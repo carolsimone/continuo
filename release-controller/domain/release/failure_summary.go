@@ -60,16 +60,22 @@ func SummarizeValidationFailure(total int, nodes []FailedNode, upstream []Change
 }
 
 // SummarizeCloneFailure is the operator-facing explanation of the unchanged
-// upstreams whose production table validation could not copy, named in id
-// order. Running a node builds its production table, so the text asks for
-// that. It is empty when no copy failed.
+// upstreams whose production table validation could not copy: it names the
+// first maxNamedNodes in id order and counts the rest. Running a node builds
+// its production table, so the text asks for that. It is empty when no copy
+// failed.
 func SummarizeCloneFailure(cloned []string) string {
 	if len(cloned) == 0 {
 		return ""
 	}
 	ids := slices.Sorted(slices.Values(cloned))
+	named := ids[:min(maxNamedNodes, len(ids))]
+	list := strings.Join(named, ", ")
+	if rest := len(ids) - len(named); rest > 0 {
+		list = andMore(list, rest)
+	}
 	return fmt.Sprintf("Could not copy the production table of %s. Run %s, then release again.",
-		strings.Join(ids, ", "), plural(len(ids), "it", "them"))
+		list, plural(len(ids), "it", "them"))
 }
 
 // SummarizeSeedFailure is the operator-facing explanation of a seed-build
@@ -124,9 +130,15 @@ func nameFirst(named []FailedNode, total int) string {
 		labels[i] = n.label()
 	}
 	if rest := total - len(named); rest > 0 {
-		return strings.Join(labels, ", ") + fmt.Sprintf(" and %d more", rest)
+		return andMore(strings.Join(labels, ", "), rest)
 	}
 	return joinWithAnd(labels)
+}
+
+// andMore appends to a list of names the count of the names it leaves out:
+// "a, b and 7 more".
+func andMore(list string, rest int) string {
+	return fmt.Sprintf("%s and %d more", list, rest)
 }
 
 func (n FailedNode) label() string {

@@ -90,7 +90,7 @@ This release adds the values key `global.releaseControllerGrpcAddr` with a defau
 - **The Nodes tab lists every node of the live release.** TL;DR: a node that never ran is listed too, after the nodes that ran, with `never` and dashes. A node the live release does not hold is not listed, whatever runs it had.
   - A `Dormant only` filter lists only the dormant nodes.
   - `continuo node list` lists the same nodes. A node that never ran has `task_count` 0 and no `last_run_at`.
-- **A new reject reason: `upstream_clone_failed`.** TL;DR: validation copies the production table of each unchanged upstream. When only such copies fail, the release is rejected `upstream_clone_failed`, and the message names the nodes: run them, then release again.
+- **A new reject reason: `upstream_clone_failed`.** TL;DR: validation copies the production table of each unchanged upstream. When only such copies fail, the release is rejected `upstream_clone_failed`, and the message names the nodes (the first five, then how many more): run them, then release again.
   - When a node built from the release's code fails too (a changed node, or a node below one), the reason stays `validation_failed`, and the message also names the copies.
   - It is not healable: remediation drops the rejection before it reads its nodes, so it proposes no fix and records no `classification_decision` row, and "Try again" is refused.
   - remediation never tries to fix a copied node, in a `validation_failed` rejection either.

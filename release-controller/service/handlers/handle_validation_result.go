@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"fmt"
-	"slices"
 	"time"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
@@ -257,12 +256,11 @@ func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipel
 // which case only present, non-ok nodes appear in failing.
 //
 // A failed node that validation cloned from its production table, rather than
-// built from its own candidate code, did not fail on the release's code. When
-// only such nodes failed, the release is rejected upstream_clone_failed and
-// names them, which remediation does not try to fix. When a built node failed
-// too, the release is rejected validation_failed: the cloned nodes leave the
-// failing set, so remediation fixes only the built ones, and the detail names
-// them.
+// built from its own candidate code, did not fail on the release's code.
+// release.DecideValidationRejection decides the reason, the detail and the
+// failing nodes from that: upstream_clone_failed, which remediation does not
+// try to fix, when only such nodes failed, and validation_failed without them
+// when a built node failed too.
 func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, in HandleValidationResultInput, failing []string, now time.Time) error {
 	topo, err := candidateTopology(ctx, d, r)
 	if err != nil {
@@ -364,38 +362,20 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 	// operator-facing detail is what the topology can say: which nodes failed,
 	// how many were skipped because of them, and which changed nodes sit upstream
 	// of the failures. It reuses the ancestors gathered above, so explaining the
-	// rejection walks the graph once.
-	detail := release.SummarizeValidationFailure(len(r.ValidationNodeIDs()), notPassed, upstream)
-
-	// A failed node that was cloned from production failed on its production
-	// table, not on the release's code. Only copies failed: the rejection is
-	// for them and asks the operator to run them. A built node failed too: the
-	// rejection stays a code failure for the built nodes, and the detail also
-	// names the copies.
-	reason := pkg_model.RejectReasonValidationFailed
-	rejectedNodes := failing
-	built, cloned := release.SplitValidationFailures(outcomes, rebuilt)
-	switch {
-	case len(cloned) > 0 && len(built) == 0:
-		reason = pkg_model.RejectReasonUpstreamCloneFailed
-		detail = release.SummarizeCloneFailure(cloned)
-		rejectedNodes = cloned
-	case len(cloned) > 0:
-		detail += ". " + release.SummarizeCloneFailure(cloned)
-		rejectedNodes = slices.DeleteFunc(slices.Clone(failing), func(id string) bool {
-			_, isCloned := slices.BinarySearch(cloned, id) // cloned is sorted
-			return isCloned
-		})
-	}
-	if err := r.Fail(string(reason), detail, rejectedNodes, now); err != nil {
+	// rejection walks the graph once. A failed node cloned from production
+	// failed on its production table, not on the release's code, and the
+	// domain decides the reason, detail and failing nodes from that.
+	summary := release.SummarizeValidationFailure(len(r.ValidationNodeIDs()), notPassed, upstream)
+	rejection := release.DecideValidationRejection(outcomes, rebuilt, failing, summary)
+	if err := r.Fail(string(rejection.Reason), rejection.Detail, rejection.FailingNodes, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 
 	payload, err := d.Rejections.Encode(ports.ReleaseRejection{
 		Shape:           ports.RejectionShapeValidation,
 		ReleaseID:       in.ReleaseID,
-		Reason:          reason,
-		FailingNodes:    rejectedNodes,
+		Reason:          rejection.Reason,
+		FailingNodes:    rejection.FailingNodes,
 		AggregateStatus: in.AggregateStatus,
 		PerNode:         perNode,
 		Repo:            r.Repo(),

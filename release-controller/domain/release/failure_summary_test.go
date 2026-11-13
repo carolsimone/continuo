@@ -311,3 +311,26 @@ func TestSummarizeCloneFailure_NamesTheNodesInIDOrder(t *testing.T) {
 func TestSummarizeCloneFailure_SaysNothingWhenNoCopyFailed(t *testing.T) {
 	assert.Equal(t, "", SummarizeCloneFailure(nil))
 }
+
+// Up to maxNamedNodes copies are all named; above it the first are named in id
+// order and the rest counted, as every other summary does.
+func TestSummarizeCloneFailure_NamesUpToTheCapAndCountsTheRest(t *testing.T) {
+	// descendingIDs returns raw.t001 … raw.t<n> in reverse id order.
+	descendingIDs := func(n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = fmt.Sprintf("raw.t%03d", n-i)
+		}
+		return out
+	}
+
+	assert.Equal(t,
+		"Could not copy the production table of raw.t001, raw.t002, raw.t003, raw.t004, raw.t005. Run them, then release again.",
+		SummarizeCloneFailure(descendingIDs(maxNamedNodes)), "at the cap every copy is named")
+	assert.Equal(t,
+		"Could not copy the production table of raw.t001, raw.t002, raw.t003, raw.t004, raw.t005 and 1 more. Run them, then release again.",
+		SummarizeCloneFailure(descendingIDs(maxNamedNodes+1)))
+	assert.Equal(t,
+		"Could not copy the production table of raw.t001, raw.t002, raw.t003, raw.t004, raw.t005 and 295 more. Run them, then release again.",
+		SummarizeCloneFailure(descendingIDs(300)))
+}
