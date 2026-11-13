@@ -5,9 +5,14 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/seedreload"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 )
 
 func TestCreateSeedBuildJob_TeamImageDbtSeedIntoCandidate(t *testing.T) {
@@ -192,4 +197,79 @@ func TestBuildSeedBuildPodSpec_NoOverlayIsByteIdentical(t *testing.T) {
 	assert.JSONEq(t, seedPodSpecWithoutOverlayJSON, string(got))
 	assert.Equal(t, seedPodSpecWithoutOverlayJSON, string(got),
 		"a seed Job without an overlay must be byte-identical to the pre-overlay spec")
+}
+
+// seedBuildParams is a seed-build leg for the seed whose production table is
+// analytics.seed_fx_rates_eur, loaded into the candidate schema.
+func seedBuildParams() ValidationJobParams {
+	return ValidationJobParams{
+		JobName: "seedbuild-fx-rates", ReleaseID: "rel-1", NodeID: "analytics.seed_fx_rates_eur",
+		ServiceName: "analytics", SchemaName: "analytics", TableName: "seed_fx_rates_eur",
+		NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "abc123",
+		CandidateSchema: "_candidate_rel_1", Namespace: "default",
+	}
+}
+
+func TestBuildSeedBuildPodSpec_RunsAReportPreflightAgainstProduction(t *testing.T) {
+	setPreflightEnv(t)
+	p := seedBuildParams()
+	p.SeedPreflight = &seedreload.Preflight{Mode: seedreload.PreflightReport, Family: warehouse.SchemaBound, Relation: "analytics.seed_fx_rates_eur", Allowed: []string{"analytics.fx_rates_current"}}
+	spec, err := buildSeedBuildPodSpec(p, []string{"dbt", "seed", "--select", "seed_fx_rates_eur"}, "/project/target/partial_parse.msgpack")
+	require.NoError(t, err)
+	pre := spec.InitContainers[len(spec.InitContainers)-1]
+	assert.Equal(t, model.SeedPreflightContainer, pre.Name)
+	assert.Equal(t, "hydrate-parse-cache", spec.InitContainers[0].Name)
+	assert.Subset(t, pre.Env, []corev1.EnvVar{
+		{Name: "VALIDATION_OP", Value: "seed_preflight"},
+		{Name: "SEED_PREFLIGHT_MODE", Value: "report"}, {Name: "SEED_PREFLIGHT_ENGINE_FAMILY", Value: "schema_bound"},
+		{Name: "PROD_SCHEMA", Value: "analytics"}, {Name: "TABLE_NAME", Value: "seed_fx_rates_eur"},
+		{Name: "SEED_PREFLIGHT_ALLOWED", Value: `["analytics.fx_rates_current"]`}, {Name: "SEED_PREFLIGHT_ACKNOWLEDGED", Value: `[]`},
+		{Name: "NODE_ID", Value: "analytics.seed_fx_rates_eur"}})
+	for _, e := range pre.Env {
+		assert.NotEqual(t, "DBT_TARGET_SCHEMA", e.Name)
+	}
+	assert.Contains(t, spec.Containers[0].Env, corev1.EnvVar{Name: "DBT_TARGET_SCHEMA", Value: "_candidate_rel_1"})
+}
+
+// The seed-build leg never fails on its preflight, whatever the request says.
+func TestBuildSeedBuildPodSpec_AReportPreflightCannotFailThePod(t *testing.T) {
+	setPreflightEnv(t)
+	p := seedBuildParams()
+	p.SeedPreflight = &seedreload.Preflight{Mode: seedreload.PreflightCheck, Family: warehouse.SchemaBound, Relation: "analytics.seed_fx_rates_eur"}
+	spec, err := buildSeedBuildPodSpec(p, []string{"dbt", "seed", "--select", "seed_fx_rates_eur"}, "/project/target/partial_parse.msgpack")
+	require.NoError(t, err)
+	pre := spec.InitContainers[len(spec.InitContainers)-1]
+	assert.Equal(t, []string{"sh", "-c", "continuo-runtime validation-op; exit 0"}, pre.Command)
+	assert.Contains(t, pre.Env, corev1.EnvVar{Name: "SEED_PREFLIGHT_MODE", Value: "report"})
+	assert.Equal(t, seedreload.PreflightCheck, p.SeedPreflight.Mode, "the request's own preflight is left as it was")
+}
+
+// A seed-build pod runs the preflight after the overlay and the parse-cache
+// hydration, and a leg whose request carries none gets no preflight container.
+func TestBuildSeedBuildPodSpec_ThePreflightRunsAfterEveryOtherInitContainer(t *testing.T) {
+	setPreflightEnv(t)
+	p := seedOverlayParams()
+	p.SeedPreflight = &seedreload.Preflight{Mode: seedreload.PreflightReport, Family: warehouse.LateBinding, Relation: "analytics.fx"}
+	spec, err := buildSeedBuildPodSpec(p, []string{"dbt", "seed", "--select", "fx"}, "/project/target/partial_parse.msgpack")
+	require.NoError(t, err)
+	names := make([]string, len(spec.InitContainers))
+	for i, ic := range spec.InitContainers {
+		names[i] = ic.Name
+	}
+	assert.Equal(t, []string{"overlay", "hydrate-parse-cache", model.SeedPreflightContainer}, names)
+
+	spec, err = buildSeedBuildPodSpec(seedOverlayParams(), []string{"dbt", "seed", "--select", "fx"}, "/project/target/partial_parse.msgpack")
+	require.NoError(t, err)
+	for _, ic := range spec.InitContainers {
+		assert.NotEqual(t, model.SeedPreflightContainer, ic.Name)
+	}
+}
+
+// A preflight that cannot run is permanent, as it is on a production attempt.
+func TestBuildSeedBuildPodSpec_APreflightOfNoSchemaAndTableIsPermanent(t *testing.T) {
+	setPreflightEnv(t)
+	p := seedBuildParams()
+	p.SeedPreflight = &seedreload.Preflight{Mode: seedreload.PreflightReport, Family: warehouse.SchemaBound, Relation: "seed_fx_rates_eur"}
+	_, err := buildSeedBuildPodSpec(p, []string{"dbt", "seed"}, "/project/target/partial_parse.msgpack")
+	require.ErrorIs(t, err, pkgevents.ErrPermanent)
 }

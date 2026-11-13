@@ -342,3 +342,50 @@ func TestProbeViews_BoundsTheProbeByItsTimeout(t *testing.T) {
 
 	assert.WithinDuration(t, before.Add(probeTimeout), deadline, 2*time.Second)
 }
+
+// seedBuildDeployment is a seed-build leg whose pod runs a preflight in mode.
+func seedBuildDeployment(mode seedreload.PreflightMode) *model.Deployment {
+	return model.NewSeedBuildDeployment(command.ValidationDeployTask{
+		ReleaseID: "rel-1", NodeID: "analytics.seed_fx_rates_eur", JobName: "seedbuild-fx-rates", ServiceName: "analytics",
+		SchemaName: "analytics", TableName: "seed_fx_rates_eur", NodeType: string(pkgmodel.NodeTypeDbtSeed),
+		SeedPreflight: &seedreload.Preflight{Mode: mode, Relation: "analytics.seed_fx_rates_eur"},
+	}, nil, time.Now())
+}
+
+// The seed-build leg's pod runs its preflight in report mode, so its findings
+// are recorded and no block, whatever it names or reports, decides a reason.
+func TestReadLogs_ASeedBuildReadsThePreflightFindingsAndSetsNoReason(t *testing.T) {
+	dependents := `"checked":true,"dependents":[{"schema":"bi","name":"fx_rates_report","kind":"view","owner":"bi","depth":1,"allowed":false}]`
+	for name, block := range map[string]string{
+		"a success that names unowned_dependents": preflightBlock("success", "unowned_dependents", dependents),
+		"an error that names no reason":           preflightBlock("error", "", dependents),
+		"an error that names a reason":            preflightBlock("error", "unowned_dependents", dependents),
+	} {
+		for _, mode := range []seedreload.PreflightMode{seedreload.PreflightReport, seedreload.PreflightCheck} {
+			t.Run(name+" in "+string(mode), func(t *testing.T) {
+				o := observerWithLogs(t, &fakeLogs{containers: map[string]string{model.SeedPreflightContainer: block}})
+
+				f := o.readLogs(context.Background(), seedBuildDeployment(mode))
+
+				assert.Empty(t, f.Reason)
+				require.NotNil(t, f.SeedPreflight)
+				assert.True(t, f.SeedPreflight.Checked)
+				assert.Equal(t, "bi.fx_rates_report", f.SeedPreflight.Outside()[0].Object())
+				code := int32(0)
+				f.ExitCode, f.JobSucceeded = &code, true
+				assert.True(t, model.Classify(f).Succeeded, "the leg's result is the seed's own")
+			})
+		}
+	}
+}
+
+// A seed-build leg whose request asked for no preflight reads no preflight log.
+func TestReadLogs_ASeedBuildWithoutAPreflightReadsNoPreflightLog(t *testing.T) {
+	block := preflightBlock("success", "", `"checked":true`)
+	o := observerWithLogs(t, &fakeLogs{containers: map[string]string{model.SeedPreflightContainer: block}})
+	d := model.NewSeedBuildDeployment(command.ValidationDeployTask{ReleaseID: "r", NodeID: "n", JobName: "j", ServiceName: "s", SchemaName: "a", TableName: "b"}, nil, time.Now())
+
+	f := o.readLogs(context.Background(), d)
+
+	assert.Nil(t, f.SeedPreflight)
+}

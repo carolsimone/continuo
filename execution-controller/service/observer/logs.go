@@ -16,9 +16,10 @@ const nothingToDo = "Nothing to do"
 
 // readLogs reads the log of d's pod and uploads it, with the structured result
 // block it printed when there is one, under keys named after the deployment;
-// it returns the facts the log shows. A seed attempt whose command carries a
-// preflight also has the seed-preflight container's log read, which adds the
-// preflight's findings and, in check mode, the reason it stopped the load. The
+// it returns the facts the log shows. A seed attempt or seed-build leg whose
+// command carries a preflight also has the seed-preflight container's log
+// read, which adds the preflight's findings and, for a production attempt in
+// check mode, the reason it stopped the load. The
 // dbt container's result is read only from the pod's main log, never from the
 // preflight's. It runs outside any transaction, under LogIOTimeout, and
 // soft-fails: a log that cannot be read or uploaded leaves its facts empty.
@@ -91,13 +92,30 @@ type seedPreflightResult struct {
 	message string
 }
 
+// preflightOf is the preflight d's pod runs: a production attempt's seed
+// dispatch asks for one, and so may a seed-build leg's request. Any other
+// deployment runs none.
+func preflightOf(d *model.Deployment) *seedreload.Preflight {
+	switch d.Mode() {
+	case model.ModeProduction:
+		return d.Command().SeedPreflight
+	case model.ModeSeedBuild:
+		return d.ValidationCommand().SeedPreflight
+	default:
+		return nil
+	}
+}
+
 // readSeedPreflight reads the log of d's seed-preflight container and parses
 // its result block. It returns nil when d's command carries no preflight, the
 // log cannot be read or it holds no seed preflight block, which leaves the
 // attempt to the usual classification of its exit code. The mode is the one in
-// d's command, not the block's: a report-mode block never decides a reason.
+// d's command, not the block's: a report-mode block never decides a reason, and
+// a seed-build leg's pod always runs in report mode, so its findings are
+// recorded and never a reason.
 func (o *Observer) readSeedPreflight(ctx context.Context, d *model.Deployment) *seedPreflightResult {
-	if d.Mode() != model.ModeProduction || d.Command().SeedPreflight == nil {
+	preflight := preflightOf(d)
+	if preflight == nil {
 		return nil
 	}
 	log, err := o.deps.Logs.GetContainerLog(ctx, d.JobName(), model.SeedPreflightContainer)
@@ -114,7 +132,7 @@ func (o *Observer) readSeedPreflight(ctx context.Context, d *model.Deployment) *
 		return nil
 	}
 	res := &seedPreflightResult{findings: findingsOf(p)}
-	if d.Command().SeedPreflight.Mode == seedreload.PreflightCheck && p.Status != "success" {
+	if d.Mode() == model.ModeProduction && preflight.Mode == seedreload.PreflightCheck && p.Status != "success" {
 		res.reason, res.message = model.ReasonFromResultBlock(p.Reason), p.Message
 	}
 	return res

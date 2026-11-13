@@ -186,3 +186,23 @@ func TestDeployTaskDTO_RoundTripsTheSeedPreflight(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &plain))
 	assert.Nil(t, plain.ToDomain().SeedPreflight)
 }
+
+// A seed-build leg's preflight is stored in job_params as the request carried
+// it, so a Job created after a restart still runs it; a leg without one stores
+// none.
+func TestValidationDeployTaskDTO_RoundTripsTheSeedPreflight(t *testing.T) {
+	cmd := command.ValidationDeployTask{ReleaseID: "r", NodeID: "analytics.seed_fx_rates_eur", SeedPreflight: &seedreload.Preflight{
+		Mode: seedreload.PreflightReport, Family: warehouse.LateBinding, Relation: "analytics.seed_fx_rates_eur",
+		Allowed: []string{"analytics.fx_rates_current"}}}
+	raw, err := json.Marshal(ValidationDeployTaskFromDomain(cmd))
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"seed_preflight":{"mode":"report","engine_family":"late_binding","relation":"analytics.seed_fx_rates_eur",`+
+		`"allowed":["analytics.fx_rates_current"],"acknowledged":[]}`)
+
+	var back ValidationDeployTaskDTO
+	require.NoError(t, json.Unmarshal(raw, &back))
+	want := *cmd.SeedPreflight
+	want.Acknowledged = []string{}
+	require.NotNil(t, back.ToDomain().SeedPreflight)
+	assert.Equal(t, want, *back.ToDomain().SeedPreflight)
+}

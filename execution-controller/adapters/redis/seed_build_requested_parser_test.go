@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/seedreload"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
@@ -225,4 +227,23 @@ func TestParseSeedBuildRequested_AbsentSourceOverlayURIIsEmpty(t *testing.T) {
 	evt, err := ParseSeedBuildRequested(seedBuildMsg(t, seedBuildPayload(), ""))
 	require.NoError(t, err)
 	assert.Empty(t, evt.SourceOverlayURI)
+}
+
+func TestParseSeedBuildRequested_ReadsEachSeedsPreflight(t *testing.T) {
+	p := seedBuildPayload()
+	seeds := p["seeds"].([]map[string]any)
+	seeds[0]["seed_preflight"] = map[string]any{
+		"mode": "report", "engine_family": "late_binding", "relation": "public.country_codes",
+		"allowed": []string{"public.country_names"}, "acknowledged": []string{},
+	}
+
+	evt, err := ParseSeedBuildRequested(seedBuildMsg(t, p, ""))
+
+	require.NoError(t, err)
+	require.NotNil(t, evt.Seeds[0].SeedPreflight)
+	assert.Equal(t, seedreload.Preflight{
+		Mode: seedreload.PreflightReport, Family: warehouse.LateBinding, Relation: "public.country_codes",
+		Allowed: []string{"public.country_names"}, Acknowledged: []string{},
+	}, *evt.Seeds[0].SeedPreflight)
+	assert.Nil(t, evt.Seeds[1].SeedPreflight, "a seed without the key asks for no preflight")
 }

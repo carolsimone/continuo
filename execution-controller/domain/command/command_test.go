@@ -119,3 +119,9 @@ func TestValidationDeployTask_ToValidationJobSpec_CarriesOp(t *testing.T) {
 	assert.Equal(t, "clone_from_prod", spec.ValidationOp)
 	assert.Equal(t, "analytics", spec.ProdSchema)
 }
+
+func TestValidationDeployTask_ToValidationJobSpec_CarriesTheSeedPreflight(t *testing.T) {
+	pf := &seedreload.Preflight{Mode: seedreload.PreflightReport, Family: warehouse.LateBinding, Relation: "analytics.fx"}
+	spec := command.ValidationDeployTask{NodeID: "analytics.fx", SeedPreflight: pf}.ToValidationJobSpec()
+	assert.Same(t, pf, spec.SeedPreflight)
+}

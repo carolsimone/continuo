@@ -99,6 +99,9 @@ type ValidationDeployTaskDTO struct {
 	ParseProdS3URI       string   `json:"parse_prod_s3_uri,omitempty"`
 	ParseCandidateS3URI  string   `json:"parse_candidate_s3_uri,omitempty"`
 	SourceOverlayURI     string   `json:"source_overlay_uri,omitempty"`
+	// SeedPreflight is stored in the shape the request carried it, so a
+	// seed-build Job created after a restart runs the same preflight.
+	SeedPreflight *pkgevents.SeedPreflight `json:"seed_preflight,omitempty"`
 }
 
 // ValidationDeployTaskFromDomain maps a domain command to its DTO.
@@ -121,6 +124,7 @@ func ValidationDeployTaskFromDomain(c command.ValidationDeployTask) ValidationDe
 		ParseProdS3URI:       c.ParseProdS3URI,
 		ParseCandidateS3URI:  c.ParseCandidateS3URI,
 		SourceOverlayURI:     c.SourceOverlayURI,
+		SeedPreflight:        pkgevents.SeedPreflightOf(c.SeedPreflight),
 	}
 }
 
@@ -144,5 +148,6 @@ func (d ValidationDeployTaskDTO) ToDomain() command.ValidationDeployTask {
 		ParseProdS3URI:       d.ParseProdS3URI,
 		ParseCandidateS3URI:  d.ParseCandidateS3URI,
 		SourceOverlayURI:     d.SourceOverlayURI,
+		SeedPreflight:        d.SeedPreflight.ToDomain(),
 	}
 }

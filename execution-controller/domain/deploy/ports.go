@@ -94,6 +94,9 @@ type ValidationJobSpec struct {
 	// run's compile Job lays over the project before compiling. Populated
 	// only for mode=compile dispatches of a verification run.
 	SourceOverlayURI string
+	// SeedPreflight is the report-mode check a seed-build pod runs against the
+	// seed's production table before dbt; nil when the dispatch asks for none.
+	SeedPreflight *seedreload.Preflight
 }
 
 // Deployer is the driven port the dispatcher uses to create Jobs.

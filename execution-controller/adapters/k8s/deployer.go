@@ -129,6 +129,7 @@ func (d *Deployer) DeploySeedBuild(ctx context.Context, spec deploy.ValidationJo
 		ImageTag:              spec.ImageTag,
 		CandidateSchema:       spec.CandidateSchema,
 		SourceOverlayURI:      spec.SourceOverlayURI,
+		SeedPreflight:         spec.SeedPreflight,
 		ActiveDeadlineSeconds: d.deadline(d.legTimeout),
 		Namespace:             d.namespace,
 	})

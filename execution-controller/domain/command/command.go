@@ -93,6 +93,10 @@ type ValidationDeployTask struct {
 	// every production release. Its DTO field is omitempty so an absent value
 	// keeps the job_params JSON byte-identical.
 	SourceOverlayURI string
+	// SeedPreflight is the report-mode check a seed-build pod runs against
+	// the seed's production table, ahead of dbt; nil for every other leg and
+	// for a seed whose request asks for none.
+	SeedPreflight *seedreload.Preflight
 }
 
 func (ValidationDeployTask) isCommand() {}
@@ -142,5 +146,6 @@ func (c ValidationDeployTask) ToValidationJobSpec() deploy.ValidationJobSpec {
 		ParseProdS3URI:       c.ParseProdS3URI,
 		ParseCandidateS3URI:  c.ParseCandidateS3URI,
 		SourceOverlayURI:     c.SourceOverlayURI,
+		SeedPreflight:        c.SeedPreflight,
 	}
 }
