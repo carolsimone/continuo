@@ -118,8 +118,10 @@ var jobNamePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 // reason when nothing does. An ingested node type stops it too: a table no node
 // builds is never run. A job_name that is not a DNS-1123 label of 1 to 63
 // characters stops it: Kubernetes can never read such a Job, so no lookup of
-// the attempt's Job could ever answer. The Job itself may still be refused
-// when it is built (deploy.ErrMalformedDispatch).
+// the attempt's Job could ever answer. A seed preflight stops it unless it is
+// on a seed, in check or report mode, for a known warehouse family, against a
+// relation of a schema and a table. The Job itself may still be refused when
+// it is built (deploy.ErrMalformedDispatch).
 func DispatchProblem(cmd command.DeployTask, knownStatus pkgmodel.AttemptStatus) (pkgmodel.FailureReason, string) {
 	nodeType, err := pkgmodel.ParseNodeType(cmd.NodeType)
 	if err != nil {
@@ -140,7 +142,10 @@ func DispatchProblem(cmd command.DeployTask, knownStatus pkgmodel.AttemptStatus)
 		problem = "image_tag is empty"
 	case cmd.TimeoutSeconds < 1:
 		problem = fmt.Sprintf("timeout_seconds %d is below 1", cmd.TimeoutSeconds)
-	default:
+	case cmd.SeedPreflight != nil:
+		problem = seedPreflightProblem(nodeType, cmd.SeedPreflight)
+	}
+	if problem == "" {
 		if _, err := pkgmodel.ParseOperation(cmd.Operation); err != nil {
 			problem = err.Error()
 		}

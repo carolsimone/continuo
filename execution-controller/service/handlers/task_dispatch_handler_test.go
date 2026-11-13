@@ -72,7 +72,7 @@ func TestTaskDispatch_ALostInsertRaceResendsTheStoredReport(t *testing.T) {
 	u.Outbox = out
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, noJobs{}, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New()))
+	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, noJobs{}, fakeResolver{}, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New()))
 
 	require.Len(t, out.created, 1, "exactly one report is written")
 	want, err := json.Marshal(serialization.ReportFromDomain(cmd, *winner.LastReport()))
@@ -130,7 +130,7 @@ func TestTaskDispatch_AnAcknowledgedAttemptsJobMissingFromTheCacheIsAdoptedFromA
 	u.Outbox = out
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, live, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New()))
+	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, live, fakeResolver{}, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New()))
 
 	assert.Equal(t, 1, live.reads)
 	stored := repo.stored[attemptKey(evt.TaskID.String(), 1)]
@@ -155,7 +155,7 @@ func TestTaskDispatch_AnAcknowledgedAttemptIsLostOnlyOnceALiveReadFindsNoJob(t *
 			u.Outbox = out
 			logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-			require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, live, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New()))
+			require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, live, fakeResolver{}, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New()))
 
 			assert.Equal(t, 1, live.reads)
 			stored := repo.stored[attemptKey(evt.TaskID.String(), 1)]
@@ -182,7 +182,7 @@ func TestTaskDispatch_AnUnreadableJobLeavesAnAcknowledgedAttemptUnanswered(t *te
 	u.Outbox = out
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	err := handlers.NewTaskDispatchHandler(noJobs{}, live, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New())
+	err := handlers.NewTaskDispatchHandler(noJobs{}, live, fakeResolver{}, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New())
 
 	require.Error(t, err)
 	assert.Equal(t, 1, live.reads)
@@ -201,7 +201,7 @@ func TestTaskDispatch_OnlyAnAttemptAboutToBeReportedLostIsReadLive(t *testing.T)
 	u.Outbox = &recordingOutbox{}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, live, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New()))
+	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, live, fakeResolver{}, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New()))
 
 	assert.Zero(t, live.reads)
 	assert.Equal(t, model.StatusPending, repo.stored[attemptKey(evt.TaskID.String(), 1)].Status())
@@ -221,7 +221,7 @@ func TestTaskDispatch_AnAcknowledgedAttemptWithAnOrphanPodIsNotReportedLost(t *t
 	u.Outbox = out
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1}))
 
-	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, live, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New()))
+	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, live, fakeResolver{}, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New()))
 
 	assert.Equal(t, 1, live.reads)
 	assert.Zero(t, repo.addAttempts, "nothing is stored")
@@ -244,7 +244,7 @@ func TestTaskDispatch_AFencedRunsAttemptWithAnOrphanPodIsLeftUnanswered(t *testi
 	u.Outbox = out
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1}))
 
-	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, live, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New()))
+	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, live, fakeResolver{}, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New()))
 
 	assert.Equal(t, 1, live.reads)
 	assert.Zero(t, repo.addAttempts, "nothing is stored")
@@ -264,7 +264,7 @@ func TestTaskDispatch_StoresTheDispatchsTenant(t *testing.T) {
 	u.Outbox = out
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, noJobs{}, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New()))
+	require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, noJobs{}, fakeResolver{}, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New()))
 
 	stored := repo.stored[attemptKey(evt.TaskID.String(), 1)]
 	require.NotNil(t, stored)
@@ -274,4 +274,78 @@ func TestTaskDispatch_StoresTheDispatchsTenant(t *testing.T) {
 	tenantID, _, err := outbox.UnwrapTenant(out.created[0].Payload)
 	require.NoError(t, err)
 	assert.Equal(t, "acme", tenantID, "the report is stored under the dispatch's tenant")
+}
+
+// fullRefreshDispatch is a new dispatch of a full refresh of a node of
+// nodeType in the finance service.
+func fullRefreshDispatch(nodeType pkgmodel.NodeType) events.TaskDispatch {
+	evt := acknowledgedDispatch()
+	evt.KnownStatus = pkgmodel.AttemptStatusDispatched
+	evt.ServiceName, evt.NodeType, evt.Operation = "finance", string(nodeType), string(pkgmodel.OperationFullRefresh)
+	return evt
+}
+
+// A full refresh whose dbt-commands block defines no such command can never
+// run: the attempt is recorded failed with the reason that names the missing
+// command, before any Job is made.
+func TestTaskDispatchHandler_RefusesAFullRefreshWhoseBlockLacksTheCommand(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	undefined := fakeResolver{blocks: map[string]bool{"finance/dbt-seed": false, "finance/dbt-model": false}}
+	for nodeType, want := range map[pkgmodel.NodeType]struct {
+		reason  pkgmodel.FailureReason
+		message string
+	}{
+		pkgmodel.NodeTypeDbtSeed:  {pkgmodel.FailureReasonSeedFullRefreshUndefined, "dbt-commands services.finance defines no seed_full_refresh command"},
+		pkgmodel.NodeTypeDbtModel: {pkgmodel.FailureReasonFullRefreshUndefined, "dbt-commands services.finance defines no full_refresh command"},
+	} {
+		t.Run(string(nodeType), func(t *testing.T) {
+			evt := fullRefreshDispatch(nodeType)
+			repo := &stubDeploymentsRepo{}
+			out := &recordingOutbox{}
+			u := newFakeUoW(repo, &recordingCancelledRepo{})
+			u.Outbox = out
+
+			require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, noJobs{}, undefined, noStops{}, logger).Handle(context.Background(), u, evt, uuid.New()))
+
+			d := repo.stored[attemptKey(evt.TaskID.String(), evt.Attempt)]
+			require.NotNil(t, d)
+			assert.Equal(t, model.StatusFailed, d.Status(), "no Job is requested")
+			assert.Equal(t, want.reason, d.Facts().Reason)
+			require.Len(t, out.created, 1)
+			report := decodeReport(t, out.created[0])
+			assert.Equal(t, "failed", report["status"])
+			assert.Equal(t, "invalid", report["failure_class"])
+			assert.Equal(t, string(want.reason), report["failure_reason"])
+			assert.Equal(t, want.message, report["error_message"])
+		})
+	}
+}
+
+// A full refresh whose block defines the command, and a run whose block
+// lacks a full refresh command, are queued for their Job.
+func TestTaskDispatchHandler_QueuesAFullRefreshWhoseBlockDefinesTheCommand(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	for name, c := range map[string]struct {
+		evt      events.TaskDispatch
+		resolver fakeResolver
+	}{
+		"a defined seed full refresh": {fullRefreshDispatch(pkgmodel.NodeTypeDbtSeed), fakeResolver{}},
+		"a seed run": {func() events.TaskDispatch {
+			evt := fullRefreshDispatch(pkgmodel.NodeTypeDbtSeed)
+			evt.Operation = string(pkgmodel.OperationRun)
+			return evt
+		}(), fakeResolver{blocks: map[string]bool{"finance/dbt-seed": false}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := &stubDeploymentsRepo{}
+			out := &recordingOutbox{}
+			u := newFakeUoW(repo, &recordingCancelledRepo{})
+			u.Outbox = out
+
+			require.NoError(t, handlers.NewTaskDispatchHandler(noJobs{}, noJobs{}, c.resolver, noStops{}, logger).Handle(context.Background(), u, c.evt, uuid.New()))
+
+			require.Len(t, out.created, 1)
+			assert.Equal(t, "queued", decodeReport(t, out.created[0])["status"])
+		})
+	}
 }

@@ -23,6 +23,12 @@ type CommandResolver interface {
 	// both events.ErrPermanent and deploy.ErrInvalidNodeType, which is how the
 	// dispatcher records the failure as invalid_node_type.
 	NodeCommand(serviceName string, op pkg_model.Operation, nt pkg_model.NodeType, node string) ([]string, error)
+	// FullRefreshBlock names the dbt-commands block that governs the service
+	// ("services.<name>" when the service has an override, else "default")
+	// and reports whether that block defines the full refresh command of nt:
+	// full_refresh for a model, seed_full_refresh for a seed. A node type that
+	// cannot be full-refreshed has none.
+	FullRefreshBlock(serviceName string, nt pkg_model.NodeType) (block string, defined bool)
 	// SeedBuildCommand returns the argv for building a seed into the
 	// release's candidate schema. When the service has no seed_build
 	// template it falls back to the seed command; schema routing then relies

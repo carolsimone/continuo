@@ -13,6 +13,7 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/service/ports"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/num"
+	"github.com/carolsimone/continuo/pkg/seedreload"
 	batchv1 "k8s.io/api/batch/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -52,6 +53,9 @@ type JobParams struct {
 	// ContentHash is the node's content hash; a python node's pod receives it
 	// as CONTENT_HASH. Empty when the dispatch carries none.
 	ContentHash string
+	// SeedPreflight is the check a seed's pod runs against the warehouse, as
+	// its last init container, before dbt loads the seed; nil for no check.
+	SeedPreflight *seedreload.Preflight
 }
 
 // K8sClient provides methods to interact with Kubernetes

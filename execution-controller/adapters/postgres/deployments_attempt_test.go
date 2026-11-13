@@ -11,6 +11,8 @@ import (
 	"github.com/carolsimone/continuo/execution-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/seedreload"
+	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -165,4 +167,40 @@ func TestRepo_AStoppedAttemptRoundTrips(t *testing.T) {
 	assert.Equal(t, model.StatusTerminating, got.Status())
 	require.NotNil(t, got.Facts().StopRequestedAt)
 	assert.True(t, now.Add(time.Minute).Equal(*got.Facts().StopRequestedAt))
+}
+
+// A seed's preflight is stored in job_params with the attempt, so the Job the
+// dispatcher creates or adopts after a restart, built from the loaded
+// command, still runs the check before the load.
+func TestRepo_TheSeedPreflightRoundTrips(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+	cmd := validCmd()
+	cmd.NodeType, cmd.SchemaName, cmd.TableName = string(pkgmodel.NodeTypeDbtSeed), "analytics", "seed_fx_rates_eur"
+	cmd.SeedPreflight = &seedreload.Preflight{Mode: seedreload.PreflightCheck, Family: warehouse.SchemaBound,
+		Relation: "analytics.seed_fx_rates_eur", Allowed: []string{"analytics.fx_rates_current"}, Acknowledged: []string{}}
+	d := model.NewDeployment(cmd, nil, time.Now())
+	d.RecordReport(d.ReportOf(pkgmodel.AttemptStatusQueued, ""))
+	added, err := repo.AddAttempt(ctx, d)
+	require.NoError(t, err)
+	require.True(t, added)
+
+	got, found, err := repo.LoadByTaskAttempt(ctx, cmd.TaskID, 0)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, cmd.SeedPreflight, got.Command().SeedPreflight)
+	assert.Equal(t, cmd.SeedPreflight, got.Command().ToJobSpec().SeedPreflight)
+	var stored string
+	require.NoError(t, db.Get(&stored, `SELECT job_params->'seed_preflight'->>'allowed' FROM deployments WHERE id = $1`, d.ID()))
+	assert.JSONEq(t, `["analytics.fx_rates_current"]`, stored)
+
+	plain := validCmd()
+	_, err = repo.AddAttempt(ctx, model.NewDeployment(plain, nil, time.Now()))
+	require.NoError(t, err)
+	got, found, err = repo.LoadByTaskAttempt(ctx, plain.TaskID, 0)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Nil(t, got.Command().SeedPreflight)
 }

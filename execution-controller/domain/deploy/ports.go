@@ -6,6 +6,8 @@ package deploy
 import (
 	"context"
 	"errors"
+
+	"github.com/carolsimone/continuo/pkg/seedreload"
 )
 
 // Errors a Deployer returns for a dispatch it can never run. Each wraps
@@ -54,6 +56,9 @@ type JobSpec struct {
 	// ContentHash is the node's content hash; a python node's pod receives it
 	// as CONTENT_HASH. Empty when the dispatch carries none.
 	ContentHash string
+	// SeedPreflight is the check a seed's pod runs against the warehouse
+	// before dbt loads the seed; nil when the dispatch asks for none.
+	SeedPreflight *seedreload.Preflight
 }
 
 // ValidationJobSpec is the domain description of a single validation deploy.

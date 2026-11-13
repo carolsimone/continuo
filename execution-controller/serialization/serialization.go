@@ -11,6 +11,7 @@ package serialization
 
 import (
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 )
 
 // DeployTaskDTO is the JSON shape of command.DeployTask as stored in the
@@ -30,6 +31,9 @@ type DeployTaskDTO struct {
 	Operation      string `json:"operation"`
 	TimeoutSeconds int64  `json:"timeout_seconds,omitempty"`
 	ContentHash    string `json:"content_hash,omitempty"`
+	// SeedPreflight is stored in the shape the dispatch carried it, so a Job
+	// created or adopted after a restart still runs the check.
+	SeedPreflight *pkgevents.SeedPreflight `json:"seed_preflight,omitempty"`
 }
 
 // DeployTaskFromDomain maps a domain command to its DTO.
@@ -49,6 +53,7 @@ func DeployTaskFromDomain(c command.DeployTask) DeployTaskDTO {
 		Operation:      c.Operation,
 		TimeoutSeconds: c.TimeoutSeconds,
 		ContentHash:    c.ContentHash,
+		SeedPreflight:  pkgevents.SeedPreflightOf(c.SeedPreflight),
 	}
 }
 
@@ -69,6 +74,7 @@ func (d DeployTaskDTO) ToDomain() command.DeployTask {
 		Operation:      d.Operation,
 		TimeoutSeconds: d.TimeoutSeconds,
 		ContentHash:    d.ContentHash,
+		SeedPreflight:  d.SeedPreflight.ToDomain(),
 	}
 }
 

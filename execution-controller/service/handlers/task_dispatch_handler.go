@@ -25,24 +25,29 @@ import (
 // holds no trace of, neither a record nor a Job nor a pod the cache or a live
 // read of the API shows, is reported attempt_lost. A dispatch of a fenced run
 // (one run-controller cancelled) that is not held creates no Job: the attempt is
-// stored stopped, or, when its Job exists, adopted to be stopped. A dispatch
+// stored stopped, or, when its Job exists, adopted to be stopped. A full
+// refresh whose dbt-commands block defines no full refresh command for its
+// node type is recorded failed before any Job is made. A dispatch
 // that may store an attempt takes its run's lock shared before it reads the
 // fence, so a fence being written is waited for and met, and a fence written
 // after sees the attempt. Each attempt stored stopped is counted once the
 // transaction commits.
 type TaskDispatchHandler struct {
-	jobs    ports.JobCache
-	lookup  ports.JobLookup
-	metrics ports.StopMetrics
-	logger  *slog.Logger
-	now     func() time.Time
+	jobs     ports.JobCache
+	lookup   ports.JobLookup
+	commands ports.CommandResolver
+	metrics  ports.StopMetrics
+	logger   *slog.Logger
+	now      func() time.Time
 }
 
 // NewTaskDispatchHandler constructs the handler; jobs is the watch's cache,
-// read for a Job of the attempt, and lookup reads the Job from the Kubernetes
-// API before an attempt is reported lost.
-func NewTaskDispatchHandler(jobs ports.JobCache, lookup ports.JobLookup, metrics ports.StopMetrics, logger *slog.Logger) *TaskDispatchHandler {
-	return &TaskDispatchHandler{jobs: jobs, lookup: lookup, metrics: metrics, logger: logger, now: time.Now}
+// read for a Job of the attempt, lookup reads the Job from the Kubernetes
+// API before an attempt is reported lost, and commands tells whether the
+// dbt-commands block of a full refresh's service defines its command.
+func NewTaskDispatchHandler(jobs ports.JobCache, lookup ports.JobLookup, commands ports.CommandResolver, metrics ports.StopMetrics,
+	logger *slog.Logger) *TaskDispatchHandler {
+	return &TaskDispatchHandler{jobs: jobs, lookup: lookup, commands: commands, metrics: metrics, logger: logger, now: time.Now}
 }
 
 // Handle applies one task.dispatch:v1 message inside u's transaction; the
@@ -80,6 +85,9 @@ func (h *TaskDispatchHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt 
 		}
 	}
 	problem, message := model.DispatchProblem(cmd, evt.KnownStatus)
+	if problem == "" {
+		problem, message = h.fullRefreshProblem(cmd)
+	}
 	cached := h.jobs.Observe(cmd.JobName)
 
 	action := model.DecideDispatch(found, laterHeld, problem, cached.RunsAttempt(cmd.TaskID, cmd.Attempt),
@@ -126,6 +134,21 @@ func (h *TaskDispatchHandler) Handle(ctx context.Context, u uow.UnitOfWork, evt 
 		return h.add(ctx, u, model.NewRefusedDeployment(cmd, procID, pkgmodel.FailureReasonAttemptLost, message, now), pkgmodel.AttemptStatusFailed, message)
 	}
 	return fmt.Errorf("dispatch of attempt %d of task %s: no action %d", cmd.Attempt, cmd.TaskID, action)
+}
+
+// fullRefreshProblem returns the reason and message of a full refresh whose
+// dbt-commands block defines no full refresh command for its node type, which
+// no Job could ever run; an empty reason for any other dispatch.
+func (h *TaskDispatchHandler) fullRefreshProblem(cmd command.DeployTask) (pkgmodel.FailureReason, string) {
+	nodeType := pkgmodel.NodeType(cmd.NodeType)
+	if pkgmodel.Operation(cmd.Operation) != pkgmodel.OperationFullRefresh || !nodeType.SupportsFullRefresh() {
+		return "", ""
+	}
+	block, defined := h.commands.FullRefreshBlock(cmd.ServiceName, nodeType)
+	if defined {
+		return "", ""
+	}
+	return model.FullRefreshUndefined(nodeType, block)
 }
 
 // acceptFenced answers a dispatch of a fenced run that holds no record of the

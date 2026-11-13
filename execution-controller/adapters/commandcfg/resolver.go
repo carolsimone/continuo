@@ -90,28 +90,51 @@ func (r *Resolver) fullRefreshCommand(serviceName string, nt pkg_model.NodeType,
 	if !nt.SupportsFullRefresh() {
 		return nil, fmt.Errorf("%w: full refresh is not supported for node type %q", events.ErrPermanent, nt)
 	}
-	vals := map[string]string{"node": node}
-	var pick func(*opSet) []string
-	var key string
-	switch nt {
-	case pkg_model.NodeTypeDbtModel:
-		pick = func(o *opSet) []string { return o.FullRefresh }
-		key = "full_refresh"
-	case pkg_model.NodeTypeDbtSeed:
-		pick = func(o *opSet) []string { return o.SeedFullRefresh }
-		key = "seed_full_refresh"
-	default:
+	pick, key := fullRefreshTemplate(nt)
+	if pick == nil {
 		return nil, fmt.Errorf("%w: no full-refresh command key is mapped for node type %q", events.ErrPermanent, nt)
 	}
-	block, name := r.cfg.Default, "default"
-	if ops := r.cfg.Services[serviceName]; ops != nil {
-		block, name = ops, "services."+serviceName
-	}
+	block, name := r.governingBlock(serviceName)
 	tpl := pick(block)
 	if tpl == nil {
 		return nil, fmt.Errorf("%w: dbt-commands %s defines no %s command", events.ErrPermanent, name, key)
 	}
-	return substitute(tpl, vals), nil
+	return substitute(tpl, map[string]string{"node": node}), nil
+}
+
+// FullRefreshBlock names the block that governs the service and reports
+// whether it defines the full refresh command of nt, without falling through
+// from an override to the default.
+func (r *Resolver) FullRefreshBlock(serviceName string, nt pkg_model.NodeType) (string, bool) {
+	block, name := r.governingBlock(serviceName)
+	pick, _ := fullRefreshTemplate(nt)
+	if pick == nil {
+		return name, false
+	}
+	return name, pick(block) != nil
+}
+
+// governingBlock is the block that governs the service, its override when it
+// has one, else the default, with the name an error gives it.
+func (r *Resolver) governingBlock(serviceName string) (*opSet, string) {
+	if ops := r.cfg.Services[serviceName]; ops != nil {
+		return ops, "services." + serviceName
+	}
+	return r.cfg.Default, "default"
+}
+
+// fullRefreshTemplate picks the full refresh template of nt from a block, with
+// the key that names it: FullRefresh for a model, SeedFullRefresh for a seed;
+// nil for any other node type.
+func fullRefreshTemplate(nt pkg_model.NodeType) (func(*opSet) []string, string) {
+	switch nt {
+	case pkg_model.NodeTypeDbtModel:
+		return func(o *opSet) []string { return o.FullRefresh }, "full_refresh"
+	case pkg_model.NodeTypeDbtSeed:
+		return func(o *opSet) []string { return o.SeedFullRefresh }, "seed_full_refresh"
+	default:
+		return nil, ""
+	}
 }
 
 // SeedBuildCommand resolves the argv for building a seed into targetSchema.

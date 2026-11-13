@@ -9,7 +9,9 @@ import (
 
 	"github.com/carolsimone/continuo/execution-controller/domain/model"
 	"github.com/carolsimone/continuo/execution-controller/domain/repository"
+	"github.com/carolsimone/continuo/execution-controller/service/ports"
 	"github.com/carolsimone/continuo/execution-controller/test/fakes"
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/google/uuid"
 )
 
@@ -135,4 +137,17 @@ func (r *recordingCancelledRepo) Exists(_ context.Context, _ uuid.UUID) (bool, e
 }
 func (r *recordingCancelledRepo) DeleteOlderThan(_ context.Context, _ time.Duration) (int64, error) {
 	return 0, nil
+}
+
+// fakeResolver is a ports.CommandResolver whose FullRefreshBlock answers from
+// blocks, keyed "<service>/<node type>": every service is governed by its own
+// override block, and a pair blocks does not hold is defined.
+type fakeResolver struct {
+	ports.CommandResolver
+	blocks map[string]bool
+}
+
+func (r fakeResolver) FullRefreshBlock(serviceName string, nt pkgmodel.NodeType) (string, bool) {
+	defined, ok := r.blocks[serviceName+"/"+string(nt)]
+	return "services." + serviceName, defined || !ok
 }

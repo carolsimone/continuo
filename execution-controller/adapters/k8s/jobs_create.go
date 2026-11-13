@@ -900,7 +900,8 @@ func extrasProjectDirWord(compileArgv []string) string {
 // that pre-seeds the prod-context partial-parse artifact (see
 // parseCacheInitContainer); partialParsePath is the service's resolved
 // partial_parse.msgpack path, used only to derive the team container's mount
-// directory.
+// directory. When params carries a SeedPreflight, its init container (see
+// seedPreflightInitContainer) runs last, after the hydrate.
 func buildPodSpec(params JobParams, command []string, partialParsePath string) (corev1.PodSpec, error) {
 	if params.ImageTag == "" {
 		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from job params for service %s",
@@ -949,6 +950,16 @@ func buildPodSpec(params JobParams, command []string, partialParsePath string) (
 		spec.InitContainers = []corev1.Container{init}
 		spec.Volumes = []corev1.Volume{vol}
 		spec.Containers[0].VolumeMounts = []corev1.VolumeMount{teamMount}
+	}
+
+	// The seed preflight runs after every other init container, so the gap
+	// between the check and dbt's drop of the seed's table stays short.
+	if params.SeedPreflight != nil {
+		preflight, err := seedPreflightInitContainer(*params.SeedPreflight, strings.ToLower(params.SchemaName+"."+params.TableName))
+		if err != nil {
+			return corev1.PodSpec{}, err
+		}
+		spec.InitContainers = append(spec.InitContainers, preflight)
 	}
 
 	return spec, nil
