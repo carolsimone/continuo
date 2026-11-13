@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,11 +18,13 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
+	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/llmcache"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
+	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 )
 
@@ -42,9 +45,23 @@ var (
 	ctx     = context.Background()
 )
 
-type fixedClock struct{ now time.Time }
+// testClock is a clock the test moves.
+type testClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
 
-func (c fixedClock) Now() time.Time { return c.now }
+func (c *testClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *testClock) set(t time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = t
+}
 
 // fakeSource is the repository at the trigger's commit. fail is returned by
 // the next ReadFile, once, and onRead runs on every read.
@@ -77,14 +94,23 @@ func (s *fakeSource) ListDir(context.Context, string, string, string) ([]string,
 	return nil, ports.ErrSourceNotFound
 }
 
-type fakeEvidence struct{ objects map[string]string }
+// fakeEvidence reads the objects it holds, and every artifact the runner
+// wrote, by its URI.
+type fakeEvidence struct {
+	objects   map[string]string
+	artifacts *memArtifacts
+}
 
 func (e fakeEvidence) Fetch(_ context.Context, uri string) (string, error) {
-	c, ok := e.objects[uri]
-	if !ok {
-		return "", ports.ErrNotFound
+	if c, ok := e.objects[uri]; ok {
+		return c, nil
 	}
-	return c, nil
+	if key, ok := strings.CutPrefix(uri, artifactsURIPrefix); ok {
+		if c, ok := e.artifacts.get(key); ok {
+			return c, nil
+		}
+	}
+	return "", ports.ErrNotFound
 }
 
 type nopSanitizer struct{}
@@ -97,22 +123,107 @@ func (noPrecedents) Precedents(context.Context, ports.PrecedentQuery) ([]prompt.
 	return nil, nil
 }
 
-// noBundle is a code bundle that holds no node. onRead runs on every read.
+// noBundle is a code bundle that holds only the nodes in nodes. onRead runs
+// on every read.
 type noBundle struct {
 	mu     sync.Mutex
 	reads  int
+	nodes  map[string]ports.CandidateSource
 	onRead func(n int)
 }
 
-func (b *noBundle) NodeSource(context.Context, string, string, string) (ports.CandidateSource, error) {
+func (b *noBundle) NodeSource(_ context.Context, _, nodeID, _ string) (ports.CandidateSource, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.reads++
 	if b.onRead != nil {
 		b.onRead(b.reads)
 	}
+	if src, ok := b.nodes[nodeID]; ok {
+		return src, nil
+	}
 	return ports.CandidateSource{}, ports.ErrNotFound
 }
+
+// noVersions is a graph with no running version of any node.
+type noVersions struct{}
+
+func (noVersions) CurrentVersion(context.Context, string) (ports.CurrentVersion, bool, error) {
+	return ports.CurrentVersion{}, false, nil
+}
+
+// fakeReleases reads the failing release's image tag of a service as
+// "tag-<service>".
+type fakeReleases struct{}
+
+func (fakeReleases) ImageTag(_ context.Context, _, service string) (string, error) {
+	return "tag-" + service, nil
+}
+
+func (fakeReleases) FailingNodes(context.Context, string) (map[string]string, error) {
+	return nil, nil
+}
+
+// fakePipeline records every verification run submitted. submitErr is
+// returned by the next Submit, once. status answers every status read, queued
+// when it is nil, and onStatus runs before each read.
+type fakePipeline struct {
+	mu        sync.Mutex
+	submitted []ports.VerificationRequest
+	submitErr error
+	status    func(runID string) (ports.VerificationStatus, error)
+	onStatus  func()
+	reads     int
+}
+
+func (p *fakePipeline) Submit(_ context.Context, r ports.VerificationRequest) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.submitErr != nil {
+		err := p.submitErr
+		p.submitErr = nil
+		return err
+	}
+	p.submitted = append(p.submitted, r)
+	return nil
+}
+
+func (p *fakePipeline) Status(_ context.Context, runID string) (ports.VerificationStatus, error) {
+	p.mu.Lock()
+	status, onStatus := p.status, p.onStatus
+	p.reads++
+	p.mu.Unlock()
+	if onStatus != nil {
+		onStatus()
+	}
+	if status == nil {
+		return ports.VerificationStatus{Phase: proposal.PhaseQueued}, nil
+	}
+	return status(runID)
+}
+
+// answer makes every run read as phase, with nodeErrors when it failed and
+// activated at t0 once it left the queue.
+func (p *fakePipeline) answer(phase proposal.Phase, nodeErrors map[string]string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.status = func(string) (ports.VerificationStatus, error) {
+		st := ports.VerificationStatus{Phase: phase, NodeErrors: nodeErrors}
+		if phase != proposal.PhaseQueued {
+			st.ActivatedAt = t0
+		}
+		return st, nil
+	}
+}
+
+func (p *fakePipeline) runs() []ports.VerificationRequest {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]ports.VerificationRequest(nil), p.submitted...)
+}
+
+// artifactsURIPrefix is the URI prefix of every artifact memArtifacts stores.
+const artifactsURIPrefix = "s3://artifacts/"
 
 // memArtifacts stores every artifact written, by key.
 type memArtifacts struct {
@@ -127,7 +238,7 @@ func (a *memArtifacts) Write(_ context.Context, key, body, _ string) (string, er
 		a.objects = map[string]string{}
 	}
 	a.objects[key] = body
-	return "s3://artifacts/" + key, nil
+	return artifactsURIPrefix + key, nil
 }
 
 func (a *memArtifacts) get(key string) (string, bool) {
@@ -277,17 +388,57 @@ func testFiles(tries int) workflow.Set {
 type harness struct {
 	t           *testing.T
 	store       *memory.Store
-	clock       fixedClock
+	clock       *testClock
 	source      *fakeSource
 	evidence    fakeEvidence
 	bundle      *noBundle
 	artifacts   *memArtifacts
+	pipeline    *fakePipeline
 	llm         *scriptedLLM
 	cache       *memCache
 	files       workflow.Set
 	maintenance bool
 	collab      runner.Collaborators
 	runner      *runner.Runner
+
+	// afterCommit runs after every unit of work of the runner commits.
+	afterCommit func()
+	// phaseWrites counts the runner's UpdateVerificationPhase calls.
+	phaseWrites atomic.Int64
+}
+
+// verificationTimeout is how long the gate lets a verification run take.
+const verificationTimeout = 20 * time.Minute
+
+// hookedUoW is a memory unit of work that runs the harness's afterCommit hook
+// after it commits and counts the phase writes of its proposal repository.
+type hookedUoW struct {
+	uow.UnitOfWork
+	h *harness
+}
+
+func (u hookedUoW) Commit() error {
+	if err := u.UnitOfWork.Commit(); err != nil {
+		return err
+	}
+	if u.h.afterCommit != nil {
+		u.h.afterCommit()
+	}
+	return nil
+}
+
+func (u hookedUoW) ProposalRepo() repository.ProposalRepository {
+	return phaseCounter{ProposalRepository: u.UnitOfWork.ProposalRepo(), h: u.h}
+}
+
+type phaseCounter struct {
+	repository.ProposalRepository
+	h *harness
+}
+
+func (p phaseCounter) UpdateVerificationPhase(ctx context.Context, id, runID string, phase proposal.Phase, activatedAt *time.Time) error {
+	p.h.phaseWrites.Add(1)
+	return p.ProposalRepository.UpdateVerificationPhase(ctx, id, runID, phase, activatedAt)
 }
 
 type option func(*harness)
@@ -313,17 +464,19 @@ func withFlowContext() option {
 
 func newHarness(t *testing.T, opts ...option) *harness {
 	t.Helper()
+	artifacts := &memArtifacts{}
 	h := &harness{
 		t:     t,
 		store: memory.NewStore(),
-		clock: fixedClock{now: t0},
+		clock: &testClock{now: t0},
 		source: &fakeSource{files: map[string]string{
 			"services/svc-a/models/orders.sql": "select 1",
 			"services/svc-b/models/orders.sql": "select 1",
 		}},
-		evidence:  fakeEvidence{objects: map[string]string{}},
+		evidence:  fakeEvidence{objects: map[string]string{}, artifacts: artifacts},
 		bundle:    &noBundle{},
-		artifacts: &memArtifacts{},
+		artifacts: artifacts,
+		pipeline:  &fakePipeline{},
 		llm:       &scriptedLLM{answer: fixAnswer},
 		cache:     &memCache{},
 		files:     testFiles(3),
@@ -342,9 +495,13 @@ func newHarness(t *testing.T, opts ...option) *harness {
 			"svc-b": "services/svc-b",
 			"core":  "services/core",
 		},
-		Precedents:      noPrecedents{},
-		CandidateSource: h.bundle,
-		Clock:           h.clock,
+		Precedents:          noPrecedents{},
+		CandidateSource:     h.bundle,
+		Versions:            noVersions{},
+		Releases:            fakeReleases{},
+		Pipeline:            h.pipeline,
+		Clock:               h.clock,
+		VerificationTimeout: verificationTimeout,
 	}
 	_, err := runner.Validate(h.files, runner.NewRegistry(h.collab))
 	require.NoError(t, err)
@@ -355,15 +512,16 @@ func newHarness(t *testing.T, opts ...option) *harness {
 // runnerOver is a runner over the harness's store and fakes that runs files.
 func (h *harness) runnerOver(files workflow.Set) *runner.Runner {
 	return runner.New(runner.Deps{
-		NewUoW:      func() uow.UnitOfWork { return memory.NewUnitOfWork(h.store) },
-		Registry:    runner.NewRegistry(h.collab),
-		Files:       files,
-		LLM:         llmcache.New(h.llm, h.cache, "test-model", discard),
-		Collab:      h.collab,
-		Clock:       h.clock,
-		Logger:      discard,
-		Maintenance: h.maintenance,
-		Owner:       workerOwner,
+		NewUoW:              func() uow.UnitOfWork { return hookedUoW{UnitOfWork: memory.NewUnitOfWork(h.store), h: h} },
+		Registry:            runner.NewRegistry(h.collab),
+		Files:               files,
+		LLM:                 llmcache.New(h.llm, h.cache, "test-model", discard),
+		Collab:              h.collab,
+		Clock:               h.clock,
+		Logger:              discard,
+		Maintenance:         h.maintenance,
+		Owner:               workerOwner,
+		VerificationTimeout: verificationTimeout,
 	})
 }
 
@@ -505,4 +663,71 @@ func (h *harness) cluster(id uuid.UUID, try, n int) remediation.Cluster {
 	}
 	h.t.Fatalf("no cluster %d in try %d", n, try)
 	return remediation.Cluster{}
+}
+
+// reclaim gives the lease on the remediation to the runner's owner again from
+// now, as the worker and the poller claim it before they act.
+func (h *harness) reclaim(id uuid.UUID) {
+	h.t.Helper()
+	repo := h.store.RemediationRepository()
+	require.NoError(h.t, repo.ReleaseLease(ctx, id, workerOwner))
+	_, err := repo.Claim(ctx, id, workerOwner, h.clock.Now(), lease)
+	require.NoError(h.t, err)
+}
+
+// drive claims the remediation and drives it, as the worker does.
+func (h *harness) drive(id uuid.UUID) error {
+	h.t.Helper()
+	h.reclaim(id)
+	return h.runner.Drive(ctx, id)
+}
+
+// poll claims the remediation and polls its gate with the snapshot the poller
+// would have listed, as the gate poller does.
+func (h *harness) poll(id uuid.UUID) error {
+	h.t.Helper()
+	h.reclaim(id)
+	snap, err := h.store.RemediationRepository().Load(ctx, id)
+	require.NoError(h.t, err)
+	return h.runner.PollGate(ctx, snap)
+}
+
+// attempt returns the proposal row of one attempt of the release.
+func (h *harness) attempt(n int) memory.StoredProposal {
+	h.t.Helper()
+	for _, p := range h.proposals() {
+		if p.Proposal.Attempt == n {
+			return p
+		}
+	}
+	h.t.Fatalf("no proposal row for attempt %d", n)
+	return memory.StoredProposal{}
+}
+
+// try returns one try of the remediation.
+func (h *harness) try(id uuid.UUID, n int) remediation.Try {
+	h.t.Helper()
+	for _, t := range h.store.Tries(id) {
+		if t.Try == n {
+			return t
+		}
+	}
+	h.t.Fatalf("no try %d", n)
+	return remediation.Try{}
+}
+
+// flowRows returns the flow-level journal rows of one try, by step name.
+func (h *harness) flowRows(id uuid.UUID, try int) map[string][]remediation.StepRun {
+	return h.stepRows(id, try, 0)
+}
+
+// proposedEvents is every outbox entry on remediation.proposed:v1.
+func (h *harness) proposedEvents() []outbox.Entry {
+	var out []outbox.Entry
+	for _, e := range h.store.OutboxEntries() {
+		if e.StreamName == streams.RemediationProposedV1 {
+			out = append(out, e)
+		}
+	}
+	return out
 }

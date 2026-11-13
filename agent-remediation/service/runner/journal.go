@@ -41,6 +41,10 @@ const (
 	// filled and, once every check passed, the URIs of its stored content and
 	// diff. Its findings are every finding of the pass.
 	stepPreflight = "preflight"
+	// stepDrafts reads the checked drafts of a try back from the journal once
+	// every cluster has ended. It is a flow-level row, and has one only when
+	// that failed.
+	stepDrafts = "drafts"
 )
 
 // contextRecord is a context step's output as its row stores it: each piece of
@@ -139,11 +143,23 @@ func (r *Runner) recordFailure(ctx context.Context, row remediation.StepRun, cau
 	}
 	now := r.clock.Now()
 	row.Status = remediation.StepFailed
-	row.Failures++
-	row.LastError = strings.ReplaceAll(cause.Error(), "\x00", "")
 	row.Output = nil
 	row.Findings = nil
 	row.FinishedAt = &now
+	return r.countFailure(ctx, row, cause)
+}
+
+// countFailure raises the row's failures by one and records cause as its last
+// error, without NUL characters, leaving the rest of the row as it is, in a
+// transaction of its own after holding the lease. It returns cause. A lost
+// lease is returned as it is, and nothing is recorded for a drive whose context
+// ended.
+func (r *Runner) countFailure(ctx context.Context, row remediation.StepRun, cause error) error {
+	if ctx.Err() != nil || errors.Is(cause, repository.ErrLeaseLost) {
+		return cause
+	}
+	row.Failures++
+	row.LastError = strings.ReplaceAll(cause.Error(), "\x00", "")
 	err := r.commit(ctx, row.RemediationID, func(u uow.UnitOfWork) error {
 		return u.RemediationRepo().SaveStep(ctx, row)
 	})
@@ -245,6 +261,25 @@ func promptDraft(row remediation.StepRun) (remediation.Draft, error) {
 		return remediation.Draft{}, fmt.Errorf("decode the output of step %s: %w", row.Step, err)
 	}
 	return rec.Draft, nil
+}
+
+// preflightDraft returns the draft a done pre-flight pass's row recorded.
+func preflightDraft(row remediation.StepRun) (remediation.Draft, error) {
+	var rec preflightRecord
+	if err := json.Unmarshal(row.Output, &rec); err != nil {
+		return remediation.Draft{}, fmt.Errorf("decode the output of step %s: %w", row.Step, err)
+	}
+	return rec.Draft, nil
+}
+
+// checkResult returns the result and the evidence a done pre-flight check's
+// row recorded.
+func checkResult(row remediation.StepRun) (checkRecord, error) {
+	var rec checkRecord
+	if err := json.Unmarshal(row.Output, &rec); err != nil {
+		return checkRecord{}, fmt.Errorf("decode the output of step %s: %w", row.Step, err)
+	}
+	return rec, nil
 }
 
 // evidenceValues is every piece of evidence ev holds, by key.

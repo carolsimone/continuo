@@ -37,7 +37,9 @@ type Deps struct {
 	// recorded skipped for every node instead of calling the model.
 	Maintenance bool
 	Owner       string
-	// VerificationTimeout is how long a try's verification runs may take.
+	// VerificationTimeout is how long a try's verification runs may take. A
+	// verifying try's deadline falls this long, plus an hour, after the gate
+	// started its runs.
 	VerificationTimeout time.Duration
 }
 
@@ -78,9 +80,11 @@ type tryRun struct {
 // waits on something outside the worker, ends, or the worker's lease is lost.
 // The caller holds the lease. A remediation with no try, or whose try failed,
 // gets its next try opened first. Then every cluster of the try runs its steps
-// to an end. A lost lease stops the drive quietly with nil, since another
-// worker holds the remediation. A step that errors is recorded on its journal
-// row, and its error is returned; the next drive runs it again.
+// to an end, and the try is finished: settled when it has nothing to verify,
+// otherwise checked across its clusters and submitted to the gate, where it
+// waits on the gate's poller. A lost lease stops the drive quietly with nil,
+// since another worker holds the remediation. A step that errors is recorded
+// on its journal row, and its error is returned; the next drive runs it again.
 func (r *Runner) Drive(ctx context.Context, id uuid.UUID) error {
 	err := r.drive(ctx, id)
 	if errors.Is(err, repository.ErrLeaseLost) {
@@ -107,19 +111,20 @@ func (r *Runner) drive(ctx context.Context, id uuid.UUID) error {
 		}
 		switch run.snap.Try.Status {
 		case remediation.TryDrafting:
-			c, open := nextOpenCluster(run.snap.Clusters)
-			if !open {
-				return r.finishTry(ctx, run)
-			}
-			if err := r.runClusterStep(ctx, run, c); err != nil {
-				return err
+			if c, open := nextOpenCluster(run.snap.Clusters); open {
+				err = r.runClusterStep(ctx, run, c)
+			} else {
+				err = r.finishTry(ctx, run)
 			}
 		case remediation.TryChecking:
-			return r.finishTry(ctx, run)
+			err = r.finishTry(ctx, run)
 		default:
 			// A verifying try waits on the gate's poller, and a passed try
 			// ends with its remediation.
 			return nil
+		}
+		if err != nil {
+			return err
 		}
 	}
 }

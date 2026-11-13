@@ -91,7 +91,7 @@ func TestRunner_AttemptNumberContinuesTheReleaseSequence(t *testing.T) {
 	h.legacyAttempt(2, proposal.StatusFailed)
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 
-	require.NoError(t, h.runner.Drive(ctx, id))
+	require.NoError(t, h.runner.NextTry(ctx, id))
 
 	tries := h.store.Tries(id)
 	require.Len(t, tries, 1)
@@ -317,7 +317,7 @@ func TestRunner_EveryStepWritesOneJournalRow(t *testing.T) {
 
 	require.Error(t, h.runner.Drive(ctx, id), "the first step's commit fails")
 	require.NoError(t, h.runner.Drive(ctx, id))
-	require.NoError(t, h.runner.Drive(ctx, id), "a drive with every cluster terminal writes nothing")
+	require.NoError(t, h.runner.Drive(ctx, id), "a drive of a verifying try writes nothing")
 
 	type key struct {
 		step string
@@ -329,9 +329,11 @@ func TestRunner_EveryStepWritesOneJournalRow(t *testing.T) {
 		{"target_file_was_shown", "check"}, {"content_changed", "check"}, {"confidence_not_low", "check"},
 		{"preflight", "runner"},
 	}
-	steps := h.store.Steps(id)
 	var got []key
-	for _, s := range steps {
+	for _, s := range h.store.Steps(id) {
+		if s.Cluster != 1 {
+			continue
+		}
 		got = append(got, key{s.Step, s.Kind})
 		assert.Equal(t, 1, s.Try, s.Step)
 		assert.Equal(t, 1, s.Cluster, s.Step)
@@ -552,6 +554,9 @@ func TestRunner_TheFlowContextRunsBeforeTheTypeContext(t *testing.T) {
 
 	var order, revisions []string
 	for _, s := range h.store.Steps(id) {
+		if s.Cluster != 1 {
+			continue
+		}
 		order = append(order, s.Step)
 		revisions = append(revisions, s.FileRevision)
 	}

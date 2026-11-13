@@ -23,7 +23,10 @@ import (
 
 const nameVerificationRun workflow.StepName = "verification_run"
 
-var errNoEdits = errors.New("the try has no edit to verify")
+var (
+	errNoEdits      = errors.New("the try has no edit to verify")
+	errNoSubmitTime = errors.New("the gate input names no time its runs were submitted at")
+)
 
 // VerificationRun is the long check `verification_run`. It runs the real
 // release pipeline over the try's edits: a verification run carries the full
@@ -196,8 +199,13 @@ func (g *VerificationRun) Submit(ctx context.Context, in step.GateInput) (step.G
 // them, and refused when they are not the runs the waiting result names. The
 // verdict carries the service, kind, phase and errors of each run it read, and
 // Phases lists those seen queued or running. A run whose status could not be
-// read is left out of both, so the runner keeps what it recorded for it.
+// read is left out of both, so the runner keeps what it recorded for it. An
+// input with no SubmittedAt is refused before any run is read, since the budget
+// of a run whose status cannot be read counts from it.
 func (g *VerificationRun) Poll(ctx context.Context, in step.GateInput, waiting remediation.CheckResult) (step.GateVerdict, error) {
+	if in.SubmittedAt.IsZero() {
+		return step.GateVerdict{}, errNoSubmitTime
+	}
 	planned, err := g.plan(in)
 	if err != nil {
 		return step.GateVerdict{}, err

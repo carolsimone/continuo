@@ -63,11 +63,7 @@ func (g *VerificationRun) decide(in step.GateInput, got read) step.GateVerdict {
 	if got.read < len(got.runs) {
 		// The budget of an unreadable run runs from when the try was submitted:
 		// with no status to read, nothing else measures it.
-		since := in.SubmittedAt
-		if since.IsZero() {
-			since = in.Try.CreatedAt
-		}
-		if now.Sub(since) >= g.timeout {
+		if now.Sub(in.SubmittedAt) >= g.timeout {
 			return timedOut(ids, seen, phases)
 		}
 		return waiting(name, ids, seen, phases)

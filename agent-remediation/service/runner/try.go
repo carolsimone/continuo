@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -19,8 +20,21 @@ import (
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 )
 
-// tryDraftingTime is how long after it opens a try's deadline falls.
-const tryDraftingTime = time.Hour
+// How long a try may stay in each open status: its deadline is set when it
+// enters the status. A verifying try's deadline is a backstop past the gate's
+// own timeouts, which end a verification that never answers first.
+const (
+	tryDraftingTime   = time.Hour
+	tryCheckingTime   = 10 * time.Minute
+	tryVerifyingSlack = time.Hour
+)
+
+// The cluster and round of a flow-level step's journal row: a cross-cluster
+// check, the gate or an output.
+const (
+	flowCluster = 0
+	flowRound   = 1
+)
 
 // The reasons a node is recorded with when no fix is attempted for it.
 const (
@@ -217,10 +231,149 @@ func (r *Runner) recordAttempt(ctx context.Context, u uow.UnitOfWork, run tryRun
 	return nil
 }
 
-// finishTry runs once every cluster of the try has ended, or while the try is
-// checking, and ends the drive there, leaving the try as it is.
-func (r *Runner) finishTry(context.Context, tryRun) error {
+// finishTry takes the next committed step of a try whose every cluster has
+// ended. A drafting try none of whose checked clusters has an edit is settled:
+// its attempt is recorded with what its clusters reported, the try fails and
+// the remediation is done. Any other drafting try moves to checking. A
+// checking try runs the flow's cross-cluster checks one at a time, in file
+// order, each committed on its own; a finding fails the attempt and ends the
+// remediation. Once every check passed, the drafts are submitted to the gate.
+// The checked drafts are rebuilt from the journal each time, and a failure to
+// read them back is counted on the runner's drafts row.
+func (r *Runner) finishTry(ctx context.Context, run tryRun) error {
+	checked, err := r.checkedClusters(run)
+	if err != nil {
+		return r.recordFailure(ctx, r.newRow(run, flowCluster, stepDrafts, kindRunner, flowRound, run.flow.Revision), err)
+	}
+	drafts := draftsOf(checked)
+	if run.snap.Try.Status == remediation.TryDrafting {
+		if len(drafts) == 0 {
+			return r.settleTry(ctx, run, checked)
+		}
+		return r.commit(ctx, run.snap.Remediation.ID, func(u uow.UnitOfWork) error {
+			return r.saveTry(ctx, u, *run.snap.Try, remediation.TryChecking, r.clock.Now().Add(tryCheckingTime))
+		})
+	}
+	for _, ref := range run.flow.AcrossClusters {
+		row, done := run.journal.done(flowCluster, string(ref.Name), flowRound)
+		if !done {
+			return r.runCrossCheck(ctx, run, drafts, ref.Name)
+		}
+		if len(row.Findings) > 0 {
+			return r.commitFlowStep(ctx, row, func(u uow.UnitOfWork) error {
+				return r.refuseAttempt(ctx, u, run, row.Findings[0].Message)
+			})
+		}
+	}
+	return r.submitGate(ctx, run, checked)
+}
+
+// settleTry records the attempt of a try that has nothing to verify, fails
+// the try and ends the remediation, in one transaction. The attempt is skipped
+// when every node was skipped, and failed as soon as one node was attempted.
+func (r *Runner) settleTry(ctx context.Context, run tryRun, checked []checkedCluster) error {
+	outcomes := nodeOutcomes(run.snap.Clusters, checked)
+	p := proposal.Proposal{Status: settledStatus(outcomes), NodeOutcomes: outcomes}
+	if err := r.commit(ctx, run.snap.Remediation.ID, func(u uow.UnitOfWork) error {
+		if err := r.recordAttempt(ctx, u, run, run.snap.Try.Attempt, p); err != nil {
+			return err
+		}
+		return r.endTry(ctx, u, run, remediation.TryFailed)
+	}); err != nil {
+		return err
+	}
+	r.logger.Info("no cluster of the try produced an edit; the attempt is settled",
+		"remediation", run.snap.Remediation.ID, "release", run.trigger.ReleaseID, "attempt", run.snap.Try.Attempt, "status", p.Status)
 	return nil
+}
+
+// runCrossCheck runs one cross-cluster check over the try's drafts and commits
+// its row. A finding fails the attempt with the finding's message and ends the
+// remediation in the same transaction.
+func (r *Runner) runCrossCheck(ctx context.Context, run tryRun, drafts []step.ClusterDraft, name workflow.StepName) error {
+	row := r.newRow(run, flowCluster, string(name), string(step.KindCheck), flowRound, run.flow.Revision)
+	chk, err := lookup[step.CrossCheck](r.d.Registry, name, step.KindCheck)
+	if err != nil {
+		return r.recordFailure(ctx, row, err)
+	}
+	if row.InputDigest, err = draftsDigest(drafts); err != nil {
+		return r.recordFailure(ctx, row, err)
+	}
+	res, err := chk.CheckAll(ctx, step.CrossInput{Trigger: run.trigger, Drafts: drafts})
+	if err != nil {
+		return r.recordFailure(ctx, row, fmt.Errorf("step %s: %w", name, err))
+	}
+	if row.Output, err = json.Marshal(checkRecord{Result: res}); err != nil {
+		return r.recordFailure(ctx, row, fmt.Errorf("encode the output of step %s: %w", name, err))
+	}
+	row.Findings = res.Findings
+	r.finish(&row)
+	f, refused := firstFinding([]remediation.CheckResult{res})
+	return r.commitFlowStep(ctx, row, func(u uow.UnitOfWork) error {
+		if !refused {
+			return nil
+		}
+		return r.refuseAttempt(ctx, u, run, f.Message)
+	})
+}
+
+// commitFlowStep commits a flow-level step's row and what fn writes, in one
+// transaction after holding the lease. A commit that fails is recorded as a
+// failure of the step.
+func (r *Runner) commitFlowStep(ctx context.Context, row remediation.StepRun, fn func(u uow.UnitOfWork) error) error {
+	err := r.commit(ctx, row.RemediationID, func(u uow.UnitOfWork) error {
+		if err := u.RemediationRepo().SaveStep(ctx, row); err != nil {
+			return fmt.Errorf("save step %s: %w", row.Step, err)
+		}
+		return fn(u)
+	})
+	if err != nil {
+		return r.recordFailure(ctx, row, err)
+	}
+	return nil
+}
+
+// refuseAttempt records the attempt failed for reason on every node of the
+// trigger, fails the try and ends the remediation, in u's transaction: no
+// verification run could judge the try's edits.
+func (r *Runner) refuseAttempt(ctx context.Context, u uow.UnitOfWork, run tryRun, reason string) error {
+	r.logger.Error("the attempt's edits cannot be verified by any release",
+		"remediation", run.snap.Remediation.ID, "release", run.trigger.ReleaseID, "attempt", run.snap.Try.Attempt, "error", reason)
+	if err := r.recordAttempt(ctx, u, run, run.snap.Try.Attempt, proposal.Proposal{
+		Status:       proposal.StatusFailed,
+		NodeOutcomes: outcomesFor(run.trigger.NodeIDs(), proposal.NodeOutcome{Status: proposal.StatusFailed, Reason: reason}),
+		Rationale:    reason,
+	}); err != nil {
+		return err
+	}
+	return r.endTry(ctx, u, run, remediation.TryFailed)
+}
+
+// saveTry moves t to the status to in u's transaction, refusing a move the
+// try's states do not allow. A deadline that is not zero becomes the try's
+// deadline.
+func (r *Runner) saveTry(ctx context.Context, u uow.UnitOfWork, t remediation.Try, to remediation.TryStatus, deadline time.Time) error {
+	if !t.Status.CanMoveTo(to) {
+		return fmt.Errorf("try %d cannot move from %s to %s", t.Try, t.Status, to)
+	}
+	t.Status = to
+	if !deadline.IsZero() {
+		t.DeadlineAt = deadline
+	}
+	t.UpdatedAt = r.clock.Now()
+	if err := u.RemediationRepo().SaveTry(ctx, t); err != nil {
+		return fmt.Errorf("save try: %w", err)
+	}
+	return nil
+}
+
+// endTry ends the current try with the status to and the remediation with it,
+// in u's transaction.
+func (r *Runner) endTry(ctx context.Context, u uow.UnitOfWork, run tryRun, to remediation.TryStatus) error {
+	if err := r.saveTry(ctx, u, *run.snap.Try, to, time.Time{}); err != nil {
+		return err
+	}
+	return r.endRemediation(ctx, u, run.snap.Remediation)
 }
 
 // generatingProposal is the in-flight row of an attempt, naming the trigger's

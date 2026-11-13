@@ -539,15 +539,14 @@ func TestPoll_TheUnreadableBudgetCountsFromTheSubmit(t *testing.T) {
 	assert.False(t, poll(t, r, in).Result.Waiting, "the submit's own age is")
 }
 
-func TestPoll_WithNoSubmitTimeTheUnreadableBudgetCountsFromTheTry(t *testing.T) {
+func TestPoll_RefusesAnInputWithNoSubmitTime(t *testing.T) {
 	r := newRig()
-	r.pipeline.statusErrs[salesRun] = errBoom
 	in := gateInput(dbtCluster())
 	in.SubmittedAt = time.Time{}
-	r.clock.now = t0.Add(timeout - time.Second)
-	assert.True(t, poll(t, r, in).Result.Waiting)
-	r.clock.now = t0.Add(timeout)
-	assert.False(t, poll(t, r, in).Result.Waiting)
+	_, err := r.step.Poll(context.Background(), in, remediation.CheckResult{Check: "verification_run", Waiting: true, RunIDs: []string{salesRun}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "submit")
+	assert.Empty(t, r.pipeline.statusReads, "no run is read")
 }
 
 func TestPoll_AnUnreadableRunStopsTheReadAndKeepsWhatWasRead(t *testing.T) {
