@@ -286,3 +286,28 @@ func TestSummarizeCompileFailure_NamesWhatFailedToCompile(t *testing.T) {
 func TestSummarizeCompileFailure_SaysSoWhenNoNodeReportedAFailure(t *testing.T) {
 	assert.Equal(t, "dbt compile failed, but no per-node failure was recorded", SummarizeCompileFailure(nil))
 }
+
+func TestSummarizeCloneFailure(t *testing.T) {
+	assert.Equal(t,
+		"Could not copy the production table of analytics.b. Run it, then release again.",
+		SummarizeCloneFailure([]string{"analytics.b"}))
+	assert.Equal(t,
+		"Could not copy the production table of analytics.b, raw.c. Run them, then release again.",
+		SummarizeCloneFailure([]string{"analytics.b", "raw.c"}))
+}
+
+// The nodes are named in id order whatever order they are given in, so the
+// same failure always reads the same.
+func TestSummarizeCloneFailure_NamesTheNodesInIDOrder(t *testing.T) {
+	ids := []string{"raw.c", "analytics.b"}
+
+	got := SummarizeCloneFailure(ids)
+
+	assert.Equal(t,
+		"Could not copy the production table of analytics.b, raw.c. Run them, then release again.", got)
+	assert.Equal(t, []string{"raw.c", "analytics.b"}, ids, "the caller's slice is left as it was")
+}
+
+func TestSummarizeCloneFailure_SaysNothingWhenNoCopyFailed(t *testing.T) {
+	assert.Equal(t, "", SummarizeCloneFailure(nil))
+}

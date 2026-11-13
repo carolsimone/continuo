@@ -119,8 +119,8 @@ func TestEncodeSeedBuildRejection(t *testing.T) {
 const goldenValidationRejection = `{"release_id":"rel-4","stage":"validation","reason":"validation_failed",` +
 	`"failing_nodes":["svc.sch.b"],"missing_nodes":[],"aggregate_status":"failed",` +
 	`"per_node":[` +
-	`{"node_id":"svc.sch.a","status":"ok","dbt_log_uri":"s3://logs/a.log","candidate_artifact_uri":"s3://cand/a.sql","node_type":"dbt-model","file_path":"models/a.sql","service":"svc"},` +
-	`{"node_id":"svc.sch.b","status":"failed","dbt_log_uri":"s3://logs/b.log","run_results_uri":"s3://logs/b.json","node_type":"dbt-model","file_path":"models/b.sql","service":"svc",` +
+	`{"node_id":"svc.sch.a","status":"ok","dbt_log_uri":"s3://logs/a.log","candidate_artifact_uri":"s3://cand/a.sql","node_type":"dbt-model","validation_op":"build_from_sql","file_path":"models/a.sql","service":"svc"},` +
+	`{"node_id":"svc.sch.b","status":"failed","dbt_log_uri":"s3://logs/b.log","run_results_uri":"s3://logs/b.json","node_type":"dbt-model","validation_op":"build_from_sql","file_path":"models/b.sql","service":"svc",` +
 	`"changed_ancestors":[{"node_id":"svc.sch.a","file_path":"models/a.sql","service":"svc","depth":1}]}],` +
 	`"repo":"org/svc","commit_sha":"jkl012","code_bundle_uri":"s3://bundles/rel-4.tar.gz"}`
 
@@ -138,6 +138,7 @@ func TestEncodeValidationRejection(t *testing.T) {
 				DBTLogURI:            "s3://logs/a.log",
 				CandidateArtifactURI: "s3://cand/a.sql",
 				NodeType:             "dbt-model",
+				ValidationOp:         "build_from_sql",
 				FilePath:             "models/a.sql",
 				Service:              "svc",
 			},
@@ -147,6 +148,7 @@ func TestEncodeValidationRejection(t *testing.T) {
 				DBTLogURI:     "s3://logs/b.log",
 				RunResultsURI: "s3://logs/b.json",
 				NodeType:      "dbt-model",
+				ValidationOp:  "build_from_sql",
 				FilePath:      "models/b.sql",
 				Service:       "svc",
 				ChangedAncestors: []ports.ChangedAncestor{
@@ -161,6 +163,50 @@ func TestEncodeValidationRejection(t *testing.T) {
 	assertJSON(t, got, goldenValidationRejection)
 	// The validation shape carries no error_detail: its evidence is per node.
 	assertNoKey(t, got, "error_detail")
+}
+
+// validation_op names how the validation leg prepared each node: built from
+// its own candidate code, or cloned empty from its production table. A copied
+// node's failure is not a fault in the release's code, so a consumer reads
+// this key to tell the two apart. An entry with no op omits the key.
+func TestReleaseRejected_ValidationOpIsEncoded(t *testing.T) {
+	got := encode(t, ports.ReleaseRejection{
+		Shape:           ports.RejectionShapeValidation,
+		ReleaseID:       "rel-8",
+		Reason:          pkg_model.RejectReasonUpstreamCloneFailed,
+		AggregateStatus: "failed",
+		FailingNodes:    []string{"analytics.b"},
+		PerNode: []ports.RejectedNode{
+			{NodeID: "analytics.b", Status: "failed", NodeType: "dbt-model", ValidationOp: "clone_from_prod"},
+			{NodeID: "analytics.s", Status: "skipped", NodeType: "dbt-model", ValidationOp: "build_from_sql"},
+			{NodeID: "analytics.x", Status: "skipped"},
+		},
+	})
+	const want = `{"release_id":"rel-8","stage":"validation","reason":"upstream_clone_failed",` +
+		`"failing_nodes":["analytics.b"],"missing_nodes":[],"aggregate_status":"failed",` +
+		`"per_node":[` +
+		`{"node_id":"analytics.b","status":"failed","node_type":"dbt-model","validation_op":"clone_from_prod"},` +
+		`{"node_id":"analytics.s","status":"skipped","node_type":"dbt-model","validation_op":"build_from_sql"},` +
+		`{"node_id":"analytics.x","status":"skipped"}],` +
+		`"repo":"","commit_sha":"","code_bundle_uri":""}`
+	assertJSON(t, got, want)
+}
+
+// Only the validation leg chooses a validation op, so no other shape carries
+// the key even when a handler sets it.
+func TestReleaseRejected_OnlyTheValidationShapeCarriesValidationOp(t *testing.T) {
+	node := ports.RejectedNode{NodeID: "svc.sch.a", Status: "failed", ValidationOp: "build_from_sql"}
+	for _, shape := range []ports.RejectionShape{
+		ports.RejectionShapeParse,
+		ports.RejectionShapeCompile,
+		ports.RejectionShapeSeedBuild,
+		ports.RejectionShapeDuplicateTable,
+	} {
+		got := encode(t, ports.ReleaseRejection{Shape: shape, ReleaseID: "rel-9", PerNode: []ports.RejectedNode{node}})
+		if strings.Contains(got, "validation_op") {
+			t.Errorf("shape %q must not carry validation_op: %s", shape, got)
+		}
+	}
 }
 
 const goldenDuplicateRejection = `{"release_id":"rel-5","reason":"duplicate_table","error_detail":"sch.t claimed by svc_a (models/t.sql) and svc_b (models/t.sql)",` +

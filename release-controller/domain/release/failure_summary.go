@@ -2,6 +2,7 @@ package release
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -56,6 +57,19 @@ func SummarizeValidationFailure(total int, nodes []FailedNode, upstream []Change
 		summary += "; changed upstream of the failing nodes: " + nameNodes(passing, maxNamedUpstream)
 	}
 	return summary
+}
+
+// SummarizeCloneFailure is the operator-facing explanation of the unchanged
+// upstreams whose production table validation could not copy, named in id
+// order. Running a node builds its production table, so the text asks for
+// that. It is empty when no copy failed.
+func SummarizeCloneFailure(cloned []string) string {
+	if len(cloned) == 0 {
+		return ""
+	}
+	ids := slices.Sorted(slices.Values(cloned))
+	return fmt.Sprintf("Could not copy the production table of %s. Run %s, then release again.",
+		strings.Join(ids, ", "), plural(len(ids), "it", "them"))
 }
 
 // SummarizeSeedFailure is the operator-facing explanation of a seed-build

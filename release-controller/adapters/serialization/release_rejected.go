@@ -61,8 +61,10 @@ type changedAncestorDTO struct {
 }
 
 // validationNodeDTO is one validation-leg result: the node's artifacts, the
-// candidate facts that locate its source, and — for a failing node — the
-// changed ancestors that may be the root cause.
+// candidate facts that locate its source, how the leg prepared it
+// (validation_op: built from its own candidate code, or clone_from_prod for an
+// unchanged upstream copied from its production table), and — for a failing
+// node — the changed ancestors that may be the root cause.
 type validationNodeDTO struct {
 	NodeID               string               `json:"node_id"`
 	Status               string               `json:"status"`
@@ -70,6 +72,7 @@ type validationNodeDTO struct {
 	RunResultsURI        string               `json:"run_results_uri,omitempty"`
 	CandidateArtifactURI string               `json:"candidate_artifact_uri,omitempty"`
 	NodeType             string               `json:"node_type,omitempty"`
+	ValidationOp         string               `json:"validation_op,omitempty"`
 	FilePath             string               `json:"file_path,omitempty"`
 	Service              string               `json:"service,omitempty"`
 	ChangedAncestors     []changedAncestorDTO `json:"changed_ancestors,omitempty"`
@@ -302,6 +305,7 @@ func validationNode(n ports.RejectedNode) validationNodeDTO {
 		RunResultsURI:        n.RunResultsURI,
 		CandidateArtifactURI: n.CandidateArtifactURI,
 		NodeType:             n.NodeType,
+		ValidationOp:         n.ValidationOp,
 		FilePath:             n.FilePath,
 		Service:              n.Service,
 		ChangedAncestors:     mapAncestors(n.ChangedAncestors),

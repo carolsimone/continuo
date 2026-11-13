@@ -77,6 +77,12 @@ type RejectedNode struct {
 	// CandidateArtifactURI points at the node's compiled candidate SQL.
 	CandidateArtifactURI string
 
+	// ValidationOp names how the validation leg prepared the node:
+	// build_from_sql, build_from_columns or check_binds for a node checked
+	// from its own candidate code, clone_from_prod for an unchanged upstream
+	// cloned empty from its production table. Only the validation leg sets it.
+	ValidationOp string
+
 	// RelationID, OtherService and OtherFilePath describe a duplicate-table
 	// collision: the contested relation, and the competing claimant that a
 	// rename must move away from.
@@ -104,10 +110,12 @@ type ReleaseRejection struct {
 	// AggregateStatus is the validation run's own terminal status.
 	AggregateStatus string
 
-	// FailingNodes names every node that failed, and PerNode carries the
-	// evidence for the nodes a fixer can act on. A nil slice and an empty one
-	// are distinct on the wire (null vs []), so both are passed through as
-	// the handler built them.
+	// FailingNodes names the nodes the rejection is for: every node that
+	// failed, except that a validation rejection with a failed node built from
+	// the candidate leaves out the unchanged upstreams whose copy from
+	// production failed. PerNode carries the evidence for the nodes a fixer
+	// can act on. A nil slice and an empty one are distinct on the wire (null
+	// vs []), so both are passed through as the handler built them.
 	FailingNodes []string
 	PerNode      []RejectedNode
 

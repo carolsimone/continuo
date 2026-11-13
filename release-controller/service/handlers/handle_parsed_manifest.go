@@ -445,14 +445,31 @@ func changedNodeIDsFor(ctx context.Context, u uow.UnitOfWork, d *Deps, r *pipeli
 	return scope, contextRebuilds, nil
 }
 
+// rebuiltFromCandidateFor derives, for a run whose validation set is already
+// chosen, the set of validation nodes built from their own candidate code
+// (rebuiltFromCandidateSet over the run's scope closure and context rebuilds).
+// The seed-build leg reads it to find the seeds it just built, and the
+// validation-result leg reads it to tell a node checked from its own code from
+// an unchanged upstream cloned from production. Both derive it exactly as the
+// parse leg did when it requested the run, so every leg names the same
+// validation op for a node.
+func rebuiltFromCandidateFor(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, topo, prod release.Topology, validationIDs []string) (map[string]bool, error) {
+	scope, contextRebuilds, err := changedNodeIDsFor(ctx, u, d, r, topo, prod)
+	if err != nil {
+		return nil, err
+	}
+	changedClosure := release.DescendantsClosure(topo, scope)
+	return rebuiltFromCandidateSet(changedClosure, contextRebuilds, validationIDs), nil
+}
+
 // rebuiltFromCandidateSet is the set of validation nodes built from their own
 // candidate SQL (build_from_sql / build_from_columns) rather than cloned empty
 // from production: the scope's descendant closure, plus any verification
 // context rebuild that lands in the validation set as an ancestor of the scope.
 // A context node outside the validation set is irrelevant to the run and is not
-// built. Both the parse leg and the seed-build leg derive their build strategy
-// and their built-seed set from this same set, so the two legs never disagree
-// on whether a node is rebuilt from the candidate.
+// built. The parse, seed-build and validation-result legs all derive the build
+// strategy from this same set, so they never disagree on whether a node is
+// rebuilt from the candidate.
 func rebuiltFromCandidateSet(changedClosure, contextRebuilds, validationIDs []string) map[string]bool {
 	set := make(map[string]bool, len(changedClosure)+len(contextRebuilds))
 	for _, id := range changedClosure {
