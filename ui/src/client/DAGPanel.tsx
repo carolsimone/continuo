@@ -246,23 +246,24 @@ function unknownExternalLabel(nodeId: string): React.ReactNode {
 type RunErrorHandler = (nodeId: string, message: string | null) => void;
 
 // The ▶ on a dormant node starts a run of that node alone, from the live
-// release, as the node page's "Run this node" does. A dormant node's latest
-// run is what a press could have made, so a press repeated while the graph
-// still shows the run the first press saw is a retry of it. The button is a
-// control of its own on the node: its press neither selects nor drags the node.
+// release, as the node page's "Run this node" does. The graph names no run by
+// its id: a run an unanswered press made shows on it only as a later last-run
+// time, which the graph's poll may bring before the press's error, so the
+// operator has not seen it. A press therefore observes no run, and a repeated
+// press sends the first one's request id until the server has given its final
+// answer. The button is a control of its own on the node: its press neither
+// selects nor drags the node.
 function DormantRunButton({
   nodeId,
-  lastRunAt,
   onRunError,
 }: {
   nodeId: string;
-  lastRunAt: string | null;
   onRunError: RunErrorHandler;
 }) {
   const { service_name, schema_name, table_name } = parseNodeId(nodeId);
   const { runState, postRun } = useSingleNodeRun(
     { service: service_name, schema: schema_name, table: table_name },
-    { operation: 'run', observed: lastRunAt },
+    { operation: 'run' },
   );
   const className = [
     'btn',
@@ -301,7 +302,7 @@ function dormantLabel(node: GraphNode, onRunError: RunErrorHandler): React.React
       <NodeTypeIcon nodeType={node.node_type} />
       <span>{parseNodeId(node.node_id).table_name || node.node_id}</span>
       <span className="dag-node-chip dag-node-chip--dormant">dormant</span>
-      <DormantRunButton nodeId={node.node_id} lastRunAt={node.last_run_at} onRunError={onRunError} />
+      <DormantRunButton nodeId={node.node_id} onRunError={onRunError} />
     </div>
   );
 }
@@ -693,7 +694,7 @@ export default function DAGPanel({
       </div>
 
       {runError && (
-        <div className="info-strip info-strip--error dag-run-error">
+        <div className="info-strip info-strip--error dag-run-error" role="alert">
           {`Could not run ${parseNodeId(runError.nodeId).table_name}: ${runError.message}`}
         </div>
       )}

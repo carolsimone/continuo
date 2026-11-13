@@ -16,8 +16,9 @@ interface Options {
   // The operation a press asks for unless postRun pins another.
   operation: NodeOperation;
   // The newest run of the node a press could have made, as the page shows it
-  // (see Observation).
-  observed: Observation;
+  // (see Observation). A page that shows no such run by its id leaves it out:
+  // a press then keeps its id until the server has given its final answer.
+  observed?: Observation;
   // Called once the server has started the run.
   onStarted?: () => void;
 }
@@ -32,7 +33,8 @@ interface Options {
 // shows the newest run of the node the first press saw, sends the same id, so
 // the run the first press made is returned rather than made twice. A newer run
 // on the page makes the next press a new action, and the id is renewed once the
-// server has given its final answer.
+// server has given its final answer. Without an observation only that final
+// answer renews it.
 export function useSingleNodeRun({ service, schema, table }: NodeRef, { operation, observed, onStarted }: Options) {
   const [runState, setRunState] = useState<SingleNodeRunState>('idle');
   const [runError, setRunError] = useState<string | null>(null);

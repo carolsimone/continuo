@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MiniMap, ReactFlowProvider, type Node } from '@xyflow/react';
 import DAGPanel from '../../src/client/DAGPanel';
 import type { GraphNode, GraphEdge } from '../../src/client/types';
@@ -132,19 +133,76 @@ describe('DAGPanel dormant nodes', () => {
     expect(onNodeClick).not.toHaveBeenCalled();
   });
 
-  it('makes a press a new action once the graph shows a run newer than the unanswered press saw', async () => {
-    const posts = installRun(['timeout', { status: 200, body: { run_id: 'r2', schedule_name: 'single-node-run-2' } }]);
+  // The run an unanswered press made reaches the graph only as a later last
+  // run, and the graph's poll can bring it before the press's error shows: the
+  // retry must return that run, not start a second one.
+  it('keeps the request id of an unanswered press once the graph shows the run it made', async () => {
+    const posts = installRun(['timeout', { status: 200, body: { run_id: 'r1', schedule_name: 'single-node-run-1' } }]);
     const { container, rerender } = render(panel([dormantNode(null), READER]));
     const run = () => nodeIn(container, DORMANT_ID).querySelector('button') as HTMLButtonElement;
 
     fireEvent.click(run());
     await screen.findByText(/Could not run dormant_m/);
     rerender(panel([dormantNode(new Date().toISOString()), READER]));
+    expect(nodeIn(container, DORMANT_ID).getAttribute('title')).toMatch(/Last run just now\.$/);
+    fireEvent.click(run());
+
+    await waitFor(() => expect(posts).toHaveLength(2));
+    expect(posts[1].body.request_id).toBe(posts[0].body.request_id);
+  });
+
+  it('keeps the request id across a poll that reads the same graph again', async () => {
+    const posts = installRun(['timeout', { status: 200, body: { run_id: 'r1', schedule_name: 'single-node-run-1' } }]);
+    const lastRunAt = '2026-11-12T08:30:00Z';
+    const { container, rerender } = render(panel([dormantNode(lastRunAt), { ...READER }]));
+    const run = () => nodeIn(container, DORMANT_ID).querySelector('button') as HTMLButtonElement;
+
+    fireEvent.click(run());
+    await screen.findByText(/Could not run dormant_m/);
+    // A poll answers with new objects holding the same graph.
+    rerender(panel([dormantNode(lastRunAt), { ...READER }]));
+    fireEvent.click(run());
+
+    await waitFor(() => expect(posts).toHaveLength(2));
+    expect(posts[1].body.request_id).toBe(posts[0].body.request_id);
+  });
+
+  it('mints a new request id for a press after the server answered', async () => {
+    const posts = installRun([
+      { status: 409, body: { error: 'request id reused with other parameters' } },
+      { status: 200, body: { run_id: 'r1', schedule_name: 'single-node-run-1' } },
+    ]);
+    const { container } = render(panel([dormantNode(), READER]));
+    const run = () => nodeIn(container, DORMANT_ID).querySelector('button') as HTMLButtonElement;
+
+    fireEvent.click(run());
+    await screen.findByText(/Could not run dormant_m/);
     fireEvent.click(run());
 
     await waitFor(() => expect(posts).toHaveLength(2));
     expect(posts[1].body.request_id).toMatch(UUID);
     expect(posts[1].body.request_id).not.toBe(posts[0].body.request_id);
+  });
+
+  it('runs the node once on Enter on a focused ▶, without selecting the node', async () => {
+    const posts = installRun([{ status: 200, body: { run_id: 'r1', schedule_name: 'single-node-run-1' } }]);
+    const onNodeClick = vi.fn();
+    const { container } = render(panel([dormantNode(), READER], onNodeClick));
+    const user = userEvent.setup();
+
+    (nodeIn(container, DORMANT_ID).querySelector('button') as HTMLButtonElement).focus();
+    await user.keyboard('{Enter}');
+
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(nodeIn(container, DORMANT_ID).classList.contains('selected')).toBe(false);
+    expect(onNodeClick).not.toHaveBeenCalled();
+
+    // Enter on the focused node itself does select it, so the check above can
+    // tell a selection when there is one.
+    nodeIn(container, READER_ID).focus();
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(nodeIn(container, READER_ID).classList.contains('selected')).toBe(true));
+    expect(posts).toHaveLength(1);
   });
 
   it('says why a refused run did not start', async () => {
@@ -155,6 +213,8 @@ describe('DAGPanel dormant nodes', () => {
 
     expect(await screen.findByText('Could not run dormant_m: node s.a.dormant_m is not in the live release'))
       .toBeInTheDocument();
+    // The strip appears after a press, away from the button: it is announced.
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not run dormant_m: node s.a.dormant_m');
   });
 
   it('a click on a dormant node, not on its ▶, selects it as any node', () => {

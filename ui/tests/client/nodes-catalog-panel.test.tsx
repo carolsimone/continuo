@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
-import { MemoryRouter, Routes, Route } from 'react-router';
+import { MemoryRouter, Routes, Route, useLocation } from 'react-router';
 import NodesCatalogPanel from '../../src/client/NodesCatalogPanel';
 
 const page = {
@@ -174,6 +174,29 @@ describe('NodesCatalogPanel', () => {
     await screen.findByText('fct_orders');
     expect(screen.getByLabelText('Dormant only')).toBeChecked();
     expect(listReads().map(dormantOf)).toEqual(['1']);
+  });
+
+  it('removes dormant from the URL when Dormant only is unticked, and lists every node again', async () => {
+    function SearchProbe() {
+      return <div data-testid="search">{useLocation().search}</div>;
+    }
+    render(
+      <MemoryRouter initialEntries={['/?tab=nodes&dormant=1']}>
+        <NodesCatalogPanel />
+        <SearchProbe />
+      </MemoryRouter>,
+    );
+    await screen.findByText('fct_orders');
+    const box = screen.getByLabelText('Dormant only');
+    expect(box).toBeChecked();
+
+    fireEvent.click(box);
+
+    expect(box).not.toBeChecked();
+    expect(screen.getByTestId('search')).toHaveTextContent(/^\?tab=nodes$/);
+    const listReads = () => fetchMock.mock.calls.map(([u]) => String(u)).filter(u => u.startsWith('/api/nodes?'));
+    await vi.waitFor(() => expect(listReads()).toHaveLength(2));
+    expect(new URLSearchParams(listReads()[1].split('?')[1]).has('dormant')).toBe(false);
   });
 
   it('says no node of the live release matches while Dormant only is ticked and none is dormant', async () => {

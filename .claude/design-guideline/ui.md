@@ -164,7 +164,7 @@ Variant rules:
   If a new use case appears, add it to this file first.
 - **`btn--icon`** is a square, icon-only `.btn` for an action on an element
   too small for a labelled button: the `▶` that runs a dormant node on the
-  graph (see "Nodes no schedule runs"). It holds one glyph, its `aria-label`
+  graph (see "Nodes that no schedule runs"). It holds one glyph, its `aria-label`
   and `title` name the action (`Run orders`, `Run orders by hand`), and it
   takes the same `.is-loading` / `.is-success` states, with the glyph
   unchanged since there is no room for words.
@@ -870,7 +870,7 @@ Rules:
   status pill) and `.nodes-dash` for Success, Runs and Avg / p95, never `0`
   or an empty pill. A dormant node carries a `dormant` `.pill-sm--muted`
   after its name in the Node cell, titled with the dormant tooltip (see
-  "Nodes no schedule runs"). With no row, the empty strip reads `No node in
+  "Nodes that no schedule runs"). With no row, the empty strip reads `No node in
   the live release matches this filter.` while a filter narrows the list (a
   search, a service, `Dormant only`, or the Test operation, which lists only
   nodes with tests), and `No release has been promoted yet.` otherwise.
@@ -988,13 +988,13 @@ Rules:
   neutral inline chip (`.info-strip--neutral .info-strip--inline`); the
   graph shows family only. A dormant node adds a `dormant` chip right after
   it, the same neutral inline chip, titled with the dormant tooltip (see
-  "Nodes no schedule runs"); the page offers it the run it offers any node.
+  "Nodes that no schedule runs"); the page offers it the run it offers any node.
 - A python-csv node's detail header also carries a `source: <uri>` line
   under the title (`.detail-node-source`, the `.nodes-node-subpath`
   monospace treatment). It renders only when the URI is known — no empty
   `source:` label, and no such line on any other node type.
 
-### Nodes no schedule runs
+### Nodes that no schedule runs
 
 Two kinds of node on a schedule's graph are in no schedule's run, so they
 have no run status to paint: an **unknown-external** node (a table continuo
@@ -1052,10 +1052,14 @@ Rules:
   button). A click elsewhere on the node selects it as on any node, and the
   focus legend's `Open node detail →` opens its node page; an
   unknown-external node has no node page.
-- The press is one action: a press repeated after no answer, while the graph
-  still shows the node's latest run as the first press saw it, sends the same
-  request id; once the graph shows a newer run, the next press is a new one.
-- A run that did not start says why in one `.info-strip--error` between the
+- The press is one action: a press repeated after no answer sends the same
+  request id until the server has given its final answer (the run started, or
+  was refused). The graph names no run by its id, and its poll can show the
+  run an unanswered press made, as a later last run in the title, before the
+  press's error appears, so a newer last run never makes the next press a new
+  one.
+- A run that did not start says why in one `.info-strip--error`
+  (`role="alert"`, since it appears away from the button pressed) between the
   search strip and the canvas, naming the node (`Could not run
   orders_backfill: …`). The next press of any `▶` clears it.
 
