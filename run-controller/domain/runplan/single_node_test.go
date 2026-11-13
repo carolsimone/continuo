@@ -81,3 +81,18 @@ func TestSingleNode_AnUnknownExternalKeyOfAnotherReleaseIsNotFound(t *testing.T)
 	_, err := runplan.SingleNode{Key: unknownExternalProbe, ServiceName: ""}.Select(releaseGraph(e2eDAG))
 	assert.ErrorIs(t, err, runplan.ErrTargetNotFound)
 }
+
+// A dormant node is on no schedule, so only a run of the node alone executes
+// it: the plan holds its one task, ready at creation, whatever it reads.
+func TestSingleNode_SelectsADormantNode(t *testing.T) {
+	g := releaseGraph(dormantDAG)
+	n, ok := g.Node(key("dormant_d"))
+	require.True(t, ok)
+	require.True(t, n.IsDormant(), "the fixture node is dormant")
+
+	for _, op := range []model.Operation{model.OperationRun, model.OperationBuild, model.OperationFullRefresh} {
+		plan, err := runplan.SingleNode{Key: key("dormant_d"), ServiceName: "service-3", Operation: op}.Select(g)
+		require.NoError(t, err, "operation %q", op)
+		assert.Equal(t, planOf(pending("dormant_d"), "dormant_d"), plan, "operation %q", op)
+	}
+}

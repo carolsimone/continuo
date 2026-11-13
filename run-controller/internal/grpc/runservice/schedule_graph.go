@@ -2,6 +2,7 @@ package runservice
 
 import (
 	"context"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -13,8 +14,11 @@ import (
 )
 
 // GetScheduleGraph returns the live release's view of one schedule: its nodes,
-// the nodes of other schedules they read, and the edges from each node to the
-// nodes it reads.
+// the nodes they read (of other schedules, dormant or unknown-external), and
+// the edges from each node to the nodes it reads. A node is marked dormant
+// when it is a node continuo builds that belongs to no schedule
+// (topology.Node.IsDormant), and a dormant node that ran carries the creation
+// time of its last run, in RFC3339 and UTC.
 func (s *Server) GetScheduleGraph(ctx context.Context, req *runv1.GetScheduleGraphRequest) (*runv1.GetScheduleGraphResponse, error) {
 	tenantID, err := requestTenant(ctx)
 	if err != nil {
@@ -32,13 +36,18 @@ func (s *Server) GetScheduleGraph(ctx context.Context, req *runv1.GetScheduleGra
 	ids := make(map[topology.NodeKey]string, len(graph.Nodes))
 	for _, n := range graph.Nodes {
 		ids[n.Key] = n.ServiceName + "." + n.SchemaName + "." + n.TableName
-		nodes = append(nodes, &runv1.ScheduleGraphNode{
+		node := &runv1.ScheduleGraphNode{
 			ServiceName:  n.ServiceName,
 			SchemaName:   n.SchemaName,
 			TableName:    n.TableName,
 			NodeType:     n.NodeType,
 			ScheduleName: n.ScheduleName,
-		})
+			Dormant:      n.IsDormant(),
+		}
+		if n.LastRunAt != nil {
+			node.LastRunAt = n.LastRunAt.UTC().Format(time.RFC3339)
+		}
+		nodes = append(nodes, node)
 	}
 	// An edge names the dependent node first and the node it reads second; an
 	// edge with an end outside the nodes cannot be named and is left out.
@@ -55,7 +64,8 @@ func (s *Server) GetScheduleGraph(ctx context.Context, req *runv1.GetScheduleGra
 }
 
 // ListScheduleTopologies returns each schedule of the live release with its
-// node count and the time that release was loaded.
+// node count and the time that release was loaded, and the number of dormant
+// nodes the release holds (0 when no release is live).
 func (s *Server) ListScheduleTopologies(ctx context.Context, _ *runv1.ListScheduleTopologiesRequest) (*runv1.ListScheduleTopologiesResponse, error) {
 	tenantID, err := requestTenant(ctx)
 	if err != nil {
@@ -65,8 +75,8 @@ func (s *Server) ListScheduleTopologies(ctx context.Context, _ *runv1.ListSchedu
 	if err != nil {
 		return nil, s.internalError("ListScheduleTopologies", err)
 	}
-	out := make([]*runv1.ScheduleTopologySummary, 0, len(summaries))
-	for _, sum := range summaries {
+	out := make([]*runv1.ScheduleTopologySummary, 0, len(summaries.Schedules))
+	for _, sum := range summaries.Schedules {
 		item := &runv1.ScheduleTopologySummary{
 			ScheduleName: sum.ScheduleName,
 			NodeCount:    num.ClampInt32(sum.NodeCount),
@@ -76,5 +86,5 @@ func (s *Server) ListScheduleTopologies(ctx context.Context, _ *runv1.ListSchedu
 		}
 		out = append(out, item)
 	}
-	return &runv1.ListScheduleTopologiesResponse{Schedules: out}, nil
+	return &runv1.ListScheduleTopologiesResponse{Schedules: out, DormantNodeCount: int64(summaries.DormantNodeCount)}, nil
 }

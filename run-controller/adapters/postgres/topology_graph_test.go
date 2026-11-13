@@ -173,3 +173,51 @@ func TestTopologyRepository_AnUnknownExternalUpstreamLeavesRebaseAndWholeSchedul
 		Ready: []topology.NodeKey{"a.up"},
 	}, plan)
 }
+
+// A schedule's run graph holds the schedule's nodes and the seeds they read. A
+// dormant node a schedule's node reads belongs to no schedule and is no seed,
+// so neither it nor its edge is in the graph, and no run of the schedule, of
+// any operation, executes it. The data tests of a dormant model are never
+// stored, since no release stores a test.
+func TestScheduleGraph_NeverHoldsADormantUpstream(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := newTopoTenant(t, db)
+	_, err := saveTopoRelease(t, db, topoRelease(t, tenant, "rel-1", 1, "sha-1",
+		graphSpec("seed_1", "dbt-seed", "seed"),
+		graphSpec("dormant_m", "dbt-model", "", "seed_1"),
+		graphSpec("dormant_s", "dbt-snapshot", ""),
+		topology.NodeSpec{
+			UniqueID: "test.svc.not_null_dormant_m", ServiceName: "svc-", SchemaName: "stg", TableName: "not_null_dormant_m",
+			NodeType: "dbt-test", UpstreamUniqueIDs: []string{"stg.dormant_m"},
+		},
+		graphSpec("a", "dbt-model", "daily", "dormant_m", "dormant_s", "seed_1"),
+		graphSpec("b", "dbt-model", "daily", "a"),
+	))
+	require.NoError(t, err)
+	repo := postgres.NewTopologyRepository(db, nil)
+	require.Equal(t, 2, countTopoRows(t, db, `
+		SELECT count(*) FROM topology_edges
+		WHERE tenant_id = $1 AND release_id = 'rel-1' AND downstream_key = 'stg.a' AND upstream_key IN ('stg.dormant_m', 'stg.dormant_s')`, tenant),
+		"the release holds the edges from the dormant nodes to their reader")
+
+	g, err := repo.ScheduleGraph(ctx, tenant, "rel-1", "daily")
+	require.NoError(t, err)
+	assert.Equal(t, []topology.NodeKey{"stg.a", "stg.b", "stg.seed_1"}, g.Keys())
+	assert.Equal(t, []topology.Edge{
+		{Upstream: "stg.a", Downstream: "stg.b"},
+		{Upstream: "stg.seed_1", Downstream: "stg.a"},
+	}, edgesOf(g))
+	for _, k := range g.Keys() {
+		n, _ := g.Node(k)
+		assert.False(t, n.IsDormant(), "%s", k)
+	}
+
+	for _, op := range []model.Operation{model.OperationRun, model.OperationBuild, model.OperationTest} {
+		plan, err := runplan.WholeDAG{Operation: op}.Select(g)
+		require.NoError(t, err, "operation %q", op)
+		for _, task := range plan.Tasks {
+			assert.NotContains(t, []topology.NodeKey{"stg.dormant_m", "stg.dormant_s"}, task.Key, "operation %q", op)
+		}
+	}
+}

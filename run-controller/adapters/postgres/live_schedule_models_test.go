@@ -110,8 +110,8 @@ func TestLiveScheduleModels_AgreeWithTheScheduleGraphSummaries(t *testing.T) {
 		require.NoError(t, err)
 		summaries, err := graphs.Summaries(ctx, tenant)
 		require.NoError(t, err)
-		nodes := make(map[string]int, len(summaries))
-		for _, s := range summaries {
+		nodes := make(map[string]int, len(summaries.Schedules))
+		for _, s := range summaries.Schedules {
 			nodes[s.ScheduleName] = s.NodeCount
 		}
 		assert.Equal(t, counts, nodes, "the models counted for a schedule are its nodes counted for its tile")

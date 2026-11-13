@@ -200,3 +200,24 @@ func TestNewRelease_CopiesSeedColumnsHash(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "sha256:e5a0", rel.Nodes[0].SeedColumnsHash)
 }
+
+// A node is dormant when continuo builds it and it belongs to no schedule:
+// only a run started by hand executes it. An unknown-external node, which no
+// node builds, and a node of a schedule are not dormant.
+func TestNode_IsDormant(t *testing.T) {
+	for _, tc := range []struct {
+		nodeType, schedule string
+		want               bool
+	}{
+		{"dbt-model", "", true},
+		{"dbt-snapshot", "", true},
+		{"python-node", "", true},
+		{"dbt-model", "daily", false},
+		{"dbt-seed", "seed", false},
+		{"unknown-external", "", false},
+		{"dbt-macro", "", false},
+	} {
+		n := topology.Node{Key: "stg.n", NodeType: tc.nodeType, ScheduleName: tc.schedule}
+		assert.Equal(t, tc.want, n.IsDormant(), "%s of schedule %q", tc.nodeType, tc.schedule)
+	}
+}

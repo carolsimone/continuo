@@ -66,7 +66,7 @@ type fakeStore struct {
 	// The live release's schedule views, by tenant: the graph of each schedule
 	// and the summaries of all of them.
 	scheduleGraphs map[string]map[string]topology.ScheduleGraph
-	summaries      map[string][]topology.ScheduleSummary
+	summaries      map[string]topology.ScheduleSummaries
 
 	failWith error
 
@@ -100,7 +100,7 @@ func newStore() *fakeStore {
 		scheduleSummaries: map[string][]schedules.Summary{},
 
 		scheduleGraphs: map[string]map[string]topology.ScheduleGraph{},
-		summaries:      map[string][]topology.ScheduleSummary{},
+		summaries:      map[string]topology.ScheduleSummaries{},
 	}
 }
 
@@ -295,9 +295,9 @@ func (f fakeScheduleGraphs) Graph(_ context.Context, tenantID, scheduleName stri
 	return f.scheduleGraphs[tenantID][scheduleName], nil
 }
 
-func (f fakeScheduleGraphs) Summaries(_ context.Context, tenantID string) ([]topology.ScheduleSummary, error) {
+func (f fakeScheduleGraphs) Summaries(_ context.Context, tenantID string) (topology.ScheduleSummaries, error) {
 	if f.failWith != nil {
-		return nil, f.failWith
+		return topology.ScheduleSummaries{}, f.failWith
 	}
 	return f.summaries[tenantID], nil
 }

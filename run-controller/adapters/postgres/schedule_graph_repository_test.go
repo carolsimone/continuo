@@ -2,9 +2,11 @@ package postgres_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -51,7 +53,7 @@ func makeTenantLive(t *testing.T, db *sqlx.DB, tenant, releaseID string, seq int
 		context.Background(), tenant, topology.Pointer{ReleaseID: releaseID, PromotionSeq: seq}, time.Now()))
 }
 
-func keysOf(nodes []topology.Node) []topology.NodeKey {
+func keysOf(nodes []topology.ScheduleGraphNode) []topology.NodeKey {
 	out := make([]topology.NodeKey, 0, len(nodes))
 	for _, n := range nodes {
 		out = append(out, n.Key)
@@ -84,7 +86,7 @@ func TestScheduleGraph_IsTheScheduleAndItsOneHopUpstreams(t *testing.T) {
 		Key: "stg.seed_table_2", UniqueID: "stg.seed_table_2", ServiceName: "svc-seeds", SchemaName: "stg",
 		TableName: "seed_table_2", NodeType: "dbt-seed", TestCount: &one, ContentHash: "h-seed_table_2",
 		ImageTag: "svc:1", SecretRef: "secret-seed_table_2", ScheduleName: "seeds",
-	}, seed2)
+	}, seed2.Node)
 }
 
 func TestScheduleGraph_AScheduleWithNoUpstreamInAnotherScheduleHasNoCrossEdge(t *testing.T) {
@@ -113,7 +115,7 @@ func TestGraph_ReturnsAnUnknownExternalUpstreamAndItsEdge(t *testing.T) {
 	zero := 0
 	assert.Equal(t, topology.Node{
 		Key: "raw.x", UniqueID: "raw.x", SchemaName: "raw", TableName: "x", NodeType: "unknown-external", TestCount: &zero,
-	}, g.Nodes[1])
+	}, g.Nodes[1].Node)
 	assert.Equal(t, "", g.Nodes[1].ServiceName)
 	assert.Equal(t, []topology.Edge{{Upstream: "raw.x", Downstream: "a.m"}}, g.Edges)
 }
@@ -125,11 +127,13 @@ func TestScheduleSummaries_AnUnknownExternalNodeIsNoSchedule(t *testing.T) {
 	db := newTestDB(t)
 	tenant := unknownExternalRelease(t, db)
 
-	got, err := postgres.NewScheduleGraphRepository(db).Summaries(ctx, tenant)
+	summaries, err := postgres.NewScheduleGraphRepository(db).Summaries(ctx, tenant)
 	require.NoError(t, err)
+	got := summaries.Schedules
 	require.Len(t, got, 1)
 	assert.Equal(t, "s", got[0].ScheduleName)
 	assert.Equal(t, 1, got[0].NodeCount)
+	assert.Zero(t, summaries.DormantNodeCount, "an unknown-external node is not dormant")
 
 	models := postgres.NewLiveScheduleModelRepository(db)
 	counts, err := models.CountByScheduleName(ctx, tenant)
@@ -195,8 +199,9 @@ func TestScheduleSummaries_CountTheLiveReleasesNodes(t *testing.T) {
 	db := newTestDB(t)
 	tenant, loadedAt := liveScheduleRelease(t, db)
 
-	got, err := postgres.NewScheduleGraphRepository(db).Summaries(context.Background(), tenant)
+	summaries, err := postgres.NewScheduleGraphRepository(db).Summaries(context.Background(), tenant)
 	require.NoError(t, err)
+	got := summaries.Schedules
 
 	require.Len(t, got, 3, "the node of no schedule has no tile")
 	assert.Equal(t, []string{"daily", "other", "seeds"}, []string{got[0].ScheduleName, got[1].ScheduleName, got[2].ScheduleName})
@@ -219,14 +224,154 @@ func TestScheduleSummaries_AreOfTheTenantsLiveRelease(t *testing.T) {
 
 	theirs, err := repo.Summaries(context.Background(), other)
 	require.NoError(t, err)
-	require.Len(t, theirs, 1)
-	assert.Equal(t, 2, theirs[0].NodeCount)
+	require.Len(t, theirs.Schedules, 1)
+	assert.Equal(t, 2, theirs.Schedules[0].NodeCount)
+	assert.Zero(t, theirs.DormantNodeCount)
 
 	mine, err := repo.Summaries(context.Background(), tenant)
 	require.NoError(t, err)
-	assert.Equal(t, 4, mine[0].NodeCount)
+	assert.Equal(t, 4, mine.Schedules[0].NodeCount)
+	assert.Equal(t, 1, mine.DormantNodeCount, "orphan, the model of no schedule, is the tenant's one dormant node")
 
 	nobody, err := repo.Summaries(context.Background(), "t-no-release")
 	require.NoError(t, err)
-	assert.Empty(t, nobody)
+	assert.Equal(t, topology.ScheduleSummaries{}, nobody)
+}
+
+// dormantRelease stores two releases of a new tenant and makes rel-2 live.
+// rel-2 holds the model a of schedule "daily", which reads the dormant model d,
+// the dormant snapshot never, the model up of schedule "other" and the
+// unknown-external table raw.x, plus every node of extra. rel-1, which is not
+// live, holds the dormant model old_dormant. It returns the tenant.
+func dormantRelease(t *testing.T, db *sqlx.DB, extra ...topology.NodeSpec) string {
+	t.Helper()
+	tenant := newTopoTenant(t, db)
+	reader := graphSpec("a", "dbt-model", "daily", "d", "never", "up")
+	reader.UpstreamUniqueIDs = append(reader.UpstreamUniqueIDs, "raw.x")
+	specs := append([]topology.NodeSpec{
+		reader,
+		graphSpec("d", "dbt-model", ""),
+		graphSpec("never", "dbt-snapshot", ""),
+		graphSpec("up", "dbt-model", "other"),
+		unknownExternalSpec("raw", "x"),
+	}, extra...)
+	_, err := saveTopoRelease(t, db, topoRelease(t, tenant, "rel-1", 1, "sha-1", graphSpec("old_dormant", "dbt-model", "")))
+	require.NoError(t, err)
+	_, err = saveTopoRelease(t, db, topoRelease(t, tenant, "rel-2", 2, "sha-2", specs...))
+	require.NoError(t, err)
+	makeTenantLive(t, db, tenant, "rel-2", 2)
+	return tenant
+}
+
+// insertNodeRun stores a run of tenant created at createdAt holding one task,
+// created with the run, of each node key, and deletes the run and its tasks
+// when the test ends.
+func insertNodeRun(t *testing.T, db *sqlx.DB, tenant string, createdAt time.Time, nodeKeys ...string) {
+	t.Helper()
+	runID := uuid.New()
+	_, err := db.Exec(`
+		INSERT INTO runs (tenant_id, run_id, schedule_name, status, created_at)
+		VALUES ($1, $2, $3, 'succeeded', $4)`, tenant, runID, "node-"+runID.String()[:8], createdAt)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM runs WHERE tenant_id = $1 AND run_id = $2`, tenant, runID) })
+	for _, k := range nodeKeys {
+		schema, table, _ := strings.Cut(k, ".")
+		_, err := db.Exec(`
+			INSERT INTO tasks (tenant_id, task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries, node_key)
+			VALUES ($1, $2, $3, $4, 'svc', $5, $6, $7, 'succeeded', 2, $8)`,
+			tenant, uuid.New(), runID, createdAt, schema, table, "job-"+uuid.NewString()[:8], k)
+		require.NoError(t, err)
+	}
+}
+
+// The schedule graph returns a dormant node a schedule's node reads, marked
+// dormant, with the creation time of the run of its newest task; a dormant
+// node that never ran has no last run. A node of a schedule is not dormant and
+// carries no last run, whatever it ran, and a run of another tenant is not
+// read.
+func TestGraph_ReturnsADormantUpstreamWithItsLastRun(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := dormantRelease(t, db)
+	older := time.Date(2026, 11, 1, 8, 0, 0, 0, time.UTC)
+	newer := older.Add(26 * time.Hour)
+	insertNodeRun(t, db, tenant, older, "stg.d", "stg.a")
+	insertNodeRun(t, db, tenant, newer, "stg.d")
+	insertNodeRun(t, db, tenant, newer.Add(time.Hour), "stg.a", "stg.up")
+	insertNodeRun(t, db, newTopoTenant(t, db), newer.Add(48*time.Hour), "stg.d", "stg.never")
+
+	g, err := postgres.NewScheduleGraphRepository(db).Graph(ctx, tenant, "daily")
+	require.NoError(t, err)
+
+	require.Equal(t, []topology.NodeKey{"raw.x", "stg.a", "stg.d", "stg.never", "stg.up"}, keysOf(g.Nodes))
+	external, a, d, never, up := g.Nodes[0], g.Nodes[1], g.Nodes[2], g.Nodes[3], g.Nodes[4]
+	assert.True(t, d.IsDormant())
+	require.NotNil(t, d.LastRunAt)
+	assert.True(t, newer.Equal(*d.LastRunAt), "the last run of d is its newest task's run: got %s", d.LastRunAt)
+	assert.True(t, never.IsDormant())
+	assert.Nil(t, never.LastRunAt, "a dormant node that never ran in its tenant has no last run")
+	for _, n := range []topology.ScheduleGraphNode{external, a, up} {
+		assert.False(t, n.IsDormant(), "%s", n.Key)
+		assert.Nil(t, n.LastRunAt, "%s is not dormant, so it carries no last run", n.Key)
+	}
+}
+
+// The topology tiles count the live release's dormant nodes: the nodes
+// continuo builds that belong to no schedule. An unknown-external node, which
+// has no schedule either, is not one, and neither is a node of a release that
+// is not live or of another tenant. The schedules keep their tiles and counts:
+// a node of no schedule adds no tile and no count to any schedule.
+func TestSummaries_CountsDormantNodes(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := dormantRelease(t, db)
+	other := newTopoTenant(t, db)
+	_, err := saveTopoRelease(t, db, topoRelease(t, other, "rel-9", 9, "sha-x",
+		graphSpec("theirs", "dbt-model", ""), graphSpec("theirs_2", "dbt-model", ""), graphSpec("theirs_3", "dbt-model", "")))
+	require.NoError(t, err)
+	makeTenantLive(t, db, other, "rel-9", 9)
+
+	got, err := postgres.NewScheduleGraphRepository(db).Summaries(ctx, tenant)
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, got.DormantNodeCount, "d and never; not raw.x, old_dormant or the other tenant's")
+	require.Len(t, got.Schedules, 2)
+	assert.Equal(t, []string{"daily", "other"}, []string{got.Schedules[0].ScheduleName, got.Schedules[1].ScheduleName})
+	assert.Equal(t, []int{1, 1}, []int{got.Schedules[0].NodeCount, got.Schedules[1].NodeCount})
+	counts, err := postgres.NewLiveScheduleModelRepository(db).CountByScheduleName(ctx, tenant)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int{"daily": 1, "other": 1}, counts, "the models of a schedule leave out the dormant nodes")
+}
+
+// A stored release can hold an unknown-external node under the legacy type
+// name "ingested", with an empty schedule. It is not a node continuo builds,
+// so the tiles do not count it dormant.
+func TestSummaries_DoesNotCountALegacyIngestedRowAsDormant(t *testing.T) {
+	legacy := unknownExternalSpec("raw", "legacy")
+	legacy.NodeType = "ingested"
+	db := newTestDB(t)
+	tenant := dormantRelease(t, db, legacy)
+	require.Equal(t, 1, countTopoRows(t, db, `
+		SELECT count(*) FROM topology_nodes
+		WHERE tenant_id = $1 AND release_id = 'rel-2' AND node_type = 'ingested' AND schedule_name = ''`, tenant))
+
+	got, err := postgres.NewScheduleGraphRepository(db).Summaries(context.Background(), tenant)
+	require.NoError(t, err)
+	assert.Equal(t, 2, got.DormantNodeCount)
+}
+
+// A live release whose every node continuo builds is dormant has no schedule
+// and no tile, and still reports its dormant nodes.
+func TestSummaries_ALiveReleaseOfDormantNodesOnlyHasNoScheduleAndCountsThem(t *testing.T) {
+	db := newTestDB(t)
+	tenant := newTopoTenant(t, db)
+	_, err := saveTopoRelease(t, db, topoRelease(t, tenant, "rel-1", 1, "sha-1",
+		graphSpec("d1", "dbt-model", ""), graphSpec("d2", "dbt-model", "", "d1"), unknownExternalSpec("raw", "x")))
+	require.NoError(t, err)
+	makeTenantLive(t, db, tenant, "rel-1", 1)
+
+	got, err := postgres.NewScheduleGraphRepository(db).Summaries(context.Background(), tenant)
+	require.NoError(t, err)
+	assert.Empty(t, got.Schedules)
+	assert.Equal(t, 2, got.DormantNodeCount)
 }

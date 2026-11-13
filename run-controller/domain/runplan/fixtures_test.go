@@ -168,3 +168,8 @@ func withUnknownExternalUpstream(g topology.Graph, tables ...string) topology.Gr
 	}
 	return topology.NewGraph(nodes, edges)
 }
+
+// dormantDAG is the e2e DAG with dormant_d, a model of service-3 that reads
+// table_a and belongs to no schedule: a dormant node, which only a run
+// started by hand executes.
+var dormantDAG = changed(e2eDAG, nil, fixtureNode{"dormant_d", "service-3", "", []string{"table_a"}})

@@ -163,6 +163,30 @@ func TestRunReadRepository_GraphComesFromTheRunsOwnRelease(t *testing.T) {
 	}, g.Edges)
 }
 
+// A run's graph reads each node's type from the run's release, where a node
+// can be stored under the legacy type name "ingested": it reads that node as
+// unknown-external.
+func TestRunReadRepository_GraphReadsALegacyIngestedNodeAsUnknownExternal(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := schemaTenant(t, db)
+	insertSchemaRelease(t, db, tenant, "rel-7", "raw.a")
+	_, err := db.Exec(`
+		INSERT INTO topology_nodes (tenant_id, release_id, node_key, unique_id, service_name, schema_name, table_name, node_type)
+		VALUES ($1, 'rel-7', 'raw.x', 'raw.x', '', 'raw', 'x', 'ingested')`, tenant)
+	require.NoError(t, err)
+	rel, seq := "rel-7", int64(7)
+	runID := readRun(t, db, tenant, "graph-"+uuid.NewString()[:8], &rel, &seq, "running", false)
+	readTask(t, db, runID, "a", "running")
+	readTask(t, db, runID, "x", "pending")
+
+	g, err := postgres.NewRunReadRepository(db).GetRunGraph(ctx, tenant, runID)
+	require.NoError(t, err)
+	require.Len(t, g.Nodes, 2)
+	assert.Equal(t, "dbt-seed", g.Nodes[0].NodeType)
+	assert.Equal(t, "unknown-external", g.Nodes[1].NodeType)
+}
+
 func TestRunReadRepository_RunWithoutAReleaseHasNoEdges(t *testing.T) {
 	db := newTestDB(t)
 	runID := readRun(t, db, pkgevents.DefaultTenantID, "legacy-"+uuid.NewString()[:8], nil, nil, "running", false)

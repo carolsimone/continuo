@@ -143,3 +143,17 @@ func TestRerun_ReadsPastAnUnknownExternalUpstream(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
 }
+
+// A rerun of a failed run of a dormant node alone executes the node again, on
+// the source run's release: the plan holds its one task, ready at creation.
+func TestRerun_OfASingleNodeRunOfADormantNodeRunsItAgain(t *testing.T) {
+	src := sourceRun(model.OperationRun, nil, []string{"dormant_d"})
+	g := sourceGraph(dormantDAG, src)
+	n, ok := g.Node(key("dormant_d"))
+	require.True(t, ok)
+	require.True(t, n.IsDormant(), "the fixture node is dormant")
+
+	plan, err := runplan.Rerun{Source: src}.Select(g)
+	require.NoError(t, err)
+	assert.Equal(t, planOf(pending("dormant_d"), "dormant_d"), plan)
+}

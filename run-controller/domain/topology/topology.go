@@ -58,6 +58,13 @@ type Node struct {
 	TimeoutSeconds  *int
 }
 
+// IsDormant reports whether the node is dormant: a node continuo builds that
+// belongs to no schedule, so no cron or schedule run executes it and only a
+// run started by hand does (model.IsDormant).
+func (n Node) IsDormant() bool {
+	return model.IsDormant(model.NodeType(n.NodeType), n.ScheduleName)
+}
+
 // NodeHashes are the two fingerprints a release states for one node: the hash
 // of its code and, for a seed, the hash of its CSV header and column types
 // (empty when the release carried no compile extras for the seed's service).

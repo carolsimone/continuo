@@ -253,6 +253,9 @@ type topologyNodeRow struct {
 	TimeoutSeconds  sql.NullInt32 `db:"timeout_seconds"`
 }
 
+// toDomain returns the stored node with its type under its current name
+// (model.CanonicalNodeType), so a release stored under a legacy type name
+// reads as every other release does.
 func (row topologyNodeRow) toDomain() topology.Node {
 	var testCount *int
 	if row.TestCount.Valid {
@@ -270,7 +273,7 @@ func (row topologyNodeRow) toDomain() topology.Node {
 		ServiceName:     row.ServiceName,
 		SchemaName:      row.SchemaName,
 		TableName:       row.TableName,
-		NodeType:        row.NodeType,
+		NodeType:        string(model.CanonicalNodeType(row.NodeType)),
 		TestCount:       testCount,
 		ContentHash:     row.ContentHash,
 		SeedColumnsHash: row.SeedColumnsHash,

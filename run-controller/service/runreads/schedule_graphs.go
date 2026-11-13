@@ -23,7 +23,8 @@ func (s *ScheduleGraphs) Graph(ctx context.Context, tenantID, scheduleName strin
 	return s.graphs.Graph(ctx, tenantID, scheduleName)
 }
 
-// Summaries returns every schedule of tenantID's live release, by name.
-func (s *ScheduleGraphs) Summaries(ctx context.Context, tenantID string) ([]topology.ScheduleSummary, error) {
+// Summaries returns every schedule of tenantID's live release, by name, and
+// the number of dormant nodes the release holds.
+func (s *ScheduleGraphs) Summaries(ctx context.Context, tenantID string) (topology.ScheduleSummaries, error) {
 	return s.graphs.Summaries(ctx, tenantID)
 }
