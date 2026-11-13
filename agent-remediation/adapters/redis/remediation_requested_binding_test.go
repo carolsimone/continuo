@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/agent-remediation/config"
 	"github.com/carolsimone/continuo/agent-remediation/service/handlers"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
@@ -185,10 +184,10 @@ func TestBinding_RunnerEngineAcceptsTheTrigger(t *testing.T) {
 	}}
 
 	var got []runner.Accepted
-	h := newRemediationRequestedHandler(handlers.Deps{}, func(_ context.Context, a runner.Accepted) error {
+	h := newRunnerRemediationRequestedHandler(func(_ context.Context, a runner.Accepted) error {
 		got = append(got, a)
 		return nil
-	}, config.EngineRunner)
+	})
 	require.NoError(t, h(context.Background(), msg))
 
 	require.Len(t, got, 1)
@@ -206,16 +205,20 @@ func TestBinding_RunnerEngineAcceptsTheTrigger(t *testing.T) {
 		"the stream's fields travel with the trigger, without the payload it already carries")
 }
 
-func TestBinding_RunnerEngineDefaultsTheTenant(t *testing.T) {
+// TestBinding_RunnerEngineLeavesAnAbsentTenantToAccept verifies that a message
+// with no tenant_id reaches accept with an empty tenant: the runner's Accept is
+// the one place that gives it the default tenant.
+func TestBinding_RunnerEngineLeavesAnAbsentTenantToAccept(t *testing.T) {
 	raw, err := json.Marshal(requestedPayloadFixture)
 	require.NoError(t, err)
 	var got runner.Accepted
-	h := newRemediationRequestedHandler(handlers.Deps{}, func(_ context.Context, a runner.Accepted) error {
+	h := newRunnerRemediationRequestedHandler(func(_ context.Context, a runner.Accepted) error {
 		got = a
 		return nil
-	}, config.EngineRunner)
+	})
 	require.NoError(t, h(context.Background(), goredis.XMessage{ID: "8-0", Values: map[string]any{"payload": string(raw)}}))
-	assert.Equal(t, pkgevents.DefaultTenantID, got.Trigger.TenantID)
+	assert.Empty(t, got.Trigger.TenantID)
+	assert.Equal(t, "rel-456", got.Trigger.ReleaseID)
 }
 
 // TestBinding_RunnerEngineRedeliversAnAcceptError verifies that an error from
@@ -224,7 +227,7 @@ func TestBinding_RunnerEngineRedeliversAnAcceptError(t *testing.T) {
 	raw, err := json.Marshal(requestedPayloadFixture)
 	require.NoError(t, err)
 	boom := errors.New("database down")
-	h := newRemediationRequestedHandler(handlers.Deps{}, func(context.Context, runner.Accepted) error { return boom }, config.EngineRunner)
+	h := newRunnerRemediationRequestedHandler(func(context.Context, runner.Accepted) error { return boom })
 	err = h(context.Background(), goredis.XMessage{ID: "9-0", Values: map[string]any{"payload": string(raw)}})
 	require.ErrorIs(t, err, boom)
 	assert.NotErrorIs(t, err, pkgevents.ErrPermanent)

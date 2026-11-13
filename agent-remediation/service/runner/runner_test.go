@@ -17,6 +17,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/llmcache"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 )
 
@@ -49,6 +50,21 @@ func TestRunner_AcceptTwiceCreatesOneRemediation(t *testing.T) {
 	msgs := h.store.ProcessedMessages()
 	require.Len(t, msgs, 1)
 	assert.Equal(t, messageprocessing.StateCompleted, msgs[0].State)
+}
+
+// Accept is the one place a trigger with no tenant gets the default tenant: the
+// stream binding hands over the tenant the message carries, which may be none.
+func TestRunner_AcceptGivesATriggerWithNoTenantTheDefaultTenant(t *testing.T) {
+	h := newHarness(t)
+	trig := trigger("compile", compileNode("svc-a"))
+	trig.TenantID = ""
+	a := h.accepted(trig, "1-0")
+	a.Fields = map[string]string{}
+	require.NoError(t, h.runner.Accept(ctx, a))
+
+	rems := h.store.Remediations()
+	require.Len(t, rems, 1)
+	assert.Equal(t, events.DefaultTenantID, rems[0].TenantID)
 }
 
 func TestRunner_AcceptOfASecondTriggerForTheSameRoundAddsNoRemediation(t *testing.T) {

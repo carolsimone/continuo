@@ -404,10 +404,16 @@ func main() {
 	lifecycleManager.Go(func() { retentionSweeper.Run(ctx) })
 
 	// Start the remediation.requested consumer in a goroutine; blocks until ctx
-	// is cancelled. The engine decides whether it proposes a fix itself or
-	// hands the trigger to the runner.
+	// is cancelled. The engine decides whether it hands the trigger to the
+	// runner or proposes a fix itself.
 	logger.Info("remediation engine", "engine", cfg.Engine)
-	runConsumer("remediation_requested", rredis.NewRemediationRequestedConsumer(rc, deps, accept, cfg.Engine, logger))
+	var requested *pkgredis.StreamConsumer
+	if cfg.Engine == config.EngineRunner {
+		requested = rredis.NewRemediationRequestedRunnerConsumer(rc, accept, logger)
+	} else {
+		requested = rredis.NewRemediationRequestedLegacyConsumer(rc, deps, logger)
+	}
+	runConsumer("remediation_requested", requested)
 
 	// Start the RemediationProposals gRPC server. The proposal service uses a
 	// DB-bound (non-transactional) repository for reads and the UoW factory for
