@@ -222,10 +222,13 @@ What a load does depends on your warehouse.
     the table and creates it again for that load, so you do not need to set
     `+full_refresh: true` to land a column change.
   - With `+full_refresh: false`, continuo never drops the table, so it refuses
-    a change of columns and an operator's full refresh. Both fail with the
-    reason `seed_full_refresh_disabled`, and the seed's table stays as it is.
-    An operator's request starts no run, and the CLI exits with code 2. A
-    seed whose only change is its rows loads normally.
+    a change of columns and a full refresh. The seed's table stays as it is, and
+    the reason is `seed_full_refresh_disabled`. If you ask for a full refresh
+    with `continuo node full-refresh` (or run the seed node alone), no run
+    starts and the CLI exits with code 2. A release's load, a rerun and a
+    rebase start their run, and the seed's task fails with
+    `seed_full_refresh_disabled` before any container starts. A seed whose only
+    change is its rows loads normally.
 - **Trino.** Every load creates the table again, whatever the setting says.
 
 After a load that drops the table, continuo rebuilds what the drop took away.
@@ -240,7 +243,7 @@ read each other.
 - On Trino, a view that continuo does not own can go stale after the load.
   continuo checks such views after the load and lists the ones it finds.
 
-A release that only re-baselines fingerprints reloads no seed.
+A release that only records the seeds as already loaded does not reload any seed.
 
 #### Where to look
 
