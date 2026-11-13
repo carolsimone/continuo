@@ -12,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
 )
 
 // sourceValidation is the trigger source of a rejection whose release
@@ -35,7 +36,7 @@ var _ step.Prompt = (*DBTValidation)(nil)
 // service name to its path inside the repository. It calls no port until
 // Propose.
 func NewDBTValidation(artifacts ports.ArtifactWriter, sanitizer ports.LogSanitizer, serviceRepoPaths map[string]string, logger *slog.Logger) *DBTValidation {
-	return &DBTValidation{artifacts: artifacts, sanitizer: sanitizer, serviceRepoPaths: serviceRepoPaths, logger: loggerOrDefault(logger)}
+	return &DBTValidation{artifacts: artifacts, sanitizer: sanitizer, serviceRepoPaths: serviceRepoPaths, logger: shared.LoggerOrDefault(logger)}
 }
 
 // Meta describes the step.

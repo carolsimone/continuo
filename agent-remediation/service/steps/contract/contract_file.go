@@ -10,6 +10,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
 )
 
 // ContractFile is the context source `contract_file`: the contract yaml that
@@ -24,7 +25,7 @@ var _ step.ContextSource = (*ContractFile)(nil)
 
 // NewContractFile builds the contract_file step. It calls no port until Gather.
 func NewContractFile(archive ports.RepoArchive, locator ports.ContractLocator, logger *slog.Logger) *ContractFile {
-	return &ContractFile{archive: archive, locator: locator, logger: loggerOrDefault(logger)}
+	return &ContractFile{archive: archive, locator: locator, logger: shared.LoggerOrDefault(logger)}
 }
 
 // Meta describes the step.
@@ -136,11 +137,4 @@ func splitNodeID(nodeID string) (schema, table string, ok bool) {
 		return "", "", false
 	}
 	return schema, table, true
-}
-
-func loggerOrDefault(l *slog.Logger) *slog.Logger {
-	if l == nil {
-		return slog.Default()
-	}
-	return l
 }

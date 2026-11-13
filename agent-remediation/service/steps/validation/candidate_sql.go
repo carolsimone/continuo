@@ -15,6 +15,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 )
 
@@ -29,7 +30,7 @@ var _ step.ContextSource = (*CandidateSQL)(nil)
 
 // NewCandidateSQL builds the candidate_sql step. It calls no port until Gather.
 func NewCandidateSQL(evidence ports.EvidenceReader, logger *slog.Logger) *CandidateSQL {
-	return &CandidateSQL{evidence: evidence, logger: loggerOrDefault(logger)}
+	return &CandidateSQL{evidence: evidence, logger: shared.LoggerOrDefault(logger)}
 }
 
 // Meta describes the step.
@@ -75,11 +76,4 @@ func (s *CandidateSQL) Gather(ctx context.Context, in step.ContextInput) (step.C
 	return step.ContextOutput{Evidence: map[remediation.EvidenceKey]any{
 		remediation.KeyCandidateSQL: remediation.Text(sql),
 	}}, nil
-}
-
-func loggerOrDefault(l *slog.Logger) *slog.Logger {
-	if l == nil {
-		return slog.Default()
-	}
-	return l
 }

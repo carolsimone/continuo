@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -110,6 +109,19 @@ func TestTarget_TheFirstLocatedAncestorEntryWins(t *testing.T) {
 	got := gatheredTarget(t, out)
 	assert.Equal(t, "second.sql", got.FilePath)
 	assert.Equal(t, "down-svc", got.Service)
+	assert.Empty(t, loc.calls)
+}
+
+func TestTarget_OfTwoCompleteAncestorEntriesTheFirstWins(t *testing.T) {
+	loc := &fakeLocator{filePath: "graph/x.sql", service: "down-svc"}
+	out := gather(t, newTarget(okBundle(), &fakeVersions{}, loc), failure(func(f *remediation.Failure) {
+		f.Trigger.Nodes[0].ChangedAncestors = []remediation.ChangedAncestor{{NodeID: targetID, FilePath: "first.sql", Service: "up-svc"}}
+		f.Trigger.Nodes[1].ChangedAncestors = []remediation.ChangedAncestor{{NodeID: targetID, FilePath: "second.sql", Service: "down-svc"}}
+	}), remediation.NewEvidence())
+
+	got := gatheredTarget(t, out)
+	assert.Equal(t, "first.sql", got.FilePath)
+	assert.Equal(t, "up-svc", got.Service)
 	assert.Empty(t, loc.calls)
 }
 
@@ -238,27 +250,4 @@ func TestTarget_TheSourceIsKeptRawAndTheDiffIsSanitized(t *testing.T) {
 	got := gatheredTarget(t, out)
 	assert.Equal(t, targetSource, got.Source, "the edit's original is the real file")
 	assert.True(t, strings.HasPrefix(got.OwnChangeDiff, "<") && strings.HasSuffix(got.OwnChangeDiff, ">"))
-}
-
-func TestTarget_CapsALongDiffAtARuneBoundary(t *testing.T) {
-	// A diff of two-byte runes cut at 8192 bytes lands inside a rune for one of
-	// two neighbouring prefix lengths, so one of these inputs needs the cut
-	// backed up.
-	for _, pad := range []string{"", "x"} {
-		t.Run("pad "+pad, func(t *testing.T) {
-			bundle := &fakeBundle{nodes: map[string]ports.CandidateSource{
-				targetID: dbtEntry("select '" + pad + strings.Repeat("é", 6000) + "'"),
-			}}
-			versions := &fakeVersions{versions: map[string]ports.CurrentVersion{targetID: {RawCode: "select 1"}}}
-
-			out := gather(t, newTarget(bundle, versions, &fakeLocator{}), failure(nil), remediation.NewEvidence())
-
-			diff := gatheredTarget(t, out).OwnChangeDiff
-			require.True(t, strings.HasSuffix(diff, "\n… (diff truncated)"))
-			body := strings.TrimSuffix(diff, "\n… (diff truncated)")
-			assert.LessOrEqual(t, len(body), 8192)
-			assert.Greater(t, len(body), 8190)
-			assert.True(t, utf8.ValidString(body), "the cut does not split a rune")
-		})
-	}
 }

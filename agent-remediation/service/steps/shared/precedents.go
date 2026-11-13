@@ -27,7 +27,7 @@ var _ step.ContextSource = (*Precedents)(nil)
 // NewPrecedents builds the failure_precedents step. It calls no port until
 // Gather.
 func NewPrecedents(precedents ports.PrecedentReader, sanitizer ports.LogSanitizer, logger *slog.Logger) *Precedents {
-	return &Precedents{precedents: precedents, sanitizer: sanitizer, logger: loggerOrDefault(logger)}
+	return &Precedents{precedents: precedents, sanitizer: sanitizer, logger: LoggerOrDefault(logger)}
 }
 
 // Meta describes the step.

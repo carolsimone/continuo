@@ -9,6 +9,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
 )
 
 // maxChangedAncestors caps how many changed ancestors the prompt shows, nearest
@@ -19,7 +20,7 @@ const maxChangedAncestors = 3
 // release changed in the failing node's nearest changed ancestors.
 type ChangedAncestorDiffs struct {
 	candidates ports.CandidateSourceReader
-	changes    changeDiffer
+	changes    shared.ChangeDiffer
 	logger     *slog.Logger
 }
 
@@ -28,10 +29,10 @@ var _ step.ContextSource = (*ChangedAncestorDiffs)(nil)
 // NewChangedAncestorDiffs builds the changed_ancestor_diffs step. It calls no
 // port until Gather.
 func NewChangedAncestorDiffs(candidates ports.CandidateSourceReader, versions ports.VersionReader, sanitizer ports.LogSanitizer, logger *slog.Logger) *ChangedAncestorDiffs {
-	logger = loggerOrDefault(logger)
+	logger = shared.LoggerOrDefault(logger)
 	return &ChangedAncestorDiffs{
 		candidates: candidates,
-		changes:    changeDiffer{versions: versions, sanitizer: sanitizer, logger: logger},
+		changes:    shared.ChangeDiffer{Versions: versions, Sanitizer: sanitizer, Logger: logger},
 		logger:     logger,
 	}
 }
@@ -73,7 +74,7 @@ func (s *ChangedAncestorDiffs) Gather(ctx context.Context, in step.ContextInput)
 			s.logger.Warn("changed ancestor source unavailable; listing it without a diff",
 				"node", f.Target.NodeID, "ancestor", a.NodeID, "error", err)
 		} else {
-			diff = s.changes.diff(ctx, a.NodeID, src.RawCode)
+			diff = s.changes.Diff(ctx, a.NodeID, src.RawCode)
 		}
 		out = append(out, prompt.ReleaseUpstreamChange{NodeID: a.NodeID, Service: a.Service, Depth: a.Depth, Diff: diff})
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
 )
 
 // ContractEntry is the context source `contract_entry`: the failing node's
@@ -24,7 +25,7 @@ var _ step.ContextSource = (*ContractEntry)(nil)
 // NewContractEntry builds the contract_entry step. It calls no port until
 // Gather.
 func NewContractEntry(candidates ports.CandidateSourceReader, sanitizer ports.LogSanitizer, logger *slog.Logger) *ContractEntry {
-	return &ContractEntry{candidates: candidates, sanitizer: sanitizer, logger: loggerOrDefault(logger)}
+	return &ContractEntry{candidates: candidates, sanitizer: sanitizer, logger: shared.LoggerOrDefault(logger)}
 }
 
 // Meta describes the step.

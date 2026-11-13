@@ -26,7 +26,7 @@ var _ step.ContextSource = (*DBTLog)(nil)
 
 // NewDBTLog builds the dbt_log step. It calls no port until Gather.
 func NewDBTLog(evidence ports.EvidenceReader, sanitizer ports.LogSanitizer, logger *slog.Logger) *DBTLog {
-	return &DBTLog{evidence: evidence, sanitizer: sanitizer, logger: loggerOrDefault(logger)}
+	return &DBTLog{evidence: evidence, sanitizer: sanitizer, logger: LoggerOrDefault(logger)}
 }
 
 // Meta describes the step.
@@ -64,11 +64,4 @@ func logOutput(text string) step.ContextOutput {
 	return step.ContextOutput{Evidence: map[remediation.EvidenceKey]any{
 		remediation.KeyDBTLog: remediation.Text(text),
 	}}
-}
-
-func loggerOrDefault(l *slog.Logger) *slog.Logger {
-	if l == nil {
-		return slog.Default()
-	}
-	return l
 }

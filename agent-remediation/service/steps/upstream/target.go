@@ -10,26 +10,19 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"unicode/utf8"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
 )
-
-// maxDiffBytes caps the change diff (what this release changed in the ancestor
-// relative to the code that runs now) so one large refactor cannot dominate the
-// prompt.
-const maxDiffBytes = 8192
 
 // Target is the context source `upstream_target`: the changed ancestor an
 // upstream cluster's fix edits, with its source and where it lives.
 type Target struct {
 	candidates       ports.CandidateSourceReader
 	locator          ports.NodeLocator
-	versions         ports.VersionReader
-	sanitizer        ports.LogSanitizer
+	changes          shared.ChangeDiffer
 	serviceRepoPaths map[string]string
 	logger           *slog.Logger
 }
@@ -39,13 +32,13 @@ var _ step.ContextSource = (*Target)(nil)
 // NewTarget builds the upstream_target step. serviceRepoPaths maps a service
 // name to its path inside the repository. It calls no port until Gather.
 func NewTarget(candidates ports.CandidateSourceReader, locator ports.NodeLocator, versions ports.VersionReader, sanitizer ports.LogSanitizer, serviceRepoPaths map[string]string, logger *slog.Logger) *Target {
+	logger = shared.LoggerOrDefault(logger)
 	return &Target{
 		candidates:       candidates,
 		locator:          locator,
-		versions:         versions,
-		sanitizer:        sanitizer,
+		changes:          shared.ChangeDiffer{Versions: versions, Sanitizer: sanitizer, Logger: logger},
 		serviceRepoPaths: serviceRepoPaths,
-		logger:           loggerOrDefault(logger),
+		logger:           logger,
 	}
 }
 
@@ -100,7 +93,7 @@ func (s *Target) Gather(ctx context.Context, in step.ContextInput) (step.Context
 			Source:        src.RawCode,
 			FilePath:      filePath,
 			Service:       serviceName,
-			OwnChangeDiff: s.ownChangeDiff(ctx, targetID, src.RawCode),
+			OwnChangeDiff: s.changes.Diff(ctx, targetID, src.RawCode),
 		},
 	}}, nil
 }
@@ -138,42 +131,4 @@ func ancestorLocation(t remediation.Trigger, ancestorID string) (filePath, servi
 		}
 	}
 	return "", ""
-}
-
-// ownChangeDiff is the unified diff from the ancestor's promoted version to its
-// candidate source, sanitized before it is truncated, like every other source
-// string sent to the model, so a secret in a changed line is redacted rather
-// than sent. It is empty when the ancestor has no promoted version (it is new)
-// or the version read fails, which is logged.
-func (s *Target) ownChangeDiff(ctx context.Context, nodeID, candidateSource string) string {
-	cur, ok, err := s.versions.CurrentVersion(ctx, nodeID)
-	if err != nil {
-		s.logger.Warn("current version unavailable; omitting own-change diff", "node", nodeID, "error", err)
-		return ""
-	}
-	if !ok {
-		return ""
-	}
-	return truncateDiff(s.sanitizer.Sanitize(proposal.ComputeUnifiedDiff(cur.RawCode, candidateSource, nodeID)), maxDiffBytes)
-}
-
-// truncateDiff caps a diff at max bytes, appending a marker when it was cut. The
-// cut is backed up to a UTF-8 rune boundary so truncation never splits a
-// multibyte character, which would render as U+FFFD in the prompt.
-func truncateDiff(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	cut := max
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut] + "\n… (diff truncated)"
-}
-
-func loggerOrDefault(l *slog.Logger) *slog.Logger {
-	if l == nil {
-		return slog.Default()
-	}
-	return l
 }

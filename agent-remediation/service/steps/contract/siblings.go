@@ -10,6 +10,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
 )
 
 // FailingSiblings is the context source `failing_siblings`: it refuses a
@@ -27,7 +28,7 @@ var _ step.ContextSource = (*FailingSiblings)(nil)
 // NewFailingSiblings builds the failing_siblings step. It calls no port until
 // Gather.
 func NewFailingSiblings(archive ports.RepoArchive, locator ports.ContractLocator, releases ports.ReleaseReader, logger *slog.Logger) *FailingSiblings {
-	return &FailingSiblings{archive: archive, locator: locator, releases: releases, logger: loggerOrDefault(logger)}
+	return &FailingSiblings{archive: archive, locator: locator, releases: releases, logger: shared.LoggerOrDefault(logger)}
 }
 
 // Meta describes the step.

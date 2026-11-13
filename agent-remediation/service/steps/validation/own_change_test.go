@@ -2,9 +2,7 @@ package validation_test
 
 import (
 	"context"
-	"strings"
 	"testing"
-	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -64,27 +62,6 @@ func TestOwnChangeDiff_IsEmptyWhenThereIsNothingToDiff(t *testing.T) {
 
 			assert.Empty(t, ownDiff(t, out))
 			assert.Equal(t, c.wantRead, len(c.versions.calls) > 0)
-		})
-	}
-}
-
-func TestOwnChangeDiff_CapsALongDiffAtARuneBoundary(t *testing.T) {
-	// A diff of two-byte runes cut at 8192 bytes lands inside a rune for one of
-	// two neighbouring prefix lengths, so one of these inputs needs the cut
-	// backed up.
-	for _, pad := range []string{"", "x"} {
-		t.Run("pad "+pad, func(t *testing.T) {
-			next := "select '" + pad + strings.Repeat("é", 6000) + "'"
-			versions := &fakeVersions{versions: map[string]ports.CurrentVersion{"model.svc.a": {RawCode: "select 1"}}}
-
-			out := gather(t, validation.NewOwnChangeDiff(versions, markSanitizer{}, discardLogger()), failure(nil), withSource(next))
-
-			got := string(ownDiff(t, out))
-			require.True(t, strings.HasSuffix(got, "\n… (diff truncated)"))
-			body := strings.TrimSuffix(got, "\n… (diff truncated)")
-			assert.LessOrEqual(t, len(body), 8192)
-			assert.Greater(t, len(body), 8190)
-			assert.True(t, utf8.ValidString(body), "the cut does not split a rune")
 		})
 	}
 }

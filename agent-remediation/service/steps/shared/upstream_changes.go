@@ -23,7 +23,7 @@ var _ step.ContextSource = (*UpstreamChanges)(nil)
 // NewUpstreamChanges builds the upstream_changes step. It calls no port until
 // Gather.
 func NewUpstreamChanges(upstream ports.UpstreamChangeReader, sanitizer ports.LogSanitizer, logger *slog.Logger) *UpstreamChanges {
-	return &UpstreamChanges{upstream: upstream, sanitizer: sanitizer, logger: loggerOrDefault(logger)}
+	return &UpstreamChanges{upstream: upstream, sanitizer: sanitizer, logger: LoggerOrDefault(logger)}
 }
 
 // Meta describes the step.

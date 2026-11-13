@@ -11,6 +11,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
 )
 
 // PriorAttempts is the context source `prior_attempts`: the earlier attempts at
@@ -28,7 +29,7 @@ var _ step.ContextSource = (*PriorAttempts)(nil)
 // NewPriorAttempts builds the prior_attempts step. A nil attempts reader gives
 // no prior attempts. It calls no port until Gather.
 func NewPriorAttempts(attempts repository.AttemptLister, evidence ports.EvidenceReader, sanitizer ports.LogSanitizer, logger *slog.Logger) *PriorAttempts {
-	return &PriorAttempts{attempts: attempts, evidence: evidence, sanitizer: sanitizer, logger: loggerOrDefault(logger)}
+	return &PriorAttempts{attempts: attempts, evidence: evidence, sanitizer: sanitizer, logger: shared.LoggerOrDefault(logger)}
 }
 
 // Meta describes the step.

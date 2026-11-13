@@ -11,6 +11,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
 )
 
 // errNonDbtCandidate reports that the failing node's candidate source is not a
@@ -46,7 +47,7 @@ func NewCodeBundleSource(candidates ports.CandidateSourceReader, source ports.So
 		source:           source,
 		locator:          locator,
 		serviceRepoPaths: serviceRepoPaths,
-		logger:           loggerOrDefault(logger),
+		logger:           shared.LoggerOrDefault(logger),
 	}
 }
 
