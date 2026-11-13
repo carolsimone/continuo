@@ -15,7 +15,7 @@ shipped in those.
 **TL;DR**
 
 - A table that a node reads and no node builds now shows in the DAG as a grey `unknown-external` node.
-- A dbt model with an owner and no tag is now a dormant node: you run it by hand, and a broken one rejects the release.
+- A dbt model or snapshot with an owner and no tag is now a dormant node in every release: check that it builds, and run it once by hand, since no cron runs it.
 - Hold releases with maintenance mode while you upgrade, and do not roll release-controller back afterwards.
 - Every node's code fingerprint (`content_hash`) is computed anew, closing 23 gaps. After the upgrade, release each service once with `"rebaseline": true`.
 - The default validation image is `v0.12.0`.
@@ -28,12 +28,13 @@ shipped in those.
 2. **Hold releases with maintenance mode while you upgrade.** A release-controller older than this version that receives a topology with `unknown-external` nodes sends them to validation, which stalls that release and the queue. A release that is queued or submitted while the pods roll can be parsed by the new topology-controller while the old release-controller still runs, so keep releases from starting until every pod is new. Do it in this order:
    1. Turn maintenance mode on, on the chart version you run now: `helm upgrade <release> <chart> --version <the version you run now> --reuse-values --set maintenance.enabled=true`. Do not change the chart version in this step: without `--version`, Helm pulls the latest chart, which is this release, and the pods roll before the drain. A new release is refused with HTTP 503, release-controller activates no queued release, and the releases already in progress finish. A scheduled run that comes due while maintenance mode is on is skipped, not caught up later; the comment above `maintenance:` in `deploy/continuo/values.yaml` lists what else it refuses.
    2. Wait until no release is compiling, parsing, seed-building or validating. A fix verification of a remediation attempt already in progress still activates in maintenance mode, so wait for those too.
-   3. Run the upgrade to this version with maintenance mode still on: pass `--version <this version>` and keep `--set maintenance.enabled=true`, with your usual values. Its migration Job builds the index `idx_tasks_node_key_created` on run-controller's `tasks` table before the pods roll, and run-controller cannot write a task until the index is built, so the runs in progress pause for that time.
+   3. Run the upgrade to this version with maintenance mode still on: pass `--version <this version>` and keep `--set maintenance.enabled=true`, with your usual values. Its migration Job builds the index `idx_tasks_node_key_created` on run-controller's `tasks` table. run-controller cannot write a task until the index is built, so the runs in progress pause for that time.
    4. Turn maintenance mode off: `helm upgrade <release> <chart> --version <this version> --reuse-values --set maintenance.enabled=false`. release-controller activates the oldest queued release when it starts.
 
    Each change of `maintenance.enabled` restarts every continuo service. If you skip this and a release stalls, it stays in `validating` and the release queue stops. No API, CLI or UI action fails a release, so an operator has to fail that release directly in release-controller's database and then restart release-controller, which advances the queue as it starts. This has not been rehearsed.
 3. **Do not roll release-controller back below this version** after a release with `unknown-external` nodes has been promoted. The old activation check counts the nodes' empty service as uncovered, and no later release activates.
-4. **Re-baseline the fingerprints.** After the upgrade, release every dbt service once with its current `image_tag` and `"bootstrap": true, "rebaseline": true`. Then rebuild each Python service on `continuo-python-runtime` 0.12.0 with no other change (its image's `FROM` tag and the runtime its CI installs) and release it with `"bootstrap": true, "rebaseline": true` and `"kind": "python"`, its `image_tag` the full registry reference. See "Re-baseline after a fingerprint change" in `deploy/README.md`. A model with an owner and no tag enters production in this release as a dormant node, without validation. If its table does not exist yet, run it once before you release a change to a model that reads it, or that release is rejected `upstream_clone_failed`.
+4. **Re-baseline the fingerprints.** After the upgrade, release every dbt service once with its current `image_tag` and `"bootstrap": true, "rebaseline": true`. Then rebuild each Python service on `continuo-python-runtime` 0.12.0 with no other change (its image's `FROM` tag and the runtime its CI installs) and release it with `"bootstrap": true, "rebaseline": true` and `"kind": "python"`, its `image_tag` the full registry reference. See "Re-baseline after a fingerprint change" in `deploy/README.md`.
+   - A model or snapshot with an owner and no tag enters production in that bootstrap release as a dormant node, without validation. If its table does not exist yet, run it once from its node page before you release a change to a model that reads it. Otherwise that release is rejected `upstream_clone_failed`.
 5. Release one service with no change: nothing validates.
 6. Unfreeze producer merges.
 
@@ -86,10 +87,10 @@ This release changes no values key, and it ships as a `MINOR`.
   - A `Dormant only` filter lists only the dormant nodes.
   - `continuo node list` lists the same nodes. A node that never ran has `task_count` 0 and no `last_run_at`.
 - **A new reject reason: `upstream_clone_failed`.** TL;DR: validation copies the production table of each unchanged upstream. When only such copies fail, the release is rejected `upstream_clone_failed`, and the message names the nodes: run them, then release again.
-  - When a changed node fails too, the reason stays `validation_failed`, and the message also names the copies.
-  - It is not healable: remediation proposes no fix, and "Try again" is refused.
+  - When a node built from the release's code fails too (a changed node, or a node below one), the reason stays `validation_failed`, and the message also names the copies.
+  - It is not healable: remediation drops the rejection before it reads its nodes, so it proposes no fix and records no `classification_decision` row, and "Try again" is refused.
+  - remediation never tries to fix a copied node, in a `validation_failed` rejection either.
   - A CI pipeline that reads `reject_reason` can get the new value, and `continuo_releases_total{reject_reason}` counts it.
-- **remediation drops a rejection that is not healable.** TL;DR: remediation drops a rejection whose reason is not healable before it reads its nodes, so such a rejection leaves no `classification_decision` row. It never tries to fix a node that validation copied from production.
 - **topology-controller counts dormant nodes.** TL;DR: `continuo_topology_release_dormant_nodes` counts the dormant nodes of the last release. `continuo_topology_release_skipped_nodes{reason}` has no `no_tag` value any more: its reasons are `no_owner` and `local_stub`.
 
 ### Security
