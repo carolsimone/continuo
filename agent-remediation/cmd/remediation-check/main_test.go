@@ -191,7 +191,7 @@ func copyBuiltin(t *testing.T, edit func(flow string) string) string {
 		if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
 			return err
 		}
-		return os.WriteFile(dst, data, 0o600)
+		return os.WriteFile(dst, data, 0o600) //nolint:gosec // G703: a path under the test's own temporary directory.
 	}))
 	return dir
 }

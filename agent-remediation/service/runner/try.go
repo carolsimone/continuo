@@ -21,8 +21,11 @@ import (
 )
 
 // How long a try may stay in each open status: its deadline is set when it
-// enters the status. A verifying try's deadline is a backstop past the gate's
-// own timeouts, which end a verification that never answers first.
+// enters the status, and the sweeper ends a drafting or checking try past it.
+// A verifying try's deadline is informational: it records when the gate's
+// runs should have answered, an hour past the verification timeout, and
+// nothing acts on it, since the gate's own timeouts end a verification that
+// never answers.
 const (
 	tryDraftingTime   = time.Hour
 	tryCheckingTime   = 10 * time.Minute

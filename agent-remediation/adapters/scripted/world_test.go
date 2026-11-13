@@ -103,7 +103,7 @@ func TestCheckout_FetchWritesEveryFileAndCleanupRemovesThem(t *testing.T) {
 
 	root, cleanup, err := c.Fetch(ctx, "o/r", "sha")
 	require.NoError(t, err)
-	body, err := os.ReadFile(filepath.Join(root, "services", "a", "contracts", "n.yml"))
+	body, err := os.ReadFile(filepath.Clean(filepath.Join(root, "services", "a", "contracts", "n.yml"))) //nolint:gosec // G304: a file of the checkout the test just fetched.
 	require.NoError(t, err)
 	assert.Equal(t, "nodes: []\n", string(body))
 

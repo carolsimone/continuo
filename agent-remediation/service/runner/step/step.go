@@ -158,10 +158,10 @@ type LongCheck interface {
 }
 
 // GateInput is what a gate reads: the try's checked drafts and the proposal
-// they belong to. SubmittedAt is when the gate's Submit committed, which the
-// runner fills from the start of the gate step's run; it is zero before that.
-// A poll counts how long runs have been unreadable from it, so a poll refuses
-// an input without it.
+// they belong to. SubmittedAt is the StartedAt of the gate step's row, which
+// the runner takes before Submit runs, so it is no later than the submit; it is
+// zero for the Submit itself. A poll counts how long runs have been unreadable
+// from it, so a poll refuses an input without it.
 type GateInput struct {
 	Remediation remediation.Remediation
 	Try         remediation.Try

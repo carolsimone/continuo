@@ -47,7 +47,7 @@ var _ ports.RepoArchive = (*archive)(nil)
 
 func read(t *testing.T, root, p string) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(p)))
+	b, err := os.ReadFile(filepath.Clean(filepath.Join(root, filepath.FromSlash(p)))) //nolint:gosec // G304: a file of the checkout the test made.
 	require.NoError(t, err)
 	return string(b)
 }

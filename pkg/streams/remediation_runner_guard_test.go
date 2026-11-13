@@ -28,8 +28,9 @@ const (
 // layer that may name ports.LLMProvider or ports.VerificationPipeline: the
 // runner and its steps, the ports themselves, the model's cache and prompt log,
 // and the conformance suite, which supplies scripted stand-ins for both.
-// remediationFrozenDirs are today's lane code, which keeps its direct access
-// until it is removed; each entry is dropped from the list on its removal.
+// remediationFrozenDirs are the legacy engine's packages, which call the model
+// and the verification pipeline directly. Each entry must name a directory
+// (TestRemediationGuardFrozenPackagesExist).
 var remediationModelAndGateDirs = append([]string{
 	"agent-remediation/service/runner",
 	"agent-remediation/service/steps",

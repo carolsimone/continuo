@@ -1,5 +1,6 @@
-// remediation-check checks the workflow files of agent-remediation, in the
-// image beside the service binary and in CI.
+// remediation-check checks the workflow files of agent-remediation. It ships in
+// the image beside the service binary, for an install to check its own files,
+// and the repository's tests run it on the built-in files.
 //
 //	remediation-check files <dir>
 //

@@ -593,7 +593,7 @@ func TestDeclaredOnce_SearchesAfterTheAnswerIsApplied(t *testing.T) {
 	p, in := declPass(t)
 	var seen string
 	l := &sniffLocator{read: func(root string) {
-		b, err := os.ReadFile(filepath.Join(root, "svc", "contracts", "fx.yaml"))
+		b, err := os.ReadFile(filepath.Clean(filepath.Join(root, "svc", "contracts", "fx.yaml"))) //nolint:gosec // G304: a file of the patched checkout the step made.
 		require.NoError(t, err)
 		seen = string(b)
 	}, located: theLocated}

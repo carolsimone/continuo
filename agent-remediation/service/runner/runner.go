@@ -48,8 +48,9 @@ type Deps struct {
 	Maintenance bool
 	Owner       string
 	// VerificationTimeout is how long a try's verification runs may take. A
-	// verifying try's deadline falls this long, plus an hour, after the gate
-	// started its runs.
+	// verifying try's deadline is recorded this long, plus an hour, after the
+	// gate started its runs; it is informational, and the gate's own timeouts,
+	// which the registry's gate step reads from Collab, end a verification.
 	VerificationTimeout time.Duration
 	// StepTimeout bounds each step of a drive. Zero is ten minutes.
 	StepTimeout time.Duration

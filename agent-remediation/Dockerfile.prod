@@ -39,8 +39,9 @@ WORKDIR /app/agent-remediation
 RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -a -installsuffix cgo -o /app/bin/agent-remediation .
 
-# remediation-check, the command that checks the workflow files (the CI gate
-# runs it in this image): `remediation-check files <dir>`.
+# remediation-check, the command that checks the workflow files: an install
+# runs `remediation-check files <dir>` in this image on its own files, and the
+# repository's test TestFiles_BuiltinDirPasses runs it on the built-in ones.
 RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -a -installsuffix cgo -o /app/bin/remediation-check ./cmd/remediation-check
 
