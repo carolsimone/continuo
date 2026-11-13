@@ -11,6 +11,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/source"
+	"github.com/carolsimone/continuo/agent-remediation/service/steps/validation"
 )
 
 // described is what every step implements, whatever its Kind.
@@ -42,10 +43,14 @@ func NewRegistry(c Collaborators) *Registry {
 			remediation.KeyFailure: func() any { return remediation.Failure{} },
 			remediation.KeyDraft:   func() any { return remediation.Draft{} },
 			// The keys the registered steps provide.
-			remediation.KeyDBTLog:            func() any { return remediation.Text("") },
-			remediation.KeyFailurePrecedents: func() any { return []prompt.Precedent{} },
-			remediation.KeyUpstreamChanges:   func() any { return []prompt.UpstreamChange{} },
-			remediation.KeySourceFiles:       func() any { return remediation.SourceFiles{} },
+			remediation.KeyDBTLog:               func() any { return remediation.Text("") },
+			remediation.KeyFailurePrecedents:    func() any { return []prompt.Precedent{} },
+			remediation.KeyUpstreamChanges:      func() any { return []prompt.UpstreamChange{} },
+			remediation.KeySourceFiles:          func() any { return remediation.SourceFiles{} },
+			remediation.KeyCandidateSQL:         func() any { return remediation.Text("") },
+			remediation.KeyCodeBundleSource:     func() any { return remediation.CandidateSource{} },
+			remediation.KeyOwnChangeDiff:        func() any { return remediation.Text("") },
+			remediation.KeyChangedAncestorDiffs: func() any { return []prompt.ReleaseUpstreamChange{} },
 		},
 	}
 	r.register(shared.NewDBTLog(c.Evidence, c.Sanitizer, c.Logger))
@@ -59,6 +64,11 @@ func NewRegistry(c Collaborators) *Registry {
 	r.register(source.NewSeed(c.Sanitizer))
 	r.register(source.NewDuplicateTable(c.Sanitizer))
 	r.register(source.NewTargetFileWasShown())
+	r.register(validation.NewCandidateSQL(c.Evidence, c.Logger))
+	r.register(validation.NewCodeBundleSource(c.CandidateSource, c.Source, c.Locator, c.ServiceRepoPaths, c.Logger))
+	r.register(validation.NewOwnChangeDiff(c.Versions, c.Sanitizer, c.Logger))
+	r.register(validation.NewChangedAncestorDiffs(c.CandidateSource, c.Versions, c.Sanitizer, c.Logger))
+	r.register(validation.NewDBTValidation(c.Artifacts, c.Sanitizer, c.ServiceRepoPaths, c.Logger))
 	return r
 }
 

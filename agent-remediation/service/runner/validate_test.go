@@ -65,15 +65,16 @@ func (stubPass) Pass(context.Context, uow.UnitOfWork, step.OutputInput, remediat
 	return nil
 }
 
-// stubRegistry holds one stub step per kind and stage the checks care about. A
-// stub replaces the registered step of the same name, so each test states the
-// evidence a step reads and provides itself.
+// stubRegistry holds one stub step per kind and stage the checks care about and
+// none of the real steps, so each test states the evidence a step reads and
+// provides itself.
 func stubRegistry() *Registry {
-	r := NewRegistry(Collaborators{})
-	for _, name := range []workflow.StepName{"failing_node_source", "dbt-compile", "dbt-parse", "target_file_was_shown"} {
-		delete(r.steps, name)
+	r := &Registry{
+		steps:    map[workflow.StepName]entry{},
+		evidence: map[remediation.EvidenceKey]func() any{},
 	}
 	for _, m := range []step.Meta{
+		{Name: "dbt_log", Kind: step.KindContext, Provides: []remediation.EvidenceKey{remediation.KeyDBTLog}},
 		{Name: "failing_node_source", Kind: step.KindContext, Provides: []remediation.EvidenceKey{remediation.KeySourceFiles}},
 		{Name: "reads_dbt_log", Kind: step.KindContext, Needs: []remediation.EvidenceKey{remediation.KeyDBTLog}},
 		{Name: "reads_the_draft", Kind: step.KindContext, Needs: []remediation.EvidenceKey{remediation.KeyDraft}},
