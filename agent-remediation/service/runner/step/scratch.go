@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"os"
 	"path/filepath"
 	"sync"
 
@@ -27,6 +26,7 @@ var ErrPathOutsideCheckout = errors.New("a proposed file's path is outside the c
 // a new Scratch, so it always fetches again.
 type Scratch struct {
 	archive ports.RepoArchive
+	patcher ports.CheckoutPatcher
 	repo    string
 	commit  string
 
@@ -37,10 +37,11 @@ type Scratch struct {
 	originals map[string]string
 }
 
-// NewScratch builds the Scratch of one pass. It fetches nothing until the first
-// PatchedCheckout.
-func NewScratch(archive ports.RepoArchive, repo, commit string) *Scratch {
-	return &Scratch{archive: archive, repo: repo, commit: commit}
+// NewScratch builds the Scratch of one pass: archive fetches the repository at
+// commit, and patcher writes the draft's files over the checkout. It fetches
+// nothing until the first PatchedCheckout.
+func NewScratch(archive ports.RepoArchive, patcher ports.CheckoutPatcher, repo, commit string) *Scratch {
+	return &Scratch{archive: archive, patcher: patcher, repo: repo, commit: commit}
 }
 
 // PatchedCheckout returns the root of the checkout with files written into it
@@ -71,7 +72,7 @@ func (s *Scratch) PatchedCheckout(ctx context.Context, files []ports.ProposedFil
 	if err != nil {
 		return "", nil, fmt.Errorf("fetch repo %s@%s: %w", s.repo, s.commit, err)
 	}
-	originals, err = applyFiles(root, files)
+	originals, err = s.patcher.Apply(root, files)
 	if err != nil {
 		cleanup()
 		return "", nil, err
@@ -101,31 +102,4 @@ func (s *Scratch) Close() {
 		s.cleanup()
 		s.cleanup = nil
 	}
-}
-
-// applyFiles writes each proposed file into the checkout at root and returns
-// what each path held beforehand, keyed by the path as the model named it. The
-// originals are read before anything is written so they describe the
-// repository's own content; a path the repository does not have yet reads as
-// empty, which diffs as a new file.
-func applyFiles(root string, files []ports.ProposedFile) (map[string]string, error) {
-	originals := make(map[string]string, len(files))
-	for _, f := range files {
-		full := filepath.Join(root, filepath.FromSlash(f.Path))
-		existing, err := os.ReadFile(full) //nolint:gosec // G304: full is a checkout-relative path PatchedCheckout confirmed is local.
-		if err != nil && !os.IsNotExist(err) {
-			return nil, fmt.Errorf("read %s before applying the fix: %w", f.Path, err)
-		}
-		originals[f.Path] = string(existing)
-	}
-	for _, f := range files {
-		full := filepath.Join(root, filepath.FromSlash(f.Path))
-		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
-			return nil, fmt.Errorf("create directory for %s: %w", f.Path, err)
-		}
-		if err := os.WriteFile(full, []byte(f.Content), 0o600); err != nil {
-			return nil, fmt.Errorf("apply fix to %s: %w", f.Path, err)
-		}
-	}
-	return originals, nil
 }

@@ -650,6 +650,7 @@ func runnerCollaborators(cfg config.Config, svc fixer.Services, pipeline ports.V
 	c.SQLDialect = cfg.SQLDialect
 	c.VerificationTimeout = cfg.VerificationTimeout
 	c.Clock = ports.SystemClock{}
+	c.Patcher = repofs.CheckoutPatcher{}
 	return c
 }
 

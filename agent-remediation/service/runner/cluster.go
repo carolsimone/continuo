@@ -204,7 +204,7 @@ func (r *Runner) runPreflight(ctx context.Context, run tryRun, c remediation.Clu
 	if pass.InputDigest, err = serialization.InputDigest(ev, c.Round); err != nil {
 		return r.recordFailure(ctx, pass, err)
 	}
-	scratch := step.NewScratch(r.d.Collab.Archive, run.trigger.Repo, run.trigger.CommitSHA)
+	scratch := step.NewScratch(r.d.Collab.Archive, r.d.Collab.Patcher, run.trigger.Repo, run.trigger.CommitSHA)
 	defer scratch.Close()
 
 	rows := make([]remediation.StepRun, 0, len(plan.preflight)+1)

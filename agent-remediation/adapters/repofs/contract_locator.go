@@ -1,7 +1,7 @@
-// Package repofs reads a repository checkout on local disk. It implements the
-// ports whose subject is the tree an archive fetch already extracted, keeping
-// the directory walk, the file reads, and the yaml deserialization out of the
-// application layer.
+// Package repofs reads and patches a repository checkout on local disk. It
+// implements the ports whose subject is the tree an archive fetch already
+// extracted, keeping the directory walk, the file reads and writes, and the
+// yaml deserialization out of the application layer.
 package repofs
 
 import (

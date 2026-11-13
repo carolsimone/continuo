@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 )
@@ -54,7 +55,7 @@ func read(t *testing.T, root, p string) string {
 
 func TestScratch_PatchedCheckoutAppliesTheFilesAndReturnsTheOriginals(t *testing.T) {
 	a := &archive{t: t, seed: map[string]string{"svc/contract/a.yaml": "old a"}}
-	s := step.NewScratch(a, "org/repo", "abc123")
+	s := step.NewScratch(a, repofs.CheckoutPatcher{}, "org/repo", "abc123")
 	defer s.Close()
 
 	root, originals, err := s.PatchedCheckout(context.Background(), []ports.ProposedFile{
@@ -70,7 +71,7 @@ func TestScratch_PatchedCheckoutAppliesTheFilesAndReturnsTheOriginals(t *testing
 
 func TestScratch_ASecondCallInThePassReturnsTheSameCheckoutWithoutFetchingOrApplyingAgain(t *testing.T) {
 	a := &archive{t: t, seed: map[string]string{"a.yaml": "old"}}
-	s := step.NewScratch(a, "r", "c")
+	s := step.NewScratch(a, repofs.CheckoutPatcher{}, "r", "c")
 	defer s.Close()
 
 	files := []ports.ProposedFile{{Path: "a.yaml", Content: "new"}}
@@ -90,7 +91,7 @@ func TestScratch_ASecondCallInThePassReturnsTheSameCheckoutWithoutFetchingOrAppl
 func TestScratch_ANewScratchFetchesAgain(t *testing.T) {
 	a := &archive{t: t, seed: map[string]string{"a.yaml": "old"}}
 	for range 2 {
-		s := step.NewScratch(a, "r", "c")
+		s := step.NewScratch(a, repofs.CheckoutPatcher{}, "r", "c")
 		_, originals, err := s.PatchedCheckout(context.Background(), []ports.ProposedFile{{Path: "a.yaml", Content: "new"}})
 		require.NoError(t, err)
 		assert.Equal(t, "old", originals["a.yaml"])
@@ -101,7 +102,7 @@ func TestScratch_ANewScratchFetchesAgain(t *testing.T) {
 
 func TestScratch_CloseRemovesTheCheckoutAndIsSafeToRepeat(t *testing.T) {
 	a := &archive{t: t, seed: map[string]string{"a.yaml": "old"}}
-	s := step.NewScratch(a, "r", "c")
+	s := step.NewScratch(a, repofs.CheckoutPatcher{}, "r", "c")
 	root, _, err := s.PatchedCheckout(context.Background(), nil)
 	require.NoError(t, err)
 
@@ -115,7 +116,7 @@ func TestScratch_CloseRemovesTheCheckoutAndIsSafeToRepeat(t *testing.T) {
 
 func TestScratch_CloseWithNoCheckoutDoesNothing(t *testing.T) {
 	a := &archive{t: t}
-	s := step.NewScratch(a, "r", "c")
+	s := step.NewScratch(a, repofs.CheckoutPatcher{}, "r", "c")
 	s.Close()
 	assert.Empty(t, a.fetches)
 	assert.Nil(t, s.Originals())
@@ -123,7 +124,7 @@ func TestScratch_CloseWithNoCheckoutDoesNothing(t *testing.T) {
 
 func TestScratch_OriginalsAreKeptAfterClose(t *testing.T) {
 	a := &archive{t: t, seed: map[string]string{"a.yaml": "old"}}
-	s := step.NewScratch(a, "r", "c")
+	s := step.NewScratch(a, repofs.CheckoutPatcher{}, "r", "c")
 	_, _, err := s.PatchedCheckout(context.Background(), []ports.ProposedFile{{Path: "a.yaml", Content: "new"}})
 	require.NoError(t, err)
 	s.Close()
@@ -133,7 +134,7 @@ func TestScratch_OriginalsAreKeptAfterClose(t *testing.T) {
 
 func TestScratch_APatchedCheckoutAfterCloseIsRefused(t *testing.T) {
 	a := &archive{t: t}
-	s := step.NewScratch(a, "r", "c")
+	s := step.NewScratch(a, repofs.CheckoutPatcher{}, "r", "c")
 	s.Close()
 	_, _, err := s.PatchedCheckout(context.Background(), nil)
 	require.ErrorIs(t, err, step.ErrScratchClosed)
@@ -143,7 +144,7 @@ func TestScratch_APatchedCheckoutAfterCloseIsRefused(t *testing.T) {
 func TestScratch_AFetchErrorIsReturnedWrappedAndTheNextCallTriesAgain(t *testing.T) {
 	boom := errors.New("boom")
 	a := &archive{t: t, err: boom}
-	s := step.NewScratch(a, "r", "c")
+	s := step.NewScratch(a, repofs.CheckoutPatcher{}, "r", "c")
 	defer s.Close()
 
 	_, _, err := s.PatchedCheckout(context.Background(), nil)
@@ -159,7 +160,7 @@ func TestScratch_AFetchErrorIsReturnedWrappedAndTheNextCallTriesAgain(t *testing
 
 func TestScratch_ASourceNotFoundStaysMatchable(t *testing.T) {
 	a := &archive{t: t, err: ports.ErrSourceNotFound}
-	s := step.NewScratch(a, "r", "c")
+	s := step.NewScratch(a, repofs.CheckoutPatcher{}, "r", "c")
 	_, _, err := s.PatchedCheckout(context.Background(), nil)
 	require.ErrorIs(t, err, ports.ErrSourceNotFound)
 }
@@ -168,7 +169,7 @@ func TestScratch_APathOutsideTheCheckoutIsRefusedBeforeAnythingIsFetchedOrWritte
 	for _, p := range []string{"../escape.yaml", "a/../../escape.yaml", "/etc/escape.yaml", ""} {
 		t.Run(p, func(t *testing.T) {
 			a := &archive{t: t}
-			s := step.NewScratch(a, "r", "c")
+			s := step.NewScratch(a, repofs.CheckoutPatcher{}, "r", "c")
 			defer s.Close()
 			_, _, err := s.PatchedCheckout(context.Background(), []ports.ProposedFile{{Path: p, Content: "x"}})
 			require.ErrorIs(t, err, step.ErrPathOutsideCheckout)
@@ -180,7 +181,7 @@ func TestScratch_APathOutsideTheCheckoutIsRefusedBeforeAnythingIsFetchedOrWritte
 func TestScratch_AFailedApplyRemovesTheCheckoutAndTheNextCallStartsOver(t *testing.T) {
 	// A directory where the file should go makes the read of the original fail.
 	a := &archive{t: t, seed: map[string]string{"dir/inner.txt": "x"}}
-	s := step.NewScratch(a, "r", "c")
+	s := step.NewScratch(a, repofs.CheckoutPatcher{}, "r", "c")
 	defer s.Close()
 
 	_, _, err := s.PatchedCheckout(context.Background(), []ports.ProposedFile{{Path: "dir", Content: "x"}})
@@ -197,7 +198,7 @@ func TestScratch_AFailedApplyRemovesTheCheckoutAndTheNextCallStartsOver(t *testi
 
 func TestScratch_TheOriginalsAMapHandsOutAreCopies(t *testing.T) {
 	a := &archive{t: t, seed: map[string]string{"a.yaml": "old"}}
-	s := step.NewScratch(a, "r", "c")
+	s := step.NewScratch(a, repofs.CheckoutPatcher{}, "r", "c")
 	defer s.Close()
 	files := []ports.ProposedFile{{Path: "a.yaml", Content: "new"}}
 

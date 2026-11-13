@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/memory"
+	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/sanitizer"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
@@ -97,6 +98,7 @@ func NewWorld(store *memory.Store, f conformance.Fixture, s conformance.Script) 
 		Precedents:       cat,
 		CandidateSource:  bundle{nodes: f.Bundle},
 		Archive:          repo,
+		Patcher:          repofs.CheckoutPatcher{},
 		Packager:         packager{p: f.Packager},
 		Releases:         release{r: f.Release},
 		PriorAttempts:    store.ProposalRepository(),

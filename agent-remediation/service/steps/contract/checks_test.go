@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
@@ -98,7 +99,7 @@ type pass struct {
 func newPass(t *testing.T, seed map[string]string) pass {
 	t.Helper()
 	a := &seedArchive{t: t, seed: seed}
-	s := step.NewScratch(a, repoName, commit)
+	s := step.NewScratch(a, repofs.CheckoutPatcher{}, repoName, commit)
 	t.Cleanup(s.Close)
 	return pass{archive: a, scratch: s}
 }
@@ -692,7 +693,7 @@ func TestScratch_RefetchesTheCheckoutInANewPass(t *testing.T) {
 	}
 
 	runPass := func() {
-		s := step.NewScratch(a, repoName, commit)
+		s := step.NewScratch(a, repofs.CheckoutPatcher{}, repoName, commit)
 		defer s.Close()
 		in := step.CheckInput{
 			Failure:  failure(nil),

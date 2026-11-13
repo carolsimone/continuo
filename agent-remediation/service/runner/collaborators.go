@@ -30,6 +30,9 @@ type Collaborators struct {
 	// Archive fetches a whole repository checkout at a commit, for a fix that
 	// has to search the tree rather than read one known file.
 	Archive ports.RepoArchive
+	// Patcher writes a draft's files over a checkout Archive fetched, for the
+	// pre-flight checks that run against the patched repository.
+	Patcher ports.CheckoutPatcher
 	// ContractLocator finds which contract yaml in that checkout declares the
 	// python node being fixed.
 	ContractLocator ports.ContractLocator
