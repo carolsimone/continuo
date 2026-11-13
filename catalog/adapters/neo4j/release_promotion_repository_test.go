@@ -248,6 +248,14 @@ func releaseOf(nodes ...topology.ReleasePromotedTopologyNode) []topology.Release
 	return nodes
 }
 
+// dormantNode is a built node whose release carries no schedule for it: it is
+// in the topology and on no cron.
+func dormantNode(uniqueID string, upstreams ...string) topology.ReleasePromotedTopologyNode {
+	n := modelNode(uniqueID, upstreams...)
+	n.Schedule = ""
+	return n
+}
+
 func TestPromoteRelease_FirstPromotionCreatesNodesEdgesAndMeta(t *testing.T) {
 	f := newSwapFixture(t)
 
@@ -620,4 +628,53 @@ func TestPromoteRelease_RetiresAnUnknownExternalNodeNoOneReads(t *testing.T) {
 	assert.Equal(t, "unknown-external", n["node_type"], "a retired node keeps its type")
 	assert.Equal(t, []string{"analytics.a", "analytics.b"}, f.activeIDs())
 	assert.Empty(t, f.edges(), "no live reader depends on the retired node")
+}
+
+// A node with an empty schedule (a dormant node) is stored as a live :Node whose
+// schedule_name is the empty string, and its edges are drawn like any node's.
+func TestPromoteRelease_StoresADormantNodeWithAnEmptySchedule(t *testing.T) {
+	f := newSwapFixture(t)
+
+	outcome := f.promote("rel-1", releaseOf(
+		modelNode("analytics.a"),
+		dormantNode("analytics.b", "analytics.a"),
+	), time.Now().UTC())
+	assert.Equal(t, topology.PromotionApplied, outcome)
+
+	n := f.node("analytics.b")
+	require.NotNil(t, n)
+	assert.Equal(t, true, n["active"])
+	assert.Equal(t, "dbt-model", n["node_type"])
+	assert.Contains(t, n, "schedule_name", "a dormant node stores its schedule as an empty string")
+	assert.Equal(t, "", n["schedule_name"])
+	assert.Equal(t, "daily", f.node("analytics.a")["schedule_name"])
+	assert.Equal(t, []string{"analytics.a", "analytics.b"}, f.activeIDs())
+	assert.Equal(t, []string{"analytics.b->analytics.a"}, f.edges())
+}
+
+// A later release that tags a dormant node gives it its schedule on the same
+// :Node: no second :Node appears and its edges hold.
+func TestPromoteRelease_ATagMovesADormantNodeToItsSchedule(t *testing.T) {
+	f := newSwapFixture(t)
+	now := time.Now().UTC()
+
+	f.promote("rel-1", releaseOf(
+		modelNode("analytics.a"),
+		dormantNode("analytics.b", "analytics.a"),
+	), now)
+	require.Equal(t, "", f.node("analytics.b")["schedule_name"])
+
+	require.Equal(t, topology.PromotionApplied, f.promote("rel-2", releaseOf(
+		modelNode("analytics.a"),
+		modelNode("analytics.b", "analytics.a"),
+	), now.Add(time.Hour)))
+
+	assert.Equal(t, int64(1), f.count(
+		`MATCH (n:Node {tenant_id: $tenant_id, unique_id: $uid}) RETURN count(n) AS n`, map[string]any{"uid": "analytics.b"}),
+		"one :Node holds the id")
+	n := f.node("analytics.b")
+	assert.Equal(t, "daily", n["schedule_name"])
+	assert.Equal(t, "rel-2", n["release_id"])
+	assert.Equal(t, true, n["active"])
+	assert.Equal(t, []string{"analytics.b->analytics.a"}, f.edges())
 }
