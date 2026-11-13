@@ -17,8 +17,10 @@ shipped in those.
 - A table that a node reads and no node builds now shows in the DAG as a grey `ingested` node.
 - Hold releases with maintenance mode while you upgrade, and do not roll release-controller back afterwards.
 - Every node's code fingerprint (`content_hash`) is computed anew, closing 23 gaps. After the upgrade, release each service once with `"rebaseline": true`.
-- The default validation image is `v0.12.0`.
-- No values change is needed.
+- The default validation image is `v0.12.0`, and a pinned validation image below it fails the render.
+- release-controller serves a read-only gRPC call on port 50056 for `continuo release notices`.
+- A seed load that drops its table rebuilds the continuo views that read it.
+- No values change is needed unless you pin `validation.imageTag` below `v0.12.0`.
 
 ### Upgrade steps
 
@@ -38,10 +40,15 @@ shipped in those.
 
 Rebuild a Python service on 0.12.0 only inside these steps: a normal release on 0.12.0 outside them moves its hashes outside the window and starts a validation.
 
-This release changes no values key, and it ships as a `MINOR`.
+This release adds the values key `global.releaseControllerGrpcAddr` with a default, and it ships as a `MINOR`.
+
+### Breaking
+
+- **A pinned validation image below `v0.12.0` fails the render.** TL;DR: re-pin `validation.imageTag` to `v0.12.0` or later before you upgrade, or drop the override. Every seed load that drops its table now runs the seed preflight first, and only the `v0.12.0` runner has it. An unmodified values file gets the new default and is not affected.
 
 ### Added
 
+- release-controller serves `release.v1.ReleaseQuery` on gRPC port 50056 for `continuo release notices`, with the values key `global.releaseControllerGrpcAddr` (default `release-controller:50056`). A values file that overrides the whole `services` list gets neither release-controller's `grpcPort` and `RELEASE_CONTROLLER_GRPC_PORT` nor agent-chat's `CONTINUO_RELEASE_CONTROLLER_ADDR`: copy them from the chart's `values.yaml`, or `continuo release notices` cannot reach release-controller. Nothing else depends on them.
 - **Tables no node builds show as `ingested` nodes.** TL;DR: a table that a node reads and no node builds, such as a table another system loads, now shows in the DAG as a grey `ingested` node with an edge to each node that reads it.
   - An ingested node has no schedule and is never built, run or validated. A node that reads its table still reads it where it is.
   - A system relation never becomes an ingested node.
@@ -67,6 +74,7 @@ This release changes no values key, and it ships as a `MINOR`.
   - A function's body (its language, arguments, return type, config, compiled SQL and overload bodies, but not its descriptions), the functions it calls and the macros that on-run hooks and functions call are in the fingerprint. A bare macro call resolves in dbt's order: the node's own package, the root project, other packages, then dbt's own. An enforced contract is hashed on models only.
   - agent-remediation packages a proposed Python fix with `continuo-python-runtime` 0.12.0.
 - **The default validation image is `v0.12.0`** (`validation.imageTag`).
+- A seed load that drops the seed's table now rebuilds, in the same run, the continuo views that read it, and stops before it drops an object continuo does not own on Postgres.
 - **`validation.engine` also decides which relations are system relations.** TL;DR: the engine you set picks the SQL dialect and also the warehouse's own relations, which never become nodes.
   - `postgres` has `information_schema` and the `pg_*` schemas, `trino` has `information_schema` and the `system` catalog. A system relation never becomes an ingested node, never resolves to a node and is never redirected to the candidate schema.
   - The key and its default are unchanged, and no values change is needed.

@@ -33,6 +33,15 @@ UPGRADE NOTES
   --target, --profile, --profiles-dir or --project-dir values than its compile
   command stops execution-controller from starting.
 
+  A validation.imageTag below v0.12.0 fails the render: that runner has no
+  seed preflight. Re-pin it to v0.12.0 or later, or drop the override to
+  track the chart's default.
+
+  A values file that overrides the whole services list gets neither
+  release-controller's grpcPort and RELEASE_CONTROLLER_GRPC_PORT nor
+  agent-chat's CONTINUO_RELEASE_CONTROLLER_ADDR: copy them from the chart's
+  values.yaml, or continuo release notices cannot reach release-controller.
+
   From continuo 0.11.x or earlier: the run-controller service now plans every
   run. When it first starts on this version, it cancels each run still pending
   or running that it did not plan (cancelled by "system", reason "the run's

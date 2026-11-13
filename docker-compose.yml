@@ -310,6 +310,7 @@ services:
       - REDIS_PASSWORD=local-continuo_release_controller
       - REDIS_ACL_MODE=perService
       - RELEASE_CONTROLLER_HTTP_PORT=8088
+      - RELEASE_CONTROLLER_GRPC_PORT=50056
       - LOG_LEVEL=INFO
       - S3_BUCKET=continuo
       - S3_ENDPOINT_URL=http://minio:9000
@@ -323,6 +324,7 @@ services:
       - WAREHOUSE_ENGINE=postgres
     ports:
       - "8088:8088"
+      - "50056:50056"
     networks:
       - default
 
@@ -590,6 +592,7 @@ services:
       - CONTINUO_RUN_CONTROLLER_ADDR=run-controller:50051
       - CONTINUO_CATALOG_ADDR=catalog:50052
       - CONTINUO_DEAD_LETTER_ADDR=dead-letter-controller:50055
+      - CONTINUO_RELEASE_CONTROLLER_ADDR=release-controller:50056
       - REDIS_ADDR=redis:6379
       - REDIS_USERNAME=continuo_agent_chat
       - REDIS_PASSWORD=local-continuo_agent_chat
@@ -604,7 +607,7 @@ services:
       # public API of LLM_PROVIDER=anthropic|openai.
       - LLM_BASE_URL=${LLM_BASE_URL-http://stub-llm:9100}
       # Outbound HTTP (the LLM) goes through egress-proxy. The gRPC dials to
-      # run-controller, catalog and dead-letter-controller, which
+      # run-controller, catalog, dead-letter-controller and release-controller, which
       # agent-chat's continuo CLI subprocess inherits, are the stack's own
       # services and bypass it. stub-llm is deliberately absent from NO_PROXY:
       # it is an allowlisted egress destination. The Go module hosts are listed
@@ -613,7 +616,7 @@ services:
       # stack's own service and bypasses the proxy.
       - HTTP_PROXY=http://egress-proxy:3128
       - HTTPS_PROXY=http://egress-proxy:3128
-      - NO_PROXY=localhost,127.0.0.1,::1,postgres,redis,run-controller,catalog,dead-letter-controller,proxy.golang.org,sum.golang.org,storage.googleapis.com,minio
+      - NO_PROXY=localhost,127.0.0.1,::1,postgres,redis,run-controller,catalog,dead-letter-controller,release-controller,proxy.golang.org,sum.golang.org,storage.googleapis.com,minio
     ports:
       - "8091:8091"
       - "50053:50053"

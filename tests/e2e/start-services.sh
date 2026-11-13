@@ -33,9 +33,13 @@ check_health "catalog" 8087 || exit 1
 # release-controller (blue/green release API + stream consumers) runs in
 # docker-compose alongside the other stream services. The e2e release-promote
 # test reaches its HTTP API at release-controller:8088 over the compose network,
-# and its consumers drive the candidate-parse → validation → promotion loop.
+# and its consumers drive the candidate-parse → validation → promotion loop. It
+# also serves ReleaseQuery on 50056, which the e2e `continuo release notices`
+# run dials; /healthz answers before the gRPC listener binds, so wait for the
+# port as well.
 start_service "release-controller" "release-controller" "release-controller"
 check_health "release-controller" 8088 "/healthz" || exit 1
+wait_for_tcp_port release-controller 50056 || exit 1
 
 start_service "remediation" "remediation" "remediation"
 check_health "remediation" 8090 "/healthz" || exit 1
