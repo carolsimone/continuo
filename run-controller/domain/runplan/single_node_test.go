@@ -82,8 +82,8 @@ func TestSingleNode_AnUnknownExternalKeyOfAnotherReleaseIsNotFound(t *testing.T)
 	assert.ErrorIs(t, err, runplan.ErrTargetNotFound)
 }
 
-// A dormant node is on no schedule, so only a run of the node alone executes
-// it: the plan holds its one task, ready at creation, whatever it reads.
+// A dormant node is on no schedule, and a run of the node alone executes it:
+// the plan holds its one task, ready at creation, whatever it reads.
 func TestSingleNode_SelectsADormantNode(t *testing.T) {
 	g := releaseGraph(dormantDAG)
 	n, ok := g.Node(key("dormant_d"))

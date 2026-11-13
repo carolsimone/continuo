@@ -201,9 +201,9 @@ func TestNewRelease_CopiesSeedColumnsHash(t *testing.T) {
 	assert.Equal(t, "sha256:e5a0", rel.Nodes[0].SeedColumnsHash)
 }
 
-// A node is dormant when continuo builds it and it belongs to no schedule:
-// only a run started by hand executes it. An unknown-external node, which no
-// node builds, and a node of a schedule are not dormant.
+// A node is dormant when continuo builds it and it belongs to no schedule. An
+// unknown-external node, which no node builds, and a node of a schedule are
+// not dormant.
 func TestNode_IsDormant(t *testing.T) {
 	for _, tc := range []struct {
 		nodeType, schedule string

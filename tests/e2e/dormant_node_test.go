@@ -32,8 +32,9 @@ const (
 
 // TestE2E_DormantNode_IsListedRunsByHandAndNeverRunsOnASchedule proves that a
 // model with an owner and no schedule tag is a dormant node: part of the
-// topology, never in a schedule's run, listed before it ever ran, and run by
-// hand:
+// topology, listed before it ever ran, and run by hand. dormant_probe is a
+// table below no seed, so no seed reload rebuilds it either, and no schedule's
+// run executes it:
 //
 //  1. A bootstrap release of service-1 promotes. service-1's dormant_probe
 //     model carries the project's owner and no tag.
@@ -49,7 +50,9 @@ const (
 //     ListScheduleTopologies counts the release's dormant nodes as
 //     model.IsDormant counts them.
 //  4. StartRun with no schedule name is refused, and no schedule ListSchedules
-//     lists has an empty name, so no run selects the nodes of no schedule.
+//     lists has an empty name, so no run selects the nodes of no schedule as
+//     its own (a run whose load of a seed drops its table rebuilds a dormant
+//     view below that seed, and dormant_probe is no such view).
 //     StartRun of every schedule of the release creates a run with no task
 //     for the node; each run is cancelled as soon as it is created, since its
 //     tasks are written with it, and a ResourceQuota keeps every pod from

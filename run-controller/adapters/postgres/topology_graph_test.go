@@ -174,19 +174,28 @@ func TestTopologyRepository_AnUnknownExternalUpstreamLeavesRebaseAndWholeSchedul
 	}, plan)
 }
 
-// A schedule's run graph holds the schedule's nodes and the seeds they read. A
-// dormant node a schedule's node reads belongs to no schedule and is no seed,
-// so neither it nor its edge is in the graph, and no run of the schedule, of
-// any operation, executes it. The data tests of a dormant model are never
-// stored, since no release stores a test.
+// ScheduleGraph, the graph a schedule's run is planned from, holds the
+// schedule's nodes and the seeds they read, and never a dormant node: here a
+// dormant table below the seed seed_1 and a dormant snapshot, both read by the
+// schedule's node a. Neither is in the graph, nor their edges, so a whole-graph
+// plan of the schedule, of any operation, selects neither. A dormant table is
+// never a seed reload's rebuild either. A dormant view below a seed the run
+// loads is the one dormant node a schedule's run can execute: the planner adds
+// it as a rebuild through ViewClosure
+// (TestViewClosure_ReachesADormantViewBelowASeed). The data tests of a dormant
+// model are never stored, since no release stores a test.
 func TestScheduleGraph_NeverHoldsADormantUpstream(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	tenant := newTopoTenant(t, db)
+	dormantTable := graphSpec("dormant_m", "dbt-model", "", "seed_1")
+	dormantTable.Materialized = "table"
+	dormantSnapshot := graphSpec("dormant_s", "dbt-snapshot", "")
+	dormantSnapshot.Materialized = "snapshot"
 	_, err := saveTopoRelease(t, db, topoRelease(t, tenant, "rel-1", 1, "sha-1",
 		graphSpec("seed_1", "dbt-seed", "seed"),
-		graphSpec("dormant_m", "dbt-model", "", "seed_1"),
-		graphSpec("dormant_s", "dbt-snapshot", ""),
+		dormantTable,
+		dormantSnapshot,
 		topology.NodeSpec{
 			UniqueID: "test.svc.not_null_dormant_m", ServiceName: "svc-", SchemaName: "stg", TableName: "not_null_dormant_m",
 			NodeType: "dbt-test", UpstreamUniqueIDs: []string{"stg.dormant_m"},
@@ -255,4 +264,36 @@ func TestViewClosure_FollowsViewsAndEphemeralsFromTheSeeds(t *testing.T) {
 	ghost, err := repo.ViewClosure(ctx, tenant, "rel-closure", []topology.NodeKey{"stg.ghost"})
 	require.NoError(t, err)
 	assert.Equal(t, 0, ghost.Len())
+}
+
+// ViewClosure reaches a dormant view below a seed, whatever its schedule, so a
+// run that loads the seed and drops its table rebuilds it. It stops at a
+// dormant table below the seed and never reaches the dormant view below that
+// table. TestScheduleGraph_NeverHoldsADormantUpstream pins the other side: the
+// schedule's own graph holds no dormant node.
+func TestViewClosure_ReachesADormantViewBelowASeed(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := newTopoTenant(t, db)
+	// s seed; dv dormant view(s); dt dormant table(s); dtv dormant view(dt)
+	specs := []topology.NodeSpec{
+		graphSpec("s", "dbt-seed", "seed"),
+		graphSpec("dv", "dbt-model", "", "s"),
+		graphSpec("dt", "dbt-model", "", "s"),
+		graphSpec("dtv", "dbt-model", "", "dt"),
+	}
+	for i, m := range []string{"seed", "view", "table", "view"} {
+		specs[i].Materialized = m
+	}
+	_, err := saveTopoRelease(t, db, topoRelease(t, tenant, "rel-dormant-closure", 1, "abc", specs...))
+	require.NoError(t, err)
+	repo := postgres.NewTopologyRepository(db, nil)
+
+	g, err := repo.ViewClosure(ctx, tenant, "rel-dormant-closure", []topology.NodeKey{"stg.s"})
+	require.NoError(t, err)
+	assert.Equal(t, []topology.NodeKey{"stg.dv", "stg.s"}, g.Keys())
+	assert.Equal(t, []topology.NodeKey{"stg.s"}, g.Upstreams("stg.dv"))
+	dv, ok := g.Node("stg.dv")
+	require.True(t, ok)
+	assert.True(t, dv.IsDormant(), "the view below the seed is dormant")
 }

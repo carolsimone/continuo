@@ -143,9 +143,9 @@ describe('DAGPanel unknown-external nodes', () => {
     const graphEdges: GraphEdge[] = [...EDGES, { from_node_id: dormantId, to_node_id: READER_ID }];
     const { container } = setup({ colorByStatus: true, graphNodes, graphEdges });
 
-    // The reader has no task in the run on screen, so it is dashed; neither the
-    // external node nor the dormant node is ever in a schedule's run, and both
-    // keep a solid border of their own colour.
+    // The reader has no task in the run on screen, so it is dashed. Neither the
+    // external node nor the dormant node has one either, yet both keep a solid
+    // border of their own colour: a fixed look never takes the dashed border.
     expect(nodeIn(container, READER_ID).style.borderTopStyle).toBe('dashed');
     for (const id of [UNKNOWN_EXTERNAL_ID, dormantId]) {
       const node = nodeIn(container, id);

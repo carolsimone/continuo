@@ -762,6 +762,81 @@ func TestPlanner_AScheduleNodeThatReadsARebuiltViewWaitsForTheRebuild(t *testing
 	assert.Equal(t, []topology.NodeKey{current, seed}, sel.Graph.Upstreams(summary))
 }
 
+// A run of the daily schedule whose load of the seed drops the seed's table
+// rebuilds the dormant views below the seed, though no schedule holds them: on
+// Postgres when the seed's columns changed, and on Trino on every load, the
+// seed's columns unchanged. A dormant table below the seed is no rebuild, and
+// neither is the dormant view below that table: the walk stops at a table.
+func TestPlanner_ADormantViewBelowAReloadedSeedIsRebuilt(t *testing.T) {
+	const (
+		dormantTable topology.NodeKey = "analytics.fx_rates_archive"
+		belowTable   topology.NodeKey = "analytics.fx_rates_archive_eur"
+	)
+	g := fxTopology()
+	nodes := []topology.Node{fxNode(dormantTable, "dbt-model", "table", ""), fxNode(belowTable, "dbt-model", "view", "")}
+	edges := []topology.Edge{{Upstream: seed, Downstream: dormantTable}, {Upstream: dormantTable, Downstream: belowTable}}
+	for _, k := range g.Keys() {
+		n, _ := g.Node(k)
+		nodes = append(nodes, n)
+		for _, d := range g.Downstreams(k) {
+			edges = append(edges, topology.Edge{Upstream: k, Downstream: d})
+		}
+	}
+	withDormantTable := topology.NewGraph(nodes, edges)
+	for _, k := range []topology.NodeKey{current, latest, dormantTable, belowTable} {
+		n, ok := withDormantTable.Node(k)
+		require.True(t, ok, "%s is in the release", k)
+		require.True(t, n.IsDormant(), "%s is dormant", k)
+	}
+
+	cases := map[string]struct {
+		planner runstart.Planner
+		loaded  string
+		reasons map[topology.NodeKey]string
+	}{
+		"postgres, columns changed": {
+			planner: fxPlanner,
+			loaded:  "sha256:old",
+			reasons: map[topology.NodeKey]string{
+				current: "rebuild: dropped by the load of analytics.seed_fx_rates_eur",
+				latest:  "rebuild: dropped by the load of analytics.seed_fx_rates_eur, through analytics.fx_rates_current",
+			},
+		},
+		"trino, columns unchanged": {
+			planner: runstart.Planner{Tasks: defaults, Family: warehouse.LateBinding, Engine: "trino"},
+			loaded:  "sha256:new",
+			reasons: map[topology.NodeKey]string{
+				current: "rebuild: may be stale on Trino after the load of analytics.seed_fx_rates_eur",
+				latest:  "rebuild: may be stale on Trino after the load of analytics.seed_fx_rates_eur, through analytics.fx_rates_current",
+			},
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			u, topo := fxUoW(nil)
+			topo.graph = withDormantTable
+			topo.schedules = map[string][]topology.NodeKey{"daily": {table, seed}}
+			u.MaterializationRepo = loadedColumns{seed: c.loaded}
+
+			sel, err := c.planner.Schedule(context.Background(), u, tenant, "daily", model.OperationRun)
+
+			require.NoError(t, err)
+			assert.Equal(t, []topology.NodeKey{current, latest, table, seed}, keysOf(sel.Plan.Tasks))
+			for k, reason := range c.reasons {
+				task := taskOf(sel.Plan, k)
+				require.Equal(t, k, task.Key, "the dormant view %s is a task of the schedule's run", k)
+				assert.Equal(t, reason, task.Reason, "%s", k)
+				assert.Equal(t, seed, task.RebuildOf, "%s", k)
+				n, ok := sel.Graph.Node(k)
+				require.True(t, ok, "%s is in the run's graph", k)
+				assert.True(t, n.IsDormant(), "%s is dormant in the run's graph", k)
+			}
+			assert.NotContains(t, keysOf(sel.Plan.Tasks), dormantTable, "a dormant table below the seed is not rebuilt")
+			assert.NotContains(t, keysOf(sel.Plan.Tasks), belowTable, "a dormant view below that table is not rebuilt")
+		})
+	}
+}
+
 // A column change of a release that skipped validation says so at the end of
 // the seed's reason.
 func TestPlanner_ABootstrapReleaseMarksAColumnChangeUnvalidated(t *testing.T) {
