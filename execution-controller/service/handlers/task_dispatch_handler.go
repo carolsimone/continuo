@@ -32,8 +32,8 @@ import (
 // one made while the block defined the command is adopted or awaited like
 // any other. A dispatch that may store an attempt takes its run's lock shared
 // before it reads the fence, so a fence being written is waited for and met,
-// and a fence written after sees the attempt. Each attempt stored stopped is counted once the
-// transaction commits.
+// and a fence written after sees the attempt. Each attempt stored stopped is
+// counted once the transaction commits.
 type TaskDispatchHandler struct {
 	jobs     ports.JobCache
 	lookup   ports.JobLookup
