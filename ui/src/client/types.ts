@@ -205,11 +205,26 @@ export interface NodeRun {
   error_message: string | null;
   log_s3_key: string | null;
   run_results_uri: string | null;
+  // The objects (lowercased schema.name) a seed load stopped on because they
+  // read the seed and no run rebuilds them; empty on every other task.
+  blocking_objects?: string[];
 }
 
-// A node's history: one row per task that ran the node, with its run.
+// A view the load of a seed took out of production: missing (dropped) or stale
+// (still readable, built on the seed's earlier content). `since` is when the
+// outage began, null when the server does not know.
+export interface NodeOutage {
+  state: 'missing' | 'stale';
+  since: string | null;
+  seed_node_id: string;
+  run_id: string;
+}
+
+// A node's history: one row per task that ran the node, with its run, and the
+// outage of the node's production object when it has one.
 export interface NodeRunsResponse {
   tasks: NodeRun[];
+  outage?: NodeOutage | null;
 }
 
 export interface ScheduleTopologySummary {

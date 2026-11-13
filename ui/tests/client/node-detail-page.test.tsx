@@ -1152,3 +1152,174 @@ describe('NodeDetailPage — history of a run still in flight', () => {
     expect(screen.getByText('running')).toBeInTheDocument();
   });
 });
+
+// A seed's history read: the outage of its views and, on a task whose load
+// stopped, the objects it named.
+function seedHistory(
+  tasks: unknown[],
+  outage: unknown = null,
+  options: { post?: (init: RequestInit) => Promise<Response> } = {},
+) {
+  return (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-seed', test_count: 1, test_count_known: true });
+    if (url.endsWith('/run') && init?.method === 'POST') {
+      return options.post ? options.post(init) : jsonResp({ run_id: 'fr', schedule_name: 'single-node-run-00ff00ff' });
+    }
+    return jsonResp({ tasks, outage });
+  };
+}
+
+const runPosts = () => (mockFetch.mock.calls as unknown as [string, RequestInit?][])
+  .filter(c => String(c[0]).endsWith('/run') && c[1]?.method === 'POST')
+  .map(c => c[1] as RequestInit);
+
+async function openFullRefreshDialog() {
+  await waitFor(() => screen.getByRole('option', { name: /full refresh/i }));
+  await userEvent.selectOptions(screen.getByLabelText(/operation/i), 'full_refresh');
+  await userEvent.click(screen.getByRole('button', { name: 'Full refresh this node' }));
+  return screen.findByRole('dialog');
+}
+
+describe('NodeDetailPage — outage of a view after a seed load', () => {
+  const since = '2026-11-24T09:16:02Z';
+  const outageOf = (state: string, over: Record<string, unknown> = {}) =>
+    ({ state, since, seed_node_id: 'analytics.seed_fx_rates_eur', run_id: 'r1', ...over });
+
+  it('shows the view missing in production since its seed load', async () => {
+    mockFetch.mockImplementation(seedHistory([], outageOf('missing')));
+    const { container } = renderPage();
+    const strip = (await screen.findByText(/Missing in production since/)).closest('.info-strip')!;
+    expect(strip).toHaveClass('info-strip--error');
+    expect(strip).toHaveTextContent(`since ${new Date(since).toLocaleString()}`);
+    expect(screen.getByText(/analytics.seed_fx_rates_eur/)).toBeInTheDocument();
+    expect(container.querySelectorAll('.info-strip--warning')).toHaveLength(0);
+  });
+
+  it('shows a stale view as a warning', async () => {
+    mockFetch.mockImplementation(seedHistory([], outageOf('stale')));
+    renderPage();
+    const strip = (await screen.findByText(/Stale since/)).closest('.info-strip')!;
+    expect(strip).toHaveClass('info-strip--warning');
+    expect(strip).toHaveTextContent('after the load of analytics.seed_fx_rates_eur');
+  });
+
+  it('names the outage without a time when the server gives none', async () => {
+    mockFetch.mockImplementation(seedHistory([], outageOf('missing', { since: null })));
+    renderPage();
+    const strip = (await screen.findByText(/Missing in production/)).closest('.info-strip')!;
+    expect(strip).not.toHaveTextContent('since');
+  });
+
+  it('shows no strip for a node without an outage', async () => {
+    mockFetch.mockImplementation(seedHistory([mkRun({})], null));
+    const { container } = renderPage();
+    await screen.findByRole('table');
+    expect(screen.queryByText(/Missing in production|Stale since/)).toBeNull();
+    expect(container.querySelectorAll('.info-strip--error')).toHaveLength(0);
+  });
+
+  it('drops the strip once a later read reports no outage', async () => {
+    let outage: unknown = outageOf('missing');
+    mockFetch.mockImplementation((input: RequestInfo | URL, init?: RequestInit) =>
+      seedHistory([], outage)(input, init));
+    renderPage();
+    await screen.findByText(/Missing in production since/);
+    outage = null;
+    fireEvent.change(screen.getByLabelText(/operation/i), { target: { value: 'test' } });
+    fireEvent.change(screen.getByLabelText(/operation/i), { target: { value: 'run' } });
+    await waitFor(() => expect(screen.queryByText(/Missing in production since/)).toBeNull());
+  });
+});
+
+describe('NodeDetailPage — objects a seed full refresh may drop', () => {
+  const stopped = (objects: string[]) => mkRun({ kind: 'single_node_run', task_status: 'failed', failure_class: 'task', failure_reason: 'unowned_dependents', blocking_objects: objects } as never);
+
+  it('lets the operator name the objects a seed full refresh may drop', async () => {
+    mockFetch.mockImplementation(seedHistory([stopped(['e2e_bi.seed_reader'])]));
+    renderPage();
+    const dialog = await openFullRefreshDialog();
+    expect(dialog).toHaveTextContent(/views that read it are rebuilt in the same run/i);
+    const box = screen.getByRole('checkbox', { name: 'e2e_bi.seed_reader' });
+    expect(box).not.toBeChecked();
+    await userEvent.click(box);
+    await userEvent.click(screen.getByRole('button', { name: 'Full refresh' }));
+    await waitFor(() => expect(runPosts()).toHaveLength(1));
+    expect(bodyOf(runPosts()[0])).toEqual({
+      request_id: expect.stringMatching(UUID),
+      operation: 'full_refresh',
+      acknowledged_dependents: ['e2e_bi.seed_reader'],
+    });
+  });
+
+  it('sends only the ticked objects, in the order the dialog lists them', async () => {
+    mockFetch.mockImplementation(seedHistory([stopped(['bi.a', 'bi.b', 'bi.c', 'bi.a'])]));
+    renderPage();
+    await openFullRefreshDialog();
+    expect(screen.getAllByRole('checkbox')).toHaveLength(3);
+    await userEvent.click(screen.getByRole('checkbox', { name: 'bi.c' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: 'bi.a' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Full refresh' }));
+    await waitFor(() => expect(runPosts()).toHaveLength(1));
+    expect(bodyOf(runPosts()[0]).acknowledged_dependents).toEqual(['bi.a', 'bi.c']);
+  });
+
+  it('sends no acknowledged_dependents when none is ticked', async () => {
+    mockFetch.mockImplementation(seedHistory([stopped(['bi.a'])]));
+    renderPage();
+    await openFullRefreshDialog();
+    await userEvent.click(screen.getByRole('button', { name: 'Full refresh' }));
+    await waitFor(() => expect(runPosts()).toHaveLength(1));
+    expect(bodyOf(runPosts()[0])).not.toHaveProperty('acknowledged_dependents');
+  });
+
+  it('lists no object when the newest task named none', async () => {
+    mockFetch.mockImplementation(seedHistory([mkRun({ kind: 'single_node_run' }), stopped(['bi.a'])]));
+    renderPage();
+    const dialog = await openFullRefreshDialog();
+    expect(screen.queryByRole('checkbox')).toBeNull();
+    expect(dialog).not.toHaveClass('dialog--wide');
+  });
+
+  it('does not offer the objects on the dialog of a node that is not a seed', async () => {
+    mockFetch.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 1, test_count_known: true });
+      return seedHistory([mkRun({})])(input, init);
+    });
+    renderPage();
+    const dialog = await openFullRefreshDialog();
+    expect(dialog).toHaveTextContent(/Only this node runs/);
+    expect(dialog).not.toHaveTextContent(/views that read it are rebuilt/);
+  });
+
+  it('a retry that names the same objects sends the same request id, other objects a new one', async () => {
+    let n = 0;
+    mockFetch.mockImplementation(seedHistory([stopped(['bi.a', 'bi.b'])], null, {
+      post: () => (n++ < 2 ? Promise.reject(new Error('timeout')) : jsonResp({ run_id: 'fr', schedule_name: 's' })),
+    }));
+    renderPage();
+
+    await openFullRefreshDialog();
+    await userEvent.click(screen.getByRole('checkbox', { name: 'bi.b' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: 'bi.a' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Full refresh' }));
+    await screen.findByText('Request failed — please try again');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Full refresh this node' }));
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'bi.a' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: 'bi.b' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Full refresh' }));
+    await waitFor(() => expect(runPosts()).toHaveLength(2));
+    expect(bodyOf(runPosts()[1]).request_id).toBe(bodyOf(runPosts()[0]).request_id);
+    expect(bodyOf(runPosts()[1]).acknowledged_dependents).toEqual(['bi.a', 'bi.b']);
+    await screen.findByText('Request failed — please try again');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Full refresh this node' }));
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'bi.a' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Full refresh' }));
+    await waitFor(() => expect(runPosts()).toHaveLength(3));
+    expect(bodyOf(runPosts()[2]).request_id).not.toBe(bodyOf(runPosts()[0]).request_id);
+    expect(bodyOf(runPosts()[2]).acknowledged_dependents).toEqual(['bi.a']);
+  });
+});
