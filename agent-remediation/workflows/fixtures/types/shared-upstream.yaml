@@ -1,0 +1,105 @@
+# Two sales models fail the same way below base_orders, which the release
+# changed: it dropped the amount column both of them read. The fix restores
+# the column in base_orders once. When it cannot, each member falls back to a
+# dbt-validation fix of its own. Built from the upstream lane's tests
+# (service/fixer/upstream_test.go).
+kind: fixture
+version: 1
+type: shared-upstream
+trigger:
+  source: validation
+  release_id: rel-shared-1
+  repo: o/repo
+  commit_sha: sha-shared
+  code_bundle_uri: s3://continuo/code-bundles/rel-shared-1/bundle.json
+  nodes:
+    - node_id: model.sales.daily_orders
+      category: validation
+      error_signature: sig-base-orders-amount
+      reason: missing_column
+      error_excerpt: 'column base_orders.amount does not exist'
+      dbt_log_uri: s3://logs/rel-shared-1/model.sales.daily_orders.log
+      candidate_artifact_uri: s3://candidates/rel-shared-1/model.sales.daily_orders.sql
+      file_path: models/daily_orders.sql
+      service: sales
+      node_type: dbt-model
+      changed_ancestors:
+        - { node_id: model.sales.base_orders, file_path: models/base_orders.sql, service: sales, depth: 1 }
+    - node_id: model.sales.weekly_orders
+      category: validation
+      error_signature: sig-base-orders-amount
+      reason: missing_column
+      error_excerpt: 'column base_orders.amount does not exist'
+      dbt_log_uri: s3://logs/rel-shared-1/model.sales.weekly_orders.log
+      candidate_artifact_uri: s3://candidates/rel-shared-1/model.sales.weekly_orders.sql
+      file_path: models/weekly_orders.sql
+      service: sales
+      node_type: dbt-model
+      changed_ancestors:
+        - { node_id: model.sales.base_orders, file_path: models/base_orders.sql, service: sales, depth: 1 }
+service_repo_paths:
+  sales: services/sales
+repo_files:
+  services/sales/models/base_orders.sql: "select id from analytics.raw_orders\n"
+  services/sales/models/daily_orders.sql: "select id, amount from base_orders\n"
+  services/sales/models/weekly_orders.sql: "select id, sum(amount) as amount from base_orders group by id\n"
+objects:
+  s3://logs/rel-shared-1/model.sales.daily_orders.log: "Database Error in model daily_orders\n  column base_orders.amount does not exist\n"
+  s3://logs/rel-shared-1/model.sales.weekly_orders.log: "Database Error in model weekly_orders\n  column base_orders.amount does not exist\n"
+  s3://candidates/rel-shared-1/model.sales.daily_orders.sql: "select id, amount from analytics.base_orders"
+  s3://candidates/rel-shared-1/model.sales.weekly_orders.sql: "select id, sum(amount) as amount from analytics.base_orders group by id"
+bundle:
+  model.sales.base_orders: { runtime: dbt, raw_code: "select id from analytics.raw_orders\n" }
+  model.sales.daily_orders: { runtime: dbt, raw_code: "select id, amount from base_orders\n" }
+  model.sales.weekly_orders: { runtime: dbt, raw_code: "select id, sum(amount) as amount from base_orders group by id\n" }
+catalog:
+  current_versions:
+    model.sales.base_orders: { raw_code: "select id, amount from analytics.raw_orders\n", content_hash: h-base-1, promoted_at: "2026-11-01T00:00:00Z" }
+release:
+  image_tag: sha-shared
+answers:
+  pass:
+    - proposed_sql: "select id, amount from analytics.raw_orders\n"
+      rationale: restored the amount column both members read
+      confidence: high
+      model: claude-test
+  fail:
+    # base_orders unchanged: pre-flight refuses it and the members fall back.
+    - proposed_sql: "select id from analytics.raw_orders\n"
+      rationale: base_orders looks right
+      confidence: high
+      model: claude-test
+  decline:
+    - proposed_sql: "select id, amount from analytics.raw_orders\n"
+      rationale: the members may be the ones to change
+      confidence: low
+      model: claude-test
+member_answers:
+  model.sales.daily_orders:
+    pass:
+      - proposed_sql: "select id, 0 as amount from analytics.base_orders"
+        rationale: base_orders has no amount column now
+        confidence: high
+        model: claude-test
+      - proposed_sql: "select id, 0 as amount from base_orders\n"
+        rationale: stop reading the dropped column
+        confidence: high
+        model: claude-test
+  model.sales.weekly_orders:
+    pass:
+      - proposed_sql: "select id, 0 as amount from analytics.base_orders group by id"
+        rationale: base_orders has no amount column now
+        confidence: high
+        model: claude-test
+      - proposed_sql: "select id, 0 as amount from base_orders group by id\n"
+        rationale: stop reading the dropped column
+        confidence: high
+        model: claude-test
+# An ancestor the trigger does not place and the promoted graph cannot locate
+# cannot be edited.
+decline_before_model:
+  node:
+    changed_ancestors:
+      - { node_id: model.sales.base_orders, service: sales, depth: 1 }
+gate_errors:
+  model.sales.daily_orders: 'column base_orders.amount does not exist'

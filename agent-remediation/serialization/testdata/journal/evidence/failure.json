@@ -1,0 +1,87 @@
+{
+  "Trigger": {
+    "TenantID": "acme",
+    "Source": "release-validation",
+    "ReleaseID": "rel-1",
+    "Round": 2,
+    "Repo": "org/repo",
+    "CommitSHA": "abc123",
+    "CodeBundleURI": "s3://bundles/rel-1.tar.gz",
+    "Nodes": [
+      {
+        "NodeID": "orders.model.orders_daily",
+        "RelationID": "analytics.orders_daily",
+        "ErrorSignature": "sig-1",
+        "Category": "compile",
+        "Reason": "compile_error",
+        "ErrorExcerpt": "column x does not exist",
+        "DBTLogURI": "s3://logs/dbt.log",
+        "CandidateArtifactURI": "s3://candidate/orders_daily.sql",
+        "FilePath": "models/orders_daily.sql",
+        "Service": "orders",
+        "NodeType": "model",
+        "OtherService": "billing",
+        "OtherFilePath": "models/other.sql",
+        "ChangedAncestors": [
+          {
+            "NodeID": "orders.model.stg_orders",
+            "FilePath": "models/stg_orders.sql",
+            "Service": "orders",
+            "Depth": 1
+          }
+        ]
+      }
+    ]
+  },
+  "Kind": "shared_upstream",
+  "TargetNodeID": "orders.model.orders_daily",
+  "Target": {
+    "NodeID": "orders.model.orders_daily",
+    "RelationID": "analytics.orders_daily",
+    "ErrorSignature": "sig-1",
+    "Category": "compile",
+    "Reason": "compile_error",
+    "ErrorExcerpt": "column x does not exist",
+    "DBTLogURI": "s3://logs/dbt.log",
+    "CandidateArtifactURI": "s3://candidate/orders_daily.sql",
+    "FilePath": "models/orders_daily.sql",
+    "Service": "orders",
+    "NodeType": "model",
+    "OtherService": "billing",
+    "OtherFilePath": "models/other.sql",
+    "ChangedAncestors": [
+      {
+        "NodeID": "orders.model.stg_orders",
+        "FilePath": "models/stg_orders.sql",
+        "Service": "orders",
+        "Depth": 1
+      }
+    ]
+  },
+  "Members": [
+    {
+      "NodeID": "orders.model.orders_daily",
+      "RelationID": "analytics.orders_daily",
+      "ErrorSignature": "sig-1",
+      "Category": "compile",
+      "Reason": "compile_error",
+      "ErrorExcerpt": "column x does not exist",
+      "DBTLogURI": "s3://logs/dbt.log",
+      "CandidateArtifactURI": "s3://candidate/orders_daily.sql",
+      "FilePath": "models/orders_daily.sql",
+      "Service": "orders",
+      "NodeType": "model",
+      "OtherService": "billing",
+      "OtherFilePath": "models/other.sql",
+      "ChangedAncestors": [
+        {
+          "NodeID": "orders.model.stg_orders",
+          "FilePath": "models/stg_orders.sql",
+          "Service": "orders",
+          "Depth": 1
+        }
+      ]
+    }
+  ],
+  "Attempt": 3
+}

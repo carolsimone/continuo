@@ -75,6 +75,13 @@ type anthropicToolChoice struct {
 // anthropicResponse is the top-level response from POST /v1/messages.
 type anthropicResponse struct {
 	Content []anthropicContentBlock `json:"content"`
+	Usage   anthropicUsage          `json:"usage"`
+}
+
+// anthropicUsage is the response's token accounting.
+type anthropicUsage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
 }
 
 // anthropicContentBlock is one element of the response content array.
@@ -178,6 +185,7 @@ func (p *anthropicProvider) parseResponse(r io.Reader, toolName string) (ports.P
 				Confidence:             block.Input.Confidence,
 				SuspectedRootCauseNode: block.Input.SuspectedRootCauseNode,
 				Model:                  p.model,
+				Usage:                  ports.TokenUsage{Input: resp.Usage.InputTokens, Output: resp.Usage.OutputTokens},
 			}, nil
 		}
 	}

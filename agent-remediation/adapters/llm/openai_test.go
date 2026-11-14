@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/llm"
+	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -150,6 +151,26 @@ func TestOpenAI_ParseResponse(t *testing.T) {
 	assert.Equal(t, "medium", result.Confidence)
 	assert.Equal(t, "model.service_2.orders", result.SuspectedRootCauseNode)
 	assert.Equal(t, "gpt-4o", result.Model)
+}
+
+// TestOpenAI_ReadsTokenUsage verifies the adapter reports the response's
+// usage.prompt_tokens and usage.completion_tokens.
+func TestOpenAI_ReadsTokenUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(openaiRecordedResponse))
+	}))
+	defer srv.Close()
+
+	provider, err := llm.NewProvider("openai", "test-key", "gpt-4o", srv.URL, srv.Client())
+	require.NoError(t, err)
+
+	result, err := provider.Propose(context.Background(), buildTestProposeRequest())
+	require.NoError(t, err)
+
+	assert.Equal(t, ports.TokenUsage{Input: 80, Output: 60}, result.Usage)
+	assert.False(t, result.Cached)
 }
 
 // TestOpenAI_NonOKStatus verifies that a non-2xx response returns an error

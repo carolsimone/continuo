@@ -3,12 +3,16 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -24,15 +28,20 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/s3"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/sanitizer"
+	"github.com/carolsimone/continuo/agent-remediation/adapters/workflowfile"
 	remediationv1 "github.com/carolsimone/continuo/agent-remediation/api/remediation/v1"
 	"github.com/carolsimone/continuo/agent-remediation/config"
+	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
+	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/handlers"
 	"github.com/carolsimone/continuo/agent-remediation/service/llmcache"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/promptlog"
 	"github.com/carolsimone/continuo/agent-remediation/service/proposals"
+	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 	"github.com/carolsimone/continuo/agent-remediation/service/verification"
+	"github.com/carolsimone/continuo/agent-remediation/workflows"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
 	"github.com/carolsimone/continuo/pkg/domain/model"
@@ -308,6 +317,40 @@ func main() {
 		Maintenance:       cfg.Maintenance,
 	}
 
+	// The runner works a heal trigger as a remediation of committed steps. Its
+	// worker, gate poller and sweeper run with either engine: the engine only
+	// decides what the remediation.requested consumer does with a new trigger,
+	// and a remediation the runner started must finish whichever engine runs
+	// now. Its built-in files are checked against the steps the registry holds
+	// before anything starts, and a refused file stops startup.
+	newUoW := func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, cfg.ServiceRepoPaths) }
+	collab := runnerCollaborators(cfg, runnerAdapters{
+		github:    gh,
+		evidence:  evidenceReader,
+		artifacts: artifactWriter,
+		graph:     graphClient,
+		bundle:    bundleReader,
+		contracts: contracts,
+		packager:  packager,
+		release:   releaseGateway,
+		proposals: proposalRepo,
+	}, logger)
+	files, err := loadRunnerFiles(workflows.Builtin, collab, logger)
+	if err != nil {
+		logger.Error("the built-in remediation files are refused", "error", err)
+		os.Exit(1)
+	}
+	warnIgnoredMaxAttempts(cfg, files, logger)
+	remediationRepo := postgres.NewRemediationRepository(db)
+	accept := startRunner(ctx, cfg, collab, files, runnerWiring{
+		llm:    cachedLLM,
+		newUoW: newUoW,
+		repo:   func() repository.RemediationRepository { return remediationRepo },
+		owner:  leaseOwner(hostName(), os.Getpid()),
+		live:   liveReg,
+		logger: logger,
+	}, lifecycleManager.Go)
+
 	// The outbox relay wakes on the notification a committed insert into its
 	// table sends.
 	outboxWaker, err := pkgoutbox.NewPostgresWaker(ctx, cfg.Postgres.DSN, postgres.OutboxTable, logger)
@@ -346,6 +389,11 @@ func main() {
 				Prune:        mpPruner.DeleteOlderThan,
 				MinRetention: model.ReplayHorizon,
 			},
+			{
+				Name:         "remediation",
+				Prune:        remediationRepo.DeleteFinishedOlderThan,
+				MinRetention: model.ReplayHorizon,
+			},
 		},
 		pkgretention.Config{
 			Retention: time.Duration(cfg.RetentionDays) * 24 * time.Hour,
@@ -356,8 +404,16 @@ func main() {
 	lifecycleManager.Go(func() { retentionSweeper.Run(ctx) })
 
 	// Start the remediation.requested consumer in a goroutine; blocks until ctx
-	// is cancelled.
-	runConsumer("remediation_requested", rredis.NewRemediationRequestedConsumer(rc, deps, logger))
+	// is cancelled. The engine decides whether it hands the trigger to the
+	// runner or proposes a fix itself.
+	logger.Info("remediation engine", "engine", cfg.Engine)
+	var requested *pkgredis.StreamConsumer
+	if cfg.Engine == config.EngineRunner {
+		requested = rredis.NewRemediationRequestedRunnerConsumer(rc, accept, logger)
+	} else {
+		requested = rredis.NewRemediationRequestedLegacyConsumer(rc, deps, logger)
+	}
+	runConsumer("remediation_requested", requested)
 
 	// Start the RemediationProposals gRPC server. The proposal service uses a
 	// DB-bound (non-transactional) repository for reads and the UoW factory for
@@ -443,4 +499,283 @@ func main() {
 	grpcSrv.GracefulStop()
 	_ = srv.Shutdown(shutdownCtx)
 	logger.Info("agent-remediation stopped")
+}
+
+// loop is a background loop that runs until its context ends.
+type loop interface{ Run(ctx context.Context) }
+
+// runnerLoops are the loops that carry a remediation the runner accepted to its
+// end: the worker that drives it, the poller that reads its gate and the
+// sweeper that ends one that can go no further. They run with either engine, so
+// a remediation the runner started finishes whichever engine runs now.
+type runnerLoops struct {
+	worker, poller, sweeper loop
+}
+
+// runnerWiring is what the runner and its loops are built over.
+type runnerWiring struct {
+	llm    ports.LLMProvider
+	newUoW func() uow.UnitOfWork
+	repo   func() repository.RemediationRepository
+	// owner names the process on the leases it holds.
+	owner  string
+	live   *liveness.Registry
+	logger *slog.Logger
+}
+
+// loopLivenessSlack is added to the longest a loop can go between two beats
+// before it is reported wedged.
+const loopLivenessSlack = time.Minute
+
+// loopBudgets are how long the worker and the poller may go without beating
+// before they are reported wedged. A worker beats at every claim and every
+// third of a lease while it drives, so it can be silent for one step and the
+// park of a remediation whose drive failed. A poller beats at every pass,
+// every remediation it polls and every third of a lease while a poll runs, so
+// it can be silent for at most one poll of a gate and the wait between two
+// passes, which VERIFICATION_POLL_INTERVAL sets.
+func loopBudgets(cfg config.Config) (worker, poller time.Duration) {
+	worker = runner.DefaultStepTimeout + runner.ParkDuration + loopLivenessSlack
+	poller = cfg.VerificationPollInterval + runner.DefaultStepTimeout + loopLivenessSlack
+	return worker, poller
+}
+
+// startRunner builds the runner, starts its three loops with spawn and returns
+// the function that accepts a heal trigger as a remediation. The loops start
+// with either engine: the engine only decides what the consumer does with a new
+// trigger, and a remediation the runner started finishes whichever engine runs
+// now.
+func startRunner(ctx context.Context, cfg config.Config, collab runner.Collaborators, files workflow.Set, w runnerWiring, spawn func(func())) func(context.Context, runner.Accepted) error {
+	loops, accept := buildRunner(cfg, collab, files, w)
+	for _, l := range []loop{loops.worker, loops.poller, loops.sweeper} {
+		spawn(func() { l.Run(ctx) })
+	}
+	return accept
+}
+
+// buildRunner builds the runner, its three loops and the function that accepts
+// a heal trigger as a remediation. The worker and the poller are registered
+// with the liveness registry: each beats as it works, and a loop that stops, or
+// stops beating, fails the pod's probes. The sweeper takes its own lease name,
+// so a worker and the sweeper of one process never share a lease.
+func buildRunner(cfg config.Config, collab runner.Collaborators, files workflow.Set, w runnerWiring) (runnerLoops, func(context.Context, runner.Accepted) error) {
+	r := runner.New(newRunnerDeps(cfg, collab, files, w.newUoW, w.llm, w.owner, w.logger))
+	worker := runner.NewWorker(r, w.repo, w.owner, ports.SystemClock{}, w.logger)
+	poller := runner.NewGatePoller(r, w.repo, w.owner, cfg.VerificationPollInterval, worker.Wake, ports.SystemClock{}, w.logger)
+	sweeper := runner.NewSweeper(w.newUoW, w.repo, w.owner+"/sweeper", ports.SystemClock{}, w.logger)
+	workerBudget, pollerBudget := loopBudgets(cfg)
+	worker.SetHeartbeat(registerLoop(w.live, "remediation_worker", workerBudget))
+	poller.SetHeartbeat(registerLoop(w.live, "remediation_gate_poller", pollerBudget))
+	w.logger.Info("remediation runner built", "engine", cfg.Engine, "owner", w.owner)
+	// A trigger the runner accepts wakes the worker, which would otherwise find
+	// it at its next look.
+	accept := func(ctx context.Context, a runner.Accepted) error {
+		err := r.Accept(ctx, a)
+		worker.Wake()
+		return err
+	}
+	return runnerLoops{
+		worker:  trackedLoop{name: "remediation_worker", inner: worker, live: w.live},
+		poller:  trackedLoop{name: "remediation_gate_poller", inner: poller, live: w.live},
+		sweeper: sweeper,
+	}, accept
+}
+
+// registerLoop registers a background loop with the liveness registry, as a
+// stream consumer is, with the longest it may go without beating, and returns
+// the function the loop calls to show it is working.
+func registerLoop(live *liveness.Registry, name string, budget time.Duration) func() {
+	h := &loopHealth{}
+	h.beat()
+	live.RegisterWorker(name)
+	live.AddWorkerProbe(name+"_heartbeat", 10*time.Second, func(context.Context) error {
+		return h.healthy(budget)
+	})
+	return h.beat
+}
+
+// loopHealth is when a background loop last showed it was working.
+type loopHealth struct{ last atomic.Int64 }
+
+func (h *loopHealth) beat() { h.last.Store(time.Now().UnixNano()) }
+
+// healthy fails when the loop has not beaten within budget.
+func (h *loopHealth) healthy(budget time.Duration) error {
+	if idle := time.Since(time.Unix(0, h.last.Load())); idle > budget {
+		return fmt.Errorf("loop stalled: no activity for %s", idle.Round(time.Second))
+	}
+	return nil
+}
+
+// trackedLoop runs a loop and tells the liveness registry when it returns.
+type trackedLoop struct {
+	name  string
+	inner loop
+	live  *liveness.Registry
+}
+
+func (t trackedLoop) Run(ctx context.Context) {
+	t.inner.Run(ctx)
+	var err error
+	if ctx.Err() == nil {
+		err = errors.New("the loop returned before shutdown")
+	}
+	t.live.WorkerExited(t.name, err)
+}
+
+// runnerAdapters are the adapters main builds that the runner's steps read
+// through, each typed by every port it answers for the steps: the GitHub client
+// reads single files and fetches whole checkouts, the catalog client answers
+// every graph read, the contract locator also inspects a contract's
+// declarations, and the release gateway reads a release's failures and runs
+// verifications.
+type runnerAdapters struct {
+	github interface {
+		ports.SourceReader
+		ports.RepoArchive
+	}
+	evidence  ports.EvidenceReader
+	artifacts ports.ArtifactWriter
+	graph     interface {
+		ports.NodeLocator
+		ports.UpstreamChangeReader
+		ports.VersionReader
+		ports.PrecedentReader
+	}
+	bundle    ports.CandidateSourceReader
+	contracts interface {
+		ports.ContractLocator
+		ports.ContractInspector
+	}
+	packager ports.ContractPackager
+	release  interface {
+		ports.ReleaseReader
+		ports.VerificationPipeline
+	}
+	proposals repository.AttemptLister
+}
+
+// runnerCollaborators is the ports the steps are built from: the adapters main
+// built, the sanitizer, the patcher that writes a draft over a checkout, the
+// system clock, and what the install configures (the repository paths of the
+// services, the warehouse's SQL dialect and how long a verification may run).
+func runnerCollaborators(cfg config.Config, a runnerAdapters, logger *slog.Logger) runner.Collaborators {
+	return runner.Collaborators{
+		Source:              a.github,
+		Evidence:            a.evidence,
+		Sanitizer:           sanitizer.Passthrough{},
+		Artifacts:           a.artifacts,
+		Logger:              logger,
+		ServiceRepoPaths:    cfg.ServiceRepoPaths,
+		Locator:             a.graph,
+		Upstream:            a.graph,
+		Versions:            a.graph,
+		Precedents:          a.graph,
+		CandidateSource:     a.bundle,
+		Archive:             a.github,
+		Patcher:             repofs.CheckoutPatcher{},
+		ContractLocator:     a.contracts,
+		ContractInspector:   a.contracts,
+		Packager:            a.packager,
+		Releases:            a.release,
+		PriorAttempts:       a.proposals,
+		SQLDialect:          cfg.SQLDialect,
+		Pipeline:            a.release,
+		Clock:               ports.SystemClock{},
+		VerificationTimeout: cfg.VerificationTimeout,
+	}
+}
+
+// newRunnerDeps is what the runner works with. The registry is built from
+// collab, so the gate's budget is the one collab carries, and the verifying
+// try's deadline is built on the same VERIFICATION_TIMEOUT.
+func newRunnerDeps(cfg config.Config, collab runner.Collaborators, files workflow.Set, newUoW func() uow.UnitOfWork, llm ports.LLMProvider, owner string, logger *slog.Logger) runner.Deps {
+	return runner.Deps{
+		NewUoW:              newUoW,
+		Registry:            runner.NewRegistry(collab),
+		Files:               files,
+		LLM:                 llm,
+		Collab:              collab,
+		Clock:               ports.SystemClock{},
+		Logger:              logger,
+		Maintenance:         cfg.Maintenance,
+		Owner:               owner,
+		VerificationTimeout: cfg.VerificationTimeout,
+	}
+}
+
+// loadRunnerFiles loads the remediation files of fsys, checks every flow and
+// type of them against the steps collab's registry holds, and checks that they
+// define the flow every heal trigger runs. Every refusal is logged on its own
+// line and the error that joins them is returned; a warning is logged and does
+// not stop startup. The worker drives the runner's remediations with either
+// engine, so files without the trigger's flow stop startup with either.
+func loadRunnerFiles(fsys fs.FS, collab runner.Collaborators, logger *slog.Logger) (workflow.Set, error) {
+	set, err := workflowfile.Load(fsys)
+	if err != nil {
+		logRefusals(logger, err)
+		return workflow.Set{}, err
+	}
+	warnings, err := runner.Validate(set, runner.NewRegistry(collab))
+	for _, w := range warnings {
+		logger.Warn("remediation file", "warning", w)
+	}
+	if _, ferr := runner.TriggerFlow(set); ferr != nil {
+		err = errors.Join(err, ferr)
+	}
+	if err != nil {
+		logRefusals(logger, err)
+		return workflow.Set{}, err
+	}
+	return set, nil
+}
+
+// warnIgnoredMaxAttempts warns at startup when the engine is the runner and
+// AGENT_REMEDIATION_MAX_ATTEMPTS differs from the tries of the flow every heal
+// trigger runs: the runner gives up after the flow file's tries and never reads
+// the variable, which only the legacy handler reads.
+func warnIgnoredMaxAttempts(cfg config.Config, files workflow.Set, logger *slog.Logger) {
+	if cfg.Engine != config.EngineRunner {
+		return
+	}
+	flow, err := runner.TriggerFlow(files)
+	if err != nil || flow.Tries == cfg.MaxAttempts {
+		return
+	}
+	logger.Warn("AGENT_REMEDIATION_MAX_ATTEMPTS is not read by the runner engine; the flow file's tries govern",
+		"max_attempts", cfg.MaxAttempts, "flow", flow.Name, "tries", flow.Tries)
+}
+
+// logRefusals logs each error joined in err on a line of its own.
+func logRefusals(logger *slog.Logger, err error) {
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, e := range joined.Unwrap() {
+			logger.Error("remediation file refused", "refusal", e.Error())
+		}
+		return
+	}
+	logger.Error("remediation file refused", "refusal", err.Error())
+}
+
+// leaseOwner names a process on the leases it holds: its host and its pid. A
+// restarted container keeps its host name and is often pid 1, so the name can
+// repeat across restarts; the lease the old process held ends by itself, and
+// until it does the new process cannot claim that remediation.
+func leaseOwner(host string, pid int) string {
+	if host == "" {
+		host = "unknown"
+	}
+	return host + ":" + strconv.Itoa(pid)
+}
+
+// hostName is the host the process runs on: HOSTNAME, else the OS's name.
+func hostName() string {
+	if h := os.Getenv("HOSTNAME"); h != "" {
+		return h
+	}
+	h, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+	return h
 }

@@ -39,6 +39,12 @@ WORKDIR /app/agent-remediation
 RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -a -installsuffix cgo -o /app/bin/agent-remediation .
 
+# remediation-check, the command that checks the workflow files: an install
+# runs `remediation-check files <dir>` in this image on its own files, and the
+# repository's test TestFiles_BuiltinDirPasses runs it on the built-in ones.
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -a -installsuffix cgo -o /app/bin/remediation-check ./cmd/remediation-check
+
 # Runtime stage. Debian slim, not alpine: the packaging toolchain below pulls
 # in pyarrow, which ships manylinux wheels only — alpine's musl libc would
 # force a source build. continuo-python-runtime declares requires-python
@@ -53,9 +59,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
  && rm -rf /var/lib/apt/lists/* \
  && pip install --no-cache-dir continuo-python-runtime==0.12.0
 
-# Explicit COPY allowlist — only the service binary; new builder artifacts
-# are absent from the runtime image unless added here.
+# Explicit COPY allowlist — the service binary and remediation-check; new
+# builder artifacts are absent from the runtime image unless added here.
 COPY --from=builder /app/bin/agent-remediation /usr/local/bin/agent-remediation
+COPY --from=builder /app/bin/remediation-check /usr/local/bin/remediation-check
 
 EXPOSE 8092
 

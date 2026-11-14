@@ -1,0 +1,24 @@
+# A python node that failed the release's validation: the model corrects the
+# contract yaml that declares it, and the patched contract directory is
+# packaged with the release tool before it is verified.
+kind: type
+version: 1
+name: python-validation
+match: { cluster: single, source: validation, node_types: [python-node, python-api] }
+context:
+  - contract_file
+  - failing_siblings
+  - dbt_log
+  - contract_entry
+  - upstream_changes
+  - failure_precedents
+  - prior_attempts
+agent: { prompt: python-contract, tools: [], rounds: 1 }
+preflight:
+  - contract_paths_inside_folder
+  - yaml_reads
+  - node_identity_unchanged
+  - reads_kept
+  - no_new_secret_ref
+  - declared_once
+  - contract_packages

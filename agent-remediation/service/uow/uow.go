@@ -10,15 +10,18 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 )
 
-// UnitOfWork groups the write path for a single remediation proposal attempt
-// into one Postgres transaction. Begin must be called before any repo method;
-// Commit or Rollback closes the transaction.
+// UnitOfWork groups the writes of one operation (a proposal attempt, or one
+// step commit of a remediation) into one transaction. Begin must be called
+// before any repo method; Commit or Rollback closes the transaction.
 type UnitOfWork interface {
 	Begin(ctx context.Context) error
 	Commit() error
 	Rollback() error
 	// ProposalRepo returns the ProposalRepository bound to the active transaction.
 	ProposalRepo() repository.ProposalRepository
+	// RemediationRepo returns the RemediationRepository bound to the active
+	// transaction.
+	RemediationRepo() repository.RemediationRepository
 	// OutboxRepo returns the outbox.Repository bound to the active transaction.
 	OutboxRepo() outbox.Repository
 	// MessageProcessingRepo returns the messageprocessing.Repository bound to the

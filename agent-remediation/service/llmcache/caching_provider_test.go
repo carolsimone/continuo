@@ -116,14 +116,48 @@ func TestPropose_HitSkipsProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !reflect.DeepEqual(got, cached) {
-		t.Fatalf("expected cached result, got %+v", got)
+	wantHit := cached
+	wantHit.Cached = true
+	if !reflect.DeepEqual(got, wantHit) {
+		t.Fatalf("expected cached result marked cached, got %+v", got)
 	}
 	if provider.calls != 0 {
 		t.Fatalf("provider calls = %d, want 0 on cache hit", provider.calls)
 	}
 	if len(cache.putKeys) != 0 {
 		t.Fatalf("cache Put count = %d, want 0 on cache hit", len(cache.putKeys))
+	}
+}
+
+// A hit is distinguishable from a miss: the first call of a trigger returns
+// Cached false, its redelivery returns the same answer and usage with Cached
+// true, and the provider is called once.
+func TestCachingProvider_MarksAHitCached(t *testing.T) {
+	result := sampleResult()
+	result.Usage = ports.TokenUsage{Input: 120, Output: 45}
+	provider := &fakeProvider{result: result}
+	p := New(provider, newFakeCache(), "model-x", testLogger())
+
+	first, err := p.Propose(triggerCtx("trigger-1"), sampleReq())
+	if err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	if first.Cached {
+		t.Fatal("a miss must not be marked cached")
+	}
+
+	second, err := p.Propose(triggerCtx("trigger-1"), sampleReq())
+	if err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+	if !second.Cached {
+		t.Fatal("a hit must be marked cached")
+	}
+	if second.Usage != result.Usage || second.ProposedContent != result.ProposedContent {
+		t.Fatalf("hit must carry the stored answer and usage, got %+v", second)
+	}
+	if provider.calls != 1 {
+		t.Fatalf("provider calls = %d, want 1", provider.calls)
 	}
 }
 

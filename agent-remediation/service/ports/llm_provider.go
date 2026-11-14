@@ -16,10 +16,19 @@ type ProposedFile struct {
 	Content string
 }
 
+// TokenUsage is the tokens one model call consumed, as the provider reports
+// them: Input is the prompt side, Output the completion side.
+type TokenUsage struct {
+	Input  int
+	Output int
+}
+
 // ProposeResult is the structured fix-tool call result. Which fields carry the
 // answer depends on the tool the request forced: a single-file fix fills
 // ProposedSQL or TargetFile+ProposedContent, while a multi-file fix (a python
-// node's contract) fills Files.
+// node's contract) fills Files. Usage is the provider-reported token count of
+// the call, and Cached is true when the result was replayed from the response
+// cache instead of a new model call (Usage is then the original call's).
 type ProposeResult struct {
 	ProposedSQL            string
 	ProposedContent        string // corrected content for the chosen TargetFile (compile/seed)
@@ -29,6 +38,8 @@ type ProposeResult struct {
 	Confidence             string
 	SuspectedRootCauseNode string
 	Model                  string
+	Usage                  TokenUsage
+	Cached                 bool
 }
 
 // LLMProvider performs a single-shot, tool-forced proposal. Implementations

@@ -1,0 +1,12 @@
+[
+  {
+    "Attempt": 1,
+    "VerifyError": "column x does not exist",
+    "Diffs": [
+      {
+        "Path": "svc/contracts/fx.yaml",
+        "Diff": "-a\n+b"
+      }
+    ]
+  }
+]

@@ -1,0 +1,17 @@
+{
+  "result": {
+    "Check": "dbt-compile",
+    "Findings": [
+      {
+        "Code": "compile_error",
+        "Message": "column x does not exist",
+        "File": "models/orders_daily.sql",
+        "Line": 4
+      }
+    ],
+    "Waiting": true,
+    "RunIDs": [
+      "run-1"
+    ]
+  }
+}

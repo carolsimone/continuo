@@ -1,0 +1,51 @@
+# A dbt model whose SQL the release's parser rejected: a comma is missing
+# between two columns. Built from the parse lane's tests
+# (service/fixer/parse_test.go).
+kind: fixture
+version: 1
+type: dbt-parse
+trigger:
+  source: parse
+  release_id: rel-parse-1
+  repo: o/repo
+  commit_sha: sha-parse
+  nodes:
+    - node_id: analytics.fx
+      category: parse
+      error_signature: sig-parse-missing-comma
+      reason: parse_error
+      error_excerpt: "Expecting ). Line 3, Col: 12.\n  select a b"
+      file_path: models/fx.sql
+      service: svc
+      node_type: dbt-model
+service_repo_paths:
+  svc: services/svc
+repo_files:
+  services/svc/models/fx.sql: "select a b, c from t\n"
+  services/svc/dbt_project.yml: "name: svc\n"
+release:
+  image_tag: sha-parse
+answers:
+  pass:
+    - target_file: services/svc/models/fx.sql
+      proposed_content: "select a, b, c from t\n"
+      rationale: added the missing comma
+      confidence: high
+      model: claude-test
+  fail:
+    # The file unchanged: pre-flight fails the node.
+    - target_file: services/svc/models/fx.sql
+      proposed_content: "select a b, c from t\n"
+      rationale: the SQL looks right
+      confidence: high
+      model: claude-test
+  decline:
+    - target_file: services/svc/models/fx.sql
+      proposed_content: "select a, b, c from t\n"
+      rationale: a and b may be one column with an alias
+      confidence: low
+      model: claude-test
+decline_before_model:
+  node: { file_path: "" }
+gate_errors:
+  analytics.fx: "Expecting ). Line 3, Col: 12."

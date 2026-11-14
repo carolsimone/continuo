@@ -1,0 +1,55 @@
+# A dbt project whose model x does not compile: its config block has a stray
+# parenthesis. Built from the compile lane's tests (service/fixer/compile_test.go).
+# For a compile failure the node id names the service.
+kind: fixture
+version: 1
+type: dbt-compile
+trigger:
+  source: compile
+  release_id: rel-compile-1
+  remediation_round: 1
+  repo: o/repo
+  commit_sha: sha-compile
+  nodes:
+    - node_id: svc
+      category: compile
+      error_signature: sig-compile-jinja
+      reason: jinja_syntax
+      error_excerpt: "Compilation Error in model x (models/x.sql): unexpected ')'"
+      dbt_log_uri: s3://logs/rel-compile-1/svc/dbt.log
+      file_path: models/x.sql
+service_repo_paths:
+  svc: services/svc
+repo_files:
+  services/svc/models/x.sql: "{{ config(x), y) }}\nselect 1\n"
+  services/svc/models/schema.yml: "version: 2\nmodels:\n  - name: x\n"
+  services/svc/dbt_project.yml: "name: svc\n"
+objects:
+  s3://logs/rel-compile-1/svc/dbt.log: "Compilation Error in model x (models/x.sql)\n  unexpected ')'\n"
+release:
+  image_tag: sha-compile
+answers:
+  pass:
+    - target_file: services/svc/models/x.sql
+      proposed_content: "{{ config(x) }}\nselect 1\n"
+      rationale: removed the stray argument from the config block
+      confidence: high
+      model: claude-test
+  fail:
+    # A file the model was not shown: pre-flight hands the node over skipped.
+    - target_file: services/svc/models/other.sql
+      proposed_content: "select 2\n"
+      rationale: rewrote another model
+      confidence: high
+      model: claude-test
+  decline:
+    - target_file: services/svc/models/x.sql
+      proposed_content: "{{ config(x) }}\nselect 1\n"
+      rationale: the log does not say which argument is wrong
+      confidence: low
+      model: claude-test
+# A compile error that names no source file leaves nothing to fix.
+decline_before_model:
+  node: { file_path: "" }
+gate_errors:
+  svc: "Compilation Error in model x (models/x.sql): unexpected ')'"

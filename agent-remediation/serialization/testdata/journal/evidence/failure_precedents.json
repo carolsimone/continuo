@@ -1,0 +1,24 @@
+[
+  {
+    "ReleaseID": "rel-0",
+    "NodeID": "orders.model.orders_daily",
+    "Stage": "validation",
+    "Category": "compile",
+    "Reason": "compile_error",
+    "ErrorExcerpt": "column y does not exist",
+    "RejectedAt": "2026-11-01T09:00:00Z",
+    "Resolved": true,
+    "ResolutionDiff": "-y\n+z",
+    "DiffTruncated": true,
+    "PRURL": "https://github.com/org/repo/pull/7",
+    "Edited": [
+      {
+        "NodeID": "orders.model.orders_daily",
+        "Path": "models/orders_daily.sql",
+        "Amended": true,
+        "Diff": "-y\n+z",
+        "DiffIsShipped": true
+      }
+    ]
+  }
+]

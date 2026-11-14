@@ -405,6 +405,9 @@ services:
       - AGENT_REMEDIATION_HTTP_PORT=8092
       - AGENT_REMEDIATION_GRPC_PORT=50054
       - AGENT_REMEDIATION_MAX_ATTEMPTS=3
+      # The e2e suite proves the runner, so the local stack runs it; the
+      # chart's agentRemediation.engine defaults to legacy.
+      - AGENT_REMEDIATION_ENGINE=runner
       - LOG_LEVEL=INFO
       - REMEDIATION_PR_POLL_INTERVAL=${REMEDIATION_PR_POLL_INTERVAL:-5s}
       - REMEDIATION_PR_OPENING_GRACE_PERIOD=${REMEDIATION_PR_OPENING_GRACE_PERIOD:-15s}

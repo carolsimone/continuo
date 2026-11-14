@@ -1,0 +1,8 @@
+# A dbt seed whose csv failed to load: the model rewrites the csv.
+kind: type
+version: 1
+name: seed-build
+match: { cluster: single, source: seed_build }
+context: [failing_node_source, dbt_log, failure_precedents]
+agent: { prompt: seed, tools: [], rounds: 1 }
+preflight: [content_changed, confidence_not_low]

@@ -1,0 +1,7 @@
+{
+  "NodeID": "orders.model.stg_orders",
+  "Source": "select a",
+  "FilePath": "models/stg_orders.sql",
+  "Service": "orders",
+  "OwnChangeDiff": "-a\n+b"
+}

@@ -1,0 +1,79 @@
+# A finance model and a marketing model fail because the release changed
+# core's orders model, which both read: it dropped the amount column. The fix
+# restores it in core. When it cannot, both members are handed over, since a
+# fix in their own services cannot ship before core's. Built from the upstream
+# lane's tests (service/fixer/upstream_test.go).
+kind: fixture
+version: 1
+type: cross-service-upstream
+trigger:
+  source: validation
+  release_id: rel-cross-1
+  repo: o/repo
+  commit_sha: sha-cross
+  code_bundle_uri: s3://continuo/code-bundles/rel-cross-1/bundle.json
+  nodes:
+    - node_id: model.finance.revenue
+      category: validation
+      error_signature: sig-revenue-amount
+      reason: missing_column
+      error_excerpt: 'column orders.amount does not exist'
+      dbt_log_uri: s3://logs/rel-cross-1/model.finance.revenue.log
+      candidate_artifact_uri: s3://candidates/rel-cross-1/model.finance.revenue.sql
+      file_path: models/revenue.sql
+      service: finance
+      node_type: dbt-model
+      changed_ancestors:
+        - { node_id: model.core.orders, file_path: models/orders.sql, service: core, depth: 1 }
+    - node_id: model.marketing.campaign_orders
+      category: validation
+      error_signature: sig-campaign-amount
+      reason: missing_column
+      error_excerpt: 'column orders.amount does not exist'
+      dbt_log_uri: s3://logs/rel-cross-1/model.marketing.campaign_orders.log
+      candidate_artifact_uri: s3://candidates/rel-cross-1/model.marketing.campaign_orders.sql
+      file_path: models/campaign_orders.sql
+      service: marketing
+      node_type: dbt-model
+      changed_ancestors:
+        - { node_id: model.core.orders, file_path: models/orders.sql, service: core, depth: 2 }
+service_repo_paths:
+  core: services/core
+  finance: services/finance
+  marketing: services/marketing
+repo_files:
+  services/core/models/orders.sql: "select id from analytics.raw_orders\n"
+  services/finance/models/revenue.sql: "select sum(amount) as revenue from analytics.orders\n"
+  services/marketing/models/campaign_orders.sql: "select id, amount from analytics.orders\n"
+bundle:
+  model.core.orders: { runtime: dbt, raw_code: "select id from analytics.raw_orders\n" }
+catalog:
+  current_versions:
+    model.core.orders: { raw_code: "select id, amount from analytics.raw_orders\n", content_hash: h-core-orders-1, promoted_at: "2026-11-01T00:00:00Z" }
+release:
+  image_tag: sha-cross
+answers:
+  pass:
+    - proposed_sql: "select id, amount from analytics.raw_orders\n"
+      rationale: restored the amount column finance and marketing read
+      confidence: high
+      model: claude-test
+  fail:
+    - proposed_sql: "select id from analytics.raw_orders\n"
+      rationale: core's orders looks right
+      confidence: high
+      model: claude-test
+  decline:
+    - proposed_sql: "select id, amount from analytics.raw_orders\n"
+      rationale: core may have dropped the column on purpose
+      confidence: low
+      model: claude-test
+# An ancestor the trigger does not place and the promoted graph cannot locate
+# cannot be edited.
+decline_before_model:
+  node:
+    changed_ancestors:
+      - { node_id: model.core.orders, service: core, depth: 1 }
+gate_errors:
+  model.finance.revenue: 'column orders.amount does not exist'
+  model.marketing.campaign_orders: 'column orders.amount does not exist'

@@ -1,0 +1,9 @@
+# A dbt project that failed to compile: the model rewrites the one file the
+# dbt log points at, or a yml file beside it.
+kind: type
+version: 1
+name: dbt-compile
+match: { cluster: single, source: compile }
+context: [failing_node_source, dbt_log, failure_precedents]
+agent: { prompt: dbt-compile, tools: [], rounds: 1 }
+preflight: [target_file_was_shown, content_changed, confidence_not_low]

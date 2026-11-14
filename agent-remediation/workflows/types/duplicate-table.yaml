@@ -1,0 +1,9 @@
+# Two nodes that claim one relation: the model renames the claimant the
+# release changed.
+kind: type
+version: 1
+name: duplicate-table
+match: { cluster: single, source: duplicate_table }
+context: [failing_node_source, failure_precedents]
+agent: { prompt: duplicate-table, tools: [], rounds: 1 }
+preflight: [target_file_was_shown, content_changed, confidence_not_low]

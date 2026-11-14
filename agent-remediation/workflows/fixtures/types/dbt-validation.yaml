@@ -1,0 +1,80 @@
+# A dbt model that failed validation: it reads a column the release renamed
+# upstream. The model diagnoses the candidate SQL, then applies the diagnosis
+# to the model's source from the code bundle. Built from the validation lane's
+# tests (service/fixer/validation_test.go).
+kind: fixture
+version: 1
+type: dbt-validation
+trigger:
+  source: validation
+  release_id: rel-validation-1
+  repo: o/repo
+  commit_sha: sha-validation
+  code_bundle_uri: s3://continuo/code-bundles/rel-validation-1/bundle.json
+  nodes:
+    - node_id: model.sales.orders
+      category: validation
+      error_signature: sig-missing-amount
+      reason: missing_column
+      error_excerpt: 'column "amount" does not exist'
+      dbt_log_uri: s3://logs/rel-validation-1/model.sales.orders.log
+      candidate_artifact_uri: s3://candidates/rel-validation-1/model.sales.orders.sql
+      file_path: models/orders.sql
+      service: sales
+      node_type: dbt-model
+service_repo_paths:
+  sales: services/sales
+repo_files:
+  services/sales/models/orders.sql: "select id, amount from analytics.raw_orders\n"
+objects:
+  s3://logs/rel-validation-1/model.sales.orders.log: "Database Error in model orders (models/orders.sql)\n  column \"amount\" does not exist\n"
+  s3://candidates/rel-validation-1/model.sales.orders.sql: "select id, amount from analytics.raw_orders"
+bundle:
+  model.sales.orders: { runtime: dbt, raw_code: "select id, amount from analytics.raw_orders\n" }
+catalog:
+  current_versions:
+    model.sales.orders: { raw_code: "select id from analytics.raw_orders\n", content_hash: h-orders-1, promoted_at: "2026-11-01T00:00:00Z" }
+  upstream_changes:
+    model.sales.orders:
+      - { node_id: analytics.raw_orders, depth: 1, code_diff: "-amount\n+total" }
+  precedents:
+    - node_id: model.sales.refunds
+      stage: validation
+      category: validation
+      reason: missing_column
+      error_excerpt: 'column "amount" does not exist'
+      resolved: true
+      resolution_diff: "-amount\n+total as amount"
+release:
+  image_tag: sha-validation
+answers:
+  pass:
+    # The diagnosis of the candidate SQL, then the fix of the real source.
+    - proposed_sql: "select id, total as amount from analytics.raw_orders"
+      rationale: the upstream column amount is named total now
+      confidence: high
+      model: claude-test
+    - proposed_sql: "select id, total as amount from analytics.raw_orders\n"
+      rationale: read total and keep the name amount
+      confidence: high
+      model: claude-test
+  fail:
+    # No SQL at all: the draft has no edit, so pre-flight fails the node.
+    - proposed_sql: ""
+      rationale: no fix found
+      confidence: high
+      model: claude-test
+  decline:
+    - proposed_sql: "select id, total as amount from analytics.raw_orders"
+      rationale: the upstream column amount is named total now
+      confidence: high
+      model: claude-test
+    - proposed_sql: "select id, total as amount from analytics.raw_orders\n"
+      rationale: not sure the source is the one validated
+      confidence: low
+      model: claude-test
+# A failure with no candidate artifact has no SQL to fix.
+decline_before_model:
+  node: { candidate_artifact_uri: "" }
+gate_errors:
+  model.sales.orders: 'column "total" does not exist'

@@ -17,7 +17,7 @@ shipped in those.
 - New: a dbt model or snapshot with an owner and no tag is now a dormant node. A release checks it like any model, but no cron runs it: you run it by hand.
 - The node type `ingested` is now `unknown-external`, and nodes stored as `ingested` keep working. A script that looks for `ingested` must look for `unknown-external`.
 - You must act (steps below): check your models with no tag, upgrade with maintenance mode on, then run each dormant node whose table does not exist yet. Do not roll release-controller back afterwards.
-- No values change is needed. On 0.21.0 or earlier, upgrade to 0.22.0 first.
+- No values change is needed: the new values key `agentRemediation.engine` defaults to `legacy`, and `runner` switches agent-remediation to an engine a restart continues. On 0.21.0 or earlier, upgrade to 0.22.0 first.
 
 ### Upgrade steps
 
@@ -37,7 +37,7 @@ shipped in those.
 4. **Do not roll release-controller back below this version** after a release with `unknown-external` nodes has been promoted. An older release-controller, 0.22.0's included, counts the empty service of those nodes as uncovered at activation, so no later release activates.
 5. **Run each dormant node whose table does not exist yet.** A dormant node enters production with the first release after the upgrade, and no cron runs it. Run it once from its node page (the Dormant tile on the Topology tab opens their list) before you release a change to any node below it. Otherwise validation cannot copy its production table, and that release is rejected `upstream_clone_failed`.
 
-This release changes no values key, and it ships as a `MINOR`.
+This release adds the values key `agentRemediation.engine` with a safe default, and it ships as a `MINOR`.
 
 ### Added
 
@@ -48,6 +48,12 @@ This release changes no values key, and it ships as a `MINOR`.
   - The table a dormant model writes never shows as an `unknown-external` node. The table of a model with no owner still can.
   - No values change is needed.
 - **The Dormant tile.** TL;DR: when the live release has dormant nodes, the Topology tab shows a Dormant tile with their number. It opens the Nodes tab filtered to them.
+- **`agentRemediation.engine` picks agent-remediation's fix proposer.** TL;DR: `legacy` (the default) keeps today's proposer, and `runner` works each heal trigger as a remediation of committed steps that a restart continues. No values change is needed.
+  - The value reaches agent-remediation as `AGENT_REMEDIATION_ENGINE` on the shared ConfigMap, so it restarts every continuo service when it changes. agent-remediation refuses to start on any other value.
+  - Both engines run the remediation worker, the verification poller and the sweeper, so a remediation the runner started finishes after the value is set back to `legacy`.
+  - Upgrade to this version with `legacy` first, and set `runner` in a later upgrade. While the pods roll, a pod of an older version runs only the legacy verification reconciler, which does not skip the runner's attempt rows.
+  - Under `runner`, the `tries` of the `rejected-release` flow file (3) sets how many attempts a release round gets. The runner does not read `AGENT_REMEDIATION_MAX_ATTEMPTS`, which only `legacy` reads, and agent-remediation logs a warning at startup when the engine is `runner` and the variable differs from the flow's `tries`.
+  - A remediation the runner cannot move on is ended as a system failure, and its attempt row (generating or verifying) is failed with the reason: a step that failed five times (a gate that failed five polls in a row), a remediation that could not be loaded or could not open its next try five times in a row, and a try still drafting or checking past its deadline. A step that runs longer than ten minutes is stopped and counts as one failure, and a remediation whose step failed is retried two minutes later.
 
 ### Changed
 

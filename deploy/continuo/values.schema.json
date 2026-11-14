@@ -530,6 +530,17 @@
       }
     },
 
+    "agentRemediation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "engine": {
+          "enum": ["legacy", "runner"],
+          "description": "The fix proposer agent-remediation runs: legacy handles each heal trigger in one handler, runner works it as a remediation of committed steps. Both run the worker, the verification poller and the sweeper."
+        }
+      }
+    },
+
     "databaseInit": {
       "type": "object",
       "additionalProperties": false,

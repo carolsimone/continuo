@@ -1,0 +1,72 @@
+# The shared-upstream cluster at base_orders declines: the release's code
+# bundle does not hold base_orders. Its members fall back to dbt-validation
+# fixes of their own, which pass.
+kind: fixture
+version: 1
+flow: rejected-release
+scenario: shared_upstream_declines
+trigger:
+  source: validation
+  release_id: rel-flow-shared-declines
+  repo: o/repo
+  commit_sha: sha-shared-declines
+  code_bundle_uri: s3://continuo/code-bundles/rel-flow-shared-declines/bundle.json
+  nodes:
+    - node_id: model.sales.daily_orders
+      category: validation
+      error_signature: sig-base-orders-amount
+      reason: missing_column
+      error_excerpt: 'column base_orders.amount does not exist'
+      candidate_artifact_uri: s3://candidates/rel-flow-shared-declines/model.sales.daily_orders.sql
+      file_path: models/daily_orders.sql
+      service: sales
+      node_type: dbt-model
+      changed_ancestors:
+        - { node_id: model.sales.base_orders, file_path: models/base_orders.sql, service: sales, depth: 1 }
+    - node_id: model.sales.weekly_orders
+      category: validation
+      error_signature: sig-base-orders-amount
+      reason: missing_column
+      error_excerpt: 'column base_orders.amount does not exist'
+      candidate_artifact_uri: s3://candidates/rel-flow-shared-declines/model.sales.weekly_orders.sql
+      file_path: models/weekly_orders.sql
+      service: sales
+      node_type: dbt-model
+      changed_ancestors:
+        - { node_id: model.sales.base_orders, file_path: models/base_orders.sql, service: sales, depth: 1 }
+service_repo_paths:
+  sales: services/sales
+objects:
+  s3://candidates/rel-flow-shared-declines/model.sales.daily_orders.sql: "select id, amount from analytics.base_orders"
+  s3://candidates/rel-flow-shared-declines/model.sales.weekly_orders.sql: "select id, sum(amount) as amount from analytics.base_orders group by id"
+bundle:
+  model.sales.daily_orders: { runtime: dbt, raw_code: "select id, amount from base_orders\n" }
+  model.sales.weekly_orders: { runtime: dbt, raw_code: "select id, sum(amount) as amount from base_orders group by id\n" }
+release:
+  image_tag: sha-shared-declines
+answers:
+  pass:
+    - proposed_sql: "select id, amount from analytics.raw_orders\n"
+      rationale: unused, the upstream cluster declines first
+      confidence: high
+member_answers:
+  model.sales.daily_orders:
+    pass:
+      - proposed_sql: "select id, 0 as amount from analytics.base_orders"
+        rationale: base_orders has no amount column now
+        confidence: high
+        model: claude-test
+      - proposed_sql: "select id, 0 as amount from base_orders\n"
+        rationale: stop reading the dropped column
+        confidence: high
+        model: claude-test
+  model.sales.weekly_orders:
+    pass:
+      - proposed_sql: "select id, 0 as amount from analytics.base_orders group by id"
+        rationale: base_orders has no amount column now
+        confidence: high
+        model: claude-test
+      - proposed_sql: "select id, 0 as amount from base_orders group by id\n"
+        rationale: stop reading the dropped column
+        confidence: high
+        model: claude-test

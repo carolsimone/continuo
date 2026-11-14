@@ -1,0 +1,72 @@
+# Two clusters of two types fix the sales service: orders is a dbt-validation
+# fix of its own, and daily_orders and weekly_orders share one fix at
+# base_orders. One verification run checks both edits, and one attempt
+# carries them.
+kind: fixture
+version: 1
+flow: rejected-release
+scenario: two_types_one_service
+trigger:
+  source: validation
+  release_id: rel-flow-two-types
+  repo: o/repo
+  commit_sha: sha-two-types
+  code_bundle_uri: s3://continuo/code-bundles/rel-flow-two-types/bundle.json
+  nodes:
+    - node_id: model.sales.orders
+      category: validation
+      error_signature: sig-orders-total
+      reason: missing_column
+      error_excerpt: 'column "total" does not exist'
+      dbt_log_uri: s3://logs/rel-flow-two-types/model.sales.orders.log
+      candidate_artifact_uri: s3://candidates/rel-flow-two-types/model.sales.orders.sql
+      file_path: models/orders.sql
+      service: sales
+      node_type: dbt-model
+    - node_id: model.sales.daily_orders
+      category: validation
+      error_signature: sig-base-orders-amount
+      reason: missing_column
+      error_excerpt: 'column base_orders.amount does not exist'
+      file_path: models/daily_orders.sql
+      service: sales
+      node_type: dbt-model
+      changed_ancestors:
+        - { node_id: model.sales.base_orders, file_path: models/base_orders.sql, service: sales, depth: 1 }
+    - node_id: model.sales.weekly_orders
+      category: validation
+      error_signature: sig-base-orders-amount
+      reason: missing_column
+      error_excerpt: 'column base_orders.amount does not exist'
+      file_path: models/weekly_orders.sql
+      service: sales
+      node_type: dbt-model
+      changed_ancestors:
+        - { node_id: model.sales.base_orders, file_path: models/base_orders.sql, service: sales, depth: 1 }
+service_repo_paths:
+  sales: services/sales
+objects:
+  s3://logs/rel-flow-two-types/model.sales.orders.log: "Database Error in model orders\n  column \"total\" does not exist\n"
+  s3://candidates/rel-flow-two-types/model.sales.orders.sql: "select id, total from analytics.raw_orders"
+bundle:
+  model.sales.orders: { runtime: dbt, raw_code: "select id, total from analytics.raw_orders\n" }
+  model.sales.base_orders: { runtime: dbt, raw_code: "select id from analytics.raw_orders\n" }
+release:
+  image_tag: sha-two-types
+answers:
+  pass:
+    - proposed_sql: "select id, amount from analytics.raw_orders\n"
+      rationale: restored the amount column both members read
+      confidence: high
+      model: claude-test
+member_answers:
+  model.sales.orders:
+    pass:
+      - proposed_sql: "select id, amount as total from analytics.raw_orders"
+        rationale: the column is named amount
+        confidence: high
+        model: claude-test
+      - proposed_sql: "select id, amount as total from analytics.raw_orders\n"
+        rationale: read amount and keep the name total
+        confidence: high
+        model: claude-test

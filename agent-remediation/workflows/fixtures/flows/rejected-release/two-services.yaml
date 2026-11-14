@@ -1,0 +1,68 @@
+# Two dbt-validation fixes in two services: sales and finance each get a
+# verification run of their own.
+kind: fixture
+version: 1
+flow: rejected-release
+scenario: two_services
+trigger:
+  source: validation
+  release_id: rel-flow-two-services
+  repo: o/repo
+  commit_sha: sha-two-services
+  code_bundle_uri: s3://continuo/code-bundles/rel-flow-two-services/bundle.json
+  nodes:
+    - node_id: model.sales.orders
+      category: validation
+      error_signature: sig-orders-total
+      reason: missing_column
+      error_excerpt: 'column "total" does not exist'
+      candidate_artifact_uri: s3://candidates/rel-flow-two-services/model.sales.orders.sql
+      file_path: models/orders.sql
+      service: sales
+      node_type: dbt-model
+    - node_id: model.finance.revenue
+      category: validation
+      error_signature: sig-revenue-net
+      reason: missing_column
+      error_excerpt: 'column "net" does not exist'
+      candidate_artifact_uri: s3://candidates/rel-flow-two-services/model.finance.revenue.sql
+      file_path: models/revenue.sql
+      service: finance
+      node_type: dbt-model
+service_repo_paths:
+  sales: services/sales
+  finance: services/finance
+objects:
+  s3://candidates/rel-flow-two-services/model.sales.orders.sql: "select id, total from analytics.raw_orders"
+  s3://candidates/rel-flow-two-services/model.finance.revenue.sql: "select sum(net) as revenue from analytics.invoices"
+bundle:
+  model.sales.orders: { runtime: dbt, raw_code: "select id, total from analytics.raw_orders\n" }
+  model.finance.revenue: { runtime: dbt, raw_code: "select sum(net) as revenue from analytics.invoices\n" }
+release:
+  image_tag: sha-two-services
+answers:
+  pass:
+    - proposed_sql: "select 1"
+      rationale: unused
+      confidence: high
+member_answers:
+  model.sales.orders:
+    pass:
+      - proposed_sql: "select id, amount as total from analytics.raw_orders"
+        rationale: the column is named amount
+        confidence: high
+        model: claude-test
+      - proposed_sql: "select id, amount as total from analytics.raw_orders\n"
+        rationale: read amount and keep the name total
+        confidence: high
+        model: claude-test
+  model.finance.revenue:
+    pass:
+      - proposed_sql: "select sum(net_amount) as revenue from analytics.invoices"
+        rationale: the column is named net_amount
+        confidence: high
+        model: claude-test
+      - proposed_sql: "select sum(net_amount) as revenue from analytics.invoices\n"
+        rationale: read net_amount
+        confidence: high
+        model: claude-test

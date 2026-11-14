@@ -97,6 +97,7 @@ func (p *CachingLLMProvider) Propose(ctx context.Context, req ports.ProposeReque
 	if res, ok, err := p.cache.Get(ctx, key); err != nil {
 		p.logger.Warn("llm cache: get failed; treating as miss", "error", err)
 	} else if ok {
+		res.Cached = true
 		return res, nil
 	}
 

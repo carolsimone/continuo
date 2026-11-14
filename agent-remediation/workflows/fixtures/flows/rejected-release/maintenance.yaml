@@ -1,0 +1,32 @@
+# The trigger of a dbt-validation failure arrives while continuo is in
+# maintenance mode: the attempt is recorded skipped and the model is never
+# called.
+kind: fixture
+version: 1
+flow: rejected-release
+scenario: maintenance
+trigger:
+  source: validation
+  release_id: rel-flow-maintenance
+  repo: o/repo
+  commit_sha: sha-maintenance
+  code_bundle_uri: s3://continuo/code-bundles/rel-flow-maintenance/bundle.json
+  nodes:
+    - node_id: model.sales.orders
+      category: validation
+      error_signature: sig-missing-amount
+      reason: missing_column
+      error_excerpt: 'column "amount" does not exist'
+      candidate_artifact_uri: s3://candidates/rel-flow-maintenance/model.sales.orders.sql
+      file_path: models/orders.sql
+      service: sales
+      node_type: dbt-model
+service_repo_paths:
+  sales: services/sales
+objects:
+  s3://candidates/rel-flow-maintenance/model.sales.orders.sql: "select id, amount from analytics.raw_orders"
+answers:
+  pass:
+    - proposed_sql: "select id, total as amount from analytics.raw_orders"
+      rationale: unused in maintenance mode
+      confidence: high

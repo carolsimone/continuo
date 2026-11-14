@@ -49,9 +49,9 @@ func ContextWithFailure(ctx context.Context, f Failure) context.Context {
 	return context.WithValue(ctx, failureCtxKey{}, f)
 }
 
-// failureFromContext returns the stamped failure identity and whether one was
+// FailureFromContext returns the stamped failure identity and whether one was
 // present.
-func failureFromContext(ctx context.Context) (Failure, bool) {
+func FailureFromContext(ctx context.Context) (Failure, bool) {
 	f, ok := ctx.Value(failureCtxKey{}).(Failure)
 	return f, ok
 }
@@ -80,7 +80,7 @@ func (p *LoggingLLMProvider) Propose(ctx context.Context, req ports.ProposeReque
 		"system_bytes", len(req.System),
 		"user_bytes", len(req.User),
 	}
-	if f, ok := failureFromContext(ctx); ok {
+	if f, ok := FailureFromContext(ctx); ok {
 		attrs = append(attrs,
 			"source", f.Source,
 			"release", f.ReleaseID,

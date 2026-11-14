@@ -1,0 +1,28 @@
+# A failing dbt test: a test is never a fix target, so no type takes it and it
+# is handed over skipped.
+kind: fixture
+version: 1
+flow: rejected-release
+scenario: no_type
+trigger:
+  source: validation
+  release_id: rel-flow-no-type
+  repo: o/repo
+  commit_sha: sha-no-type
+  code_bundle_uri: s3://continuo/code-bundles/rel-flow-no-type/bundle.json
+  nodes:
+    - node_id: test.sales.not_null_orders_id
+      category: validation
+      error_signature: sig-not-null-orders-id
+      reason: test_failed
+      error_excerpt: "Got 3 results, configured to fail if != 0"
+      file_path: models/schema.yml
+      service: sales
+      node_type: dbt-test
+service_repo_paths:
+  sales: services/sales
+answers:
+  pass:
+    - proposed_sql: "select 1"
+      rationale: unused, no type takes a test
+      confidence: high

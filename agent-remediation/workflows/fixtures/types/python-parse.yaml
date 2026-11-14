@@ -1,0 +1,104 @@
+# A python node whose declared read names its relation without a schema, which
+# the release's SQL parser rejects. The fix qualifies the relation in the
+# contract yaml. Built from the e2e fixture tests/e2e/fixtures/py-remediation-repo
+# (services/svc-py-e2e-parse) and the python parse lane's tests
+# (service/fixer/python_parse_test.go). A parse rejection has no code bundle.
+kind: fixture
+version: 1
+type: python-parse
+trigger:
+  source: parse
+  release_id: rel-python-parse-1
+  repo: o/demo
+  commit_sha: deadbeef
+  nodes:
+    - node_id: e2e_schema.py_unqualified_read
+      category: parse
+      error_signature: sig-unqualified-reference
+      reason: unqualified_reference
+      error_excerpt: "read orders references right_name, which names no schema"
+      service: svc-py-e2e-parse
+      node_type: python-node
+service_repo_paths:
+  svc-py-e2e-parse: services/svc-py-e2e-parse
+repo_files:
+  services/svc-py-e2e-parse/contracts/py_unqualified_read.yml: |
+    nodes:
+      - schema: e2e_schema
+        table: py_unqualified_read
+        owner: e2e
+        schedule: daily
+        criticality: SECONDARY
+        script: scripts/py_unqualified_read.py
+        description: "python node whose declared read is not schema-qualified"
+        reads:
+          orders: select id from right_name
+        output_columns:
+          - {name: id, type: INTEGER, nullable: false}
+  services/svc-py-e2e-parse/scripts/py_unqualified_read.py: |
+    import pyarrow as pa
+
+
+    def run(ctx):
+        ctx.read("orders")
+        return pa.table({"id": pa.array([1], type=pa.int32())})
+release:
+  image_tag: sha-python-parse
+  failing_nodes:
+    e2e_schema.py_unqualified_read: "read orders references right_name, which names no schema"
+packager:
+  merged: |
+    nodes:
+      - schema: e2e_schema
+        table: py_unqualified_read
+        reads:
+          orders: select id from public.right_name
+answers:
+  pass:
+    - files:
+        - path: services/svc-py-e2e-parse/contracts/py_unqualified_read.yml
+          content: |
+            nodes:
+              - schema: e2e_schema
+                table: py_unqualified_read
+                owner: e2e
+                schedule: daily
+                criticality: SECONDARY
+                script: scripts/py_unqualified_read.py
+                description: "python node whose declared read is not schema-qualified"
+                reads:
+                  orders: select id from public.right_name
+                output_columns:
+                  - {name: id, type: INTEGER, nullable: false}
+      rationale: qualified right_name with its schema
+      confidence: high
+      model: claude-test
+  fail:
+    # The node renamed: pre-flight fails a fix that changes the node's identity.
+    - files:
+        - path: services/svc-py-e2e-parse/contracts/py_unqualified_read.yml
+          content: |
+            nodes:
+              - schema: e2e_schema
+                table: py_qualified_read
+                owner: e2e
+                schedule: daily
+                criticality: SECONDARY
+                script: scripts/py_unqualified_read.py
+                description: "python node whose declared read is not schema-qualified"
+                reads:
+                  orders: select id from public.right_name
+                output_columns:
+                  - {name: id, type: INTEGER, nullable: false}
+      rationale: renamed the node and qualified its read
+      confidence: high
+      model: claude-test
+  decline:
+    - files: []
+      rationale: cannot tell which schema right_name lives in
+      confidence: low
+      model: claude-test
+decline_before_model:
+  node: { service: "" }
+gate_errors:
+  e2e_schema.py_unqualified_read: 'relation "public.right_name" does not exist'

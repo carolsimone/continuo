@@ -119,6 +119,9 @@ const (
 type Proposal struct {
 	Source    string
 	ReleaseID string
+	// RemediationID is the id of the runner's remediation this attempt belongs
+	// to. It is empty for an attempt the proposal driver made.
+	RemediationID string
 	// RemediationRound is the release's remediation round this attempt belongs to; the attempt cap is counted within a round.
 	RemediationRound int
 	NodeID           string

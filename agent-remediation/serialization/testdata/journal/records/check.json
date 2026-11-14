@@ -1,0 +1,30 @@
+{
+  "result": {
+    "Check": "dbt-compile",
+    "Findings": [
+      {
+        "Code": "compile_error",
+        "Message": "column x does not exist",
+        "File": "models/orders_daily.sql",
+        "Line": 4
+      }
+    ],
+    "Waiting": true,
+    "RunIDs": [
+      "run-1"
+    ]
+  },
+  "evidence": {
+    "dbt_log": "Compilation Error",
+    "source_files": {
+      "Files": {
+        "models/orders_daily.sql": "select 1"
+      },
+      "Order": [
+        "models/orders_daily.sql"
+      ],
+      "Primary": "models/orders_daily.sql",
+      "Service": "orders"
+    }
+  }
+}
