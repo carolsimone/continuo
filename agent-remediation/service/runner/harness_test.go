@@ -492,6 +492,16 @@ func withTries(n int) option {
 	return func(h *harness) { h.files = testFiles(n) }
 }
 
+// withRounds gives every type of the harness rounds pre-flight rounds.
+func withRounds(rounds int) option {
+	return func(h *harness) {
+		for name, typ := range h.files.Types {
+			typ.Agent.Rounds = rounds
+			h.files.Types[name] = typ
+		}
+	}
+}
+
 // withoutCrossClusterChecks gives the flow no cross-cluster check, so the gate
 // is the first to see the try's drafts together.
 func withoutCrossClusterChecks() option {

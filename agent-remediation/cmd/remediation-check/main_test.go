@@ -243,11 +243,11 @@ func TestFiles_FilesWithoutTheTriggerFlowExitOne(t *testing.T) {
 	assert.Empty(t, r.Scenarios)
 }
 
-// The runner runs one pre-flight round per try, so a type that asks for two is
+// A type runs at least one pre-flight round, so a type that asks for none is
 // refused at its agent line, as the service refuses it at startup.
-func TestFiles_ATypeWithTwoRoundsExitsOne(t *testing.T) {
+func TestFiles_ATypeWithNoRoundsExitsOne(t *testing.T) {
 	dir := copyBuiltinEditing(t, filepath.Join("types", "dbt-compile.yaml"), func(typ string) string {
-		return strings.Replace(typ, "rounds: 1", "rounds: 2", 1)
+		return strings.Replace(typ, "rounds: 1", "rounds: 0", 1)
 	})
 
 	code, stdout, stderr := runFiles(t, "files", dir)
@@ -255,6 +255,6 @@ func TestFiles_ATypeWithTwoRoundsExitsOne(t *testing.T) {
 	assert.Equal(t, 1, code, stderr)
 	r := decode(t, stdout)
 	require.Len(t, r.Errors, 1, "%v", r.Errors)
-	assert.Equal(t, `types/dbt-compile.yaml:8: type "dbt-compile" has rounds 2, and the runner runs one pre-flight round per try, so rounds must be 1`, r.Errors[0])
+	assert.Equal(t, `types/dbt-compile.yaml:8: type "dbt-compile" has rounds 0, and a type runs at least one pre-flight round, so rounds must be 1 or more`, r.Errors[0])
 	assert.Empty(t, r.Scenarios, "the suite is skipped when the files do not validate")
 }

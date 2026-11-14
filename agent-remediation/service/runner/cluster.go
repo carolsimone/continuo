@@ -12,10 +12,14 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 )
 
-// codeTargetNotShown is the finding of a draft whose target file the model was
-// not shown. A cluster refused with it is skipped rather than failed: the
-// model never edited a file it could see.
-const codeTargetNotShown = "target_not_shown"
+// roundsSpentPrefix starts the outcome of the members of a cluster whose last
+// pre-flight round refused its draft; the first finding of that round follows.
+const roundsSpentPrefix = "pre-flight rounds spent: "
+
+// contextRound is the round a cluster's context steps run in. They run once
+// per try, in its first round; every later round rebuilds the cluster's
+// evidence from their rows.
+const contextRound = 1
 
 // artifactContentType is the content type of a draft's stored content and
 // diff.
@@ -29,8 +33,8 @@ type plannedStep struct {
 }
 
 // clusterPlan is the steps a cluster runs, in the order the runner runs them:
-// the flow's context steps, the type's context steps, the type's prompt, then
-// the type's pre-flight checks in one pass.
+// the flow's context steps, the type's context steps, then in each round the
+// type's prompt and the type's pre-flight checks in one pass.
 type clusterPlan struct {
 	typ       workflow.Type
 	context   []plannedStep
@@ -57,11 +61,12 @@ func (r *Runner) planFor(run tryRun, c remediation.Cluster) (clusterPlan, error)
 }
 
 // runClusterStep runs the next step of an open cluster and commits it: the
-// first context step with no done row, else the prompt, else the pre-flight
-// pass. The cluster's evidence is rebuilt from the rows of its done steps. A
-// cluster whose type the loaded files do not define fails on the runner's plan
-// row, and a done row that cannot be read back fails on the row of the step
-// about to run, so either failure is counted like a step's own.
+// first context step with no done row in the first round, else the prompt of
+// the cluster's round, else that round's pre-flight pass. The cluster's
+// evidence is rebuilt from the rows of its done context steps. A cluster whose
+// type the loaded files do not define fails on the runner's plan row, and a
+// done row that cannot be read back fails on the row of the step about to run,
+// so either failure is counted like a step's own.
 func (r *Runner) runClusterStep(ctx context.Context, run tryRun, c remediation.Cluster) error {
 	plan, err := r.planFor(run, c)
 	if err != nil {
@@ -70,7 +75,7 @@ func (r *Runner) runClusterStep(ctx context.Context, run tryRun, c remediation.C
 	f := failureFor(run.trigger, c, run.snap.Try.Attempt)
 	ev := remediation.NewEvidence().With(remediation.KeyFailure, f)
 	for i, ps := range plan.context {
-		row, done := run.journal.done(c.Cluster, string(ps.name), c.Round)
+		row, done := run.journal.done(c.Cluster, string(ps.name), contextRound)
 		if !done {
 			return r.runContext(ctx, run, c, f, ev, ps, i == len(plan.context)-1)
 		}
@@ -80,7 +85,7 @@ func (r *Runner) runClusterStep(ctx context.Context, run tryRun, c remediation.C
 	}
 	row, done := run.journal.done(c.Cluster, string(plan.prompt.name), c.Round)
 	if !done {
-		return r.runPrompt(ctx, run, c, f, ev, plan.prompt)
+		return r.runPrompt(ctx, run, c, plan, f, ev)
 	}
 	draft, err := promptDraft(row)
 	if err != nil {
@@ -90,11 +95,12 @@ func (r *Runner) runClusterStep(ctx context.Context, run tryRun, c remediation.C
 }
 
 // pendingRow starts the row of the step the cluster runs next: its first
-// context step with no done row, else its prompt, else its pre-flight pass.
+// context step with no done row in the first round, else the prompt of its
+// round, else that round's pre-flight pass.
 func (r *Runner) pendingRow(run tryRun, c remediation.Cluster, plan clusterPlan) remediation.StepRun {
 	for _, ps := range plan.context {
-		if _, done := run.journal.done(c.Cluster, string(ps.name), c.Round); !done {
-			return r.newRow(run, c.Cluster, string(ps.name), string(step.KindContext), c.Round, ps.revision)
+		if _, done := run.journal.done(c.Cluster, string(ps.name), contextRound); !done {
+			return r.newRow(run, c.Cluster, string(ps.name), string(step.KindContext), contextRound, ps.revision)
 		}
 	}
 	if _, done := run.journal.done(c.Cluster, string(plan.prompt.name), c.Round); !done {
@@ -106,12 +112,12 @@ func (r *Runner) pendingRow(run tryRun, c remediation.Cluster, plan clusterPlan)
 // runContext runs one context step. A decline ends the cluster; the last
 // context step moves it on to the prompt.
 func (r *Runner) runContext(ctx context.Context, run tryRun, c remediation.Cluster, f remediation.Failure, ev remediation.Evidence, ps plannedStep, last bool) error {
-	row := r.newRow(run, c.Cluster, string(ps.name), string(step.KindContext), c.Round, ps.revision)
+	row := r.newRow(run, c.Cluster, string(ps.name), string(step.KindContext), contextRound, ps.revision)
 	src, err := lookup[step.ContextSource](r.d.Registry, ps.name, step.KindContext)
 	if err != nil {
 		return r.recordFailure(ctx, row, err)
 	}
-	if row.InputDigest, err = serialization.InputDigest(ev, c.Round); err != nil {
+	if row.InputDigest, err = serialization.InputDigest(ev, contextRound); err != nil {
 		return r.recordFailure(ctx, row, err)
 	}
 	out, err := src.Gather(ctx, step.ContextInput{Failure: f, Evidence: ev})
@@ -142,9 +148,11 @@ func (r *Runner) runContext(ctx context.Context, run tryRun, c remediation.Clust
 }
 
 // runPrompt runs the cluster's prompt step through a model handle keyed by the
-// remediation, try, cluster and round. A decline ends the cluster; a draft
-// moves it on to pre-flight.
-func (r *Runner) runPrompt(ctx context.Context, run tryRun, c remediation.Cluster, f remediation.Failure, ev remediation.Evidence, ps plannedStep) error {
+// remediation, try, cluster and round. In a round after the first the step is
+// given the round before it, read from the journal (previousRound). A decline
+// ends the cluster; a draft moves it on to pre-flight.
+func (r *Runner) runPrompt(ctx context.Context, run tryRun, c remediation.Cluster, plan clusterPlan, f remediation.Failure, ev remediation.Evidence) error {
+	ps := plan.prompt
 	row := r.newRow(run, c.Cluster, string(ps.name), string(step.KindPrompt), c.Round, ps.revision)
 	p, err := lookup[step.Prompt](r.d.Registry, ps.name, step.KindPrompt)
 	if err != nil {
@@ -153,13 +161,19 @@ func (r *Runner) runPrompt(ctx context.Context, run tryRun, c remediation.Cluste
 	if row.InputDigest, err = serialization.InputDigest(ev, c.Round); err != nil {
 		return r.recordFailure(ctx, row, err)
 	}
+	in := step.PromptInput{Failure: f, Evidence: ev, Round: c.Round - 1}
+	if c.Round > 1 {
+		if in, err = r.previousRound(run, c, plan, in); err != nil {
+			return r.recordFailure(ctx, row, fmt.Errorf("step %s: %w", ps.name, err))
+		}
+	}
 	m := newModel(r.d.LLM, run.snap.Remediation.ID, run.snap.Try.Try, c.Cluster, c.Round, promptlog.Failure{
 		Source:    run.trigger.Source,
 		ReleaseID: run.trigger.ReleaseID,
 		NodeID:    c.TargetNodeID,
 		Attempt:   run.snap.Try.Attempt,
 	})
-	out, err := p.Propose(ctx, step.PromptInput{Failure: f, Evidence: ev, Round: c.Round - 1}, m)
+	out, err := p.Propose(ctx, in, m)
 	row.Model, row.PromptVersion = m.lastModel, m.promptVersion
 	row.TokensIn, row.TokensOut, row.CacheHit = m.tokensIn, m.tokensOut, m.cacheHit()
 	if err != nil {
@@ -188,6 +202,36 @@ func (r *Runner) runPrompt(ctx context.Context, run tryRun, c remediation.Cluste
 	return r.commitStep(ctx, run, row, []remediation.StepRun{row}, append([]remediation.Cluster{next}, added...))
 }
 
+// previousRound returns in with the round before the cluster's, as the journal
+// holds it: the draft, the last request and the last answer of that round's
+// prompt row, and every finding of that round's pre-flight checks, check by
+// check in the order the type lists them, from each check's row. A prompt row
+// that stores no model call cannot be revised, and is an error.
+func (r *Runner) previousRound(run tryRun, c remediation.Cluster, plan clusterPlan, in step.PromptInput) (step.PromptInput, error) {
+	prev := c.Round - 1
+	row, done := run.journal.done(c.Cluster, string(plan.prompt.name), prev)
+	if !done {
+		return in, fmt.Errorf("round %d's prompt step has no done row", prev)
+	}
+	rec, err := serialization.DecodeRecord[serialization.PromptRecord](row.Output)
+	if err != nil {
+		return in, fmt.Errorf("decode the output of round %d's prompt step: %w", prev, err)
+	}
+	if rec.LastRequest == nil || rec.LastAnswer == nil {
+		return in, fmt.Errorf("round %d's prompt row stores no model call to revise", prev)
+	}
+	req, answer := rec.LastRequest.Request(), rec.LastAnswer.Answer()
+	in.Previous, in.PreviousRequest, in.PreviousAnswer = &rec.Draft, &req, &answer
+	for _, ps := range plan.preflight {
+		check, done := run.journal.done(c.Cluster, string(ps.name), prev)
+		if !done {
+			return in, fmt.Errorf("round %d's pre-flight check %s has no done row", prev, ps.name)
+		}
+		in.Findings = append(in.Findings, check.Findings...)
+	}
+	return in, nil
+}
+
 // promptRecord is the journal record of a prompt step's output: its draft or
 // its decline and, for a step that made a model call and did not decline, the
 // last call it made, which a later round revises. A declined cluster takes no
@@ -208,8 +252,10 @@ func promptRecord(out step.PromptOutput, m *model) serialization.PromptRecord {
 //
 // When every check passed, each edit with no original gets the one the pass's
 // checkout read, the edits' content and diff are stored, and the cluster is
-// checked. Otherwise the cluster ends on the first finding: its members are
-// skipped when the model named a file it was not shown, and failed otherwise.
+// checked. Otherwise, while the cluster has rounds left of the ones its type
+// allows, it goes back to proposing in the next round, where the prompt step
+// revises the draft with every finding of this pass. In its last round the
+// cluster settles with its members failed on the pass's first finding.
 func (r *Runner) runPreflight(ctx context.Context, run tryRun, c remediation.Cluster, plan clusterPlan, f remediation.Failure, ev remediation.Evidence, draft remediation.Draft) error {
 	pass := r.newRow(run, c.Cluster, stepPreflight, kindRunner, c.Round, plan.typ.Revision)
 	ev = ev.With(remediation.KeyDraft, draft)
@@ -241,11 +287,13 @@ func (r *Runner) runPreflight(ctx context.Context, run tryRun, c remediation.Clu
 	next := c
 	var added []remediation.Cluster
 	if first, refused := firstFinding(results); refused {
-		status := proposal.StatusFailed
-		if first.Code == codeTargetNotShown {
-			status = proposal.StatusSkipped
+		if c.Round < plan.typ.Agent.Rounds {
+			next.Round++
+			err = moveCluster(&next, remediation.ClusterProposing)
+		} else {
+			added, err = r.settle(run, &next, proposal.NodeOutcome{Status: proposal.StatusFailed, Reason: roundsSpentPrefix + first.Message})
 		}
-		if added, err = r.settle(run, &next, proposal.NodeOutcome{Status: status, Reason: first.Message}); err != nil {
+		if err != nil {
 			return err
 		}
 	} else {

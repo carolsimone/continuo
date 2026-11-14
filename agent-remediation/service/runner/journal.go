@@ -33,10 +33,10 @@ const (
 	// stepPlan finds the steps a cluster runs from its type. It has a row only
 	// when it failed: its type is not among the loaded files.
 	stepPlan = "plan"
-	// stepPreflight runs a cluster's pre-flight checks in one pass. Its row's
-	// output holds the draft as the pass left it: with every edit's original
-	// filled and, once every check passed, the URIs of its stored content and
-	// diff. Its findings are every finding of the pass.
+	// stepPreflight runs a cluster's pre-flight checks in one pass per round.
+	// Its row's output holds the draft as the pass left it: with every edit's
+	// original filled and, once every check passed, the URIs of its stored
+	// content and diff. Its findings are every finding of the pass.
 	stepPreflight = "preflight"
 	// stepDrafts reads the checked drafts of a try back from the journal once
 	// every cluster has ended. It is a flow-level row, and has one only when

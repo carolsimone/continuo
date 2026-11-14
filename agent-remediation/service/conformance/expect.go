@@ -15,9 +15,9 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 )
 
-// codeTargetNotShown is the finding of a draft that edits a file the model was
-// not shown. Pre-flight hands its members over skipped rather than failed.
-const codeTargetNotShown = "target_not_shown"
+// roundsSpentPrefix starts the outcome of the members of a cluster whose last
+// pre-flight round refused its draft.
+const roundsSpentPrefix = "pre-flight rounds spent: "
 
 // expectation collects every way a run differs from what its scenario
 // expects.
@@ -241,10 +241,15 @@ func (e *expectation) upstreamReachedModel(c remediation.Cluster, typ workflow.T
 	e.that(reached == want, "in scenario %s the upstream cluster reached the model: %t, want %t", sc, reached, want)
 }
 
-// firstFinding is the first finding of cluster c's pre-flight checks, in the
-// order typ lists them.
+// firstFinding is the first finding of cluster c's pre-flight checks in the
+// cluster's last round, in the order typ lists them.
 func (e *expectation) firstFinding(c remediation.Cluster, typ workflow.Type) (remediation.Finding, bool) {
-	rows := e.stepRows(c.Cluster)
+	rows := map[string]remediation.StepRun{}
+	for _, s := range e.sr.w.Steps(e.sr.id) {
+		if s.Try == 1 && s.Cluster == c.Cluster && s.Round == c.Round {
+			rows[s.Step] = s
+		}
+	}
 	for _, ref := range typ.Preflight {
 		if row, ok := rows[string(ref.Name)]; ok && len(row.Findings) > 0 {
 			return row.Findings[0], true
@@ -254,10 +259,9 @@ func (e *expectation) firstFinding(c remediation.Cluster, typ workflow.Type) (re
 }
 
 // singleHandedOver expects the single cluster c handed over in scenario sc,
-// with no verification run: by its pre-flight pass, the attempt settled
-// skipped when the first finding is a target the model was not shown and
-// failed otherwise; by a context step that declined, skipped with no model
-// call; by the model, failed.
+// with no verification run: by its last pre-flight round, which refused its
+// draft, failed with that round's first finding; by a context step that
+// declined, skipped with no model call; by the model, failed.
 func (e *expectation) singleHandedOver(c remediation.Cluster, typ workflow.Type, sc Scenario) {
 	e.that(c.Status == remediation.ClusterHandedOver, "cluster %d is %s, not handed_over", c.Cluster, c.Status)
 	want := proposal.StatusFailed
@@ -265,9 +269,8 @@ func (e *expectation) singleHandedOver(c remediation.Cluster, typ workflow.Type,
 	case PreflightFails:
 		finding, ok := e.firstFinding(c, typ)
 		e.that(ok, "pre-flight refused nothing in cluster %d", c.Cluster)
-		if finding.Code == codeTargetNotShown {
-			want = proposal.StatusSkipped
-		}
+		reason := roundsSpentPrefix + finding.Message
+		e.that(c.Outcome != nil && c.Outcome.Reason == reason, "cluster %d ended with %+v, want the reason %q", c.Cluster, c.Outcome, reason)
 	case DeclinesBeforeModel:
 		want = proposal.StatusSkipped
 		e.modelCalls(0)

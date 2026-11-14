@@ -25,10 +25,11 @@ type checkedCluster struct {
 
 // checkedClusters rebuilds every checked cluster of the try from the journal,
 // in cluster order. Its evidence is the failure, what each of its context
-// steps gathered, what each of its pre-flight checks gathered (a packaged
-// contract among them) and the draft as the pre-flight pass left it, with its
-// originals and stored content. The same rows always rebuild the same drafts,
-// so the gate is polled with exactly the drafts it was submitted.
+// steps gathered in the first round, what each of its pre-flight checks
+// gathered in the cluster's last round (a packaged contract among them) and
+// the draft as that round's pre-flight pass left it, with its originals and
+// stored content. The same rows always rebuild the same drafts, so the gate is
+// polled with exactly the drafts it was submitted.
 func (r *Runner) checkedClusters(run tryRun) ([]checkedCluster, error) {
 	var out []checkedCluster
 	for _, c := range run.snap.Clusters {
@@ -49,16 +50,16 @@ func (r *Runner) checkedCluster(run tryRun, c remediation.Cluster) (checkedClust
 	if err != nil {
 		return checkedCluster{}, err
 	}
-	doneRow := func(name string) (remediation.StepRun, error) {
-		row, done := run.journal.done(c.Cluster, name, c.Round)
+	doneRow := func(name string, round int) (remediation.StepRun, error) {
+		row, done := run.journal.done(c.Cluster, name, round)
 		if !done {
-			return row, fmt.Errorf("step %s has no done row", name)
+			return row, fmt.Errorf("step %s has no done row in round %d", name, round)
 		}
 		return row, nil
 	}
 	ev := remediation.NewEvidence().With(remediation.KeyFailure, failureFor(run.trigger, c, run.snap.Try.Attempt))
 	for _, ps := range plan.context {
-		row, err := doneRow(string(ps.name))
+		row, err := doneRow(string(ps.name), contextRound)
 		if err != nil {
 			return checkedCluster{}, err
 		}
@@ -68,7 +69,7 @@ func (r *Runner) checkedCluster(run tryRun, c remediation.Cluster) (checkedClust
 	}
 	results := make([]remediation.CheckResult, 0, len(plan.preflight))
 	for _, ps := range plan.preflight {
-		row, err := doneRow(string(ps.name))
+		row, err := doneRow(string(ps.name), c.Round)
 		if err != nil {
 			return checkedCluster{}, err
 		}
@@ -81,7 +82,7 @@ func (r *Runner) checkedCluster(run tryRun, c remediation.Cluster) (checkedClust
 		}
 		results = append(results, rec.Result)
 	}
-	pass, err := doneRow(stepPreflight)
+	pass, err := doneRow(stepPreflight, c.Round)
 	if err != nil {
 		return checkedCluster{}, err
 	}

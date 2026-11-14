@@ -466,16 +466,16 @@ func TestRunner_PreflightFindingHandsTheClusterOver(t *testing.T) {
 		findings []string
 	}{
 		{
-			name:   "a target the model was not shown is skipped",
+			name:   "a target the model was not shown is failed",
 			answer: func(r *ports.ProposeResult) { r.TargetFile = "models/elsewhere.sql" },
-			outcome: proposal.NodeOutcome{Status: proposal.StatusSkipped,
-				Reason: `the model named "models/elsewhere.sql" as the file to change, which is not one of the files it was shown`},
+			outcome: proposal.NodeOutcome{Status: proposal.StatusFailed,
+				Reason: `pre-flight rounds spent: the model named "models/elsewhere.sql" as the file to change, which is not one of the files it was shown`},
 			findings: []string{"target_not_shown", "content_unchanged"},
 		},
 		{
 			name:     "a low-confidence draft is failed",
 			answer:   func(r *ports.ProposeResult) { r.Confidence = "low" },
-			outcome:  proposal.NodeOutcome{Status: proposal.StatusFailed, Reason: "the model could not determine a safe fix with confidence"},
+			outcome:  proposal.NodeOutcome{Status: proposal.StatusFailed, Reason: "pre-flight rounds spent: the model could not determine a safe fix with confidence"},
 			findings: []string{"low_confidence"},
 		},
 	}

@@ -275,22 +275,26 @@ func TestValidate_RefusesAnUnprovidedNeed(t *testing.T) {
 	})
 }
 
-// The runner runs one pre-flight round per try, so a type that asks for any
-// other number of rounds is refused at its agent line rather than run as one.
-func TestValidate_RefusesRoundsOtherThanOne(t *testing.T) {
-	for _, rounds := range []int{0, 2, 3} {
+// A type runs at least one pre-flight round, so a type that asks for fewer is
+// refused at its agent line rather than run with none.
+func TestValidate_RefusesRoundsBelowOne(t *testing.T) {
+	for _, rounds := range []int{0, -1} {
 		t.Run(fmt.Sprintf("rounds %d", rounds), func(t *testing.T) {
 			refuses(t, func(_ *workflow.Flow, ty *workflow.Type) { ty.Agent.Rounds = rounds },
-				fmt.Sprintf(`types/t.yaml:6: type "t" has rounds %d, and the runner runs one pre-flight round per try, so rounds must be 1`, rounds))
+				fmt.Sprintf(`types/t.yaml:6: type "t" has rounds %d, and a type runs at least one pre-flight round, so rounds must be 1 or more`, rounds))
 		})
 	}
 }
 
-func TestValidate_AcceptsOneRound(t *testing.T) {
-	f, ty := validFlow(), validType()
-	ty.Agent.Rounds = 1
-	_, err := Validate(setOf(f, ty), stubRegistry())
-	require.NoError(t, err)
+func TestValidate_AcceptsOneRoundOrMore(t *testing.T) {
+	for _, rounds := range []int{1, 2, 3} {
+		t.Run(fmt.Sprintf("rounds %d", rounds), func(t *testing.T) {
+			f, ty := validFlow(), validType()
+			ty.Agent.Rounds = rounds
+			_, err := Validate(setOf(f, ty), stubRegistry())
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestValidate_RefusesTriesBelowOne(t *testing.T) {

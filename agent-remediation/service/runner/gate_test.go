@@ -65,7 +65,7 @@ func TestRunner_NoEditSettlesTheAttempt(t *testing.T) {
 		p := h.attempt(1).Proposal
 		assert.Equal(t, proposal.StatusFailed, p.Status)
 		assert.Equal(t, map[string]proposal.NodeOutcome{
-			"svc-a": {Status: proposal.StatusFailed, Reason: "the model could not determine a safe fix with confidence"},
+			"svc-a": {Status: proposal.StatusFailed, Reason: "pre-flight rounds spent: the model could not determine a safe fix with confidence"},
 			"svc-b": {Status: proposal.StatusSkipped, Reason: "dbt tests are not fix targets; fix the model or edit the test by hand"},
 		}, p.NodeOutcomes)
 		assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)

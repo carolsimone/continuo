@@ -160,10 +160,10 @@ func TestSuite_AnAnswerPreflightRefusesFailsTheScenariosThatExpectAProposal(t *t
 	}
 	const noEvent = "0 remediation.proposed events were enqueued, want 1"
 	for sc, want := range map[conformance.Scenario][]string{
-		conformance.FirstDraftPasses:    {"the attempts are [skipped], want [proposed]", noEvent},
-		conformance.GateFailsThenPasses: {"the attempts are [skipped], want [failed proposed]", noEvent},
-		conformance.TriesSpent:          {"the attempts are [skipped], want [failed failed failed escalated]", "attempt 1 carries no verify error"},
-		conformance.Redelivery:          {"the attempts are [skipped], want [proposed]", noEvent},
+		conformance.FirstDraftPasses:    {"the attempts are [failed], want [proposed]", noEvent},
+		conformance.GateFailsThenPasses: {"the attempts are [failed], want [failed proposed]", noEvent},
+		conformance.TriesSpent:          {"the attempts are [failed], want [failed failed failed escalated]", "attempt 1 carries no verify error"},
+		conformance.Redelivery:          {"the attempts are [failed], want [proposed]", noEvent},
 	} {
 		require.Error(t, errs[sc], "scenario %s", sc)
 		for _, w := range want {
