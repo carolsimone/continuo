@@ -42,7 +42,8 @@ func (*DBTValidation) Meta() step.Meta {
 		Kind: step.KindPrompt,
 		Description: "Shows the model a validation-failed dbt node's candidate SQL with the dbt error, what the release changed in the node and its ancestors and " +
 			"past precedent, and stores the SQL fix it proposes. It then asks the model to apply its diagnosis to the node's real source, " +
-			"and the answer, whatever it holds, becomes the draft's one edit for the pre-flight checks to judge.",
+			"and the answer, whatever it holds, becomes the draft's one edit for the pre-flight checks to judge. " +
+			"Both requests of the first round carry the earlier tries at the failure, when there are any.",
 		Needs: []remediation.EvidenceKey{
 			remediation.KeyFailure,
 			remediation.KeyCandidateSQL,
@@ -63,6 +64,10 @@ func (*DBTValidation) Meta() step.Meta {
 // candidate artifacts whenever it holds SQL, for audit: it is the model's fix
 // applied to the pre-compiled SQL, not to the real model source. An answer
 // with no SQL gives a draft with no artifacts and no edit.
+//
+// Both calls of the first round carry the earlier tries at the failure
+// (step.WithPreviousTries), so whichever of them a later round revises still
+// shows them.
 //
 // The second call applies the first one's diagnosis to the node's real source.
 // Its answer is the draft's one edit whatever it holds, an empty, unchanged or
@@ -135,7 +140,7 @@ func (p *DBTValidation) Propose(ctx context.Context, in step.PromptInput, m step
 		return step.PromptOutput{}, fmt.Errorf("write candidate diff: %w", err)
 	}
 
-	applyDiagnosis := prompt.AssembleSourceFix(p.sanitizer.Sanitize(bundle.Source), nodeID, res.Rationale)
+	applyDiagnosis := step.WithPreviousTries(prompt.AssembleSourceFix(p.sanitizer.Sanitize(bundle.Source), nodeID, res.Rationale), in.Evidence)
 	return p.sourceFix(ctx, f, bundle, repoPrefix, applyDiagnosis, draft, m)
 }
 
@@ -155,10 +160,7 @@ func (p *DBTValidation) repoPrefix(bundle remediation.CandidateSource) (string, 
 }
 
 // diagnosisRequest builds the first call's request from the cluster's
-// evidence, with the earlier tries at the failure (step.WithPreviousTries). The
-// diagnosis is where the model decides what to change, so it is what the
-// earlier tries inform; the source-fix call that follows applies that
-// diagnosis, and is shown only the diagnosis and the source.
+// evidence, with the earlier tries at the failure (step.WithPreviousTries).
 func (p *DBTValidation) diagnosisRequest(in step.PromptInput, candidateSQL remediation.Text) prompt.ProposeRequest {
 	dbtLog, _ := remediation.Get[remediation.Text](in.Evidence, remediation.KeyDBTLog)
 	ownDiff, _ := remediation.Get[remediation.Text](in.Evidence, remediation.KeyOwnChangeDiff)

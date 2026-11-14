@@ -13,6 +13,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
+	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
 )
@@ -70,14 +71,14 @@ func triedSnapshot(t *testing.T, round, try, attempt int, node string, draft rem
 	preflight, err := serialization.EncodeRecord(serialization.PreflightRecord{Draft: draft})
 	require.NoError(t, err)
 	steps := []remediation.StepRun{{
-		Try: try, Cluster: 1, Step: serialization.PreflightStep, Kind: serialization.RunnerKind, Round: 1,
+		Try: try, Cluster: 1, Step: remediation.StepPreflight, Kind: remediation.KindRunner, Round: 1,
 		Status: remediation.StepDone, Output: preflight,
 	}}
 	if len(gate) > 0 {
 		out, err := serialization.EncodeRecord(serialization.CheckRecord{Result: remediation.CheckResult{Check: "verification_run", Findings: gate}, Gate: true})
 		require.NoError(t, err)
 		steps = append(steps, remediation.StepRun{
-			Try: try, Step: "verification_run", Kind: serialization.CheckKind, Round: 1, Status: remediation.StepDone, Output: out, Findings: gate,
+			Try: try, Step: "verification_run", Kind: remediation.KindCheck, Round: 1, Status: remediation.StepDone, Output: out, Findings: gate,
 		})
 	}
 	return remediation.Snapshot{
@@ -92,7 +93,7 @@ func editOf(original, content string) remediation.Draft {
 	return remediation.Draft{Edits: []remediation.Edit{{Path: "models/a.sql", Original: original, Content: content}}}
 }
 
-func gatherPreviousTries(t *testing.T, tries repository.TryLister, attempts repository.AttemptLister, objects diffObjects) []remediation.TryRecord {
+func gatherPreviousTries(t *testing.T, tries repository.TryLister, attempts repository.AttemptLister, objects ports.EvidenceReader) []remediation.TryRecord {
 	t.Helper()
 	out, err := shared.NewPreviousTries(tries, attempts, objects, markSanitizer{}, discardLogger()).Gather(context.Background(),
 		step.ContextInput{Failure: previousTriesFailure()})
@@ -189,4 +190,19 @@ func TestPreviousTries_NoReadersGiveNoTries(t *testing.T) {
 	got, ok := out.Evidence[remediation.KeyPreviousTries].([]remediation.TryRecord)
 	require.True(t, ok)
 	assert.Empty(t, got)
+}
+
+func TestPreviousTries_NoEvidenceReaderShowsLegacyAttemptsWithoutDiffs(t *testing.T) {
+	attempts := &fakeProposals{views: []proposal.View{{
+		Attempt: 1, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, VerifyError: "legacy still broken",
+		Edits: []proposal.FileEdit{{Path: "models/a.sql", DiffURI: "s3://diffs/1"}},
+	}}}
+
+	got := gatherPreviousTries(t, &fakeTries{}, attempts, nil)
+
+	assert.Equal(t, []remediation.TryRecord{{
+		Round: 1, Attempt: 1,
+		Clusters: []remediation.ClusterRecord{{Members: []string{"model.a"}}},
+		Gate:     []remediation.Finding{{Message: "<legacy still broken>"}},
+	}}, got)
 }

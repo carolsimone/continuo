@@ -21,15 +21,19 @@ var (
 )
 
 // TryLister is the repository slice the previous_tries step reads: every try
-// a tenant's release has had, in every remediation round. It is a narrower view
-// of the ListTriesOfRelease method RemediationRepository declares.
+// a tenant's release has had, in every remediation round, with the journal
+// rows a later try is shown. RemediationRepository declares it too.
 type TryLister interface {
 	// ListTriesOfRelease returns one snapshot per try of every remediation of
 	// the tenant's release, ordered by remediation round then try. Each
 	// snapshot holds its remediation, that try (not necessarily the current
-	// one), and that try's clusters (ordered by cluster) and steps (ordered by
-	// id). A remediation with no try adds none. It takes no lock and needs no
-	// transaction, so a try being written while it reads may be torn.
+	// one), that try's clusters (ordered by cluster), and of that try's steps
+	// only the rows a later try reads back, StepRun.ShownToLaterTries (ordered
+	// by id): the done pre-flight rows of its clusters and its done flow-level
+	// check rows. Every other row, a prompt or context row with its large
+	// output included, is left out. A remediation with no try adds none. It
+	// takes no lock and needs no transaction, so a try being written while it
+	// reads may be torn.
 	ListTriesOfRelease(ctx context.Context, tenantID, releaseID string) ([]remediation.Snapshot, error)
 }
 

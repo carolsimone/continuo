@@ -34,7 +34,7 @@ func NewPythonContract(sanitizer ports.LogSanitizer) step.Prompt {
 	return &contractPrompt{
 		name: "python-contract",
 		description: "Shows the model a python node's contract yaml with the validation error, runner log, the contract entry the release recorded, " +
-			"upstream changes, precedent and the earlier tries at the failure, and reads back the complete new content of every contract file it changes.",
+			"upstream changes, precedent and, when there are any, the earlier tries at the failure in its first-round request, and reads back the complete new content of every contract file it changes.",
 		assemble:  prompt.AssemblePythonContractFix,
 		sanitizer: sanitizer,
 	}
@@ -45,7 +45,7 @@ func NewPythonContract(sanitizer ports.LogSanitizer) step.Prompt {
 func NewPythonParse(sanitizer ports.LogSanitizer) step.Prompt {
 	return &contractPrompt{
 		name: "python-parse",
-		description: "Shows the model a python node's contract yaml with the SQL parser's error, upstream changes, precedent and the earlier tries at the failure, " +
+		description: "Shows the model a python node's contract yaml with the SQL parser's error, upstream changes, precedent and, when there are any, the earlier tries at the failure in its first-round request, " +
 			"and reads back the complete new content of every contract file it changes.",
 		assemble:  prompt.AssemblePythonParseFix,
 		sanitizer: sanitizer,
@@ -58,7 +58,7 @@ func NewCSVContract(sanitizer ports.LogSanitizer) step.Prompt {
 	return &contractPrompt{
 		name: "csv-contract",
 		description: "Shows the model a python-csv node's contract yaml with the validation error, the header check's runner log, the contract entry the release recorded, " +
-			"upstream changes, precedent and the earlier tries at the failure, and reads back the complete new content of every contract file it changes.",
+			"upstream changes, precedent and, when there are any, the earlier tries at the failure in its first-round request, and reads back the complete new content of every contract file it changes.",
 		assemble: func(ev prompt.PythonEvidence) prompt.ProposeRequest {
 			return prompt.AssembleCsvContractFix(prompt.CsvEvidence(ev))
 		},

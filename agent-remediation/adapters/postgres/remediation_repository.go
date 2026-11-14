@@ -420,11 +420,21 @@ func (r *RemediationRepository) snapshot(ctx context.Context, id uuid.UUID) (rem
 	return snap, nil
 }
 
+// triesStepsStatement reads the step rows ListTriesOfRelease returns: the rows
+// StepRun.ShownToLaterTries names, which are a done flow-level check row or a
+// done pre-flight row of a cluster.
+const triesStepsStatement = `SELECT ` + stepColumns + `
+	FROM remediation_step
+	WHERE remediation_id = ANY($1::uuid[]) AND status = $2
+	  AND ((cluster = $3 AND kind = $4) OR (cluster <> $3 AND kind = $5 AND step = $6))
+	ORDER BY id`
+
 // ListTriesOfRelease returns one snapshot per try of every remediation of the
 // tenant's release, by round then try, each with that try's clusters (ordered
-// by cluster) and steps (ordered by id). It reads the remediations, then the
-// tries, clusters and steps of all of them in one statement each, which the
-// tables' keys, led by remediation_id, serve.
+// by cluster) and the step rows a later try reads back (ordered by id). It
+// reads the remediations, then the tries, clusters and those steps of all of
+// them in one statement each, which the tables' keys, led by remediation_id,
+// serve.
 func (r *RemediationRepository) ListTriesOfRelease(ctx context.Context, tenantID, releaseID string) ([]remediation.Snapshot, error) {
 	var rems []remediationRow
 	if err := r.q.SelectContext(ctx, &rems, `SELECT `+remediationColumns+`
@@ -450,8 +460,8 @@ func (r *RemediationRepository) ListTriesOfRelease(ctx context.Context, tenantID
 		return nil, fmt.Errorf("list the clusters of release %s: %w", releaseID, err)
 	}
 	var steps []stepRow
-	if err := r.q.SelectContext(ctx, &steps, `SELECT `+stepColumns+`
-		FROM remediation_step WHERE remediation_id = ANY($1::uuid[]) ORDER BY id`, pq.Array(ids)); err != nil {
+	if err := r.q.SelectContext(ctx, &steps, triesStepsStatement, pq.Array(ids), string(remediation.StepDone),
+		remediation.FlowCluster, remediation.KindCheck, remediation.KindRunner, remediation.StepPreflight); err != nil {
 		return nil, fmt.Errorf("list the steps of release %s: %w", releaseID, err)
 	}
 

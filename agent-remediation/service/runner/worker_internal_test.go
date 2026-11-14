@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
-	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 )
@@ -313,8 +313,7 @@ func TestWorker_WakeEndsTheIdleWait(t *testing.T) {
 	require.Eventually(t, func() bool { repo.mu.Lock(); defer repo.mu.Unlock(); return len(repo.claims) >= 2 }, 5*time.Second, time.Millisecond)
 }
 
-// A check's row carries the kind serialization reads back into an earlier
-// try's record.
+// A check's row carries the kind a later try reads back from an earlier one.
 func TestACheckRowHasTheKindTryRecordsRead(t *testing.T) {
-	assert.Equal(t, serialization.CheckKind, string(step.KindCheck))
+	assert.Equal(t, remediation.KindCheck, string(step.KindCheck))
 }

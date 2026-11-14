@@ -47,3 +47,17 @@ func TestTryRef_OrdersByRoundThenTry(t *testing.T) {
 	assert.False(t, TryRef{Round: 2, Try: 1}.Before(TryRef{Round: 2, Try: 1}))
 	assert.False(t, TryRef{Round: 2, Try: 1}.Before(TryRef{Round: 1, Try: 9}))
 }
+
+func TestStepRun_ShownToLaterTriesIsADonePreflightOrFlowCheckRow(t *testing.T) {
+	row := func(cluster int, step, kind string, status StepStatus) StepRun {
+		return StepRun{Cluster: cluster, Step: step, Kind: kind, Status: status}
+	}
+	assert.True(t, row(1, StepPreflight, KindRunner, StepDone).ShownToLaterTries())
+	assert.True(t, row(FlowCluster, "verification_run", KindCheck, StepDone).ShownToLaterTries())
+	assert.False(t, row(1, StepPreflight, KindRunner, StepFailed).ShownToLaterTries(), "a failed row stores no output")
+	assert.False(t, row(1, "content_changed", KindCheck, StepDone).ShownToLaterTries(), "a pre-flight check's findings are on the pass's row")
+	assert.False(t, row(1, "dbt-validation", "prompt", StepDone).ShownToLaterTries())
+	assert.False(t, row(1, "previous_tries", "context", StepDone).ShownToLaterTries())
+	assert.False(t, row(FlowCluster, "pull_request", "output", StepDone).ShownToLaterTries())
+	assert.False(t, row(FlowCluster, "drafts", KindRunner, StepFailed).ShownToLaterTries())
+}

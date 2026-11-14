@@ -33,7 +33,8 @@ func (*Prompt) Meta() step.Meta {
 		Name: "upstream",
 		Kind: step.KindPrompt,
 		Description: "Shows the model the changed ancestor's source with what this release changed in it, the failing members below it with their errors " +
-			"and past precedent, and reads back the ancestor's corrected source as the draft's one edit.",
+			"and past precedent, and reads back the ancestor's corrected source as the draft's one edit." +
+			" The first-round request carries the earlier tries at the failure, when there are any.",
 		Needs: []remediation.EvidenceKey{
 			remediation.KeyFailure,
 			remediation.KeyUpstreamTarget,

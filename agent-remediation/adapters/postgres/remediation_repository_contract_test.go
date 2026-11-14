@@ -1104,8 +1104,10 @@ func TestRemediationRepository_SaveStepStoresJSONHoldingANUL(t *testing.T) {
 	assert.Equal(t, "bad\uFFFDbyte", snap.Steps[0].Findings[0].Message)
 }
 
-// savedTry stores try n of r, with one cluster at node and one step of that
-// cluster, and makes it r's current try.
+// savedTry stores try n of r, with one cluster at node, and makes it r's
+// current try. Its journal holds, in this order, a done pre-flight row of the
+// cluster, a done prompt row of it, a failed pre-flight row of its next round,
+// a done cross-cluster check row and a done output row.
 func savedTry(t *testing.T, env contractEnv, r *remediation.Remediation, n int, node string) {
 	t.Helper()
 	ctx := context.Background()
@@ -1116,61 +1118,106 @@ func savedTry(t *testing.T, env contractEnv, r *remediation.Remediation, n int, 
 		RemediationID: r.ID, Try: n, Cluster: 1, Kind: workflow.ClusterSingle, TargetNodeID: node,
 		Members: []string{node}, TypeName: "dbt-validation", Status: remediation.ClusterChecked, Round: 1,
 	}))
-	require.NoError(t, env.remediations.SaveStep(ctx, remediation.StepRun{
-		RemediationID: r.ID, Try: n, Cluster: 1, Step: "preflight", Kind: "runner", Round: 1,
-		Status: remediation.StepDone, Output: []byte(`{"draft":{}}`), StartedAt: contractBase,
-	}))
+	row := func(cluster int, step, kind string, round int, status remediation.StepStatus, output string) remediation.StepRun {
+		return remediation.StepRun{
+			RemediationID: r.ID, Try: n, Cluster: cluster, Step: step, Kind: kind, Round: round,
+			Status: status, Output: []byte(output), StartedAt: contractBase,
+		}
+	}
+	for _, s := range []remediation.StepRun{
+		row(1, "preflight", "runner", 1, remediation.StepDone, `{"draft":{}}`),
+		row(1, "dbt-validation", "prompt", 1, remediation.StepDone, `{"draft":{},"last_request":{"user":"a large request"}}`),
+		row(1, "preflight", "runner", 2, remediation.StepFailed, `{}`),
+		row(0, "no_path_edited_twice", "check", 1, remediation.StepDone, `{"result":{}}`),
+		row(0, "pull_request", "output", 1, remediation.StepDone, `{}`),
+	} {
+		require.NoError(t, env.remediations.SaveStep(ctx, s))
+	}
 	r.CurrentTry = n
 	require.NoError(t, env.remediations.SaveRemediation(ctx, *r))
 }
 
+// requireTriesOfRelease asserts that rel-tries lists round 1's tries 1 and 2
+// and round 2's try 1, each with its own cluster and only the rows a later try
+// reads back, and that another release and another tenant add nothing.
+func requireTriesOfRelease(t *testing.T, env contractEnv) {
+	t.Helper()
+	ctx := context.Background()
+	snaps, err := env.remediations.ListTriesOfRelease(ctx, "default", "rel-tries")
+	require.NoError(t, err)
+
+	type seen struct {
+		round, try, attempt int
+		node                string
+		steps               []string
+	}
+	var got []seen
+	for _, s := range snaps {
+		require.NotNil(t, s.Try)
+		require.Len(t, s.Clusters, 1, "each try has its own clusters only")
+		require.Equal(t, s.Try.Try, s.Clusters[0].Try)
+		var steps []string
+		for _, st := range s.Steps {
+			require.Equal(t, s.Try.Try, st.Try, "each try has its own steps only")
+			require.Equal(t, s.Remediation.ID, st.RemediationID)
+			steps = append(steps, fmt.Sprintf("%d/%s/%d", st.Cluster, st.Step, st.Round))
+		}
+		got = append(got, seen{s.Remediation.Round, s.Try.Try, s.Try.Attempt, s.Clusters[0].TargetNodeID, steps})
+	}
+	only := []string{"1/preflight/1", "0/no_path_edited_twice/1"}
+	require.Equal(t, []seen{
+		{1, 1, 11, "model.a", only},
+		{1, 2, 12, "model.b", only},
+		{2, 1, 21, "model.c", only},
+	}, got, "every try of the tenant's release, by round then try, with its done pre-flight and flow-level check rows in id order")
+	require.JSONEq(t, `{"draft":{}}`, string(snaps[0].Steps[0].Output))
+	require.Equal(t, "default", snaps[0].Remediation.TenantID)
+
+	none, err := env.remediations.ListTriesOfRelease(ctx, "default", "rel-unknown")
+	require.NoError(t, err)
+	require.Empty(t, none)
+}
+
+// otherReleaseAndTenant stores a try of another release and one of the same
+// release under another tenant.
+func otherReleaseAndTenant(t *testing.T, env contractEnv) {
+	t.Helper()
+	other := mustCreate(t, env, newRemediation("rel-other", 1, contractBase))
+	savedTry(t, env, &other, 1, "model.x")
+	otherTenant := newRemediation("rel-tries", 1, contractBase)
+	otherTenant.TenantID = "other-tenant"
+	otherTenant = mustCreate(t, env, otherTenant)
+	savedTry(t, env, &otherTenant, 1, "model.y")
+}
+
 func TestRemediationRepository_ListTriesOfReleaseReturnsEveryTryOfEveryRound(t *testing.T) {
 	forEachImpl(t, func(t *testing.T, env contractEnv) {
-		ctx := context.Background()
-		// Round 2 is created first: the tries come in round order, not creation order.
+		// Round 2 is created first and round 1's tries are saved in order.
 		second := mustCreate(t, env, newRemediation("rel-tries", 2, contractBase))
 		first := mustCreate(t, env, newRemediation("rel-tries", 1, contractBase.Add(time.Minute)))
 		mustCreate(t, env, newRemediation("rel-tries", 3, contractBase.Add(2*time.Minute)))
 		savedTry(t, env, &first, 1, "model.a")
 		savedTry(t, env, &first, 2, "model.b")
 		savedTry(t, env, &second, 1, "model.c")
-		other := mustCreate(t, env, newRemediation("rel-other", 1, contractBase))
-		savedTry(t, env, &other, 1, "model.x")
-		otherTenant := newRemediation("rel-tries", 1, contractBase)
-		otherTenant.TenantID = "other-tenant"
-		otherTenant = mustCreate(t, env, otherTenant)
-		savedTry(t, env, &otherTenant, 1, "model.y")
+		otherReleaseAndTenant(t, env)
 
-		snaps, err := env.remediations.ListTriesOfRelease(ctx, "default", "rel-tries")
-		require.NoError(t, err)
+		requireTriesOfRelease(t, env)
+	})
+}
 
-		type seen struct {
-			round, try, attempt int
-			node                string
-			steps               int
-		}
-		var got []seen
-		for _, s := range snaps {
-			require.NotNil(t, s.Try)
-			require.Len(t, s.Clusters, 1, "each try has its own clusters only")
-			require.Equal(t, s.Try.Try, s.Clusters[0].Try)
-			for _, st := range s.Steps {
-				require.Equal(t, s.Try.Try, st.Try, "each try has its own steps only")
-				require.Equal(t, s.Remediation.ID, st.RemediationID)
-			}
-			got = append(got, seen{s.Remediation.Round, s.Try.Try, s.Try.Attempt, s.Clusters[0].TargetNodeID, len(s.Steps)})
-		}
-		require.Equal(t, []seen{
-			{1, 1, 11, "model.a", 1},
-			{1, 2, 12, "model.b", 1},
-			{2, 1, 21, "model.c", 1},
-		}, got, "every try of the tenant's release, by round then try; a round with no try adds none")
-		require.JSONEq(t, `{"draft":{}}`, string(snaps[0].Steps[0].Output))
-		require.Equal(t, "default", snaps[0].Remediation.TenantID)
+func TestRemediationRepository_ListTriesOfReleaseOrderDoesNotFollowTheSaveOrder(t *testing.T) {
+	forEachImpl(t, func(t *testing.T, env contractEnv) {
+		// Round 1 is created first, round 2's try is saved first, and round 1's
+		// try 2 is saved before its try 1.
+		otherReleaseAndTenant(t, env)
+		mustCreate(t, env, newRemediation("rel-tries", 3, contractBase))
+		first := mustCreate(t, env, newRemediation("rel-tries", 1, contractBase.Add(time.Minute)))
+		second := mustCreate(t, env, newRemediation("rel-tries", 2, contractBase.Add(2*time.Minute)))
+		savedTry(t, env, &second, 1, "model.c")
+		savedTry(t, env, &first, 2, "model.b")
+		savedTry(t, env, &first, 1, "model.a")
 
-		none, err := env.remediations.ListTriesOfRelease(ctx, "default", "rel-unknown")
-		require.NoError(t, err)
-		require.Empty(t, none)
+		requireTriesOfRelease(t, env)
 	})
 }
 

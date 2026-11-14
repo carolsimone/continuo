@@ -30,8 +30,8 @@ type PreviousTries struct {
 var _ step.ContextSource = (*PreviousTries)(nil)
 
 // NewPreviousTries builds the previous_tries step. A nil tries reader gives no
-// runner tries and a nil attempts reader no legacy attempts. It calls no port
-// until Gather.
+// runner tries, a nil attempts reader no legacy attempts, and a nil evidence
+// reader legacy attempts with no diffs. It calls no port until Gather.
 func NewPreviousTries(tries repository.TryLister, attempts repository.AttemptLister, evidence ports.EvidenceReader,
 	sanitizer ports.LogSanitizer, logger *slog.Logger) *PreviousTries {
 	return &PreviousTries{tries: tries, attempts: attempts, evidence: evidence, sanitizer: sanitizer, logger: LoggerOrDefault(logger)}
@@ -131,8 +131,11 @@ func (s *PreviousTries) legacyAttempts(ctx context.Context, f remediation.Failur
 }
 
 // legacyDiffs reads a legacy attempt's stored diffs. An edit with no diff, or
-// whose diff cannot be read, is left out.
+// whose diff cannot be read, is left out, and a nil evidence reader reads none.
 func (s *PreviousTries) legacyDiffs(ctx context.Context, v proposal.View) []remediation.EditRecord {
+	if s.evidence == nil {
+		return nil
+	}
 	var out []remediation.EditRecord
 	for _, e := range v.Edits {
 		if e.DiffURI == "" {

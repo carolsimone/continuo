@@ -10,9 +10,10 @@ import (
 
 // WithPreviousTries returns req with the section on the earlier tries at the
 // cluster's failure that ev holds under remediation.KeyPreviousTries, as
-// prompt.WithPreviousTries renders it. A prompt step applies it to the request
-// of its first round; a later round revises that request, which already
-// carries the section. Evidence with no earlier try leaves req as it is.
+// prompt.WithPreviousTries renders it. A prompt step applies it to every
+// request of its first round; a later round revises the last request of the
+// round before it (RevisionRequest), which therefore already carries the
+// section. Evidence with no earlier try leaves req as it is.
 func WithPreviousTries(req prompt.ProposeRequest, ev remediation.Evidence) prompt.ProposeRequest {
 	records, _ := remediation.Get[[]remediation.TryRecord](ev, remediation.KeyPreviousTries)
 	return prompt.WithPreviousTries(req, previousTries(records))

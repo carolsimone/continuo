@@ -40,7 +40,7 @@ var _ step.Prompt = (*sourcePrompt)(nil)
 func NewDBTCompile(sanitizer ports.LogSanitizer) step.Prompt {
 	return &sourcePrompt{
 		name:         "dbt-compile",
-		description:  "Shows the model the files around a failed dbt compile with the dbt log, and reads back the corrected content of the one file it chooses.",
+		description:  "Shows the model the files around a failed dbt compile with the dbt log, and reads back the corrected content of the one file it chooses. The first-round request carries the earlier tries at the failure, when there are any.",
 		readsLog:     true,
 		suspectsRoot: true,
 		sanitizer:    sanitizer,
@@ -57,7 +57,7 @@ func NewDBTCompile(sanitizer ports.LogSanitizer) step.Prompt {
 func NewDBTParse(sanitizer ports.LogSanitizer) step.Prompt {
 	return &sourcePrompt{
 		name:         "dbt-parse",
-		description:  "Shows the model the files around a node whose SQL the parser rejected with the parser's error, and reads back the corrected content of the one file it chooses.",
+		description:  "Shows the model the files around a node whose SQL the parser rejected with the parser's error, and reads back the corrected content of the one file it chooses. The first-round request carries the earlier tries at the failure, when there are any.",
 		suspectsRoot: true,
 		sanitizer:    sanitizer,
 		pick:         pickNamed,
@@ -72,7 +72,7 @@ func NewDBTParse(sanitizer ports.LogSanitizer) step.Prompt {
 func NewSeed(sanitizer ports.LogSanitizer) step.Prompt {
 	return &sourcePrompt{
 		name:        "seed",
-		description: "Shows the model a seed's csv with the dbt log, and reads back the corrected csv.",
+		description: "Shows the model a seed's csv with the dbt log, and reads back the corrected csv. The first-round request carries the earlier tries at the failure, when there are any.",
 		readsLog:    true,
 		sanitizer:   sanitizer,
 		pick: func(_ ports.ProposeResult, files remediation.SourceFiles) (string, bool) {
@@ -89,7 +89,7 @@ func NewSeed(sanitizer ports.LogSanitizer) step.Prompt {
 func NewDuplicateTable(sanitizer ports.LogSanitizer) step.Prompt {
 	return &sourcePrompt{
 		name:         "duplicate-table",
-		description:  "Shows the model the changed claimant of a relation two models produce, names the other producer, and reads back the corrected content of the claimant's file.",
+		description:  "Shows the model the changed claimant of a relation two models produce, names the other producer, and reads back the corrected content of the claimant's file. The first-round request carries the earlier tries at the failure, when there are any.",
 		suspectsRoot: true,
 		sanitizer:    sanitizer,
 		pick:         pickNamed,

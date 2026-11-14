@@ -1,6 +1,7 @@
 package serialization_test
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/google/uuid"
@@ -27,13 +28,14 @@ func journalRow[R serialization.JournalRecord](t *testing.T, cluster int, step, 
 func TestTryRecordOf_ReadsEachClustersEditsAndFindingsAndTheTrysOwn(t *testing.T) {
 	unchanged := remediation.Finding{Code: "content_unchanged", Message: "the answer repeats the original"}
 	twice := remediation.Finding{Code: "path_edited_twice", Message: "models/a.sql is edited twice"}
+	kinds := remediation.Finding{Code: "two_manifest_kinds", Message: "dbt and python edits in one try"}
 	broken := remediation.Finding{Code: "verification_failed", Message: "model.a: still broken"}
 	first := remediation.Draft{Edits: []remediation.Edit{{Path: "models/a.sql", Original: "select a\n", Content: "select a\n"}}}
 	second := remediation.Draft{Edits: []remediation.Edit{
 		{Path: "models/a.sql", Original: "select a\n", Content: "select b\n"},
 		{Path: "models/unchanged.sql", Original: "select 1\n", Content: "select 1\n"},
 	}}
-	failedRow := journalRow(t, 2, serialization.PreflightStep, serialization.RunnerKind, 1, serialization.PreflightRecord{Draft: second})
+	failedRow := journalRow(t, 2, remediation.StepPreflight, remediation.KindRunner, 1, serialization.PreflightRecord{Draft: second})
 	failedRow.Status = remediation.StepFailed
 
 	snap := remediation.Snapshot{
@@ -46,20 +48,33 @@ func TestTryRecordOf_ReadsEachClustersEditsAndFindingsAndTheTrysOwn(t *testing.T
 		},
 		Steps: []remediation.StepRun{
 			journalRow(t, 1, "dbt-validation", "prompt", 1, serialization.PromptRecord{Draft: first}),
-			journalRow(t, 1, "content_changed", serialization.CheckKind, 1, serialization.CheckRecord{Result: remediation.CheckResult{Check: "content_changed", Findings: []remediation.Finding{unchanged}}}, unchanged),
-			journalRow(t, 1, serialization.PreflightStep, serialization.RunnerKind, 1, serialization.PreflightRecord{Draft: first}, unchanged),
+			journalRow(t, 1, "content_changed", remediation.KindCheck, 1, serialization.CheckRecord{Result: remediation.CheckResult{Check: "content_changed", Findings: []remediation.Finding{unchanged}}}, unchanged),
+			journalRow(t, 1, remediation.StepPreflight, remediation.KindRunner, 1, serialization.PreflightRecord{Draft: first}, unchanged),
 			journalRow(t, 1, "dbt-validation", "prompt", 2, serialization.PromptRecord{Draft: second}),
-			journalRow(t, 1, serialization.PreflightStep, serialization.RunnerKind, 2, serialization.PreflightRecord{Draft: second}),
+			journalRow(t, 1, remediation.StepPreflight, remediation.KindRunner, 2, serialization.PreflightRecord{Draft: second}),
 			failedRow,
-			journalRow(t, 0, "no_path_edited_twice", serialization.CheckKind, 1, serialization.CheckRecord{Result: remediation.CheckResult{Check: "no_path_edited_twice"}}),
-			journalRow(t, 0, "one_manifest_kind", serialization.CheckKind, 1, serialization.CheckRecord{Result: remediation.CheckResult{Check: "one_manifest_kind", Findings: []remediation.Finding{twice}}}, twice),
-			journalRow(t, 0, "verification_run", serialization.CheckKind, 1, serialization.CheckRecord{Result: remediation.CheckResult{Check: "verification_run", Findings: []remediation.Finding{broken}}, Gate: true}, broken),
+			journalRow(t, 0, "no_path_edited_twice", remediation.KindCheck, 1, serialization.CheckRecord{Result: remediation.CheckResult{Check: "no_path_edited_twice", Findings: []remediation.Finding{twice}}}, twice),
+			journalRow(t, 0, "one_manifest_kind", remediation.KindCheck, 1, serialization.CheckRecord{Result: remediation.CheckResult{Check: "one_manifest_kind", Findings: []remediation.Finding{kinds}}}, kinds),
+			journalRow(t, 0, "verification_run", remediation.KindCheck, 1, serialization.CheckRecord{Result: remediation.CheckResult{Check: "verification_run", Findings: []remediation.Finding{broken}}, Gate: true}, broken),
 			{Try: 1, Step: "hand_over", Kind: "output", Round: 1, Status: remediation.StepDone},
 		},
 	}
 
+	for i := range snap.Steps {
+		snap.Steps[i].ID = int64(i + 1)
+	}
+
 	got, err := serialization.TryRecordOf(snap)
 	require.NoError(t, err)
+
+	reversed := snap
+	reversed.Steps = slices.Clone(snap.Steps)
+	slices.Reverse(reversed.Steps)
+	reversed.Clusters = slices.Clone(snap.Clusters)
+	slices.Reverse(reversed.Clusters)
+	again, err := serialization.TryRecordOf(reversed)
+	require.NoError(t, err)
+	assert.Equal(t, got, again, "the record does not depend on the order the snapshot lists its rows and clusters in")
 
 	assert.Equal(t, remediation.TryRecord{
 		Round: 2, Try: 1, Attempt: 4,
@@ -74,7 +89,7 @@ func TestTryRecordOf_ReadsEachClustersEditsAndFindingsAndTheTrysOwn(t *testing.T
 				Outcome: "skipped: the model declined",
 			},
 		},
-		CrossCluster: []remediation.Finding{twice},
+		CrossCluster: []remediation.Finding{twice, kinds},
 		Gate:         []remediation.Finding{broken},
 	}, got)
 }
@@ -88,7 +103,7 @@ func TestTryRecordOf_RefusesASnapshotWithNoTryOrAnUnreadableRow(t *testing.T) {
 		Try:         &remediation.Try{Try: 1, Attempt: 1},
 		Clusters:    []remediation.Cluster{{Cluster: 1, Members: []string{"model.a"}}},
 		Steps: []remediation.StepRun{{
-			Try: 1, Cluster: 1, Step: serialization.PreflightStep, Kind: serialization.RunnerKind, Round: 1,
+			Try: 1, Cluster: 1, Step: remediation.StepPreflight, Kind: remediation.KindRunner, Round: 1,
 			Status: remediation.StepDone, Output: []byte("not json"),
 		}},
 	}

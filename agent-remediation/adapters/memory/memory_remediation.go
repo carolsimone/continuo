@@ -141,7 +141,8 @@ func (d *data) trySnapshot(rem *remediation.Remediation, try *remediation.Try) r
 }
 
 // ListTriesOfRelease returns one snapshot per try of every remediation of the
-// tenant's release, by round then try.
+// tenant's release, by round then try, each holding only the step rows
+// StepRun.ShownToLaterTries names.
 func (r *remediationRepository) ListTriesOfRelease(_ context.Context, tenantID, releaseID string) ([]remediation.Snapshot, error) {
 	var out []remediation.Snapshot
 	err := r.gate(func(d *data) error {
@@ -161,7 +162,9 @@ func (r *remediationRepository) ListTriesOfRelease(_ context.Context, tenantID, 
 			}
 			sort.Slice(tries, func(i, j int) bool { return tries[i].Try < tries[j].Try })
 			for _, t := range tries {
-				out = append(out, d.trySnapshot(rem, t))
+				snap := d.trySnapshot(rem, t)
+				snap.Steps = slices.DeleteFunc(snap.Steps, func(s remediation.StepRun) bool { return !s.ShownToLaterTries() })
+				out = append(out, snap)
 			}
 		}
 		return nil

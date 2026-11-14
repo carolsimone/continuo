@@ -73,6 +73,23 @@ type Cluster struct {
 	UpdatedAt time.Time
 }
 
+// The journal rows a later try reads back from an earlier one, named as the
+// runner writes them.
+const (
+	// StepPreflight is the step name of the runner's pre-flight pass of a
+	// cluster: one row per round, whose output is the draft the pass left and
+	// whose findings are every finding of the pass.
+	StepPreflight = "preflight"
+	// KindRunner is the kind of the row of a step the runner performs itself.
+	KindRunner = "runner"
+	// KindCheck is the kind of a check's row: a pre-flight check, a
+	// cross-cluster check or the gate.
+	KindCheck = "check"
+	// FlowCluster is the cluster number of a flow-level row: a cross-cluster
+	// check, the gate or an output.
+	FlowCluster = 0
+)
+
 // StepRun is the row of one run of a step of a flow. Cluster is 0 for a
 // flow-level step.
 type StepRun struct {
@@ -102,6 +119,19 @@ type StepRun struct {
 	LastError     string
 	StartedAt     time.Time
 	FinishedAt    *time.Time
+}
+
+// ShownToLaterTries reports whether a later try reads s back from an earlier
+// one: a done pre-flight row of a cluster, or a done flow-level check row (a
+// cross-cluster check or the gate).
+func (s StepRun) ShownToLaterTries() bool {
+	if s.Status != StepDone {
+		return false
+	}
+	if s.Cluster == FlowCluster {
+		return s.Kind == KindCheck
+	}
+	return s.Kind == KindRunner && s.Step == StepPreflight
 }
 
 // Snapshot is one remediation run as stored: the run, one of its tries (its
