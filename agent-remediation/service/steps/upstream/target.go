@@ -62,8 +62,9 @@ func (*Target) Meta() step.Meta {
 // promoted graph cannot place, declines the cluster. Every other reason the
 // ancestor cannot be edited also declines it: the cluster has no member, the
 // bundle does not hold the ancestor, it is not a dbt model, or its service has
-// no repository path. A transient bundle read error is returned so the work is
-// tried again.
+// no repository path. A transient bundle read error, and any error of the
+// promoted graph (which answers an unknown node with an empty location), is
+// returned so the work is tried again.
 func (s *Target) Gather(ctx context.Context, in step.ContextInput) (step.ContextOutput, error) {
 	f := in.Failure
 	targetID := f.TargetNodeID
@@ -81,7 +82,10 @@ func (s *Target) Gather(ctx context.Context, in step.ContextInput) (step.Context
 		return s.decline(targetID, fmt.Sprintf("the changed ancestor %s is not a dbt model (runtime %q)", targetID, src.Runtime)), nil
 	}
 	filePath, serviceName, err := s.locate(ctx, f)
-	if err != nil || filePath == "" || serviceName == "" {
+	if err != nil {
+		return step.ContextOutput{}, fmt.Errorf("locate %s in the promoted graph: %w", targetID, err)
+	}
+	if filePath == "" || serviceName == "" {
 		return s.decline(targetID, fmt.Sprintf("the changed ancestor %s cannot be located in the promoted graph", targetID)), nil
 	}
 	if _, ok := s.serviceRepoPaths[serviceName]; !ok {

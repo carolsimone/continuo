@@ -62,7 +62,9 @@ func (*FailingNodeSource) Meta() step.Meta {
 
 // Gather reads the files the trigger's source calls for. A failure that has no
 // source file to fix declines the cluster with its reason. A read error other
-// than a missing file is transient and is returned so the work is tried again.
+// than a missing file, and any error of the promoted graph (which answers an
+// unknown node with an empty location), is transient and is returned so the
+// work is tried again.
 func (s *FailingNodeSource) Gather(ctx context.Context, in step.ContextInput) (step.ContextOutput, error) {
 	f := in.Failure
 	var (
@@ -126,7 +128,7 @@ func (s *FailingNodeSource) seed(ctx context.Context, f remediation.Failure) (re
 	if filePath == "" || service == "" {
 		fp, svcName, err := s.locator.Locate(ctx, f.Target.NodeID)
 		if err != nil {
-			return remediation.SourceFiles{}, fmt.Sprintf("the seed's source location could not be resolved from the graph: %v", err), nil
+			return remediation.SourceFiles{}, "", fmt.Errorf("locate seed %s in the promoted graph: %w", f.Target.NodeID, err)
 		}
 		if filePath == "" {
 			filePath = fp
@@ -166,9 +168,10 @@ func (s *FailingNodeSource) duplicateTable(ctx context.Context, f remediation.Fa
 
 // gatherWithContext reads the offending file named by the failing node's file
 // path under the repository prefix of service and, when it is a .sql, its
-// co-located yml siblings and the service's dbt_project.yml as best-effort
-// context. A missing prefix or a missing offending file is a skip, returned as
-// its reason; any other read error is transient and returned.
+// co-located yml siblings and the service's dbt_project.yml as context. A
+// missing prefix or a missing offending file is a skip, returned as its reason.
+// A missing directory or context file is left out; any other read error is
+// transient and returned.
 func (s *FailingNodeSource) gatherWithContext(ctx context.Context, f remediation.Failure, service string) (remediation.SourceFiles, string, error) {
 	g, skipReason, err := s.readOffendingFile(ctx, f, service, f.Target.FilePath)
 	if err != nil || skipReason != "" {
@@ -176,20 +179,25 @@ func (s *FailingNodeSource) gatherWithContext(ctx context.Context, f remediation
 	}
 	offending := g.Primary
 	prefix := s.serviceRepoPaths[service]
+	if !strings.HasSuffix(offending, ".sql") {
+		return g, "", nil
+	}
 
-	if strings.HasSuffix(offending, ".sql") {
-		dir := path.Dir(offending)
-		if paths, derr := s.source.ListDir(ctx, f.Trigger.Repo, f.Trigger.CommitSHA, dir); derr == nil {
-			for _, p := range paths {
-				if p == offending {
-					continue
-				}
-				if strings.HasSuffix(p, ".yml") || strings.HasSuffix(p, ".yaml") {
-					s.addFile(ctx, f, &g, p)
-				}
-			}
+	dir := path.Dir(offending)
+	paths, err := s.source.ListDir(ctx, f.Trigger.Repo, f.Trigger.CommitSHA, dir)
+	if err != nil && !errors.Is(err, ports.ErrSourceNotFound) {
+		return remediation.SourceFiles{}, "", fmt.Errorf("list %s: %w", dir, err)
+	}
+	for _, p := range paths {
+		if p == offending || !(strings.HasSuffix(p, ".yml") || strings.HasSuffix(p, ".yaml")) {
+			continue
 		}
-		s.addFile(ctx, f, &g, path.Join(prefix, "dbt_project.yml"))
+		if err := s.addFile(ctx, f, &g, p); err != nil {
+			return remediation.SourceFiles{}, "", err
+		}
+	}
+	if err := s.addFile(ctx, f, &g, path.Join(prefix, "dbt_project.yml")); err != nil {
+		return remediation.SourceFiles{}, "", err
 	}
 	return g, "", nil
 }
@@ -217,15 +225,20 @@ func (s *FailingNodeSource) readOffendingFile(ctx context.Context, f remediation
 	}, "", nil
 }
 
-// addFile reads one best-effort context file, ignoring any read error.
-func (s *FailingNodeSource) addFile(ctx context.Context, f remediation.Failure, g *remediation.SourceFiles, p string) {
+// addFile reads one context file into g. A file the repository does not have
+// is left out; any other read error is returned.
+func (s *FailingNodeSource) addFile(ctx context.Context, f remediation.Failure, g *remediation.SourceFiles, p string) error {
 	if _, seen := g.Files[p]; seen {
-		return
+		return nil
 	}
 	c, err := s.source.ReadFile(ctx, f.Trigger.Repo, f.Trigger.CommitSHA, p)
+	if errors.Is(err, ports.ErrSourceNotFound) {
+		return nil
+	}
 	if err != nil {
-		return // context is optional
+		return fmt.Errorf("read %s: %w", p, err)
 	}
 	g.Files[p] = c
 	g.Order = append(g.Order, p)
+	return nil
 }

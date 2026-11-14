@@ -2,13 +2,13 @@ package source_test
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
+	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/source"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
@@ -88,16 +88,50 @@ func TestFailingNodeSource_CompileSkipsContextForANonSQLFile(t *testing.T) {
 	assert.Equal(t, []string{"services/svc/seeds/a.csv"}, sourceFiles(t, out).Order)
 }
 
-func TestFailingNodeSource_CompileIgnoresAFailingListingAndAMissingProjectFile(t *testing.T) {
+func TestFailingNodeSource_CompileLeavesOutAMissingDirectoryAndAMissingProjectFile(t *testing.T) {
 	src := &fakeSource{
 		files:  map[string]string{"services/svc/models/x.sql": "select 1"},
-		dirErr: errBoom,
+		dirErr: ports.ErrSourceNotFound,
 	}
 	s := source.NewFailingNodeSource(src, nil, repoPaths, discardLogger())
 
 	out := gather(t, s, failure("compile", remediation.TriggerNode{NodeID: "svc", FilePath: "models/x.sql"}))
 
 	assert.Equal(t, []string{"services/svc/models/x.sql"}, sourceFiles(t, out).Order)
+}
+
+// A context file that exists but cannot be read now is a transient error,
+// returned so the step runs again, rather than a file silently left out of what
+// the model is shown.
+func TestFailingNodeSource_ATransientContextReadErrorIsReturned(t *testing.T) {
+	cases := map[string]*fakeSource{
+		"the directory listing": {
+			files:  map[string]string{"services/svc/models/x.sql": "select 1"},
+			dirErr: errBoom,
+		},
+		"a yml beside the file": {
+			files:   map[string]string{"services/svc/models/x.sql": "select 1", "services/svc/models/schema.yml": "version: 2"},
+			readErr: map[string]error{"services/svc/models/schema.yml": errBoom},
+		},
+		"the project file": {
+			files:   map[string]string{"services/svc/models/x.sql": "select 1"},
+			readErr: map[string]error{"services/svc/dbt_project.yml": errBoom},
+		},
+	}
+	for name, src := range cases {
+		t.Run(name, func(t *testing.T) {
+			s := source.NewFailingNodeSource(src, nil, repoPaths, discardLogger())
+
+			out, err := s.Gather(context.Background(), step.ContextInput{
+				Failure:  failure("compile", remediation.TriggerNode{NodeID: "svc", FilePath: "models/x.sql"}),
+				Evidence: remediation.NewEvidence(),
+			})
+
+			require.ErrorIs(t, err, errBoom)
+			assert.False(t, out.Declined)
+			assert.Empty(t, out.Evidence)
+		})
+	}
 }
 
 func TestFailingNodeSource_Declines(t *testing.T) {
@@ -194,13 +228,19 @@ func TestFailingNodeSource_SeedLocatesWhatTheTriggerLeavesOut(t *testing.T) {
 	assert.Empty(t, loc.calls, "a trigger that names both is not located")
 }
 
-func TestFailingNodeSource_SeedDeclinesWithTheLocatorsError(t *testing.T) {
+// A locator error is transient: the locator answers an unknown node with an
+// empty location and no error. It is returned so the step runs again.
+func TestFailingNodeSource_SeedReturnsTheLocatorsError(t *testing.T) {
 	s := source.NewFailingNodeSource(&fakeSource{}, &fakeLocator{err: errBoom}, repoPaths, discardLogger())
 
-	out := gather(t, s, failure("seed_build", remediation.TriggerNode{NodeID: "n1"}))
+	out, err := s.Gather(context.Background(), step.ContextInput{
+		Failure:  failure("seed_build", remediation.TriggerNode{NodeID: "n1"}),
+		Evidence: remediation.NewEvidence(),
+	})
 
-	assert.True(t, out.Declined)
-	assert.Equal(t, fmt.Sprintf("the seed's source location could not be resolved from the graph: %v", errBoom), out.Decline)
+	require.ErrorIs(t, err, errBoom)
+	assert.Equal(t, "locate seed n1 in the promoted graph: boom", err.Error())
+	assert.False(t, out.Declined)
 }
 
 func TestFailingNodeSource_DuplicateTableReadsOnlyTheClaimant(t *testing.T) {

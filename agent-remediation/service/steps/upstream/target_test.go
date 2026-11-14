@@ -168,15 +168,6 @@ func TestTarget_DeclinesWithTheLanesTexts(t *testing.T) {
 			decline: "the changed ancestor model.up-svc.up cannot be located in the promoted graph",
 		},
 		{
-			name:   "a locator error",
-			bundle: okBundle(),
-			loc:    &fakeLocator{err: errBoom},
-			mod: func(f *remediation.Failure) {
-				f.Trigger.Nodes[0].ChangedAncestors, f.Trigger.Nodes[1].ChangedAncestors = nil, nil
-			},
-			decline: "the changed ancestor model.up-svc.up cannot be located in the promoted graph",
-		},
-		{
 			name:   "a location with no service",
 			bundle: okBundle(),
 			loc:    &fakeLocator{filePath: "x.sql"},
@@ -223,6 +214,21 @@ func TestTarget_ATransientBundleErrorIsReturnedNotDeclined(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, errBoom)
 	assert.Equal(t, "fetch code bundle for model.up-svc.up: boom", err.Error())
+	assert.False(t, out.Declined)
+}
+
+// A locator error is transient: the locator answers an unknown node with an
+// empty location and no error. It is returned so the step runs again.
+func TestTarget_ATransientLocatorErrorIsReturnedNotDeclined(t *testing.T) {
+	noCandidateLocation := func(f *remediation.Failure) {
+		f.Trigger.Nodes[0].ChangedAncestors, f.Trigger.Nodes[1].ChangedAncestors = nil, nil
+	}
+
+	out, err := newTarget(okBundle(), &fakeVersions{}, &fakeLocator{err: errBoom}).
+		Gather(context.Background(), step.ContextInput{Failure: failure(noCandidateLocation), Evidence: remediation.NewEvidence()})
+
+	require.ErrorIs(t, err, errBoom)
+	assert.Equal(t, "locate model.up-svc.up in the promoted graph: boom", err.Error())
 	assert.False(t, out.Declined)
 }
 
