@@ -14,7 +14,8 @@ import (
 )
 
 // Script is what one scenario makes the fakes of its world answer, beyond the
-// fixture's fixed data.
+// fixture's fixed data. Each answer list is every call it answers, in call
+// order, each answer given once: a call past the end of its list fails.
 type Script struct {
 	// Answers are the model's answers, in call order, for every cluster whose
 	// target has no entry in MemberAnswers.
@@ -69,11 +70,18 @@ type World interface {
 	Attempts() []Attempt
 	// Outbox is every outbox entry the store holds.
 	Outbox() []outbox.Entry
-	// ModelRequests is every request that reached the scripted model, past
-	// the response cache, in call order.
-	ModelRequests() []prompt.ProposeRequest
+	// ModelCalls is every call that reached the scripted model, past the
+	// response cache, in call order.
+	ModelCalls() []ModelCall
 	// Runs is every verification run submitted, in submit order.
 	Runs() []ports.VerificationRequest
+}
+
+// ModelCall is one call that reached the scripted model: the node its
+// cluster targets, as the call's context names it, and its request.
+type ModelCall struct {
+	Target  string
+	Request prompt.ProposeRequest
 }
 
 // Attempt is one proposal row as the store holds it, with the error its

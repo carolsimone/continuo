@@ -22,28 +22,36 @@ const (
 	// FirstDraftPasses: the model's first draft passes pre-flight and the
 	// gate.
 	FirstDraftPasses Scenario = "first_draft_passes"
-	// PreflightFails: pre-flight refuses the model's draft.
-	PreflightFails Scenario = "preflight_fails"
-	// GateFailsThenPasses: the first try's verification fails and the next
-	// try's passes.
-	GateFailsThenPasses Scenario = "gate_fails_then_passes"
+	// PreflightRevisionPasses: pre-flight refuses the first round's draft and
+	// the second round's revision passes it and the gate.
+	PreflightRevisionPasses Scenario = "preflight_revision_passes"
+	// PreflightRoundsSpent: pre-flight refuses the draft of every round the
+	// type allows.
+	PreflightRoundsSpent Scenario = "preflight_rounds_spent"
+	// GateFailsNextTryLearns: the first try's verification fails, the next
+	// try's first request shows why, and its verification passes.
+	GateFailsNextTryLearns Scenario = "gate_fails_next_try_learns"
 	// TriesSpent: every try's verification fails until the flow's tries are
 	// spent.
 	TriesSpent Scenario = "tries_spent"
 	// DeclinesBeforeModel: a context step declines before the model is
 	// called.
 	DeclinesBeforeModel Scenario = "declines_before_model"
-	// ModelDeclines: the model answers that it cannot fix the node, with a low
-	// confidence or no edit, which pre-flight refuses.
+	// ModelDeclines: the model first answers that it cannot fix the node, with
+	// a low confidence or no edit, which pre-flight refuses, and its revision
+	// passes.
 	ModelDeclines Scenario = "model_declines"
-	// Redelivery: the first draft passes while the trigger is delivered twice
-	// and the worker restarts once after the prompt step.
+	// Redelivery: the first round's draft is refused and its revision passes
+	// while the trigger is delivered three times and the worker restarts
+	// twice: once after the first round's first model call, and once between
+	// the rounds, after the first round's pre-flight committed.
 	Redelivery Scenario = "redelivery"
 )
 
 // TypeScenarios is every scenario a listed type runs through, in run order.
 func TypeScenarios() []Scenario {
-	return []Scenario{FirstDraftPasses, PreflightFails, GateFailsThenPasses, TriesSpent, DeclinesBeforeModel, ModelDeclines, Redelivery}
+	return []Scenario{FirstDraftPasses, PreflightRevisionPasses, PreflightRoundsSpent, GateFailsNextTryLearns,
+		TriesSpent, DeclinesBeforeModel, ModelDeclines, Redelivery}
 }
 
 // everyAttemptFails is the script's failed attempts when no verification run
@@ -86,215 +94,346 @@ func (s Suite) Run(ctx context.Context) []Result {
 		}
 	}
 	var out []Result
-	for _, name := range listed {
-		fixtures := byType[name]
+	for _, lt := range listed {
+		fixtures := byType[lt.name]
 		for _, sc := range TypeScenarios() {
 			var err error
 			switch len(fixtures) {
 			case 0:
-				err = fmt.Errorf("type %s has no fixture", name)
+				err = fmt.Errorf("type %s has no fixture", lt.name)
 			case 1:
-				err = s.runType(ctx, name, fixtures[0], sc)
+				err = s.runType(ctx, lt, fixtures[0], sc)
 			default:
-				err = fmt.Errorf("type %s has %d fixtures (%s), and a type has one", name, len(fixtures), fixtureFiles(fixtures))
+				err = fmt.Errorf("type %s has %d fixtures (%s), and a type has one", lt.name, len(fixtures), fixtureFiles(fixtures))
 			}
-			out = append(out, Result{Type: name, Scenario: sc, Err: err})
+			out = append(out, Result{Type: lt.name, Scenario: sc, Err: err})
 		}
 	}
 	for _, f := range s.Fixtures {
-		if f.Type != "" && !slices.Contains(listed, f.Type) {
+		if f.Type != "" && !slices.ContainsFunc(listed, func(lt listedType) bool { return lt.name == f.Type }) {
 			out = append(out, Result{Type: f.Type, Err: fmt.Errorf("%s tests type %s, which no flow lists", f.File, f.Type)})
 		}
 	}
 	return out
 }
 
+// listedType is a type a flow lists, with the tries of the first flow that
+// lists it.
+type listedType struct {
+	name  string
+	tries int
+}
+
 // listedTypes is every type a flow lists, flows in name order and each flow's
 // types in its order, each once.
-func (s Suite) listedTypes() []string {
+func (s Suite) listedTypes() []listedType {
 	flows := make([]string, 0, len(s.Files.Flows))
 	for name := range s.Files.Flows {
 		flows = append(flows, name)
 	}
 	sort.Strings(flows)
-	var out []string
+	var out []listedType
 	for _, name := range flows {
-		for _, t := range s.Files.Flows[name].Types {
-			if !slices.Contains(out, t) {
-				out = append(out, t)
+		flow := s.Files.Flows[name]
+		for _, t := range flow.Types {
+			if !slices.ContainsFunc(out, func(lt listedType) bool { return lt.name == t }) {
+				out = append(out, listedType{name: t, tries: flow.Tries})
 			}
 		}
 	}
 	return out
 }
 
-// runType runs the type name through scenario sc from its fixture f and
+// runType runs the listed type lt through scenario sc from its fixture f and
 // checks what the run wrote.
-func (s Suite) runType(ctx context.Context, name string, f Fixture, sc Scenario) error {
-	typ, ok := s.Files.Types[name]
+func (s Suite) runType(ctx context.Context, lt listedType, f Fixture, sc Scenario) error {
+	typ, ok := s.Files.Types[lt.name]
 	if !ok {
-		return fmt.Errorf("type %s is listed but not loaded", name)
+		return fmt.Errorf("type %s is listed but not loaded", lt.name)
 	}
-	script, trigger, err := typeScript(f, sc)
+	plan, err := typeScript(f, typ, lt.tries, sc)
 	if err != nil {
 		return err
 	}
-	firstDraftCalls := 0
+	oneRunCalls := 0
 	if sc == Redelivery {
-		if firstDraftCalls, err = s.modelCallsOfOneRun(ctx, f, script, trigger); err != nil {
-			return fmt.Errorf("count the model calls of %s: %w", FirstDraftPasses, err)
+		if oneRunCalls, err = s.modelCallsOfOneRun(ctx, f, plan); err != nil {
+			return fmt.Errorf("count the model calls of a run with no restart: %w", err)
 		}
 	}
-	sr, err := s.start(f, script, false)
+	sr, err := s.start(f, plan.script, false)
 	if err != nil {
 		return err
 	}
-	if err := sr.accept(ctx, trigger); err != nil {
+	if err := sr.accept(ctx, plan.trigger); err != nil {
 		return err
 	}
 	if sc == Redelivery {
-		if err := sr.redeliverAndRestart(ctx, trigger, typ); err != nil {
+		if err := sr.redeliverAndRestart(ctx, plan, typ); err != nil {
 			return err
 		}
 	}
 	if err := sr.finish(ctx); err != nil {
 		return err
 	}
-	return sr.expectType(s.Files, trigger, f, typ, sc, firstDraftCalls)
+	return sr.expectType(s.Files, f, typ, plan, sc, oneRunCalls)
 }
 
-// modelCallsOfOneRun is how often the model is called when trigger is
-// delivered once and driven to its end in a world of its own, with no restart.
-func (s Suite) modelCallsOfOneRun(ctx context.Context, f Fixture, script Script, trigger remediation.Trigger) (int, error) {
-	sr, err := s.start(f, script, false)
+// modelCallsOfOneRun is how often the model is called when the plan's trigger
+// is delivered once and driven to its end in a world of its own, with no
+// restart.
+func (s Suite) modelCallsOfOneRun(ctx context.Context, f Fixture, plan typePlan) (int, error) {
+	sr, err := s.start(f, plan.script, false)
 	if err != nil {
 		return 0, err
 	}
-	if err := sr.accept(ctx, trigger); err != nil {
+	if err := sr.accept(ctx, plan.trigger); err != nil {
 		return 0, err
 	}
 	if err := sr.finish(ctx); err != nil {
 		return 0, err
 	}
-	return len(sr.w.ModelRequests()), nil
+	return len(sr.w.ModelCalls()), nil
 }
 
-// typeScript is what the fakes answer in scenario sc of fixture f, and the
-// trigger the scenario delivers.
-func typeScript(f Fixture, sc Scenario) (Script, remediation.Trigger, error) {
-	script := Script{MemberAnswers: memberPasses(f)}
-	trigger := f.Trigger
-	switch sc {
-	case FirstDraftPasses, Redelivery:
-		script.Answers = f.Answers.Pass
-	case GateFailsThenPasses:
-		script.Answers = f.Answers.Pass
-		script.FailedAttempts = 1
-	case TriesSpent:
-		script.Answers = f.Answers.Pass
-		script.FailedAttempts = everyAttemptFails
-	case PreflightFails:
-		script.Answers = f.Answers.Fail
-	case ModelDeclines:
-		script.Answers = f.Answers.Decline
-	case DeclinesBeforeModel:
-		if f.DeclineBeforeModel == nil {
-			return Script{}, trigger, fmt.Errorf("%s has no decline_before_model patch", f.File)
+// answerKind names how a round's draft ends, and so which of a fixture's
+// answer lists the round answers from.
+type answerKind string
+
+const (
+	passes   answerKind = "pass"
+	fails    answerKind = "fail"
+	declines answerKind = "decline"
+)
+
+// round is the answers of a round that ends as k: the first round's list of
+// kind k, and in a later round the revision's list of kind k, or the first
+// round's when the revision has none.
+func (a Answers) round(first bool, k answerKind) []ports.ProposeResult {
+	var firstRound, revision []ports.ProposeResult
+	switch k {
+	case passes:
+		firstRound, revision = a.Pass, a.Revision.Pass
+	case fails:
+		firstRound, revision = a.Fail, a.Revision.Fail
+	case declines:
+		firstRound, revision = a.Decline, a.Revision.Decline
+	}
+	if first || len(revision) == 0 {
+		return firstRound
+	}
+	return revision
+}
+
+// try is the answers of one try whose rounds end as rounds says, in call
+// order, or an error naming the first round the fixture holds no answer for.
+func (a Answers) try(file string, rounds ...answerKind) ([]ports.ProposeResult, error) {
+	var out []ports.ProposeResult
+	for i, k := range rounds {
+		answers := a.round(i == 0, k)
+		if len(answers) == 0 {
+			list := "answers." + string(k)
+			if i > 0 {
+				list = "answers.revision." + string(k) + " or " + list
+			}
+			return nil, fmt.Errorf("%s has no %s for round %d", file, list, i+1)
 		}
-		trigger = *f.DeclineBeforeModel
-		script.Answers = f.Answers.Pass
+		out = append(out, answers...)
 	}
-	if len(script.Answers) == 0 {
-		return Script{}, trigger, fmt.Errorf("%s has no model answers for scenario %s", f.File, sc)
-	}
-	return script, trigger, nil
+	return out, nil
 }
 
-// memberPasses is the passing answers of every node the fixture answers for
-// on its own.
-func memberPasses(f Fixture) map[string][]ports.ProposeResult {
+// typePlan is what the fakes answer in one scenario of a type, the trigger
+// the scenario delivers, and what its expectations count: the tries scripted,
+// and the scripted calls of the first round, and of one try, of the first
+// cluster.
+type typePlan struct {
+	script          Script
+	trigger         remediation.Trigger
+	tries           int
+	firstRoundCalls int
+	firstTryCalls   int
+}
+
+// typeScript is the plan of scenario sc of the type typ from its fixture f,
+// in a flow that makes tries tries.
+func typeScript(f Fixture, typ workflow.Type, tries int, sc Scenario) (typePlan, error) {
+	members, err := memberPasses(f)
+	if err != nil {
+		return typePlan{}, err
+	}
+	plan := typePlan{script: Script{MemberAnswers: members}, trigger: f.Trigger}
+	var rounds []answerKind
+	repeat := 1
+	switch sc {
+	case FirstDraftPasses:
+		rounds = []answerKind{passes}
+	case PreflightRevisionPasses, Redelivery:
+		rounds = []answerKind{fails, passes}
+	case PreflightRoundsSpent:
+		for range typ.Agent.Rounds {
+			rounds = append(rounds, fails)
+		}
+	case ModelDeclines:
+		rounds = []answerKind{declines, passes}
+	case GateFailsNextTryLearns:
+		rounds, repeat = []answerKind{passes}, 2
+		plan.script.FailedAttempts = 1
+	case TriesSpent:
+		rounds, repeat = []answerKind{passes}, tries
+		plan.script.FailedAttempts = everyAttemptFails
+	case DeclinesBeforeModel:
+		// The cluster declines before its model is called, so no call of it
+		// is scripted and any call fails.
+		if f.DeclineBeforeModel == nil {
+			return typePlan{}, fmt.Errorf("%s has no decline_before_model patch", f.File)
+		}
+		plan.trigger = *f.DeclineBeforeModel
+		return plan, nil
+	}
+	oneTry, err := f.Answers.try(f.File, rounds...)
+	if err != nil {
+		return typePlan{}, fmt.Errorf("scenario %s: %w", sc, err)
+	}
+	for range repeat {
+		plan.script.Answers = append(plan.script.Answers, oneTry...)
+	}
+	plan.tries = repeat
+	plan.firstRoundCalls = len(f.Answers.round(true, rounds[0]))
+	plan.firstTryCalls = len(oneTry)
+	return plan, nil
+}
+
+// memberPasses is the passing answers of one try of every node the fixture
+// answers for on its own.
+func memberPasses(f Fixture) (map[string][]ports.ProposeResult, error) {
 	if len(f.MemberAnswers) == 0 {
-		return nil
+		return nil, nil
 	}
 	out := make(map[string][]ports.ProposeResult, len(f.MemberAnswers))
-	for node, a := range f.MemberAnswers {
-		out[node] = a.Pass
+	for _, node := range sortedKeys(f.MemberAnswers) {
+		answers, err := f.MemberAnswers[node].try(f.File+" member "+node, passes)
+		if err != nil {
+			return nil, err
+		}
+		out[node] = answers
 	}
-	return out
+	return out, nil
 }
 
-// redeliverAndRestart delivers the trigger a second time, then makes the
-// commit after the first model call fail, which loses the first cluster's
-// prompt step after the model answered, and restarts the worker.
-func (sr *scenarioRun) redeliverAndRestart(ctx context.Context, trigger remediation.Trigger, typ workflow.Type) error {
-	if err := sr.accept(ctx, trigger); err != nil {
+// redeliverAndRestart delivers the trigger a second time and loses the commit
+// after the first model call, which loses the first round's prompt step after
+// the model answered, and restarts the worker. It then loses the commit after
+// the first model call of the second round, which comes after the first
+// round's pre-flight committed, delivers the trigger a third time and restarts
+// the worker again.
+func (sr *scenarioRun) redeliverAndRestart(ctx context.Context, plan typePlan, typ workflow.Type) error {
+	prompt := string(typ.Agent.Prompt.Name)
+	if err := sr.accept(ctx, plan.trigger); err != nil {
 		return fmt.Errorf("deliver the trigger again: %w", err)
 	}
-	sr.w.OnModelCall(func(calls int) {
-		if calls == 1 {
-			sr.w.FailNextCommit()
-		}
-	})
-	if err := sr.finish(ctx); err == nil {
-		return errors.New("the run ended although the commit after the first model call failed")
+	if err := sr.loseCommitAfterCall(ctx, 1); err != nil {
+		return err
 	}
-	if row := sr.expect(trigger).stepRows(1)[string(typ.Agent.Prompt.Name)]; row.Failures == 0 {
-		return fmt.Errorf("the failed commit was not the prompt step %s of the first cluster", typ.Agent.Prompt.Name)
+	if row, _ := sr.expect(plan.trigger).stepRow(1, 1, 1, prompt); row.Failures == 0 {
+		return fmt.Errorf("the failed commit was not round 1 of the prompt step %s of the first cluster", prompt)
 	}
-	sr.w.OnModelCall(nil)
+	sr.restart()
+
+	if err := sr.loseCommitAfterCall(ctx, plan.firstRoundCalls+1); err != nil {
+		return err
+	}
+	e := sr.expect(plan.trigger)
+	if row, _ := e.stepRow(1, 1, 1, remediation.StepPreflight); row.Status != remediation.StepDone {
+		return errors.New("the first cluster's round 1 pre-flight had not committed before its round 2 prompt step")
+	}
+	if row, _ := e.stepRow(1, 1, 2, prompt); row.Failures == 0 {
+		return fmt.Errorf("the second failed commit was not round 2 of the prompt step %s of the first cluster", prompt)
+	}
+	if err := sr.accept(ctx, plan.trigger); err != nil {
+		return fmt.Errorf("deliver the trigger a third time: %w", err)
+	}
 	sr.restart()
 	return nil
 }
 
-// expectType checks what scenario sc of the type typ wrote. When a draft is
-// refused, or a step or the model declines, a shared-upstream type's members
-// run their own types with the fixture's passing member answers, a
-// cross-service type's members are handed over, and a single cluster is
-// handed over itself. firstDraftCalls is how often the model is called when
+// loseCommitAfterCall drives the remediation with the commit after the call
+// numbered n to reach the model failing, and expects the drive to fail.
+func (sr *scenarioRun) loseCommitAfterCall(ctx context.Context, n int) error {
+	sr.w.OnModelCall(func(calls int) {
+		if calls == n {
+			sr.w.FailNextCommit()
+		}
+	})
+	defer sr.w.OnModelCall(nil)
+	if err := sr.finish(ctx); err == nil {
+		return fmt.Errorf("the run ended although the commit after model call %d failed", n)
+	}
+	return nil
+}
+
+// expectType checks what scenario sc of the type typ wrote, from fixture f
+// and the scenario's plan. oneRunCalls is how often the model is called when
 // the trigger is delivered once and nothing restarts, which a redelivery and a
 // restart must not change.
-func (sr *scenarioRun) expectType(files workflow.Set, trigger remediation.Trigger, f Fixture, typ workflow.Type, sc Scenario, firstDraftCalls int) error {
-	e := sr.expect(trigger)
+func (sr *scenarioRun) expectType(files workflow.Set, f Fixture, typ workflow.Type, plan typePlan, sc Scenario, oneRunCalls int) error {
+	e := sr.expect(plan.trigger)
 	e.ended()
 	first := e.firstCluster(typ.Name)
 	switch sc {
-	case FirstDraftPasses, Redelivery:
-		if as := e.attempts(proposal.StatusProposed); len(as) == 1 {
-			e.nodes(as[0], proposal.StatusProposed)
-			e.runsPerEditedService(as[0], f.ServiceRepoPaths)
+	case FirstDraftPasses:
+		e.proposed(f)
+		e.passedInRound(first, typ, 1)
+		e.clusterCalls(first, plan.firstTryCalls)
+	case PreflightRevisionPasses, ModelDeclines:
+		e.proposed(f)
+		e.passedInRound(first, typ, 2)
+		e.clusterCalls(first, plan.firstTryCalls)
+	case Redelivery:
+		e.proposed(f)
+		e.passedInRound(first, typ, 2)
+		e.that(len(sr.w.Remediations()) == 1, "the trigger delivered three times made %d remediations", len(sr.w.Remediations()))
+		e.distinctModelRequests()
+		e.modelCalls(oneRunCalls)
+		e.clusterCalls(first, plan.firstTryCalls)
+	case PreflightRoundsSpent:
+		e.roundsSpent(first, typ, plan.firstTryCalls)
+		switch typ.Match.Cluster {
+		case workflow.ClusterSharedUpstream:
+			e.membersRanTheirTypes(files, first)
+		case workflow.ClusterCrossService:
+			if as := e.attempts(proposal.StatusSkipped); len(as) == 1 {
+				e.membersSkipped(first, as[0])
+			}
+			e.modelCalls(plan.firstTryCalls)
+		default:
+			e.singleHandedOver(first, typ, sc)
 		}
-		e.proposedEvents(1)
-		if sc == Redelivery {
-			e.that(len(sr.w.Remediations()) == 1, "the trigger delivered twice made %d remediations", len(sr.w.Remediations()))
-			e.distinctModelRequests()
-			e.modelCalls(firstDraftCalls)
-		}
-	case GateFailsThenPasses:
+	case GateFailsNextTryLearns:
 		if as := e.attempts(proposal.StatusFailed, proposal.StatusProposed); len(as) == 2 {
 			e.verifyError(as[0], f.GateErrors)
 			e.nodes(as[1], proposal.StatusProposed)
 		}
 		e.proposedEvents(1)
+		e.nextTryShownGateErrors(first, plan.firstTryCalls, f.GateErrors)
 	case TriesSpent:
-		as := e.attempts(proposal.StatusFailed, proposal.StatusFailed, proposal.StatusFailed, proposal.StatusEscalated)
-		for _, a := range as[:min(3, len(as))] {
+		failed := slices.Repeat([]proposal.Status{proposal.StatusFailed}, plan.tries)
+		as := e.attempts(append(failed, proposal.StatusEscalated)...)
+		for _, a := range as[:min(plan.tries, len(as))] {
 			e.verifyError(a, f.GateErrors)
 		}
 		e.proposedEvents(0)
-	default:
-		declinedFirst := sc == DeclinesBeforeModel
+	case DeclinesBeforeModel:
 		switch typ.Match.Cluster {
 		case workflow.ClusterSharedUpstream:
 			e.membersRanTheirTypes(files, first)
-			e.upstreamReachedModel(first, typ, !declinedFirst, sc)
+			e.that(!e.reachedModel(first, typ), "the upstream cluster that declined before the model reached it")
 		case workflow.ClusterCrossService:
 			if as := e.attempts(proposal.StatusSkipped); len(as) == 1 {
 				e.membersSkipped(first, as[0])
 			}
-			e.upstreamReachedModel(first, typ, !declinedFirst, sc)
-			if declinedFirst {
-				e.modelCalls(0)
-			}
+			e.that(!e.reachedModel(first, typ), "the upstream cluster that declined before the model reached it")
+			e.modelCalls(0)
 		default:
 			e.singleHandedOver(first, typ, sc)
 		}

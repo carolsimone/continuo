@@ -55,8 +55,8 @@ func TestFiles_BuiltinDirPasses(t *testing.T) {
 	assert.Empty(t, r.Warnings)
 	// 1 flow, 10 types, 10 type fixtures and 7 flow fixtures.
 	assert.Equal(t, 28, r.Files)
-	// 10 types x 7 type scenarios, then 1 flow x 7 flow scenarios.
-	require.Len(t, r.Scenarios, 77)
+	// 10 types x 8 type scenarios, then 1 flow x 7 flow scenarios.
+	require.Len(t, r.Scenarios, 87)
 	for _, s := range r.Scenarios {
 		assert.True(t, s.OK, "%s %s: %s", s.Type, s.Scenario, s.Error)
 		assert.Empty(t, s.Error)
@@ -247,7 +247,7 @@ func TestFiles_FilesWithoutTheTriggerFlowExitOne(t *testing.T) {
 // refused at its agent line, as the service refuses it at startup.
 func TestFiles_ATypeWithNoRoundsExitsOne(t *testing.T) {
 	dir := copyBuiltinEditing(t, filepath.Join("types", "dbt-compile.yaml"), func(typ string) string {
-		return strings.Replace(typ, "rounds: 1", "rounds: 0", 1)
+		return strings.Replace(typ, "rounds: 3", "rounds: 0", 1)
 	})
 
 	code, stdout, stderr := runFiles(t, "files", dir)

@@ -20,7 +20,6 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/adapters/memory"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/sanitizer"
-	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/conformance"
@@ -160,8 +159,9 @@ func (w *World) Attempts() []conformance.Attempt {
 // Outbox is every outbox entry the store holds.
 func (w *World) Outbox() []outbox.Entry { return w.store.OutboxEntries() }
 
-// ModelRequests is every request that reached the scripted model.
-func (w *World) ModelRequests() []prompt.ProposeRequest { return w.llm.requests() }
+// ModelCalls is every call that reached the scripted model, with the node it
+// was about.
+func (w *World) ModelCalls() []conformance.ModelCall { return w.llm.recorded() }
 
 // Runs is every verification run submitted.
 func (w *World) Runs() []ports.VerificationRequest { return w.pipeline.runs() }

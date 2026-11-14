@@ -5,23 +5,25 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/service/conformance"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/promptlog"
 )
 
 // model is the scripted model. A call about a cluster whose target has answers
 // of its own takes the next of them, and any other call takes the next of the
-// default answers; a list starts over once every answer in it was given. The
-// target is the node the prompt names on the call's context. Every call is
-// recorded.
+// default answers. Each answer is given once: a call past the last answer of
+// its list is refused, so a run that calls the model more often than its
+// scenario scripted fails instead of being answered again. The target is the
+// node the prompt names on the call's context. Every answered call is
+// recorded with its target.
 type model struct {
 	mu       sync.Mutex
 	answers  []ports.ProposeResult
 	byTarget map[string][]ports.ProposeResult
 	given    map[string]int
-	calls    []prompt.ProposeRequest
+	calls    []conformance.ModelCall
 	onCall   func(calls int)
 }
 
@@ -42,18 +44,19 @@ func (m *model) Propose(ctx context.Context, req ports.ProposeRequest) (ports.Pr
 	if own, ok := m.byTarget[target]; ok {
 		list, key = own, target
 	}
-	if len(list) == 0 {
+	n := m.given[key]
+	if n >= len(list) {
 		m.mu.Unlock()
-		return ports.ProposeResult{}, fmt.Errorf("the script holds no model answer for a call about %q", target)
+		return ports.ProposeResult{}, fmt.Errorf("the script holds %d model answers for calls about %q, and this is call %d", len(list), target, n+1)
 	}
-	res := list[m.given[key]%len(list)]
+	res := list[n]
 	m.given[key]++
 	res.Files = append([]ports.ProposedFile(nil), res.Files...)
-	m.calls = append(m.calls, req)
-	n, onCall := len(m.calls), m.onCall
+	m.calls = append(m.calls, conformance.ModelCall{Target: target, Request: req})
+	calls, onCall := len(m.calls), m.onCall
 	m.mu.Unlock()
 	if onCall != nil {
-		onCall(n)
+		onCall(calls)
 	}
 	return res, nil
 }
@@ -64,10 +67,10 @@ func (m *model) setOnCall(fn func(calls int)) {
 	m.onCall = fn
 }
 
-func (m *model) requests() []prompt.ProposeRequest {
+func (m *model) recorded() []conformance.ModelCall {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return append([]prompt.ProposeRequest(nil), m.calls...)
+	return append([]conformance.ModelCall(nil), m.calls...)
 }
 
 // responseCache is the model's response cache, in memory.

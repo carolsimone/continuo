@@ -126,20 +126,49 @@ func (e *expectation) proposedEvents(n int) {
 
 // modelCalls expects n calls to reach the model.
 func (e *expectation) modelCalls(n int) {
-	got := len(e.sr.w.ModelRequests())
+	got := len(e.sr.w.ModelCalls())
 	e.that(got == n, "the model was called %d times, want %d", got, n)
+}
+
+// callsAbout is every call that reached the model about the node, in call
+// order.
+func (e *expectation) callsAbout(node string) []ModelCall {
+	var out []ModelCall
+	for _, c := range e.sr.w.ModelCalls() {
+		if c.Target == node {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// clusterCalls expects n calls to have reached the model about cluster c's
+// target.
+func (e *expectation) clusterCalls(c remediation.Cluster, n int) {
+	got := len(e.callsAbout(c.TargetNodeID))
+	e.that(got == n, "the model was called %d times about cluster %d's target %s, want %d", got, c.Cluster, c.TargetNodeID, n)
 }
 
 // distinctModelRequests expects no request to have reached the model twice:
 // a step run again after a lost commit is answered by the response cache.
 func (e *expectation) distinctModelRequests() {
-	reqs := e.sr.w.ModelRequests()
-	e.that(len(reqs) > 0, "the model was never called")
-	for i := range reqs {
+	calls := e.sr.w.ModelCalls()
+	e.that(len(calls) > 0, "the model was never called")
+	for i := range calls {
 		for j := range i {
-			e.that(!reflect.DeepEqual(reqs[i], reqs[j]), "model call %d repeats call %d", i+1, j+1)
+			e.that(!reflect.DeepEqual(calls[i].Request, calls[j].Request), "model call %d repeats call %d", i+1, j+1)
 		}
 	}
+}
+
+// proposed expects one attempt, proposed for every failing node, with one
+// verification run per service it edits and one remediation.proposed event.
+func (e *expectation) proposed(f Fixture) {
+	if as := e.attempts(proposal.StatusProposed); len(as) == 1 {
+		e.nodes(as[0], proposal.StatusProposed)
+		e.runsPerEditedService(as[0], f.ServiceRepoPaths)
+	}
+	e.proposedEvents(1)
 }
 
 // cluster returns cluster n of try 1.
@@ -191,9 +220,10 @@ func (e *expectation) fellBackToMembers(c remediation.Cluster) {
 }
 
 // membersRanTheirTypes expects the shared-upstream cluster c to have fallen
-// back, each member's own cluster to have taken a single-cluster type that
-// called the model with the member's passing answers, and the attempt to be
-// proposed for every failing node.
+// back, each member's own cluster to have taken a single-cluster type and
+// started fresh: its context steps run in its round 1, its draft passed in
+// round 1, and the model was called about it once for each of the member's
+// scripted answers. The attempt is proposed for every failing node.
 func (e *expectation) membersRanTheirTypes(files workflow.Set, c remediation.Cluster) {
 	e.fellBackToMembers(c)
 	for _, m := range e.clustersOfTry1() {
@@ -202,7 +232,13 @@ func (e *expectation) membersRanTheirTypes(files workflow.Set, c remediation.Clu
 		}
 		typ, known := files.Types[m.TypeName]
 		e.that(known && typ.Match.Cluster == workflow.ClusterSingle, "member %s fell back to type %q", m.TargetNodeID, m.TypeName)
-		e.that(known && e.reachedModel(m, typ), "member %s's own type %q never reached the model", m.TargetNodeID, m.TypeName)
+		if !known {
+			continue
+		}
+		e.that(e.reachedModel(m, typ), "member %s's own type %q never reached the model", m.TargetNodeID, m.TypeName)
+		e.that(m.Round == 1, "member %s's own cluster %d ended in round %d, want 1", m.TargetNodeID, m.Cluster, m.Round)
+		e.contextOnlyInRound1(m, typ)
+		e.clusterCalls(m, len(e.sr.script.MemberAnswers[m.TargetNodeID]))
 	}
 	if as := e.attempts(proposal.StatusProposed); len(as) == 1 {
 		e.nodes(as[0], proposal.StatusProposed)
@@ -217,39 +253,115 @@ func (e *expectation) membersSkipped(c remediation.Cluster, a Attempt) {
 	e.runs(0)
 }
 
-// stepRows is the journal rows of one cluster of try 1, by step name.
-func (e *expectation) stepRows(cluster int) map[string]remediation.StepRun {
+// stepRows is the journal rows of one round of one cluster of one try, by
+// step name. The journal holds one row per try, cluster, round and step, so
+// each name has one row whatever order the store lists rows in; a second row
+// under one name is recorded as a problem rather than picked by that order.
+func (e *expectation) stepRows(try, cluster, round int) map[string]remediation.StepRun {
 	out := map[string]remediation.StepRun{}
 	for _, s := range e.sr.w.Steps(e.sr.id) {
-		if s.Try == 1 && s.Cluster == cluster {
-			out[s.Step] = s
+		if s.Try != try || s.Cluster != cluster || s.Round != round {
+			continue
 		}
+		if _, dup := out[s.Step]; dup {
+			e.problems = append(e.problems, fmt.Sprintf("try %d cluster %d round %d has two rows of step %s", try, cluster, round, s.Step))
+		}
+		out[s.Step] = s
 	}
 	return out
 }
 
-// reachedModel reports whether cluster c's prompt step of type typ ran.
+// stepRow is the journal row of one step in one round of one cluster of one
+// try.
+func (e *expectation) stepRow(try, cluster, round int, step string) (remediation.StepRun, bool) {
+	row, ok := e.stepRows(try, cluster, round)[step]
+	return row, ok
+}
+
+// reachedModel reports whether the first round of cluster c's prompt step of
+// type typ ran.
 func (e *expectation) reachedModel(c remediation.Cluster, typ workflow.Type) bool {
-	row, ok := e.stepRows(c.Cluster)[string(typ.Agent.Prompt.Name)]
+	row, ok := e.stepRow(1, c.Cluster, 1, string(typ.Agent.Prompt.Name))
 	return ok && row.Status == remediation.StepDone
 }
 
-// upstreamReachedModel expects the upstream cluster c's prompt step to have
-// run in scenario sc when want is true, and not to have run otherwise.
-func (e *expectation) upstreamReachedModel(c remediation.Cluster, typ workflow.Type, want bool, sc Scenario) {
-	reached := e.reachedModel(c, typ)
-	e.that(reached == want, "in scenario %s the upstream cluster reached the model: %t, want %t", sc, reached, want)
+// contextOnlyInRound1 expects every context step of typ to have run in
+// cluster c's round 1 and in no later round.
+func (e *expectation) contextOnlyInRound1(c remediation.Cluster, typ workflow.Type) {
+	for _, ref := range typ.Context {
+		row, ok := e.stepRow(1, c.Cluster, 1, string(ref.Name))
+		e.that(ok && row.Status == remediation.StepDone, "cluster %d's context step %s did not run in round 1", c.Cluster, ref.Name)
+		for round := 2; round <= c.Round; round++ {
+			_, again := e.stepRow(1, c.Cluster, round, string(ref.Name))
+			e.that(!again, "cluster %d's context step %s ran again in round %d", c.Cluster, ref.Name, round)
+		}
+	}
+}
+
+// passedInRound expects cluster c's draft to have passed pre-flight in round
+// pass after every earlier round's pre-flight refused its draft.
+func (e *expectation) passedInRound(c remediation.Cluster, typ workflow.Type, pass int) {
+	e.that(c.Status == remediation.ClusterChecked, "cluster %d is %s, not checked", c.Cluster, c.Status)
+	e.that(c.Round == pass, "cluster %d ended in round %d, want %d", c.Cluster, c.Round, pass)
+	for round := 1; round <= pass; round++ {
+		prompt, ok := e.stepRow(1, c.Cluster, round, string(typ.Agent.Prompt.Name))
+		e.that(ok && prompt.Status == remediation.StepDone, "cluster %d's prompt step did not run in round %d", c.Cluster, round)
+		pre, ok := e.stepRow(1, c.Cluster, round, remediation.StepPreflight)
+		e.that(ok, "cluster %d has no pre-flight pass in round %d", c.Cluster, round)
+		refused := len(pre.Findings) > 0
+		e.that(refused == (round < pass), "cluster %d's round %d pre-flight refused its draft: %t, want %t (%v)",
+			c.Cluster, round, refused, round < pass, pre.Findings)
+	}
+	e.contextOnlyInRound1(c, typ)
+}
+
+// roundsSpent expects pre-flight to have refused cluster c's draft in every
+// round typ allows, its prompt step to have run once per round, and the model
+// to have been called about its target exactly calls times.
+func (e *expectation) roundsSpent(c remediation.Cluster, typ workflow.Type, calls int) {
+	rounds := typ.Agent.Rounds
+	e.that(c.Round == rounds, "cluster %d ended in round %d, want %d", c.Cluster, c.Round, rounds)
+	for round := 1; round <= rounds; round++ {
+		prompt, ok := e.stepRow(1, c.Cluster, round, string(typ.Agent.Prompt.Name))
+		e.that(ok && prompt.Status == remediation.StepDone, "cluster %d's prompt step did not run in round %d", c.Cluster, round)
+		pre, ok := e.stepRow(1, c.Cluster, round, remediation.StepPreflight)
+		e.that(ok && len(pre.Findings) > 0, "cluster %d's round %d pre-flight refused nothing", c.Cluster, round)
+	}
+	_, beyond := e.stepRow(1, c.Cluster, rounds+1, string(typ.Agent.Prompt.Name))
+	e.that(!beyond, "cluster %d's prompt step ran in round %d, past its %d rounds", c.Cluster, rounds+1, rounds)
+	e.contextOnlyInRound1(c, typ)
+	e.clusterCalls(c, calls)
+}
+
+// nextTryShownGateErrors expects the first request of the second try about
+// cluster c's target, the call after a try's calls, to show the earlier tries
+// with a line saying why the gate failed that names every gate error the
+// fixture scripts.
+func (e *expectation) nextTryShownGateErrors(c remediation.Cluster, tryCalls int, gateErrors map[string]string) {
+	calls := e.callsAbout(c.TargetNodeID)
+	if len(calls) <= tryCalls {
+		e.that(false, "the model was called %d times about %s, so the second try made no call", len(calls), c.TargetNodeID)
+		return
+	}
+	user := calls[tryCalls].Request.User
+	e.that(strings.Contains(user, "## Earlier tries at this failure"), "the second try's first request shows no earlier try")
+	var gateLine string
+	for line := range strings.Lines(user) {
+		if strings.HasPrefix(line, "Why the gate failed: ") {
+			gateLine = line
+		}
+	}
+	e.that(gateLine != "", "the second try's first request has no line saying why the gate failed")
+	for _, node := range sortedKeys(gateErrors) {
+		e.that(strings.Contains(gateLine, gateErrors[node]), "the second try's gate line %q does not name %s's error %q",
+			strings.TrimSpace(gateLine), node, gateErrors[node])
+	}
 }
 
 // firstFinding is the first finding of cluster c's pre-flight checks in the
 // cluster's last round, in the order typ lists them.
 func (e *expectation) firstFinding(c remediation.Cluster, typ workflow.Type) (remediation.Finding, bool) {
-	rows := map[string]remediation.StepRun{}
-	for _, s := range e.sr.w.Steps(e.sr.id) {
-		if s.Try == 1 && s.Cluster == c.Cluster && s.Round == c.Round {
-			rows[s.Step] = s
-		}
-	}
+	rows := e.stepRows(1, c.Cluster, c.Round)
 	for _, ref := range typ.Preflight {
 		if row, ok := rows[string(ref.Name)]; ok && len(row.Findings) > 0 {
 			return row.Findings[0], true
@@ -260,14 +372,13 @@ func (e *expectation) firstFinding(c remediation.Cluster, typ workflow.Type) (re
 
 // singleHandedOver expects the single cluster c handed over in scenario sc,
 // with no verification run: by its last pre-flight round, which refused its
-// draft, failed with that round's first finding, whether the draft is one the
-// checks refuse or the model's own answer that it cannot fix the node; by a
-// context step that declined, skipped with no model call.
+// draft, failed with that round's first finding; by a context step that
+// declined, skipped with no model call.
 func (e *expectation) singleHandedOver(c remediation.Cluster, typ workflow.Type, sc Scenario) {
 	e.that(c.Status == remediation.ClusterHandedOver, "cluster %d is %s, not handed_over", c.Cluster, c.Status)
 	want := proposal.StatusFailed
 	switch sc {
-	case PreflightFails, ModelDeclines:
+	case PreflightRoundsSpent:
 		finding, ok := e.firstFinding(c, typ)
 		e.that(ok, "pre-flight refused nothing in cluster %d", c.Cluster)
 		reason := roundsSpentPrefix + finding.Message

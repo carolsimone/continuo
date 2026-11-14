@@ -83,7 +83,11 @@ func (s Suite) RunFlowScenarios(ctx context.Context, flow string) []Result {
 // runFlow runs flow scenario sc from its fixture f and checks what the run
 // wrote.
 func (s Suite) runFlow(ctx context.Context, f Fixture, sc Scenario) error {
-	script := Script{Answers: f.Answers.Pass, MemberAnswers: memberPasses(f)}
+	members, err := memberPasses(f)
+	if err != nil {
+		return err
+	}
+	script := Script{Answers: f.Answers.Pass, MemberAnswers: members}
 	sr, err := s.start(f, script, sc == FlowMaintenance)
 	if err != nil {
 		return err
@@ -173,9 +177,10 @@ func (e *expectation) firstOfKind(k workflow.ClusterKind) (remediation.Cluster, 
 }
 
 // crossClusterFinding is the first finding of try 1's cross-cluster checks,
-// in the order flow lists them.
+// in the order flow lists them. A flow-level row runs once per try, as round
+// 1 of the flow cluster.
 func (e *expectation) crossClusterFinding(flow workflow.Flow) (remediation.Finding, bool) {
-	rows := e.stepRows(0)
+	rows := e.stepRows(1, remediation.FlowCluster, 1)
 	for _, ref := range flow.AcrossClusters {
 		if row, ok := rows[string(ref.Name)]; ok && len(row.Findings) > 0 {
 			return row.Findings[0], true

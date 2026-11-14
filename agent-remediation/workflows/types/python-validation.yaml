@@ -12,7 +12,7 @@ context:
   - contract_entry
   - upstream_changes
   - failure_precedents
-agent: { prompt: python-contract, tools: [], rounds: 1 }
+agent: { prompt: python-contract, tools: [], rounds: 3 }
 preflight:
   - contract_paths_inside_folder
   - yaml_reads

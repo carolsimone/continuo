@@ -28,13 +28,14 @@ const (
 	maxPasses = 25
 )
 
-// scenarioRun is one scenario's runner over its world, and the remediation it
-// accepted.
+// scenarioRun is one scenario's runner over its world, the script its world
+// answers from, and the remediation it accepted.
 type scenarioRun struct {
-	w    World
-	deps runner.Deps
-	r    *runner.Runner
-	id   uuid.UUID
+	w      World
+	script Script
+	deps   runner.Deps
+	r      *runner.Runner
+	id     uuid.UUID
 }
 
 // start builds the world of a scenario and a runner over it, as the service
@@ -64,7 +65,7 @@ func (s Suite) start(f Fixture, script Script, maintenance bool) (*scenarioRun, 
 		Owner:               owner,
 		VerificationTimeout: verificationTimeout,
 	}
-	return &scenarioRun{w: w, deps: deps, r: runner.New(deps)}, nil
+	return &scenarioRun{w: w, script: script, deps: deps, r: runner.New(deps)}, nil
 }
 
 // restart replaces the runner with a new one over the same world, as a worker

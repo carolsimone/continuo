@@ -139,8 +139,10 @@ func TestSuite_AFlowScenarioWithoutAFixtureFails(t *testing.T) {
 }
 
 // A fixture whose passing answer edits a file the model was never shown is
-// refused by pre-flight, so the scenarios that expect a proposal fail: the
-// suite judges what the files do, not only that they run.
+// refused by pre-flight, so every round the scenario scripted to pass asks for
+// a revision instead, and each scenario that expects a proposal fails, most on
+// the call its script holds no answer for: the suite judges what the files do,
+// not only that they run, and never answers a call twice.
 func TestSuite_AnAnswerPreflightRefusesFailsTheScenariosThatExpectAProposal(t *testing.T) {
 	s := onlyTypes(builtinSuite(t), "dbt-compile")
 	for i, f := range s.Fixtures {
@@ -158,21 +160,48 @@ func TestSuite_AnAnswerPreflightRefusesFailsTheScenariosThatExpectAProposal(t *t
 			errs[r.Scenario] = r.Err
 		}
 	}
-	const noEvent = "0 remediation.proposed events were enqueued, want 1"
-	for sc, want := range map[conformance.Scenario][]string{
-		conformance.FirstDraftPasses:    {"the attempts are [failed], want [proposed]", noEvent},
-		conformance.GateFailsThenPasses: {"the attempts are [failed], want [failed proposed]", noEvent},
-		conformance.TriesSpent:          {"the attempts are [failed], want [failed failed failed escalated]", "attempt 1 carries no verify error"},
-		conformance.Redelivery:          {"the attempts are [failed], want [proposed]", noEvent},
+	const unscripted = `model answers for calls about "svc", and this is call `
+	for sc, want := range map[conformance.Scenario]string{
+		conformance.FirstDraftPasses:        "the script holds 1 " + unscripted + "2",
+		conformance.PreflightRevisionPasses: "the script holds 2 " + unscripted + "3",
+		conformance.GateFailsNextTryLearns:  "the script holds 2 " + unscripted + "3",
+		// Three refused answers spend the first try's three rounds.
+		conformance.TriesSpent:    "the attempts are [failed], want [failed failed failed escalated]",
+		conformance.ModelDeclines: "the script holds 2 " + unscripted + "3",
+		conformance.Redelivery:    "the script holds 2 " + unscripted + "3",
 	} {
 		require.Error(t, errs[sc], "scenario %s", sc)
-		for _, w := range want {
-			assert.Contains(t, errs[sc].Error(), w, "scenario %s", sc)
+		assert.Contains(t, errs[sc].Error(), want, "scenario %s", sc)
+	}
+	assert.NoError(t, errs[conformance.PreflightRoundsSpent])
+	assert.NoError(t, errs[conformance.DeclinesBeforeModel])
+}
+
+// A fixture with no answer for a round its scenario plays fails that scenario
+// with the list it lacks, before anything runs.
+func TestSuite_AScenarioWhoseRoundHasNoAnswersFails(t *testing.T) {
+	s := onlyTypes(builtinSuite(t), "dbt-compile")
+	for i, f := range s.Fixtures {
+		if f.Type == "dbt-compile" {
+			s.Fixtures = slices.Clone(s.Fixtures)
+			s.Fixtures[i].Answers.Decline = nil
 		}
 	}
-	assert.NoError(t, errs[conformance.PreflightFails])
-	assert.NoError(t, errs[conformance.DeclinesBeforeModel])
-	assert.NoError(t, errs[conformance.ModelDeclines])
+
+	errs := map[conformance.Scenario]error{}
+	for _, r := range s.Run(ctx) {
+		if r.Type == "dbt-compile" {
+			errs[r.Scenario] = r.Err
+		}
+	}
+
+	require.Error(t, errs[conformance.ModelDeclines])
+	assert.Contains(t, errs[conformance.ModelDeclines].Error(), "has no answers.decline for round 1")
+	for _, sc := range conformance.TypeScenarios() {
+		if sc != conformance.ModelDeclines {
+			assert.NoError(t, errs[sc], "scenario %s", sc)
+		}
+	}
 }
 
 // extraRuns is a world that also reports verification runs of services no
@@ -239,8 +268,8 @@ func TestSuite_AFailureNamesItsServicesAndNodesInSortedOrder(t *testing.T) {
 		}
 		require.Error(t, errs[conformance.FirstDraftPasses])
 		assert.Contains(t, errs[conformance.FirstDraftPasses].Error(), runsText)
-		require.Error(t, errs[conformance.GateFailsThenPasses])
-		gate := errs[conformance.GateFailsThenPasses].Error()
+		require.Error(t, errs[conformance.GateFailsNextTryLearns])
+		gate := errs[conformance.GateFailsNextTryLearns].Error()
 		assert.Contains(t, gate, gateText)
 		assert.Less(t, strings.Index(gate, "alpha.node"), strings.Index(gate, "zeta.node"))
 		texts = append(texts, errs[conformance.FirstDraftPasses].Error()+"\n"+gate)

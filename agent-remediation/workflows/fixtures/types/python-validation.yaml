@@ -80,7 +80,7 @@ answers:
       confidence: high
       model: claude-test
   fail:
-    # The read deleted rather than corrected: pre-flight fails the node.
+    # The read deleted rather than corrected, which pre-flight refuses.
     - files:
         - path: services/svc-py-e2e/contracts/py_bad_read.yml
           content: |

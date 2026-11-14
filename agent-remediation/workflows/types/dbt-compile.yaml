@@ -5,5 +5,5 @@ version: 1
 name: dbt-compile
 match: { cluster: single, source: compile }
 context: [failing_node_source, dbt_log, failure_precedents]
-agent: { prompt: dbt-compile, tools: [], rounds: 1 }
+agent: { prompt: dbt-compile, tools: [], rounds: 3 }
 preflight: [target_file_was_shown, content_changed, confidence_not_low, sql_parses]

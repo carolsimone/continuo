@@ -52,7 +52,7 @@ type Fixture struct {
 	Packager Packager
 
 	// Answers are the model's answers for every cluster whose target has no
-	// MemberAnswers, by scenario.
+	// MemberAnswers, by how a round ends.
 	Answers Answers
 	// MemberAnswers are the model's answers for the clusters whose target is
 	// the named node: a shared-upstream member's own cluster after the
@@ -75,16 +75,34 @@ type SQLError struct {
 	Line    int
 }
 
-// Answers are scripted model answers, one per model call, in call order. When
-// a run calls the model more often than a list holds, the list starts over, so
-// a two-call prompt answers each try the same way.
+// Answers are a cluster's scripted model answers: the lists of a try's first
+// pre-flight round, and the revision's lists for a round after it. Each list
+// holds the answers of one round, one per model call, in call order. A scenario
+// composes the lists into the calls it scripts, round by round and try by try:
+// a draft refused and then revised is the first round's fail list followed by
+// the revision's pass list. Every scripted answer is given once; a call past
+// the last one is an error, never an answer given again.
 type Answers struct {
-	// Pass is answered by a scenario whose draft passes pre-flight.
+	// Pass is a round whose draft passes pre-flight.
 	Pass []ports.ProposeResult
-	// Fail is an answer pre-flight refuses.
+	// Fail is a round whose draft pre-flight refuses.
 	Fail []ports.ProposeResult
-	// Decline is an answer the model gives when it declines, such as a low
-	// confidence or no edit at all.
+	// Decline is a round in which the model declines, with a low confidence
+	// or no edit at all, which pre-flight refuses.
+	Decline []ports.ProposeResult
+	// Revision is the lists of a round after a try's first, for a type whose
+	// revising round makes other calls than its first round: a dbt-validation
+	// round that revises the source fix makes that one call, where its first
+	// round diagnoses the candidate SQL and then fixes the source. A list the
+	// revision leaves empty takes the first round's list of its kind.
+	Revision RoundAnswers
+}
+
+// RoundAnswers are the answers of one round by how its draft ends, each list
+// one answer per model call, in call order.
+type RoundAnswers struct {
+	Pass    []ports.ProposeResult
+	Fail    []ports.ProposeResult
 	Decline []ports.ProposeResult
 }
 

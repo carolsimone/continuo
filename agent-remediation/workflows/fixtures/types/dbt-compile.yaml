@@ -36,7 +36,7 @@ answers:
       confidence: high
       model: claude-test
   fail:
-    # A file the model was not shown: pre-flight hands the node over skipped.
+    # A file the model was not shown, which pre-flight refuses.
     - target_file: services/svc/models/other.sql
       proposed_content: "select 2\n"
       rationale: rewrote another model

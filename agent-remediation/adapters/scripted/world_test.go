@@ -26,24 +26,49 @@ func about(node string) context.Context {
 
 func answer(rationale string) ports.ProposeResult { return ports.ProposeResult{Rationale: rationale} }
 
-func TestModel_AnswersACallFromTheAnswersOfItsTargetAndStartsOverAtTheEnd(t *testing.T) {
+func TestModel_AnswersACallFromTheAnswersOfItsTarget(t *testing.T) {
 	m := newModel(
-		[]ports.ProposeResult{answer("default")},
+		[]ports.ProposeResult{answer("default-1"), answer("default-2")},
 		map[string][]ports.ProposeResult{"model.a": {answer("a-1"), answer("a-2")}},
 	)
 	var seen []int
 	m.setOnCall(func(n int) { seen = append(seen, n) })
 
 	var got []string
-	for _, c := range []context.Context{about("model.a"), about("model.b"), about("model.a"), ctx, about("model.a")} {
+	for _, c := range []context.Context{about("model.a"), about("model.b"), about("model.a"), ctx} {
 		res, err := m.Propose(c, ports.ProposeRequest{User: "u"})
 		require.NoError(t, err)
 		got = append(got, res.Rationale)
 	}
 
-	assert.Equal(t, []string{"a-1", "default", "a-2", "default", "a-1"}, got)
-	assert.Equal(t, []int{1, 2, 3, 4, 5}, seen)
-	assert.Len(t, m.requests(), 5)
+	assert.Equal(t, []string{"a-1", "default-1", "a-2", "default-2"}, got)
+	assert.Equal(t, []int{1, 2, 3, 4}, seen)
+	targets := make([]string, 0, 4)
+	for _, c := range m.recorded() {
+		targets = append(targets, c.Target)
+	}
+	assert.Equal(t, []string{"model.a", "model.b", "model.a", ""}, targets)
+}
+
+// Each answer is given once, so a run that calls the model more often than
+// its scenario scripted fails rather than being answered from the start of
+// the list again.
+func TestModel_RefusesACallPastTheLastAnswerOfItsList(t *testing.T) {
+	m := newModel(
+		[]ports.ProposeResult{answer("default")},
+		map[string][]ports.ProposeResult{"model.a": {answer("a-1")}},
+	)
+
+	_, err := m.Propose(about("model.a"), ports.ProposeRequest{})
+	require.NoError(t, err)
+	_, err = m.Propose(about("model.a"), ports.ProposeRequest{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `1 model answers for calls about "model.a", and this is call 2`)
+
+	res, err := m.Propose(about("model.b"), ports.ProposeRequest{})
+	require.NoError(t, err, "another list keeps its own count")
+	assert.Equal(t, "default", res.Rationale)
+	assert.Len(t, m.recorded(), 2, "a refused call is not recorded")
 }
 
 func TestModel_RefusesACallTheScriptHasNoAnswerFor(t *testing.T) {
@@ -53,7 +78,7 @@ func TestModel_RefusesACallTheScriptHasNoAnswerFor(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "model.b")
-	assert.Empty(t, m.requests())
+	assert.Empty(t, m.recorded())
 }
 
 func TestWorld_AnswersARepeatedRequestFromTheResponseCache(t *testing.T) {
@@ -69,7 +94,7 @@ func TestWorld_AnswersARepeatedRequestFromTheResponseCache(t *testing.T) {
 
 	assert.Equal(t, "a", first.Rationale)
 	assert.True(t, second.Cached)
-	assert.Len(t, w.ModelRequests(), 1)
+	assert.Len(t, w.ModelCalls(), 1)
 }
 
 func TestCheckout_HoldsTheFilesAtTheTriggersCommitOnly(t *testing.T) {

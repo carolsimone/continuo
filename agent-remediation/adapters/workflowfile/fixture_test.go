@@ -57,6 +57,9 @@ answers:
     - { proposed_sql: "select 2", confidence: high }
   fail: [{ proposed_sql: "" }]
   decline: [{ files: [{ path: a.yml, content: x }], confidence: low }]
+  revision:
+    pass: [{ proposed_sql: "select 3", confidence: high }]
+    fail: [{ proposed_sql: "selec 3" }]
 member_answers: { model.sales.base: { pass: [{ target_file: t.sql, proposed_content: c, suspected_root_cause_node: n }] } }
 decline_before_model: { node: { candidate_artifact_uri: "", service: other } }
 gate_errors: { model.sales.orders: still failing }
@@ -107,6 +110,10 @@ func TestLoadFixtures_ReadsEveryField(t *testing.T) {
 		},
 		Fail:    []ports.ProposeResult{{}},
 		Decline: []ports.ProposeResult{{Files: []ports.ProposedFile{{Path: "a.yml", Content: "x"}}, Confidence: "low"}},
+		Revision: conformance.RoundAnswers{
+			Pass: []ports.ProposeResult{{ProposedSQL: "select 3", Confidence: "high"}},
+			Fail: []ports.ProposeResult{{ProposedSQL: "selec 3"}},
+		},
 	}, f.Answers)
 	assert.Equal(t, map[string]conformance.Answers{
 		"model.sales.base": {Pass: []ports.ProposeResult{{TargetFile: "t.sql", ProposedContent: "c", SuspectedRootCauseNode: "n"}}},
@@ -185,6 +192,10 @@ func TestLoadFixtures_NamesTheFileAndLineOfEachProblem(t *testing.T) {
 		"an unknown field in an answer": {
 			yaml: "kind: fixture\nversion: 1\ntype: x\ntrigger: { nodes: [{ node_id: a }] }\nanswers:\n  pass:\n    - { sql: x }\n",
 			want: []string{`f.yaml:7: field "sql" is not known here`},
+		},
+		"a revision inside a revision": {
+			yaml: "kind: fixture\nversion: 1\ntype: x\ntrigger: { nodes: [{ node_id: a }] }\nanswers:\n  revision:\n    revision: {}\n",
+			want: []string{`f.yaml:7: field "revision" is not known here`},
 		},
 		"an unknown field in the patch": {
 			yaml: "kind: fixture\nversion: 1\ntype: x\ntrigger: { nodes: [{ node_id: a }] }\ndecline_before_model:\n  node: { candidate_uri: \"\" }\n",

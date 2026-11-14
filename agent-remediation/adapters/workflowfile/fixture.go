@@ -137,6 +137,14 @@ type packagerFile struct {
 }
 
 type answersFile struct {
+	Pass     []answerFile    `yaml:"pass"`
+	Fail     []answerFile    `yaml:"fail"`
+	Decline  []answerFile    `yaml:"decline"`
+	Revision roundAnswerFile `yaml:"revision"`
+}
+
+// roundAnswerFile is the answer lists of a round after a try's first.
+type roundAnswerFile struct {
 	Pass    []answerFile `yaml:"pass"`
 	Fail    []answerFile `yaml:"fail"`
 	Decline []answerFile `yaml:"decline"`
@@ -509,7 +517,16 @@ func (c catalogFile) toConformance() conformance.Catalog {
 }
 
 func (a answersFile) toConformance() conformance.Answers {
-	return conformance.Answers{Pass: answersOf(a.Pass), Fail: answersOf(a.Fail), Decline: answersOf(a.Decline)}
+	return conformance.Answers{
+		Pass:    answersOf(a.Pass),
+		Fail:    answersOf(a.Fail),
+		Decline: answersOf(a.Decline),
+		Revision: conformance.RoundAnswers{
+			Pass:    answersOf(a.Revision.Pass),
+			Fail:    answersOf(a.Revision.Fail),
+			Decline: answersOf(a.Revision.Decline),
+		},
+	}
 }
 
 func answersOf(in []answerFile) []ports.ProposeResult {

@@ -64,7 +64,8 @@ answers:
       confidence: high
       model: claude-test
   fail:
-    # base_orders unchanged: pre-flight refuses it and the members fall back.
+    # base_orders unchanged, which pre-flight refuses: once every round is
+    # refused, the members fall back to their own types.
     - proposed_sql: "select id from analytics.raw_orders\n"
       rationale: base_orders looks right
       confidence: high

@@ -74,7 +74,7 @@ answers:
       confidence: high
       model: claude-test
   fail:
-    # The node renamed: pre-flight fails a fix that changes the node's identity.
+    # The node renamed: pre-flight refuses a fix that changes the node's identity.
     - files:
         - path: services/svc-py-e2e-parse/contracts/py_unqualified_read.yml
           content: |
