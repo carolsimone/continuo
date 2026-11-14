@@ -14,7 +14,7 @@ import (
 // pkg/events.ErrPermanent, so no creation try is repeated.
 var (
 	// ErrInvalidNodeType: the node type is not one the vocabulary declares, or
-	// is `ingested`, which no command builds.
+	// is `unknown-external`, which no command builds.
 	ErrInvalidNodeType = errors.New("the dispatch names a node type that cannot run")
 	// ErrMalformedDispatch: another field of the dispatch cannot run (its
 	// operation, image or timeout, or a node type that has no command for the

@@ -941,8 +941,8 @@ def test_a_python_kind_entry_is_published_as_a_python_node(tmp_path):
 
     topology = writer.nodes
     # The node's read table, test_schema.orders, is built by no node of the
-    # release, so the topology also holds it as an ingested node.
-    assert [n["node_type"] for n in topology] == ["python-node", "ingested"]
+    # release, so the topology also holds it as an unknown-external node.
+    assert [n["node_type"] for n in topology] == ["python-node", "unknown-external"]
     assert topology[0]["unique_id"] == "test_schema.py_metrics"
     assert topology[0]["original_file_path"] == "scripts/py_metrics.py"
     assert spec_uploader.upload.call_args.kwargs["unique_id"] == "test_schema.py_metrics"
@@ -1007,7 +1007,7 @@ def test_a_release_mixing_old_and_new_python_contracts_publishes_python_node(tmp
     publisher.publish_failed.assert_not_called()
     topology = writer.nodes
     assert sorted((n["unique_id"], n["node_type"]) for n in topology) == [
-        ("test_schema.orders", "ingested"),  # the table both scripts read, built by no node
+        ("test_schema.orders", "unknown-external"),  # the table both scripts read, built by no node
         ("test_schema.py_new", "python-node"),
         ("test_schema.py_old", "python-node"),
     ]
@@ -1114,11 +1114,11 @@ def test_a_release_mixes_dbt_and_python_and_resolves_edges_in_both_directions(tm
 
     topology = {n["unique_id"]: n for n in writer.nodes}
     # service-2's orders reads test_schema.users, which no manifest of this
-    # release builds, so users is an ingested node.
+    # release builds, so users is an unknown-external node.
     assert set(topology) == {
         "test_schema.orders", "test_schema.py_metrics", "test_schema.summary", "test_schema.users",
     }
-    assert topology["test_schema.users"]["node_type"] == "ingested"
+    assert topology["test_schema.users"]["node_type"] == "unknown-external"
     # python reads dbt
     assert topology["test_schema.py_metrics"]["upstream_unique_ids"] == ["test_schema.orders"]
     # dbt reads python
@@ -1269,7 +1269,8 @@ def test_a_release_logs_one_release_line(caplog):
     (line,) = _release_lines(caplog)
     assert (line.levelno, line.release_id, line.outcome, line.nodes) == (
         logging.INFO, "rel-1", "ok", {"dbt": 2, "python": 0, "external": 0})
-    assert line.skipped == {"no_owner": 0, "no_tag": 0, "local_stub": 0}
+    assert line.skipped == {"no_owner": 0, "local_stub": 0, "installed_package": 0}
+    assert line.dormant == {}
     assert list(line.stages_ms) == [stage.value for stage in Stage]
     assert not hasattr(line, "failure_kind")
     assert not any(r.getMessage() == "candidate: parse complete" for r in caplog.records)
@@ -1303,20 +1304,88 @@ def _model(name, *, owner="team-a", tags=("daily",)):
 
 def test_each_skipped_node_is_logged_at_info_with_its_release_service_and_reason(tmp_path, caplog):
     path = _skipping_manifest(tmp_path, _model("kept"), _model("no_owner", owner=None),
-                              _model("stub", tags=("local_stub",)), _model("untagged", tags=()))
+                              _model("stub", tags=("local_stub",)), _model("no_owner_no_tag", owner=None, tags=()))
     with caplog.at_level(logging.INFO):
         timings = build_handler(source_of(ManifestFile(path=path)), MagicMock(), make_uploader()).handle(release_id="rel-1")
     skips = [r for r in caplog.records if r.getMessage() == "candidate: node skipped"]
     assert [(r.levelno, r.release_id, r.service, r.node_id, r.reason) for r in skips] == [
         (logging.INFO, "rel-1", "svc-a", "model.svc_a.no_owner", "no_owner"),
         (logging.INFO, "rel-1", "svc-a", "model.svc_a.stub", "local_stub"),
-        (logging.INFO, "rel-1", "svc-a", "model.svc_a.untagged", "no_tag")]
-    assert timings.skipped == {SkipReason.NO_OWNER: 1, SkipReason.NO_TAG: 1, SkipReason.LOCAL_STUB: 1}
+        (logging.INFO, "rel-1", "svc-a", "model.svc_a.no_owner_no_tag", "no_owner")]
+    assert timings.skipped == {SkipReason.NO_OWNER: 2, SkipReason.LOCAL_STUB: 1, SkipReason.INSTALLED_PACKAGE: 0}
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
+def test_a_model_with_an_owner_and_no_tag_is_kept_not_skipped_and_counted_dormant(tmp_path, caplog):
+    path = _skipping_manifest(tmp_path, _model("kept"), _model("untagged", tags=()))
+    with caplog.at_level(logging.INFO):
+        timings = build_handler(source_of(ManifestFile(path=path)), MagicMock(), make_uploader()).handle(release_id="rel-1")
+    assert not [r for r in caplog.records if r.getMessage() == "candidate: node skipped"]
+    assert timings.nodes == {"dbt": 2, "python": 0, "external": 0}
+    assert timings.dormant == {"svc-a": 1}
+    (line,) = _release_lines(caplog)
+    assert (line.skipped, line.dormant) == ({"no_owner": 0, "local_stub": 0, "installed_package": 0}, {"svc-a": 1})
+
+
+def test_an_untagged_node_of_an_installed_package_is_skipped_and_the_release_is_published(caplog):
+    """dbt gives the models of an installed package the project's top-level
+    owner, so the manifest of service shop-core holds untagged nodes of the
+    package evalpkg. They are left out, so the service check passes, and the
+    table one of them writes is an unknown-external node for its reader."""
+    source = _make_source_with_declared([("manifest_installed_package.json", "shop-core")])
+    publisher, writer = MagicMock(), RecordingArtifactWriter()
+    with caplog.at_level(logging.INFO):
+        timings = build_handler(source, publisher, make_uploader(), artifact_writer=writer).handle(release_id="rel-1")
+
+    publisher.publish_failed.assert_not_called()
+    publisher.publish_ok.assert_called_once()
+    by_id = {n["unique_id"]: n for n in writer.nodes}
+    assert {uid: (n["service_name"], n["node_type"], n["schedule"]) for uid, n in by_id.items()} == {
+        "analytics.orders": ("shop-core", "dbt-model", "daily"),
+        "analytics.monthly_report": ("shop-core", "dbt-model", ""),
+        "analytics.countries": ("shop-core", "dbt-seed", "seed"),
+        "analytics.pkg_model": ("", "unknown-external", ""),
+    }
+    assert by_id["analytics.orders"]["upstream_unique_ids"] == ["analytics.pkg_model"]
+    assert timings.skipped == {SkipReason.NO_OWNER: 1, SkipReason.LOCAL_STUB: 0, SkipReason.INSTALLED_PACKAGE: 2}
+    skips = [(r.service, r.node_id, r.reason) for r in caplog.records if r.getMessage() == "candidate: node skipped"]
+    assert skips == [
+        ("evalpkg", "model.evalpkg.pkg_model", "installed_package"),
+        ("evalpkg", "seed.evalpkg.pkg_seed", "installed_package"),
+        ("evalpkg", "model.evalpkg.pkg_no_owner", "no_owner"),
+    ]
+
+
+def test_a_tagged_node_of_an_installed_package_still_fails_the_service_check(tmp_path):
+    manifest = json.loads((FIXTURES / "manifest_installed_package.json").read_text())
+    manifest["nodes"]["model.evalpkg.pkg_model"]["tags"] = ["daily"]
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+    publisher = MagicMock()
+
+    build_handler(source_of(ManifestFile(path=str(path), declared_service="shop-core")), publisher,
+                  make_uploader()).handle(release_id="rel-1")
+
+    kw = _failed_kwargs(publisher)
+    assert kw["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
+    assert kw["detail"] == "shop-core: manifest contains nodes for ['evalpkg']"
+    publisher.publish_ok.assert_not_called()
+
+
+def test_a_dormant_node_enters_the_topology_the_code_bundle_and_the_candidate_schema(tmp_path):
+    uploader, bundle_uploader, writer = make_uploader(), FakeBundleUploader(), RecordingArtifactWriter()
+    path = _skipping_manifest(tmp_path, _model("untagged", tags=()))
+    build_handler(source_of(ManifestFile(path=path)), MagicMock(), uploader, bundle_uploader=bundle_uploader,
+                  artifact_writer=writer).handle(release_id="rel-1")
+    (node,) = writer.nodes
+    assert (node["unique_id"], node["node_type"], node["schedule"]) == ("analytics.untagged", "dbt-model", "")
+    ((_, bundle),) = bundle_uploader.uploads
+    assert sorted(bundle["nodes"]) == ["analytics.untagged"]
+    assert [c.kwargs["unique_id"] for c in uploader.upload.call_args_list] == ["analytics.untagged"]
+
+
 def test_a_manifest_whose_every_node_is_skipped_logs_the_skips_before_it_fails(tmp_path, caplog):
-    path = _skipping_manifest(tmp_path, _model("a", tags=()), _model("b", tags=()))
+    path = _skipping_manifest(tmp_path, _model("a", owner=None), _model("b", owner=None))
     publisher = MagicMock()
     with caplog.at_level(logging.INFO):
         build_handler(source_of(ManifestFile(path=path, declared_service="svc-a")), publisher,
@@ -1324,7 +1393,7 @@ def test_a_manifest_whose_every_node_is_skipped_logs_the_skips_before_it_fails(t
     assert publisher.publish_failed.call_args.kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
     assert len([r for r in caplog.records if r.getMessage() == "candidate: node skipped"]) == 2
     (line,) = _release_lines(caplog)
-    assert (line.outcome, line.failure_kind, line.skipped["no_tag"]) == ("failed", "invalid_artifact", 2)
+    assert (line.outcome, line.failure_kind, line.skipped["no_owner"]) == ("failed", "invalid_artifact", 2)
 
 
 class _RecordingReleaseObserver:
@@ -1344,7 +1413,7 @@ def test_the_observer_gets_each_published_release_once():
 
 def test_the_observer_gets_a_failed_release_with_its_failure_kind(tmp_path):
     observer = _RecordingReleaseObserver()
-    path = _skipping_manifest(tmp_path, _model("a", tags=()))
+    path = _skipping_manifest(tmp_path, _model("a", owner=None))
     timings = build_handler(source_of(ManifestFile(path=path, declared_service="svc-a")), MagicMock(),
                        make_uploader(), observer=observer).handle(release_id="rel-1")
     assert observer.finished == [timings]

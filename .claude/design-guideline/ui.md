@@ -162,6 +162,17 @@ Variant rules:
 - **`btn--danger`** for destructive actions (Cancel an active run).
 - Never inline `<button style="…">` or introduce a new `.foo-btn` class.
   If a new use case appears, add it to this file first.
+- **`btn--icon`** is a square, icon-only `.btn` for an action on an element
+  too small for a labelled button: the `▶` that runs a dormant node on the
+  graph (see "Nodes of no schedule"). It holds one glyph, its `aria-label`
+  and `title` name the action (`Run orders`, `Run orders by hand`), and it
+  takes the same `.is-loading` / `.is-success` states, with the glyph
+  unchanged since there is no room for words.
+
+  ```css
+  .btn--icon { justify-content: center; flex-shrink: 0; width: 20px; height: 20px;
+               padding: 0; font-size: 9px; line-height: 1; }
+  ```
 
 State rules (apply to every action button without exception):
 
@@ -830,6 +841,12 @@ Rules:
   Otherwise it makes the field taller than its sibling `.btn`s and pushes the
   `<select>` above their shared centre line — the field and the buttons must
   sit on one baseline.
+- A filter that is on or off is a native checkbox after its micro-label, in
+  the same row as the list's other filters: the Nodes tab's `Dormant only`
+  (`<label htmlFor="node-dormant">Dormant only</label><input type="checkbox">`).
+  A filter a link can open is kept in the URL (`dormant=1`), so the link opens
+  the list filtered and the box keeps its state across the page's tabs; a
+  toggle replaces the URL rather than adding a history entry.
 
 ## Tables
 
@@ -848,6 +865,15 @@ Rules:
   the failed stage on a rejected release. Rows without the attribute render
   the `.nodes-dash` marker (`—`), never a coloured info-strip. Do not use
   `info-strip--error` as a persistent per-row label.
+- The Nodes tab lists every node of the live release, unknown-external nodes
+  aside. A node that never ran reads `never` under Last run (`.nodes-ts`, no
+  status pill) and `.nodes-dash` for Success, Runs and Avg / p95, never `0`
+  or an empty pill. A dormant node carries a `dormant` `.pill-sm--muted`
+  after its name in the Node cell, titled with the dormant tooltip (see
+  "Nodes of no schedule"). With no row, the empty strip reads `No node in
+  the live release matches this filter.` while a filter narrows the list (a
+  search, a service, `Dormant only`, or the Test operation, which lists only
+  nodes with tests), and `No release has been promoted yet.` otherwise.
 
 ### Load more
 
@@ -960,11 +986,87 @@ Rules:
   minimap is too small to read it.
 - The node detail header pairs the icon with the **exact** `node_type` in a
   neutral inline chip (`.info-strip--neutral .info-strip--inline`); the
-  graph shows family only.
+  graph shows family only. A dormant node adds a `dormant` chip right after
+  it, the same neutral inline chip, titled with the dormant tooltip (see
+  "Nodes of no schedule"); the page offers it the run it offers any node.
 - A python-csv node's detail header also carries a `source: <uri>` line
   under the title (`.detail-node-source`, the `.nodes-node-subpath`
   monospace treatment). It renders only when the URI is known — no empty
   `source:` label, and no such line on any other node type.
+
+### Nodes of no schedule
+
+Two kinds of node on a schedule's graph belong to no schedule: an
+**unknown-external** node (a table continuo reads and does not build) and a
+**dormant** node (a node continuo builds that has no schedule tag). A run
+started by hand executes a dormant node, and any run whose load of a seed
+drops the seed's table rebuilds a dormant view or materialized view below that
+seed. The schedule's latest view paints no run status, so
+each carries one fixed look in place of the status fill, a chip on its top
+border that names it, and a hover title on the whole node. A run's own view
+(`RunSwimlane`, `RunNodeTable`) never takes this look: a dormant view that
+the run rebuilds is one of its tasks, painted by the task's status like any
+other.
+
+```jsx
+{/* React Flow's node wrapper, which takes the title through the node's domAttributes */}
+<div className="react-flow__node" title="No schedule tag: you run it by hand. Last run 2h ago.">
+  <div className="dag-node-label">
+    <NodeTypeIcon nodeType="dbt-model" />
+    <span>orders_backfill</span>
+    <span className="dag-node-chip dag-node-chip--dormant">dormant</span>
+    <button className="btn btn--secondary btn--icon nodrag" aria-label="Run orders_backfill"
+            title="Run orders_backfill by hand">▶</button>
+  </div>
+</div>
+```
+
+```css
+.dag-node-chip           { position: absolute; top: 0; right: 8px; transform: translateY(-50%);
+                           z-index: 1; font-size: 9.5px; font-weight: 600; line-height: 12px;
+                           padding: 0 6px; white-space: nowrap; background: #fff;
+                           border: 1px solid; border-radius: 999px; box-shadow: 0 0 0 2px #fff; }
+.dag-node-chip--external { border-color: #94a3b8; color: #475569; }
+.dag-node-chip--dormant  { border-color: #64748b; color: #334155; }
+.dag-run-error           { margin: 8px 12px 0; flex-shrink: 0; }
+```
+
+| Kind | Fill | Border | Text | Label | Chip | Title |
+|---|---|---|---|---|---|---|
+| unknown-external | `#e2e8f0` | `#94a3b8` solid | default | `schema.table`, no icon | `external` | `A table continuo reads and does not build. continuo does not know who builds it.` |
+| dormant | `#f1f5f9` | `#94a3b8` solid | `#475569` | type icon + table | `dormant` | `No schedule tag: you run it by hand. Last run 2h ago.` or `… Last run: never.` |
+
+Rules:
+
+- **Never a dashed border**, whatever the graph colours by: the dashed border
+  means "a node of the graph that is not in the run on screen", and the fixed
+  look stands in for any run status.
+- A focus role (selected, depends on, required by, unrelated) overrides the
+  fill and border as on any node; the chip stays.
+- An unknown-external node has no service, so it never takes a service
+  accent; a dormant node takes its service's accent like any node.
+- The minimap paints each in its own fill. A skipped node shares the dormant
+  fill and keeps the minimap's plain grey.
+- The dormant title's time is `formatRelative` of the node's latest run
+  (`just now` under a minute), from `dormantTitle` (`node-helpers.ts`); the
+  same text titles the `dormant` chip on the node page and the Nodes tab.
+- **The `▶` on a dormant node** (`.btn--icon`) starts a run of that node alone
+  from the live release, as the node page's `Run this node` does
+  (`useSingleNodeRun`), with no confirmation. Its press is its own: it neither
+  selects nor drags the node (`nodrag`, and its click and keys stop at the
+  button). A click elsewhere on the node selects it as on any node, and the
+  focus legend's `Open node detail →` opens its node page; an
+  unknown-external node has no node page.
+- The press is one action: a press repeated after no answer sends the same
+  request id until the server has given its final answer (the run started, or
+  was refused). The graph names no run by its id, and its poll can show the
+  run an unanswered press made, as a later last run in the title, before the
+  press's error appears, so a newer last run never makes the next press a new
+  one.
+- A run that did not start says why in one `.info-strip--error`
+  (`role="alert"`, since it appears away from the button pressed) between the
+  search strip and the canvas, naming the node (`Could not run
+  orders_backfill: …`). The next press of any `▶` clears it.
 
 ### Grouped table rows
 
@@ -1469,8 +1571,9 @@ Rules:
 ## Snapshot tiles
 
 Used inside the homepage `Topology` tab. One tile per schedule
-with at least one active topology node. Clicking the tile navigates;
-the whole tile IS the click target.
+with at least one active topology node, then one **Dormant** tile when the
+live release has dormant nodes (nodes with no schedule tag). Clicking the
+tile navigates; the whole tile IS the click target.
 
 ```css
 .snapshot-tile-grid { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
@@ -1492,9 +1595,15 @@ Content rules:
 
 - One bold title line (the schedule name).
 - Exactly one metadata line: `N nodes · updated Xm ago`.
+- The Dormant tile (`DormantTile`) is the same `.snapshot-tile`, last in the
+  grid: the title `Dormant` and the line `N dormant nodes · run by hand`
+  (`1 dormant node` for one). It opens the Nodes tab filtered to dormant
+  nodes (`/?tab=nodes&dormant=1`). With no dormant node there is no tile, not
+  a tile reading 0.
 - Never embed action buttons inside a tile. The tile is the action.
 - For "no topology yet" states render an `.info-strip--neutral` in
-  place of the grid — do not render empty tiles.
+  place of the grid — do not render empty tiles. A live release whose every
+  node is dormant shows the grid with the Dormant tile alone.
 
 ## Provenance line
 

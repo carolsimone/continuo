@@ -46,6 +46,12 @@ type rejectedPayload struct {
 		DBTLogURI            string `json:"dbt_log_uri"`
 		RunResultsURI        string `json:"run_results_uri"`
 		CandidateArtifactURI string `json:"candidate_artifact_uri"`
+		// ValidationOp is how the validation leg prepared the node, a value
+		// of the validation_op vocabulary (pkg/domain/model.ValidationOp).
+		// It decodes as a string, so a value this build does not declare
+		// still decodes. Empty on a non-validation rejection and from a
+		// producer that does not send it.
+		ValidationOp string `json:"validation_op"`
 		// RelationID is the contested physical relation for a
 		// duplicate-relation rejection, distinct from NodeID (the target
 		// claimant's own unique_id) — the two differ whenever the target
@@ -117,10 +123,9 @@ func changedAncestors(in []changedAncestorPayload) []failure.ChangedAncestor {
 // sourceFromPayload resolves the remediation Source from a release.rejected
 // payload. It prefers the explicit stage field and falls back to the reason
 // field, which covers the stage-less duplicate_table rejection. The bool is
-// false when the rejection is not remediable — invalid_artifact/internal_error
-// parse rejections are handled by the classifier's own drop,
-// unbuildable_cross_service_upstream, or an unknown future stage; the caller
-// then produces no evidence rather than misrouting it.
+// false when the rejection is not remediable — a stage this build does not
+// know, or a stage-less reason that names no pipeline leg; the caller then
+// produces no evidence rather than misrouting it.
 func sourceFromPayload(stage, reason string) (failure.Source, bool) {
 	switch stage {
 	case "parse":
@@ -147,7 +152,10 @@ func sourceFromPayload(stage, reason string) (failure.Source, bool) {
 }
 
 // evidenceFromRejected translates a release.rejected:v1 payload into one
-// FailureEvidence per failed node. Nodes with status != "failed" are skipped.
+// FailureEvidence per failed node. Nodes with status != "failed" are skipped,
+// and so is a node validation copied from its production table: no change to
+// the release's code fixes a copy of production. A rejection whose reason the
+// contract declares and marks not healable yields no evidence at all.
 // The Source field is derived from the payload's stage field; when stage is
 // absent, the reason field is used as a fallback. FilePath and Service carry
 // whatever the rejection payload set directly (populated by release-controller
@@ -170,24 +178,30 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 		return nil, nil
 	}
 
-	// Parse-export-leg rejections are not model failures: a rehearsal miss is
-	// a project *property* (env_var() at parse time / partial parse disabled)
-	// and an upload failure is continuo-internal. Neither is fixable by a
-	// model change, so no heal evidence is produced for them.
-	if p.Reason == "parse_rehearsal_failed" || p.Reason == "artifact_upload_failed" {
+	// A reason the contract declares and marks not healable is not a model
+	// failure a heal proposal could fix: a rehearsal miss is a project
+	// property, an upload failure or an internal_error is continuo's own, an
+	// invalid_artifact is a manifest or python contract the release ships
+	// unreadable or invalid (or naming another service, or declaring an invalid
+	// node setting), and a failed copy of an unchanged upstream is settled by a
+	// run of that node. A reason that is empty or that this build does not
+	// declare (an older producer, a retry replay) is not dropped here; its
+	// stage decides.
+	if r := pkg_model.RejectReason(p.Reason); r.IsValid() && !r.Healable() {
 		return nil, nil
 	}
 
 	src, ok := sourceFromPayload(p.Stage, p.Reason)
 	if !ok {
-		// Not a remediable pipeline-leg rejection (e.g. a parse-phase failure):
-		// produce no evidence rather than misrouting it onto a leg's path.
+		// Not a remediable pipeline-leg rejection (a stage this build does not
+		// know, or a stage-less reason that names no leg): produce no evidence
+		// rather than misrouting it onto a leg's path.
 		return nil, nil
 	}
 
 	out := make([]failure.FailureEvidence, 0, len(p.PerNode))
 	for _, n := range p.PerNode {
-		if n.Status != "failed" {
+		if n.Status != "failed" || pkg_model.ValidationOp(n.ValidationOp) == pkg_model.ValidationOpCloneFromProd {
 			continue
 		}
 		out = append(out, failure.FailureEvidence{
@@ -225,16 +239,19 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 // handler serves both consumers. The consumer group is created idempotently
 // by StreamConsumer.Start; call Start(ctx) in a goroutine to begin consuming.
 func classifyRejectionMessages(rc *goredis.Client, stream, group string, deps handlers.Deps, logger *slog.Logger) *pkgredis.StreamConsumer {
-	return pkgredis.NewStreamConsumer(rc, stream, group, newRejectionHandler(stream, deps), logger)
+	return pkgredis.NewStreamConsumer(rc, stream, group, newRejectionHandler(stream, deps, logger), logger)
 }
 
 // newRejectionHandler returns the MessageHandler that classifies the failed
 // nodes of one release.rejected:v1-shaped message from the named stream. A
 // message with no payload field, or one whose payload cannot be decoded, is a
 // permanent failure: the handler returns events.ErrPermanent, so the consumer
-// dead-letters it. Any error from classification is returned as is, so the
-// consumer redelivers it.
-func newRejectionHandler(stream string, deps handlers.Deps) pkgredis.MessageHandler {
+// dead-letters it. A message that yields no failed node to classify (a reason
+// the contract marks not healable, a shadow rejection, a stage this build does
+// not know, or only copies of production) is acknowledged with one DEBUG line
+// naming its release, stage and reason. Any error from classification is
+// returned as is, so the consumer redelivers it.
+func newRejectionHandler(stream string, deps handlers.Deps, logger *slog.Logger) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		raw, ok := msg.Values["payload"].(string)
 		if !ok {
@@ -244,8 +261,26 @@ func newRejectionHandler(stream string, deps handlers.Deps) pkgredis.MessageHand
 		if err != nil {
 			return fmt.Errorf("%w: %s decode: %v", pkgevents.ErrPermanent, stream, err)
 		}
+		if len(evs) == 0 {
+			logNothingToClassify(ctx, logger, stream, []byte(raw))
+			return nil
+		}
 		return handlers.ClassifyRejection(ctx, deps, evs)
 	}
+}
+
+// logNothingToClassify logs at DEBUG that a rejection yields no failed node to
+// classify, naming the rejection's release, stage and reason. raw has already
+// decoded as a rejection, so its header decodes too.
+func logNothingToClassify(ctx context.Context, logger *slog.Logger, stream string, raw []byte) {
+	var head struct {
+		ReleaseID string `json:"release_id"`
+		Stage     string `json:"stage"`
+		Reason    string `json:"reason"`
+	}
+	_ = json.Unmarshal(raw, &head)
+	logger.DebugContext(ctx, "release rejection has no failed node to classify",
+		"stream", stream, "release_id", head.ReleaseID, "stage", head.Stage, "reason", head.Reason)
 }
 
 // NewReleaseRejectedConsumer constructs a StreamConsumer that reads

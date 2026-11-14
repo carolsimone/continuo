@@ -61,7 +61,7 @@ func TestDeployValidation_PythonNode_BuildsTheValidationPod(t *testing.T) {
 		ImageTag:             "img",
 		CandidateSchema:      "candidate_rel123",
 		CandidateArtifactURI: "s3://continuo-artifacts/candidate-sql/rel123/svc-py.py_probe.json",
-		ValidationOp:         "build_from_columns",
+		ValidationOp:         string(pkg_model.ValidationOpBuildFromColumns),
 	}
 
 	err := d.DeployValidation(context.Background(), spec)
@@ -71,7 +71,7 @@ func TestDeployValidation_PythonNode_BuildsTheValidationPod(t *testing.T) {
 	podSpec := job.Spec.Template.Spec
 	assert.Equal(t, "s3://continuo-artifacts/candidate-sql/rel123/svc-py.py_probe.json", envByName(podSpec, "CANDIDATE_SPEC_URI"),
 		"the Job actually built for a python-node validation node, not a stub")
-	assert.Equal(t, "build_from_columns", envByName(podSpec, "VALIDATION_OP"))
+	assert.Equal(t, string(pkg_model.ValidationOpBuildFromColumns), envByName(podSpec, "VALIDATION_OP"))
 }
 
 // TestCompileParamsFromSpec_MapsAllFields pins DeployCompile's spec→params
@@ -92,7 +92,7 @@ func TestCompileParamsFromSpec_MapsAllFields(t *testing.T) {
 		ImageTag:             "abc123",
 		CandidateSchema:      "candidate_rel123",
 		CandidateArtifactURI: "s3://continuo/svc/orders.sql",
-		ValidationOp:         "build_from_sql",
+		ValidationOp:         string(pkg_model.ValidationOpBuildFromSQL),
 		ProdSchema:           "prod_schema",
 		ManifestS3URI:        "s3://continuo/svc/rel123/manifest.json",
 		ParseProdS3URI:       "s3://continuo/svc/rel123/parse/prod.msgpack",

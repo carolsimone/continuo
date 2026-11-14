@@ -275,25 +275,32 @@ type RunServiceClient interface {
 	// Errors: INVALID_ARGUMENT (service_name, schema_name or table_name is
 	// empty, or operation is not an operation value).
 	ListNodeTasks(ctx context.Context, in *ListNodeTasksRequest, opts ...grpc.CallOption) (*ListNodeTasksResponse, error)
-	// ListNodes returns the node list: one summary row per node that has run,
-	// with stats aggregated over the most recent 50 tasks of each node. Supports a
+	// ListNodes returns the node list: one summary row per node the live release
+	// builds (never an unknown-external node or a dbt test), with its node_type
+	// and dormant, and stats aggregated over the most recent 50 tasks of each
+	// node. A node that never ran has no stats and is listed after the nodes that
+	// ran. dormant_only keeps only the dormant nodes. Supports a
 	// case-insensitive exact match on the table name (searching "table_2" returns
 	// only "table_2", never "ftable_2" or "table_2_v2"), an exact service_name
 	// filter, and limit/offset paging. total_count reports the full
 	// match count (before paging). A limit of 0 or less means 50 and a limit
 	// above 200 is 200; a negative offset is 0. The node list of run (the empty
-	// default) includes full refreshes.
+	// default) includes full refreshes. The node list of test keeps only the
+	// nodes that have data tests (test_count above 0).
 	// Errors: INVALID_ARGUMENT (operation is not an operation value).
 	ListNodes(ctx context.Context, in *ListNodesRequest, opts ...grpc.CallOption) (*ListNodesResponse, error)
-	// ListNodeNames returns the distinct table names of nodes that have run,
-	// optionally filtered by service. It powers the node search autocomplete
-	// (the complete name list, independent of the paginated node list).
+	// ListNodeNames returns the distinct table names of the nodes ListNodes
+	// lists (the live release's nodes that continuo builds, a node that never
+	// ran included), optionally filtered by service. It powers the node search
+	// autocomplete (the complete name list, independent of the paginated node
+	// list).
 	// Errors: none beyond the service-wide ones. A service with no node returns
 	// an empty list.
 	ListNodeNames(ctx context.Context, in *ListNodeNamesRequest, opts ...grpc.CallOption) (*ListNodeNamesResponse, error)
-	// ListNodeServices returns the distinct service names of nodes that have run.
-	// It powers the node list and remediation service filters (the complete service
-	// list, independent of the paginated node list).
+	// ListNodeServices returns the distinct service names of the nodes ListNodes
+	// lists, a service whose nodes never ran included. It powers the node list
+	// and remediation service filters (the complete service list, independent of
+	// the paginated node list).
 	// Errors: none beyond the service-wide ones.
 	ListNodeServices(ctx context.Context, in *ListNodeServicesRequest, opts ...grpc.CallOption) (*ListNodeServicesResponse, error)
 	// UpsertSchedule creates or replaces the cron of a schedule: its cron (five
@@ -838,25 +845,32 @@ type RunServiceServer interface {
 	// Errors: INVALID_ARGUMENT (service_name, schema_name or table_name is
 	// empty, or operation is not an operation value).
 	ListNodeTasks(context.Context, *ListNodeTasksRequest) (*ListNodeTasksResponse, error)
-	// ListNodes returns the node list: one summary row per node that has run,
-	// with stats aggregated over the most recent 50 tasks of each node. Supports a
+	// ListNodes returns the node list: one summary row per node the live release
+	// builds (never an unknown-external node or a dbt test), with its node_type
+	// and dormant, and stats aggregated over the most recent 50 tasks of each
+	// node. A node that never ran has no stats and is listed after the nodes that
+	// ran. dormant_only keeps only the dormant nodes. Supports a
 	// case-insensitive exact match on the table name (searching "table_2" returns
 	// only "table_2", never "ftable_2" or "table_2_v2"), an exact service_name
 	// filter, and limit/offset paging. total_count reports the full
 	// match count (before paging). A limit of 0 or less means 50 and a limit
 	// above 200 is 200; a negative offset is 0. The node list of run (the empty
-	// default) includes full refreshes.
+	// default) includes full refreshes. The node list of test keeps only the
+	// nodes that have data tests (test_count above 0).
 	// Errors: INVALID_ARGUMENT (operation is not an operation value).
 	ListNodes(context.Context, *ListNodesRequest) (*ListNodesResponse, error)
-	// ListNodeNames returns the distinct table names of nodes that have run,
-	// optionally filtered by service. It powers the node search autocomplete
-	// (the complete name list, independent of the paginated node list).
+	// ListNodeNames returns the distinct table names of the nodes ListNodes
+	// lists (the live release's nodes that continuo builds, a node that never
+	// ran included), optionally filtered by service. It powers the node search
+	// autocomplete (the complete name list, independent of the paginated node
+	// list).
 	// Errors: none beyond the service-wide ones. A service with no node returns
 	// an empty list.
 	ListNodeNames(context.Context, *ListNodeNamesRequest) (*ListNodeNamesResponse, error)
-	// ListNodeServices returns the distinct service names of nodes that have run.
-	// It powers the node list and remediation service filters (the complete service
-	// list, independent of the paginated node list).
+	// ListNodeServices returns the distinct service names of the nodes ListNodes
+	// lists, a service whose nodes never ran included. It powers the node list
+	// and remediation service filters (the complete service list, independent of
+	// the paginated node list).
 	// Errors: none beyond the service-wide ones.
 	ListNodeServices(context.Context, *ListNodeServicesRequest) (*ListNodeServicesResponse, error)
 	// UpsertSchedule creates or replaces the cron of a schedule: its cron (five

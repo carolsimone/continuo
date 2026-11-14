@@ -181,7 +181,7 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 // uncoveredProdServices returns the sorted set of service names live in the
 // production topology that have no service_prod pointer and are not the
 // release's changed service. A non-empty result means assembling the full
-// topology now would silently drop those services on promote. An ingested node
+// topology now would silently drop those services on promote. An unknown-external node
 // belongs to no service, so it is skipped: no service_prod pointer covers it and
 // promoting without one drops nothing.
 func uncoveredProdServices(prod release.Topology, pointers []*release.ServiceProd, changedService string) []string {
@@ -192,7 +192,7 @@ func uncoveredProdServices(prod release.Topology, pointers []*release.ServicePro
 
 	missingSet := map[string]struct{}{}
 	for _, n := range prod {
-		if n.IsIngested() {
+		if n.IsExternal() {
 			continue
 		}
 		if _, ok := covered[n.ServiceName]; !ok {

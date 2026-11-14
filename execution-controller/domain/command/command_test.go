@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/execution-controller/domain/command"
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/seedreload"
 	"github.com/carolsimone/continuo/pkg/warehouse"
 	"github.com/stretchr/testify/assert"
@@ -113,10 +114,10 @@ func TestValidationDeployTask_ToValidationJobSpec_CarriesOp(t *testing.T) {
 		ReleaseID: "r", NodeID: "model.a", ServiceName: "s", SchemaName: "sc",
 		TableName: "a", NodeType: "dbt-model", ImageTag: "t", JobName: "j",
 		CandidateSchema: "_candidate_r", CandidateArtifactURI: "s3://b/a.sql",
-		ValidationOp: "clone_from_prod", ProdSchema: "analytics",
+		ValidationOp: string(pkg_model.ValidationOpCloneFromProd), ProdSchema: "analytics",
 	}
 	spec := cmd.ToValidationJobSpec()
-	assert.Equal(t, "clone_from_prod", spec.ValidationOp)
+	assert.Equal(t, string(pkg_model.ValidationOpCloneFromProd), spec.ValidationOp)
 	assert.Equal(t, "analytics", spec.ProdSchema)
 }
 

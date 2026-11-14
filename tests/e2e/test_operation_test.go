@@ -283,10 +283,10 @@ func TestWholeDAGTestOperationNoTestsFinalizesSkipped(t *testing.T) {
 // model run's terminal status, operation=test reflects the test run's. A
 // node with no tests (seed_table_2, test_count=0) never gets a tasks
 // row under operation=test — the no_tests gate rejects it before dispatch
-// (see TestSingleNodeTestOperationNoTests) — so it must be entirely ABSENT
+// (see TestSingleNodeTestOperationNoTests) — and it must be entirely ABSENT
 // from the operation=test node list rather than present with zero/null stats,
-// since ListNodes inner-joins tasks filtered by operation and never
-// left-joins against the topology.
+// since the operation=test node list holds only the live release's nodes
+// with a known, positive data-test count.
 func TestNodeCatalogOperationScoping(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")

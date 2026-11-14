@@ -76,3 +76,10 @@ def test_parse_failure_kind_healable_set():
         kind.INVALID_SQL,
         kind.UNQUALIFIED_REFERENCE,
     }
+
+
+def test_upstream_clone_failed_is_not_healable():
+    """A run of the unchanged upstream settles it, not a change to the release's code."""
+    reason = contract_vocabulary.RejectReason
+    assert reason.UPSTREAM_CLONE_FAILED.value == "upstream_clone_failed"
+    assert reason.UPSTREAM_CLONE_FAILED not in contract_vocabulary.REJECT_REASON_HEALABLE

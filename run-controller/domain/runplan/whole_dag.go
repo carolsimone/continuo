@@ -17,11 +17,11 @@ type WholeDAG struct {
 
 var _ Selector = WholeDAG{}
 
-// Select plans the run over g without its ingested nodes, which are no tasks
-// (a schedule's graph holds none, since an ingested node has no schedule). A g
+// Select plans the run over g without its unknown-external nodes, which are no tasks
+// (a schedule's graph holds none, since an unknown-external node has no schedule). A g
 // with no other node is ErrEmptySelection whatever the operation.
 func (s WholeDAG) Select(g topology.Graph) (Plan, error) {
-	g = withoutIngested(g)
+	g = withoutExternal(g)
 	if g.Len() == 0 {
 		return Plan{}, ErrEmptySelection
 	}

@@ -83,17 +83,17 @@ func TestVerificationBuildSets_SortedAndDeduplicated(t *testing.T) {
 	assert.Empty(t, context)
 }
 
-// TestVerificationBuildSets_NeverReturnsAnIngestedNode pins that an ingested
+// TestVerificationBuildSets_NeverReturnsAnUnknownExternalNode pins that an unknown-external
 // node is in neither build set, however it differs from production and from the
 // rejected release: it has no content for a fix to touch or a release to prove.
-func TestVerificationBuildSets_NeverReturnsAnIngestedNode(t *testing.T) {
-	ingested := release.Node{UniqueID: "raw.ingest_probe", NodeType: "ingested"}
+func TestVerificationBuildSets_NeverReturnsAnUnknownExternalNode(t *testing.T) {
+	unknownExternal := release.Node{UniqueID: "raw.ingest_probe", NodeType: "unknown-external"}
 	reader := func(hash string) release.Node {
 		return release.Node{UniqueID: "a.m", NodeType: "dbt-model", ContentHash: hash, UpstreamUniqueIDs: []string{"raw.ingest_probe"}}
 	}
 	prod := release.Topology{reader("h1")}
 	rejected := release.Topology{reader("h2")}
-	verification := release.Topology{ingested, reader("h3")}
+	verification := release.Topology{unknownExternal, reader("h3")}
 
 	scope, context := release.VerificationBuildSets(verification, prod, rejected, nil)
 

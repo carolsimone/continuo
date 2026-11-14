@@ -232,3 +232,29 @@ func TestNodeQueryRepository_GetNode_EqualRetirementFallsBackToUniqueID(t *testi
 		assert.Equal(t, "dbt-seed", got.NodeType, "call %d: ties break on the smallest unique_id", i)
 	}
 }
+
+// A stored :Node can hold "ingested", the legacy name of unknown-external.
+// GetNode reads it as unknown-external, for a live node and for a retired one.
+func TestGetNode_ReadsLegacyIngestedAsUnknownExternal(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Neo4j")
+	}
+	repo, client, cleanup := newTestQueryRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	schema, table := "raw", "legacy_probe"
+	liveService := fmt.Sprintf("svc-%s-live", t.Name())
+	retiredService := fmt.Sprintf("svc-%s-retired", t.Name())
+	seedGetNode(t, ctx, client, liveService, schema, table, "ingested", nil, true)
+	seedGetNode(t, ctx, client, retiredService, schema, table, "ingested", nil, false)
+
+	live, err := repo.GetNode(ctx, nodeQueryTenant, liveService, schema, table, domain.ActiveNodesOnly)
+	require.NoError(t, err)
+	assert.Equal(t, "unknown-external", live.NodeType)
+
+	retired, err := repo.GetNode(ctx, nodeQueryTenant, retiredService, schema, table, domain.IncludeInactiveNodes)
+	require.NoError(t, err)
+	assert.Equal(t, "unknown-external", retired.NodeType)
+	assert.True(t, retired.Inactive)
+}

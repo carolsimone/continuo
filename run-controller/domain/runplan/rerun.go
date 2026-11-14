@@ -23,8 +23,8 @@ var _ Selector = Rerun{}
 
 // Select refuses a test source (ErrRerunOfTestUnsupported), a source task
 // whose node g does not hold (ErrTargetNotFound), a source with nothing to
-// execute again (ErrNothingToRerun), and an ingested node or an undeclared node
-// type among the tasks it executes (ErrIngestedNode, ErrInvalidNodeType).
+// execute again (ErrNothingToRerun), and an unknown-external node or an undeclared node
+// type among the tasks it executes (ErrExternalNode, ErrInvalidNodeType).
 func (s Rerun) Select(g topology.Graph) (Plan, error) {
 	if s.Source.Operation == model.OperationTest {
 		return Plan{}, ErrRerunOfTestUnsupported

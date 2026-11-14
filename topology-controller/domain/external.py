@@ -29,7 +29,7 @@ class SystemRelations:
         )
 
 
-def ingested_nodes(
+def unknown_external_nodes(
     nodes: Sequence[ManifestNode],
     reads: Mapping[str, Sequence[TableRef]],
     *,
@@ -44,11 +44,11 @@ def ingested_nodes(
     it, under its declared name or under the name its build actually writes
     (an aliased dbt model). A table in one of the system's relations is the
     warehouse engine's own and never becomes a node. Each table left is one
-    ingested node, whatever the number of readers or the spelling of its name:
+    unknown-external node, whatever the number of readers or the spelling of its name:
     refs are lower-case, so "<schema>.<table>" is the key.
 
     The only state it changes is the readers' upstream_deps, which gain one
-    edge to each ingested table they read, once. The returned nodes have no
+    edge to each unknown-external table they read, once. The returned nodes have no
     service, schedule, owner, content or image, and no builder: nothing in the
     release produces them.
     """
@@ -76,7 +76,7 @@ def ingested_nodes(
                     owner="",
                     schedule_name="",
                     criticality="",
-                    node_type=NodeType.INGESTED,
+                    node_type=NodeType.UNKNOWN_EXTERNAL,
                     runtime=NodeRuntime.EXTERNAL,
                 )
             node.upstream_deps.append(UpstreamDep(table_name=ref.table, schema_name=ref.schema, service_name=""))

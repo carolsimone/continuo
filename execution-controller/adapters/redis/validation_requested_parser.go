@@ -75,9 +75,9 @@ func ParseValidationRequested(msg goredis.XMessage) (events.ValidationRequested,
 		switch {
 		case n.UniqueID == "":
 			return events.ValidationRequested{}, fmt.Errorf("node[%d] missing unique_id", i)
-		case pkg_model.NodeType(n.NodeType).IsIngested():
+		case pkg_model.NodeType(n.NodeType).IsExternal():
 			return events.ValidationRequested{},
-				fmt.Errorf("node[%d] (%s) is an ingested node: nothing builds it", i, n.UniqueID)
+				fmt.Errorf("node[%d] (%s) is an unknown-external node: nothing builds it", i, n.UniqueID)
 		case n.ServiceName == "":
 			return events.ValidationRequested{}, fmt.Errorf("node[%d] (%s) missing service_name", i, n.UniqueID)
 		case n.SchemaName == "":

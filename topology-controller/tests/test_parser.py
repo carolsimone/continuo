@@ -4,6 +4,8 @@ import logging
 from pathlib import Path
 import pytest
 from continuo_contracts.hashing import shared_fold
+from domain.contract_vocabulary import NodeType
+from domain.dormant import is_dormant
 from domain.exceptions import InvalidNodeSettingError
 from domain.model import SkippedNode, SkipReason
 from service.parser import parse_manifest
@@ -63,9 +65,60 @@ def test_parse_skips_node_missing_owner():
     assert nodes == []
 
 
-def test_parse_skips_node_missing_tags():
-    nodes = parse_manifest(str(FIXTURES / "manifest_missing_tags.json")).nodes
-    assert nodes == []
+def test_a_model_with_an_owner_and_no_tag_is_kept_dormant():
+    skipped: list[SkippedNode] = []
+    nodes = parse_manifest(str(FIXTURES / "manifest_missing_tags.json"), skipped=skipped).nodes
+    (orders,) = nodes
+    assert (orders.table_name, orders.schedule_name, orders.node_type) == ("orders", "", NodeType.DBT_MODEL)
+    assert is_dormant(orders.node_type, orders.schedule_name)
+    assert skipped == []
+
+
+def test_a_snapshot_with_an_owner_and_no_tag_is_kept_dormant(tmp_path):
+    path = _write_nodes(tmp_path, **{
+        "snapshot.svc_a.history": _svc_a_model("history", tags=[], resource_type="snapshot"),
+    })
+    skipped: list[SkippedNode] = []
+    (history,) = parse_manifest(path, skipped=skipped).nodes
+    assert (history.table_name, history.schedule_name, history.node_type) == ("history", "", NodeType.DBT_SNAPSHOT)
+    assert is_dormant(history.node_type, history.schedule_name)
+    assert skipped == []
+
+
+def test_a_model_with_no_owner_and_no_tag_is_skipped_as_no_owner(tmp_path):
+    path = _write_nodes(tmp_path, **{"model.svc_a.bare": _svc_a_model("bare", owner=None, tags=[])})
+    skipped: list[SkippedNode] = []
+    assert parse_manifest(path, skipped=skipped).nodes == []
+    assert skipped == [SkippedNode("model.svc_a.bare", "svc-a", SkipReason.NO_OWNER)]
+
+
+def test_an_untagged_seed_still_gets_the_seed_schedule_beside_a_dormant_model(tmp_path):
+    path = _write_nodes(tmp_path, **{
+        "model.svc_a.dormant": _svc_a_model("dormant", tags=[]),
+        "seed.svc_a.countries": _svc_a_model("countries", tags=[], resource_type="seed"),
+    })
+    nodes = {n.table_name: n for n in parse_manifest(path).nodes}
+    assert (nodes["countries"].schedule_name, nodes["dormant"].schedule_name) == ("seed", "")
+    assert not is_dormant(nodes["countries"].node_type, nodes["countries"].schedule_name)
+
+
+def test_a_dormant_models_tests_are_kept(tmp_path):
+    """A test is kept when its target is tracked, and a dormant model is tracked:
+    the test becomes a test node and counts against the model."""
+    path = _write_nodes(tmp_path, **{
+        "model.svc_a.dormant": _svc_a_model("dormant", tags=[]),
+        "test.svc_a.not_null_dormant_id": {
+            "resource_type": "test", "name": "not_null_dormant_id", "schema": "analytics",
+            "fqn": ["svc_a", "not_null_dormant_id"], "attached_node": "model.svc_a.dormant",
+            "compiled_code": "select id from analytics.dormant where id is null",
+        },
+    })
+    nodes = {n.table_name: n for n in parse_manifest(path).nodes}
+    assert sorted(nodes) == ["dormant", "not_null_dormant_id"]
+    assert nodes["dormant"].test_count == 1
+    test_node = nodes["not_null_dormant_id"]
+    assert (test_node.node_type, test_node.schedule_name) == (NodeType.DBT_TEST, "")
+    assert not is_dormant(test_node.node_type, test_node.schedule_name)
 
 
 def test_parse_seed_without_tags_defaults_schedule_to_seed():
@@ -612,11 +665,10 @@ def test_the_gates_report_each_skipped_node_and_its_reason_without_a_warning(tmp
     skipped: list[SkippedNode] = []
     with caplog.at_level(logging.DEBUG, logger="service.parser"):
         nodes = parse_manifest(path, skipped=skipped).nodes
-    assert [n.table_name for n in nodes] == ["kept"]
+    assert [n.table_name for n in nodes] == ["kept", "untagged"]
     assert skipped == [
         SkippedNode("model.svc_a.no_owner", "svc-a", SkipReason.NO_OWNER),
         SkippedNode("model.svc_a.stub", "svc-a", SkipReason.LOCAL_STUB),
-        SkippedNode("model.svc_a.untagged", "svc-a", SkipReason.NO_TAG),
     ]
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
@@ -627,6 +679,115 @@ def test_a_skipped_node_with_no_fqn_is_reported_with_an_empty_service(tmp_path):
     skipped: list[SkippedNode] = []
     parse_manifest(_write_nodes(tmp_path, **{"model.svc_a.bare": bare}), skipped=skipped)
     assert skipped == [SkippedNode("model.svc_a.bare", "", SkipReason.NO_OWNER)]
+
+
+PACKAGE_FIXTURE = FIXTURES / "manifest_installed_package.json"
+
+
+def _write_manifest(tmp_path, nodes, *, metadata=None) -> str:
+    """A manifest of `nodes`, with a `metadata` block when one is given."""
+    manifest = {"macros": {}, "nodes": nodes}
+    if metadata is not None:
+        manifest["metadata"] = metadata
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+    return str(path)
+
+
+def _package_node(name, *, package="evalpkg", owner="finance", tags=(), resource_type="model"):
+    """A node of the dbt package `package` as dbt writes it: its fqn starts with
+    the package's name."""
+    return _svc_a_model(name, owner=owner, tags=tags, resource_type=resource_type,
+                        package_name=package, fqn=[package, name])
+
+
+def _parse_package_fixture(**options):
+    skipped: list[SkippedNode] = []
+    nodes = parse_manifest(str(PACKAGE_FIXTURE), skipped=skipped, **options).nodes
+    return {n.table_name: n for n in nodes}, skipped
+
+
+def test_an_untagged_node_of_an_installed_package_is_skipped():
+    """dbt applies a project's top-level `models: +meta` to the models of its
+    installed packages too, so such a model has an owner. With no tag it is left
+    out: it belongs to the package, not to the project the manifest is of."""
+    nodes, skipped = _parse_package_fixture()
+    assert sorted(nodes) == ["countries", "monthly_report", "orders"]
+    assert skipped == [
+        SkippedNode("model.evalpkg.pkg_model", "evalpkg", SkipReason.INSTALLED_PACKAGE),
+        SkippedNode("seed.evalpkg.pkg_seed", "evalpkg", SkipReason.INSTALLED_PACKAGE),
+        SkippedNode("model.evalpkg.pkg_no_owner", "evalpkg", SkipReason.NO_OWNER),
+    ]
+
+
+def test_an_untagged_node_of_the_project_is_kept_beside_an_installed_package():
+    nodes, _ = _parse_package_fixture()
+    report, countries = nodes["monthly_report"], nodes["countries"]
+    assert (report.service_name, report.schedule_name) == ("shop-core", "")
+    assert is_dormant(report.node_type, report.schedule_name)
+    assert (countries.service_name, countries.schedule_name) == ("shop-core", "seed")
+
+
+def test_a_tagged_node_of_an_installed_package_is_kept_for_the_service_check(tmp_path):
+    """A tag on a package's node is a choice to schedule it, so the parse keeps
+    it under the package's service and the handler's service check refuses it."""
+    path = _write_manifest(tmp_path, {"model.evalpkg.pkg_daily": _package_node("pkg_daily", tags=["daily"])},
+                           metadata={"project_name": "shop_core"})
+    skipped: list[SkippedNode] = []
+    (node,) = parse_manifest(path, skipped=skipped).nodes
+    assert (node.service_name, node.schedule_name) == ("evalpkg", "daily")
+    assert skipped == []
+
+
+def test_the_owner_and_local_stub_gates_run_before_the_package_gate(tmp_path):
+    path = _write_manifest(tmp_path, {
+        "model.evalpkg.bare": _package_node("bare", owner=None),
+        "model.evalpkg.stub": _package_node("stub", tags=["local_stub"]),
+    }, metadata={"project_name": "shop_core"})
+    skipped: list[SkippedNode] = []
+    assert parse_manifest(path, skipped=skipped).nodes == []
+    assert skipped == [
+        SkippedNode("model.evalpkg.bare", "evalpkg", SkipReason.NO_OWNER),
+        SkippedNode("model.evalpkg.stub", "evalpkg", SkipReason.LOCAL_STUB),
+    ]
+
+
+@pytest.mark.parametrize("top_level", [
+    {}, {"metadata": None}, {"metadata": {}}, {"metadata": {"project_name": ""}}, {"metadata": {"project_name": None}},
+])
+def test_with_no_project_known_no_node_is_skipped_as_a_package_node(tmp_path, top_level):
+    """Without the manifest's project name or a declared service the parse cannot
+    tell the project from a package, so it keeps the node and no service check
+    follows. A release never parses this way: its manifest_keys entry requires a
+    service for every manifest, so the project is always known there."""
+    manifest = {"macros": {}, "nodes": {"model.evalpkg.pkg_model": _package_node("pkg_model")}, **top_level}
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+    skipped: list[SkippedNode] = []
+    (node,) = parse_manifest(str(path), skipped=skipped).nodes
+    assert (node.service_name, node.schedule_name) == ("evalpkg", "")
+    assert skipped == []
+
+
+def test_the_declared_service_names_the_project_when_the_manifest_does_not(tmp_path):
+    path = _write_manifest(tmp_path, {
+        "model.shop_core.report": _package_node("report", package="shop_core"),
+        "model.evalpkg.pkg_model": _package_node("pkg_model"),
+    })
+    skipped: list[SkippedNode] = []
+    nodes = parse_manifest(path, skipped=skipped, declared_service="shop-core").nodes
+    assert [(n.table_name, n.schedule_name) for n in nodes] == [("report", "")]
+    assert skipped == [SkippedNode("model.evalpkg.pkg_model", "evalpkg", SkipReason.INSTALLED_PACKAGE)]
+
+
+def test_the_manifests_own_project_name_wins_over_the_declared_service():
+    """A declared service that differs from the manifest's project (a misnamed
+    service, which the handler's service check refuses) does not turn the
+    project's own untagged nodes into package nodes."""
+    nodes, skipped = _parse_package_fixture(declared_service="billing")
+    assert sorted(nodes) == ["countries", "monthly_report", "orders"]
+    assert [s.reason for s in skipped] == [
+        SkipReason.INSTALLED_PACKAGE, SkipReason.INSTALLED_PACKAGE, SkipReason.NO_OWNER]
 
 
 def test_a_model_counts_its_declared_columns(tmp_path):

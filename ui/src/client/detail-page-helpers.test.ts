@@ -7,7 +7,7 @@ import {
 import type { RunGraph, RunSummary, ScheduleGraph } from './types';
 
 describe('resolveActiveGraph mode=latest', () => {
-  const scheduleGraph = { nodes: [{ node_id: 't', node_type: 'model', schedule_name: 's' }], edges: [] };
+  const scheduleGraph = { nodes: [{ node_id: 't', node_type: 'model', schedule_name: 's', dormant: false, last_run_at: null }], edges: [] };
   const liveRunGraph  = { nodes: [{ node_id: 'r', node_type: 'model', schedule_name: 's', status: 'running' }], edges: [] };
   const selectedRunGraph = { nodes: [{ node_id: 'h', node_type: 'model', schedule_name: 's', status: 'succeeded' }], edges: [] };
 
@@ -68,7 +68,7 @@ describe('graphBadgeLabel', () => {
   const run: RunSummary = {
     run_id: 'r', schedule_name: 's', status: 'failed', created_at: null, completed_at: null,
   } as RunSummary;
-  const graph: ScheduleGraph = { nodes: [{ node_id: 'n', node_type: 'model', schedule_name: 's' }], edges: [] };
+  const graph: ScheduleGraph = { nodes: [{ node_id: 'n', node_type: 'model', schedule_name: 's', dormant: false, last_run_at: null }], edges: [] };
   const emptyGraph: ScheduleGraph = { nodes: [], edges: [] };
 
   it('is "catalog" in latest mode whatever else is true', () => {

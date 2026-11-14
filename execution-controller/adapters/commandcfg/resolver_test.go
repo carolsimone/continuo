@@ -284,15 +284,15 @@ func TestNodeCommand_FullRefresh_UnsupportedNodeTypeIsPermanent(t *testing.T) {
 	}
 }
 
-// An ingested node is a table nothing builds, so no operation has a command for
+// An unknown-external node is a table nothing builds, so no operation has a command for
 // it. The refusal is permanent, since no retry can supply a command, and it is
 // an invalid node type, which is the reason the attempt's failure report gives.
-func TestResolver_NodeCommandRefusesAnIngestedNode(t *testing.T) {
+func TestResolver_NodeCommandRefusesAnUnknownExternalNode(t *testing.T) {
 	r := Defaults()
 	for _, op := range []pkg_model.Operation{
 		pkg_model.OperationRun, pkg_model.OperationTest, pkg_model.OperationBuild, pkg_model.OperationFullRefresh,
 	} {
-		argv, err := r.NodeCommand("svc", op, pkg_model.NodeTypeIngested, "orders")
+		argv, err := r.NodeCommand("svc", op, pkg_model.NodeTypeUnknownExternal, "orders")
 		assert.Nil(t, argv, "operation %s", op)
 		assert.ErrorIs(t, err, pkgevents.ErrPermanent, "operation %s", op)
 		assert.ErrorIs(t, err, deploy.ErrInvalidNodeType, "operation %s", op)
@@ -314,10 +314,10 @@ func TestNodeCommand_FullRefresh_CoversExactlyTheContractSet(t *testing.T) {
 			continue
 		}
 		assert.ErrorIs(t, err, pkgevents.ErrPermanent, "node type %s", nt)
-		if nt.IsIngested() {
-			// An ingested node has no command for any operation, so its refusal
+		if nt.IsExternal() {
+			// An unknown-external node has no command for any operation, so its refusal
 			// names that rather than the full refresh; see
-			// TestResolver_NodeCommandRefusesAnIngestedNode.
+			// TestResolver_NodeCommandRefusesAnUnknownExternalNode.
 			continue
 		}
 		assert.Contains(t, err.Error(), "full refresh is not supported", "node type %s", nt)

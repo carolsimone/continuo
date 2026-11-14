@@ -390,39 +390,39 @@ func TestDuplicateClaims_RelationAndIdentityCollisionsAreDistinguishableInOneRel
 	assert.Contains(t, detail, "the declared model itself must be renamed", "identity remedy: cannot be fixed by alias rename")
 }
 
-// TestDuplicateClaims_IgnoresAnIngestedNode pins that an ingested node claims
+// TestDuplicateClaims_IgnoresAnUnknownExternalNode pins that an unknown-external node claims
 // nothing: no node builds its table, so it writes no relation. A built node and
-// an ingested node never share a unique_id, because topology-controller emits an
-// ingested node only for a name that no node declares or resolves to. The
+// an unknown-external node never share a unique_id, because topology-controller emits an
+// unknown-external node only for a name that no node declares or resolves to. The
 // sub-tests that pair them feed the check topologies it never receives, to show
-// that it skips the ingested node rather than relying on that.
-func TestDuplicateClaims_IgnoresAnIngestedNode(t *testing.T) {
-	t.Run("a built node resolves to the ingested node's relation", func(t *testing.T) {
+// that it skips the unknown-external node rather than relying on that.
+func TestDuplicateClaims_IgnoresAnUnknownExternalNode(t *testing.T) {
+	t.Run("a built node resolves to the unknown-external node's relation", func(t *testing.T) {
 		topo := Topology{
-			{UniqueID: "raw.x", NodeType: "ingested", ResolvedRelationID: "raw.x"},
+			{UniqueID: "raw.x", NodeType: "unknown-external", ResolvedRelationID: "raw.x"},
 			{UniqueID: "a.m", NodeType: "dbt-model", ServiceName: "svc", ResolvedRelationID: "raw.x"},
 		}
 		assert.Empty(t, DuplicateClaims(topo))
 	})
-	t.Run("a built node declares the ingested node's unique_id under another relation", func(t *testing.T) {
+	t.Run("a built node declares the unknown-external node's unique_id under another relation", func(t *testing.T) {
 		// A topology topology-controller never emits: the skip, not the
 		// emitter, is what keeps the shared unique_id from being reported.
 		topo := Topology{
-			{UniqueID: "raw.x", NodeType: "ingested", ResolvedRelationID: "raw.x"},
+			{UniqueID: "raw.x", NodeType: "unknown-external", ResolvedRelationID: "raw.x"},
 			{UniqueID: "raw.x", NodeType: "dbt-model", ServiceName: "svc", ResolvedRelationID: "raw.y"},
 		}
 		assert.Empty(t, DuplicateClaims(topo))
 	})
-	t.Run("two ingested nodes with one key", func(t *testing.T) {
+	t.Run("two unknown-external nodes with one key", func(t *testing.T) {
 		topo := Topology{
-			{UniqueID: "raw.x", NodeType: "ingested", ResolvedRelationID: "raw.x"},
-			{UniqueID: "raw.x", NodeType: "ingested", ResolvedRelationID: "raw.x"},
+			{UniqueID: "raw.x", NodeType: "unknown-external", ResolvedRelationID: "raw.x"},
+			{UniqueID: "raw.x", NodeType: "unknown-external", ResolvedRelationID: "raw.x"},
 		}
 		assert.Empty(t, DuplicateClaims(topo))
 	})
-	t.Run("a real collision beside an ingested node is still reported", func(t *testing.T) {
+	t.Run("a real collision beside an unknown-external node is still reported", func(t *testing.T) {
 		topo := Topology{
-			{UniqueID: "raw.x", NodeType: "ingested", ResolvedRelationID: "raw.x"},
+			{UniqueID: "raw.x", NodeType: "unknown-external", ResolvedRelationID: "raw.x"},
 			node("s.a", "finance", "models/a.sql"),
 			nodeWithRelation("s.b", "s.a", "marketing", "models/b.sql"),
 		}

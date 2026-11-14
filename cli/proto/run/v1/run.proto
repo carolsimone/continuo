@@ -251,27 +251,34 @@ service RunService {
   // empty, or operation is not an operation value).
   rpc ListNodeTasks(ListNodeTasksRequest) returns (ListNodeTasksResponse);
 
-  // ListNodes returns the node list: one summary row per node that has run,
-  // with stats aggregated over the most recent 50 tasks of each node. Supports a
+  // ListNodes returns the node list: one summary row per node the live release
+  // builds (never an unknown-external node or a dbt test), with its node_type
+  // and dormant, and stats aggregated over the most recent 50 tasks of each
+  // node. A node that never ran has no stats and is listed after the nodes that
+  // ran. dormant_only keeps only the dormant nodes. Supports a
   // case-insensitive exact match on the table name (searching "table_2" returns
   // only "table_2", never "ftable_2" or "table_2_v2"), an exact service_name
   // filter, and limit/offset paging. total_count reports the full
   // match count (before paging). A limit of 0 or less means 50 and a limit
   // above 200 is 200; a negative offset is 0. The node list of run (the empty
-  // default) includes full refreshes.
+  // default) includes full refreshes. The node list of test keeps only the
+  // nodes that have data tests (test_count above 0).
   // Errors: INVALID_ARGUMENT (operation is not an operation value).
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
 
-  // ListNodeNames returns the distinct table names of nodes that have run,
-  // optionally filtered by service. It powers the node search autocomplete
-  // (the complete name list, independent of the paginated node list).
+  // ListNodeNames returns the distinct table names of the nodes ListNodes
+  // lists (the live release's nodes that continuo builds, a node that never
+  // ran included), optionally filtered by service. It powers the node search
+  // autocomplete (the complete name list, independent of the paginated node
+  // list).
   // Errors: none beyond the service-wide ones. A service with no node returns
   // an empty list.
   rpc ListNodeNames(ListNodeNamesRequest) returns (ListNodeNamesResponse);
 
-  // ListNodeServices returns the distinct service names of nodes that have run.
-  // It powers the node list and remediation service filters (the complete service
-  // list, independent of the paginated node list).
+  // ListNodeServices returns the distinct service names of the nodes ListNodes
+  // lists, a service whose nodes never ran included. It powers the node list
+  // and remediation service filters (the complete service list, independent of
+  // the paginated node list).
   // Errors: none beyond the service-wide ones.
   rpc ListNodeServices(ListNodeServicesRequest) returns (ListNodeServicesResponse);
 
@@ -774,6 +781,7 @@ message ListNodesRequest {
   int32 limit = 3;          // page size; 0 means 50, clamped to at most 200
   int32 offset = 4;         // page offset; default 0
   string operation = 5;     // run | test | build; empty means run
+  bool dormant_only = 6;    // true lists only dormant nodes, the nodes continuo builds that belong to no schedule; false lists every node
 }
 
 message ListNodesResponse {
@@ -791,10 +799,12 @@ message NodeSummary {
   int32 p95_duration_sec = 7;   // -1 when no measurable task
   int32 flaky_rate_pct = 8;     // percent of window tasks with attempt > 0; 0 when none
   string last_status = 9;       // the latest task status: a task_status value
-  string last_run_at = 10;      // RFC3339 of the most recent task created_at
+  string last_run_at = 10;      // RFC3339, when the latest run with a task of the node in the operation was created (run includes full_refresh); empty when it has none
   string operation = 11;        // run | test | build
   int32 timeout_seconds = 12;   // the task timeout the tasks of the node get: its declared timeout in the live release, else the install default
   bool timeout_declared = 13;   // true when the live release declares the timeout of the node; false when its tasks get the install default
+  string node_type = 14;        // the type of the node in the live release, such as dbt-model
+  bool dormant = 15;            // true for a node continuo builds that belongs to no schedule: a run started by hand executes it, and any run whose load of a seed drops the seed's table includes it only to rebuild it, as a view or materialized view below that seed. A rerun or rebase of that run rebuilds it again if the rebuild did not finish
 }
 
 message ListNodeNamesRequest {
@@ -884,6 +894,8 @@ message ScheduleGraphNode {
   string table_name = 3;
   string node_type = 4;
   string schedule_name = 5;  // the schedule the node belongs to, which differs from the requested one for an upstream node
+  bool dormant = 6;          // true for a node continuo builds that belongs to no schedule: a run started by hand executes it, and any run whose load of a seed drops the seed's table includes it only to rebuild it, as a view or materialized view below that seed. A rerun or rebase of that run rebuilds it again if the rebuild did not finish
+  string last_run_at = 7;    // RFC3339, when the latest run with a run or full_refresh task of the node was created, the last run ListNodes reports for operation run; empty when the node has no such task or is not dormant
 }
 
 message ScheduleGraphEdge {
@@ -909,4 +921,5 @@ message ScheduleTopologySummary {
 
 message ListScheduleTopologiesResponse {
   repeated ScheduleTopologySummary schedules = 1;
+  int64 dormant_node_count = 2;  // dormant nodes in the live release, which no schedule lists; 0 when no release is live
 }

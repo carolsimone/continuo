@@ -52,6 +52,10 @@ describe('reasonLabel', () => {
     expect(reasonLabel('duplicate_table')).toBe('Duplicate table');
   });
 
+  it('says an unchanged upstream could not be copied from production', () => {
+    expect(reasonLabel('upstream_clone_failed')).toBe('Could not copy an upstream from production');
+  });
+
   it('falls back to the raw token for an unrecognized reason', () => {
     expect(reasonLabel('mystery_failed')).toBe('mystery');
   });
@@ -76,6 +80,7 @@ const REJECT_REASONS = [
   'seed_build_failed',
   'validation_failed',
   'upgrade_interrupted',
+  'upstream_clone_failed',
 ];
 
 describe('reject_reason vocabulary coverage', () => {

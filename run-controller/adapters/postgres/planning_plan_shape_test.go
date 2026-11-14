@@ -83,11 +83,21 @@ func seqScansOf(scans []planScan) []string {
 
 // The hot queries of a run's attempt reports read topology_edges and
 // tasks through their indexes only, on an analysed 2,000-node release
-// and its run: a success's ready candidates, and a final failure's pending
-// descendants.
+// and the latest of its schedule's runs: a success's ready candidates, and a
+// final failure's pending descendants. Each node holds a succeeded task of
+// every earlier run too, as it does once a schedule has run a few times, so a
+// node's tasks are read by run through uq_tasks_run_node, not through the
+// node's whole history.
 func TestPlanShape_TaskGraphQueriesReadThroughIndexes(t *testing.T) {
 	db := newTestDB(t)
 	tenant := storeShape(t, db, dag2000)
+	for range 9 {
+		earlier := startScheduleRun(t, db, tenant, dag2000.schedule(), model.OperationRun)
+		_, err := db.Exec(`UPDATE runs SET status = 'succeeded' WHERE tenant_id = $1 AND run_id = $2`, tenant, earlier.RunID())
+		require.NoError(t, err)
+		_, err = db.Exec(`UPDATE tasks SET status = 'succeeded' WHERE tenant_id = $1 AND run_id = $2`, tenant, earlier.RunID())
+		require.NoError(t, err)
+	}
 	r := startScheduleRun(t, db, tenant, dag2000.schedule(), model.OperationRun)
 	_, err := db.ExecContext(context.Background(), `ANALYZE topology_nodes, topology_edges, tasks`)
 	require.NoError(t, err)
@@ -162,4 +172,22 @@ func TestPlanShape_LastSuccessDurationsProbesTheNodeIdentity(t *testing.T) {
 	assert.Empty(t, seqScansOf(scans), "last success durations: %v", scans)
 	assert.Subset(t, indexesOf(scans), []string{"idx_tasks_node_identity", "task_attempts_pkey"},
 		"last success durations: %v", scans)
+}
+
+// The schedule graph's read of the last run of its dormant nodes, in the run
+// dimension, probes tasks by tenant and node key, newest first, and reads each
+// task's run by its primary key, on an analysed 2,000-task run: no table is read whole, so the
+// read follows the number of dormant nodes, not the size of the task history.
+func TestPlanShape_LastRunsProbeTheNodeIndex(t *testing.T) {
+	db := newTestDB(t)
+	tenant := storeShape(t, db, dag2000)
+	startScheduleRun(t, db, tenant, dag2000.schedule(), model.OperationRun)
+	_, err := db.ExecContext(context.Background(), `ANALYZE tasks, runs`)
+	require.NoError(t, err)
+
+	scans := planScans(t, postgres.LastRunsQueryForTest, tenant,
+		pq.Array([]string{"bench.n00_0000", "bench.n10_0000", "bench.never"}), "run")
+	assert.Empty(t, seqScansOf(scans), "last runs: %v", scans)
+	assert.Contains(t, indexesOf(scans), "idx_tasks_node_key_created", "last runs: %v", scans)
+	assert.Contains(t, indexesOf(scans), "runs_pkey", "last runs: %v", scans)
 }

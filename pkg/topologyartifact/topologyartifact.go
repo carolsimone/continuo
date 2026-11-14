@@ -199,7 +199,9 @@ func Encode(d Document) ([]byte, string, error) {
 
 // Decode verifies gz against wantSHA256, then gunzips and parses it. Every
 // error wraps ErrChecksumMismatch or ErrMalformed; neither goes away on a
-// re-read, so a consumer treats both as permanent.
+// re-read, so a consumer treats both as permanent. An artifact is immutable, so
+// an older one can name the unknown-external type "ingested"; Decode returns
+// every node under its current type name (model.CanonicalNodeType).
 func Decode(gz []byte, wantSHA256 string) (Document, error) {
 	if len(gz) > MaxObjectBytes {
 		return Document{}, fmt.Errorf("%w: object is %d bytes, the limit is %d", ErrMalformed, len(gz), MaxObjectBytes)
@@ -229,10 +231,11 @@ func Decode(gz []byte, wantSHA256 string) (Document, error) {
 	if d.ReleaseID == "" {
 		return Document{}, fmt.Errorf("%w: empty release_id", ErrMalformed)
 	}
-	for i, n := range d.Nodes {
-		if n.UniqueID == "" {
+	for i := range d.Nodes {
+		if d.Nodes[i].UniqueID == "" {
 			return Document{}, fmt.Errorf("%w: node %d has no unique_id", ErrMalformed, i)
 		}
+		d.Nodes[i].NodeType = string(model.CanonicalNodeType(d.Nodes[i].NodeType))
 	}
 	return d, nil
 }
@@ -240,11 +243,11 @@ func Decode(gz []byte, wantSHA256 string) (Document, error) {
 // CandidateObjectKey is the S3 key of the object a node's validation Job
 // fetches: the compiled SQL rewritten to the candidate schema for a dbt node
 // (.sql), the validation spec for a python node (.json). topology-controller
-// writes these objects; a dbt seed has none, an ingested node has none, and
+// writes these objects; a dbt seed has none, an unknown-external node has none, and
 // neither does a node type this build does not know, so all three return "".
 func CandidateObjectKey(releaseID, uniqueID, nodeType string) string {
 	t := model.NodeType(nodeType)
-	if !t.IsValid() || t == model.NodeTypeDbtSeed || t.IsIngested() {
+	if !t.IsValid() || t == model.NodeTypeDbtSeed || t.IsExternal() {
 		return ""
 	}
 	ext := "sql"

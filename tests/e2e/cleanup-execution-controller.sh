@@ -42,9 +42,9 @@ kubectl delete secret continuo-job-s3 -n default --ignore-not-found=true
 log_info "Deleting test jobs..."
 kubectl delete jobs -n default -l schedule=e2e-schedule --ignore-not-found=true || true
 
-# The start-timeout e2e test applies this ResourceQuota, which forbids every new
-# pod in the namespace, and deletes it when it ends; a killed test run leaves it
-# behind.
+# The start-timeout and dormant-node e2e tests apply this ResourceQuota, which
+# forbids every new pod in the namespace, and delete it when they end; a killed
+# test run leaves it behind.
 log_info "Deleting the e2e-no-pods ResourceQuota..."
 kubectl delete resourcequota e2e-no-pods -n default --ignore-not-found=true || true
 

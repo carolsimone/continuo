@@ -12,8 +12,8 @@ function setup(props: {
   onNodeClick?: (nodeId: string | null) => void;
 }) {
   const graphNodes: GraphNode[] = [
-    { node_id: 's.sch.a', node_type: 'dbt-model', schedule_name: 's' },
-    { node_id: 's.sch.b', node_type: 'dbt-model', schedule_name: 's' },
+    { node_id: 's.sch.a', node_type: 'dbt-model', schedule_name: 's', dormant: false, last_run_at: null },
+    { node_id: 's.sch.b', node_type: 'dbt-model', schedule_name: 's', dormant: false, last_run_at: null },
   ];
   const graphEdges: GraphEdge[] = [
     { from_node_id: 's.sch.a', to_node_id: 's.sch.b' },
@@ -74,9 +74,9 @@ describe('DAGPanel colorByStatus', () => {
     // Selecting a: b becomes 'child', c becomes 'dim' — verifies focus roles
     // operate independently of colorByStatus.
     const graphNodes: GraphNode[] = [
-      { node_id: 's.sch.a', node_type: 'dbt-model', schedule_name: 's' },
-      { node_id: 's.sch.b', node_type: 'dbt-model', schedule_name: 's' },
-      { node_id: 's.sch.c', node_type: 'dbt-model', schedule_name: 's' },
+      { node_id: 's.sch.a', node_type: 'dbt-model', schedule_name: 's', dormant: false, last_run_at: null },
+      { node_id: 's.sch.b', node_type: 'dbt-model', schedule_name: 's', dormant: false, last_run_at: null },
+      { node_id: 's.sch.c', node_type: 'dbt-model', schedule_name: 's', dormant: false, last_run_at: null },
     ];
     const graphEdges: GraphEdge[] = [
       { from_node_id: 's.sch.a', to_node_id: 's.sch.b' },
@@ -118,9 +118,9 @@ describe('DAGPanel colorByStatus', () => {
 // ---- Service-level view ----
 
 const SVC_NODES: GraphNode[] = [
-  { node_id: 'svc-a.sch.n1', node_type: 'dbt-model', schedule_name: 's' },
-  { node_id: 'svc-a.sch.n2', node_type: 'dbt-model', schedule_name: 's' },
-  { node_id: 'svc-b.sch.m1', node_type: 'dbt-model', schedule_name: 's' },
+  { node_id: 'svc-a.sch.n1', node_type: 'dbt-model', schedule_name: 's', dormant: false, last_run_at: null },
+  { node_id: 'svc-a.sch.n2', node_type: 'dbt-model', schedule_name: 's', dormant: false, last_run_at: null },
+  { node_id: 'svc-b.sch.m1', node_type: 'dbt-model', schedule_name: 's', dormant: false, last_run_at: null },
 ];
 const SVC_EDGES: GraphEdge[] = [
   { from_node_id: 'svc-a.sch.n1', to_node_id: 'svc-a.sch.n2' },

@@ -17,16 +17,16 @@ import (
 // seed_table_1 -> table_a -> table_d <- table_b <- seed_table_2, where
 // seed_table_2 belongs to the schedule "seeds".
 func dailyGraph() topology.ScheduleGraph {
-	node := func(service, table, nodeType, schedule string) topology.Node {
-		return topology.Node{
+	node := func(service, table, nodeType, schedule string) topology.ScheduleGraphNode {
+		return topology.ScheduleGraphNode{Node: topology.Node{
 			Key:         topology.KeyOf("analytics", table),
 			ServiceName: service, SchemaName: "analytics", TableName: table,
 			NodeType: nodeType, ScheduleName: schedule,
-		}
+		}}
 	}
 	return topology.ScheduleGraph{
 		PromotionSeq: 7,
-		Nodes: []topology.Node{
+		Nodes: []topology.ScheduleGraphNode{
 			node("svc-a", "seed_table_1", "dbt-seed", "daily"),
 			node("svc-b", "seed_table_2", "dbt-seed", "seeds"),
 			node("svc-a", "table_a", "dbt-model", "daily"),
@@ -73,16 +73,16 @@ func TestGetScheduleGraph_MapsEveryField(t *testing.T) {
 	}, got)
 }
 
-// The graph keeps an ingested node a schedule's node reads, with no service
+// The graph keeps an unknown-external node a schedule's node reads, with no service
 // and no schedule, and the edge to its reader: the node id starts with a dot,
 // the empty service followed by the schema and table.
-func TestGetScheduleGraph_ReturnsAnIngestedNodeAndItsEdge(t *testing.T) {
+func TestGetScheduleGraph_ReturnsAnUnknownExternalNodeAndItsEdge(t *testing.T) {
 	store := newStore()
 	store.putScheduleGraph(tenantA, "daily", topology.ScheduleGraph{
 		PromotionSeq: 3,
-		Nodes: []topology.Node{
-			{Key: "analytics.table_a", ServiceName: "svc-a", SchemaName: "analytics", TableName: "table_a", NodeType: "dbt-model", ScheduleName: "daily"},
-			{Key: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe", NodeType: "ingested"},
+		Nodes: []topology.ScheduleGraphNode{
+			{Node: topology.Node{Key: "analytics.table_a", ServiceName: "svc-a", SchemaName: "analytics", TableName: "table_a", NodeType: "dbt-model", ScheduleName: "daily"}},
+			{Node: topology.Node{Key: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe", NodeType: "unknown-external"}},
 		},
 		Edges: []topology.Edge{{Upstream: "raw.ingest_probe", Downstream: "analytics.table_a"}},
 	})
@@ -91,12 +91,12 @@ func TestGetScheduleGraph_ReturnsAnIngestedNodeAndItsEdge(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, resp.GetNodes(), 2)
-	ingested := resp.GetNodes()[1]
-	assert.Equal(t, "", ingested.GetServiceName())
-	assert.Equal(t, "raw", ingested.GetSchemaName())
-	assert.Equal(t, "ingest_probe", ingested.GetTableName())
-	assert.Equal(t, "ingested", ingested.GetNodeType())
-	assert.Equal(t, "", ingested.GetScheduleName())
+	unknownExternal := resp.GetNodes()[1]
+	assert.Equal(t, "", unknownExternal.GetServiceName())
+	assert.Equal(t, "raw", unknownExternal.GetSchemaName())
+	assert.Equal(t, "ingest_probe", unknownExternal.GetTableName())
+	assert.Equal(t, "unknown-external", unknownExternal.GetNodeType())
+	assert.Equal(t, "", unknownExternal.GetScheduleName())
 	require.Len(t, resp.GetEdges(), 1)
 	assert.Equal(t, "svc-a.analytics.table_a", resp.GetEdges()[0].GetFromNodeId())
 	assert.Equal(t, ".raw.ingest_probe", resp.GetEdges()[0].GetToNodeId())
@@ -120,7 +120,10 @@ func TestGetScheduleGraph_RefusesAnEmptyScheduleName(t *testing.T) {
 func TestScheduleTopologyReads_AreOfTheRequestsTenant(t *testing.T) {
 	store := newStore()
 	store.putScheduleGraph(tenantA, "daily", dailyGraph())
-	store.summaries[tenantA] = []topology.ScheduleSummary{{ScheduleName: "daily", NodeCount: 4}}
+	store.summaries[tenantA] = topology.ScheduleSummaries{
+		Schedules:        []topology.ScheduleSummary{{ScheduleName: "daily", NodeCount: 4}},
+		DormantNodeCount: 2,
+	}
 	srv := newServer(store)
 	graph := &runv1.GetScheduleGraphRequest{ScheduleName: "daily"}
 
@@ -132,6 +135,7 @@ func TestScheduleTopologyReads_AreOfTheRequestsTenant(t *testing.T) {
 	ownTiles, err := srv.ListScheduleTopologies(ctxOf(tenantA), &runv1.ListScheduleTopologiesRequest{})
 	require.NoError(t, err)
 	require.Len(t, ownTiles.GetSchedules(), 1)
+	require.Equal(t, int64(2), ownTiles.GetDormantNodeCount())
 
 	other, err := srv.GetScheduleGraph(ctxOf(tenantB), graph)
 	require.NoError(t, err)
@@ -141,14 +145,18 @@ func TestScheduleTopologyReads_AreOfTheRequestsTenant(t *testing.T) {
 	tiles, err := srv.ListScheduleTopologies(ctxOf(tenantB), &runv1.ListScheduleTopologiesRequest{})
 	require.NoError(t, err)
 	assert.Empty(t, tiles.GetSchedules())
+	assert.Zero(t, tiles.GetDormantNodeCount())
 }
 
 func TestListScheduleTopologies_MapsEveryField(t *testing.T) {
 	store := newStore()
 	loaded := time.Date(2026, 10, 27, 8, 30, 0, 0, time.UTC)
-	store.summaries[tenantA] = []topology.ScheduleSummary{
-		{ScheduleName: "daily", NodeCount: 4, LastUpdatedAt: loaded},
-		{ScheduleName: "seeds", NodeCount: 1},
+	store.summaries[tenantA] = topology.ScheduleSummaries{
+		Schedules: []topology.ScheduleSummary{
+			{ScheduleName: "daily", NodeCount: 4, LastUpdatedAt: loaded},
+			{ScheduleName: "seeds", NodeCount: 1},
+		},
+		DormantNodeCount: 3,
 	}
 
 	resp, err := newServer(store).ListScheduleTopologies(ctxOf(tenantA), &runv1.ListScheduleTopologiesRequest{})
@@ -161,10 +169,50 @@ func TestListScheduleTopologies_MapsEveryField(t *testing.T) {
 	assert.True(t, loaded.Equal(daily.GetLastUpdatedAt().AsTime()))
 	assert.Equal(t, "seeds", seeds.GetScheduleName())
 	assert.Nil(t, seeds.GetLastUpdatedAt(), "a zero time stays unset")
+	assert.Equal(t, int64(3), resp.GetDormantNodeCount())
 }
 
 func TestListScheduleTopologies_NoLiveReleaseIsEmpty(t *testing.T) {
 	resp, err := newServer(newStore()).ListScheduleTopologies(ctxOf(tenantA), &runv1.ListScheduleTopologiesRequest{})
 	require.NoError(t, err)
 	assert.Empty(t, resp.GetSchedules())
+	assert.Zero(t, resp.GetDormantNodeCount())
+}
+
+// A node is dormant when continuo builds it and it belongs to no schedule: the
+// model the schedule reads with an empty schedule is, and carries the time of
+// its last run in RFC3339; the unknown-external node and the schedule's own
+// model are not, and carry no last run. A dormant node that never ran carries
+// an empty last run.
+func TestGetScheduleGraph_SetsDormant(t *testing.T) {
+	store := newStore()
+	ran := time.Date(2026, 11, 2, 9, 15, 30, 0, time.FixedZone("CET", 3600))
+	store.putScheduleGraph(tenantA, "daily", topology.ScheduleGraph{
+		PromotionSeq: 4,
+		Nodes: []topology.ScheduleGraphNode{
+			{Node: topology.Node{Key: "analytics.dormant", ServiceName: "svc-a", SchemaName: "analytics", TableName: "dormant", NodeType: "dbt-model"}, LastRunAt: &ran},
+			{Node: topology.Node{Key: "analytics.never", ServiceName: "svc-a", SchemaName: "analytics", TableName: "never", NodeType: "dbt-snapshot"}},
+			{Node: topology.Node{Key: "analytics.table_a", ServiceName: "svc-a", SchemaName: "analytics", TableName: "table_a", NodeType: "dbt-model", ScheduleName: "daily"}},
+			{Node: topology.Node{Key: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe", NodeType: "unknown-external"}},
+		},
+		Edges: []topology.Edge{
+			{Upstream: "analytics.dormant", Downstream: "analytics.table_a"},
+			{Upstream: "analytics.never", Downstream: "analytics.table_a"},
+			{Upstream: "raw.ingest_probe", Downstream: "analytics.table_a"},
+		},
+	})
+
+	resp, err := newServer(store).GetScheduleGraph(ctxOf(tenantA), &runv1.GetScheduleGraphRequest{ScheduleName: "daily"})
+	require.NoError(t, err)
+
+	require.Len(t, resp.GetNodes(), 4)
+	dormant, never, scheduled, external := resp.GetNodes()[0], resp.GetNodes()[1], resp.GetNodes()[2], resp.GetNodes()[3]
+	assert.True(t, dormant.GetDormant(), "a dbt-model with no schedule is dormant")
+	assert.Equal(t, "2026-11-02T08:15:30Z", dormant.GetLastRunAt(), "the last run is RFC3339 in UTC")
+	assert.True(t, never.GetDormant(), "a dbt-snapshot with no schedule is dormant")
+	assert.Empty(t, never.GetLastRunAt(), "a dormant node that never ran has no last run")
+	assert.False(t, scheduled.GetDormant(), "a node of a schedule is not dormant")
+	assert.Empty(t, scheduled.GetLastRunAt())
+	assert.False(t, external.GetDormant(), "an unknown-external node is built by no node, so it is not dormant")
+	assert.Empty(t, external.GetLastRunAt())
 }

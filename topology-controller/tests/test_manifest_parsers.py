@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from domain.exceptions import InvalidCompileExtrasError, MalformedContractError
-from domain.model import ManifestFile, ManifestKind, ParsedArtifact
+from domain.model import ManifestFile, ManifestKind, ParsedArtifact, SkippedNode, SkipReason
 from service.manifest_parsers import parser_for
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -45,6 +45,26 @@ def test_the_dbt_entry_holds_the_extras_to_the_declared_service(tmp_path):
 
     with pytest.raises(InvalidCompileExtrasError, match="other"):
         parser_for(ManifestKind.DBT).parse(mf)
+
+
+def test_the_dbt_entry_reads_a_manifest_that_names_no_project_against_the_declared_service(tmp_path):
+    """The declared service stands for the project the manifest was compiled
+    from, so an untagged node of an installed package is left out."""
+    manifest = json.loads((FIXTURES / "manifest_installed_package.json").read_text())
+    del manifest["metadata"]
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+    skipped: list[SkippedNode] = []
+
+    parsed = parser_for(ManifestKind.DBT).parse(ManifestFile(path=str(path), declared_service="shop-core"),
+                                                skipped=skipped)
+
+    assert sorted(n.table_name for n in parsed.nodes) == ["countries", "monthly_report", "orders"]
+    assert [(s.node_id, s.reason) for s in skipped] == [
+        ("model.evalpkg.pkg_model", SkipReason.INSTALLED_PACKAGE),
+        ("seed.evalpkg.pkg_seed", SkipReason.INSTALLED_PACKAGE),
+        ("model.evalpkg.pkg_no_owner", SkipReason.NO_OWNER),
+    ]
 
 
 def test_a_plain_string_resolves_the_same_as_the_enum_member():

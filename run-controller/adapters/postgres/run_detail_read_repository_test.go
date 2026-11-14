@@ -113,6 +113,7 @@ func TestNodeReadRepository_ReadsTheTenantsNodes(t *testing.T) {
 	runID := tenantRun(t, db, acmeTenant, "running")
 	table := "nodes_" + uuid.NewString()[:8]
 	tenantTask(t, db, acmeTenant, runID, table, run.TaskStatusRunning)
+	makeLiveRestoring(t, db, acmeTenant, tenantRelease(t, db, acmeTenant, table), 1)
 
 	names, err := nodes.ListNodeNames(ctx, acmeTenant, "service-1")
 	require.NoError(t, err)
@@ -132,9 +133,13 @@ func TestNodeReadRepository_ReadsTheTenantsNodes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, services, "service-1")
 
-	nodeList, total, err := nodes.ListNodes(ctx, acmeTenant, table, "", "", 10, 0)
+	nodeList, total, err := nodes.ListNodes(ctx, acmeTenant, table, "", "", false, 10, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 1, total)
 	require.Len(t, nodeList, 1)
 	assert.Equal(t, table, nodeList[0].TableName)
+	nodeList, total, err = nodes.ListNodes(ctx, pkgevents.DefaultTenantID, table, "", "", false, 10, 0)
+	require.NoError(t, err)
+	assert.Zero(t, total)
+	assert.Empty(t, nodeList)
 }

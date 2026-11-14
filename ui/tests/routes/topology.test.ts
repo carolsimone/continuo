@@ -17,6 +17,7 @@ describe('routes/topology: GET /schedules reads RunService', () => {
           { schedule_name: 'daily', node_count: 12, last_updated_at: { seconds: '1792836300', nanos: 0 } },
           { schedule_name: 'hourly', node_count: 0, last_updated_at: null },
         ],
+        dormant_node_count: '3', // gRPC-JS returns int64 as a string
       });
     });
 
@@ -28,7 +29,14 @@ describe('routes/topology: GET /schedules reads RunService', () => {
         { schedule_name: 'daily', node_count: 12, last_updated_at: '2026-10-24T10:05:00.000Z' },
         { schedule_name: 'hourly', node_count: 0, last_updated_at: null },
       ],
+      dormant_node_count: 3,
     });
+  });
+
+  it('counts no dormant node when the answer carries no count', async () => {
+    mockListScheduleTopologies.mockImplementation((_req: any, cb: any) => cb(null, { schedules: [] }));
+    const res = await request(app).get('/api/topology/schedules');
+    expect(res.body).toEqual({ schedules: [], dormant_node_count: 0 });
   });
 
   it('answers 500 when run-controller fails', async () => {

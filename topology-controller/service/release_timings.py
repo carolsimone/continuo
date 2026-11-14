@@ -5,8 +5,9 @@ the stage's elapsed seconds, its run count and its counts to one `StageRecord`
 per stage. A stage that runs several times (once per manifest, once per node)
 adds up in the same record. The record also keeps the largest resident set seen
 at a stage boundary, how many nodes and declared columns each runtime
-contributed, how many nodes the parse skipped and why, and how the release
-ended. `log_fields` renders all of it as the fields of the release's log line.
+contributed, how many nodes the parse skipped and why, how many dormant nodes
+each service holds, and how the release ended. `log_fields` renders all of it as
+the fields of the release's log line.
 """
 from collections.abc import Callable, Iterable
 from contextlib import AbstractContextManager
@@ -15,6 +16,7 @@ from enum import StrEnum
 from types import TracebackType
 
 from domain.contract_vocabulary import ParseFailureKind
+from domain.dormant import is_dormant
 from domain.model import ManifestNode, Runtime, SkippedNode, SkipReason
 from service.ports import ClockPort, MemoryProbePort
 
@@ -98,10 +100,13 @@ class ReleaseTimings:
     `peak_rss_bytes` is the largest resident set read at the boundary of a stage
     that samples memory, so it is a lower bound of the process's true peak.
     `nodes` and `columns` hold, per runtime, the nodes the release holds (the
-    nodes the parses returned and the ingested nodes, which no parse returns
+    nodes the parses returned and the unknown-external nodes, which no parse returns
     and which count under the `external` runtime) and the columns they
-    declare; `skipped` holds the nodes the parses left out, per reason. All
-    three name every runtime or reason from construction.
+    declare; `skipped` holds the nodes the parses left out, per reason.
+    `nodes`, `columns` and `skipped` name every runtime or reason from
+    construction. `dormant` holds, per service, the dormant nodes the release
+    holds (the nodes a release builds that belong to no schedule); a service
+    with none has no entry.
     `outcome` and `failure_kind` stay unset until the release ends.
     """
 
@@ -116,6 +121,7 @@ class ReleaseTimings:
         self.nodes: dict[str, int] = {runtime.value: 0 for runtime in Runtime}
         self.columns: dict[str, int] = {runtime.value: 0 for runtime in Runtime}
         self.skipped: dict[SkipReason, int] = {reason: 0 for reason in SkipReason}
+        self.dormant: dict[str, int] = {}
 
     def stage(self, name: Stage, *, sample_memory: bool = True, **counts: int) -> AbstractContextManager[StageRecord]:
         """Time one run of a stage. On exit, also when the body raised, the
@@ -134,11 +140,14 @@ class ReleaseTimings:
         return {stage.value: round(record.seconds * 1000) for stage, record in self.stages.items()}
 
     def add_nodes(self, nodes: Iterable[ManifestNode]) -> None:
-        """Count nodes the release holds, a parse's or the release's ingested
-        nodes, and their declared columns, under each node's runtime."""
+        """Count nodes the release holds, a parse's or the release's unknown-external
+        nodes, and their declared columns, under each node's runtime, and each
+        dormant node under its service."""
         for node in nodes:
             self.nodes[node.runtime] += 1
             self.columns[node.runtime] += node.declared_columns
+            if is_dormant(node.node_type, node.schedule_name):
+                self.dormant[node.service_name] = self.dormant.get(node.service_name, 0) + 1
 
     def add_skips(self, skips: Iterable[SkippedNode]) -> None:
         """Count the nodes a parse left out, under each skip's reason."""
@@ -154,6 +163,7 @@ class ReleaseTimings:
             "nodes": dict(self.nodes),
             "columns": dict(self.columns),
             "skipped": {reason.value: count for reason, count in self.skipped.items()},
+            "dormant": dict(sorted(self.dormant.items())),
             "stages_ms": self.stages_ms(),
             "peak_rss_bytes": self.peak_rss_bytes,
         }

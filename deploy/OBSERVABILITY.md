@@ -104,7 +104,8 @@ Every series also carries a `service` label.
 | `continuo_topology_releases_total` | counter | `outcome`, `failure_kind` | `topology-controller` |
 | `continuo_topology_release_nodes` | gauge | `family` | `topology-controller` |
 | `continuo_topology_release_columns` | gauge | `family` | `topology-controller` |
-| `continuo_topology_release_skipped_nodes` | gauge | `reason` | `topology-controller` |
+| `continuo_topology_release_skipped_nodes` | gauge | `reason` (`no_owner`, `local_stub`, `installed_package`) | `topology-controller` |
+| `continuo_topology_release_dormant_nodes` | gauge | none beyond `service` | `topology-controller` |
 | `continuo_topology_release_peak_rss_bytes` | gauge | none beyond `service` | `topology-controller` |
 | `continuo_releases_total` | counter | `outcome` (`promoted`, `rejected`), `reject_reason` (`none` or a reject reason) | `release-controller` |
 | `continuo_release_stage_duration_seconds` | histogram | `stage` (`compiling`, `parsing`, `seed_building`, `validating`), `outcome` (`ok`, `failed`) | `release-controller` |

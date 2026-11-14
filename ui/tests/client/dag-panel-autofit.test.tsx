@@ -26,8 +26,8 @@ vi.mock('@xyflow/react', async () => {
 });
 
 const graphNodes: GraphNode[] = [
-  { node_id: 's.sch.a', node_type: 'dbt-model', schedule_name: 's' },
-  { node_id: 's.sch.b', node_type: 'dbt-model', schedule_name: 's' },
+  { node_id: 's.sch.a', node_type: 'dbt-model', schedule_name: 's', dormant: false, last_run_at: null },
+  { node_id: 's.sch.b', node_type: 'dbt-model', schedule_name: 's', dormant: false, last_run_at: null },
 ];
 const graphEdges: GraphEdge[] = [
   { from_node_id: 's.sch.a', to_node_id: 's.sch.b' },

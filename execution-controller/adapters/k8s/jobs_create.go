@@ -168,10 +168,11 @@ type ValidationJobParams struct {
 	NodeType    pkg_model.NodeType
 	ImageTag    string
 
-	// ValidationOp selects the runner operation: "build_from_sql" (default) or
-	// "clone_from_prod". ProdSchema is the source schema for clone_from_prod.
-	// Both are set per node by release-controller (Plan 3); empty here defaults
-	// VALIDATION_OP to build_from_sql.
+	// ValidationOp selects the runner operation, a value of the validation_op
+	// vocabulary (pkg/domain/model.ValidationOp): build_from_sql,
+	// build_from_columns, check_binds or clone_from_prod. ProdSchema is the
+	// source schema for clone_from_prod. Both are set per node by
+	// release-controller; an empty op runs build_from_sql.
 	ValidationOp string
 	ProdSchema   string
 
@@ -306,9 +307,9 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		return corev1.PodSpec{}, err
 	}
 
-	op := p.ValidationOp
+	op := pkg_model.ValidationOp(p.ValidationOp)
 	if op == "" {
-		op = "build_from_sql"
+		op = pkg_model.ValidationOpBuildFromSQL
 	}
 
 	// Env common to both validation ops.
@@ -320,7 +321,7 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		{Name: "TABLE_NAME", Value: p.TableName},
 		{Name: "JOB_NAME", Value: p.JobName},
 		{Name: "DBT_TARGET_SCHEMA", Value: p.CandidateSchema},
-		{Name: "VALIDATION_OP", Value: op},
+		{Name: "VALIDATION_OP", Value: string(op)},
 		{Name: "PROD_SCHEMA", Value: p.ProdSchema},
 	}
 
@@ -336,7 +337,7 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 	mainContainer.SecurityContext = continuoImageSecurityContext()
 
 	switch op {
-	case "clone_from_prod":
+	case pkg_model.ValidationOpCloneFromProd:
 		// No candidate SQL, no S3, single container.
 		return corev1.PodSpec{
 			RestartPolicy:   corev1.RestartPolicyNever,
@@ -344,7 +345,7 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 			Containers:      []corev1.Container{mainContainer},
 		}, nil
 
-	case "build_from_sql", "check_binds":
+	case pkg_model.ValidationOpBuildFromSQL, pkg_model.ValidationOpCheckBinds:
 		// The validation container fetches its own compiled SQL from S3 (boto3).
 		// build_from_sql builds it WITH NO DATA; check_binds — a dbt test's bind
 		// check — only EXPLAINs the SQL and creates nothing. Either way there is no
@@ -363,7 +364,7 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 			Containers:      []corev1.Container{mainContainer},
 		}, nil
 
-	case "build_from_columns":
+	case pkg_model.ValidationOpBuildFromColumns:
 		// Python nodes: the runner fetches the JSON validation spec (declared
 		// reads + output columns) from S3, bind-checks each read, and creates
 		// the empty typed table. CANDIDATE_SPEC_URI is the published runner's

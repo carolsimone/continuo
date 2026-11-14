@@ -113,24 +113,24 @@ describe('DetailPage focus legend node type', () => {
   });
 });
 
-// An ingested node is a table a node reads and no node builds: it has no node
+// An unknown-external node is a table a node reads and no node builds: it has no node
 // page, so a click only highlights the nodes it feeds.
-describe('DetailPage focus legend for an ingested node', () => {
-  const INGESTED_ID = '.raw.ingest_probe';
+describe('DetailPage focus legend for an unknown-external node', () => {
+  const UNKNOWN_EXTERNAL_ID = '.raw.ingest_probe';
   const READER_ID = 'svc1.public.reader';
-  const ingestedRoutes = {
+  const unknownExternalRoutes = {
     ...routes,
     [`/api/schedules/${SCHED}/graph`]: async () => ({
       nodes: [
-        { node_id: INGESTED_ID, node_type: 'ingested', schedule_name: SCHED },
+        { node_id: UNKNOWN_EXTERNAL_ID, node_type: 'unknown-external', schedule_name: SCHED },
         { node_id: READER_ID, node_type: 'dbt-model', schedule_name: SCHED },
       ],
-      edges: [{ from_node_id: INGESTED_ID, to_node_id: READER_ID }],
+      edges: [{ from_node_id: UNKNOWN_EXTERNAL_ID, to_node_id: READER_ID }],
     }),
   };
 
   async function renderAndSelect(nodeId: string) {
-    vi.stubGlobal('fetch', mockFetchSequence(ingestedRoutes));
+    vi.stubGlobal('fetch', mockFetchSequence(unknownExternalRoutes));
     const view = renderLatest();
     await waitFor(() => {
       expect(view.container.querySelector(`.react-flow__node[data-id="${nodeId}"]`)).not.toBeNull();
@@ -139,8 +139,8 @@ describe('DetailPage focus legend for an ingested node', () => {
     return view;
   }
 
-  it('keeps the legend and offers no "Open node detail" link for a selected ingested node', async () => {
-    const { container, queryByRole } = await renderAndSelect(INGESTED_ID);
+  it('keeps the legend and offers no "Open node detail" link for a selected unknown-external node', async () => {
+    const { container, queryByRole } = await renderAndSelect(UNKNOWN_EXTERNAL_ID);
 
     await waitFor(() => {
       const legend = container.querySelector('.dag-focus-legend');
@@ -152,13 +152,13 @@ describe('DetailPage focus legend for an ingested node', () => {
     expect(queryByRole('link', { name: /open node detail/i })).toBeNull();
   });
 
-  it('names the selected ingested node with its schema, as the canvas does', async () => {
-    const { container } = await renderAndSelect(INGESTED_ID);
+  it('names the selected unknown-external node with its schema, as the canvas does', async () => {
+    const { container } = await renderAndSelect(UNKNOWN_EXTERNAL_ID);
 
     await waitFor(() => {
       expect(container.querySelector('.dag-focus-legend-title')?.textContent).toBe('raw.ingest_probe');
     });
-    const canvasNode = container.querySelector(`.react-flow__node[data-id="${INGESTED_ID}"]`);
+    const canvasNode = container.querySelector(`.react-flow__node[data-id="${UNKNOWN_EXTERNAL_ID}"]`);
     expect(canvasNode?.textContent).toContain('raw.ingest_probe');
   });
 

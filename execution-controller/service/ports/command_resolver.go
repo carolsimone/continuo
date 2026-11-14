@@ -20,7 +20,7 @@ type CommandResolver interface {
 	// full_refresh command and a seed to its seed_full_refresh command. The
 	// error wraps events.ErrPermanent when the node type cannot be
 	// full-refreshed or the service's command block defines no full_refresh
-	// (model) or seed_full_refresh (seed) command. An ingested node type has
+	// (model) or seed_full_refresh (seed) command. An unknown-external node type has
 	// no command for any operation: it is refused with an error that wraps
 	// both events.ErrPermanent and deploy.ErrInvalidNodeType, which is how the
 	// dispatcher records the failure as invalid_node_type.

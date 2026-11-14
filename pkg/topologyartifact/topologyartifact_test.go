@@ -141,6 +141,31 @@ func TestEncode_IsDeterministicAndDecodesBack(t *testing.T) {
 	}
 }
 
+// An artifact is immutable, so a stored one can still name the unknown-external
+// type "ingested"; Decode hands every reader the current name.
+func TestDecode_ReadsLegacyIngestedAsUnknownExternal(t *testing.T) {
+	legacy := topologyartifact.Document{
+		TenantID:  "default",
+		ReleaseID: "r",
+		Nodes: []topologyartifact.Node{
+			{UniqueID: "raw.orders", NodeType: "ingested"},
+			{UniqueID: "analytics.revenue", NodeType: string(model.NodeTypeDbtModel)},
+		},
+	}
+	obj, sum, err := topologyartifact.Encode(legacy)
+	require.NoError(t, err)
+
+	doc, err := topologyartifact.Decode(obj, sum)
+	require.NoError(t, err)
+	require.Len(t, doc.Nodes, 2)
+	byID := map[string]string{}
+	for _, n := range doc.Nodes {
+		byID[n.UniqueID] = n.NodeType
+	}
+	assert.Equal(t, string(model.NodeTypeUnknownExternal), byID["raw.orders"])
+	assert.Equal(t, string(model.NodeTypeDbtModel), byID["analytics.revenue"])
+}
+
 func TestDecode_AcceptsAnUppercaseChecksum(t *testing.T) {
 	fx := loadTopologyFixture(t)
 	obj, sum, err := topologyartifact.Encode(fx.Input)

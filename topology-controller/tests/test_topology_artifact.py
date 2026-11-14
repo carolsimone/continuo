@@ -258,7 +258,7 @@ def test_every_candidate_object_lands_at_the_key_release_controller_derives():
     release id, unique_id and node_type (pkg/topologyartifact.CandidateObjectKey)
     instead of reading it from the topology. This drives the production builders
     and uploaders — a seed has no compiled SQL, as the dbt parser leaves it, and
-    an ingested table has no builder at all — and checks every object lands at
+    an unknown-external table has no builder at all — and checks every object lands at
     the fixture's key, or that none is written where the key is empty."""
     cases = json.loads((_FIXTURES / "candidate_object_keys_v1.json").read_text(encoding="utf-8"))
     known = {str(t) for t in NodeType}

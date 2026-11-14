@@ -16,7 +16,7 @@ import re
 import sqlglot
 from sqlglot import exp
 
-from domain.ingested import SystemRelations
+from domain.external import SystemRelations
 from domain.model import NodeRegistryEntry, TableRef
 
 _NON_SCHEMA_SAFE = re.compile(r"[^a-zA-Z0-9_]")
@@ -74,7 +74,7 @@ def rewrite_to_candidate_schema(
     than defaulted so a caller cannot silently emit one engine's SQL to another.
 
     system_relations are the relations of that same engine, the ones the
-    dependency resolver and the ingested-node step also treat as the engine's own.
+    dependency resolver and the unknown-external-node step also treat as the engine's own.
     It is required for the same reason: a caller that forgot it would redirect an
     engine's relation to a schema that does not exist.
     """

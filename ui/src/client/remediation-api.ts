@@ -1,4 +1,4 @@
-import { ProposalDTO, ServicesResponse } from './types';
+import { ProposalDTO } from './types';
 
 // One pull request the server opened (or already had open) for one owning
 // service, as returned by POST .../pull-request.
@@ -43,14 +43,6 @@ export function fetchProposals(filter: { status?: string; pr_state?: string; ser
   return fetch(url)
     .then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
     .then((data: { proposals: ProposalDTO[] }) => data.proposals);
-}
-
-// fetchNodeServices returns the distinct active service names for the
-// Remediation tab's Service filter.
-export function fetchNodeServices(): Promise<string[]> {
-  return fetch('/api/nodes/services')
-    .then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-    .then((data: ServicesResponse) => data.services ?? []);
 }
 
 // createPullRequest opens one pull request per owning service the proposal

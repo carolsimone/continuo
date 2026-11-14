@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/carolsimone/continuo/catalog/domain"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // NodeQueryRepository implements the read-side (CQRS) queries that bypass aggregates.
@@ -40,6 +41,8 @@ LIMIT 1`
 // matches.
 // test_count is read via intFieldPresent so a node predating test_count
 // capture reports TestCountKnown = false rather than a misleading zero.
+// NodeType is the stored type read through model.CanonicalNodeType, so a node
+// stored under the legacy name of unknown-external reports unknown-external.
 func (r *NodeQueryRepository) GetNode(ctx context.Context, tenantID, service, schema, table string, scope domain.NodeScope) (*domain.NodeMeta, error) {
 	meta, err := inReadTx(ctx, r.client, tenantID, func(run TenantRunner) (*domain.NodeMeta, error) {
 		result, err := run.Run(ctx, getNodeCypher, map[string]any{
@@ -58,7 +61,7 @@ func (r *NodeQueryRepository) GetNode(ctx context.Context, tenantID, service, sc
 		nodeType, _ := recordString(rec, "node_type")
 		tc, tcKnown := intFieldPresent(rec, "test_count")
 		return &domain.NodeMeta{
-			NodeType:       nodeType,
+			NodeType:       string(model.CanonicalNodeType(nodeType)),
 			TestCount:      tc,
 			TestCountKnown: tcKnown,
 			Inactive:       recordBool(rec, "inactive"),

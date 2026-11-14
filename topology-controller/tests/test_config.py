@@ -105,7 +105,7 @@ def test_supported_engines_match_the_chart(monkeypatch):
 
 def test_system_relations_cover_exactly_the_supported_engines():
     """Every engine with a dialect also has a system-relation list, and the
-    chart accepts no other engine, so an ingested table is never judged against
+    chart accepts no other engine, so an unknown-external table is never judged against
     another engine's catalog."""
     from config.config import _ENGINE_DIALECTS, _SYSTEM_RELATIONS
     assert set(_SYSTEM_RELATIONS) == set(_ENGINE_DIALECTS) == {"postgres", "trino"}

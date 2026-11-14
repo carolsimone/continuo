@@ -119,12 +119,12 @@ func DuplicateClaims(candidate Topology) []DuplicateClaim {
 // The check is service-agnostic: two nodes in the same service collide
 // exactly as two nodes in different services do.
 //
-// An ingested node is skipped: nothing builds its table, so it writes no
+// An unknown-external node is skipped: nothing builds its table, so it writes no
 // relation that another node could also write.
 func relationCollisions(candidate Topology) []DuplicateClaim {
 	byRelation := make(map[string][]Claimant, len(candidate))
 	for _, n := range candidate {
-		if n.IsIngested() {
+		if n.IsExternal() {
 			continue
 		}
 		// A test writes no relation to claim; its identity is still checked
@@ -161,10 +161,10 @@ func relationCollisions(candidate Topology) []DuplicateClaim {
 // have been "already reported" there, and the relation-homogeneity skip does
 // not apply to it — a shared test id is always reported here.
 //
-// An ingested node is skipped. It cannot share a unique_id with a built node:
+// An unknown-external node is skipped. It cannot share a unique_id with a built node:
 // topology-controller counts every non-test node's declared "<schema>.<table>"
 // (the key a unique_id is) and the relation its build really writes as built,
-// so it never emits an ingested node for a name that a node builds.
+// so it never emits an unknown-external node for a name that a node builds.
 func identityCollisions(candidate Topology) []DuplicateClaim {
 	byID := make(map[string][]Claimant, len(candidate))
 	relationsByID := make(map[string]map[string]bool, len(candidate))
@@ -175,7 +175,7 @@ func identityCollisions(candidate Topology) []DuplicateClaim {
 	// re-reporting what relationCollisions already caught, does not apply.
 	testByID := make(map[string]bool, len(candidate))
 	for _, n := range candidate {
-		if n.IsIngested() {
+		if n.IsExternal() {
 			continue
 		}
 		byID[n.UniqueID] = append(byID[n.UniqueID], claimantOf(n))

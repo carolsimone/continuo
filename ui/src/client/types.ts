@@ -79,6 +79,16 @@ export interface GraphNode {
   node_id: string;     // "{service}.{schema}.{table}"
   node_type: string;   // a NodeType from src/server/generated/vocabulary.gen.ts, or "" when unknown
   schedule_name: string;
+  // True for a node continuo builds that belongs to no schedule: a run started
+  // by hand executes it, and any run whose load of a seed drops the seed's table
+  // includes it only to rebuild it, as a view or materialized view below that
+  // seed. A rerun or rebase of that run rebuilds it again if the rebuild did not
+  // finish. False on a run graph.
+  dormant: boolean;
+  // When the latest run with a run or full_refresh task of a dormant node was
+  // created (a test of the node is not a run of it); null when it has no such
+  // task, and on every node that is not dormant.
+  last_run_at: string | null;
   status?: TaskStatus | null;
   // A run graph node's wait for its node's lease, as on Task; absent on a
   // schedule's topology graph.
@@ -237,6 +247,8 @@ export interface ScheduleTopologySummary {
 
 export interface TopologyListResponse {
   schedules: ScheduleTopologySummary[];
+  // Dormant nodes of the live release, which no schedule lists.
+  dormant_node_count: number;
 }
 
 // Who authored the release's commit. Resolved server-side from (repo, commit_sha)
@@ -310,7 +322,8 @@ export interface ReleaseNotice {
   load: { operation: string; drops_table: boolean; reason: string };
   // Views the seed's reload rebuilds in the same run.
   rebuilds: { node_id: string; materialized: string; operation: string; schedule: string }[];
-  // Downstream nodes that pick the new table up on their own schedule.
+  // Downstream nodes that pick the new table up on their own schedule; the
+  // schedule is empty for a dormant node, which only a run by hand refreshes.
   refresh_on_schedule: { node_id: string; materialized: string; schedule: string }[];
   warehouse: {
     // False until the seed-build leg's preflight ran to the end.
@@ -367,6 +380,8 @@ export interface ReleaseDetail {
   notices?: ReleaseNotice[];
 }
 
+// One node of the live release, with the stats of its recent runs. A node
+// that never ran has task_count 0 and null stats, last_status and last_run_at.
 export interface NodeSummary {
   service_name: string;
   schema_name: string;
@@ -382,6 +397,11 @@ export interface NodeSummary {
   // the live release, else the install default (timeout_declared false).
   timeout_seconds: number;
   timeout_declared: boolean;
+  // The node's type in the live release, such as dbt-model.
+  node_type: string;
+  // True for a node continuo builds that belongs to no schedule (a dormant
+  // node).
+  dormant: boolean;
 }
 
 export interface NodesResponse {
@@ -389,8 +409,9 @@ export interface NodesResponse {
   nodes: NodeSummary[];
 }
 
-// The distinct active service names, from GET /api/nodes/services. Feeds the
-// node list and Remediation-tab service filters.
+// The distinct service names of the nodes the node list lists, from GET
+// /api/nodes/services. Feeds the Nodes-tab and Remediation-tab service
+// filters.
 export interface ServicesResponse {
   services: string[];
 }

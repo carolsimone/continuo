@@ -1,7 +1,8 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { ProposalDTO, PullRequestDTO } from './types';
-import { fetchProposals, fetchNodeServices } from './remediation-api';
+import { fetchProposals } from './remediation-api';
+import { fetchNodeServices } from './node-api';
 import type { CreatePullRequestResponse } from './remediation-api';
 import {
   proposalNodeIds, proposalPrServices, proposalPullRequests, proposalPillClass,
@@ -397,9 +398,10 @@ export default function RemediationPanel() {
 
   useEffect(() => { loadProposals(); }, [loadProposals]);
 
-  // The Service filter's options come from the node list, fetched once on
-  // mount. A failure leaves the list working with only the "All services"
-  // option rather than surfacing as the panel error.
+  // The Service filter's options are the services of the live release's
+  // nodes (fetchNodeServices), fetched once on mount. A failure leaves the
+  // list working with only the "All services" option rather than surfacing
+  // as the panel error.
   useEffect(() => {
     fetchNodeServices().then(setServices).catch(() => setServices([]));
   }, []);

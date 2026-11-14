@@ -44,7 +44,7 @@
   {
     "release_id": "rel-2026-10-08-0001",
     "unique_id": "raw.exchange_rates",
-    "node_type": "ingested",
+    "node_type": "unknown-external",
     "key": ""
   },
   {

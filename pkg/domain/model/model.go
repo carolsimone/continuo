@@ -23,11 +23,60 @@ func (t NodeType) IsPython() bool {
 	return t.Runtime() == NodeRuntimePython
 }
 
-// IsIngested reports whether this node type only marks a table another system
+// IsExternal reports whether this node type only marks a table another system
 // loads: no continuo toolchain builds it, so it is never run, built, validated
 // or fixed.
-func (t NodeType) IsIngested() bool {
+func (t NodeType) IsExternal() bool {
 	return t.Runtime() == NodeRuntimeExternal
+}
+
+// IsBuilt reports whether a release builds a node of this type: it runs on the
+// dbt or the python runtime and is not a dbt test, which only validates.
+func (t NodeType) IsBuilt() bool {
+	r := t.Runtime()
+	return (r == NodeRuntimeDbt || r == NodeRuntimePython) && t != NodeTypeDbtTest
+}
+
+// BuiltNodeTypes returns every node type for which IsBuilt holds, in
+// declaration order. A query that must leave out a table no node builds lists
+// these canonical names rather than excluding one it knows.
+func BuiltNodeTypes() []NodeType {
+	var built []NodeType
+	for _, t := range NodeTypes() {
+		if t.IsBuilt() {
+			built = append(built, t)
+		}
+	}
+	return built
+}
+
+// IsDormant reports whether a node of type t with this schedule is dormant: a
+// release builds it and it belongs to no schedule. A run started by hand
+// executes it, and any run whose load of a seed drops the seed's table includes
+// it only to rebuild it, as a view or materialized view below that seed. A
+// rerun or rebase of such a run executes that rebuild again when the rebuild
+// did not finish. A dbt test, a table no node builds and an undeclared type are
+// never dormant.
+// Go services ask this function rather than restate the rule;
+// topology-controller's is_dormant is its Python twin, and
+// testdata/dormant_cases.json pins the two to each other.
+func IsDormant(t NodeType, schedule string) bool {
+	return schedule == "" && t.IsBuilt()
+}
+
+// legacyIngested is the name under which stored rows and artifacts written
+// earlier still record NodeTypeUnknownExternal.
+const legacyIngested = "ingested"
+
+// CanonicalNodeType converts a node type read from storage or from an artifact
+// into the current NodeType: the legacy name of unknown-external becomes
+// NodeTypeUnknownExternal, and every other string is returned as it is, valid
+// or not, for ParseNodeType or IsValid to judge.
+func CanonicalNodeType(s string) NodeType {
+	if s == legacyIngested {
+		return NodeTypeUnknownExternal
+	}
+	return NodeType(s)
 }
 
 // ParseNodeType converts a raw string to NodeType. It returns an error naming

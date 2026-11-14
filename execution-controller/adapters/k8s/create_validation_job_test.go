@@ -230,7 +230,7 @@ func TestBuildValidationPodSpec_BuildFromColumns_SetsSpecURI(t *testing.T) {
 		JobName: "vj", ReleaseID: "r1", NodeID: "e2e_schema.py_probe",
 		ServiceName: "svc-py", SchemaName: "e2e_schema", TableName: "py_probe",
 		NodeType: pkg_model.NodeTypePythonNode, ImageTag: "img",
-		CandidateSchema: "cand_r1", ValidationOp: "build_from_columns",
+		CandidateSchema: "cand_r1", ValidationOp: string(pkg_model.ValidationOpBuildFromColumns),
 		CandidateArtifactURI: "s3://b/candidate-sql/r1/candidate_e2e_schema.py_probe.json",
 		Namespace:            "ns",
 	}
@@ -240,7 +240,7 @@ func TestBuildValidationPodSpec_BuildFromColumns_SetsSpecURI(t *testing.T) {
 	assert.Equal(t, "s3://b/candidate-sql/r1/candidate_e2e_schema.py_probe.json", env["CANDIDATE_SPEC_URI"])
 	_, hasSQLURI := env["CANDIDATE_SQL_URI"]
 	assert.False(t, hasSQLURI, "build_from_columns must not set CANDIDATE_SQL_URI")
-	assert.Equal(t, "build_from_columns", env["VALIDATION_OP"])
+	assert.Equal(t, string(pkg_model.ValidationOpBuildFromColumns), env["VALIDATION_OP"])
 	assertS3KeyFromJobSecret(t, spec.Containers[0], "AWS_ACCESS_KEY_ID")
 }
 
@@ -252,7 +252,7 @@ func TestBuildValidationPodSpec_BuildFromColumns_EmptyURIFailsPermanently(t *tes
 	t.Setenv("VALIDATION_IMAGE", "ghcr.io/x/continuo-python-runtime-postgres:test")
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
 	p := ValidationJobParams{JobName: "vj", NodeID: "n1", NodeType: pkg_model.NodeTypePythonNode,
-		ValidationOp: "build_from_columns", Namespace: "ns"}
+		ValidationOp: string(pkg_model.ValidationOpBuildFromColumns), Namespace: "ns"}
 	_, err := buildValidationPodSpec(p)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, events.ErrPermanent)
@@ -266,7 +266,7 @@ func TestBuildValidationPodSpec_BuildFromColumns_EmptyURIFailsPermanently(t *tes
 func TestBuildValidationPodSpec_CheckBindsCarriesTheCandidateSQL(t *testing.T) {
 	t.Setenv("AWS_ACCESS_KEY_ID", "test-key-id")
 	p := validationParams()
-	p.ValidationOp = "check_binds"
+	p.ValidationOp = string(pkg_model.ValidationOpCheckBinds)
 	p.NodeID = "test.service_2.not_null_tbind_amount_eur.a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8"
 	p.CandidateArtifactURI = "s3://b/candidate-sql/rel/candidate_test.sql"
 
@@ -274,7 +274,7 @@ func TestBuildValidationPodSpec_CheckBindsCarriesTheCandidateSQL(t *testing.T) {
 	require.NoError(t, err)
 
 	env := envMap(spec.Containers[0].Env)
-	assert.Equal(t, "check_binds", env["VALIDATION_OP"])
+	assert.Equal(t, string(pkg_model.ValidationOpCheckBinds), env["VALIDATION_OP"])
 	assert.Equal(t, "s3://b/candidate-sql/rel/candidate_test.sql", env["CANDIDATE_SQL_URI"])
 	assert.NotContains(t, env, "CANDIDATE_SPEC_URI")
 	assert.Len(t, spec.Containers, 1)
@@ -285,7 +285,7 @@ func TestBuildValidationPodSpec_CheckBindsCarriesTheCandidateSQL(t *testing.T) {
 // can never succeed (there is no SQL to EXPLAIN), so it fails permanently.
 func TestBuildValidationPodSpec_CheckBindsRequiresTheArtifact(t *testing.T) {
 	p := validationParams()
-	p.ValidationOp = "check_binds"
+	p.ValidationOp = string(pkg_model.ValidationOpCheckBinds)
 	p.CandidateArtifactURI = ""
 
 	_, err := buildValidationPodSpec(p)
@@ -311,7 +311,7 @@ func TestSanitizeK8sLabel_DbtTestIDIsValid(t *testing.T) {
 func TestCreateValidationJob_LongDbtTestTableNameLabelIsValid(t *testing.T) {
 	c := newValidationTestClient()
 	p := validationParams()
-	p.ValidationOp = "check_binds"
+	p.ValidationOp = string(pkg_model.ValidationOpCheckBinds)
 	p.NodeType = pkg_model.NodeTypeDbtTest
 	// A dbt accepted_values test name: dotted, comma-bearing, and well over 63
 	// chars — exactly the shape that breaks a raw label value.
@@ -338,7 +338,7 @@ func TestCreateValidationJob_CloneFromProd_SingleContainerNoS3(t *testing.T) {
 	c := newValidationTestClient()
 	p := validationParams()
 	p.JobName = "validate-orders-rel123-clone"
-	p.ValidationOp = "clone_from_prod"
+	p.ValidationOp = string(pkg_model.ValidationOpCloneFromProd)
 	p.ProdSchema = "analytics"
 	p.CandidateArtifactURI = "" // clone nodes have no candidate SQL
 
@@ -348,7 +348,7 @@ func TestCreateValidationJob_CloneFromProd_SingleContainerNoS3(t *testing.T) {
 	assert.Empty(t, spec.InitContainers, "clone_from_prod has no fetch init container")
 	assert.Empty(t, spec.Volumes, "clone_from_prod needs no shared emptyDir")
 	require.Len(t, spec.Containers, 1)
-	assert.Equal(t, "clone_from_prod", envByName(spec, "VALIDATION_OP"))
+	assert.Equal(t, string(pkg_model.ValidationOpCloneFromProd), envByName(spec, "VALIDATION_OP"))
 	assert.Equal(t, "analytics", envByName(spec, "PROD_SCHEMA"))
 	assert.Empty(t, envByName(spec, "AWS_SECRET_ACCESS_KEY"), "clone_from_prod must not carry S3 creds")
 	assert.Empty(t, envByName(spec, "CANDIDATE_SQL_PATH"),
@@ -447,7 +447,7 @@ func TestCreateValidationJob_AttachesWarehouseSecretEnvFrom(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "continuo-warehouse-validation")
 	c := newValidationTestClient()
 	p := validationParams()
-	p.ValidationOp = "clone_from_prod"
+	p.ValidationOp = string(pkg_model.ValidationOpCloneFromProd)
 	p.ProdSchema = "analytics"
 	p.CandidateArtifactURI = ""
 
@@ -497,17 +497,17 @@ func TestCreateValidationJob_SetsValidationOpAndProdSchema(t *testing.T) {
 	p := validationParams()
 	require.NoError(t, c.CreateValidationJob(context.Background(), p))
 	job := fetchJob(t, c, p.Namespace, p.JobName)
-	assert.Equal(t, "build_from_sql", envByName(job.Spec.Template.Spec, "VALIDATION_OP"))
+	assert.Equal(t, string(pkg_model.ValidationOpBuildFromSQL), envByName(job.Spec.Template.Spec, "VALIDATION_OP"))
 
 	// explicit clone op + prod schema forwarded; clone nodes have no candidate SQL.
 	p2 := validationParams()
 	p2.JobName = "validate-orders-rel123-clone"
-	p2.ValidationOp = "clone_from_prod"
+	p2.ValidationOp = string(pkg_model.ValidationOpCloneFromProd)
 	p2.ProdSchema = "analytics"
 	p2.CandidateArtifactURI = ""
 	require.NoError(t, c.CreateValidationJob(context.Background(), p2))
 	job2 := fetchJob(t, c, p2.Namespace, p2.JobName)
-	assert.Equal(t, "clone_from_prod", envByName(job2.Spec.Template.Spec, "VALIDATION_OP"))
+	assert.Equal(t, string(pkg_model.ValidationOpCloneFromProd), envByName(job2.Spec.Template.Spec, "VALIDATION_OP"))
 	assert.Equal(t, "analytics", envByName(job2.Spec.Template.Spec, "PROD_SCHEMA"))
 }
 

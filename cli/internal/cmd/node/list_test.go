@@ -111,6 +111,124 @@ func TestList_SuccessMapsAllFieldsAndTotalCount(t *testing.T) {
 	assert.Equal(t, int32(20), fake.gotListOffset)
 }
 
+// --dormant sends dormant_only to the RPC, and the list says for every node its
+// type and whether it is dormant. A node that never ran is listed like any
+// other: task_count 0, no last_run_at, none of the statistics the server cannot
+// measure. The help names the flag, both new fields and the never-run case, so
+// a caller learns from it alone how to list the nodes of no schedule.
+func TestList_DormantFlagAndNeverRunNode(t *testing.T) {
+	fake := &fakeNodeRunController{listResp: &runv1.ListNodesResponse{
+		TotalCount: 2,
+		Nodes: []*runv1.NodeSummary{{
+			ServiceName: "finance", SchemaName: "analytics", TableName: "orders",
+			TaskCount: 12, SuccessRatePct: 92, AvgDurationSec: 34, P95DurationSec: 80,
+			FlakyRatePct: 8, LastStatus: "succeeded", LastRunAt: "2026-09-18T10:00:00Z",
+			Operation: "run", TimeoutSeconds: 7200, TimeoutDeclared: true,
+			NodeType: "dbt-model", Dormant: false,
+		}, {
+			ServiceName: "finance", SchemaName: "analytics", TableName: "scratch_rates",
+			TaskCount: 0, SuccessRatePct: -1, AvgDurationSec: -1, P95DurationSec: -1,
+			Operation: "run", TimeoutSeconds: 86400,
+			NodeType: "dbt-model", Dormant: true,
+		}},
+	}}
+
+	stdout, stderr, exit := runList(t, fake, []string{"--dormant"}, false)
+
+	require.Equal(t, 0, exit, "stderr: %s", stderr)
+	assert.True(t, fake.gotListDormantOnly, "--dormant sends dormant_only")
+	var payload struct {
+		Nodes []map[string]json.RawMessage `json:"nodes"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
+	require.Len(t, payload.Nodes, 2)
+
+	ran, never := payload.Nodes[0], payload.Nodes[1]
+	assert.JSONEq(t, `"dbt-model"`, string(ran["node_type"]))
+	assert.JSONEq(t, `false`, string(ran["dormant"]), "a node of a schedule says dormant false, the key is never left out")
+	assert.JSONEq(t, `"dbt-model"`, string(never["node_type"]))
+	assert.JSONEq(t, `true`, string(never["dormant"]))
+	assert.JSONEq(t, `0`, string(never["task_count"]))
+	assert.NotContains(t, never, "last_run_at", "a node that never ran has no last_run_at")
+	for _, k := range []string{"success_rate_pct", "avg_duration_sec", "p95_duration_sec"} {
+		assert.NotContains(t, never, k, "a node that never ran has no %s", k)
+	}
+	assert.JSONEq(t, `86400`, string(never["timeout_seconds"]), "a node that never ran still has its task timeout")
+
+	long := strings.Join(strings.Fields(NewListCommand(nil, nil, nil, nil).Long), " ")
+	assert.Contains(t, long, `--dormant`, "the help names the flag")
+	assert.Contains(t, long, `"node_type":string,"dormant":bool`, "the help shows both fields in the output shape")
+	assert.Contains(t, long, "any run whose load of a seed drops the seed's table includes it only to rebuild it, as a view or materialized view below that seed",
+		"the help says what a dormant node is, and which run includes one only to rebuild it")
+	assert.Contains(t, long, "dormant is true for a node continuo builds that belongs to no schedule", "the help says what dormant means")
+	assert.NotContains(t, long, "schedule tag", "an untagged seed takes the seed schedule and is not dormant, so the help never defines dormant by a missing tag")
+	assert.Contains(t, long, `"continuo node trigger <service> <schema> <table>"`, "the help names the command that runs a dormant node")
+	assert.Contains(t, long, "node that never ran has task_count 0 and no last_run_at", "the help says how a never-run node reads")
+}
+
+// --dormant is a switch that is off by default, and its usage text says what
+// it keeps, so `continuo describe` carries it as a documented flag.
+func TestList_DormantFlagIsADocumentedSwitchOffByDefault(t *testing.T) {
+	flag := NewListCommand(nil, nil, nil, nil).Flags().Lookup("dormant")
+	require.NotNil(t, flag, "node list has a --dormant flag")
+	assert.Equal(t, "bool", flag.Value.Type())
+	assert.Equal(t, "false", flag.DefValue)
+	assert.Contains(t, flag.Usage, "dormant")
+	assert.Contains(t, flag.Usage, "belong to no schedule")
+	assert.NotContains(t, flag.Usage, "schedule tag", "an untagged seed takes the seed schedule and is not dormant")
+}
+
+// The output_schema annotation declares every field a node of the list can
+// carry: a node with every field set emits exactly the keys its nodes item
+// declares, with the type the schema names.
+func TestList_OutputSchemaDeclaresEveryNodeField(t *testing.T) {
+	fake := &fakeNodeRunController{listResp: &runv1.ListNodesResponse{
+		TotalCount: 1,
+		Nodes: []*runv1.NodeSummary{{
+			ServiceName: "finance", SchemaName: "analytics", TableName: "orders",
+			TaskCount: 12, SuccessRatePct: 92, AvgDurationSec: 34, P95DurationSec: 80,
+			FlakyRatePct: 8, LastStatus: "succeeded", LastRunAt: "2026-09-18T10:00:00Z",
+			Operation: "run", TimeoutSeconds: 7200, TimeoutDeclared: true,
+			NodeType: "dbt-model", Dormant: true,
+		}},
+	}}
+	stdout, _, exit := runList(t, fake, nil, false)
+	require.Equal(t, 0, exit)
+
+	var emitted struct {
+		TotalCount json.RawMessage              `json:"total_count"`
+		Nodes      []map[string]json.RawMessage `json:"nodes"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &emitted))
+	require.Len(t, emitted.Nodes, 1)
+
+	var schema struct {
+		TotalCount string              `json:"total_count"`
+		Nodes      []map[string]string `json:"nodes"`
+	}
+	cmd := NewListCommand(nil, &config.Config{}, io.Discard, io.Discard)
+	require.NoError(t, json.Unmarshal([]byte(cmd.Annotations["output_schema"]), &schema))
+	require.Len(t, schema.Nodes, 1, "output_schema declares the fields of one nodes item")
+
+	assert.Equal(t, "number", schema.TotalCount)
+	assert.ElementsMatch(t, mapKeys(emitted.Nodes[0]), mapKeys(schema.Nodes[0]))
+	assert.Equal(t, "string", schema.Nodes[0]["node_type"])
+	assert.Equal(t, "boolean", schema.Nodes[0]["dormant"])
+	for key, typ := range schema.Nodes[0] {
+		raw := string(emitted.Nodes[0][key])
+		switch typ {
+		case "string":
+			assert.True(t, strings.HasPrefix(raw, `"`), "%s is declared a string, emitted %s", key, raw)
+		case "number":
+			assert.Regexp(t, `^-?[0-9]+$`, raw, "%s is declared a number", key)
+		case "boolean":
+			assert.Contains(t, []string{"true", "false"}, raw, "%s is declared a boolean", key)
+		default:
+			t.Errorf("%s: schema type %q is none of string, number, boolean", key, typ)
+		}
+	}
+}
+
 func TestList_DefaultsForwardEmptyFiltersRunAndFirstPage(t *testing.T) {
 	fake := &fakeNodeRunController{listResp: &runv1.ListNodesResponse{}}
 
@@ -120,6 +238,7 @@ func TestList_DefaultsForwardEmptyFiltersRunAndFirstPage(t *testing.T) {
 	assert.Equal(t, "", fake.gotListSearch)
 	assert.Equal(t, "", fake.gotListService)
 	assert.Equal(t, "run", fake.gotListOperation)
+	assert.False(t, fake.gotListDormantOnly, "every node is listed unless --dormant is given")
 	assert.Equal(t, defaultListLimit, fake.gotListLimit)
 	assert.Equal(t, int32(0), fake.gotListOffset)
 	// An empty node list is a success with an empty array, never null.
@@ -214,8 +333,8 @@ func TestList_HumanModeRendersRowsAndPageSummary(t *testing.T) {
 	fake := &fakeNodeRunController{listResp: &runv1.ListNodesResponse{
 		TotalCount: 42,
 		Nodes: []*runv1.NodeSummary{
-			{ServiceName: "finance", SchemaName: "analytics", TableName: "orders", TaskCount: 12, SuccessRatePct: 92, AvgDurationSec: 34, P95DurationSec: 80, LastStatus: "succeeded", LastRunAt: "2026-09-18T10:00:00Z", Operation: "run"},
-			{ServiceName: "finance", SchemaName: "analytics", TableName: "never_ran", TaskCount: 0, SuccessRatePct: -1, AvgDurationSec: -1, P95DurationSec: -1, LastStatus: "pending", Operation: "run"},
+			{ServiceName: "finance", SchemaName: "analytics", TableName: "orders", TaskCount: 12, SuccessRatePct: 92, AvgDurationSec: 34, P95DurationSec: 80, LastStatus: "succeeded", LastRunAt: "2026-09-18T10:00:00Z", Operation: "run", NodeType: "dbt-model"},
+			{ServiceName: "finance", SchemaName: "analytics", TableName: "never_ran", TaskCount: 0, SuccessRatePct: -1, AvgDurationSec: -1, P95DurationSec: -1, Operation: "run", NodeType: "dbt-model", Dormant: true},
 		},
 	}}
 
@@ -225,9 +344,9 @@ func TestList_HumanModeRendersRowsAndPageSummary(t *testing.T) {
 	assert.Empty(t, stdout, "human mode writes nothing to stdout")
 	lines := strings.Split(strings.TrimRight(stderr, "\n"), "\n")
 	require.Len(t, lines, 4, "header + 2 rows + page summary, got: %q", stderr)
-	assert.Equal(t, "NODE  OPERATION  TASKS  SUCCESS_PCT  AVG_SEC  P95_SEC  LAST_STATUS  LAST_RUN_AT", lines[0])
-	assert.Equal(t, "finance.analytics.orders  run  12  92  34  80  succeeded  2026-09-18T10:00:00Z", lines[1])
-	assert.Equal(t, "finance.analytics.never_ran  run  0  -  -  -  pending  -", lines[2])
+	assert.Equal(t, "NODE  OPERATION  TASKS  SUCCESS_PCT  AVG_SEC  P95_SEC  LAST_STATUS  LAST_RUN_AT  DORMANT", lines[0])
+	assert.Equal(t, "finance.analytics.orders  run  12  92  34  80  succeeded  2026-09-18T10:00:00Z  -", lines[1])
+	assert.Equal(t, "finance.analytics.never_ran  run  0  -  -  -  -  -  yes", lines[2])
 	assert.Equal(t, "showing 11-12 of 42", lines[3])
 }
 
