@@ -3,11 +3,11 @@ name = "topology-controller"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
-    "sqlglot>=30.29.0",
+    "sqlglot>=30.30.0",
     "redis>=8.1.0",
     "grpcio>=1.85.1",
     "protobuf>=7.36.2",
-    "boto3>=1.43.125",
+    "boto3>=1.43.126",
     "PyYAML>=6.0",
     "prometheus-client==0.26.0",
     "continuo-contracts==0.1.0",
