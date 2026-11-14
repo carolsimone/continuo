@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 )
 
 // The scenarios a flow runs through, each played by a flow fixture.
@@ -17,7 +19,8 @@ const (
 	FlowTwoTypesOneService Scenario = "two_types_one_service"
 	// FlowTwoServices: the try's edits change two services.
 	FlowTwoServices Scenario = "two_services"
-	// FlowCrossClusterFails: two clusters edit one path.
+	// FlowCrossClusterFails: two clusters edit one path in every try, so every
+	// try fails before the gate and the flow's tries are spent.
 	FlowCrossClusterFails Scenario = "cross_cluster_fails"
 	// FlowSharedUpstreamDeclines: a shared-upstream cluster declines.
 	FlowSharedUpstreamDeclines Scenario = "shared_upstream_declines"
@@ -41,7 +44,7 @@ func FlowScenarios() []Scenario {
 // A scenario with no fixture, or with several, fails. A fixture for a scenario
 // that is not a flow scenario fails too, with one result of its own. Every
 // cluster takes its fixture's passing answers, and every verification run
-// passes.
+// passes. In the scenario whose tries all fail, every try takes them again.
 func (s Suite) RunFlowScenarios(ctx context.Context, flow string) []Result {
 	byScenario := map[Scenario][]Fixture{}
 	for _, f := range s.Fixtures {
@@ -88,6 +91,9 @@ func (s Suite) runFlow(ctx context.Context, f Fixture, sc Scenario) error {
 		return err
 	}
 	script := Script{Answers: f.Answers.Pass, MemberAnswers: members}
+	if sc == FlowCrossClusterFails {
+		script = script.everyTry(s.Files.Flows[f.Flow].Tries)
+	}
 	sr, err := s.start(f, script, sc == FlowMaintenance)
 	if err != nil {
 		return err
@@ -128,12 +134,11 @@ func (sr *scenarioRun) expectFlow(files workflow.Set, f Fixture, sc Scenario) er
 		}
 		e.runs(2)
 	case FlowCrossClusterFails:
-		if as := e.attempts(proposal.StatusFailed); len(as) == 1 {
-			e.nodes(as[0], proposal.StatusFailed)
-			finding, ok := e.crossClusterFinding(files.Flows[f.Flow])
-			e.that(ok, "no cross-cluster check found anything")
-			e.that(as[0].Proposal.Rationale == finding.Message, "the attempt's reason %q is not the cross-cluster finding %q", as[0].Proposal.Rationale, finding.Message)
-		}
+		flow := files.Flows[f.Flow]
+		failed := slices.Repeat([]proposal.Status{proposal.StatusFailed}, flow.Tries)
+		as := e.attempts(append(failed, proposal.StatusEscalated)...)
+		e.crossClusterFailedEveryTry(flow, as[:min(flow.Tries, len(as))])
+		e.proposedEvents(0)
 		e.runs(0)
 	case FlowSharedUpstreamDeclines:
 		if c, ok := e.firstOfKind(workflow.ClusterSharedUpstream); ok {
@@ -176,15 +181,78 @@ func (e *expectation) firstOfKind(k workflow.ClusterKind) (remediation.Cluster, 
 	return remediation.Cluster{}, false
 }
 
-// crossClusterFinding is the first finding of try 1's cross-cluster checks,
-// in the order flow lists them. A flow-level row runs once per try, as round
-// 1 of the flow cluster.
-func (e *expectation) crossClusterFinding(flow workflow.Flow) (remediation.Finding, bool) {
-	rows := e.stepRows(1, remediation.FlowCluster, 1)
-	for _, ref := range flow.AcrossClusters {
-		if row, ok := rows[string(ref.Name)]; ok && len(row.Findings) > 0 {
-			return row.Findings[0], true
+// everyTry returns the script with the calls it answers made by each of tries
+// tries in turn, for a scenario whose every try makes the calls its first try
+// makes.
+func (sc Script) everyTry(tries int) Script {
+	out := sc
+	out.Answers = slices.Repeat(sc.Answers, tries)
+	if sc.MemberAnswers != nil {
+		out.MemberAnswers = make(map[string][]ports.ProposeResult, len(sc.MemberAnswers))
+		for node, answers := range sc.MemberAnswers {
+			out.MemberAnswers[node] = slices.Repeat(answers, tries)
 		}
 	}
-	return remediation.Finding{}, false
+	return out
+}
+
+// crossClusterFailedEveryTry expects the failed attempts as, one per try in
+// try order, to have failed every node with the finding of that try's
+// cross-cluster checks, every try to have failed, the model to have made the
+// same calls in every try, and each later try's requests to show the finding
+// that failed the try before it.
+func (e *expectation) crossClusterFailedEveryTry(flow workflow.Flow, as []Attempt) {
+	tries := e.sr.w.Tries(e.sr.id)
+	e.that(len(tries) == flow.Tries, "the remediation made %d tries, want %d", len(tries), flow.Tries)
+	for _, t := range tries {
+		e.that(t.Status == remediation.TryFailed, "try %d is %s, not failed", t.Try, t.Status)
+	}
+	findings := make([][]remediation.Finding, len(as))
+	for i, a := range as {
+		findings[i] = e.crossClusterFindings(flow, i+1)
+		e.that(len(findings[i]) > 0, "no cross-cluster check of try %d found anything", i+1)
+		e.nodes(a, proposal.StatusFailed)
+		reason := findingMessages(findings[i])
+		e.that(a.Proposal.Rationale == reason, "attempt %d's reason %q is not the cross-cluster findings %q", a.Proposal.Attempt, a.Proposal.Rationale, reason)
+	}
+
+	calls := e.sr.w.ModelCalls()
+	if len(calls) == 0 || len(calls)%flow.Tries != 0 {
+		e.that(false, "the model was called %d times, which %d tries do not divide evenly", len(calls), flow.Tries)
+		return
+	}
+	perTry := len(calls) / flow.Tries
+	for try := 2; try <= min(flow.Tries, len(findings)); try++ {
+		for _, call := range calls[(try-1)*perTry : try*perTry] {
+			user := call.Request.User
+			e.that(strings.Contains(user, "## Earlier tries at this failure"), "try %d's request about %s shows no earlier try", try, call.Target)
+			for _, f := range findings[try-2] {
+				want := "across clusters: " + f.Code + ": " + f.Message
+				e.that(strings.Contains(user, want), "try %d's request about %s does not show the cross-cluster finding %q", try, call.Target, want)
+			}
+		}
+	}
+}
+
+// crossClusterFindings is the findings of the first of the flow's
+// cross-cluster checks to find any in one try, in the order the flow lists
+// them. A flow-level row runs once per try, as round 1 of the flow cluster.
+func (e *expectation) crossClusterFindings(flow workflow.Flow, try int) []remediation.Finding {
+	rows := e.stepRows(try, remediation.FlowCluster, 1)
+	for _, ref := range flow.AcrossClusters {
+		if row, ok := rows[string(ref.Name)]; ok && len(row.Findings) > 0 {
+			return row.Findings
+		}
+	}
+	return nil
+}
+
+// findingMessages is the messages of findings joined by "; ", the reason a
+// try's attempt carries.
+func findingMessages(findings []remediation.Finding) string {
+	messages := make([]string, 0, len(findings))
+	for _, f := range findings {
+		messages = append(messages, f.Message)
+	}
+	return strings.Join(messages, "; ")
 }

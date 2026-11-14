@@ -74,17 +74,10 @@ func TestRunner_NoEditSettlesTheAttempt(t *testing.T) {
 	})
 }
 
-func TestRunner_CrossClusterFindingFailsTheAttempt(t *testing.T) {
-	h := newHarness(t)
-	h.source.files["services/core/models/base.sql"] = "select 1"
-	h.bundle.nodes = map[string]ports.CandidateSource{"model.core.base": {RawCode: "select 1", Runtime: ports.RuntimeDbt}}
-	h.llm.answer = func(req prompt.ProposeRequest) ports.ProposeResult {
-		r := fixAnswer(req)
-		r.ProposedSQL = "select 2"
-		return r
-	}
-	// The consumer is fixed at the changed ancestor in core, and the producer's
-	// own compile failure is fixed in the same file.
+// crossClusterTrigger is a trigger of two failing nodes: the consumer svc-a,
+// fixed at its changed ancestor in core, and the producer core, whose own
+// compile failure is fixed in the same file as the ancestor.
+func crossClusterTrigger() remediation.Trigger {
 	ancestor := remediation.ChangedAncestor{NodeID: "model.core.base", FilePath: "models/base.sql", Service: "core", Depth: 1}
 	consumer := compileNode("svc-a")
 	consumer.Service = "svc-a"
@@ -92,7 +85,27 @@ func TestRunner_CrossClusterFindingFailsTheAttempt(t *testing.T) {
 	producer := compileNode("core")
 	producer.Service = "core"
 	producer.FilePath = "models/base.sql"
-	id := h.accept(trigger("compile", consumer, producer))
+	return trigger("compile", consumer, producer)
+}
+
+// twoEditsOfOneFile makes both of crossClusterTrigger's clusters edit
+// services/core/models/base.sql.
+func (h *harness) twoEditsOfOneFile() {
+	h.source.files["services/core/models/base.sql"] = "select 1"
+	h.bundle.nodes = map[string]ports.CandidateSource{"model.core.base": {RawCode: "select 1", Runtime: ports.RuntimeDbt}}
+	h.llm.answer = func(req prompt.ProposeRequest) ports.ProposeResult {
+		r := fixAnswer(req)
+		r.ProposedSQL = "select 2"
+		return r
+	}
+}
+
+// With a single try, a cross-cluster finding fails the attempt and the try, and
+// the tries being spent, the remediation hands over.
+func TestRunner_CrossClusterFindingFailsTheAttempt(t *testing.T) {
+	h := newHarness(t, withTries(1))
+	h.twoEditsOfOneFile()
+	id := h.accept(crossClusterTrigger())
 
 	require.NoError(t, h.runner.Drive(ctx, id))
 
@@ -109,6 +122,8 @@ func TestRunner_CrossClusterFindingFailsTheAttempt(t *testing.T) {
 	}, p.NodeOutcomes)
 	assert.Equal(t, id.String(), p.RemediationID)
 	assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
+	assert.Len(t, h.store.Tries(id), 1, "the only try is spent")
+	assert.Equal(t, proposal.StatusEscalated, h.attempt(2).Proposal.Status, "the tries being spent, the failing set is handed over")
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 	assert.Empty(t, h.pipeline.runs())
 
@@ -125,6 +140,50 @@ func TestRunner_CrossClusterFindingFailsTheAttempt(t *testing.T) {
 	assert.Equal(t, "path_edited_twice", dup.Findings[0].Code)
 	assert.Empty(t, rows["one_manifest_kind"], "the checks stop at the first finding")
 	assert.Empty(t, rows["verification_run"])
+}
+
+// A cross-cluster finding fails the try like a failed gate does: the attempt
+// is failed with the finding, the try fails and the remediation, still running,
+// opens its next try, whose requests show the finding among the earlier tries.
+// The second try's upstream fix is not confident, so the producer's edit is its
+// only draft and the try reaches the gate.
+func TestRunner_ACrossClusterFindingStartsTheNextTry(t *testing.T) {
+	h := newHarness(t, withPreviousTries())
+	h.twoEditsOfOneFile()
+	upstreamAnswer := h.llm.answer
+	h.llm.answer = func(req prompt.ProposeRequest) ports.ProposeResult {
+		r := upstreamAnswer(req)
+		if strings.HasPrefix(req.User, "Upstream node:") && strings.Contains(req.User, "## Earlier tries at this failure") {
+			r.Confidence = "low"
+		}
+		return r
+	}
+	id := h.accept(crossClusterTrigger())
+
+	require.NoError(t, h.runner.Drive(ctx, id))
+
+	const reason = "two edits change the same file: services/core/models/base.sql"
+	first := h.attempt(1).Proposal
+	assert.Equal(t, proposal.StatusFailed, first.Status)
+	assert.Equal(t, reason, first.Rationale)
+	assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
+	assert.Equal(t, remediation.StatusRunning, h.remediation(id).Status, "the failed try does not end the remediation")
+	assert.Equal(t, 2, h.remediation(id).CurrentTry)
+	second := h.try(id, 2)
+	assert.Equal(t, remediation.TryVerifying, second.Status)
+	assert.Equal(t, 2, second.Attempt)
+	assert.Equal(t, proposal.StatusVerifying, h.attempt(2).Proposal.Status)
+	assert.Len(t, h.pipeline.runs(), 1, "the second try's one edited service is verified")
+
+	require.Equal(t, 4, h.llm.calls(), "each try asks the model once per cluster")
+	for _, req := range h.llm.requests[:2] {
+		assert.NotContains(t, req.User, "## Earlier tries at this failure", "the first try has no earlier try")
+	}
+	for _, req := range h.llm.requests[2:] {
+		assert.Contains(t, req.User, "### Try 1 (round 1)", "the second try sees the first")
+		assert.Contains(t, req.User, "What pre-flight found:\n- across clusters: path_edited_twice: "+reason+" (services/core/models/base.sql)",
+			"and the cross-cluster finding that failed it")
+	}
 }
 
 func TestRunner_TheVerifyingRowCarriesTheTry(t *testing.T) {
