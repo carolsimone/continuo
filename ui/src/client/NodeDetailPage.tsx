@@ -195,22 +195,28 @@ export default function NodeDetailPage() {
   // The node's row of the node list: its task timeout and whether it is
   // dormant, with its last run. The search filters on the table name only (an
   // exact match within the service), so rows of other schemas sharing the table
-  // name can come back: the schema is matched client-side. A read replaces what
-  // the page holds only when its answer lands and no later read has started, so
-  // a read that fails leaves the page as it was and an answer for a node the
-  // page has left, or older than a later read's, lands nowhere.
-  const summaryGenRef = useRef(0);
+  // name can come back: the schema is matched client-side.
+  //
+  // Each read takes the next number, and an answer replaces what the page holds
+  // only when its number is above that of every answer already applied, so an
+  // older read never lands over a newer one. A read that fails applies nothing
+  // and does not hold back an older read still in flight. A change of node
+  // counts every read started so far as applied: the answers still in flight
+  // for the node left land nowhere.
+  const summaryStartedRef = useRef(0);
+  const summaryAppliedRef = useRef(0);
   const fetchNodeSummary = useCallback(() => {
     if (!service || !schema || !table) return;
-    const myGen = ++summaryGenRef.current;
+    const myRead = ++summaryStartedRef.current;
     fetch(`/api/nodes?service=${encodeURIComponent(service)}&search=${encodeURIComponent(table)}&operation=run`)
       .then(r => {
         if (!r.ok) throw new Error(`node list answered ${r.status}`);
         return r.json();
       })
-      .then((data: NodesResponse | null) => {
-        if (myGen !== summaryGenRef.current) return;
-        const row = (data?.nodes ?? []).find(n => n.schema_name === schema);
+      .then((data: NodesResponse) => {
+        const row = data.nodes.find(n => n.schema_name === schema);
+        if (myRead <= summaryAppliedRef.current) return;
+        summaryAppliedRef.current = myRead;
         setTaskTimeout(row && typeof row.timeout_seconds === 'number' && row.timeout_seconds > 0
           ? { seconds: row.timeout_seconds, declared: !!row.timeout_declared }
           : null);
@@ -219,13 +225,12 @@ export default function NodeDetailPage() {
       .catch(() => { /* the page keeps what it holds */ });
   }, [service, schema, table]);
 
-  // A new node starts with nothing known about it, and the answers still in
-  // flight for the node it replaces are dropped.
+  // A new node starts with nothing known about it.
   useEffect(() => {
     setTaskTimeout(null);
     setDormant(null);
     fetchNodeSummary();
-    return () => { summaryGenRef.current += 1; };
+    return () => { summaryAppliedRef.current = summaryStartedRef.current; };
   }, [fetchNodeSummary]);
 
   const canFullRefresh = FULL_REFRESH_NODE_TYPES.has(nodeType);
@@ -255,7 +260,7 @@ export default function NodeDetailPage() {
   const newestNodeRunId = runsKnown ? (runs.find(r => r.kind === 'single_node_run')?.run_id ?? null) : undefined;
 
   // A started run reads the history again, and the node's row of the node list,
-  // whose last run the run has just moved.
+  // whose last run a run or a full refresh moves.
   const handleStarted = useCallback(() => {
     fetchRuns();
     fetchNodeSummary();

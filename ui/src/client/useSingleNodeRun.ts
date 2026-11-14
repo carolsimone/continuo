@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { settlesRequest, useActionRequestId, type Observation } from './request-id';
 import type { NodeOperation } from '../server/shared/operation';
 
@@ -35,15 +35,34 @@ interface Options {
 // on the page makes the next press a new action, and the id is renewed once the
 // server has given its final answer. Without an observation only that final
 // answer renews it.
+//
+// The state of the press belongs to the node the component shows. When the
+// component is given another node the state returns to idle, and the answer of
+// a press made for the node it left changes nothing it shows: it neither marks
+// the new node's press as started or failed nor calls onStarted, whose reads
+// are those of the node left. The answer still settles the request id.
 export function useSingleNodeRun({ service, schema, table }: NodeRef, { operation, observed, onStarted }: Options) {
   const [runState, setRunState] = useState<SingleNodeRunState>('idle');
   const [runError, setRunError] = useState<string | null>(null);
   const { take: takeRequestId, renew: renewRunRequestId } = useActionRequestId();
 
+  // The node the component shows now, which an answer compares with the node
+  // its press was made for. It is set when a change of node commits, before
+  // any answer can arrive.
+  const shownNode = `${service}.${schema}.${table}`;
+  const shownNodeRef = useRef(shownNode);
+  useLayoutEffect(() => {
+    shownNodeRef.current = shownNode;
+    setRunState('idle');
+    setRunError(null);
+  }, [shownNode]);
+
   // opOverride pins the operation for a caller that must send exactly what it
   // confirmed, independent of the select's current value. The promise
   // resolves to null once the run started, and to the error shown otherwise.
   const postRun = useCallback(async (body: object, opOverride?: NodeOperation): Promise<string | null> => {
+    const pressedFor = shownNode;
+    const stillShown = () => shownNodeRef.current === pressedFor;
     setRunState('loading');
     setRunError(null);
     try {
@@ -56,22 +75,28 @@ export function useSingleNodeRun({ service, schema, table }: NodeRef, { operatio
       );
       if (settlesRequest(res)) renewRunRequestId();
       if (res.ok) {
-        setRunState('success');
-        onStarted?.();
-        setTimeout(() => setRunState('idle'), 3000);
+        if (stillShown()) {
+          setRunState('success');
+          onStarted?.();
+          setTimeout(() => { if (stillShown()) setRunState('idle'); }, 3000);
+        }
         return null;
       }
       const errBody = await res.json().catch(() => ({ error: REQUEST_FAILED }));
       const message: string = errBody.error ?? REQUEST_FAILED;
-      setRunError(message);
-      setRunState('error');
+      if (stillShown()) {
+        setRunError(message);
+        setRunState('error');
+      }
       return message;
     } catch {
-      setRunError(REQUEST_FAILED);
-      setRunState('error');
+      if (stillShown()) {
+        setRunError(REQUEST_FAILED);
+        setRunState('error');
+      }
       return REQUEST_FAILED;
     }
-  }, [service, schema, table, onStarted, operation, observed, takeRequestId, renewRunRequestId]);
+  }, [shownNode, service, schema, table, onStarted, operation, observed, takeRequestId, renewRunRequestId]);
 
   return { runState, runError, postRun };
 }
