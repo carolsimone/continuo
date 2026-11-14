@@ -620,27 +620,30 @@ func TestRunner_AFailedVerifyingCommitResubmitsTheSameRuns(t *testing.T) {
 	assert.Len(t, h.pipeline.runs(), 4, "the poll submits nothing")
 }
 
-// A gate that refuses the try's drafts without starting a run fails the
-// attempt with its first finding's message and ends the remediation. With no
-// cross-cluster check in the flow, the gate is the one to find two edits of
-// one file.
-func TestRunner_AGateThatRefusesTheDraftsFailsTheAttempt(t *testing.T) {
-	h := newHarness(t, withoutCrossClusterChecks())
-	h.source.files["services/core/models/base.sql"] = "select 1"
-	h.bundle.nodes = map[string]ports.CandidateSource{"model.core.base": {RawCode: "select 1", Runtime: ports.RuntimeDbt}}
+// lowUpstreamConfidenceOnALaterTry makes the upstream fix of
+// crossClusterTrigger low-confidence once its request shows an earlier try, so
+// a later try's only draft is the producer's edit.
+func (h *harness) lowUpstreamConfidenceOnALaterTry() {
+	answer := h.llm.answer
 	h.llm.answer = func(req prompt.ProposeRequest) ports.ProposeResult {
-		r := fixAnswer(req)
-		r.ProposedSQL = "select 2"
+		r := answer(req)
+		if strings.HasPrefix(req.User, "Upstream node:") && strings.Contains(req.User, "## Earlier tries at this failure") {
+			r.Confidence = "low"
+		}
 		return r
 	}
-	ancestor := remediation.ChangedAncestor{NodeID: "model.core.base", FilePath: "models/base.sql", Service: "core", Depth: 1}
-	consumer := compileNode("svc-a")
-	consumer.Service = "svc-a"
-	consumer.ChangedAncestors = []remediation.ChangedAncestor{ancestor}
-	producer := compileNode("core")
-	producer.Service = "core"
-	producer.FilePath = "models/base.sql"
-	id := h.accept(trigger("compile", consumer, producer))
+}
+
+// A gate that refuses the try's drafts without starting a run fails the try
+// like a gate whose run failed: the attempt is failed with the refusal, the try
+// fails, and the remediation, still running, opens its next try, whose requests
+// show the refusal as the reason the gate failed. With no cross-cluster check
+// in the flow, the gate is the one to find two edits of one file.
+func TestRunner_AGateThatRefusesTheDraftsStartsTheNextTry(t *testing.T) {
+	h := newHarness(t, withoutCrossClusterChecks(), withPreviousTries())
+	h.twoEditsOfOneFile()
+	h.lowUpstreamConfidenceOnALaterTry()
+	id := h.accept(crossClusterTrigger())
 
 	require.NoError(t, h.runner.Drive(ctx, id))
 
@@ -654,16 +657,73 @@ func TestRunner_AGateThatRefusesTheDraftsFailsTheAttempt(t *testing.T) {
 	}, p.NodeOutcomes)
 	assert.Empty(t, p.Verifications)
 	assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
-	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
-	assert.Empty(t, h.pipeline.runs(), "no run was started")
+	assert.Equal(t, remediation.StatusRunning, h.remediation(id).Status, "the refused try does not end the remediation")
+	assert.Equal(t, 2, h.remediation(id).CurrentTry)
+	assert.Equal(t, remediation.TryVerifying, h.try(id, 2).Status)
+	assert.Equal(t, proposal.StatusVerifying, h.attempt(2).Proposal.Status)
+	assert.Len(t, h.pipeline.runs(), 1, "only the second try started a run")
 	assert.Empty(t, h.proposedEvents())
 
 	rows := h.flowRows(id, 1)
-	require.Len(t, rows, 1, "the gate is the only flow-level step")
+	require.Len(t, rows, 1, "the gate is the only flow-level step of the first try")
 	require.Len(t, rows["verification_run"], 1)
 	gate := rows["verification_run"][0]
 	assert.Equal(t, remediation.StepDone, gate.Status)
 	assert.NotNil(t, gate.FinishedAt)
 	assert.Empty(t, gate.WaitingOn)
 	assert.Equal(t, []remediation.Finding{{Code: "path_edited_twice", Message: reason}}, gate.Findings)
+
+	require.Equal(t, 4, h.llm.calls(), "each try asks the model once per cluster")
+	for _, req := range h.llm.requests[2:] {
+		assert.Contains(t, req.User, "### Try 1 (round 1)", "the second try sees the first")
+		assert.Contains(t, req.User, "Why the gate failed: "+reason, "and the refusal that failed it")
+	}
+}
+
+// A gate refusal with no try left hands the failing set over.
+func TestRunner_AGateRefusalWithNoTryLeftHandsOver(t *testing.T) {
+	h := newHarness(t, withoutCrossClusterChecks(), withTries(1))
+	h.twoEditsOfOneFile()
+	id := h.accept(crossClusterTrigger())
+
+	require.NoError(t, h.runner.Drive(ctx, id))
+
+	assert.Equal(t, proposal.StatusFailed, h.attempt(1).Proposal.Status)
+	assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
+	assert.Len(t, h.store.Tries(id), 1, "the only try is spent")
+	assert.Equal(t, proposal.StatusEscalated, h.attempt(2).Proposal.Status, "the tries being spent, the failing set is handed over")
+	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
+	assert.Empty(t, h.pipeline.runs())
+}
+
+// A refusal of the try's drafts, by a cross-cluster check or by the gate,
+// fails the members of the clusters whose drafts it judged. A cluster already
+// handed over in the try keeps the outcome it was handed over with.
+func TestRunner_ARefusalKeepsTheOutcomesOfClustersAlreadyHandedOver(t *testing.T) {
+	const reason = "two edits change the same file: services/core/models/base.sql"
+	for name, opts := range map[string][]option{
+		"a cross-cluster check": {withTries(1)},
+		"the gate":              {withTries(1), withoutCrossClusterChecks()},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, opts...)
+			h.twoEditsOfOneFile()
+			trig := crossClusterTrigger()
+			test := compileNode("svc-b")
+			test.NodeType = "dbt-test"
+			trig.Nodes = append(trig.Nodes, test)
+			id := h.accept(trig)
+
+			require.NoError(t, h.runner.Drive(ctx, id))
+
+			p := h.attempt(1).Proposal
+			assert.Equal(t, proposal.StatusFailed, p.Status)
+			assert.Equal(t, reason, p.Rationale)
+			assert.Equal(t, map[string]proposal.NodeOutcome{
+				"svc-a": {Status: proposal.StatusFailed, Reason: reason},
+				"core":  {Status: proposal.StatusFailed, Reason: reason},
+				"svc-b": {Status: proposal.StatusSkipped, Reason: "dbt tests are not fix targets; fix the model or edit the test by hand"},
+			}, p.NodeOutcomes)
+		})
+	}
 }
