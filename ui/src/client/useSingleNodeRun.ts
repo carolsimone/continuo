@@ -12,6 +12,14 @@ interface NodeRef {
   table: string;
 }
 
+// The latest press of one node: its token tells it from the node's other
+// presses, and state and error are what the node shows.
+interface Press {
+  token: number;
+  state: SingleNodeRunState;
+  error: string | null;
+}
+
 interface Options {
   // The operation a press asks for unless postRun pins another.
   operation: NodeOperation;
@@ -36,64 +44,66 @@ interface Options {
 // server has given its final answer. Without an observation only that final
 // answer renews it.
 //
-// The state of the press belongs to the node the component shows. When the
-// component is given another node the state returns to idle, and the answer of
-// a press made for the node it left changes nothing it shows: it neither marks
-// the new node's press as started or failed nor calls onStarted, whose reads
-// are those of the node left. The answer still settles the request id.
+// The state of a press belongs to the node it was made for. Each node the
+// component has shown keeps the state of its latest press, and the component
+// returns the state of the node it shows now: idle for a node with no press,
+// and the press of a node again once the component comes back to it. The answer
+// of a press made for another node only changes the state of that press, and
+// does not call onStarted, whose reads are those of the node shown. An answer
+// renews only the request id its own press sent, so it never closes the
+// request of a press made since for another node.
 export function useSingleNodeRun({ service, schema, table }: NodeRef, { operation, observed, onStarted }: Options) {
-  const [runState, setRunState] = useState<SingleNodeRunState>('idle');
-  const [runError, setRunError] = useState<string | null>(null);
+  const [presses, setPresses] = useState<Readonly<Record<string, Press>>>({});
+  const nextToken = useRef(0);
   const { take: takeRequestId, renew: renewRunRequestId } = useActionRequestId();
 
   // The node the component shows now, which an answer compares with the node
-  // its press was made for. It is set when a change of node commits, before
-  // any answer can arrive.
+  // its press was made for. Until a change of node commits, the component still
+  // shows the node left, and an answer then belongs to it.
   const shownNode = `${service}.${schema}.${table}`;
   const shownNodeRef = useRef(shownNode);
   useLayoutEffect(() => {
     shownNodeRef.current = shownNode;
-    setRunState('idle');
-    setRunError(null);
   }, [shownNode]);
+
+  const shown = presses[shownNode];
+  const runState: SingleNodeRunState = shown?.state ?? 'idle';
+  const runError = shown?.error ?? null;
 
   // opOverride pins the operation for a caller that must send exactly what it
   // confirmed, independent of the select's current value. The promise
   // resolves to null once the run started, and to the error shown otherwise.
   const postRun = useCallback(async (body: object, opOverride?: NodeOperation): Promise<string | null> => {
     const pressedFor = shownNode;
+    const token = ++nextToken.current;
     const stillShown = () => shownNodeRef.current === pressedFor;
-    setRunState('loading');
-    setRunError(null);
+    // Each state change is the press's own: a later press of the node has
+    // another token, and the answers and timers of this one leave it alone.
+    const settle = (state: SingleNodeRunState, error: string | null) => setPresses(prev => (
+      prev[pressedFor]?.token === token ? { ...prev, [pressedFor]: { token, state, error } } : prev
+    ));
+    setPresses(prev => ({ ...prev, [pressedFor]: { token, state: 'loading', error: null } }));
     try {
       const op = opOverride ?? operation;
       const asked = { ...body, operation: op === 'run' ? '' : op };
-      const withOp = { ...asked, request_id: takeRequestId(`${service}.${schema}.${table}|${JSON.stringify(asked)}`, observed) };
+      const requestId = takeRequestId(`${service}.${schema}.${table}|${JSON.stringify(asked)}`, observed);
       const res = await fetch(
         `/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/run`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(withOp) },
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...asked, request_id: requestId }) },
       );
-      if (settlesRequest(res)) renewRunRequestId();
+      if (settlesRequest(res)) renewRunRequestId(requestId);
       if (res.ok) {
-        if (stillShown()) {
-          setRunState('success');
-          onStarted?.();
-          setTimeout(() => { if (stillShown()) setRunState('idle'); }, 3000);
-        }
+        settle('success', null);
+        if (stillShown()) onStarted?.();
+        setTimeout(() => settle('idle', null), 3000);
         return null;
       }
       const errBody = await res.json().catch(() => ({ error: REQUEST_FAILED }));
       const message: string = errBody.error ?? REQUEST_FAILED;
-      if (stillShown()) {
-        setRunError(message);
-        setRunState('error');
-      }
+      settle('error', message);
       return message;
     } catch {
-      if (stillShown()) {
-        setRunError(REQUEST_FAILED);
-        setRunState('error');
-      }
+      settle('error', REQUEST_FAILED);
       return REQUEST_FAILED;
     }
   }, [shownNode, service, schema, table, onStarted, operation, observed, takeRequestId, renewRunRequestId]);

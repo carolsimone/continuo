@@ -233,6 +233,14 @@ export default function NodeDetailPage() {
     return () => { summaryAppliedRef.current = summaryStartedRef.current; };
   }, [fetchNodeSummary]);
 
+  // A dialog opened for the node left is closed: a full refresh it confirms
+  // would otherwise run on the node the page shows now and drop its table.
+  useEffect(() => {
+    setPickerOpen(false);
+    setConfirmOpen(false);
+    setPendingSource(null);
+  }, [service, schema, table]);
+
   const canFullRefresh = FULL_REFRESH_NODE_TYPES.has(nodeType);
 
   // A full refresh selected via navigation state falls back to Run once the
