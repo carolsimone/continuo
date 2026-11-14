@@ -12,15 +12,14 @@ shipped in those.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-11-14
+
 **TL;DR**
 
-- A table that a node reads and no node builds now shows in the DAG as a grey `ingested` node.
-- Hold releases with maintenance mode while you upgrade, and do not roll release-controller back afterwards.
-- Every node's code fingerprint (`content_hash`) is computed anew, closing 23 gaps. After the upgrade, release each service once with `"rebaseline": true`.
-- The default validation image is `v0.12.0`, and a pinned validation image below it fails the render.
-- release-controller serves a read-only gRPC call on port 50056 for `continuo release notices`.
-- A seed load that drops its table rebuilds the continuo views that read it.
-- No values change is needed unless you pin `validation.imageTag` below `v0.12.0`.
+- New: tables continuo does not build show as grey `ingested` nodes, a seed load that drops its table rebuilds the views that read it in the same run, and `continuo release notices` shows what a release will reload.
+- You must act: hold releases with maintenance mode while you upgrade, then release every service once with `"rebaseline": true` (steps below). Do not roll release-controller back afterwards.
+- The default validation image is `v0.12.0`, and a pinned `validation.imageTag` below it fails the render.
+- No other values change is needed.
 
 ### Upgrade steps
 
