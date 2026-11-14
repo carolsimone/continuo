@@ -118,20 +118,55 @@ func (d *data) snapshot(rem *remediation.Remediation) (remediation.Snapshot, err
 	if try == nil {
 		return remediation.Snapshot{}, fmt.Errorf("load remediation %s: current try %d has no row", rem.ID, rem.CurrentTry)
 	}
+	return d.trySnapshot(rem, try), nil
+}
+
+// trySnapshot is one try of a remediation with that try's clusters, ordered by
+// cluster, and steps, in insertion order, which is id order.
+func (d *data) trySnapshot(rem *remediation.Remediation, try *remediation.Try) remediation.Snapshot {
 	t := cloneTry(*try)
-	snap.Try = &t
+	snap := remediation.Snapshot{Remediation: cloneRemediation(*rem), Try: &t}
 	for key, c := range d.clusters {
-		if key.remediationID == rem.ID && key.try == rem.CurrentTry {
+		if key.remediationID == rem.ID && key.try == try.Try {
 			snap.Clusters = append(snap.Clusters, cloneCluster(*c))
 		}
 	}
 	sort.Slice(snap.Clusters, func(i, j int) bool { return snap.Clusters[i].Cluster < snap.Clusters[j].Cluster })
 	for _, s := range d.steps {
-		if s.RemediationID == rem.ID && s.Try == rem.CurrentTry {
+		if s.RemediationID == rem.ID && s.Try == try.Try {
 			snap.Steps = append(snap.Steps, cloneStep(*s))
 		}
 	}
-	return snap, nil
+	return snap
+}
+
+// ListTriesOfRelease returns one snapshot per try of every remediation of the
+// tenant's release, by round then try.
+func (r *remediationRepository) ListTriesOfRelease(_ context.Context, tenantID, releaseID string) ([]remediation.Snapshot, error) {
+	var out []remediation.Snapshot
+	err := r.gate(func(d *data) error {
+		var rems []*remediation.Remediation
+		for _, rem := range d.remediations {
+			if rem.TenantID == tenantID && rem.ReleaseID == releaseID {
+				rems = append(rems, rem)
+			}
+		}
+		sort.Slice(rems, func(i, j int) bool { return rems[i].Round < rems[j].Round })
+		for _, rem := range rems {
+			var tries []*remediation.Try
+			for key, t := range d.tries {
+				if key.remediationID == rem.ID {
+					tries = append(tries, t)
+				}
+			}
+			sort.Slice(tries, func(i, j int) bool { return tries[i].Try < tries[j].Try })
+			for _, t := range tries {
+				out = append(out, d.trySnapshot(rem, t))
+			}
+		}
+		return nil
+	})
+	return out, err
 }
 
 // Get reads the remediation's snapshot under the store's lock, from the data

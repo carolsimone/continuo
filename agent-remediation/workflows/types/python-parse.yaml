@@ -11,7 +11,6 @@ context:
   - contract_entry
   - upstream_changes
   - failure_precedents
-  - prior_attempts
 agent: { prompt: python-parse, tools: [], rounds: 1 }
 preflight:
   - contract_paths_inside_folder

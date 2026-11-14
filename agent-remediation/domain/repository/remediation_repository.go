@@ -20,15 +20,28 @@ var (
 	ErrRemediationNotFound = errors.New("remediation not found")
 )
 
+// TryLister is the repository slice the previous_tries step reads: every try
+// a tenant's release has had, in every remediation round. It is a narrower view
+// of the ListTriesOfRelease method RemediationRepository declares.
+type TryLister interface {
+	// ListTriesOfRelease returns one snapshot per try of every remediation of
+	// the tenant's release, ordered by remediation round then try. Each
+	// snapshot holds its remediation, that try (not necessarily the current
+	// one), and that try's clusters (ordered by cluster) and steps (ordered by
+	// id). A remediation with no try adds none. It takes no lock and needs no
+	// transaction, so a try being written while it reads may be torn.
+	ListTriesOfRelease(ctx context.Context, tenantID, releaseID string) ([]remediation.Snapshot, error)
+}
+
 // RemediationRepository persists the runner's state: remediations, their tries,
 // the clusters of each try and the steps that work on a cluster. A worker owns
 // a remediation through a lease, which only the lease methods change.
 //
 // An implementation bound to a unit of work's transaction is what a step's
 // commit uses (Hold, Load and the Save methods). One bound to the database
-// serves the worker, the verification poller and the retention sweeper, which
-// call ClaimNext, Claim, ReleaseLease, the list methods and
-// DeleteFinishedOlderThan outside any transaction. Get is a read-only snapshot
+// serves the worker, the verification poller, the retention sweeper and the
+// previous_tries step, which call ClaimNext, Claim, ReleaseLease, the list
+// methods and DeleteFinishedOlderThan outside any transaction. Get is a read-only snapshot
 // that takes no lock and needs no transaction, so either implementation may
 // serve it; the worker calls it inside a read-only unit of work that is rolled
 // back. In both places two claimers never get one remediation.
@@ -105,6 +118,8 @@ type RemediationRepository interface {
 	// cluster, step, round). The row's id is assigned on insert and kept on
 	// update; s.ID is ignored.
 	SaveStep(ctx context.Context, s remediation.StepRun) error
+
+	TryLister
 
 	// ListVerifying returns up to limit running remediations whose current try
 	// is 'verifying', each as Get returns it, oldest first.

@@ -510,3 +510,23 @@ func TestDBTValidation_ALaterRoundWithoutThePreviousCallIsAnErrorAndCallsNoModel
 		})
 	}
 }
+
+// The diagnosis is where the model decides what to change, so the earlier tries
+// go with it, and the source-fix call that applies the diagnosis is left as it
+// is.
+func TestDBTValidation_TheDiagnosisIsShownTheEarlierTriesAndTheSourceFixIsNot(t *testing.T) {
+	tries := []remediation.TryRecord{{
+		Round: 1, Try: 1, Attempt: 1,
+		Clusters: []remediation.ClusterRecord{{Members: []string{"model.svc.a"}, Edits: []remediation.EditRecord{{Path: repoFilePath, Diff: "<-bad\n+worse>"}}}},
+		Gate:     []remediation.Finding{{Code: "verification_failed", Message: "<model.svc.a: column worse does not exist>"}},
+	}}
+	ev := validationEvidence(resolvedBundle()).With(remediation.KeyPreviousTries, tries)
+	model := answers(stepOne(fixedSQL), stepTwo(fixedSource, "high"))
+
+	proposeValidation(t, &fakeArtifacts{}, failure(nil), ev, model)
+
+	require.Len(t, model.reqs, 2)
+	assert.Equal(t, step.WithPreviousTries(firstRequest(true), ev), model.reqs[0])
+	assert.Contains(t, model.reqs[0].User, "Why the gate failed: <model.svc.a: column worse does not exist>")
+	assert.Equal(t, secondRequest(), model.reqs[1])
+}

@@ -45,9 +45,12 @@ type Collaborators struct {
 	Packager ports.ContractPackager
 	// Releases reads the original failing release's node-failure set.
 	Releases ports.ReleaseReader
-	// PriorAttempts reads the attempts already recorded for the failing node,
-	// so a later attempt's prompt can show what earlier ones tried.
+	// PriorAttempts reads the release's proposal rows, so a later try's prompt
+	// can show what the legacy engine's attempts tried.
 	PriorAttempts repository.AttemptLister
+	// Tries reads every try the runner made at the release, so a later try's
+	// prompt can show what earlier tries tried and why they were refused.
+	Tries repository.TryLister
 	// SQLDialect is the sqlglot dialect the warehouse this install runs
 	// speaks, resolved from the operator's configured warehouse engine.
 	SQLDialect string

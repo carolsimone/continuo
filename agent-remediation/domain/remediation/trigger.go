@@ -117,8 +117,8 @@ func (t Trigger) Services() []string {
 }
 
 // Failure is one cluster of failing nodes to fix: the trigger it came from, the
-// cluster's shape, the node the fix edits, its member nodes and the proposal
-// attempt it belongs to.
+// cluster's shape, the node the fix edits, its member nodes, and the try and
+// proposal attempt it belongs to.
 type Failure struct {
 	Trigger      Trigger
 	Kind         workflow.ClusterKind
@@ -127,6 +127,9 @@ type Failure struct {
 	Members      []TriggerNode
 	// Attempt is the proposal attempt number of the try.
 	Attempt int
+	// Try is the try's number within its remediation, whose round is the
+	// trigger's.
+	Try int
 }
 
 // PrecedentSubject is the node whose failure precedents inform the fix: the

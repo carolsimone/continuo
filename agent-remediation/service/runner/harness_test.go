@@ -528,6 +528,16 @@ func withoutCrossClusterChecks() option {
 	}
 }
 
+// withPreviousTries gives the flow the context step previous_tries, as the
+// built-in flow lists it.
+func withPreviousTries() option {
+	return func(h *harness) {
+		flow := h.files.Flows["rejected-release"]
+		flow.Context = refs("previous_tries")
+		h.files.Flows[flow.Name] = flow
+	}
+}
+
 // withFlowContext gives the flow the context step dbt_log, which the
 // dbt-compile type then no longer lists itself.
 func withFlowContext() option {
@@ -577,6 +587,7 @@ func newHarness(t *testing.T, opts ...option) *harness {
 		Precedents:          noPrecedents{},
 		Upstream:            noUpstream{},
 		PriorAttempts:       h.store.ProposalRepository(),
+		Tries:               h.store.RemediationRepository(),
 		CandidateSource:     h.bundle,
 		Versions:            noVersions{},
 		Releases:            fakeReleases{},

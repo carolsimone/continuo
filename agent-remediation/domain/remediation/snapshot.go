@@ -104,8 +104,9 @@ type StepRun struct {
 	FinishedAt    *time.Time
 }
 
-// Snapshot is one remediation run as stored: the run, its current try, and the
-// clusters and steps of that try.
+// Snapshot is one remediation run as stored: the run, one of its tries (its
+// current try, unless the reader says otherwise), and the clusters and steps of
+// that try.
 type Snapshot struct {
 	Remediation Remediation
 	Try         *Try

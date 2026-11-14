@@ -144,7 +144,8 @@ func (p *sourcePrompt) Propose(ctx context.Context, in step.PromptInput, m step.
 	return step.PromptOutput{Draft: p.draft(in.Failure, files, res)}, nil
 }
 
-// request builds the first round's request from the cluster's evidence.
+// request builds the first round's request from the cluster's evidence, with
+// the earlier tries at the failure (step.WithPreviousTries).
 func (p *sourcePrompt) request(in step.PromptInput, files remediation.SourceFiles) prompt.ProposeRequest {
 	var dbtLog string
 	if p.readsLog {
@@ -152,7 +153,7 @@ func (p *sourcePrompt) request(in step.PromptInput, files remediation.SourceFile
 		dbtLog = string(log)
 	}
 	precedents, _ := remediation.Get[[]prompt.Precedent](in.Evidence, remediation.KeyFailurePrecedents)
-	return p.build(p.sanitizer, in.Failure, files, dbtLog, precedents)
+	return step.WithPreviousTries(p.build(p.sanitizer, in.Failure, files, dbtLog, precedents), in.Evidence)
 }
 
 // draft reads the model's answer into a draft. The edit's original is the file

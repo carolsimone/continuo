@@ -57,7 +57,7 @@ func (r *Runner) checkedCluster(run tryRun, c remediation.Cluster) (checkedClust
 		}
 		return row, nil
 	}
-	ev := remediation.NewEvidence().With(remediation.KeyFailure, failureFor(run.trigger, c, run.snap.Try.Attempt))
+	ev := remediation.NewEvidence().With(remediation.KeyFailure, failureFor(run.trigger, c, *run.snap.Try))
 	for _, ps := range plan.context {
 		row, err := doneRow(string(ps.name), contextRound)
 		if err != nil {

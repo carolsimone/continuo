@@ -23,7 +23,7 @@ import (
 // The kinds of journal row the runner writes besides a step's own Kind.
 const (
 	// kindRunner is a step the runner itself performs.
-	kindRunner = "runner"
+	kindRunner = serialization.RunnerKind
 	// kindOutput is an output step.
 	kindOutput = "output"
 )
@@ -37,7 +37,7 @@ const (
 	// Its row's output holds the draft as the pass left it: with every edit's
 	// original filled and, once every check passed, the URIs of its stored
 	// content and diff. Its findings are every finding of the pass.
-	stepPreflight = "preflight"
+	stepPreflight = serialization.PreflightStep
 	// stepDrafts reads the checked drafts of a try back from the journal once
 	// every cluster has ended. It is a flow-level row, and has one only when
 	// that failed.

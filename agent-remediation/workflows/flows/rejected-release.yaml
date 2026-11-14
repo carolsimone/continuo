@@ -17,7 +17,7 @@ types:
   - csv-validation
   - shared-upstream
   - cross-service-upstream
-context: []
+context: [previous_tries]
 across_clusters: [edits_map_to_a_service, no_path_edited_twice, one_manifest_kind]
 gate: [verification_run]
 tries: 3

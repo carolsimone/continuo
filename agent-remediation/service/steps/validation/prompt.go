@@ -154,7 +154,11 @@ func (p *DBTValidation) repoPrefix(bundle remediation.CandidateSource) (string, 
 	return prefix, nil
 }
 
-// diagnosisRequest builds the first call's request from the cluster's evidence.
+// diagnosisRequest builds the first call's request from the cluster's
+// evidence, with the earlier tries at the failure (step.WithPreviousTries). The
+// diagnosis is where the model decides what to change, so it is what the
+// earlier tries inform; the source-fix call that follows applies that
+// diagnosis, and is shown only the diagnosis and the source.
 func (p *DBTValidation) diagnosisRequest(in step.PromptInput, candidateSQL remediation.Text) prompt.ProposeRequest {
 	dbtLog, _ := remediation.Get[remediation.Text](in.Evidence, remediation.KeyDBTLog)
 	ownDiff, _ := remediation.Get[remediation.Text](in.Evidence, remediation.KeyOwnChangeDiff)
@@ -163,7 +167,7 @@ func (p *DBTValidation) diagnosisRequest(in step.PromptInput, candidateSQL remed
 	ancestors, _ := remediation.Get[[]prompt.ReleaseUpstreamChange](in.Evidence, remediation.KeyChangedAncestorDiffs)
 
 	f := in.Failure
-	return prompt.Assemble(prompt.Evidence{
+	return step.WithPreviousTries(prompt.Assemble(prompt.Evidence{
 		NodeID:                 f.Target.NodeID,
 		ErrorSignature:         f.Target.ErrorSignature,
 		CandidateSQL:           string(candidateSQL),
@@ -173,7 +177,7 @@ func (p *DBTValidation) diagnosisRequest(in step.PromptInput, candidateSQL remed
 		Precedents:             precedents,
 		ReleaseUpstreamChanges: ancestors,
 		ReleaseAncestorsKnown:  f.Trigger.Source == sourceValidation,
-	})
+	}), in.Evidence)
 }
 
 // reviseSourceFix makes the one call of a round that revises the previous

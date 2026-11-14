@@ -93,10 +93,12 @@ type PromptRecord struct {
 
 // CheckRecord is a check's output as its row stores it: its result and, for a
 // pre-flight check, the evidence it gathered. A cross-cluster check and the
-// gate store a result only.
+// gate store a result only, and the gate's row is marked Gate, which tells it
+// apart from the cross-cluster checks' rows of the same try.
 type CheckRecord struct {
 	Result   remediation.CheckResult `json:"result"`
 	Evidence EncodedEvidence         `json:"evidence,omitempty"`
+	Gate     bool                    `json:"gate,omitempty"`
 }
 
 // PreflightRecord is the output of the runner's pre-flight pass of a cluster:

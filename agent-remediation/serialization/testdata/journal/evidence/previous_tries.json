@@ -1,0 +1,49 @@
+[
+  {
+    "Round": 1,
+    "Try": 2,
+    "Attempt": 2,
+    "Clusters": [
+      {
+        "Type": "dbt-validation",
+        "TargetNodeID": "orders.model.orders_daily",
+        "Members": [
+          "orders.model.orders_daily"
+        ],
+        "Edits": [
+          {
+            "Path": "services/orders/models/orders_daily.sql",
+            "Diff": "-a\n+b"
+          }
+        ],
+        "Rounds": [
+          [
+            {
+              "Code": "content_unchanged",
+              "Message": "the answer repeats the original",
+              "File": "models/orders_daily.sql",
+              "Line": 1
+            }
+          ]
+        ],
+        "Outcome": "failed: pre-flight rounds spent"
+      }
+    ],
+    "CrossCluster": [
+      {
+        "Code": "path_edited_twice",
+        "Message": "edited twice",
+        "File": "models/orders_daily.sql",
+        "Line": 2
+      }
+    ],
+    "Gate": [
+      {
+        "Code": "verification_failed",
+        "Message": "column x does not exist",
+        "File": "models/orders_daily.sql",
+        "Line": 3
+      }
+    ]
+  }
+]

@@ -3,8 +3,8 @@ package shared
 import (
 	"context"
 	"log/slog"
-	"unicode/utf8"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 )
@@ -36,19 +36,5 @@ func (d ChangeDiffer) Diff(ctx context.Context, nodeID, candidateSource string) 
 	if !ok {
 		return ""
 	}
-	return truncateDiff(d.Sanitizer.Sanitize(proposal.ComputeUnifiedDiff(cur.RawCode, candidateSource, nodeID)), maxChangeDiffBytes)
-}
-
-// truncateDiff caps a diff at max bytes, appending a marker when it was cut.
-// The cut is backed up to a UTF-8 rune boundary so truncation never splits a
-// multibyte character, which would render as U+FFFD in the prompt.
-func truncateDiff(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	cut := max
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut] + "\n… (diff truncated)"
+	return prompt.TruncateDiff(d.Sanitizer.Sanitize(proposal.ComputeUnifiedDiff(cur.RawCode, candidateSource, nodeID)), maxChangeDiffBytes)
 }

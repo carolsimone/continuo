@@ -16,7 +16,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
+	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 )
 
 // leaseLog is a remediation repository that hands out one remediation and
@@ -309,4 +311,10 @@ func TestWorker_WakeEndsTheIdleWait(t *testing.T) {
 	w.Wake()
 	w.Wake()
 	require.Eventually(t, func() bool { repo.mu.Lock(); defer repo.mu.Unlock(); return len(repo.claims) >= 2 }, 5*time.Second, time.Millisecond)
+}
+
+// A check's row carries the kind serialization reads back into an earlier
+// try's record.
+func TestACheckRowHasTheKindTryRecordsRead(t *testing.T) {
+	assert.Equal(t, serialization.CheckKind, string(step.KindCheck))
 }

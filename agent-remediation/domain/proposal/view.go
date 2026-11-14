@@ -40,7 +40,11 @@ type View struct {
 	ReleaseID string
 	// RemediationRound is the release's remediation round this attempt belongs to; the attempt cap is counted within a round.
 	RemediationRound int
-	NodeID           string
+	// RemediationID is the id of the runner's remediation the attempt belongs
+	// to, empty for an attempt of the legacy engine or one whose remediation
+	// was deleted.
+	RemediationID string
+	NodeID        string
 	// ResolvedNodeIDs is the failing nodes this attempt addresses, sorted;
 	// NodeID is their representative.
 	ResolvedNodeIDs []string

@@ -72,7 +72,7 @@ func (r *Runner) runClusterStep(ctx context.Context, run tryRun, c remediation.C
 	if err != nil {
 		return r.recordFailure(ctx, r.newRow(run, c.Cluster, stepPlan, kindRunner, c.Round, run.flow.Revision), err)
 	}
-	f := failureFor(run.trigger, c, run.snap.Try.Attempt)
+	f := failureFor(run.trigger, c, *run.snap.Try)
 	ev := remediation.NewEvidence().With(remediation.KeyFailure, f)
 	for i, ps := range plan.context {
 		row, done := run.journal.done(c.Cluster, string(ps.name), contextRound)
@@ -475,11 +475,11 @@ func lookup[T any](reg *Registry, name workflow.StepName, kind step.Kind) (T, er
 }
 
 // failureFor is the cluster as its steps read it: the trigger, the cluster's
-// shape, the node the fix edits and its member nodes. An upstream cluster's
-// target is a changed ancestor the trigger may not carry as a failing node;
-// it is then named by its id alone.
-func failureFor(t remediation.Trigger, c remediation.Cluster, attempt int) remediation.Failure {
-	f := remediation.Failure{Trigger: t, Kind: c.Kind, TargetNodeID: c.TargetNodeID, Attempt: attempt}
+// shape, the node the fix edits, its member nodes, and the try with its
+// attempt. An upstream cluster's target is a changed ancestor the trigger may
+// not carry as a failing node; it is then named by its id alone.
+func failureFor(t remediation.Trigger, c remediation.Cluster, try remediation.Try) remediation.Failure {
+	f := remediation.Failure{Trigger: t, Kind: c.Kind, TargetNodeID: c.TargetNodeID, Attempt: try.Attempt, Try: try.Try}
 	if n, ok := nodeByID(t, c.TargetNodeID); ok {
 		f.Target = n
 	} else {

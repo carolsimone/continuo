@@ -66,13 +66,14 @@ const (
 )
 
 // equivalenceScenarios are the scenarios both engines run, in run order, each
-// with the statuses its attempts end in.
+// with the statuses its attempts end in. Only a first try is compared: a later
+// try of the runner is shown the earlier tries, which today's driver shows only
+// for a python node and in another form.
 var equivalenceScenarios = []struct {
 	scenario conformance.Scenario
 	attempts []proposal.Status
 }{
 	{conformance.FirstDraftPasses, []proposal.Status{proposal.StatusProposed}},
-	{conformance.GateFailsThenPasses, []proposal.Status{proposal.StatusFailed, proposal.StatusProposed}},
 }
 
 func TestEquivalence(t *testing.T) {
@@ -127,9 +128,8 @@ func typeFixture(t *testing.T, fixtures []conformance.Fixture, typeName string) 
 }
 
 // equivalenceScript is what the fakes answer in scenario sc of fixture f, as
-// the conformance suite scripts it: the passing answers, each member's own
-// passing answers, and the first attempt's runs failing in
-// gate_fails_then_passes.
+// the conformance suite scripts it: the passing answers and each member's own
+// passing answers.
 func equivalenceScript(t *testing.T, f conformance.Fixture, sc conformance.Scenario) conformance.Script {
 	t.Helper()
 	require.NotEmpty(t, f.Answers.Pass, "%s has passing answers", f.File)
@@ -140,11 +140,7 @@ func equivalenceScript(t *testing.T, f conformance.Fixture, sc conformance.Scena
 			script.MemberAnswers[node] = a.Pass
 		}
 	}
-	switch sc {
-	case conformance.FirstDraftPasses:
-	case conformance.GateFailsThenPasses:
-		script.FailedAttempts = 1
-	default:
+	if sc != conformance.FirstDraftPasses {
 		t.Fatalf("scenario %s is not an equivalence scenario", sc)
 	}
 	return script

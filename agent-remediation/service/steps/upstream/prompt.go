@@ -90,7 +90,8 @@ func (p *Prompt) Propose(ctx context.Context, in step.PromptInput, m step.Model)
 	}}, nil
 }
 
-// request builds the first round's request from the cluster's evidence.
+// request builds the first round's request from the cluster's evidence, with
+// the earlier tries at the failure (step.WithPreviousTries).
 func (p *Prompt) request(in step.PromptInput, target remediation.UpstreamTarget) prompt.ProposeRequest {
 	precedents, _ := remediation.Get[[]prompt.Precedent](in.Evidence, remediation.KeyFailurePrecedents)
 
@@ -99,14 +100,14 @@ func (p *Prompt) request(in step.PromptInput, target remediation.UpstreamTarget)
 	for _, n := range f.Members {
 		members = append(members, prompt.MemberFailure{NodeID: n.NodeID, Service: n.Service, ErrorExcerpt: p.sanitizer.Sanitize(n.ErrorExcerpt)})
 	}
-	return prompt.AssembleUpstreamFix(prompt.UpstreamEvidence{
+	return step.WithPreviousTries(prompt.AssembleUpstreamFix(prompt.UpstreamEvidence{
 		TargetNodeID:  target.NodeID,
 		TargetSource:  p.sanitizer.Sanitize(target.Source),
 		OwnChangeDiff: target.OwnChangeDiff,
 		Members:       members,
 		Precedents:    precedents,
 		CrossService:  f.Kind == workflow.ClusterCrossService,
-	})
+	}), in.Evidence)
 }
 
 // repoPath is where the ancestor's file lives in the repository.

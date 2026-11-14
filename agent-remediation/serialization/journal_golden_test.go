@@ -125,6 +125,7 @@ func sampleFailure() remediation.Failure {
 		Target:       target,
 		Members:      []remediation.TriggerNode{target},
 		Attempt:      3,
+		Try:          2,
 	}
 }
 
@@ -236,8 +237,16 @@ func evidenceSamples() map[remediation.EvidenceKey]any {
 			YAMLPath: "svc/contracts/fx.yaml", YAMLText: "nodes: []",
 		},
 		remediation.KeyContractEntry: remediation.Text("schema: analytics\ntable: fx"),
-		remediation.KeyPriorAttempts: []prompt.PriorAttempt{{
-			Attempt: 1, VerifyError: "column x does not exist", Diffs: []prompt.AttemptDiff{{Path: "svc/contracts/fx.yaml", Diff: "-a\n+b"}},
+		remediation.KeyPreviousTries: []remediation.TryRecord{{
+			Round: 1, Try: 2, Attempt: 2,
+			Clusters: []remediation.ClusterRecord{{
+				Type: "dbt-validation", TargetNodeID: "orders.model.orders_daily", Members: []string{"orders.model.orders_daily"},
+				Edits:   []remediation.EditRecord{{Path: "services/orders/models/orders_daily.sql", Diff: "-a\n+b"}},
+				Rounds:  [][]remediation.Finding{{{Code: "content_unchanged", Message: "the answer repeats the original", File: "models/orders_daily.sql", Line: 1}}},
+				Outcome: "failed: pre-flight rounds spent",
+			}},
+			CrossCluster: []remediation.Finding{{Code: "path_edited_twice", Message: "edited twice", File: "models/orders_daily.sql", Line: 2}},
+			Gate:         []remediation.Finding{{Code: "verification_failed", Message: "column x does not exist", File: "models/orders_daily.sql", Line: 3}},
 		}},
 		remediation.KeyPackagedContract: remediation.Bytes("packaged contract"),
 		remediation.KeyUpstreamTarget: remediation.UpstreamTarget{
@@ -380,6 +389,9 @@ func TestJournal_RecordsKeepTheirStoredJSON(t *testing.T) {
 		}),
 		recordOf("check_result_only", serialization.CheckRecord{Result: sampleCheckResult()}, func(t *testing.T, got serialization.CheckRecord) {
 			assert.Equal(t, serialization.CheckRecord{Result: sampleCheckResult()}, got)
+		}),
+		recordOf("check_gate", serialization.CheckRecord{Result: sampleCheckResult(), Gate: true}, func(t *testing.T, got serialization.CheckRecord) {
+			assert.Equal(t, serialization.CheckRecord{Result: sampleCheckResult(), Gate: true}, got)
 		}),
 		recordOf("preflight", serialization.PreflightRecord{Draft: sampleDraft()}, func(t *testing.T, got serialization.PreflightRecord) {
 			assert.Equal(t, serialization.PreflightRecord{Draft: sampleDraft()}, got)

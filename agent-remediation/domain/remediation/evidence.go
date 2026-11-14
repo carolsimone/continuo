@@ -31,8 +31,8 @@ const (
 	KeyContractFile EvidenceKey = "contract_file"
 	// KeyContractEntry holds Text.
 	KeyContractEntry EvidenceKey = "contract_entry"
-	// KeyPriorAttempts holds []prompt.PriorAttempt.
-	KeyPriorAttempts EvidenceKey = "prior_attempts"
+	// KeyPreviousTries holds []TryRecord.
+	KeyPreviousTries EvidenceKey = "previous_tries"
 	// KeyUpstreamTarget holds UpstreamTarget.
 	KeyUpstreamTarget EvidenceKey = "upstream_target"
 	// KeyPackagedContract holds Bytes.

@@ -36,7 +36,7 @@ const (
 // The cluster and round of a flow-level step's journal row: a cross-cluster
 // check, the gate or an output.
 const (
-	flowCluster = 0
+	flowCluster = serialization.FlowCluster
 	flowRound   = 1
 	// flowGateRowName is the step name of the gate's row for a flow that names
 	// no gate step.

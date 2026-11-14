@@ -253,6 +253,7 @@ type proposalRow struct {
 	Source              string         `db:"source"`
 	ReleaseID           string         `db:"release_id"`
 	RemediationRound    int            `db:"remediation_round"`
+	RemediationID       sql.NullString `db:"remediation_id"`
 	NodeID              string         `db:"node_id"`
 	ErrorSignature      string         `db:"error_signature"`
 	Attempt             int            `db:"attempt"`
@@ -455,6 +456,7 @@ func (row proposalRow) toView() proposal.View {
 		Source:              row.Source,
 		ReleaseID:           row.ReleaseID,
 		RemediationRound:    row.RemediationRound,
+		RemediationID:       row.RemediationID.String,
 		NodeID:              row.NodeID,
 		ResolvedNodeIDs:     resolvedOrLegacy(row.ResolvedNodeIDs, row.NodeID),
 		ErrorSignature:      row.ErrorSignature,
@@ -494,7 +496,7 @@ const proposalColumns = `id, source, release_id, remediation_round, node_id, err
 		       candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
 		       repo, commit_sha, file_path, file_edits, model, created_at,
 		       pr_url, pr_number, pr_state, pr_opened_at, pr_opened_by, pr_closed_at,
-		       resolved_node_ids, node_outcomes, verifications, services`
+		       resolved_node_ids, node_outcomes, verifications, services, remediation_id`
 
 // claimRow is the persistence DTO for the BeginPR RETURNING projection.
 type claimRow struct {

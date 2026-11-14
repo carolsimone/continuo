@@ -321,3 +321,20 @@ func TestPrompts_ALaterRoundWithoutThePreviousCallIsAnErrorAndCallsNoModel(t *te
 		}
 	}
 }
+
+func TestPrompts_TheFirstRoundIsShownTheEarlierTries(t *testing.T) {
+	tries := []remediation.TryRecord{{
+		Round: 1, Try: 1, Attempt: 1,
+		Clusters: []remediation.ClusterRecord{{Members: []string{"svc"}, Edits: []remediation.EditRecord{{Path: sqlPath, Diff: "<-select 1\n+select 3>"}}}},
+		Gate:     []remediation.Finding{{Code: "verification_failed", Message: "<svc: still broken>"}},
+	}}
+	ev := evidenceFor(shownFiles).With(remediation.KeyPreviousTries, tries)
+	f := failure("compile", remediation.TriggerNode{NodeID: "svc", FilePath: "models/x.sql"})
+	m := &fakeModel{results: []ports.ProposeResult{answer("models/x.sql", "select 2")}}
+
+	propose(t, source.NewDBTCompile(markSanitizer{}), f, ev, m)
+
+	want := prompt.AssembleCompileFix(sanitizedAll(shownFiles), "sanitized log", "svc", precedents)
+	assert.Equal(t, step.WithPreviousTries(want, ev), m.reqs[0])
+	assert.Contains(t, m.reqs[0].User, "### Try 1 (round 1)")
+}

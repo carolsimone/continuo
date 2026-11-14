@@ -34,7 +34,7 @@ func NewPythonContract(sanitizer ports.LogSanitizer) step.Prompt {
 	return &contractPrompt{
 		name: "python-contract",
 		description: "Shows the model a python node's contract yaml with the validation error, runner log, the contract entry the release recorded, " +
-			"upstream changes, precedent and earlier attempts, and reads back the complete new content of every contract file it changes.",
+			"upstream changes, precedent and the earlier tries at the failure, and reads back the complete new content of every contract file it changes.",
 		assemble:  prompt.AssemblePythonContractFix,
 		sanitizer: sanitizer,
 	}
@@ -45,7 +45,7 @@ func NewPythonContract(sanitizer ports.LogSanitizer) step.Prompt {
 func NewPythonParse(sanitizer ports.LogSanitizer) step.Prompt {
 	return &contractPrompt{
 		name: "python-parse",
-		description: "Shows the model a python node's contract yaml with the SQL parser's error, upstream changes, precedent and earlier attempts, " +
+		description: "Shows the model a python node's contract yaml with the SQL parser's error, upstream changes, precedent and the earlier tries at the failure, " +
 			"and reads back the complete new content of every contract file it changes.",
 		assemble:  prompt.AssemblePythonParseFix,
 		sanitizer: sanitizer,
@@ -58,7 +58,7 @@ func NewCSVContract(sanitizer ports.LogSanitizer) step.Prompt {
 	return &contractPrompt{
 		name: "csv-contract",
 		description: "Shows the model a python-csv node's contract yaml with the validation error, the header check's runner log, the contract entry the release recorded, " +
-			"upstream changes, precedent and earlier attempts, and reads back the complete new content of every contract file it changes.",
+			"upstream changes, precedent and the earlier tries at the failure, and reads back the complete new content of every contract file it changes.",
 		assemble: func(ev prompt.PythonEvidence) prompt.ProposeRequest {
 			return prompt.AssembleCsvContractFix(prompt.CsvEvidence(ev))
 		},
@@ -79,17 +79,17 @@ func (p *contractPrompt) Meta() step.Meta {
 			remediation.KeyDBTLog,
 			remediation.KeyUpstreamChanges,
 			remediation.KeyFailurePrecedents,
-			remediation.KeyPriorAttempts,
 		},
 	}
 }
 
 // Propose makes the model call and reads its answer into a draft. In the first
-// round it assembles what the model is shown. The failure text and the
-// declaring file are required; the runner log, the bundle's contract entry,
-// upstream changes, precedent and prior attempts each degrade to their own
-// absence, because a missing evidence section costs the model context while a
-// blocked heal costs the operator the fix entirely. The error excerpt and the
+// round it assembles what the model is shown, with the earlier tries at the
+// failure (step.WithPreviousTries). The failure text and the declaring file are
+// required; the runner log, the bundle's contract entry, upstream changes,
+// precedent and the earlier tries each degrade to their own absence, because a
+// missing evidence section costs the model context while a blocked heal costs
+// the operator the fix entirely. The error excerpt and the
 // yaml text are sanitized here, since they leave for an external model, and the
 // other sections arrive sanitized from the steps that gathered them. In a round
 // after the first the request is the revision of the last round's request with
@@ -147,10 +147,9 @@ func (p *contractPrompt) request(in step.PromptInput) (prompt.ProposeRequest, er
 	dbtLog, _ := remediation.Get[remediation.Text](in.Evidence, remediation.KeyDBTLog)
 	upstream, _ := remediation.Get[[]prompt.UpstreamChange](in.Evidence, remediation.KeyUpstreamChanges)
 	precedents, _ := remediation.Get[[]prompt.Precedent](in.Evidence, remediation.KeyFailurePrecedents)
-	attempts, _ := remediation.Get[[]prompt.PriorAttempt](in.Evidence, remediation.KeyPriorAttempts)
 
 	f := in.Failure
-	return p.assemble(prompt.PythonEvidence{
+	return step.WithPreviousTries(p.assemble(prompt.PythonEvidence{
 		NodeID:          f.Target.NodeID,
 		NoReads:         f.Target.NodeType == string(pkgmodel.NodeTypePythonApi),
 		ErrorExcerpt:    p.sanitizer.Sanitize(f.Target.ErrorExcerpt),
@@ -160,8 +159,7 @@ func (p *contractPrompt) request(in step.PromptInput) (prompt.ProposeRequest, er
 		YAMLText:        p.sanitizer.Sanitize(file.YAMLText),
 		UpstreamChanges: upstream,
 		Precedents:      precedents,
-		PriorAttempts:   attempts,
-	}), nil
+	}), in.Evidence), nil
 }
 
 // editKeys are the keys under which the runner stores the content and the diff

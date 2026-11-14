@@ -294,6 +294,30 @@ func TestRunner_GateFailStartsTheNextTry(t *testing.T) {
 	assert.Equal(t, 2, h.llm.calls(), "each try asks the model again")
 }
 
+func TestRunner_EachTryIsShownTheEarlierTriesAtItsFailure(t *testing.T) {
+	h := newHarness(t, withPreviousTries())
+	h.legacyAttempt(1, proposal.StatusFailed)
+	id := h.accept(trigger("compile", compileNode("svc-a")))
+
+	require.NoError(t, h.drive(id))
+	first := h.llm.lastRequest().User
+	assert.Contains(t, first, "\n\n## Earlier tries at this failure\n", "the first try is shown the legacy attempt")
+	assert.Contains(t, first, "### Attempt 1 (round 1)\nNothing was recorded for this try.")
+	assert.NotContains(t, first, "### Try ", "the try being made is not one of its earlier tries")
+
+	h.pipeline.answer(proposal.PhaseFailed, map[string]string{"svc-a": "column x does not exist"})
+	require.NoError(t, h.poll(id))
+	require.NoError(t, h.drive(id))
+
+	require.Equal(t, 2, h.llm.calls())
+	second := h.llm.lastRequest().User
+	assert.Contains(t, second, "### Attempt 1 (round 1)")
+	assert.Contains(t, second, "### Try 1 (round 1)\nChanged ")
+	assert.Contains(t, second, "+select 2", "the second try sees the diff the first applied")
+	assert.Contains(t, second, "Why the gate failed: svc-a: column x does not exist", "and why its verification failed")
+	assert.Less(t, strings.Index(second, "### Attempt 1"), strings.Index(second, "### Try 1"), "oldest first")
+}
+
 func TestRunner_TriesSpentHandsOver(t *testing.T) {
 	h := newHarness(t)
 	h.pipeline.answer(proposal.PhaseFailed, map[string]string{"svc-a": "still broken"})

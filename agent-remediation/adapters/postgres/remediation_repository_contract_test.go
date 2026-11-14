@@ -1103,3 +1103,93 @@ func TestRemediationRepository_SaveStepStoresJSONHoldingANUL(t *testing.T) {
 	require.Len(t, snap.Steps[0].Findings, 1)
 	assert.Equal(t, "bad\uFFFDbyte", snap.Steps[0].Findings[0].Message)
 }
+
+// savedTry stores try n of r, with one cluster at node and one step of that
+// cluster, and makes it r's current try.
+func savedTry(t *testing.T, env contractEnv, r *remediation.Remediation, n int, node string) {
+	t.Helper()
+	ctx := context.Background()
+	try := newTry(r.ID, n, remediation.TryFailed, contractBase.Add(time.Hour))
+	try.Attempt = 10*r.Round + n
+	require.NoError(t, env.remediations.SaveTry(ctx, try))
+	require.NoError(t, env.remediations.SaveCluster(ctx, remediation.Cluster{
+		RemediationID: r.ID, Try: n, Cluster: 1, Kind: workflow.ClusterSingle, TargetNodeID: node,
+		Members: []string{node}, TypeName: "dbt-validation", Status: remediation.ClusterChecked, Round: 1,
+	}))
+	require.NoError(t, env.remediations.SaveStep(ctx, remediation.StepRun{
+		RemediationID: r.ID, Try: n, Cluster: 1, Step: "preflight", Kind: "runner", Round: 1,
+		Status: remediation.StepDone, Output: []byte(`{"draft":{}}`), StartedAt: contractBase,
+	}))
+	r.CurrentTry = n
+	require.NoError(t, env.remediations.SaveRemediation(ctx, *r))
+}
+
+func TestRemediationRepository_ListTriesOfReleaseReturnsEveryTryOfEveryRound(t *testing.T) {
+	forEachImpl(t, func(t *testing.T, env contractEnv) {
+		ctx := context.Background()
+		// Round 2 is created first: the tries come in round order, not creation order.
+		second := mustCreate(t, env, newRemediation("rel-tries", 2, contractBase))
+		first := mustCreate(t, env, newRemediation("rel-tries", 1, contractBase.Add(time.Minute)))
+		mustCreate(t, env, newRemediation("rel-tries", 3, contractBase.Add(2*time.Minute)))
+		savedTry(t, env, &first, 1, "model.a")
+		savedTry(t, env, &first, 2, "model.b")
+		savedTry(t, env, &second, 1, "model.c")
+		other := mustCreate(t, env, newRemediation("rel-other", 1, contractBase))
+		savedTry(t, env, &other, 1, "model.x")
+		otherTenant := newRemediation("rel-tries", 1, contractBase)
+		otherTenant.TenantID = "other-tenant"
+		otherTenant = mustCreate(t, env, otherTenant)
+		savedTry(t, env, &otherTenant, 1, "model.y")
+
+		snaps, err := env.remediations.ListTriesOfRelease(ctx, "default", "rel-tries")
+		require.NoError(t, err)
+
+		type seen struct {
+			round, try, attempt int
+			node                string
+			steps               int
+		}
+		var got []seen
+		for _, s := range snaps {
+			require.NotNil(t, s.Try)
+			require.Len(t, s.Clusters, 1, "each try has its own clusters only")
+			require.Equal(t, s.Try.Try, s.Clusters[0].Try)
+			for _, st := range s.Steps {
+				require.Equal(t, s.Try.Try, st.Try, "each try has its own steps only")
+				require.Equal(t, s.Remediation.ID, st.RemediationID)
+			}
+			got = append(got, seen{s.Remediation.Round, s.Try.Try, s.Try.Attempt, s.Clusters[0].TargetNodeID, len(s.Steps)})
+		}
+		require.Equal(t, []seen{
+			{1, 1, 11, "model.a", 1},
+			{1, 2, 12, "model.b", 1},
+			{2, 1, 21, "model.c", 1},
+		}, got, "every try of the tenant's release, by round then try; a round with no try adds none")
+		require.JSONEq(t, `{"draft":{}}`, string(snaps[0].Steps[0].Output))
+		require.Equal(t, "default", snaps[0].Remediation.TenantID)
+
+		none, err := env.remediations.ListTriesOfRelease(ctx, "default", "rel-unknown")
+		require.NoError(t, err)
+		require.Empty(t, none)
+	})
+}
+
+func TestProposalRepository_ListNamesTheRemediationOfEachRow(t *testing.T) {
+	forEachImpl(t, func(t *testing.T, env contractEnv) {
+		ctx := context.Background()
+		r := mustCreate(t, env, newRemediation("rel-named", 1, contractBase))
+		insertRunnerProposal(t, env, "rel-named", 2, r.ID)
+		require.NoError(t, env.proposals.Upsert(ctx, proposal.Proposal{
+			Source: "validation", ReleaseID: "rel-named", NodeID: "model.a", Attempt: 1, Status: proposal.StatusFailed,
+			CreatedAt: contractBase,
+		}))
+
+		views, err := env.proposals.List(ctx, repository.ProposalFilter{ReleaseID: "rel-named"})
+		require.NoError(t, err)
+		byAttempt := map[int]string{}
+		for _, v := range views {
+			byAttempt[v.Attempt] = v.RemediationID
+		}
+		require.Equal(t, map[int]string{1: "", 2: r.ID.String()}, byAttempt)
+	})
+}

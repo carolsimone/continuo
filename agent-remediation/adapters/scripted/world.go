@@ -103,6 +103,7 @@ func NewWorld(store *memory.Store, f conformance.Fixture, s conformance.Script) 
 		SQL:              sqlParser{errors: f.SQLErrors},
 		Releases:         release{r: f.Release},
 		PriorAttempts:    store.ProposalRepository(),
+		Tries:            store.RemediationRepository(),
 		Pipeline:         pipe,
 		Clock:            clock,
 	}

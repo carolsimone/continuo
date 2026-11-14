@@ -386,6 +386,7 @@ func TestMain_RunnerCollaboratorsFillEveryField(t *testing.T) {
 			ports.VerificationPipeline
 		}{},
 		proposals: struct{ repository.AttemptLister }{},
+		tries:     struct{ repository.TryLister }{},
 	}, logger)
 
 	v := reflect.ValueOf(collab)

@@ -420,6 +420,86 @@ func (r *RemediationRepository) snapshot(ctx context.Context, id uuid.UUID) (rem
 	return snap, nil
 }
 
+// ListTriesOfRelease returns one snapshot per try of every remediation of the
+// tenant's release, by round then try, each with that try's clusters (ordered
+// by cluster) and steps (ordered by id). It reads the remediations, then the
+// tries, clusters and steps of all of them in one statement each, which the
+// tables' keys, led by remediation_id, serve.
+func (r *RemediationRepository) ListTriesOfRelease(ctx context.Context, tenantID, releaseID string) ([]remediation.Snapshot, error) {
+	var rems []remediationRow
+	if err := r.q.SelectContext(ctx, &rems, `SELECT `+remediationColumns+`
+		FROM remediation WHERE tenant_id=$1 AND release_id=$2 ORDER BY remediation_round`, tenantID, releaseID); err != nil {
+		return nil, fmt.Errorf("list the remediations of release %s: %w", releaseID, err)
+	}
+	if len(rems) == 0 {
+		return nil, nil
+	}
+	ids := make([]string, 0, len(rems))
+	for _, row := range rems {
+		ids = append(ids, row.ID.String())
+	}
+
+	var tries []tryRow
+	if err := r.q.SelectContext(ctx, &tries, `SELECT `+tryColumns+`
+		FROM remediation_try WHERE remediation_id = ANY($1::uuid[]) ORDER BY remediation_id, try`, pq.Array(ids)); err != nil {
+		return nil, fmt.Errorf("list the tries of release %s: %w", releaseID, err)
+	}
+	var clusters []clusterRow
+	if err := r.q.SelectContext(ctx, &clusters, `SELECT `+clusterColumns+`
+		FROM remediation_cluster WHERE remediation_id = ANY($1::uuid[]) ORDER BY remediation_id, try, cluster`, pq.Array(ids)); err != nil {
+		return nil, fmt.Errorf("list the clusters of release %s: %w", releaseID, err)
+	}
+	var steps []stepRow
+	if err := r.q.SelectContext(ctx, &steps, `SELECT `+stepColumns+`
+		FROM remediation_step WHERE remediation_id = ANY($1::uuid[]) ORDER BY id`, pq.Array(ids)); err != nil {
+		return nil, fmt.Errorf("list the steps of release %s: %w", releaseID, err)
+	}
+
+	type key struct {
+		id  uuid.UUID
+		try int
+	}
+	clustersOf := map[key][]remediation.Cluster{}
+	for _, row := range clusters {
+		c, err := row.toDomain()
+		if err != nil {
+			return nil, err
+		}
+		k := key{c.RemediationID, c.Try}
+		clustersOf[k] = append(clustersOf[k], c)
+	}
+	stepsOf := map[key][]remediation.StepRun{}
+	for _, row := range steps {
+		st, err := row.toDomain()
+		if err != nil {
+			return nil, err
+		}
+		k := key{st.RemediationID, st.Try}
+		stepsOf[k] = append(stepsOf[k], st)
+	}
+	triesOf := map[uuid.UUID][]remediation.Try{}
+	for _, row := range tries {
+		t, err := row.toDomain()
+		if err != nil {
+			return nil, err
+		}
+		triesOf[t.RemediationID] = append(triesOf[t.RemediationID], t)
+	}
+
+	var out []remediation.Snapshot
+	for _, row := range rems {
+		rem, err := row.toDomain()
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range triesOf[rem.ID] {
+			k := key{rem.ID, t.Try}
+			out = append(out, remediation.Snapshot{Remediation: rem, Try: &t, Clusters: clustersOf[k], Steps: stepsOf[k]})
+		}
+	}
+	return out, nil
+}
+
 // claimNextStatement leases the oldest claimable running remediation in one
 // statement. The inner SELECT locks the row and skips rows another claim holds,
 // so concurrent callers take different rows, and the UPDATE needs no

@@ -1,0 +1,210 @@
+package shared
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"slices"
+
+	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
+	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
+	"github.com/carolsimone/continuo/agent-remediation/serialization"
+	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+)
+
+// PreviousTries is the context source `previous_tries`: every earlier try at
+// the cluster's failure in its release, in this remediation round and the ones
+// before it, each with what it changed and why it was refused. It reads the
+// runner's own tries from their journal and the legacy engine's attempts from
+// their proposal rows.
+type PreviousTries struct {
+	tries     repository.TryLister
+	attempts  repository.AttemptLister
+	evidence  ports.EvidenceReader
+	sanitizer ports.LogSanitizer
+	logger    *slog.Logger
+}
+
+var _ step.ContextSource = (*PreviousTries)(nil)
+
+// NewPreviousTries builds the previous_tries step. A nil tries reader gives no
+// runner tries and a nil attempts reader no legacy attempts. It calls no port
+// until Gather.
+func NewPreviousTries(tries repository.TryLister, attempts repository.AttemptLister, evidence ports.EvidenceReader,
+	sanitizer ports.LogSanitizer, logger *slog.Logger) *PreviousTries {
+	return &PreviousTries{tries: tries, attempts: attempts, evidence: evidence, sanitizer: sanitizer, logger: LoggerOrDefault(logger)}
+}
+
+// Meta describes the step.
+func (*PreviousTries) Meta() step.Meta {
+	return step.Meta{
+		Name: "previous_tries",
+		Kind: step.KindContext,
+		Description: "Lists the earlier tries at the cluster's failing nodes in this release, in this round and the rounds before it, oldest first: " +
+			"each try's diffs, what its pre-flight and cross-cluster checks found and why its verification failed, sanitized. " +
+			"The legacy engine's attempts are listed with their verification error and diffs.",
+		Needs:    []remediation.EvidenceKey{remediation.KeyFailure},
+		Provides: []remediation.EvidenceKey{remediation.KeyPreviousTries},
+	}
+}
+
+// Gather returns the tries made before the failure's own (its trigger's round
+// and its try) whose clusters held any of its member nodes, oldest first, every
+// text in them sanitized. The runner's tries come from the journal of every
+// remediation of the release; a try whose journal does not decode is left out
+// and logged. The legacy attempts are the release's proposal rows of the
+// trigger's source that belong to no remediation and name a member; a diff of
+// theirs that cannot be read is left out and logged, since the attempt still
+// shows with its error. An error reading the journal or the proposal rows is
+// the step's, so the runner tries the step again rather than show the model a
+// partial history.
+func (s *PreviousTries) Gather(ctx context.Context, in step.ContextInput) (step.ContextOutput, error) {
+	f := in.Failure
+	records, err := s.runnerTries(ctx, f)
+	if err != nil {
+		return step.ContextOutput{}, err
+	}
+	legacy, err := s.legacyAttempts(ctx, f)
+	if err != nil {
+		return step.ContextOutput{}, err
+	}
+	earlier := remediation.TryRecords(append(records, legacy...), memberIDs(f), remediation.TryRef{Round: f.Trigger.Round, Try: f.Try})
+	out := make([]remediation.TryRecord, 0, len(earlier))
+	for _, rec := range earlier {
+		out = append(out, s.sanitized(rec))
+	}
+	return step.ContextOutput{Evidence: map[remediation.EvidenceKey]any{remediation.KeyPreviousTries: out}}, nil
+}
+
+// runnerTries reads every try of the failure's release from the journal.
+func (s *PreviousTries) runnerTries(ctx context.Context, f remediation.Failure) ([]remediation.TryRecord, error) {
+	if s.tries == nil {
+		return nil, nil
+	}
+	snaps, err := s.tries.ListTriesOfRelease(ctx, f.Trigger.TenantID, f.Trigger.ReleaseID)
+	if err != nil {
+		return nil, fmt.Errorf("list the tries of release %s: %w", f.Trigger.ReleaseID, err)
+	}
+	out := make([]remediation.TryRecord, 0, len(snaps))
+	for _, snap := range snaps {
+		rec, err := serialization.TryRecordOf(snap)
+		if err != nil {
+			s.logger.Warn("an earlier try's journal cannot be read; leaving it out",
+				"remediation", snap.Remediation.ID, "round", snap.Remediation.Round, "error", err)
+			continue
+		}
+		out = append(out, rec)
+	}
+	return out, nil
+}
+
+// legacyAttempts reads the legacy engine's attempts at the failure's members
+// from their proposal rows, each as a record of one cluster holding the nodes
+// the attempt addressed, its diffs and its verification error.
+func (s *PreviousTries) legacyAttempts(ctx context.Context, f remediation.Failure) ([]remediation.TryRecord, error) {
+	if s.attempts == nil {
+		return nil, nil
+	}
+	views, err := s.attempts.List(ctx, repository.ProposalFilter{ReleaseID: f.Trigger.ReleaseID, Source: f.Trigger.Source})
+	if err != nil {
+		return nil, fmt.Errorf("list the proposals of release %s: %w", f.Trigger.ReleaseID, err)
+	}
+	members := memberIDs(f)
+	var out []remediation.TryRecord
+	for _, v := range views {
+		if v.RemediationID != "" || !namesAny(v.ResolvedNodeIDs, members) {
+			continue
+		}
+		rec := remediation.TryRecord{
+			Round:    v.RemediationRound,
+			Attempt:  v.Attempt,
+			Clusters: []remediation.ClusterRecord{{Members: append([]string(nil), v.ResolvedNodeIDs...), Edits: s.legacyDiffs(ctx, v)}},
+		}
+		if v.VerifyError != "" {
+			rec.Gate = []remediation.Finding{{Message: v.VerifyError}}
+		}
+		out = append(out, rec)
+	}
+	return out, nil
+}
+
+// legacyDiffs reads a legacy attempt's stored diffs. An edit with no diff, or
+// whose diff cannot be read, is left out.
+func (s *PreviousTries) legacyDiffs(ctx context.Context, v proposal.View) []remediation.EditRecord {
+	var out []remediation.EditRecord
+	for _, e := range v.Edits {
+		if e.DiffURI == "" {
+			continue
+		}
+		raw, err := s.evidence.Fetch(ctx, e.DiffURI)
+		if err != nil {
+			s.logger.Warn("an earlier attempt's diff cannot be read; leaving it out",
+				"attempt", v.Attempt, "diff_uri", e.DiffURI, "error", err)
+			continue
+		}
+		out = append(out, remediation.EditRecord{Path: e.Path, Diff: raw})
+	}
+	return out
+}
+
+// sanitized is rec with every diff, finding message and outcome sanitized,
+// since they leave for an external model.
+func (s *PreviousTries) sanitized(rec remediation.TryRecord) remediation.TryRecord {
+	clusters := make([]remediation.ClusterRecord, 0, len(rec.Clusters))
+	for _, c := range rec.Clusters {
+		var edits []remediation.EditRecord
+		for _, e := range c.Edits {
+			edits = append(edits, remediation.EditRecord{Path: e.Path, Diff: s.sanitizer.Sanitize(e.Diff)})
+		}
+		var rounds [][]remediation.Finding
+		for _, r := range c.Rounds {
+			rounds = append(rounds, s.findings(r))
+		}
+		c.Edits, c.Rounds = edits, rounds
+		if c.Outcome != "" {
+			c.Outcome = s.sanitizer.Sanitize(c.Outcome)
+		}
+		clusters = append(clusters, c)
+	}
+	rec.Clusters = clusters
+	rec.CrossCluster = s.findings(rec.CrossCluster)
+	rec.Gate = s.findings(rec.Gate)
+	return rec
+}
+
+// findings is fs with each message sanitized. No findings stay nil.
+func (s *PreviousTries) findings(fs []remediation.Finding) []remediation.Finding {
+	if fs == nil {
+		return nil
+	}
+	out := make([]remediation.Finding, len(fs))
+	for i, f := range fs {
+		f.Message = s.sanitizer.Sanitize(f.Message)
+		out[i] = f
+	}
+	return out
+}
+
+// memberIDs is the failure's member node ids, or its target's when it names no
+// member.
+func memberIDs(f remediation.Failure) []string {
+	ids := make([]string, 0, len(f.Members))
+	for _, m := range f.Members {
+		ids = append(ids, m.NodeID)
+	}
+	if len(ids) == 0 {
+		ids = append(ids, f.Target.NodeID)
+	}
+	return ids
+}
+
+func namesAny(nodeIDs, members []string) bool {
+	for _, id := range members {
+		if slices.Contains(nodeIDs, id) {
+			return true
+		}
+	}
+	return false
+}

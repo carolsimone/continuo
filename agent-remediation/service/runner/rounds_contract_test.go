@@ -91,7 +91,7 @@ func withContractType(rounds int, packager ports.ContractPackager) option {
 			Version: workflow.SupportedVersion,
 			Name:    "python-validation",
 			Match:   workflow.Match{Cluster: workflow.ClusterSingle, Source: "validation", NodeTypes: []string{"python-node"}},
-			Context: refs("contract_file", "failing_siblings", "dbt_log", "contract_entry", "upstream_changes", "failure_precedents", "prior_attempts"),
+			Context: refs("contract_file", "failing_siblings", "dbt_log", "contract_entry", "upstream_changes", "failure_precedents"),
 			Agent: workflow.Agent{
 				Prompt: workflow.StepRef{Name: "python-contract"}, Tools: []workflow.StepRef{}, Rounds: rounds,
 			},

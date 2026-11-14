@@ -1,0 +1,97 @@
+package serialization_test
+
+import (
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
+	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/serialization"
+)
+
+// journalRow is one done journal row of try 1 holding rec as its output.
+func journalRow[R serialization.JournalRecord](t *testing.T, cluster int, step, kind string, round int, rec R, findings ...remediation.Finding) remediation.StepRun {
+	t.Helper()
+	out, err := serialization.EncodeRecord(rec)
+	require.NoError(t, err)
+	return remediation.StepRun{
+		Try: 1, Cluster: cluster, Step: step, Kind: kind, Round: round,
+		Status: remediation.StepDone, Output: out, Findings: findings,
+	}
+}
+
+func TestTryRecordOf_ReadsEachClustersEditsAndFindingsAndTheTrysOwn(t *testing.T) {
+	unchanged := remediation.Finding{Code: "content_unchanged", Message: "the answer repeats the original"}
+	twice := remediation.Finding{Code: "path_edited_twice", Message: "models/a.sql is edited twice"}
+	broken := remediation.Finding{Code: "verification_failed", Message: "model.a: still broken"}
+	first := remediation.Draft{Edits: []remediation.Edit{{Path: "models/a.sql", Original: "select a\n", Content: "select a\n"}}}
+	second := remediation.Draft{Edits: []remediation.Edit{
+		{Path: "models/a.sql", Original: "select a\n", Content: "select b\n"},
+		{Path: "models/unchanged.sql", Original: "select 1\n", Content: "select 1\n"},
+	}}
+	failedRow := journalRow(t, 2, serialization.PreflightStep, serialization.RunnerKind, 1, serialization.PreflightRecord{Draft: second})
+	failedRow.Status = remediation.StepFailed
+
+	snap := remediation.Snapshot{
+		Remediation: remediation.Remediation{ID: uuid.New(), Round: 2, CurrentTry: 1},
+		Try:         &remediation.Try{Try: 1, Attempt: 4, Status: remediation.TryFailed},
+		Clusters: []remediation.Cluster{
+			{Cluster: 1, Kind: workflow.ClusterSingle, TargetNodeID: "model.a", Members: []string{"model.a"}, TypeName: "dbt-validation", Status: remediation.ClusterChecked, Round: 2},
+			{Cluster: 2, Kind: workflow.ClusterSingle, TargetNodeID: "model.b", Members: []string{"model.b"}, TypeName: "dbt-validation",
+				Status: remediation.ClusterHandedOver, Round: 1, Outcome: &proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: "the model declined"}},
+		},
+		Steps: []remediation.StepRun{
+			journalRow(t, 1, "dbt-validation", "prompt", 1, serialization.PromptRecord{Draft: first}),
+			journalRow(t, 1, "content_changed", serialization.CheckKind, 1, serialization.CheckRecord{Result: remediation.CheckResult{Check: "content_changed", Findings: []remediation.Finding{unchanged}}}, unchanged),
+			journalRow(t, 1, serialization.PreflightStep, serialization.RunnerKind, 1, serialization.PreflightRecord{Draft: first}, unchanged),
+			journalRow(t, 1, "dbt-validation", "prompt", 2, serialization.PromptRecord{Draft: second}),
+			journalRow(t, 1, serialization.PreflightStep, serialization.RunnerKind, 2, serialization.PreflightRecord{Draft: second}),
+			failedRow,
+			journalRow(t, 0, "no_path_edited_twice", serialization.CheckKind, 1, serialization.CheckRecord{Result: remediation.CheckResult{Check: "no_path_edited_twice"}}),
+			journalRow(t, 0, "one_manifest_kind", serialization.CheckKind, 1, serialization.CheckRecord{Result: remediation.CheckResult{Check: "one_manifest_kind", Findings: []remediation.Finding{twice}}}, twice),
+			journalRow(t, 0, "verification_run", serialization.CheckKind, 1, serialization.CheckRecord{Result: remediation.CheckResult{Check: "verification_run", Findings: []remediation.Finding{broken}}, Gate: true}, broken),
+			{Try: 1, Step: "hand_over", Kind: "output", Round: 1, Status: remediation.StepDone},
+		},
+	}
+
+	got, err := serialization.TryRecordOf(snap)
+	require.NoError(t, err)
+
+	assert.Equal(t, remediation.TryRecord{
+		Round: 2, Try: 1, Attempt: 4,
+		Clusters: []remediation.ClusterRecord{
+			{
+				Type: "dbt-validation", TargetNodeID: "model.a", Members: []string{"model.a"},
+				Edits:  []remediation.EditRecord{{Path: "models/a.sql", Diff: proposal.ComputeUnifiedDiff("select a\n", "select b\n", "models/a.sql")}},
+				Rounds: [][]remediation.Finding{{unchanged}, nil},
+			},
+			{
+				Type: "dbt-validation", TargetNodeID: "model.b", Members: []string{"model.b"},
+				Outcome: "skipped: the model declined",
+			},
+		},
+		CrossCluster: []remediation.Finding{twice},
+		Gate:         []remediation.Finding{broken},
+	}, got)
+}
+
+func TestTryRecordOf_RefusesASnapshotWithNoTryOrAnUnreadableRow(t *testing.T) {
+	_, err := serialization.TryRecordOf(remediation.Snapshot{Remediation: remediation.Remediation{ID: uuid.New(), Round: 1}})
+	require.Error(t, err)
+
+	snap := remediation.Snapshot{
+		Remediation: remediation.Remediation{ID: uuid.New(), Round: 1, CurrentTry: 1},
+		Try:         &remediation.Try{Try: 1, Attempt: 1},
+		Clusters:    []remediation.Cluster{{Cluster: 1, Members: []string{"model.a"}}},
+		Steps: []remediation.StepRun{{
+			Try: 1, Cluster: 1, Step: serialization.PreflightStep, Kind: serialization.RunnerKind, Round: 1,
+			Status: remediation.StepDone, Output: []byte("not json"),
+		}},
+	}
+	_, err = serialization.TryRecordOf(snap)
+	require.Error(t, err)
+}

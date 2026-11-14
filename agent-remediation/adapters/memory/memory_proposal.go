@@ -197,6 +197,7 @@ func (row *proposalRow) view() proposal.View {
 		Source:              p.Source,
 		ReleaseID:           p.ReleaseID,
 		RemediationRound:    p.RemediationRound,
+		RemediationID:       p.RemediationID,
 		NodeID:              p.NodeID,
 		ResolvedNodeIDs:     resolved,
 		ErrorSignature:      p.ErrorSignature,
