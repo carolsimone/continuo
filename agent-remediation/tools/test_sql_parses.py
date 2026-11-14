@@ -98,6 +98,35 @@ class SQLParsesTest(unittest.TestCase):
         self.assertEqual(len(result["errors"]), 1, result)
         self.assertEqual(result["errors"][0]["line"], 3)
 
+    def test_every_error_message_is_one_line(self):
+        # sqlglot quotes the text around a tokenizer error, newlines included;
+        # a finding is shown to the model as one line of a list.
+        for sql in ("select 1\nfrom t\nwhere x = 'abc\n", "select a,\n  from\n where", "select (\n1\n"):
+            with self.subTest(sql=sql):
+                result = parse(sql)
+                self.assertTrue(result["errors"], result)
+                for err in result["errors"]:
+                    self.assertNotIn("\n", err["message"])
+                    self.assertNotIn("\r", err["message"])
+                    self.assertEqual(err["message"], " ".join(err["message"].split()))
+
+    def test_token_error_message_keeps_the_quoted_text_on_one_line(self):
+        result = parse("select 1\nfrom t\nwhere x = 'abc\n")
+        self.assertEqual(result["errors"][0]["message"], "Error tokenizing 'select 1 from t where x = 'abc'")
+
+    def test_a_clause_emitting_macro_does_not_parse_once_reduced(self):
+        # A macro that renders a whole clause becomes a name where no name can
+        # stand, so the reduced file does not parse; the check therefore judges
+        # an edit only when the file it replaces parses under the same reduction.
+        for sql in (
+            "select a, count(*) from {{ ref('x') }} where a > 1 {{ dbt_utils.group_by(1) }}",
+            "select * from {{ ref('x') }} as x {{ incremental_where() }}",
+        ):
+            with self.subTest(sql=sql):
+                result = parse(sql)
+                self.assertEqual(result["skipped"], "")
+                self.assertTrue(result["errors"], result)
+
     def test_trino_dialect_is_used(self):
         sql = "select json_query(payload, 'lax $.items' with array wrapper) as items from raw.events"
         self.assertEqual(parse(sql, "trino"), {"errors": [], "skipped": ""})

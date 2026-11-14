@@ -62,7 +62,8 @@ answers:
       confidence: high
       model: claude-test
   fail:
-    # The source fix does not parse (see sql_errors), so sql_parses refuses it.
+    # The source fix does not parse (see sql_errors) while the source it
+    # replaces does, so sql_parses refuses it.
     - proposed_sql: "select id, total as amount from analytics.raw_orders"
       rationale: the upstream column amount is named total now
       confidence: high

@@ -18,7 +18,8 @@ Before parsing, the dbt Jinja is reduced to plain SQL:
 4. every other ``{{ ... }}`` expression becomes the name ``__jinja__``.
 
 Each removed or replaced span keeps its newlines, so a reported line is the
-line of the file. Diagnostics go to stderr through logging; stdout carries only
+line of the file. Every error message is one line: whitespace in it, the
+newlines of the text sqlglot quotes included, becomes one space. Diagnostics go to stderr through logging; stdout carries only
 the result line. A dialect sqlglot does not know exits non-zero.
 """
 
@@ -134,18 +135,25 @@ def _token_error_line(text: str, err: TokenError) -> int:
     return _line_at(text.rstrip("\n"), failed_at)
 
 
+def _one_line(message: object) -> str:
+    """message with every run of whitespace, newlines included, made one
+    space: sqlglot quotes the text around an error as the file holds it."""
+    return " ".join(str(message).split())
+
+
 def parse_errors(text: str, dialect: str) -> list[dict]:
-    """Parses text in dialect and returns each error with its line."""
+    """Parses text in dialect and returns each error, its message on one line,
+    with its line."""
     try:
         sqlglot.parse(text, read=dialect)
     except ParseError as err:
         errors = [
-            {"message": str(e.get("description") or err), "line": int(e.get("line") or 1)}
+            {"message": _one_line(e.get("description") or err), "line": int(e.get("line") or 1)}
             for e in err.errors
         ]
-        return errors or [{"message": str(err), "line": 1}]
+        return errors or [{"message": _one_line(err), "line": 1}]
     except TokenError as err:
-        return [{"message": str(err), "line": _token_error_line(text, err)}]
+        return [{"message": _one_line(err), "line": _token_error_line(text, err)}]
     return []
 
 
