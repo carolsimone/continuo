@@ -28,6 +28,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/s3"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/sanitizer"
+	"github.com/carolsimone/continuo/agent-remediation/adapters/sqlparse"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/workflowfile"
 	remediationv1 "github.com/carolsimone/continuo/agent-remediation/api/remediation/v1"
 	"github.com/carolsimone/continuo/agent-remediation/config"
@@ -282,6 +283,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The SQL parser runs a probe parse in the install's dialect here: an image
+	// whose interpreter cannot import sqlglot, or a dialect sqlglot does not
+	// know, stops startup once instead of failing every draft's sql_parses
+	// check.
+	sqlParser, err := sqlparse.New(cfg.SQLDialect)
+	if err != nil {
+		logger.Error("sql parser unavailable", "error", err)
+		os.Exit(1)
+	}
+
 	// The proposal repository is bound to the DB rather than to a transaction:
 	// the gRPC read path, the reconciler, and the fixers' prior-attempt reads
 	// all use it outside any unit of work.
@@ -332,6 +343,7 @@ func main() {
 		bundle:    bundleReader,
 		contracts: contracts,
 		packager:  packager,
+		sql:       sqlParser,
 		release:   releaseGateway,
 		proposals: proposalRepo,
 	}, logger)
@@ -648,6 +660,7 @@ type runnerAdapters struct {
 		ports.ContractInspector
 	}
 	packager ports.ContractPackager
+	sql      ports.SQLParser
 	release  interface {
 		ports.ReleaseReader
 		ports.VerificationPipeline
@@ -680,6 +693,7 @@ func runnerCollaborators(cfg config.Config, a runnerAdapters, logger *slog.Logge
 		Releases:            a.release,
 		PriorAttempts:       a.proposals,
 		SQLDialect:          cfg.SQLDialect,
+		SQL:                 a.sql,
 		Pipeline:            a.release,
 		Clock:               ports.SystemClock{},
 		VerificationTimeout: cfg.VerificationTimeout,

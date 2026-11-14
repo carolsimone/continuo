@@ -209,6 +209,29 @@ func TestPackager_PackagesAContractDirectoryAndRefusesAsTheFixtureSays(t *testin
 	assert.Error(t, err)
 }
 
+func TestSQLParser_ReportsTheFixturesErrorsForTheSQLTheyNameOnly(t *testing.T) {
+	p := sqlParser{errors: []conformance.SQLError{
+		{SQL: "selec 1", Message: "Invalid expression", Line: 1},
+		{SQL: "select (", Message: "Expecting )", Line: 1},
+		{SQL: "selec 1", Message: "Expected table name", Line: 2},
+	}}
+
+	got, err := p.Parse(ctx, "selec 1")
+	require.NoError(t, err)
+	assert.Equal(t, ports.SQLParseResult{Errors: []ports.SQLParseError{
+		{Message: "Invalid expression", Line: 1},
+		{Message: "Expected table name", Line: 2},
+	}}, got)
+
+	got, err = p.Parse(ctx, "select 1")
+	require.NoError(t, err)
+	assert.Equal(t, ports.SQLParseResult{}, got, "a SQL text the fixture does not name parses")
+
+	got, err = sqlParser{}.Parse(ctx, "selec 1")
+	require.NoError(t, err)
+	assert.Empty(t, got.Errors, "with no sql_errors every text parses")
+}
+
 func TestCatalog_AnswersFromTheFixture(t *testing.T) {
 	c := catalog{c: conformance.Catalog{
 		Locations:       map[string]conformance.Location{"model.a": {FilePath: "models/a.sql", Service: "svc"}},

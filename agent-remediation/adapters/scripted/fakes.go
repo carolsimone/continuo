@@ -230,6 +230,23 @@ func (k packager) Merge(_ context.Context, contractDir, repoRoot, _, _ string) (
 	return []byte(k.p.Merged), nil
 }
 
+// sqlParser is the SQL parser. It reports the fixture's errors for the SQL
+// texts they name, and parses every other text.
+type sqlParser struct{ errors []conformance.SQLError }
+
+var _ ports.SQLParser = sqlParser{}
+
+// Parse returns every error the fixture names for sql, in fixture order.
+func (p sqlParser) Parse(_ context.Context, sql string) (ports.SQLParseResult, error) {
+	var res ports.SQLParseResult
+	for _, e := range p.errors {
+		if e.SQL == sql {
+			res.Errors = append(res.Errors, ports.SQLParseError{Message: e.Message, Line: e.Line})
+		}
+	}
+	return res, nil
+}
+
 func isDir(p string) error {
 	info, err := os.Stat(p)
 	if err != nil {

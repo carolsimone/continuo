@@ -292,19 +292,24 @@ jobs:
         # runner (clean env) keeps the container's ambient env out of config tests.
         run: make test-go
 
-      - name: Test agent-remediation/adapters/packaging (in-container)
+      - name: Test agent-remediation packaging, sqlparse and tools (in-container)
         # agent-remediation/adapters/packaging shells out to the continuo-runtime
-        # CLI, which is installed only inside the agent-remediation image
+        # CLI, and agent-remediation/adapters/sqlparse runs tools/sql_parses.py
+        # under the interpreter that carries sqlglot ($SQL_PARSES_PYTHON). Both
+        # are installed only inside the agent-remediation image
         # (agent-remediation/Dockerfile.dev), never on the bare CI runner that the
-        # step above runs on. cli_packager_test.go skips itself there for exactly
-        # that reason, which would otherwise let this package's only integration
-        # test pass CI without ever calling the real CLI. Run it here instead,
-        # inside the agent-remediation container that "Wait for service
-        # containers" already confirmed is up, where continuo-runtime is on PATH
-        # and the Go toolchain + this PR's source are both baked into the image.
-        # Every other Go test stays on the runner; this is the one package whose
-        # dependency cannot exist there.
-        run: docker exec agent-remediation go test -tags integration -count=1 ./adapters/packaging/... -v
+        # step above runs on, and each package's integration test skips itself
+        # there for exactly that reason, which would otherwise let it pass CI
+        # without ever calling the real tool. Run them here instead, inside the
+        # agent-remediation container that "Wait for service containers" already
+        # confirmed is up, where the tools, the Go toolchain and this PR's source
+        # are all baked into the image, together with the Python tests of
+        # tools/sql_parses.py under the same interpreter. Every other Go test
+        # stays on the runner; these are the packages whose dependencies cannot
+        # exist there.
+        run: |
+          docker exec agent-remediation go test -tags integration -count=1 ./adapters/packaging/... ./adapters/sqlparse/... -v
+          docker exec agent-remediation sh -c '"$SQL_PARSES_PYTHON" -I -m unittest discover -s /app/agent-remediation/tools -v'
 
       - name: Test topology-controller
         run: docker exec topology-controller uv run pytest -v

@@ -380,6 +380,7 @@ func TestMain_RunnerCollaboratorsFillEveryField(t *testing.T) {
 			ports.ContractInspector
 		}{},
 		packager: struct{ ports.ContractPackager }{},
+		sql:      struct{ ports.SQLParser }{},
 		release: struct {
 			ports.ReleaseReader
 			ports.VerificationPipeline

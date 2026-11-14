@@ -6,4 +6,4 @@ name: duplicate-table
 match: { cluster: single, source: duplicate_table }
 context: [failing_node_source, failure_precedents]
 agent: { prompt: duplicate-table, tools: [], rounds: 1 }
-preflight: [target_file_was_shown, content_changed, confidence_not_low]
+preflight: [target_file_was_shown, content_changed, confidence_not_low, sql_parses]

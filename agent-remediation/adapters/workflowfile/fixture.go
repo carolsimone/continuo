@@ -38,6 +38,14 @@ type fixtureFile struct {
 	MemberAnswers      map[string]answersFile `yaml:"member_answers"`
 	DeclineBeforeModel *patchFile             `yaml:"decline_before_model"`
 	GateErrors         map[string]string      `yaml:"gate_errors"`
+	SQLErrors          []sqlErrorFile         `yaml:"sql_errors"`
+}
+
+// sqlErrorFile is one parse error the SQL parser reports for the SQL text sql.
+type sqlErrorFile struct {
+	SQL     string `yaml:"sql"`
+	Message string `yaml:"message"`
+	Line    int    `yaml:"line"`
 }
 
 type triggerFile struct {
@@ -251,6 +259,12 @@ func (l *loader) loadFixture(file string, root *yaml.Node) (conformance.Fixture,
 			l.fail(file, nodeLine(triggerNode, i, root.Line), "a failing node of the trigger has no node_id")
 		}
 	}
+	sqlErrorsNode := valueOf(root, "sql_errors")
+	for i, e := range f.SQLErrors {
+		if e.SQL == "" || e.Message == "" || e.Line < 1 {
+			l.fail(file, itemLine(sqlErrorsNode, i, root.Line), "a sql_errors entry names the sql, a message and a line from 1")
+		}
+	}
 	if len(l.errs) > before {
 		return conformance.Fixture{}, false
 	}
@@ -271,6 +285,9 @@ func (l *loader) loadFixture(file string, root *yaml.Node) (conformance.Fixture,
 		Packager:         conformance.Packager{Merged: f.Packager.Merged, Refuse: f.Packager.Refuse},
 		Answers:          f.Answers.toConformance(),
 		GateErrors:       f.GateErrors,
+	}
+	for _, e := range f.SQLErrors {
+		fixture.SQLErrors = append(fixture.SQLErrors, conformance.SQLError(e))
 	}
 	if len(f.MemberAnswers) > 0 {
 		fixture.MemberAnswers = make(map[string]conformance.Answers, len(f.MemberAnswers))
@@ -396,11 +413,15 @@ func keyIndex(n *yaml.Node, key string) int {
 // nodeLine is the line of the i-th failing node of the trigger mapping, or
 // fallback.
 func nodeLine(trigger *yaml.Node, i, fallback int) int {
-	nodes := valueOf(trigger, "nodes")
-	if nodes == nil || nodes.Kind != yaml.SequenceNode || i >= len(nodes.Content) {
+	return itemLine(valueOf(trigger, "nodes"), i, fallback)
+}
+
+// itemLine is the line of the i-th item of the sequence seq, or fallback.
+func itemLine(seq *yaml.Node, i, fallback int) int {
+	if seq == nil || seq.Kind != yaml.SequenceNode || i >= len(seq.Content) {
 		return fallback
 	}
-	return nodes.Content[i].Line
+	return seq.Content[i].Line
 }
 
 func (t triggerFile) toDomain() remediation.Trigger {

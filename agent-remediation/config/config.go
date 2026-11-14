@@ -82,7 +82,8 @@ type Config struct {
 
 	// SQLDialect is the sqlglot dialect name the ContractPackager adapter
 	// passes to continuo-runtime's --dialect flag when packaging a proposed
-	// python-node fix. Resolved from WAREHOUSE_ENGINE at startup (see
+	// python-node fix, and the dialect the sql_parses check parses a draft's
+	// SQL in. Resolved from WAREHOUSE_ENGINE at startup (see
 	// engineDialects) — the same shared-ConfigMap key topology-controller
 	// reads for its own parser dialect, so both services agree on which
 	// engines they can honour.

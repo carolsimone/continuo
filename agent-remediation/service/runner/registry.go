@@ -68,6 +68,7 @@ func NewRegistry(c Collaborators) *Registry {
 	r.register(shared.NewUpstreamChanges(c.Upstream, c.Sanitizer, c.Logger))
 	r.register(shared.NewContentChanged())
 	r.register(shared.NewConfidenceNotLow())
+	r.register(shared.NewSQLParses(c.SQL))
 	r.register(source.NewFailingNodeSource(c.Source, c.Locator, c.ServiceRepoPaths, c.Logger))
 	r.register(source.NewDBTCompile(c.Sanitizer))
 	r.register(source.NewDBTParse(c.Sanitizer))
