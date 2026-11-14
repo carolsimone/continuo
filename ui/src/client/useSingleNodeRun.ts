@@ -36,13 +36,15 @@ interface Options {
 // press: loading while the request is in flight, success for 3 s once the run
 // started, error with the message to show when it did not.
 //
-// The request id is that of one user action: a press that gets no answer and
-// is repeated with the same node, operation and body, while the page still
-// shows the newest run of the node the first press saw, sends the same id, so
-// the run the first press made is returned rather than made twice. A newer run
-// on the page makes the next press a new action, and the id is renewed once the
-// server has given its final answer. Without an observation only that final
-// answer renews it.
+// The hook holds one request id, that of the latest press the server has not
+// given a final answer to (a success or a refusal). A press that gets no answer,
+// or a 5xx, and is repeated with the same node, operation and body, while the
+// page still shows the newest run of the node the first press saw, sends the
+// same id, so the run the first press made is returned rather than made twice.
+// The final answer renews the id. A newer run on the page makes the next press
+// a new action. Without an observation only the final answer renews it. The
+// hook holds no id per node: a press of another node drops the open id of an
+// unanswered press, and a later press of the first node then sends a new id.
 //
 // The state of a press belongs to the node it was made for. Each node the
 // component has shown keeps the state of its latest press, and the component

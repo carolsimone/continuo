@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useParams } from 'react-router';
 import PageHeader from './PageHeader';
@@ -233,9 +233,10 @@ export default function NodeDetailPage() {
     return () => { summaryAppliedRef.current = summaryStartedRef.current; };
   }, [fetchNodeSummary]);
 
-  // A dialog opened for the node left is closed: a full refresh it confirms
-  // would otherwise run on the node the page shows now and drop its table.
-  useEffect(() => {
+  // A dialog opened for the node left is closed in the commit that shows the new
+  // node: a full refresh it confirms would otherwise run on the node the page
+  // shows now and drop its table.
+  useLayoutEffect(() => {
     setPickerOpen(false);
     setConfirmOpen(false);
     setPendingSource(null);

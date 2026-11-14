@@ -62,3 +62,75 @@ describe('useSingleNodeRun — press state', () => {
     expect(result.current.runState).toBe('idle');
   });
 });
+
+describe('useSingleNodeRun — request id', () => {
+  // The request id each POST carried, in order.
+  const sentIds = () => (mockFetch.mock.calls as unknown as [string, RequestInit][])
+    .map(([, init]) => JSON.parse(String(init.body)).request_id as string);
+
+  it('sends a new id for a press made after a started press, since the answer settled the first', async () => {
+    mockFetch.mockImplementation(() => Promise.resolve(started()));
+    const { result } = renderOnTable('a');
+
+    await act(async () => { await result.current.postRun({}); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    expect(result.current.runState).toBe('idle');
+    await act(async () => { await result.current.postRun({}); });
+
+    const ids = sentIds();
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).not.toBe(ids[0]);
+  });
+
+  it('sends a new id for a press made after a started press when the component showed another node in between', async () => {
+    mockFetch.mockImplementation(() => Promise.resolve(started()));
+    const { result, rerender } = renderOnTable('a');
+
+    await act(async () => { await result.current.postRun({}); });
+    rerender({ table: 'b' });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    rerender({ table: 'a' });
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(result.current.runState).toBe('idle');
+    await act(async () => { await result.current.postRun({}); });
+
+    const ids = sentIds();
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).not.toBe(ids[0]);
+  });
+
+  it('settles the id of a press whose started answer comes while another node is shown, so the next press of its node is a new action', async () => {
+    let answerFirst!: (r: Response) => void;
+    mockFetch
+      .mockImplementationOnce(() => new Promise<Response>(res => { answerFirst = res; }))
+      .mockImplementation(() => Promise.resolve(started()));
+    const { result, rerender } = renderOnTable('a');
+
+    let first!: Promise<string | null>;
+    act(() => { first = result.current.postRun({}); });
+    rerender({ table: 'b' });
+    await act(async () => { answerFirst(started()); await first; });
+    rerender({ table: 'a' });
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    expect(result.current.runState).toBe('idle');
+    await act(async () => { await result.current.postRun({}); });
+
+    const ids = sentIds();
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).not.toBe(ids[0]);
+  });
+
+  it('keeps the id of a press the server answered with a 5xx, for the press repeated on the same node', async () => {
+    mockFetch
+      .mockImplementationOnce(() => Promise.resolve({ ok: false, status: 502, json: async () => ({ error: 'bad gateway' }) } as Response))
+      .mockImplementation(() => Promise.resolve(started()));
+    const { result } = renderOnTable('a');
+
+    await act(async () => { await result.current.postRun({}); });
+    await act(async () => { await result.current.postRun({}); });
+
+    const ids = sentIds();
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).toBe(ids[0]);
+  });
+});
