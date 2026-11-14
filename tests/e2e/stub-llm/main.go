@@ -352,11 +352,18 @@ func contractYAML(userContent string) string {
 	return rest[:end]
 }
 
-// priorAttemptsHeading opens the section prompt.AssemblePythonContractFix
-// renders for the earlier attempts at the same failure. The section exists only
-// when an earlier attempt was recorded, so the heading is what tells a retry
-// apart from a first attempt.
-const priorAttemptsHeading = "Previous fix attempts for this node"
+// priorAttemptsHeading opens the section the legacy engine's
+// prompt.AssemblePythonContractFix renders for the earlier attempts at the
+// same failure, and earlierTriesHeading the section the runner engine's
+// prompt.WithPreviousTries appends to every request of a try after the first.
+// Each section exists only when an earlier attempt or try was recorded, so
+// either heading is what tells a retry apart from a first attempt. A later
+// pre-flight round of the first try carries neither: it shows the model its
+// previous answer under its own heading, and is no retry.
+const (
+	priorAttemptsHeading = "Previous fix attempts for this node"
+	earlierTriesHeading  = "## Earlier tries at this failure"
+)
 
 // promptAroundContract returns the request with the contract file it showed cut
 // out of it: what the prompt assembler wrote AROUND that file — the failure, the
@@ -378,8 +385,8 @@ func promptAroundContract(userContent, contract string) string {
 
 // isRetryShownTheRejectedRead reports whether this request is a retry that was
 // actually shown what the earlier attempt did: the prompt carries the
-// prior-attempts section, and that section names the relation the earlier
-// attempt declared.
+// prior-attempts section of either engine, and the prompt names the relation
+// the earlier attempt declared.
 //
 // Both halves are required, and both are read from around the contract file.
 // The heading alone would answer a retry correctly even when the evidence the
@@ -389,7 +396,8 @@ func promptAroundContract(userContent, contract string) string {
 // including in text the stub was never meant to read.
 func isRetryShownTheRejectedRead(userContent, contract string) bool {
 	around := promptAroundContract(userContent, contract)
-	return strings.Contains(around, priorAttemptsHeading) && strings.Contains(around, stillBrokenRead)
+	shown := strings.Contains(around, priorAttemptsHeading) || strings.Contains(around, earlierTriesHeading)
+	return shown && strings.Contains(around, stillBrokenRead)
 }
 
 // writeProposePythonFixResponse returns a deterministic, non-streaming answer
@@ -404,10 +412,11 @@ func isRetryShownTheRejectedRead(userContent, contract string) bool {
 //     next attempt's evidence;
 //   - the loop fixture on a retry gets bindingRead, so the second
 //     verification run validates. A retry is recognised by
-//     isRetryShownTheRejectedRead: the prompt's prior-attempts section exists
-//     AND it names the relation the earlier attempt declared, which reaches
-//     the prompt only through that attempt's recorded verification error or
-//     the diff it applied. A retry whose prompt lost that evidence therefore
+//     isRetryShownTheRejectedRead: the prompt's prior-attempts section (the
+//     legacy engine's or the runner's earlier tries) exists AND the prompt
+//     names the relation the earlier attempt declared, which reaches it only
+//     through that attempt's recorded verification error or the diff it
+//     applied. A retry whose prompt lost that evidence therefore
 //     keeps getting the answer that already failed, and the e2e test driving
 //     it never goes green;
 //   - every other fixture gets bindingRead immediately.

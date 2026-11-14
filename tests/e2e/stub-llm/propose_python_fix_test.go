@@ -175,6 +175,73 @@ func TestProposePythonFix_RetryWithoutTheRejectedEvidenceKeepsFailing(t *testing
 	}
 }
 
+// earlierTriesSection is the section the runner engine appends to a later
+// try's request, rendered as prompt.WithPreviousTries renders it: the heading,
+// its instruction, then one part per earlier try with the diff that try
+// applied and why the verification gate failed it.
+const earlierTriesSection = "\n\n## Earlier tries at this failure\n" +
+	"These tries at the same failure did not pass. Do not repeat a change that did not pass; correct what each try was refused for.\n" +
+	"\n### Try 1 (round 1)\n" +
+	"Changed " + loopFixturePath + ":\n" +
+	"```diff\n" +
+	"-      missing: select id from public.loop_wrong_name\n" +
+	"+      missing: select id from public.still_wrong_name\n" +
+	"```\n" +
+	"Why the gate failed: e2e_schema.py_loop_read: relation \"public.still_wrong_name\" does not exist"
+
+// runnerPythonFixPrompt is the request the runner engine sends for the loop
+// fixture: the contract-fix request, with no earlier-attempts section of its
+// own, and the earlier tries appended after it.
+func runnerPythonFixPrompt(contract, earlierTries string) string {
+	return pythonFixPrompt(contract, "") + earlierTries
+}
+
+// TestProposePythonFix_LoopFixture_RunnerRetryShownTheEarlierTryBinds is the
+// runner engine's retry: its second try carries the earlier tries under its own
+// heading, with the read the first try declared in that try's diff and gate
+// error, and gets the binding read.
+func TestProposePythonFix_LoopFixture_RunnerRetryShownTheEarlierTryBinds(t *testing.T) {
+	_, content := proposedFile(t, runnerPythonFixPrompt(readLoopFixture(t), earlierTriesSection))
+
+	if !strings.Contains(content, "select id from "+bindingRead) {
+		t.Errorf("a runner try shown the earlier try must declare the binding read; got:\n%s", content)
+	}
+	if strings.Contains(content, stillBrokenRead) {
+		t.Errorf("a runner try must not repeat the read the earlier try failed for; got:\n%s", content)
+	}
+}
+
+// TestProposePythonFix_LoopFixture_RunnerRetryWithoutTheEvidenceKeepsFailing:
+// the runner's heading alone, with no earlier try's diff or gate error behind
+// it, earns no binding read.
+func TestProposePythonFix_LoopFixture_RunnerRetryWithoutTheEvidenceKeepsFailing(t *testing.T) {
+	const emptyTries = "\n\n## Earlier tries at this failure\n" +
+		"These tries at the same failure did not pass. Do not repeat a change that did not pass; correct what each try was refused for.\n" +
+		"\n### Try 1 (round 1)\nNothing was recorded for this try."
+
+	_, content := proposedFile(t, runnerPythonFixPrompt(readLoopFixture(t), emptyTries))
+
+	if !strings.Contains(content, "select id from "+stillBrokenRead) {
+		t.Errorf("a runner try shown no evidence must keep getting the answer that already failed; got:\n%s", content)
+	}
+}
+
+// TestProposePythonFix_LoopFixture_RevisionInTheFirstTryStaysBroken: a later
+// pre-flight round of the first try carries the model's previous answer, which
+// names the still-broken read, but no earlier try, so it is no retry.
+func TestProposePythonFix_LoopFixture_RevisionInTheFirstTryStaysBroken(t *testing.T) {
+	revision := "\n\n## Your previous answer\n```json\n" +
+		`{"updated_files":[{"path":"` + loopFixturePath + `","content":"select id from public.still_wrong_name"}]}` +
+		"\n```\n\n## What the checks found\n- reads_kept: a read was dropped\n" +
+		"\nCorrect every finding and call the tool again with your complete answer."
+
+	_, content := proposedFile(t, runnerPythonFixPrompt(readLoopFixture(t), revision))
+
+	if !strings.Contains(content, "select id from "+stillBrokenRead) {
+		t.Errorf("a revision within the first try is not a retry; got:\n%s", content)
+	}
+}
+
 // TestProposePythonFix_BadReadFixtureBindsImmediately covers the other e2e
 // scenario, whose node is repaired in a single attempt: the fixture declaring
 // badReadBrokenRead gets the binding relation straight away.
