@@ -189,7 +189,7 @@ func (s *FailingNodeSource) gatherWithContext(ctx context.Context, f remediation
 		return remediation.SourceFiles{}, "", fmt.Errorf("list %s: %w", dir, err)
 	}
 	for _, p := range paths {
-		if p == offending || !(strings.HasSuffix(p, ".yml") || strings.HasSuffix(p, ".yaml")) {
+		if p == offending || (!strings.HasSuffix(p, ".yml") && !strings.HasSuffix(p, ".yaml")) {
 			continue
 		}
 		if err := s.addFile(ctx, f, &g, p); err != nil {
