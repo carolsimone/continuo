@@ -64,9 +64,11 @@ func TestCodeBundleSource_LocatesANodeTheTriggerDoesNotPlace(t *testing.T) {
 	assert.Equal(t, []string{"model.svc.a"}, loc.calls)
 }
 
-func TestCodeBundleSource_ALocatorErrorLeavesNoLocationAndDeclines(t *testing.T) {
+// A node the graph does not know is a permanent miss: no location, so the
+// cluster is declined with the reason.
+func TestCodeBundleSource_ANodeTheGraphDoesNotKnowDeclines(t *testing.T) {
 	bundle := &fakeBundle{nodes: map[string]ports.CandidateSource{"model.svc.a": dbtEntry("select 1")}}
-	loc := &fakeLocator{err: errBoom}
+	loc := &fakeLocator{}
 
 	out := gather(t, newBundleSource(bundle, &fakeSource{}, loc),
 		failure(func(f *remediation.Failure) { f.Target.FilePath = "" }), remediation.NewEvidence())
@@ -74,6 +76,7 @@ func TestCodeBundleSource_ALocatorErrorLeavesNoLocationAndDeclines(t *testing.T)
 	assert.True(t, out.Declined, "a source no fix can reach is not offered to the model")
 	assert.Contains(t, out.Decline, "model.svc.a")
 	assert.Contains(t, out.Decline, "file path")
+	assert.Equal(t, []string{"model.svc.a"}, loc.calls)
 	assert.Empty(t, out.Evidence)
 }
 
@@ -145,7 +148,7 @@ func TestCodeBundleSource_DeclinesWithoutALocation(t *testing.T) {
 			`service "ghost" has no repository path mapping`},
 		{"a source in neither the bundle nor the repository", nil, &fakeBundle{}, &fakeSource{},
 			"the failing node model.svc.a's source is in neither the release's code bundle nor the repository at the trigger's commit"},
-		{"a failed repository read", nil, &fakeBundle{}, &fakeSource{err: errBoom},
+		{"a file the repository does not have", nil, &fakeBundle{}, &fakeSource{err: ports.ErrSourceNotFound},
 			"the failing node model.svc.a's source is in neither the release's code bundle nor the repository at the trigger's commit"},
 	}
 	for _, c := range cases {
@@ -154,6 +157,34 @@ func TestCodeBundleSource_DeclinesWithoutALocation(t *testing.T) {
 
 			assert.True(t, out.Declined)
 			assert.Equal(t, c.reason, out.Decline)
+			assert.Empty(t, out.Evidence)
+		})
+	}
+}
+
+// A lookup or read that failed says nothing about the node, and would not fail
+// on every try, so it is an error for the runner to retry and not a decline.
+func TestCodeBundleSource_ATransientErrorIsReturnedNotDeclined(t *testing.T) {
+	cases := []struct {
+		name string
+		mod  func(*remediation.Failure)
+		src  *fakeSource
+		loc  *fakeLocator
+		want string
+	}{
+		{"a failed lookup of the location", func(f *remediation.Failure) { f.Target.FilePath = "" }, &fakeSource{}, &fakeLocator{err: errBoom},
+			"locate model.svc.a"},
+		{"a failed repository read", nil, &fakeSource{err: errBoom}, &fakeLocator{},
+			"read services/svc/models/a.sql"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out, err := newBundleSource(&fakeBundle{}, c.src, c.loc).
+				Gather(context.Background(), step.ContextInput{Failure: failure(c.mod), Evidence: remediation.NewEvidence()})
+
+			require.ErrorIs(t, err, errBoom)
+			assert.ErrorContains(t, err, c.want)
+			assert.False(t, out.Declined)
 			assert.Empty(t, out.Evidence)
 		})
 	}

@@ -157,15 +157,10 @@ var (
 	_ ports.PrecedentReader      = catalog{}
 )
 
-// errNotInGraph is what locating a node the catalog does not place returns.
-var errNotInGraph = errors.New("node not found in the promoted graph")
-
-// Locate returns where the node lives.
+// Locate returns where the node lives, or no location for a node the fixture
+// does not place, as the catalog answers for a node it does not know.
 func (c catalog) Locate(_ context.Context, uniqueID string) (string, string, error) {
-	loc, ok := c.c.Locations[uniqueID]
-	if !ok {
-		return "", "", fmt.Errorf("%s: %w", uniqueID, errNotInGraph)
-	}
+	loc := c.c.Locations[uniqueID]
 	return loc.FilePath, loc.Service, nil
 }
 

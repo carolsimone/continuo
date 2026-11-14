@@ -67,11 +67,11 @@ func (*CodeBundleSource) Meta() step.Meta {
 // Gather finds where the node's source lives, then reads it: the location the
 // trigger carries is preferred, which release-controller stamps from the
 // candidate topology, and only a trigger that carries none falls back to the
-// promoted graph, because the rejected release was never promoted. That lookup
-// is best-effort: a failure leaves the location empty. The source itself is the
-// bundle's, with the repository read as the fallback. A permanent miss leaves
-// the source empty and is not an error, and a transient read error is returned
-// so the work is tried again.
+// promoted graph, because the rejected release was never promoted. The source
+// itself is the bundle's, with the repository read as the fallback. A node the
+// graph does not know and a source that is not there are permanent misses,
+// which leave the location or the source empty and are not errors. A failed
+// lookup or read is transient and is returned so the work is tried again.
 //
 // A source that is not a dbt model declines the cluster, and so does a node
 // whose location or source stayed unknown: a fix edits the file the node's
@@ -86,8 +86,7 @@ func (s *CodeBundleSource) Gather(ctx context.Context, in step.ContextInput) (st
 		var err error
 		filePath, serviceName, err = s.locator.Locate(ctx, n.NodeID)
 		if err != nil {
-			s.logger.Warn("node location unavailable", "node", n.NodeID, "error", err)
-			filePath, serviceName = "", ""
+			return step.ContextOutput{}, fmt.Errorf("locate %s: %w", n.NodeID, err)
 		}
 	}
 
@@ -146,7 +145,8 @@ func (s *CodeBundleSource) unreachable(nodeID, filePath, serviceName, source str
 // about the node's kind. Only when the trigger carries no node type does a
 // resolved path that does not end in ".sql" also return errNonDbtCandidate: a
 // trigger that does carry a node type is trusted over the extension and always
-// proceeds to the read, where any error leaves the source unresolved.
+// proceeds to the read, where a missing file leaves the source unresolved and
+// any other read error is returned.
 func (s *CodeBundleSource) resolve(ctx context.Context, f remediation.Failure, filePath, serviceName string) (source, origin string, err error) {
 	n := f.Target
 	src, berr := s.candidates.NodeSource(ctx, f.Trigger.CodeBundleURI, n.NodeID, f.Trigger.ReleaseID)
@@ -179,10 +179,12 @@ func (s *CodeBundleSource) resolve(ctx context.Context, f remediation.Failure, f
 	}
 	full := path.Join(prefix, filePath)
 	content, gerr := s.source.ReadFile(ctx, f.Trigger.Repo, f.Trigger.CommitSHA, full)
-	if gerr != nil {
-		s.logger.Warn("repo fallback read failed",
-			"node", n.NodeID, "path", full, "error", gerr)
+	if errors.Is(gerr, ports.ErrSourceNotFound) {
+		s.logger.Warn("repo fallback has no such file", "node", n.NodeID, "path", full)
 		return "", "", nil
+	}
+	if gerr != nil {
+		return "", "", fmt.Errorf("read %s: %w", full, gerr)
 	}
 	return content, "github", nil
 }

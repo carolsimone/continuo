@@ -2,7 +2,6 @@ package scripted
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -220,8 +219,10 @@ func TestCatalog_AnswersFromTheFixture(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "models/a.sql", file)
 	assert.Equal(t, "svc", service)
-	_, _, err = c.Locate(ctx, "model.b")
-	assert.True(t, errors.Is(err, errNotInGraph))
+	file, service, err = c.Locate(ctx, "model.b")
+	require.NoError(t, err, "a node the fixture does not place has no location, which is no error")
+	assert.Empty(t, file)
+	assert.Empty(t, service)
 	v, ok, err := c.CurrentVersion(ctx, "model.a")
 	require.NoError(t, err)
 	assert.True(t, ok)
