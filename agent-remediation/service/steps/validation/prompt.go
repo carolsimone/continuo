@@ -3,16 +3,13 @@ package validation
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"path"
-	"strings"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
-	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
 )
 
 // sourceValidation is the trigger source of a rejection whose release
@@ -27,7 +24,6 @@ type DBTValidation struct {
 	artifacts        ports.ArtifactWriter
 	sanitizer        ports.LogSanitizer
 	serviceRepoPaths map[string]string
-	logger           *slog.Logger
 }
 
 var _ step.Prompt = (*DBTValidation)(nil)
@@ -35,8 +31,8 @@ var _ step.Prompt = (*DBTValidation)(nil)
 // NewDBTValidation builds the dbt-validation step. serviceRepoPaths maps a
 // service name to its path inside the repository. It calls no port until
 // Propose.
-func NewDBTValidation(artifacts ports.ArtifactWriter, sanitizer ports.LogSanitizer, serviceRepoPaths map[string]string, logger *slog.Logger) *DBTValidation {
-	return &DBTValidation{artifacts: artifacts, sanitizer: sanitizer, serviceRepoPaths: serviceRepoPaths, logger: shared.LoggerOrDefault(logger)}
+func NewDBTValidation(artifacts ports.ArtifactWriter, sanitizer ports.LogSanitizer, serviceRepoPaths map[string]string) *DBTValidation {
+	return &DBTValidation{artifacts: artifacts, sanitizer: sanitizer, serviceRepoPaths: serviceRepoPaths}
 }
 
 // Meta describes the step.
@@ -46,7 +42,7 @@ func (*DBTValidation) Meta() step.Meta {
 		Kind: step.KindPrompt,
 		Description: "Shows the model a validation-failed dbt node's candidate SQL with the dbt error, what the release changed in the node and its ancestors and " +
 			"past precedent, and stores the SQL fix it proposes. It then asks the model to apply its diagnosis to the node's real source, " +
-			"which becomes the draft's one edit when the answer is a confident change.",
+			"and the answer, whatever it holds, becomes the draft's one edit for the pre-flight checks to judge.",
 		Needs: []remediation.EvidenceKey{
 			remediation.KeyFailure,
 			remediation.KeyCandidateSQL,
@@ -69,22 +65,24 @@ func (*DBTValidation) Meta() step.Meta {
 // with no SQL gives a draft with no artifacts and no edit.
 //
 // The second call applies the first one's diagnosis to the node's real source.
-// It degrades quietly, to a draft with no edit, when the source or its file
-// path or service is unknown, the service has no repository path, the call
-// fails, its answer is empty, unchanged or rated low. On success the draft
-// holds one edit of the source file. Either way the draft's confidence, model
-// and suspected root are the first call's, and its rationale is the second
-// call's when it produced the edit, because that note describes the diff the
-// reviewer sees, and the first call's otherwise.
+// Its answer is the draft's one edit whatever it holds, an empty, unchanged or
+// low-confidence one included: the pre-flight checks judge it, and a round
+// after the first revises it. A failed call is the step's error, which the
+// runner retries. The draft's rationale and confidence are the second call's,
+// because that note describes the diff the reviewer sees and that confidence
+// rates it, and its model and suspected root are the first call's. The source
+// is always reachable: code_bundle_source declines a node whose source, file
+// path, service or service's repository path is unknown, and evidence that
+// lacks one is an error that calls no model.
 //
 // A round after the first revises the last call of the round before it, with
 // its answer and the findings (step.RevisionRequest). When that call is the
 // source fix, the one call of the round is its revision, read as the second
 // call is, and the diagnosis is not made again: the draft keeps the previous
-// draft's candidate fix, confidence, model and suspected root. When it is the
-// diagnosis, which is all a first round makes when the answer holds no SQL, the
-// diagnosis is revised and its answer goes the way a first call's does,
-// including the source fix.
+// draft's candidate fix, model and suspected root. When it is the diagnosis,
+// which is all a first round makes when the answer holds no SQL, the diagnosis
+// is revised and its answer goes the way a first call's does, including the
+// source fix.
 func (p *DBTValidation) Propose(ctx context.Context, in step.PromptInput, m step.Model) (step.PromptOutput, error) {
 	candidateSQL, ok := remediation.Get[remediation.Text](in.Evidence, remediation.KeyCandidateSQL)
 	if !ok {
@@ -94,12 +92,16 @@ func (p *DBTValidation) Propose(ctx context.Context, in step.PromptInput, m step
 	if !ok {
 		return step.PromptOutput{}, fmt.Errorf("dbt-validation: the evidence holds no code bundle source")
 	}
+	repoPrefix, err := p.repoPrefix(bundle)
+	if err != nil {
+		return step.PromptOutput{}, err
+	}
 	req, revising, err := step.RevisionRequest(in)
 	if err != nil {
 		return step.PromptOutput{}, fmt.Errorf("dbt-validation: %w", err)
 	}
 	if revising && prompt.IsSourceFix(req) {
-		return p.reviseSourceFix(ctx, in, bundle, req, m)
+		return p.reviseSourceFix(ctx, in, bundle, repoPrefix, req, m)
 	}
 	if !revising {
 		req = p.diagnosisRequest(in, candidateSQL)
@@ -133,15 +135,23 @@ func (p *DBTValidation) Propose(ctx context.Context, in step.PromptInput, m step
 		return step.PromptOutput{}, fmt.Errorf("write candidate diff: %w", err)
 	}
 
-	applyDiagnosis := func() prompt.ProposeRequest {
-		return prompt.AssembleSourceFix(p.sanitizer.Sanitize(bundle.Source), nodeID, res.Rationale)
+	applyDiagnosis := prompt.AssembleSourceFix(p.sanitizer.Sanitize(bundle.Source), nodeID, res.Rationale)
+	return p.sourceFix(ctx, f, bundle, repoPrefix, applyDiagnosis, draft, m)
+}
+
+// repoPrefix is the repository path of the service the node's source lives in.
+// code_bundle_source gives a node only when its source, file path and service
+// are known and the service has a repository path, so evidence without one of
+// them is an error.
+func (p *DBTValidation) repoPrefix(bundle remediation.CandidateSource) (string, error) {
+	if bundle.Source == "" || bundle.FilePath == "" || bundle.Service == "" {
+		return "", fmt.Errorf("dbt-validation: the code bundle source holds no source, file path or service to edit")
 	}
-	if edit, note, ok := p.sourceFix(ctx, f, bundle, applyDiagnosis, m); ok {
-		draft.Edits = []remediation.Edit{edit}
-		draft.SourceResolved = true
-		draft.Rationale = note
+	prefix, ok := p.serviceRepoPaths[bundle.Service]
+	if !ok {
+		return "", fmt.Errorf("dbt-validation: service %q has no repository path mapping", bundle.Service)
 	}
-	return step.PromptOutput{Draft: draft}, nil
+	return prefix, nil
 }
 
 // diagnosisRequest builds the first call's request from the cluster's evidence.
@@ -168,71 +178,44 @@ func (p *DBTValidation) diagnosisRequest(in step.PromptInput, candidateSQL remed
 
 // reviseSourceFix makes the one call of a round that revises the previous
 // round's source fix, and reads its answer as the second call is read. The
-// draft is the previous draft's candidate fix, rationale, confidence, model and
-// suspected root, which came from the first call, with the edit when the
-// revised answer produced one, and the revised answer's note as the rationale.
-func (p *DBTValidation) reviseSourceFix(ctx context.Context, in step.PromptInput, bundle remediation.CandidateSource, revision prompt.ProposeRequest, m step.Model) (step.PromptOutput, error) {
+// draft is the previous draft's candidate fix, model and suspected root, which
+// came from the first call, with the revised answer as its edit, note and
+// confidence.
+func (p *DBTValidation) reviseSourceFix(ctx context.Context, in step.PromptInput, bundle remediation.CandidateSource, repoPrefix string, revision prompt.ProposeRequest, m step.Model) (step.PromptOutput, error) {
 	if in.Previous == nil {
 		return step.PromptOutput{}, fmt.Errorf("dbt-validation: a revision of the source fix needs the previous round's draft")
 	}
 	prev := *in.Previous
 	draft := remediation.Draft{
-		Rationale:           prev.Rationale,
-		Confidence:          prev.Confidence,
 		Model:               prev.Model,
 		SuspectedRoot:       prev.SuspectedRoot,
 		CandidateFixSQLURI:  prev.CandidateFixSQLURI,
 		CandidateFixDiffURI: prev.CandidateFixDiffURI,
 	}
-	if edit, note, ok := p.sourceFix(ctx, in.Failure, bundle, func() prompt.ProposeRequest { return revision }, m); ok {
-		draft.Edits = []remediation.Edit{edit}
-		draft.SourceResolved = true
-		draft.Rationale = note
-	}
-	return step.PromptOutput{Draft: draft}, nil
+	return p.sourceFix(ctx, in.Failure, bundle, repoPrefix, revision, draft, m)
 }
 
-// sourceFix makes the source-fix call with the request it builds, and returns
-// the edit and the note of that call. It reports false on every degraded path,
-// so the draft keeps only the candidate fix. The request is built only once the
-// source and its location are known, so a degraded path makes no call.
-func (p *DBTValidation) sourceFix(ctx context.Context, f remediation.Failure, bundle remediation.CandidateSource, request func() prompt.ProposeRequest, m step.Model) (remediation.Edit, string, bool) {
-	nodeID := f.Target.NodeID
-	if bundle.Source == "" {
-		p.logger.Warn("source fix: no candidate source resolved; using candidate proposal", "node", nodeID)
-		return remediation.Edit{}, "", false
-	}
-	if bundle.FilePath == "" || bundle.Service == "" {
-		p.logger.Warn("source fix: file path or service name unavailable; using candidate proposal",
-			"node", nodeID, "file_path", bundle.FilePath, "service_name", bundle.Service)
-		return remediation.Edit{}, "", false
-	}
-	repoPrefix, ok := p.serviceRepoPaths[bundle.Service]
-	if !ok {
-		p.logger.Warn("source fix: no repo path mapping for service; using candidate proposal",
-			"node", nodeID, "service_name", bundle.Service)
-		return remediation.Edit{}, "", false
-	}
-	out, err := m.Propose(ctx, request())
+// sourceFix makes the source-fix call with request and returns draft with the
+// call's answer as its one edit of the source file, and the answer's note and
+// confidence as the draft's. The answer is the edit however little it holds, for
+// the checks to judge. A failed call is an error.
+func (p *DBTValidation) sourceFix(ctx context.Context, f remediation.Failure, bundle remediation.CandidateSource, repoPrefix string, request prompt.ProposeRequest, draft remediation.Draft, m step.Model) (step.PromptOutput, error) {
+	out, err := m.Propose(ctx, request)
 	if err != nil {
-		p.logger.Warn("source fix: llm step 2 failed; using candidate proposal", "node", nodeID, "error", err)
-		return remediation.Edit{}, "", false
+		return step.PromptOutput{}, fmt.Errorf("llm propose source fix: %w", err)
 	}
-	if out.ProposedSQL == "" || out.ProposedSQL == bundle.Source {
-		p.logger.Warn("source fix: llm step 2 produced no improvement; using candidate proposal", "node", nodeID)
-		return remediation.Edit{}, "", false
-	}
-	if strings.EqualFold(strings.TrimSpace(out.Confidence), "low") {
-		p.logger.Warn("source fix: llm step 2 low confidence; using candidate proposal", "node", nodeID)
-		return remediation.Edit{}, "", false
-	}
+	nodeID := f.Target.NodeID
 	base := fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.source", f.Trigger.ReleaseID, nodeID, f.Attempt)
-	return remediation.Edit{
+	draft.Edits = []remediation.Edit{{
 		Path:         path.Join(repoPrefix, bundle.FilePath),
 		Original:     bundle.Source,
 		Content:      out.ProposedSQL,
 		TargetNodeID: nodeID,
 		ContentKey:   base + ".sql",
 		DiffKey:      base + ".diff",
-	}, out.Rationale, true
+	}}
+	draft.SourceResolved = true
+	draft.Rationale = out.Rationale
+	draft.Confidence = out.Confidence
+	return step.PromptOutput{Draft: draft}, nil
 }

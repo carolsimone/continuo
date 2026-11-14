@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/memory"
+	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
@@ -122,6 +123,17 @@ func (e fakeEvidence) Fetch(_ context.Context, uri string) (string, error) {
 type nopSanitizer struct{}
 
 func (nopSanitizer) Sanitize(s string) string { return s }
+
+// noUpstream is a graph that knows no change upstream of any node.
+type noUpstream struct{}
+
+func (noUpstream) UpstreamChanges(context.Context, string) ([]prompt.UpstreamChange, error) {
+	return nil, nil
+}
+
+// contractFiles searches and reads a checkout's contract yaml as the service
+// does.
+var contractFiles = repofs.NewLocator(discard)
 
 type noPrecedents struct{}
 
@@ -399,7 +411,7 @@ func testFiles(tries int) workflow.Set {
 			[]string{"target_file_was_shown", "content_changed", "confidence_not_low"}),
 		typ("dbt-validation", workflow.Match{Cluster: workflow.ClusterSingle, Source: "validation", NodeTypes: []string{"dbt-model", "dbt-seed", "dbt-snapshot", "none"}},
 			[]string{"candidate_sql", "dbt_log", "code_bundle_source", "own_change_diff", "upstream_changes", "changed_ancestor_diffs", "failure_precedents"},
-			"dbt-validation", []string{"content_changed"}),
+			"dbt-validation", []string{"content_changed", "confidence_not_low"}),
 		typ("shared-upstream", workflow.Match{Cluster: workflow.ClusterSharedUpstream},
 			[]string{"upstream_target", "failure_precedents"}, "upstream", []string{"content_changed", "confidence_not_low"}),
 		typ("cross-service-upstream", workflow.Match{Cluster: workflow.ClusterCrossService},
@@ -428,8 +440,12 @@ type harness struct {
 	files       workflow.Set
 	maintenance bool
 	stepTimeout time.Duration
-	collab      runner.Collaborators
-	runner      *runner.Runner
+	// archive and packager are the repository checkout and the contract
+	// packaging tool the contract steps read, nil unless a test sets them.
+	archive  ports.RepoArchive
+	packager ports.ContractPackager
+	collab   runner.Collaborators
+	runner   *runner.Runner
 
 	// afterCommit runs after every unit of work of the runner commits.
 	afterCommit func()
@@ -559,9 +575,16 @@ func newHarness(t *testing.T, opts ...option) *harness {
 			"core":  "services/core",
 		},
 		Precedents:          noPrecedents{},
+		Upstream:            noUpstream{},
+		PriorAttempts:       h.store.ProposalRepository(),
 		CandidateSource:     h.bundle,
 		Versions:            noVersions{},
 		Releases:            fakeReleases{},
+		Archive:             h.archive,
+		Patcher:             repofs.CheckoutPatcher{},
+		ContractLocator:     contractFiles,
+		ContractInspector:   contractFiles,
+		Packager:            h.packager,
 		Pipeline:            h.pipeline,
 		Clock:               h.clock,
 		VerificationTimeout: verificationTimeout,

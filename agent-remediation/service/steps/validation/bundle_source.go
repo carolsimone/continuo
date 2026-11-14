@@ -57,7 +57,8 @@ func (*CodeBundleSource) Meta() step.Meta {
 		Name: "code_bundle_source",
 		Kind: step.KindContext,
 		Description: "Reads the failing dbt node's source from the release's code bundle, falling back to the repository at the trigger's commit, " +
-			"with the file path and service it was found for. Declines a node whose source is not a dbt model.",
+			"with the file path and service it was found for. Declines a node whose source is not a dbt model and one whose source, " +
+			"file path, service or the service's repository path is unknown, since no fix can edit it.",
 		Needs:    []remediation.EvidenceKey{remediation.KeyFailure},
 		Provides: []remediation.EvidenceKey{remediation.KeyCodeBundleSource},
 	}
@@ -67,11 +68,16 @@ func (*CodeBundleSource) Meta() step.Meta {
 // trigger carries is preferred, which release-controller stamps from the
 // candidate topology, and only a trigger that carries none falls back to the
 // promoted graph, because the rejected release was never promoted. That lookup
-// is best-effort: a failure leaves the location empty, which only makes the
-// source fix degrade to the candidate. The source itself is the bundle's, with
-// the repository read as the fallback. A permanent miss leaves the source empty
-// and is not an error, and a transient read error is returned so the work is
-// tried again. A source that is not a dbt model declines the cluster.
+// is best-effort: a failure leaves the location empty. The source itself is the
+// bundle's, with the repository read as the fallback. A permanent miss leaves
+// the source empty and is not an error, and a transient read error is returned
+// so the work is tried again.
+//
+// A source that is not a dbt model declines the cluster, and so does a node
+// whose location or source stayed unknown: a fix edits the file the node's
+// source lives in, so with no source, file path, service or repository path
+// for the service there is no edit to make, and no model call is worth making.
+// Each decline carries its reason.
 func (s *CodeBundleSource) Gather(ctx context.Context, in step.ContextInput) (step.ContextOutput, error) {
 	f := in.Failure
 	n := f.Target
@@ -80,8 +86,7 @@ func (s *CodeBundleSource) Gather(ctx context.Context, in step.ContextInput) (st
 		var err error
 		filePath, serviceName, err = s.locator.Locate(ctx, n.NodeID)
 		if err != nil {
-			s.logger.Warn("node location unavailable; source fix will degrade to candidate",
-				"node", n.NodeID, "error", err)
+			s.logger.Warn("node location unavailable", "node", n.NodeID, "error", err)
 			filePath, serviceName = "", ""
 		}
 	}
@@ -90,14 +95,16 @@ func (s *CodeBundleSource) Gather(ctx context.Context, in step.ContextInput) (st
 	if errors.Is(err, errNonDbtCandidate) {
 		s.logger.Info("validation fix: failing node's candidate source is not a dbt model; skipping",
 			"node", n.NodeID, "error", err)
-		return step.ContextOutput{Declined: true}, nil
+		return step.ContextOutput{Declined: true, Decline: err.Error()}, nil
 	}
 	if err != nil {
 		return step.ContextOutput{}, err
 	}
-	if origin != "" {
-		s.logger.Info("validation fix: candidate source resolved", "node", n.NodeID, "source_origin", origin)
+	if reason := s.unreachable(n.NodeID, filePath, serviceName, source); reason != "" {
+		s.logger.Info("validation fix: failing node's source cannot be edited; skipping", "node", n.NodeID, "reason", reason)
+		return step.ContextOutput{Declined: true, Decline: reason}, nil
 	}
+	s.logger.Info("validation fix: candidate source resolved", "node", n.NodeID, "source_origin", origin)
 	return step.ContextOutput{Evidence: map[remediation.EvidenceKey]any{
 		remediation.KeyCodeBundleSource: remediation.CandidateSource{
 			Source:   source,
@@ -108,6 +115,26 @@ func (s *CodeBundleSource) Gather(ctx context.Context, in step.ContextInput) (st
 	}}, nil
 }
 
+// unreachable is why no fix can edit the node's source, or "" when it can: the
+// node has no file path or service, the service has no repository path, or the
+// source was found nowhere. The location is judged first, because with none the
+// source could only have come from the bundle.
+func (s *CodeBundleSource) unreachable(nodeID, filePath, serviceName, source string) string {
+	switch {
+	case filePath == "":
+		return fmt.Sprintf("the failing node %s has no file path, so there is no source file to edit", nodeID)
+	case serviceName == "":
+		return fmt.Sprintf("the failing node %s names no service, so there is no source file to edit", nodeID)
+	}
+	if _, ok := s.serviceRepoPaths[serviceName]; !ok {
+		return fmt.Sprintf("service %q has no repository path mapping", serviceName)
+	}
+	if source == "" {
+		return fmt.Sprintf("the failing node %s's source is in neither the release's code bundle nor the repository at the trigger's commit", nodeID)
+	}
+	return ""
+}
+
 // resolve returns the failing candidate's raw source. Order: the release's code
 // bundle (exact failing source, keyed by unique id, no path mapping needed),
 // then the repo file at the release's commit, then "". A bundle entry that is
@@ -115,11 +142,11 @@ func (s *CodeBundleSource) Gather(ctx context.Context, in step.ContextInput) (st
 // miss, including a bundle for a different release and a dbt entry with no
 // source text, walks down to the repo fallback instead. There, an empty file
 // path, an empty service name, or a service with no entry in serviceRepoPaths
-// still degrades quietly to an unresolved source, since these are location gaps
-// and say nothing about the node's kind. Only when the trigger carries no node
-// type does a resolved path that does not end in ".sql" also return
-// errNonDbtCandidate: a trigger that does carry a node type is trusted over the
-// extension and always proceeds to the read, where any error degrades quietly.
+// leaves the source unresolved, since these are location gaps and say nothing
+// about the node's kind. Only when the trigger carries no node type does a
+// resolved path that does not end in ".sql" also return errNonDbtCandidate: a
+// trigger that does carry a node type is trusted over the extension and always
+// proceeds to the read, where any error leaves the source unresolved.
 func (s *CodeBundleSource) resolve(ctx context.Context, f remediation.Failure, filePath, serviceName string) (source, origin string, err error) {
 	n := f.Target
 	src, berr := s.candidates.NodeSource(ctx, f.Trigger.CodeBundleURI, n.NodeID, f.Trigger.ReleaseID)
@@ -153,7 +180,7 @@ func (s *CodeBundleSource) resolve(ctx context.Context, f remediation.Failure, f
 	full := path.Join(prefix, filePath)
 	content, gerr := s.source.ReadFile(ctx, f.Trigger.Repo, f.Trigger.CommitSHA, full)
 	if gerr != nil {
-		s.logger.Warn("repo fallback read failed; using candidate proposal",
+		s.logger.Warn("repo fallback read failed",
 			"node", n.NodeID, "path", full, "error", gerr)
 		return "", "", nil
 	}

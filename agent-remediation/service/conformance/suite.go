@@ -33,7 +33,8 @@ const (
 	// DeclinesBeforeModel: a context step declines before the model is
 	// called.
 	DeclinesBeforeModel Scenario = "declines_before_model"
-	// ModelDeclines: the model declines.
+	// ModelDeclines: the model answers that it cannot fix the node, with a low
+	// confidence or no edit, which pre-flight refuses.
 	ModelDeclines Scenario = "model_declines"
 	// Redelivery: the first draft passes while the trigger is delivered twice
 	// and the worker restarts once after the prompt step.

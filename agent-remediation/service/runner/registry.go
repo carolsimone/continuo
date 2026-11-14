@@ -78,7 +78,7 @@ func NewRegistry(c Collaborators) *Registry {
 	r.register(validation.NewCodeBundleSource(c.CandidateSource, c.Source, c.Locator, c.ServiceRepoPaths, c.Logger))
 	r.register(validation.NewOwnChangeDiff(c.Versions, c.Sanitizer, c.Logger))
 	r.register(validation.NewChangedAncestorDiffs(c.CandidateSource, c.Versions, c.Sanitizer, c.Logger))
-	r.register(validation.NewDBTValidation(c.Artifacts, c.Sanitizer, c.ServiceRepoPaths, c.Logger))
+	r.register(validation.NewDBTValidation(c.Artifacts, c.Sanitizer, c.ServiceRepoPaths))
 	r.register(contract.NewContractFile(c.Archive, c.ContractLocator, c.Logger))
 	r.register(contract.NewFailingSiblings(c.Archive, c.ContractLocator, c.Releases, c.Logger))
 	r.register(contract.NewContractEntry(c.CandidateSource, c.Sanitizer, c.Logger))

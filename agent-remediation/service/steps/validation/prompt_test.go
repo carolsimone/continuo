@@ -12,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/validation"
 )
 
@@ -83,7 +84,7 @@ func secondRequest() prompt.ProposeRequest {
 }
 
 func newValidationPrompt(w *fakeArtifacts) *validation.DBTValidation {
-	return validation.NewDBTValidation(w, markSanitizer{}, repoPaths, discardLogger())
+	return validation.NewDBTValidation(w, markSanitizer{}, repoPaths)
 }
 
 func proposeValidation(t *testing.T, w *fakeArtifacts, f remediation.Failure, ev remediation.Evidence, m *fakeModel) step.PromptOutput {
@@ -95,7 +96,7 @@ func proposeValidation(t *testing.T, w *fakeArtifacts, f remediation.Failure, ev
 }
 
 func TestDBTValidation_MetaNamesTheStepAndWhatItReads(t *testing.T) {
-	m := validation.NewDBTValidation(nil, nil, nil, nil).Meta()
+	m := validation.NewDBTValidation(nil, nil, nil).Meta()
 	assert.Equal(t, "dbt-validation", string(m.Name))
 	assert.Equal(t, step.KindPrompt, m.Kind)
 	assert.NotEmpty(t, m.Description)
@@ -149,7 +150,7 @@ func TestDBTValidation_WritesTheCandidateArtifactsAndOffersASourceEdit(t *testin
 			DiffKey:      "proposed-fix/rel-1/model.svc.a/attempt-2.source.diff",
 		}},
 		Rationale:           editNote,
-		Confidence:          "high",
+		Confidence:          "medium",
 		Model:               "model-1",
 		SuspectedRoot:       "model.svc.root",
 		CandidateFixSQLURI:  "s3://artifacts/proposed-fix/rel-1/model.svc.a/attempt-2.sql",
@@ -158,55 +159,110 @@ func TestDBTValidation_WritesTheCandidateArtifactsAndOffersASourceEdit(t *testin
 	}, out.Draft)
 }
 
-func TestDBTValidation_EveryDegradedSecondStepGivesADraftWithNoEdit(t *testing.T) {
+// A source fix the model leaves empty, unchanged or rates low is still the
+// draft's edit: the pre-flight checks judge it, and a round after the first
+// revises it with their findings.
+func TestDBTValidation_ALowConfidenceSourceFixIsJudgedByTheChecks(t *testing.T) {
 	cases := []struct {
 		name   string
-		bundle remediation.CandidateSource
-		two    *modelAnswer
-		calls  int
+		answer ports.ProposeResult
+		check  step.Check
+		code   string
 	}{
-		{"a low-confidence answer", resolvedBundle(), &modelAnswer{res: stepTwo(fixedSource, "low")}, 2},
-		{"a low-confidence answer in any case", resolvedBundle(), &modelAnswer{res: stepTwo(fixedSource, " Low ")}, 2},
-		{"an empty answer", resolvedBundle(), &modelAnswer{res: stepTwo("", "high")}, 2},
-		{"an answer equal to the source", resolvedBundle(), &modelAnswer{res: stepTwo(modelSource, "high")}, 2},
-		{"a failed call", resolvedBundle(), &modelAnswer{err: errBoom}, 2},
-		{"no source", remediation.CandidateSource{FilePath: "models/a.sql", Service: "svc"}, nil, 1},
-		{"no file path", remediation.CandidateSource{Source: modelSource, Service: "svc"}, nil, 1},
-		{"no service", remediation.CandidateSource{Source: modelSource, FilePath: "models/a.sql"}, nil, 1},
-		{"a service with no repository path", remediation.CandidateSource{Source: modelSource, FilePath: "models/a.sql", Service: "ghost"}, nil, 1},
+		{"a low-confidence answer", stepTwo(fixedSource, "low"), shared.NewConfidenceNotLow(), "low_confidence"},
+		{"a low-confidence answer in any case", stepTwo(fixedSource, " Low "), shared.NewConfidenceNotLow(), "low_confidence"},
+		{"an empty answer", stepTwo("", "high"), shared.NewContentChanged(), "content_unchanged"},
+		{"an answer equal to the source", stepTwo(modelSource, "high"), shared.NewContentChanged(), "content_unchanged"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			model := answers(stepOne(fixedSQL))
-			if c.two != nil {
-				model.answers = append(model.answers, *c.two)
-			}
+			model := answers(stepOne(fixedSQL), c.answer)
 			w := &fakeArtifacts{}
 
-			out := proposeValidation(t, w, failure(nil), validationEvidence(c.bundle), model)
+			out := proposeValidation(t, w, failure(nil), validationEvidence(resolvedBundle()), model)
 
-			assert.Len(t, model.reqs, c.calls)
-			assert.Empty(t, out.Draft.Edits)
-			assert.False(t, out.Draft.SourceResolved)
-			assert.Equal(t, diagnosisNote, out.Draft.Rationale, "the candidate fix keeps the first call's note")
-			assert.Equal(t, "high", out.Draft.Confidence)
+			assert.Len(t, model.reqs, 2)
+			require.Len(t, out.Draft.Edits, 1, "the answer is the draft's edit whatever it holds")
+			edit := out.Draft.Edits[0]
+			assert.Equal(t, repoFilePath, edit.Path)
+			assert.Equal(t, modelSource, edit.Original)
+			assert.Equal(t, c.answer.ProposedSQL, edit.Content)
+			assert.True(t, out.Draft.SourceResolved)
+			assert.Equal(t, editNote, out.Draft.Rationale, "the note is the second call's, which describes the edit")
+			assert.Equal(t, c.answer.Confidence, out.Draft.Confidence, "the confidence is the second call's")
 			assert.Equal(t, "model-1", out.Draft.Model)
 			assert.NotEmpty(t, out.Draft.CandidateFixSQLURI)
 			assert.NotEmpty(t, out.Draft.CandidateFixDiffURI)
-			assert.Len(t, w.writes, 2, "the candidate artifacts are written whatever the second step does")
+			assert.Len(t, w.writes, 2, "the candidate artifacts are written whatever the second call answers")
+
+			res, err := c.check.Check(context.Background(), step.CheckInput{Failure: failure(nil), Draft: out.Draft})
+			require.NoError(t, err)
+			require.Len(t, res.Result.Findings, 1, "the check the type runs refuses it")
+			assert.Equal(t, c.code, res.Result.Findings[0].Code)
 		})
 	}
 }
 
-func TestDBTValidation_TheDraftsConfidenceIsTheFirstAnswers(t *testing.T) {
-	first := stepOne(fixedSQL)
-	first.Confidence = "medium"
-
+func TestDBTValidation_AConfidentChangedSourceFixPassesTheChecks(t *testing.T) {
 	out := proposeValidation(t, &fakeArtifacts{}, failure(nil), validationEvidence(resolvedBundle()),
-		answers(first, stepTwo(fixedSource, "high")))
+		answers(stepOne(fixedSQL), stepTwo(fixedSource, "medium")))
 
-	assert.Equal(t, "medium", out.Draft.Confidence)
-	assert.Len(t, out.Draft.Edits, 1)
+	for _, check := range []step.Check{shared.NewContentChanged(), shared.NewConfidenceNotLow()} {
+		res, err := check.Check(context.Background(), step.CheckInput{Failure: failure(nil), Draft: out.Draft})
+		require.NoError(t, err)
+		assert.Empty(t, res.Result.Findings, check.Meta().Name)
+	}
+}
+
+func TestDBTValidation_AFailedSourceFixCallIsAStepError(t *testing.T) {
+	model := &fakeModel{answers: []modelAnswer{{res: stepOne(fixedSQL)}, {err: errBoom}}}
+
+	_, err := newValidationPrompt(&fakeArtifacts{}).Propose(context.Background(),
+		step.PromptInput{Failure: failure(nil), Evidence: validationEvidence(resolvedBundle())}, model)
+
+	require.ErrorIs(t, err, errBoom, "the runner retries the step, and the call is not given up on quietly")
+	assert.Contains(t, err.Error(), "llm propose")
+	assert.Len(t, model.reqs, 2)
+}
+
+func TestDBTValidation_TheDraftsConfidenceIsTheSecondAnswers(t *testing.T) {
+	for _, c := range []struct{ first, second string }{{"medium", "high"}, {"high", "medium"}} {
+		t.Run(c.first+" then "+c.second, func(t *testing.T) {
+			first := stepOne(fixedSQL)
+			first.Confidence = c.first
+
+			out := proposeValidation(t, &fakeArtifacts{}, failure(nil), validationEvidence(resolvedBundle()),
+				answers(first, stepTwo(fixedSource, c.second)))
+
+			assert.Equal(t, c.second, out.Draft.Confidence)
+			assert.Len(t, out.Draft.Edits, 1)
+		})
+	}
+}
+
+// code_bundle_source declines a node whose source or location is unknown, so a
+// step handed such evidence is a wiring defect and calls no model.
+func TestDBTValidation_RefusesASourceItCannotLocate(t *testing.T) {
+	cases := map[string]remediation.CandidateSource{
+		"no source":                         {FilePath: "models/a.sql", Service: "svc"},
+		"no file path":                      {Source: modelSource, Service: "svc"},
+		"no service":                        {Source: modelSource, FilePath: "models/a.sql"},
+		"a service with no repository path": {Source: modelSource, FilePath: "models/a.sql", Service: "ghost"},
+	}
+	for name, bundle := range cases {
+		t.Run(name, func(t *testing.T) {
+			model := answers(stepOne(fixedSQL))
+			w := &fakeArtifacts{}
+
+			_, err := newValidationPrompt(w).Propose(context.Background(),
+				step.PromptInput{Failure: failure(nil), Evidence: validationEvidence(bundle)}, model)
+
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "dbt-validation")
+			assert.Empty(t, model.reqs, "no model call is made for a node no fix can reach")
+			assert.Empty(t, w.writes)
+		})
+	}
 }
 
 func TestDBTValidation_AFirstAnswerWithNoSQLWritesNothingAndOffersNothing(t *testing.T) {
@@ -278,7 +334,7 @@ func TestDBTValidation_RefusesEvidenceMissingWhatItMustHave(t *testing.T) {
 func TestDBTValidation_OptionalEvidenceMayBeAbsent(t *testing.T) {
 	ev := remediation.NewEvidence().
 		With(remediation.KeyCandidateSQL, remediation.Text(candidateSQL)).
-		With(remediation.KeyCodeBundleSource, remediation.CandidateSource{})
+		With(remediation.KeyCodeBundleSource, resolvedBundle())
 	model := answers(stepOne(""))
 
 	proposeValidation(t, &fakeArtifacts{}, failure(nil), ev, model)
@@ -330,16 +386,19 @@ func TestDBTValidation_RevisesTheLastCallWithTheFindings(t *testing.T) {
 			DiffKey:      "proposed-fix/rel-1/model.svc.a/attempt-2.source.diff",
 		}},
 		Rationale:           "qualified the column",
-		Confidence:          "medium",
+		Confidence:          "high",
 		Model:               "model-1",
 		SuspectedRoot:       "model.svc.root",
 		CandidateFixSQLURI:  "s3://artifacts/proposed-fix/rel-1/model.svc.a/attempt-2.sql",
 		CandidateFixDiffURI: "s3://artifacts/proposed-fix/rel-1/model.svc.a/attempt-2.diff",
 		SourceResolved:      true,
-	}, out.Draft, "the first call's parts come from the previous draft, the edit from the revised answer")
+	}, out.Draft, "the candidate fix, model and suspected root come from the previous draft, the edit, note and confidence from the revised answer")
 }
 
-func TestDBTValidation_ADegradedRevisionOfTheSourceFixKeepsThePreviousDraftsCandidateFix(t *testing.T) {
+// A revised source fix is read as the first one is: the answer is the edit
+// however little it holds, with its own note and confidence, and the checks
+// judge it again.
+func TestDBTValidation_ARevisedSourceFixIsTheDraftsEditHoweverDegraded(t *testing.T) {
 	cases := map[string]ports.ProposeResult{
 		"a low-confidence answer":       stepTwo(fixedSource, "low"),
 		"an empty answer":               stepTwo("", "high"),
@@ -351,6 +410,7 @@ func TestDBTValidation_ADegradedRevisionOfTheSourceFixKeepsThePreviousDraftsCand
 			second := stepTwo(fixedSource, "high")
 			m := answers(first, second)
 			round1 := proposeValidation(t, &fakeArtifacts{}, failure(nil), validationEvidence(resolvedBundle()), m)
+			revised.Rationale = "revised note"
 			m.answers = append(m.answers, modelAnswer{res: revised})
 
 			out, err := newValidationPrompt(&fakeArtifacts{}).Propose(context.Background(),
@@ -358,9 +418,12 @@ func TestDBTValidation_ADegradedRevisionOfTheSourceFixKeepsThePreviousDraftsCand
 
 			require.NoError(t, err)
 			require.Len(t, m.reqs, 3)
-			assert.Empty(t, out.Draft.Edits)
-			assert.False(t, out.Draft.SourceResolved)
-			assert.Equal(t, "high", out.Draft.Confidence)
+			require.Len(t, out.Draft.Edits, 1)
+			assert.Equal(t, revised.ProposedSQL, out.Draft.Edits[0].Content)
+			assert.Equal(t, modelSource, out.Draft.Edits[0].Original)
+			assert.True(t, out.Draft.SourceResolved)
+			assert.Equal(t, "revised note", out.Draft.Rationale, "the note is the revised answer's, not the previous draft's")
+			assert.Equal(t, revised.Confidence, out.Draft.Confidence)
 			assert.Equal(t, "model-1", out.Draft.Model)
 			assert.Equal(t, "model.svc.root", out.Draft.SuspectedRoot)
 			assert.Equal(t, round1.Draft.CandidateFixSQLURI, out.Draft.CandidateFixSQLURI)
@@ -368,6 +431,20 @@ func TestDBTValidation_ADegradedRevisionOfTheSourceFixKeepsThePreviousDraftsCand
 			assert.NotEmpty(t, out.Draft.CandidateFixSQLURI)
 		})
 	}
+}
+
+func TestDBTValidation_AFailedRevisionOfTheSourceFixIsAStepError(t *testing.T) {
+	first := stepOne(fixedSQL)
+	second := stepTwo(fixedSource, "high")
+	m := answers(first, second)
+	round1 := proposeValidation(t, &fakeArtifacts{}, failure(nil), validationEvidence(resolvedBundle()), m)
+	m.answers = append(m.answers, modelAnswer{err: errBoom})
+
+	_, err := newValidationPrompt(&fakeArtifacts{}).Propose(context.Background(),
+		revisionInput(round1.Draft, m.reqs[1], second, revisionFindings, validationEvidence(resolvedBundle())), m)
+
+	require.ErrorIs(t, err, errBoom)
+	assert.Contains(t, err.Error(), "llm propose")
 }
 
 // A first round whose diagnosis held no SQL made one call and no source fix. A

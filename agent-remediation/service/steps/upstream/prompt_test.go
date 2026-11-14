@@ -12,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/upstream"
 )
 
@@ -139,14 +140,32 @@ func TestPrompt_TheDraftIsOneEditOfTheAncestor(t *testing.T) {
 	}, out.Draft)
 }
 
-func TestPrompt_AnEmptyOrUnchangedAnswerIsLeftToTheChecks(t *testing.T) {
-	for name, source := range map[string]string{"empty": "", "unchanged": targetSource} {
-		t.Run(name, func(t *testing.T) {
-			out := proposeUpstream(t, failure(nil), upstreamEvidence(), &fakeModel{res: answer(source, "low")})
+// An answer the model leaves empty or unchanged, or rates low, is a draft and
+// not a decline: the pre-flight checks refuse it, so a round after the first
+// revises it, and the cluster falls back only once its rounds are spent.
+func TestUpstream_AnUnchangedAnswerIsADraftTheChecksRefuse(t *testing.T) {
+	cases := []struct {
+		name   string
+		answer ports.ProposeResult
+		check  step.Check
+		code   string
+	}{
+		{"an empty answer", answer("", "high"), shared.NewContentChanged(), "content_unchanged"},
+		{"an unchanged answer", answer(targetSource, "high"), shared.NewContentChanged(), "content_unchanged"},
+		{"a low-confidence answer", answer(fixedSource, "low"), shared.NewConfidenceNotLow(), "low_confidence"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out := proposeUpstream(t, failure(nil), upstreamEvidence(), &fakeModel{res: c.answer})
 
 			require.Len(t, out.Draft.Edits, 1)
-			assert.Equal(t, source, out.Draft.Edits[0].Content)
-			assert.Equal(t, "low", out.Draft.Confidence)
+			assert.Equal(t, c.answer.ProposedSQL, out.Draft.Edits[0].Content)
+			assert.Equal(t, targetSource, out.Draft.Edits[0].Original)
+			assert.Equal(t, c.answer.Confidence, out.Draft.Confidence)
+			res, err := c.check.Check(context.Background(), step.CheckInput{Failure: failure(nil), Draft: out.Draft})
+			require.NoError(t, err)
+			require.Len(t, res.Result.Findings, 1)
+			assert.Equal(t, c.code, res.Result.Findings[0].Code)
 		})
 	}
 }
