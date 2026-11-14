@@ -192,31 +192,41 @@ export default function NodeDetailPage() {
       });
   }, [service, schema, table]);
 
-  // The node-list search filters on the table name only (an exact match within
-  // the service), so rows of other schemas sharing the table name can come
-  // back: the schema is matched client-side.
-  useEffect(() => {
-    setTaskTimeout(null);
-    setDormant(null);
+  // The node's row of the node list: its task timeout and whether it is
+  // dormant, with its last run. The search filters on the table name only (an
+  // exact match within the service), so rows of other schemas sharing the table
+  // name can come back: the schema is matched client-side. A read replaces what
+  // the page holds only when its answer lands and no later read has started, so
+  // a read that fails leaves the page as it was and an answer for a node the
+  // page has left, or older than a later read's, lands nowhere.
+  const summaryGenRef = useRef(0);
+  const fetchNodeSummary = useCallback(() => {
     if (!service || !schema || !table) return;
-    let cancelled = false;
+    const myGen = ++summaryGenRef.current;
     fetch(`/api/nodes?service=${encodeURIComponent(service)}&search=${encodeURIComponent(table)}&operation=run`)
-      .then(r => (r.ok ? r.json() : null))
+      .then(r => {
+        if (!r.ok) throw new Error(`node list answered ${r.status}`);
+        return r.json();
+      })
       .then((data: NodesResponse | null) => {
-        if (cancelled) return;
+        if (myGen !== summaryGenRef.current) return;
         const row = (data?.nodes ?? []).find(n => n.schema_name === schema);
         setTaskTimeout(row && typeof row.timeout_seconds === 'number' && row.timeout_seconds > 0
           ? { seconds: row.timeout_seconds, declared: !!row.timeout_declared }
           : null);
         setDormant(row?.dormant ? { lastRunAt: row.last_run_at ?? null } : null);
       })
-      .catch(() => {
-        if (cancelled) return;
-        setTaskTimeout(null);
-        setDormant(null);
-      });
-    return () => { cancelled = true; };
+      .catch(() => { /* the page keeps what it holds */ });
   }, [service, schema, table]);
+
+  // A new node starts with nothing known about it, and the answers still in
+  // flight for the node it replaces are dropped.
+  useEffect(() => {
+    setTaskTimeout(null);
+    setDormant(null);
+    fetchNodeSummary();
+    return () => { summaryGenRef.current += 1; };
+  }, [fetchNodeSummary]);
 
   const canFullRefresh = FULL_REFRESH_NODE_TYPES.has(nodeType);
 
@@ -244,11 +254,18 @@ export default function NodeDetailPage() {
   // with no single-node run in its window observes none.
   const newestNodeRunId = runsKnown ? (runs.find(r => r.kind === 'single_node_run')?.run_id ?? null) : undefined;
 
+  // A started run reads the history again, and the node's row of the node list,
+  // whose last run the run has just moved.
+  const handleStarted = useCallback(() => {
+    fetchRuns();
+    fetchNodeSummary();
+  }, [fetchRuns, fetchNodeSummary]);
+
   // A press is one action while the history shows no node run newer than the
-  // one the press saw; a started run reads the history again.
+  // one the press saw.
   const { runState, runError, postRun } = useSingleNodeRun(
     { service, schema, table },
-    { operation, observed: newestNodeRunId, onStarted: fetchRuns },
+    { operation, observed: newestNodeRunId, onStarted: handleStarted },
   );
 
   // A full refresh drops the node's table, so it is only posted once confirmed.

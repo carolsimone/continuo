@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Routes, Route } from 'react-router';
+import { MemoryRouter, Routes, Route, useNavigate } from 'react-router';
 import NodeDetailPage from '../../src/client/NodeDetailPage';
 import type { NodeDetailFrom } from '../../src/client/types';
 
@@ -495,19 +495,19 @@ describe('NodeDetailPage — task timeout', () => {
 });
 
 describe('NodeDetailPage — dormant node', () => {
+  const summaryRow = (over: Record<string, unknown>) => ({
+    service_name: 'svc', schema_name: 'schema', table_name: 'tbl',
+    task_count: 0, success_rate_pct: null, avg_duration_sec: null, p95_duration_sec: null,
+    last_status: null, last_run_at: null, operation: 'run', timeout_seconds: 3600, timeout_declared: false,
+    node_type: 'dbt-model', ...over,
+  });
+  const answerWith = (...rows: ReturnType<typeof summaryRow>[]) => jsonResp({ total_count: rows.length, nodes: rows });
+
   // Serves the node's meta, its row of the node list and an empty history.
   function serve(row: Record<string, unknown> | null) {
     mockFetch.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
-      if (url.startsWith('/api/nodes?')) {
-        const nodes = row ? [{
-          service_name: 'svc', schema_name: 'schema', table_name: 'tbl',
-          task_count: 0, success_rate_pct: null, avg_duration_sec: null, p95_duration_sec: null,
-          last_status: null, last_run_at: null, operation: 'run', timeout_seconds: 3600, timeout_declared: false,
-          node_type: 'dbt-model', ...row,
-        }] : [];
-        return jsonResp({ total_count: nodes.length, nodes });
-      }
+      if (url.startsWith('/api/nodes?')) return row ? answerWith(summaryRow(row)) : answerWith();
       if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 0, test_count_known: true });
       return jsonResp({ tasks: [] });
     });
@@ -536,6 +536,159 @@ describe('NodeDetailPage — dormant node', () => {
     renderPage();
     await screen.findByText('dbt-model');
     expect(screen.queryByText('dormant')).toBeNull();
+  });
+
+  const WHAT = 'No schedule tag: you run it by hand.';
+  const NEVER = `${WHAT} Last run: never.`;
+  const chipTitle = () => screen.getByText('dormant').getAttribute('title');
+
+  // A response the test answers by hand, when it chooses.
+  function deferred() {
+    let resolve!: (r: Response) => void;
+    const promise = new Promise<Response>(res => { resolve = res; });
+    return { promise, resolve };
+  }
+
+  // Serves the node's meta, an empty history and a run start that succeeds.
+  // The nth read of the node list is answered by summaries[n] (the last one
+  // answers every read after it); reads() counts the reads.
+  function serveSummaries(summaries: Array<(url: string) => Promise<Response>>) {
+    let reads = 0;
+    mockFetch.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.startsWith('/api/nodes?')) return summaries[Math.min(reads++, summaries.length - 1)](url);
+      if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 0, test_count_known: true });
+      if (url.endsWith('/run') && init?.method === 'POST') return jsonResp({ run_id: 'new-r', schedule_name: 'single-node-run-abc12345' });
+      return jsonResp({ tasks: [] });
+    });
+    return () => reads;
+  }
+
+  const flush = () => act(async () => { await new Promise(r => setTimeout(r, 0)); });
+
+  describe('after a run starts from its page', () => {
+    it('shows the last run the started run made, and keeps the chip while the node list answers', async () => {
+      const second = deferred();
+      const reads = serveSummaries([
+        () => answerWith(summaryRow({ dormant: true, last_run_at: null })),
+        () => second.promise,
+      ]);
+      renderPage();
+      await screen.findByText('dormant');
+      expect(chipTitle()).toBe(NEVER);
+
+      fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
+      await waitFor(() => expect(reads()).toBe(2));
+      // The chip is not reset while the read is in flight.
+      expect(chipTitle()).toBe(NEVER);
+
+      await act(async () => {
+        second.resolve(await answerWith(summaryRow({ dormant: true, last_run_at: new Date().toISOString() })));
+      });
+      await waitFor(() => expect(chipTitle()).toBe(`${WHAT} Last run just now.`));
+    });
+
+    it.each([
+      ['fails', () => Promise.reject(new Error('network down'))],
+      ['is refused by the server', () => jsonResp({ error: 'boom' }, 502)],
+    ])('keeps the last run it showed when the read after the start %s', async (_why, secondRead) => {
+      const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+      const reads = serveSummaries([
+        () => answerWith(summaryRow({ dormant: true, last_run_at: twoHoursAgo })),
+        secondRead,
+      ]);
+      renderPage();
+      await screen.findByText('dormant');
+      expect(chipTitle()).toBe(`${WHAT} Last run 2h ago.`);
+
+      fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
+      await waitFor(() => expect(reads()).toBe(2));
+      await flush();
+
+      expect(chipTitle()).toBe(`${WHAT} Last run 2h ago.`);
+    });
+
+    it('keeps the newer answer when an older read of the node list lands after it', async () => {
+      const first = deferred();
+      const reads = serveSummaries([
+        () => first.promise,
+        () => answerWith(summaryRow({ dormant: true, last_run_at: new Date().toISOString() })),
+      ]);
+      renderPage();
+      await screen.findByText('dbt-model');
+
+      fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
+      await waitFor(() => expect(reads()).toBe(2));
+      await waitFor(() => expect(chipTitle()).toBe(`${WHAT} Last run just now.`));
+
+      await act(async () => {
+        first.resolve(await answerWith(summaryRow({ dormant: true, last_run_at: null })));
+      });
+      await flush();
+
+      expect(chipTitle()).toBe(`${WHAT} Last run just now.`);
+    });
+  });
+
+  describe('when the page moves to another node', () => {
+    // The page with a button that opens svc.schema.<to> in the same route, so
+    // the page stays mounted while its node changes.
+    function GoTo({ to }: { to: string }) {
+      const navigate = useNavigate();
+      return <button type="button" onClick={() => navigate(`/node/svc.schema.${to}`)}>go to {to}</button>;
+    }
+    function renderWithLinkTo(to: string) {
+      return render(
+        <MemoryRouter initialEntries={['/node/svc.schema.tbl']}>
+          <Routes>
+            <Route path="/node/:fqn" element={<><GoTo to={to} /><NodeDetailPage /></>} />
+          </Routes>
+        </MemoryRouter>,
+      );
+    }
+    const searchOf = (url: string) => new URL(url, 'http://x').searchParams.get('search');
+
+    it('drops the chip of the node it left until the new node answers', async () => {
+      const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+      const other = deferred();
+      serveSummaries([
+        url => (searchOf(url) === 'tbl'
+          ? answerWith(summaryRow({ dormant: true, last_run_at: twoHoursAgo }))
+          : other.promise),
+      ]);
+      renderWithLinkTo('other');
+      await screen.findByText('dormant');
+      expect(chipTitle()).toBe(`${WHAT} Last run 2h ago.`);
+
+      fireEvent.click(screen.getByRole('button', { name: 'go to other' }));
+      await waitFor(() => expect(screen.queryByText('dormant')).toBeNull());
+
+      await act(async () => {
+        other.resolve(await answerWith(summaryRow({ table_name: 'other', dormant: true, last_run_at: null })));
+      });
+      await screen.findByText('dormant');
+      expect(chipTitle()).toBe(NEVER);
+    });
+
+    it('ignores the late answer of the node it left', async () => {
+      const late = deferred();
+      serveSummaries([
+        url => (searchOf(url) === 'tbl'
+          ? late.promise
+          : answerWith(summaryRow({ table_name: 'other', dormant: false }))),
+      ]);
+      renderWithLinkTo('other');
+
+      fireEvent.click(await screen.findByRole('button', { name: 'go to other' }));
+      await screen.findByText('task timeout 1 h · install default');
+
+      await act(async () => {
+        late.resolve(await answerWith(summaryRow({ dormant: true, last_run_at: new Date().toISOString() })));
+      });
+      await flush();
+
+      expect(screen.queryByText('dormant')).toBeNull();
+    });
   });
 });
 
