@@ -38,6 +38,39 @@ class SQLParsesTest(unittest.TestCase):
         sql = "{{ config(\n    materialized='table',\n    tags=['daily']\n) }}\nselect 1 as x\n"
         self.assertEqual(parse(sql), {"errors": [], "skipped": ""})
 
+    def test_config_with_a_nested_expression_in_a_hook_is_removed(self):
+        sql = (
+            "{{ config(\n"
+            "    materialized='table',\n"
+            "    post_hook=\"insert into {{ ref('audit') }} select 1\"\n"
+            ") }}\n"
+            "select 1 as x\n"
+        )
+        self.assertEqual(parse(sql), {"errors": [], "skipped": ""})
+
+    def test_config_with_a_parenthesis_in_a_quoted_argument_is_removed(self):
+        sql = "{{ config(alias='orders) }}x', tags=[\"a(b\"]) }}\nselect 1 as x\n"
+        self.assertEqual(parse(sql), {"errors": [], "skipped": ""})
+
+    def test_config_removal_keeps_the_line_numbers_after_a_nested_expression(self):
+        sql = "{{ config(\n  post_hook=\"grant select on {{ this }} to r\"\n) }}\nselect id\nfrom where\n"
+        result = parse(sql)
+        self.assertTrue(result["errors"], result)
+        self.assertEqual(result["errors"][0]["line"], 5)
+
+    def test_jinja_comment_is_removed(self):
+        for dialect in ("postgres", "trino"):
+            with self.subTest(dialect=dialect):
+                self.assertEqual(parse("{# don't touch #}\nselect 1\n", dialect), {"errors": [], "skipped": ""})
+
+    def test_jinja_comment_keeps_the_line_numbers(self):
+        result = parse("{# a comment\n   that isn't short #}\nselect id\nfrom where\n")
+        self.assertTrue(result["errors"], result)
+        self.assertEqual(result["errors"][0]["line"], 4)
+
+    def test_jinja_comment_holding_a_statement_tag_does_not_skip(self):
+        self.assertEqual(parse("{# {% if x %} #}\nselect 1\n"), {"errors": [], "skipped": ""})
+
     def test_expression_becomes_a_placeholder_name(self):
         result = parse("select * from {{ ref('orders') }}")
         self.assertEqual(result, {"errors": [], "skipped": ""})
@@ -69,6 +102,14 @@ class SQLParsesTest(unittest.TestCase):
         sql = "select json_query(payload, 'lax $.items' with array wrapper) as items from raw.events"
         self.assertEqual(parse(sql, "trino"), {"errors": [], "skipped": ""})
         self.assertTrue(parse(sql, "postgres")["errors"])
+
+    def test_token_error_without_offsets_reports_line_one(self):
+        import sql_parses  # the tools directory is on sys.path under discover
+
+        class BareTokenError(Exception):
+            pass
+
+        self.assertEqual(sql_parses._token_error_line("select 1\nfrom t", BareTokenError("boom")), 1)
 
     def test_unknown_dialect_fails(self):
         proc = subprocess.run(

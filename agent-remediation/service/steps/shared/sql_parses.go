@@ -32,7 +32,8 @@ func (SQLParses) Meta() step.Meta {
 		Name: "sql_parses",
 		Kind: step.KindCheck,
 		Description: "Fails a draft whose .sql edit does not parse in the warehouse's dialect, with one finding per parse " +
-			"error, its file and line. dbt's config block is removed and every other {{ }} expression read as a name; " +
+			"error, its file and line. Jinja comments and dbt's config block are removed and every other {{ }} " +
+			"expression read as a name; " +
 			"a file holding a {% %} statement is not parsed.",
 		Needs:  []remediation.EvidenceKey{remediation.KeyDraft},
 		Stages: []workflow.Stage{workflow.StagePreflight},

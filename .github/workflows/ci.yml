@@ -302,8 +302,8 @@ jobs:
         # there for exactly that reason, which would otherwise let it pass CI
         # without ever calling the real tool. Run them here instead, inside the
         # agent-remediation container that "Wait for service containers" already
-        # confirmed is up, where the tools, the Go toolchain and this PR's source
-        # are all baked into the image, together with the Python tests of
+        # confirmed is up, where the tools, the Go toolchain and the checked-out
+        # source are all baked into the image, together with the Python tests of
         # tools/sql_parses.py under the same interpreter. Every other Go test
         # stays on the runner; these are the packages whose dependencies cannot
         # exist there.
