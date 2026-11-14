@@ -110,9 +110,10 @@ in it, deliberately:
    `continuo node trigger`). The one exception is a dormant view below a seed:
    a run whose load of the seed drops the seed's table rebuilds it (see
    [Seeds that change](#seeds-that-change)). Run a dormant node once before you
-   release a change to a model that reads it: validation copies its production
-   table, and a table that does not exist yet rejects that release with
-   `upstream_clone_failed`. Seeds are exempt and default to build-on-release.
+   release a change to any node below it: validation copies the production
+   table of the dormant node, and a table that does not exist yet rejects that
+   release with `upstream_clone_failed`. Seeds are exempt and default to
+   build-on-release.
    The tag decides which models a schedule runs, not when: a schedule runs on
    its own once you give it a cron in the UI (**Add cron** on its card) or with
    `continuo schedule set-cron daily "0 1 * * *" Europe/Paris` (the
