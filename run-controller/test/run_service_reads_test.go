@@ -14,11 +14,15 @@ import (
 )
 
 // RunService serves the reads of a run StartRun created, and treats another
-// tenant's run as one that does not exist.
+// tenant's run as one that does not exist. The node list and the name
+// suggestions hold the live release's dormant node, which never ran, beside
+// the run's node.
 func TestRunService_ServesTheReadsOfATriggeredRun(t *testing.T) {
 	ctx := context.Background()
 	const schedule = "run-service-reads"
-	promoteSchedules(t, runControllerDB, schedule)
+	promoteRelease(t, runControllerDB,
+		scheduledNode("mart", "run_service_reads", "dbt-model", schedule),
+		scheduledNode("mart", "run_service_reads_dormant", "dbt-model", ""))
 	runID := startRun(t, schedule)
 
 	got, err := runClient.GetRun(ctx, &runv1.GetRunRequest{RunId: runID})
@@ -61,10 +65,23 @@ func TestRunService_ServesTheReadsOfATriggeredRun(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, nodes.GetNodes())
 	assert.GreaterOrEqual(t, nodes.GetNodes()[0].GetTaskCount(), int32(1))
+	assert.Equal(t, "dbt-model", nodes.GetNodes()[0].GetNodeType())
+	assert.False(t, nodes.GetNodes()[0].GetDormant())
+	assert.NotEmpty(t, nodes.GetNodes()[0].GetLastRunAt())
+	dormant, err := runClient.ListNodes(ctx, &runv1.ListNodesRequest{DormantOnly: true})
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), dormant.GetTotalCount(), "the live release's one dormant node")
+	require.Len(t, dormant.GetNodes(), 1)
+	d := dormant.GetNodes()[0]
+	assert.Equal(t, "run_service_reads_dormant", d.GetTableName())
+	assert.True(t, d.GetDormant())
+	assert.Zero(t, d.GetTaskCount())
+	assert.Empty(t, d.GetLastRunAt(), "the dormant node never ran")
 
 	names, err := runClient.ListNodeNames(ctx, &runv1.ListNodeNamesRequest{ServiceName: task.GetServiceName()})
 	require.NoError(t, err)
 	assert.Contains(t, names.GetTableNames(), task.GetTableName())
+	assert.Contains(t, names.GetTableNames(), "run_service_reads_dormant", "a dormant node that never ran is suggested")
 	services, err := runClient.ListNodeServices(ctx, &runv1.ListNodeServicesRequest{})
 	require.NoError(t, err)
 	assert.Contains(t, services.GetServiceNames(), task.GetServiceName())

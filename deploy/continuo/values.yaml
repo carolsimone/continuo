@@ -459,11 +459,11 @@ validation:
   # and re-renders the candidate SQL in. It also picks which relations are the
   # warehouse's own system relations: `information_schema` and the `pg_*`
   # schemas on postgres, `information_schema` and the `system` catalog on trino.
-  # A system relation never becomes an ingested node, never resolves to a node
-  # and is never redirected to the candidate schema. The rewritten SQL is what
-  # the validation runner executes, so the engine here must be the engine your
-  # warehouse actually is — topology-controller refuses to start on an engine it
-  # has no dialect or system relations for.
+  # A system relation never becomes an unknown-external node, never resolves to
+  # a node and is never redirected to the candidate schema. The rewritten SQL
+  # is what the validation runner executes, so the engine here must be the
+  # engine your warehouse actually is — topology-controller refuses to start on
+  # an engine it has no dialect or system relations for.
   #
   # Three more services read it. agent-remediation picks the SQL dialect it
   # packages a proposed python-node fix under. run-controller and

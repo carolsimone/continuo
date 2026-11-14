@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
 	"github.com/carolsimone/continuo/run-controller/domain/projection"
 	"github.com/carolsimone/continuo/run-controller/domain/repository"
@@ -95,10 +96,12 @@ func (r *RunReadRepository) GetRunGraph(ctx context.Context, tenantID string, ru
 		ORDER BY t.service_name, t.schema_name, t.table_name`, runID, tenantID); err != nil {
 		return projection.RunGraph{}, fmt.Errorf("read tasks of run %s: %w", runID, err)
 	}
+	// A node's type is returned under its current name, whatever name the
+	// run's release stored it under.
 	for _, n := range nodes {
 		g.Nodes = append(g.Nodes, projection.RunGraphNode{
 			ServiceName: n.ServiceName, SchemaName: n.SchemaName, TableName: n.TableName,
-			ScheduleName: n.ScheduleName, NodeType: n.NodeType,
+			ScheduleName: n.ScheduleName, NodeType: string(model.CanonicalNodeType(n.NodeType)),
 			Status: run.TaskStatus(n.Status), TaskID: n.TaskID,
 			WaitReason: run.WaitReason(n.WaitReason), WaitingSince: n.WaitingSince,
 			WaitingOnRunID: n.WaitingOnRunID,

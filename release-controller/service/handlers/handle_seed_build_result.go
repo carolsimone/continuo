@@ -170,20 +170,17 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 
 	// Recompute the rebuilt-from-candidate set to identify the just-built seeds
 	// and exclude them from the validation leg (they are already in the candidate
-	// schema). This mirrors the parse leg exactly — the same scope/context split
-	// and the same rebuiltFromCandidateSet — so a verification run identifies the
-	// same built seeds and assigns the same per-node build strategy here as it did
-	// when it requested the seed build.
+	// schema). rebuiltFromCandidateFor derives it as the parse leg did, so a
+	// verification run identifies the same built seeds and assigns the same
+	// per-node build strategy here as it did when it requested the seed build.
 	prod, err := currentProdTopology(ctx, d, u)
 	if err != nil {
 		return err
 	}
-	scope, contextRebuilds, err := changedNodeIDsFor(ctx, u, d, r, topo, prod)
+	rebuiltFromCandidate, err := rebuiltFromCandidateFor(ctx, d, u, r, topo, prod, allIDs)
 	if err != nil {
 		return err
 	}
-	changedClosure := release.DescendantsClosure(topo, scope)
-	rebuiltFromCandidate := rebuiltFromCandidateSet(changedClosure, contextRebuilds, allIDs)
 	builtSeeds := make(map[string]bool)
 	for _, id := range newChangedSeedIDs(topo, allIDs, rebuiltFromCandidate) {
 		builtSeeds[id] = true

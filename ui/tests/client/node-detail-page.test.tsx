@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Routes, Route } from 'react-router';
+import { MemoryRouter, Routes, Route, useNavigate } from 'react-router';
 import NodeDetailPage from '../../src/client/NodeDetailPage';
 import type { NodeDetailFrom } from '../../src/client/types';
 
@@ -25,6 +25,35 @@ function renderPage(from?: NodeDetailFrom, navOperation?: string) {
         <Route path="/schedule/:name" element={<div>RUN MODE</div>} />
         <Route path="/schedule/:name/latest" element={<div>LATEST MODE</div>} />
         <Route path="/node/:fqn" element={<NodeDetailPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
+// A response the test answers by hand, when it chooses.
+function deferred() {
+  let resolve!: (r: Response) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<Response>((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
+const flush = () => act(async () => { await new Promise(r => setTimeout(r, 0)); });
+
+// The page with a button for each node it can move to, in the same route,
+// so the page stays mounted while its node changes.
+function GoTo({ fqn }: { fqn: string }) {
+  const navigate = useNavigate();
+  return <button type="button" onClick={() => navigate(`/node/${fqn}`)}>go to {fqn}</button>;
+}
+function renderWithLinksTo(...fqns: string[]) {
+  return render(
+    <MemoryRouter initialEntries={['/node/svc.schema.tbl']}>
+      <Routes>
+        <Route
+          path="/node/:fqn"
+          element={<>{fqns.map(fqn => <GoTo key={fqn} fqn={fqn} />)}<NodeDetailPage /></>}
+        />
       </Routes>
     </MemoryRouter>,
   );
@@ -491,6 +520,403 @@ describe('NodeDetailPage — task timeout', () => {
     ]);
     renderPage();
     expect(await screen.findByText('task timeout 2 h · declared')).toBeInTheDocument();
+  });
+});
+
+describe('NodeDetailPage — dormant node', () => {
+  const summaryRow = (over: Record<string, unknown>) => ({
+    service_name: 'svc', schema_name: 'schema', table_name: 'tbl',
+    task_count: 0, success_rate_pct: null, avg_duration_sec: null, p95_duration_sec: null,
+    last_status: null, last_run_at: null, operation: 'run', timeout_seconds: 3600, timeout_declared: false,
+    node_type: 'dbt-model', ...over,
+  });
+  const answerWith = (...rows: ReturnType<typeof summaryRow>[]) => jsonResp({ total_count: rows.length, nodes: rows });
+
+  // Serves the node's meta, its row of the node list and an empty history.
+  function serve(row: Record<string, unknown> | null) {
+    mockFetch.mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.startsWith('/api/nodes?')) return row ? answerWith(summaryRow(row)) : answerWith();
+      if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 0, test_count_known: true });
+      return jsonResp({ tasks: [] });
+    });
+  }
+
+  it('marks a dormant node dormant beside its type', async () => {
+    serve({ dormant: true });
+    renderPage();
+    const chip = await screen.findByText('dormant');
+    expect(chip.className).toBe('info-strip info-strip--neutral info-strip--inline');
+    expect(chip.getAttribute('title')).toBe('No schedule tag: you run it by hand. Last run: never.');
+    // It follows the node type chip.
+    expect(chip.previousElementSibling?.textContent).toBe('dbt-model');
+    // A dormant node offers the run the page offers any node.
+    expect(screen.getByRole('button', { name: /run this node/i })).toBeEnabled();
+  });
+
+  it('does not mark a node with a schedule, or one the node list does not hold', async () => {
+    serve({ dormant: false });
+    const scheduled = renderPage();
+    await screen.findByText('task timeout 1 h · install default');
+    expect(screen.queryByText('dormant')).toBeNull();
+    scheduled.unmount();
+
+    serve(null);
+    renderPage();
+    await screen.findByText('dbt-model');
+    expect(screen.queryByText('dormant')).toBeNull();
+  });
+
+  const WHAT = 'No schedule tag: you run it by hand.';
+  const NEVER = `${WHAT} Last run: never.`;
+  const chipTitle = () => screen.getByText('dormant').getAttribute('title');
+
+  // Serves the node's meta, an empty history and a run start that succeeds.
+  // The nth read of the node list is answered by summaries[n] (the last one
+  // answers every read after it); reads() counts the reads.
+  function serveSummaries(summaries: Array<(url: string) => Promise<Response>>) {
+    let reads = 0;
+    mockFetch.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.startsWith('/api/nodes?')) return summaries[Math.min(reads++, summaries.length - 1)](url);
+      if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 0, test_count_known: true });
+      if (url.endsWith('/run') && init?.method === 'POST') return jsonResp({ run_id: 'new-r', schedule_name: 'single-node-run-abc12345' });
+      return jsonResp({ tasks: [] });
+    });
+    return () => reads;
+  }
+
+  const searchOf = (url: string) => new URL(url, 'http://x').searchParams.get('search');
+
+  describe('after a run starts from its page', () => {
+    it('shows the last run the started run made, and keeps the chip while the node list answers', async () => {
+      const second = deferred();
+      const reads = serveSummaries([
+        () => answerWith(summaryRow({ dormant: true, last_run_at: null })),
+        () => second.promise,
+      ]);
+      renderPage();
+      await screen.findByText('dormant');
+      expect(chipTitle()).toBe(NEVER);
+
+      fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
+      await waitFor(() => expect(reads()).toBe(2));
+      // The chip is not reset while the read is in flight.
+      expect(chipTitle()).toBe(NEVER);
+
+      await act(async () => {
+        second.resolve(await answerWith(summaryRow({ dormant: true, last_run_at: new Date().toISOString() })));
+      });
+      await waitFor(() => expect(chipTitle()).toBe(`${WHAT} Last run just now.`));
+    });
+
+    it.each([
+      ['fails', () => Promise.reject(new Error('network down'))],
+      ['is refused by the server', () => jsonResp({ error: 'boom' }, 502)],
+    ])('keeps the last run it showed when the read after the start %s', async (_why, secondRead) => {
+      const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+      const reads = serveSummaries([
+        () => answerWith(summaryRow({ dormant: true, last_run_at: twoHoursAgo })),
+        secondRead,
+      ]);
+      renderPage();
+      await screen.findByText('dormant');
+      expect(chipTitle()).toBe(`${WHAT} Last run 2h ago.`);
+
+      fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
+      await waitFor(() => expect(reads()).toBe(2));
+      await flush();
+
+      expect(chipTitle()).toBe(`${WHAT} Last run 2h ago.`);
+    });
+
+    it('applies the answer of an earlier read still in flight when the read after the start fails', async () => {
+      const first = deferred();
+      const reads = serveSummaries([
+        () => first.promise,
+        () => Promise.reject(new Error('network down')),
+      ]);
+      renderPage();
+      await screen.findByText('dbt-model');
+
+      fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
+      await waitFor(() => expect(reads()).toBe(2));
+      await flush();
+
+      await act(async () => {
+        first.resolve(await answerWith(summaryRow({ dormant: true, last_run_at: null })));
+      });
+
+      await waitFor(() => expect(chipTitle()).toBe(NEVER));
+    });
+
+    it('keeps the newer answer when an older read of the node list lands after it', async () => {
+      const first = deferred();
+      const reads = serveSummaries([
+        () => first.promise,
+        () => answerWith(summaryRow({ dormant: true, last_run_at: new Date().toISOString() })),
+      ]);
+      renderPage();
+      await screen.findByText('dbt-model');
+
+      fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
+      await waitFor(() => expect(reads()).toBe(2));
+      await waitFor(() => expect(chipTitle()).toBe(`${WHAT} Last run just now.`));
+
+      await act(async () => {
+        first.resolve(await answerWith(summaryRow({ dormant: true, last_run_at: null })));
+      });
+      await flush();
+
+      expect(chipTitle()).toBe(`${WHAT} Last run just now.`);
+    });
+  });
+
+  describe('when the page moves to another node', () => {
+    it('drops the chip of the node it left until the new node answers', async () => {
+      const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+      const other = deferred();
+      serveSummaries([
+        url => (searchOf(url) === 'tbl'
+          ? answerWith(summaryRow({ dormant: true, last_run_at: twoHoursAgo }))
+          : other.promise),
+      ]);
+      renderWithLinksTo('svc.schema.other');
+      await screen.findByText('dormant');
+      expect(chipTitle()).toBe(`${WHAT} Last run 2h ago.`);
+
+      fireEvent.click(screen.getByRole('button', { name: 'go to svc.schema.other' }));
+      await waitFor(() => expect(screen.queryByText('dormant')).toBeNull());
+
+      await act(async () => {
+        other.resolve(await answerWith(summaryRow({ table_name: 'other', dormant: true, last_run_at: null })));
+      });
+      await screen.findByText('dormant');
+      expect(chipTitle()).toBe(NEVER);
+    });
+
+    it('ignores the late answer of the node it left', async () => {
+      const late = deferred();
+      serveSummaries([
+        url => (searchOf(url) === 'tbl'
+          ? late.promise
+          : answerWith(summaryRow({ table_name: 'other', dormant: false }))),
+      ]);
+      renderWithLinksTo('svc.schema.other');
+
+      fireEvent.click(await screen.findByRole('button', { name: 'go to svc.schema.other' }));
+      await screen.findByText('task timeout 1 h · install default');
+
+      await act(async () => {
+        late.resolve(await answerWith(summaryRow({ dormant: true, last_run_at: new Date().toISOString() })));
+      });
+      await flush();
+
+      expect(screen.queryByText('dormant')).toBeNull();
+    });
+
+    it('ignores the late answer of the node it left when the new name has no table', async () => {
+      const late = deferred();
+      serveSummaries([() => late.promise]);
+      renderWithLinksTo('svc.schema');
+
+      fireEvent.click(await screen.findByRole('button', { name: 'go to svc.schema' }));
+      await screen.findByText('svc.schema');
+
+      await act(async () => {
+        late.resolve(await answerWith(summaryRow({ dormant: true, last_run_at: new Date().toISOString() })));
+      });
+      await flush();
+
+      expect(screen.queryByText('dormant')).toBeNull();
+      expect(screen.queryByText(/task timeout/)).toBeNull();
+    });
+  });
+
+  describe('when a run starts for a node the page has left', () => {
+    const twoHoursAgo = () => new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+
+    // Serves the nodes svc.schema.tbl and svc.schema.other: each one's row of
+    // the node list (tbl last ran 2 h ago, other never) and its history (one
+    // run whose image tag names the node), and a run start for each. The start
+    // of tbl is answered by startOfTbl(n) for the nth start of any node, that
+    // of other by startOfOther(n), which succeeds by default. reads names the
+    // node of each read, in order, and startIds the request id of each start.
+    function serveTwoNodes(
+      startOfTbl: (nth: number) => Promise<Response>,
+      startOfOther: (nth: number) => Promise<Response> = () => jsonResp({ run_id: 'other-r', schedule_name: 'single-node-run-0a0b0c0d' }),
+    ) {
+      const reads = { summary: [] as string[], history: [] as string[] };
+      const startIds: string[] = [];
+      mockFetch.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.startsWith('/api/nodes?')) {
+          const table = searchOf(url) ?? '';
+          reads.summary.push(table);
+          return answerWith(summaryRow({
+            table_name: table, dormant: true, last_run_at: table === 'tbl' ? twoHoursAgo() : null,
+          }));
+        }
+        const history = /^\/api\/nodes\/svc\/schema\/([^/]+)\/runs\?/.exec(url);
+        if (history) {
+          reads.history.push(history[1]);
+          return jsonResp({ tasks: [{ ...mkRun({}), image_tag: `${history[1]}-image` }] });
+        }
+        if (url.endsWith('/meta')) return jsonResp({ node_type: 'dbt-model', test_count: 0, test_count_known: true });
+        if (url.endsWith('/run') && init?.method === 'POST') {
+          startIds.push(bodyOf(init).request_id as string);
+          return url.includes('/schema/tbl/') ? startOfTbl(startIds.length) : startOfOther(startIds.length);
+        }
+        return jsonResp({ tasks: [] });
+      });
+      return { reads, startIds };
+    }
+    const started = () => jsonResp({ run_id: 'tbl-r', schedule_name: 'single-node-run-abc12345' });
+
+    // Presses Run on tbl, whose start the test answers later, and moves the
+    // page to other once other's history shows.
+    async function pressRunOnTblThenMoveToOther() {
+      await screen.findByText('tbl-image');
+      fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
+      fireEvent.click(screen.getByRole('button', { name: 'go to svc.schema.other' }));
+      await screen.findByText('other-image');
+      await waitFor(() => expect(chipTitle()).toBe(NEVER));
+    }
+
+    it('does not replace the history of the node the page shows with that of the node left', async () => {
+      const start = deferred();
+      const { reads } = serveTwoNodes(() => start.promise);
+      renderWithLinksTo('svc.schema.other', 'svc.schema.tbl');
+      await pressRunOnTblThenMoveToOther();
+
+      await act(async () => { start.resolve(await started()); });
+      await flush();
+
+      expect(screen.getByText('other-image')).toBeInTheDocument();
+      expect(screen.queryByText('tbl-image')).toBeNull();
+      expect(reads.history.filter(t => t === 'tbl')).toHaveLength(1);
+    });
+
+    it('does not replace the dormant chip of the node the page shows with that of the node left', async () => {
+      const start = deferred();
+      const { reads } = serveTwoNodes(() => start.promise);
+      renderWithLinksTo('svc.schema.other', 'svc.schema.tbl');
+      await pressRunOnTblThenMoveToOther();
+
+      await act(async () => { start.resolve(await started()); });
+      await flush();
+
+      expect(chipTitle()).toBe(NEVER);
+      expect(reads.summary.filter(t => t === 'tbl')).toHaveLength(1);
+    });
+
+    it('leaves the run button of the node the page shows idle while and after the start of the node left', async () => {
+      const start = deferred();
+      serveTwoNodes(() => start.promise);
+      renderWithLinksTo('svc.schema.other', 'svc.schema.tbl');
+      await pressRunOnTblThenMoveToOther();
+
+      const runButton = () => screen.getByRole('button', { name: /^(Run this node|Triggering…|Triggered)$/ });
+      expect(runButton()).toHaveTextContent(/^Run this node$/);
+      expect(runButton()).toBeEnabled();
+
+      await act(async () => { start.resolve(await started()); });
+      await flush();
+
+      expect(runButton()).toHaveTextContent(/^Run this node$/);
+      expect(runButton()).toBeEnabled();
+    });
+
+    it('shows no error of the start of the node left on the node the page shows', async () => {
+      const start = deferred();
+      serveTwoNodes(() => start.promise);
+      renderWithLinksTo('svc.schema.other', 'svc.schema.tbl');
+      await pressRunOnTblThenMoveToOther();
+
+      await act(async () => { start.resolve(await jsonResp({ error: 'tbl is locked' }, 409)); });
+      await flush();
+
+      expect(screen.queryByText('tbl is locked')).toBeNull();
+    });
+
+    it('still settles the request id of a start of the node left that the server refused, so a later press of that node is a new action', async () => {
+      const start = deferred();
+      const { startIds } = serveTwoNodes(nth => (nth === 1 ? start.promise : started()));
+      renderWithLinksTo('svc.schema.other', 'svc.schema.tbl');
+      await pressRunOnTblThenMoveToOther();
+      // A refusal is the server's final word, and leaves the button of tbl enabled when the page comes back.
+      await act(async () => { start.resolve(await jsonResp({ error: 'tbl is busy' }, 409)); });
+      await flush();
+
+      fireEvent.click(screen.getByRole('button', { name: 'go to svc.schema.tbl' }));
+      await screen.findByText('tbl-image');
+      await waitFor(() => expect(chipTitle()).toBe(`${WHAT} Last run 2h ago.`));
+      fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
+      await waitFor(() => expect(startIds).toHaveLength(2));
+
+      expect(startIds[1]).toMatch(UUID);
+      expect(startIds[1]).not.toBe(startIds[0]);
+    });
+
+    it('keeps the request id of the open press of the node shown when the start of the node left answers', async () => {
+      const startOfTbl = deferred();
+      // The first start of other is refused with a 502, which leaves its request open.
+      const { startIds } = serveTwoNodes(
+        () => startOfTbl.promise,
+        nth => (nth === 2 ? jsonResp({ error: 'bad gateway' }, 502) : started()),
+      );
+      renderWithLinksTo('svc.schema.other', 'svc.schema.tbl');
+      await pressRunOnTblThenMoveToOther();
+
+      fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
+      await waitFor(() => expect(startIds).toHaveLength(2));
+      await screen.findByText('bad gateway');
+
+      await act(async () => { startOfTbl.resolve(await started()); });
+      await flush();
+      fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
+      await waitFor(() => expect(startIds).toHaveLength(3));
+
+      // The retry of the press on other is the same request, not a second run.
+      expect(startIds[2]).toBe(startIds[1]);
+      expect(startIds[1]).not.toBe(startIds[0]);
+    });
+
+    it.each([
+      ['is lost', (start: ReturnType<typeof deferred>) => start.reject(new Error('lost'))],
+      ['is answered with a 502', async (start: ReturnType<typeof deferred>) => start.resolve(await jsonResp({ error: 'bad gateway' }, 502))],
+    ])('keeps the request id of a start of the node left that %s, so the press repeated on return is a retry', async (_how, settle) => {
+      const start = deferred();
+      const { startIds } = serveTwoNodes(() => start.promise);
+      renderWithLinksTo('svc.schema.other', 'svc.schema.tbl');
+      await pressRunOnTblThenMoveToOther();
+
+      await act(async () => { await settle(start); });
+      await flush();
+      fireEvent.click(screen.getByRole('button', { name: 'go to svc.schema.tbl' }));
+      await screen.findByText('tbl-image');
+      await waitFor(() => expect(chipTitle()).toBe(`${WHAT} Last run 2h ago.`));
+      fireEvent.click(screen.getByRole('button', { name: /run this node/i }));
+      await waitFor(() => expect(startIds).toHaveLength(2));
+
+      expect(startIds[1]).toBe(startIds[0]);
+    });
+
+    it('shows the press of a node still in flight when the page comes back to it', async () => {
+      const start = deferred();
+      serveTwoNodes(() => start.promise);
+      renderWithLinksTo('svc.schema.other', 'svc.schema.tbl');
+      await pressRunOnTblThenMoveToOther();
+
+      fireEvent.click(screen.getByRole('button', { name: 'go to svc.schema.tbl' }));
+      await screen.findByText('tbl-image');
+      const runButton = () => screen.getByRole('button', { name: /^(Run this node|Triggering…|Triggered)$/ });
+      await waitFor(() => expect(runButton()).toHaveTextContent(/^Triggering…$/));
+      expect(runButton()).toBeDisabled();
+
+      await act(async () => { start.resolve(await started()); });
+      await waitFor(() => expect(runButton()).toHaveTextContent(/^Triggered$/));
+    });
   });
 });
 
@@ -1321,5 +1747,30 @@ describe('NodeDetailPage — objects a seed full refresh may drop', () => {
     await waitFor(() => expect(runPosts()).toHaveLength(3));
     expect(bodyOf(runPosts()[2]).request_id).not.toBe(bodyOf(runPosts()[0]).request_id);
     expect(bodyOf(runPosts()[2]).acknowledged_dependents).toEqual(['bi.a']);
+  });
+});
+
+describe('NodeDetailPage — dialogs of the node the page has left', () => {
+  it('closes the full refresh confirmation when the page moves to another node, and posts nothing', async () => {
+    mockFetch.mockImplementation(metaAndRuns('dbt-model'));
+    renderWithLinksTo('svc.schema.other');
+    const dialog = await openFullRefreshDialog();
+    expect(dialog).toHaveTextContent('Full refresh svc.schema.tbl?');
+
+    fireEvent.click(screen.getByRole('button', { name: 'go to svc.schema.other' }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(runPosts()).toHaveLength(0);
+  });
+
+  it('closes the old snapshot picker when the page moves to another node', async () => {
+    mockFetch.mockImplementation(metaAndRuns('dbt-model'));
+    renderWithLinksTo('svc.schema.other');
+    fireEvent.click(await screen.findByRole('button', { name: /run with old snapshot/i }));
+    await screen.findByRole('dialog');
+
+    fireEvent.click(screen.getByRole('button', { name: 'go to svc.schema.other' }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 });

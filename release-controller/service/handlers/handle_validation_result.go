@@ -110,7 +110,7 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 	// aggregate. In the normal complete case every ValidationNodeID is present.
 	var failing []string
 	for _, id := range r.ValidationNodeIDs() {
-		if n, ok := stored[id]; ok && n.Status != "ok" {
+		if n, ok := stored[id]; ok && n.Status != release.NodeStatusOK {
 			failing = append(failing, id)
 		}
 	}
@@ -254,8 +254,25 @@ func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipel
 // kind=node messages projected, not from this terminal message. A node whose
 // projection write was permanently dropped may be absent from the read model, in
 // which case only present, non-ok nodes appear in failing.
+//
+// A failed node that validation cloned from its production table, rather than
+// built from its own candidate code, did not fail on the release's code.
+// release.DecideValidationRejection decides the reason, the detail and the
+// failing nodes from that: upstream_clone_failed, which remediation does not
+// try to fix, when only such nodes failed, and validation_failed without them
+// when a built node failed too.
 func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, in HandleValidationResultInput, failing []string, now time.Time) error {
 	topo, err := candidateTopology(ctx, d, r)
+	if err != nil {
+		return err
+	}
+	prod, err := currentProdTopology(ctx, d, u)
+	if err != nil {
+		return err
+	}
+	// Which validation nodes were built from their own candidate code; every
+	// other validation node was cloned empty from its production table.
+	rebuilt, err := rebuiltFromCandidateFor(ctx, d, u, r, topo, prod, r.ValidationNodeIDs())
 	if err != nil {
 		return err
 	}
@@ -266,40 +283,44 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 	//     checked — mirroring the dbt_log_uri pattern as a pointer, not inline
 	//     content;
 	//   - node_type, file_path, service: the node's kind and source location as
-	//     THIS candidate declares them.
+	//     THIS candidate declares them;
+	//   - validation_op: how the validation leg prepared the node, the same op
+	//     the validation request named for it.
 	// The location comes from the candidate topology rather than being resolved
 	// downstream because a rejected release is never promoted: the promoted
 	// topology holds nothing for a newly-added node, and the previous release's
 	// path for a node whose candidate moved it. node_type additionally lets the
 	// remediation agent recognise a python node — whose candidate artifact is a
 	// JSON validation spec rather than SQL — without a topology lookup of its own.
-	type candidateFacts struct{ artifactURI, nodeType, filePath, service string }
+	type candidateFacts struct {
+		artifactURI, nodeType, filePath, service string
+		validationOp                             pkg_model.ValidationOp
+	}
 	factsByNodeID := make(map[string]candidateFacts, len(topo))
 	for _, n := range topo {
+		op, _ := release.ValidationOpFor(n, rebuilt)
 		factsByNodeID[n.UniqueID] = candidateFacts{
-			artifactURI: candidateArtifactURI(d.Bucket, r.ID(), n),
-			nodeType:    n.NodeType,
-			filePath:    n.OriginalFilePath,
-			service:     n.ServiceName,
+			artifactURI:  candidateArtifactURI(d.Bucket, r.ID(), n),
+			nodeType:     n.NodeType,
+			filePath:     n.OriginalFilePath,
+			service:      n.ServiceName,
+			validationOp: op,
 		}
 	}
 
 	// Which candidate nodes changed against production, so each failing node
 	// can name the changed ancestors that may be the root cause of its failure.
-	prod, err := currentProdTopology(ctx, d, u)
-	if err != nil {
-		return err
-	}
 	changedSet := make(map[string]bool)
 	for _, id := range release.DerivedChangedNodeIDs(topo, prod) {
 		changedSet[id] = true
 	}
 
 	// Source the per-node audit rows from the projected read model, enriched with
-	// each node's candidate artifact pointer, kind, and source location from the
-	// candidate topology. A failing node additionally names its changed
-	// ancestors, which may be the root cause of its failure.
+	// each node's candidate artifact pointer, kind, source location and
+	// validation op from the candidate topology. A failing node additionally
+	// names its changed ancestors, which may be the root cause of its failure.
 	var perNode []ports.RejectedNode
+	var outcomes []release.NodeOutcome     // every node's status, to split code failures from copy failures
 	var notPassed []release.FailedNode     // every node that did not pass, for the summary
 	var upstream []release.ChangedAncestor // the changed ancestors of the nodes that failed, for the summary
 	for _, nr := range r.PerNodeResults() {
@@ -307,6 +328,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 			continue
 		}
 		f := factsByNodeID[nr.NodeID]
+		outcomes = append(outcomes, release.NodeOutcome{NodeID: nr.NodeID, Status: nr.Status})
 		entry := ports.RejectedNode{
 			NodeID:               nr.NodeID,
 			Status:               nr.Status,
@@ -316,9 +338,10 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 			NodeType:             f.nodeType,
 			FilePath:             f.filePath,
 			Service:              f.service,
+			ValidationOp:         f.validationOp,
 		}
-		if nr.Status != "ok" {
-			skipped := nr.Status == nodeSkipped
+		if nr.Status != release.NodeStatusOK {
+			skipped := nr.Status == release.NodeStatusSkipped
 			notPassed = append(notPassed, release.FailedNode{NodeID: nr.NodeID, Service: f.service, Skipped: skipped})
 			ancestors := release.ChangedAncestors(topo, nr.NodeID, changedSet)
 			if !skipped {
@@ -339,17 +362,20 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 	// operator-facing detail is what the topology can say: which nodes failed,
 	// how many were skipped because of them, and which changed nodes sit upstream
 	// of the failures. It reuses the ancestors gathered above, so explaining the
-	// rejection walks the graph once.
-	detail := release.SummarizeValidationFailure(len(r.ValidationNodeIDs()), notPassed, upstream)
-	if err := r.Fail(string(pkg_model.RejectReasonValidationFailed), detail, failing, now); err != nil {
+	// rejection walks the graph once. A failed node cloned from production
+	// failed on its production table, not on the release's code, and the
+	// domain decides the reason, detail and failing nodes from that.
+	summary := release.SummarizeValidationFailure(len(r.ValidationNodeIDs()), notPassed, upstream)
+	rejection := release.DecideValidationRejection(outcomes, rebuilt, failing, summary)
+	if err := r.Fail(string(rejection.Reason), rejection.Detail, rejection.FailingNodes, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 
 	payload, err := d.Rejections.Encode(ports.ReleaseRejection{
 		Shape:           ports.RejectionShapeValidation,
 		ReleaseID:       in.ReleaseID,
-		Reason:          pkg_model.RejectReasonValidationFailed,
-		FailingNodes:    failing,
+		Reason:          rejection.Reason,
+		FailingNodes:    rejection.FailingNodes,
 		AggregateStatus: in.AggregateStatus,
 		PerNode:         perNode,
 		Repo:            r.Repo(),

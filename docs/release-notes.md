@@ -17,6 +17,25 @@ app changes can still be a `PATCH`.
 
 ---
 
+## 0.22.0 · 2026-11-14 · `MINOR`
+
+**TL;DR**
+
+- Tables continuo does not build now show in the DAG as grey `ingested` nodes.
+- A seed load that drops its table rebuilds the views that read it in the same run, and stops on Postgres before it drops an object continuo does not own.
+- You must act: hold releases with maintenance mode while you upgrade, then release every service once with `"rebaseline": true`. Follow the [upgrade steps](https://github.com/carolsimone/continuo/blob/main/deploy/continuo/CHANGELOG.md#0220---2026-11-14).
+- A pinned `validation.imageTag` below `v0.12.0` fails the render.
+
+What else is new:
+
+- **Code fingerprints are complete.** A change to a macro, a hook, a function or a seed's bytes now counts, and a release that changes nothing validates nothing.
+- **See what a release will reload.** The release page, `GET /api/v1/releases/<id>` and `continuo release notices` show each seed reload before it happens.
+- **Name the objects a stopped load may drop.** `continuo node full-refresh … --acknowledge <schema>.<name>`, the full-refresh dialog on the node page, or the assistant.
+- **A missing view shows on its node page** until its rebuild succeeds.
+- **topology-controller serves metrics**, and release-controller counts releases by outcome.
+
+[Changelog](https://github.com/carolsimone/continuo/blob/main/deploy/continuo/CHANGELOG.md#0220---2026-11-14) · [Release](https://github.com/carolsimone/continuo/releases/tag/v0.22.0)
+
 ## 0.21.0 · 2026-11-06 · `MINOR`
 
 **TL;DR**

@@ -4,18 +4,25 @@ package projection
 
 import "time"
 
-// NodeSummary is one row of the node list: a node identity plus aggregate
-// stats computed over that node's most recent runs (the stats window, capped at
-// 50). Returned by the ListNodes gRPC method.
+// NodeSummary is one row of the node list: a node of the live release, its
+// type, whether it is dormant, plus aggregate stats computed over that node's
+// most recent runs (the stats window, capped at 50). Returned by the ListNodes
+// gRPC method.
 //
+// A node that never ran has RunCount 0, no LastStatus and a nil LastRunAt.
 // A -1 on SuccessRatePct / AvgDurationSec / P95DurationSec means "undefined":
 // no terminal runs in the window, or no succeeded attempt with a measurable
 // duration (durations come from each task's succeeded attempt only). The
 // repository converts these to nulls at the BFF boundary so the UI renders "—".
 type NodeSummary struct {
-	ServiceName    string
-	SchemaName     string
-	TableName      string
+	ServiceName string
+	SchemaName  string
+	TableName   string
+	// NodeType is the node's type in the live release, such as dbt-model.
+	NodeType string
+	// Dormant is true for a node continuo builds that belongs to no schedule
+	// (model.IsDormant).
+	Dormant        bool
 	RunCount       int
 	SuccessRatePct int
 	AvgDurationSec int
@@ -24,12 +31,14 @@ type NodeSummary struct {
 	// their first attempt (attempt > 0).
 	FlakyRatePct int
 	LastStatus   string
-	LastRunAt    time.Time
+	// LastRunAt is when the run of the node's newest task of the row's
+	// operation dimension was created (for the run dimension, a run or
+	// full_refresh task); nil when the node has no task of that dimension.
+	LastRunAt *time.Time
 	// Operation is the run/test/build dimension this node-list row was scoped
 	// to when queried: "run" | "test" | "build".
 	Operation string
 	// TimeoutSeconds is the task timeout the live release declares for the
-	// node; nil when the node declares none or the live release does not hold
-	// it.
+	// node; nil when the node declares none.
 	TimeoutSeconds *int
 }

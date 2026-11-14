@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isIngestedNodeType, nodeTypeFamily } from '../../src/client/NodeTypeIcon';
+import { isExternalNodeType, nodeTypeFamily } from '../../src/client/NodeTypeIcon';
 import { NODE_TYPE_RUNTIME, NODE_TYPES } from '../../src/server/generated/vocabulary.gen';
 
 describe('nodeTypeFamily', () => {
@@ -18,10 +18,10 @@ describe('nodeTypeFamily', () => {
     expect(nodeTypeFamily('python-model')).toBeNull();
     expect(nodeTypeFamily('')).toBeNull();
   });
-  it('gives an ingested node no family, so it draws no tool mark', () => {
-    expect(nodeTypeFamily('ingested')).toBeNull();
-    expect(isIngestedNodeType('ingested')).toBe(true);
-    expect(isIngestedNodeType('dbt-model')).toBe(false);
+  it('gives an unknown-external node no family, so it draws no tool mark', () => {
+    expect(nodeTypeFamily('unknown-external')).toBeNull();
+    expect(isExternalNodeType('unknown-external')).toBe(true);
+    expect(isExternalNodeType('dbt-model')).toBe(false);
   });
   it('classifies every declared node type that a toolchain builds', () => {
     for (const t of NODE_TYPES) {

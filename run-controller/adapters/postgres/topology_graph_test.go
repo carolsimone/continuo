@@ -119,13 +119,13 @@ func TestTopologyRepository_GraphHoldsTheKeysAndTheEdgesAmongThem(t *testing.T) 
 	assert.Equal(t, 0, empty.Len())
 }
 
-// A failed run was planned on rel-1, before any release held an ingested node.
-// rel-2, the live release, adds the ingested table raw.x that the failed node
-// a.m reads. The live schedule graph holds neither the ingested node nor its
+// A failed run was planned on rel-1, before any release held an unknown-external node.
+// rel-2, the live release, adds the unknown-external table raw.x that the failed node
+// a.m reads. The live schedule graph holds neither the unknown-external node nor its
 // edge, so a rebase reads no new node and finds no change, and a whole-schedule
 // run plans the tasks it planned before: neither is refused, and neither
-// selects the ingested node.
-func TestTopologyRepository_AnIngestedUpstreamLeavesRebaseAndWholeScheduleRunsAsTheyWere(t *testing.T) {
+// selects the unknown-external node.
+func TestTopologyRepository_AnUnknownExternalUpstreamLeavesRebaseAndWholeScheduleRunsAsTheyWere(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)
 	tenant := newTopoTenant(t, db)
@@ -134,13 +134,13 @@ func TestTopologyRepository_AnIngestedUpstreamLeavesRebaseAndWholeScheduleRunsAs
 	_, err := saveTopoRelease(t, db, topoRelease(t, tenant, "rel-1", 1, "sha-1", up, failed))
 	require.NoError(t, err)
 	failed.UpstreamUniqueIDs = []string{"a.up", "raw.x"}
-	_, err = saveTopoRelease(t, db, topoRelease(t, tenant, "rel-2", 2, "sha-2", up, failed, ingestedSpec("raw", "x")))
+	_, err = saveTopoRelease(t, db, topoRelease(t, tenant, "rel-2", 2, "sha-2", up, failed, unknownExternalSpec("raw", "x")))
 	require.NoError(t, err)
 	repo := postgres.NewTopologyRepository(db, nil)
 	require.Equal(t, 1, countTopoRows(t, db, `
 		SELECT count(*) FROM topology_edges
 		WHERE tenant_id = $1 AND release_id = 'rel-2' AND upstream_key = 'raw.x' AND downstream_key = 'a.m'`, tenant),
-		"the live release holds the ingested node and its edge")
+		"the live release holds the unknown-external node and its edge")
 
 	live, err := repo.ScheduleGraph(ctx, tenant, "rel-2", "daily")
 	require.NoError(t, err)
@@ -172,6 +172,63 @@ func TestTopologyRepository_AnIngestedUpstreamLeavesRebaseAndWholeScheduleRunsAs
 		Tasks: []runplan.PlannedTask{{Key: "a.m"}, {Key: "a.up"}},
 		Ready: []topology.NodeKey{"a.up"},
 	}, plan)
+}
+
+// ScheduleGraph, the graph a schedule's run is planned from, holds the
+// schedule's nodes and the seeds they read, and never a dormant node: here a
+// dormant table below the seed seed_1 and a dormant snapshot, both read by the
+// schedule's node a. Neither is in the graph, nor their edges, so a whole-graph
+// plan of the schedule selects neither, whether it runs, builds or tests
+// (full_refresh is single-node only). A dormant table is never a seed reload's
+// rebuild either. A dormant view below a seed the run loads is the one dormant
+// node a schedule's run can execute: the planner adds it as a rebuild through
+// ViewClosure (TestViewClosure_ReachesADormantViewBelowASeed). The data tests
+// of a dormant model are never stored, since no release stores a test.
+func TestScheduleGraph_NeverHoldsADormantUpstream(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := newTopoTenant(t, db)
+	dormantTable := graphSpec("dormant_m", "dbt-model", "", "seed_1")
+	dormantTable.Materialized = "table"
+	dormantSnapshot := graphSpec("dormant_s", "dbt-snapshot", "")
+	dormantSnapshot.Materialized = "snapshot"
+	_, err := saveTopoRelease(t, db, topoRelease(t, tenant, "rel-1", 1, "sha-1",
+		graphSpec("seed_1", "dbt-seed", "seed"),
+		dormantTable,
+		dormantSnapshot,
+		topology.NodeSpec{
+			UniqueID: "test.svc.not_null_dormant_m", ServiceName: "svc-", SchemaName: "stg", TableName: "not_null_dormant_m",
+			NodeType: "dbt-test", UpstreamUniqueIDs: []string{"stg.dormant_m"},
+		},
+		graphSpec("a", "dbt-model", "daily", "dormant_m", "dormant_s", "seed_1"),
+		graphSpec("b", "dbt-model", "daily", "a"),
+	))
+	require.NoError(t, err)
+	repo := postgres.NewTopologyRepository(db, nil)
+	require.Equal(t, 2, countTopoRows(t, db, `
+		SELECT count(*) FROM topology_edges
+		WHERE tenant_id = $1 AND release_id = 'rel-1' AND downstream_key = 'stg.a' AND upstream_key IN ('stg.dormant_m', 'stg.dormant_s')`, tenant),
+		"the release holds the edges from the dormant nodes to their reader")
+
+	g, err := repo.ScheduleGraph(ctx, tenant, "rel-1", "daily")
+	require.NoError(t, err)
+	assert.Equal(t, []topology.NodeKey{"stg.a", "stg.b", "stg.seed_1"}, g.Keys())
+	assert.Equal(t, []topology.Edge{
+		{Upstream: "stg.a", Downstream: "stg.b"},
+		{Upstream: "stg.seed_1", Downstream: "stg.a"},
+	}, edgesOf(g))
+	for _, k := range g.Keys() {
+		n, _ := g.Node(k)
+		assert.False(t, n.IsDormant(), "%s", k)
+	}
+
+	for _, op := range []model.Operation{model.OperationRun, model.OperationBuild, model.OperationTest} {
+		plan, err := runplan.WholeDAG{Operation: op}.Select(g)
+		require.NoError(t, err, "operation %q", op)
+		for _, task := range plan.Tasks {
+			assert.NotContains(t, []topology.NodeKey{"stg.dormant_m", "stg.dormant_s"}, task.Key, "operation %q", op)
+		}
+	}
 }
 
 func TestViewClosure_FollowsViewsAndEphemeralsFromTheSeeds(t *testing.T) {
@@ -207,4 +264,36 @@ func TestViewClosure_FollowsViewsAndEphemeralsFromTheSeeds(t *testing.T) {
 	ghost, err := repo.ViewClosure(ctx, tenant, "rel-closure", []topology.NodeKey{"stg.ghost"})
 	require.NoError(t, err)
 	assert.Equal(t, 0, ghost.Len())
+}
+
+// ViewClosure reaches a dormant view below a seed, whatever its schedule, so a
+// run that loads the seed and drops its table rebuilds it. It stops at a
+// dormant table below the seed and never reaches the dormant view below that
+// table. TestScheduleGraph_NeverHoldsADormantUpstream pins the other side: the
+// schedule's own graph holds no dormant node.
+func TestViewClosure_ReachesADormantViewBelowASeed(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	tenant := newTopoTenant(t, db)
+	// s seed; dv dormant view(s); dt dormant table(s); dtv dormant view(dt)
+	specs := []topology.NodeSpec{
+		graphSpec("s", "dbt-seed", "seed"),
+		graphSpec("dv", "dbt-model", "", "s"),
+		graphSpec("dt", "dbt-model", "", "s"),
+		graphSpec("dtv", "dbt-model", "", "dt"),
+	}
+	for i, m := range []string{"seed", "view", "table", "view"} {
+		specs[i].Materialized = m
+	}
+	_, err := saveTopoRelease(t, db, topoRelease(t, tenant, "rel-dormant-closure", 1, "abc", specs...))
+	require.NoError(t, err)
+	repo := postgres.NewTopologyRepository(db, nil)
+
+	g, err := repo.ViewClosure(ctx, tenant, "rel-dormant-closure", []topology.NodeKey{"stg.s"})
+	require.NoError(t, err)
+	assert.Equal(t, []topology.NodeKey{"stg.dv", "stg.s"}, g.Keys())
+	assert.Equal(t, []topology.NodeKey{"stg.s"}, g.Upstreams("stg.dv"))
+	dv, ok := g.Node("stg.dv")
+	require.True(t, ok)
+	assert.True(t, dv.IsDormant(), "the view below the seed is dormant")
 }

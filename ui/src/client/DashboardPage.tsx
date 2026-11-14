@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ScheduleSummary, SchedulesResponse, ScheduleTopologySummary, TopologyListResponse } from './types';
 import SchedulerCard from './SchedulerCard';
 import SnapshotTile from './SnapshotTile';
+import DormantTile from './DormantTile';
 import Tabs, { useActiveTab } from './Tabs';
 import ReleasesPanel from './ReleasesPanel';
 import NodesCatalogPanel from './NodesCatalogPanel';
@@ -16,6 +17,9 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [topologies, setTopologies] = useState<ScheduleTopologySummary[]>([]);
   const [topologiesError, setTopologiesError] = useState<string | null>(null);
+  // Dormant nodes of the live release: nodes continuo builds that belong to no
+  // schedule.
+  const [dormantNodeCount, setDormantNodeCount] = useState(0);
   const [nodeTotal, setNodeTotal] = useState(0);
   const [openPrCount, setOpenPrCount] = useState(0);
 
@@ -50,6 +54,7 @@ export default function DashboardPage() {
       readJson<TopologyListResponse>('/api/topology/schedules')
         .then((data) => {
           setTopologies(data.schedules || []);
+          setDormantNodeCount(Number(data.dormant_node_count) || 0);
           setTopologiesError(null);
         })
         .catch(e => setTopologiesError(e.message));
@@ -127,17 +132,18 @@ export default function DashboardPage() {
                 <span className="info-strip__icon">⚠</span> {topologiesError}
               </div>
             )}
-            {!topologiesError && topologies.length === 0 && (
+            {!topologiesError && topologies.length === 0 && dormantNodeCount === 0 && (
               <div className="info-strip info-strip--neutral">
                 <span className="info-strip__icon">ⓘ</span>
                 No topology loaded yet — push a dbt manifest to populate.
               </div>
             )}
-            {!topologiesError && topologies.length > 0 && (
+            {!topologiesError && (topologies.length > 0 || dormantNodeCount > 0) && (
               <div className="snapshot-tile-grid">
                 {topologies.map((s) => (
                   <SnapshotTile key={s.schedule_name} summary={s} />
                 ))}
+                {dormantNodeCount > 0 && <DormantTile count={dormantNodeCount} />}
               </div>
             )}
           </>

@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useParams } from 'react-router';
 import PageHeader from './PageHeader';
-import { settlesRequest, useActionRequestId } from './request-id';
+import { useSingleNodeRun } from './useSingleNodeRun';
 import type { NodeOutage, NodeRun, NodeRunsResponse, NodeDetailFrom, NodesResponse } from './types';
-import { kindLabel, computeNodeStats, formatDuration, formatRelative, formatTimeout } from './node-helpers';
+import { kindLabel, computeNodeStats, dormantTitle, formatDuration, formatRelative, formatTimeout } from './node-helpers';
 import { isTerminalStatus, taskPillClass, taskStatusTitle } from './detail-page-helpers';
 import NodeTypeIcon from './NodeTypeIcon';
 import RunSourcePickerDialog from './RunSourcePickerDialog';
@@ -113,8 +113,6 @@ export default function NodeDetailPage() {
   // The outage of the node's production object the latest history read
   // reported, null when it has none.
   const [outage, setOutage] = useState<NodeOutage | null>(null);
-  const [runState, setRunState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
-  const [runError, setRunError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [operation, setOperation] = useState<NodeOperation>(initialOperation);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -127,14 +125,11 @@ export default function NodeDetailPage() {
   // declares it (else it is the install default); null while unknown or when
   // the node has no node-list row.
   const [taskTimeout, setTaskTimeout] = useState<{ seconds: number; declared: boolean } | null>(null);
+  // Whether the node is dormant in the live release (it belongs to no
+  // schedule), and when it last ran; null while unknown or when the node has no
+  // node-list row.
+  const [dormant, setDormant] = useState<{ lastRunAt: string | null } | null>(null);
   const genRef = useRef(0);
-  // The request id of the node run being asked for: a press that gets no
-  // answer and is repeated with the same node, operation and source, while
-  // the history still shows the newest node run the first press saw, sends
-  // the same id, so the run the first press made is returned rather than made
-  // twice. A newer node run in the history makes the next press a new action,
-  // and the id is renewed once the server has given its final answer.
-  const { take: takeRequestId, renew: renewRunRequestId } = useActionRequestId();
 
   const parts = (fqn ?? '').split('.');
   const service = parts[0] ?? '';
@@ -197,26 +192,54 @@ export default function NodeDetailPage() {
       });
   }, [service, schema, table]);
 
-  // The node-list search filters on the table name only (an exact match within
-  // the service), so rows of other schemas sharing the table name can come
-  // back: the schema is matched client-side.
-  useEffect(() => {
-    setTaskTimeout(null);
+  // The node's row of the node list: its task timeout and whether it is
+  // dormant, with its last run. The search filters on the table name only (an
+  // exact match within the service), so rows of other schemas sharing the table
+  // name can come back: the schema is matched client-side.
+  //
+  // Each read takes the next number, and an answer replaces what the page holds
+  // only when its number is above that of every answer already applied, so an
+  // older read never lands over a newer one. A read that fails applies nothing
+  // and does not hold back an older read still in flight. A change of node
+  // counts every read started so far as applied: the answers still in flight
+  // for the node left land nowhere.
+  const summaryStartedRef = useRef(0);
+  const summaryAppliedRef = useRef(0);
+  const fetchNodeSummary = useCallback(() => {
     if (!service || !schema || !table) return;
-    let cancelled = false;
+    const myRead = ++summaryStartedRef.current;
     fetch(`/api/nodes?service=${encodeURIComponent(service)}&search=${encodeURIComponent(table)}&operation=run`)
-      .then(r => (r.ok ? r.json() : null))
-      .then((data: NodesResponse | null) => {
-        if (cancelled) return;
-        const row = (data?.nodes ?? []).find(n => n.schema_name === schema);
+      .then(r => {
+        if (!r.ok) throw new Error(`node list answered ${r.status}`);
+        return r.json();
+      })
+      .then((data: NodesResponse) => {
+        const row = data.nodes.find(n => n.schema_name === schema);
+        if (myRead <= summaryAppliedRef.current) return;
+        summaryAppliedRef.current = myRead;
         setTaskTimeout(row && typeof row.timeout_seconds === 'number' && row.timeout_seconds > 0
           ? { seconds: row.timeout_seconds, declared: !!row.timeout_declared }
           : null);
+        setDormant(row?.dormant ? { lastRunAt: row.last_run_at ?? null } : null);
       })
-      .catch(() => {
-        if (!cancelled) setTaskTimeout(null);
-      });
-    return () => { cancelled = true; };
+      .catch(() => { /* the page keeps what it holds */ });
+  }, [service, schema, table]);
+
+  // A new node starts with nothing known about it.
+  useEffect(() => {
+    setTaskTimeout(null);
+    setDormant(null);
+    fetchNodeSummary();
+    return () => { summaryAppliedRef.current = summaryStartedRef.current; };
+  }, [fetchNodeSummary]);
+
+  // A dialog opened for the node left is closed in the commit that shows the new
+  // node: a full refresh it confirms would otherwise run on the node the page
+  // shows now and drop its table.
+  useLayoutEffect(() => {
+    setPickerOpen(false);
+    setConfirmOpen(false);
+    setPendingSource(null);
   }, [service, schema, table]);
 
   const canFullRefresh = FULL_REFRESH_NODE_TYPES.has(nodeType);
@@ -245,34 +268,19 @@ export default function NodeDetailPage() {
   // with no single-node run in its window observes none.
   const newestNodeRunId = runsKnown ? (runs.find(r => r.kind === 'single_node_run')?.run_id ?? null) : undefined;
 
-  // opOverride pins the operation for a caller that must send exactly what it
-  // confirmed, independent of the select's current value.
-  const postRun = useCallback(async (body: object, opOverride?: NodeOperation) => {
-    setRunState('loading');
-    setRunError(null);
-    try {
-      const op = opOverride ?? operation;
-      const asked = { ...body, operation: op === 'run' ? '' : op };
-      const withOp = { ...asked, request_id: takeRequestId(`${service}.${schema}.${table}|${JSON.stringify(asked)}`, newestNodeRunId) };
-      const res = await fetch(
-        `/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/run`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(withOp) },
-      );
-      if (settlesRequest(res)) renewRunRequestId();
-      if (res.ok) {
-        setRunState('success');
-        fetchRuns();
-        setTimeout(() => setRunState('idle'), 3000);
-      } else {
-        const errBody = await res.json().catch(() => ({ error: 'Request failed — please try again' }));
-        setRunError(errBody.error ?? 'Request failed — please try again');
-        setRunState('error');
-      }
-    } catch {
-      setRunError('Request failed — please try again');
-      setRunState('error');
-    }
-  }, [service, schema, table, fetchRuns, operation, newestNodeRunId, takeRequestId, renewRunRequestId]);
+  // A started run reads the history again, and the node's row of the node list,
+  // whose last run a run or a full refresh moves.
+  const handleStarted = useCallback(() => {
+    fetchRuns();
+    fetchNodeSummary();
+  }, [fetchRuns, fetchNodeSummary]);
+
+  // A press is one action while the history shows no node run newer than the
+  // one the press saw.
+  const { runState, runError, postRun } = useSingleNodeRun(
+    { service, schema, table },
+    { operation, observed: newestNodeRunId, onStarted: handleStarted },
+  );
 
   // A full refresh drops the node's table, so it is only posted once confirmed.
   const handleRunLatest = useCallback(() => {
@@ -355,6 +363,11 @@ export default function NodeDetailPage() {
             {fqn}
             {nodeType && (
               <span className="info-strip info-strip--neutral info-strip--inline">{nodeType}</span>
+            )}
+            {dormant !== null && (
+              <span className="info-strip info-strip--neutral info-strip--inline" title={dormantTitle(dormant.lastRunAt)}>
+                dormant
+              </span>
             )}
             {taskTimeout !== null && (
               <span className="info-strip info-strip--neutral info-strip--inline">

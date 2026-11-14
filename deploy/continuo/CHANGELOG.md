@@ -14,14 +14,76 @@ shipped in those.
 
 **TL;DR**
 
-- A table that a node reads and no node builds now shows in the DAG as a grey `ingested` node.
-- Hold releases with maintenance mode while you upgrade, and do not roll release-controller back afterwards.
-- Every node's code fingerprint (`content_hash`) is computed anew, closing 23 gaps. After the upgrade, release each service once with `"rebaseline": true`.
-- The default validation image is `v0.12.0`, and a pinned validation image below it fails the render.
-- release-controller serves a read-only gRPC call on port 50056 for `continuo release notices`.
-- A seed load that drops its table rebuilds the continuo views that read it.
-- `agentRemediation.engine` (default `legacy`) lets you switch agent-remediation to the runner engine, which a restart continues.
-- No values change is needed unless you pin `validation.imageTag` below `v0.12.0`, and both new values keys have defaults.
+- New: a dbt model or snapshot with an owner and no tag is now a dormant node. A release checks it like any model, but no cron runs it: you run it by hand.
+- The node type `ingested` is now `unknown-external`, and nodes stored as `ingested` keep working. A script that looks for `ingested` must look for `unknown-external`.
+- You must act (steps below): check your models with no tag, upgrade with maintenance mode on, then run each dormant node whose table does not exist yet. Do not roll release-controller back afterwards.
+- No values change is needed: the new values key `agentRemediation.engine` defaults to `legacy`, and `runner` switches agent-remediation to an engine a restart continues. On 0.21.0 or earlier, upgrade to 0.22.0 first.
+
+### Upgrade steps
+
+1. **On 0.21.0 or earlier:** upgrade to 0.22.0 first and follow its steps. The steps below start from 0.22.0.
+2. **Check every model and snapshot that has an owner and no tag.** Do this before you upgrade.
+   - In each dbt project, list the models and snapshots with no tag: `dbt ls --resource-type model --resource-type snapshot --select package:this --exclude "tag:*"`. After the upgrade, each one that has an owner is a dormant node of its service.
+   - A model in that list may stand in for a table it does not really build: a stub with the same schema and name as another service's table, or as a table another system loads. Tag each such stub `local_stub`, or remove its owner, and release that change now: the version you run now leaves such a model out too, so production does not change.
+   - A stub that stays a node claims its table. With a stub of another service's table, every release is rejected `duplicate_table`, and a run of a stub of a loaded table replaces that table.
+   - Every other model or snapshot in that list must build. Production does not hold it yet, so the first release after the upgrade, whatever its service, builds it and every node below it. A broken one rejects that release and every later one until you fix it.
+3. **Hold releases with maintenance mode while you upgrade.** This version names the type of a table no node builds `unknown-external`, and that name replaces `ingested`. A release-controller older than this version, 0.22.0's included, does not know the new name: when it receives a topology with `unknown-external` nodes, it sends them to validation, which stalls that release and the queue. A release that is queued or submitted while the pods roll can be parsed by the new topology-controller while the old release-controller still runs, so keep releases from starting until every pod is new. Do it in this order:
+   1. Turn maintenance mode on, on the chart version you run now: `helm upgrade <release> <chart> --version <the version you run now> --reuse-values --set maintenance.enabled=true`. Do not change the chart version in this step: without `--version`, Helm pulls the latest chart, which is this release, and the pods roll before the drain. A new release is refused with HTTP 503, release-controller activates no queued release, and the releases already in progress finish. A scheduled run that comes due while maintenance mode is on is skipped, not caught up later; the comment above `maintenance:` in `deploy/continuo/values.yaml` lists what else it refuses.
+   2. Wait until no release is compiling, parsing, seed-building or validating. A fix verification of a remediation attempt already in progress still activates in maintenance mode, so wait for those too.
+   3. Run the upgrade to this version with maintenance mode still on: pass `--version <this version>` and keep `--set maintenance.enabled=true`, with your usual values. Its migration Job builds the index `idx_tasks_node_key_created` on run-controller's `tasks` table. run-controller cannot write a task until the index is built, so the runs in progress pause for that time. The build takes longer the more rows the `tasks` table holds, and afterwards the index adds a little work to every task insert.
+   4. Turn maintenance mode off: `helm upgrade <release> <chart> --version <this version> --reuse-values --set maintenance.enabled=false`. release-controller activates the oldest queued release when it starts.
+
+   Each change of `maintenance.enabled` restarts every continuo service. If you skip this and a release stalls, it stays in `validating` and the release queue stops. No API, CLI or UI action fails a release, so an operator has to fail that release directly in release-controller's database and then restart release-controller, which advances the queue as it starts. This has not been rehearsed.
+4. **Do not roll release-controller back below this version** after a release with `unknown-external` nodes has been promoted. An older release-controller, 0.22.0's included, counts the empty service of those nodes as uncovered at activation, so no later release activates.
+5. **Run each dormant node whose table does not exist yet.** A dormant node enters production with the first release after the upgrade, and no cron runs it. Run it once from its node page (the Dormant tile on the Topology tab opens their list) before you release a change to any node below it. Otherwise validation cannot copy its production table, and that release is rejected `upstream_clone_failed`.
+
+This release adds the values key `agentRemediation.engine` with a safe default, and it ships as a `MINOR`.
+
+### Added
+
+- **Dormant nodes.** TL;DR: a dbt model or snapshot with an owner and no tag is now a node with no schedule. No cron runs it, except to rebuild it: any run whose load of a seed drops the seed's table rebuilds the dormant views and materialized views below that seed. You run it by hand from its node page, from its ▶ on a schedule's graph, or with `continuo node trigger`.
+  - A schedule's graph shows each dormant node it reads in light grey, with a `dormant` chip and a tooltip with its last run. The last run is its newest run or full refresh, as on the Nodes tab: a test of the node is not a run of it. Its node page marks it `dormant` too.
+  - `continuo schedule graph` and `continuo node list` mark each node `dormant`, and `continuo node list --dormant` lists only the dormant ones.
+  - On the release page, a seed reload notice says that a dormant node below the seed refreshes only when run by hand, unless the load rebuilds it.
+  - The table a dormant model writes never shows as an `unknown-external` node. The table of a model with no owner still can.
+  - No values change is needed.
+- **The Dormant tile.** TL;DR: when the live release has dormant nodes, the Topology tab shows a Dormant tile with their number. It opens the Nodes tab filtered to them.
+- **`agentRemediation.engine` picks agent-remediation's fix proposer.** TL;DR: `legacy` (the default) keeps today's proposer, and `runner` works each heal trigger as a remediation of committed steps that a restart continues. No values change is needed.
+  - The value reaches agent-remediation as `AGENT_REMEDIATION_ENGINE` on the shared ConfigMap, so it restarts every continuo service when it changes. agent-remediation refuses to start on any other value.
+  - Both engines run the remediation worker, the verification poller and the sweeper, so a remediation the runner started finishes after the value is set back to `legacy`.
+  - Upgrade to this version with `legacy` first, and set `runner` in a later upgrade. While the pods roll, a pod of an older version runs only the legacy verification reconciler, which does not skip the runner's attempt rows.
+  - Under `runner`, the `tries` of the `rejected-release` flow file (3) sets how many attempts a release round gets. The runner does not read `AGENT_REMEDIATION_MAX_ATTEMPTS`, which only `legacy` reads, and agent-remediation logs a warning at startup when the engine is `runner` and the variable differs from the flow's `tries`.
+  - A remediation the runner cannot move on is ended as a system failure, and its attempt row (generating or verifying) is failed with the reason: a step that failed five times (a gate that failed five polls in a row), a remediation that could not be loaded or could not open its next try five times in a row, and a try still drafting or checking past its deadline. A step that runs longer than ten minutes is stopped and counts as one failure, and a remediation whose step failed is retried two minutes later.
+
+### Changed
+
+- **The node type `ingested` is now `unknown-external`.** TL;DR: a table that a node reads and no node builds is still a grey node in the DAG, now of type `unknown-external`. Its chip says `external` instead of `ingested`.
+  - The gRPC API, `continuo schedule graph` and every new topology artifact name the type `unknown-external`. A script that looks for `ingested` must look for `unknown-external`.
+  - A node that a 0.22.0 install stored as `ingested`, in a topology artifact, in run-controller's database or in catalog's graph, reads as `unknown-external`. Nothing is migrated.
+  - No values change is needed.
+- **A model with an owner and no tag is validated.** TL;DR: continuo used to skip such a model. It is now a dormant node, and a release checks it like any model, so a broken one rejects the release.
+  - To keep a model out of continuo, leave out its `meta.owner` or tag it `local_stub`.
+  - This is only for your own dbt project. A model, seed or snapshot of an installed dbt package is left out when it has no tag, even though dbt gives it the owner of your project's top-level `+meta`. A seed like that used to reject the release `invalid_artifact`. A package's node with an owner and a tag still rejects the release `invalid_artifact`, unless it carries the tag `local_stub`. One with no owner is left out.
+- **The Nodes tab lists every node of the live release.** TL;DR: a node that never ran is listed too, after the nodes that ran, with `never` and dashes. A node the live release does not hold is not listed, whatever runs it had.
+  - A `Dormant only` filter lists only the dormant nodes.
+  - The Service filter offers every service with a listed node, and the search suggests every listed table, a node that never ran included. A node the live release does not hold is no longer suggested.
+  - `continuo node list` lists the same nodes, each with its `node_type`. A node that never ran has `task_count` 0 and no `last_run_at`.
+- **A new reject reason: `upstream_clone_failed`.** TL;DR: validation copies the production table of each unchanged upstream. When only such copies fail, the release is rejected `upstream_clone_failed`, and the message names the nodes (the first five, then how many more): run them, then release again.
+  - When a node built from the release's code fails too (a changed node, or a node below one), the reason stays `validation_failed`, and the message also names the copies.
+  - It is not healable: remediation proposes no fix for it, and "Try again" is refused.
+  - remediation never tries to fix a copied node, in a `validation_failed` rejection either.
+  - Each node of a validation rejection on `release.rejected:v1` names how validation prepared it, as `validation_op`: `clone_from_prod` for a copy, and `build_from_sql`, `build_from_columns` or `check_binds` otherwise.
+  - A CI pipeline that reads `reject_reason` can get the new value, and `continuo_releases_total{reject_reason}` counts it.
+- **topology-controller counts dormant nodes.** TL;DR: `continuo_topology_release_dormant_nodes` counts the dormant nodes of the last release. `continuo_topology_release_skipped_nodes{reason}` has no `no_tag` value any more: its reasons are `no_owner`, `local_stub` and `installed_package`, a node of an installed dbt package with no tag.
+
+## [0.22.0] - 2026-11-14
+
+**TL;DR**
+
+- New: tables continuo does not build show as grey `ingested` nodes, a seed load that drops its table rebuilds the views that read it in the same run, and `continuo release notices` shows what a release will reload.
+- You must act: hold releases with maintenance mode while you upgrade, then release every service once with `"rebaseline": true` (steps below). Do not roll release-controller back afterwards.
+- The default validation image is `v0.12.0`, and a pinned `validation.imageTag` below it fails the render.
+- No other values change is needed.
 
 ### Upgrade steps
 
@@ -41,7 +103,7 @@ shipped in those.
 
 Rebuild a Python service on 0.12.0 only inside these steps: a normal release on 0.12.0 outside them moves its hashes outside the window and starts a validation.
 
-This release adds two values keys, `global.releaseControllerGrpcAddr` and `agentRemediation.engine`, each with a safe default, and it ships as a `MINOR`.
+This release adds the values key `global.releaseControllerGrpcAddr` with a default, and it ships as a `MINOR`.
 
 ### Breaking
 
@@ -50,12 +112,6 @@ This release adds two values keys, `global.releaseControllerGrpcAddr` and `agent
 ### Added
 
 - release-controller serves `release.v1.ReleaseQuery` on gRPC port 50056 for `continuo release notices`, with the values key `global.releaseControllerGrpcAddr` (default `release-controller:50056`). A values file that overrides the whole `services` list gets neither release-controller's `grpcPort` and `RELEASE_CONTROLLER_GRPC_PORT` nor agent-chat's `CONTINUO_RELEASE_CONTROLLER_ADDR`: copy them from the chart's `values.yaml`, or `continuo release notices` cannot reach release-controller. Nothing else depends on them.
-- **`agentRemediation.engine` picks agent-remediation's fix proposer.** TL;DR: `legacy` (the default) keeps today's proposer, and `runner` works each heal trigger as a remediation of committed steps that a restart continues. No values change is needed.
-  - The value reaches agent-remediation as `AGENT_REMEDIATION_ENGINE` on the shared ConfigMap, so it restarts every continuo service when it changes. agent-remediation refuses to start on any other value.
-  - Both engines run the remediation worker, the verification poller and the sweeper, so a remediation the runner started finishes after the value is set back to `legacy`.
-  - Upgrade to this version with `legacy` first, and set `runner` in a later upgrade. While the pods roll, a pod of an older version runs only the legacy verification reconciler, which does not skip the runner's attempt rows.
-  - Under `runner`, the `tries` of the `rejected-release` flow file (3) sets how many attempts a release round gets. The runner does not read `AGENT_REMEDIATION_MAX_ATTEMPTS`, which only `legacy` reads, and agent-remediation logs a warning at startup when the engine is `runner` and the variable differs from the flow's `tries`.
-  - A remediation the runner cannot move on is ended as a system failure, and its attempt row (generating or verifying) is failed with the reason: a step that failed five times (a gate that failed five polls in a row), a remediation that could not be loaded or could not open its next try five times in a row, and a try still drafting or checking past its deadline. A step that runs longer than ten minutes is stopped and counts as one failure, and a remediation whose step failed is retried two minutes later.
 - **Tables no node builds show as `ingested` nodes.** TL;DR: a table that a node reads and no node builds, such as a table another system loads, now shows in the DAG as a grey `ingested` node with an edge to each node that reads it.
   - An ingested node has no schedule and is never built, run or validated. A node that reads its table still reads it where it is.
   - A system relation never becomes an ingested node.

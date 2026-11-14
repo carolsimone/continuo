@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
@@ -180,7 +181,7 @@ func TestHandleValidationResult_FailedNodeInStore_Rejects(t *testing.T) {
 
 	e := findEntry(t, store, streams.ReleaseRejectedV1)
 	assert.JSONEq(t, string(e.Payload), string(r.RejectionPayload()),
-		"the rejection payload stored on the release must match the one emitted on release.rejected:v1")
+		"the rejection payload stored on the release must match the one emitted on %s", streams.ReleaseRejectedV1)
 	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
 }
 
@@ -702,7 +703,7 @@ func TestHandleValidationResult_Rejected_CarriesCandidateArtifactURIAndProvenanc
 	assert.Equal(t, "s3://continuo/candidate-sql/rA/candidate_b.json", byID["b"],
 		"failing node must carry candidate_artifact_uri")
 	assert.Equal(t, "run-results/rA/b.json", runResultsByID["b"],
-		"failing node must carry run_results_uri through to release.rejected:v1")
+		"failing node must carry run_results_uri through to %s", streams.ReleaseRejectedV1)
 }
 
 // TestHandleValidationResult_Rejected_CarriesCandidateNodeTypeAndLocation asserts
@@ -1207,4 +1208,374 @@ func TestHandleValidationResult_Promote_PointsCurrentProdAtTheCandidateArtifact(
 	assert.Equal(t, r.CandidateTopologyRef(), cp.Topology())
 	assert.Equal(t, int64(1), cp.PromotionSeq())
 	assert.Equal(t, int64(1), store.LastPromotionSeq())
+}
+
+// seedToValidatingAgainstProd advances a candidate of service "core" to
+// Validating while current_prod holds prod. A candidate node whose
+// content_hash matches prod's is an unchanged upstream, which the validation
+// leg clones empty from its production table; every other node is built from
+// its own candidate code.
+func seedToValidatingAgainstProd(t *testing.T, releaseID string, prod, candidate release.Topology) (*handlers.Deps, *fakeStore) {
+	t.Helper()
+	deps, store := seedToParsing(t, releaseID, map[string]string{"core": "sha-core"})
+	seedProd(t, deps, store, "prev", prod, time.Unix(50, 0).UTC())
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: releaseID, Status: "ok", TopologyRef: putTopology(t, deps, releaseID, candidate),
+	}))
+	r, err := store.GetRelease(releaseID)
+	require.NoError(t, err)
+	require.Equal(t, pipeline.StatusValidating, r.Status())
+	return deps, store
+}
+
+// clonedUpstreamTopologies is a release that changes only analytics.s, which
+// reads analytics.b, unchanged since production. extra nodes are added to the
+// candidate as they are given.
+func clonedUpstreamTopologies(extra ...release.Node) (prod, candidate release.Topology) {
+	b := release.Node{UniqueID: "analytics.b", ServiceName: "core", NodeType: "dbt-model",
+		SchemaName: "analytics", TableName: "b", OriginalFilePath: "models/b.sql", ContentHash: "hash-b"}
+	s := release.Node{UniqueID: "analytics.s", ServiceName: "core", NodeType: "dbt-model",
+		SchemaName: "analytics", TableName: "s", OriginalFilePath: "models/s.sql", ContentHash: "hash-s-NEW",
+		UpstreamUniqueIDs: []string{"analytics.b"}}
+	oldS := s
+	oldS.ContentHash = "hash-s-OLD"
+	return release.Topology{b, oldS}, append(release.Topology{b, s}, extra...)
+}
+
+// rejectedValidationPayload is the part of a validation rejection these tests
+// read, with each per-node entry's validation op.
+type rejectedValidationPayload struct {
+	Stage        string   `json:"stage"`
+	Reason       string   `json:"reason"`
+	FailingNodes []string `json:"failing_nodes"`
+	PerNode      []struct {
+		NodeID       string                 `json:"node_id"`
+		Status       string                 `json:"status"`
+		ValidationOp pkg_model.ValidationOp `json:"validation_op"`
+	} `json:"per_node"`
+}
+
+func decodeRejectedValidation(t *testing.T, store *fakeStore) (rejectedValidationPayload, map[string]pkg_model.ValidationOp) {
+	t.Helper()
+	var p rejectedValidationPayload
+	require.NoError(t, json.Unmarshal(findEntry(t, store, streams.ReleaseRejectedV1).Payload, &p))
+	ops := make(map[string]pkg_model.ValidationOp, len(p.PerNode))
+	for _, n := range p.PerNode {
+		ops[n.NodeID] = n.ValidationOp
+	}
+	return p, ops
+}
+
+// A release changes only analytics.s, which reads the unchanged analytics.b.
+// Validation copies b's production table, the copy fails and s is skipped. No
+// change to the release's code can make that copy succeed, so the release is
+// rejected for the copy, names b and tells the operator to run it.
+func TestHandleValidationResult_OnlyClonedFailed_RejectsUpstreamCloneFailed(t *testing.T) {
+	prod, candidate := clonedUpstreamTopologies()
+	deps, store := seedToValidatingAgainstProd(t, "rClone", prod, candidate)
+	seedValidationNodes(t, deps, "rClone", []handlers.NodeResult{
+		{NodeID: "analytics.b", Status: "failed", DBTLogURI: "s3://logs/rClone/b.log"},
+		{NodeID: "analytics.s", Status: "skipped"},
+	})
+
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID: "rClone", AggregateStatus: "failed",
+	}))
+
+	r, err := store.GetRelease("rClone")
+	require.NoError(t, err)
+	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, string(pkg_model.RejectReasonUpstreamCloneFailed), r.FailReason())
+	assert.Equal(t, []string{"analytics.b"}, r.FailingNodes())
+	assert.Equal(t, release.SummarizeCloneFailure([]string{"analytics.b"}), r.FailDetail())
+	assert.Equal(t, "Could not copy the production table of analytics.b. Run it, then release again.", r.FailDetail())
+
+	p, ops := decodeRejectedValidation(t, store)
+	assert.Equal(t, "validation", p.Stage)
+	assert.Equal(t, "upstream_clone_failed", p.Reason)
+	assert.Equal(t, []string{"analytics.b"}, p.FailingNodes)
+	assert.Equal(t, pkg_model.ValidationOpCloneFromProd, ops["analytics.b"], "b was copied from production")
+	assert.Equal(t, pkg_model.ValidationOpBuildFromSQL, ops["analytics.s"], "s was built from its own code")
+	assert.JSONEq(t, string(findEntry(t, store, streams.ReleaseRejectedV1).Payload), string(r.RejectionPayload()),
+		"the rejection payload stored on the release must match the one emitted on %s", streams.ReleaseRejectedV1)
+	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
+}
+
+// A changed node that fails on its own code is still a validation failure when
+// a copied node fails too: the release is rejected validation_failed for the
+// changed node, which remediation can fix, and the copied node is left out of
+// the failing nodes and named in the detail instead.
+func TestHandleValidationResult_MixedFailure_RejectsValidationFailedAndNamesClonedNodes(t *testing.T) {
+	prod, candidate := clonedUpstreamTopologies()
+	deps, store := seedToValidatingAgainstProd(t, "rMixed", prod, candidate)
+	seedValidationNodes(t, deps, "rMixed", []handlers.NodeResult{
+		{NodeID: "analytics.b", Status: "failed"},
+		{NodeID: "analytics.s", Status: "failed"},
+	})
+
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID: "rMixed", AggregateStatus: "failed",
+	}))
+
+	r, err := store.GetRelease("rMixed")
+	require.NoError(t, err)
+	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, string(pkg_model.RejectReasonValidationFailed), r.FailReason())
+	assert.Equal(t, []string{"analytics.s"}, r.FailingNodes())
+	assert.True(t, strings.HasSuffix(r.FailDetail(), release.SummarizeCloneFailure([]string{"analytics.b"})),
+		"the detail names the copied node: %q", r.FailDetail())
+	assert.Equal(t,
+		"2 of 2 nodes failed validation: analytics.b (core) and analytics.s (core). "+
+			"Could not copy the production table of analytics.b. Run it, then release again.",
+		r.FailDetail())
+
+	p, ops := decodeRejectedValidation(t, store)
+	assert.Equal(t, "validation_failed", p.Reason)
+	assert.Equal(t, []string{"analytics.s"}, p.FailingNodes)
+	assert.Equal(t, pkg_model.ValidationOpCloneFromProd, ops["analytics.b"])
+	assert.Equal(t, pkg_model.ValidationOpBuildFromSQL, ops["analytics.s"])
+}
+
+// A node skipped below a changed node that failed stays among the failing
+// nodes, as in any validation rejection: a verification of a later fix reads
+// the failing nodes and must not take a skipped node for a validated one. Only
+// the copied node leaves the list.
+func TestHandleValidationResult_MixedFailure_KeepsSkippedNodesFailing(t *testing.T) {
+	prod, candidate := clonedUpstreamTopologies(release.Node{
+		UniqueID: "analytics.t", ServiceName: "core", NodeType: "dbt-model", SchemaName: "analytics", TableName: "t",
+		OriginalFilePath: "models/t.sql", ContentHash: "hash-t", UpstreamUniqueIDs: []string{"analytics.s"},
+	})
+	deps, store := seedToValidatingAgainstProd(t, "rMixedSkip", prod, candidate)
+	seedValidationNodes(t, deps, "rMixedSkip", []handlers.NodeResult{
+		{NodeID: "analytics.b", Status: "failed"},
+		{NodeID: "analytics.s", Status: "failed"},
+		{NodeID: "analytics.t", Status: "skipped"},
+	})
+
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID: "rMixedSkip", AggregateStatus: "failed",
+	}))
+
+	r, err := store.GetRelease("rMixedSkip")
+	require.NoError(t, err)
+	assert.Equal(t, string(pkg_model.RejectReasonValidationFailed), r.FailReason())
+	assert.Equal(t, []string{"analytics.s", "analytics.t"}, r.FailingNodes())
+
+	_, ops := decodeRejectedValidation(t, store)
+	assert.Equal(t, map[string]pkg_model.ValidationOp{
+		"analytics.b": pkg_model.ValidationOpCloneFromProd,
+		"analytics.s": pkg_model.ValidationOpBuildFromSQL,
+		"analytics.t": pkg_model.ValidationOpBuildFromSQL,
+	}, ops, "every per-node entry names how validation prepared its node")
+}
+
+// A copied node that passed is no clone failure: a release whose only non-ok
+// node was skipped is rejected validation_failed exactly as before.
+func TestHandleValidationResult_OnlySkippedNodes_RejectsValidationFailed(t *testing.T) {
+	prod, candidate := clonedUpstreamTopologies()
+	deps, store := seedToValidatingAgainstProd(t, "rSkipOnly", prod, candidate)
+	seedValidationNodes(t, deps, "rSkipOnly", []handlers.NodeResult{
+		{NodeID: "analytics.b", Status: "ok"},
+		{NodeID: "analytics.s", Status: "skipped"},
+	})
+
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID: "rSkipOnly", AggregateStatus: "failed",
+	}))
+
+	r, err := store.GetRelease("rSkipOnly")
+	require.NoError(t, err)
+	assert.Equal(t, string(pkg_model.RejectReasonValidationFailed), r.FailReason())
+	assert.Equal(t, []string{"analytics.s"}, r.FailingNodes())
+	assert.NotContains(t, r.FailDetail(), "Could not copy")
+}
+
+// A release whose changed node also reads a new seed goes through the
+// seed-build leg, which builds the seed and drops it from the validation set.
+// This pins that narrowing of ValidationNodeIDs, and that a failed copy is
+// still rejected upstream_clone_failed on the narrowed set. For a candidate
+// the validation set does not change which nodes count as built: it only
+// filters a verification's context rebuilds. The test that fails when the
+// validation-result leg reads the wrong set is
+// TestHandleValidationResult_Verification_AFailedContextRebuildIsBuilt.
+func TestHandleValidationResult_SeedBuildLegLeavesTheBuiltSeedOutOfTheValidationSet(t *testing.T) {
+	prod, candidate := clonedUpstreamTopologies(release.Node{
+		UniqueID: "seed.core.fx", ServiceName: "core", NodeType: "dbt-seed", SchemaName: "analytics", TableName: "fx",
+		OriginalFilePath: "seeds/fx.csv", ContentHash: "hash-fx",
+	})
+	for i := range candidate {
+		if candidate[i].UniqueID == "analytics.s" {
+			candidate[i].UpstreamUniqueIDs = []string{"analytics.b", "seed.core.fx"}
+		}
+	}
+	deps, store := seedToParsing(t, "rSeedClone", map[string]string{"core": "sha-core"})
+	seedProd(t, deps, store, "prev", prod, time.Unix(50, 0).UTC())
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rSeedClone", Status: "ok", TopologyRef: putTopology(t, deps, "rSeedClone", candidate),
+	}))
+	require.NoError(t, handlers.HandleSeedBuildResult(context.Background(), deps, handlers.HandleSeedBuildResultInput{
+		ReleaseID: "rSeedClone", Status: "ok",
+		PerNode: []handlers.NodeResult{{NodeID: "seed.core.fx", Status: "ok"}},
+	}))
+	r, err := store.GetRelease("rSeedClone")
+	require.NoError(t, err)
+	require.Equal(t, []string{"analytics.b", "analytics.s"}, r.ValidationNodeIDs(), "the built seed left the validation set")
+
+	seedValidationNodes(t, deps, "rSeedClone", []handlers.NodeResult{
+		{NodeID: "analytics.b", Status: "failed"},
+		{NodeID: "analytics.s", Status: "skipped"},
+	})
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID: "rSeedClone", AggregateStatus: "failed",
+	}))
+
+	r, err = store.GetRelease("rSeedClone")
+	require.NoError(t, err)
+	assert.Equal(t, string(pkg_model.RejectReasonUpstreamCloneFailed), r.FailReason())
+	assert.Equal(t, []string{"analytics.b"}, r.FailingNodes())
+	_, ops := decodeRejectedValidation(t, store)
+	assert.Equal(t, map[string]pkg_model.ValidationOp{"analytics.b": pkg_model.ValidationOpCloneFromProd, "analytics.s": pkg_model.ValidationOpBuildFromSQL}, ops)
+}
+
+// contextRebuildVerification seeds a verification run of service-3 and
+// advances it to Validating. The rejected release it verifies changed the
+// shared ancestor A, which validated ok, and broke A's readers B and C. The
+// verification fixes B, which also reads the unchanged upstream U. So B is the
+// fix's scope, A is rebuilt from the candidate for context as B's ancestor, U
+// is cloned from production, and C, still broken and left to its own run, is
+// not validated.
+func contextRebuildVerification(t *testing.T, id string) (*handlers.Deps, *fakeStore) {
+	t.Helper()
+	const (
+		a = "svc2.shared_ancestor"
+		b = "svc3.fixed_consumer"
+		c = "svc4.sibling_consumer"
+	)
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+	u := release.Node{UniqueID: verifyUID, ServiceName: "shared", NodeType: "dbt-model", ContentHash: "h_u"}
+	node := func(id, service, hash string, upstreams ...string) release.Node {
+		return release.Node{UniqueID: id, ServiceName: service, NodeType: "dbt-model", ContentHash: hash, UpstreamUniqueIDs: upstreams}
+	}
+	prod := release.Topology{u, node(a, "service-2", "a_old"), node(b, "service-3", "b_old", a, verifyUID), node(c, "service-4", "c_old", a)}
+	rejected := release.Topology{u, node(a, "service-2", "a_new"), node(b, "service-3", "b_old", a, verifyUID), node(c, "service-4", "c_broken", a)}
+	parsed := release.Topology{u, node(a, "service-2", "a_new"), node(b, "service-3", "b_fixed", a, verifyUID), node(c, "service-4", "c_broken", a)}
+
+	seedProd(t, deps, store, "prev", prod, time.Unix(50, 0).UTC())
+	seedRejectedOriginal(store, "orig-"+id, "service-2", rejected, []string{b, c})
+	seedReleaseInParsing(store, id, "service-3", true, "orig-"+id)
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: id, Status: "ok", TopologyRef: putTopology(t, deps, id, parsed),
+	}))
+	r, err := store.GetRelease(id)
+	require.NoError(t, err)
+	require.Equal(t, pipeline.StatusValidating, r.Status())
+	require.Equal(t, []string{verifyUID, a, b}, r.ValidationNodeIDs())
+	return deps, store
+}
+
+// A verification rebuilds the shared ancestor A from the candidate for
+// context, so a failure of A is a failure of the release's code, not of a
+// copy: the run fails validation_failed with A among its failing nodes. This
+// is the one path where the validation-result leg's choice of validation set
+// changes the outcome: were A's context rebuild dropped, A would count as a
+// failed copy and the run would fail upstream_clone_failed.
+func TestHandleValidationResult_Verification_AFailedContextRebuildIsBuilt(t *testing.T) {
+	deps, store := contextRebuildVerification(t, "verify-ctx")
+	seedValidationNodes(t, deps, "verify-ctx", []handlers.NodeResult{
+		{NodeID: verifyUID, Status: "ok"},
+		{NodeID: "svc2.shared_ancestor", Status: "failed"},
+		{NodeID: "svc3.fixed_consumer", Status: "skipped"},
+	})
+
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID: "verify-ctx", AggregateStatus: "failed",
+	}))
+
+	r, err := store.GetRelease("verify-ctx")
+	require.NoError(t, err)
+	assert.Equal(t, pipeline.StatusFailed, r.Status())
+	assert.Equal(t, string(pkg_model.RejectReasonValidationFailed), r.FailReason())
+	assert.Equal(t, []string{"svc2.shared_ancestor", "svc3.fixed_consumer"}, r.FailingNodes(),
+		"the context rebuild failed on its own code and the fix below it was skipped")
+	assert.NotContains(t, r.FailDetail(), "Could not copy")
+}
+
+// A verification whose only failure is the copy of an unchanged upstream
+// fails upstream_clone_failed, as a candidate is rejected, and names the copy.
+// This is accepted because a verification emits no release.rejected, so
+// nothing acts on the reason, and the text, which agent-remediation only
+// shows, is true: the production table could not be copied.
+func TestHandleValidationResult_Verification_OnlyClonedFailed_FailsUpstreamCloneFailed(t *testing.T) {
+	deps, store := contextRebuildVerification(t, "verify-copy")
+	seedValidationNodes(t, deps, "verify-copy", []handlers.NodeResult{
+		{NodeID: verifyUID, Status: "failed"},
+		{NodeID: "svc2.shared_ancestor", Status: "ok"},
+		{NodeID: "svc3.fixed_consumer", Status: "skipped"},
+	})
+
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID: "verify-copy", AggregateStatus: "failed",
+	}))
+
+	r, err := store.GetRelease("verify-copy")
+	require.NoError(t, err)
+	assert.Equal(t, pipeline.StatusFailed, r.Status())
+	assert.Equal(t, string(pkg_model.RejectReasonUpstreamCloneFailed), r.FailReason())
+	assert.Equal(t, []string{verifyUID}, r.FailingNodes())
+	assert.Equal(t, release.SummarizeCloneFailure([]string{verifyUID}), r.FailDetail())
+	assert.Nil(t, lastEntryOn(store, streams.ReleaseRejectedV1), "a verification emits no release.rejected")
+	assert.Equal(t, "failed", outcomeOf(t, lastEntryOn(store, streams.PipelineRunFinishedV1)))
+}
+
+// The parse leg names each validation node's op in validation.requested, and
+// the validation-result leg names it again in the rejection's per_node. The
+// two legs derive it separately, so the rejection of every node must carry the
+// op its validation request named. The release clones b, builds s and t from
+// SQL (t is unchanged but below s), builds the python node py from its
+// columns, and bind-checks the test tst.
+func TestHandleValidationResult_RejectionNamesTheOpTheValidationRequestNamed(t *testing.T) {
+	below := func(id, nodeType, hash string) release.Node {
+		return release.Node{UniqueID: id, ServiceName: "core", NodeType: nodeType, SchemaName: "analytics",
+			TableName: strings.TrimPrefix(id, "analytics."), ContentHash: hash, UpstreamUniqueIDs: []string{"analytics.s"}}
+	}
+	unchanged := below("analytics.t", "dbt-model", "hash-t")
+	prod, candidate := clonedUpstreamTopologies(unchanged,
+		below("analytics.py", string(pkg_model.NodeTypePythonNode), "hash-py"),
+		below("analytics.tst", string(pkg_model.NodeTypeDbtTest), "hash-tst"))
+	prod = append(prod, unchanged)
+	deps, store := seedToValidatingAgainstProd(t, "rOps", prod, candidate)
+
+	var requested struct {
+		Nodes []struct {
+			UniqueID     string                 `json:"unique_id"`
+			ValidationOp pkg_model.ValidationOp `json:"validation_op"`
+		} `json:"nodes"`
+	}
+	require.NoError(t, json.Unmarshal(findEntry(t, store, streams.ValidationRequestedV1).Payload, &requested))
+	requestedOps := make(map[string]pkg_model.ValidationOp, len(requested.Nodes))
+	for _, n := range requested.Nodes {
+		requestedOps[n.UniqueID] = n.ValidationOp
+	}
+	require.Equal(t, map[string]pkg_model.ValidationOp{
+		"analytics.b":   pkg_model.ValidationOpCloneFromProd,
+		"analytics.s":   pkg_model.ValidationOpBuildFromSQL,
+		"analytics.t":   pkg_model.ValidationOpBuildFromSQL,
+		"analytics.py":  pkg_model.ValidationOpBuildFromColumns,
+		"analytics.tst": pkg_model.ValidationOpCheckBinds,
+	}, requestedOps, "the fixture requests every validation op")
+
+	seedValidationNodes(t, deps, "rOps", []handlers.NodeResult{
+		{NodeID: "analytics.b", Status: "ok"},
+		{NodeID: "analytics.py", Status: "skipped"},
+		{NodeID: "analytics.s", Status: "failed"},
+		{NodeID: "analytics.t", Status: "skipped"},
+		{NodeID: "analytics.tst", Status: "skipped"},
+	})
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID: "rOps", AggregateStatus: "failed",
+	}))
+
+	_, rejectedOps := decodeRejectedValidation(t, store)
+	assert.Equal(t, requestedOps, rejectedOps)
 }

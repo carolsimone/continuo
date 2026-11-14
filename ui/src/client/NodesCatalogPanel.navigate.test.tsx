@@ -18,6 +18,9 @@ function node(over: Partial<NodeSummary> = {}): NodeSummary {
     last_run_at: '2026-05-10T10:00:00Z',
     operation: 'run',
     timeout_seconds: 0,
+    timeout_declared: false,
+    node_type: 'dbt-model',
+    dormant: false,
     ...over,
   };
 }

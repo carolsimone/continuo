@@ -1,13 +1,20 @@
 package redis
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"log/slog"
 	"testing"
 
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/remediation/domain/failure"
+	"github.com/carolsimone/continuo/remediation/service/handlers"
 )
 
 func TestEvidenceFromRejected(t *testing.T) {
@@ -284,8 +291,10 @@ func TestEvidenceFromRejected_DuplicateTable(t *testing.T) {
 
 // TestEvidenceFromRejected_ParsePhaseReasonsStillDropped verifies that
 // unbuildable_cross_service_upstream — a parse-phase reason that is not
-// fixable by a model rename — still yields no evidence now that the
-// stage-less branch of sourceFromPayload also matches duplicate_table.
+// fixable by a model rename — yields no evidence. It is a declared reason the
+// contract marks not healable, so the drop of such reasons removes it, and the
+// stage-less branch of sourceFromPayload, which also matches duplicate_table,
+// does not route it.
 func TestEvidenceFromRejected_ParsePhaseReasonsStillDropped(t *testing.T) {
 	for _, reason := range []string{"unbuildable_cross_service_upstream"} {
 		raw := []byte(`{"release_id":"rel-1","reason":"` + reason +
@@ -298,6 +307,172 @@ func TestEvidenceFromRejected_ParsePhaseReasonsStillDropped(t *testing.T) {
 		if len(evs) != 0 {
 			t.Errorf("%s: want 0 evidence, got %d — not a model defect a heal proposal could fix", reason, len(evs))
 		}
+	}
+}
+
+// TestEvidenceFromRejected_DropsADeclaredReasonThatIsNotHealable verifies that
+// every reason the contract declares and marks not healable produces no
+// evidence, however its stage and per-node entries read. The node it carries
+// is failed and not a copy of production, so it would yield evidence if
+// nothing dropped the reason. upstream_clone_failed is the reason a release
+// gets when validation could not copy an unchanged upstream's production
+// table, which a run of that node settles and no code change does.
+func TestEvidenceFromRejected_DropsADeclaredReasonThatIsNotHealable(t *testing.T) {
+	require.True(t, pkg_model.RejectReasonUpstreamCloneFailed.IsValid())
+	require.False(t, pkg_model.RejectReasonUpstreamCloneFailed.Healable())
+
+	notHealable := 0
+	for _, reason := range pkg_model.RejectReasons() {
+		if reason.Healable() {
+			continue
+		}
+		notHealable++
+		t.Run(string(reason), func(t *testing.T) {
+			raw := []byte(`{"release_id":"rel-1","stage":"validation","reason":"` + string(reason) + `",
+				"repo":"o/r","commit_sha":"sha","failing_nodes":["analytics.b"],
+				"per_node":[{"node_id":"analytics.b","status":"failed","validation_op":"build_from_sql","dbt_log_uri":"s3://b/b.log"}]}`)
+			evs, err := evidenceFromRejected(raw)
+			require.NoError(t, err)
+			require.Empty(t, evs, "a declared reason that is not healable yields no evidence")
+		})
+	}
+	require.Positive(t, notHealable, "the contract declares reasons that are not healable")
+}
+
+// TestEvidenceFromRejected_DropsNonHealableParseRejections verifies that a
+// parse-stage rejection whose reason is not healable (invalid_artifact: a
+// manifest or contract the release ships unreadable or invalid, internal_error:
+// continuo's own failure) yields no evidence even though its failed node
+// carries a contract kind. A healable parse reason with the same shape still
+// yields evidence, so the case is not vacuous.
+func TestEvidenceFromRejected_DropsNonHealableParseRejections(t *testing.T) {
+	rejection := func(reason, kind string) []byte {
+		return []byte(`{"release_id":"rel-9","stage":"parse","reason":"` + reason + `",
+		  "repo":"o/r","commit_sha":"sha","failing_nodes":["a.b"],
+		  "per_node":[{"node_id":"a.b","status":"failed","kind":"` + kind + `","detail":"cannot read","file_path":"models/b.sql","service":"s","node_type":"dbt-model"}]}`)
+	}
+
+	t.Run("invalid_artifact", func(t *testing.T) {
+		evs, err := evidenceFromRejected(rejection("invalid_artifact", "invalid_artifact"))
+		require.NoError(t, err)
+		require.Empty(t, evs)
+	})
+	t.Run("internal_error", func(t *testing.T) {
+		evs, err := evidenceFromRejected(rejection("internal_error", "internal"))
+		require.NoError(t, err)
+		require.Empty(t, evs)
+	})
+	t.Run("a healable parse reason still yields evidence", func(t *testing.T) {
+		evs, err := evidenceFromRejected(rejection("invalid_sql", "invalid_sql"))
+		require.NoError(t, err)
+		require.Len(t, evs, 1)
+		assert.Equal(t, failure.SourceParse, evs[0].Source)
+	})
+}
+
+// TestEvidenceFromRejected_SkipsClonedNodes verifies that in a release where a
+// changed node and a node copied from its production table both failed, only
+// the changed node yields evidence. The reason stays validation_failed and the
+// copied node appears in per_node alone: no change to the release's code fixes
+// a copy of production.
+func TestEvidenceFromRejected_SkipsClonedNodes(t *testing.T) {
+	raw := []byte(`{"release_id":"rel-1","stage":"validation","reason":"validation_failed",
+		"repo":"o/r","commit_sha":"sha","failing_nodes":["analytics.s"],
+		"per_node":[
+			{"node_id":"analytics.s","status":"failed","validation_op":"build_from_sql","dbt_log_uri":"s3://b/s.log"},
+			{"node_id":"analytics.b","status":"failed","validation_op":"clone_from_prod","dbt_log_uri":"s3://b/b.log"}
+		]}`)
+	evs, err := evidenceFromRejected(raw)
+	require.NoError(t, err)
+	require.Len(t, evs, 1, "the cloned node is never fixed")
+	assert.Equal(t, "analytics.s", evs[0].NodeID)
+	assert.Equal(t, failure.SourceValidation, evs[0].Source)
+}
+
+// TestEvidenceFromRejected_KeepsAFailedNodeThatIsNotACopy verifies that a
+// failed node yields evidence for every validation op except the copy from
+// production, and when the producer sends no op at all (an older producer):
+// only validation_op clone_from_prod marks a node as a copy.
+func TestEvidenceFromRejected_KeepsAFailedNodeThatIsNotACopy(t *testing.T) {
+	ops := []string{""}
+	for _, op := range pkg_model.ValidationOps() {
+		if op != pkg_model.ValidationOpCloneFromProd {
+			ops = append(ops, string(op))
+		}
+	}
+	for _, op := range ops {
+		t.Run("validation_op "+op, func(t *testing.T) {
+			raw := []byte(`{"release_id":"rel-1","stage":"validation","reason":"validation_failed",
+				"per_node":[{"node_id":"analytics.s","status":"failed","validation_op":"` + op + `"}]}`)
+			evs, err := evidenceFromRejected(raw)
+			require.NoError(t, err)
+			require.Len(t, evs, 1)
+			assert.Equal(t, "analytics.s", evs[0].NodeID)
+		})
+	}
+	t.Run("validation_op absent", func(t *testing.T) {
+		raw := []byte(`{"release_id":"rel-1","stage":"validation","reason":"validation_failed",
+			"per_node":[{"node_id":"analytics.s","status":"failed"}]}`)
+		evs, err := evidenceFromRejected(raw)
+		require.NoError(t, err)
+		require.Len(t, evs, 1)
+	})
+}
+
+// TestEvidenceFromRejected_KeepsAFailedNodeWithAnUndeclaredValidationOp
+// verifies that a validation_op this build does not declare (a newer
+// producer's) still decodes, since the field is a string, and that its failed
+// node yields evidence: only clone_from_prod marks a node as a copy.
+func TestEvidenceFromRejected_KeepsAFailedNodeWithAnUndeclaredValidationOp(t *testing.T) {
+	const op = "some_future_op"
+	require.False(t, pkg_model.ValidationOp(op).IsValid(), "the op must be one this build does not declare")
+	raw := []byte(`{"release_id":"rel-1","stage":"validation","reason":"validation_failed",
+		"per_node":[{"node_id":"analytics.s","status":"failed","validation_op":"` + op + `"}]}`)
+	evs, err := evidenceFromRejected(raw)
+	require.NoError(t, err)
+	require.Len(t, evs, 1)
+	assert.Equal(t, "analytics.s", evs[0].NodeID)
+	assert.Equal(t, failure.SourceValidation, evs[0].Source)
+}
+
+// TestRejectionHandler_LogsARejectionWithNoNodeToClassifyAtDebug verifies that
+// a rejection that yields no failed node to classify, here one whose reason
+// the contract marks not healable, is acknowledged with one DEBUG line naming
+// its stream, release, stage and reason, so an operator can tell why
+// remediation proposed no fix.
+func TestRejectionHandler_LogsARejectionWithNoNodeToClassifyAtDebug(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	h := newRejectionHandler(streams.ReleaseRejectedV1, handlers.Deps{}, logger)
+	payload := `{"release_id":"rel-7","stage":"validation","reason":"upstream_clone_failed",
+		"per_node":[{"node_id":"analytics.b","status":"failed","validation_op":"build_from_sql"}]}`
+
+	require.NoError(t, h(context.Background(), goredis.XMessage{ID: "1-0", Values: map[string]any{"payload": payload}}))
+
+	var line map[string]any
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &line), "exactly one log line: %s", buf.String())
+	assert.Equal(t, "DEBUG", line["level"])
+	assert.Equal(t, streams.ReleaseRejectedV1, line["stream"])
+	assert.Equal(t, "rel-7", line["release_id"])
+	assert.Equal(t, "validation", line["stage"])
+	assert.Equal(t, "upstream_clone_failed", line["reason"])
+}
+
+// TestEvidenceFromRejected_UnknownReasonKeepsTodaysPath verifies that only a
+// declared, non-healable reason is dropped before the stage decides: a message
+// with an empty reason (an older producer, a retry replay) or a reason this
+// build does not declare still yields evidence for its failed nodes.
+func TestEvidenceFromRejected_UnknownReasonKeepsTodaysPath(t *testing.T) {
+	for _, reason := range []string{"", "no-such-reason"} {
+		t.Run("reason "+reason, func(t *testing.T) {
+			raw := []byte(`{"release_id":"rel-1","stage":"validation","reason":"` + reason + `",
+				"per_node":[{"node_id":"analytics.s","status":"failed","validation_op":"build_from_sql"}]}`)
+			evs, err := evidenceFromRejected(raw)
+			require.NoError(t, err)
+			require.Len(t, evs, 1)
+			assert.Equal(t, "analytics.s", evs[0].NodeID)
+			assert.Equal(t, failure.SourceValidation, evs[0].Source)
+		})
 	}
 }
 

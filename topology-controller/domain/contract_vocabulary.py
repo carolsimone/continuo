@@ -35,10 +35,19 @@ class RejectReason(StrEnum):
     SEED_BUILD_FAILED = "seed_build_failed"
     VALIDATION_FAILED = "validation_failed"
     UPGRADE_INTERRUPTED = "upgrade_interrupted"
+    UPSTREAM_CLONE_FAILED = "upstream_clone_failed"
 
 
 REJECT_REASON_HEALABLE = frozenset({RejectReason.COMPILE_FAILED, RejectReason.INVALID_SQL, RejectReason.UNQUALIFIED_REFERENCE, RejectReason.DUPLICATE_TABLE, RejectReason.SEED_BUILD_FAILED, RejectReason.VALIDATION_FAILED})
 """Values of RejectReason a remediation attempt can fix by changing the user's source."""
+
+
+class ValidationOp(StrEnum):
+    """How the validation leg prepares one node of a candidate release in the candidate schema. release-controller names it per node on validation.requested:v1 and on each per_node entry of a validation rejection on release.rejected:v1; execution-controller passes it to the validation runner as VALIDATION_OP; remediation never turns a failed clone_from_prod node into a failure to fix."""
+    BUILD_FROM_SQL = "build_from_sql"
+    BUILD_FROM_COLUMNS = "build_from_columns"
+    CHECK_BINDS = "check_binds"
+    CLONE_FROM_PROD = "clone_from_prod"
 
 
 class DeadLetterKind(StrEnum):
@@ -64,7 +73,7 @@ class NodeType(StrEnum):
     PYTHON_CSV = "python-csv"
     PYTHON_API = "python-api"
     DBT_TEST = "dbt-test"
-    INGESTED = "ingested"
+    UNKNOWN_EXTERNAL = "unknown-external"
 
 
 NODE_TYPES_SUPPORTING_FULL_REFRESH = frozenset({NodeType.DBT_MODEL, NodeType.DBT_SEED})
@@ -75,7 +84,7 @@ NODE_TYPES_WITH_SECRET_REF = frozenset({NodeType.PYTHON_API})
 """Values of NodeType whose contract may name one Secret for the node's pod."""
 
 
-NODE_TYPE_RUNTIME: dict[NodeType, NodeRuntime] = {NodeType.DBT_MODEL: NodeRuntime.DBT, NodeType.DBT_SEED: NodeRuntime.DBT, NodeType.DBT_SNAPSHOT: NodeRuntime.DBT, NodeType.PYTHON_NODE: NodeRuntime.PYTHON, NodeType.PYTHON_CSV: NodeRuntime.PYTHON, NodeType.PYTHON_API: NodeRuntime.PYTHON, NodeType.DBT_TEST: NodeRuntime.DBT, NodeType.INGESTED: NodeRuntime.EXTERNAL}
+NODE_TYPE_RUNTIME: dict[NodeType, NodeRuntime] = {NodeType.DBT_MODEL: NodeRuntime.DBT, NodeType.DBT_SEED: NodeRuntime.DBT, NodeType.DBT_SNAPSHOT: NodeRuntime.DBT, NodeType.PYTHON_NODE: NodeRuntime.PYTHON, NodeType.PYTHON_CSV: NodeRuntime.PYTHON, NodeType.PYTHON_API: NodeRuntime.PYTHON, NodeType.DBT_TEST: NodeRuntime.DBT, NodeType.UNKNOWN_EXTERNAL: NodeRuntime.EXTERNAL}
 """Which toolchain builds each NodeType, or external when nothing in continuo builds it."""
 
 

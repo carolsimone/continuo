@@ -27,10 +27,11 @@ const (
 	// a model that succeeds whenever its pod starts.
 	startTimeoutTable = "ftable_a"
 
-	// noPodsQuota is the ResourceQuota the start-timeout test applies to the
-	// namespace the Jobs run in. deploy-execution-controller.sh,
-	// provision-k8s-test-env.sh and cleanup-execution-controller.sh delete it too,
-	// in case a killed test run left it behind.
+	// noPodsQuota is the ResourceQuota the start-timeout and dormant-node
+	// tests apply to the namespace the Jobs run in.
+	// deploy-execution-controller.sh, provision-k8s-test-env.sh and
+	// cleanup-execution-controller.sh delete it too, in case a killed test run
+	// left it behind.
 	noPodsQuota = "e2e-no-pods"
 )
 

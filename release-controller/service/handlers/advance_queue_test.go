@@ -151,16 +151,16 @@ func TestAdvanceQueue_ProdSeeded_AllServicesCovered_Proceeds(t *testing.T) {
 	assert.Equal(t, streams.CompileRequestedV1, entries[0].StreamName)
 }
 
-// TestUncoveredProdServices_IgnoresIngestedNodes pins that the live production
-// topology's ingested nodes do not count as a service without a service_prod
-// pointer: an ingested node has no service, so no pointer can ever cover it,
+// TestUncoveredProdServices_IgnoresUnknownExternalNodes pins that the live production
+// topology's unknown-external nodes do not count as a service without a service_prod
+// pointer: an unknown-external node has no service, so no pointer can ever cover it,
 // and counting it would hold every release in the queue.
-func TestUncoveredProdServices_IgnoresIngestedNodes(t *testing.T) {
+func TestUncoveredProdServices_IgnoresUnknownExternalNodes(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "bucket"
 
 	seedProd(t, deps, store, "rProd", release.Topology{
-		{UniqueID: "raw.orders", SchemaName: "raw", TableName: "orders", ResolvedRelationID: "raw.orders", NodeType: "ingested", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "raw.orders", SchemaName: "raw", TableName: "orders", ResolvedRelationID: "raw.orders", NodeType: "unknown-external", UpstreamUniqueIDs: []string{}},
 		{UniqueID: "b", ServiceName: "svc-b", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"raw.orders"}},
 	}, time.Unix(0, 0).UTC())
 	store.SeedServiceProd(release.NewServiceProd("svc-b", "rOLD1", "s3://bucket/svc-b/rOLD1/manifest.json", "tag-b-old", release.ManifestKindDbt, time.Unix(0, 0)))
@@ -171,18 +171,18 @@ func TestUncoveredProdServices_IgnoresIngestedNodes(t *testing.T) {
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	r, _ := store.GetRelease("rA")
-	assert.Equal(t, pipeline.StatusCompiling, r.Status(), "svc-b is covered and the ingested node needs no pointer")
+	assert.Equal(t, pipeline.StatusCompiling, r.Status(), "svc-b is covered and the unknown-external node needs no pointer")
 }
 
-// TestUncoveredProdServices_StillBlocksOnAnUncoveredServiceBesideAnIngestedNode
-// is the control: an ingested node is skipped, a real service without a
+// TestUncoveredProdServices_StillBlocksOnAnUncoveredServiceBesideAnUnknownExternalNode
+// is the control: an unknown-external node is skipped, a real service without a
 // pointer still holds the release.
-func TestUncoveredProdServices_StillBlocksOnAnUncoveredServiceBesideAnIngestedNode(t *testing.T) {
+func TestUncoveredProdServices_StillBlocksOnAnUncoveredServiceBesideAnUnknownExternalNode(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "bucket"
 
 	seedProd(t, deps, store, "rProd", release.Topology{
-		{UniqueID: "raw.orders", SchemaName: "raw", TableName: "orders", ResolvedRelationID: "raw.orders", NodeType: "ingested", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "raw.orders", SchemaName: "raw", TableName: "orders", ResolvedRelationID: "raw.orders", NodeType: "unknown-external", UpstreamUniqueIDs: []string{}},
 		{UniqueID: "b", ServiceName: "svc-b", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"raw.orders"}},
 	}, time.Unix(0, 0).UTC())
 

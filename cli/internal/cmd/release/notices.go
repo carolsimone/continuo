@@ -142,6 +142,9 @@ Output (stdout, JSON):
     "outside_continuo":[{"object":string,"kind":string,"owner":string}]},
    "prediction":string,"stop_reason":string,"unvalidated":boolean}]}
   notices is [] for a release that changes no seed's load, in node id order.
+  A "schedule" of "" in "rebuilds" or "refresh_on_schedule" means a dormant
+  node, which no schedule runs: the load still rebuilds a dormant view, and a
+  dormant node the load does not rebuild refreshes only when run by hand.
 
 Errors:
   usage      (exit 2)  missing, blank or extra release id

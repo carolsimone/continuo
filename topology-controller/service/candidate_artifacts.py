@@ -13,7 +13,7 @@ Each builder owns its whole step: rewrite to the candidate schema and upload.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from domain.ingested import SystemRelations
+from domain.external import SystemRelations
 from domain.model import ManifestNode, NodeRegistryEntry
 from service.ports import CandidateSpecUploaderPort, CandidateSqlUploaderPort
 from service.release_timings import ReleaseTimings, Stage

@@ -4,7 +4,7 @@ import re
 from collections.abc import Iterable
 
 from config.secrets import read_secret
-from domain.ingested import SystemRelations
+from domain.external import SystemRelations
 from streams_contract import (
     RELEASE_REQUESTED_V1,
     MANIFEST_LOADED_CANDIDATE_V2,

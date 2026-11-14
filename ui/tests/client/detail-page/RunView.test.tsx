@@ -3,14 +3,15 @@ import { describe, it, expect, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import RunView from '../../../src/client/detail-page/RunView';
-import type { ScheduleGraph, Task } from '../../../src/client/types';
+import { resolveActiveGraph } from '../../../src/client/detail-page-helpers';
+import type { RunGraph, ScheduleGraph, Task } from '../../../src/client/types';
 
 const task = {
   task_id: 't1', service_name: 'svc1', schema_name: 'public', table_name: 'orders',
   job_name: 'orders', status: 'running', attempt: 0, max_retries: 0, created_at: null,
 } as unknown as Task;
 const graph: ScheduleGraph = {
-  nodes: [{ node_id: 'svc1.public.orders', node_type: 'dbt-model', schedule_name: 's' }],
+  nodes: [{ node_id: 'svc1.public.orders', node_type: 'dbt-model', schedule_name: 's', dormant: false, last_run_at: null }],
   edges: [],
 };
 
@@ -98,5 +99,44 @@ describe('RunView', () => {
     expect(screen.getByRole('tab', { name: /past runs/i })).toHaveTextContent('7');
     fireEvent.click(container.querySelector('.run-row')!);
     expect(onSelectRun).toHaveBeenCalledWith('r1');
+  });
+
+  // A schedule's run whose seed load drops the seed's table rebuilds the
+  // dormant view below it. The run view reads the run's own graph, where no
+  // node is dormant, and paints the view by its task: a failed rebuild shows
+  // failed, with the rebuild's reason, and never with the dormant look.
+  it('paints a dormant view the run rebuilds with its task status', async () => {
+    const reason = 'rebuild: dropped by the load of public.seed_rates';
+    const runGraph: RunGraph = {
+      nodes: [
+        { node_id: 'svc1.public.seed_rates', node_type: 'dbt-seed', schedule_name: 'daily', status: 'succeeded' },
+        { node_id: 'svc1.public.rates_view', node_type: 'dbt-model', schedule_name: '', status: 'failed', plan_reason: reason },
+      ],
+      edges: [{ from_node_id: 'svc1.public.seed_rates', to_node_id: 'svc1.public.rates_view' }],
+      run_promotion_seq: 3,
+      latest_promotion_seq: 3,
+    };
+    const tasks = [
+      { ...task, task_id: 't-seed', table_name: 'seed_rates', job_name: 'seed_rates', status: 'succeeded' },
+      { ...task, task_id: 't-view', table_name: 'rates_view', job_name: 'rates_view', status: 'failed', plan_reason: reason },
+    ] as Task[];
+    const activeGraph = resolveActiveGraph({
+      mode: 'run', scheduleGraph: null, liveRunGraph: runGraph, selectedRunGraph: null, selectedRunId: null,
+    });
+    expect(activeGraph?.nodes.find((n) => n.node_id === 'svc1.public.rates_view')?.dormant).toBe(false);
+
+    const { container } = renderRunView({ tasks, activeGraph });
+    fireEvent.click(screen.getByRole('button', { name: /^graph$/i }));
+
+    const view = await waitFor(() => {
+      const el = Array.from(container.querySelectorAll<HTMLElement>('.swim-node'))
+        .find((n) => n.textContent === 'rates_view');
+      expect(el).toBeTruthy();
+      return el!;
+    });
+    expect(view).toHaveClass('fail');
+    expect(view.getAttribute('title')).toBe(`svc1.public.rates_view — ${reason}`);
+    expect(container.querySelector('.dag-node-chip--dormant')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Run rates_view' })).toBeNull();
   });
 });

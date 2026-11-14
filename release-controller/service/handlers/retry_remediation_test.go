@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
@@ -98,6 +99,14 @@ func TestRetryRemediation_Refusals(t *testing.T) {
 			require.NoError(t, r.TransitionToParsing(now))
 			require.NoError(t, r.Fail("invalid_artifact", "", nil, now))
 			r.SetRejectionPayload([]byte(`{}`))
+			return r
+		}, handlers.ErrNotHealable},
+		{"an upstream that could not be copied is not healable", func() *pipeline.Run {
+			r := pipeline.NewCandidate("rel-1", "finance", "abc", false, false, "o/r", "sha", release.ManifestKindDbt, now)
+			require.NoError(t, r.TransitionToParsing(now))
+			require.NoError(t, r.TransitionToValidating(release.TopologyRef{}, []string{"analytics.b"}, now))
+			require.NoError(t, r.Fail(string(pkg_model.RejectReasonUpstreamCloneFailed), "", []string{"analytics.b"}, now))
+			r.SetRejectionPayload([]byte(`{"stage":"validation","reason":"upstream_clone_failed"}`))
 			return r
 		}, handlers.ErrNotHealable},
 		{"parse invalid_sql is healable (fails later on no payload)", func() *pipeline.Run {
@@ -431,7 +440,7 @@ func TestIsHealableReason(t *testing.T) {
 	for _, reason := range []string{"compile_failed", "seed_build_failed", "validation_failed", "duplicate_table", "invalid_sql", "unqualified_reference"} {
 		assert.True(t, handlers.IsHealableReason(reason), reason)
 	}
-	for _, reason := range []string{"invalid_artifact", "internal_error", "parse_rehearsal_failed", "artifact_upload_failed", "unbuildable_cross_service_upstream", "nothing_to_validate", ""} {
+	for _, reason := range []string{"invalid_artifact", "internal_error", "parse_rehearsal_failed", "artifact_upload_failed", "unbuildable_cross_service_upstream", "nothing_to_validate", "upstream_clone_failed", ""} {
 		assert.False(t, handlers.IsHealableReason(reason), reason)
 	}
 }

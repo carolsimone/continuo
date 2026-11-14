@@ -1,0 +1,12 @@
+[
+  {"node_type": "dbt-model", "schedule": "", "dormant": true},
+  {"node_type": "dbt-model", "schedule": "daily", "dormant": false},
+  {"node_type": "dbt-snapshot", "schedule": "", "dormant": true},
+  {"node_type": "dbt-seed", "schedule": "", "dormant": true},
+  {"node_type": "python-node", "schedule": "", "dormant": true},
+  {"node_type": "dbt-test", "schedule": "", "dormant": false},
+  {"node_type": "unknown-external", "schedule": "", "dormant": false},
+  {"node_type": "no-such-type", "schedule": "", "dormant": false},
+  {"node_type": "python-csv", "schedule": "daily", "dormant": false},
+  {"node_type": "python-api", "schedule": "daily", "dormant": false}
+]

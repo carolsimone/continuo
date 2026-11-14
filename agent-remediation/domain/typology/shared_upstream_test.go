@@ -268,7 +268,7 @@ func TestGroup_StableAcrossInputOrder(t *testing.T) {
 }
 
 func TestClusterByChangedAncestor_SkipsAnAncestorWithNoService(t *testing.T) {
-	// An ancestor with no service is an ingested table no node builds, so no fix
+	// An ancestor with no service is an unknown-external table no node builds, so no fix
 	// can be placed there. Two failures that share only such an ancestor form no
 	// shared cluster and are each fixed alone.
 	nodes := []FailingNode{
@@ -287,7 +287,7 @@ func TestClusterByChangedAncestor_SkipsAnAncestorWithNoService(t *testing.T) {
 	claimed, rest := SharedUpstreamCause{}.Claim(nodes, dag)
 
 	if len(claimed) != 0 {
-		t.Fatalf("no shared cluster may form at an ingested table, got %+v", claimed)
+		t.Fatalf("no shared cluster may form at an unknown-external table, got %+v", claimed)
 	}
 	if len(rest) != 2 {
 		t.Fatalf("both failures must be left to be fixed alone, got %+v", rest)
@@ -295,7 +295,7 @@ func TestClusterByChangedAncestor_SkipsAnAncestorWithNoService(t *testing.T) {
 }
 
 func TestClusterByChangedAncestor_TargetsTheAncestorWithAServiceBesideOneWithout(t *testing.T) {
-	// The ingested ancestor sorts first, yet the cluster still forms, at the
+	// The unknown-external ancestor sorts first, yet the cluster still forms, at the
 	// shared ancestor that a service owns.
 	nodes := []FailingNode{
 		{NodeID: "analytics.a", ErrorSignature: "missing_col_x", NodeType: "dbt-model"},

@@ -81,8 +81,10 @@ func toProtoOutage(o seeds.ViewOutage) *runv1.ViewOutage {
 	}
 }
 
-// ListNodes returns one page of the node list. An operation the operation
-// vocabulary does not declare is InvalidArgument.
+// ListNodes returns one page of the node list: the nodes of the live
+// release, each with its type, whether it is dormant and its run stats; a
+// node that never ran has no last run. An operation the operation vocabulary
+// does not declare is InvalidArgument.
 func (s *Server) ListNodes(ctx context.Context, req *runv1.ListNodesRequest) (*runv1.ListNodesResponse, error) {
 	tenantID, err := requestTenant(ctx)
 	if err != nil {
@@ -92,7 +94,8 @@ func (s *Server) ListNodes(ctx context.Context, req *runv1.ListNodesRequest) (*r
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid operation: %v", err)
 	}
-	rows, total, err := s.reads.Nodes.ListNodes(ctx, tenantID, req.GetSearch(), req.GetServiceName(), operation, int(req.GetLimit()), int(req.GetOffset()))
+	rows, total, err := s.reads.Nodes.ListNodes(ctx, tenantID, req.GetSearch(), req.GetServiceName(), operation, req.GetDormantOnly(),
+		int(req.GetLimit()), int(req.GetOffset()))
 	if err != nil {
 		return nil, s.internalError("ListNodes", err, "search", req.GetSearch(), "service", req.GetServiceName())
 	}
@@ -108,16 +111,18 @@ func (s *Server) ListNodes(ctx context.Context, req *runv1.ListNodesRequest) (*r
 			P95DurationSec:  num.ClampInt32(r.P95DurationSec),
 			FlakyRatePct:    num.ClampInt32(r.FlakyRatePct),
 			LastStatus:      r.LastStatus,
-			LastRunAt:       r.LastRunAt.UTC().Format(time.RFC3339),
+			LastRunAt:       rfc3339OrEmpty(r.LastRunAt),
 			Operation:       r.Operation,
 			TimeoutSeconds:  num.ClampInt32(int64(r.Timeout / time.Second)),
 			TimeoutDeclared: r.TimeoutDeclared,
+			NodeType:        r.NodeType,
+			Dormant:         r.Dormant,
 		})
 	}
 	return &runv1.ListNodesResponse{Nodes: out, TotalCount: num.ClampInt32(total)}, nil
 }
 
-// ListNodeNames returns the distinct table names of nodes that have run.
+// ListNodeNames returns the distinct table names of the nodes ListNodes lists.
 func (s *Server) ListNodeNames(ctx context.Context, req *runv1.ListNodeNamesRequest) (*runv1.ListNodeNamesResponse, error) {
 	tenantID, err := requestTenant(ctx)
 	if err != nil {
@@ -130,7 +135,8 @@ func (s *Server) ListNodeNames(ctx context.Context, req *runv1.ListNodeNamesRequ
 	return &runv1.ListNodeNamesResponse{TableNames: names}, nil
 }
 
-// ListNodeServices returns the distinct service names of nodes that have run.
+// ListNodeServices returns the distinct service names of the nodes ListNodes
+// lists.
 func (s *Server) ListNodeServices(ctx context.Context, _ *runv1.ListNodeServicesRequest) (*runv1.ListNodeServicesResponse, error) {
 	tenantID, err := requestTenant(ctx)
 	if err != nil {

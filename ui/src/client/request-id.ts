@@ -23,7 +23,8 @@ export function settlesRequest(res: { ok: boolean; status: number }): boolean {
 // An observation is the newest run a page shows that an action could have
 // made: a run id, null when the page knows it shows none (a schedule that
 // never ran), or undefined when it does not know (its read is still loading
-// or failed).
+// or failed, or the page shows no run of the action by its id, as the schedule
+// graph does).
 export type Observation = string | null | undefined;
 
 export interface ActionRequestId {

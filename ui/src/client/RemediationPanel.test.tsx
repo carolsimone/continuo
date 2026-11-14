@@ -9,10 +9,14 @@ import type { AuthUser } from './auth/useAuth';
 
 vi.mock('./remediation-api', () => ({
   fetchProposals: vi.fn(),
+}));
+
+vi.mock('./node-api', () => ({
   fetchNodeServices: vi.fn(),
 }));
 
-import { fetchProposals, fetchNodeServices } from './remediation-api';
+import { fetchProposals } from './remediation-api';
+import { fetchNodeServices } from './node-api';
 const mockFetchProposals = fetchProposals as ReturnType<typeof vi.fn>;
 const mockFetchNodeServices = fetchNodeServices as ReturnType<typeof vi.fn>;
 

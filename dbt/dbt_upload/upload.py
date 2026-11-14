@@ -23,8 +23,9 @@ def filter_manifest(service_dir: str) -> None:
     topology-controller hashes into the nodes that run with it, so dropping
     them would give the baseline other hashes than the release candidate. The
     fine-grained tracking (a test only counts when its model is tracked, a node
-    needs an owner and a schedule tag) still happens downstream in the parser;
-    this is only the coarse resource-type gate.
+    needs an owner, and a model or snapshot with no schedule tag becomes a
+    dormant node) still happens downstream in the parser; this is only the
+    coarse resource-type gate.
     """
     manifest_path = os.path.join(service_dir, "target", "manifest.json")
     with open(manifest_path) as f:

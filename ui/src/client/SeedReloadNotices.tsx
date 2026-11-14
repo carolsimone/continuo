@@ -33,8 +33,9 @@ function columnChange(n: ReleaseNotice): string {
 
 // noticeText is the whole warning for one seed reload: the change, what the
 // load does and the views it rebuilds, the nodes that refresh on their own
-// schedule, the objects outside continuo that read the seed, what the reload
-// is predicted to do, and what is not known about it.
+// schedule (a dormant one, which has none, only when run by hand), the objects
+// outside continuo that read the seed, what the reload is predicted to do, and
+// what is not known about it.
 function noticeText(n: ReleaseNotice, warehouseCheckExpected: boolean): string {
   const rebuilds = n.rebuilds.length > 0
     ? ` and, in the same run, rebuilds the ${n.rebuilds.length} ${plural(n.rebuilds.length, 'view that reads', 'views that read')} it: ${n.rebuilds.map((r) => r.node_id).join(', ')}`
@@ -42,7 +43,9 @@ function noticeText(n: ReleaseNotice, warehouseCheckExpected: boolean): string {
   const sentences = [`Seed reload: ${n.node_id} ${columnChange(n)}${n.load.reason ? ` (${n.load.reason})` : ''}${rebuilds}.`];
 
   for (const r of n.refresh_on_schedule) {
-    sentences.push(`${r.node_id} (${r.materialized}) refreshes on its own schedule, ${r.schedule}.`);
+    sentences.push(r.schedule
+      ? `${r.node_id} (${r.materialized}) refreshes on its own schedule, ${r.schedule}.`
+      : `${r.node_id} (${r.materialized}) is dormant: it refreshes only when run by hand.`);
   }
 
   const outside = n.warehouse.outside_continuo;

@@ -238,11 +238,11 @@ echo "✓ dbt seeds materialized"
 
 # Create the table that service-1's ingest_probe_reader model reads and no model
 # builds: the table an outside system loads. topology-controller turns that read
-# into an ingested node, and the ingested-node e2e test runs the reader, whose
-# Job selects from it. It is created as the warehouse's own login, the one dbt
-# and the run Jobs sign in as, so the reader may select from it. The local
-# warehouse is Postgres (WAREHOUSE_ENGINE=postgres, the dbt profiles' type), and
-# both statements are idempotent.
+# into an unknown-external node, and the unknown-external-node e2e test runs
+# the reader, whose Job selects from it. It is created as the warehouse's own
+# login, the one dbt and the run Jobs sign in as, so the reader may select from
+# it. The local warehouse is Postgres (WAREHOUSE_ENGINE=postgres, the dbt
+# profiles' type), and both statements are idempotent.
 echo "Creating the outside table e2e_raw.ingest_probe..."
 docker compose exec -T -e PGPASSWORD=local-continuo_warehouse postgres \
   psql -v ON_ERROR_STOP=1 -U continuo_warehouse -d continuo_dbt <<'SQL'

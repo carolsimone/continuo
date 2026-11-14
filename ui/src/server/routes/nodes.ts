@@ -26,7 +26,10 @@ function csvSourceUri(rawCode: unknown): string {
 export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphClient) {
   const router = Router();
 
-  // GET /api/nodes?search=&service=&limit=&offset= — node list (paged)
+  // GET /api/nodes?search=&service=&operation=&dormant=&limit=&offset= — every
+  // node of the live release, paged, with the stats of its recent runs; a node
+  // that never ran has none. dormant=1 lists only dormant nodes (the ones that
+  // belong to no schedule).
   router.get('/', (req, res) => {
     const nullIfNeg = (n: any): number | null => {
       const v = Number(n ?? -1);
@@ -40,6 +43,7 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
       operation,
       limit: parseLimit(req.query.limit, { def: 50, max: 500 }),
       offset: parseOffset(req.query.offset),
+      dormant_only: req.query.dormant === '1',
     };
     runClient.listNodes(q, (err: any, response: any) => {
       if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
@@ -58,12 +62,16 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
           operation:        operationFromWire(r.operation),
           timeout_seconds:  Number(r.timeout_seconds ?? 0),
           timeout_declared: Boolean(r.timeout_declared),
+          node_type:        r.node_type || '',
+          dormant:          Boolean(r.dormant),
         })),
       });
     });
   });
 
-  // GET /api/nodes/names?service= — distinct node table names for search autocomplete
+  // GET /api/nodes/names?service= — the distinct table names of the nodes the
+  // node list lists (the live release's nodes continuo builds), for the search
+  // autocomplete
   router.get('/names', (req, res) => {
     const service = typeof req.query.service === 'string' ? req.query.service : '';
     runClient.listNodeNames({ service_name: service }, (err: any, response: any) => {
@@ -72,9 +80,10 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
     });
   });
 
-  // GET /api/nodes/services — distinct active service names, for the node list
-  // and Remediation-tab service filters. Backed by the ListNodeServices run-controller
-  // read (a single DISTINCT query), independent of the paginated node list.
+  // GET /api/nodes/services — the distinct service names of the nodes the node
+  // list lists, for the Nodes-tab and Remediation-tab service filters. Backed
+  // by the ListNodeServices run-controller read (a single DISTINCT query),
+  // independent of the paginated node list.
   router.get('/services', (_req, res) => {
     runClient.listNodeServices({}, (err: any, response: any) => {
       if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });

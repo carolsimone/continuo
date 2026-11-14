@@ -359,12 +359,12 @@ func TestTopologyArtifactStore_LoadKeepsNodesSharingAUniqueID(t *testing.T) {
 	assert.Len(t, fromCache, 2)
 }
 
-// An ingested node has no service, no content hash, no image and no source
+// An unknown-external node has no service, no content hash, no image and no source
 // file. An artifact topology-controller wrote with those fields empty decodes
 // and loads with the node whole, and a write of it reads back the same.
-func TestTopologyArtifactStore_LoadKeepsAnIngestedNodeWithEmptyFields(t *testing.T) {
+func TestTopologyArtifactStore_LoadKeepsAnUnknownExternalNodeWithEmptyFields(t *testing.T) {
 	const doc = `{"nodes":[` +
-		`{"content_hash":"","image_tag":"","node_type":"ingested","original_file_path":"","resolved_relation_id":"raw.ingest_probe",` +
+		`{"content_hash":"","image_tag":"","node_type":"unknown-external","original_file_path":"","resolved_relation_id":"raw.ingest_probe",` +
 		`"schedule":"","schema_name":"raw","service_name":"","table_name":"ingest_probe","test_count":0,"unique_id":"raw.ingest_probe","upstream_unique_ids":[]},` +
 		`{"content_hash":"h","image_tag":"img:1","node_type":"dbt-model","original_file_path":"models/m.sql","resolved_relation_id":"svc.m",` +
 		`"schedule":"","schema_name":"svc","service_name":"svc","table_name":"m","test_count":1,"unique_id":"svc.m","upstream_unique_ids":["raw.ingest_probe"]}` +
@@ -379,7 +379,7 @@ func TestTopologyArtifactStore_LoadKeepsAnIngestedNodeWithEmptyFields(t *testing
 
 	want := release.Node{
 		UniqueID: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe", ResolvedRelationID: "raw.ingest_probe",
-		NodeType: "ingested", UpstreamUniqueIDs: []string{},
+		NodeType: "unknown-external", UpstreamUniqueIDs: []string{},
 	}
 	assert.Equal(t, want, byUniqueID(got)["raw.ingest_probe"])
 	assert.Equal(t, []string{"raw.ingest_probe"}, byUniqueID(got)["svc.m"].UpstreamUniqueIDs)

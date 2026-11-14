@@ -52,7 +52,7 @@ describe('lease wait helpers', () => {
 
   it('resolves a graph node\'s wait from its task, else from the run graph', () => {
     const graphNode: GraphNode = {
-      node_id: 'core.a.x', node_type: 'dbt-model', schedule_name: 's', status: 'pending',
+      node_id: 'core.a.x', node_type: 'dbt-model', schedule_name: 's', dormant: false, last_run_at: null, status: 'pending',
       wait_reason: 'node_lease', waiting_on_run_id: 'graph-holder', waiting_since: SINCE,
     };
     expect(resolveNodeWait(graphNode, [waiting('x')])).toEqual({ holderRunId: HOLDER, since: SINCE });
@@ -62,7 +62,7 @@ describe('lease wait helpers', () => {
 
   it('resolves a node\'s status and wait the same from the tasks indexed by node', () => {
     const graphNode: GraphNode = {
-      node_id: 'core.a.x', node_type: 'dbt-model', schedule_name: 's', status: 'succeeded',
+      node_id: 'core.a.x', node_type: 'dbt-model', schedule_name: 's', dormant: false, last_run_at: null, status: 'succeeded',
       wait_reason: 'node_lease', waiting_on_run_id: 'graph-holder', waiting_since: SINCE,
     };
     const tasks = [task('y', 'running'), waiting('x'), task('x', 'dispatched')];
@@ -140,7 +140,7 @@ describe('the waiting for node pill', () => {
   });
 
   it('marks a waiting node on the run graph, linking the holder run', () => {
-    const node = (id: string): GraphNode => ({ node_id: id, node_type: 'dbt-model', schedule_name: 's' });
+    const node = (id: string): GraphNode => ({ node_id: id, node_type: 'dbt-model', schedule_name: 's', dormant: false, last_run_at: null });
     const graph = { nodes: [node('core.a.orders'), node('core.a.customers')], edges: [] as GraphEdge[] };
     const { container } = render(
       <RunSwimlane graph={graph} tasks={[waiting('orders'), task('customers', 'pending')]}
@@ -155,7 +155,7 @@ describe('the waiting for node pill', () => {
   });
 
   it('a collapsed lane names the wait in its cell\'s title', () => {
-    const graph = { nodes: [{ node_id: 'core.a.orders', node_type: 'dbt-model', schedule_name: 's' }], edges: [] as GraphEdge[] };
+    const graph = { nodes: [{ node_id: 'core.a.orders', node_type: 'dbt-model', schedule_name: 's', dormant: false, last_run_at: null }], edges: [] as GraphEdge[] };
     const { container } = render(
       <RunSwimlane graph={graph} tasks={[waiting('orders')]}
         serviceOrder={['core']} collapsed={new Set(['core'])} onLaneToggle={vi.fn()} />,

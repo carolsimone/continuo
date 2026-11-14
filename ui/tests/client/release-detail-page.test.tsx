@@ -537,6 +537,22 @@ describe('ReleaseDetailPage — seed reload notices', () => {
     ]);
   });
 
+  it('words a dormant node below the seed as refreshed only by hand', async () => {
+    mockRelease({
+      ...promotedRelease,
+      notices: [{ ...designNotice, refresh_on_schedule: [
+        { node_id: 'analytics.fx_transactions_eur', materialized: 'table', schedule: 'daily' },
+        { node_id: 'analytics.fx_archive', materialized: 'incremental', schedule: '' },
+      ] }],
+    });
+    const { container } = renderPage('/releases/rel-a1b2c3d-201');
+    await screen.findByText(/Seed reload: /);
+    const [text] = strips(container);
+    expect(text).toContain('analytics.fx_transactions_eur (table) refreshes on its own schedule, daily. ');
+    expect(text).toContain('analytics.fx_archive (incremental) is dormant: it refreshes only when run by hand. ');
+    expect(text).not.toContain('schedule, .');
+  });
+
   it('draws one strip per notice and words a row change, a removal and a type change', async () => {
     mockRelease({
       ...promotedRelease,

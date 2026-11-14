@@ -64,6 +64,8 @@ const STAGE_LABELS: Record<string, string> = {
   nothing_to_validate: 'Nothing to validate',
   unbuildable_cross_service_upstream: 'Unbuildable cross-service upstream',
   upgrade_interrupted: 'Upgrade interrupted',
+  // upstream_clone_failed, after reasonLabel drops its "_failed" suffix.
+  upstream_clone: 'Could not copy an upstream from production',
 };
 
 // stageLabel maps a raw stage literal to its section display label, falling back

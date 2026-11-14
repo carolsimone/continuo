@@ -102,14 +102,40 @@ in it, deliberately:
 3. **Every node needs `meta.owner`** (set once in `dbt_project.yml`). Nodes
    without it are skipped. `meta` also carries an optional per-node task
    timeout; see [Declare the task timeout of a node](#declare-the-task-timeout-of-a-node).
-4. **Every model needs a tag naming its schedule** — `{{ config(tags=['daily'])
-   }}`. continuo reads the **first tag as the schedule the node belongs to**; an
-   untagged model is skipped. Seeds are exempt and default to build-on-release.
+4. **A model's tag names its schedule** — `{{ config(tags=['daily'])
+   }}`. continuo reads the **first tag as the schedule the node belongs to**.
+   A model or snapshot with an owner and no tag is a *dormant* node: a release
+   checks it like any other model, so a broken one rejects the release, but no
+   cron runs it. You run it by hand from its node page (or with
+   `continuo node trigger`). The one exception is a dormant view below a seed:
+   a run whose load of the seed drops the seed's table rebuilds it (see
+   [Seeds that change](#seeds-that-change)). Run a dormant node once before you
+   release a change to any node below it: validation copies the production
+   table of the dormant node, and a table that does not exist yet rejects that
+   release with `upstream_clone_failed`. Seeds are exempt and default to
+   build-on-release.
    The tag decides which models a schedule runs, not when: a schedule runs on
    its own once you give it a cron in the UI (**Add cron** on its card) or with
    `continuo schedule set-cron daily "0 1 * * *" Europe/Paris` (the
    [`continuo` command line](#the-continuo-command-line)), and until then
    it runs only when triggered.
+
+   A model, seed or snapshot of an installed dbt package (one your
+   `packages.yml` names) is never a node of your service. dbt gives it the
+   top-level `+meta` of your `dbt_project.yml`, so it has an owner when you set
+   the owner there. continuo leaves out a package node that has no owner or is
+   tagged `local_stub`. For any other package node, continuo looks at its tag.
+   With no tag, continuo leaves it out. With a tag, continuo rejects the
+   release as `invalid_artifact`, because a service's release may hold only the
+   nodes of its own project.
+
+   A model that stands in for a table it does not really build (a stub with
+   the same schema and name as another service's table, or as a table another
+   system loads) needs the tag `local_stub`, or no owner, so that continuo
+   leaves it out. With an owner and no tag it is a dormant node that claims
+   the table: a stub of another service's table makes every release fail with
+   `duplicate_table`, and a run of a stub of a loaded table replaces that
+   table.
 
 The full contract, including the `generate_schema_name` macro each project
 carries, is in
@@ -235,10 +261,12 @@ After a load that drops the table, continuo rebuilds what the drop took away.
 It does this in the same run, after the seed loads and in the order the views
 read each other.
 
-- continuo rebuilds the views and materialized views below the seed. It
-  follows the chain through `ephemeral` models.
+- continuo rebuilds the views and materialized views below the seed, dormant
+  ones included. It follows the chain through `ephemeral` models. A rerun or
+  rebase of the run rebuilds again a view whose rebuild did not finish.
 - continuo does not rebuild tables, incremental models, snapshots or Python
-  nodes. They keep their data until their own schedules run them.
+  nodes. They keep their data until their own schedules run them. A dormant
+  one has no schedule, so it keeps its data until you run it by hand.
 - On Trino, a materialized view below the seed is rebuilt with a full refresh.
 - On Trino, a view that continuo does not own can go stale after the load.
   continuo checks such views after the load and lists the ones it finds.
@@ -1013,7 +1041,7 @@ Then set the LLM key (and the PAT, if you made one), and upgrade:
 
 ```bash
 helm upgrade continuo oci://ghcr.io/carolsimone/charts/continuo \
-  --version 0.21.0 -n continuo --reuse-values \
+  --version 0.22.0 -n continuo --reuse-values \
   --set llm.apiKey='<your-api-key>' \
   --set github.token='<your-read-only-PAT>'   # drop this line without a PAT
 ```
@@ -1086,7 +1114,7 @@ file, not a flag value (a PEM has newlines that `--set` mangles), so pass it wit
 
 ```bash
 helm upgrade continuo oci://ghcr.io/carolsimone/charts/continuo \
-  --version 0.21.0 -n continuo --reuse-values \
+  --version 0.22.0 -n continuo --reuse-values \
   --set-string github.appId='<app-id>' \
   --set-string github.installationId='<installation-id>' \
   --set-file github.appPrivateKey=/path/to/downloaded-key.pem

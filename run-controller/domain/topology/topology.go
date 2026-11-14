@@ -81,6 +81,12 @@ func (n Node) Relation() string {
 	return string(n.Key)
 }
 
+// IsDormant reports whether the node is dormant, by the rule model.IsDormant
+// states and explains, applied to its type and schedule.
+func (n Node) IsDormant() bool {
+	return model.IsDormant(model.NodeType(n.NodeType), n.ScheduleName)
+}
+
 // NodeHashes are the two fingerprints a release states for one node: the hash
 // of its code and, for a seed, the hash of its CSV header and column types
 // (empty when the release carried no compile extras for the seed's service).

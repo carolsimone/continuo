@@ -16,6 +16,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/streams"
 	runv1 "github.com/carolsimone/continuo/run-controller/proto/run/v1"
 	"github.com/google/uuid"
@@ -189,9 +190,9 @@ func TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes(t *testing.T) 
 	// object (seeded above) must have passed for the release to promote at
 	// all, which waitForReleasePromoted inside promotePythonFixtureRelease
 	// already proved.
-	assertValidationNodeOp(t, ctx, validationTap, releaseID, pyProbeUniqueID, "build_from_columns", ".json")
-	assertValidationNodeOp(t, ctx, validationTap, releaseID, pyCsvUniqueID, "build_from_columns", ".json")
-	assertValidationNodeOp(t, ctx, validationTap, releaseID, pyAPIUniqueID, "build_from_columns", ".json")
+	assertValidationNodeOp(t, ctx, validationTap, releaseID, pyProbeUniqueID, model.ValidationOpBuildFromColumns, ".json")
+	assertValidationNodeOp(t, ctx, validationTap, releaseID, pyCsvUniqueID, model.ValidationOpBuildFromColumns, ".json")
+	assertValidationNodeOp(t, ctx, validationTap, releaseID, pyAPIUniqueID, model.ValidationOpBuildFromColumns, ".json")
 	assertNoCompileRequested(t, compileTap, releaseID)
 
 	// The promoted pointer records the python kind and the contract artifact.
@@ -493,7 +494,7 @@ func putS3Object(t *testing.T, ctx context.Context, clients *testClients, key st
 
 // assertValidationNodeOp finds the release's validation.requested:v1 message
 // and asserts the named node's validation_op and candidate_artifact_uri suffix.
-func assertValidationNodeOp(t *testing.T, ctx context.Context, validationTap *streamTap, releaseID, nodeID, wantOp, wantURISuffix string) {
+func assertValidationNodeOp(t *testing.T, ctx context.Context, validationTap *streamTap, releaseID, nodeID string, wantOp model.ValidationOp, wantURISuffix string) {
 	t.Helper()
 	pollUntil(t, ctx, 2*time.Minute, 1*time.Second, func() (bool, error) {
 		msgs := validationTap.Entries()
@@ -505,9 +506,9 @@ func assertValidationNodeOp(t *testing.T, ctx context.Context, validationTap *st
 			var p struct {
 				ReleaseID string `json:"release_id"`
 				Nodes     []struct {
-					UniqueID             string `json:"unique_id"`
-					ValidationOp         string `json:"validation_op"`
-					CandidateArtifactURI string `json:"candidate_artifact_uri"`
+					UniqueID             string             `json:"unique_id"`
+					ValidationOp         model.ValidationOp `json:"validation_op"`
+					CandidateArtifactURI string             `json:"candidate_artifact_uri"`
 				} `json:"nodes"`
 			}
 			if json.Unmarshal([]byte(payload), &p) != nil || p.ReleaseID != releaseID {

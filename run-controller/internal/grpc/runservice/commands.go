@@ -265,14 +265,14 @@ func cancelledBy(ctx context.Context, requested string) string {
 //   - A command that acted on another run than it claimed is Internal: it is
 //     a defect in run-controller, and nothing it wrote was kept.
 //   - A run, schedule, node or task that does not exist is NotFound; a full
-//     refresh of a node type that cannot be rebuilt, a run of an ingested
-//     node, a single-node run of a seed that sets +full_refresh: false and
-//     needs its table rebuilt (a full refresh, or a load of changed columns),
-//     acknowledged dependents on a run that is not a full refresh of a dbt
-//     seed, and a schedule name longer than a run carries are
-//     InvalidArgument; a live release other than the one the caller
-//     previewed, and every other refusal of the run's selection or its
-//     source, is FailedPrecondition.
+//     refresh of a node type that cannot be rebuilt, a run of an
+//     unknown-external node, a single-node run of a seed that sets
+//     +full_refresh: false and needs its table rebuilt (a full refresh, or a
+//     load of changed columns), acknowledged dependents on a run that is not
+//     a full refresh of a dbt seed, and a schedule name longer than a run
+//     carries are InvalidArgument; a live release other than the one the
+//     caller previewed, and every other refusal of the run's selection or
+//     its source, is FailedPrecondition.
 //
 // Anything else is logged and Internal.
 func (s *Server) commandError(rpc string, err error, attrs ...any) error {
@@ -293,7 +293,7 @@ func (s *Server) commandError(rpc string, err error, attrs ...any) error {
 		errors.Is(err, runplan.ErrTargetNotFound):
 		return status.Error(codes.NotFound, err.Error())
 	case errors.Is(err, runplan.ErrFullRefreshUnsupported),
-		errors.Is(err, runplan.ErrIngestedNode),
+		errors.Is(err, runplan.ErrExternalNode),
 		errors.Is(err, runplan.ErrSeedFullRefreshDisabled),
 		errors.Is(err, runplan.ErrAcknowledgementNotAllowed),
 		errors.Is(err, run.ErrScheduleNameTooLong):

@@ -269,8 +269,8 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 // so DescendantsClosure(topo, {ftable_e}) yields {ftable_e, ftable_f} as the
 // changed closure, and FullAncestorsClosure of that closure adds {ftable_a,
 // ftable_b, ftable_c, ftable_d} as buildable upstreams — release-controller's
-// rebuiltFromCandidateSet (handle_parsed_manifest.go) puts only the changed
-// closure itself, {ftable_e, ftable_f}, into the build-from-candidate-SQL set.
+// RebuiltFromCandidateSet (release-controller/domain/release) puts only the
+// changed closure itself, {ftable_e, ftable_f}, into the build-from-candidate-SQL set.
 // Those four upstream models are validated but not rebuilt,
 // so the validation Job clones each straight from production instead
 // (VALIDATION_OP=clone_from_prod: "CREATE TABLE <candidate>.<table> AS SELECT

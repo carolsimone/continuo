@@ -32,9 +32,9 @@ func TestSeeds_AnUndeclaredNodeTypeIsRefused(t *testing.T) {
 	assert.ErrorIs(t, err, runplan.ErrInvalidNodeType)
 }
 
-// The seed reconcile names dbt seeds only, so a key that names an ingested
+// The seed reconcile names dbt seeds only, so a key that names an unknown-external
 // node is refused rather than run.
-func TestSeeds_AnIngestedNodeIsRefused(t *testing.T) {
-	_, err := runplan.Seeds{Keys: append(keys("seed_table_1"), ingestedProbe)}.Select(withIngestedUpstream(releaseGraph(e2eDAG), "table_a"))
-	assert.ErrorIs(t, err, runplan.ErrIngestedNode)
+func TestSeeds_AnUnknownExternalNodeIsRefused(t *testing.T) {
+	_, err := runplan.Seeds{Keys: append(keys("seed_table_1"), unknownExternalProbe)}.Select(withUnknownExternalUpstream(releaseGraph(e2eDAG), "table_a"))
+	assert.ErrorIs(t, err, runplan.ErrExternalNode)
 }

@@ -320,8 +320,8 @@ func TestJournal_RecordsKeepTheirStoredJSON(t *testing.T) {
 			sameEvidence(t, got.Evidence)
 			assert.False(t, got.Declined)
 		}),
-		recordOf("context_declined", serialization.ContextRecord{Declined: true, Decline: "no source for an ingested node"}, func(t *testing.T, got serialization.ContextRecord) {
-			assert.Equal(t, serialization.ContextRecord{Declined: true, Decline: "no source for an ingested node"}, got)
+		recordOf("context_declined", serialization.ContextRecord{Declined: true, Decline: "no source for an external node"}, func(t *testing.T, got serialization.ContextRecord) {
+			assert.Equal(t, serialization.ContextRecord{Declined: true, Decline: "no source for an external node"}, got)
 		}),
 		recordOf("prompt", serialization.PromptRecord{Draft: sampleDraft()}, func(t *testing.T, got serialization.PromptRecord) {
 			assert.Equal(t, serialization.PromptRecord{Draft: sampleDraft()}, got)

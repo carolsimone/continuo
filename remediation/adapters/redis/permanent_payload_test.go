@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
@@ -21,7 +22,7 @@ func TestHandlers_UndecodablePayloadIsPermanent(t *testing.T) {
 		"undecodable":     {ID: "2-0", Values: map[string]any{"payload": "{not json"}},
 	}
 	for _, stream := range []string{streams.ReleaseRejectedV1, streams.RemediationRetryRequestedV1} {
-		h := newRejectionHandler(stream, handlers.Deps{})
+		h := newRejectionHandler(stream, handlers.Deps{}, slog.New(slog.DiscardHandler))
 		for mname, m := range messages {
 			err := h(context.Background(), m)
 			assert.ErrorIs(t, err, pkgevents.ErrPermanent, "%s / %s", stream, mname)

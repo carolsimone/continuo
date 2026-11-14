@@ -8,9 +8,11 @@ import (
 	"time"
 
 	catalogv1 "github.com/carolsimone/continuo/catalog/api/catalog/v1"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/topologyartifact"
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -164,6 +166,26 @@ func restoreDefaultTopologyAfter(t *testing.T, clients *testClients, releaseID s
 	waitForPromoteSeedRunsToEnd(t, ctx, clients, releaseID, 5*time.Minute)
 }
 
+// activeRunStatuses are the run statuses that hold a run active: the queries
+// that wait for a run to end, or refuse one that has not, bind them.
+var activeRunStatuses = pq.StringArray{
+	string(model.RunStatusPending), string(model.RunStatusRunning), string(model.RunStatusCancelling),
+}
+
+// activePromoteSeedRuns returns each active promote-seed run of releaseID, or
+// of any release when releaseID is "", as "<run id> (<status>)", in run id
+// order.
+func activePromoteSeedRuns(ctx context.Context, clients *testClients, releaseID string) ([]string, error) {
+	var active []string
+	err := clients.runControllerDB.SelectContext(ctx, &active, `
+		SELECT run_id::text || ' (' || status || ')' FROM runs
+		 WHERE tenant_id = $1 AND kind = 'promote_seed' AND ($2::text = '' OR release_id = $2)
+		   AND status = ANY($3)
+		 ORDER BY run_id`,
+		events.DefaultTenantID, releaseID, activeRunStatuses)
+	return active, err
+}
+
 // waitForPromoteSeedRunsToEnd waits until no promote-seed run of releaseID, or
 // of any release when releaseID is "", is active. It returns without failing
 // when one still is after timeout: a seed load that runs long is not what the
@@ -172,17 +194,12 @@ func waitForPromoteSeedRunsToEnd(t *testing.T, ctx context.Context, clients *tes
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for {
-		var active int
-		err := clients.runControllerDB.GetContext(ctx, &active, `
-			SELECT count(*) FROM runs
-			 WHERE tenant_id = $1 AND kind = 'promote_seed' AND ($2::text = '' OR release_id = $2)
-			   AND status IN ('pending', 'running', 'cancelling')`,
-			events.DefaultTenantID, releaseID)
-		if err == nil && active == 0 {
+		active, err := activePromoteSeedRuns(ctx, clients, releaseID)
+		if err == nil && len(active) == 0 {
 			return
 		}
 		if time.Now().After(deadline) || ctx.Err() != nil {
-			t.Logf("%d promote-seed run(s) of release %s still active after %s (last read error: %v)", active, releaseID, timeout, err)
+			t.Logf("promote-seed run(s) of release %q still active after %s: %v (last read error: %v)", releaseID, timeout, active, err)
 			return
 		}
 		select {

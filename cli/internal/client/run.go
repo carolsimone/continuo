@@ -48,7 +48,10 @@ type RunClient interface {
 	ListTasks(ctx context.Context, runID, status string, pageSize, pageOffset int32) (*runv1.ListTasksResponse, error)
 	ListRunAttempts(ctx context.Context, runID, taskID string, pageSize, pageOffset int32) (*runv1.ListRunAttemptsResponse, error)
 	ListNodeRuns(ctx context.Context, service, schema, table, operation string, limit int32) (*runv1.ListNodeTasksResponse, error)
-	ListNodes(ctx context.Context, search, service, operation string, limit, offset int32) (*runv1.ListNodesResponse, error)
+	// ListNodes lists the nodes of the live release. With dormantOnly it keeps
+	// only the dormant ones, the nodes continuo builds that belong to no
+	// schedule.
+	ListNodes(ctx context.Context, search, service, operation string, dormantOnly bool, limit, offset int32) (*runv1.ListNodesResponse, error)
 
 	// Schedule crons. An edit takes no request id, so the server cannot answer
 	// a repeat with the result of the first call: each save raises the
@@ -286,11 +289,12 @@ func (c *runGRPCClient) ListRunAttempts(ctx context.Context, runID, taskID strin
 	})
 }
 
-func (c *runGRPCClient) ListNodes(ctx context.Context, search, service, operation string, limit, offset int32) (*runv1.ListNodesResponse, error) {
+func (c *runGRPCClient) ListNodes(ctx context.Context, search, service, operation string, dormantOnly bool, limit, offset int32) (*runv1.ListNodesResponse, error) {
 	return c.api.ListNodes(ctx, &runv1.ListNodesRequest{
 		Search:      search,
 		ServiceName: service,
 		Operation:   operation,
+		DormantOnly: dormantOnly,
 		Limit:       limit,
 		Offset:      offset,
 	})

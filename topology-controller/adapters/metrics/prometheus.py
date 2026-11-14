@@ -69,6 +69,12 @@ class TopologyMetrics:
             ["service", "reason"],
             registry=self.registry,
         )
+        self._release_dormant_nodes = Gauge(
+            "continuo_topology_release_dormant_nodes",
+            "Dormant nodes (a model or snapshot with an owner and no schedule tag) the last release that ended held.",
+            ["service"],
+            registry=self.registry,
+        )
         self._release_peak_rss = Gauge(
             "continuo_topology_release_peak_rss_bytes",
             "Largest resident set read at a stage boundary during the last release that ended.",
@@ -107,13 +113,16 @@ class TopologyMetrics:
             self._releases.labels(service, ReleaseOutcome.FAILED.value, kind.value)
         for reason in SkipReason:
             self._release_skipped_nodes.labels(service, reason.value).set(0)
+        self._release_dormant_nodes.labels(service).set(0)
 
     def release_finished(self, timings: ReleaseTimings) -> None:
         """Count a release that ended and replace the gauges of the last one.
 
         A stage that never ran observes nothing. The gauges are set for every
         family and every skip reason the record names, so one the release lacked
-        drops to 0 instead of keeping the previous release's value.
+        drops to 0 instead of keeping the previous release's value. The dormant
+        gauge is set from the release's dormant total, so a release with none
+        sets it to 0.
         """
         for stage, record in timings.stages.items():
             if record.runs > 0:
@@ -126,6 +135,7 @@ class TopologyMetrics:
             self._release_columns.labels(self._service, family).set(count)
         for reason in SkipReason:
             self._release_skipped_nodes.labels(self._service, reason.value).set(timings.skipped.get(reason, 0))
+        self._release_dormant_nodes.labels(self._service).set(sum(timings.dormant.values()))
         self._release_peak_rss.labels(self._service).set(timings.peak_rss_bytes)
 
     def handled(self, stream: str, group: str, result: str, seconds: float) -> None:

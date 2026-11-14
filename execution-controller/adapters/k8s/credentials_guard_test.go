@@ -64,11 +64,11 @@ func jobPodSpecKinds(t *testing.T) map[string]corev1.PodSpec {
 	spec, err = buildPythonPodSpec(csvParams())
 	add("task python-csv", spec, err)
 
-	for _, op := range []string{"clone_from_prod", "build_from_sql", "check_binds", "build_from_columns"} {
+	for _, op := range pkg_model.ValidationOps() {
 		p := validationParams()
-		p.ValidationOp = op
+		p.ValidationOp = string(op)
 		spec, err = buildValidationPodSpec(p)
-		add("validation "+op, spec, err)
+		add("validation "+string(op), spec, err)
 	}
 
 	spec, err = buildSeedBuildPodSpec(seedOverlayParams(),

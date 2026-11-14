@@ -93,6 +93,8 @@ const (
 	RejectReasonValidationFailed RejectReason = "validation_failed"
 	// RejectReasonUpgradeInterrupted — the run was in `parsing` when release-controller moved to topology artifacts; its parse result was published on a stream the new version no longer reads. Submit the release again.
 	RejectReasonUpgradeInterrupted RejectReason = "upgrade_interrupted"
+	// RejectReasonUpstreamCloneFailed — validation could not copy the production table of an unchanged upstream; a run of that node, not a code change, settles it.
+	RejectReasonUpstreamCloneFailed RejectReason = "upstream_clone_failed"
 )
 
 // RejectReasons returns every value in contract.yaml declaration order.
@@ -111,6 +113,7 @@ func RejectReasons() []RejectReason {
 		RejectReasonSeedBuildFailed,
 		RejectReasonValidationFailed,
 		RejectReasonUpgradeInterrupted,
+		RejectReasonUpstreamCloneFailed,
 	}
 }
 
@@ -143,6 +146,8 @@ func (v RejectReason) IsValid() bool {
 		return true
 	case RejectReasonUpgradeInterrupted:
 		return true
+	case RejectReasonUpstreamCloneFailed:
+		return true
 	}
 	return false
 }
@@ -162,6 +167,47 @@ func (v RejectReason) Healable() bool {
 	case RejectReasonSeedBuildFailed:
 		return true
 	case RejectReasonValidationFailed:
+		return true
+	}
+	return false
+}
+
+// ValidationOp — How the validation leg prepares one node of a candidate release in the candidate schema. release-controller names it per node on validation.requested:v1 and on each per_node entry of a validation rejection on release.rejected:v1; execution-controller passes it to the validation runner as VALIDATION_OP; remediation never turns a failed clone_from_prod node into a failure to fix.
+// Values come from the vocabulary "validation_op" in contract.yaml, in
+// declaration order.
+type ValidationOp string
+
+const (
+	// ValidationOpBuildFromSQL — a dbt model or snapshot built from its own candidate code; the runner builds its compiled SQL, with no data, in the candidate schema.
+	ValidationOpBuildFromSQL ValidationOp = "build_from_sql"
+	// ValidationOpBuildFromColumns — a python node built from its own candidate code; the runner bind-checks its declared reads and creates its empty typed table from its validation spec.
+	ValidationOpBuildFromColumns ValidationOp = "build_from_columns"
+	// ValidationOpCheckBinds — a dbt test built from its own candidate code; the runner EXPLAINs its compiled SQL against the candidate schema and creates nothing.
+	ValidationOpCheckBinds ValidationOp = "check_binds"
+	// ValidationOpCloneFromProd — an unchanged upstream of a node built from candidate code; the runner copies its production table, empty, into the candidate schema. A failure points at that production table, which a run of the node settles, not a code change.
+	ValidationOpCloneFromProd ValidationOp = "clone_from_prod"
+)
+
+// ValidationOps returns every value in contract.yaml declaration order.
+func ValidationOps() []ValidationOp {
+	return []ValidationOp{
+		ValidationOpBuildFromSQL,
+		ValidationOpBuildFromColumns,
+		ValidationOpCheckBinds,
+		ValidationOpCloneFromProd,
+	}
+}
+
+// IsValid reports whether v is a value declared in contract.yaml.
+func (v ValidationOp) IsValid() bool {
+	switch v {
+	case ValidationOpBuildFromSQL:
+		return true
+	case ValidationOpBuildFromColumns:
+		return true
+	case ValidationOpCheckBinds:
+		return true
+	case ValidationOpCloneFromProd:
 		return true
 	}
 	return false
@@ -259,8 +305,8 @@ const (
 	NodeTypePythonApi NodeType = "python-api"
 	// NodeTypeDbtTest — a dbt data test; exists only in candidate and current_prod topologies, where validation bind-checks its compiled SQL; never promoted to catalog's graph and never scheduled.
 	NodeTypeDbtTest NodeType = "dbt-test"
-	// NodeTypeIngested — a table a node reads that no node builds, never run, built, validated or fixed.
-	NodeTypeIngested NodeType = "ingested"
+	// NodeTypeUnknownExternal — a table a node reads that no node builds, never run, built, validated or fixed.
+	NodeTypeUnknownExternal NodeType = "unknown-external"
 )
 
 // NodeTypes returns every value in contract.yaml declaration order.
@@ -273,7 +319,7 @@ func NodeTypes() []NodeType {
 		NodeTypePythonCsv,
 		NodeTypePythonApi,
 		NodeTypeDbtTest,
-		NodeTypeIngested,
+		NodeTypeUnknownExternal,
 	}
 }
 
@@ -294,7 +340,7 @@ func (v NodeType) IsValid() bool {
 		return true
 	case NodeTypeDbtTest:
 		return true
-	case NodeTypeIngested:
+	case NodeTypeUnknownExternal:
 		return true
 	}
 	return false
@@ -340,7 +386,7 @@ func (v NodeType) Runtime() NodeRuntime {
 		return NodeRuntimePython
 	case NodeTypeDbtTest:
 		return NodeRuntimeDbt
-	case NodeTypeIngested:
+	case NodeTypeUnknownExternal:
 		return NodeRuntimeExternal
 	}
 	return ""

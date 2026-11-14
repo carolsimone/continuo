@@ -3,6 +3,7 @@ package k8s
 import (
 	"testing"
 
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -57,7 +58,7 @@ func TestBuildSeedBuildPodSpecHardening(t *testing.T) {
 
 func TestBuildValidationPodSpecHardening(t *testing.T) {
 	p := validationParams()
-	p.ValidationOp = "clone_from_prod"
+	p.ValidationOp = string(pkg_model.ValidationOpCloneFromProd)
 	spec, err := buildValidationPodSpec(p)
 	require.NoError(t, err)
 	assertPodHardening(t, spec)
@@ -67,7 +68,7 @@ func TestBuildValidationPodSpecHardening(t *testing.T) {
 
 func TestBuildValidationPodSpecBuildFromSQLHardening(t *testing.T) {
 	p := validationParams()
-	p.ValidationOp = "build_from_sql"
+	p.ValidationOp = string(pkg_model.ValidationOpBuildFromSQL)
 	p.CandidateArtifactURI = "s3://bucket/candidate.sql"
 	spec, err := buildValidationPodSpec(p)
 	require.NoError(t, err)

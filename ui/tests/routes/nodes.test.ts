@@ -174,6 +174,7 @@ describe('nodes router', () => {
             p95_duration_sec: 21, flaky_rate_pct: 4,
             last_status: 'succeeded', last_run_at: '2026-06-08T10:00:00Z',
             operation: 'run', timeout_seconds: 28800, timeout_declared: true,
+            node_type: 'dbt-model', dormant: true,
           },
           {
             service_name: 'svc', schema_name: 'an', table_name: 'dim',
@@ -203,10 +204,41 @@ describe('nodes router', () => {
     expect(res.body.nodes[1].last_status).toBeNull();      // '' -> null
     expect(res.body.nodes[1].last_run_at).toBeNull();
     expect(res.body.nodes[1].operation).toBe('test');
+    expect(res.body.nodes[0].node_type).toBe('dbt-model');
+    expect(res.body.nodes[0].dormant).toBe(true);
+    expect(res.body.nodes[1].node_type).toBe('');           // unset -> ''
+    expect(res.body.nodes[1].dormant).toBe(false);          // unset -> false
     expect(mockListNodes).toHaveBeenCalledWith(
-      { search: 'f', service_name: 'svc', operation: 'run', limit: 25, offset: 0 },
+      { search: 'f', service_name: 'svc', operation: 'run', limit: 25, offset: 0, dormant_only: false },
       expect.any(Function),
     );
+  });
+
+  it('GET / sends dormant_only for ?dormant=1 and for no other value', async () => {
+    mockListNodes.mockImplementation((_req, cb) => cb(null, { total_count: 0, nodes: [] }));
+    await request(makeApp()).get('/api/nodes?dormant=1');
+    await request(makeApp()).get('/api/nodes?dormant=0');
+    await request(makeApp()).get('/api/nodes?dormant=true');
+    expect(mockListNodes.mock.calls.map(([req]) => req.dormant_only)).toEqual([true, false, false]);
+  });
+
+  it('GET / lists a node that never ran with no stats, no status and no last run', async () => {
+    mockListNodes.mockImplementation((_req, cb) =>
+      cb(null, {
+        total_count: 1,
+        nodes: [{
+          service_name: 'svc', schema_name: 'an', table_name: 'stg_backfill',
+          task_count: 0, success_rate_pct: -1, avg_duration_sec: -1, p95_duration_sec: -1, flaky_rate_pct: 0,
+          last_status: '', last_run_at: '', operation: 'run', timeout_seconds: 3600,
+          node_type: 'dbt-model', dormant: true,
+        }],
+      }),
+    );
+    const res = await request(makeApp()).get('/api/nodes?dormant=1');
+    expect(res.body.nodes[0]).toMatchObject({
+      task_count: 0, success_rate_pct: null, avg_duration_sec: null, p95_duration_sec: null,
+      last_status: null, last_run_at: null, node_type: 'dbt-model', dormant: true,
+    });
   });
 
   it('GET / defaults missing/invalid query params', async () => {
@@ -215,7 +247,7 @@ describe('nodes router', () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ total_count: 0, nodes: [] });
     expect(mockListNodes).toHaveBeenCalledWith(
-      { search: '', service_name: '', operation: 'run', limit: 50, offset: 0 },
+      { search: '', service_name: '', operation: 'run', limit: 50, offset: 0, dormant_only: false },
       expect.any(Function),
     );
   });
@@ -244,7 +276,7 @@ describe('nodes router', () => {
     mockListNodes.mockImplementation((_req, cb) => cb(null, { total_count: 0, nodes: [] }));
     await request(makeApp()).get('/api/nodes?operation=test');
     expect(mockListNodes).toHaveBeenCalledWith(
-      { search: '', service_name: '', operation: 'test', limit: 50, offset: 0 },
+      { search: '', service_name: '', operation: 'test', limit: 50, offset: 0, dormant_only: false },
       expect.any(Function),
     );
   });

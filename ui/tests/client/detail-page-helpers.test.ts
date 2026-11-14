@@ -6,7 +6,7 @@ import {
   formatAttemptSeconds,
   groupAttemptsByTask,
   headerDriftLabel,
-  ingestedNodeName,
+  externalNodeName,
   parseNodeId,
   resolveActiveGraph,
   resolveNodeStatus,
@@ -36,6 +36,8 @@ describe('detail page graph helpers', () => {
           node_id: 'svc.analytics.orders',
           node_type: 'dbt-model',
           schedule_name: 'daily',
+          dormant: false,
+          last_run_at: null,
           status: 'running',
         },
       ],
@@ -70,6 +72,8 @@ describe('detail page graph helpers', () => {
           node_id: 'svc.analytics.orders',
           node_type: 'dbt-model',
           schedule_name: 'daily',
+          dormant: false,
+          last_run_at: null,
           status: 'running',
         },
       ],
@@ -103,6 +107,8 @@ describe('detail page graph helpers', () => {
           node_id: 'svc.analytics.orders',
           node_type: 'dbt-model',
           schedule_name: 'daily',
+          dormant: false,
+          last_run_at: null,
           status: 'succeeded',
         },
       ],
@@ -115,6 +121,8 @@ describe('detail page graph helpers', () => {
       node_id: 'svc.analytics.orders',
       node_type: 'dbt-model',
       schedule_name: 'daily',
+      dormant: false,
+      last_run_at: null,
       status: 'succeeded',
     };
     const matchingTask: Task = {
@@ -157,8 +165,8 @@ describe('detail page graph helpers', () => {
     });
   });
 
-  it('names an ingested node by its schema and table, skipping its empty service', () => {
-    expect(ingestedNodeName('.raw.ingest_probe')).toBe('raw.ingest_probe');
+  it('names an unknown-external node by its schema and table, skipping its empty service', () => {
+    expect(externalNodeName('.raw.ingest_probe')).toBe('raw.ingest_probe');
   });
 
   it('hides the header drift chip in latest mode regardless of drift', () => {
