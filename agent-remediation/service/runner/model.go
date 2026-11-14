@@ -23,7 +23,8 @@ const promptVersionLen = 12
 // carries the cluster's idempotency key, so a step that runs again after a lost
 // commit is answered by the response cache, and the failure it was built for,
 // so the logged prompt names it. It sums what the calls report for the step's
-// journal row.
+// journal row, and keeps the last request and the answer it got, which the row's
+// output stores for a later round to revise.
 type model struct {
 	llm     ports.LLMProvider
 	key     string
@@ -35,6 +36,8 @@ type model struct {
 	tokensOut     int
 	lastModel     string
 	promptVersion string
+	lastRequest   prompt.ProposeRequest
+	lastAnswer    ports.ProposeResult
 }
 
 var _ step.Model = (*model)(nil)
@@ -50,7 +53,9 @@ func newModel(llm ports.LLMProvider, id uuid.UUID, try, cluster, round int, fail
 }
 
 // Propose calls the model and records the call: its tokens are added up, its
-// model id is kept as the last one, and its request names the prompt version.
+// model id is kept as the last one, its request names the prompt version, and
+// the request and the answer are kept as the last call. A call that fails is not
+// recorded.
 func (m *model) Propose(ctx context.Context, req prompt.ProposeRequest) (ports.ProposeResult, error) {
 	ctx = llmcache.ContextWithIdempotencyKey(ctx, m.key)
 	ctx = promptlog.ContextWithFailure(ctx, m.failure)
@@ -68,6 +73,7 @@ func (m *model) Propose(ctx context.Context, req prompt.ProposeRequest) (ports.P
 		m.lastModel = res.Model
 	}
 	m.promptVersion = promptVersion(req)
+	m.lastRequest, m.lastAnswer = req, res
 	return res, nil
 }
 

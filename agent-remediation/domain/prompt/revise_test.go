@@ -67,3 +67,14 @@ func TestRevise_RevisingARevisionKeepsTheOriginalTextFirst(t *testing.T) {
 	assert.Contains(t, second.User, req.User+"\n\n## Your previous answer\n```json\n{\"rationale\":\"one\"}\n```")
 	assert.Contains(t, second.User, "- b: second\n\nCorrect every finding and call the tool again with your complete answer.")
 }
+
+func TestIsSourceFix_RecognisesTheSourceFixRequestAndItsRevisions(t *testing.T) {
+	sourceFix := AssembleSourceFix("select 1", "analytics.table_a", "qualify the table")
+	diagnosis := Assemble(Evidence{NodeID: "analytics.table_a", CandidateSQL: "select 1"})
+
+	assert.True(t, IsSourceFix(sourceFix))
+	assert.True(t, IsSourceFix(Revise(sourceFix, `{"proposed_sql":"select 2"}`, []string{"a: first"})))
+	assert.False(t, IsSourceFix(diagnosis))
+	assert.False(t, IsSourceFix(Revise(diagnosis, `{"proposed_sql":"select 2"}`, []string{"a: first"})))
+	assert.False(t, IsSourceFix(ProposeRequest{}))
+}

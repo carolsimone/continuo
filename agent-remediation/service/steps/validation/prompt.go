@@ -60,7 +60,8 @@ func (*DBTValidation) Meta() step.Meta {
 	}
 }
 
-// Propose makes the two chained model calls.
+// Propose makes the two chained model calls of the first round, and in a round
+// after the first revises the last of them.
 //
 // The first call fixes the candidate SQL. Its answer is written as the
 // candidate artifacts whenever it holds SQL, for audit: it is the model's fix
@@ -75,6 +76,15 @@ func (*DBTValidation) Meta() step.Meta {
 // and suspected root are the first call's, and its rationale is the second
 // call's when it produced the edit, because that note describes the diff the
 // reviewer sees, and the first call's otherwise.
+//
+// A round after the first revises the last call of the round before it, with
+// its answer and the findings (step.RevisionRequest). When that call is the
+// source fix, the one call of the round is its revision, read as the second
+// call is, and the diagnosis is not made again: the draft keeps the previous
+// draft's candidate fix, confidence, model and suspected root. When it is the
+// diagnosis, which is all a first round makes when the answer holds no SQL, the
+// diagnosis is revised and its answer goes the way a first call's does,
+// including the source fix.
 func (p *DBTValidation) Propose(ctx context.Context, in step.PromptInput, m step.Model) (step.PromptOutput, error) {
 	candidateSQL, ok := remediation.Get[remediation.Text](in.Evidence, remediation.KeyCandidateSQL)
 	if !ok {
@@ -84,25 +94,20 @@ func (p *DBTValidation) Propose(ctx context.Context, in step.PromptInput, m step
 	if !ok {
 		return step.PromptOutput{}, fmt.Errorf("dbt-validation: the evidence holds no code bundle source")
 	}
-	dbtLog, _ := remediation.Get[remediation.Text](in.Evidence, remediation.KeyDBTLog)
-	ownDiff, _ := remediation.Get[remediation.Text](in.Evidence, remediation.KeyOwnChangeDiff)
-	upstream, _ := remediation.Get[[]prompt.UpstreamChange](in.Evidence, remediation.KeyUpstreamChanges)
-	precedents, _ := remediation.Get[[]prompt.Precedent](in.Evidence, remediation.KeyFailurePrecedents)
-	ancestors, _ := remediation.Get[[]prompt.ReleaseUpstreamChange](in.Evidence, remediation.KeyChangedAncestorDiffs)
+	req, revising, err := step.RevisionRequest(in)
+	if err != nil {
+		return step.PromptOutput{}, fmt.Errorf("dbt-validation: %w", err)
+	}
+	if revising && prompt.IsSourceFix(req) {
+		return p.reviseSourceFix(ctx, in, bundle, req, m)
+	}
+	if !revising {
+		req = p.diagnosisRequest(in, candidateSQL)
+	}
 
 	f := in.Failure
 	nodeID := f.Target.NodeID
-	res, err := m.Propose(ctx, prompt.Assemble(prompt.Evidence{
-		NodeID:                 nodeID,
-		ErrorSignature:         f.Target.ErrorSignature,
-		CandidateSQL:           string(candidateSQL),
-		DBTLog:                 string(dbtLog),
-		OwnChangeDiff:          string(ownDiff),
-		UpstreamChanges:        upstream,
-		Precedents:             precedents,
-		ReleaseUpstreamChanges: ancestors,
-		ReleaseAncestorsKnown:  f.Trigger.Source == sourceValidation,
-	}))
+	res, err := m.Propose(ctx, req)
 	if err != nil {
 		return step.PromptOutput{}, fmt.Errorf("llm propose: %w", err)
 	}
@@ -128,7 +133,10 @@ func (p *DBTValidation) Propose(ctx context.Context, in step.PromptInput, m step
 		return step.PromptOutput{}, fmt.Errorf("write candidate diff: %w", err)
 	}
 
-	if edit, note, ok := p.sourceFix(ctx, f, bundle, res, m); ok {
+	applyDiagnosis := func() prompt.ProposeRequest {
+		return prompt.AssembleSourceFix(p.sanitizer.Sanitize(bundle.Source), nodeID, res.Rationale)
+	}
+	if edit, note, ok := p.sourceFix(ctx, f, bundle, applyDiagnosis, m); ok {
 		draft.Edits = []remediation.Edit{edit}
 		draft.SourceResolved = true
 		draft.Rationale = note
@@ -136,10 +144,59 @@ func (p *DBTValidation) Propose(ctx context.Context, in step.PromptInput, m step
 	return step.PromptOutput{Draft: draft}, nil
 }
 
-// sourceFix asks the model to apply the first call's diagnosis to the node's
-// real source, and returns the edit and the note of that call. It reports false
-// on every degraded path, so the draft keeps only the candidate fix.
-func (p *DBTValidation) sourceFix(ctx context.Context, f remediation.Failure, bundle remediation.CandidateSource, step1 ports.ProposeResult, m step.Model) (remediation.Edit, string, bool) {
+// diagnosisRequest builds the first call's request from the cluster's evidence.
+func (p *DBTValidation) diagnosisRequest(in step.PromptInput, candidateSQL remediation.Text) prompt.ProposeRequest {
+	dbtLog, _ := remediation.Get[remediation.Text](in.Evidence, remediation.KeyDBTLog)
+	ownDiff, _ := remediation.Get[remediation.Text](in.Evidence, remediation.KeyOwnChangeDiff)
+	upstream, _ := remediation.Get[[]prompt.UpstreamChange](in.Evidence, remediation.KeyUpstreamChanges)
+	precedents, _ := remediation.Get[[]prompt.Precedent](in.Evidence, remediation.KeyFailurePrecedents)
+	ancestors, _ := remediation.Get[[]prompt.ReleaseUpstreamChange](in.Evidence, remediation.KeyChangedAncestorDiffs)
+
+	f := in.Failure
+	return prompt.Assemble(prompt.Evidence{
+		NodeID:                 f.Target.NodeID,
+		ErrorSignature:         f.Target.ErrorSignature,
+		CandidateSQL:           string(candidateSQL),
+		DBTLog:                 string(dbtLog),
+		OwnChangeDiff:          string(ownDiff),
+		UpstreamChanges:        upstream,
+		Precedents:             precedents,
+		ReleaseUpstreamChanges: ancestors,
+		ReleaseAncestorsKnown:  f.Trigger.Source == sourceValidation,
+	})
+}
+
+// reviseSourceFix makes the one call of a round that revises the previous
+// round's source fix, and reads its answer as the second call is read. The
+// draft is the previous draft's candidate fix, rationale, confidence, model and
+// suspected root, which came from the first call, with the edit when the
+// revised answer produced one, and the revised answer's note as the rationale.
+func (p *DBTValidation) reviseSourceFix(ctx context.Context, in step.PromptInput, bundle remediation.CandidateSource, revision prompt.ProposeRequest, m step.Model) (step.PromptOutput, error) {
+	if in.Previous == nil {
+		return step.PromptOutput{}, fmt.Errorf("dbt-validation: a revision of the source fix needs the previous round's draft")
+	}
+	prev := *in.Previous
+	draft := remediation.Draft{
+		Rationale:           prev.Rationale,
+		Confidence:          prev.Confidence,
+		Model:               prev.Model,
+		SuspectedRoot:       prev.SuspectedRoot,
+		CandidateFixSQLURI:  prev.CandidateFixSQLURI,
+		CandidateFixDiffURI: prev.CandidateFixDiffURI,
+	}
+	if edit, note, ok := p.sourceFix(ctx, in.Failure, bundle, func() prompt.ProposeRequest { return revision }, m); ok {
+		draft.Edits = []remediation.Edit{edit}
+		draft.SourceResolved = true
+		draft.Rationale = note
+	}
+	return step.PromptOutput{Draft: draft}, nil
+}
+
+// sourceFix makes the source-fix call with the request it builds, and returns
+// the edit and the note of that call. It reports false on every degraded path,
+// so the draft keeps only the candidate fix. The request is built only once the
+// source and its location are known, so a degraded path makes no call.
+func (p *DBTValidation) sourceFix(ctx context.Context, f remediation.Failure, bundle remediation.CandidateSource, request func() prompt.ProposeRequest, m step.Model) (remediation.Edit, string, bool) {
 	nodeID := f.Target.NodeID
 	if bundle.Source == "" {
 		p.logger.Warn("source fix: no candidate source resolved; using candidate proposal", "node", nodeID)
@@ -156,7 +213,7 @@ func (p *DBTValidation) sourceFix(ctx context.Context, f remediation.Failure, bu
 			"node", nodeID, "service_name", bundle.Service)
 		return remediation.Edit{}, "", false
 	}
-	out, err := m.Propose(ctx, prompt.AssembleSourceFix(p.sanitizer.Sanitize(bundle.Source), nodeID, step1.Rationale))
+	out, err := m.Propose(ctx, request())
 	if err != nil {
 		p.logger.Warn("source fix: llm step 2 failed; using candidate proposal", "node", nodeID, "error", err)
 		return remediation.Edit{}, "", false

@@ -287,3 +287,149 @@ func TestDBTValidation_OptionalEvidenceMayBeAbsent(t *testing.T) {
 		NodeID: "model.svc.a", ErrorSignature: "sig-1", CandidateSQL: candidateSQL, ReleaseAncestorsKnown: true,
 	}), model.reqs[0])
 }
+
+// revisionInput is the input of a later round: the previous round's draft and
+// last call, and the findings the checks made in the draft.
+func revisionInput(prev remediation.Draft, req prompt.ProposeRequest, ans ports.ProposeResult, findings []remediation.Finding, ev remediation.Evidence) step.PromptInput {
+	return step.PromptInput{Failure: failure(nil), Evidence: ev, Round: 1, Previous: &prev, PreviousRequest: &req, PreviousAnswer: &ans, Findings: findings}
+}
+
+var revisionFindings = []remediation.Finding{
+	{Code: "content_unchanged", Message: "the model returned the file unchanged, which is not a fix", File: repoFilePath},
+	{Code: "sql_parse", Message: "unexpected token", File: repoFilePath, Line: 3},
+}
+
+func TestDBTValidation_RevisesTheLastCallWithTheFindings(t *testing.T) {
+	first := stepOne(fixedSQL)
+	first.Confidence = "medium"
+	second := stepTwo(fixedSource, "medium")
+	round1w := &fakeArtifacts{}
+	m := answers(first, second)
+	round1 := proposeValidation(t, round1w, failure(nil), validationEvidence(resolvedBundle()), m)
+	require.Len(t, m.reqs, 2)
+
+	revised := stepTwo("select  better  from t -- real source", "high")
+	revised.Rationale = "qualified the column"
+	m.answers = append(m.answers, modelAnswer{res: revised})
+	w := &fakeArtifacts{}
+	out, err := newValidationPrompt(w).Propose(context.Background(),
+		revisionInput(round1.Draft, m.reqs[1], second, revisionFindings, validationEvidence(resolvedBundle())), m)
+
+	require.NoError(t, err)
+	require.Len(t, m.reqs, 3, "a later round makes one model call, the source fix revised, and does not diagnose again")
+	assert.Equal(t, prompt.Revise(m.reqs[1], step.AnswerJSON(second), step.FindingLines(revisionFindings)), m.reqs[2])
+	assert.NotEqual(t, m.reqs[1], m.reqs[2])
+	assert.Empty(t, w.writes, "the candidate artifacts are the first round's")
+	assert.Equal(t, remediation.Draft{
+		Edits: []remediation.Edit{{
+			Path:         repoFilePath,
+			Original:     modelSource,
+			Content:      "select  better  from t -- real source",
+			TargetNodeID: "model.svc.a",
+			ContentKey:   "proposed-fix/rel-1/model.svc.a/attempt-2.source.sql",
+			DiffKey:      "proposed-fix/rel-1/model.svc.a/attempt-2.source.diff",
+		}},
+		Rationale:           "qualified the column",
+		Confidence:          "medium",
+		Model:               "model-1",
+		SuspectedRoot:       "model.svc.root",
+		CandidateFixSQLURI:  "s3://artifacts/proposed-fix/rel-1/model.svc.a/attempt-2.sql",
+		CandidateFixDiffURI: "s3://artifacts/proposed-fix/rel-1/model.svc.a/attempt-2.diff",
+		SourceResolved:      true,
+	}, out.Draft, "the first call's parts come from the previous draft, the edit from the revised answer")
+}
+
+func TestDBTValidation_ADegradedRevisionOfTheSourceFixKeepsThePreviousDraftsCandidateFix(t *testing.T) {
+	cases := map[string]ports.ProposeResult{
+		"a low-confidence answer":       stepTwo(fixedSource, "low"),
+		"an empty answer":               stepTwo("", "high"),
+		"an answer equal to the source": stepTwo(modelSource, "high"),
+	}
+	for name, revised := range cases {
+		t.Run(name, func(t *testing.T) {
+			first := stepOne(fixedSQL)
+			second := stepTwo(fixedSource, "high")
+			m := answers(first, second)
+			round1 := proposeValidation(t, &fakeArtifacts{}, failure(nil), validationEvidence(resolvedBundle()), m)
+			m.answers = append(m.answers, modelAnswer{res: revised})
+
+			out, err := newValidationPrompt(&fakeArtifacts{}).Propose(context.Background(),
+				revisionInput(round1.Draft, m.reqs[1], second, revisionFindings, validationEvidence(resolvedBundle())), m)
+
+			require.NoError(t, err)
+			require.Len(t, m.reqs, 3)
+			assert.Empty(t, out.Draft.Edits)
+			assert.False(t, out.Draft.SourceResolved)
+			assert.Equal(t, "high", out.Draft.Confidence)
+			assert.Equal(t, "model-1", out.Draft.Model)
+			assert.Equal(t, "model.svc.root", out.Draft.SuspectedRoot)
+			assert.Equal(t, round1.Draft.CandidateFixSQLURI, out.Draft.CandidateFixSQLURI)
+			assert.Equal(t, round1.Draft.CandidateFixDiffURI, out.Draft.CandidateFixDiffURI)
+			assert.NotEmpty(t, out.Draft.CandidateFixSQLURI)
+		})
+	}
+}
+
+// A first round whose diagnosis held no SQL made one call and no source fix. A
+// later round revises that diagnosis and, once it holds SQL, applies it to the
+// source as the first round does.
+func TestDBTValidation_ALaterRoundAfterADiagnosisWithNoSQLRevisesTheDiagnosisThenAppliesIt(t *testing.T) {
+	noSQL := stepOne("")
+	m := answers(noSQL)
+	round1 := proposeValidation(t, &fakeArtifacts{}, failure(nil), validationEvidence(resolvedBundle()), m)
+	require.Len(t, m.reqs, 1)
+	m.answers = append(m.answers, modelAnswer{res: stepOne(fixedSQL)}, modelAnswer{res: stepTwo(fixedSource, "high")})
+	w := &fakeArtifacts{}
+
+	out, err := newValidationPrompt(w).Propose(context.Background(),
+		revisionInput(round1.Draft, m.reqs[0], noSQL, revisionFindings, validationEvidence(resolvedBundle())), m)
+
+	require.NoError(t, err)
+	require.Len(t, m.reqs, 3)
+	assert.Equal(t, prompt.Revise(firstRequest(true), step.AnswerJSON(noSQL), step.FindingLines(revisionFindings)), m.reqs[1], "the diagnosis is revised")
+	assert.Equal(t, secondRequest(), m.reqs[2], "and its answer is applied to the source as in the first round")
+	assert.Len(t, w.writes, 2)
+	fresh := proposeValidation(t, &fakeArtifacts{}, failure(nil), validationEvidence(resolvedBundle()),
+		answers(stepOne(fixedSQL), stepTwo(fixedSource, "high")))
+	assert.Equal(t, fresh.Draft, out.Draft, "the draft is the one the first round builds from the same answers")
+}
+
+func TestDBTValidation_ARevisedDiagnosisWithNoSQLMakesOneCallAndOffersNothing(t *testing.T) {
+	noSQL := stepOne("")
+	m := answers(noSQL)
+	round1 := proposeValidation(t, &fakeArtifacts{}, failure(nil), validationEvidence(resolvedBundle()), m)
+	m.answers = append(m.answers, modelAnswer{res: noSQL})
+	w := &fakeArtifacts{}
+
+	out, err := newValidationPrompt(w).Propose(context.Background(),
+		revisionInput(round1.Draft, m.reqs[0], noSQL, revisionFindings, validationEvidence(resolvedBundle())), m)
+
+	require.NoError(t, err)
+	require.Len(t, m.reqs, 2)
+	assert.Empty(t, w.writes)
+	assert.Empty(t, out.Draft.Edits)
+	assert.Empty(t, out.Draft.CandidateFixSQLURI)
+}
+
+func TestDBTValidation_ALaterRoundWithoutThePreviousCallIsAnErrorAndCallsNoModel(t *testing.T) {
+	req, res := secondRequest(), stepTwo(fixedSource, "high")
+	prev := remediation.Draft{Rationale: diagnosisNote}
+	cases := map[string]step.PromptInput{
+		"no previous call":    {Round: 1, Previous: &prev},
+		"no previous request": {Round: 1, Previous: &prev, PreviousAnswer: &res},
+		"no previous answer":  {Round: 1, Previous: &prev, PreviousRequest: &req},
+		"no previous draft":   {Round: 1, PreviousRequest: &req, PreviousAnswer: &res},
+	}
+	for name, in := range cases {
+		t.Run(name, func(t *testing.T) {
+			in.Failure, in.Evidence = failure(nil), validationEvidence(resolvedBundle())
+			m := answers(stepTwo(fixedSource, "high"))
+
+			_, err := newValidationPrompt(&fakeArtifacts{}).Propose(context.Background(), in, m)
+
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "dbt-validation")
+			assert.Empty(t, m.reqs)
+		})
+	}
+}

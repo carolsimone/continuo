@@ -376,6 +376,41 @@ func TestRunner_EveryStepWritesOneJournalRow(t *testing.T) {
 	assert.False(t, p.CacheHit)
 }
 
+func TestRunner_ThePromptRowStoresTheLastModelCall(t *testing.T) {
+	h := newHarness(t)
+	id := h.accept(trigger("compile", compileNode("svc-a")))
+
+	require.NoError(t, h.runner.Drive(ctx, id))
+
+	rec, err := serialization.DecodeRecord[serialization.PromptRecord](h.stepRows(id, 1, 1)["dbt-compile"][0].Output)
+	require.NoError(t, err)
+	require.NotNil(t, rec.LastRequest)
+	require.NotNil(t, rec.LastAnswer)
+	req := h.llm.lastRequest()
+	assert.Equal(t, req, rec.LastRequest.Request())
+	assert.Equal(t, fixAnswer(req), rec.LastAnswer.Answer())
+	assert.Equal(t, "select 2", rec.Draft.Edits[0].Content)
+}
+
+func TestRunner_ARestartThatReplaysTheCachedAnswerStoresTheSameLastModelCall(t *testing.T) {
+	h := newHarness(t)
+	h.llm.onCall = func(int) { h.store.FailNextCommit() }
+	id := h.accept(trigger("compile", compileNode("svc-a")))
+	require.Error(t, h.runner.Drive(ctx, id), "the prompt step's commit fails after the model call")
+
+	h.llm.onCall = nil
+	require.NoError(t, h.runner.Drive(ctx, id))
+
+	assert.Equal(t, 1, h.llm.calls(), "the answer is replayed from the cache")
+	rec, err := serialization.DecodeRecord[serialization.PromptRecord](h.stepRows(id, 1, 1)["dbt-compile"][0].Output)
+	require.NoError(t, err)
+	require.NotNil(t, rec.LastRequest)
+	require.NotNil(t, rec.LastAnswer)
+	assert.Equal(t, h.llm.lastRequest(), rec.LastRequest.Request())
+	assert.Equal(t, "select 2", rec.LastAnswer.Answer().ProposedContent)
+	assert.True(t, rec.LastAnswer.Answer().Cached)
+}
+
 func TestRunner_AStepErrorIsRecordedAndRunsAgain(t *testing.T) {
 	h := newHarness(t)
 	h.source.fail = errors.New("github is down")

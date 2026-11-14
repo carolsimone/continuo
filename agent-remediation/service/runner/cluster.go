@@ -165,7 +165,7 @@ func (r *Runner) runPrompt(ctx context.Context, run tryRun, c remediation.Cluste
 	if err != nil {
 		return r.recordFailure(ctx, row, fmt.Errorf("step %s: %w", ps.name, err))
 	}
-	if row.Output, err = serialization.EncodeRecord(serialization.PromptRecord{Draft: out.Draft, Declined: out.Declined, Decline: out.Decline}); err != nil {
+	if row.Output, err = serialization.EncodeRecord(promptRecord(out, m)); err != nil {
 		return r.recordFailure(ctx, row, fmt.Errorf("encode the output of step %s: %w", ps.name, err))
 	}
 	r.finish(&row)
@@ -186,6 +186,19 @@ func (r *Runner) runPrompt(ctx context.Context, run tryRun, c remediation.Cluste
 		return err
 	}
 	return r.commitStep(ctx, run, row, []remediation.StepRun{row}, append([]remediation.Cluster{next}, added...))
+}
+
+// promptRecord is the journal record of a prompt step's output: its draft or
+// its decline and, for a step that made a model call and did not decline, the
+// last call it made, which a later round revises. A declined cluster takes no
+// later round, so a decline stores no call.
+func promptRecord(out step.PromptOutput, m *model) serialization.PromptRecord {
+	rec := serialization.PromptRecord{Draft: out.Draft, Declined: out.Declined, Decline: out.Decline}
+	if !out.Declined && m.calls > 0 {
+		req, answer := serialization.RequestOf(m.lastRequest), serialization.AnswerOf(m.lastAnswer)
+		rec.LastRequest, rec.LastAnswer = &req, &answer
+	}
+	return rec
 }
 
 // runPreflight runs every pre-flight check of the cluster's type on the draft,

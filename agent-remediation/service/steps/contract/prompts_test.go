@@ -233,3 +233,71 @@ func TestPrompts_NeedTheContractFileAndReturnTheModelError(t *testing.T) {
 		})
 	}
 }
+
+// revisesTheLastCall runs the step's first round, then a second round that
+// carries the first one's draft, last call and findings. It asserts the second
+// round makes one model call, the revision of the first round's request with
+// its answer and the findings, and that the draft it returns is the one the
+// first round builds from the same answer.
+func revisesTheLastCall(t *testing.T, tc promptCase) {
+	t.Helper()
+	f := failure(func(f *remediation.Failure) { f.Target.NodeType = tc.nodeType })
+	first := answer(ports.ProposedFile{Path: "svc/contracts/fx.yaml", Content: "first try"})
+	second := answer(
+		ports.ProposedFile{Path: "svc/contracts/fx.yaml", Content: "second try"},
+		ports.ProposedFile{Path: "svc/contracts/shared.yaml", Content: "second shared"},
+	)
+	m := answers(first, second)
+	round1 := proposeWith(t, tc.build(), f, promptEvidence(), m)
+	findings := []remediation.Finding{
+		{Code: "contract_rejected", Message: "the packager refused the contract: column amount is not declared", File: "svc/contracts/fx.yaml"},
+		{Code: "content_unchanged", Message: "the model returned the file unchanged, which is not a fix"},
+	}
+
+	out, err := tc.build().Propose(context.Background(), step.PromptInput{
+		Failure: f, Evidence: promptEvidence(), Round: 1,
+		Previous: &round1.Draft, PreviousRequest: &m.reqs[0], PreviousAnswer: &first, Findings: findings,
+	}, m)
+
+	require.NoError(t, err)
+	require.Len(t, m.reqs, 2, "a later round makes one model call")
+	assert.Equal(t, prompt.Revise(m.reqs[0], step.AnswerJSON(first), step.FindingLines(findings)), m.reqs[1])
+	assert.NotEqual(t, m.reqs[0], m.reqs[1])
+	again := proposeWith(t, tc.build(), f, promptEvidence(), answers(second))
+	assert.Equal(t, again.Draft, out.Draft, "the answer is read as the first round's answer is")
+}
+
+func TestPythonContract_RevisesTheLastCallWithTheFindings(t *testing.T) {
+	revisesTheLastCall(t, promptCases()[0])
+}
+
+func TestPythonParse_RevisesTheLastCallWithTheFindings(t *testing.T) {
+	revisesTheLastCall(t, promptCases()[1])
+}
+
+func TestCSVContract_RevisesTheLastCallWithTheFindings(t *testing.T) {
+	revisesTheLastCall(t, promptCases()[2])
+}
+
+func TestPrompts_ALaterRoundWithoutThePreviousCallIsAnErrorAndCallsNoModel(t *testing.T) {
+	req, res := prompt.ProposeRequest{User: "u"}, answer()
+	cases := map[string]step.PromptInput{
+		"no previous call":    {Round: 1},
+		"no previous request": {Round: 1, PreviousAnswer: &res},
+		"no previous answer":  {Round: 1, PreviousRequest: &req},
+	}
+	for _, tc := range promptCases() {
+		for name, in := range cases {
+			t.Run(tc.name+" "+name, func(t *testing.T) {
+				in.Failure, in.Evidence = failure(nil), promptEvidence()
+				m := answers(answer())
+
+				_, err := tc.build().Propose(context.Background(), in, m)
+
+				require.Error(t, err)
+				assert.ErrorContains(t, err, tc.wantStep)
+				assert.Empty(t, m.reqs)
+			})
+		}
+	}
+}

@@ -80,11 +80,15 @@ type ContextRecord struct {
 }
 
 // PromptRecord is a prompt step's output as its row stores it: the model's
-// draft, or its decision to decline the cluster.
+// draft, or its decision to decline the cluster. A step that made a model call
+// and did not decline also stores the last call it made, its request and the
+// answer it got, which a later round revises.
 type PromptRecord struct {
-	Draft    remediation.Draft `json:"draft"`
-	Declined bool              `json:"declined,omitempty"`
-	Decline  string            `json:"decline,omitempty"`
+	Draft       remediation.Draft `json:"draft"`
+	Declined    bool              `json:"declined,omitempty"`
+	Decline     string            `json:"decline,omitempty"`
+	LastRequest *RequestWire      `json:"last_request,omitempty"`
+	LastAnswer  *AnswerWire       `json:"last_answer,omitempty"`
 }
 
 // CheckRecord is a check's output as its row stores it: its result and, for a

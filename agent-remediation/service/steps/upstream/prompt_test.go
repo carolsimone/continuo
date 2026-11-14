@@ -179,3 +179,47 @@ func TestPrompt_RefusesAServiceWithNoRepositoryPath(t *testing.T) {
 	require.Error(t, err)
 	assert.Empty(t, model.reqs, "no model call is made for a target that cannot be edited")
 }
+
+func TestUpstream_RevisesTheLastCallWithTheFindings(t *testing.T) {
+	first, second := answer(targetSource, "high"), answer(fixedSource, "medium")
+	model := &fakeModel{res: first}
+	round1 := proposeUpstream(t, failure(nil), upstreamEvidence(), model)
+	findings := []remediation.Finding{
+		{Code: "content_unchanged", Message: "the model returned the file unchanged, which is not a fix", File: "services/up-svc/models/up.sql"},
+		{Code: "confidence_low", Message: "the model rated its own fix low"},
+	}
+
+	model.res = second
+	out, err := newPrompt().Propose(context.Background(), step.PromptInput{
+		Failure: failure(nil), Evidence: upstreamEvidence(), Round: 1,
+		Previous: &round1.Draft, PreviousRequest: &model.reqs[0], PreviousAnswer: &first, Findings: findings,
+	}, model)
+
+	require.NoError(t, err)
+	require.Len(t, model.reqs, 2, "a later round makes one model call")
+	assert.Equal(t, prompt.Revise(model.reqs[0], step.AnswerJSON(first), step.FindingLines(findings)), model.reqs[1])
+	assert.NotEqual(t, model.reqs[0], model.reqs[1])
+	again := proposeUpstream(t, failure(nil), upstreamEvidence(), &fakeModel{res: second})
+	assert.Equal(t, again.Draft, out.Draft, "the answer is read as the first round's answer is")
+}
+
+func TestPrompt_ALaterRoundWithoutThePreviousCallIsAnErrorAndCallsNoModel(t *testing.T) {
+	req, res := prompt.ProposeRequest{User: "u"}, answer(fixedSource, "high")
+	cases := map[string]step.PromptInput{
+		"no previous call":    {Round: 1},
+		"no previous request": {Round: 1, PreviousAnswer: &res},
+		"no previous answer":  {Round: 1, PreviousRequest: &req},
+	}
+	for name, in := range cases {
+		t.Run(name, func(t *testing.T) {
+			in.Failure, in.Evidence = failure(nil), upstreamEvidence()
+			model := &fakeModel{res: res}
+
+			_, err := newPrompt().Propose(context.Background(), in, model)
+
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "upstream")
+			assert.Empty(t, model.reqs)
+		})
+	}
+}

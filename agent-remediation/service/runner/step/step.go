@@ -85,14 +85,18 @@ type Prompt interface {
 }
 
 // PromptInput is what a prompt step reads. Round is the pre-flight round, 0 for
-// the first. Previous and Findings are set on a revision: the draft the last
-// round produced and what the checks found in it.
+// the first. The rest is set on a revision, a round after the first: Previous is
+// the draft the last round produced, PreviousRequest and PreviousAnswer are the
+// last model call of that round, and Findings is what the checks found in the
+// draft. A step revises through RevisionRequest.
 type PromptInput struct {
-	Failure  remediation.Failure
-	Evidence remediation.Evidence
-	Round    int
-	Previous *remediation.Draft
-	Findings []remediation.Finding
+	Failure         remediation.Failure
+	Evidence        remediation.Evidence
+	Round           int
+	Previous        *remediation.Draft
+	PreviousRequest *prompt.ProposeRequest
+	PreviousAnswer  *ports.ProposeResult
+	Findings        []remediation.Finding
 }
 
 // PromptOutput is the draft a prompt step read from the model's answer, or a

@@ -1,0 +1,65 @@
+package step_test
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
+	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
+	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+)
+
+func previousCall() (prompt.ProposeRequest, ports.ProposeResult) {
+	req := prompt.ProposeRequest{System: "fix it", User: "Failed node: a", ToolName: "propose_fix"}
+	res := ports.ProposeResult{ProposedSQL: "select 1", Rationale: "because", Confidence: "high"}
+	return req, res
+}
+
+func TestRevisionRequest_TheFirstRoundIsNotARevision(t *testing.T) {
+	req, res := previousCall()
+
+	got, revising, err := step.RevisionRequest(step.PromptInput{Round: 0})
+	require.NoError(t, err)
+	assert.False(t, revising)
+	assert.Equal(t, prompt.ProposeRequest{}, got)
+
+	// The round decides: what an input carries from a call is not read in the first round.
+	_, revising, err = step.RevisionRequest(step.PromptInput{Round: 0, PreviousRequest: &req, PreviousAnswer: &res})
+	require.NoError(t, err)
+	assert.False(t, revising)
+}
+
+func TestRevisionRequest_ALaterRoundRevisesThePreviousCallWithEveryFinding(t *testing.T) {
+	req, res := previousCall()
+	findings := []remediation.Finding{
+		{Code: "content_unchanged", Message: "the model returned the file unchanged, which is not a fix", File: "models/a.sql"},
+		{Code: "sql_parse", Message: "unexpected token", File: "models/a.sql", Line: 3},
+	}
+
+	got, revising, err := step.RevisionRequest(step.PromptInput{Round: 1, PreviousRequest: &req, PreviousAnswer: &res, Findings: findings})
+
+	require.NoError(t, err)
+	assert.True(t, revising)
+	assert.Equal(t, prompt.Revise(req, step.AnswerJSON(res), step.FindingLines(findings)), got)
+}
+
+func TestRevisionRequest_ALaterRoundWithoutThePreviousCallIsAnError(t *testing.T) {
+	req, res := previousCall()
+	cases := map[string]step.PromptInput{
+		"no previous call":    {Round: 1},
+		"no previous request": {Round: 2, PreviousAnswer: &res},
+		"no previous answer":  {Round: 2, PreviousRequest: &req},
+	}
+	for name, in := range cases {
+		t.Run(name, func(t *testing.T) {
+			got, revising, err := step.RevisionRequest(in)
+
+			require.Error(t, err)
+			assert.False(t, revising)
+			assert.Equal(t, prompt.ProposeRequest{}, got)
+		})
+	}
+}

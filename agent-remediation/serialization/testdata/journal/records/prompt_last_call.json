@@ -1,0 +1,65 @@
+{
+  "draft": {
+    "Edits": [
+      {
+        "Path": "services/orders/models/orders_daily.sql",
+        "Original": "select 1",
+        "Content": "select 2",
+        "TargetNodeID": "orders.model.orders_daily",
+        "ContentKey": "proposed-fix/rel-1/orders/attempt-3.source.sql",
+        "DiffKey": "proposed-fix/rel-1/orders/attempt-3.source.diff",
+        "ContentURI": "s3://artifacts/proposed-fix/rel-1/orders/attempt-3.source.sql",
+        "DiffURI": "s3://artifacts/proposed-fix/rel-1/orders/attempt-3.source.diff"
+      }
+    ],
+    "NamedTarget": "models/orders_daily.sql",
+    "TargetShown": true,
+    "Rationale": "the column was renamed upstream",
+    "Confidence": "high",
+    "Model": "model-1",
+    "SuspectedRoot": "orders.model.stg_orders",
+    "CandidateFixSQLURI": "s3://artifacts/fix.sql",
+    "CandidateFixDiffURI": "s3://artifacts/fix.diff",
+    "SourceResolved": true
+  },
+  "last_request": {
+    "system": "You fix dbt models.",
+    "user": "Failed node: orders.model.orders_daily",
+    "tool_name": "propose_fix",
+    "tool_description": "Propose a corrected version of the failed model.",
+    "tool_params": [
+      {
+        "name": "updated_files",
+        "type": "array",
+        "description": "Every file changed.",
+        "required": true,
+        "items": [
+          {
+            "name": "path",
+            "type": "string",
+            "description": "The file path.",
+            "required": true
+          }
+        ]
+      }
+    ]
+  },
+  "last_answer": {
+    "proposed_sql": "select 2",
+    "proposed_content": "a,b\n1,2\n",
+    "target_file": "seeds/a.csv",
+    "files": [
+      {
+        "path": "contracts/fx.yaml",
+        "content": "nodes: []"
+      }
+    ],
+    "rationale": "the column was renamed upstream",
+    "confidence": "high",
+    "suspected_root_cause_node": "orders.model.stg_orders",
+    "model": "model-1",
+    "input_tokens": 100,
+    "output_tokens": 20,
+    "cached": true
+  }
+}

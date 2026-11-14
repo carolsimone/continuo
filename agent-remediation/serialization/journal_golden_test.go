@@ -17,6 +17,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
+	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 )
 
@@ -49,31 +50,36 @@ func golden(t *testing.T, name string, got []byte) []byte {
 // requireEveryFieldSet fails unless every exported field of v, at every depth,
 // holds a value that is not its zero value, and every slice and map holds at
 // least one element. A golden file made from such a value names every field, so
-// a field added to or renamed in the type changes it.
-func requireEveryFieldSet(t *testing.T, path string, v reflect.Value) {
+// a field added to or renamed in the type changes it. A path in unchecked, in
+// the form of the failure messages, is left unchecked with everything below it,
+// which is how the check stops at a type that holds itself.
+func requireEveryFieldSet(t *testing.T, path string, v reflect.Value, unchecked ...string) {
 	t.Helper()
+	if slices.Contains(unchecked, path) {
+		return
+	}
 	switch v.Kind() {
 	case reflect.Interface, reflect.Pointer:
 		require.False(t, v.IsNil(), "%s is nil", path)
-		requireEveryFieldSet(t, path, v.Elem())
+		requireEveryFieldSet(t, path, v.Elem(), unchecked...)
 	case reflect.Struct:
 		for i := range v.NumField() {
 			f := v.Type().Field(i)
 			if !f.IsExported() {
 				continue
 			}
-			requireEveryFieldSet(t, path+"."+f.Name, v.Field(i))
+			requireEveryFieldSet(t, path+"."+f.Name, v.Field(i), unchecked...)
 		}
 	case reflect.Slice, reflect.Map:
 		require.Positive(t, v.Len(), "%s is empty", path)
 		if v.Kind() == reflect.Slice {
 			for i := range v.Len() {
-				requireEveryFieldSet(t, path+"[]", v.Index(i))
+				requireEveryFieldSet(t, path+"[]", v.Index(i), unchecked...)
 			}
 			return
 		}
 		for _, k := range v.MapKeys() {
-			requireEveryFieldSet(t, path+"[]", v.MapIndex(k))
+			requireEveryFieldSet(t, path+"[]", v.MapIndex(k), unchecked...)
 		}
 	default:
 		require.False(t, v.IsZero(), "%s is its zero value", path)
@@ -143,6 +149,37 @@ func sampleDraft() remediation.Draft {
 		CandidateFixSQLURI:  "s3://artifacts/fix.sql",
 		CandidateFixDiffURI: "s3://artifacts/fix.diff",
 		SourceResolved:      true,
+	}
+}
+
+// sampleRequest is a model request with every field set, a tool parameter with
+// element parameters included.
+func sampleRequest() prompt.ProposeRequest {
+	return prompt.ProposeRequest{
+		System:          "You fix dbt models.",
+		User:            "Failed node: orders.model.orders_daily",
+		ToolName:        "propose_fix",
+		ToolDescription: "Propose a corrected version of the failed model.",
+		ToolParams: []prompt.ToolParam{{
+			Name: "updated_files", Type: "array", Description: "Every file changed.", Required: true,
+			Items: []prompt.ToolParam{{Name: "path", Type: "string", Description: "The file path.", Required: true}},
+		}},
+	}
+}
+
+// sampleAnswer is a model answer with every field set.
+func sampleAnswer() ports.ProposeResult {
+	return ports.ProposeResult{
+		ProposedSQL:            "select 2",
+		ProposedContent:        "a,b\n1,2\n",
+		TargetFile:             "seeds/a.csv",
+		Files:                  []ports.ProposedFile{{Path: "contracts/fx.yaml", Content: "nodes: []"}},
+		Rationale:              "the column was renamed upstream",
+		Confidence:             "high",
+		SuspectedRootCauseNode: "orders.model.stg_orders",
+		Model:                  "model-1",
+		Usage:                  ports.TokenUsage{Input: 100, Output: 20},
+		Cached:                 true,
 	}
 }
 
@@ -315,6 +352,7 @@ func TestJournal_RecordsKeepTheirStoredJSON(t *testing.T) {
 		assert.Equal(t, want, have)
 	}
 
+	lastRequest, lastAnswer := serialization.RequestOf(sampleRequest()), serialization.AnswerOf(sampleAnswer())
 	records := []record{
 		recordOf("context", serialization.ContextRecord{Evidence: evidence}, func(t *testing.T, got serialization.ContextRecord) {
 			sameEvidence(t, got.Evidence)
@@ -325,6 +363,13 @@ func TestJournal_RecordsKeepTheirStoredJSON(t *testing.T) {
 		}),
 		recordOf("prompt", serialization.PromptRecord{Draft: sampleDraft()}, func(t *testing.T, got serialization.PromptRecord) {
 			assert.Equal(t, serialization.PromptRecord{Draft: sampleDraft()}, got)
+		}),
+		recordOf("prompt_last_call", serialization.PromptRecord{Draft: sampleDraft(), LastRequest: &lastRequest, LastAnswer: &lastAnswer}, func(t *testing.T, got serialization.PromptRecord) {
+			assert.Equal(t, sampleDraft(), got.Draft)
+			require.NotNil(t, got.LastRequest)
+			require.NotNil(t, got.LastAnswer)
+			assert.Equal(t, sampleRequest(), got.LastRequest.Request())
+			assert.Equal(t, sampleAnswer(), got.LastAnswer.Answer())
 		}),
 		recordOf("prompt_declined", serialization.PromptRecord{Declined: true, Decline: "the model declined"}, func(t *testing.T, got serialization.PromptRecord) {
 			assert.Equal(t, serialization.PromptRecord{Declined: true, Decline: "the model declined"}, got)
@@ -341,6 +386,12 @@ func TestJournal_RecordsKeepTheirStoredJSON(t *testing.T) {
 		}),
 	}
 	requireEveryFieldSet(t, "draft", reflect.ValueOf(sampleDraft()))
+	// A tool parameter holds the parameters of its elements, so the check stops
+	// at the elements' own.
+	requireEveryFieldSet(t, "request", reflect.ValueOf(sampleRequest()), "request.ToolParams[].Items[].Items")
+	requireEveryFieldSet(t, "answer", reflect.ValueOf(sampleAnswer()))
+	requireEveryFieldSet(t, "request wire", reflect.ValueOf(lastRequest), "request wire.ToolParams[].Items[].Items")
+	requireEveryFieldSet(t, "answer wire", reflect.ValueOf(lastAnswer))
 	requireEveryFieldSet(t, "check result", reflect.ValueOf(sampleCheckResult()))
 	for _, r := range records {
 		t.Run(r.name, func(t *testing.T) {
@@ -349,6 +400,23 @@ func TestJournal_RecordsKeepTheirStoredJSON(t *testing.T) {
 			r.decoded(t, golden(t, "records/"+r.name, out))
 		})
 	}
+}
+
+// A last call with nothing set, a request with no tool parameters and an answer
+// with no file among them, is stored and read back as it is.
+func TestJournal_ALastCallWithNothingSetRoundTrips(t *testing.T) {
+	req, res := prompt.ProposeRequest{User: "u"}, ports.ProposeResult{Rationale: "r"}
+	wantReq, wantRes := serialization.RequestOf(req), serialization.AnswerOf(res)
+
+	out, err := serialization.EncodeRecord(serialization.PromptRecord{LastRequest: &wantReq, LastAnswer: &wantRes})
+	require.NoError(t, err)
+	got, err := serialization.DecodeRecord[serialization.PromptRecord](out)
+
+	require.NoError(t, err)
+	require.NotNil(t, got.LastRequest)
+	require.NotNil(t, got.LastAnswer)
+	assert.Equal(t, req, got.LastRequest.Request())
+	assert.Equal(t, res, got.LastAnswer.Answer())
 }
 
 func TestJournal_DecodeRecordReturnsTheZeroRecordForOutputThatDoesNotDecode(t *testing.T) {

@@ -23,3 +23,10 @@ func Revise(req ProposeRequest, previousAnswerJSON string, findings []string) Pr
 	req.User = u.String()
 	return req
 }
+
+// IsSourceFix reports whether req asks the model to apply a diagnosis to a dbt
+// model's real source: the request AssembleSourceFix builds, or a Revise of it.
+// A request is told apart by its system prompt, which Revise keeps.
+func IsSourceFix(req ProposeRequest) bool {
+	return req.System == sourceFixSystemPrompt
+}

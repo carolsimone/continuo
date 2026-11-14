@@ -231,3 +231,93 @@ func TestPrompts_WithoutSourceFilesAreAnErrorAndCallNoModel(t *testing.T) {
 	assert.ErrorContains(t, err, "dbt-compile")
 	assert.Empty(t, m.reqs)
 }
+
+// revisesTheLastCall runs the step's first round, then a second round that
+// carries the first one's draft, last call and findings. It asserts the second
+// round makes one model call, the revision of the first round's request with
+// its answer and the findings, and that the draft it returns is the one the
+// first round builds from the same answer.
+func revisesTheLastCall(t *testing.T, p step.Prompt, f remediation.Failure, ev remediation.Evidence, first, second ports.ProposeResult) {
+	t.Helper()
+	m := &fakeModel{results: []ports.ProposeResult{first, second}}
+	round1 := propose(t, p, f, ev, m)
+	findings := []remediation.Finding{
+		{Code: "content_unchanged", Message: "the model returned the file unchanged, which is not a fix", File: sqlPath},
+		{Code: "sql_parse", Message: "unexpected token", File: sqlPath, Line: 3},
+	}
+
+	out, err := p.Propose(context.Background(), step.PromptInput{
+		Failure: f, Evidence: ev, Round: 1,
+		Previous: &round1.Draft, PreviousRequest: &m.reqs[0], PreviousAnswer: &first, Findings: findings,
+	}, m)
+
+	require.NoError(t, err)
+	require.Len(t, m.reqs, 2, "a later round makes one model call")
+	assert.Equal(t, prompt.Revise(m.reqs[0], step.AnswerJSON(first), step.FindingLines(findings)), m.reqs[1])
+	assert.NotEqual(t, m.reqs[0], m.reqs[1])
+	again := propose(t, p, f, ev, &fakeModel{results: []ports.ProposeResult{second}})
+	assert.Equal(t, again.Draft, out.Draft, "the answer is read as the first round's answer is")
+}
+
+func TestDBTCompile_RevisesTheLastCallWithTheFindings(t *testing.T) {
+	f := failure("compile", remediation.TriggerNode{NodeID: "svc", FilePath: "models/x.sql"})
+
+	revisesTheLastCall(t, source.NewDBTCompile(markSanitizer{}), f, evidenceFor(shownFiles),
+		answer("models/x.sql", "select 1"), answer("models/x.sql", "select 3"))
+}
+
+func TestDBTParse_RevisesTheLastCallWithTheFindings(t *testing.T) {
+	f := failure("parse", remediation.TriggerNode{NodeID: "model.svc.x", Service: "svc", FilePath: "models/x.sql", ErrorExcerpt: "parse error near from"})
+
+	revisesTheLastCall(t, source.NewDBTParse(markSanitizer{}), f, evidenceFor(shownFiles),
+		answer("models/x.sql", "select from"), answer("models/x.sql", "select 3"))
+}
+
+func TestSeed_RevisesTheLastCallWithTheFindings(t *testing.T) {
+	csv := remediation.SourceFiles{Files: map[string]string{"services/svc/seeds/a.csv": "a,b\n1"}, Order: []string{"services/svc/seeds/a.csv"}, Primary: "services/svc/seeds/a.csv", Service: "svc"}
+	f := failure("seed_build", remediation.TriggerNode{NodeID: "seed.svc.a", Service: "svc", FilePath: "seeds/a.csv"})
+
+	revisesTheLastCall(t, source.NewSeed(markSanitizer{}), f, evidenceFor(csv),
+		answer("", "a,b\n1"), answer("", "a,b\n1,2"))
+}
+
+func TestDuplicateTable_RevisesTheLastCallWithTheFindings(t *testing.T) {
+	one := remediation.SourceFiles{Files: map[string]string{sqlPath: "select 1"}, Order: []string{sqlPath}, Primary: sqlPath, Service: "svc"}
+	f := failure("duplicate_table", remediation.TriggerNode{
+		NodeID: "model.svc.x", RelationID: "analytics.orders", Service: "svc", FilePath: "models/x.sql",
+		OtherService: "billing", OtherFilePath: "models/orders.sql",
+	})
+
+	revisesTheLastCall(t, source.NewDuplicateTable(markSanitizer{}), f, evidenceFor(one),
+		answer("", "select 1"), answer("", "select 1 as renamed"))
+}
+
+func TestPrompts_ALaterRoundWithoutThePreviousCallIsAnErrorAndCallsNoModel(t *testing.T) {
+	f := failure("compile", remediation.TriggerNode{NodeID: "svc", FilePath: "models/x.sql"})
+	req, res := prompt.ProposeRequest{User: "u"}, answer("models/x.sql", "select 2")
+	cases := map[string]step.PromptInput{
+		"no previous call":    {Round: 1},
+		"no previous request": {Round: 1, PreviousAnswer: &res},
+		"no previous answer":  {Round: 1, PreviousRequest: &req},
+	}
+	steps := map[string]step.Prompt{
+		"dbt-compile":     source.NewDBTCompile(markSanitizer{}),
+		"dbt-parse":       source.NewDBTParse(markSanitizer{}),
+		"seed":            source.NewSeed(markSanitizer{}),
+		"duplicate-table": source.NewDuplicateTable(markSanitizer{}),
+	}
+	for stepName, p := range steps {
+		for name, in := range cases {
+			t.Run(stepName+" "+name, func(t *testing.T) {
+				in.Failure, in.Evidence = f, evidenceFor(shownFiles)
+				m := &fakeModel{}
+
+				_, err := p.Propose(context.Background(), in, m)
+
+				require.Error(t, err)
+				assert.ErrorContains(t, err, stepName)
+				assert.Empty(t, m.reqs)
+			})
+		}
+	}
+}
