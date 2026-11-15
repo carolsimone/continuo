@@ -22,12 +22,17 @@ concurrency:
 
 jobs:
   ci:
-    # Fork-gated runner. Maintainer PRs (branches pushed inside this repo) run on
-    # the self-hosted box (warm caches); fork PRs from outside contributors run on
-    # free GitHub-hosted (sandboxed) — never on the self-hosted box, which has
-    # prod-deploy reach. This expression is the routing default; the actual
-    # security boundary is the repo setting "Require approval for all outside
-    # collaborators", since a fork could otherwise edit this line.
+    # Author-gated runner. A PR runs on the self-hosted box (warm caches) when
+    # its branch lives in this repo, or when it comes from a fork and its author
+    # is the repo's owner, a member or a collaborator: each of them can push
+    # branches here, so a fork changes nothing about whose code reaches the box.
+    # A fork PR from anyone else runs on free GitHub-hosted (sandboxed) — never
+    # on the self-hosted box, which has prod-deploy reach. author_association is
+    # the author's role when the event fires, so an author whose access was
+    # removed runs on GitHub-hosted again. This expression is the routing
+    # default; the actual security boundary is the repo setting "Require
+    # approval for all outside collaborators", since a fork could otherwise edit
+    # this line.
     #
     # The `kind` label is REQUIRED, not decorative. This job runs scripts/setup.sh,
     # which creates a kind cluster named `continuo` — a fixed name — and whose
@@ -39,7 +44,8 @@ jobs:
     # so requiring it makes GitHub's scheduler serialize these jobs.
     #
     # fromJSON is needed because a ternary cannot yield a YAML sequence.
-    runs-on: ${{ github.event.pull_request.head.repo.fork
+    runs-on: ${{ (github.event.pull_request.head.repo.fork
+        && !contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association))
       && 'ubuntu-latest'
       || fromJSON('["self-hosted","kind"]') }}
     # Hard backstop against runaway runs. Without this the job inherits GitHub's
@@ -73,12 +79,13 @@ jobs:
 
     steps:
       - name: Free disk space
-        # GitHub-hosted only (the fork-PR path). ubuntu-latest ships ~30 GB of
-        # tools we never use (Android SDK, .NET, Haskell, large apt packages);
-        # removing them before any Docker work gives ~20 GB of headroom so kind
-        # can save image tarballs to /tmp. The self-hosted box has ample disk and
-        # no passwordless sudo for these paths, so this step is skipped there.
-        if: ${{ github.event.pull_request.head.repo.fork }}
+        # GitHub-hosted only (fork PRs of outside contributors). ubuntu-latest
+        # ships ~30 GB of tools we never use (Android SDK, .NET, Haskell, large
+        # apt packages); removing them before any Docker work gives ~20 GB of
+        # headroom so kind can save image tarballs to /tmp. The self-hosted box
+        # has ample disk and no passwordless sudo for these paths, so this step
+        # is skipped there — a collaborator's fork PR runs on that box too.
+        if: ${{ runner.environment == 'github-hosted' }}
         run: |
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /usr/share/dotnet
