@@ -33,10 +33,9 @@ _TEST_RETRY_SLEEP = 0.01  # real seconds; short enough to keep tests fast
 # second server-side, which is what paces the production loop on the
 # no-error/no-message path. A MagicMock returns instantly, so without some
 # pacing here start()'s `while True` spins as fast as the interpreter can
-# manage — GIL-starving the test's own thread and burning CPU for the rest
-# of the process, since these background threads are daemons with no stop
-# mechanism and outlive the test. This tiny real sleep keeps every side
-# effect below at a bounded, sane iteration rate instead.
+# manage — GIL-starving the test's own thread and burning CPU for as long as
+# the loop runs. This tiny real sleep keeps every side effect below at a
+# bounded, sane iteration rate instead.
 _TEST_ITERATION_PACING = 0.01
 
 
@@ -52,6 +51,18 @@ def _defang_sleep(monkeypatch):
         consumer_mod, "time",
         SimpleNamespace(sleep=lambda _s: time.sleep(_TEST_RETRY_SLEEP), monotonic=time.monotonic),
     )
+
+
+@pytest.fixture(autouse=True)
+def _no_thread_outlives_its_test():
+    """A thread a test starts must be over when the test is. A consumer loop
+    that keeps running calls the consumer module's `time`, which a later test
+    may have replaced with a fake clock of its own, and draws that clock's
+    ticks and sleeps."""
+    before = set(threading.enumerate())
+    yield
+    leaked = [t.name for t in threading.enumerate() if t not in before]
+    assert not leaked, f"threads still running after the test: {leaked}"
 
 
 def test_process_message_calls_message_handler_with_fields():
@@ -209,10 +220,35 @@ def test_reclaim_only_claims_messages_idle_for_at_least_a_minute():
 # matches the Go behavior: log, retry, keep consuming once the connection
 # recovers — never let the exception escape and end the loop.
 
-def _start_in_background(consumer: Consumer) -> threading.Thread:
-    t = threading.Thread(target=consumer.start, daemon=True)
-    t.start()
-    return t
+@pytest.fixture
+def start_in_background(monkeypatch):
+    """Run a consumer's real start() loop in a thread, and end it with the test.
+
+    start() has no stop call. A NOGROUP reply ends it, as it does in production
+    when the group is removed, so teardown makes the next XAUTOCLAIM answer that
+    and waits for the thread. `monkeypatch` is requested so that it is undone
+    only after the thread has ended: a loop caught in a sleep the test shortened
+    must not fall back to the real 3s one."""
+    started = []
+
+    def start(consumer, redis_mock):
+        def loop():
+            try:
+                consumer.start()
+            except redis_exceptions.ResponseError as e:
+                if "NOGROUP" not in str(e):
+                    raise
+
+        thread = threading.Thread(target=loop, daemon=True)
+        thread.start()
+        started.append((thread, redis_mock))
+        return thread
+
+    yield start
+
+    for thread, redis_mock in started:
+        redis_mock.xautoclaim.side_effect = redis_exceptions.ResponseError("NOGROUP the group is gone")
+        thread.join(timeout=5)
 
 
 def _holding(redis_mock, group, *keys):
@@ -226,7 +262,7 @@ def _holding(redis_mock, group, *keys):
     redis_mock.xinfo_groups.side_effect = xinfo_groups
 
 
-def test_start_survives_transient_connection_errors_and_keeps_consuming(monkeypatch):
+def test_start_survives_transient_connection_errors_and_keeps_consuming(monkeypatch, start_in_background):
     """A run of redis.exceptions.ConnectionError from _reclaim_stale_pending
     (the exact call site in the incident traceback) must not kill the
     consumer loop: it keeps retrying and successfully consumes a message once
@@ -266,7 +302,7 @@ def test_start_survives_transient_connection_errors_and_keeps_consuming(monkeypa
         service_name=_SERVICE_NAME,
     )
 
-    t = _start_in_background(c)
+    t = start_in_background(c, redis_mock)
 
     assert delivered.wait(timeout=5), "consumer never recovered after transient ConnectionErrors"
     deadline = time.monotonic() + 2
@@ -297,7 +333,7 @@ def test_start_raises_when_the_group_is_removed_while_running(monkeypatch):
     redis_mock.xgroup_create.assert_not_called()
 
 
-def test_last_heartbeat_advances_while_loop_runs(monkeypatch):
+def test_last_heartbeat_advances_while_loop_runs(monkeypatch, start_in_background):
     """The health server (adapters/health/server.py) treats a stale
     last_heartbeat as 'the loop stopped making progress'. It must advance on
     every pass, including passes that hit a handled Redis error."""
@@ -310,7 +346,7 @@ def test_last_heartbeat_advances_while_loop_runs(monkeypatch):
     c = Consumer(redis_client=redis_mock, stream_name="s", group_name="g", message_handler=lambda f: None, service_name=_SERVICE_NAME)
     initial = c.last_heartbeat
 
-    t = _start_in_background(c)
+    t = start_in_background(c, redis_mock)
 
     deadline = time.monotonic() + 2
     while c.last_heartbeat == initial and time.monotonic() < deadline:
