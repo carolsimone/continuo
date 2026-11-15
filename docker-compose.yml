@@ -897,8 +897,13 @@ services:
       # the real per-service tags before `docker compose up`; the placeholder default
       # only keeps a bare `docker compose up` from tripping the validator.
       - IMAGE_TAG_PER_SERVICE=${IMAGE_TAG_PER_SERVICE:-service-1=e2e-local,service-2=e2e-local,service-3=e2e-local}
+    # Read-only, so nothing this container runs writes into the checkout,
+    # whichever user owns it: a compile writes under /app/build, any other dbt
+    # command under the image's DBT_TARGET_PATH and DBT_LOG_PATH
+    # (dbt/Dockerfile.upload). dbt/tests/test_services_mount.py fails when
+    # this mount is writable.
     volumes:
-      - ./dbt/services:/app/services
+      - ./dbt/services:/app/services:ro
 
 volumes:
   neo4j_data:

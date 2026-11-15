@@ -4,6 +4,8 @@ import os
 import shutil
 import subprocess
 
+from dbt_upload.paths import build_dir
+
 logger = logging.getLogger(__name__)
 
 # The project directory of the dbt base image this uploader's image is built
@@ -13,13 +15,14 @@ logger = logging.getLogger(__name__)
 # are macros of each service's root project when the service's image compiles.
 BASE_PROJECT_DIR = "/project"
 
-# The directory under a service's target/ that holds the project dbt compiles.
-# It stays after the compile, since the manifest's root_path names it and the
-# compile extras read each seed's file from there.
+# The directory under a service's build directory that holds the project dbt
+# compiles. It stays after the compile, since the manifest's root_path names it
+# and the compile extras read each seed's file from there.
 STAGED_PROJECT_DIR = "staged-project"
 
 # What dbt writes into a project directory; never staged from the top of a
-# service directory or the base project.
+# service directory or the base project, where a dbt command run there before
+# may have left them.
 _DBT_OUTPUT_DIRS = frozenset({"target", "logs"})
 
 
@@ -34,13 +37,14 @@ def compile_service(service_dir: str, base_project_dir: str = BASE_PROJECT_DIR) 
     """Run `dbt compile` for service_dir as the service's image compiles it.
     Returns True on success.
 
-    dbt runs in target/staged-project: a copy of base_project_dir with the
-    service's files copied over it (a service file replaces a base file of the
-    same path), so the manifest holds the same root-project macros the compile
-    Job's manifest holds. dbt writes its output into service_dir's target/. A
-    missing base_project_dir fails the service: the manifest would lack the base
-    image's macros, and every content_hash computed from it would differ from a
-    release's.
+    dbt runs in staged-project under the service's build directory: a copy of
+    base_project_dir with the service's files copied over it (a service file
+    replaces a base file of the same path), so the manifest holds the same
+    root-project macros the compile Job's manifest holds. dbt writes its output
+    into the build directory and nothing into service_dir, which may be
+    read-only. A missing base_project_dir fails the service: the manifest would
+    lack the base image's macros, and every content_hash computed from it would
+    differ from a release's.
     """
     name = os.path.basename(service_dir)
     if not os.path.isdir(base_project_dir):
@@ -50,7 +54,7 @@ def compile_service(service_dir: str, base_project_dir: str = BASE_PROJECT_DIR) 
         return False
     logger.info("Compiling %s", name)
     service_dir = os.path.abspath(service_dir)
-    target_dir = os.path.join(service_dir, "target")
+    target_dir = build_dir(service_dir)
     project_dir = os.path.join(target_dir, STAGED_PROJECT_DIR)
     shutil.rmtree(project_dir, ignore_errors=True)
     _copy_project(base_project_dir, project_dir)

@@ -319,11 +319,13 @@ jobs:
             ghcr.io/astral-sh/uv:python3.12-bookworm-slim \
             sh -c "uv run --with boto3 --with pyyaml --with pytest pytest tests/ -v"
 
-      - name: Test dbt compile + S3 upload (integration)
-        # Runs every @pytest.mark.integration test under dbt/tests (test_upload.py's
-        # compile+S3 round trip and test_parse_rehearsal.py's real-dbt partial-parse
-        # rehearsal + fetcher round trip), not just one file, so a new integration
-        # test module is picked up here automatically.
+      - name: Test dbt compile + S3 upload
+        # Runs every test under dbt/tests: the unit tests and every
+        # @pytest.mark.integration test (test_upload.py's compile+S3 round trip,
+        # test_parse_rehearsal.py's real-dbt partial-parse rehearsal + fetcher
+        # round trip, and test_services_mount.py's check that /app/services is
+        # mounted read-only), not just one file, so a new test module is picked
+        # up here automatically.
         run: |
           docker exec \
             -e AWS_ACCESS_KEY_ID=minioadmin \
@@ -332,7 +334,7 @@ jobs:
             -e S3_ENDPOINT_URL=http://minio:9000 \
             -e S3_BUCKET=continuo \
             dbt-compile-and-load \
-            uv run --with pytest pytest tests/ -v -m integration
+            uv run --with pytest pytest tests/ -v
 
       - name: Set up Node
         # ui vitest runs directly on the runner. GitHub-hosted preinstalls
