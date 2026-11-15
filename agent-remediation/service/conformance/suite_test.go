@@ -2,6 +2,7 @@ package conformance_test
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"maps"
 	"slices"
@@ -276,5 +277,42 @@ func TestSuite_AFailureNamesItsServicesAndNodesInSortedOrder(t *testing.T) {
 	}
 	for _, text := range texts[1:] {
 		assert.Equal(t, texts[0], text)
+	}
+}
+
+// withRounds is the suite with every type allowing rounds pre-flight rounds
+// and the flow making tries tries.
+func withRounds(s conformance.Suite, rounds, tries int) conformance.Suite {
+	types := make(map[string]workflow.Type, len(s.Files.Types))
+	for name, typ := range s.Files.Types {
+		typ.Agent.Rounds = rounds
+		types[name] = typ
+	}
+	flow := s.Files.Flows[flowName]
+	flow.Tries = tries
+	s.Files = workflow.Set{Flows: map[string]workflow.Flow{flowName: flow}, Types: types}
+	return s
+}
+
+// Every scenario runs for every type whatever its rounds and its flow's
+// tries: a type of one round has its refused draft handed over where a type
+// that revises passes its revision, and a flow of one try hands over the
+// attempt whose verification failed.
+func TestSuite_EveryScenarioHoldsForTypesOfOneAndOfTwoRounds(t *testing.T) {
+	for _, tc := range []struct{ rounds, tries int }{{1, 3}, {2, 3}, {1, 1}} {
+		t.Run(fmt.Sprintf("rounds %d tries %d", tc.rounds, tc.tries), func(t *testing.T) {
+			s := withRounds(builtinSuite(t), tc.rounds, tc.tries)
+			_, err := runner.Validate(s.Files, runner.NewRegistry(runner.Collaborators{}))
+			require.NoError(t, err)
+
+			results := s.Run(ctx)
+			require.Len(t, results, len(s.Files.Flows[flowName].Types)*len(conformance.TypeScenarios()))
+			for _, r := range results {
+				assert.NoError(t, r.Err, "type %s, scenario %s", r.Type, r.Scenario)
+			}
+			for _, r := range s.RunFlowScenarios(ctx, flowName) {
+				assert.NoError(t, r.Err, "flow %s, scenario %s", r.Type, r.Scenario)
+			}
+		})
 	}
 }

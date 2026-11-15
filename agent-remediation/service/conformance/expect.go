@@ -370,20 +370,19 @@ func (e *expectation) firstFinding(c remediation.Cluster, typ workflow.Type) (re
 	return remediation.Finding{}, false
 }
 
-// singleHandedOver expects the single cluster c handed over in scenario sc,
-// with no verification run: by its last pre-flight round, which refused its
-// draft, failed with that round's first finding; by a context step that
-// declined, skipped with no model call.
-func (e *expectation) singleHandedOver(c remediation.Cluster, typ workflow.Type, sc Scenario) {
+// singleHandedOver expects the single cluster c handed over with no
+// verification run: when roundsSpent, by its last pre-flight round, which
+// refused its draft, failed with that round's first finding; otherwise by a
+// context step that declined, skipped with no model call.
+func (e *expectation) singleHandedOver(c remediation.Cluster, typ workflow.Type, roundsSpent bool) {
 	e.that(c.Status == remediation.ClusterHandedOver, "cluster %d is %s, not handed_over", c.Cluster, c.Status)
 	want := proposal.StatusFailed
-	switch sc {
-	case PreflightRoundsSpent:
+	if roundsSpent {
 		finding, ok := e.firstFinding(c, typ)
 		e.that(ok, "pre-flight refused nothing in cluster %d", c.Cluster)
 		reason := roundsSpentPrefix + finding.Message
 		e.that(c.Outcome != nil && c.Outcome.Reason == reason, "cluster %d ended with %+v, want the reason %q", c.Cluster, c.Outcome, reason)
-	case DeclinesBeforeModel:
+	} else {
 		want = proposal.StatusSkipped
 		e.modelCalls(0)
 	}

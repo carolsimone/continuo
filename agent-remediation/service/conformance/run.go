@@ -12,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
+	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 )
 
 const (
@@ -29,13 +30,32 @@ const (
 )
 
 // scenarioRun is one scenario's runner over its world, the script its world
-// answers from, and the remediation it accepted.
+// answers from, and the remediation it accepted. afterCommit, when set, runs
+// after every commit of a unit of work of the runner that succeeded.
 type scenarioRun struct {
-	w      World
-	script Script
-	deps   runner.Deps
-	r      *runner.Runner
-	id     uuid.UUID
+	w           World
+	script      Script
+	deps        runner.Deps
+	r           *runner.Runner
+	id          uuid.UUID
+	afterCommit func()
+}
+
+// hookedUoW is a unit of work of the world that runs its scenario's
+// afterCommit after a commit that succeeded.
+type hookedUoW struct {
+	uow.UnitOfWork
+	sr *scenarioRun
+}
+
+func (u hookedUoW) Commit() error {
+	if err := u.UnitOfWork.Commit(); err != nil {
+		return err
+	}
+	if u.sr.afterCommit != nil {
+		u.sr.afterCommit()
+	}
+	return nil
 }
 
 // start builds the world of a scenario and a runner over it, as the service
@@ -53,8 +73,9 @@ func (s Suite) start(f Fixture, script Script, maintenance bool) (*scenarioRun, 
 	collab.ContractLocator = s.Locator
 	collab.ContractInspector = s.Inspector
 	collab.VerificationTimeout = verificationTimeout
-	deps := runner.Deps{
-		NewUoW:              w.NewUoW,
+	sr := &scenarioRun{w: w, script: script}
+	sr.deps = runner.Deps{
+		NewUoW:              func() uow.UnitOfWork { return hookedUoW{UnitOfWork: w.NewUoW(), sr: sr} },
 		Registry:            runner.NewRegistry(collab),
 		Files:               s.Files,
 		LLM:                 w.LLM(),
@@ -65,7 +86,8 @@ func (s Suite) start(f Fixture, script Script, maintenance bool) (*scenarioRun, 
 		Owner:               owner,
 		VerificationTimeout: verificationTimeout,
 	}
-	return &scenarioRun{w: w, script: script, deps: deps, r: runner.New(deps)}, nil
+	sr.r = runner.New(sr.deps)
+	return sr, nil
 }
 
 // restart replaces the runner with a new one over the same world, as a worker
