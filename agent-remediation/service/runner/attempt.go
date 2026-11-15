@@ -24,12 +24,15 @@ type checkedCluster struct {
 }
 
 // checkedClusters rebuilds every checked cluster of the try from the journal,
-// in cluster order. Its evidence is the failure, what each of its context
-// steps gathered in the first round, what each of its pre-flight checks
-// gathered in the cluster's last round (a packaged contract among them) and
-// the draft as that round's pre-flight pass left it, with its originals and
-// stored content. The same rows always rebuild the same drafts, so the gate is
-// polled with exactly the drafts it was submitted.
+// in cluster order. Its evidence is the failure, what each of its done context
+// rows recorded in the first round (gatheredEvidence), what each of its done
+// pre-flight check rows gathered in the cluster's last round (a packaged
+// contract among them) and the draft as that round's pre-flight pass left it,
+// with its originals and stored content. Only rows are read, never the loaded
+// files, so a checked cluster is rebuilt from the steps it ran even when the
+// files now list other steps or no longer define its type. The same rows
+// always rebuild the same drafts, so the gate is polled with exactly the
+// drafts it was submitted.
 func (r *Runner) checkedClusters(run tryRun) ([]checkedCluster, error) {
 	var out []checkedCluster
 	for _, c := range run.snap.Clusters {
@@ -46,45 +49,25 @@ func (r *Runner) checkedClusters(run tryRun) ([]checkedCluster, error) {
 }
 
 func (r *Runner) checkedCluster(run tryRun, c remediation.Cluster) (checkedCluster, error) {
-	plan, err := r.planFor(run, c)
+	ev, err := r.gatheredEvidence(run, c, failureFor(run.trigger, c, *run.snap.Try))
 	if err != nil {
 		return checkedCluster{}, err
 	}
-	doneRow := func(name string, round int) (remediation.StepRun, error) {
-		row, done := run.journal.done(c.Cluster, name, round)
-		if !done {
-			return row, fmt.Errorf("step %s has no done row in round %d", name, round)
-		}
-		return row, nil
-	}
-	ev := remediation.NewEvidence().With(remediation.KeyFailure, failureFor(run.trigger, c, *run.snap.Try))
-	for _, ps := range plan.context {
-		row, err := doneRow(string(ps.name), contextRound)
-		if err != nil {
-			return checkedCluster{}, err
-		}
-		if ev, err = r.contextEvidence(ev, row); err != nil {
-			return checkedCluster{}, err
-		}
-	}
-	results := make([]remediation.CheckResult, 0, len(plan.preflight))
-	for _, ps := range plan.preflight {
-		row, err := doneRow(string(ps.name), c.Round)
-		if err != nil {
-			return checkedCluster{}, err
-		}
+	checks := run.journal.doneRows(c.Cluster, string(step.KindCheck), c.Round)
+	results := make([]remediation.CheckResult, 0, len(checks))
+	for _, row := range checks {
 		rec, err := checkResult(row)
 		if err != nil {
 			return checkedCluster{}, err
 		}
-		if ev, err = r.withEvidence(ev, rec.Evidence); err != nil {
-			return checkedCluster{}, err
+		if ev, err = r.withEvidence(ev, row, rec.Evidence); err != nil {
+			return checkedCluster{}, fmt.Errorf("step %s: %w", row.Step, err)
 		}
 		results = append(results, rec.Result)
 	}
-	pass, err := doneRow(stepPreflight, c.Round)
-	if err != nil {
-		return checkedCluster{}, err
+	pass, done := run.journal.done(c.Cluster, stepPreflight, c.Round)
+	if !done {
+		return checkedCluster{}, fmt.Errorf("step %s has no done row in round %d", stepPreflight, c.Round)
 	}
 	draft, err := preflightDraft(pass)
 	if err != nil {

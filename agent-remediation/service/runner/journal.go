@@ -1,14 +1,17 @@
 package runner
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
+	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 )
 
@@ -72,6 +75,33 @@ func (j journal) row(cluster int, step string, round int) (remediation.StepRun, 
 func (j journal) done(cluster int, step string, round int) (remediation.StepRun, bool) {
 	s, ok := j.row(cluster, step, round)
 	return s, ok && s.Status == remediation.StepDone
+}
+
+// promptRow returns the done row of the prompt step of one cluster in one
+// round, whatever the step's name: a round has one prompt row, written by the
+// type's prompt as the runner had it loaded when the round ran.
+func (j journal) promptRow(cluster, round int) (remediation.StepRun, bool) {
+	rows := j.doneRows(cluster, string(step.KindPrompt), round)
+	if len(rows) == 0 {
+		return remediation.StepRun{}, false
+	}
+	return rows[0], true
+}
+
+// doneRows returns the done rows of one kind of step of one cluster in one
+// round, in the order they were first written (by row id, then by step name).
+// They are the steps that ran, whatever the loaded files list now.
+func (j journal) doneRows(cluster int, kind string, round int) []remediation.StepRun {
+	var out []remediation.StepRun
+	for k, s := range j {
+		if k.cluster == cluster && k.round == round && s.Kind == kind && s.Status == remediation.StepDone {
+			out = append(out, s)
+		}
+	}
+	slices.SortFunc(out, func(a, b remediation.StepRun) int {
+		return cmp.Or(cmp.Compare(a.ID, b.ID), strings.Compare(a.Step, b.Step))
+	})
+	return out
 }
 
 // newRow starts the row of one run of a step of the current try. It keeps the
@@ -191,20 +221,45 @@ func (r *Runner) encodeEvidence(values map[remediation.EvidenceKey]any) (seriali
 	return serialization.EncodeEvidence(values, r.d.Registry.EvidenceType)
 }
 
-// withEvidence returns ev with every encoded piece of evidence added, each
-// decoded into the Go type the registry gives its key, in key order.
-func (r *Runner) withEvidence(ev remediation.Evidence, encoded serialization.EncodedEvidence) (remediation.Evidence, error) {
-	return encoded.AddTo(ev, r.d.Registry.EvidenceType)
+// withEvidence returns ev with every piece of evidence a done row recorded
+// added, each decoded into the Go type the registry gives its key, in key
+// order. A key the registry gives no type is left out and logged: a row only
+// holds one when an earlier build wrote it, since encodeEvidence refuses one,
+// and no step of this build provides it, so none can read it.
+func (r *Runner) withEvidence(ev remediation.Evidence, row remediation.StepRun, encoded serialization.EncodedEvidence) (remediation.Evidence, error) {
+	known := make(serialization.EncodedEvidence, len(encoded))
+	var unknown []string
+	for k, v := range encoded {
+		if _, ok := r.d.Registry.EvidenceType(k); !ok {
+			unknown = append(unknown, string(k))
+			continue
+		}
+		known[k] = v
+	}
+	if len(unknown) > 0 {
+		slices.Sort(unknown)
+		r.logger.Warn("a journal row holds evidence no registered step provides; it is left out",
+			"remediation", row.RemediationID, "try", row.Try, "cluster", row.Cluster, "step", row.Step, "round", row.Round, "keys", unknown)
+	}
+	return known.AddTo(ev, r.d.Registry.EvidenceType)
 }
 
-// contextEvidence returns ev with the evidence a done context step's row
-// recorded.
-func (r *Runner) contextEvidence(ev remediation.Evidence, row remediation.StepRun) (remediation.Evidence, error) {
-	rec, err := serialization.DecodeRecord[serialization.ContextRecord](row.Output)
-	if err != nil {
-		return ev, fmt.Errorf("decode the output of step %s: %w", row.Step, err)
+// gatheredEvidence is the evidence a cluster's steps read before its prompt
+// answers: the failure, then what each done context row of the cluster's
+// first round recorded, in the order the rows were written. The rows are the
+// context steps that ran, whatever the loaded files list now.
+func (r *Runner) gatheredEvidence(run tryRun, c remediation.Cluster, f remediation.Failure) (remediation.Evidence, error) {
+	ev := remediation.NewEvidence().With(remediation.KeyFailure, f)
+	for _, row := range run.journal.doneRows(c.Cluster, string(step.KindContext), contextRound) {
+		rec, err := serialization.DecodeRecord[serialization.ContextRecord](row.Output)
+		if err != nil {
+			return ev, fmt.Errorf("decode the output of step %s: %w", row.Step, err)
+		}
+		if ev, err = r.withEvidence(ev, row, rec.Evidence); err != nil {
+			return ev, fmt.Errorf("step %s: %w", row.Step, err)
+		}
 	}
-	return r.withEvidence(ev, rec.Evidence)
+	return ev, nil
 }
 
 // promptDraft returns the draft a done prompt step's row recorded.

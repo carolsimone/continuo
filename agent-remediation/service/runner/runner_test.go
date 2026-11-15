@@ -680,15 +680,15 @@ func TestRunner_AnUndecodableRowIsRecordedOnTheNextStep(t *testing.T) {
 			id := h.accept(trigger("compile", compileNode("svc-a")))
 			require.NoError(t, h.runner.NextTry(ctx, id))
 			for _, name := range tc.done {
-				out := `{"evidence":{"failure_precedents":null}}`
-				switch name {
-				case tc.corrupt:
+				out, kind := `{"evidence":{"failure_precedents":null}}`, "context"
+				if name == "dbt-compile" {
+					out, kind = `{"draft":{}}`, "prompt"
+				}
+				if name == tc.corrupt {
 					out = `{"evidence":{"source_files":"not an object"},"draft":"not an object"}`
-				case "dbt-compile":
-					out = `{"draft":{}}`
 				}
 				h.saveStep(remediation.StepRun{
-					RemediationID: id, Try: 1, Cluster: 1, Step: name, Kind: "context", Round: 1,
+					RemediationID: id, Try: 1, Cluster: 1, Step: name, Kind: kind, Round: 1,
 					Status: remediation.StepDone, Output: []byte(out), StartedAt: t0,
 				})
 			}
