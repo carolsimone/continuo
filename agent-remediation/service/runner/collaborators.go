@@ -54,8 +54,6 @@ type Collaborators struct {
 	// SQLDialect is the sqlglot dialect the warehouse this install runs
 	// speaks, resolved from the operator's configured warehouse engine.
 	SQLDialect string
-	// SQL parses a draft's SQL files in the warehouse's dialect.
-	SQL ports.SQLParser
 	// Pipeline submits verification runs and reads their status.
 	Pipeline ports.VerificationPipeline
 	// Clock tells the time.

@@ -99,7 +99,6 @@ func NewWorld(store *memory.Store, f conformance.Fixture, s conformance.Script) 
 		Archive:          repo,
 		Patcher:          repofs.CheckoutPatcher{},
 		Packager:         packager{p: f.Packager},
-		SQL:              sqlParser{errors: f.SQLErrors},
 		Releases:         release{r: f.Release},
 		PriorAttempts:    store.ProposalRepository(),
 		Tries:            store.RemediationRepository(),

@@ -10,10 +10,6 @@ WORKDIR /app
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && ~/.local/bin/uv tool install --python 3.14 continuo-python-runtime==0.12.0
 ENV PATH="/root/.local/bin:${PATH}"
-# The sql_parses pre-flight check runs tools/sql_parses.py under an interpreter
-# that can import sqlglot. The base image's python3 cannot; the interpreter of
-# the continuo-python-runtime tool environment above carries sqlglot.
-ENV SQL_PARSES_PYTHON=/root/.local/share/uv/tools/continuo-python-runtime/bin/python
 
 # Layer 1: Workspace stub. All go.mod / go.sum files are copied so
 # `go mod download` can satisfy every dependency cited by go.work, but
@@ -59,8 +55,6 @@ COPY catalog/ ./catalog/
 COPY agent-remediation/ ./agent-remediation/
 # Integration tests read production backfill expressions as SELECT fixtures.
 COPY db/migration/agent_remediation/ ./db/migration/agent_remediation/
-# The script the sql_parses check runs, at the path the parser adapter reads.
-COPY agent-remediation/tools/sql_parses.py /usr/local/lib/continuo/sql_parses.py
 
 WORKDIR /app/agent-remediation
 

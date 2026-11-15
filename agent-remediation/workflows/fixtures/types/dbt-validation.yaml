@@ -62,13 +62,13 @@ answers:
       confidence: high
       model: claude-test
   fail:
-    # The source fix does not parse (see sql_errors) while the source it
-    # replaces does, so sql_parses refuses it.
+    # The source fix returns the model's source unchanged, so pre-flight
+    # refuses it as no fix.
     - proposed_sql: "select id, total as amount from analytics.raw_orders"
       rationale: the upstream column amount is named total now
       confidence: high
       model: claude-test
-    - proposed_sql: "select id, total as amount form analytics.raw_orders\n"
+    - proposed_sql: "select id, amount from analytics.raw_orders\n"
       rationale: read total and keep the name amount
       confidence: high
       model: claude-test
@@ -86,18 +86,14 @@ answers:
   revision:
     pass:
       - proposed_sql: "select id, total as amount from analytics.raw_orders\n"
-        rationale: fixed the keyword and kept reading total as amount
+        rationale: changed the source to read total as amount
         confidence: high
         model: claude-test
     fail:
-      - proposed_sql: "select id, total as amount form analytics.raw_orders\n"
+      - proposed_sql: "select id, amount from analytics.raw_orders\n"
         rationale: read total and keep the name amount
         confidence: high
         model: claude-test
-sql_errors:
-  - sql: "select id, total as amount form analytics.raw_orders\n"
-    message: "Invalid expression / Unexpected token: 'analytics'"
-    line: 1
 # A failure with no candidate artifact has no SQL to fix.
 decline_before_model:
   node: { candidate_artifact_uri: "" }

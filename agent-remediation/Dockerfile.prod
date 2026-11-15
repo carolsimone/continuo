@@ -59,13 +59,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
  && rm -rf /var/lib/apt/lists/* \
  && pip install --no-cache-dir continuo-python-runtime==0.12.0
 
-# Explicit COPY allowlist — the service binary, remediation-check and the
-# script the sql_parses check runs; new builder artifacts are absent from the
-# runtime image unless added here. The script runs under this image's python3,
-# which carries sqlglot through continuo-python-runtime.
+# Explicit COPY allowlist — the service binary and remediation-check; new
+# builder artifacts are absent from the runtime image unless added here.
 COPY --from=builder /app/bin/agent-remediation /usr/local/bin/agent-remediation
 COPY --from=builder /app/bin/remediation-check /usr/local/bin/remediation-check
-COPY agent-remediation/tools/sql_parses.py /usr/local/lib/continuo/sql_parses.py
 
 EXPOSE 8092
 

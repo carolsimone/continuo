@@ -13,4 +13,4 @@ context:
   - changed_ancestor_diffs
   - failure_precedents
 agent: { prompt: dbt-validation, tools: [], rounds: 3 }
-preflight: [content_changed, confidence_not_low, sql_parses]
+preflight: [content_changed, confidence_not_low]

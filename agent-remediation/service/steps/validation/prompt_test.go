@@ -352,7 +352,7 @@ func revisionInput(prev remediation.Draft, req prompt.ProposeRequest, ans ports.
 
 var revisionFindings = []remediation.Finding{
 	{Code: "content_unchanged", Message: "the model returned the file unchanged, which is not a fix", File: repoFilePath},
-	{Code: "sql_parse", Message: "unexpected token", File: repoFilePath, Line: 3},
+	{Code: "low_confidence", Message: "the model could not determine a safe fix with confidence"},
 }
 
 func TestDBTValidation_RevisesTheLastCallWithTheFindings(t *testing.T) {

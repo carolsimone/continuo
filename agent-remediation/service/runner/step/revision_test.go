@@ -36,7 +36,7 @@ func TestRevisionRequest_ALaterRoundRevisesThePreviousCallWithEveryFinding(t *te
 	req, res := previousCall()
 	findings := []remediation.Finding{
 		{Code: "content_unchanged", Message: "the model returned the file unchanged, which is not a fix", File: "models/a.sql"},
-		{Code: "sql_parse", Message: "unexpected token", File: "models/a.sql", Line: 3},
+		{Code: "low_confidence", Message: "the model could not determine a safe fix with confidence"},
 	}
 
 	got, revising, err := step.RevisionRequest(step.PromptInput{Round: 1, PreviousRequest: &req, PreviousAnswer: &res, Findings: findings})

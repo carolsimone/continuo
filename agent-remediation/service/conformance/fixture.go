@@ -61,18 +61,6 @@ type Fixture struct {
 
 	// GateErrors is the error a failed verification run reports per node.
 	GateErrors map[string]string
-
-	// SQLErrors are the SQL texts the SQL parser does not parse, each with
-	// the errors it reports for it. Every other SQL text parses.
-	SQLErrors []SQLError
-}
-
-// SQLError is one parse error the SQL parser reports for a SQL text: the text
-// exactly as a draft writes it, the error's message and its line.
-type SQLError struct {
-	SQL     string
-	Message string
-	Line    int
 }
 
 // Answers are a cluster's scripted model answers: the lists of a try's first

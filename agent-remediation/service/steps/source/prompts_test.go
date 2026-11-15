@@ -243,7 +243,7 @@ func revisesTheLastCall(t *testing.T, p step.Prompt, f remediation.Failure, ev r
 	round1 := propose(t, p, f, ev, m)
 	findings := []remediation.Finding{
 		{Code: "content_unchanged", Message: "the model returned the file unchanged, which is not a fix", File: sqlPath},
-		{Code: "sql_parse", Message: "unexpected token", File: sqlPath, Line: 3},
+		{Code: "low_confidence", Message: "the model could not determine a safe fix with confidence"},
 	}
 
 	out, err := p.Propose(context.Background(), step.PromptInput{

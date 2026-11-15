@@ -81,14 +81,14 @@ func TestAnswerJSON_IsCanonical(t *testing.T) {
 func TestFindingLines_NamesTheCodeAndMessage(t *testing.T) {
 	got := step.FindingLines([]remediation.Finding{
 		{Code: "content_changed", Message: "the answer left the file unchanged"},
-		{Code: "sql_parses", Message: "unexpected token", File: "models/a.sql", Line: 3},
+		{Code: "yaml_reads", Message: "mapping values are not allowed here", File: "contracts/a.yml", Line: 3},
 		{Code: "confidence_not_low", Message: "the model is not sure", File: "models/b.sql"},
 		{Code: "orphan_line", Message: "a line without a file", Line: 7},
 	})
 
 	assert.Equal(t, []string{
 		"content_changed: the answer left the file unchanged",
-		"sql_parses: unexpected token (models/a.sql:3)",
+		"yaml_reads: mapping values are not allowed here (contracts/a.yml:3)",
 		"confidence_not_low: the model is not sure (models/b.sql)",
 		"orphan_line: a line without a file",
 	}, got)

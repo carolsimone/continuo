@@ -130,7 +130,6 @@ func TestRegistry_HoldsTheSharedSteps(t *testing.T) {
 		"upstream_changes":   step.KindContext,
 		"content_changed":    step.KindCheck,
 		"confidence_not_low": step.KindCheck,
-		"sql_parses":         step.KindCheck,
 	} {
 		_, m, ok := r.Lookup(name)
 		assert.True(t, ok, name)

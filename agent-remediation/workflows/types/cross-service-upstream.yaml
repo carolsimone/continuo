@@ -7,4 +7,4 @@ name: cross-service-upstream
 match: { cluster: cross_service }
 context: [upstream_target, failure_precedents]
 agent: { prompt: upstream, tools: [], rounds: 3 }
-preflight: [content_changed, confidence_not_low, sql_parses]
+preflight: [content_changed, confidence_not_low]

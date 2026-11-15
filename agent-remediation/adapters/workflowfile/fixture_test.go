@@ -63,9 +63,6 @@ answers:
 member_answers: { model.sales.base: { pass: [{ target_file: t.sql, proposed_content: c, suspected_root_cause_node: n }] } }
 decline_before_model: { node: { candidate_artifact_uri: "", service: other } }
 gate_errors: { model.sales.orders: still failing }
-sql_errors:
-  - { sql: "selec 1", message: Invalid expression, line: 1 }
-  - { sql: "selec 1", message: Expected table name, line: 2 }
 `
 
 func TestLoadFixtures_ReadsEveryField(t *testing.T) {
@@ -119,10 +116,6 @@ func TestLoadFixtures_ReadsEveryField(t *testing.T) {
 		"model.sales.base": {Pass: []ports.ProposeResult{{TargetFile: "t.sql", ProposedContent: "c", SuspectedRootCauseNode: "n"}}},
 	}, f.MemberAnswers)
 	assert.Equal(t, map[string]string{"model.sales.orders": "still failing"}, f.GateErrors)
-	assert.Equal(t, []conformance.SQLError{
-		{SQL: "selec 1", Message: "Invalid expression", Line: 1},
-		{SQL: "selec 1", Message: "Expected table name", Line: 2},
-	}, f.SQLErrors)
 
 	require.NotNil(t, f.DeclineBeforeModel)
 	patched := node
@@ -232,18 +225,6 @@ func TestLoadFixtures_NamesTheFileAndLineOfEachProblem(t *testing.T) {
 		"a value of the wrong type": {
 			yaml: "kind: fixture\nversion: 1\ntype: x\ntrigger: { nodes: [{ node_id: a }] }\nrepo_files: [a, b]\n",
 			want: []string{`f.yaml:5:`},
-		},
-		"a sql error with no message": {
-			yaml: "kind: fixture\nversion: 1\ntype: x\ntrigger: { nodes: [{ node_id: a }] }\nsql_errors:\n  - { sql: a, message: m, line: 1 }\n  - { sql: a, line: 1 }\n",
-			want: []string{`f.yaml:7: a sql_errors entry names the sql, a message and a line from 1`},
-		},
-		"a sql error with no line": {
-			yaml: "kind: fixture\nversion: 1\ntype: x\ntrigger: { nodes: [{ node_id: a }] }\nsql_errors: [{ sql: a, message: m }]\n",
-			want: []string{`f.yaml:5: a sql_errors entry names the sql, a message and a line from 1`},
-		},
-		"an unknown field in a sql error": {
-			yaml: "kind: fixture\nversion: 1\ntype: x\ntrigger: { nodes: [{ node_id: a }] }\nsql_errors:\n  - { file: a.sql, sql: a, message: m, line: 1 }\n",
-			want: []string{`f.yaml:6: field "file" is not known here`},
 		},
 		"a patch that is not a mapping": {
 			yaml: "kind: fixture\nversion: 1\ntype: x\ntrigger: { nodes: [{ node_id: a }] }\ndecline_before_model: {}\n",

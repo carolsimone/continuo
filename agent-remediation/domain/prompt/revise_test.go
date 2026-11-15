@@ -24,7 +24,7 @@ func TestRevise_KeepsTheToolAndAppendsTheAnswerAndFindings(t *testing.T) {
 
 	got := Revise(req, `{"proposed_sql":"select 1","confidence":"high"}`, []string{
 		"content_changed: the answer left the file unchanged (models/a.sql)",
-		"sql_parses: unexpected token (models/a.sql:3)",
+		"yaml_reads: mapping values are not allowed here (contracts/a.yml:3)",
 	})
 
 	assert.Equal(t, req.System, got.System)
@@ -41,7 +41,7 @@ func TestRevise_KeepsTheToolAndAppendsTheAnswerAndFindings(t *testing.T) {
 		"\n" +
 		"## What the checks found\n" +
 		"- content_changed: the answer left the file unchanged (models/a.sql)\n" +
-		"- sql_parses: unexpected token (models/a.sql:3)\n" +
+		"- yaml_reads: mapping values are not allowed here (contracts/a.yml:3)\n" +
 		"\n" +
 		"Correct every finding and call the tool again with your complete answer."
 	assert.Equal(t, want, got.User)
