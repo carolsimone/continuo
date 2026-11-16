@@ -6,16 +6,17 @@
     "payload": {
       "release_id": "rel-2026-10-08-0002",
       "status": "failed",
-      "failure_kind": "invalid_sql",
-      "detail": "1 node(s) failed to parse: staging.orders",
+      "failure_kind": "invalid_contract",
+      "continuo_contracts": "0.2.0",
+      "detail": "1 node failed to parse: analytics.py_daily_kpis",
       "failed_nodes": [
         {
-          "node_id": "staging.orders",
-          "kind": "invalid_sql",
-          "service": "service-1",
-          "file_path": "models/staging/orders.sql",
-          "node_type": "dbt-model",
-          "detail": "Invalid expression / Unexpected token. Line 3, Col: 14."
+          "node_id": "analytics.py_daily_kpis",
+          "kind": "invalid_contract",
+          "service": "service-py",
+          "file_path": "contracts/py_daily_kpis.odcs.yaml",
+          "node_type": "python-node",
+          "detail": "schema[0].properties[2].physicalType: 'NUMERIC(12)' is not a type continuo accepts"
         }
       ]
     }
@@ -29,16 +30,17 @@
     "payload": {
       "release_id": "rel-2026-10-08-0002",
       "status": "failed",
-      "failure_kind": "invalid_sql",
-      "detail": "1 node(s) failed to parse: staging.orders",
+      "failure_kind": "invalid_contract",
+      "continuo_contracts": "0.2.0",
+      "detail": "1 node failed to parse: analytics.py_daily_kpis",
       "failed_nodes": [
         {
-          "node_id": "staging.orders",
-          "kind": "invalid_sql",
-          "service": "service-1",
-          "file_path": "models/staging/orders.sql",
-          "node_type": "dbt-model",
-          "detail": "Invalid expression / Unexpected token. Line 3, Col: 14."
+          "node_id": "analytics.py_daily_kpis",
+          "kind": "invalid_contract",
+          "service": "service-py",
+          "file_path": "contracts/py_daily_kpis.odcs.yaml",
+          "node_type": "python-node",
+          "detail": "schema[0].properties[2].physicalType: 'NUMERIC(12)' is not a type continuo accepts"
         }
       ]
     }

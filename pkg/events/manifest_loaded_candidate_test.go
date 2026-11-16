@@ -109,6 +109,61 @@ func TestManifestLoadedCandidateFields_AFailureWithoutNodesCarriesAnEmptyList(t 
 	assert.Contains(t, got["payload"], `"failed_nodes":[]`)
 }
 
+func TestManifestLoadedCandidateFields_OKCarriesTheContractBundleAndTheLibraryVersion(t *testing.T) {
+	fx := loadManifestLoadedCandidateFixture(t, "testdata/manifest_loaded_candidate_v2_ok.json")
+	p := fx.Input.Payload
+	require.Equal(t, "s3://continuo/tenants/default/topologies/rel-2026-10-08-0001/contracts.json.gz", p.ContractBundleURI)
+	require.Equal(t, "9b0c4d1e7a52f3860be1d9c4a7f08e35b216d0a94c7e53f1a8b20d6e49c71f3a", p.ContractBundleSHA256)
+	require.Equal(t, "0.2.0", p.ContinuoContracts)
+
+	got, err := events.ManifestLoadedCandidateFields(fx.Input.TenantID, fx.Input.Producer, fx.Input.OccurredAt, p)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal([]byte(got["payload"].(string)), &payload))
+	assert.Equal(t, p.ContractBundleURI, payload["contract_bundle_uri"])
+	assert.Equal(t, p.ContractBundleSHA256, payload["contract_bundle_sha256"])
+	assert.Equal(t, p.ContinuoContracts, payload["continuo_contracts"])
+}
+
+func TestManifestLoadedCandidateFields_FailedCarriesTheLibraryVersion(t *testing.T) {
+	fx := loadManifestLoadedCandidateFixture(t, "testdata/manifest_loaded_candidate_v2_failed.json")
+	p := fx.Input.Payload
+	require.Equal(t, "invalid_contract", p.FailureKind)
+	require.Equal(t, "0.2.0", p.ContinuoContracts)
+	require.Len(t, p.FailedNodes, 1)
+	require.Equal(t, "analytics.py_daily_kpis", p.FailedNodes[0].NodeID)
+
+	got, err := events.ManifestLoadedCandidateFields(fx.Input.TenantID, fx.Input.Producer, fx.Input.OccurredAt, p)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal([]byte(got["payload"].(string)), &payload))
+	assert.Equal(t, "0.2.0", payload["continuo_contracts"])
+	assert.NotContains(t, payload, "contract_bundle_uri", "a failed release writes no contract bundle")
+	assert.NotContains(t, payload, "contract_bundle_sha256", "a failed release writes no contract bundle")
+}
+
+func TestDecodeManifestLoadedCandidate_AnEntryWithoutTheNewFieldsDecodes(t *testing.T) {
+	for name, payload := range map[string]string{
+		"ok":     `{"release_id":"rel-1","status":"ok","topology_uri":"s3://b/k","topology_sha256":"abc","node_count":1,"code_bundle_uri":"s3://b/c"}`,
+		"failed": `{"release_id":"rel-1","status":"failed","failure_kind":"invalid_sql","detail":"d","failed_nodes":[]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, p, err := events.DecodeManifestLoadedCandidate(map[string]string{
+				"event_id":       "e",
+				"tenant_id":      "default",
+				"occurred_at":    "2026-10-08T09:30:00.000000Z",
+				"producer":       "topology-controller",
+				"schema_version": "1",
+				"payload":        payload,
+			})
+			require.NoError(t, err)
+			assert.Empty(t, p.ContractBundleURI)
+			assert.Empty(t, p.ContractBundleSHA256)
+			assert.Empty(t, p.ContinuoContracts)
+		})
+	}
+}
+
 func TestDecodeManifestLoadedCandidate_RejectsMalformedEntries(t *testing.T) {
 	valid := func() map[string]string {
 		return map[string]string{

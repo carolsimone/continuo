@@ -9,7 +9,10 @@
       "topology_uri": "s3://continuo/tenants/default/topologies/rel-2026-10-08-0001/topology.json.gz",
       "topology_sha256": "c24510f9d0bf0bb622bac658a15570a66a9bf1e3e00ccf4ea6c84e1c232e3f48",
       "node_count": 5,
-      "code_bundle_uri": "s3://continuo/code-bundles/rel-2026-10-08-0001/bundle.json"
+      "code_bundle_uri": "s3://continuo/code-bundles/rel-2026-10-08-0001/bundle.json",
+      "contract_bundle_uri": "s3://continuo/tenants/default/topologies/rel-2026-10-08-0001/contracts.json.gz",
+      "contract_bundle_sha256": "9b0c4d1e7a52f3860be1d9c4a7f08e35b216d0a94c7e53f1a8b20d6e49c71f3a",
+      "continuo_contracts": "0.2.0"
     }
   },
   "fields": {
@@ -24,7 +27,10 @@
       "topology_uri": "s3://continuo/tenants/default/topologies/rel-2026-10-08-0001/topology.json.gz",
       "topology_sha256": "c24510f9d0bf0bb622bac658a15570a66a9bf1e3e00ccf4ea6c84e1c232e3f48",
       "node_count": 5,
-      "code_bundle_uri": "s3://continuo/code-bundles/rel-2026-10-08-0001/bundle.json"
+      "code_bundle_uri": "s3://continuo/code-bundles/rel-2026-10-08-0001/bundle.json",
+      "contract_bundle_uri": "s3://continuo/tenants/default/topologies/rel-2026-10-08-0001/contracts.json.gz",
+      "contract_bundle_sha256": "9b0c4d1e7a52f3860be1d9c4a7f08e35b216d0a94c7e53f1a8b20d6e49c71f3a",
+      "continuo_contracts": "0.2.0"
     }
   }
 }

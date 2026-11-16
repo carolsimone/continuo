@@ -8,7 +8,9 @@ import (
 // DecodeReleasePromoted reads one release.promoted:v2 entry. Every error wraps
 // ErrMalformedEnvelope: an unreadable envelope, another schema_version, a
 // payload that is not JSON, no release_id, a promotion_seq below 1, or no
-// topology_uri or topology_sha256.
+// topology_uri or topology_sha256. contract_bundle_uri and
+// contract_bundle_sha256 are optional: an entry from a producer that does not
+// write them decodes with empty values.
 func DecodeReleasePromoted(fields map[string]string) (Envelope, ReleasePromoted, error) {
 	env, payload, err := ParseEnvelope(fields)
 	if err != nil {

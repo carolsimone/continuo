@@ -16,21 +16,25 @@ const ReleasePromotedSchemaVersion = 1
 // the seq in the transaction that moves current_prod, or when it announces a
 // topology without moving it; a consumer applies an entry only when its seq is
 // higher than the last one it applied. The topology is the artifact at
-// TopologyURI, verified against TopologySHA256. ChangedNodeIDs lists the
+// TopologyURI, verified against TopologySHA256. The release's contract bundle
+// is the artifact at ContractBundleURI, verified against ContractBundleSHA256;
+// both are empty when the promoted release has none. ChangedNodeIDs lists the
 // non-test nodes whose content changed against the previous prod topology; it
 // is informational and empty when Bootstrap is set.
 type ReleasePromoted struct {
-	ReleaseID       string    `json:"release_id"`
-	PromotedAt      time.Time `json:"promoted_at"`
-	PromotionSeq    int64     `json:"promotion_seq"`
-	TopologyURI     string    `json:"topology_uri"`
-	TopologySHA256  string    `json:"topology_sha256"`
-	ChangedNodeIDs  []string  `json:"changed_node_ids"`
-	CandidateSchema string    `json:"candidate_schema"`
-	CodeBundleURI   string    `json:"code_bundle_uri"`
-	Repo            string    `json:"repo"`
-	CommitSHA       string    `json:"commit_sha"`
-	Bootstrap       bool      `json:"bootstrap"`
+	ReleaseID            string    `json:"release_id"`
+	PromotedAt           time.Time `json:"promoted_at"`
+	PromotionSeq         int64     `json:"promotion_seq"`
+	TopologyURI          string    `json:"topology_uri"`
+	TopologySHA256       string    `json:"topology_sha256"`
+	ChangedNodeIDs       []string  `json:"changed_node_ids"`
+	CandidateSchema      string    `json:"candidate_schema"`
+	CodeBundleURI        string    `json:"code_bundle_uri"`
+	ContractBundleURI    string    `json:"contract_bundle_uri"`
+	ContractBundleSHA256 string    `json:"contract_bundle_sha256"`
+	Repo                 string    `json:"repo"`
+	CommitSHA            string    `json:"commit_sha"`
+	Bootstrap            bool      `json:"bootstrap"`
 	// Rebaseline marks a bootstrap promotion that re-baselines fingerprints:
 	// run-controller records every live seed as loaded at its new hash instead of
 	// reloading it. It is set only together with Bootstrap.
