@@ -1,0 +1,59 @@
+package ports
+
+import (
+	"context"
+	"errors"
+	"time"
+)
+
+// LiveIndexSchemaVersion is the version of the live folder's index layout
+// this build writes and reads.
+const LiveIndexSchemaVersion = 1
+
+// ErrInvalidLiveFile means a tenant id or a unique id cannot name an object of
+// the live contracts folder: it is empty, "." or "..", or holds a "/".
+var ErrInvalidLiveFile = errors.New("the id cannot name a live contracts file")
+
+// LiveIndex is the index of a tenant's live contracts folder, written after
+// every file it lists: the promotion it was written for, the fingerprint of
+// the publishing settings its files were rendered with, and one entry per
+// published file, sorted by unique id.
+type LiveIndex struct {
+	SchemaVersion  int
+	TenantID       string
+	PromotionSeq   int64
+	ReleaseID      string
+	WrittenAt      time.Time
+	SettingsSHA256 string
+	Files          []LiveIndexFile
+}
+
+// LiveIndexFile is one published file of the live folder: the node, the
+// counter of its current contract and that contract's hash.
+type LiveIndexFile struct {
+	UniqueID     string
+	Version      int64
+	ContractHash string
+}
+
+// LiveContractsStore writes a tenant's live contracts folder in object
+// storage: one published contract file per unique id, and the folder's
+// index.
+type LiveContractsStore interface {
+	// Put writes body as uniqueID's published contract file.
+	Put(ctx context.Context, tenantID, uniqueID string, body []byte) error
+	// Delete removes uniqueID's published contract file. A file that does not
+	// exist is not an error.
+	Delete(ctx context.Context, tenantID, uniqueID string) error
+	// ReadIndex reads the tenant's index; found is false when the folder has
+	// none.
+	ReadIndex(ctx context.Context, tenantID string) (idx LiveIndex, found bool, err error)
+	// PutIndex writes the tenant's index.
+	PutIndex(ctx context.Context, tenantID string, idx LiveIndex) error
+}
+
+// PublishedRenderer renders the published form of a contract as the bytes of
+// its live file. The same document always renders the same bytes.
+type PublishedRenderer interface {
+	Render(doc map[string]any) ([]byte, error)
+}

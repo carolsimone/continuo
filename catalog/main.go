@@ -15,11 +15,12 @@ import (
 	neo4jinfra "github.com/carolsimone/continuo/catalog/adapters/neo4j"
 	"github.com/carolsimone/continuo/catalog/adapters/redis"
 	s3infra "github.com/carolsimone/continuo/catalog/adapters/s3"
+	serializationinfra "github.com/carolsimone/continuo/catalog/adapters/serialization"
 	"github.com/carolsimone/continuo/catalog/config"
-	domainModel "github.com/carolsimone/continuo/catalog/domain/model"
 	"github.com/carolsimone/continuo/catalog/service/backup"
 	"github.com/carolsimone/continuo/catalog/service/handlers"
 	"github.com/carolsimone/continuo/catalog/service/queries"
+	"github.com/carolsimone/continuo/catalog/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/lifecycle"
@@ -30,6 +31,10 @@ import (
 	pkgretention "github.com/carolsimone/continuo/pkg/retention"
 	"github.com/carolsimone/continuo/pkg/streams"
 )
+
+// liveFolderRetry is how long a failed start-up rewrite of the live contracts
+// folder waits before it tries again.
+const liveFolderRetry = time.Minute
 
 // topologyHandlerTimeout bounds the consumers whose one message covers a whole
 // DAG or release, which they write to Neo4j in one handler.
@@ -258,13 +263,39 @@ func main() {
 	// reads the release's contract bundle from object storage, verifies it
 	// against the promotion's SHA-256, records each node's contract versions,
 	// promotion edges and current-contract pointer through the Neo4j unit of
-	// work, then runs its live-folder step, noLiveContractsRewrite, which
-	// writes nothing. Isolated from the swap and the code versions so neither
-	// waits on the contracts. Its series are registered here whatever the
-	// install enables, every label pair at 0.
+	// work, then rewrites the tenant's live contracts folder
+	// (tenants/<tenant>/contracts/live/) under the tenant's live-folder lease,
+	// which is not the export lease, renewing the message's in-flight mark
+	// while the rewrite runs. Isolated from the swap and the code versions so
+	// neither waits on the contracts. Its series are registered here whatever
+	// the install enables, every label pair at 0.
 	contractMetrics := metricsinfra.NewContractMetrics(metricsReg)
+	liveFolderLease := neo4jinfra.NewLiveFolderLease(neo4jClient, logger)
+	liveFolder := handlers.NewLiveFolder(
+		neo4jinfra.NewContractQueryRepository(neo4jClient),
+		s3infra.NewLiveContractsStore(objectStore),
+		serializationinfra.ODCSYAML{},
+		liveFolderLease,
+		liveFolderLease,
+		contractMetrics,
+		nil, // no warehouse server settings: the published files carry no servers entry
+		time.Now,
+		logger,
+	)
 	releasePromotedContractsHandler := handlers.NewReleasePromotedContractsHandler(
-		graphUnitOfWork, s3infra.NewContractBundleReader(objectStore), noLiveContractsRewrite{}, contractMetrics, logger)
+		graphUnitOfWork, s3infra.NewContractBundleReader(objectStore), liveFolder, contractMetrics,
+		uow.InFlightTTL/4, logger)
+
+	// A tenant whose live folder was written with other publishing settings
+	// has every file rewritten, in a tracked goroutine that neither holds
+	// readiness back nor outlives shutdown. A pass that fails is logged, its
+	// failed writes counted, and tried again every liveFolderRetry.
+	liveFolderTenants := neo4jinfra.NewGraphTenants(neo4jClient)
+	lifecycleManager.Go(func() {
+		if err := liveFolder.RefreshAtStart(ctx, liveFolderTenants, liveFolderRetry); err != nil {
+			logger.Info("Live contracts folder start-up rewrite stopped", "error", err)
+		}
+	})
 
 	// remediation.requested:v2 (rejections) + remediation.pr_opened:v1
 	// (proposals) + remediation.pr_closed:v1 (provenance) — the
@@ -378,13 +409,4 @@ func main() {
 	// intake, drain in-flight goroutines, then close infra. No fixed sleep.
 	<-lifecycleManager.Done()
 	logger.Info("Catalog service stopped")
-}
-
-// noLiveContractsRewrite is the contracts group's live-folder step while catalog
-// publishes no live contracts folder: it writes nothing.
-type noLiveContractsRewrite struct{}
-
-// Rewrite writes nothing.
-func (noLiveContractsRewrite) Rewrite(context.Context, domainModel.PromoteReleaseInput) error {
-	return nil
 }

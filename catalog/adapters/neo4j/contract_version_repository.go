@@ -116,12 +116,14 @@ CREATE (n)-[:CURRENT_CONTRACT {
 // run inside the same write transaction as Write. The unit of work takes the
 // tenant's export-gate lock before either, so a tenant's writes are
 // serialized and the states a plan is made from cannot change before it is
-// written. The Cypher guards are a second line: every node of a promotion
-// advances its watermark contract_promotion_seq to the larger seq, and every
-// edge and pointer write is guarded, inside the same statement, on that
-// watermark being this promotion's seq and on the pointer not already naming
-// the edge's contract. So an older promotion records its contracts but never
-// a change, and a plan made from a stale read records no change twice.
+// written. A node a newer promotion already reached is left out of the plan,
+// so it is left untouched and stores nothing. The Cypher guards are a second
+// line: every node of the plan advances its watermark contract_promotion_seq
+// to the larger seq, and every edge and pointer write is guarded, inside the
+// same statement, on that watermark being this promotion's seq and on the
+// pointer not already naming the edge's contract. So an older promotion never
+// records a change, and a plan made from a stale read records no change
+// twice.
 type contractVersionRepository struct {
 	run TenantRunner
 }

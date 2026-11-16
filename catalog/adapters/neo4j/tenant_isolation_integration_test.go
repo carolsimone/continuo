@@ -63,9 +63,9 @@ type isolationRow struct {
 
 // isolationRepositories are the repositories of this package: the readers
 // the gRPC server and the live contracts folder serve from, the four that
-// write through uow.Tx, the
-// export lease, the unit of work, and the export and import of a tenant's
-// graph. Each exported method of each has a row.
+// write through uow.Tx, the export lease, the live-folder lease and state,
+// the unit of work, and the export and import of a tenant's graph. Each
+// exported method of each has a row.
 var isolationRepositories = []any{
 	(*NodeQueryRepository)(nil),
 	(*CodeVersionQueryRepository)(nil),
@@ -76,6 +76,7 @@ var isolationRepositories = []any{
 	(*caseBaseRepository)(nil),
 	(*contractVersionRepository)(nil),
 	(*exportLease)(nil),
+	(*LiveFolderLease)(nil),
 	(*unitOfWork)(nil),
 	(*graphExporter)(nil),
 	(*graphImporter)(nil),
@@ -90,6 +91,7 @@ type isolationFixture struct {
 	precedents *PrecedentQueryRepository
 	contracts  *ContractQueryRepository
 	lease      ports.ExportLease
+	live       *LiveFolderLease
 	// sharedMessage is a message id B's topology group processed; A never did.
 	sharedMessage string
 	// wroteA reports whether the unit of work ran A's write.
@@ -186,10 +188,22 @@ func newIsolationFixture(t *testing.T) *isolationFixture {
 		precedents:    NewPrecedentQueryRepository(a.client, quietLogger()),
 		contracts:     NewContractQueryRepository(a.client),
 		lease:         NewExportLease(a.client, quietLogger()),
+		live:          NewLiveFolderLease(a.client, quietLogger()),
 		sharedMessage: "iso-shared-" + uuid.NewString(),
 	}
 	seedIsolationTenant(f.a, isoMarkA, 1, false)
 	seedIsolationTenant(f.b, isoMarkB, 2, true)
+
+	// B's live folder has a watermark and settings, and B holds its
+	// live-folder lease, so none of A's live-folder calls may read or take
+	// them.
+	liveMarker := uow.Marker{TenantID: f.b.tenant, Group: streams.CatalogReleaseContracts, MessageID: "iso-live-" + uuid.NewString()}
+	require.NoError(t, f.b.uow.Write(f.ctx, liveMarker, true, func(ctx context.Context, tx uow.Tx) error {
+		return tx.Contracts().RecordLiveFolder(ctx, f.b.tenant, 9, "settings-"+isoMarkB)
+	}))
+	acquired, err := f.live.Acquire(f.ctx, f.b.tenant, "b-live-holder", 10*time.Minute)
+	require.NoError(t, err)
+	require.True(t, acquired)
 
 	// B has processed sharedMessage and holds its export lease, so neither may
 	// skip or pause a write of A.
@@ -449,6 +463,38 @@ func (f *isolationFixture) rows() []isolationRow {
 			f.a.writeContracts(contractPromotion("r3", 3), isoContract(isoOnlyB, 3, isoMarkA))
 			hash, _ := f.a.contractPointer(isoOnlyB)
 			assert.Equal(t, "k3-"+isoMarkA, hash, "A's node takes A's contract")
+		}},
+		{"contractVersionRepository.RecordLiveFolder", func(t *testing.T) {
+			require.NoError(t, f.a.uow.Write(ctx, uow.Marker{TenantID: tenant(), Group: streams.CatalogReleaseContracts,
+				MessageID: "iso-live-a-" + uuid.NewString()}, true, func(ctx context.Context, tx uow.Tx) error {
+				return tx.Contracts().RecordLiveFolder(ctx, tenant(), 3, "settings-"+isoMarkA)
+			}))
+		}},
+		{"LiveFolderLease.Read", func(t *testing.T) {
+			seq, settings, err := f.live.Read(ctx, tenant())
+			require.NoError(t, err)
+			assert.Equal(t, int64(3), seq, "A's watermark, not B's")
+			assert.Equal(t, "settings-"+isoMarkA, settings)
+		}},
+		{"LiveFolderLease.RecordSettings", func(t *testing.T) {
+			require.NoError(t, f.live.RecordSettings(ctx, tenant(), "settings-2-"+isoMarkA), "B's export lease does not pause A's writes")
+			_, settings, err := f.live.Read(ctx, tenant())
+			require.NoError(t, err)
+			assert.Equal(t, "settings-2-"+isoMarkA, settings)
+		}},
+		{"LiveFolderLease.Acquire", func(t *testing.T) {
+			acquired, err := f.live.Acquire(ctx, tenant(), isoHolder, time.Minute)
+			require.NoError(t, err)
+			assert.True(t, acquired, "B's live-folder lease does not hold A's")
+		}},
+		{"LiveFolderLease.Renew", func(t *testing.T) {
+			require.NoError(t, f.live.Renew(ctx, tenant(), isoHolder, time.Minute))
+			assert.ErrorIs(t, f.live.Renew(ctx, f.b.tenant, isoHolder, time.Minute), ports.ErrLeaseLost,
+				"A's holder does not hold B's live-folder lease")
+		}},
+		{"LiveFolderLease.Release", func(t *testing.T) {
+			require.NoError(t, f.live.Release(ctx, tenant(), isoHolder))
+			require.NoError(t, f.live.Release(ctx, f.b.tenant, isoHolder), "releasing another holder's lease is a no-op")
 		}},
 		{"caseBaseRepository.RecordRejection", func(t *testing.T) {
 			f.a.recordRejection(rejectionOf("r-failed-again", isoOnlyB, isoOnlyBSig, promotedAtOf(3)))

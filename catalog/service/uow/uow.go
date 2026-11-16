@@ -3,10 +3,18 @@ package uow
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/carolsimone/continuo/catalog/domain/repository"
 	"github.com/google/uuid"
 )
+
+// InFlightTTL is how long a Write that is not final keeps its message's
+// in-flight mark live. It exceeds the time one batch takes, and a message that
+// dies mid-way holds an export back for at most this long after its last
+// write. A handler whose work between two writes can take longer writes again,
+// not final, to keep the mark live.
+const InFlightTTL = 2 * time.Minute
 
 // ErrWritesPaused means an export or a restore holds the tenant's export
 // lease, so the write did not run. The consumer backs off and retries, as for

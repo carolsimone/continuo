@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -52,6 +54,8 @@ type fakeContractRepository struct {
 	reads  [][]string
 	plans  []contractversion.WritePlan
 	promos []contractversion.Promotion
+	// liveFolder lists the live-folder watermarks transaction B recorded.
+	liveFolder []liveFolderRecord
 }
 
 func (f *fakeContractRepository) ReadStates(_ context.Context, _ string, ids []string) (map[string]contractversion.NodeState, error) {
@@ -63,6 +67,17 @@ func (f *fakeContractRepository) Write(_ context.Context, _ string, p contractve
 	f.promos = append(f.promos, p)
 	f.plans = append(f.plans, plan)
 	return f.res, nil
+}
+
+func (f *fakeContractRepository) RecordLiveFolder(_ context.Context, _ string, seq int64, settings string) error {
+	f.liveFolder = append(f.liveFolder, liveFolderRecord{seq: seq, settings: settings})
+	return nil
+}
+
+// liveFolderRecord is one RecordLiveFolder call.
+type liveFolderRecord struct {
+	seq      int64
+	settings string
 }
 
 var _ repository.ContractRepository = (*fakeContractRepository)(nil)
@@ -85,14 +100,21 @@ func (f *fakeLiveRewriter) Rewrite(_ context.Context, in domainModel.PromoteRele
 	return f.err
 }
 
+// fakeLiveSettings is the settings fingerprint fakeLiveRewriter publishes
+// with.
+const fakeLiveSettings = "sha-settings"
+
+func (f *fakeLiveRewriter) SettingsSHA256() string { return fakeLiveSettings }
+
 var _ handlers.LiveContractsRewriter = (*fakeLiveRewriter)(nil)
 
 // ── fakes: ports.ContractMetrics ─────────────────────────────────────────────
 
 // fakeContractMetrics records what the handler counts. onVersions, when set,
 // runs at each VersionsWritten call, so a test can see what had committed by
-// then.
+// then. LiveWrite may be called from several goroutines at once.
 type fakeContractMetrics struct {
+	mu         sync.Mutex
 	versions   []int
 	steps      []string
 	liveWrites [][2]string
@@ -107,7 +129,16 @@ func (f *fakeContractMetrics) VersionsWritten(n int) {
 }
 
 func (f *fakeContractMetrics) LiveWrite(op, outcome string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.liveWrites = append(f.liveWrites, [2]string{op, outcome})
+}
+
+// writes returns the live-folder writes counted so far.
+func (f *fakeContractMetrics) writes() [][2]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.liveWrites)
 }
 
 func (f *fakeContractMetrics) ObserveStep(step string, _ time.Duration) {
@@ -171,7 +202,7 @@ func newContractsFixture() *contractsFixture {
 		metrics: &fakeContractMetrics{},
 	}
 	f.uow.tx.contracts = f.repo
-	f.handler = handlers.NewReleasePromotedContractsHandler(f.uow, f.bundles, f.live, f.metrics, newTestLogger())
+	f.handler = handlers.NewReleasePromotedContractsHandler(f.uow, f.bundles, f.live, f.metrics, time.Minute, newTestLogger())
 	return f
 }
 
@@ -347,7 +378,7 @@ func TestContractsHandler_CountsVersionsAfterCommit(t *testing.T) {
 
 	lost := newContractsFixture()
 	lost.handler = handlers.NewReleasePromotedContractsHandler(
-		commitFailingUnitOfWork{lost.uow}, lost.bundles, lost.live, lost.metrics, newTestLogger())
+		commitFailingUnitOfWork{lost.uow}, lost.bundles, lost.live, lost.metrics, time.Minute, newTestLogger())
 	err := lost.handler.Handle(context.Background(), "1-0", nil, contractsInput())
 	require.ErrorIs(t, err, errCommitLost)
 	assert.Empty(t, lost.metrics.versions, "nothing is counted for a transaction that did not commit")
@@ -378,7 +409,7 @@ func TestContractsHandler_AMessageFinishedMeanwhileIsAcknowledged(t *testing.T) 
 	f.bundles.err = nil
 	marker := uow.Marker{TenantID: in.TenantID, Group: streams.CatalogReleaseContracts, MessageID: "1-0"}
 	reader := &recordingBundleReader{fakeContractBundleReader: f.bundles, onFetch: func() { f.uow.record(marker) }}
-	h := handlers.NewReleasePromotedContractsHandler(f.uow, reader, f.live, f.metrics, newTestLogger())
+	h := handlers.NewReleasePromotedContractsHandler(f.uow, reader, f.live, f.metrics, time.Minute, newTestLogger())
 
 	require.NoError(t, h.Handle(context.Background(), "1-0", nil, in))
 
@@ -408,7 +439,7 @@ func TestContractsHandler_LogsTheSupersededNodes(t *testing.T) {
 		"analytics.py_weekly":     {UniqueID: "analytics.py_weekly", Watermark: 9},
 	}
 	var logs bytes.Buffer
-	h := handlers.NewReleasePromotedContractsHandler(f.uow, f.bundles, f.live, f.metrics,
+	h := handlers.NewReleasePromotedContractsHandler(f.uow, f.bundles, f.live, f.metrics, time.Minute,
 		slog.New(slog.NewJSONHandler(&logs, nil)))
 
 	require.NoError(t, h.Handle(context.Background(), "1-0", nil, contractsInput()))
@@ -427,4 +458,50 @@ func TestContractsHandler_LogsTheSupersededNodes(t *testing.T) {
 	require.NotNil(t, line, "a log line counts the superseded nodes")
 	assert.Equal(t, "rel-1", line["release_id"])
 	assert.Equal(t, 2.0, line["superseded"])
+}
+
+// Transaction B records the live folder's watermark, the promotion's seq and
+// the settings the folder was rewritten with, with the marker.
+func TestContractsHandler_TransactionBRecordsTheLiveWatermark(t *testing.T) {
+	f := newContractsFixture()
+	var atRewrite int
+	f.live.onRewrite = func() { atRewrite = len(f.repo.liveFolder) }
+
+	require.NoError(t, f.handler.Handle(context.Background(), "1-0", nil, contractsInput()))
+
+	assert.Zero(t, atRewrite, "the watermark waits for the rewrite")
+	assert.Equal(t, []liveFolderRecord{{seq: 3, settings: fakeLiveSettings}}, f.repo.liveFolder)
+	require.Len(t, f.uow.writes, 2)
+	assert.True(t, f.uow.writes[1].Final, "in the final write, with the marker")
+}
+
+// A failed rewrite leaves the watermark where it was.
+func TestContractsHandler_AFailedRewriteRecordsNoWatermark(t *testing.T) {
+	f := newContractsFixture()
+	f.live.err = errors.New("object storage unavailable")
+
+	require.Error(t, f.handler.Handle(context.Background(), "1-0", nil, contractsInput()))
+
+	assert.Empty(t, f.repo.liveFolder)
+}
+
+// A rewrite that runs long writes again, not final, while it runs, so the
+// message's in-flight mark stays live until transaction B and no export starts
+// in between; the renewals stop when the rewrite ends.
+func TestContractsHandler_ALongRewriteKeepsTheMessageInFlight(t *testing.T) {
+	f := newContractsFixture()
+	f.live.onRewrite = func() { time.Sleep(150 * time.Millisecond) }
+	h := handlers.NewReleasePromotedContractsHandler(f.uow, f.bundles, f.live, f.metrics, 20*time.Millisecond, newTestLogger())
+
+	require.NoError(t, h.Handle(context.Background(), "1-0", nil, contractsInput()))
+
+	writes := f.uow.writes
+	require.GreaterOrEqual(t, len(writes), 4, "transaction A, at least two renewals, transaction B")
+	for _, w := range writes[:len(writes)-1] {
+		assert.False(t, w.Final, "every write before transaction B leaves the message in flight")
+	}
+	assert.True(t, writes[len(writes)-1].Final)
+	assert.Len(t, f.repo.plans, 1, "a renewal writes no contract")
+	time.Sleep(60 * time.Millisecond)
+	assert.Len(t, f.uow.writes, len(writes), "no renewal after the rewrite ends")
 }

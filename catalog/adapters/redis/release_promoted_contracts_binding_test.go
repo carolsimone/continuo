@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/carolsimone/continuo/catalog/service/handlers"
 	"github.com/carolsimone/continuo/catalog/service/uow"
@@ -18,7 +19,7 @@ import (
 // contractsBinding is the contracts group's binding over a handler on u.
 func contractsBinding(u uow.UnitOfWork) pkgredis.MessageHandler {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return NewReleasePromotedContractsBinding(handlers.NewReleasePromotedContractsHandler(u, nil, nil, nil, logger), logger)
+	return NewReleasePromotedContractsBinding(handlers.NewReleasePromotedContractsHandler(u, nil, nil, nil, time.Minute, logger), logger)
 }
 
 // The contracts group parses release.promoted:v2 with the topology group's

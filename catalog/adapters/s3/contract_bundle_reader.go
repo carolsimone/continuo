@@ -35,9 +35,9 @@ func NewContractBundleReader(objects objectstore.Reader) *ContractBundleReader {
 // (retried); a uri that names no object, an object over
 // contractbundle.MaxObjectBytes, a checksum mismatch, an undecodable or
 // unsupported document, a document with no tenant_id and a contract catalog
-// cannot version are
-// ports.ErrContractBundleInvalid (permanent); any other error keeps its cause
-// and wraps neither, so the consumer's classifier recognises an outage.
+// cannot version are ports.ErrContractBundleInvalid (permanent); any other
+// error keeps its cause and wraps neither, so the consumer's classifier
+// recognises an outage.
 //
 // A contract is refused when its hash is empty or its document is not an
 // object whose id equals the unique id the bundle keys it by: the bundle holds

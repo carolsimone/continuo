@@ -17,8 +17,8 @@ var ErrContractBundleNotFound = errors.New("contract bundle not found")
 // contract bundle: its URI names no object, the object exceeds the size a
 // reader accepts, its SHA-256 differs from the event's, it is not a document
 // of a schema version this build reads, it names no tenant, or one of its
-// contracts is not one catalog can version. Re-reading the same object cannot help, so the caller
-// fails the message permanently.
+// contracts is not one catalog can version. Re-reading the same object
+// cannot help, so the caller fails the message permanently.
 var ErrContractBundleInvalid = errors.New("contract bundle invalid")
 
 // ContractBundle is what a release's contract bundle holds for catalog: the

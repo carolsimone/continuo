@@ -67,6 +67,8 @@ func (r *recordedLiveRewrite) Rewrite(context.Context, domainModel.PromoteReleas
 	return r.err
 }
 
+func (r *recordedLiveRewrite) SettingsSHA256() string { return "sha-settings" }
+
 var _ handlers.LiveContractsRewriter = (*recordedLiveRewrite)(nil)
 
 // contractsFixture is the contracts handler of one tenant over the production
@@ -89,7 +91,7 @@ func newContractsFixture(t *testing.T) *contractsFixture {
 		live:         &recordedLiveRewrite{},
 	}
 	f.handler = handlers.NewReleasePromotedContractsHandler(
-		g.uow, s3infra.NewContractBundleReader(g.mem), f.live, f.metrics, quietLogger())
+		g.uow, s3infra.NewContractBundleReader(g.mem), f.live, f.metrics, time.Minute, quietLogger())
 	return f
 }
 
