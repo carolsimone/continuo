@@ -286,7 +286,7 @@ const (
 	RemediationSourceCompile RemediationSource = "compile"
 	// RemediationSourceSeedBuild — the seed-build leg of a candidate release.
 	RemediationSourceSeedBuild RemediationSource = "seed_build"
-	// RemediationSourceDuplicateTable — topology-controller's rejection of two nodes that claim the same relation, before any Job runs.
+	// RemediationSourceDuplicateTable — release-controller's rejection of a candidate topology in which two nodes claim the same relation, before any Job runs.
 	RemediationSourceDuplicateTable RemediationSource = "duplicate_table"
 	// RemediationSourceParse — topology-controller's rejection of a node whose SQL it could not resolve, before any Job runs.
 	RemediationSourceParse RemediationSource = "parse"

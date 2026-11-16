@@ -453,7 +453,7 @@ vocabularies:
         description: the seed-build leg of a candidate release.
       - value: duplicate_table
         const: DuplicateTable
-        description: topology-controller's rejection of two nodes that claim the same relation, before any Job runs.
+        description: release-controller's rejection of a candidate topology in which two nodes claim the same relation, before any Job runs.
       - value: parse
         const: Parse
         description: topology-controller's rejection of a node whose SQL it could not resolve, before any Job runs.
