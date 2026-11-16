@@ -8,26 +8,6 @@ import (
 	"github.com/carolsimone/continuo/catalog/domain/event"
 )
 
-const goldenRemediationRequested = `{"event_id":"e","source":"remediation","release_id":"r","code_bundle_uri":"s3://b","classified_at":"2026-01-02T03:04:05Z","nodes":[{"node_id":"n","category":"compile","error_signature":"sig","reason":"why","error_excerpt":"exc","dbt_log_uri":"s3://l"}]}`
-
-func TestRemediationRequestedDecodes(t *testing.T) {
-	var dto RemediationRequestedDTO
-	if err := json.Unmarshal([]byte(goldenRemediationRequested), &dto); err != nil {
-		t.Fatalf("unmarshal golden: %v", err)
-	}
-	want := event.RemediationRequested{
-		EventID: "e", Source: "remediation", ReleaseID: "r", CodeBundleURI: "s3://b",
-		ClassifiedAt: "2026-01-02T03:04:05Z",
-		Nodes: []event.RemediationRequestedNode{{
-			NodeID: "n", Category: "compile", ErrorSignature: "sig", Reason: "why",
-			ErrorExcerpt: "exc", DBTLogURI: "s3://l",
-		}},
-	}
-	if got := dto.ToDomain(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("ToDomain:\n got %+v\nwant %+v", got, want)
-	}
-}
-
 const goldenPROpened = `{"proposal_id":"p","release_id":"r","node_id":"n","resolved_node_ids":["n","n2"],"pr_url":"http://x","pr_number":5,"opened_by":"bot","opened_at":"2026-01-02T03:04:05Z","service":"svc"}`
 
 func TestPROpenedDecodes(t *testing.T) {

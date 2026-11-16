@@ -18,18 +18,20 @@ import (
 	"github.com/google/uuid"
 )
 
-// RemediationRequestedRejectionsHandler consumes remediation.requested:v2 on
-// the rejections group and records each node of the batch as a :Rejection of
-// the message's tenant.
+// RemediationRequestedRejectionsHandler consumes remediation.requested:v3 on
+// the rejections group and records each fixable node of the batch as a
+// :Rejection of the message's tenant. A node the classifier marked unfixable
+// is no precedent a fix can learn from and is left out of the case base; a
+// message whose every node is unfixable records only its processed marker.
 //
 // The write is code-optional by design: a compile-stage failure has no code
 // bundle (parse never ran), and a bundle that turns out unreadable must not
 // cost the precedent — the classification carried by the event is recorded
 // either way, and only a bundle that may still land (absent from object
-// storage) is worth a retry. One message carries every healable node from a
-// rejected release; the bundle is fetched once, and every node's :Rejection
-// is recorded in one write transaction with the message's processed-message
-// marker.
+// storage) is worth a retry. One message carries every failing node of a
+// rejected release; the bundle is fetched once, and every fixable node's
+// :Rejection is recorded in one write transaction with the message's
+// processed-message marker.
 type RemediationRequestedRejectionsHandler struct {
 	uow     uow.UnitOfWork
 	bundles ports.CodeBundleReader
@@ -45,17 +47,20 @@ func NewRemediationRequestedRejectionsHandler(
 	return &RemediationRequestedRejectionsHandler{uow: u, bundles: bundles, logger: logger}
 }
 
-// Handle processes one remediation.requested:v2 message of tenantID on the
-// rejections group, recording one :Rejection per node the classifier flagged
-// as healable. Steps:
+// Handle processes one remediation.requested:v3 message of tenantID on the
+// rejections group, recording one :Rejection per node the classifier did not
+// mark unfixable. Steps:
 //  1. Refuse as permanent a message lacking its release, its nodes, a node's
-//     id or error signature, or a parseable classified_at.
+//     id or error signature (an unfixable node's included), or a parseable
+//     classified_at.
 //  2. Look the group's marker up, by messageID or by outboxEntryID, which
 //     catches a re-XADD of the same upstream outbox row under a fresh Redis
 //     message ID. A processed message is acknowledged without reading object
 //     storage.
-//  3. Read the release's code bundle, outside any transaction.
-//  4. In one write transaction, record every node's rejection and the marker.
+//  3. Read the release's code bundle, outside any transaction, unless every
+//     node is unfixable.
+//  4. In one write transaction, record every fixable node's rejection and the
+//     marker. A message with no fixable node writes the marker alone.
 func (h *RemediationRequestedRejectionsHandler) Handle(
 	ctx context.Context,
 	tenantID string,
@@ -95,13 +100,26 @@ func (h *RemediationRequestedRejectionsHandler) Handle(
 		return nil
 	}
 
-	bundle, err := h.releaseBundle(ctx, tenantID, in)
-	if err != nil {
-		return err // bundle may still land: leave in PEL for redelivery
+	fixable := make([]event.RemediationRequestedNode, 0, len(in.Nodes))
+	for _, n := range in.Nodes {
+		if n.Unfixable {
+			h.logger.Info("unfixable node left out of the case base",
+				"tenant_id", tenantID, "release_id", in.ReleaseID, "node_id", n.NodeID, "reason", n.Reason)
+			continue
+		}
+		fixable = append(fixable, n)
 	}
 
-	rejections := make([]casebase.Rejection, 0, len(in.Nodes))
-	for _, n := range in.Nodes {
+	var bundle *codebundle.Bundle
+	if len(fixable) > 0 {
+		bundle, err = h.releaseBundle(ctx, tenantID, in)
+		if err != nil {
+			return err // bundle may still land: leave in PEL for redelivery
+		}
+	}
+
+	rejections := make([]casebase.Rejection, 0, len(fixable))
+	for _, n := range fixable {
 		rawCode, contentHash := codeFor(bundle, tenantID, in, n.NodeID, h.logger)
 		rejections = append(rejections, casebase.Rejection{
 			ReleaseID:    in.ReleaseID,
@@ -136,6 +154,11 @@ func (h *RemediationRequestedRejectionsHandler) Handle(
 	}
 	if !wrote {
 		h.logger.Info("remediation.requested processed by another delivery of the rejections group meanwhile; acknowledged",
+			"message_id", messageID, "tenant_id", tenantID, "release_id", in.ReleaseID)
+		return nil
+	}
+	if len(rejections) == 0 {
+		h.logger.Info("remediation.requested carries no fixable node; recorded as processed",
 			"message_id", messageID, "tenant_id", tenantID, "release_id", in.ReleaseID)
 		return nil
 	}

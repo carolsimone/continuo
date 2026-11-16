@@ -62,7 +62,7 @@ func TestMain_ConsumesOnlyTopologyAndCaseBaseStreams(t *testing.T) {
 		"ReleasePromotedV2",
 		"RemediationPrClosedV1",
 		"RemediationPrOpenedV1",
-		"RemediationRequestedV2",
+		"RemediationRequestedV3",
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("main.go names streams %v, want %v", got, want)
