@@ -1,3 +1,4 @@
+import { HANDOVER_REASONS, type HandoverReason } from '../server/generated/vocabulary.gen';
 import { NodeValidationResult, ProposalDTO, PullRequestDTO, ReleaseTransition } from './types';
 
 // releasePillClass maps a status to a design-system pill variant. It handles
@@ -135,6 +136,16 @@ export function proposalStatusForNode(p: ProposalDTO, nodeId: string): string {
 // specific node, falling back to the proposal's overall rationale.
 export function proposalReasonForNode(p: ProposalDTO, nodeId: string): string {
   return p.node_outcomes?.[nodeId]?.reason ?? p.rationale;
+}
+
+// proposalCodeForNode reads the handover_reason a batched attempt handed one
+// specific node over for. It reads only that node's own outcome: a proposal
+// describes several nodes, so no proposal-level value stands in for it. The
+// server sends '' for an outcome with no code and an older payload omits the
+// field; both, and a value that is not a known reason, read as undefined.
+export function proposalCodeForNode(p: ProposalDTO, nodeId: string): HandoverReason | undefined {
+  const code = p.node_outcomes?.[nodeId]?.code;
+  return code && (HANDOVER_REASONS as readonly string[]).includes(code) ? code : undefined;
 }
 
 // proposalPullRequests lists every pull request opened from this proposal.

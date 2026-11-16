@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
   groupByStage, stageLabel, reasonLabel, proposalKey,
-  proposalNodeIds, proposalStatusForNode, proposalReasonForNode,
+  proposalNodeIds, proposalStatusForNode, proposalReasonForNode, proposalCodeForNode,
   releasePillClass, verificationPhase, verificationRunPhase,
   effectiveRound, groupProposals, proposalPillClass,
 } from './release-helpers';
+import { HANDOVER_TEXT } from './handover-text';
+import { HANDOVER_REASONS } from '../server/generated/vocabulary.gen';
 import { NodeValidationResult } from './types';
 import type { ProposalDTO } from './types';
 
@@ -129,6 +131,43 @@ describe('batched proposal helpers', () => {
     expect(proposalStatusForNode(p, 's.b')).toBe('skipped');
     expect(proposalReasonForNode(p, 's.b')).toBe('no source');
     expect(proposalReasonForNode(p, 's.a')).toBe('overall');
+  });
+});
+
+describe('proposalCodeForNode', () => {
+  const withOutcome = (outcome: object): ProposalDTO => ({
+    ...base, resolved_node_ids: ['s.a'], node_outcomes: { 's.a': outcome as any },
+  });
+
+  it('reads the hand-over code of the node\'s own outcome', () => {
+    expect(proposalCodeForNode(withOutcome({ status: 'failed', reason: 'x', code: 'tries_spent' }), 's.a')).toBe('tries_spent');
+  });
+
+  it('is undefined for the empty code the server sends when an outcome has none', () => {
+    expect(proposalCodeForNode(withOutcome({ status: 'failed', reason: 'x', code: '' }), 's.a')).toBeUndefined();
+  });
+
+  it('is undefined when the outcome omits the code field', () => {
+    expect(proposalCodeForNode(withOutcome({ status: 'failed', reason: 'x' }), 's.a')).toBeUndefined();
+  });
+
+  it('is undefined for a value that is not a known reason', () => {
+    expect(proposalCodeForNode(withOutcome({ status: 'failed', reason: 'x', code: 'something_new' }), 's.a')).toBeUndefined();
+  });
+
+  it('is undefined for a node with no outcome of its own, with no proposal-level fallback', () => {
+    const p = withOutcome({ status: 'failed', reason: 'x', code: 'declined' });
+    expect(proposalCodeForNode(p, 's.b')).toBeUndefined();
+    expect(proposalCodeForNode(base, 's.a')).toBeUndefined();
+  });
+});
+
+describe('HANDOVER_TEXT', () => {
+  it('every hand-over reason has a text', () => {
+    expect(Object.keys(HANDOVER_TEXT).sort()).toEqual([...HANDOVER_REASONS].sort());
+    for (const reason of HANDOVER_REASONS) {
+      expect(HANDOVER_TEXT[reason].trim()).not.toBe('');
+    }
   });
 });
 

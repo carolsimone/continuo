@@ -4,10 +4,11 @@ import PageHeader from './PageHeader';
 import { ReleaseDetail, NodeValidationResult, ProposalDTO, VerificationRunSummary } from './types';
 import {
   releasePillClass, proposalKey, reasonLabel,
-  proposalNodeIds, proposalStatusForNode, proposalReasonForNode,
+  proposalNodeIds, proposalStatusForNode, proposalReasonForNode, proposalCodeForNode,
   proposalPullRequests, proposalPrServices, proposalPrStateForService,
   verificationPhase, verificationRunPhase, effectiveRound, shortSha,
 } from './release-helpers';
+import { HANDOVER_TEXT } from './handover-text';
 import { fetchProposals } from './remediation-api';
 import { NodeResultsTable } from './node-results';
 import ServiceTiles from './ServiceTiles';
@@ -373,6 +374,16 @@ export default function ReleaseDetailPage() {
           setVerifyPhaseByKey(phaseByKey);
           const noteByKey = new Map<string, string>();
           for (const [k, { proposal: p, nodeId: nid }] of latestByKey) {
+            // A node outcome with a handover code says why the node went to a
+            // human: the code's text, then the node's own message. It reads
+            // the outcome's own reason, never the proposal's rationale, which
+            // on a batched attempt describes other nodes' fixes.
+            const code = proposalCodeForNode(p, nid);
+            if (code) {
+              const message = p.node_outcomes?.[nid]?.reason?.trim();
+              noteByKey.set(k, message ? `${HANDOVER_TEXT[code]} ${message}` : HANDOVER_TEXT[code]);
+              continue;
+            }
             const status = proposalStatusForNode(p, nid);
             const reason = proposalReasonForNode(p, nid);
             if (status === 'escalated') noteByKey.set(k, 'Attempt budget spent.');
