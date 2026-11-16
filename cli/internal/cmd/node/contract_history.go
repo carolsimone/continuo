@@ -31,7 +31,8 @@ A version number rises each time a promotion changes the node's contract, so a
 revert to an earlier contract is a new version: its same_as_version names the
 earlier version with the same contract_hash. is_current marks the version the
 node has now; after a node is retired its history stays and none of it is
-current. A node with no history gives an empty list.
+current. A node with no history, or one the catalog does not know, gives an
+empty list: this command never answers not_found.
 
 Arguments:
   <unique_id>  The node's unique_id, "<schema>.<table>" (for example
@@ -50,13 +51,12 @@ Output (stdout, JSON):
 
 Errors:
   usage      (exit 2)  wrong number of arguments, or a limit that is not a whole number from 0 up
-  not_found  (exit 3)  the catalog service reports the node as unknown
   unavailable(exit 5)  the catalog service is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo node contract-history analytics.py_daily_kpis\n  continuo node contract-history analytics.py_daily_kpis 5",
 		Annotations: map[string]string{
 			"output_schema": `{"versions":[{"unique_id":"string","version":"number","contract_hash":"string","release_id":"string","promoted_at":"string","content_hash":"string","is_current":"boolean","same_as_version":"number","continuo_contracts":"string"}]}`,
-			"exit_codes":    `[0,2,3,5,6]`,
+			"exit_codes":    `[0,2,5,6]`,
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) < 1 || len(args) > 2 {

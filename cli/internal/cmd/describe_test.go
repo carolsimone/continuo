@@ -258,13 +258,17 @@ func TestDescribe_CronCommandsDocumentTheirPositionalArgsAndExitCodes(t *testing
 func TestDescribe_ContractCommandsDocumentTheirPositionalArgsAndExitCodes(t *testing.T) {
 	p := runDescribe(t)
 
-	for path, args := range map[string][]string{
-		"node contract":         {"<unique_id>"},
-		"node contract-history": {"<unique_id>", "[limit]"},
-		"node contract-diff":    {"<unique_id>", "<from>", "<to>"},
+	for path, want := range map[string]struct {
+		args  []string
+		exits []int
+	}{
+		"node contract": {[]string{"<unique_id>"}, []int{0, 2, 3, 5, 6}},
+		// The catalog answers a node with no history with an empty list, never not_found.
+		"node contract-history": {[]string{"<unique_id>", "[limit]"}, []int{0, 2, 5, 6}},
+		"node contract-diff":    {[]string{"<unique_id>", "<from>", "<to>"}, []int{0, 2, 3, 5, 6}},
 	} {
 		c := findCmd(t, p, path)
-		assert.Equal(t, args, c.Args, path)
+		assert.Equal(t, want.args, c.Args, path)
 		assert.False(t, c.Mutating, "%s only reads", path)
 		assert.NotEmpty(t, c.Short, path)
 		require.NotEmpty(t, c.Examples, path)
@@ -272,7 +276,7 @@ func TestDescribe_ContractCommandsDocumentTheirPositionalArgsAndExitCodes(t *tes
 
 		var exitCodes []int
 		require.NoError(t, json.Unmarshal(c.ExitCodes, &exitCodes))
-		assert.Equal(t, []int{0, 2, 3, 5, 6}, exitCodes, path)
+		assert.Equal(t, want.exits, exitCodes, path)
 
 		var schema map[string]json.RawMessage
 		require.NoError(t, json.Unmarshal(c.OutputSchema, &schema), path)

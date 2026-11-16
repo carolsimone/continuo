@@ -140,10 +140,8 @@ func TestContractHistory_ARefusedLimitFromTheServerExits2(t *testing.T) {
 	assert.Equal(t, 2, exit)
 }
 
-func TestContractHistory_NotFoundExits3AndUnavailableExits5(t *testing.T) {
-	_, _, exit := runContractCommand(t, NewContractHistoryCommand, &fakeNodeCatalog{contractVersionsErr: status.Error(codes.NotFound, "no such node")}, []string{"analytics.orders"}, false)
-	assert.Equal(t, 3, exit)
-	_, _, exit = runContractCommand(t, NewContractHistoryCommand, &fakeNodeCatalog{contractVersionsErr: status.Error(codes.Unavailable, "down")}, []string{"analytics.orders"}, false)
+func TestContractHistory_UnavailableExits5AndInternalExits6(t *testing.T) {
+	_, _, exit := runContractCommand(t, NewContractHistoryCommand, &fakeNodeCatalog{contractVersionsErr: status.Error(codes.Unavailable, "down")}, []string{"analytics.orders"}, false)
 	assert.Equal(t, 5, exit)
 	_, _, exit = runContractCommand(t, NewContractHistoryCommand, &fakeNodeCatalog{contractVersionsErr: status.Error(codes.Internal, "boom")}, []string{"analytics.orders"}, false)
 	assert.Equal(t, 6, exit)
@@ -178,7 +176,8 @@ func TestContractHistory_IsDocumentedAsAReadOnlyCommandThatTheChatSetsNoFlagsOn(
 	assert.NotEmpty(t, cmd.Short)
 	assert.NotEmpty(t, cmd.Long)
 	assert.NotEmpty(t, cmd.Example)
-	assert.JSONEq(t, `[0,2,3,5,6]`, cmd.Annotations["exit_codes"])
+	assert.JSONEq(t, `[0,2,5,6]`, cmd.Annotations["exit_codes"], "the catalog answers an empty list, never not_found, so exit 3 is not listed")
+	assert.NotContains(t, cmd.Long, "not_found  (exit 3)")
 	assert.NotContains(t, cmd.Annotations, "mutating")
 	assert.NotContains(t, cmd.Annotations, "chat_flags")
 	assert.Zero(t, cmd.LocalFlags().NFlag())
