@@ -17,6 +17,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 const (
@@ -173,7 +174,7 @@ func TestContractPackages_ARefusalInTheLastRoundHandsTheClusterOver(t *testing.T
 	assert.Equal(t, 2, c.Round)
 	require.NotNil(t, c.Outcome)
 	assert.Equal(t, proposal.StatusFailed, c.Outcome.Status)
-	assert.Contains(t, c.Outcome.Reason, "pre-flight rounds spent: ")
+	assert.Equal(t, model.HandoverReasonPreflightRoundsSpent, c.Outcome.Code)
 	assert.Contains(t, c.Outcome.Reason, toolRefusal)
 	assert.Empty(t, h.pipeline.runs())
 }

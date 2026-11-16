@@ -115,7 +115,7 @@ func (g *VerificationRun) plan(in step.GateInput) ([]plannedRun, error) {
 func (g *VerificationRun) Submit(ctx context.Context, in step.GateInput) (step.GateVerdict, error) {
 	runs, err := g.plan(in)
 	if f, refused := shared.RefusalFinding(err); refused {
-		g.logger.Error("the attempt's edits cannot be verified by any release",
+		g.logger.Warn("the attempt's edits cannot be verified by any release; the try fails and the next try is shown why",
 			"release", in.Trigger.ReleaseID, "attempt", in.Try.Attempt, "error", err)
 		return step.GateVerdict{
 			Result:      remediation.CheckResult{Check: string(nameVerificationRun), Findings: []remediation.Finding{f}},

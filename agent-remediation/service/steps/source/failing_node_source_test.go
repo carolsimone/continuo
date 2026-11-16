@@ -148,15 +148,6 @@ func TestFailingNodeSource_Declines(t *testing.T) {
 			`service "ghost" has no repository path mapping, so its source cannot be read`},
 		{"compile with a missing file", "compile", remediation.TriggerNode{NodeID: "svc", FilePath: "models/x.sql"},
 			"the offending file services/svc/models/x.sql does not exist at commit abc123"},
-		{"parse of a python-csv node", "parse", remediation.TriggerNode{NodeID: "n1", NodeType: string(pkg_model.NodeTypePythonCsv)},
-			"n1 is a python-csv node: its only read is an S3 URI, not SQL the parser can reject, " +
-				"so remediation has no fix to offer; correct the contract by hand"},
-		{"parse of a python-api node", "parse", remediation.TriggerNode{NodeID: "n1", NodeType: string(pkg_model.NodeTypePythonApi)},
-			"n1 is a python-api node: python-api has no reads, so there is no SQL " +
-				"the parser can reject and remediation has no fix to offer; correct the contract by hand"},
-		{"parse of a python-node", "parse", remediation.TriggerNode{NodeID: "n1", NodeType: string(pkg_model.NodeTypePythonNode)},
-			"n1 is a python-node node: its reads are declared in its service's contract.yaml, " +
-				"which this lane does not edit; correct the contract by hand"},
 		{"parse with no file", "parse", remediation.TriggerNode{NodeID: "n1", Service: "svc"},
 			"the parse rejection names no source file, so there is no file to fix"},
 		{"parse with no service", "parse", remediation.TriggerNode{NodeID: "n1", FilePath: "models/x.sql"},

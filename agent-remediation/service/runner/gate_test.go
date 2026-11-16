@@ -16,6 +16,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // The runs that verify the edits of attempt 1 and attempt 2 to svc-a and svc-b.
@@ -37,8 +38,8 @@ func TestRunner_NoEditSettlesTheAttempt(t *testing.T) {
 		p := h.attempt(1).Proposal
 		assert.Equal(t, proposal.StatusSkipped, p.Status)
 		assert.Equal(t, map[string]proposal.NodeOutcome{
-			test.NodeID:   {Status: proposal.StatusSkipped, Reason: "dbt tests are not fix targets; fix the model or edit the test by hand"},
-			python.NodeID: {Status: proposal.StatusSkipped, Reason: "no remediation type matches this failure"},
+			test.NodeID:   {Status: proposal.StatusSkipped, Reason: dbtTestReason, Code: model.HandoverReasonNoType},
+			python.NodeID: {Status: proposal.StatusSkipped, Reason: noTypeReason, Code: model.HandoverReasonNoType},
 		}, p.NodeOutcomes)
 		assert.Equal(t, id.String(), p.RemediationID)
 		assert.Empty(t, p.Rationale)
@@ -65,8 +66,8 @@ func TestRunner_NoEditSettlesTheAttempt(t *testing.T) {
 		p := h.attempt(1).Proposal
 		assert.Equal(t, proposal.StatusFailed, p.Status)
 		assert.Equal(t, map[string]proposal.NodeOutcome{
-			"svc-a": {Status: proposal.StatusFailed, Reason: "pre-flight rounds spent: the model could not determine a safe fix with confidence"},
-			"svc-b": {Status: proposal.StatusSkipped, Reason: "dbt tests are not fix targets; fix the model or edit the test by hand"},
+			"svc-a": {Status: proposal.StatusFailed, Reason: lowConfidenceReason, Code: model.HandoverReasonPreflightRoundsSpent},
+			"svc-b": {Status: proposal.StatusSkipped, Reason: dbtTestReason, Code: model.HandoverReasonNoType},
 		}, p.NodeOutcomes)
 		assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
 		assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
@@ -117,8 +118,8 @@ func TestRunner_CrossClusterFindingFailsTheAttempt(t *testing.T) {
 	assert.Equal(t, proposal.StatusFailed, p.Status)
 	assert.Equal(t, reason, p.Rationale)
 	assert.Equal(t, map[string]proposal.NodeOutcome{
-		"svc-a": {Status: proposal.StatusFailed, Reason: reason},
-		"core":  {Status: proposal.StatusFailed, Reason: reason},
+		"svc-a": {Status: proposal.StatusFailed, Reason: reason, Code: model.HandoverReasonUnverifiableEdits},
+		"core":  {Status: proposal.StatusFailed, Reason: reason, Code: model.HandoverReasonUnverifiableEdits},
 	}, p.NodeOutcomes)
 	assert.Equal(t, id.String(), p.RemediationID)
 	assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
@@ -654,8 +655,8 @@ func TestRunner_AGateThatRefusesTheDraftsStartsTheNextTry(t *testing.T) {
 	assert.Equal(t, proposal.StatusFailed, p.Status)
 	assert.Equal(t, reason, p.Rationale)
 	assert.Equal(t, map[string]proposal.NodeOutcome{
-		"svc-a": {Status: proposal.StatusFailed, Reason: reason},
-		"core":  {Status: proposal.StatusFailed, Reason: reason},
+		"svc-a": {Status: proposal.StatusFailed, Reason: reason, Code: model.HandoverReasonUnverifiableEdits},
+		"core":  {Status: proposal.StatusFailed, Reason: reason, Code: model.HandoverReasonUnverifiableEdits},
 	}, p.NodeOutcomes)
 	assert.Empty(t, p.Verifications)
 	assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
@@ -722,9 +723,9 @@ func TestRunner_ARefusalKeepsTheOutcomesOfClustersAlreadyHandedOver(t *testing.T
 			assert.Equal(t, proposal.StatusFailed, p.Status)
 			assert.Equal(t, reason, p.Rationale)
 			assert.Equal(t, map[string]proposal.NodeOutcome{
-				"svc-a": {Status: proposal.StatusFailed, Reason: reason},
-				"core":  {Status: proposal.StatusFailed, Reason: reason},
-				"svc-b": {Status: proposal.StatusSkipped, Reason: "dbt tests are not fix targets; fix the model or edit the test by hand"},
+				"svc-a": {Status: proposal.StatusFailed, Reason: reason, Code: model.HandoverReasonUnverifiableEdits},
+				"core":  {Status: proposal.StatusFailed, Reason: reason, Code: model.HandoverReasonUnverifiableEdits},
+				"svc-b": {Status: proposal.StatusSkipped, Reason: dbtTestReason, Code: model.HandoverReasonNoType},
 			}, p.NodeOutcomes)
 		})
 	}

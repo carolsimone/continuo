@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -312,6 +313,25 @@ func TestSubmit_RefusesWhatNoRunCouldJudgeBeforeWritingAnything(t *testing.T) {
 
 	_, err := r.step.Submit(context.Background(), gateInput())
 	assert.Error(t, err, "a try with no edit at all is a defect of the caller, not a refusal")
+}
+
+// A refusal fails the try and the next try is shown why, so it is logged as a
+// warning, not as an error.
+func TestSubmit_LogsARefusalAsAWarning(t *testing.T) {
+	var logs bytes.Buffer
+	r := newRig()
+	r.step = gate.NewVerificationRun(r.evidence, r.artifacts, r.releases, r.pipeline, repoPaths, r.clock, timeout,
+		slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	twice := dbtCluster()
+	twice.Draft.Edits = append(twice.Draft.Edits, twice.Draft.Edits[0])
+
+	v, err := r.step.Submit(context.Background(), gateInput(twice))
+
+	require.NoError(t, err)
+	require.NotEmpty(t, v.Result.Findings)
+	assert.Contains(t, logs.String(), "level=WARN")
+	assert.Contains(t, logs.String(), "the try fails and the next try is shown why")
+	assert.NotContains(t, logs.String(), "level=ERROR")
 }
 
 func TestSubmit_ReturnsTheErrorOfEachCollaborator(t *testing.T) {

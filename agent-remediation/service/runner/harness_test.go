@@ -16,6 +16,7 @@ import (
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/memory"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
+	"github.com/carolsimone/continuo/agent-remediation/adapters/workflowfile"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
@@ -25,6 +26,8 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
+	"github.com/carolsimone/continuo/agent-remediation/workflows"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 )
@@ -446,6 +449,9 @@ type harness struct {
 	packager ports.ContractPackager
 	collab   runner.Collaborators
 	runner   *runner.Runner
+	// replaced are the steps that stand in for the registered steps of their
+	// names in every runner the harness builds.
+	replaced []any
 
 	// afterCommit runs after every unit of work of the runner commits.
 	afterCommit func()
@@ -528,6 +534,24 @@ func withoutCrossClusterChecks() option {
 	}
 }
 
+// withPreflight gives the type typeName the pre-flight checks checks.
+func withPreflight(typeName string, checks ...string) option {
+	return func(h *harness) {
+		typ := h.files.Types[typeName]
+		typ.Preflight = refs(checks...)
+		h.files.Types[typeName] = typ
+	}
+}
+
+// withBuiltinFiles runs the flows and types built into the binary.
+func withBuiltinFiles() option {
+	return func(h *harness) {
+		set, err := workflowfile.Load(workflows.Builtin)
+		require.NoError(h.t, err)
+		h.files = set
+	}
+}
+
 // withPreviousTries gives the flow the context step previous_tries, as the
 // built-in flow lists it.
 func withPreviousTries() option {
@@ -606,6 +630,23 @@ func newHarness(t *testing.T, opts ...option) *harness {
 	return h
 }
 
+// registry is the registry built from the harness's fakes, with each replaced
+// step in place of the registered step of its name.
+func (h *harness) registry() *runner.Registry {
+	reg := runner.NewRegistry(h.collab)
+	for _, s := range h.replaced {
+		reg.ReplaceStep(s)
+	}
+	return reg
+}
+
+// replaceStep puts s in place of the registered step of its name, in the
+// harness's runner and in every runner it builds after.
+func (h *harness) replaceStep(s any) {
+	h.replaced = append(h.replaced, s)
+	h.runner = h.runnerOver(h.files)
+}
+
 // runnerOver is a runner over the harness's store and fakes that runs files.
 func (h *harness) runnerOver(files workflow.Set) *runner.Runner {
 	return h.runnerOwnedBy(files, workerOwner)
@@ -616,7 +657,7 @@ func (h *harness) runnerOver(files workflow.Set) *runner.Runner {
 func (h *harness) runnerOwnedBy(files workflow.Set, owner string) *runner.Runner {
 	return runner.New(runner.Deps{
 		NewUoW:              func() uow.UnitOfWork { return hookedUoW{UnitOfWork: memory.NewUnitOfWork(h.store), h: h} },
-		Registry:            runner.NewRegistry(h.collab),
+		Registry:            h.registry(),
 		Files:               files,
 		LLM:                 llmcache.New(h.llm, h.cache, "test-model", discard),
 		Collab:              h.collab,
@@ -638,6 +679,12 @@ func compileNode(id string) remediation.TriggerNode {
 		ErrorExcerpt:   "syntax error near select",
 		FilePath:       "models/orders.sql",
 	}
+}
+
+// unfixable is n marked unfixable by the classifier, for reason.
+func unfixable(n remediation.TriggerNode, reason model.HandoverReason, detail string) remediation.TriggerNode {
+	n.Unfixable = &remediation.Unfixable{Reason: reason, Detail: detail}
+	return n
 }
 
 func trigger(source string, nodes ...remediation.TriggerNode) remediation.Trigger {
@@ -664,6 +711,9 @@ func payloadOf(t *testing.T, trig remediation.Trigger) []byte {
 			"dbt_log_uri": n.DBTLogURI, "candidate_artifact_uri": n.CandidateArtifactURI,
 			"file_path": n.FilePath, "service": n.Service, "node_type": n.NodeType,
 			"other_service": n.OtherService, "other_file_path": n.OtherFilePath,
+		}
+		if n.Unfixable != nil {
+			node["unfixable"] = map[string]any{"reason": string(n.Unfixable.Reason), "detail": n.Unfixable.Detail}
 		}
 		if len(n.ChangedAncestors) > 0 {
 			ancestors := make([]map[string]any, 0, len(n.ChangedAncestors))

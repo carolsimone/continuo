@@ -15,6 +15,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/llmcache"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // lowConfidenceFinding is what confidence_not_low finds in a low-confidence
@@ -124,7 +125,7 @@ func TestRunner_RoundsSpentHandsTheClusterOver(t *testing.T) {
 	c := h.cluster(id, 1, 1)
 	assert.Equal(t, remediation.ClusterHandedOver, c.Status)
 	assert.Equal(t, 3, c.Round)
-	want := proposal.NodeOutcome{Status: proposal.StatusFailed, Reason: "pre-flight rounds spent: " + lowConfidenceFinding.Message}
+	want := proposal.NodeOutcome{Status: proposal.StatusFailed, Reason: lowConfidenceFinding.Message, Code: model.HandoverReasonPreflightRoundsSpent}
 	assert.Equal(t, &want, c.Outcome)
 	p := h.attempt(1).Proposal
 	assert.Equal(t, proposal.StatusFailed, p.Status)
@@ -157,7 +158,9 @@ func TestRunner_AnUpstreamClusterWhoseRoundsAreSpentFallsBack(t *testing.T) {
 	assert.Equal(t, remediation.ClusterFellBack, clusters[0].Status)
 	require.NotNil(t, clusters[0].Outcome)
 	assert.Equal(t, proposal.StatusSkipped, clusters[0].Outcome.Status)
-	assert.Contains(t, clusters[0].Outcome.Reason, "pre-flight rounds spent: ")
+	assert.Equal(t, model.HandoverReasonDeclined, clusters[0].Outcome.Code, "the members of a cross-service cluster that fell back are declined")
+	assert.Contains(t, clusters[0].Outcome.Reason, "the change that broke this node lives in service core; "+
+		"a fix in this node's own service cannot ship before it: ")
 }
 
 func TestRunner_EachRoundHasItsOwnCacheKey(t *testing.T) {

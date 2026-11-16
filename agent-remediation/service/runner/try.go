@@ -92,13 +92,17 @@ func (r *Runner) NextTry(ctx context.Context, id uuid.UUID) error {
 // order:
 //   - the terminal attempts of the trigger's round reached the flow's tries:
 //     the flow's give-up output runs and the remediation is done;
-//   - maintenance mode: the attempt is recorded skipped for every node and the
-//     remediation is done;
-//   - the trigger names no repository: the attempt is recorded failed, since
-//     no pull request could ever be opened, and the remediation is done;
+//   - maintenance mode: the attempt is recorded skipped for every node, with
+//     no code, and the remediation is done;
+//   - the trigger names no repository: the attempt is recorded failed, every
+//     node with no_repository, since no pull request could ever be opened, and
+//     the remediation is done;
 //   - otherwise the try opens drafting, with the release's next attempt
 //     number, the trigger's failing set grouped into clusters each matched to
 //     a type, and the attempt's in-flight proposal row.
+//
+// In both attempts recorded without a try, a node the classifier marked
+// unfixable keeps the outcome the classifier gave it.
 func (r *Runner) openTry(ctx context.Context, run tryRun) error {
 	t := run.trigger
 	rem := run.snap.Remediation
@@ -108,7 +112,6 @@ func (r *Runner) openTry(ctx context.Context, run tryRun) error {
 			return err
 		}
 		attempt := total + 1
-		nodeIDs := t.NodeIDs()
 		switch {
 		case inRound >= run.flow.Tries:
 			return r.giveUp(ctx, u, run)
@@ -117,7 +120,7 @@ func (r *Runner) openTry(ctx context.Context, run tryRun) error {
 				"remediation", rem.ID, "release", t.ReleaseID, "round", t.Round, "attempt", attempt)
 			return r.endWithAttempt(ctx, u, run, attempt, proposal.Proposal{
 				Status:       proposal.StatusSkipped,
-				NodeOutcomes: outcomesFor(nodeIDs, proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: maintenanceSkipReason}),
+				NodeOutcomes: attemptOutcomes(t, proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: maintenanceSkipReason}),
 				Rationale:    maintenanceSkipReason,
 			})
 		case t.Repo == "":
@@ -125,9 +128,11 @@ func (r *Runner) openTry(ctx context.Context, run tryRun) error {
 			r.logger.Warn("remediation.requested trigger names no repository; recording the attempt failed",
 				"remediation", rem.ID, "release", t.ReleaseID, "attempt", attempt)
 			return r.endWithAttempt(ctx, u, run, attempt, proposal.Proposal{
-				Status:       proposal.StatusFailed,
-				NodeOutcomes: outcomesFor(nodeIDs, proposal.NodeOutcome{Status: proposal.StatusFailed, Reason: reason}),
-				Rationale:    reason,
+				Status: proposal.StatusFailed,
+				NodeOutcomes: attemptOutcomes(t, proposal.NodeOutcome{
+					Status: proposal.StatusFailed, Reason: reason, Code: pkg_model.HandoverReasonNoRepository,
+				}),
+				Rationale: reason,
 			})
 		}
 		return r.startTry(ctx, u, run, attempt)
@@ -137,6 +142,12 @@ func (r *Runner) openTry(ctx context.Context, run tryRun) error {
 // startTry writes the remediation's next try, its clusters and the attempt's
 // in-flight proposal row in u's transaction, and makes it the current try. The
 // failures counted on the remediation's own row are cleared: the try opened.
+//
+// Each node settled for good (settledNodes) comes first, as a single cluster of
+// its own already handed over with the outcome it was settled with; it runs no
+// step. Only the other nodes are grouped into clusters to work. The in-flight
+// row names every cluster handed over at once with its outcome, and every
+// other node as being worked on.
 func (r *Runner) startTry(ctx context.Context, u uow.UnitOfWork, run tryRun, attempt int) error {
 	t := run.trigger
 	rem := run.snap.Remediation
@@ -155,14 +166,27 @@ func (r *Runner) startTry(ctx context.Context, u uow.UnitOfWork, run tryRun, att
 	if err := repo.SaveTry(ctx, try); err != nil {
 		return fmt.Errorf("save try: %w", err)
 	}
-	groups := groupClusters(t)
-	for i, g := range groups {
-		c := r.newCluster(rem, try, run.flow, t, i+1, clusterKind(g.Kind), g.TargetNodeID, g.Members)
+	settled := settledNodes(run)
+	clusters := make([]remediation.Cluster, 0, len(t.Nodes))
+	open := make([]remediation.TriggerNode, 0, len(t.Nodes))
+	for _, n := range t.Nodes {
+		if _, ok := settled[n.NodeID]; !ok {
+			open = append(open, n)
+		}
+	}
+	for _, id := range sortedKeys(settled) {
+		clusters = append(clusters, r.settledCluster(rem, try, len(clusters)+1, id, settled[id]))
+	}
+	groups := groupClusters(open)
+	for _, g := range groups {
+		clusters = append(clusters, r.newCluster(rem, try, run.flow, t, len(clusters)+1, clusterKind(g.Kind), g.TargetNodeID, g.Members))
+	}
+	for _, c := range clusters {
 		if err := repo.SaveCluster(ctx, c); err != nil {
 			return fmt.Errorf("save cluster %d: %w", c.Cluster, err)
 		}
 	}
-	if err := u.ProposalRepo().InsertGenerating(ctx, generatingProposal(rem.ID, t, attempt, now)); err != nil {
+	if err := u.ProposalRepo().InsertGenerating(ctx, generatingProposal(rem.ID, t, attempt, now, clusters)); err != nil {
 		return fmt.Errorf("mark generating: %w", err)
 	}
 	rem.CurrentTry = try.Try
@@ -174,8 +198,89 @@ func (r *Runner) startTry(ctx context.Context, u uow.UnitOfWork, run tryRun, att
 		return fmt.Errorf("clear the failures of remediation %s: %w", rem.ID, err)
 	}
 	r.logger.Info("remediation try opened", "remediation", rem.ID, "release", t.ReleaseID,
-		"try", try.Try, "attempt", attempt, "clusters", len(groups))
+		"try", try.Try, "attempt", attempt, "clusters", len(clusters), "settled", len(settled))
 	return nil
+}
+
+// settledNodes is every node of the remediation settled for good, with the
+// outcome it was settled with: each trigger node the classifier marked
+// unfixable, with the classifier's outcome, and, when the try being replaced
+// failed, each member of one of its clusters whose outcome carries a settled
+// code (settledCode). The clusters a try carries are themselves handed over
+// with their code, so a node once settled stays settled in every later try. A
+// node handed over because its pre-flight rounds are spent is not settled, and
+// is grouped again.
+func settledNodes(run tryRun) map[string]proposal.NodeOutcome {
+	out := map[string]proposal.NodeOutcome{}
+	for _, n := range run.trigger.Nodes {
+		if n.Unfixable != nil {
+			out[n.NodeID] = unfixableOutcome(*n.Unfixable)
+		}
+	}
+	if run.snap.Try == nil || run.snap.Try.Status != remediation.TryFailed {
+		return out
+	}
+	for _, c := range run.snap.Clusters {
+		if c.Outcome == nil || !settledCode(c.Outcome.Code) {
+			continue
+		}
+		for _, m := range c.Members {
+			if _, ok := out[m]; !ok {
+				out[m] = *c.Outcome
+			}
+		}
+	}
+	return out
+}
+
+// settledCode reports whether a node handed over with code is settled for good:
+// no later try of the remediation can reach it. A step declined it, no type
+// matches it, or the classifier marked it unfixable.
+func settledCode(code pkg_model.HandoverReason) bool {
+	switch code {
+	case pkg_model.HandoverReasonDeclined, pkg_model.HandoverReasonNoType,
+		pkg_model.HandoverReasonClassifierInfra, pkg_model.HandoverReasonClassifierUnhealableParse:
+		return true
+	}
+	return false
+}
+
+// unfixableOutcome is how a node the classifier marked unfixable ends: skipped,
+// with the classifier's reason as its code and its detail as the reason.
+func unfixableOutcome(u remediation.Unfixable) proposal.NodeOutcome {
+	return proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: u.Detail, Code: u.Reason}
+}
+
+// attemptOutcomes stamps o on every node of the trigger but the ones the
+// classifier marked unfixable, which keep the classifier's outcome.
+func attemptOutcomes(t remediation.Trigger, o proposal.NodeOutcome) map[string]proposal.NodeOutcome {
+	out := make(map[string]proposal.NodeOutcome, len(t.Nodes))
+	for _, n := range t.Nodes {
+		if n.Unfixable != nil {
+			out[n.NodeID] = unfixableOutcome(*n.Unfixable)
+			continue
+		}
+		out[n.NodeID] = o
+	}
+	return out
+}
+
+// settledCluster is cluster n of a try for the node settled for good with
+// outcome o: a single cluster targeting the node, already handed over, with no
+// type.
+func (r *Runner) settledCluster(rem remediation.Remediation, try remediation.Try, n int, nodeID string, o proposal.NodeOutcome) remediation.Cluster {
+	return remediation.Cluster{
+		RemediationID: rem.ID,
+		Try:           try.Try,
+		Cluster:       n,
+		Kind:          workflow.ClusterSingle,
+		TargetNodeID:  nodeID,
+		Members:       []string{nodeID},
+		Status:        remediation.ClusterHandedOver,
+		Round:         1,
+		Outcome:       &o,
+		UpdatedAt:     r.clock.Now(),
+	}
 }
 
 // giveUp runs the flow's give-up output and ends the remediation in u's
@@ -382,12 +487,12 @@ func (r *Runner) failTryOnFindings(ctx context.Context, u uow.UnitOfWork, run tr
 
 // recordRefusal records the attempt of the current try failed for reason, in
 // u's transaction. The members of each checked cluster whose draft has an edit,
-// the drafts the refusing check judged, fail for reason; every other node keeps
-// how its cluster ended (nodeOutcomes), such as a cluster handed over before
-// any draft.
+// the drafts the refusing check judged, fail for reason with
+// unverifiable_edits; every other node keeps how its cluster ended
+// (nodeOutcomes), such as a cluster handed over before any draft.
 func (r *Runner) recordRefusal(ctx context.Context, u uow.UnitOfWork, run tryRun, checked []checkedCluster, reason string) error {
 	outcomes := nodeOutcomes(run.snap.Clusters, checked)
-	refused := proposal.NodeOutcome{Status: proposal.StatusFailed, Reason: reason}
+	refused := proposal.NodeOutcome{Status: proposal.StatusFailed, Reason: reason, Code: pkg_model.HandoverReasonUnverifiableEdits}
 	for _, d := range draftsOf(checked) {
 		for _, m := range d.Cluster.Members {
 			outcomes[m] = refused
@@ -438,16 +543,27 @@ func (r *Runner) endTry(ctx context.Context, u uow.UnitOfWork, run tryRun, to re
 }
 
 // generatingProposal is the in-flight row of an attempt, naming the trigger's
-// whole failing set as being worked on.
-func generatingProposal(id uuid.UUID, t remediation.Trigger, attempt int, now time.Time) proposal.Proposal {
+// whole failing set: the members of each of the try's clusters handed over as
+// it opened with the cluster's outcome, and every other node as being worked
+// on.
+func generatingProposal(id uuid.UUID, t remediation.Trigger, attempt int, now time.Time, clusters []remediation.Cluster) proposal.Proposal {
 	nodeIDs := t.NodeIDs()
+	outcomes := outcomesFor(nodeIDs, proposal.NodeOutcome{Status: proposal.StatusGenerating})
+	for _, c := range clusters {
+		if c.Outcome == nil {
+			continue
+		}
+		for _, m := range c.Members {
+			outcomes[m] = *c.Outcome
+		}
+	}
 	p := proposal.Proposal{
 		Source:           t.Source,
 		ReleaseID:        t.ReleaseID,
 		RemediationID:    id.String(),
 		RemediationRound: t.Round,
 		ResolvedNodeIDs:  nodeIDs,
-		NodeOutcomes:     outcomesFor(nodeIDs, proposal.NodeOutcome{Status: proposal.StatusGenerating}),
+		NodeOutcomes:     outcomes,
 		Attempt:          attempt,
 		Status:           proposal.StatusGenerating,
 		Services:         t.Services(),
@@ -480,7 +596,8 @@ func countAttempts(ctx context.Context, repo repository.ProposalRepository, t re
 // handles it. A single cluster whose target is a dbt test is handed over at
 // once with its member skipped, before any type is matched, since a test is
 // never a fix target whatever its failure. Any other cluster no type handles is
-// handed over at once with its members skipped for that reason.
+// handed over at once with its members skipped for that reason. Both hand-overs
+// carry the code no_type.
 func (r *Runner) newCluster(rem remediation.Remediation, try remediation.Try, flow workflow.Flow, t remediation.Trigger,
 	n int, kind workflow.ClusterKind, target string, members []string) remediation.Cluster {
 	c := remediation.Cluster{
@@ -510,7 +627,7 @@ func (r *Runner) newCluster(rem remediation.Remediation, try remediation.Try, fl
 		reason = noTypeSkipReason
 	}
 	c.Status = remediation.ClusterHandedOver
-	c.Outcome = &proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: reason}
+	c.Outcome = &proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: reason, Code: pkg_model.HandoverReasonNoType}
 	r.logger.Info("cluster handed over before any step; its members are skipped",
 		"release", t.ReleaseID, "cluster", n, "kind", kind, "target", target, "reason", reason)
 	return c
@@ -536,14 +653,15 @@ func fileName(file, name string) string {
 	return file
 }
 
-// groupClusters partitions the trigger's failing set into fix targets. A node
-// broken by a change in another service is fixed at that changed ancestor;
-// nodes that fail the same way below one ancestor their own service changed
-// are fixed at that ancestor once; every other node is its own cluster.
-func groupClusters(t remediation.Trigger) []typology.Cluster {
-	nodes := make([]typology.FailingNode, 0, len(t.Nodes))
-	dag := typology.DagView{ChangedAncestorsByNode: make(map[string][]typology.ChangedAncestor, len(t.Nodes))}
-	for _, n := range t.Nodes {
+// groupClusters partitions failing nodes of the trigger into fix targets. A
+// node broken by a change in another service is fixed at that changed
+// ancestor; nodes that fail the same way below one ancestor their own service
+// changed are fixed at that ancestor once; every other node is its own
+// cluster.
+func groupClusters(failing []remediation.TriggerNode) []typology.Cluster {
+	nodes := make([]typology.FailingNode, 0, len(failing))
+	dag := typology.DagView{ChangedAncestorsByNode: make(map[string][]typology.ChangedAncestor, len(failing))}
+	for _, n := range failing {
 		nodes = append(nodes, typology.FailingNode{
 			NodeID:         n.NodeID,
 			ErrorSignature: n.ErrorSignature,

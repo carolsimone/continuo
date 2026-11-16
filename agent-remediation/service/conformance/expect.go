@@ -15,10 +15,6 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 )
 
-// roundsSpentPrefix starts the outcome of the members of a cluster whose last
-// pre-flight round refused its draft.
-const roundsSpentPrefix = "pre-flight rounds spent: "
-
 // expectation collects every way a run differs from what its scenario
 // expects.
 type expectation struct {
@@ -372,16 +368,15 @@ func (e *expectation) firstFinding(c remediation.Cluster, typ workflow.Type) (re
 
 // singleHandedOver expects the single cluster c handed over with no
 // verification run: when roundsSpent, by its last pre-flight round, which
-// refused its draft, failed with that round's first finding; otherwise by a
-// context step that declined, skipped with no model call.
+// refused its draft, failed with that round's first finding as its reason;
+// otherwise by a context step that declined, skipped with no model call.
 func (e *expectation) singleHandedOver(c remediation.Cluster, typ workflow.Type, roundsSpent bool) {
 	e.that(c.Status == remediation.ClusterHandedOver, "cluster %d is %s, not handed_over", c.Cluster, c.Status)
 	want := proposal.StatusFailed
 	if roundsSpent {
 		finding, ok := e.firstFinding(c, typ)
 		e.that(ok, "pre-flight refused nothing in cluster %d", c.Cluster)
-		reason := roundsSpentPrefix + finding.Message
-		e.that(c.Outcome != nil && c.Outcome.Reason == reason, "cluster %d ended with %+v, want the reason %q", c.Cluster, c.Outcome, reason)
+		e.that(c.Outcome != nil && c.Outcome.Reason == finding.Message, "cluster %d ended with %+v, want the reason %q", c.Cluster, c.Outcome, finding.Message)
 	} else {
 		want = proposal.StatusSkipped
 		e.modelCalls(0)

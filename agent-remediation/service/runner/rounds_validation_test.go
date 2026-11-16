@@ -11,6 +11,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 const (
@@ -90,7 +91,8 @@ func TestRunner_AnUnchangedSourceFixInTheLastRoundHandsTheClusterOver(t *testing
 	assert.Equal(t, remediation.ClusterHandedOver, c.Status)
 	require.NotNil(t, c.Outcome)
 	assert.Equal(t, proposal.StatusFailed, c.Outcome.Status)
-	assert.Equal(t, "pre-flight rounds spent: the model returned the file unchanged, which is not a fix", c.Outcome.Reason)
+	assert.Equal(t, "the model returned the file unchanged, which is not a fix", c.Outcome.Reason)
+	assert.Equal(t, model.HandoverReasonPreflightRoundsSpent, c.Outcome.Code)
 }
 
 // A failed source-fix call is the step's error, not a draft with no edit: the

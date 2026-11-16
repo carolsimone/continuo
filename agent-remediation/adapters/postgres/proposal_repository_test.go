@@ -1567,7 +1567,8 @@ func TestProposalRepository_KeepsTheNodeOutcomeCode(t *testing.T) {
 // TestProposalRepositoryMarkVerifiedRewritesNodeOutcomes verifies that the
 // UPDATE finalizing an attempt also finalizes its per-node outcomes: every node
 // that was waiting on verification becomes 'proposed', while a node the
-// attempt had already settled keeps the status and reason it was recorded with.
+// attempt had already settled keeps the status, reason and code it was
+// recorded with.
 // Without the rewrite the row would report itself proposed while its own nodes
 // still read as verifying, and every reader of node_outcomes would keep showing
 // them as in flight.
@@ -1580,13 +1581,14 @@ func TestProposalRepositoryMarkVerifiedRewritesNodeOutcomes(t *testing.T) {
 		Source:          "validation",
 		ReleaseID:       "rel-verify-outcomes-1",
 		NodeID:          "model.p.a",
-		ResolvedNodeIDs: []string{"model.p.a", "model.p.b"},
+		ResolvedNodeIDs: []string{"model.p.a", "model.p.b", "model.p.c"},
 		ErrorSignature:  "sig-verify-outcomes-1",
 		Attempt:         1,
 		Status:          proposal.StatusVerifying,
 		NodeOutcomes: map[string]proposal.NodeOutcome{
 			"model.p.a": {Status: proposal.StatusVerifying},
 			"model.p.b": {Status: proposal.StatusSkipped, Reason: "no source to fix"},
+			"model.p.c": {Status: proposal.StatusSkipped, Reason: "the warehouse timed out", Code: model.HandoverReasonClassifierInfra},
 		},
 		VerificationRunID: "verify-rel-verify-outcomes-1",
 		CreatedAt:         time.Now().UTC(),
@@ -1602,7 +1604,8 @@ func TestProposalRepositoryMarkVerifiedRewritesNodeOutcomes(t *testing.T) {
 	require.Equal(t, map[string]proposal.NodeOutcome{
 		"model.p.a": {Status: proposal.StatusProposed},
 		"model.p.b": {Status: proposal.StatusSkipped, Reason: "no source to fix"},
-	}, got.NodeOutcomes, "every verifying node becomes proposed; a settled node is untouched")
+		"model.p.c": {Status: proposal.StatusSkipped, Reason: "the warehouse timed out", Code: model.HandoverReasonClassifierInfra},
+	}, got.NodeOutcomes, "every verifying node becomes proposed; a settled node is untouched, its code included")
 
 	// A row carrying no per-node outcomes at all: the rewrite aggregates over
 	// zero entries, which must still write an empty object rather than the SQL
@@ -1631,7 +1634,7 @@ func TestProposalRepositoryMarkVerifiedRewritesNodeOutcomes(t *testing.T) {
 // TestProposalRepositoryMarkVerifyFailedRewritesNodeOutcomes is the mirror of
 // the rewrite above for a failed attempt: every node that was waiting on
 // verification becomes 'failed', and a node the attempt had already settled
-// keeps its own outcome.
+// keeps its own outcome, its code included.
 func TestProposalRepositoryMarkVerifyFailedRewritesNodeOutcomes(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
@@ -1641,13 +1644,14 @@ func TestProposalRepositoryMarkVerifyFailedRewritesNodeOutcomes(t *testing.T) {
 		Source:          "validation",
 		ReleaseID:       "rel-verify-outcomes-2",
 		NodeID:          "model.p.a",
-		ResolvedNodeIDs: []string{"model.p.a", "model.p.b"},
+		ResolvedNodeIDs: []string{"model.p.a", "model.p.b", "model.p.c"},
 		ErrorSignature:  "sig-verify-outcomes-2",
 		Attempt:         1,
 		Status:          proposal.StatusVerifying,
 		NodeOutcomes: map[string]proposal.NodeOutcome{
 			"model.p.a": {Status: proposal.StatusVerifying},
 			"model.p.b": {Status: proposal.StatusSkipped, Reason: "no source to fix"},
+			"model.p.c": {Status: proposal.StatusFailed, Reason: "the model could not determine a safe fix", Code: model.HandoverReasonPreflightRoundsSpent},
 		},
 		VerificationRunID: "verify-rel-verify-outcomes-3",
 		CreatedAt:         time.Now().UTC(),
@@ -1664,7 +1668,8 @@ func TestProposalRepositoryMarkVerifyFailedRewritesNodeOutcomes(t *testing.T) {
 	require.Equal(t, map[string]proposal.NodeOutcome{
 		"model.p.a": {Status: proposal.StatusFailed},
 		"model.p.b": {Status: proposal.StatusSkipped, Reason: "no source to fix"},
-	}, got.NodeOutcomes, "every verifying node becomes failed; a settled node is untouched")
+		"model.p.c": {Status: proposal.StatusFailed, Reason: "the model could not determine a safe fix", Code: model.HandoverReasonPreflightRoundsSpent},
+	}, got.NodeOutcomes, "every verifying node becomes failed; a settled node is untouched, its code included")
 }
 
 // TestListVerifying_OrderedOldestFirstAndLimited seeds 25 verifying proposals
@@ -2345,7 +2350,8 @@ func TestBeginPR_PerServiceClaimOverMemberlessEditsResolvesNoMembers(t *testing.
 // (proposalStatusForNode: `node_outcomes?.[node]?.status ?? status`), so a
 // per-node entry left at 'generating' keeps the FIX cell spinning and hides
 // "Try again" even though the row is failed — the exact orphan symptom this
-// recovery must clear. Any node already terminal is left as it was.
+// recovery must clear. Any node already terminal is left as it was, its code
+// included.
 func TestProposalRepositoryFailGenerating_FailsNodeOutcomes(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
@@ -2354,10 +2360,11 @@ func TestProposalRepositoryFailGenerating_FailsNodeOutcomes(t *testing.T) {
 	inFlight := proposal.Proposal{
 		Source: "compile", ReleaseID: "rel-no-1", Attempt: 1, Status: proposal.StatusGenerating,
 		CreatedAt:       time.Now().UTC(),
-		ResolvedNodeIDs: []string{"core", "analytics.b"},
+		ResolvedNodeIDs: []string{"core", "analytics.b", "analytics.c"},
 		NodeOutcomes: map[string]proposal.NodeOutcome{
 			"core":        {Status: proposal.StatusGenerating},
 			"analytics.b": {Status: proposal.StatusGenerating},
+			"analytics.c": {Status: proposal.StatusSkipped, Reason: "the parser refuses this construct", Code: model.HandoverReasonClassifierUnhealableParse},
 		},
 	}
 	inFlight.NormalizeRepresentativeViews()
@@ -2380,6 +2387,13 @@ func TestProposalRepositoryFailGenerating_FailsNodeOutcomes(t *testing.T) {
 		require.Equal(t, string(proposal.StatusFailed), got.Status, "node %s status must be failed", node)
 		require.Equal(t, "poison-dropped after exhausting redelivery", got.Reason, "node %s reason", node)
 	}
+
+	got, err := repo.List(ctx, repository.ProposalFilter{ReleaseID: "rel-no-1"})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Equal(t, proposal.NodeOutcome{
+		Status: proposal.StatusSkipped, Reason: "the parser refuses this construct", Code: model.HandoverReasonClassifierUnhealableParse,
+	}, got[0].NodeOutcomes["analytics.c"], "a node already settled keeps its outcome and its code")
 }
 
 // TestUpdateVerificationPhase_TouchesOnlyThatRun verifies that

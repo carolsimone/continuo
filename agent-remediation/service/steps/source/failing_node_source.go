@@ -103,18 +103,11 @@ func (s *FailingNodeSource) compile(ctx context.Context, f remediation.Failure) 
 	return s.gatherWithContext(ctx, f, f.Target.NodeID)
 }
 
+// parse reads the source file of a dbt node whose SQL the release's parser
+// rejected, under the service the trigger names.
 func (s *FailingNodeSource) parse(ctx context.Context, f remediation.Failure) (remediation.SourceFiles, string, error) {
 	n := f.Target
 	switch {
-	case n.NodeType == string(pkg_model.NodeTypePythonCsv):
-		return remediation.SourceFiles{}, fmt.Sprintf("%s is a python-csv node: its only read is an S3 URI, not SQL the parser can reject, "+
-			"so remediation has no fix to offer; correct the contract by hand", n.NodeID), nil
-	case n.NodeType == string(pkg_model.NodeTypePythonApi):
-		return remediation.SourceFiles{}, fmt.Sprintf("%s is a python-api node: python-api has no reads, so there is no SQL "+
-			"the parser can reject and remediation has no fix to offer; correct the contract by hand", n.NodeID), nil
-	case pkg_model.NodeType(n.NodeType).IsPython():
-		return remediation.SourceFiles{}, fmt.Sprintf("%s is a %s node: its reads are declared in its service's contract.yaml, "+
-			"which this lane does not edit; correct the contract by hand", n.NodeID, n.NodeType), nil
 	case n.FilePath == "":
 		return remediation.SourceFiles{}, "the parse rejection names no source file, so there is no file to fix", nil
 	case n.Service == "":
