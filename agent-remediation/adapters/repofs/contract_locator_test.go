@@ -32,67 +32,70 @@ func writeFile(t *testing.T, root, relPath, content string) {
 	}
 }
 
-// TestLocate_FindsSecondOfTwoFiles verifies that Locate correctly identifies
-// the file declaring the target node even when it is not the first yaml file
-// the walk encounters, and that the returned Located fields are derived
-// correctly from where that file lives in the tree.
-func TestLocate_FindsSecondOfTwoFiles(t *testing.T) {
+// odcsContract renders a minimal ODCS contract for the node id, whose table
+// is the part after its last dot.
+func odcsContract(id string) string {
+	table := id[strings.LastIndex(id, ".")+1:]
+	return "apiVersion: v3.2.0\nkind: DataContract\nid: " + id + "\nname: " + table + "\nversion: \"0\"\n" +
+		"team:\n  name: service-py\n" +
+		"customProperties:\n" +
+		"  - {vendor: continuo, property: schedule, value: daily}\n" +
+		"  - {vendor: continuo, property: criticality, value: SECONDARY}\n" +
+		"  - {vendor: continuo, property: script, value: scripts/" + table + ".py}\n" +
+		"schema:\n  - name: " + table + "\n    physicalType: table\n    properties:\n" +
+		"      - {name: day, physicalType: DATE, required: true}\n"
+}
+
+// legacyContract is a contract.yaml in the format a service uses before it is
+// converted to ODCS: a "nodes:" list.
+const legacyContract = "nodes:\n  - schema: analytics\n    table: py_daily_kpis\n    script: scripts/py_daily_kpis.py\n"
+
+// TestLocate_FindsTheODCSFileByID verifies that Locate returns the ODCS file
+// whose id names the node, even when it is not the first contract the walk
+// reads, and derives the contract directory and the application root from
+// where that file lives.
+func TestLocate_FindsTheODCSFileByID(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, root, "services/service-py/contracts/other.yml", "nodes:\n  - schema: analytics\n    table: other_kpis\n    script: scripts/other.py\n")
-	writeFile(t, root, "services/service-py/contracts/py_daily_kpis.yml", "nodes:\n  - schema: analytics\n    table: py_daily_kpis\n    script: scripts/py_daily_kpis.py\n")
+	writeFile(t, root, "services/service-py/contracts/other_kpis.odcs.yaml", odcsContract("analytics.other_kpis"))
+	writeFile(t, root, "services/service-py/contracts/py_daily_kpis.odcs.yaml", odcsContract("analytics.py_daily_kpis"))
 
 	got, err := newLocator().Locate(root, "analytics", "py_daily_kpis")
 	if err != nil {
 		t.Fatalf("Locate: %v", err)
 	}
-	if got.YAMLPath != "services/service-py/contracts/py_daily_kpis.yml" {
-		t.Errorf("YAMLPath = %q", got.YAMLPath)
+	want := ports.Located{
+		YAMLPath:    "services/service-py/contracts/py_daily_kpis.odcs.yaml",
+		YAMLText:    odcsContract("analytics.py_daily_kpis"),
+		ContractDir: "services/service-py/contracts",
+		RepoRoot:    "services/service-py",
 	}
-	if got.ContractDir != "services/service-py/contracts" {
-		t.Errorf("ContractDir = %q", got.ContractDir)
-	}
-	if got.RepoRoot != "services/service-py" {
-		t.Errorf("RepoRoot = %q", got.RepoRoot)
-	}
-	wantText := "nodes:\n  - schema: analytics\n    table: py_daily_kpis\n    script: scripts/py_daily_kpis.py\n"
-	if got.YAMLText != wantText {
-		t.Errorf("YAMLText = %q, want %q", got.YAMLText, wantText)
+	if got != want {
+		t.Errorf("Locate = %+v, want %+v", got, want)
 	}
 }
 
-// TestLocate_MultiNodeFileTargetInMiddle verifies that a single dbt-style
-// schema.yml file declaring several nodes is still matched correctly when
-// the target entry is neither first nor last in the list.
-func TestLocate_MultiNodeFileTargetInMiddle(t *testing.T) {
+// TestLocate_MatchesTheIDNotTheFileName verifies that the file name plays no
+// part in the search: a contract is found by the id it declares.
+func TestLocate_MatchesTheIDNotTheFileName(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, root, "services/service-py/contracts/schema.yml", `nodes:
-  - schema: analytics
-    table: first_node
-    script: scripts/first.py
-  - schema: analytics
-    table: middle_node
-    script: scripts/middle.py
-  - schema: analytics
-    table: last_node
-    script: scripts/last.py
-`)
+	writeFile(t, root, "svc/contracts/misnamed.odcs.yaml", odcsContract("analytics.py_daily_kpis"))
+	writeFile(t, root, "svc/contracts/py_daily_kpis.odcs.yaml", odcsContract("analytics.something_else"))
 
-	got, err := newLocator().Locate(root, "analytics", "middle_node")
+	got, err := newLocator().Locate(root, "analytics", "py_daily_kpis")
 	if err != nil {
 		t.Fatalf("Locate: %v", err)
 	}
-	if got.YAMLPath != "services/service-py/contracts/schema.yml" {
+	if got.YAMLPath != "svc/contracts/misnamed.odcs.yaml" {
 		t.Errorf("YAMLPath = %q", got.YAMLPath)
 	}
 }
 
-// TestLocate_NoMatchIsErrNodeNotDeclared verifies that a schema/table with no
-// declaring entry anywhere in the tree returns the distinguishable sentinel
-// error, so a caller can match it with errors.Is and persist a skip rationale
-// rather than treating it as a transient failure.
+// TestLocate_NoMatchIsErrNodeNotDeclared verifies that a node no ODCS file
+// declares returns the distinguishable sentinel error, so a caller can match
+// it with errors.Is and record why it stopped.
 func TestLocate_NoMatchIsErrNodeNotDeclared(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, root, "services/service-py/contracts/py_daily_kpis.yml", "nodes:\n  - schema: analytics\n    table: py_daily_kpis\n")
+	writeFile(t, root, "svc/contracts/py_daily_kpis.odcs.yaml", odcsContract("analytics.py_daily_kpis"))
 
 	_, err := newLocator().Locate(root, "analytics", "does_not_exist")
 	if !errors.Is(err, ports.ErrNodeNotDeclared) {
@@ -100,15 +103,13 @@ func TestLocate_NoMatchIsErrNodeNotDeclared(t *testing.T) {
 	}
 }
 
-// TestLocate_DuplicateDeclarationIsErrAmbiguous verifies that the same
-// (schema, table) declared in two different files — a state the system's
-// duplicate-node gate should make impossible — is reported as the distinct
-// ambiguous-declaration sentinel rather than either file being picked
-// silently.
-func TestLocate_DuplicateDeclarationIsErrAmbiguous(t *testing.T) {
+// TestLocate_TwoFilesWithOneIDAreAmbiguous verifies that one id declared by
+// two ODCS files is reported as ambiguous rather than either file being
+// picked.
+func TestLocate_TwoFilesWithOneIDAreAmbiguous(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, root, "services/service-py/contracts/a.yml", "nodes:\n  - schema: analytics\n    table: py_daily_kpis\n")
-	writeFile(t, root, "services/other/contracts/b.yml", "nodes:\n  - schema: analytics\n    table: py_daily_kpis\n")
+	writeFile(t, root, "services/service-py/contracts/py_daily_kpis.odcs.yaml", odcsContract("analytics.py_daily_kpis"))
+	writeFile(t, root, "services/other/contracts/copy.odcs.yaml", odcsContract("analytics.py_daily_kpis"))
 
 	_, err := newLocator().Locate(root, "analytics", "py_daily_kpis")
 	if !errors.Is(err, ports.ErrAmbiguousDeclaration) {
@@ -116,47 +117,26 @@ func TestLocate_DuplicateDeclarationIsErrAmbiguous(t *testing.T) {
 	}
 }
 
-// TestLocate_SkipsOversizeFile verifies that a yaml file over the 1 MiB cap
-// is skipped by the search rather than parsed, even when it would otherwise
-// match — matching only files within the size cap.
-func TestLocate_SkipsOversizeFile(t *testing.T) {
+// TestLocate_AServiceStillOnContractYAMLIsNotConverted verifies that a tree
+// holding no ODCS file but a contract yaml with a "nodes:" list is reported as
+// a service that has not been converted, not as a node no contract declares.
+func TestLocate_AServiceStillOnContractYAMLIsNotConverted(t *testing.T) {
 	root := t.TempDir()
-	padding := make([]byte, maxContractYAMLBytes+1)
-	for i := range padding {
-		padding[i] = '#'
-	}
-	oversized := "nodes:\n  - schema: analytics\n    table: py_daily_kpis\n# " + string(padding) + "\n"
-	writeFile(t, root, "services/service-py/contracts/py_daily_kpis.yml", oversized)
+	writeFile(t, root, "services/service-py/contracts/py_daily_kpis.yml", legacyContract)
 
 	_, err := newLocator().Locate(root, "analytics", "py_daily_kpis")
-	if !errors.Is(err, ports.ErrNodeNotDeclared) {
-		t.Fatalf("err = %v, want ports.ErrNodeNotDeclared (oversize file should be skipped, not matched)", err)
+	if !errors.Is(err, ports.ErrServiceNotConverted) {
+		t.Fatalf("err = %v, want ports.ErrServiceNotConverted", err)
 	}
 }
 
-// TestLocate_SkipsUnparseableYAML verifies that a file that fails to parse as
-// yaml is skipped (logged, not surfaced as an error), so one malformed file
-// elsewhere in the tree cannot break the search for a real match.
-func TestLocate_SkipsUnparseableYAML(t *testing.T) {
+// TestLocate_AnODCSFileMeansTheTreeIsConverted verifies that a "nodes:" yaml
+// beside an ODCS file does not make the tree unconverted: a node no ODCS file
+// declares is then simply not declared.
+func TestLocate_AnODCSFileMeansTheTreeIsConverted(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, root, "services/broken/contracts/broken.yml", "nodes: [this is not: valid: yaml")
-	writeFile(t, root, "services/service-py/contracts/py_daily_kpis.yml", "nodes:\n  - schema: analytics\n    table: py_daily_kpis\n")
-
-	got, err := newLocator().Locate(root, "analytics", "py_daily_kpis")
-	if err != nil {
-		t.Fatalf("Locate: %v", err)
-	}
-	if got.YAMLPath != "services/service-py/contracts/py_daily_kpis.yml" {
-		t.Errorf("YAMLPath = %q", got.YAMLPath)
-	}
-}
-
-// TestLocate_IgnoresNonYAMLFiles verifies that files without a .yml/.yaml
-// extension are never parsed as candidates, even if their content happens to
-// look like a contract yaml.
-func TestLocate_IgnoresNonYAMLFiles(t *testing.T) {
-	root := t.TempDir()
-	writeFile(t, root, "services/service-py/scripts/py_daily_kpis.py", "nodes:\n  - schema: analytics\n    table: py_daily_kpis\n")
+	writeFile(t, root, "svc/contracts/other_kpis.odcs.yaml", odcsContract("analytics.other_kpis"))
+	writeFile(t, root, "svc/old/py_daily_kpis.yml", legacyContract)
 
 	_, err := newLocator().Locate(root, "analytics", "py_daily_kpis")
 	if !errors.Is(err, ports.ErrNodeNotDeclared) {
@@ -164,45 +144,95 @@ func TestLocate_IgnoresNonYAMLFiles(t *testing.T) {
 	}
 }
 
-// TestLocate_MatchesDeclaredCaseInsensitively verifies that a node whose
-// contract declares a capitalized schema or table is still found. The two
-// sides genuinely disagree in case: a node's identity key across the system is
-// lowercased, so a caller derives the schema and table it searches for from a
-// lowercased id, while the contract file keeps whatever case its author wrote
-// (the declared spelling is what renders into SQL and DDL downstream). Matching
-// exactly would report a declared node as undeclared for every team that
-// capitalizes a name.
-func TestLocate_MatchesDeclaredCaseInsensitively(t *testing.T) {
+// TestLocate_ATreeWithNoContractAtAllDeclaresNothing verifies that a tree with
+// neither an ODCS file nor a "nodes:" yaml reports the node as not declared.
+func TestLocate_ATreeWithNoContractAtAllDeclaresNothing(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, root, "services/service-py/contracts/orders.yml",
-		"nodes:\n  - schema: Analytics\n    table: Orders\n    script: scripts/orders.py\n")
+	writeFile(t, root, "svc/dbt_project.yml", "name: svc\nversion: '1.0'\n")
+
+	_, err := newLocator().Locate(root, "analytics", "py_daily_kpis")
+	if !errors.Is(err, ports.ErrNodeNotDeclared) {
+		t.Fatalf("err = %v, want ports.ErrNodeNotDeclared", err)
+	}
+}
+
+// TestLocate_SkipsOversizeFile verifies that an ODCS file over the 1 MiB cap
+// is skipped by the search rather than parsed, even when it would otherwise
+// match.
+func TestLocate_SkipsOversizeFile(t *testing.T) {
+	root := t.TempDir()
+	padding := strings.Repeat("#", maxContractYAMLBytes+1)
+	writeFile(t, root, "svc/contracts/py_daily_kpis.odcs.yaml", odcsContract("analytics.py_daily_kpis")+"# "+padding+"\n")
+
+	_, err := newLocator().Locate(root, "analytics", "py_daily_kpis")
+	if !errors.Is(err, ports.ErrNodeNotDeclared) {
+		t.Fatalf("err = %v, want ports.ErrNodeNotDeclared (oversize file should be skipped, not matched)", err)
+	}
+}
+
+// TestLocate_SkipsUnparseableYAML verifies that an ODCS file that fails to
+// parse is skipped (logged, not surfaced as an error), so one malformed file
+// elsewhere in the tree cannot break the search for a real match.
+func TestLocate_SkipsUnparseableYAML(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "services/broken/contracts/broken.odcs.yaml", "id: [this is not: valid: yaml")
+	writeFile(t, root, "services/service-py/contracts/py_daily_kpis.odcs.yaml", odcsContract("analytics.py_daily_kpis"))
+
+	got, err := newLocator().Locate(root, "analytics", "py_daily_kpis")
+	if err != nil {
+		t.Fatalf("Locate: %v", err)
+	}
+	if got.YAMLPath != "services/service-py/contracts/py_daily_kpis.odcs.yaml" {
+		t.Errorf("YAMLPath = %q", got.YAMLPath)
+	}
+}
+
+// TestLocate_ReadsOnlyODCSFiles verifies that a file whose name does not end
+// in .odcs.yaml is never a candidate, even when its content is a contract
+// naming the node.
+func TestLocate_ReadsOnlyODCSFiles(t *testing.T) {
+	for name, rel := range map[string]string{
+		"plain yaml": "svc/contracts/py_daily_kpis.yaml",
+		"yml":        "svc/contracts/py_daily_kpis.odcs.yml",
+		"script":     "svc/scripts/py_daily_kpis.py",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, root, "svc/contracts/other_kpis.odcs.yaml", odcsContract("analytics.other_kpis"))
+			writeFile(t, root, rel, odcsContract("analytics.py_daily_kpis"))
+
+			_, err := newLocator().Locate(root, "analytics", "py_daily_kpis")
+			if !errors.Is(err, ports.ErrNodeNotDeclared) {
+				t.Fatalf("err = %v, want ports.ErrNodeNotDeclared", err)
+			}
+		})
+	}
+}
+
+// TestLocate_MatchesTheIDCaseInsensitively verifies that a contract whose id
+// is written with capitals is still found for the lowercased schema and table
+// every caller derives from a node id. Only the comparison folds: the returned
+// text is exactly what is on disk.
+func TestLocate_MatchesTheIDCaseInsensitively(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "svc/contracts/orders.odcs.yaml", odcsContract("Analytics.Orders"))
 
 	got, err := newLocator().Locate(root, "analytics", "orders")
 	if err != nil {
 		t.Fatalf("Locate: %v", err)
 	}
-	if got.YAMLPath != "services/service-py/contracts/orders.yml" {
-		t.Errorf("YAMLPath = %q", got.YAMLPath)
-	}
-	if got.ContractDir != "services/service-py/contracts" {
-		t.Errorf("ContractDir = %q", got.ContractDir)
-	}
-	if got.RepoRoot != "services/service-py" {
-		t.Errorf("RepoRoot = %q", got.RepoRoot)
-	}
-	if !strings.Contains(got.YAMLText, "schema: Analytics") {
+	if !strings.Contains(got.YAMLText, "id: Analytics.Orders") {
 		t.Errorf("YAMLText must be the file verbatim, with the author's case intact: %q", got.YAMLText)
 	}
 }
 
-// TestLocate_CaseVariantsAreOneAmbiguity verifies that two files whose
-// declarations differ only in case are reported as ambiguous rather than one
-// of them being picked. They name the same physical relation and the same
-// node identity, so a fix written into either could be the wrong one.
+// TestLocate_CaseVariantsAreOneAmbiguity verifies that two files whose ids
+// differ only in case are reported as ambiguous rather than one of them being
+// picked: they name the same node.
 func TestLocate_CaseVariantsAreOneAmbiguity(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, root, "contracts/a.yml", "nodes:\n  - schema: Analytics\n    table: Orders\n")
-	writeFile(t, root, "contracts/b.yml", "nodes:\n  - schema: analytics\n    table: orders\n")
+	writeFile(t, root, "contracts/a.odcs.yaml", odcsContract("Analytics.Orders"))
+	writeFile(t, root, "contracts/b.odcs.yaml", odcsContract("analytics.orders"))
 
 	_, err := newLocator().Locate(root, "analytics", "orders")
 	if !errors.Is(err, ports.ErrAmbiguousDeclaration) {
@@ -210,70 +240,104 @@ func TestLocate_CaseVariantsAreOneAmbiguity(t *testing.T) {
 	}
 }
 
-// TestDeclarations_ReadsEveryDeclaredNodesIdentityAndReads verifies that
-// Declarations returns the identity fields and the read names of every node a
-// document declares, in declaration order. The caller compares these across an
-// edit to decide whether an answer repaired a node or quietly took something
-// away from it, so a field this adapter silently drops would be a field an
-// answer could silently change.
-func TestDeclarations_ReadsEveryDeclaredNodesIdentityAndReads(t *testing.T) {
-	const doc = `nodes:
-  - schema: analytics
-    table: py_daily_kpis
-    owner: data-platform
-    schedule: daily
-    criticality: SECONDARY
-    script: scripts/py_daily_kpis.py
-    secret_ref: continuo-api-fx
-    reads:
+// TestDeclarations_ReadsTheIdentityAndTheReadKeysInOrder verifies that
+// Declarations returns the one node an ODCS document declares: its schema
+// (the id without the table), its table (the schema object's name), the
+// continuo properties that identify it, its team as the owner, and the keys of
+// readQueries in the order the file writes them. The caller compares these
+// across an edit, so a field this adapter dropped would be a field an answer
+// could change unseen.
+func TestDeclarations_ReadsTheIdentityAndTheReadKeysInOrder(t *testing.T) {
+	const doc = `apiVersion: v3.2.0
+kind: DataContract
+id: analytics.py_daily_kpis
+name: py_daily_kpis
+version: "0"
+team:
+  name: data-platform
+customProperties:
+  - {vendor: continuo, property: schedule, value: daily}
+  - {vendor: continuo, property: criticality, value: SECONDARY}
+  - {vendor: continuo, property: script, value: scripts/py_daily_kpis.py}
+  - {vendor: continuo, property: secretRef, value: continuo-api-fx}
+  - {vendor: other, property: script, value: not/this.py}
+  - vendor: continuo
+    property: readQueries
+    value:
       orders: select id from analytics.orders
       customers: select id from analytics.customers
-    output_columns:
-      - name: revenue
-  - schema: analytics
-    table: py_weekly_kpis
-    script: scripts/py_weekly_kpis.py
+      accounts: select id from analytics.accounts
+schema:
+  - name: py_daily_kpis
+    physicalType: table
+    properties:
+      - {name: revenue, physicalType: INTEGER}
 `
 	got, err := newLocator().Declarations(doc)
 	if err != nil {
 		t.Fatalf("Declarations: %v", err)
 	}
-	want := []ports.NodeDeclaration{
-		{
-			Identity: ports.NodeIdentity{ //nolint:gosec // G101: continuo-api-* is a Secret name, not a value
-				Schema: "analytics", Table: "py_daily_kpis", Script: "scripts/py_daily_kpis.py",
-				Kind: "python-node", Owner: "data-platform", Schedule: "daily", Criticality: "SECONDARY",
-				SecretRef: "continuo-api-fx",
-			},
-			ReadKeys: []string{"orders", "customers"},
+	want := ports.NodeDeclaration{
+		Identity: ports.NodeIdentity{ //nolint:gosec // G101: continuo-api-* is a Secret name, not a value
+			Schema: "analytics", Table: "py_daily_kpis", Script: "scripts/py_daily_kpis.py",
+			Kind: "python-node", Owner: "data-platform", Schedule: "daily", Criticality: "SECONDARY",
+			SecretRef: "continuo-api-fx",
 		},
-		{Identity: ports.NodeIdentity{Schema: "analytics", Table: "py_weekly_kpis", Script: "scripts/py_weekly_kpis.py", Kind: "python-node"}},
+		ReadKeys: []string{"orders", "customers", "accounts"},
 	}
-	if len(got) != len(want) {
-		t.Fatalf("Declarations returned %d entries, want %d: %+v", len(got), len(want), got)
+	if len(got) != 1 {
+		t.Fatalf("Declarations returned %d entries, want 1: %+v", len(got), got)
 	}
-	for i := range want {
-		if got[i].Identity != want[i].Identity {
-			t.Errorf("entry %d identity = %+v, want %+v", i, got[i].Identity, want[i].Identity)
-		}
-		if !slices.Equal(got[i].ReadKeys, want[i].ReadKeys) {
-			t.Errorf("entry %d read keys = %v, want %v", i, got[i].ReadKeys, want[i].ReadKeys)
-		}
+	if got[0].Identity != want.Identity {
+		t.Errorf("identity = %+v, want %+v", got[0].Identity, want.Identity)
+	}
+	if !slices.Equal(got[0].ReadKeys, want.ReadKeys) {
+		t.Errorf("read keys = %v, want %v", got[0].ReadKeys, want.ReadKeys)
 	}
 }
 
-// TestDeclarations_UnexpectedReadsShapeStillDeclaresTheNode verifies that a
-// "reads:" holding something other than a name -> SQL mapping costs the read
-// names and nothing else. Failing the whole document instead would read as
-// "this file declares nothing", which excuses every node in it from the
-// comparison made across an edit — the opposite of what an odd-looking file
-// should cause.
-func TestDeclarations_UnexpectedReadsShapeStillDeclaresTheNode(t *testing.T) {
-	const doc = `nodes:
-  - schema: analytics
-    table: py_daily_kpis
-    reads:
-      - select id from analytics.orders
+// TestDeclarations_TheKindIsReadAsTheReleaseReadsIt verifies that a contract
+// with no kind property is a python-node and that the python-model alias reads
+// as python-node, so an answer that writes the kind the release already used
+// is not taken for a change of kind.
+func TestDeclarations_TheKindIsReadAsTheReleaseReadsIt(t *testing.T) {
+	for written, want := range map[string]string{
+		"":             "python-node",
+		"python-model": "python-node",
+		"python-api":   "python-api",
+	} {
+		t.Run(want+"/"+written, func(t *testing.T) {
+			doc := odcsContract("analytics.py_daily_kpis")
+			if written != "" {
+				doc = strings.Replace(doc, "customProperties:\n",
+					"customProperties:\n  - {vendor: continuo, property: kind, value: "+written+"}\n", 1)
+			}
+			got, err := newLocator().Declarations(doc)
+			if err != nil {
+				t.Fatalf("Declarations: %v", err)
+			}
+			if len(got) != 1 || got[0].Identity.Kind != want {
+				t.Fatalf("Declarations = %+v, want one node of kind %s", got, want)
+			}
+		})
+	}
+}
+
+// TestDeclarations_ACsvNodesReadIsItsCsvSource verifies that a python-csv
+// contract's one read is its csvSource, under the key "csv", as the release
+// records a csv node's reads.
+func TestDeclarations_ACsvNodesReadIsItsCsvSource(t *testing.T) {
+	const doc = `apiVersion: v3.2.0
+kind: DataContract
+id: analytics.demo_orders_csv
+team:
+  name: service-py
+customProperties:
+  - {vendor: continuo, property: kind, value: python-csv}
+  - {vendor: continuo, property: csvSource, value: "s3://bucket/orders.csv"}
+schema:
+  - name: demo_orders_csv
+    physicalType: table
 `
 	got, err := newLocator().Declarations(doc)
 	if err != nil {
@@ -282,23 +346,66 @@ func TestDeclarations_UnexpectedReadsShapeStillDeclaresTheNode(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("Declarations returned %d entries, want 1: %+v", len(got), got)
 	}
-	if got[0].Identity.Table != "py_daily_kpis" {
-		t.Errorf("entry identity = %+v, want the node it declares", got[0].Identity)
+	if got[0].Identity.Kind != "python-csv" || got[0].Identity.Table != "demo_orders_csv" {
+		t.Errorf("identity = %+v", got[0].Identity)
 	}
-	if len(got[0].ReadKeys) != 0 {
-		t.Errorf("read keys = %v, want none — a sequence carries no names to preserve", got[0].ReadKeys)
+	if !slices.Equal(got[0].ReadKeys, []string{"csv"}) {
+		t.Errorf("read keys = %v, want [csv]", got[0].ReadKeys)
 	}
 }
 
-// TestDeclarations_DocumentDeclaringNoNodesIsNotAnError verifies that a yaml
-// file holding something other than a contract yields no declarations and no
-// error: a contract directory legitimately holds such files, and they declare
-// nothing to preserve across an edit.
-func TestDeclarations_DocumentDeclaringNoNodesIsNotAnError(t *testing.T) {
+// TestDeclarations_AnIDThatDoesNotEndInTheTableKeepsTheWholeID verifies that
+// an id that does not name the schema object's table is kept whole as the
+// schema, so an answer that renames the table without the id (or the id
+// without the table) reads as a different node.
+func TestDeclarations_AnIDThatDoesNotEndInTheTableKeepsTheWholeID(t *testing.T) {
+	doc := strings.Replace(odcsContract("analytics.py_daily_kpis"), "  - name: py_daily_kpis\n", "  - name: renamed\n", 1)
+	got, err := newLocator().Declarations(doc)
+	if err != nil {
+		t.Fatalf("Declarations: %v", err)
+	}
+	if len(got) != 1 || got[0].Identity.Schema != "analytics.py_daily_kpis" || got[0].Identity.Table != "renamed" {
+		t.Fatalf("Declarations = %+v", got)
+	}
+}
+
+// TestDeclarations_UnexpectedShapesStillDeclareTheNode verifies that a
+// readQueries or customProperties holding something other than what ODCS
+// expects costs the fields it carries and nothing else. Failing the whole
+// document instead would read as "this file declares nothing", which excuses
+// the node from the comparison made across an edit.
+func TestDeclarations_UnexpectedShapesStillDeclareTheNode(t *testing.T) {
+	for name, doc := range map[string]string{
+		"readQueries a list": strings.Replace(odcsContract("analytics.py_daily_kpis"), "customProperties:\n",
+			"customProperties:\n  - {vendor: continuo, property: readQueries, value: [select 1]}\n", 1),
+		"customProperties a mapping": "id: analytics.py_daily_kpis\ncustomProperties: {script: x}\nschema:\n  - name: py_daily_kpis\n",
+		"team a string":              "id: analytics.py_daily_kpis\nteam: data\nschema:\n  - name: py_daily_kpis\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := newLocator().Declarations(doc)
+			if err != nil {
+				t.Fatalf("Declarations: %v", err)
+			}
+			if len(got) != 1 || got[0].Identity.Table != "py_daily_kpis" {
+				t.Fatalf("Declarations = %+v, want the node it declares", got)
+			}
+			if len(got[0].ReadKeys) != 0 {
+				t.Errorf("read keys = %v, want none", got[0].ReadKeys)
+			}
+		})
+	}
+}
+
+// TestDeclarations_DocumentDeclaringNoNodeIsNotAnError verifies that a yaml
+// file that is not an ODCS contract yields no declarations and no error: a
+// contract directory may hold such files, and they declare nothing to
+// preserve across an edit.
+func TestDeclarations_DocumentDeclaringNoNodeIsNotAnError(t *testing.T) {
 	for name, doc := range map[string]string{
 		"empty":            "",
 		"unrelated object": "version: 2\nmodels:\n  - name: orders\n",
-		"empty nodes list": "nodes: []\n",
+		"legacy contract":  legacyContract,
+		"a list":           "- a\n- b\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := newLocator().Declarations(doc)
@@ -312,13 +419,11 @@ func TestDeclarations_DocumentDeclaringNoNodesIsNotAnError(t *testing.T) {
 	}
 }
 
-// TestDeclarations_UnparseableTextIsAnError verifies that text which is not yaml
-// at all is reported rather than read as "declares nothing". The caller uses
-// the empty result to mean "this file protects no node", so silently returning
-// it for an unreadable document would let a broken answer erase a declaration
-// and be recorded as having changed nothing.
+// TestDeclarations_UnparseableTextIsAnError verifies that text which is not
+// yaml at all is reported rather than read as "declares nothing", so a broken
+// answer cannot erase a declaration and be recorded as having changed nothing.
 func TestDeclarations_UnparseableTextIsAnError(t *testing.T) {
-	if _, err := newLocator().Declarations("nodes:\n\t- schema: analytics\n"); err == nil {
+	if _, err := newLocator().Declarations("id: analytics.x\n\t- name: x\n"); err == nil {
 		t.Fatal("Declarations accepted text that is not valid yaml; an unreadable document must not read as an empty one")
 	}
 }

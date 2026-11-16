@@ -1,5 +1,5 @@
 # A python node whose declared read names a relation that does not exist.
-# The fix corrects the read in the contract yaml that declares the node.
+# The fix corrects the read in the node's ODCS contract.
 # Built from the e2e fixture tests/e2e/fixtures/py-remediation-repo
 # (services/svc-py-e2e) and the python lane's tests
 # (service/fixer/python_validation_test.go).
@@ -24,19 +24,29 @@ trigger:
 service_repo_paths:
   svc-py-e2e: services/svc-py-e2e
 repo_files:
-  services/svc-py-e2e/contracts/py_bad_read.yml: |
-    nodes:
-      - schema: e2e_schema
-        table: py_bad_read
-        owner: e2e
-        schedule: daily
-        criticality: SECONDARY
-        script: scripts/py_bad_read.py
-        description: "python node whose declared read cannot bind"
-        reads:
+  services/svc-py-e2e/contracts/py_bad_read.odcs.yaml: |
+    apiVersion: v3.2.0
+    kind: DataContract
+    id: e2e_schema.py_bad_read
+    name: py_bad_read
+    version: "0"
+    description:
+      purpose: "python node whose declared read cannot bind"
+    team:
+      name: e2e
+    customProperties:
+      - {vendor: continuo, property: schedule, value: daily}
+      - {vendor: continuo, property: criticality, value: SECONDARY}
+      - {vendor: continuo, property: script, value: scripts/py_bad_read.py}
+      - vendor: continuo
+        property: readQueries
+        value:
           missing: select id from public.wrong_name
-        output_columns:
-          - {name: id, type: INTEGER, nullable: false}
+    schema:
+      - name: py_bad_read
+        physicalType: table
+        properties:
+          - {name: id, physicalType: INTEGER, required: true}
   services/svc-py-e2e/scripts/py_bad_read.py: |
     import pyarrow as pa
 
@@ -62,39 +72,56 @@ packager:
 answers:
   pass:
     - files:
-        - path: services/svc-py-e2e/contracts/py_bad_read.yml
+        - path: services/svc-py-e2e/contracts/py_bad_read.odcs.yaml
           content: |
-            nodes:
-              - schema: e2e_schema
-                table: py_bad_read
-                owner: e2e
-                schedule: daily
-                criticality: SECONDARY
-                script: scripts/py_bad_read.py
-                description: "python node whose declared read cannot bind"
-                reads:
+            apiVersion: v3.2.0
+            kind: DataContract
+            id: e2e_schema.py_bad_read
+            name: py_bad_read
+            version: "0"
+            description:
+              purpose: "python node whose declared read cannot bind"
+            team:
+              name: e2e
+            customProperties:
+              - {vendor: continuo, property: schedule, value: daily}
+              - {vendor: continuo, property: criticality, value: SECONDARY}
+              - {vendor: continuo, property: script, value: scripts/py_bad_read.py}
+              - vendor: continuo
+                property: readQueries
+                value:
                   missing: select id from public.right_name
-                output_columns:
-                  - {name: id, type: INTEGER, nullable: false}
+            schema:
+              - name: py_bad_read
+                physicalType: table
+                properties:
+                  - {name: id, physicalType: INTEGER, required: true}
       rationale: the read names public.right_name, which exists
       confidence: high
       model: claude-test
   fail:
     # The read deleted rather than corrected, which pre-flight refuses.
     - files:
-        - path: services/svc-py-e2e/contracts/py_bad_read.yml
+        - path: services/svc-py-e2e/contracts/py_bad_read.odcs.yaml
           content: |
-            nodes:
-              - schema: e2e_schema
-                table: py_bad_read
-                owner: e2e
-                schedule: daily
-                criticality: SECONDARY
-                script: scripts/py_bad_read.py
-                description: "python node whose declared read cannot bind"
-                reads: {}
-                output_columns:
-                  - {name: id, type: INTEGER, nullable: false}
+            apiVersion: v3.2.0
+            kind: DataContract
+            id: e2e_schema.py_bad_read
+            name: py_bad_read
+            version: "0"
+            description:
+              purpose: "python node whose declared read cannot bind"
+            team:
+              name: e2e
+            customProperties:
+              - {vendor: continuo, property: schedule, value: daily}
+              - {vendor: continuo, property: criticality, value: SECONDARY}
+              - {vendor: continuo, property: script, value: scripts/py_bad_read.py}
+            schema:
+              - name: py_bad_read
+                physicalType: table
+                properties:
+                  - {name: id, physicalType: INTEGER, required: true}
       rationale: removed the read that cannot bind
       confidence: high
       model: claude-test

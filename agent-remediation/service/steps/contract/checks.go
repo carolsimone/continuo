@@ -15,8 +15,8 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 )
 
-// csvReadKey is the name a python-csv node's contract entry gives its one
-// read: the "reads: {csv: <uri>}" key the runtime loads the file from.
+// csvReadKey is the read name a python-csv node's one read, its contract's
+// csvSource (the uri the runtime loads the file from), is declared under.
 const csvReadKey = "csv"
 
 // The names the checks of this file register under.
@@ -204,10 +204,10 @@ func unreadableYAML(p string, err error) remediation.Finding {
 	}
 }
 
-// isContractYAMLPath reports whether a repository path is one the contract
-// search would parse. Only those files can declare a node, so only those are
-// compared across the edit; a script or a data file the answer also returns
-// carries no declaration to preserve.
+// isContractYAMLPath reports whether a repository path is a yaml file, which
+// may hold an ODCS contract. Only those files can declare a node, so only
+// those are compared across the edit; a script or a data file the answer also
+// returns carries no declaration to preserve.
 func isContractYAMLPath(p string) bool {
 	switch strings.ToLower(path.Ext(filepath.ToSlash(p))) {
 	case ".yml", ".yaml":
@@ -399,8 +399,8 @@ func NewCSVReadKept(inspector ports.ContractInspector) step.Check {
 		meta: step.Meta{
 			Name: nameCSVReadKept,
 			Kind: step.KindCheck,
-			Description: "Fails a draft after which a node that declared a \"csv\" read no longer declares one (its uri may be corrected, " +
-				"but the key may never be removed or renamed), or after which any node no longer declares another read it declared. " +
+			Description: "Fails a draft after which a node that declared a csvSource no longer declares one (its uri may be corrected, " +
+				"but the csvSource may never be removed or renamed), or after which any node no longer declares another read it declared. " +
 				"It takes the place of reads_kept for a python-csv node.",
 			Needs:  needsDraft,
 			Stages: preflightOnly,
@@ -411,10 +411,10 @@ func NewCSVReadKept(inspector ports.ContractInspector) step.Check {
 }
 
 // csvReadKeptFindings walks the nodes in key order and finds at most one
-// finding for each. A node that declared a "csv" read before the edit and does
-// not afterwards is a csv_read_dropped finding: that key names the file the
-// runtime loads, and the read's value (the uri) is the one thing a python-csv
-// fix may change, so the finding names the csv read specifically. Otherwise a
+// finding for each. A node that declared a csvSource (its "csv" read) before
+// the edit and does not afterwards is a csv_read_dropped finding: the
+// csvSource names the file the runtime loads, and its value (the uri) is the
+// one thing a python-csv fix may change, so the finding names it specifically. Otherwise a
 // node that dropped any other read is the read_dropped finding of reads_kept:
 // every node the answer's files touch is held to the blanket rule, a sibling's
 // script being never edited by the fix. A node the answer removes altogether is
@@ -431,10 +431,9 @@ func csvReadKeptFindings(before, after map[string]ports.NodeDeclaration) []remed
 			found = append(found, remediation.Finding{
 				Code: "csv_read_dropped",
 				Message: fmt.Sprintf(
-					"the model's answer no longer declares the %q read of %s. A python-csv node's single read names the "+
-						"file its runtime loads; that read's uri may be corrected, but the %q key itself may never be "+
-						"removed or renamed, or the node would have nothing left for the runtime to read the file from",
-					csvReadKey, k, csvReadKey),
+					"the model's answer no longer declares the csvSource of %s. A python-csv node's csvSource names the "+
+						"file its runtime loads; its uri may be corrected, but the csvSource itself may never be "+
+						"removed or renamed, or the node would have nothing left for the runtime to read the file from", k),
 			})
 			continue
 		}

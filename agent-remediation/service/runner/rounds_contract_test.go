@@ -21,10 +21,16 @@ import (
 
 const (
 	contractNodeID = "sales.loader"
-	contractYAML   = "services/svc-a/contracts/loader.yml"
-	brokenContract = "nodes:\n  - schema: sales\n    table: loader\n    script: scripts/loader.py\n    reads:\n      src: select id from public.wrong_name\n"
-	fixedContract  = "nodes:\n  - schema: sales\n    table: loader\n    script: scripts/loader.py\n    reads:\n      src: select id from public.right_name\n"
-	toolRefusal    = "read src: relation public.wrong_name is not declared"
+	contractYAML   = "services/svc-a/contracts/loader.odcs.yaml"
+	brokenContract = "apiVersion: v3.2.0\nkind: DataContract\nid: sales.loader\ncustomProperties:\n" +
+		"  - {vendor: continuo, property: script, value: scripts/loader.py}\n" +
+		"  - {vendor: continuo, property: readQueries, value: {src: select id from public.wrong_name}}\n" +
+		"schema:\n  - name: loader\n    physicalType: table\n"
+	fixedContract = "apiVersion: v3.2.0\nkind: DataContract\nid: sales.loader\ncustomProperties:\n" +
+		"  - {vendor: continuo, property: script, value: scripts/loader.py}\n" +
+		"  - {vendor: continuo, property: readQueries, value: {src: select id from public.right_name}}\n" +
+		"schema:\n  - name: loader\n    physicalType: table\n"
+	toolRefusal = "read src: relation public.wrong_name is not declared"
 )
 
 // checkoutOf is a repository checkout that holds files, which every fetch

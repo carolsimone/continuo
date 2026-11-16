@@ -8,17 +8,17 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 )
 
-// csvReadKey is the name a python-csv node's contract entry gives its one
-// read: the "reads: {csv: <uri>}" key the runtime loads the file from. It is
+// csvReadKey is the read name a python-csv node's one read, its contract's
+// csvSource (the uri the runtime loads the file from), is declared under. It is
 // the single read a python-csv node is allowed to have, and the only one this
 // lane's guard is concerned with — unlike a python-node, whose script
 // may declare any number of reads under any names.
 const csvReadKey = "csv"
 
 // csvValidationFixer handles a python-csv node's validation rejection. A
-// python-csv node is contract-only: an entry in a contract yaml declaring its
-// schema and table, a single "csv" read naming the file the runtime loads, and
-// the output_columns it promises that file to carry. There is no script at
+// python-csv node is contract-only: an ODCS contract declaring its id, a
+// csvSource naming the file the runtime loads, and the columns it promises
+// that file to carry. There is no script at
 // all — nothing runs to produce the relation — so validation instead fetches
 // the file's header line and rejects the release when a declared output
 // column is missing from it.
@@ -112,10 +112,9 @@ func csvDeclarationBreach(svc Services, files []ports.ProposedFile, originals ma
 		was, now := before[k], after[k]
 		if hasReadKey(was.ReadKeys, csvReadKey) && !hasReadKey(now.ReadKeys, csvReadKey) {
 			return fmt.Sprintf(
-				"the model's answer no longer declares the %q read of %s. A python-csv node's single read names the "+
-					"file its runtime loads; that read's uri may be corrected, but the %q key itself may never be "+
-					"removed or renamed, or the node would have nothing left for the runtime to read the file from",
-				csvReadKey, k, csvReadKey)
+				"the model's answer no longer declares the csvSource of %s. A python-csv node's csvSource names the "+
+					"file its runtime loads; its uri may be corrected, but the csvSource itself may never be "+
+					"removed or renamed, or the node would have nothing left for the runtime to read the file from", k)
 		}
 		// Whatever the "csv" check above did not already refuse — a sibling
 		// that never declared a "csv" read, or the csv node's own read of it

@@ -6,14 +6,13 @@ import (
 )
 
 // CsvEvidence is the failure evidence for a python-csv node whose contract
-// failed validation. A python-csv node has no script at all: it is an entry
-// under "nodes:" naming its schema and table, exactly one read — the csv: key
-// pointing at the file the runtime loads — and the output_columns it promises
-// that file to carry. The evidence therefore has the same shape as a python
-// node's (a normalized ContractEntry paired with the declaring file's verbatim
-// YAMLText at YAMLPath), because the same contract-yaml-plus-verification-run
-// mechanism verifies both; only what the model is told a fix may touch
-// differs, in the system prompt.
+// failed validation. A python-csv node has no script at all: it is an ODCS
+// contract naming its id, its csvSource (the uri of the file the runtime
+// loads) and the columns it promises that file to carry. The evidence
+// therefore has the same shape as a python node's (a normalized ContractEntry
+// paired with the contract file's verbatim YAMLText at YAMLPath), because the
+// same contract-plus-verification-run mechanism verifies both; only what the
+// model is told a fix may touch differs, in the system prompt.
 //
 // Every field but NodeID is optional: an absent one renders no section at all.
 type CsvEvidence struct {
@@ -28,8 +27,9 @@ type CsvEvidence struct {
 	// ContractEntry is the node's entry from the release's code bundle: its
 	// normalized contract as canonical JSON.
 	ContractEntry string
-	// YAMLPath and YAMLText locate and carry the contract file that declares
-	// the node, verbatim as the repository holds it at the failing commit.
+	// YAMLPath and YAMLText locate and carry the ODCS contract file that
+	// declares the node, verbatim as the repository holds it at the failing
+	// commit.
 	YAMLPath        string
 	YAMLText        string
 	UpstreamChanges []UpstreamChange
@@ -38,31 +38,31 @@ type CsvEvidence struct {
 	// first.
 	PriorAttempts []PriorAttempt
 	// NoReads is carried so the struct converts to and from PythonEvidence; a
-	// python-csv node always declares its one csv read, so it is never set.
+	// python-csv node always declares its one read, its csvSource, so it is
+	// never set.
 	NoReads bool
 }
 
 const csvContractFixSystemPrompt = `You are a data-engineering assistant that fixes a Continuo python-csv node whose contract failed blue/green validation.
 
-A python-csv node is contract-only: an entry under "nodes:" naming its schema and table (kind: python-csv), exactly one read — a "csv" key whose value is the uri of the CSV file the node loads — and the output_columns it promises that file to carry. There is NO script: nothing runs to produce the relation. Validation fetches the CSV file's header line and rejects the release when a declared output column is missing from it.
+A python-csv node is contract-only: its own ODCS contract file, contracts/<table>.odcs.yaml: one contract per node. Its id is "<schema>.<table>". Its continuo customProperties set its kind (python-csv) and its csvSource, the uri of the CSV file the node loads; it has no script and no readQueries. The columns it promises that file to carry are the properties of its one schema object (schema[0].properties), each with a name, a physicalType and whether it is required. There is NO script: nothing runs to produce the relation. Validation fetches the CSV file's header line and rejects the release when a declared column is missing from it.
 
-THE CSV FILE IS THE SOURCE OF TRUTH. The header the runtime read is a fact about a file that already exists; the contract is what may be wrong. So the fix corrects the contract to match the file: rename or remove a mis-declared output_columns entry so it matches the file's real header, or — only when the evidence itself shows the uri is stale, such as a dated export path that has since rolled forward — correct the "csv:" uri to point at the right file.
+THE CSV FILE IS THE SOURCE OF TRUTH. The header the runtime read is a fact about a file that already exists; the contract is what may be wrong. So the fix corrects the contract to match the file: rename or remove a mis-declared column in schema[0].properties so it matches the file's real header, or — only when the evidence itself shows the uri is stale, such as a dated export path that has since rolled forward — correct the csvSource uri to point at the right file.
 
 Rules:
-- Never change schema, table, owner, schedule, criticality, or the node's kind — those identify the node, and changing one makes it a different node rather than a fixed one.
-- The node's single "csv" read may be corrected — its uri is exactly what a stale-path fix touches — but it may never be deleted or renamed to another key. A python-csv node with no "csv" read is not a python-csv node; the runtime would have nothing to load.
+- Never change the id, the schema object's name, team, schedule, criticality, or the node's kind — those identify the node, and changing one makes it a different node rather than a fixed one.
+- The node's csvSource may be corrected — its uri is exactly what a stale-path fix touches — but it may never be deleted or renamed to another property. A python-csv node with no csvSource is not a python-csv node; the runtime would have nothing to load.
 - Do not invent a column the evidence does not show the file carrying, and do not drop a declared column merely to make the check pass unless the evidence shows that column is genuinely absent from the file's header.
-- A contract file may declare several nodes. Leave every node other than the failing one byte-for-byte unchanged.
+- Each contract file declares exactly one node. Leave the contract of every node other than the failing one unchanged, and never declare the failing node in a second file.
 - Return the COMPLETE new content of every file you change, never a diff and never a fragment. A file you do not change must not appear in your answer at all.
 - When earlier attempts are shown, read what each one changed and why its verification failed, and do not repeat a change that has already been rejected.
 - When past precedents are shown, weigh how the same error was resolved before; follow a precedent's approach only where it fits the contract you are shown.
 - Always respond by calling the propose_csv_fix tool.`
 
 // AssembleCsvContractFix builds the request that asks the model to correct
-// the contract yaml declaring a failed python-csv node. The answer is a list
-// of complete files rather than one file's content, because a fix can
-// legitimately span the declaring file and a sibling it shares definitions
-// with.
+// the ODCS contract declaring a failed python-csv node. The answer is a list
+// of complete files rather than one file's content, the shape every python
+// contract fix shares.
 func AssembleCsvContractFix(ev CsvEvidence) ProposeRequest {
 	var u strings.Builder
 	fmt.Fprintf(&u, "Failed python-csv node: %s\n\n", ev.NodeID)

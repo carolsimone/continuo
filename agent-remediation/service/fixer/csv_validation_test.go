@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -15,47 +16,37 @@ import (
 
 // --- fixture ----------------------------------------------------------------
 
-// csvDeclaringYAML declares one python-csv node: no script, a single "csv"
-// read naming the file the runtime loads, and the output_columns it promises
-// that file to carry. customer_id is the mis-declared column the failing
-// release's header check rejected.
-const csvDeclaringYAML = `nodes:
-  - schema: analytics
-    table: py_csv_orders
-    kind: python-csv
-    reads:
-      csv: s3://exports/orders/orders.csv
-    output_columns:
-      - name: order_id
-      - name: customer_id
-`
+// csvNode is one python-csv node's contract: no script, a csvSource naming
+// the file the runtime loads, and the columns it promises that file to carry.
+// customer_id is the mis-declared column the failing release's header check
+// rejected; csvDeclaringYAML is its file as the repository holds it.
+var csvNode = odcsNode{
+	ID: "analytics.py_csv_orders", Kind: "python-csv", CSVSource: "s3://exports/orders/orders.csv",
+	Columns: []string{"order_id", "customer_id"},
+}
 
-// csvCorrectedYAML is the answer a fix that renames the mis-declared column to
-// match the file's real header would return.
-const csvCorrectedYAML = `nodes:
-  - schema: analytics
-    table: py_csv_orders
-    kind: python-csv
-    reads:
-      csv: s3://exports/orders/orders.csv
-    output_columns:
-      - name: order_id
-      - name: cust_id
-`
+var csvDeclaringYAML = csvNode.yaml()
 
-// csvSiblingYAML is the second node declared in the same contract directory:
+// csvCorrectedNode is the answer a fix that renames the mis-declared column to
+// match the file's real header would return, and csvCorrectedYAML its file.
+var csvCorrectedNode = func() odcsNode { n := csvNode; n.Columns = []string{"order_id", "cust_id"}; return n }()
+
+var csvCorrectedYAML = csvCorrectedNode.yaml()
+
+// csvSiblingNode is the second node declared in the same contract directory:
 // a python-node, not the csv node under repair, but packaged and
 // re-validated alongside it. It carries kind and script explicitly so a test
 // that edits it while preserving its identity can do so without those fields
 // appearing to change from their zero value.
-const csvSiblingYAML = `nodes:
-  - schema: analytics
-    table: other
-    kind: python-node
-    script: scripts/other.py
-    reads:
-      customers: select id from analytics.customers
-`
+var csvSiblingNode = odcsNode{
+	ID: "analytics.other", Kind: "python-node", Script: "scripts/other.py",
+	Reads: [][2]string{{"customers", "select id from analytics.customers"}},
+}
+
+var csvSiblingYAML = csvSiblingNode.yaml()
+
+// csvWith renders n after mod.
+func csvWith(n odcsNode, mod func(*odcsNode)) string { mod(&n); return n.yaml() }
 
 // csvRepoTree writes a repository checkout holding one python service whose
 // contracts directory declares the failing csv node, and returns its root.
@@ -67,8 +58,8 @@ func csvRepoTree(t *testing.T) string {
 		require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o750))
 		require.NoError(t, os.WriteFile(full, []byte(content), 0o600))
 	}
-	write("services/service-csv/contracts/py_csv_orders.yml", csvDeclaringYAML)
-	write("services/service-csv/contracts/other.yml", csvSiblingYAML)
+	write("services/service-csv/contracts/py_csv_orders.odcs.yaml", csvDeclaringYAML)
+	write("services/service-csv/contracts/other.odcs.yaml", csvSiblingYAML)
 	return root
 }
 
@@ -93,7 +84,7 @@ func csvSvc(t *testing.T, root string) (Services, *fakeArchive, *fakePackager, *
 	svc := Services{
 		LLM: &fakeLLM{queue: []ports.ProposeResult{{
 			Files: []ports.ProposedFile{
-				{Path: "services/service-csv/contracts/py_csv_orders.yml", Content: csvCorrectedYAML},
+				{Path: "services/service-csv/contracts/py_csv_orders.odcs.yaml", Content: csvCorrectedYAML},
 			},
 			Rationale: "renamed the column to match the file's real header", Confidence: "high", Model: "test-model",
 		}}},
@@ -138,8 +129,8 @@ func TestCsvValidation_HappyPath(t *testing.T) {
 	call := pkgr.calls[0]
 	require.Equal(t, filepath.Join(root, "services", "service-csv", "contracts"), call.contractDir)
 	require.Equal(t, "svc-csv", call.service)
-	require.Equal(t, csvCorrectedYAML, call.sawOnDisk["py_csv_orders.yml"])
-	require.Equal(t, csvSiblingYAML, call.sawOnDisk["other.yml"],
+	require.Equal(t, csvCorrectedYAML, call.sawOnDisk["py_csv_orders.odcs.yaml"])
+	require.Equal(t, csvSiblingYAML, call.sawOnDisk["other.odcs.yaml"],
 		"a file the model did not return must be left exactly as the repository holds it")
 
 	// The merged contract is returned in memory for the driver, not uploaded.
@@ -149,7 +140,7 @@ func TestCsvValidation_HappyPath(t *testing.T) {
 	require.Equal(t, proposal.StatusProposed, p.Status,
 		"an answer that only edits output_columns must be proposed, not refused as a false breach")
 	require.Len(t, p.Edits, 1)
-	require.Equal(t, "services/service-csv/contracts/py_csv_orders.yml", p.Edits[0].Path)
+	require.Equal(t, "services/service-csv/contracts/py_csv_orders.odcs.yaml", p.Edits[0].Path)
 	require.Equal(t, "analytics.py_csv_orders", p.Edits[0].TargetNodeID)
 	for key := range arts.written {
 		require.NotContains(t, key, "contract.yaml",
@@ -174,18 +165,11 @@ func TestCsvValidation_HappyPath(t *testing.T) {
 func TestCsvValidation_AnswerCorrectsTheCsvURI_Verifies(t *testing.T) {
 	root := csvRepoTree(t)
 	svc, _, pkgr, _, _ := csvSvc(t, root)
-	const target = "services/service-csv/contracts/py_csv_orders.yml"
+	const target = "services/service-csv/contracts/py_csv_orders.odcs.yaml"
 	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{
-		Files: []ports.ProposedFile{{Path: target, Content: `nodes:
-  - schema: analytics
-    table: py_csv_orders
-    kind: python-csv
-    reads:
-      csv: s3://exports/orders/2026-08-01/orders.csv
-    output_columns:
-      - name: order_id
-      - name: customer_id
-`}},
+		Files: []ports.ProposedFile{{Path: target, Content: csvWith(csvNode, func(n *odcsNode) {
+			n.CSVSource = "s3://exports/orders/2026-08-01/orders.csv"
+		})}},
 		Confidence: "high",
 	}}}
 
@@ -202,27 +186,12 @@ func TestCsvValidation_AnswerCorrectsTheCsvURI_Verifies(t *testing.T) {
 // read entirely, or rename it, and there is nothing left for the runtime to
 // load — the run passes on a node that is no longer a csv node at all.
 func TestCsvValidation_AnswerDeletesTheCsvRead_Fails(t *testing.T) {
-	const target = "services/service-csv/contracts/py_csv_orders.yml"
+	const target = "services/service-csv/contracts/py_csv_orders.odcs.yaml"
 
 	cases := map[string]string{
-		"the csv read is removed entirely": `nodes:
-  - schema: analytics
-    table: py_csv_orders
-    kind: python-csv
-    output_columns:
-      - name: order_id
-      - name: cust_id
-`,
-		"the csv read is renamed": `nodes:
-  - schema: analytics
-    table: py_csv_orders
-    kind: python-csv
-    reads:
-      data: s3://exports/orders/orders.csv
-    output_columns:
-      - name: order_id
-      - name: cust_id
-`,
+		"the csvSource is removed entirely": csvWith(csvCorrectedNode, func(n *odcsNode) { n.CSVSource = "" }),
+		"the csvSource is renamed": strings.Replace(csvCorrectedYAML,
+			"property: csvSource", "property: csvFile", 1),
 	}
 
 	for name, content := range cases {
@@ -258,18 +227,13 @@ func TestCsvValidation_AnswerDeletesTheCsvRead_Fails(t *testing.T) {
 func TestCsvValidation_SiblingReadDropped_Fails(t *testing.T) {
 	root := csvRepoTree(t)
 	svc, _, pkgr, _, arts := csvSvc(t, root)
-	const sibling = "services/service-csv/contracts/other.yml"
+	const sibling = "services/service-csv/contracts/other.odcs.yaml"
 	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{
 		Files: []ports.ProposedFile{
-			{Path: "services/service-csv/contracts/py_csv_orders.yml", Content: csvCorrectedYAML},
-			// Same identity as csvSiblingYAML (schema, table, kind, script) but
+			{Path: "services/service-csv/contracts/py_csv_orders.odcs.yaml", Content: csvCorrectedYAML},
+			// Same identity as csvSiblingNode (schema, table, kind, script) but
 			// its "customers" read is gone.
-			{Path: sibling, Content: `nodes:
-  - schema: analytics
-    table: other
-    kind: python-node
-    script: scripts/other.py
-`},
+			{Path: sibling, Content: withReads(csvSiblingNode)},
 		},
 		Confidence: "high",
 	}}}
@@ -295,18 +259,12 @@ func TestCsvValidation_SiblingReadDropped_Fails(t *testing.T) {
 func TestCsvValidation_AnswerChangesKind_Fails(t *testing.T) {
 	root := csvRepoTree(t)
 	svc, _, pkgr, _, arts := csvSvc(t, root)
-	const target = "services/service-csv/contracts/py_csv_orders.yml"
+	const target = "services/service-csv/contracts/py_csv_orders.odcs.yaml"
 	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{
-		Files: []ports.ProposedFile{{Path: target, Content: `nodes:
-  - schema: analytics
-    table: py_csv_orders
-    kind: python-node
-    reads:
-      csv: s3://exports/orders/orders.csv
-    output_columns:
-      - name: order_id
-      - name: cust_id
-`}},
+		Files: []ports.ProposedFile{{Path: target, Content: csvWith(csvCorrectedNode, func(n *odcsNode) {
+			n.Kind, n.CSVSource = "python-node", ""
+			n.Reads = [][2]string{{"csv", "select * from s3"}}
+		})}},
 		Confidence: "high",
 	}}}
 
@@ -327,18 +285,9 @@ func TestCsvValidation_AnswerChangesKind_Fails(t *testing.T) {
 func TestCsvValidation_AnswerThatChangesNodeIdentity_Fails(t *testing.T) {
 	root := csvRepoTree(t)
 	svc, _, pkgr, _, arts := csvSvc(t, root)
-	const target = "services/service-csv/contracts/py_csv_orders.yml"
+	const target = "services/service-csv/contracts/py_csv_orders.odcs.yaml"
 	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{
-		Files: []ports.ProposedFile{{Path: target, Content: `nodes:
-  - schema: analytics
-    table: py_csv_orders_v2
-    kind: python-csv
-    reads:
-      csv: s3://exports/orders/orders.csv
-    output_columns:
-      - name: order_id
-      - name: cust_id
-`}},
+		Files:      []ports.ProposedFile{{Path: target, Content: csvWith(csvCorrectedNode, func(n *odcsNode) { n.ID = "analytics.py_csv_orders_v2" })}},
 		Confidence: "high",
 	}}}
 
@@ -430,7 +379,7 @@ func TestCsvValidation_SiblingFailureInSameDirectory_Skips(t *testing.T) {
 	svc, _, pkgr, rel, arts := csvSvc(t, root)
 	llm := svc.LLM.(*fakeLLM)
 
-	// other.yml sits in the same contracts/ directory as the failing node's
+	// other.odcs.yaml sits in the same contracts/ directory as the failing node's
 	// own declaring file, so packaging one packages both.
 	rel.failingNodes = map[string]string{
 		"analytics.py_csv_orders": "csv header missing declared column(s): ['customer_id']",

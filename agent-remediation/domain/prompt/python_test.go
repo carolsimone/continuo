@@ -16,8 +16,8 @@ func pythonEvidence() PythonEvidence {
 		ErrorExcerpt:  "column revenue_total is declared but the script produced revenue",
 		RunnerLog:     "continuo-runtime: validating analytics.py_daily_kpis\nFAILED",
 		ContractEntry: `{"output_columns":[{"name":"revenue_total"}],"reads":{"orders":"select * from analytics.orders"}}`,
-		YAMLPath:      "services/service-py/contracts/py_daily_kpis.yml",
-		YAMLText:      "nodes:\n  - schema: analytics\n    table: py_daily_kpis\n",
+		YAMLPath:      "services/service-py/contracts/py_daily_kpis.odcs.yaml",
+		YAMLText:      "apiVersion: v3.2.0\nkind: DataContract\nid: analytics.py_daily_kpis\n",
 		UpstreamChanges: []UpstreamChange{
 			{NodeID: "analytics.orders", Depth: 1, CodeDiff: "-  revenue\n+  revenue_amount", ConfigDiff: "+materialized: table"},
 		},
@@ -31,7 +31,7 @@ func pythonEvidence() PythonEvidence {
 				Attempt:     1,
 				VerifyError: "verification failed: revenue_total still missing",
 				Diffs: []AttemptDiff{
-					{Path: "services/service-py/contracts/py_daily_kpis.yml", Diff: "-    - name: revenue\n+    - name: revenue_total"},
+					{Path: "services/service-py/contracts/py_daily_kpis.odcs.yaml", Diff: "-    - name: revenue\n+    - name: revenue_total"},
 				},
 			},
 		},
@@ -55,8 +55,8 @@ func TestAssemblePythonContractFix_RendersEverySection(t *testing.T) {
 	// The contract entry is canonical JSON and the declaring file is yaml; each
 	// is fenced as what it is so the model does not have to guess.
 	require.Contains(t, u, "```json\n"+`{"output_columns":[{"name":"revenue_total"}],"reads":{"orders":"select * from analytics.orders"}}`)
-	require.Contains(t, u, "```yaml\nnodes:\n  - schema: analytics\n    table: py_daily_kpis\n")
-	require.Contains(t, u, "services/service-py/contracts/py_daily_kpis.yml")
+	require.Contains(t, u, "```yaml\napiVersion: v3.2.0\nkind: DataContract\nid: analytics.py_daily_kpis\n")
+	require.Contains(t, u, "services/service-py/contracts/py_daily_kpis.odcs.yaml")
 
 	// Upstream changes and precedent.
 	require.Contains(t, u, "analytics.orders")
@@ -78,8 +78,8 @@ func TestAssemblePythonContractFix_SectionsOmittedWhenAbsent(t *testing.T) {
 	req := AssemblePythonContractFix(PythonEvidence{
 		NodeID:       "analytics.py_daily_kpis",
 		ErrorExcerpt: "boom",
-		YAMLPath:     "contracts/py.yml",
-		YAMLText:     "nodes: []\n",
+		YAMLPath:     "contracts/py_daily_kpis.odcs.yaml",
+		YAMLText:     "id: analytics.py_daily_kpis\n",
 	})
 	u := req.User
 
@@ -118,24 +118,57 @@ func TestAssemblePythonContractFix_ToolSchema(t *testing.T) {
 	require.True(t, byName["confidence"].Required)
 }
 
-// TestAssemblePythonContractFix_SystemPromptScopesTheEdit pins the three rules
-// that keep a contract fix from breaking the release it is meant to repair:
-// only validation-relevant fields change, unrelated nodes in a shared file are
-// left alone, and every returned file is complete rather than a fragment.
+// TestAssemblePythonContractFix_SystemPromptScopesTheEdit pins the rules that
+// keep a contract fix from breaking the release it is meant to repair: only
+// validation-relevant fields change, the contracts of other nodes are left
+// alone, and every returned file is complete rather than a fragment.
 func TestAssemblePythonContractFix_SystemPromptScopesTheEdit(t *testing.T) {
 	sys := AssemblePythonContractFix(pythonEvidence()).System
 	lower := strings.ToLower(sys)
 
 	require.Contains(t, lower, "reads")
-	require.Contains(t, lower, "output_columns")
 	require.Contains(t, lower, "config")
 	require.Contains(t, lower, "unchanged", "the prompt must tell the model to leave other nodes untouched")
 	require.Contains(t, lower, "complete", "the prompt must demand each file's full new content")
 }
 
+// TestPythonPrompts_DescribeTheODCSContract pins that every python prompt
+// describes the file the model edits as it is: one ODCS contract per node at
+// contracts/<table>.odcs.yaml, its id, its script, its readQueries (each one
+// SELECT naming every table's schema) and the columns of schema[0].properties,
+// and that none still describes a "nodes:" list.
+func TestPythonPrompts_DescribeTheODCSContract(t *testing.T) {
+	noReads := pythonEvidence()
+	noReads.NoReads = true
+	for name, sys := range map[string]string{
+		"validation":           AssemblePythonContractFix(pythonEvidence()).System,
+		"validation, no reads": AssemblePythonContractFix(noReads).System,
+		"parse":                AssemblePythonParseFix(pythonEvidence()).System,
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.Contains(t, sys, "contracts/<table>.odcs.yaml")
+			require.Contains(t, sys, "one contract per node")
+			require.Contains(t, sys, `id is "<schema>.<table>"`)
+			require.Contains(t, sys, "script")
+			require.Contains(t, sys, "schema[0].properties")
+			require.Contains(t, sys, "secretRef")
+			require.NotContains(t, sys, "nodes:")
+			require.NotContains(t, sys, "output_columns")
+			require.NotContains(t, sys, "secret_ref")
+		})
+	}
+	for name, sys := range map[string]string{
+		"validation": AssemblePythonContractFix(pythonEvidence()).System,
+		"parse":      AssemblePythonParseFix(pythonEvidence()).System,
+	} {
+		require.Contains(t, sys, "readQueries", name)
+		require.Contains(t, sys, "each query is one SELECT that names every table it reads with its schema", name)
+	}
+}
+
 // TestAssemblePythonContractFix_NoReadsNodeSaysItFetchesItsOwnData pins that a
 // node declaring no reads is not described as reading upstream relations, and
-// that every python prompt lists secret_ref among the fields a fix never
+// that every python prompt lists secretRef among the fields a fix never
 // touches.
 func TestAssemblePythonContractFix_NoReadsNodeSaysItFetchesItsOwnData(t *testing.T) {
 	ev := pythonEvidence()
@@ -149,7 +182,7 @@ func TestAssemblePythonContractFix_NoReadsNodeSaysItFetchesItsOwnData(t *testing
 	require.NotContains(t, req.System, "adding a read is allowed")
 	require.NotContains(t, req.System, "Keep every read")
 	require.Contains(t, req.System, "Never add a read")
-	require.Contains(t, req.System, "the script that produces it, and the output_columns")
+	require.Contains(t, req.System, "the script that produces it. This node declares no reads")
 	require.NotEqual(t, pythonContractFixSystemPrompt, noReadsSystemPrompt(pythonContractFixSystemPrompt),
 		"the rewrite must change the base prompt")
 
@@ -165,7 +198,7 @@ func TestAssemblePythonContractFix_NoReadsNodeSaysItFetchesItsOwnData(t *testing
 		"validation, no reads": req.System,
 		"parse":                AssemblePythonParseFix(pythonEvidence()).System,
 	} {
-		require.Contains(t, sys, "secret_ref", "%s prompt must forbid touching secret_ref", name)
+		require.Contains(t, sys, "secretRef", "%s prompt must forbid touching secretRef", name)
 	}
 }
 
@@ -199,8 +232,8 @@ func TestAssemblePythonParseFix_ShowsTheParserError(t *testing.T) {
 	require.Contains(t, u, "unqualified table reference `orders`")
 	require.NotContains(t, u, "Validation error:")
 	require.NotContains(t, u, "Full runner log")
-	require.Contains(t, u, "```yaml\nnodes:\n  - schema: analytics\n    table: py_daily_kpis\n")
-	require.Contains(t, u, "services/service-py/contracts/py_daily_kpis.yml")
+	require.Contains(t, u, "```yaml\napiVersion: v3.2.0\nkind: DataContract\nid: analytics.py_daily_kpis\n")
+	require.Contains(t, u, "services/service-py/contracts/py_daily_kpis.odcs.yaml")
 
 	require.Contains(t, req.System, "parser rejected")
 	require.Contains(t, req.System, "schema-qualified")

@@ -1492,33 +1492,51 @@ func (fakeAttemptLister) List(_ context.Context, _ repository.ProposalFilter) ([
 }
 
 const (
-	pythonDeclaringYAML = `nodes:
-  - schema: analytics
-    table: pynode
-    script: scripts/pynode.py
-    reads:
+	pythonDeclaringYAML = `apiVersion: v3.2.0
+kind: DataContract
+id: analytics.pynode
+customProperties:
+  - {vendor: continuo, property: script, value: scripts/pynode.py}
+  - vendor: continuo
+    property: readQueries
+    value:
       orders: select id from analytics.orders
-    output_columns:
-      - name: revenue
+schema:
+  - name: pynode
+    physicalType: table
+    properties:
+      - {name: revenue, physicalType: INTEGER}
 `
-	pythonCorrectedYAML = `nodes:
-  - schema: analytics
-    table: pynode
-    script: scripts/pynode.py
-    reads:
+	pythonCorrectedYAML = `apiVersion: v3.2.0
+kind: DataContract
+id: analytics.pynode
+customProperties:
+  - {vendor: continuo, property: script, value: scripts/pynode.py}
+  - vendor: continuo
+    property: readQueries
+    value:
       orders: select id from analytics.orders
-    output_columns:
-      - name: revenue_total
+schema:
+  - name: pynode
+    physicalType: table
+    properties:
+      - {name: revenue_total, physicalType: INTEGER}
 `
 	// pythonSiblingYAML declares a second node in the same contract
 	// directory. The model's answer below returns it unchanged — its only
 	// purpose is to give pythonValidationFixer a second file to edit, so the
 	// cluster produces two FileEdits instead of one.
-	pythonSiblingYAML = `nodes:
-  - schema: analytics
-    table: sibling
-    reads:
+	pythonSiblingYAML = `apiVersion: v3.2.0
+kind: DataContract
+id: analytics.sibling
+customProperties:
+  - vendor: continuo
+    property: readQueries
+    value:
       customers: select id from analytics.customers
+schema:
+  - name: sibling
+    physicalType: table
 `
 )
 
@@ -1533,8 +1551,8 @@ func pythonContractRepoTree(t *testing.T) string {
 		require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o750))
 		require.NoError(t, os.WriteFile(full, []byte(content), 0o600))
 	}
-	write("services/svc/contracts/pynode.yml", pythonDeclaringYAML)
-	write("services/svc/contracts/other.yml", pythonSiblingYAML)
+	write("services/svc/contracts/pynode.odcs.yaml", pythonDeclaringYAML)
+	write("services/svc/contracts/other.odcs.yaml", pythonSiblingYAML)
 	write("services/svc/scripts/pynode.py", "print('hi')\n")
 	return root
 }
@@ -1560,9 +1578,9 @@ func TestProposeFix_EditsFromOnePythonClusterAreIndependentlyCopied(t *testing.T
 	ev := fakeEvidence{vals: map[string]string{"s3://b/log": "runner log body"}}
 	llm := newFakeLLM(ports.ProposeResult{
 		Files: []ports.ProposedFile{
-			{Path: "services/svc/contracts/pynode.yml", Content: pythonCorrectedYAML},
+			{Path: "services/svc/contracts/pynode.odcs.yaml", Content: pythonCorrectedYAML},
 			// Unchanged; present only to force a second edit out of one cluster.
-			{Path: "services/svc/contracts/other.yml", Content: pythonSiblingYAML},
+			{Path: "services/svc/contracts/other.odcs.yaml", Content: pythonSiblingYAML},
 		},
 		Rationale: "declared the column the script produces", Confidence: "high", Model: "m",
 	}, nil)
@@ -1724,7 +1742,7 @@ func TestSubmitVerifications_PythonLaneIgnoresTheTriggersServiceField(t *testing
 	tr.Nodes = []TriggerNode{{NodeID: "analytics.py_daily_kpis", ErrorSignature: "sig",
 		NodeType: "python-node", Service: ""}}
 	edits := []proposal.FileEdit{{
-		Path: "services/svc/contracts/kpis.yml", ContentURI: "s3://art/edit", TargetNodeID: "analytics.py_daily_kpis",
+		Path: "services/svc/contracts/kpis.odcs.yaml", ContentURI: "s3://art/edit", TargetNodeID: "analytics.py_daily_kpis",
 	}}
 
 	got, err := submitVerifications(context.Background(), d, tr, 1, edits,

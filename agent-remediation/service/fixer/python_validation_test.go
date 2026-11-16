@@ -2,7 +2,9 @@ package fixer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -118,42 +120,34 @@ func (f *fakeAttempts) List(_ context.Context, filter repository.ProposalFilter)
 
 // --- fixture ----------------------------------------------------------------
 
-const declaringYAML = `nodes:
-  - schema: analytics
-    table: py_daily_kpis
-    script: scripts/py_daily_kpis.py
-    reads:
-      orders: select id from analytics.orders
-    output_columns:
-      - name: revenue
-`
+// failingNode is the contract of the node under repair, and declaringYAML its
+// file as the repository holds it.
+var failingNode = odcsNode{
+	ID: "analytics.py_daily_kpis", Script: "scripts/py_daily_kpis.py",
+	Reads: [][2]string{{"orders", "select id from analytics.orders"}}, Columns: []string{"revenue"},
+}
 
-const correctedYAML = `nodes:
-  - schema: analytics
-    table: py_daily_kpis
-    script: scripts/py_daily_kpis.py
-    reads:
-      orders: select id from analytics.orders
-    output_columns:
-      - name: revenue_total
-`
+var declaringYAML = failingNode.yaml()
 
-// siblingYAML is the second node declared in the same contract directory: not
+// correctedNode is the failing node with the column its script produces, and
+// correctedYAML the answer that declares it.
+var correctedNode = func() odcsNode { n := failingNode; n.Columns = []string{"revenue_total"}; return n }()
+
+var correctedYAML = correctedNode.yaml()
+
+// siblingNode is the second node declared in the same contract directory: not
 // the node under repair, but packaged and re-validated alongside it.
-const siblingYAML = `nodes:
-  - schema: analytics
-    table: other
-    reads:
-      customers: select id from analytics.customers
-`
+var siblingNode = odcsNode{ID: "analytics.other", Reads: [][2]string{{"customers", "select id from analytics.customers"}}}
+
+var siblingYAML = siblingNode.yaml()
 
 // pythonRepoTree writes a repository checkout holding one python service whose
 // contracts directory declares the failing node, and returns its root.
 func pythonRepoTree(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	writeRepoFile(t, root, "services/service-py/contracts/py_daily_kpis.yml", declaringYAML)
-	writeRepoFile(t, root, "services/service-py/contracts/other.yml", siblingYAML)
+	writeRepoFile(t, root, "services/service-py/contracts/py_daily_kpis.odcs.yaml", declaringYAML)
+	writeRepoFile(t, root, "services/service-py/contracts/other.odcs.yaml", siblingYAML)
 	writeRepoFile(t, root, "services/service-py/scripts/py_daily_kpis.py", "print('hi')\n")
 	return root
 }
@@ -190,7 +184,7 @@ func pythonSvc(t *testing.T, root string) (Services, *fakeArchive, *fakePackager
 	svc := Services{
 		LLM: &fakeLLM{queue: []ports.ProposeResult{{
 			Files: []ports.ProposedFile{
-				{Path: "services/service-py/contracts/py_daily_kpis.yml", Content: correctedYAML},
+				{Path: "services/service-py/contracts/py_daily_kpis.odcs.yaml", Content: correctedYAML},
 			},
 			Rationale: "declared the column the script produces", Confidence: "high", Model: "test-model",
 		}}},
@@ -244,8 +238,8 @@ func TestPythonValidation_HappyPath(t *testing.T) {
 
 	// What the packager saw on disk is the model's answer, not the failing
 	// tree: packaging the unpatched checkout would verify nothing.
-	require.Equal(t, correctedYAML, call.sawOnDisk["py_daily_kpis.yml"])
-	require.Equal(t, siblingYAML, call.sawOnDisk["other.yml"],
+	require.Equal(t, correctedYAML, call.sawOnDisk["py_daily_kpis.odcs.yaml"])
+	require.Equal(t, siblingYAML, call.sawOnDisk["other.odcs.yaml"],
 		"a file the model did not return must be left exactly as the repository holds it")
 
 	// The merged contract is returned in memory for the driver, not uploaded.
@@ -265,11 +259,11 @@ func TestPythonValidation_HappyPath(t *testing.T) {
 	require.Equal(t, "o/demo", p.Repo)
 	require.Equal(t, "deadbeef", p.CommitSHA)
 	require.Len(t, p.Edits, 1)
-	require.Equal(t, "services/service-py/contracts/py_daily_kpis.yml", p.Edits[0].Path)
+	require.Equal(t, "services/service-py/contracts/py_daily_kpis.odcs.yaml", p.Edits[0].Path)
 	require.Equal(t, "analytics.py_daily_kpis", p.Edits[0].TargetNodeID)
 	require.Equal(t, p.Edits[0].Path, p.FilePath)
 	require.Equal(t, correctedYAML, arts.written["proposed-fix/rel-1/analytics.py_daily_kpis/attempt-1/edit-0.content"])
-	require.Contains(t, arts.written["proposed-fix/rel-1/analytics.py_daily_kpis/attempt-1/edit-0.diff"], "+      - name: revenue_total")
+	require.Contains(t, arts.written["proposed-fix/rel-1/analytics.py_daily_kpis/attempt-1/edit-0.diff"], "+      - {name: revenue_total, physicalType: INTEGER}")
 }
 
 // TestPythonValidation_NodeNotDeclared_Skips verifies that a node no contract
@@ -300,7 +294,7 @@ func TestPythonValidation_NodeNotDeclared_Skips(t *testing.T) {
 func TestPythonValidation_AmbiguousDeclaration_Skips(t *testing.T) {
 	root := pythonRepoTree(t)
 	require.NoError(t, os.WriteFile(
-		filepath.Join(root, "services", "service-py", "contracts", "dup.yml"),
+		filepath.Join(root, "services", "service-py", "contracts", "dup.odcs.yaml"),
 		[]byte(declaringYAML), 0o600))
 	svc, _, pkgr, _, _ := pythonSvc(t, root)
 
@@ -317,7 +311,7 @@ func TestPythonValidation_AmbiguousDeclaration_Skips(t *testing.T) {
 // how a bad answer would edit an unrelated service — or escape the clone.
 func TestPythonValidation_PathOutsideContractDir_Fails(t *testing.T) {
 	for name, badPath := range map[string]string{
-		"another service":  "services/service-other/contracts/x.yml",
+		"another service":  "services/service-other/contracts/x.odcs.yaml",
 		"parent traversal": "services/service-py/contracts/../../../etc/passwd",
 		"absolute":         "/etc/passwd",
 	} {
@@ -325,7 +319,7 @@ func TestPythonValidation_PathOutsideContractDir_Fails(t *testing.T) {
 			root := pythonRepoTree(t)
 			svc, _, pkgr, _, _ := pythonSvc(t, root)
 			svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{
-				Files:      []ports.ProposedFile{{Path: badPath, Content: "nodes: []\n"}},
+				Files:      []ports.ProposedFile{{Path: badPath, Content: notAContract}},
 				Confidence: "high",
 			}}}
 
@@ -338,7 +332,7 @@ func TestPythonValidation_PathOutsideContractDir_Fails(t *testing.T) {
 
 			// The tree is untouched: the declaring file still holds the failing
 			// contract, so a later attempt starts from the real source.
-			b, rerr := os.ReadFile(filepath.Join(root, "services", "service-py", "contracts", "py_daily_kpis.yml")) //nolint:gosec // G304: a path under the test's own temp tree
+			b, rerr := os.ReadFile(filepath.Join(root, "services", "service-py", "contracts", "py_daily_kpis.odcs.yaml")) //nolint:gosec // G304: a path under the test's own temp tree
 			require.NoError(t, rerr)
 			require.Equal(t, declaringYAML, string(b))
 		})
@@ -369,7 +363,7 @@ func TestPythonValidation_SecondAttempt_PromptCarriesPriorEvidence(t *testing.T)
 	root := pythonRepoTree(t)
 	svc, _, _, _, _ := pythonSvc(t, root)
 	llm := &fakeLLM{queue: []ports.ProposeResult{{
-		Files:      []ports.ProposedFile{{Path: "services/service-py/contracts/py_daily_kpis.yml", Content: correctedYAML}},
+		Files:      []ports.ProposedFile{{Path: "services/service-py/contracts/py_daily_kpis.odcs.yaml", Content: correctedYAML}},
 		Confidence: "high",
 	}}}
 	svc.LLM = llm
@@ -377,7 +371,7 @@ func TestPythonValidation_SecondAttempt_PromptCarriesPriorEvidence(t *testing.T)
 		{
 			Attempt: 1, Status: proposal.StatusFailed,
 			VerifyError: "verification failed: revenue_total still missing",
-			Edits:       []proposal.FileEdit{{Path: "services/service-py/contracts/py_daily_kpis.yml", DiffURI: "s3://diff-1"}},
+			Edits:       []proposal.FileEdit{{Path: "services/service-py/contracts/py_daily_kpis.odcs.yaml", DiffURI: "s3://diff-1"}},
 		},
 		// The row for the attempt now in flight must not be fed back to the
 		// model as if it were a previous one.
@@ -609,10 +603,10 @@ func TestPythonValidation_UnusableTrigger_Skips(t *testing.T) {
 func TestPythonValidation_DuplicatePath_Fails(t *testing.T) {
 	root := pythonRepoTree(t)
 	svc, _, pkgr, _, arts := pythonSvc(t, root)
-	const target = "services/service-py/contracts/py_daily_kpis.yml"
+	const target = "services/service-py/contracts/py_daily_kpis.odcs.yaml"
 	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{
 		Files: []ports.ProposedFile{
-			{Path: target, Content: "nodes: []\n"},
+			{Path: target, Content: notAContract},
 			{Path: target, Content: correctedYAML},
 		},
 		Confidence: "high",
@@ -626,7 +620,7 @@ func TestPythonValidation_DuplicatePath_Fails(t *testing.T) {
 	require.Empty(t, arts.written, "a refused answer writes no artifacts")
 
 	// The checkout is untouched, so a later attempt starts from the real source.
-	b, rerr := os.ReadFile(filepath.Join(root, "services", "service-py", "contracts", "py_daily_kpis.yml")) //nolint:gosec // G304: a path under the test's own temp tree
+	b, rerr := os.ReadFile(filepath.Join(root, "services", "service-py", "contracts", "py_daily_kpis.odcs.yaml")) //nolint:gosec // G304: a path under the test's own temp tree
 	require.NoError(t, rerr)
 	require.Equal(t, declaringYAML, string(b))
 }
@@ -648,93 +642,58 @@ func TestPythonValidation_DuplicatePath_Fails(t *testing.T) {
 // (schema, table, script, owner, schedule, criticality) untouched. Anything
 // else ends the attempt as failed, naming what moved.
 func TestPythonValidation_AnswerThatChangesNodeIdentity_Fails(t *testing.T) {
-	const target = "services/service-py/contracts/py_daily_kpis.yml"
-	const sibling = "services/service-py/contracts/other.yml"
+	const target = "services/service-py/contracts/py_daily_kpis.odcs.yaml"
+	const sibling = "services/service-py/contracts/other.odcs.yaml"
 
 	// apiNodeYAML is the failing node's contract as a python-api author wrote
 	// it: naming the Secret it runs with.
-	const apiNodeYAML = `nodes:
-  - schema: analytics
-    table: py_daily_kpis
-    script: scripts/py_daily_kpis.py
-    secret_ref: continuo-api-x
-    output_columns:
-      - name: revenue
-`
+	apiNode := odcsNode{ID: "analytics.py_daily_kpis", Script: "scripts/py_daily_kpis.py", SecretRef: "continuo-api-x", Columns: []string{"revenue"}}
+	apiNodeYAML := apiNode.yaml()
+	with := func(n odcsNode, mod func(*odcsNode)) string { mod(&n); return n.yaml() }
 	cases := map[string]struct {
 		original string // when set, replaces the target file on disk before the fix
 		files    []ports.ProposedFile
 		want     string
 	}{
 		"a secret_ref is added to the failing node": {
-			files: []ports.ProposedFile{{Path: target, Content: `nodes:
-  - schema: analytics
-    table: py_daily_kpis
-    script: scripts/py_daily_kpis.py
-    secret_ref: continuo-api-x
-    reads:
-      orders: select id from analytics.orders
-    output_columns:
-      - name: revenue_total
-`}},
-			want: "secret_ref",
+			files: []ports.ProposedFile{{Path: target, Content: with(correctedNode, func(n *odcsNode) { n.SecretRef = "continuo-api-x" })}},
+			want:  "secret_ref",
 		},
 		"the secret_ref is re-pointed": {
 			original: apiNodeYAML,
-			files: []ports.ProposedFile{{Path: target, Content: `nodes:
-  - schema: analytics
-    table: py_daily_kpis
-    script: scripts/py_daily_kpis.py
-    secret_ref: continuo-api-y
-    output_columns:
-      - name: revenue_total
-`}},
+			files: []ports.ProposedFile{{Path: target, Content: with(apiNode, func(n *odcsNode) {
+				n.SecretRef, n.Columns = "continuo-api-y", []string{"revenue_total"}
+			})}},
 			want: "secret_ref",
 		},
 		"the secret_ref is removed": {
 			original: apiNodeYAML,
-			files: []ports.ProposedFile{{Path: target, Content: `nodes:
-  - schema: analytics
-    table: py_daily_kpis
-    script: scripts/py_daily_kpis.py
-    output_columns:
-      - name: revenue_total
-`}},
+			files: []ports.ProposedFile{{Path: target, Content: with(apiNode, func(n *odcsNode) {
+				n.SecretRef, n.Columns = "", []string{"revenue_total"}
+			})}},
 			want: "secret_ref",
 		},
 		"the failing node is deleted": {
-			files: []ports.ProposedFile{{Path: target, Content: "nodes: []\n"}},
+			files: []ports.ProposedFile{{Path: target, Content: notAContract}},
 			want:  "analytics.py_daily_kpis",
 		},
 		"the failing node is renamed": {
-			files: []ports.ProposedFile{{Path: target, Content: `nodes:
-  - schema: analytics
-    table: py_daily_kpis_v2
-    script: scripts/py_daily_kpis.py
-    output_columns:
-      - name: revenue_total
-`}},
-			want: "analytics.py_daily_kpis",
+			files: []ports.ProposedFile{{Path: target, Content: with(correctedNode, func(n *odcsNode) { n.ID = "analytics.py_daily_kpis_v2" })}},
+			want:  "analytics.py_daily_kpis",
 		},
 		"the failing node is pointed at another script": {
-			files: []ports.ProposedFile{{Path: target, Content: `nodes:
-  - schema: analytics
-    table: py_daily_kpis
-    script: scripts/py_daily_kpis_v2.py
-    output_columns:
-      - name: revenue_total
-`}},
-			want: "script",
+			files: []ports.ProposedFile{{Path: target, Content: with(correctedNode, func(n *odcsNode) { n.Script = "scripts/py_daily_kpis_v2.py" })}},
+			want:  "script",
 		},
 		"a sibling in the same directory is renamed": {
 			files: []ports.ProposedFile{
 				{Path: target, Content: correctedYAML},
-				{Path: sibling, Content: "nodes:\n  - schema: analytics\n    table: other_renamed\n"},
+				{Path: sibling, Content: with(siblingNode, func(n *odcsNode) { n.ID = "analytics.other_renamed" })},
 			},
 			want: "analytics.other",
 		},
 		"a returned file is not parseable contract yaml": {
-			files: []ports.ProposedFile{{Path: target, Content: "nodes:\n\t- schema: analytics\n"}},
+			files: []ports.ProposedFile{{Path: target, Content: "id: analytics.py_daily_kpis\n\t- name: x\n"}},
 			want:  target,
 		},
 	}
@@ -764,15 +723,14 @@ func TestPythonValidation_AnswerThatChangesNodeIdentity_Fails(t *testing.T) {
 // may add a node but never one that names a Secret: granting credentials is
 // not a repair of the failing node.
 func TestPythonValidation_AnswerThatAddsANodeWithASecretRef_Fails(t *testing.T) {
-	const target = "services/service-py/contracts/py_daily_kpis.yml"
+	const target = "services/service-py/contracts/py_daily_kpis.odcs.yaml"
 	root := pythonRepoTree(t)
 	svc, _, pkgr, _, arts := pythonSvc(t, root)
-	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{Files: []ports.ProposedFile{{Path: target, Content: correctedYAML + `  - schema: analytics
-    table: py_new_api
-    kind: python-api
-    script: scripts/py_new_api.py
-    secret_ref: continuo-api-new
-`}}, Confidence: "high"}}}
+	newAPI := odcsNode{ID: "analytics.py_new_api", Kind: "python-api", Script: "scripts/py_new_api.py", SecretRef: "continuo-api-new"}
+	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{Files: []ports.ProposedFile{
+		{Path: target, Content: correctedYAML},
+		{Path: "services/service-py/contracts/py_new_api.odcs.yaml", Content: newAPI.yaml()},
+	}, Confidence: "high"}}}
 
 	r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
 	require.NoError(t, err)
@@ -793,18 +751,11 @@ func TestPythonValidation_AnswerThatAddsANodeWithASecretRef_Fails(t *testing.T) 
 func TestPythonValidation_AnswerAddsExplicitDefaultKind_Verifies(t *testing.T) {
 	root := pythonRepoTree(t)
 	svc, _, pkgr, _, _ := pythonSvc(t, root)
-	const answerWithExplicitKind = `nodes:
-  - schema: analytics
-    table: py_daily_kpis
-    kind: python-node
-    script: scripts/py_daily_kpis.py
-    reads:
-      orders: select id from analytics.orders
-    output_columns:
-      - name: revenue_total
-`
+	explicit := correctedNode
+	explicit.Kind = "python-node"
+	answerWithExplicitKind := explicit.yaml()
 	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{
-		Files:     []ports.ProposedFile{{Path: "services/service-py/contracts/py_daily_kpis.yml", Content: answerWithExplicitKind}},
+		Files:     []ports.ProposedFile{{Path: "services/service-py/contracts/py_daily_kpis.odcs.yaml", Content: answerWithExplicitKind}},
 		Rationale: "declared the column the script produces", Confidence: "high", Model: "test-model",
 	}}}
 
@@ -828,7 +779,7 @@ func TestPythonValidation_AnswerRedeclaringTheNodeElsewhere_Fails(t *testing.T) 
 	svc, _, pkgr, _, _ := pythonSvc(t, root)
 	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{
 		Files: []ports.ProposedFile{
-			{Path: "services/service-py/contracts/copy.yml", Content: correctedYAML},
+			{Path: "services/service-py/contracts/copy.odcs.yaml", Content: correctedYAML},
 		},
 		Confidence: "high",
 	}}}
@@ -855,39 +806,25 @@ func TestPythonValidation_AnswerRedeclaringTheNodeElsewhere_Fails(t *testing.T) 
 // it. Correcting a read's SQL, or adding another one, stays open: both leave
 // the runner something to check and are how a contract is genuinely repaired.
 func TestPythonValidation_AnswerThatDropsADeclaredRead_Fails(t *testing.T) {
-	const target = "services/service-py/contracts/py_daily_kpis.yml"
-	const sibling = "services/service-py/contracts/other.yml"
+	const target = "services/service-py/contracts/py_daily_kpis.odcs.yaml"
+	const sibling = "services/service-py/contracts/other.odcs.yaml"
 
 	refused := map[string]struct {
 		files []ports.ProposedFile
 		want  string
 	}{
 		"the failing node's reads are removed entirely": {
-			files: []ports.ProposedFile{{Path: target, Content: `nodes:
-  - schema: analytics
-    table: py_daily_kpis
-    script: scripts/py_daily_kpis.py
-    output_columns:
-      - name: revenue_total
-`}},
-			want: "orders",
+			files: []ports.ProposedFile{{Path: target, Content: withReads(correctedNode)}},
+			want:  "orders",
 		},
 		"the failing node's read is renamed": {
-			files: []ports.ProposedFile{{Path: target, Content: `nodes:
-  - schema: analytics
-    table: py_daily_kpis
-    script: scripts/py_daily_kpis.py
-    reads:
-      orders_v2: select id from analytics.orders
-    output_columns:
-      - name: revenue_total
-`}},
-			want: "orders",
+			files: []ports.ProposedFile{{Path: target, Content: withReads(correctedNode, [2]string{"orders_v2", "select id from analytics.orders"})}},
+			want:  "orders",
 		},
 		"a sibling in the same directory loses its read": {
 			files: []ports.ProposedFile{
 				{Path: target, Content: correctedYAML},
-				{Path: sibling, Content: "nodes:\n  - schema: analytics\n    table: other\n"},
+				{Path: sibling, Content: withReads(siblingNode)},
 			},
 			want: "customers",
 		},
@@ -911,25 +848,9 @@ func TestPythonValidation_AnswerThatDropsADeclaredRead_Fails(t *testing.T) {
 	}
 
 	allowed := map[string][]ports.ProposedFile{
-		"the read's SQL is corrected": {{Path: target, Content: `nodes:
-  - schema: analytics
-    table: py_daily_kpis
-    script: scripts/py_daily_kpis.py
-    reads:
-      orders: select id from analytics.orders_v2
-    output_columns:
-      - name: revenue_total
-`}},
-		"another read is added beside it": {{Path: target, Content: `nodes:
-  - schema: analytics
-    table: py_daily_kpis
-    script: scripts/py_daily_kpis.py
-    reads:
-      orders: select id from analytics.orders
-      customers: select id from analytics.customers
-    output_columns:
-      - name: revenue_total
-`}},
+		"the read's SQL is corrected": {{Path: target, Content: withReads(correctedNode, [2]string{"orders", "select id from analytics.orders_v2"})}},
+		"another read is added beside it": {{Path: target, Content: withReads(correctedNode,
+			[2]string{"orders", "select id from analytics.orders"}, [2]string{"customers", "select id from analytics.customers"})}},
 	}
 
 	for name, files := range allowed {
@@ -965,7 +886,7 @@ func TestPythonValidation_SiblingFailureInSameDirectory_Skips(t *testing.T) {
 	svc, _, pkgr, rel, arts := pythonSvc(t, root)
 	llm := svc.LLM.(*fakeLLM)
 
-	// other.yml sits in the same contracts/ directory as the failing node's
+	// other.odcs.yaml sits in the same contracts/ directory as the failing node's
 	// own declaring file, so packaging one packages both.
 	rel.failingNodes = map[string]string{
 		"analytics.py_daily_kpis": "column revenue_total does not exist",
@@ -995,8 +916,8 @@ func TestPythonValidation_FailureElsewhereDoesNotBlock(t *testing.T) {
 	root := pythonRepoTree(t)
 	otherDir := filepath.Join(root, "services", "service-two", "contracts")
 	require.NoError(t, os.MkdirAll(otherDir, 0o750))
-	require.NoError(t, os.WriteFile(filepath.Join(otherDir, "z.yml"),
-		[]byte("nodes:\n  - schema: analytics\n    table: z\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(otherDir, "z.odcs.yaml"),
+		[]byte(odcsNode{ID: "analytics.z"}.yaml()), 0o600))
 
 	svc, _, pkgr, rel, _ := pythonSvc(t, root)
 	rel.failingNodes = map[string]string{
@@ -1025,4 +946,49 @@ func TestPythonValidation_UnreadableFailingNodesIsTransient(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "release-controller unreachable")
 	require.Empty(t, pkgr.calls)
+}
+
+// TestPythonFixer_RefusesAnUnconvertedServiceAndLogsWhy verifies that a python
+// failure in a service whose repository still declares its nodes in
+// contract.yaml (no ODCS file anywhere) ends with no fix: no model call, no
+// packaging, the node recorded skipped with the reason, and the reason logged
+// at INFO with the release and the node, for every python contract lane.
+func TestPythonFixer_RefusesAnUnconvertedServiceAndLogsWhy(t *testing.T) {
+	for name, lane := range map[string]Fixer{
+		"python validation": pythonValidationFixer{},
+		"csv validation":    csvValidationFixer{},
+		"python parse":      pythonParseFixer{},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeRepoFile(t, root, "services/service-py/contracts/contract.yaml",
+				"nodes:\n  - schema: analytics\n    table: py_daily_kpis\n    script: scripts/py_daily_kpis.py\n")
+			svc, arch, pkgr, _, arts := pythonSvc(t, root)
+			llm := &fakeLLM{}
+			svc.LLM = llm
+			var logs strings.Builder
+			svc.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+
+			r, err := lane.Propose(context.Background(), svc, pythonInput())
+			require.NoError(t, err)
+
+			want := "service svc-py still uses contract.yaml; convert it to ODCS"
+			require.Equal(t, proposal.StatusSkipped, r.Proposal.Status)
+			require.Equal(t, want, r.Proposal.Rationale)
+			require.Empty(t, r.Proposal.Edits)
+			require.Nil(t, r.VerificationContract)
+			require.Equal(t, 0, llm.calls)
+			require.Empty(t, pkgr.calls)
+			require.Empty(t, arts.written)
+			require.Equal(t, 1, arch.cleanups)
+
+			var line map[string]any
+			require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(logs.String())), &line),
+				"exactly one log line: %s", logs.String())
+			require.Equal(t, "INFO", line["level"])
+			require.Equal(t, want, line["msg"])
+			require.Equal(t, "rel-1", line["release"])
+			require.Equal(t, "analytics.py_daily_kpis", line["node"])
+		})
+	}
 }

@@ -116,11 +116,14 @@ type Services struct {
 	// Archive fetches a whole repository checkout at a commit, for a fix that
 	// has to search the tree rather than read one known file.
 	Archive ports.RepoArchive
-	// ContractLocator finds which contract yaml in that checkout declares the
-	// python node being fixed.
+	// ContractLocator finds which ODCS contract file in that checkout
+	// declares the python node being fixed. A service whose repository still
+	// declares its python nodes in contract.yaml gets no python fix: every
+	// python contract lane records the node skipped and logs that the service
+	// must be converted to ODCS.
 	ContractLocator ports.ContractLocator
-	// ContractInspector reads the node declarations out of a contract yaml
-	// document, so the answer's effect on them can be compared against what
+	// ContractInspector reads the node declaration out of an ODCS contract
+	// document, so the answer's effect on it can be compared against what
 	// the repository held before it was applied.
 	ContractInspector ports.ContractInspector
 	// Packager turns a directory of python-node contract yaml files into the

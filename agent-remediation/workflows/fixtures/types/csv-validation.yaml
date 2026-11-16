@@ -1,5 +1,5 @@
 # A python-csv node whose declared columns do not match the csv's header. The
-# fix renames the column in the contract yaml. Built from the csv lane's tests
+# fix renames the column in the node's ODCS contract. Built from the csv lane's tests
 # (service/fixer/csv_validation_test.go).
 kind: fixture
 version: 1
@@ -22,24 +22,39 @@ trigger:
 service_repo_paths:
   svc-csv: services/service-csv
 repo_files:
-  services/service-csv/contracts/py_csv_orders.yml: |
-    nodes:
-      - schema: analytics
-        table: py_csv_orders
-        kind: python-csv
-        reads:
-          csv: s3://exports/orders/orders.csv
-        output_columns:
-          - name: order_id
-          - name: customer_id
-  services/service-csv/contracts/other.yml: |
-    nodes:
-      - schema: analytics
-        table: other
-        kind: python-node
-        script: scripts/other.py
-        reads:
+  services/service-csv/contracts/py_csv_orders.odcs.yaml: |
+    apiVersion: v3.2.0
+    kind: DataContract
+    id: analytics.py_csv_orders
+    name: py_csv_orders
+    version: "0"
+    customProperties:
+      - {vendor: continuo, property: kind, value: python-csv}
+      - {vendor: continuo, property: csvSource, value: "s3://exports/orders/orders.csv"}
+    schema:
+      - name: py_csv_orders
+        physicalType: table
+        properties:
+          - {name: order_id, physicalType: INTEGER}
+          - {name: customer_id, physicalType: INTEGER}
+  services/service-csv/contracts/other.odcs.yaml: |
+    apiVersion: v3.2.0
+    kind: DataContract
+    id: analytics.other
+    name: other
+    version: "0"
+    customProperties:
+      - {vendor: continuo, property: kind, value: python-node}
+      - {vendor: continuo, property: script, value: scripts/other.py}
+      - vendor: continuo
+        property: readQueries
+        value:
           customers: select id from analytics.customers
+    schema:
+      - name: other
+        physicalType: table
+        properties:
+          - {name: id, physicalType: INTEGER}
   services/service-csv/scripts/other.py: "print('other')\n"
 objects:
   s3://logs/rel-csv-1/analytics.py_csv_orders.log: "header check: csv header is order_id,cust_id\n"
@@ -58,34 +73,44 @@ packager:
 answers:
   pass:
     - files:
-        - path: services/service-csv/contracts/py_csv_orders.yml
+        - path: services/service-csv/contracts/py_csv_orders.odcs.yaml
           content: |
-            nodes:
-              - schema: analytics
-                table: py_csv_orders
-                kind: python-csv
-                reads:
-                  csv: s3://exports/orders/orders.csv
-                output_columns:
-                  - name: order_id
-                  - name: cust_id
+            apiVersion: v3.2.0
+            kind: DataContract
+            id: analytics.py_csv_orders
+            name: py_csv_orders
+            version: "0"
+            customProperties:
+              - {vendor: continuo, property: kind, value: python-csv}
+              - {vendor: continuo, property: csvSource, value: "s3://exports/orders/orders.csv"}
+            schema:
+              - name: py_csv_orders
+                physicalType: table
+                properties:
+                  - {name: order_id, physicalType: INTEGER}
+                  - {name: cust_id, physicalType: INTEGER}
       rationale: renamed the column to match the file's real header
       confidence: high
       model: claude-test
   fail:
-    # The csv read renamed: its key may never change.
+    # The csvSource renamed: the node's one read may never go.
     - files:
-        - path: services/service-csv/contracts/py_csv_orders.yml
+        - path: services/service-csv/contracts/py_csv_orders.odcs.yaml
           content: |
-            nodes:
-              - schema: analytics
-                table: py_csv_orders
-                kind: python-csv
-                reads:
-                  file: s3://exports/orders/orders.csv
-                output_columns:
-                  - name: order_id
-                  - name: cust_id
+            apiVersion: v3.2.0
+            kind: DataContract
+            id: analytics.py_csv_orders
+            name: py_csv_orders
+            version: "0"
+            customProperties:
+              - {vendor: continuo, property: kind, value: python-csv}
+              - {vendor: continuo, property: csvFile, value: "s3://exports/orders/orders.csv"}
+            schema:
+              - name: py_csv_orders
+                physicalType: table
+                properties:
+                  - {name: order_id, physicalType: INTEGER}
+                  - {name: cust_id, physicalType: INTEGER}
       rationale: renamed the read and the column
       confidence: high
       model: claude-test

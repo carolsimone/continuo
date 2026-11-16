@@ -18,10 +18,10 @@ import (
 )
 
 // pythonValidationFixer handles a python node's validation rejection. A python
-// node is not a SQL file: it is an entry in a contract yaml declaring the
-// relations it reads, the columns it produces, and the script that produces
-// them, and validation rejects it when what the script produced does not match
-// what the contract promised. So the fix is made in that yaml, and it cannot be
+// node is not a SQL file: it is an ODCS contract declaring the relations it
+// reads, the columns it produces, and the script that produces them, and
+// validation rejects it when what the script produced does not match what the
+// contract promised. So the fix is made in that contract, and it cannot be
 // judged by reading it back — only by running it.
 //
 // The fixer therefore cannot judge its own answer: it checks out the team's
@@ -131,6 +131,17 @@ func locateContractForFix(ctx context.Context, svc Services, in Input) (
 	// past: both end the attempt with the reason recorded, so an operator sees
 	// why the heal stopped instead of finding nothing at all.
 	located, err = svc.ContractLocator.Locate(root, schema, table)
+	// A service that still declares its python nodes in contract.yaml has no
+	// ODCS contract a fix could be packaged from, so no fix is made for it:
+	// the node is recorded skipped with the reason, which is logged so the
+	// operator knows to convert the service.
+	if errors.Is(err, ports.ErrServiceNotConverted) {
+		reason := proposal.ServiceNotConvertedReason(in.Service)
+		svc.Logger.Info(reason, "release", in.ReleaseID, "node", in.NodeID, "node_type", in.NodeType)
+		skip = &Result{Proposal: proposal.Proposal{Status: proposal.StatusSkipped, Rationale: reason}}
+		err = nil
+		return
+	}
 	if errors.Is(err, ports.ErrNodeNotDeclared) || errors.Is(err, ports.ErrAmbiguousDeclaration) {
 		skip = skipResult(svc, in, err.Error())
 		err = nil
@@ -538,10 +549,10 @@ func identityDelta(was, now ports.NodeIdentity) string {
 	return strings.Join(changed, ", ")
 }
 
-// isContractYAMLPath reports whether a repository path is one the contract
-// search would parse. Only those files can declare a node, so only those are
-// compared across the edit; a script or a data file the answer also returns
-// carries no declaration to preserve.
+// isContractYAMLPath reports whether a repository path is a yaml file, which
+// may hold an ODCS contract. Only those files can declare a node, so only
+// those are compared across the edit; a script or a data file the answer also
+// returns carries no declaration to preserve.
 func isContractYAMLPath(p string) bool {
 	switch strings.ToLower(path.Ext(filepath.ToSlash(p))) {
 	case ".yml", ".yaml":

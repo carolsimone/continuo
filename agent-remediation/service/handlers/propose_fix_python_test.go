@@ -36,9 +36,15 @@ func pythonCheckout(t *testing.T) string {
 	root := t.TempDir()
 	dir := filepath.Join(root, "services", "svc", "contracts")
 	require.NoError(t, os.MkdirAll(dir, 0o750))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "kpis.yml"),
-		[]byte("nodes:\n  - schema: analytics\n    table: py_daily_kpis\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "kpis.odcs.yaml"), []byte(kpisContract("")), 0o600))
 	return root
+}
+
+// kpisContract is the failing node's ODCS contract, with columns as the
+// schema object's properties.
+func kpisContract(columns string) string {
+	return "apiVersion: v3.2.0\nkind: DataContract\nid: analytics.py_daily_kpis\n" +
+		"schema:\n  - name: py_daily_kpis\n    physicalType: table\n    properties:\n" + columns
 }
 
 // pythonDeps wires the driver for a python contract fix over checkout root.
@@ -80,8 +86,8 @@ func pythonTrigger() Trigger {
 func pythonFixResult() ports.ProposeResult {
 	return ports.ProposeResult{
 		Files: []ports.ProposedFile{{
-			Path:    "services/svc/contracts/kpis.yml",
-			Content: "nodes:\n  - schema: analytics\n    table: py_daily_kpis\n    output_columns:\n      - name: revenue\n",
+			Path:    "services/svc/contracts/kpis.odcs.yaml",
+			Content: kpisContract("      - {name: revenue, physicalType: INTEGER}\n"),
 		}},
 		Rationale:  "declared the missing column",
 		Confidence: "high",
@@ -111,7 +117,7 @@ func TestProposeFix_PythonValidation_RecordsVerifying(t *testing.T) {
 	require.Equal(t, "verify-r1-svc-a1", got.VerificationRunID)
 	require.Equal(t, tr.RawPayload, got.TriggerPayload,
 		"a verifying row must carry the trigger that produced it, so the attempt can be rebuilt once the verification run answers")
-	require.Equal(t, "services/svc/contracts/kpis.yml", got.FilePath)
+	require.Equal(t, "services/svc/contracts/kpis.odcs.yaml", got.FilePath)
 	require.Len(t, got.Edits, 1)
 	require.Equal(t, "analytics.py_daily_kpis", got.Edits[0].TargetNodeID)
 	require.Equal(t, []proposal.Verification{{
@@ -232,7 +238,7 @@ func TestProposeFix_PythonValidation_EditOutsideEveryConfiguredService(t *testin
 	require.Len(t, u.pr.inserted, 1)
 	got := u.pr.inserted[0]
 	require.Equal(t, proposal.StatusFailed, got.Status)
-	require.Contains(t, got.NodeOutcomes["analytics.py_daily_kpis"].Reason, "services/svc/contracts/kpis.yml")
+	require.Contains(t, got.NodeOutcomes["analytics.py_daily_kpis"].Reason, "services/svc/contracts/kpis.odcs.yaml")
 	require.Empty(t, gw.submitted, "no release-queue slot is spent on edits nothing can run")
 	require.Empty(t, u.ob.entries)
 }

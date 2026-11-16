@@ -407,8 +407,8 @@ func TestReadsKept(t *testing.T) {
 
 func TestCSVReadKept(t *testing.T) {
 	const (
-		csvDropped = "the model's answer no longer declares the %q read of %s. A python-csv node's single read names the " +
-			"file its runtime loads; that read's uri may be corrected, but the %q key itself may never be " +
+		csvDropped = "the model's answer no longer declares the csvSource of %s. A python-csv node's csvSource names the " +
+			"file its runtime loads; its uri may be corrected, but the csvSource itself may never be " +
 			"removed or renamed, or the node would have nothing left for the runtime to read the file from"
 		dropped = "the model's answer no longer declares the read %s of %s. Validation bind-checks the reads a contract still " +
 			"declares, so deleting one hides the failure instead of repairing it: the node's script — which this fix " +
@@ -416,7 +416,7 @@ func TestCSVReadKept(t *testing.T) {
 			"or replaced, never dropped"
 	)
 	csv := func(node string) remediation.Finding {
-		return remediation.Finding{Code: "csv_read_dropped", Message: fmt.Sprintf(csvDropped, "csv", node, "csv")}
+		return remediation.Finding{Code: "csv_read_dropped", Message: fmt.Sprintf(csvDropped, node)}
 	}
 	blanket := func(read, node string) remediation.Finding {
 		return remediation.Finding{Code: "read_dropped", Message: fmt.Sprintf(dropped, read, node)}

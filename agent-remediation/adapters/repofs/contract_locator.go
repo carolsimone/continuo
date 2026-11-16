@@ -19,13 +19,28 @@ import (
 )
 
 // maxContractYAMLBytes caps the size of a yaml file this search will parse.
-// A contract file declaring one or many python nodes is always small; a file
-// over this cap is skipped rather than read, so an unrelated large yaml file
-// elsewhere in the repository is never loaded into memory on this path.
+// A contract file is always small; a file over this cap is skipped rather than
+// read, so an unrelated large yaml file elsewhere in the repository is never
+// loaded into memory on this path.
 const maxContractYAMLBytes = 1 << 20 // 1 MiB
 
-// Locator searches a repository checkout for the contract yaml declaring a
-// python node.
+// odcsSuffix ends the name of every ODCS contract file. A Python node's
+// contract is one such file, and the packager reads only these.
+const odcsSuffix = ".odcs.yaml"
+
+// continuoVendor is the vendor of the customProperties items continuo reads.
+const continuoVendor = "continuo"
+
+// csvReadKey is the read name a python-csv node's csvSource is recorded under
+// by the release, which reads a csv node's one read as {"csv": csvSource}.
+const csvReadKey = "csv"
+
+// kindAliases maps a kind a contract may still write to the kind the release
+// reads it as.
+var kindAliases = map[string]string{"python-model": string(pkg_model.NodeTypePythonNode)}
+
+// Locator searches a repository checkout for the ODCS contract file declaring
+// a python node.
 type Locator struct {
 	logger *slog.Logger
 }
@@ -38,51 +53,6 @@ func NewLocator(logger *slog.Logger) *Locator {
 	return &Locator{logger: logger}
 }
 
-// contractDoc is the subset of a contract yaml's shape this package needs: a
-// top-level "nodes:" list. A filename convention is deliberately never assumed
-// — a single file can declare many nodes (a dbt-schema.yml-style layout), and
-// nothing about a file's name is guaranteed to relate to any one of them.
-type contractDoc struct {
-	Nodes []contractNode `yaml:"nodes"`
-}
-
-// contractNode is one entry of that list, narrowed to the fields that identify
-// the node plus the reads it declares. The search matches on schema and table;
-// the remaining identity fields are read so a caller can tell an entry that was
-// repaired apart from one that was re-identified, and the reads so it can tell
-// a repaired read apart from a deleted one.
-type contractNode struct {
-	Schema      string `yaml:"schema"`
-	Table       string `yaml:"table"`
-	Script      string `yaml:"script"`
-	Kind        string `yaml:"kind"`
-	Owner       string `yaml:"owner"`
-	Schedule    string `yaml:"schedule"`
-	Criticality string `yaml:"criticality"`
-	SecretRef   string `yaml:"secret_ref"`
-	// Reads is the entry's "reads:" mapping kept as a raw node, because only its
-	// keys are needed and its values are whatever the author wrote. Decoding it
-	// into a typed map would make one entry with an unexpected value shape fail
-	// the whole document, which every caller here reads as "this file declares
-	// nothing" — skipping it in the contract search and excusing it from every
-	// comparison made across an edit.
-	Reads yaml.Node `yaml:"reads"`
-}
-
-// readKeys returns the names an entry gives the relations it reads, in
-// declaration order. A "reads:" that is absent, empty, or not a mapping yields
-// none: there is no key in it to preserve.
-func readKeys(n yaml.Node) []string {
-	if n.Kind != yaml.MappingNode {
-		return nil
-	}
-	out := make([]string, 0, len(n.Content)/2)
-	for i := 0; i+1 < len(n.Content); i += 2 {
-		out = append(out, n.Content[i].Value)
-	}
-	return out
-}
-
 // match pairs a candidate file's repo-relative path with the content already
 // read from disk while checking it, so a hit does not require re-reading the
 // file.
@@ -91,28 +61,29 @@ type match struct {
 	text    string
 }
 
-// Locate walks rootDir for every *.yml/*.yaml file, parses each as a
-// contractDoc, and returns the location of the file whose "nodes:" list
-// contains an entry matching schema and table.
+// Locate walks rootDir for every *.odcs.yaml file of at most
+// maxContractYAMLBytes and returns the location of the one whose id names
+// schema and table ("<schema>.<table>"). The file name plays no part in the
+// match.
 //
 // The match folds case on both sides. A node's identity across this system is
 // its lowercased "<schema>.<table>", so a caller derives the schema and table
-// it searches for from an already-lowercased id, while the contract file keeps
-// whatever case its author wrote — the declared spelling is what renders into
-// SQL and DDL, so nothing normalizes it in the repository. Comparing the two
-// verbatim would report a declared node as undeclared for every team that
-// capitalizes a name. Only the comparison folds: the returned paths and text
-// are exactly what is on disk.
+// it searches for from an already-lowercased id. Only the comparison folds:
+// the returned paths and text are exactly what is on disk.
 //
-// Zero matching files returns ports.ErrNodeNotDeclared. More than one matching
-// file returns ports.ErrAmbiguousDeclaration — including two files whose
-// declarations differ only in case, which name one relation and one node
-// identity, so neither may be picked over the other. A file over
-// maxContractYAMLBytes, or one that fails to parse as yaml, is skipped
-// (logged) rather than treated as a search error — one malformed or oversized
-// file elsewhere in the tree must not prevent finding the real match.
+// Zero matching files returns ports.ErrNodeNotDeclared, or
+// ports.ErrServiceNotConverted when the tree holds no ODCS file at all but
+// holds a yaml file with a "nodes:" list (a contract.yaml no fix is packaged
+// from). More than one matching file returns ports.ErrAmbiguousDeclaration,
+// including two ids that differ only in case. A file over the size cap, or one
+// that fails to parse as yaml, is skipped (logged) rather than treated as a
+// search error, so one malformed or oversized file elsewhere in the tree does
+// not prevent finding the real match.
 func (l *Locator) Locate(rootDir, schema, table string) (ports.Located, error) {
+	want := schema + "." + table
 	var matches []match
+	var legacyCandidates []string
+	sawODCS := false
 
 	err := filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -121,46 +92,30 @@ func (l *Locator) Locate(rootDir, schema, table string) (ports.Located, error) {
 		if d.IsDir() {
 			return nil
 		}
-		ext := filepath.Ext(d.Name())
-		if ext != ".yml" && ext != ".yaml" {
+		name := d.Name()
+		if !strings.HasSuffix(name, odcsSuffix) {
+			if ext := filepath.Ext(name); ext == ".yml" || ext == ".yaml" {
+				legacyCandidates = append(legacyCandidates, path)
+			}
 			return nil
 		}
+		sawODCS = true
 
-		info, err := d.Info()
+		raw, ok := l.readCapped(path)
+		if !ok {
+			return nil
+		}
+		root, err := parseRoot(raw)
 		if err != nil {
-			l.logger.Warn("contract search: stat failed; skipping", "path", path, "error", err)
-			return nil
-		}
-		if info.Size() > maxContractYAMLBytes {
-			l.logger.Warn("contract search: file exceeds size cap; skipping",
-				"path", path, "size", info.Size(), "cap", maxContractYAMLBytes)
-			return nil
-		}
-
-		raw, err := os.ReadFile(path) //nolint:gosec // G304: path is produced by filepath.WalkDir over rootDir, the caller-supplied repository checkout root — not external/user input.
-		if err != nil {
-			l.logger.Warn("contract search: read failed; skipping", "path", path, "error", err)
-			return nil
-		}
-
-		var doc contractDoc
-		if err := yaml.Unmarshal(raw, &doc); err != nil {
 			l.logger.Warn("contract search: unparseable yaml; skipping", "path", path, "error", err)
 			return nil
 		}
-
-		for _, n := range doc.Nodes {
-			if strings.EqualFold(n.Schema, schema) && strings.EqualFold(n.Table, table) {
-				rel, relErr := filepath.Rel(rootDir, path)
-				if relErr != nil {
-					return fmt.Errorf("relativize %q: %w", path, relErr)
-				}
-				matches = append(matches, match{
-					relPath: filepath.ToSlash(rel),
-					text:    string(raw),
-				})
-				break
+		if id, ok := scalar(mappingValue(root, "id")); ok && strings.EqualFold(id, want) {
+			rel, relErr := filepath.Rel(rootDir, path)
+			if relErr != nil {
+				return fmt.Errorf("relativize %q: %w", path, relErr)
 			}
+			matches = append(matches, match{relPath: filepath.ToSlash(rel), text: string(raw)})
 		}
 		return nil
 	})
@@ -170,6 +125,9 @@ func (l *Locator) Locate(rootDir, schema, table string) (ports.Located, error) {
 
 	switch len(matches) {
 	case 0:
+		if !sawODCS && l.anyLegacyContract(legacyCandidates) {
+			return ports.Located{}, fmt.Errorf("schema %q table %q: %w", schema, table, ports.ErrServiceNotConverted)
+		}
 		return ports.Located{}, fmt.Errorf("schema %q table %q: %w", schema, table, ports.ErrNodeNotDeclared)
 	case 1:
 		return buildLocated(matches[0]), nil
@@ -182,48 +140,206 @@ func (l *Locator) Locate(rootDir, schema, table string) (ports.Located, error) {
 	}
 }
 
-// Declarations parses yamlText as a contract document and returns every node
-// under its "nodes:" list, in declaration order: the fields that identify it and
-// the keys of the reads it declares.
+// anyLegacyContract reports whether one of paths is a yaml file whose
+// top-level "nodes:" is a list: a contract.yaml that declares Python nodes in
+// the format before ODCS.
+func (l *Locator) anyLegacyContract(paths []string) bool {
+	for _, path := range paths {
+		raw, ok := l.readCapped(path)
+		if !ok {
+			continue
+		}
+		root, err := parseRoot(raw)
+		if err != nil {
+			continue
+		}
+		if nodes := mappingValue(root, "nodes"); nodes != nil && nodes.Kind == yaml.SequenceNode {
+			return true
+		}
+	}
+	return false
+}
+
+// readCapped reads path when it is at most maxContractYAMLBytes. ok is false,
+// with the reason logged, for a file it skipped.
+func (l *Locator) readCapped(path string) (raw []byte, ok bool) {
+	info, err := os.Stat(path)
+	if err != nil {
+		l.logger.Warn("contract search: stat failed; skipping", "path", path, "error", err)
+		return nil, false
+	}
+	if info.Size() > maxContractYAMLBytes {
+		l.logger.Warn("contract search: file exceeds size cap; skipping",
+			"path", path, "size", info.Size(), "cap", maxContractYAMLBytes)
+		return nil, false
+	}
+	raw, err = os.ReadFile(path) //nolint:gosec // G304: path is produced by filepath.WalkDir over rootDir, the caller-supplied repository checkout root — not external/user input.
+	if err != nil {
+		l.logger.Warn("contract search: read failed; skipping", "path", path, "error", err)
+		return nil, false
+	}
+	return raw, true
+}
+
+// Declarations parses yamlText as an ODCS contract and returns the one node it
+// declares: the fields that identify it and the names of the reads it
+// declares.
 //
-// A document that parses but declares no nodes yields an empty result and no
-// error: a yaml file holding something else entirely is a normal member of a
-// contract directory, and it declares nothing to compare. Text that is not
-// valid yaml returns an error, because a caller comparing declarations across
-// an edit cannot tell "declares nothing" apart from "could not be read" and
-// must not treat the second as the first.
+// The node's table is the name of the first schema object and its schema is
+// the id without the ".<table>" that ends it (compared case-insensitively), or
+// the whole id when the id does not end in the table. Script, kind, schedule,
+// criticality and secretRef are the continuo customProperties of those names
+// (a missing kind is python-node, and python-model reads as python-node), and
+// the owner is team.name. The read names are the keys of the readQueries
+// property in file order; a python-csv node's one read is its csvSource, named
+// "csv", as the release records it.
+//
+// A document that parses but is not a contract (no id) yields no declaration
+// and no error: a contract directory may hold other yaml files, and they
+// declare nothing to compare. A field of an unexpected shape is read as absent
+// rather than failing the document, because a caller reads "declares nothing"
+// as "protects no node". Text that is not valid yaml returns an error, because
+// a caller comparing declarations across an edit must not treat "could not be
+// read" as "declares nothing".
 func (l *Locator) Declarations(yamlText string) ([]ports.NodeDeclaration, error) {
-	var doc contractDoc
-	if err := yaml.Unmarshal([]byte(yamlText), &doc); err != nil {
+	root, err := parseRoot([]byte(yamlText))
+	if err != nil {
 		return nil, fmt.Errorf("parse contract document: %w", err)
 	}
-	out := make([]ports.NodeDeclaration, 0, len(doc.Nodes))
-	for _, n := range doc.Nodes {
-		// Absent kind means python-node — the same default every parser of this
-		// wire format applies (topology-controller's python_contract_parser.py,
-		// e.g.). A contract may omit "kind:", so without this default an answer
-		// that writes it explicitly (a plausible, correct normalization) would
-		// read as an identity change ("" -> "python-node") rather than as the
-		// no-op it actually is.
-		kind := n.Kind
-		if kind == "" {
-			kind = string(pkg_model.NodeTypePythonNode)
-		}
-		out = append(out, ports.NodeDeclaration{
-			Identity: ports.NodeIdentity{
-				Schema:      n.Schema,
-				Table:       n.Table,
-				Script:      n.Script,
-				Kind:        kind,
-				Owner:       n.Owner,
-				Schedule:    n.Schedule,
-				Criticality: n.Criticality,
-				SecretRef:   n.SecretRef,
-			},
-			ReadKeys: readKeys(n.Reads),
-		})
+	id, ok := scalar(mappingValue(root, "id"))
+	if !ok || id == "" {
+		return nil, nil
 	}
-	return out, nil
+
+	table, _ := scalar(mappingValue(firstItem(mappingValue(root, "schema")), "name"))
+	owner, _ := scalar(mappingValue(mappingValue(root, "team"), "name"))
+	props := continuoProperties(mappingValue(root, "customProperties"))
+
+	kind, _ := scalar(props["kind"])
+	if kind == "" {
+		kind = string(pkg_model.NodeTypePythonNode)
+	}
+	if alias, ok := kindAliases[kind]; ok {
+		kind = alias
+	}
+	script, _ := scalar(props["script"])
+	schedule, _ := scalar(props["schedule"])
+	criticality, _ := scalar(props["criticality"])
+	secretRef, _ := scalar(props["secretRef"])
+
+	readKeys := mappingKeys(props["readQueries"])
+	if kind == string(pkg_model.NodeTypePythonCsv) {
+		readKeys = nil
+		if props["csvSource"] != nil {
+			readKeys = []string{csvReadKey}
+		}
+	}
+
+	return []ports.NodeDeclaration{{
+		Identity: ports.NodeIdentity{
+			Schema:      schemaOf(id, table),
+			Table:       table,
+			Script:      script,
+			Kind:        kind,
+			Owner:       owner,
+			Schedule:    schedule,
+			Criticality: criticality,
+			SecretRef:   secretRef,
+		},
+		ReadKeys: readKeys,
+	}}, nil
+}
+
+// schemaOf returns the id without the ".<table>" that ends it, comparing the
+// two case-insensitively, or the whole id when it does not end in the table.
+func schemaOf(id, table string) string {
+	tail := "." + table
+	if table != "" && len(id) > len(tail) && strings.EqualFold(id[len(id)-len(tail):], tail) {
+		return id[:len(id)-len(tail)]
+	}
+	return id
+}
+
+// parseRoot parses raw as one yaml document and returns its top-level node:
+// the mapping a contract is, or any other node, which declares nothing. An
+// empty document yields nil.
+func parseRoot(raw []byte) (*yaml.Node, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		return nil, err
+	}
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+		return nil, nil
+	}
+	return doc.Content[0], nil
+}
+
+// mappingValue returns the value of key in the mapping n, or nil when n is not
+// a mapping or has no such key.
+func mappingValue(n *yaml.Node, key string) *yaml.Node {
+	if n == nil || n.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if n.Content[i].Value == key {
+			return n.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// mappingKeys returns the keys of the mapping n in file order, or none when n
+// is not a mapping.
+func mappingKeys(n *yaml.Node) []string {
+	if n == nil || n.Kind != yaml.MappingNode {
+		return nil
+	}
+	out := make([]string, 0, len(n.Content)/2)
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		out = append(out, n.Content[i].Value)
+	}
+	return out
+}
+
+// firstItem returns the first item of the sequence n, or nil.
+func firstItem(n *yaml.Node) *yaml.Node {
+	if n == nil || n.Kind != yaml.SequenceNode || len(n.Content) == 0 {
+		return nil
+	}
+	return n.Content[0]
+}
+
+// scalar returns the value of the scalar node n. ok is false for a missing
+// node or one that is not a scalar.
+func scalar(n *yaml.Node) (string, bool) {
+	if n == nil || n.Kind != yaml.ScalarNode {
+		return "", false
+	}
+	return n.Value, true
+}
+
+// continuoProperties returns the value node of each continuo item of a
+// customProperties list, by property name. An item of another vendor is
+// skipped, and so is one with no string property or no value; a name that
+// appears twice keeps its last value, as the release reads it.
+func continuoProperties(n *yaml.Node) map[string]*yaml.Node {
+	out := map[string]*yaml.Node{}
+	if n == nil || n.Kind != yaml.SequenceNode {
+		return out
+	}
+	for _, item := range n.Content {
+		vendor, _ := scalar(mappingValue(item, "vendor"))
+		if vendor != continuoVendor {
+			continue
+		}
+		name, ok := scalar(mappingValue(item, "property"))
+		value := mappingValue(item, "value")
+		if !ok || value == nil {
+			continue
+		}
+		out[name] = value
+	}
+	return out
 }
 
 // buildLocated derives ContractDir and RepoRoot from where the matched file

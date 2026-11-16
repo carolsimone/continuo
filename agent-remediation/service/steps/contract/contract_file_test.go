@@ -2,7 +2,10 @@ package contract_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -153,4 +156,32 @@ func TestContractFile_ReturnsAnyOtherLocateErrorAndRemovesTheCheckout(t *testing
 	require.ErrorIs(t, err, errBoom)
 	assert.EqualError(t, err, "locate contract for py.fx.rates: boom")
 	a.requireNoCheckoutLeft()
+}
+
+// TestContractFileStep_DeclinesAnUnconvertedService verifies that a node of a
+// service whose repository still declares its python nodes in contract.yaml
+// declines the cluster with the reason naming the service, logged at INFO with
+// the release and the node, and leaves no checkout behind.
+func TestContractFileStep_DeclinesAnUnconvertedService(t *testing.T) {
+	a := &fakeArchive{t: t}
+	l := &fakeLocator{errs: map[string]error{"fx.rates": fmt.Errorf("fx.rates: %w", ports.ErrServiceNotConverted)}}
+	var logs strings.Builder
+	s := contract.NewContractFile(a, l, slog.New(slog.NewJSONHandler(&logs, nil)))
+
+	out, err := s.Gather(context.Background(), step.ContextInput{Failure: failure(nil), Evidence: remediation.NewEvidence()})
+	require.NoError(t, err)
+
+	want := "service svc still uses contract.yaml; convert it to ODCS"
+	assert.True(t, out.Declined)
+	assert.Equal(t, want, out.Decline)
+	assert.Nil(t, out.Evidence)
+	a.requireNoCheckoutLeft()
+
+	var line map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(logs.String())), &line),
+		"exactly one log line: %s", logs.String())
+	assert.Equal(t, "INFO", line["level"])
+	assert.Equal(t, want, line["msg"])
+	assert.Equal(t, "rel-1", line["release"])
+	assert.Equal(t, "py.fx.rates", line["node"])
 }
