@@ -194,7 +194,6 @@ func TestPullRequest_ASecondPassOnAFinalizedRowWritesNothing(t *testing.T) {
 	assert.Equal(t, proposal.StatusProposed, store.Proposals()[0].Proposal.Status)
 }
 
-
 // handedOverEntryID is the id of the outbox entry that carries the
 // remediation.handed_over:v1 event of remediation id.
 func handedOverEntryID(id uuid.UUID) uuid.UUID {

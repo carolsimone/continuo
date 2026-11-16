@@ -53,11 +53,31 @@ func remediationHandedOverFields(t *testing.T, p events.RemediationHandedOver) m
 	return stringFields(fields)
 }
 
+// readHandedOver reads rendered remediation.handed_over:v1 fields back as a
+// reader of the stream would: the envelope through ParseEnvelope and the
+// payload as JSON.
+func readHandedOver(t *testing.T, fields map[string]string) (events.Envelope, events.RemediationHandedOver) {
+	t.Helper()
+	env, payload, err := events.ParseEnvelope(fields)
+	require.NoError(t, err)
+	var p events.RemediationHandedOver
+	require.NoError(t, json.Unmarshal(payload, &p))
+	return env, p
+}
+
 func TestRemediationHandedOverFields_MatchGoldenFixture(t *testing.T) {
 	fx := loadRemediationHandedOverFixture(t)
 	got, err := events.RemediationHandedOverFields(fx.Input.EventID, fx.Input.TenantID, fx.Input.Producer, fx.Input.OccurredAt, fx.Input.Payload)
 	require.NoError(t, err)
 	assertFieldsMatchFixture(t, fx.Fields, got)
+
+	env, p := readHandedOver(t, fixtureFields(t, fx.Fields))
+	assert.Equal(t, fx.Input.Payload, p)
+	assert.Equal(t, fx.Input.EventID, env.EventID)
+	assert.Equal(t, fx.Input.TenantID, env.TenantID)
+	assert.Equal(t, fx.Input.Producer, env.Producer)
+	assert.True(t, fx.Input.OccurredAt.Equal(env.OccurredAt))
+	assert.Equal(t, events.RemediationHandedOverSchemaVersion, env.SchemaVersion)
 }
 
 func TestRemediationHandedOverFields_AlwaysCarryANodesArray(t *testing.T) {
@@ -67,31 +87,19 @@ func TestRemediationHandedOverFields_AlwaysCarryANodesArray(t *testing.T) {
 	assert.JSONEq(t, `[]`, string(mustRawField(t, fields["payload"], "nodes")))
 }
 
-func TestDecodeRemediationHandedOver_ReadsGoldenFixture(t *testing.T) {
-	fx := loadRemediationHandedOverFixture(t)
-	env, p, err := events.DecodeRemediationHandedOver(fixtureFields(t, fx.Fields))
-	require.NoError(t, err)
-	assert.Equal(t, fx.Input.Payload, p)
-	assert.Equal(t, fx.Input.EventID, env.EventID)
-	assert.Equal(t, fx.Input.TenantID, env.TenantID)
-	assert.Equal(t, fx.Input.Producer, env.Producer)
-	assert.Equal(t, events.RemediationHandedOverSchemaVersion, env.SchemaVersion)
-}
-
-func TestDecodeRemediationHandedOver_AcceptsEveryHandoverReasonAndNoTries(t *testing.T) {
+func TestRemediationHandedOverFields_AcceptEveryHandoverReasonAndNoTries(t *testing.T) {
 	for _, reason := range model.HandoverReasons() {
 		t.Run(string(reason), func(t *testing.T) {
 			p := validRemediationHandedOver()
 			p.Tries = 0
 			p.Nodes[0].Reason = string(reason)
-			_, got, err := events.DecodeRemediationHandedOver(remediationHandedOverFields(t, p))
-			require.NoError(t, err)
-			assert.Equal(t, string(reason), got.Nodes[0].Reason)
+			_, got := readHandedOver(t, remediationHandedOverFields(t, p))
+			assert.Equal(t, p, got)
 		})
 	}
 }
 
-func TestDecodeRemediationHandedOver_RefusesWhatTheContractForbids(t *testing.T) {
+func TestRemediationHandedOverFields_RefuseWhatTheContractForbids(t *testing.T) {
 	cases := map[string]func(p *events.RemediationHandedOver){
 		"no remediation id":             func(p *events.RemediationHandedOver) { p.RemediationID = "" },
 		"no release id":                 func(p *events.RemediationHandedOver) { p.ReleaseID = "" },
@@ -106,23 +114,9 @@ func TestDecodeRemediationHandedOver_RefusesWhatTheContractForbids(t *testing.T)
 		t.Run(name, func(t *testing.T) {
 			p := validRemediationHandedOver()
 			mutate(&p)
-			_, _, err := events.DecodeRemediationHandedOver(remediationHandedOverFields(t, p))
+			fields, err := events.RemediationHandedOverFields("e", events.DefaultTenantID, "agent-remediation", time.Date(2026, 11, 12, 10, 47, 19, 0, time.UTC), p)
 			require.ErrorIs(t, err, events.ErrMalformedEnvelope)
-		})
-	}
-}
-
-func TestDecodeRemediationHandedOver_RefusesAnUnreadableEntry(t *testing.T) {
-	valid := func() map[string]string { return remediationHandedOverFields(t, validRemediationHandedOver()) }
-	cases := map[string]map[string]string{
-		"other version":    withField(valid(), "schema_version", "2"),
-		"payload not json": withPayload(valid(), `{`),
-		"no payload":       withPayload(valid(), ``),
-	}
-	for name, fields := range cases {
-		t.Run(name, func(t *testing.T) {
-			_, _, err := events.DecodeRemediationHandedOver(fields)
-			require.ErrorIs(t, err, events.ErrMalformedEnvelope)
+			assert.Nil(t, fields)
 		})
 	}
 }

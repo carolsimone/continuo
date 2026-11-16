@@ -106,11 +106,10 @@ func renderRemediationProposed(entry *pkgoutbox.Entry) (map[string]any, error) {
 // renderRemediationHandedOver renders a remediation.handed_over:v1 row as the
 // event's envelope: the row's id as event_id, the tenant its payload is stored
 // under, the row's creation time as occurred_at, agent-remediation as producer
-// and the event as payload. The envelope is read back with the event's decoder
-// before it is returned, so only an entry that decodes is published. The
-// stored payload is our own, so a row that is not stored under a tenant, whose
-// payload is not the event, or whose event the decoder refuses is permanent:
-// no retry makes it renderable.
+// and the event as payload. The stored payload is our own, so a row that is
+// not stored under a tenant, whose payload is not the event, or whose event
+// the contract forbids (events.RemediationHandedOverFields refuses it) is
+// permanent: no retry makes it renderable.
 func renderRemediationHandedOver(entry *pkgoutbox.Entry) (map[string]any, error) {
 	tenantID, payload, err := pkgoutbox.UnwrapTenant(entry.Payload)
 	if err != nil {
@@ -122,13 +121,6 @@ func renderRemediationHandedOver(entry *pkgoutbox.Entry) (map[string]any, error)
 	}
 	values, err := pkgevents.RemediationHandedOverFields(entry.ID.String(), tenantID, config.ServiceName, entry.CreatedAt, p)
 	if err != nil {
-		return nil, handedOverPermanent(err)
-	}
-	fields, err := pkgoutbox.StringifyFields(values)
-	if err != nil {
-		return nil, handedOverPermanent(err)
-	}
-	if _, _, err := pkgevents.DecodeRemediationHandedOver(fields); err != nil {
 		return nil, handedOverPermanent(err)
 	}
 	return values, nil

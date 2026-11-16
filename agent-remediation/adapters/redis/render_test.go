@@ -259,8 +259,8 @@ func TestPublish_ProposedRowXAddCarriesItsStoredTenant(t *testing.T) {
 // event's envelope: the row's id as event_id, the tenant the row is stored
 // under, the row's creation time, agent-remediation as producer and the event
 // it wraps as payload; and that a row stored under no tenant, whose stored
-// payload is not the event, or whose event the event's decoder refuses, is
-// refused as permanent: no retry makes it renderable.
+// payload is not the event, or whose event the contract forbids, is refused
+// as permanent: no retry makes it renderable.
 func TestRender_HandedOverCarriesTheRowsTenant(t *testing.T) {
 	p := &agentRemediationOutboxPublisher{}
 	handed := pkgevents.RemediationHandedOver{
@@ -285,23 +285,27 @@ func TestRender_HandedOverCarriesTheRowsTenant(t *testing.T) {
 	assert.Equal(t, "acme", values["tenant_id"])
 	fields, err := pkgoutbox.StringifyFields(values)
 	require.NoError(t, err)
-	env, got, err := pkgevents.DecodeRemediationHandedOver(fields)
+	env, published, err := pkgevents.ParseEnvelope(fields)
 	require.NoError(t, err)
+	var got pkgevents.RemediationHandedOver
+	require.NoError(t, json.Unmarshal(published, &got))
 	assert.Equal(t, entry.ID.String(), env.EventID)
 	assert.Equal(t, "acme", env.TenantID)
 	assert.Equal(t, "agent-remediation", env.Producer)
 	assert.True(t, entry.CreatedAt.Equal(env.OccurredAt))
+	assert.Equal(t, pkgevents.RemediationHandedOverSchemaVersion, env.SchemaVersion)
 	assert.Equal(t, handed, got)
 
 	for name, payload := range map[string]string{
-		"an unwrapped payload":         string(body),
-		"an empty tenant":              `{"tenant_id":"","payload":{"release_id":"rel-1"}}`,
+		"an unwrapped payload":            string(body),
+		"an empty tenant":                 `{"tenant_id":"","payload":{"release_id":"rel-1"}}`,
 		"a payload that is not the event": `{"tenant_id":"acme","payload":["not","the","event"]}`,
 		"a reason outside the vocabulary": `{"tenant_id":"acme","payload":{"remediation_id":"r","release_id":"rel-1","remediation_round":1,"flow":"rejected-release","tries":1,` +
 			`"nodes":[{"node_id":"model.a","reason":"gave_up","message":"m"}]}}`,
 		"no remediation round": `{"tenant_id":"acme","payload":{"remediation_id":"r","release_id":"rel-1","remediation_round":0,"flow":"rejected-release","tries":1,"nodes":[]}}`,
 	} {
-		_, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), StreamName: streams.RemediationHandedOverV1, Payload: []byte(payload)})
+		values, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), StreamName: streams.RemediationHandedOverV1, Payload: []byte(payload)})
 		require.ErrorIs(t, err, pkgevents.ErrPermanent, name)
+		assert.Nil(t, values, name)
 	}
 }

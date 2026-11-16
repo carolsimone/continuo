@@ -9,7 +9,9 @@ import (
 )
 
 // ErrMalformedEnvelope reports stream fields that do not carry a readable
-// envelope: a missing or unparseable envelope field, or no payload.
+// envelope: a missing or unparseable envelope field, or no payload. A function
+// that renders an entry wraps it too when it refuses a payload the entry's
+// contract forbids.
 var ErrMalformedEnvelope = errors.New("malformed event envelope")
 
 // ParseEnvelope reads the envelope fields Envelope.Fields writes and returns

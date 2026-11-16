@@ -1,7 +1,6 @@
 package events
 
 import (
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -36,8 +35,14 @@ type HandedOverNode struct {
 // RemediationHandedOverFields renders p as the Redis fields of one
 // remediation.handed_over:v1 entry. eventID is the id of the outbox row that
 // carries the entry. The payload always holds a nodes array, empty when p
-// names none.
+// names none. A payload the contract forbids is refused with an error that
+// wraps ErrMalformedEnvelope: an empty remediation_id, release_id or flow, a
+// remediation_round below 1, negative tries, or a node without a node_id or
+// with a reason outside the handover_reason vocabulary.
 func RemediationHandedOverFields(eventID, tenantID, producer string, occurredAt time.Time, p RemediationHandedOver) (map[string]any, error) {
+	if err := validRemediationHandedOver(p); err != nil {
+		return nil, err
+	}
 	if p.Nodes == nil {
 		p.Nodes = []HandedOverNode{}
 	}
@@ -49,29 +54,6 @@ func RemediationHandedOverFields(eventID, tenantID, producer string, occurredAt 
 		SchemaVersion: RemediationHandedOverSchemaVersion,
 	}
 	return env.Fields(p)
-}
-
-// DecodeRemediationHandedOver reads one remediation.handed_over:v1 entry.
-// Every error wraps ErrMalformedEnvelope: an unreadable envelope, another
-// schema_version, a payload that is not JSON, an empty remediation_id,
-// release_id or flow, a remediation_round below 1, negative tries, or a node
-// without a node_id or with a reason outside the handover_reason vocabulary.
-func DecodeRemediationHandedOver(fields map[string]string) (Envelope, RemediationHandedOver, error) {
-	env, payload, err := ParseEnvelope(fields)
-	if err != nil {
-		return Envelope{}, RemediationHandedOver{}, err
-	}
-	if env.SchemaVersion != RemediationHandedOverSchemaVersion {
-		return Envelope{}, RemediationHandedOver{}, fmt.Errorf("%w: schema_version %d", ErrMalformedEnvelope, env.SchemaVersion)
-	}
-	var p RemediationHandedOver
-	if err := json.Unmarshal(payload, &p); err != nil {
-		return Envelope{}, RemediationHandedOver{}, fmt.Errorf("%w: payload: %v", ErrMalformedEnvelope, err)
-	}
-	if err := validRemediationHandedOver(p); err != nil {
-		return Envelope{}, RemediationHandedOver{}, err
-	}
-	return env, p, nil
 }
 
 func validRemediationHandedOver(p RemediationHandedOver) error {
