@@ -219,7 +219,7 @@ func (v ValidationOp) IsValid() bool {
 type HandoverReason string
 
 const (
-	// HandoverReasonTriesSpent — every try of the flow ended without a fix the verification gate accepted.
+	// HandoverReasonTriesSpent — the tries are spent and the last try failed at the verification runs.
 	HandoverReasonTriesSpent HandoverReason = "tries_spent"
 	// HandoverReasonPreflightRoundsSpent — the model's drafts for the node's cluster were refused by pre-flight in every round its type allows.
 	HandoverReasonPreflightRoundsSpent HandoverReason = "preflight_rounds_spent"
@@ -233,7 +233,7 @@ const (
 	HandoverReasonClassifierUnhealableParse HandoverReason = "classifier_unhealable_parse"
 	// HandoverReasonNoRepository — the trigger names no repository, so no fix pull request can be opened.
 	HandoverReasonNoRepository HandoverReason = "no_repository"
-	// HandoverReasonUnverifiableEdits — the last try's edits failed the cross-cluster checks, so no release could verify them.
+	// HandoverReasonUnverifiableEdits — the tries are spent and the last try's edits could not be checked by a release, because a cross-cluster check refused them or the gate refused them before starting a run.
 	HandoverReasonUnverifiableEdits HandoverReason = "unverifiable_edits"
 )
 
