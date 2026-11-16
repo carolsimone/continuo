@@ -1,8 +1,11 @@
 """The handler's treatment of invalid python-odcs contracts: every manifest's parse reports its
 invalid contracts, the release goes on through resolve with the valid nodes, and one
 `publish_failed` names every failed node."""
+import itertools
 import json
 from unittest.mock import MagicMock
+
+import pytest
 
 from domain.contract_vocabulary import ParseFailureKind
 from domain.model import FailedNode, ManifestFile, ManifestKind
@@ -15,7 +18,7 @@ from tests.fakes import (
     python_handler,
     source_of,
 )
-from tests.odcs_fixtures import bundle_file, bundle_node, demo_node, demo_nodes, demo_text
+from tests.odcs_fixtures import bundle_doc, bundle_file, bundle_node, demo_node, demo_nodes, demo_text, write_bundle
 
 KPIS_PATH = "contracts/py_daily_kpis.odcs.yaml"
 CSV_PATH = "contracts/demo_orders_csv.odcs.yaml"
@@ -33,6 +36,10 @@ def _failed_kwargs(publisher):
     publisher.publish_failed.assert_called_once()
     publisher.publish_ok.assert_not_called()
     return publisher.publish_failed.call_args.kwargs
+
+
+def _broken_sql_node(name):
+    return {**dbt_node(name), "compiled_code": "SELECT FROM WHERE((("}
 
 
 def _dbt_manifest(tmp_path, *nodes, declared_service="service-1"):
@@ -196,3 +203,91 @@ def test_any_other_unreadable_manifest_is_named_by_its_path_and_its_error(tmp_pa
     kwargs = _failed_kwargs(publisher)
     assert kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
     assert kwargs["detail"] == f"{bad}: KeyError('nodes')"
+
+
+def _failed_node_ids(publisher):
+    return [(n.node_id, n.service) for n in _failed_kwargs(publisher)["failed_nodes"]]
+
+
+def test_the_failed_nodes_do_not_depend_on_the_order_of_the_manifests_or_of_the_nodes(tmp_path):
+    """Three manifests, one holding two broken nodes written in reverse order: whatever the
+    order, the publish lists the same failed nodes, by node id."""
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    (tmp_path / "c").mkdir()
+    manifests = [
+        bundle_file(tmp_path / "a", [KPIS_WITH_NUMERIC_12], declared_service="service-a", service="service-a"),
+        bundle_file(tmp_path / "b", [CSV_WITH_SERVERS], declared_service="service-b", service="service-b"),
+        _dbt_manifest(tmp_path / "c", _broken_sql_node("zeta"), _broken_sql_node("alpha")),
+    ]
+    expected = [
+        ("analytics.demo_orders_csv", "service-b"),
+        ("analytics.py_daily_kpis", "service-a"),
+        ("test_schema.alpha", "service-1"),
+        ("test_schema.zeta", "service-1"),
+    ]
+
+    for order in itertools.permutations(manifests):
+        publisher = MagicMock()
+        python_handler(source_of(*order), publisher).handle(release_id="rel-1")
+        assert _failed_node_ids(publisher) == expected, [m.declared_service for m in order]
+
+
+def test_failed_nodes_that_share_an_id_and_a_path_are_ordered_by_what_else_they_carry(tmp_path):
+    """The same contract id at the same path in two services is two failed nodes: their order
+    is theirs, not the order the manifests came in."""
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    manifests = [
+        bundle_file(tmp_path / "a", [KPIS_WITH_NUMERIC_12], declared_service="service-a", service="service-a"),
+        bundle_file(tmp_path / "b", [KPIS_WITH_NUMERIC_12], declared_service="service-b", service="service-b"),
+    ]
+
+    for order in (manifests, manifests[::-1]):
+        publisher = MagicMock()
+        python_handler(source_of(*order), publisher).handle(release_id="rel-1")
+        assert _failed_node_ids(publisher) == [
+            ("analytics.py_daily_kpis", "service-a"), ("analytics.py_daily_kpis", "service-b")]
+
+
+def _unreadable_bundle(directory):
+    return write_bundle(
+        directory, {**bundle_doc(demo_nodes(), service="service-b"), "bundle_version": 2}, declared_service="service-b")
+
+
+def _empty_bundle(directory):
+    return bundle_file(directory, [], declared_service="service-b", service="service-b")
+
+
+def _foreign_nodes_manifest(directory):
+    return _dbt_manifest(directory, dbt_node("foreign"), declared_service="service-b")
+
+
+def _unknown_kind(directory):
+    return ManifestFile(path=str(directory / "odcs-bundle.json"), declared_service="service-b", kind="spark")
+
+
+@pytest.mark.parametrize("artifact_error_first", [False, True])
+@pytest.mark.parametrize("artifact_error, detail", [
+    (_unreadable_bundle, "service-b: bundle_version 2 is newer than this install reads"),
+    (_empty_bundle, "service-b: bundle declares no nodes"),
+    (_foreign_nodes_manifest, "service-b: manifest contains nodes for ['service-1']"),
+    (_unknown_kind, "service-b: unknown manifest kind 'spark'"),
+])
+def test_an_artifact_level_error_fails_the_release_with_no_failed_nodes(
+        tmp_path, artifact_error, detail, artifact_error_first):
+    """An unreadable, empty, wrong-service or unknown-kind manifest ends the release at once
+    as invalid_artifact, whether an earlier or a later bundle holds invalid contracts."""
+    (tmp_path / "invalid").mkdir()
+    (tmp_path / "bad").mkdir()
+    invalid = bundle_file(tmp_path / "invalid", [KPIS_WITH_NUMERIC_12])
+    bad = artifact_error(tmp_path / "bad")
+    publisher = MagicMock()
+
+    python_handler(source_of(*((bad, invalid) if artifact_error_first else (invalid, bad))), publisher).handle(
+        release_id="rel-1")
+
+    kwargs = _failed_kwargs(publisher)
+    assert kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
+    assert kwargs["detail"].startswith(detail)
+    assert kwargs["failed_nodes"] == []

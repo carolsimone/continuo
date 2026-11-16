@@ -57,6 +57,13 @@ def _summary(failed: list[FailedNode]) -> str:
     return f"{len(failed)} {noun} failed to parse: " + ", ".join(sorted(n.node_id for n in failed))
 
 
+def _failed_node_order(node: FailedNode) -> tuple[str, ...]:
+    """The place of a failed node in the publish: by node id, file path and kind,
+    then by every other field so that two nodes agreeing on those three still
+    have one order, whatever order the manifests came in."""
+    return (node.node_id, node.file_path, str(node.kind), node.service, str(node.node_type), node.detail)
+
+
 def _unreadable_manifest_detail(mf: ManifestFile, exc: Exception) -> str:
     """The detail of a release whose manifest cannot be read as a whole. A bundle
     error carries a message written for the operator, so it is the detail as it
@@ -145,9 +152,13 @@ class CandidateManifestHandler:
     finds invalid (the parse reports it as a failed node, with its own
     failure kind): every valid node is resolved, then one publish_failed
     carries the whole failed set (failure_kind by contract precedence) so the
-    operator sees every broken node at once. An unreadable, empty, or
-    wrong-service artifact is invalid_artifact; a missing builder, missing
-    image tags or a refused S3 write is internal. Neither carries failed nodes.
+    operator sees every broken node at once, in node id order whatever the
+    order of the manifests. An unreadable, empty, or wrong-service artifact
+    (and a manifest of an unknown kind) is invalid_artifact; a missing builder,
+    missing image tags or a refused S3 write is internal. Neither carries
+    failed nodes. Such an artifact-level error fails the release at once, so
+    its publish carries no failed nodes even when earlier manifests reported
+    invalid contracts.
 
     dialect is the sqlglot dialect of the warehouse the install targets,
     supplied by the composition root from the configured engine. It governs
@@ -571,7 +582,7 @@ class CandidateManifestHandler:
                 release_id=release_id,
                 failure_kind=kind,
                 detail=detail,
-                failed_nodes=list(failed_nodes),
+                failed_nodes=sorted(failed_nodes, key=_failed_node_order),
             )
         self._timings.outcome = ReleaseOutcome.FAILED
         self._timings.failure_kind = kind
