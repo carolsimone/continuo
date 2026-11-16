@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -41,7 +42,7 @@ import (
 //	→ release-controller TransitionToRejected("compile_failed"), RecordStageResults("compile")
 //	→ release.rejected:v1 {stage:"compile", per_node:[{node_id:<service>, status:"failed", dbt_log_uri}]}
 //	→ remediation classifier maps stage→SourceCompile, ExtractDbtFilePath(log)→file_path,
-//	  classifies the parse/compilation error as healable → remediation.requested:v2 (source="compile")
+//	  classifies the parse/compilation error as healable → remediation.requested:v3 (source="compile")
 //	→ agent-remediation proposeFromSource: reads model source from GitHub (stub-github),
 //	  asks stub-llm to fix it → proposal row (source="compile", file_path)
 //	→ a verification run lays the corrected file over the fixture service's dbt
@@ -99,7 +100,7 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 	// Clear any mid-flight release so AdvanceQueue can activate this one.
 	// Tap the remediation streams before the release is posted: the trim loop
 	// removes consumed entries, so the polls below read what the taps recorded.
-	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV2)
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV3)
 	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationProposedV1)
 	rejectedTap := startStreamTap(t, ctx, clients.redisClient, streams.ReleaseRejectedV1)
 
@@ -123,36 +124,16 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 	//    discriminator the remediation classifier maps to SourceCompile.
 	assertRejectedStageCompile(t, ctx, rejectedTap, releaseID)
 
-	// 4. remediation.requested:v2 must be emitted with source=="compile" and an
+	// 4. remediation.requested:v3 must be emitted with source=="compile" and an
 	//    entry carrying a non-empty file_path (derived by the classifier via
 	//    ExtractDbtFilePath on the dbt compile log). The compile node_id is the
 	//    service name.
-	var node compileNodeEntry
-	pollUntil(t, ctx, 4*time.Minute, 2*time.Second, func() (bool, error) {
-		msgs := requestedTap.Entries()
-		for _, msg := range msgs {
-			raw, ok := msg.Values["payload"].(string)
-			if !ok || raw == "" {
-				continue
-			}
-			var p compileTriggerPayload
-			if json.Unmarshal([]byte(raw), &p) != nil {
-				continue
-			}
-			if p.ReleaseID != releaseID || p.Source != "compile" {
-				continue
-			}
-			for _, n := range p.Nodes {
-				if n.NodeID == fixtureService {
-					node = n
-					return true, nil
-				}
-			}
-		}
-		return false, nil
-	}, fmt.Sprintf("timeout waiting for %s (source=compile) for release %s", streams.RemediationRequestedV2, releaseID))
+	trigger := waitForBatchedTrigger(t, ctx, requestedTap, releaseID, []string{fixtureService}, 4*time.Minute)
+	require.Equal(t, string(model.RemediationSourceCompile), trigger.Source, "compile trigger source")
+	node, _ := trigger.findNode(fixtureService)
 
 	require.Equal(t, fixtureService, node.NodeID, "compile trigger node_id is the service name")
+	require.Nil(t, node.Unfixable, "a compilation error is one a fix can reach, so the trigger must not mark it unfixable")
 	require.NotEmpty(t, node.FilePath,
 		"compile trigger must carry a file_path extracted from the dbt compile log")
 	require.NotEmpty(t, node.DBTLogURI, "compile trigger must carry a dbt_log_uri")
@@ -163,7 +144,7 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 	// of a service the same signature.
 	require.Contains(t, node.ErrorExcerpt, "Compilation Error in model daily_transactions",
 		"compile trigger error_excerpt must carry the compilation message, got %q", node.ErrorExcerpt)
-	t.Logf("✅ %s (compile): file_path=%s signature=%s excerpt=%q", streams.RemediationRequestedV2, node.FilePath, node.ErrorSignature, node.ErrorExcerpt)
+	t.Logf("✅ %s (compile): file_path=%s signature=%s excerpt=%q", streams.RemediationRequestedV3, node.FilePath, node.ErrorSignature, node.ErrorExcerpt)
 
 	// 5. classification_decision row must record source=='compile'.
 	var decision classificationDecisionRow
@@ -294,28 +275,6 @@ func assertRejectedStageCompile(t *testing.T, ctx context.Context, rejectedTap *
 		}
 		return false, nil
 	}, fmt.Sprintf("timeout waiting for release.rejected:v1 with stage=compile for release %s", releaseID))
-}
-
-// compileTriggerPayload mirrors remediation.requested:v2 including the
-// file_path and error_excerpt fields the compile path populates (the shared
-// remediationNodeEntry in remediation_classifier_test.go omits both, which are
-// empty for a validation failure).
-type compileTriggerPayload struct {
-	Source    string             `json:"source"`
-	ReleaseID string             `json:"release_id"`
-	Nodes     []compileNodeEntry `json:"nodes"`
-}
-
-// compileNodeEntry is one failing node inside a compile-stage batched trigger.
-// A compile abort fails the whole service project, so the node id is the
-// service name and the batch carries a single entry.
-type compileNodeEntry struct {
-	NodeID         string `json:"node_id"`
-	Category       string `json:"category"`
-	ErrorSignature string `json:"error_signature"`
-	ErrorExcerpt   string `json:"error_excerpt"`
-	DBTLogURI      string `json:"dbt_log_uri"`
-	FilePath       string `json:"file_path"`
 }
 
 // compileProposalRow captures the proposal fields asserted for a compile-stage

@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -28,8 +30,8 @@ const ftableEUniqueID = "e2e_schema.ftable_e"
 //	→ ftable_e fails (references public.wrong_name which does not exist)
 //	→ validation.result:v1 terminal (kind=complete, release rejected)
 //	→ release.rejected:v1 → remediation classifier classifies the node
-//	→ remediation.requested:v2 emitted for the release, its ftable_e entry
-//	  carrying category=logic
+//	→ remediation.requested:v3 emitted for the release, its ftable_e entry
+//	  carrying category=logic and no unfixable mark
 //	→ classification_decision row: source=validation, decision=emit, category=logic
 //
 // The changed node is ftable_e (service-2), whose SQL body is:
@@ -39,11 +41,9 @@ const ftableEUniqueID = "e2e_schema.ftable_e"
 // The "does not exist" error in the dbt log classifies as category=logic
 // (rule: "does not exist" → "logic:missing_object") and decision=emit.
 //
-// Scoping note: the DROP path (infra_transient) is NOT driven in e2e. Forcing a
-// real infra failure (warehouse connection refused, OOMKilled) mid-validation is
-// impractical to stage deterministically in a shared cluster. That path is
-// covered by the Task 4 unit tests in remediation/domain/failure/classify_test.go.
-// This test covers the realistic, drivable EMIT path only.
+// This test covers the EMIT path. The DROP path (infra_transient) is driven by
+// TestE2E_Remediation_EveryNodeUnfixableIsHandedOver, whose model fails with
+// an error that names the classifier's "connection refused" phrase.
 func TestE2E_Remediation_ValidationRejectionEmitsTrigger(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -98,7 +98,7 @@ func TestE2E_Remediation_ValidationRejectionEmitsTrigger(t *testing.T) {
 	// Tap the remediation streams before the release is posted: the trim loop
 	// removes consumed entries, so the polls below read what the taps recorded.
 	rejectedTap := startStreamTap(t, ctx, clients.redisClient, streams.ReleaseRejectedV1)
-	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV2)
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV3)
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
@@ -149,45 +149,25 @@ func TestE2E_Remediation_ValidationRejectionEmitsTrigger(t *testing.T) {
 		"ftable_e must carry run_results_uri on release.rejected:v1 (structured validation result)")
 	t.Logf("✅ release.rejected:v1 carries run_results_uri=%s for ftable_e", rejectedRunResultsURI)
 
-	// 7. Poll remediation.requested:v2 for the release's batched trigger and
+	// 7. Poll remediation.requested:v3 for the release's batched trigger and
 	//    the entry it carries for ftable_e. The classifier receives
 	//    release.rejected:v1, fetches the dbt log from S3, classifies the
 	//    "does not exist" error as logic, and publishes one trigger for the
 	//    whole rejected release via the outbox publisher.
-	var trigger remediationRequestedPayload
-	var node remediationNodeEntry
-	pollUntil(t, ctx, 3*time.Minute, 2*time.Second, func() (bool, error) {
-		msgs := requestedTap.Entries()
-		for _, msg := range msgs {
-			raw, ok := msg.Values["payload"].(string)
-			if !ok || raw == "" {
-				continue
-			}
-			var p remediationRequestedPayload
-			if json.Unmarshal([]byte(raw), &p) != nil {
-				continue
-			}
-			if p.ReleaseID != releaseID {
-				continue
-			}
-			if n, ok := p.findNode(ftableEUniqueID); ok {
-				trigger, node = p, n
-				return true, nil
-			}
-		}
-		return false, nil
-	}, fmt.Sprintf("timeout waiting for %s for release %s node %s", streams.RemediationRequestedV2, releaseID, ftableEUniqueID))
+	trigger := waitForBatchedTrigger(t, ctx, requestedTap, releaseID, []string{ftableEUniqueID}, 3*time.Minute)
+	node, _ := trigger.findNode(ftableEUniqueID)
 
 	// 8. Assert trigger payload fields.
 	require.Equal(t, releaseID, trigger.ReleaseID, "trigger release_id")
-	require.Equal(t, "validation", trigger.Source,
-		"trigger source must be the literal 'validation', not the stream name")
+	require.Equal(t, string(model.RemediationSourceValidation), trigger.Source,
+		"trigger source must be the remediation_source value, not the stream name")
 	require.Equal(t, ftableEUniqueID, node.NodeID, "trigger node_id")
 	require.Equal(t, "logic", node.Category,
 		"ftable_e references public.wrong_name → structured status=error, message 'does not exist' → category=logic")
+	require.Nil(t, node.Unfixable, "a logic failure is one a fix can reach, so the trigger must not mark it unfixable")
 	require.NotEmpty(t, node.ErrorSignature, "trigger must carry a non-empty error_signature")
 	require.NotEmpty(t, node.DBTLogURI, "trigger must carry a non-empty dbt_log_uri")
-	t.Logf("✅ %s received: category=%s signature=%s", streams.RemediationRequestedV2, node.Category, node.ErrorSignature)
+	t.Logf("✅ %s received: category=%s signature=%s", streams.RemediationRequestedV3, node.Category, node.ErrorSignature)
 
 	// 9. Query classification_decision in continuo_remediation to confirm the
 	//    decision was persisted.
@@ -238,66 +218,18 @@ func waitForReleaseRejected(t *testing.T, ctx context.Context, clients *testClie
 	t.Logf("✅ release %s reached rejected status (ftable_e failed validation as expected)", releaseID)
 }
 
-// remediationRequestedPayload mirrors the remediation.requested:v2 wire shape
-// produced by the remediation classifier's outbox publisher: one batched
-// trigger per rejected release, carrying release-level facts plus one entry in
-// Nodes per healable failure the classifier decided to emit.
-type remediationRequestedPayload struct {
-	EventID          string                 `json:"event_id"`
-	Source           string                 `json:"source"`
-	ReleaseID        string                 `json:"release_id"`
-	RemediationRound int                    `json:"remediation_round"`
-	Nodes            []remediationNodeEntry `json:"nodes"`
-}
-
-// remediationNodeEntry is one failing node inside a batched trigger.
-// ChangedAncestors is what lets the agent group several failures that share one
-// changed ancestor into a single upstream fix, and — because each entry carries
-// the location the rejected release's candidate declares — edit that ancestor
-// where THIS release holds it.
-type remediationNodeEntry struct {
-	NodeID         string `json:"node_id"`
-	NodeType       string `json:"node_type"`
-	Category       string `json:"category"`
-	ErrorSignature string `json:"error_signature"`
-	// ErrorExcerpt is the key error line the signature was folded from. It is
-	// what makes a signature mismatch between two nodes diagnosable: the hashes
-	// themselves say only that they differ, the excerpts say why.
-	ErrorExcerpt     string                 `json:"error_excerpt"`
-	DBTLogURI        string                 `json:"dbt_log_uri"`
-	Service          string                 `json:"service"`
-	ChangedAncestors []changedAncestorEntry `json:"changed_ancestors"`
-}
-
-// changedAncestorEntry is one changed upstream of a failing node, with the file
-// path and service the rejected release's candidate topology declares for it.
-type changedAncestorEntry struct {
-	NodeID   string `json:"node_id"`
-	FilePath string `json:"file_path"`
-	Service  string `json:"service"`
-	Depth    int    `json:"depth"`
-}
-
-// ancestorIDs is the entry's changed-ancestor ids, for assertions that only
-// care which ancestors were named.
-func (n remediationNodeEntry) ancestorIDs() []string {
+// ancestorIDs is the changed-ancestor ids of one trigger entry, for assertions
+// that only care which ancestors were named. The changed ancestors are what
+// lets the agent group several failures that share one changed ancestor into a
+// single upstream fix, and — because each carries the location the rejected
+// release's candidate declares — edit that ancestor where THIS release holds
+// it.
+func ancestorIDs(n pkgevents.RemediationRequestedNode) []string {
 	ids := make([]string, 0, len(n.ChangedAncestors))
 	for _, a := range n.ChangedAncestors {
 		ids = append(ids, a.NodeID)
 	}
 	return ids
-}
-
-// findNode returns the trigger's entry for a node id, and whether it is
-// present. Callers assert on the entry rather than on the trigger as a whole,
-// because one batched trigger can carry several failing nodes.
-func (p remediationRequestedPayload) findNode(nodeID string) (remediationNodeEntry, bool) {
-	for _, n := range p.Nodes {
-		if n.NodeID == nodeID {
-			return n, true
-		}
-	}
-	return remediationNodeEntry{}, false
 }
 
 // classificationDecisionRow captures the fields asserted from

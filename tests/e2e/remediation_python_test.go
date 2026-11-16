@@ -122,7 +122,7 @@ const (
 //
 //	POST /releases (kind=python, one node whose declared read cannot bind)
 //	→ the validation Job's bind check fails → release rejected
-//	→ classifier emits remediation.requested:v2 (one node, node_type=python-node)
+//	→ classifier emits remediation.requested:v3 (one node, node_type=python-node)
 //	→ agent-remediation routes it to the python contract fixer: fetches the
 //	  repository tarball at the failing commit from stub-github, finds the yaml
 //	  declaring the node, has the model correct it, packages the directory with
@@ -172,7 +172,7 @@ func TestE2E_PythonValidationFailure_VerifiedFix(t *testing.T) {
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
 	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationProposedV1)
-	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV2)
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV3)
 
 	clearProd := rejectPythonFixtureRelease(t, ctx, clients,
 		pyBadReadService, pyBadReadContract, pyBadReadScript, releaseID)
@@ -302,7 +302,7 @@ func TestE2E_PythonValidationFailure_VerificationErrorFeedsNextAttempt(t *testin
 
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
-	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV2)
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV3)
 
 	clearProd := rejectPythonFixtureRelease(t, ctx, clients,
 		pyLoopService, pyLoopContract, pyLoopScript, releaseID)
@@ -713,16 +713,7 @@ func waitForRemediationProposed(
 // heal, which is a loop with no exit.
 func assertNoRemediationTriggerFor(t *testing.T, requestedTap *streamTap, runID string) {
 	t.Helper()
-	msgs := requestedTap.Entries()
-	for _, msg := range msgs {
-		raw, _ := msg.Values["payload"].(string)
-		if raw == "" {
-			continue
-		}
-		var p remediationRequestedPayload
-		if json.Unmarshal([]byte(raw), &p) != nil {
-			continue
-		}
+	for _, p := range requestedTap.Triggers(t) {
 		require.NotEqual(t, runID, p.ReleaseID,
 			"verification run %s must produce no remediation trigger, found one carrying %d node(s)",
 			runID, len(p.Nodes))
@@ -757,7 +748,7 @@ func assertNoNodeVersionsFor(t *testing.T, ctx context.Context, clients *testCli
 //	→ release.rejected:v1 {stage: parse, per_node: [{kind, detail, file_path,
 //	  service, node_type=python-node}]} — the parser's own text is inline;
 //	  there is no dbt log because nothing ran
-//	→ classifier emits remediation.requested:v2 (source=parse, node_type=python-node)
+//	→ classifier emits remediation.requested:v3 (source=parse, node_type=python-node)
 //	→ agent-remediation routes it to the python parse fixer: the trigger's
 //	  file_path names the script, which the parser never reads, so the fixer
 //	  finds the contract yaml from the node id alone, has the model qualify the

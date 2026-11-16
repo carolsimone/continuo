@@ -11,6 +11,8 @@ import (
 	"time"
 
 	remediationv1 "github.com/carolsimone/continuo/agent-remediation/api/remediation/v1"
+	"github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -64,7 +66,7 @@ const (
 //
 //	POST /releases (service-2; ftable_e and ftable_k are both new)
 //	→ validation fails on both nodes → release "rejected"
-//	→ ONE remediation.requested:v2 carrying both nodes, each with no changed ancestor
+//	→ ONE remediation.requested:v3 carrying both nodes, each with no changed ancestor
 //	→ ONE proposal row for the release (attempt 1) holding TWO file edits,
 //	  each naming the node whose source it repairs
 //	→ ONE dbt verification run (both edits belong to service-2) that passes
@@ -127,7 +129,7 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
-	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV2)
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV3)
 	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationProposedV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
@@ -161,20 +163,21 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 	trigger := waitForBatchedTrigger(t, ctx, requestedTap, releaseID,
 		[]string{ftableEUniqueID, ftableKUniqueID}, batchTriggerBudget)
 	require.Len(t, triggersForRelease(t, requestedTap, releaseID), 1,
-		"a rejected release must produce exactly one %s", streams.RemediationRequestedV2)
+		"a rejected release must produce exactly one %s", streams.RemediationRequestedV3)
 	require.Len(t, trigger.Nodes, 2,
 		"the trigger must carry exactly the two failing models; got %v", triggerNodeIDs(trigger))
-	require.Equal(t, "validation", trigger.Source, "trigger source")
+	require.Equal(t, string(model.RemediationSourceValidation), trigger.Source, "trigger source")
 
 	for _, nodeID := range []string{ftableEUniqueID, ftableKUniqueID} {
 		node, ok := trigger.findNode(nodeID)
 		require.True(t, ok, "trigger must carry an entry for %s", nodeID)
+		require.Nil(t, node.Unfixable, "%s fails on a missing relation, which a fix can reach", nodeID)
 		require.Empty(t, node.ChangedAncestors,
 			"%s fails on its own body, not below a changed ancestor, so it must name none; got %v",
 			nodeID, node.ChangedAncestors)
 		require.NotEmpty(t, node.ErrorSignature, "%s must carry an error_signature", nodeID)
 	}
-	t.Logf("✅ one %s carries both independent failures", streams.RemediationRequestedV2)
+	t.Logf("✅ one %s carries both independent failures", streams.RemediationRequestedV3)
 
 	// 5. ONE proposal row for the whole release, reaching 'proposed' only after
 	//    its verification run has judged the fix. The representative node_id is
@@ -257,7 +260,7 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 //
 //	POST /releases (service-2; ftable_u is the only changed node)
 //	→ validation fails on ftable_v and ftable_w, identically
-//	→ ONE remediation.requested:v2 whose two entries share one error signature
+//	→ ONE remediation.requested:v3 whose two entries share one error signature
 //	  and both name ftable_u as their changed ancestor
 //	→ the driver forms ONE shared-upstream cluster targeting ftable_u
 //	→ ONE proposal with ONE edit — to ftable_u's source, a node that never failed
@@ -327,7 +330,7 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
-	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV2)
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV3)
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
@@ -379,15 +382,16 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 	//    of what the clustering needs.
 	require.Len(t, trigger.Nodes, 2,
 		"the trigger must carry exactly the two failing descendants; got %v", triggerNodeIDs(trigger))
-	for _, n := range []remediationNodeEntry{vNode, wNode} {
-		require.Equal(t, []string{ftableUUniqueID}, n.ancestorIDs(),
+	for _, n := range []pkgevents.RemediationRequestedNode{vNode, wNode} {
+		require.Nil(t, n.Unfixable, "%s fails on a dropped column, which a fix can reach", n.NodeID)
+		require.Equal(t, []string{ftableUUniqueID}, ancestorIDs(n),
 			"%s failed below the one node this release changed, so the trigger must say so", n.NodeID)
 		require.Equal(t, "models/ftable_u.sql", n.ChangedAncestors[0].FilePath,
 			"the ancestor must carry the path THIS candidate declares — the file the upstream fix edits")
 		require.Equal(t, changedService, n.ChangedAncestors[0].Service, "the ancestor's owning service")
 		require.Equal(t, 1, n.ChangedAncestors[0].Depth, "ftable_u is a direct upstream of %s", n.NodeID)
 	}
-	t.Logf("✅ one %s names %s as the shared cause of both failures", streams.RemediationRequestedV2, ftableUUniqueID)
+	t.Logf("✅ one %s names %s as the shared cause of both failures", streams.RemediationRequestedV3, ftableUUniqueID)
 
 	// 6. ONE proposal, and — the point of the whole scenario — ONE edit, to a
 	//    node that never appeared in the failing set.
@@ -514,7 +518,7 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 //
 //	POST /releases (service-2; ftable_e and ftable_g both held back from prod)
 //	→ validation fails on both nodes → release "rejected"
-//	→ ONE remediation.requested:v2 carrying both nodes
+//	→ ONE remediation.requested:v3 carrying both nodes
 //	→ ONE proposal row (attempt 1) holding TWO file edits, one per service
 //	→ TWO dbt verification runs (one per edited service) that both pass
 //	→ ONE remediation.proposed:v1
@@ -583,7 +587,7 @@ func TestE2E_BatchedRemediation_TwoServicesTwoPullRequests(t *testing.T) {
 
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
-	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV2)
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV3)
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
@@ -618,7 +622,7 @@ func TestE2E_BatchedRemediation_TwoServicesTwoPullRequests(t *testing.T) {
 		[]string{ftableEUniqueID, ftableGUniqueID}, batchTriggerBudget)
 	require.Len(t, trigger.Nodes, 2, "the trigger must carry exactly the two cross-service failures; got %v",
 		triggerNodeIDs(trigger))
-	require.Equal(t, "validation", trigger.Source, "trigger source")
+	require.Equal(t, string(model.RemediationSourceValidation), trigger.Source, "trigger source")
 
 	// 5. ONE proposal for the release, TWO independent edits.
 	row := waitForBatchProposal(t, ctx, clients, releaseID, 1, "proposed", batchProposalBudget)
@@ -796,7 +800,7 @@ func TestE2E_BatchedRemediation_AmendedMergeMarksProvenanceAmended(t *testing.T)
 
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
-	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV2)
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV3)
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
@@ -968,17 +972,19 @@ func decodeNodeIDs(t *testing.T, raw []byte) []string {
 	return ids
 }
 
-// waitForBatchedTrigger polls remediation.requested:v2 until the release's
+// waitForBatchedTrigger polls remediation.requested:v3 until the release's
 // trigger carries an entry for every named node, and returns it. Waiting on the
 // whole set rather than on any one node is what makes the batching assertions
 // meaningful: a trigger observed mid-write would otherwise satisfy a
-// single-node wait and then fail a count.
+// single-node wait and then fail a count. Every entry the tap recorded is
+// decoded with pkgevents.DecodeRemediationRequested, so an entry that is not a
+// v3 trigger fails the test.
 func waitForBatchedTrigger(
 	t *testing.T, ctx context.Context, requestedTap *streamTap,
 	releaseID string, nodeIDs []string, timeout time.Duration,
-) remediationRequestedPayload {
+) tappedTrigger {
 	t.Helper()
-	var found remediationRequestedPayload
+	var found tappedTrigger
 	pollUntil(t, ctx, timeout, 2*time.Second, func() (bool, error) {
 		for _, p := range triggersForRelease(t, requestedTap, releaseID) {
 			complete := true
@@ -995,33 +1001,26 @@ func waitForBatchedTrigger(
 		}
 		return false, nil
 	}, fmt.Sprintf("timeout waiting for one %s for release %s carrying %v",
-		streams.RemediationRequestedV2, releaseID, nodeIDs))
+		streams.RemediationRequestedV3, releaseID, nodeIDs))
 	return found
 }
 
-// triggersForRelease returns every remediation.requested:v2 message naming the
-// release. A release is remediated once, so the length of this is itself an
-// assertion subject.
-func triggersForRelease(t *testing.T, requestedTap *streamTap, releaseID string) []remediationRequestedPayload {
+// triggersForRelease returns every remediation.requested:v3 message naming the
+// release. A release is remediated once per round, so the length of this is
+// itself an assertion subject.
+func triggersForRelease(t *testing.T, requestedTap *streamTap, releaseID string) []tappedTrigger {
 	t.Helper()
-	msgs := requestedTap.Entries()
-	var out []remediationRequestedPayload
-	for _, msg := range msgs {
-		raw, _ := msg.Values["payload"].(string)
-		if raw == "" {
-			continue
+	var out []tappedTrigger
+	for _, p := range requestedTap.Triggers(t) {
+		if p.ReleaseID == releaseID {
+			out = append(out, p)
 		}
-		var p remediationRequestedPayload
-		if json.Unmarshal([]byte(raw), &p) != nil || p.ReleaseID != releaseID {
-			continue
-		}
-		out = append(out, p)
 	}
 	return out
 }
 
 // triggerNodeIDs lists the node ids a trigger carries, for failure messages.
-func triggerNodeIDs(p remediationRequestedPayload) []string {
+func triggerNodeIDs(p tappedTrigger) []string {
 	ids := make([]string, 0, len(p.Nodes))
 	for _, n := range p.Nodes {
 		ids = append(ids, n.NodeID)
@@ -1237,7 +1236,7 @@ func seedModelTopologyNodes(t *testing.T, ctx context.Context, clients *testClie
 //	current_prod: xbreak_up (service-3) at a STALE hash, xbreak_down (service-2) real
 //	POST /releases (service-3) → xbreak_up changed, validates ok; xbreak_down
 //	  (its consumer, from service-2's production manifest) fails on amount_eur
-//	→ ONE remediation.requested:v2 with one node whose changed_ancestors names
+//	→ ONE remediation.requested:v3 with one node whose changed_ancestors names
 //	  xbreak_up@service-3 at depth 1
 //	→ CrossServiceCause targets xbreak_up; the stub keeps id AND amount_eur
 //	→ ONE edit to services/service-3/models/xbreak_up.sql, ONE verification
@@ -1290,7 +1289,7 @@ func TestE2E_BatchedRemediation_CrossServiceBreakFixedAtProducer(t *testing.T) {
 
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
-	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV2)
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV3)
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
@@ -1315,7 +1314,7 @@ func TestE2E_BatchedRemediation_CrossServiceBreakFixedAtProducer(t *testing.T) {
 	down, ok := trigger.findNode(xbreakDownUniqueID)
 	require.True(t, ok)
 	require.Equal(t, consumerService, down.Service, "the failing node's own service")
-	require.Equal(t, []string{xbreakUpUniqueID}, down.ancestorIDs())
+	require.Equal(t, []string{xbreakUpUniqueID}, ancestorIDs(down))
 	require.Equal(t, producerService, down.ChangedAncestors[0].Service, "the changed ancestor lives in the other service")
 	require.Equal(t, "models/xbreak_up.sql", down.ChangedAncestors[0].FilePath)
 	require.Equal(t, 1, down.ChangedAncestors[0].Depth)

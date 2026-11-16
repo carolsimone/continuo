@@ -71,7 +71,7 @@ func TestE2E_ReleaseValidation_TestThatNoLongerBindsRejects(t *testing.T) {
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
 	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
-	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV2)
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV3)
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
@@ -95,6 +95,7 @@ func TestE2E_ReleaseValidation_TestThatNoLongerBindsRejects(t *testing.T) {
 	trigger := waitForBatchedTrigger(t, ctx, requestedTap, releaseID, []string{tbindNotNullTestID, tbindSingularTestID}, batchTriggerBudget)
 	for _, n := range trigger.Nodes {
 		require.Equal(t, "dbt-test", n.NodeType)
+		require.Nil(t, n.Unfixable, "a test that fails to bind is no infrastructure failure, so the classifier leaves it to the agent")
 	}
 	row := waitForBatchProposal(t, ctx, clients, releaseID, 1, "skipped", batchProposalBudget)
 	outcomes := decodeNodeOutcomes(t, row.NodeOutcomes)
