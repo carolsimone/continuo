@@ -40,6 +40,9 @@ on:
       - 'scripts/release/**'
       - '.github/workflows/release.yml'
       - 'scripts/lib/common.sh'
+      # changelog-check.sh requires a CHANGELOG.md line naming a new
+      # continuo-contracts pin.
+      - 'topology-controller/pyproject.toml'
   workflow_call:
     inputs:
       image_tag:
