@@ -2,6 +2,7 @@ package runner_test
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -235,6 +236,68 @@ func TestRunner_Declined(t *testing.T) {
 		assert.Equal(t, proposal.StatusFailed, p.Status, "a node the model was asked about fails the attempt")
 		assert.Equal(t, map[string]proposal.NodeOutcome{"svc-a": noEditDeclined}, p.NodeOutcomes)
 		assert.Empty(t, h.pipeline.runs())
+	})
+}
+
+// A step that declines with no reason is recorded as having declined the fix,
+// so the attempt row, the hand-over event and every reader of them carry a
+// message. A reason of only white space is no reason. A step's own reason is
+// kept as it is.
+func TestRunner_AStepThatDeclinesWithNoReasonIsNamed(t *testing.T) {
+	const missing = "step dbt-compile declined the fix"
+	for name, tc := range map[string]struct {
+		reason string
+		want   string
+	}{
+		"no reason":               {reason: "", want: missing},
+		"a reason of white space": {reason: " \t\n", want: missing},
+		"a reason":                {reason: "no edit reaches this node", want: "no edit reaches this node"},
+	} {
+		t.Run("the prompt step gives "+name, func(t *testing.T) {
+			h := newHarness(t)
+			orig, _, ok := h.registry().Lookup("dbt-compile")
+			require.True(t, ok)
+			h.replaceStep(decliningPrompt{Prompt: orig.(step.Prompt), reason: tc.reason})
+			id := h.accept(trigger("compile", compileNode("svc-a")))
+
+			require.NoError(t, h.runner.Drive(ctx, id))
+
+			want := proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: tc.want, Code: model.HandoverReasonDeclined}
+			assert.Equal(t, &want, h.cluster(id, 1, 1).Outcome)
+			assert.Equal(t, map[string]proposal.NodeOutcome{"svc-a": want}, h.attempt(1).Proposal.NodeOutcomes)
+			assert.Equal(t, handedOverOf(id, 1, 1, handedOverNode("svc-a", want)), h.handedOverEvent())
+		})
+	}
+
+	t.Run("a context step gives no reason", func(t *testing.T) {
+		h := newHarness(t)
+		node := remediation.TriggerNode{NodeID: "model.sales.orders", ErrorSignature: "sig-v", NodeType: "dbt-model", Service: "svc-a"}
+		id := h.accept(trigger("validation", node))
+
+		require.NoError(t, h.runner.Drive(ctx, id))
+
+		want := proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: "step candidate_sql declined the fix", Code: model.HandoverReasonDeclined}
+		assert.Equal(t, &want, h.cluster(id, 1, 1).Outcome)
+		assert.Equal(t, handedOverOf(id, 1, 1, handedOverNode(node.NodeID, want)), h.handedOverEvent())
+	})
+
+	t.Run("a cross-service cluster whose step gives no reason", func(t *testing.T) {
+		h := newHarness(t)
+		orig, _, ok := h.registry().Lookup("upstream")
+		require.True(t, ok)
+		h.replaceStep(decliningPrompt{Prompt: orig.(step.Prompt), reason: ""})
+		h.bundle.nodes = map[string]ports.CandidateSource{"model.core.base": {RawCode: "select 1", Runtime: "dbt"}}
+		trig := trigger("compile", crossServiceNode())
+		trig.CodeBundleURI = "s3://bundles/rel-1.tar.gz"
+		id := h.accept(trig)
+
+		require.NoError(t, h.runner.Drive(ctx, id))
+
+		o := h.cluster(id, 1, 1).Outcome
+		require.NotNil(t, o)
+		assert.Equal(t, model.HandoverReasonDeclined, o.Code)
+		assert.Equal(t, "the change that broke this node lives in service core; a fix in this node's own service cannot ship before it: "+
+			"step upstream declined the fix", o.Reason)
 	})
 }
 
@@ -489,6 +552,92 @@ func TestRunner_ARoundsSpentNodeIsTriedAgain(t *testing.T) {
 
 	assert.Equal(t, 4, h.llm.calls(), "each try asks the model about both nodes")
 	assert.Equal(t, remediation.ClusterHandedOver, h.clusterFor(id, 2, "svc-a").Status)
+}
+
+// A cross-service cluster that fell back hands its members over with the code
+// of the cause: declined when a step declined it, which settles them for good,
+// and preflight_rounds_spent when pre-flight refused every round, which leaves
+// them to be grouped again in the next try.
+func TestRunner_ACrossServiceFallbackKeepsTheCodeOfItsCause(t *testing.T) {
+	const bundleURI = "s3://bundles/rel-1.tar.gz"
+	upstreamSource := map[string]ports.CandidateSource{"model.core.base": {RawCode: "select 1", Runtime: "dbt"}}
+	// clusterOf is the cluster of try that holds node as a member.
+	clusterOf := func(h *harness, id uuid.UUID, try int, node string) remediation.Cluster {
+		h.t.Helper()
+		for _, c := range h.store.Clusters(id) {
+			if c.Try == try && slices.Contains(c.Members, node) {
+				return c
+			}
+		}
+		h.t.Fatalf("no cluster of try %d holds %s", try, node)
+		return remediation.Cluster{}
+	}
+
+	t.Run("a step declined the upstream fix", func(t *testing.T) {
+		h := newHarness(t)
+		trig := trigger("compile", crossServiceNode(), compileNode("svc-b"))
+		trig.CodeBundleURI = bundleURI
+		id := h.accept(trig)
+		require.NoError(t, h.runner.Drive(ctx, id))
+		fellBack := clusterOf(h, id, 1, "svc-a")
+		require.Equal(t, remediation.ClusterFellBack, fellBack.Status)
+		require.Equal(t, &proposal.NodeOutcome{
+			Status: proposal.StatusSkipped,
+			Reason: "the change that broke this node lives in service core; a fix in this node's own service cannot ship before it: " +
+				"the changed ancestor's source is not in the release's code bundle",
+			Code: model.HandoverReasonDeclined,
+		}, fellBack.Outcome)
+
+		h.failGate(id, "svc-b")
+
+		carried := clusterOf(h, id, 2, "svc-a")
+		assert.Equal(t, remediation.ClusterHandedOver, carried.Status, "the members are settled, so the next try carries them handed over")
+		assert.Equal(t, "", carried.TypeName)
+		assert.Equal(t, fellBack.Outcome, carried.Outcome)
+		assert.Equal(t, proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: fellBack.Outcome.Reason, Code: model.HandoverReasonDeclined},
+			h.attempt(2).Proposal.NodeOutcomes["svc-a"])
+	})
+
+	t.Run("pre-flight refused every round of the upstream fix", func(t *testing.T) {
+		h := newHarness(t)
+		h.bundle.nodes = upstreamSource
+		h.llm.answer = func(req prompt.ProposeRequest) ports.ProposeResult {
+			r := fixAnswer(req)
+			if strings.Contains(req.User, "model.core.base") {
+				r.ProposedSQL, r.Confidence = "select 3", "low"
+			}
+			return r
+		}
+		trig := trigger("compile", crossServiceNode(), compileNode("svc-b"))
+		trig.CodeBundleURI = bundleURI
+		id := h.accept(trig)
+		require.NoError(t, h.runner.Drive(ctx, id))
+		fellBack := clusterOf(h, id, 1, "svc-a")
+		require.Equal(t, workflow.ClusterCrossService, fellBack.Kind)
+		require.Equal(t, remediation.ClusterFellBack, fellBack.Status)
+		require.NotNil(t, fellBack.Outcome)
+		require.Equal(t, model.HandoverReasonPreflightRoundsSpent, fellBack.Outcome.Code)
+		require.Equal(t, proposal.StatusSkipped, fellBack.Outcome.Status)
+		require.Contains(t, fellBack.Outcome.Reason, "the change that broke this node lives in service core; "+
+			"a fix in this node's own service cannot ship before it: "+lowConfidenceReason)
+		assert.Equal(t, map[string]proposal.NodeOutcome{"svc-a": *fellBack.Outcome, "svc-b": {Status: proposal.StatusVerifying}},
+			h.attempt(1).Proposal.NodeOutcomes)
+		calls := h.llm.calls()
+
+		h.failGate(id, "svc-b")
+
+		again := clusterOf(h, id, 2, "svc-a")
+		assert.Equal(t, workflow.ClusterCrossService, again.Kind, "the members are grouped again")
+		assert.Equal(t, "cross-service-upstream", again.TypeName)
+		assert.Equal(t, remediation.ClusterGathering, again.Status)
+		assert.Nil(t, again.Outcome)
+		assert.Equal(t, proposal.NodeOutcome{Status: proposal.StatusGenerating}, h.attempt(2).Proposal.NodeOutcomes["svc-a"])
+
+		require.NoError(t, h.drive(id))
+
+		assert.Equal(t, calls*2, h.llm.calls(), "the second try asks the model about the upstream fix again")
+		assert.Equal(t, remediation.ClusterFellBack, clusterOf(h, id, 2, "svc-a").Status)
+	})
 }
 
 // A trigger whose every node the classifier marked unfixable writes one

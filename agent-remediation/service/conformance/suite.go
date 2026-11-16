@@ -29,11 +29,10 @@ const (
 	// with the first round's calls and no more.
 	PreflightRevisionPasses Scenario = "preflight_revision_passes"
 	// PreflightRoundsSpent: pre-flight refuses the draft of every round the
-	// type allows. The cluster's members are handed over as
-	// preflight_rounds_spent, in one remediation.handed_over event. The
-	// members of a shared-upstream cluster each take their own type and are
-	// proposed, and the members of a cross-service cluster are handed over as
-	// declined.
+	// type allows. The members of a single or a cross-service cluster are
+	// handed over as preflight_rounds_spent, in one remediation.handed_over
+	// event. The members of a shared-upstream cluster each take their own type
+	// and are proposed.
 	PreflightRoundsSpent Scenario = "preflight_rounds_spent"
 	// GateFailsNextTryLearns: the first try's verification fails, the next
 	// try's first request shows why, and its verification passes. In a flow
@@ -487,7 +486,7 @@ func (sr *scenarioRun) expectType(files workflow.Set, f Fixture, typ workflow.Ty
 			e.that(!e.reachedModel(first, typ), "the upstream cluster that declined before the model reached it")
 		case workflow.ClusterCrossService:
 			if as := e.attempts(proposal.StatusSkipped); len(as) == 1 {
-				e.membersSkipped(first, as[0])
+				e.membersSkipped(first, as[0], model.HandoverReasonDeclined)
 			}
 			e.that(!e.reachedModel(first, typ), "the upstream cluster that declined before the model reached it")
 			e.modelCalls(0)
@@ -501,8 +500,10 @@ func (sr *scenarioRun) expectType(files workflow.Set, f Fixture, typ workflow.Ty
 // refusedEveryRound expects pre-flight to have refused the first cluster's
 // draft in every round its type allows, with the plan's calls of one try, and
 // the cluster to have ended by its shape: a shared-upstream cluster's members
-// each ran their own type, a cross-service cluster's members were skipped, and
-// a single cluster was handed over with its last round's first finding.
+// each ran their own type, a cross-service cluster's members were skipped with
+// the code preflight_rounds_spent and the last round's first finding in their
+// reason, and a single cluster was handed over with its last round's first
+// finding.
 func (e *expectation) refusedEveryRound(files workflow.Set, first remediation.Cluster, typ workflow.Type, plan typePlan) {
 	e.roundsSpent(first, typ, plan.firstTryCalls)
 	switch typ.Match.Cluster {
@@ -510,8 +511,12 @@ func (e *expectation) refusedEveryRound(files workflow.Set, first remediation.Cl
 		e.membersRanTheirTypes(files, first)
 	case workflow.ClusterCrossService:
 		if as := e.attempts(proposal.StatusSkipped); len(as) == 1 {
-			e.membersSkipped(first, as[0])
+			e.membersSkipped(first, as[0], model.HandoverReasonPreflightRoundsSpent)
 		}
+		finding, ok := e.firstFinding(first, typ)
+		e.that(ok, "pre-flight refused nothing in cluster %d", first.Cluster)
+		e.that(first.Outcome != nil && strings.HasSuffix(first.Outcome.Reason, ": "+finding.Message),
+			"cluster %d ended with %+v, want a reason that ends with the first finding %q", first.Cluster, first.Outcome, finding.Message)
 		e.modelCalls(plan.firstTryCalls)
 	default:
 		e.singleHandedOver(first, typ, true)
@@ -530,11 +535,7 @@ func (e *expectation) triesSpent(f Fixture, plan typePlan) {
 	}
 	e.everyTryFailed(plan.tries)
 	if len(as) == plan.tries+1 {
-		escalated := as[plan.tries]
-		e.handedOver(escalated, plan.tries, codes(model.HandoverReasonTriesSpent, e.trigger.NodeIDs()...))
-		for _, id := range e.trigger.NodeIDs() {
-			e.that(escalated.Proposal.NodeOutcomes[id].Reason != "", "node %s was handed over as tries_spent with no message", id)
-		}
+		e.handedOver(as[plan.tries], plan.tries, codes(model.HandoverReasonTriesSpent, e.trigger.NodeIDs()...))
 	}
 	e.proposedEvents(0)
 }

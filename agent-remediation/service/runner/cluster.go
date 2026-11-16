@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
@@ -160,7 +161,7 @@ func (r *Runner) runContext(ctx context.Context, run tryRun, c remediation.Clust
 	var added []remediation.Cluster
 	switch {
 	case out.Declined:
-		added, err = r.settle(run, &next, declined(out.Decline))
+		added, err = r.settle(run, &next, declined(ps.name, out.Decline))
 	case last:
 		err = moveCluster(&next, remediation.ClusterProposing)
 	}
@@ -211,7 +212,7 @@ func (r *Runner) runPrompt(ctx context.Context, run tryRun, c remediation.Cluste
 	next := c
 	var added []remediation.Cluster
 	if out.Declined {
-		added, err = r.settle(run, &next, declined(out.Decline))
+		added, err = r.settle(run, &next, declined(ps.name, out.Decline))
 	} else {
 		if next.Status == remediation.ClusterGathering {
 			err = moveCluster(&next, remediation.ClusterProposing)
@@ -436,8 +437,12 @@ func (r *Runner) writeArtifacts(ctx context.Context, d remediation.Draft) (remed
 // as its members' outcome. A single cluster is handed over. An upstream cluster
 // falls back: each member of a shared-upstream cluster is added as a single
 // cluster of its own, returned for the same commit, and the members of a
-// cross-service cluster are skipped as declined, because a fix in their own
-// service cannot ship before the change in the other service that broke them.
+// cross-service cluster are skipped with the code of o, because a fix in their
+// own service cannot ship before the change in the other service that broke
+// them. The code says why the upstream fix failed: declined when a step or the
+// draft declined it, which settles the members for good, and
+// preflight_rounds_spent when pre-flight refused every round, which leaves
+// them to be grouped again in the next try.
 func (r *Runner) settle(run tryRun, c *remediation.Cluster, o proposal.NodeOutcome) ([]remediation.Cluster, error) {
 	switch c.Kind {
 	case workflow.ClusterSharedUpstream:
@@ -456,7 +461,7 @@ func (r *Runner) settle(run tryRun, c *remediation.Cluster, o proposal.NodeOutco
 			Status: proposal.StatusSkipped,
 			Reason: fmt.Sprintf("the change that broke this node lives in %s; a fix in this node's own service cannot ship before it: %s",
 				describeService(service), o.Reason),
-			Code: pkg_model.HandoverReasonDeclined,
+			Code: o.Code,
 		}
 		r.logger.Info("cross-service upstream fix unavailable; members are skipped, not fixed in their own service",
 			"release", run.trigger.ReleaseID, "target", c.TargetNodeID, "members", c.Members, "reason", o.Reason)
@@ -485,9 +490,14 @@ func (r *Runner) memberClusters(run tryRun, c remediation.Cluster) []remediation
 	return out
 }
 
-// declined is the outcome of the members of a cluster a step declined, for
-// reason: skipped, with the code declined.
-func declined(reason string) proposal.NodeOutcome {
+// declined is the outcome of the members of a cluster the step named declined,
+// for reason: skipped, with the code declined. A step that gives no reason is
+// recorded as having declined the fix, so a hand-over never carries an empty
+// message.
+func declined(name workflow.StepName, reason string) proposal.NodeOutcome {
+	if strings.TrimSpace(reason) == "" {
+		reason = fmt.Sprintf("step %s declined the fix", name)
+	}
 	return proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: reason, Code: pkg_model.HandoverReasonDeclined}
 }
 

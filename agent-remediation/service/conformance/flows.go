@@ -156,7 +156,7 @@ func (sr *scenarioRun) expectFlow(files workflow.Set, f Fixture, sc Scenario) er
 	case FlowCrossServiceDeclines:
 		c, ok := e.firstOfKind(workflow.ClusterCrossService)
 		if as := e.attempts(proposal.StatusSkipped); ok && len(as) == 1 {
-			e.membersSkipped(c, as[0])
+			e.membersSkipped(c, as[0], model.HandoverReasonDeclined)
 		}
 	case FlowNoType:
 		if as := e.attempts(proposal.StatusSkipped); len(as) == 1 {

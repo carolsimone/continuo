@@ -321,7 +321,10 @@ func TestRunner_ADeclineWithNoTextHandsTheClusterOver(t *testing.T) {
 	c := h.cluster(id, 1, 1)
 	assert.Equal(t, "dbt-validation", c.TypeName)
 	assert.Equal(t, remediation.ClusterHandedOver, c.Status)
-	assert.Equal(t, &proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: "", Code: model.HandoverReasonDeclined}, c.Outcome)
+	want := proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: "step candidate_sql declined the fix", Code: model.HandoverReasonDeclined}
+	assert.Equal(t, &want, c.Outcome, "a step that gives no reason is recorded as having declined the fix")
+	assert.Equal(t, map[string]proposal.NodeOutcome{"model.sales.orders": want}, h.attempt(1).Proposal.NodeOutcomes)
+	assert.Equal(t, handedOverOf(id, 1, 1, handedOverNode("model.sales.orders", want)), h.handedOverEvent(), "and so is the event")
 	rows := h.stepRows(id, 1, 1)
 	require.Len(t, rows, 1, "the cluster stops at the declining step")
 	require.Len(t, rows["candidate_sql"], 1)

@@ -158,7 +158,7 @@ func TestRunner_AnUpstreamClusterWhoseRoundsAreSpentFallsBack(t *testing.T) {
 	assert.Equal(t, remediation.ClusterFellBack, clusters[0].Status)
 	require.NotNil(t, clusters[0].Outcome)
 	assert.Equal(t, proposal.StatusSkipped, clusters[0].Outcome.Status)
-	assert.Equal(t, model.HandoverReasonDeclined, clusters[0].Outcome.Code, "the members of a cross-service cluster that fell back are declined")
+	assert.Equal(t, model.HandoverReasonPreflightRoundsSpent, clusters[0].Outcome.Code, "the members of a cross-service cluster whose rounds are spent are handed over as such")
 	assert.Contains(t, clusters[0].Outcome.Reason, "the change that broke this node lives in service core; "+
 		"a fix in this node's own service cannot ship before it: ")
 }

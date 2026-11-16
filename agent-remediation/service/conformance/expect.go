@@ -180,8 +180,7 @@ func codes(code model.HandoverReason, nodeIDs ...string) map[string]model.Handov
 // to have enqueued exactly one remediation.handed_over event, under the
 // remediation's tenant, that carries the remediation's identity and the tries
 // it made and names exactly the nodes of want, in node id order, each with its
-// code and the message its outcome on attempt a carries. A message may be empty
-// where the step that handed the node over gave no reason.
+// code and the message its outcome on attempt a carries, which is never empty.
 func (e *expectation) handedOver(a Attempt, tries int, want map[string]model.HandoverReason) {
 	for _, id := range sortedKeys(want) {
 		o := a.Proposal.NodeOutcomes[id]
@@ -212,6 +211,7 @@ func (e *expectation) handedOver(a Attempt, tries int, want map[string]model.Han
 		w, ok := want[n.NodeID]
 		e.that(ok, "the hand-over event names node %s (%s), which the scenario does not hand over", n.NodeID, n.Reason)
 		e.that(ok && n.Reason == string(w), "the hand-over event gives node %s the reason %q, want %q", n.NodeID, n.Reason, w)
+		e.that(strings.TrimSpace(n.Message) != "", "the hand-over event gives node %s (%s) no message", n.NodeID, n.Reason)
 		e.that(n.Message == a.Proposal.NodeOutcomes[n.NodeID].Reason, "the hand-over event's message for node %s is %q, but its outcome says %q",
 			n.NodeID, n.Message, a.Proposal.NodeOutcomes[n.NodeID].Reason)
 	}
@@ -369,12 +369,15 @@ func (e *expectation) membersRanTheirTypes(files workflow.Set, c remediation.Clu
 }
 
 // membersSkipped expects the cross-service cluster c to have fallen back with
-// every member skipped in attempt a and handed over as declined, in the
-// remediation's first and only try, and no verification run.
-func (e *expectation) membersSkipped(c remediation.Cluster, a Attempt) {
+// every member skipped in attempt a and handed over with code, the cause of
+// the fall back, in the remediation's first and only try, and no verification
+// run. The code is declined when a step declined the upstream fix and
+// preflight_rounds_spent when pre-flight refused every round of it.
+func (e *expectation) membersSkipped(c remediation.Cluster, a Attempt, code model.HandoverReason) {
 	e.that(c.Status == remediation.ClusterFellBack, "cluster %d is %s, not fell_back", c.Cluster, c.Status)
+	e.that(c.Outcome != nil && c.Outcome.Code == code, "cluster %d ended with %+v, want the code %q", c.Cluster, c.Outcome, code)
 	e.members(a, c.Members, proposal.StatusSkipped)
-	e.handedOverInFirstTry(a, codes(model.HandoverReasonDeclined, c.Members...))
+	e.handedOverInFirstTry(a, codes(code, c.Members...))
 	e.runs(0)
 }
 
