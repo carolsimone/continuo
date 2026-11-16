@@ -21,9 +21,12 @@ import (
 
 // ── fakes: queries.ContractReader ────────────────────────────────────────────
 
-// fakeContractReader answers Live with live.
+// fakeContractReader answers Live with live, whatever the seq, recording
+// each seq it is asked for, and LatestPromotionSeq with latest.
 type fakeContractReader struct {
-	live []contractversion.LiveContract
+	live   []contractversion.LiveContract
+	latest int64
+	asked  []int64
 }
 
 func (f *fakeContractReader) Current(context.Context, string, string) (contractversion.VersionView, error) {
@@ -38,8 +41,13 @@ func (f *fakeContractReader) ByVersion(context.Context, string, string, int64) (
 	return contractversion.VersionView{}, contractversion.ErrNotFound
 }
 
-func (f *fakeContractReader) Live(context.Context, string) ([]contractversion.LiveContract, error) {
+func (f *fakeContractReader) Live(_ context.Context, _ string, seq int64) ([]contractversion.LiveContract, error) {
+	f.asked = append(f.asked, seq)
 	return slices.Clone(f.live), nil
+}
+
+func (f *fakeContractReader) LatestPromotionSeq(context.Context, string) (int64, error) {
+	return f.latest, nil
 }
 
 var _ queries.ContractReader = (*fakeContractReader)(nil)
@@ -276,6 +284,7 @@ func TestLiveRewrite_PutsOnlyChangedFilesThenTheIndex(t *testing.T) {
 
 	require.NoError(t, f.folder.Rewrite(context.Background(), livePromotion(3)))
 
+	assert.Equal(t, []int64{3}, f.reader.asked, "the live set is the promotion's nodes")
 	assert.Equal(t, []string{"put analytics.a", "index"}, f.store.writes())
 	assert.Equal(t, "analytics.a v2 servers=true", string(f.store.files["analytics.a"]),
 		"the file is the published form: the counter and the install's server")
@@ -350,6 +359,58 @@ func TestLiveRewrite_AFolderAlreadyWrittenForThePromotionWritesNothing(t *testin
 	require.NoError(t, f.folder.Rewrite(context.Background(), livePromotion(3)))
 
 	assert.Empty(t, f.store.writes())
+	assert.Equal(t, 1, f.lease.releases)
+}
+
+// A node the promotion added gets its file in the same rewrite, and a node it
+// dropped loses its file in the same rewrite.
+func TestLiveRewrite_ANewNodeGetsItsFileAndADroppedNodeLosesItInTheSamePromotion(t *testing.T) {
+	f := newLiveFolderFixture(liveContract("analytics.a", 1, "sha256:a1"), liveContract("analytics.new", 1, "sha256:n1"))
+	f.listed(2,
+		ports.LiveIndexFile{UniqueID: "analytics.a", Version: 1, ContractHash: "sha256:a1"},
+		ports.LiveIndexFile{UniqueID: "analytics.dropped", Version: 2, ContractHash: "sha256:d2"},
+	)
+
+	require.NoError(t, f.folder.Rewrite(context.Background(), livePromotion(3)))
+
+	assert.Equal(t, []string{"put analytics.new", "delete analytics.dropped", "index"}, f.store.writes())
+	assert.Equal(t, []ports.LiveIndexFile{
+		{UniqueID: "analytics.a", Version: 1, ContractHash: "sha256:a1"},
+		{UniqueID: "analytics.new", Version: 1, ContractHash: "sha256:n1"},
+	}, f.store.index.Files)
+}
+
+// A promotion whose bundle names no node empties the folder: every file is
+// deleted and the index lists none.
+func TestLiveRewrite_AnEmptyPromotionDeletesEveryFile(t *testing.T) {
+	f := newLiveFolderFixture()
+	f.listed(2,
+		ports.LiveIndexFile{UniqueID: "analytics.a", Version: 1, ContractHash: "sha256:a1"},
+		ports.LiveIndexFile{UniqueID: "analytics.b", Version: 1, ContractHash: "sha256:b1"},
+	)
+
+	require.NoError(t, f.folder.Rewrite(context.Background(), livePromotion(3)))
+
+	writes := f.store.writes()
+	require.Len(t, writes, 3)
+	assert.ElementsMatch(t, []string{"delete analytics.a", "delete analytics.b"}, writes[:2], "deletes run at once, in any order")
+	assert.Equal(t, "index", writes[2])
+	assert.Empty(t, f.store.index.Files)
+	assert.Empty(t, f.store.files)
+}
+
+// A promotion older than the newest one whose contracts are recorded writes
+// nothing, even when the folder's watermark is behind both: the newer
+// promotion's rewrite, redelivered, writes the folder, and the older set
+// would put superseded files back or delete current ones.
+func TestLiveRewrite_ANewerPromotionsContractsWriteNothing(t *testing.T) {
+	f := newLiveFolderFixture(liveContract("analytics.a", 1, "sha256:a1"))
+	f.reader.latest = 5
+
+	require.NoError(t, f.folder.Rewrite(context.Background(), livePromotion(3)))
+
+	assert.Empty(t, f.store.writes())
+	assert.Empty(t, f.reader.asked)
 	assert.Equal(t, 1, f.lease.releases)
 }
 
@@ -441,6 +502,7 @@ func TestLiveFolder_ChangedSettingsRewriteEveryFileAtStart(t *testing.T) {
 	assert.Equal(t, f.folder.SettingsSHA256(), f.store.index.SettingsSHA256)
 	assert.Equal(t, []string{f.folder.SettingsSHA256()}, f.lease.settingsSaved)
 	assert.Equal(t, 1, f.lease.releases)
+	assert.Equal(t, []int64{7}, f.reader.asked, "the live set of the promotion the folder's watermark names")
 
 	for name, settings := range map[string]string{"current": f.folder.SettingsSHA256(), "never written": ""} {
 		g := newLiveFolderFixture(liveContract("analytics.a", 1, "sha256:a1"))
@@ -451,10 +513,27 @@ func TestLiveFolder_ChangedSettingsRewriteEveryFileAtStart(t *testing.T) {
 	}
 }
 
+// A start-up rewrite writes nothing for a folder with no watermark, or while
+// a newer promotion's contracts wait for their own rewrite.
+func TestLiveFolder_AStartRewriteWithNoWatermarkOrANewerPromotionWritesNothing(t *testing.T) {
+	noWatermark := newLiveFolderFixture(liveContract("analytics.a", 1, "sha256:a1"))
+	noWatermark.lease.settings = "old-settings"
+	newer := newLiveFolderFixture(liveContract("analytics.a", 1, "sha256:a1"))
+	newer.lease.seq, newer.lease.settings = 7, "old-settings"
+	newer.reader.latest = 8
+
+	for name, f := range map[string]*liveFolderFixture{"no watermark": noWatermark, "newer promotion": newer} {
+		require.NoError(t, f.folder.RefreshAtStart(context.Background(), fakeTenants{"default"}, time.Millisecond), name)
+		assert.Empty(t, f.store.writes(), name)
+		assert.Empty(t, f.reader.asked, name)
+		assert.Empty(t, f.lease.settingsSaved, name)
+	}
+}
+
 // A start-up rewrite that fails is tried again until it succeeds.
 func TestLiveFolder_AFailedStartRewriteIsTriedAgain(t *testing.T) {
 	f := newLiveFolderFixture(liveContract("analytics.a", 1, "sha256:a1"))
-	f.lease.settings = "old-settings"
+	f.lease.seq, f.lease.settings = 7, "old-settings"
 	f.lease.heldElsewhere = true
 	go func() {
 		for f.leaseAcquires() < 2 {

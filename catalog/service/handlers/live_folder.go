@@ -40,8 +40,12 @@ const (
 )
 
 // LiveFolder writes a tenant's live contracts folder: one published contract
-// file per live node whose current contract is not an ephemeral model's, and
-// the folder's index, written last. A file's bytes depend only on the node's
+// file per node of the promotion it is written for whose current contract is
+// not an ephemeral model's, and the folder's index, written last. The nodes of
+// a promotion are those whose contract watermark is its seq: every bundle
+// names every python-odcs node of the release, so the set never waits for the
+// topology swap, takes a node the release added at once and drops a node the
+// release removed at once. A file's bytes depend only on the node's
 // current contract version and the publishing settings, so a rewrite puts
 // only the files whose version or contract hash differs from the index, or
 // every file when the index was written with other settings, and deletes the
@@ -49,7 +53,10 @@ const (
 //
 // Every rewrite of a tenant holds the tenant's live-folder lease, so two
 // rewrites never interleave their writes, and reads the live contracts only
-// once it holds the lease, so a later rewrite always writes a later state.
+// once it holds the lease, so a later rewrite always writes a later state. A
+// rewrite for a promotion older than the newest one whose contracts are
+// recorded writes nothing: that newer promotion's own rewrite writes the
+// folder, and the older set would put superseded files back.
 type LiveFolder struct {
 	contracts queries.ContractReader
 	store     ports.LiveContractsStore
@@ -110,12 +117,13 @@ func (l *LiveFolder) SettingsSHA256() string {
 }
 
 // Rewrite brings the tenant's folder up to date after the promotion in. It
-// does nothing when in.PromotionSeq is at or below the folder's watermark, or
+// does nothing when in.PromotionSeq is at or below the folder's watermark,
 // when the index was already written for this promotion or a later one with
 // the same settings (an earlier delivery finished the rewrite but not its
-// transaction B). Otherwise, holding the tenant's live-folder lease, it puts
-// each changed file, deletes each file no longer published and puts the
-// index. A lease another rewrite holds is ErrLiveFolderBusy; a write that
+// transaction B), or when a newer promotion's contracts are already recorded.
+// Otherwise, holding the tenant's live-folder lease, it puts each changed file
+// of the promotion's nodes, deletes each file no longer published and puts
+// the index. A lease another rewrite holds is ErrLiveFolderBusy; a write that
 // fails ends the rewrite before the index, so the old index still describes
 // every file it lists, and the message's redelivery finishes the work.
 func (l *LiveFolder) Rewrite(ctx context.Context, in domainModel.PromoteReleaseInput) error {
@@ -137,8 +145,26 @@ func (l *LiveFolder) Rewrite(ctx context.Context, in domainModel.PromoteReleaseI
 				"tenant_id", in.TenantID, "promotion_seq", in.PromotionSeq, "index_promotion_seq", prev.PromotionSeq)
 			return nil
 		}
+		if newer, err := l.superseded(ctx, in.TenantID, in.PromotionSeq); err != nil || newer {
+			return err
+		}
 		return l.write(ctx, in.TenantID, prev, found, false, in.PromotionSeq, in.ReleaseID)
 	})
+}
+
+// superseded reports whether a promotion newer than seq has its contracts
+// recorded, so a rewrite for seq would publish a superseded set.
+func (l *LiveFolder) superseded(ctx context.Context, tenantID string, seq int64) (bool, error) {
+	latest, err := l.contracts.LatestPromotionSeq(ctx, tenantID)
+	if err != nil {
+		return false, fmt.Errorf("read the newest contract promotion: %w", err)
+	}
+	if latest > seq {
+		l.logger.Info("a newer promotion's contracts are recorded; its rewrite writes the live folder",
+			"tenant_id", tenantID, "promotion_seq", seq, "newest_promotion_seq", latest)
+		return true, nil
+	}
+	return false, nil
 }
 
 // atWatermark reports whether the folder's watermark is at or above the
@@ -156,22 +182,31 @@ func (l *LiveFolder) atWatermark(ctx context.Context, in domainModel.PromoteRele
 	return false, nil
 }
 
-// RewriteAll puts every published file of the tenant, deletes each file the
-// index lists that is no longer published, puts the index, which keeps the
-// promotion the previous one named, and stores the settings fingerprint.
+// RewriteAll rewrites the folder for the promotion its watermark names: it
+// puts every published file of that promotion's nodes, deletes each file the
+// index lists that is no longer published, puts the index and stores the
+// settings fingerprint. A folder with no watermark has nothing to rewrite. A
+// newer promotion whose contracts are recorded leaves the folder to that
+// promotion's own rewrite, which puts every file written with other settings.
 func (l *LiveFolder) RewriteAll(ctx context.Context, tenantID string) error {
 	return l.underLease(ctx, tenantID, func(ctx context.Context) error {
 		seq, _, err := l.state.Read(ctx, tenantID)
 		if err != nil {
 			return fmt.Errorf("read the live folder's watermark: %w", err)
 		}
+		if seq == 0 {
+			return nil
+		}
+		if newer, err := l.superseded(ctx, tenantID, seq); err != nil || newer {
+			return err
+		}
 		prev, found, err := l.store.ReadIndex(ctx, tenantID)
 		if err != nil {
 			return fmt.Errorf("read the live index: %w", err)
 		}
 		releaseID := ""
-		if found {
-			seq, releaseID = prev.PromotionSeq, prev.ReleaseID
+		if found && prev.PromotionSeq == seq {
+			releaseID = prev.ReleaseID
 		}
 		if err := l.write(ctx, tenantID, prev, found, true, seq, releaseID); err != nil {
 			return err
@@ -270,7 +305,7 @@ func (l *LiveFolder) underLease(ctx context.Context, tenantID string, fn func(ct
 	return nil
 }
 
-// write puts the files of the tenant's live contracts that must be written
+// write puts the files of promotionSeq's live contracts that must be written
 // (every one when all is set, or when prev was not found or was written with
 // other settings), deletes the files prev lists that are no longer published,
 // then puts the index naming promotionSeq and releaseID.
@@ -282,7 +317,7 @@ func (l *LiveFolder) write(
 	promotionSeq int64,
 	releaseID string,
 ) error {
-	live, err := l.contracts.Live(ctx, tenantID)
+	live, err := l.contracts.Live(ctx, tenantID, promotionSeq)
 	if err != nil {
 		return fmt.Errorf("read the live contracts: %w", err)
 	}

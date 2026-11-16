@@ -46,13 +46,6 @@ func newLiveFolderFixture(t *testing.T, server *contractversion.Server) *liveFol
 	return &liveFolderFixture{contractsFixture: c, folder: folder}
 }
 
-// liveNodes creates the tenant's nodes as the topology swap leaves them:
-// live.
-func (f *liveFolderFixture) liveNodes(uniqueIDs ...string) {
-	f.exec(f.tenantID, `UNWIND $ids AS id CREATE (:Node {tenant_id: $tenant_id, unique_id: id, active: true})`,
-		map[string]any{"ids": uniqueIDs})
-}
-
 // object returns the live folder's object name (a file or _index.json) and
 // whether it exists.
 func (f *liveFolderFixture) object(name string) (string, bool) {
@@ -86,7 +79,6 @@ func (f *liveFolderFixture) livePuts() []string {
 func TestLiveFolder_APromotionPublishesTheFolderAndItsWatermark(t *testing.T) {
 	server := &contractversion.Server{Type: "postgres", Host: "warehouse.internal.example", Port: 5432, Database: "continuo_dbt"}
 	f := newLiveFolderFixture(t, server)
-	f.liveNodes("analytics.py_daily_kpis", "analytics.py_weekly")
 	ctx := context.Background()
 
 	first := f.release("rel-1", 41, map[string]string{"analytics.py_daily_kpis": "sha256:3f1c", "analytics.py_weekly": "sha256:a0b1"})
@@ -129,32 +121,62 @@ func TestLiveFolder_APromotionPublishesTheFolderAndItsWatermark(t *testing.T) {
 	assert.Equal(t, int64(43), f.value(live+`RETURN m.promotion_seq AS v`))
 }
 
-// A retired node's file is deleted by the next rewrite.
-func TestLiveFolder_ARetiredNodeLosesItsFile(t *testing.T) {
+// The live folder never waits for the topology swap: a node a promotion adds,
+// which the contracts group creates inactive, gets its file in that
+// promotion's rewrite, and a node a promotion drops loses its file in that
+// rewrite while the swap has not retired it yet.
+func TestLiveFolder_ANewNodeAndADroppedNodeChangeTheFolderInTheSamePromotion(t *testing.T) {
 	f := newLiveFolderFixture(t, nil)
-	f.liveNodes("analytics.py_daily_kpis", "analytics.py_weekly")
 	ctx := context.Background()
+	f.exec(f.tenantID, `CREATE (:Node {tenant_id: $tenant_id, unique_id: 'analytics.py_weekly', active: true})`, nil)
 	require.NoError(t, f.handler.Handle(ctx, "41-0", nil,
 		f.release("rel-1", 41, map[string]string{"analytics.py_daily_kpis": "sha256:3f1c", "analytics.py_weekly": "sha256:a0b1"})))
-	_, ok := f.object("analytics.py_weekly.odcs.yaml")
-	require.True(t, ok)
+	_, ok := f.object("analytics.py_daily_kpis.odcs.yaml")
+	assert.True(t, ok, "a node the graph did not hold, created inactive, is published at once")
+	assert.Equal(t, false,
+		f.value(`MATCH (n:Node {tenant_id: $tenant_id, unique_id: 'analytics.py_daily_kpis'}) RETURN n.active AS v`))
 
-	f.exec(f.tenantID, `MATCH (n:Node {tenant_id: $tenant_id, unique_id: 'analytics.py_weekly'}) SET n.active = false, n.retired_at = datetime()`, nil)
 	require.NoError(t, f.handler.Handle(ctx, "42-0", nil,
-		f.release("rel-2", 42, map[string]string{"analytics.py_daily_kpis": "sha256:3f1c"})))
+		f.release("rel-2", 42, map[string]string{"analytics.py_daily_kpis": "sha256:3f1c", "analytics.py_new": "sha256:c0de"})))
 
 	_, ok = f.object("analytics.py_weekly.odcs.yaml")
-	assert.False(t, ok, "the retired node's file is deleted")
-	file, ok := f.object("analytics.py_daily_kpis.odcs.yaml")
-	require.True(t, ok)
+	assert.False(t, ok, "the dropped node's file is deleted while the node is still active")
+	assert.Equal(t, true,
+		f.value(`MATCH (n:Node {tenant_id: $tenant_id, unique_id: 'analytics.py_weekly'}) RETURN n.active AS v`))
+	file, ok := f.object("analytics.py_new.odcs.yaml")
+	require.True(t, ok, "the added node's file is put in the same promotion")
 	assert.NotContains(t, file, "servers:", "no server settings, no servers entry")
+	raw, _ := f.object("_index.json")
+	var index map[string]any
+	require.NoError(t, json.Unmarshal([]byte(raw), &index))
+	assert.Equal(t, []any{
+		map[string]any{"unique_id": "analytics.py_daily_kpis", "key": "analytics.py_daily_kpis.odcs.yaml", "version": float64(1), "contract_hash": "sha256:3f1c"},
+		map[string]any{"unique_id": "analytics.py_new", "key": "analytics.py_new.odcs.yaml", "version": float64(1), "contract_hash": "sha256:c0de"},
+	}, index["files"])
+}
+
+// A promotion whose bundle names no contract empties the folder.
+func TestLiveFolder_AnEmptyBundleEmptiesTheFolder(t *testing.T) {
+	f := newLiveFolderFixture(t, nil)
+	ctx := context.Background()
+	require.NoError(t, f.handler.Handle(ctx, "41-0", nil,
+		f.release("rel-1", 41, map[string]string{"analytics.py_daily_kpis": "sha256:3f1c"})))
+
+	require.NoError(t, f.handler.Handle(ctx, "42-0", nil, f.release("rel-2", 42, map[string]string{})))
+
+	_, ok := f.object("analytics.py_daily_kpis.odcs.yaml")
+	assert.False(t, ok)
+	raw, _ := f.object("_index.json")
+	var index map[string]any
+	require.NoError(t, json.Unmarshal([]byte(raw), &index))
+	assert.Equal(t, []any{}, index["files"])
+	assert.Equal(t, float64(42), index["promotion_seq"])
 }
 
 // At start, a tenant whose folder was written with other settings has every
 // file rewritten with the current ones, and the new fingerprint stored.
 func TestLiveFolder_ChangedSettingsRewriteTheFolderAtStart(t *testing.T) {
 	f := newLiveFolderFixture(t, nil)
-	f.liveNodes("analytics.py_daily_kpis")
 	ctx := context.Background()
 	require.NoError(t, f.handler.Handle(ctx, "41-0", nil,
 		f.release("rel-1", 41, map[string]string{"analytics.py_daily_kpis": "sha256:3f1c"})))

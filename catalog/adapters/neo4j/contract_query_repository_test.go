@@ -109,28 +109,36 @@ func TestContractQueryRepository_CurrentAndByVersion(t *testing.T) {
 	assert.ErrorIs(t, err, contractversion.ErrNotFound)
 }
 
-func TestContractQueryRepository_LiveSkipsARetiredNode(t *testing.T) {
+// The live set of a promotion is the nodes its bundle named, by their
+// contract watermark: a node the promotion added, which the contracts group
+// created inactive before any topology swap, is in it; a node the promotion
+// dropped is not, even while the swap has not retired it yet.
+func TestContractQueryRepository_LiveIsThePromotionsNodes(t *testing.T) {
 	f := newSwapFixture(t)
 	ctx := context.Background()
 	f.promoteAt("rel-40", 40, []topology.ReleasePromotedTopologyNode{
-		modelNode("analytics.z_last"), modelNode(kpisNode), modelNode("analytics.retired"), modelNode("analytics.no_contract"),
+		modelNode("analytics.z_last"), modelNode(kpisNode), modelNode("analytics.dropped"), modelNode("analytics.no_contract"),
 	}, time.Now())
 	f.writeContracts(contractPromotion("rel-41", 41),
 		contractOf("analytics.z_last", contractB, "z"), contractOf(kpisNode, contractA, "service-py"),
-		contractOf("analytics.retired", contractA, "gone"))
-	// A release without analytics.retired retires it.
-	f.promoteAt("rel-42", 42, []topology.ReleasePromotedTopologyNode{
-		modelNode("analytics.z_last"), modelNode(kpisNode), modelNode("analytics.no_contract"),
-	}, time.Now())
-	require.Equal(t, false, f.node("analytics.retired")["active"])
+		contractOf("analytics.dropped", contractA, "gone"))
+	// rel-42 drops analytics.dropped and adds analytics.added, before its
+	// topology swap.
+	f.writeContracts(contractPromotion("rel-42", 42),
+		contractOf("analytics.z_last", contractB, "z"), contractOf(kpisNode, contractA, "service-py"),
+		contractOf("analytics.added", contractB, "new"))
+	require.Equal(t, true, f.node("analytics.dropped")["active"], "the swap has not retired it")
+	require.Equal(t, false, f.node("analytics.added")["active"], "the swap has not made it live")
 
-	live, err := f.contractReader().Live(ctx, f.tenant)
+	live, err := f.contractReader().Live(ctx, f.tenant, 42)
 	require.NoError(t, err)
-	require.Len(t, live, 2)
-	assert.Equal(t, "analytics.py_daily_kpis", live[0].UniqueID, "sorted by unique id")
-	assert.Equal(t, "analytics.z_last", live[1].UniqueID)
+	ids := []string{}
+	for _, c := range live {
+		ids = append(ids, c.UniqueID)
+	}
+	assert.Equal(t, []string{"analytics.added", kpisNode, "analytics.z_last"}, ids, "sorted by unique id")
 
-	got := live[0]
+	got := live[1]
 	assertUTC(t, promotedAtOf(41), got.Provenance.PromotedAt)
 	got.Provenance.PromotedAt = time.Time{}
 	assert.Equal(t, contractversion.LiveContract{
@@ -146,10 +154,32 @@ func TestContractQueryRepository_LiveSkipsARetiredNode(t *testing.T) {
 			SourcePath:        "contracts/py_daily_kpis.odcs.yaml",
 			PromotionSeq:      41,
 		},
-	}, got)
+	}, got, "an unchanged contract keeps the provenance of the promotion that made it current")
 
-	// The retired node keeps its history and its pointer, and has no current
-	// contract.
+	older, err := f.contractReader().Live(ctx, f.tenant, 41)
+	require.NoError(t, err)
+	require.Len(t, older, 1)
+	assert.Equal(t, "analytics.dropped", older[0].UniqueID, "only the node no newer promotion reached keeps seq 41")
+
+	latest, err := f.contractReader().LatestPromotionSeq(ctx, f.tenant)
+	require.NoError(t, err)
+	assert.Equal(t, int64(42), latest)
+	none, err := f.contractReader().LatestPromotionSeq(ctx, f.another().tenant)
+	require.NoError(t, err)
+	assert.Zero(t, none, "a tenant with no contract has no contract promotion")
+}
+
+// A retired node keeps its history and its pointer, and has no current
+// contract.
+func TestContractQueryRepository_ARetiredNodeHasNoCurrentContract(t *testing.T) {
+	f := newSwapFixture(t)
+	ctx := context.Background()
+	f.promoteAt("rel-40", 40, []topology.ReleasePromotedTopologyNode{modelNode(kpisNode), modelNode("analytics.retired")}, time.Now())
+	f.writeContracts(contractPromotion("rel-41", 41),
+		contractOf(kpisNode, contractA, "service-py"), contractOf("analytics.retired", contractA, "gone"))
+	f.promoteAt("rel-42", 42, []topology.ReleasePromotedTopologyNode{modelNode(kpisNode)}, time.Now())
+	require.Equal(t, false, f.node("analytics.retired")["active"])
+
 	hash, _ := f.contractPointer("analytics.retired")
 	assert.Equal(t, contractA, hash, "a retired node keeps its pointer")
 	history, err := f.contractReader().History(ctx, f.tenant, "analytics.retired", 0)
@@ -169,9 +199,12 @@ func TestContractQueryRepository_ReadsOneTenant(t *testing.T) {
 	other.writeContracts(contractPromotion("rel-41", 41), contractOf(kpisNode, contractA, "theirs"))
 	ctx := context.Background()
 
-	live, err := f.contractReader().Live(ctx, f.tenant)
+	live, err := f.contractReader().Live(ctx, f.tenant, 41)
 	require.NoError(t, err)
 	assert.Empty(t, live)
+	latest, err := f.contractReader().LatestPromotionSeq(ctx, f.tenant)
+	require.NoError(t, err)
+	assert.Zero(t, latest)
 	history, err := f.contractReader().History(ctx, f.tenant, kpisNode, 0)
 	require.NoError(t, err)
 	assert.Empty(t, history)

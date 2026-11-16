@@ -194,6 +194,9 @@ func newIsolationFixture(t *testing.T) *isolationFixture {
 	seedIsolationTenant(f.a, isoMarkA, 1, false)
 	seedIsolationTenant(f.b, isoMarkB, 2, true)
 
+	// B alone has a contract promotion 9.
+	f.b.writeContracts(contractPromotion("r9", 9), isoContract(isoOnlyB, 9, isoMarkB))
+
 	// B's live folder has a watermark and settings, and B holds its
 	// live-folder lease, so none of A's live-folder calls may read or take
 	// them.
@@ -438,11 +441,16 @@ func (f *isolationFixture) rows() []isolationRow {
 			assert.ErrorIs(t, err, contractversion.ErrNotFound)
 		}},
 		{"ContractQueryRepository.Live", func(t *testing.T) {
-			live, err := f.contracts.Live(ctx, tenant())
+			live, err := f.contracts.Live(ctx, tenant(), 2)
 			require.NoError(t, err)
 			require.Len(t, live, 1, "A's one live contract, not B's two")
 			assert.Equal(t, isoUp, live[0].UniqueID)
 			onlyA(t, live)
+		}},
+		{"ContractQueryRepository.LatestPromotionSeq", func(t *testing.T) {
+			latest, err := f.contracts.LatestPromotionSeq(ctx, tenant())
+			require.NoError(t, err)
+			assert.Equal(t, int64(2), latest, "A's newest contract promotion, not B's")
 		}},
 		{"releasePromotionRepository.PromoteRelease", func(t *testing.T) {
 			assert.Equal(t, topology.PromotionApplied, f.a.promoteAt("r3", 3, releaseOf(modelNode(isoUp)), promotedAtOf(3)))

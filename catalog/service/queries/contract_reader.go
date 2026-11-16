@@ -24,7 +24,15 @@ type ContractReader interface {
 	// document. A version the node has no promotion edge for returns
 	// contractversion.ErrNotFound.
 	ByVersion(ctx context.Context, tenantID, uniqueID string, version int64) (contractversion.VersionView, error)
-	// Live returns the current contract of every live node that has one,
-	// sorted by unique id.
-	Live(ctx context.Context, tenantID string) ([]contractversion.LiveContract, error)
+	// Live returns the current contract of every node whose contract
+	// watermark is promotionSeq, sorted by unique id: the nodes that
+	// promotion's bundle named and no newer promotion reached, whatever their
+	// active flag. Every bundle names every python-odcs node of the release's
+	// topology, so a node the promotion added is in the set, and a node it
+	// dropped, whose watermark lags, is not.
+	Live(ctx context.Context, tenantID string, promotionSeq int64) ([]contractversion.LiveContract, error)
+	// LatestPromotionSeq returns the largest contract watermark of the
+	// tenant's nodes: the newest promotion whose contracts are recorded. It
+	// is 0 when no node has one.
+	LatestPromotionSeq(ctx context.Context, tenantID string) (int64, error)
 }

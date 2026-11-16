@@ -23,10 +23,11 @@ import (
 // each carries, never by time: the counter is assigned at promotion and never
 // goes backwards. The current version is the edge whose counter the node's
 // :CURRENT_CONTRACT pointer carries, so after a revert the first edge to the
-// same stored contract is not current. Every read of the pointer goes through
-// a live node: a retired node keeps its pointer as the record of its last
-// contract, but none of its versions is current and it has no current
-// contract.
+// same stored contract is not current. Current, History and ByVersion read
+// the pointer through a live node: a retired node keeps its pointer as the
+// record of its last contract, but none of its versions is current and it has
+// no current contract. Live instead reads the nodes a promotion's bundle
+// named, by their contract watermark, whatever their active flag.
 type ContractQueryRepository struct {
 	client Neo4jClient
 }
@@ -127,11 +128,12 @@ func (r *ContractQueryRepository) one(ctx context.Context, tenantID, uniqueID, q
 	return views[0], nil
 }
 
-// liveContractsCypher returns every live node's current contract with the
-// promotion edge that made it current, sorted by unique id.
+// liveContractsCypher returns the current contract of every node whose
+// contract watermark is $promotion_seq, with the promotion edge that made it
+// current, sorted by unique id.
 const liveContractsCypher = `
 MATCH (n:Node {tenant_id: $tenant_id})-[cur:CURRENT_CONTRACT]->(v:ContractVersion {tenant_id: $tenant_id})
-WHERE coalesce(n.active, true)
+WHERE n.contract_promotion_seq = $promotion_seq
 MATCH (n)-[e:CONTRACT_PROMOTED]->(v)
 WHERE e.version = cur.version
 RETURN n.unique_id AS unique_id, e.version AS version, v.contract_hash AS contract_hash, v.document AS document,
@@ -139,11 +141,18 @@ RETURN n.unique_id AS unique_id, e.version AS version, v.contract_hash AS contra
        e.source_path AS source_path, e.promotion_seq AS promotion_seq, e.promoted_at AS promoted_at
 ORDER BY unique_id`
 
-// Live returns the current contract of every live node that has one, sorted
-// by unique id.
-func (r *ContractQueryRepository) Live(ctx context.Context, tenantID string) ([]contractversion.LiveContract, error) {
+// latestContractPromotionCypher returns the largest contract watermark of
+// the tenant's nodes, 0 when none has one.
+const latestContractPromotionCypher = `
+MATCH (n:Node {tenant_id: $tenant_id})
+WHERE n.contract_promotion_seq IS NOT NULL
+RETURN coalesce(max(n.contract_promotion_seq), 0) AS seq`
+
+// Live returns the current contract of every node whose contract watermark
+// is promotionSeq, active or not, sorted by unique id.
+func (r *ContractQueryRepository) Live(ctx context.Context, tenantID string, promotionSeq int64) ([]contractversion.LiveContract, error) {
 	live, err := inReadTx(ctx, r.client, tenantID, func(run TenantRunner) ([]contractversion.LiveContract, error) {
-		res, err := run.Run(ctx, liveContractsCypher, nil)
+		res, err := run.Run(ctx, liveContractsCypher, map[string]any{"promotion_seq": promotionSeq})
 		if err != nil {
 			return nil, err
 		}
@@ -183,6 +192,26 @@ func (r *ContractQueryRepository) Live(ctx context.Context, tenantID string) ([]
 		return nil, fmt.Errorf("ContractQueryRepository.Live: %w", err)
 	}
 	return live, nil
+}
+
+// LatestPromotionSeq returns the largest contract watermark of the tenant's
+// nodes, 0 when no node has one.
+func (r *ContractQueryRepository) LatestPromotionSeq(ctx context.Context, tenantID string) (int64, error) {
+	seq, err := inReadTx(ctx, r.client, tenantID, func(run TenantRunner) (int64, error) {
+		res, err := run.Run(ctx, latestContractPromotionCypher, nil)
+		if err != nil {
+			return 0, err
+		}
+		rec, err := res.Single(ctx)
+		if err != nil {
+			return 0, err
+		}
+		return toInt64(recordValue(rec, "seq")), nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("ContractQueryRepository.LatestPromotionSeq: %w", err)
+	}
+	return seq, nil
 }
 
 // collectContractVersions runs a query projected by contractVersionColumns
