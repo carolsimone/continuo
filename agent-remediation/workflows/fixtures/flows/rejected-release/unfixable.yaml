@@ -1,7 +1,7 @@
 # The classifier read a database that refused the connection: a new release run
 # clears that, and no change to the release's source fixes it. It marked the
 # node unfixable, so the runner hands it over without a model call and records
-# one skipped attempt.
+# one skipped attempt whose reason is the failure's error line.
 kind: fixture
 version: 1
 flow: rejected-release
@@ -24,7 +24,7 @@ trigger:
       node_type: dbt-model
       unfixable:
         reason: classifier_infra
-        detail: "infra:connection_refused"
+        detail: 'could not connect to server: connection refused'
 service_repo_paths:
   sales: services/sales
 objects:

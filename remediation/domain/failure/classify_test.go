@@ -247,6 +247,33 @@ func TestClassify_DropNamesWhyNoFixReachesTheNode(t *testing.T) {
 	}
 }
 
+// TestClassification_UnfixableDetail pins the message a dropped failure is
+// handed over with: its key error line, and the matched rule only when the
+// classification holds no line.
+func TestClassification_UnfixableDetail(t *testing.T) {
+	cases := []struct {
+		name string
+		got  Classification
+		want string
+	}{
+		{"infra in the text log", Classify("could not connect to database: connection refused"),
+			"could not connect to database: connection refused"},
+		{"infra in the structured result", ClassifyWithStructured(&StructuredResult{Status: "error", Message: "connection refused by the warehouse"}, ""),
+			"connection refused by the warehouse"},
+		{"a parse kind that is not healable", ClassifyParse(FailureEvidence{NodeID: "a.b", ParseKind: model.ParseFailureKindInternal, Detail: "parser crashed"}),
+			"parser crashed"},
+		{"a parse failure with no detail", ClassifyParse(FailureEvidence{NodeID: "a.b", ParseKind: model.ParseFailureKindInternal}),
+			"parse:not_healable"},
+		{"a parse failure with a blank detail", ClassifyParse(FailureEvidence{NodeID: "a.b", ParseKind: model.ParseFailureKindInternal, Detail: "  \n"}),
+			"parse:not_healable"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, tc.got.UnfixableDetail())
+		})
+	}
+}
+
 func contains(s, sub string) bool {
 	return sub == "" || (len(sub) <= len(s) && (indexOf(s, sub) >= 0))
 }

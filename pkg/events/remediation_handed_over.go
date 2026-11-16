@@ -25,7 +25,7 @@ type RemediationHandedOver struct {
 
 // HandedOverNode is one node left to a human. Reason is a value of the
 // handover_reason vocabulary and Message is the detail the runner recorded
-// with that code (for a classifier hand-over, the classifier's rule).
+// with that code (for a classifier hand-over, the failure's key error line).
 type HandedOverNode struct {
 	NodeID  string `json:"node_id"`
 	Reason  string `json:"reason"`

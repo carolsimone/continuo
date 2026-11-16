@@ -91,8 +91,9 @@ type FailingNode struct {
 
 // Unfixable is the classifier's verdict on a failing node no fix proposal can
 // help: Reason is model.HandoverReasonClassifierInfra or
-// model.HandoverReasonClassifierUnhealableParse, and Detail is the rule that
-// matched, in the classifier's words.
+// model.HandoverReasonClassifierUnhealableParse, and Detail is what actually
+// failed: the failure's key error line, or the matched rule when the
+// classification holds no line.
 type Unfixable struct {
 	Reason model.HandoverReason
 	Detail string

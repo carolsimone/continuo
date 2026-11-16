@@ -107,7 +107,7 @@ func ClassifyRejection(ctx context.Context, deps Deps, tenantID string, evs []fa
 				if !it.c.Unfixable.IsValid() {
 					return fmt.Errorf("node %s of release %s is dropped (%s) with no unfixable reason", it.ev.NodeID, it.ev.ReleaseID, it.c.Reason)
 				}
-				node.Unfixable = &event.Unfixable{Reason: it.c.Unfixable, Detail: it.c.Reason}
+				node.Unfixable = &event.Unfixable{Reason: it.c.Unfixable, Detail: it.c.UnfixableDetail()}
 			}
 			payload.Nodes = append(payload.Nodes, node)
 		}

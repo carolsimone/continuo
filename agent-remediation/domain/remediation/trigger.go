@@ -88,7 +88,8 @@ type TriggerNode struct {
 }
 
 // Unfixable is the classifier's verdict that no fix proposal can help a node:
-// Reason is the hand-over reason it is given, Detail says why in words.
+// Reason is the hand-over reason it is given, Detail is what actually failed,
+// the failure's key error line.
 type Unfixable struct {
 	Reason model.HandoverReason
 	Detail string

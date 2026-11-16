@@ -128,7 +128,7 @@ func remediationRequestedFixture() pkgevents.RemediationRequested {
 			{NodeID: "s.a", Category: "logic", ErrorSignature: "sig-a", Reason: "logic:missing_object", DBTLogURI: "s3://b/a.log"},
 			{
 				NodeID: "s.b", Category: "infra_transient", ErrorSignature: "sig-b", Reason: "infra:connection_refused", DBTLogURI: "s3://b/b.log",
-				Unfixable: &pkgevents.Unfixable{Reason: "classifier_infra", Detail: "infra:connection_refused"},
+				Unfixable: &pkgevents.Unfixable{Reason: "classifier_infra", Detail: "could not connect to server: connection refused"},
 			},
 		},
 	}

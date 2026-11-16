@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -284,7 +285,8 @@ func TestClassifyFailure_MalformedRunResultsFallsBackToLog(t *testing.T) {
 // TestClassifyFailure_InfraIsForwardedUnfixable holds that a failure the
 // classifier judges an infrastructure error is recorded as a drop and still
 // reaches the trigger, marked unfixable with the reason classifier_infra and the
-// rule that matched as its detail, with every other field of a forwarded node.
+// failure's key error line as its detail (the rule that matched stays in the
+// node's reason), with every other field of a forwarded node.
 func TestClassifyFailure_InfraIsForwardedUnfixable(t *testing.T) {
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
 	ev := failure.FailureEvidence{
@@ -311,7 +313,7 @@ func TestClassifyFailure_InfraIsForwardedUnfixable(t *testing.T) {
 	assert.Equal(t, "models/n.sql", n.FilePath)
 	assert.Equal(t, "svc", n.Service)
 	require.NotNil(t, n.Unfixable)
-	assert.Equal(t, pkgevents.Unfixable{Reason: string(pkg_model.HandoverReasonClassifierInfra), Detail: "infra:connection_refused"}, *n.Unfixable)
+	assert.Equal(t, pkgevents.Unfixable{Reason: string(pkg_model.HandoverReasonClassifierInfra), Detail: "could not connect to database: connection refused"}, *n.Unfixable)
 	assert.True(t, u.committed)
 }
 
@@ -650,7 +652,8 @@ func TestClassifyRejection_AllUnfixableStillEmitsOneTrigger(t *testing.T) {
 	for _, n := range p.Nodes {
 		require.NotNil(t, n.Unfixable, n.NodeID)
 		assert.Equal(t, string(pkg_model.HandoverReasonClassifierInfra), n.Unfixable.Reason)
-		assert.Equal(t, "infra:oomkilled", n.Unfixable.Detail)
+		assert.Equal(t, "OOMKilled: container exceeded its memory limit", n.Unfixable.Detail)
+		assert.Equal(t, "infra:oomkilled", n.Reason, "the rule that matched stays on the node's reason")
 	}
 	for _, d := range u.dec.saved {
 		assert.Equal(t, failure.DecisionDrop, d.Decision, "the decision row still says drop")
@@ -673,8 +676,8 @@ func TestClassifyRejection_RedeliveryOfUnfixableNodesWritesNothing(t *testing.T)
 
 // TestClassifyRejection_ParseNotHealableIsForwardedUnfixable holds that a
 // parse failure of a kind no source change fixes is forwarded unfixable with the
-// reason classifier_unhealable_parse and the detail parse:not_healable, and that
-// the trigger carries the parser's own text as the node's excerpt.
+// reason classifier_unhealable_parse and the parser's own text as its detail,
+// and that the rule id stays on the node's reason.
 func TestClassifyRejection_ParseNotHealableIsForwardedUnfixable(t *testing.T) {
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
 	var fetches int
@@ -705,7 +708,53 @@ func TestClassifyRejection_ParseNotHealableIsForwardedUnfixable(t *testing.T) {
 	assert.Equal(t, "parser crashed", n.ErrorExcerpt)
 	assert.Equal(t, "models/b.sql", n.FilePath)
 	require.NotNil(t, n.Unfixable)
-	assert.Equal(t, pkgevents.Unfixable{Reason: string(pkg_model.HandoverReasonClassifierUnhealableParse), Detail: "parse:not_healable"}, *n.Unfixable)
+	assert.Equal(t, pkgevents.Unfixable{Reason: string(pkg_model.HandoverReasonClassifierUnhealableParse), Detail: "parser crashed"}, *n.Unfixable)
+}
+
+// TestClassifyRejection_UnfixableDetailFallsBackToTheRule holds that a dropped
+// node whose classification has no key error line is still handed over with a
+// message: the rule that matched.
+func TestClassifyRejection_UnfixableDetailFallsBackToTheRule(t *testing.T) {
+	for name, detail := range map[string]string{"no detail": "", "a blank detail": " \n\t "} {
+		t.Run(name, func(t *testing.T) {
+			u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
+			deps := Deps{
+				NewUoW:    func() uow.UnitOfWork { return u },
+				LogReader: fakeLogReader{err: errors.New("log reader must not be called")},
+				Clock:     fakeClock{},
+				Logger:    slog.Default(),
+			}
+			ev := failure.FailureEvidence{
+				Source: pkg_model.RemediationSourceParse, ReleaseID: "rel-1", NodeID: "a.b",
+				ParseKind: pkg_model.ParseFailureKindInternal, Detail: detail,
+			}
+
+			require.NoError(t, ClassifyRejection(context.Background(), deps, testTenant, []failure.FailureEvidence{ev}))
+
+			require.Len(t, u.ob.entries, 1)
+			n := triggerOf(t, u.ob.entries[0]).Nodes[0]
+			require.NotNil(t, n.Unfixable)
+			assert.Equal(t, "parse:not_healable", n.Unfixable.Detail)
+		})
+	}
+}
+
+// TestClassifyRejection_UnfixableDetailIsTheCappedErrorLine holds that an
+// infrastructure failure's detail is its key error line, cut to the excerpt's
+// cap, never the whole log.
+func TestClassifyRejection_UnfixableDetailIsTheCappedErrorLine(t *testing.T) {
+	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
+	ev := failure.FailureEvidence{Source: pkg_model.RemediationSourceValidation, ReleaseID: "r1", NodeID: "s.n", DBTLogURI: "s3://b/k"}
+	log := "12:00:01  Encountered an error:\nconnection refused " + strings.Repeat("x", 10_000) + "\n12:00:02  next line"
+
+	require.NoError(t, ClassifyRejection(context.Background(), depsWith(u, log, nil), testTenant, []failure.FailureEvidence{ev}))
+
+	n := triggerOf(t, u.ob.entries[0]).Nodes[0]
+	require.NotNil(t, n.Unfixable)
+	assert.Equal(t, n.ErrorExcerpt, n.Unfixable.Detail, "the detail is the excerpt the trigger carries")
+	assert.True(t, strings.HasPrefix(n.Unfixable.Detail, "connection refused xxx"), n.Unfixable.Detail[:40])
+	assert.LessOrEqual(t, len(n.Unfixable.Detail), 4*1024)
+	assert.NotContains(t, n.Unfixable.Detail, "next line")
 }
 
 // TestClassifyRejection_StoresTheTriggerUnderTheMessagesTenant holds that the

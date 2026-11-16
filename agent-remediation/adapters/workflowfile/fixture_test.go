@@ -158,7 +158,7 @@ trigger:
   release_id: rel-1
   nodes:
     - node_id: infra
-      unfixable: { reason: classifier_infra, detail: "infra:connection_refused" }
+      unfixable: { reason: classifier_infra, detail: "could not connect to server: connection refused" }
     - node_id: parse
       unfixable:
         reason: classifier_unhealable_parse
@@ -172,7 +172,7 @@ trigger:
 	require.Len(t, fixtures, 1)
 	assert.Equal(t, conformance.FlowUnfixable, fixtures[0].Scenario)
 	assert.Equal(t, []remediation.TriggerNode{
-		{NodeID: "infra", Unfixable: &remediation.Unfixable{Reason: model.HandoverReasonClassifierInfra, Detail: "infra:connection_refused"}},
+		{NodeID: "infra", Unfixable: &remediation.Unfixable{Reason: model.HandoverReasonClassifierInfra, Detail: "could not connect to server: connection refused"}},
 		{NodeID: "parse", Unfixable: &remediation.Unfixable{Reason: model.HandoverReasonClassifierUnhealableParse, Detail: "the manifest cannot be read"}},
 		{NodeID: "fixable"},
 	}, fixtures[0].Trigger.Nodes)

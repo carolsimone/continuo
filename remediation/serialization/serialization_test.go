@@ -14,7 +14,7 @@ import (
 // goldenRemediationRequested has every tagged field set, an unfixable node
 // among them, so the payload reproduces each tag, name, casing and order of
 // remediation.requested:v3.
-const goldenRemediationRequested = `{"source":"validation","release_id":"r","remediation_round":2,"repo":"acme/demo","commit_sha":"abc","code_bundle_uri":"s3://b","classified_at":"2026-01-02T03:04:05Z","nodes":[{"node_id":"n","relation_id":"sch.rel","category":"logic","error_signature":"sig","reason":"why","error_excerpt":"exc","dbt_log_uri":"s3://l","candidate_artifact_uri":"s3://c","file_path":"models/m.sql","service":"svc","node_type":"dbt-model","other_service":"svc2","other_file_path":"models/o.sql","changed_ancestors":[{"node_id":"a","file_path":"models/a.sql","service":"svc","depth":1}]},{"node_id":"m","category":"infra_transient","error_signature":"sig2","reason":"infra:connection_refused","dbt_log_uri":"s3://l2","unfixable":{"reason":"classifier_infra","detail":"infra:connection_refused"}}]}`
+const goldenRemediationRequested = `{"source":"validation","release_id":"r","remediation_round":2,"repo":"acme/demo","commit_sha":"abc","code_bundle_uri":"s3://b","classified_at":"2026-01-02T03:04:05Z","nodes":[{"node_id":"n","relation_id":"sch.rel","category":"logic","error_signature":"sig","reason":"why","error_excerpt":"exc","dbt_log_uri":"s3://l","candidate_artifact_uri":"s3://c","file_path":"models/m.sql","service":"svc","node_type":"dbt-model","other_service":"svc2","other_file_path":"models/o.sql","changed_ancestors":[{"node_id":"a","file_path":"models/a.sql","service":"svc","depth":1}]},{"node_id":"m","category":"infra_transient","error_signature":"sig2","reason":"infra:connection_refused","dbt_log_uri":"s3://l2","unfixable":{"reason":"classifier_infra","detail":"could not connect to server: connection refused"}}]}`
 
 func TestRemediationRequestedMapsEveryField(t *testing.T) {
 	got := RemediationRequestedFromDomain(event.RemediationRequested{
@@ -29,7 +29,7 @@ func TestRemediationRequestedMapsEveryField(t *testing.T) {
 			},
 			{
 				NodeID: "m", Category: "infra_transient", ErrorSignature: "sig2", Reason: "infra:connection_refused", DBTLogURI: "s3://l2",
-				Unfixable: &event.Unfixable{Reason: model.HandoverReasonClassifierInfra, Detail: "infra:connection_refused"},
+				Unfixable: &event.Unfixable{Reason: model.HandoverReasonClassifierInfra, Detail: "could not connect to server: connection refused"},
 			},
 		},
 	})

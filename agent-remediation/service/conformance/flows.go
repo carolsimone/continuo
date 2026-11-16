@@ -218,7 +218,7 @@ func (e *expectation) unfixableHandedOver(flow workflow.Flow) {
 		for _, n := range e.trigger.Nodes {
 			if n.Unfixable != nil {
 				o := as[0].Proposal.NodeOutcomes[n.NodeID]
-				e.that(o.Reason == n.Unfixable.Detail, "node %s ended the attempt with the reason %q, want the classifier's detail %q", n.NodeID, o.Reason, n.Unfixable.Detail)
+				e.that(o.Reason == n.Unfixable.Detail, "node %s ended the attempt with the reason %q, want the trigger's detail %q", n.NodeID, o.Reason, n.Unfixable.Detail)
 			}
 		}
 		e.handedOverInFirstTry(as[0], want)

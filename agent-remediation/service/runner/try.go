@@ -248,7 +248,8 @@ func settledCode(code pkg_model.HandoverReason) bool {
 }
 
 // unfixableOutcome is how a node the classifier marked unfixable ends: skipped,
-// with the classifier's reason as its code and its detail as the reason.
+// with the classifier's reason as its code and the failure's key error line (the
+// detail) as the outcome's reason.
 func unfixableOutcome(u remediation.Unfixable) proposal.NodeOutcome {
 	return proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: u.Detail, Code: u.Reason}
 }

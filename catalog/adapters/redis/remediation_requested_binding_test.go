@@ -42,7 +42,7 @@ func remediationRequestedPayload() events.RemediationRequested {
 				ErrorSignature: "sig-2",
 				Reason:         "infra:connection_refused",
 				DBTLogURI:      "s3://b/logs/rel-1/analytics.orders.log",
-				Unfixable:      &events.Unfixable{Reason: "classifier_infra", Detail: "infra:connection_refused"},
+				Unfixable:      &events.Unfixable{Reason: "classifier_infra", Detail: "could not connect to server: connection refused"},
 			},
 		},
 	}

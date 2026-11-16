@@ -622,7 +622,7 @@ func TestPoll_ASettledNodesErrorDoesNotLeadTheReason(t *testing.T) {
 		d.Cluster.Members = []string{"model.sales.orders"}
 		return d
 	}())
-	in.Trigger.Nodes[1].Unfixable = &remediation.Unfixable{Reason: model.HandoverReasonClassifierInfra, Detail: "infra:connection_refused"}
+	in.Trigger.Nodes[1].Unfixable = &remediation.Unfixable{Reason: model.HandoverReasonClassifierInfra, Detail: "could not connect to server: connection refused"}
 	r.pipeline.statuses[salesRun] = status(proposal.PhaseFailed, t0, map[string]string{
 		"model.sales.margins": "connection refused",
 		"model.sales.orders":  "column x does not exist",
