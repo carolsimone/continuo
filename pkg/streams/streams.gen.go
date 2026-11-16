@@ -40,12 +40,14 @@ const (
 	ReleaseRejectedV1 = "release.rejected:v1"
 	// PipelineRunFinishedV1 — A pipeline run of either kind (a candidate release or a fix-verification run) reached a terminal status; carries the run's candidate schema so execution-controller can drop it whatever the outcome.
 	PipelineRunFinishedV1 = "pipeline.run.finished:v1"
-	// RemediationRetryRequestedV1 — A human asked for another remediation round on a rejected release; release-controller replays the release's stored rejection payload plus remediation_round, and the remediation classifier re-classifies it as a fresh round.
-	RemediationRetryRequestedV1 = "remediation.retry_requested:v1"
-	// RemediationRequestedV2 — One batched remediation trigger per rejected release carrying its whole healable node set (each node with the classifier's evidence and its changed ancestors); emitted by the remediation classifier, consumed by the heal agent and by catalog's case-base rejections group.
-	RemediationRequestedV2 = "remediation.requested:v2"
+	// RemediationRetryRequestedV2 — An operator's "Try again" on a rejected release; release-controller sends the next remediation round, carrying the stored release.rejected payload unchanged, and the remediation classifier classifies it as a fresh round.
+	RemediationRetryRequestedV2 = "remediation.retry_requested:v2"
+	// RemediationRequestedV3 — One batched trigger per rejected release and remediation round, carrying every failing node the classifier recorded, each with its evidence and its changed ancestors; a node the classifier judged unfixable is marked with its reason, so agent-remediation hands it over without a model call and catalog keeps it out of its case base. Emitted by the remediation classifier, consumed by the heal agent and by catalog's case-base rejections group.
+	RemediationRequestedV3 = "remediation.requested:v3"
 	// RemediationProposedV1 — One verified fix proposal per (release, attempt), carrying every node the attempt resolves and every file it edits; emitted by the remediation agent, consumed by the PR creator and approval surfaces.
 	RemediationProposedV1 = "remediation.proposed:v1"
+	// RemediationHandedOverV1 — One event when a remediation ends with nodes a human must fix, each with its reason code; emitted by the remediation agent, read by people and not consumed by any service.
+	RemediationHandedOverV1 = "remediation.handed_over:v1"
 	// RemediationPrOpenedV1 — Emitted when an operator opens a GitHub PR from a fix proposal, one per (release, attempt) and carrying every node the PR resolves; consumed by catalog's case-base proposals group.
 	RemediationPrOpenedV1 = "remediation.pr_opened:v1"
 	// RemediationPrClosedV1 — Terminal PR outcome (merged, or closed without merge), one per (release, attempt, service); merged outcomes carry per-edit amended flags and diffs, and catalog's provenance group draws RESOLVED_BY/EDITED case-base edges from them.
@@ -96,11 +98,11 @@ const (
 	ExecutionControllerReleaseRejected = "execution-controller-release-rejected"
 	// ExecutionControllerPipelineRunFinished — execution-controller consumer group on pipeline.run.finished:v1.
 	ExecutionControllerPipelineRunFinished = "execution-controller-pipeline-run-finished"
-	// RemediationRetryRequested — remediation consumer group on remediation.retry_requested:v1.
+	// RemediationRetryRequested — remediation consumer group on remediation.retry_requested:v2.
 	RemediationRetryRequested = "remediation-retry-requested"
-	// AgentRemediationRemediationRequested — agent-remediation consumer group on remediation.requested:v2.
+	// AgentRemediationRemediationRequested — agent-remediation consumer group on remediation.requested:v3.
 	AgentRemediationRemediationRequested = "agent-remediation-remediation-requested"
-	// CatalogRemediationRequestedRejections — catalog consumer group on remediation.requested:v2.
+	// CatalogRemediationRequestedRejections — catalog consumer group on remediation.requested:v3.
 	CatalogRemediationRequestedRejections = "catalog-remediation-requested-rejections"
 	// CatalogRemediationPrOpenedProposals — catalog consumer group on remediation.pr_opened:v1.
 	CatalogRemediationPrOpenedProposals = "catalog-remediation-pr-opened-proposals"
@@ -127,9 +129,10 @@ var All = []string{
 	ReleasePromotedV2,
 	ReleaseRejectedV1,
 	PipelineRunFinishedV1,
-	RemediationRetryRequestedV1,
-	RemediationRequestedV2,
+	RemediationRetryRequestedV2,
+	RemediationRequestedV3,
 	RemediationProposedV1,
+	RemediationHandedOverV1,
 	RemediationPrOpenedV1,
 	RemediationPrClosedV1,
 }
@@ -154,9 +157,10 @@ var Groups = map[string][]string{
 	ReleasePromotedV2:           {CatalogReleaseTopology, CatalogReleaseVersions, ExecutionControllerReleasePromoted, RunControllerReleasePromoted},
 	ReleaseRejectedV1:           {RemediationReleaseRejected, ExecutionControllerReleaseRejected},
 	PipelineRunFinishedV1:       {ExecutionControllerPipelineRunFinished},
-	RemediationRetryRequestedV1: {RemediationRetryRequested},
-	RemediationRequestedV2:      {AgentRemediationRemediationRequested, CatalogRemediationRequestedRejections},
+	RemediationRetryRequestedV2: {RemediationRetryRequested},
+	RemediationRequestedV3:      {AgentRemediationRemediationRequested, CatalogRemediationRequestedRejections},
 	RemediationProposedV1:       {},
+	RemediationHandedOverV1:     {},
 	RemediationPrOpenedV1:       {CatalogRemediationPrOpenedProposals},
 	RemediationPrClosedV1:       {CatalogRemediationPrClosedProvenance},
 }
@@ -175,6 +179,8 @@ var Retired = []string{
 	"release.promoted:v1",
 	"release.seeds.pending:v1",
 	"remediation.requested:v1",
+	"remediation.requested:v2",
+	"remediation.retry_requested:v1",
 	"rerun.ready:v1",
 	"retry.task:v1",
 	"run.entries.dispatch_failed:v1",

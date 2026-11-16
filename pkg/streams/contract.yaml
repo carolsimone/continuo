@@ -180,9 +180,9 @@ streams:
         group: execution-controller-pipeline-run-finished
         const: ExecutionControllerPipelineRunFinished
 
-  - name: remediation.retry_requested:v1
-    const: RemediationRetryRequestedV1
-    description: A human asked for another remediation round on a rejected release; release-controller replays the release's stored rejection payload plus remediation_round, and the remediation classifier re-classifies it as a fresh round.
+  - name: remediation.retry_requested:v2
+    const: RemediationRetryRequestedV2
+    description: An operator's "Try again" on a rejected release; release-controller sends the next remediation round, carrying the stored release.rejected payload unchanged, and the remediation classifier classifies it as a fresh round.
     producers: [release-controller]
     consumers:
       - service: remediation
@@ -191,9 +191,9 @@ streams:
 
   # ---------------- remediation-classifier streams ----------------
 
-  - name: remediation.requested:v2
-    const: RemediationRequestedV2
-    description: One batched remediation trigger per rejected release carrying its whole healable node set (each node with the classifier's evidence and its changed ancestors); emitted by the remediation classifier, consumed by the heal agent and by catalog's case-base rejections group.
+  - name: remediation.requested:v3
+    const: RemediationRequestedV3
+    description: One batched trigger per rejected release and remediation round, carrying every failing node the classifier recorded, each with its evidence and its changed ancestors; a node the classifier judged unfixable is marked with its reason, so agent-remediation hands it over without a model call and catalog keeps it out of its case base. Emitted by the remediation classifier, consumed by the heal agent and by catalog's case-base rejections group.
     producers: [remediation]
     consumers:
       - service: agent-remediation
@@ -208,6 +208,12 @@ streams:
   - name: remediation.proposed:v1
     const: RemediationProposedV1
     description: One verified fix proposal per (release, attempt), carrying every node the attempt resolves and every file it edits; emitted by the remediation agent, consumed by the PR creator and approval surfaces.
+    producers: [agent-remediation]
+    consumers: []
+
+  - name: remediation.handed_over:v1
+    const: RemediationHandedOverV1
+    description: One event when a remediation ends with nodes a human must fix, each with its reason code; emitted by the remediation agent, read by people and not consumed by any service.
     producers: [agent-remediation]
     consumers: []
 
@@ -263,6 +269,8 @@ retired_streams:
   - name: release.promoted:v1
   - name: release.seeds.pending:v1
   - name: remediation.requested:v1
+  - name: remediation.requested:v2
+  - name: remediation.retry_requested:v1
   - name: rerun.ready:v1
   - name: retry.task:v1
   - name: run.entries.dispatch_failed:v1
@@ -400,6 +408,55 @@ vocabularies:
       - value: clone_from_prod
         const: CloneFromProd
         description: an unchanged upstream of a node built from candidate code; the runner copies its production table, empty, into the candidate schema. A failure points at that production table, which a run of the node settles, not a code change.
+
+  - name: handover_reason
+    const: HandoverReason
+    description: Why a failing node of a rejected release is left to a human instead of a fix proposal. Remediation records one code on each node it hands over, and the release page tells the operator what to do from it.
+    values:
+      - value: tries_spent
+        const: TriesSpent
+        description: every try of the flow ended without a fix the verification gate accepted.
+      - value: preflight_rounds_spent
+        const: PreflightRoundsSpent
+        description: the model's drafts for the node's cluster were refused by pre-flight in every round its type allows.
+      - value: declined
+        const: Declined
+        description: a context or prompt step found that no fix can reach the node, so no model call was made for it.
+      - value: no_type
+        const: NoType
+        description: no type of the flow matches the node's failure, so no model call was made for it.
+      - value: classifier_infra
+        const: ClassifierInfra
+        description: the classifier judged the failure an infrastructure error that a new release run clears, and marked the node unfixable.
+      - value: classifier_unhealable_parse
+        const: ClassifierUnhealableParse
+        description: the classifier judged the parse failure one no change to the release's source fixes, and marked the node unfixable.
+      - value: no_repository
+        const: NoRepository
+        description: the trigger names no repository, so no fix pull request can be opened.
+      - value: unverifiable_edits
+        const: UnverifiableEdits
+        description: the last try's edits failed the cross-cluster checks, so no release could verify them.
+
+  - name: remediation_source
+    const: RemediationSource
+    description: The pipeline stage that produced the failure of a node a remediation works on.
+    values:
+      - value: validation
+        const: Validation
+        description: the per-node validation of a candidate release.
+      - value: compile
+        const: Compile
+        description: the compile leg of a candidate release.
+      - value: seed_build
+        const: SeedBuild
+        description: the seed-build leg of a candidate release.
+      - value: duplicate_table
+        const: DuplicateTable
+        description: topology-controller's rejection of two nodes that claim the same relation, before any Job runs.
+      - value: parse
+        const: Parse
+        description: topology-controller's rejection of a node whose SQL it could not resolve, before any Job runs.
 
   - name: dead_letter_kind
     const: DeadLetterKind

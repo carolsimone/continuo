@@ -74,6 +74,12 @@ This release adds the values key `agentRemediation.engine` with a safe default, 
   - remediation never tries to fix a copied node, in a `validation_failed` rejection either.
   - Each node of a validation rejection on `release.rejected:v1` names how validation prepared it, as `validation_op`: `clone_from_prod` for a copy, and `build_from_sql`, `build_from_columns` or `check_binds` otherwise.
   - A CI pipeline that reads `reject_reason` can get the new value, and `continuo_releases_total{reject_reason}` counts it.
+- **Redis rule changes for the remediation streams.** TL;DR: the remediation flow moves to `remediation.requested:v3` and `remediation.retry_requested:v2`, and agent-remediation can write the new `remediation.handed_over:v1`. With your own Redis, apply the new rules from `deploy/redis-acl-rules.acl` before or with the upgrade. The bundled Redis needs nothing and restarts once, because its rules change.
+  - `continuo_remediation` reads `remediation.retry_requested:v2` and writes `remediation.requested:v3`.
+  - `continuo_release_controller` writes `remediation.retry_requested:v2`.
+  - `continuo_agent_remediation` reads `remediation.requested:v3` and writes `remediation.handed_over:v1`.
+  - `continuo_catalog` reads `remediation.requested:v3`.
+  - `remediation.requested:v2` and `remediation.retry_requested:v1` are retired streams: no login names them, and dead-letter-controller deletes their keys from Redis.
 - **topology-controller counts dormant nodes.** TL;DR: `continuo_topology_release_dormant_nodes` counts the dormant nodes of the last release. `continuo_topology_release_skipped_nodes{reason}` has no `no_tag` value any more: its reasons are `no_owner`, `local_stub` and `installed_package`, a node of an installed dbt package with no tag.
 
 ## [0.22.0] - 2026-11-14

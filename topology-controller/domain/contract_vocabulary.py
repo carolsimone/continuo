@@ -50,6 +50,27 @@ class ValidationOp(StrEnum):
     CLONE_FROM_PROD = "clone_from_prod"
 
 
+class HandoverReason(StrEnum):
+    """Why a failing node of a rejected release is left to a human instead of a fix proposal. Remediation records one code on each node it hands over, and the release page tells the operator what to do from it."""
+    TRIES_SPENT = "tries_spent"
+    PREFLIGHT_ROUNDS_SPENT = "preflight_rounds_spent"
+    DECLINED = "declined"
+    NO_TYPE = "no_type"
+    CLASSIFIER_INFRA = "classifier_infra"
+    CLASSIFIER_UNHEALABLE_PARSE = "classifier_unhealable_parse"
+    NO_REPOSITORY = "no_repository"
+    UNVERIFIABLE_EDITS = "unverifiable_edits"
+
+
+class RemediationSource(StrEnum):
+    """The pipeline stage that produced the failure of a node a remediation works on."""
+    VALIDATION = "validation"
+    COMPILE = "compile"
+    SEED_BUILD = "seed_build"
+    DUPLICATE_TABLE = "duplicate_table"
+    PARSE = "parse"
+
+
 class DeadLetterKind(StrEnum):
     """Why a stream message or an outbox row was dead-lettered. An operational vocabulary — delivery outcomes of the transport, used by pkg/redis, pkg/outbox and the dead-letter streams — that the generator emits into the shared domain packages with the other vocabularies."""
     PERMANENT = "permanent"
