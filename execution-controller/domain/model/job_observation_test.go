@@ -131,6 +131,32 @@ func TestJobObservation_Facts(t *testing.T) {
 	assert.Equal(t, at(60), f.AwaitingStopSince, "a pod being deleted starts the stop clock")
 }
 
+// A failed init container stands in for a main container that never
+// terminated with its termination reason as well as its exit code, as the main
+// container's own termination gives both: an init container killed for memory
+// classifies oom_killed, and one that exited 137 for any other reason stays a
+// plain exit code.
+func TestJobObservation_FactsOfAFailedInitContainerKeepItsTerminationReason(t *testing.T) {
+	for reason, want := range map[string]pkgmodel.FailureReason{
+		"Error":     pkgmodel.FailureReasonExitCode,
+		"OOMKilled": pkgmodel.FailureReasonOOMKilled,
+	} {
+		t.Run(reason, func(t *testing.T) {
+			pod := model.PodObservation{Name: "p", Phase: model.PodFailed,
+				Main: model.ContainerObservation{Name: "dbt-job", WaitingReason: "PodInitializing"},
+				Inits: []model.ContainerObservation{{Name: model.SeedPreflightContainer, Terminated: true,
+					ExitCode: 137, TerminatedReason: reason, FinishedAt: at(12)}}}
+
+			f := model.JobObservation{JobPresent: true, JobFailed: true, Pods: []model.PodObservation{pod}}.Facts(*at(60))
+
+			assert.Equal(t, model.SeedPreflightContainer, f.FailedContainer)
+			assert.Equal(t, code(137), f.ExitCode)
+			assert.Equal(t, reason, f.TerminationReason)
+			assert.Equal(t, want, model.Classify(f).Reason)
+		})
+	}
+}
+
 func TestJobObservation_Started(t *testing.T) {
 	pending := model.PodObservation{Name: "p", Phase: model.PodPending,
 		Main: model.ContainerObservation{Name: "dbt-job", WaitingReason: "ErrImagePull"}}
