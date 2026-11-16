@@ -411,3 +411,38 @@ func TestContractRepository_LeavesOtherTenantsAlone(t *testing.T) {
 	assert.Equal(t, []edgeSummary{{Version: 1, Seq: 41, Hash: contractA}}, summaries(f.promotions(kpisNode)))
 	assert.Equal(t, []edgeSummary{{Version: 1, Seq: 41, Hash: contractB}}, summaries(other.promotions(kpisNode)))
 }
+
+// A change written twice under fresh message ids, and once more from a plan
+// made before the first write committed, records one edge and moves the
+// pointer once: the write never records a change to the contract the pointer
+// already names.
+func TestContractRepository_AChangeWrittenTwiceIsRecordedOnce(t *testing.T) {
+	f := newSwapFixture(t)
+	f.seedLiveNode(kpisNode)
+	f.writeContracts(contractPromotion("rel-41", 41), contractOf(kpisNode, contractA, "service-py"))
+	p47 := contractPromotion("rel-47", 47)
+	b := contractOf(kpisNode, contractB, "analytics-eng")
+
+	_, first := f.writeContracts(p47, b)
+	assert.Equal(t, contractversion.WriteResult{VersionsCreated: 1, EdgesCreated: 1, PointersMoved: 1}, first)
+	_, again := f.writeContracts(p47, b)
+	assert.Equal(t, contractversion.WriteResult{}, again, "a redelivery under a fresh message id writes nothing")
+
+	// The plan a read taken before the first write would have made: the node
+	// at version 1 on contract a, so b would be version 2 again.
+	stale := contractversion.Plan(p47, []contractversion.Incoming{b}, map[string]contractversion.NodeState{kpisNode: {
+		UniqueID: kpisNode, Watermark: 41, CurrentHash: contractA, CurrentVersion: 1, MaxVersion: 1,
+		FirstVersionByHash: map[string]int64{contractA: 1},
+	}})
+	require.Len(t, stale.Edges, 1)
+	assert.Equal(t, contractversion.WriteResult{}, f.writePlan(p47, stale),
+		"a stale plan at the same seq records no edge and moves no pointer")
+
+	assert.Equal(t, []edgeSummary{
+		{Version: 1, Seq: 41, Hash: contractA},
+		{Version: 2, Seq: 47, Hash: contractB},
+	}, summaries(f.promotions(kpisNode)))
+	hash, pointer := f.contractPointer(kpisNode)
+	assert.Equal(t, contractB, hash)
+	assert.Equal(t, int64(2), pointer["version"])
+}

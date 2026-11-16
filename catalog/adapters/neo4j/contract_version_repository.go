@@ -51,7 +51,9 @@ SET n.contract_promotion_seq = CASE
 
 // writeContractVersionsCypher records each stored contract once: every
 // property is set on creation only, so a revert, or the same contract promoted
-// again, MERGEs onto the version that exists.
+// again, MERGEs onto the version that exists. first_release_id is the release
+// whose promotion first stored the version, even when that promotion was
+// already superseded for the node and recorded no change.
 const writeContractVersionsCypher = `
 UNWIND $versions AS c
 MERGE (v:ContractVersion {tenant_id: $tenant_id, unique_id: c.unique_id, contract_hash: c.contract_hash})
@@ -61,13 +63,17 @@ ON CREATE SET v.family           = c.family,
               v.first_release_id = c.first_release_id`
 
 // recordContractPromotionsCypher draws one :CONTRACT_PROMOTED edge per change
-// while the node's watermark is this promotion's seq. A null property (no
+// while the node's watermark is this promotion's seq and its pointer does not
+// already name the edge's contract, so a plan made from a stale read never
+// records the same change twice. It runs before moveContractPointerCypher, so
+// the pointer it reads is the one before this write. A null property (no
 // revert, no ontology) is not stored.
 const recordContractPromotionsCypher = `
 UNWIND $edges AS e
 MATCH (n:Node {tenant_id: $tenant_id, unique_id: e.unique_id})
 WHERE n.contract_promotion_seq = $promotion_seq
 MATCH (v:ContractVersion {tenant_id: $tenant_id, unique_id: e.unique_id, contract_hash: e.contract_hash})
+WHERE NOT (n)-[:CURRENT_CONTRACT]->(v)
 CREATE (n)-[:CONTRACT_PROMOTED {
   version:            e.version,
   promotion_seq:      $promotion_seq,
@@ -81,15 +87,17 @@ CREATE (n)-[:CONTRACT_PROMOTED {
 }]->(v)`
 
 // moveContractPointerCypher points each changed node at its new contract while
-// the node's watermark is this promotion's seq. The comparison and the
-// replacement are one statement, behind the watermark's write lock, so an
-// older promotion can never delete a newer pointer and put a stale one in its
-// place.
+// the node's watermark is this promotion's seq and its pointer names another
+// contract. The comparison and the replacement are one statement, behind the
+// watermark's write lock, so an older promotion can never delete a newer
+// pointer and put a stale one in its place, and a stale plan never moves a
+// pointer onto the contract it already names.
 const moveContractPointerCypher = `
 UNWIND $edges AS e
 MATCH (n:Node {tenant_id: $tenant_id, unique_id: e.unique_id})
 WHERE n.contract_promotion_seq = $promotion_seq
 MATCH (v:ContractVersion {tenant_id: $tenant_id, unique_id: e.unique_id, contract_hash: e.contract_hash})
+WHERE NOT (n)-[:CURRENT_CONTRACT]->(v)
 OPTIONAL MATCH (n)-[old:CURRENT_CONTRACT]->(:ContractVersion {tenant_id: $tenant_id})
 DELETE old
 CREATE (n)-[:CURRENT_CONTRACT {
@@ -104,10 +112,17 @@ CREATE (n)-[:CURRENT_CONTRACT {
 //
 // A :ContractVersion is immutable: every property is set under ON CREATE, so
 // the graph holds one per distinct (unique_id, contract_hash) ever promoted.
-// Ordering is decided by the node's watermark contract_promotion_seq, never by
-// a read in Go: every node of a promotion advances it to the larger seq, and
-// every edge and pointer write is guarded on it inside the same statement, so
-// an older promotion records its contracts but never a change.
+//
+// Change detection and ordering come from ReadStates and contractversion.Plan,
+// run inside the same write transaction as Write. The unit of work takes the
+// tenant's export-gate lock before either, so a tenant's writes are
+// serialized and the states a plan is made from cannot change before it is
+// written. The Cypher guards are a second line: every node of a promotion
+// advances its watermark contract_promotion_seq to the larger seq, and every
+// edge and pointer write is guarded, inside the same statement, on that
+// watermark being this promotion's seq and on the pointer not already naming
+// the edge's contract. So an older promotion records its contracts but never
+// a change, and a plan made from a stale read records no change twice.
 type contractVersionRepository struct {
 	run TenantRunner
 }
