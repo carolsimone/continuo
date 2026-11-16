@@ -247,10 +247,15 @@ func TestMain_LinksNoSQLDriver(t *testing.T) {
 func TestMain_SweepsProcessedMessageMarkers(t *testing.T) {
 	file := parseMain(t)
 
-	// The call that builds the sweeper, and the variable that holds it.
+	// The call that builds the sweeper, and the variable that holds it. The
+	// contract history sweeper is another call (TestMain_NoContractHistorySweeperAtZero
+	// pins it), so the walk stays out of its block.
 	var build *ast.CallExpr
 	var sweeper string
 	ast.Inspect(file, func(n ast.Node) bool {
+		if s, ok := n.(*ast.IfStmt); ok && exprText(s.Cond) == contractHistoryCondition {
+			return false
+		}
 		assign, ok := n.(*ast.AssignStmt)
 		if !ok || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
 			return true
@@ -313,6 +318,139 @@ func TestMain_SweepsProcessedMessageMarkers(t *testing.T) {
 			}
 			return true
 		})
+		return true
+	})
+	if !tracked {
+		t.Errorf("main.go must start %s.Run inside lifecycleManager.Go, so shutdown waits for the sweep", sweeper)
+	}
+}
+
+// contractHistoryCondition is the condition of the block that starts the
+// contract history sweeper.
+const contractHistoryCondition = "cfg.ContractHistoryRetentionDays > 0"
+
+// TestMain_NoContractHistorySweeperAtZero pins how main.go runs the contract
+// history sweeper: only inside `if cfg.ContractHistoryRetentionDays > 0`, so
+// the default of 0 starts no sweeper and keeps every version; through its own
+// retention sweeper with one target named contract_history whose prune and
+// after-sweep are the history sweeper's and that has no minimum retention,
+// with the install's retention days and RETENTION_SWEEP_INTERVAL_MINUTES as
+// its retention and interval; and as a goroutine the lifecycle manager
+// tracks, so shutdown waits for it.
+func TestMain_NoContractHistorySweeperAtZero(t *testing.T) {
+	file := parseMain(t)
+
+	var enabled *ast.IfStmt
+	ast.Inspect(file, func(n ast.Node) bool {
+		if s, ok := n.(*ast.IfStmt); ok && exprText(s.Cond) == contractHistoryCondition {
+			enabled = s
+			return false
+		}
+		return true
+	})
+	if enabled == nil {
+		t.Fatal("main.go has no `if cfg.ContractHistoryRetentionDays > 0` block")
+	}
+
+	// Outside that block main.go builds the marker sweeper's retention sweeper
+	// and nothing named contract_history.
+	sweepers := 0
+	ast.Inspect(file, func(n ast.Node) bool {
+		if n == enabled {
+			return false
+		}
+		switch x := n.(type) {
+		case *ast.CallExpr:
+			if isSelector(x.Fun, "pkgretention", "NewSweeper") {
+				sweepers++
+			}
+		case *ast.BasicLit:
+			if x.Value == `"contract_history"` {
+				t.Errorf("main.go names the contract_history target outside `if cfg.ContractHistoryRetentionDays > 0`")
+			}
+		}
+		return true
+	})
+	if sweepers != 1 {
+		t.Errorf("main.go builds %d retention sweepers outside the contract history block, want 1 (the markers')", sweepers)
+	}
+
+	var build *ast.CallExpr
+	var history, sweeper string
+	ast.Inspect(enabled.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.AssignStmt:
+			if len(x.Lhs) != 1 || len(x.Rhs) != 1 {
+				return true
+			}
+			call, ok := x.Rhs[0].(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			id, _ := x.Lhs[0].(*ast.Ident)
+			switch {
+			case isSelector(call.Fun, "pkgretention", "NewSweeper") && build == nil:
+				build = call
+				if id != nil {
+					sweeper = id.Name
+				}
+			case isSelector(call.Fun, "neo4jinfra", "NewContractHistorySweeper") && id != nil:
+				history = id.Name
+			}
+		}
+		return true
+	})
+	if build == nil || sweeper == "" || len(build.Args) != 3 {
+		t.Fatal("the block does not assign pkgretention.NewSweeper(targets, config, logger) to a variable")
+	}
+	if history == "" {
+		t.Fatal("the block does not assign neo4jinfra.NewContractHistorySweeper(...) to a variable")
+	}
+
+	targets, ok := build.Args[0].(*ast.CompositeLit)
+	if !ok || len(targets.Elts) != 1 {
+		t.Fatal("the contract history sweeper must have exactly one target")
+	}
+	target := fields(targets.Elts[0])
+	if lit, ok := target["Name"].(*ast.BasicLit); !ok || lit.Value != `"contract_history"` {
+		t.Errorf("the target's Name = %v, want \"contract_history\"", exprText(target["Name"]))
+	}
+	if !isSelector(target["Prune"], history, "Prune") {
+		t.Errorf("the target's Prune = %v, want %s.Prune", exprText(target["Prune"]), history)
+	}
+	if !isSelector(target["AfterSweep"], history, "AfterSweep") {
+		t.Errorf("the target's AfterSweep = %v, want %s.AfterSweep", exprText(target["AfterSweep"]), history)
+	}
+	if _, set := target["MinRetention"]; set {
+		t.Errorf("the target sets MinRetention = %v: a contract version is no message to replay", exprText(target["MinRetention"]))
+	}
+
+	config, ok := build.Args[1].(*ast.CompositeLit)
+	if !ok {
+		t.Fatal("the config must be a pkgretention.Config literal")
+	}
+	cfg := fields(config)
+	if !mentionsSelector(cfg["Retention"], "cfg", "ContractHistoryRetentionDays") {
+		t.Errorf("the config's Retention = %v, want it computed from cfg.ContractHistoryRetentionDays", exprText(cfg["Retention"]))
+	}
+	if !mentionsSelector(cfg["Interval"], "cfg", "RetentionSweepIntervalMin") {
+		t.Errorf("the config's Interval = %v, want it computed from cfg.RetentionSweepIntervalMin", exprText(cfg["Interval"]))
+	}
+
+	tracked := false
+	ast.Inspect(enabled.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || !isSelector(call.Fun, "lifecycleManager", "Go") || len(call.Args) != 1 {
+			return true
+		}
+		if body, ok := call.Args[0].(*ast.FuncLit); ok {
+			ast.Inspect(body.Body, func(n ast.Node) bool {
+				if c, ok := n.(*ast.CallExpr); ok && isSelector(c.Fun, sweeper, "Run") {
+					tracked = true
+				}
+				return true
+			})
+		}
 		return true
 	})
 	if !tracked {

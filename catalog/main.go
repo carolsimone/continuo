@@ -218,6 +218,31 @@ func main() {
 	)
 	lifecycleManager.Go(func() { retentionSweeper.Run(ctx) })
 
+	// Contract history sweeper — runs only when CONTRACT_HISTORY_RETENTION_DAYS
+	// is above 0; at 0, every contract version is kept. It deletes the
+	// promotion edges older than that many days, never a node's two newest, and
+	// the versions no edge or pointer then reaches. Like the marker sweep, it
+	// skips a tenant whose export lease is held and runs every
+	// RETENTION_SWEEP_INTERVAL_MINUTES as a tracked goroutine.
+	if cfg.ContractHistoryRetentionDays > 0 {
+		contractHistorySweeper := neo4jinfra.NewContractHistorySweeper(neo4jClient, logger)
+		contractHistoryRetention := pkgretention.NewSweeper(
+			[]pkgretention.Target{
+				{
+					Name:       "contract_history",
+					Prune:      contractHistorySweeper.Prune,
+					AfterSweep: contractHistorySweeper.AfterSweep,
+				},
+			},
+			pkgretention.Config{
+				Retention: time.Duration(cfg.ContractHistoryRetentionDays) * 24 * time.Hour,
+				Interval:  time.Duration(cfg.RetentionSweepIntervalMin) * time.Minute,
+			},
+			logger,
+		)
+		lifecycleManager.Go(func() { contractHistoryRetention.Run(ctx) })
+	}
+
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
 		return healthServer.Shutdown(ctx)
 	})

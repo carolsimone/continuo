@@ -64,7 +64,9 @@ type NodeState struct {
 	// MaxVersion is the counter of the node's newest promotion edge.
 	MaxVersion int64
 	// FirstVersionByHash maps each contract hash the node has held to the
-	// earliest version number a promotion edge gave that contract.
+	// earliest version number a promotion edge the graph still holds gave
+	// that contract. The retention sweep deletes old edges, so a contract
+	// whose every edge it deleted has no entry.
 	FirstVersionByHash map[string]int64
 }
 
