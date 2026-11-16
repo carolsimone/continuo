@@ -138,6 +138,7 @@ func contractsInput() domainModel.PromoteReleaseInput {
 // contractsBundle is rel-1's bundle: the contracts of two python nodes.
 func contractsBundle() ports.ContractBundle {
 	return ports.ContractBundle{
+		TenantID:          "default",
 		ReleaseID:         "rel-1",
 		ContinuoContracts: "0.2.0",
 		Contracts: []contractversion.Incoming{
@@ -252,6 +253,21 @@ func TestContractsHandler_ABundleOfAnotherReleaseIsPermanent(t *testing.T) {
 	assert.Contains(t, err.Error(), "rel-0")
 	assert.Empty(t, f.uow.writes)
 	assert.Empty(t, f.live.calls)
+}
+
+// A bundle written for another tenant is permanent: recording it would put
+// another tenant's contracts in this tenant's graph.
+func TestContractsHandler_ABundleOfAnotherTenantIsPermanent(t *testing.T) {
+	f := newContractsFixture()
+	f.bundles.bundle.TenantID = "tenant-b"
+
+	err := f.handler.Handle(context.Background(), "1-0", nil, contractsInput())
+
+	require.ErrorIs(t, err, pkgevents.ErrPermanent)
+	assert.Contains(t, err.Error(), "tenant-b")
+	assert.Empty(t, f.uow.writes)
+	assert.Empty(t, f.live.calls)
+	assert.Empty(t, f.metrics.versions)
 }
 
 // A bundle that is absent from object storage is retried, as a missing code

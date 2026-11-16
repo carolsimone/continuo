@@ -58,7 +58,7 @@ func NewReleasePromotedContractsHandler(
 //  3. While an export or a restore holds the tenant's lease it returns
 //     uow.ErrWritesPaused without reading object storage. Otherwise it reads
 //     the bundle and verifies its SHA-256, outside any transaction. A bundle
-//     the reader refuses as invalid, or one of another release, is
+//     the reader refuses as invalid, or one of another tenant or release, is
 //     permanent; a missing bundle or an outage is retried.
 //  4. Transaction A reads the nodes' contract states, plans the promotion
 //     (contractversion.Plan) and writes the plan, and marks the message in
@@ -187,9 +187,9 @@ func (h *ReleasePromotedContractsHandler) Handle(
 }
 
 // fetch reads the promotion's contract bundle and checks that it is the
-// promoted release's. A bundle the reader refuses as invalid, or one of
-// another release, is permanent; any other error is returned as it is, so a
-// missing bundle and an outage are retried.
+// promoted tenant's and release's. A bundle the reader refuses as invalid, or
+// one of another tenant or release, is permanent; any other error is returned
+// as it is, so a missing bundle and an outage are retried.
 func (h *ReleasePromotedContractsHandler) fetch(ctx context.Context, in domainModel.PromoteReleaseInput) (ports.ContractBundle, error) {
 	bundle, err := h.bundles.Fetch(ctx, in.ContractBundleURI, in.ContractBundleSHA256)
 	if err != nil {
@@ -202,6 +202,15 @@ func (h *ReleasePromotedContractsHandler) fetch(ctx context.Context, in domainMo
 		}
 		// Absent or unreachable: the object may still land, so retry.
 		return ports.ContractBundle{}, fmt.Errorf("fetch contract bundle %s: %w", in.ContractBundleURI, err)
+	}
+	if bundle.TenantID != in.TenantID {
+		// Recording it would put another tenant's contracts in this tenant's
+		// graph.
+		h.logger.Error("contract bundle does not belong to the promotion's tenant — dead-lettering the message",
+			"tenant_id", in.TenantID, "bundle_tenant_id", bundle.TenantID, "release_id", in.ReleaseID,
+			"uri", in.ContractBundleURI)
+		return ports.ContractBundle{}, fmt.Errorf("%w: contract bundle %s belongs to tenant %q, event promoted for %q",
+			pkgevents.ErrPermanent, in.ContractBundleURI, bundle.TenantID, in.TenantID)
 	}
 	if bundle.ReleaseID != in.ReleaseID {
 		// Recording it would stamp this promotion onto another release's

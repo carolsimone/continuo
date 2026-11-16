@@ -345,8 +345,8 @@ func TestContractRepository_ALateOlderPromotionChangesNothing(t *testing.T) {
 
 	plan, res := f.writeContracts(contractPromotion("rel-47", 47), contractOf(kpisNode, contractB, "analytics-eng"))
 	assert.Equal(t, 1, plan.Superseded)
-	assert.Equal(t, contractversion.WriteResult{VersionsCreated: 1}, res,
-		"the older contract is stored, and nothing points at it")
+	assert.Equal(t, contractversion.WriteResult{}, res, "the older contract is not stored")
+	assert.NotContains(t, f.contractVersions(kpisNode), contractB, "no contract is left that nothing points at")
 	assert.Len(t, f.promotions(kpisNode), 1)
 	hash, pointer := f.contractPointer(kpisNode)
 	assert.Equal(t, contractA, hash)

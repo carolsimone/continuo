@@ -81,9 +81,10 @@ type Edge struct {
 	SameAsVersion int64
 }
 
-// WritePlan is what a promotion writes: every contract as a Version (created
-// only when missing), an Edge for each node whose current contract changes,
-// and the counts of the nodes it leaves alone.
+// WritePlan is what a promotion writes: the contract of every node no newer
+// promotion reached as a Version (created only when missing), an Edge for
+// each node whose current contract changes, and the counts of the nodes it
+// leaves alone.
 type WritePlan struct {
 	Versions []Version
 	Edges    []Edge

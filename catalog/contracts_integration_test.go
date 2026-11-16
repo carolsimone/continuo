@@ -258,3 +258,40 @@ func TestContractsHandler_ABundleThatFailsItsChecksumWritesNothing(t *testing.T)
 	assert.False(t, f.recorded("41-0"))
 	assert.Zero(t, f.live.calls)
 }
+
+// A promotion older than the node's watermark that carries a contract the
+// node never held stores nothing: no version nothing points at, no edge, and
+// nothing counted.
+func TestContractsHandler_ALatePromotionWithANewHashCreatesNoVersion(t *testing.T) {
+	ctx := context.Background()
+	f := newContractsFixture(t)
+	require.NoError(t, f.handler.Handle(ctx, "52-0", nil,
+		f.release("rel-52", 52, map[string]string{"analytics.py_daily_kpis": "sha256:3f1c"})))
+
+	require.NoError(t, f.handler.Handle(ctx, "47-0", nil,
+		f.release("rel-47", 47, map[string]string{"analytics.py_daily_kpis": "sha256:never-promoted"})))
+
+	assert.Equal(t, int64(1), f.versions(), "the late contract is not stored")
+	assert.Equal(t, int64(0), f.value(`MATCH (c:ContractVersion {tenant_id: $tenant_id, contract_hash: 'sha256:never-promoted'}) RETURN count(c) AS v`))
+	assert.Equal(t, int64(1), f.edges())
+	assert.Equal(t, []int{1, 0}, f.metrics.versions, "the late promotion counts 0")
+	assert.Equal(t, int64(52), f.value(`MATCH (n:Node {tenant_id: $tenant_id, unique_id: 'analytics.py_daily_kpis'}) RETURN n.contract_promotion_seq AS v`))
+	assert.True(t, f.recorded("47-0"))
+}
+
+// A promotion whose contract bundle was written for another tenant is
+// dead-lettered, and nothing is written under either tenant.
+func TestContractsHandler_ABundleOfAnotherTenantWritesNothing(t *testing.T) {
+	f := newContractsFixture(t)
+	in := f.release("rel-1", 41, map[string]string{"analytics.py_daily_kpis": "sha256:3f1c"})
+	in.TenantID = f.tenant("other")
+
+	err := f.handler.Handle(context.Background(), "41-0", nil, in)
+
+	require.ErrorIs(t, err, pkgevents.ErrPermanent)
+	assert.Contains(t, err.Error(), f.tenantID)
+	assert.Equal(t, int64(0), f.versions())
+	assert.Empty(t, f.query(in.TenantID, `MATCH (c:ContractVersion {tenant_id: $tenant_id}) RETURN c`))
+	assert.Empty(t, f.metrics.versions)
+	assert.Zero(t, f.live.calls)
+}

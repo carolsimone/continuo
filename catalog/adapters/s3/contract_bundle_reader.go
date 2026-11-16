@@ -34,7 +34,8 @@ func NewContractBundleReader(objects objectstore.Reader) *ContractBundleReader {
 // port's errors: a missing object is ports.ErrContractBundleNotFound
 // (retried); a uri that names no object, an object over
 // contractbundle.MaxObjectBytes, a checksum mismatch, an undecodable or
-// unsupported document and a contract catalog cannot version are
+// unsupported document, a document with no tenant_id and a contract catalog
+// cannot version are
 // ports.ErrContractBundleInvalid (permanent); any other error keeps its cause
 // and wraps neither, so the consumer's classifier recognises an outage.
 //
@@ -60,11 +61,15 @@ func (r *ContractBundleReader) Fetch(ctx context.Context, uri, sha256Hex string)
 	if err != nil {
 		return ports.ContractBundle{}, fmt.Errorf("%w: %s: %w", ports.ErrContractBundleInvalid, uri, err)
 	}
+	if strings.TrimSpace(doc.TenantID) == "" {
+		return ports.ContractBundle{}, fmt.Errorf("%w: %s: the bundle has no tenant_id", ports.ErrContractBundleInvalid, uri)
+	}
 	contracts, err := incomingContracts(doc.Contracts)
 	if err != nil {
 		return ports.ContractBundle{}, fmt.Errorf("%w: %s: %w", ports.ErrContractBundleInvalid, uri, err)
 	}
 	return ports.ContractBundle{
+		TenantID:          doc.TenantID,
 		ReleaseID:         doc.ReleaseID,
 		ContinuoContracts: doc.ContinuoContracts,
 		Contracts:         contracts,

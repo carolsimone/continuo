@@ -177,8 +177,22 @@ func TestPlan_ALateOlderPromotionChangesNothing(t *testing.T) {
 	plan := contractversion.Plan(promo(47), []contractversion.Incoming{b}, states)
 
 	assert.Empty(t, plan.Edges)
+	assert.Empty(t, plan.Versions)
 	assert.Equal(t, 1, plan.Superseded)
 	assert.Zero(t, plan.Unchanged)
+}
+
+// A late promotion carrying a contract the node never held stores nothing:
+// no version, so no contract that nothing points at.
+func TestPlan_ALateOlderPromotionWithANewHashPlansNoVersion(t *testing.T) {
+	c := incoming(kpis, "sha256:never-seen", content)
+	states := stateOf(kpis, 52, hashA, 3, 3, map[string]int64{hashA: 1, hashB: 2})
+
+	plan := contractversion.Plan(promo(47), []contractversion.Incoming{c}, states)
+
+	assert.Empty(t, plan.Versions)
+	assert.Empty(t, plan.Edges)
+	assert.Equal(t, 1, plan.Superseded)
 }
 
 func TestPlan_ASupersededNodeIsNotCountedAsUnchangedWhenItsHashMatches(t *testing.T) {
@@ -190,6 +204,7 @@ func TestPlan_ASupersededNodeIsNotCountedAsUnchangedWhenItsHashMatches(t *testin
 	assert.Equal(t, 1, plan.Superseded)
 	assert.Zero(t, plan.Unchanged)
 	assert.Empty(t, plan.Edges)
+	assert.Empty(t, plan.Versions)
 }
 
 func TestPlan_ARedeliveryOfTheCurrentPromotionChangesNothing(t *testing.T) {
@@ -236,7 +251,8 @@ func TestPlan_AMixedPromotionSortsEverythingByUniqueID(t *testing.T) {
 	for _, e := range plan.Edges {
 		edgeIDs = append(edgeIDs, e.UniqueID)
 	}
-	assert.Equal(t, []string{"analytics.a_late", "analytics.b_changed", "analytics.m_same", "analytics.z_new"}, versionIDs)
+	assert.Equal(t, []string{"analytics.b_changed", "analytics.m_same", "analytics.z_new"}, versionIDs,
+		"the superseded node contributes no version")
 	assert.Equal(t, []string{"analytics.b_changed", "analytics.z_new"}, edgeIDs)
 	assert.Equal(t, 1, plan.Superseded)
 	assert.Equal(t, 1, plan.Unchanged)

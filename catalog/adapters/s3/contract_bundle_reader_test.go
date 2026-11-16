@@ -95,6 +95,7 @@ func TestContractBundleReader_ReadsTheFixture(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, fx.Input.ReleaseID, bundle.ReleaseID)
+	assert.Equal(t, "default", bundle.TenantID, "the tenant the bundle was written for")
 	assert.Equal(t, fx.Input.LibraryVersion, bundle.ContinuoContracts)
 	require.Len(t, bundle.Contracts, 1)
 	got := bundle.Contracts[0]
@@ -205,6 +206,29 @@ func TestContractBundleReader_AnObjectOverTheCeilingIsInvalid(t *testing.T) {
 	require.ErrorIs(t, err, ports.ErrContractBundleInvalid)
 	assert.ErrorIs(t, err, objectstore.ErrTooLarge)
 	assert.NotErrorIs(t, err, ports.ErrContractBundleNotFound)
+}
+
+// A bundle that names no tenant cannot be matched to the promotion that
+// carries it, so it is refused as invalid, without being read further.
+func TestContractBundleReader_ABundleWithNoTenantIsInvalid(t *testing.T) {
+	for name, tenant := range map[string]string{"empty": `""`, "blank": `"  "`} {
+		t.Run(name, func(t *testing.T) {
+			mem := objectstoretest.NewMemory(defaultBucket)
+			sha := putContractBundle(t, mem, fmt.Appendf(nil,
+				`{"schema_version":1,"tenant_id":%s,"release_id":"rel-1","continuo_contracts":"0.2.0","contracts":{}}`, tenant))
+
+			_, err := fetchContractBundle(t, mem, sha)
+			require.ErrorIs(t, err, ports.ErrContractBundleInvalid)
+			assert.Contains(t, err.Error(), "tenant_id")
+		})
+	}
+	t.Run("absent", func(t *testing.T) {
+		mem := objectstoretest.NewMemory(defaultBucket)
+		sha := putContractBundle(t, mem, []byte(`{"schema_version":1,"release_id":"rel-1","contracts":{}}`))
+
+		_, err := fetchContractBundle(t, mem, sha)
+		require.ErrorIs(t, err, ports.ErrContractBundleInvalid)
+	})
 }
 
 func TestContractBundleReader_ADocumentOfAnotherVersionIsInvalid(t *testing.T) {

@@ -52,8 +52,7 @@ SET n.contract_promotion_seq = CASE
 // writeContractVersionsCypher records each stored contract once: every
 // property is set on creation only, so a revert, or the same contract promoted
 // again, MERGEs onto the version that exists. first_release_id is the release
-// whose promotion first stored the version, even when that promotion was
-// already superseded for the node and recorded no change.
+// whose promotion first stored the version.
 const writeContractVersionsCypher = `
 UNWIND $versions AS c
 MERGE (v:ContractVersion {tenant_id: $tenant_id, unique_id: c.unique_id, contract_hash: c.contract_hash})
