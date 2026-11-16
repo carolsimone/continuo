@@ -8,7 +8,8 @@ const (
 	LiveWritePut = "put"
 	// LiveWriteDelete is the delete of the file of a node no longer live.
 	LiveWriteDelete = "delete"
-	// LiveWriteIndex is the put of the folder's index, written last.
+	// LiveWriteIndex is the put of the folder's index: the interim index a
+	// rewrite that puts files writes first, or the final one, written last.
 	LiveWriteIndex = "index"
 )
 

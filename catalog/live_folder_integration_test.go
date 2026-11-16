@@ -110,7 +110,7 @@ func TestLiveFolder_APromotionPublishesTheFolderAndItsWatermark(t *testing.T) {
 	require.NoError(t, f.handler.Handle(ctx, "41-0", nil, first))
 
 	require.Len(t, f.livePuts(), 4)
-	assert.Equal(t, "_index.json", f.livePuts()[0], "an interim index lists the new files before they are put")
+	assert.Equal(t, "_index.json", f.livePuts()[0], "an interim index lists every file about to be put")
 	assert.ElementsMatch(t, []string{"analytics.py_daily_kpis.odcs.yaml", "analytics.py_weekly.odcs.yaml"}, f.livePuts()[1:3])
 	assert.Equal(t, "_index.json", f.livePuts()[3], "the final index is written last")
 	file, ok := f.object("analytics.py_daily_kpis.odcs.yaml")
@@ -141,8 +141,8 @@ func TestLiveFolder_APromotionPublishesTheFolderAndItsWatermark(t *testing.T) {
 
 	changed := f.release("rel-3", 43, map[string]string{"analytics.py_daily_kpis": "sha256:b07e", "analytics.py_weekly": "sha256:a0b1"})
 	require.NoError(t, f.handler.Handle(ctx, "43-0", nil, changed))
-	assert.Equal(t, []string{"analytics.py_daily_kpis.odcs.yaml", "_index.json"}, f.livePuts()[5:],
-		"a changed file the index lists needs no interim index")
+	assert.Equal(t, []string{"_index.json", "analytics.py_daily_kpis.odcs.yaml", "_index.json"}, f.livePuts()[5:],
+		"an interim index marks the file about to be put, then the put, then the final index")
 	file, _ = f.object("analytics.py_daily_kpis.odcs.yaml")
 	assert.Contains(t, file, "version: \"2\"\n")
 	assert.Equal(t, int64(43), f.value(live+`RETURN m.promotion_seq AS v`))

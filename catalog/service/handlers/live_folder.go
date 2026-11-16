@@ -47,15 +47,16 @@ const (
 
 // LiveFolder writes a tenant's live contracts folder: one published contract
 // file per node of the promotion it is written for whose current contract is
-// not an ephemeral model's, and the folder's index, written last. The nodes of
+// not an ephemeral model's, and the folder's index, whose final form is
+// written last. The nodes of
 // a promotion are those whose contract watermark is its seq: every bundle
 // names every python-odcs node of the release, so the set never waits for the
 // topology swap, takes a node the release added at once and drops a node the
-// release removed at once. A file's bytes depend only on the node's
-// current contract version and the publishing settings, so a rewrite puts
-// only the files whose version or contract hash differs from the index, or
-// every file when the index was written with other settings, and deletes the
-// files of the nodes the index lists that are no longer published.
+// release removed at once. A file's bytes depend only on the node's current
+// contract version and the publishing settings, so a rewrite puts only the
+// files whose version or contract hash differs from the index, or every file
+// when the index was written with other settings, and deletes the files of
+// the nodes the index lists that are no longer published.
 //
 // Every rewrite of a tenant holds the tenant's live-folder lease, so two
 // rewrites never interleave their writes, and reads the live contracts only
@@ -333,11 +334,13 @@ func (l *LiveFolder) underLease(ctx context.Context, tenantID string, fn func(ct
 // other settings), deletes the files prev lists that are no longer published,
 // then puts the index naming promotionSeq and releaseID.
 //
-// Before it puts a file prev does not list, it puts an interim index: prev
-// with an entry for each such file at version 0, which no contract has. A
-// rewrite that stops after such a put leaves the file listed, so the next
-// rewrite deletes it if its node is not published, and puts it again if it
-// is, whichever promotion that rewrite is for.
+// Before its puts it puts an interim index: prev with every file about to be
+// put listed at version 0 and an empty hash, which match no contract. A
+// rewrite that stops after a put leaves that file listed at version 0, so the
+// next rewrite, whichever promotion and settings it is for, deletes the file
+// if its node is not published and puts it again if it is: a file a failed
+// rewrite added, or overwrote with another version or other settings, is
+// never left in place.
 func (l *LiveFolder) write(
 	ctx context.Context,
 	tenantID string,
@@ -380,7 +383,7 @@ func (l *LiveFolder) write(
 	slices.SortFunc(puts, func(a, b contractversion.LiveContract) int { return cmp.Compare(a.UniqueID, b.UniqueID) })
 	slices.Sort(deletes)
 
-	if err := l.putInterimIndex(ctx, tenantID, prev, found, listed, puts); err != nil {
+	if err := l.putInterimIndex(ctx, tenantID, prev, found, puts, promotionSeq, releaseID); err != nil {
 		return err
 	}
 	if err := l.each(ctx, len(puts), ports.LiveWritePut, func(ctx context.Context, i int) error {
@@ -418,32 +421,43 @@ func (l *LiveFolder) write(
 	return nil
 }
 
-// putInterimIndex puts the interim index write describes when puts holds a
-// file prev does not list; otherwise it writes nothing. The interim index keeps
-// prev's promotion, release and settings, so a rewrite reading it still sees
-// the folder's last finished rewrite; with no prev it names no promotion and
-// no settings.
+// putInterimIndex puts the interim index write describes when puts is not
+// empty; otherwise it writes nothing. The interim index keeps prev's
+// promotion, release and settings, so a rewrite reading it still sees the
+// folder's last finished rewrite. With no prev it names the promotion and
+// release being written and no settings, which no rewrite takes as finished.
 func (l *LiveFolder) putInterimIndex(
 	ctx context.Context,
 	tenantID string,
 	prev ports.LiveIndex,
 	found bool,
-	listed map[string]ports.LiveIndexFile,
 	puts []contractversion.LiveContract,
+	promotionSeq int64,
+	releaseID string,
 ) error {
-	files := slices.Clone(prev.Files)
+	if len(puts) == 0 {
+		return nil
+	}
+	pending := make(map[string]bool, len(puts))
 	for _, c := range puts {
-		if _, ok := listed[c.UniqueID]; !ok {
-			files = append(files, ports.LiveIndexFile{UniqueID: c.UniqueID})
+		pending[c.UniqueID] = true
+	}
+	files := make([]ports.LiveIndexFile, 0, len(prev.Files)+len(puts))
+	for _, f := range prev.Files {
+		if !pending[f.UniqueID] {
+			files = append(files, f)
 		}
 	}
-	if len(files) == len(prev.Files) {
-		return nil
+	for _, c := range puts {
+		files = append(files, ports.LiveIndexFile{UniqueID: c.UniqueID})
 	}
 	slices.SortFunc(files, func(a, b ports.LiveIndexFile) int { return cmp.Compare(a.UniqueID, b.UniqueID) })
 	interim := prev
 	if !found {
-		interim = ports.LiveIndex{SchemaVersion: ports.LiveIndexSchemaVersion, TenantID: tenantID}
+		interim = ports.LiveIndex{
+			SchemaVersion: ports.LiveIndexSchemaVersion, TenantID: tenantID,
+			PromotionSeq: promotionSeq, ReleaseID: releaseID,
+		}
 	}
 	interim.WrittenAt = l.now().UTC()
 	interim.Files = files

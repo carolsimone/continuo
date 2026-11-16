@@ -14,10 +14,13 @@ const LiveIndexSchemaVersion = 1
 // the live contracts folder: it is empty, "." or "..", or holds a "/".
 var ErrInvalidLiveFile = errors.New("the id cannot name a live contracts file")
 
-// LiveIndex is the index of a tenant's live contracts folder, written after
-// every file it lists: the promotion it was written for, the fingerprint of
-// the publishing settings its files were rendered with, and one entry per
-// published file, sorted by unique id.
+// LiveIndex is the index of a tenant's live contracts folder: the promotion
+// it was written for, the fingerprint of the publishing settings its files
+// were rendered with, and one entry per file, sorted by unique id. A rewrite
+// that puts files first writes an interim index, listing every file about to
+// be put at version 0 with an empty contract hash, and writes the final index
+// last, once every put and delete has succeeded. So an entry at version 0
+// names a file whose bytes no index vouches for.
 type LiveIndex struct {
 	SchemaVersion  int
 	TenantID       string
