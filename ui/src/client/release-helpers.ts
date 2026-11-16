@@ -140,9 +140,9 @@ export function proposalReasonForNode(p: ProposalDTO, nodeId: string): string {
 
 // proposalCodeForNode reads the handover_reason a batched attempt handed one
 // specific node over for. It reads only that node's own outcome: a proposal
-// describes several nodes, so no proposal-level value stands in for it. The
-// server sends '' for an outcome with no code and an older payload omits the
-// field; both, and a value that is not a known reason, read as undefined.
+// describes several nodes, so no proposal-level value stands in for it. An
+// absent or empty code, and a value that is not a known reason, read as
+// undefined.
 export function proposalCodeForNode(p: ProposalDTO, nodeId: string): HandoverReason | undefined {
   const code = p.node_outcomes?.[nodeId]?.code;
   return code && (HANDOVER_REASONS as readonly string[]).includes(code) ? code : undefined;

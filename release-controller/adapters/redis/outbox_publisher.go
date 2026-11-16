@@ -28,9 +28,8 @@ type releaseOutboxPublisher struct {
 
 var _ pkgoutbox.Publisher = (*releaseOutboxPublisher)(nil)
 
-// Publish writes the outbox entry payload to its designated Redis stream.
-// The wire format is a single "payload" field containing the JSON body, which
-// is consistent with how release-controller event consumers decode messages.
+// Publish writes the outbox entry to its designated Redis stream, with the
+// fields Render decides for the row.
 func (p *releaseOutboxPublisher) Publish(ctx context.Context, entry *pkgoutbox.Entry) error {
 	values, err := p.Render(entry)
 	if err != nil {

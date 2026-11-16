@@ -35,7 +35,7 @@ func DecodeRemediationRequested(fields map[string]string) (Envelope, Remediation
 // trigger as a store holds it: a remediation.requested:v3 payload, or one
 // remediation.requested:v2 stored, whose event_id is ignored and whose nodes
 // are all fixable. A stored payload that has no remediation_round, or a 0,
-// is round 1: the field was added after the first v2 payloads were stored.
+// reads as round 1.
 // Every error wraps ErrMalformedEnvelope: a payload that is not JSON, an
 // empty release_id, a negative remediation_round, a source outside the
 // remediation_source vocabulary, a node without a node_id, or an unfixable

@@ -250,8 +250,8 @@ func TestDecodeRemediationRequested_RefusesRoundZeroAndAMissingRound(t *testing.
 	require.ErrorIs(t, err, events.ErrMalformedEnvelope, "no round")
 }
 
-// A payload stored before the round field existed has none: the stored-payload
-// decoder reads it as round 1, as the consumers of a stored payload do. The
+// A stored payload with no remediation_round reads as round 1 through the
+// stored-payload decoder, as the consumers of a stored payload read it. The
 // rest of the payload reads as written.
 func TestDecodeRemediationRequestedPayload_ReadsAMissingRoundAsOne(t *testing.T) {
 	raw, err := os.ReadFile(remediationRequestedV2StoredFixture)

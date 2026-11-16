@@ -436,7 +436,7 @@ export interface FileEditDTO {
 // How a batched remediation attempt ended for one specific node it resolved.
 // code is the handover_reason a node was handed over for when its outcome is
 // not part of a verified fix; the server sends "" when the outcome carries no
-// code, and a payload from a server that predates the field omits it.
+// code. An absent or empty code reads as no code.
 export interface NodeOutcomeDTO {
   status: string;
   reason: string;

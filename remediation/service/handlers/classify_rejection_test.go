@@ -209,7 +209,7 @@ func TestClassifyFailure_EmitsHealableNodes(t *testing.T) {
 }
 
 func TestClassifyFailure_StructuredBranchWinsOverLog(t *testing.T) {
-	// The text log alone would classify infra (drop, no trigger); the structured
+	// The text log alone would classify infra (drop, forwarded unfixable); the structured
 	// run_results says status=fail (a test), which is healable and must emit.
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
 	ev := failure.FailureEvidence{
