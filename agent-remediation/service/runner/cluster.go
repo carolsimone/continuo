@@ -13,6 +13,11 @@ import (
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 )
 
+// noEditReason is the outcome of the members of a cluster whose draft passed
+// pre-flight with no edit: nothing a verification run could run, and nothing
+// a pull request could carry. Such members are recorded declined.
+const noEditReason = "the fix could not be applied to version-controlled source, so there is nothing to verify"
+
 // contextRound is the round a cluster's context steps run in. They run once
 // per try, in its first round and only while the cluster is gathering; every
 // later step rebuilds the cluster's evidence from their rows.
@@ -270,7 +275,9 @@ func promptRecord(out step.PromptOutput, m *model) serialization.PromptRecord {
 //
 // When every check passed, each edit with no original gets the one the pass's
 // checkout read, the edits' content and diff are stored, and the cluster is
-// checked. Otherwise, while the cluster has rounds left of the ones its type
+// checked. A draft that passed every check with no edit is a decline: the
+// cluster settles with its members failed for noEditReason, with the code
+// declined, and an upstream cluster falls back as on any decline. Otherwise, while the cluster has rounds left of the ones its type
 // allows, it goes back to proposing in the next round, where the prompt step
 // revises the draft with every finding of this pass. In its last round the
 // cluster settles with its members failed on the pass's first finding, with
@@ -315,6 +322,12 @@ func (r *Runner) runPreflight(ctx context.Context, run tryRun, c remediation.Clu
 			})
 		}
 		if err != nil {
+			return err
+		}
+	} else if len(draft.Edits) == 0 {
+		if added, err = r.settle(run, &next, proposal.NodeOutcome{
+			Status: proposal.StatusFailed, Reason: noEditReason, Code: pkg_model.HandoverReasonDeclined,
+		}); err != nil {
 			return err
 		}
 	} else {

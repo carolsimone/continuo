@@ -358,9 +358,9 @@ func (r *Runner) recordAttempt(ctx context.Context, u uow.UnitOfWork, run tryRun
 }
 
 // finishTry takes the next committed step of a try whose every cluster has
-// ended. A drafting try none of whose checked clusters has an edit is settled:
-// its attempt is recorded with what its clusters reported, the try fails and
-// the remediation is done. Any other drafting try moves to checking. A
+// ended. A drafting try with no checked draft that has an edit, every cluster
+// having been handed over or fallen back, is settled: its attempt is recorded
+// with what its clusters reported, the try fails and the remediation is done. Any other drafting try moves to checking. A
 // checking try runs the flow's cross-cluster checks one at a time, in file
 // order, each committed on its own; a finding fails the attempt and the try,
 // like a gate that did not pass the fix, and the remediation's next try opens
@@ -376,7 +376,7 @@ func (r *Runner) finishTry(ctx context.Context, run tryRun) error {
 	drafts := draftsOf(checked)
 	if run.snap.Try.Status == remediation.TryDrafting {
 		if len(drafts) == 0 {
-			return r.settleTry(ctx, run, checked)
+			return r.settleTry(ctx, run)
 		}
 		return r.commit(ctx, run.snap.Remediation.ID, func(u uow.UnitOfWork) error {
 			if err := r.clearFailures(ctx, u, run); err != nil {
@@ -402,8 +402,8 @@ func (r *Runner) finishTry(ctx context.Context, run tryRun) error {
 // settleTry records the attempt of a try that has nothing to verify, fails
 // the try and ends the remediation, in one transaction. The attempt is skipped
 // when every node was skipped, and failed as soon as one node was attempted.
-func (r *Runner) settleTry(ctx context.Context, run tryRun, checked []checkedCluster) error {
-	outcomes := nodeOutcomes(run.snap.Clusters, checked)
+func (r *Runner) settleTry(ctx context.Context, run tryRun) error {
+	outcomes := nodeOutcomes(run.snap.Clusters)
 	p := proposal.Proposal{Status: settledStatus(outcomes), NodeOutcomes: outcomes}
 	if err := r.commit(ctx, run.snap.Remediation.ID, func(u uow.UnitOfWork) error {
 		if err := r.recordAttempt(ctx, u, run, run.snap.Try.Attempt, p); err != nil {
@@ -491,7 +491,7 @@ func (r *Runner) failTryOnFindings(ctx context.Context, u uow.UnitOfWork, run tr
 // unverifiable_edits; every other node keeps how its cluster ended
 // (nodeOutcomes), such as a cluster handed over before any draft.
 func (r *Runner) recordRefusal(ctx context.Context, u uow.UnitOfWork, run tryRun, checked []checkedCluster, reason string) error {
-	outcomes := nodeOutcomes(run.snap.Clusters, checked)
+	outcomes := nodeOutcomes(run.snap.Clusters)
 	refused := proposal.NodeOutcome{Status: proposal.StatusFailed, Reason: reason, Code: pkg_model.HandoverReasonUnverifiableEdits}
 	for _, d := range draftsOf(checked) {
 		for _, m := range d.Cluster.Members {

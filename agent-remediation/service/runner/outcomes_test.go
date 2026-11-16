@@ -221,27 +221,84 @@ func TestRunner_Declined(t *testing.T) {
 		assert.Zero(t, h.llm.calls())
 	})
 
-	t.Run("a checked draft has no edit", func(t *testing.T) {
+	t.Run("a draft with no edit passes pre-flight", func(t *testing.T) {
 		h := newHarness(t, withPreflight("dbt-compile", "confidence_not_low"))
-		h.llm.answer = func(req prompt.ProposeRequest) ports.ProposeResult {
-			r := fixAnswer(req)
-			r.TargetFile = "models/elsewhere.sql"
-			return r
-		}
+		h.llm.answer = noEditAnswer
 		id := h.accept(trigger("compile", compileNode("svc-a")))
 
 		require.NoError(t, h.runner.Drive(ctx, id))
 
-		assert.Equal(t, remediation.ClusterChecked, h.cluster(id, 1, 1).Status)
+		c := h.cluster(id, 1, 1)
+		assert.Equal(t, remediation.ClusterHandedOver, c.Status)
+		assert.Equal(t, &noEditDeclined, c.Outcome)
 		p := h.attempt(1).Proposal
-		assert.Equal(t, proposal.StatusFailed, p.Status)
-		assert.Equal(t, map[string]proposal.NodeOutcome{"svc-a": {
-			Status: proposal.StatusFailed,
-			Reason: "the fix could not be applied to version-controlled source, so there is nothing to verify",
-			Code:   model.HandoverReasonDeclined,
-		}}, p.NodeOutcomes)
+		assert.Equal(t, proposal.StatusFailed, p.Status, "a node the model was asked about fails the attempt")
+		assert.Equal(t, map[string]proposal.NodeOutcome{"svc-a": noEditDeclined}, p.NodeOutcomes)
 		assert.Empty(t, h.pipeline.runs())
 	})
+}
+
+// noEditDeclined is the outcome of the members of a cluster whose draft passed
+// pre-flight with no edit.
+var noEditDeclined = proposal.NodeOutcome{
+	Status: proposal.StatusFailed,
+	Reason: "the fix could not be applied to version-controlled source, so there is nothing to verify",
+	Code:   model.HandoverReasonDeclined,
+}
+
+// noEditAnswer names a file the model was not shown, so the compile prompt's
+// draft holds no edit.
+func noEditAnswer(req prompt.ProposeRequest) ports.ProposeResult {
+	r := fixAnswer(req)
+	r.TargetFile = "models/elsewhere.sql"
+	return r
+}
+
+// A draft that passes pre-flight with no edit is a decline: the cluster is
+// handed over declined, and the next try carries the node as settled and does
+// not group it again. The type here checks only the draft's confidence, so a
+// draft with no edit passes its pre-flight.
+func TestRunner_ADraftWithNoEditIsDeclinedAndNotTriedAgain(t *testing.T) {
+	h := newHarness(t, withPreflight("dbt-compile", "confidence_not_low"))
+	h.llm.answer = func(req prompt.ProposeRequest) ports.ProposeResult {
+		if strings.Contains(req.User, "services/svc-a/") {
+			return noEditAnswer(req)
+		}
+		return fixAnswer(req)
+	}
+	id := h.accept(trigger("compile", compileNode("svc-a"), compileNode("svc-b")))
+	require.NoError(t, h.runner.Drive(ctx, id))
+
+	declinedCluster := h.clusterFor(id, 1, "svc-a")
+	assert.Equal(t, remediation.ClusterHandedOver, declinedCluster.Status)
+	assert.Equal(t, &noEditDeclined, declinedCluster.Outcome)
+	assert.Equal(t, map[string]proposal.NodeOutcome{
+		"svc-a": noEditDeclined,
+		"svc-b": {Status: proposal.StatusVerifying},
+	}, h.attempt(1).Proposal.NodeOutcomes)
+	require.Equal(t, 2, h.llm.calls())
+
+	h.failGate(id, "svc-b")
+
+	assert.Equal(t, noEditDeclined, h.attempt(1).Proposal.NodeOutcomes["svc-a"], "the failed gate leaves the declined node as it was")
+	carried := h.clusterFor(id, 2, "svc-a")
+	assert.Equal(t, "", carried.TypeName)
+	assert.Equal(t, remediation.ClusterHandedOver, carried.Status)
+	assert.Equal(t, &noEditDeclined, carried.Outcome)
+	for _, c := range h.store.Clusters(id) {
+		if c.Try == 2 && c.Cluster != carried.Cluster {
+			assert.Equal(t, []string{"svc-b"}, c.Members, "only svc-b is grouped again")
+		}
+	}
+
+	require.NoError(t, h.drive(id))
+
+	assert.Empty(t, h.stepRows(id, 2, carried.Cluster), "no step runs again for the declined node")
+	assert.Equal(t, 3, h.llm.calls(), "the second try asks the model about svc-b alone")
+	assert.Equal(t, map[string]proposal.NodeOutcome{
+		"svc-a": noEditDeclined,
+		"svc-b": {Status: proposal.StatusVerifying},
+	}, h.attempt(2).Proposal.NodeOutcomes)
 }
 
 // crossServiceNode is svc-a, broken by a change to model.core.base in core,

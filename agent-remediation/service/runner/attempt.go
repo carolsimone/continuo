@@ -8,13 +8,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
-	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 )
-
-// noEditReason is the outcome of the members of a checked cluster whose draft
-// has no edit: nothing a verification run could run, and nothing a pull
-// request could carry. Such members are recorded declined.
-const noEditReason = "the fix could not be applied to version-controlled source, so there is nothing to verify"
 
 // checkedCluster is a checked cluster of the try with the draft it produced and
 // the evidence it was made from, as the journal recorded them, and the results
@@ -103,24 +97,18 @@ func draftsDigest(drafts []step.ClusterDraft) (string, error) {
 }
 
 // nodeOutcomes is how the try ended for each failing node: verifying for the
-// members of a checked cluster with an edit, failed as declined for the members
-// of a checked cluster whose draft has no edit, and the outcome a handed-over or
-// fallen-back cluster recorded for its members. A shared-upstream cluster that
-// fell back records none: each of its members is the target of a cluster of
-// its own.
-func nodeOutcomes(clusters []remediation.Cluster, checked []checkedCluster) map[string]proposal.NodeOutcome {
-	withEdit := make(map[int]bool, len(checked))
-	for _, cc := range checked {
-		withEdit[cc.draft.Cluster.Cluster] = len(cc.draft.Draft.Edits) > 0
-	}
+// members of a checked cluster, whose draft has an edit (a draft with no edit
+// is settled as a decline before it is checked), and the outcome a
+// handed-over or fallen-back cluster recorded for its members. A
+// shared-upstream cluster that fell back records none: each of its members is
+// the target of a cluster of its own.
+func nodeOutcomes(clusters []remediation.Cluster) map[string]proposal.NodeOutcome {
 	out := map[string]proposal.NodeOutcome{}
 	for _, c := range clusters {
 		var o proposal.NodeOutcome
 		switch {
-		case c.Status == remediation.ClusterChecked && withEdit[c.Cluster]:
-			o = proposal.NodeOutcome{Status: proposal.StatusVerifying}
 		case c.Status == remediation.ClusterChecked:
-			o = proposal.NodeOutcome{Status: proposal.StatusFailed, Reason: noEditReason, Code: pkg_model.HandoverReasonDeclined}
+			o = proposal.NodeOutcome{Status: proposal.StatusVerifying}
 		case c.Outcome != nil:
 			o = *c.Outcome
 		default:
@@ -154,7 +142,7 @@ func verifyingAttempt(run tryRun, checked []checkedCluster, verifications []prop
 	t := run.trigger
 	p := proposal.Proposal{
 		Status:         proposal.StatusVerifying,
-		NodeOutcomes:   nodeOutcomes(run.snap.Clusters, checked),
+		NodeOutcomes:   nodeOutcomes(run.snap.Clusters),
 		Verifications:  verifications,
 		SourceResolved: true,
 		Repo:           t.Repo,
