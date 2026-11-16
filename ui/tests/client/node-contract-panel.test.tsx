@@ -225,7 +225,7 @@ describe('NodeContractPanel', () => {
     serve({ contract: null, versions: [] });
     renderPanel();
 
-    expect(await screen.findByText('This node has no contract yet.')).toBeInTheDocument();
+    expect(await screen.findByText(/^This node has no contract\. Only Python services released as python-odcs have contracts/)).toBeInTheDocument();
     expect(screen.queryByRole('region')).not.toBeInTheDocument();
   });
 
@@ -261,7 +261,7 @@ describe('NodeContractPanel', () => {
     renderPanel();
 
     expect(await screen.findByText(/Could not read this node's contract/)).toBeInTheDocument();
-    expect(screen.queryByText('This node has no contract yet.')).not.toBeInTheDocument();
+    expect(screen.queryByText(/^This node has no contract/)).not.toBeInTheDocument();
   });
 
   it('reads the contract of the node it now shows when the node changes', async () => {
@@ -277,7 +277,7 @@ describe('NodeContractPanel', () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText('This node has no contract yet.')).toBeInTheDocument();
+    expect(await screen.findByText(/^This node has no contract\. Only Python services released as python-odcs have contracts/)).toBeInTheDocument();
     expect(mockFetch).toHaveBeenCalledWith(other, expect.anything());
     expect(screen.queryByRole('region', { name: 'Current contract' })).not.toBeInTheDocument();
   });
