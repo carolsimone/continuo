@@ -34,8 +34,8 @@ const csvReadKey = "csv"
 //
 // Locating the failing node's contract file, verifying no sibling in the same
 // directory also failed (so the verification run the driver later submits
-// can actually pass), and everything from the model call through packaging the
-// merged contract is not merely similar in shape to the python-node lane's —
+// can actually pass), and everything from the model call through packing the
+// odcs-bundle.json is not merely similar in shape to the python-node lane's —
 // it is the same code, shared through locateContractForFix and
 // contractFix. This type differs from pythonValidationFixer
 // only in the two seams passed into contractFix: what

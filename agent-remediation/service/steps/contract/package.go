@@ -16,16 +16,18 @@ import (
 // checkout, is a contract the team's packaging tool accepts.
 type ContractPackages struct {
 	packager ports.ContractPackager
+	images   ports.ImagePackagesSource
 	dialect  string
 }
 
 var _ step.Check = (*ContractPackages)(nil)
 
-// NewContractPackages builds the contract_packages step. dialect is the sqlglot
-// dialect of the warehouse the install runs, which the tool renders the
-// contract's reads under.
-func NewContractPackages(packager ports.ContractPackager, dialect string) *ContractPackages {
-	return &ContractPackages{packager: packager, dialect: dialect}
+// NewContractPackages builds the contract_packages step. images reads the
+// package list of the rejected release's image of the service, which the
+// bundle records. dialect is the sqlglot dialect of the warehouse the install
+// runs, which the tool checks the contract's reads under.
+func NewContractPackages(packager ports.ContractPackager, images ports.ImagePackagesSource, dialect string) *ContractPackages {
+	return &ContractPackages{packager: packager, images: images, dialect: dialect}
 }
 
 const nameContractPackages workflow.StepName = "contract_packages"
@@ -35,25 +37,30 @@ func (*ContractPackages) Meta() step.Meta {
 	return step.Meta{
 		Name: nameContractPackages,
 		Kind: step.KindCheck,
-		Description: "Packages the contract directory of the patched checkout with the tool the team's own release CI runs, and fails " +
-			"a draft the tool refuses. Provides the merged contract a verification run is submitted with.",
+		Description: "Packs the contract directory of the patched checkout into an odcs-bundle.json with the tool the team's own release CI runs, " +
+			"recording the package list of the rejected release's image of the service, and fails a draft the tool refuses. " +
+			"Provides the bundle a verification run is submitted with. A release that records no package list fails the step.",
 		Needs:    needsDraftAndFile,
 		Provides: []remediation.EvidenceKey{remediation.KeyPackagedContract},
 		Stages:   preflightOnly,
 	}
 }
 
-// Check packages the contract directory of the patched checkout, resolving
-// scripts against the service's own directory, for the failing node's service.
-// The order is the whole point: packaging the checkout before the answer is
+// Check packs the contract directory of the patched checkout, resolving
+// scripts against the service's own directory, for the failing node's service,
+// with the package list of the rejected release's image of that service.
+// The order is the whole point: packing the checkout before the answer is
 // written to it would produce, and verify, the contract that already failed.
 //
 // A contract the tool read and refused is settled, because the tool is
 // deterministic on its input: it is a contract_rejected finding keeping the
-// tool's complaint. Any other failure is the tool never having answered, and is
-// returned so the work is tried again. A draft with a path outside the checkout
-// is never applied: it is reported as path_outside_contract_dir, as the path
-// check does.
+// tool's complaint. A release none of whose bundles records the package list
+// (ports.ErrNoImagePackages) is no fault of the draft, so it is returned as
+// the step's error with the reason, which the remediation's failure count
+// records. Any other failure is the tool or a read never having answered, and
+// is returned so the work is tried again. A draft with a path outside the
+// checkout is never applied: it is reported as path_outside_contract_dir, as
+// the path check does.
 func (c *ContractPackages) Check(ctx context.Context, in step.CheckInput) (step.CheckOutput, error) {
 	file, err := contractFileOf(in, nameContractPackages)
 	if err != nil {
@@ -63,10 +70,15 @@ func (c *ContractPackages) Check(ctx context.Context, in step.CheckInput) (step.
 	if done || err != nil {
 		return out, err
 	}
-	merged, err := c.packager.Merge(ctx,
+	f := in.Failure
+	packages, err := c.images.ImagePackages(ctx, f.Trigger.ReleaseID, f.Target.Service)
+	if err != nil {
+		return step.CheckOutput{}, fmt.Errorf("read the image packages to pack %s with: %w", f.Target.NodeID, err)
+	}
+	bundle, err := c.packager.Pack(ctx,
 		filepath.Join(root, filepath.FromSlash(file.ContractDir)),
 		filepath.Join(root, filepath.FromSlash(file.RepoRoot)),
-		in.Failure.Target.Service, c.dialect)
+		f.Target.Service, c.dialect, packages)
 	if errors.Is(err, ports.ErrContractRejected) {
 		return result(nameContractPackages, []remediation.Finding{{
 			Code: "contract_rejected",
@@ -75,10 +87,10 @@ func (c *ContractPackages) Check(ctx context.Context, in step.CheckInput) (step.
 		}}), nil
 	}
 	if err != nil {
-		return step.CheckOutput{}, fmt.Errorf("package contract for %s: %w", in.Failure.Target.NodeID, err)
+		return step.CheckOutput{}, fmt.Errorf("package contract for %s: %w", f.Target.NodeID, err)
 	}
 	return step.CheckOutput{
 		Result:   remediation.CheckResult{Check: string(nameContractPackages)},
-		Evidence: map[remediation.EvidenceKey]any{remediation.KeyPackagedContract: remediation.Bytes(merged)},
+		Evidence: map[remediation.EvidenceKey]any{remediation.KeyPackagedContract: remediation.Bytes(bundle)},
 	}, nil
 }

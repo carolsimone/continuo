@@ -70,7 +70,7 @@ func TestSubmit_PythonOmitsTheOverlay(t *testing.T) {
 	}))
 	defer srv.Close()
 	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
-	require.NoError(t, g.Submit(context.Background(), ports.VerificationRequest{RunID: "v", Service: "py", ImageTag: "i", Kind: ports.VerificationKindPython, VerifiesReleaseID: "rel-1", Attempt: 2}))
+	require.NoError(t, g.Submit(context.Background(), ports.VerificationRequest{RunID: "v", Service: "py", ImageTag: "i", Kind: ports.VerificationKindPythonODCS, VerifiesReleaseID: "rel-1", Attempt: 2}))
 	_, has := got["source_overlay_uri"]
 	assert.False(t, has)
 }
@@ -289,4 +289,31 @@ func TestStatus_FailedParseStageWithNoDetailFallsBack(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "invalid_sql — the compiled SQL does not parse",
 		st.NodeErrors["analytics.py_daily_kpis"])
+}
+
+func TestContractBundle_ReadsTheReleasesBundle(t *testing.T) {
+	srv := releaseServer(t, "/releases/rel-1", http.StatusOK,
+		`{"release_id":"rel-1","contract_bundle_uri":"s3://b/tenants/default/topologies/rel-1/contracts.json.gz","contract_bundle_sha256":"ab12","continuo_contracts":"0.2.0"}`)
+	defer srv.Close()
+	uri, sha, err := NewGateway(srv.URL, &fakeEvidence{}, nil).ContractBundle(context.Background(), "rel-1")
+	require.NoError(t, err)
+	assert.Equal(t, "s3://b/tenants/default/topologies/rel-1/contracts.json.gz", uri)
+	assert.Equal(t, "ab12", sha)
+}
+
+func TestContractBundle_AReleaseRejectedBeforeItsParseEndedHasNone(t *testing.T) {
+	srv := releaseServer(t, "/releases/rel-1", http.StatusOK,
+		`{"release_id":"rel-1","contract_bundle_uri":"","contract_bundle_sha256":"","continuo_contracts":""}`)
+	defer srv.Close()
+	uri, sha, err := NewGateway(srv.URL, &fakeEvidence{}, nil).ContractBundle(context.Background(), "rel-1")
+	require.NoError(t, err)
+	assert.Empty(t, uri)
+	assert.Empty(t, sha)
+}
+
+func TestContractBundle_AFailedReadIsAnError(t *testing.T) {
+	srv := releaseServer(t, "/releases/rel-1", http.StatusBadGateway, "upstream down")
+	defer srv.Close()
+	_, _, err := NewGateway(srv.URL, &fakeEvidence{}, nil).ContractBundle(context.Background(), "rel-1")
+	require.Error(t, err)
 }

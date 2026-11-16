@@ -58,6 +58,7 @@ func NewRegistry(c Collaborators) *Registry {
 			remediation.KeyChangedAncestorDiffs: func() any { return []prompt.ReleaseUpstreamChange{} },
 			remediation.KeyContractFile:         func() any { return remediation.ContractFile{} },
 			remediation.KeyContractEntry:        func() any { return remediation.Text("") },
+			remediation.KeyCurrentContract:      func() any { return remediation.Text("") },
 			remediation.KeyPreviousTries:        func() any { return []remediation.TryRecord{} },
 			remediation.KeyPackagedContract:     func() any { return remediation.Bytes{} },
 			remediation.KeyUpstreamTarget:       func() any { return remediation.UpstreamTarget{} },
@@ -83,6 +84,7 @@ func NewRegistry(c Collaborators) *Registry {
 	r.register(contract.NewContractFile(c.Archive, c.ContractLocator, c.Logger))
 	r.register(contract.NewFailingSiblings(c.Archive, c.ContractLocator, c.Releases, c.Logger))
 	r.register(contract.NewContractEntry(c.CandidateSource, c.Sanitizer, c.Logger))
+	r.register(contract.NewCurrentContract(c.CurrentContracts, c.Sanitizer))
 	r.register(contract.NewPythonContract(c.Sanitizer))
 	r.register(contract.NewPythonParse(c.Sanitizer))
 	r.register(contract.NewCSVContract(c.Sanitizer))
@@ -93,7 +95,7 @@ func NewRegistry(c Collaborators) *Registry {
 	r.register(contract.NewCSVReadKept(c.ContractInspector))
 	r.register(contract.NewNoNewSecretRef(c.ContractInspector))
 	r.register(contract.NewDeclaredOnce(c.ContractLocator))
-	r.register(contract.NewContractPackages(c.Packager, c.SQLDialect))
+	r.register(contract.NewContractPackages(c.Packager, c.ImagePackages, c.SQLDialect))
 	r.register(upstream.NewTarget(c.CandidateSource, c.Locator, c.Versions, c.Sanitizer, c.ServiceRepoPaths, c.Logger))
 	r.register(upstream.NewPrompt(c.Sanitizer, c.ServiceRepoPaths))
 	r.register(cross.NewEditsMapToAService(c.ServiceRepoPaths, c.Logger))

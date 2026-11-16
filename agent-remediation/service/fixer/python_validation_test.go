@@ -41,7 +41,7 @@ func (f *fakeArchive) Fetch(_ context.Context, repo, ref string) (string, func()
 	return f.root, func() { f.cleanups++ }, nil
 }
 
-// packagerCall records one Merge invocation, including the contract directory's
+// packagerCall records one Pack invocation, including the contract directory's
 // contents as they were on disk at the moment it ran — the only way to prove
 // the tree was patched with the model's answer before it was packaged.
 type packagerCall struct {
@@ -49,17 +49,18 @@ type packagerCall struct {
 	repoRoot    string
 	service     string
 	dialect     string
+	packages    map[string]string
 	sawOnDisk   map[string]string
 }
 
-// fakePackager records every Merge and returns a fixed merged document.
+// fakePackager records every Pack and returns a fixed bundle.
 type fakePackager struct {
 	merged []byte
 	err    error
 	calls  []packagerCall
 }
 
-func (f *fakePackager) Merge(_ context.Context, contractDir, repoRoot, service, dialect string) ([]byte, error) {
+func (f *fakePackager) Pack(_ context.Context, contractDir, repoRoot, service, dialect string, packages map[string]string) ([]byte, error) {
 	seen := map[string]string{}
 	_ = filepath.WalkDir(contractDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -74,7 +75,7 @@ func (f *fakePackager) Merge(_ context.Context, contractDir, repoRoot, service, 
 	})
 	f.calls = append(f.calls, packagerCall{
 		contractDir: contractDir, repoRoot: repoRoot,
-		service: service, dialect: dialect, sawOnDisk: seen,
+		service: service, dialect: dialect, packages: packages, sawOnDisk: seen,
 	})
 	if f.err != nil {
 		return nil, f.err
@@ -104,6 +105,31 @@ func (f *fakeReleases) FailingNodes(_ context.Context, releaseID string) (map[st
 func (f *fakeReleases) ImageTag(_ context.Context, _, _ string) (string, error) {
 	return "", fmt.Errorf("a fixer must never read an image tag; the driver does")
 }
+
+func (f *fakeReleases) ContractBundle(context.Context, string) (string, string, error) {
+	return "", "", fmt.Errorf("a fixer reads image packages through ImagePackagesSource")
+}
+
+// fakeImages answers the package list of a release's service image, or err,
+// and records what it was asked.
+type fakeImages struct {
+	packages map[string]string
+	err      error
+	asked    [][2]string
+}
+
+func (f *fakeImages) ImagePackages(_ context.Context, releaseID, service string) (map[string]string, error) {
+	f.asked = append(f.asked, [2]string{releaseID, service})
+	return f.packages, f.err
+}
+
+// fakeContracts answers a node's current contract.
+type fakeContracts struct {
+	yaml string
+	err  error
+}
+
+func (f fakeContracts) CurrentContract(context.Context, string) (string, error) { return f.yaml, f.err }
 
 // fakeAttempts returns a fixed set of prior proposal rows and records the
 // filter it was asked for.
@@ -199,6 +225,8 @@ func pythonSvc(t *testing.T, root string) (Services, *fakeArchive, *fakePackager
 		ContractLocator:   locator,
 		ContractInspector: locator,
 		Packager:          pkgr,
+		ImagePackages:     &fakeImages{packages: map[string]string{"pyarrow": "26.0.0"}},
+		CurrentContracts:  fakeContracts{},
 		Releases:          rel,
 		PriorAttempts:     &fakeAttempts{},
 		SQLDialect:        "postgres",
@@ -235,6 +263,8 @@ func TestPythonValidation_HappyPath(t *testing.T) {
 	require.Equal(t, filepath.Join(root, "services", "service-py"), call.repoRoot)
 	require.Equal(t, "svc-py", call.service)
 	require.Equal(t, "postgres", call.dialect)
+	require.Equal(t, map[string]string{"pyarrow": "26.0.0"}, call.packages,
+		"the bundle records the package list of the rejected release's image")
 
 	// What the packager saw on disk is the model's answer, not the failing
 	// tree: packaging the unpatched checkout would verify nothing.
@@ -411,11 +441,37 @@ func TestPythonValidation_EvidenceDegradesNeverBlocks(t *testing.T) {
 	svc.Precedents = &fakePrecedents{err: fmt.Errorf("catalog down")}
 	svc.PriorAttempts = &fakeAttempts{err: fmt.Errorf("db down")}
 	svc.CandidateSource = &fakeCandidateSource{err: ports.ErrNotFound}
+	svc.CurrentContracts = fakeContracts{err: fmt.Errorf("catalog down")}
 
 	r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
 	require.NoError(t, err)
 	require.Equal(t, proposal.StatusProposed, r.Proposal.Status)
 	require.NotEmpty(t, r.VerificationContract)
+}
+
+// TestPythonFixer_PromptShowsTheCurrentContract pins that every python lane
+// shows the model the node's contract as continuo last promoted it, beside the
+// file the repository holds at the failing commit.
+func TestPythonFixer_PromptShowsTheCurrentContract(t *testing.T) {
+	const current = "apiVersion: v3.2.0\nkind: DataContract\nid: analytics.py_daily_kpis\nversion: \"4\"\n"
+	for name, lane := range map[string]Fixer{
+		"python validation": pythonValidationFixer{},
+		"csv validation":    csvValidationFixer{},
+		"python parse":      pythonParseFixer{},
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc, _, _, _, _ := pythonSvc(t, pythonRepoTree(t))
+			llm := svc.LLM.(*fakeLLM)
+			svc.CurrentContracts = fakeContracts{yaml: current}
+
+			_, err := lane.Propose(context.Background(), svc, pythonInput())
+
+			require.NoError(t, err)
+			require.Len(t, llm.requests, 1)
+			require.Contains(t, llm.requests[0].User, "Current contract")
+			require.Contains(t, llm.requests[0].User, current)
+		})
+	}
 }
 
 // TestPythonValidation_TransientBundleError_Redelivers verifies that a
@@ -1041,4 +1097,46 @@ func TestPythonValidation_AnswerLeavingOnlyALegacyEntry_Fails(t *testing.T) {
 	require.Contains(t, r.Proposal.Rationale, "is no longer declared by exactly one contract file")
 	require.Contains(t, r.Proposal.Rationale, ports.ErrServiceNotConverted.Error())
 	require.Empty(t, pkgr.calls)
+}
+
+// TestPythonFixer_NoImagePackagesSkipsBeforeTheModel covers a release none of
+// whose bundles records the service's image packages: no lane can pack a fix,
+// so each records the node skipped with the reason before any model call.
+func TestPythonFixer_NoImagePackagesSkipsBeforeTheModel(t *testing.T) {
+	for name, lane := range map[string]Fixer{
+		"python validation": pythonValidationFixer{},
+		"csv validation":    csvValidationFixer{},
+		"python parse":      pythonParseFixer{},
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc, _, pkgr, _, arts := pythonSvc(t, pythonRepoTree(t))
+			llm := &fakeLLM{}
+			svc.LLM = llm
+			noPackages := fmt.Errorf("release rel-1, service svc-py: %w", ports.ErrNoImagePackages)
+			images := &fakeImages{err: noPackages}
+			svc.ImagePackages = images
+
+			r, err := lane.Propose(context.Background(), svc, pythonInput())
+
+			require.NoError(t, err)
+			require.Equal(t, proposal.StatusSkipped, r.Proposal.Status)
+			require.Equal(t, noPackages.Error(), r.Proposal.Rationale)
+			require.Equal(t, [][2]string{{"rel-1", "svc-py"}}, images.asked)
+			require.Equal(t, 0, llm.calls)
+			require.Empty(t, pkgr.calls)
+			require.Empty(t, arts.written)
+		})
+	}
+}
+
+// TestPythonFixer_AnImagePackagesReadThatMayClearIsRedelivered keeps a failed
+// read of the release's bundles transient.
+func TestPythonFixer_AnImagePackagesReadThatMayClearIsRedelivered(t *testing.T) {
+	svc, _, _, _, _ := pythonSvc(t, pythonRepoTree(t))
+	boom := fmt.Errorf("connection reset")
+	svc.ImagePackages = &fakeImages{err: boom}
+
+	_, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
+
+	require.ErrorIs(t, err, boom)
 }

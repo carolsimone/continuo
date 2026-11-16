@@ -72,14 +72,14 @@ type refusingPackager struct {
 
 var _ ports.ContractPackager = (*refusingPackager)(nil)
 
-func (p *refusingPackager) Merge(context.Context, string, string, string, string) ([]byte, error) {
+func (p *refusingPackager) Pack(context.Context, string, string, string, string, map[string]string) ([]byte, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.calls++
 	if p.calls <= p.refuse {
 		return nil, fmt.Errorf("%w: %s", ports.ErrContractRejected, p.refusal)
 	}
-	return []byte("merged"), nil
+	return []byte(`{"bundle_version": 1}`), nil
 }
 
 // withContractType gives the harness a python-validation type of rounds
@@ -97,7 +97,7 @@ func withContractType(rounds int, packager ports.ContractPackager) option {
 			Version: workflow.SupportedVersion,
 			Name:    "python-validation",
 			Match:   workflow.Match{Cluster: workflow.ClusterSingle, Source: "validation", NodeTypes: []string{"python-node"}},
-			Context: refs("contract_file", "failing_siblings", "dbt_log", "contract_entry", "upstream_changes", "failure_precedents"),
+			Context: refs("contract_file", "failing_siblings", "dbt_log", "contract_entry", "current_contract", "upstream_changes", "failure_precedents"),
 			Agent: workflow.Agent{
 				Prompt: workflow.StepRef{Name: "python-contract"}, Tools: []workflow.StepRef{}, Rounds: rounds,
 			},

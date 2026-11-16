@@ -60,16 +60,24 @@ objects:
   s3://logs/rel-csv-1/analytics.py_csv_orders.log: "header check: csv header is order_id,cust_id\n"
 bundle:
   analytics.py_csv_orders: { runtime: python, raw_code: '{"output_columns":[{"name":"order_id"},{"name":"customer_id"}]}' }
+catalog:
+  # The node's contract as continuo last promoted it.
+  contracts:
+    analytics.py_csv_orders: |
+      apiVersion: v3.2.0
+      kind: DataContract
+      id: analytics.py_csv_orders
+      name: py_csv_orders
+      version: "1"
 release:
   image_tag: sha-csv
+  image_packages: {pyarrow: "26.0.0"}
   failing_nodes:
     analytics.py_csv_orders: "csv header missing declared column(s): ['customer_id']"
 packager:
-  merged: |
-    nodes:
-      - schema: analytics
-        table: py_csv_orders
-        kind: python-csv
+  # The odcs-bundle.json continuo-runtime pack writes for the patched contract
+  # directory, with the release's image packages.
+  packed: '{"bundle_version": 1, "service": "svc-csv", "producer": {"continuo_python_runtime": "0.13.0", "continuo_contracts": "0.2.0"}, "image_packages": {"pyarrow": "26.0.0"}, "nodes": [{"path": "contracts/py_csv_orders.odcs.yaml", "text": "id: analytics.py_csv_orders\n", "source_hash": "", "shared_code_hash": ""}]}'
 answers:
   pass:
     - files:

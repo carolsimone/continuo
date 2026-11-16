@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -151,14 +152,17 @@ func (f *fakeLLM) Propose(_ context.Context, req ports.ProposeRequest) (ports.Pr
 // through the evidence reader to build the verification run's source overlay,
 // so tests key their evidence fixtures on exactly these URIs.
 type fakeArtifacts struct {
-	written map[string]string
+	written      map[string]string
+	contentTypes map[string]string
 }
 
-func (f *fakeArtifacts) Write(_ context.Context, key, body, _ string) (string, error) {
+func (f *fakeArtifacts) Write(_ context.Context, key, body, contentType string) (string, error) {
 	if f.written == nil {
 		f.written = map[string]string{}
+		f.contentTypes = map[string]string{}
 	}
 	f.written[key] = body
+	f.contentTypes[key] = contentType
 	return "s3://art/" + key, nil
 }
 
@@ -192,6 +196,10 @@ func (g *fakeGateway) ImageTag(context.Context, string, string) (string, error) 
 
 func (g *fakeGateway) FailingNodes(context.Context, string) (map[string]string, error) {
 	return nil, nil
+}
+
+func (g *fakeGateway) ContractBundle(context.Context, string) (string, string, error) {
+	return "", "", errors.New("the driver reads image packages through ImagePackagesSource, never the release's bundle")
 }
 
 // tarNames lists the member paths of a gzip tarball, in archive order.
@@ -1477,13 +1485,6 @@ func (f fakeRepoArchive) Fetch(_ context.Context, _, _ string) (string, func(), 
 	return f.root, func() {}, nil
 }
 
-// fakeContractPackager returns a fixed merged contract for every Merge call.
-type fakeContractPackager struct{ merged []byte }
-
-func (f fakeContractPackager) Merge(_ context.Context, _, _, _, _ string) ([]byte, error) {
-	return f.merged, nil
-}
-
 // fakeAttemptLister answers every prior-attempt query with no attempts.
 type fakeAttemptLister struct{}
 
@@ -1590,7 +1591,9 @@ func TestProposeFix_EditsFromOnePythonClusterAreIndependentlyCopied(t *testing.T
 	loc := repofs.NewLocator(slog.Default())
 	d.ContractLocator = loc
 	d.ContractInspector = loc
-	d.Packager = fakeContractPackager{merged: []byte("merged: contract\n")}
+	d.Packager = handlerPackager{}
+	d.ImagePackages = handlerImages{packages: map[string]string{"pyarrow": "26.0.0"}}
+	d.CurrentContracts = noContracts{}
 	d.PriorAttempts = fakeAttemptLister{}
 	d.SQLDialect = "postgres"
 
@@ -1746,16 +1749,16 @@ func TestSubmitVerifications_PythonLaneIgnoresTheTriggersServiceField(t *testing
 	}}
 
 	got, err := submitVerifications(context.Background(), d, tr, 1, edits,
-		map[string][]byte{"svc": []byte("merged: contract\n")})
+		map[string][]byte{"svc": []byte(packedBundle)})
 	require.NoError(t, err)
 
 	require.Equal(t, []proposal.Verification{{
-		Service: "svc", Kind: ports.VerificationKindPython, RunID: "verify-r1-svc-a1", Phase: proposal.PhaseQueued,
+		Service: "svc", Kind: ports.VerificationKindPythonODCS, RunID: "verify-r1-svc-a1", Phase: proposal.PhaseQueued,
 	}}, got)
-	require.Equal(t, "merged: contract\n", art.written["svc/verify-r1-svc-a1/contract.yaml"])
+	require.Equal(t, packedBundle, art.written["svc/verify-r1-svc-a1/odcs-bundle.json"])
 	require.NotContains(t, art.written, "svc/verify-r1-svc-a1/source-overlay.tar.gz")
 	require.Len(t, gw.submitted, 1)
-	require.Equal(t, ports.VerificationKindPython, gw.submitted[0].Kind)
+	require.Equal(t, ports.VerificationKindPythonODCS, gw.submitted[0].Kind)
 	require.Empty(t, gw.submitted[0].SourceOverlayURI)
 }
 

@@ -117,6 +117,10 @@ func (f *fakeReleases) FailingNodes(_ context.Context, releaseID string) (map[st
 	return f.failing, f.err
 }
 
+func (f *fakeReleases) ContractBundle(context.Context, string) (string, string, error) {
+	return "", "", errors.New("not used")
+}
+
 var _ ports.ReleaseReader = (*fakeReleases)(nil)
 
 // fakeBundle serves code bundle entries by node id and records every read.

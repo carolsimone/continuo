@@ -94,7 +94,7 @@ func (g *VerificationRun) plan(in step.GateInput) ([]plannedRun, error) {
 	for i, grp := range groups {
 		kind := ports.VerificationKindDbt
 		if grp.Contract != nil {
-			kind = ports.VerificationKindPython
+			kind = ports.VerificationKindPythonODCS
 		}
 		runs[i] = plannedRun{edits: grp, kind: kind, runID: RunID(in.Trigger.ReleaseID, grp.Service, in.Try.Attempt)}
 	}
@@ -102,11 +102,11 @@ func (g *VerificationRun) plan(in step.GateInput) ([]plannedRun, error) {
 }
 
 // Submit posts one verification run per service the try edits. A python service
-// is verified by the contract yaml its fix packaged, uploaded under the run's
-// own id. A dbt service is verified by re-running its project with the proposed
-// content laid over it, so each edit's content is read back from the artifact
-// the draft stored and packed into one source overlay, keyed by the edit's path
-// within that service's project.
+// is verified as kind python-odcs by the odcs-bundle.json its fix packed,
+// uploaded under the run's own id. A dbt service is verified by re-running its
+// project with the proposed content laid over it, so each edit's content is
+// read back from the artifact the draft stored and packed into one source
+// overlay, keyed by the edit's path within that service's project.
 //
 // Both the artifact writes and the submission are idempotent on the try's keys,
 // since the run id is a pure function of (release, service, attempt), so a
@@ -130,13 +130,13 @@ func (g *VerificationRun) Submit(ctx context.Context, in step.GateInput) (step.G
 	for _, r := range runs {
 		service := r.edits.Service
 		overlayURI := ""
-		if r.kind == ports.VerificationKindPython {
-			// A python service's artifact IS the packaged contract: there is no
-			// project to overlay, so the run reads the contract written under its
+		if r.kind == ports.VerificationKindPythonODCS {
+			// A python service's artifact IS the packed bundle: there is no
+			// project to overlay, so the run reads the bundle written under its
 			// own id.
 			if _, err := g.artifacts.Write(ctx,
-				service+"/"+r.runID+"/contract.yaml", string(r.edits.Contract), "application/yaml"); err != nil {
-				return step.GateVerdict{}, fmt.Errorf("write verification contract for %s: %w", service, err)
+				service+"/"+r.runID+"/"+ports.ODCSBundleName, string(r.edits.Contract), "application/json"); err != nil {
+				return step.GateVerdict{}, fmt.Errorf("write verification bundle for %s: %w", service, err)
 			}
 		} else {
 			files := make([]overlay.File, 0, len(r.edits.Edits))

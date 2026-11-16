@@ -99,6 +99,8 @@ func csvSvc(t *testing.T, root string) (Services, *fakeArchive, *fakePackager, *
 		ContractLocator:   locator,
 		ContractInspector: locator,
 		Packager:          pkgr,
+		ImagePackages:     &fakeImages{packages: map[string]string{"pyarrow": "26.0.0"}},
+		CurrentContracts:  fakeContracts{},
 		Releases:          rel,
 		PriorAttempts:     &fakeAttempts{},
 		SQLDialect:        "postgres",

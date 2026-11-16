@@ -26,9 +26,10 @@ import (
 //
 // The fixer therefore cannot judge its own answer: it checks out the team's
 // repository at the failing commit, finds the file declaring the node, asks
-// the model to correct it, and packages the result with the same tool the
-// team's own CI runs after a merge — the merged contract a real release would
-// run. It returns that contract as Result.VerificationContract alongside the
+// the model to correct it, and packs the result with the same tool the
+// team's own CI runs for a release — the odcs-bundle.json a real release would
+// run, recording the package list of the rejected release's image. It returns
+// that bundle as Result.VerificationContract alongside the
 // proposed edits, with Status=StatusProposed; the driver collects it with
 // every other edit for the release and submits a fix-verification run that
 // carries the full parse -> candidate-schema -> validation pipeline through
@@ -38,7 +39,7 @@ import (
 // construction, because a verification run IS one.
 //
 // Locating the contract file and everything from the model call through
-// packaging the merged contract (locateContractForFix,
+// packing the odcs-bundle.json (locateContractForFix,
 // contractFix) is shared code, not merely a similar
 // shape, with the python-csv lane (csvValidationFixer): both call the same
 // two functions. The two lanes differ only in the two seams passed into
@@ -101,7 +102,7 @@ func locateContractForFix(ctx context.Context, svc Services, in Input) (
 			"node id %q does not name a schema and a table, so the contract file declaring it cannot be found", in.NodeID))
 		return
 	}
-	// The service is what the driver later keys the merged contract's upload
+	// The service is what the driver later keys the packed bundle's upload
 	// and the verification run's submission by, so a trigger without one
 	// names nothing the fix could ever be verified under.
 	if in.Service == "" {
@@ -186,8 +187,8 @@ func buildPythonProposeRequest(ctx context.Context, svc Services, in Input, loca
 
 // contractFix is the shared skeleton of every lane whose fix is made in a
 // python contract yaml and can only be judged by a verification run: one
-// model call, applying and guarding the answer, and packaging it into the
-// merged contract a verification run would run, plus writing the audit
+// model call, applying and guarding the answer, and packing it into the
+// odcs-bundle.json a verification run would run, plus writing the audit
 // artifacts. The python validation, python-csv validation and python parse
 // lanes compose it; its counterpart for a fix made in one dbt source file is
 // sourceFileFix. It never submits anything — packaging the whole release from
@@ -202,6 +203,18 @@ func contractFix(
 	buildRequest func(ctx context.Context, svc Services, in Input, located ports.Located) (prompt.ProposeRequest, error),
 	checkDeclarations func(svc Services, files []ports.ProposedFile, originals map[string]string) string,
 ) (Result, error) {
+	// The bundle records the package list of the rejected release's image of
+	// the service, so a release that records none can have no fix packed: the
+	// node is skipped with the reason before the model is called. Any other
+	// read error is transient and redelivers the trigger.
+	imagePackages, err := svc.ImagePackages.ImagePackages(ctx, in.ReleaseID, in.Service)
+	if errors.Is(err, ports.ErrNoImagePackages) {
+		return skipPython(svc, in, err.Error())
+	}
+	if err != nil {
+		return Result{}, fmt.Errorf("read the image packages of release %s for %s: %w", in.ReleaseID, in.Service, err)
+	}
+
 	// Step 4 — evidence and the one model call.
 	req, err := buildRequest(ctx, svc, in, located)
 	if err != nil {
@@ -281,10 +294,10 @@ func contractFix(
 			in.NodeID, located.ContractDir, relocated.ContractDir))
 	}
 
-	merged, err := svc.Packager.Merge(ctx,
+	bundle, err := svc.Packager.Pack(ctx,
 		filepath.Join(root, filepath.FromSlash(located.ContractDir)),
 		filepath.Join(root, filepath.FromSlash(located.RepoRoot)),
-		in.Service, svc.SQLDialect)
+		in.Service, svc.SQLDialect, imagePackages)
 	// A contract the packaging tool read and refused is settled: the tool is
 	// deterministic on its input, and a redelivery rebuilds that same input from
 	// the cached model answer, so retrying would refuse it again until the
@@ -317,7 +330,7 @@ func contractFix(
 		"node", in.NodeID, "node_type", in.NodeType, "release", in.ReleaseID, "files", len(edits))
 
 	return Result{
-		VerificationContract: merged,
+		VerificationContract: bundle,
 		Proposal: proposal.Proposal{
 			Status:         proposal.StatusProposed,
 			Confidence:     normalizeConfidence(res.Confidence),
@@ -764,10 +777,26 @@ func pythonEvidence(ctx context.Context, svc Services, in Input, located ports.L
 		ContractEntry:   contractEntry,
 		YAMLPath:        located.YAMLPath,
 		YAMLText:        svc.Sanitizer.Sanitize(located.YAMLText),
+		CurrentContract: currentContract(ctx, svc, in.NodeID),
 		UpstreamChanges: upstream,
 		Precedents:      loadPrecedents(ctx, svc, in),
 		PriorAttempts:   loadPriorAttempts(ctx, svc, in),
 	}, nil
+}
+
+// currentContract returns the node's current contract from the catalog,
+// sanitized. A node with no contract gives "", and an unavailable catalog
+// degrades to "" with a warning, like every other graph read the prompt shows.
+func currentContract(ctx context.Context, svc Services, nodeID string) string {
+	doc, err := svc.CurrentContracts.CurrentContract(ctx, nodeID)
+	if err != nil {
+		svc.Logger.Warn("current contract unavailable; proceeding without it", "node", nodeID, "error", err)
+		return ""
+	}
+	if doc == "" {
+		return ""
+	}
+	return svc.Sanitizer.Sanitize(doc)
 }
 
 // pythonContractEntry returns the failing node's entry from the release's code

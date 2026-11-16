@@ -40,9 +40,14 @@ type Collaborators struct {
 	// document, so the answer's effect on them can be compared against what
 	// the repository held before it was applied.
 	ContractInspector ports.ContractInspector
-	// Packager turns a directory of python-node contract yaml files into the
-	// merged wire contract a release is submitted with.
+	// Packager packs a service's directory of ODCS contracts into the
+	// odcs-bundle.json a release is submitted with.
 	Packager ports.ContractPackager
+	// ImagePackages reads the package list of the rejected release's image of
+	// a service, which the bundle records.
+	ImagePackages ports.ImagePackagesSource
+	// CurrentContracts reads a node's current contract from the catalog.
+	CurrentContracts ports.CurrentContractReader
 	// Releases reads the original failing release's node-failure set.
 	Releases ports.ReleaseReader
 	// PriorAttempts reads the release's proposal rows, so a later try's prompt

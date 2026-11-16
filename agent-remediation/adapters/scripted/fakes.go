@@ -151,10 +151,11 @@ func (b bundle) NodeSource(_ context.Context, _, uniqueID, _ string) (ports.Cand
 type catalog struct{ c conformance.Catalog }
 
 var (
-	_ ports.NodeLocator          = catalog{}
-	_ ports.UpstreamChangeReader = catalog{}
-	_ ports.VersionReader        = catalog{}
-	_ ports.PrecedentReader      = catalog{}
+	_ ports.NodeLocator           = catalog{}
+	_ ports.UpstreamChangeReader  = catalog{}
+	_ ports.VersionReader         = catalog{}
+	_ ports.PrecedentReader       = catalog{}
+	_ ports.CurrentContractReader = catalog{}
 )
 
 // Locate returns where the node lives, or no location for a node the fixture
@@ -173,6 +174,12 @@ func (c catalog) UpstreamChanges(_ context.Context, uniqueID string) ([]prompt.U
 func (c catalog) CurrentVersion(_ context.Context, uniqueID string) (ports.CurrentVersion, bool, error) {
 	v, ok := c.c.CurrentVersions[uniqueID]
 	return v, ok, nil
+}
+
+// CurrentContract returns the node's current contract, "" for a node the
+// fixture gives none.
+func (c catalog) CurrentContract(_ context.Context, uniqueID string) (string, error) {
+	return c.c.Contracts[uniqueID], nil
 }
 
 // Precedents returns the fixture's precedents, at most q.Limit of them when it
@@ -203,14 +210,38 @@ func (r release) FailingNodes(context.Context, string) (map[string]string, error
 	return r.r.FailingNodes, nil
 }
 
+// ContractBundle answers that the release has no contract bundle: the world's
+// image packages are read from the fixture by imagePackages.
+func (release) ContractBundle(context.Context, string) (string, string, error) {
+	return "", "", nil
+}
+
+// imagePackages answers the package list of every service's image from the
+// fixture, or ErrNoImagePackages when the fixture names none.
+type imagePackages struct{ r conformance.Release }
+
+var _ ports.ImagePackagesSource = imagePackages{}
+
+// ImagePackages returns the fixture's package list.
+func (i imagePackages) ImagePackages(_ context.Context, releaseID, service string) (map[string]string, error) {
+	if i.r.ImagePackages == nil {
+		return nil, fmt.Errorf("release %s, service %s: %w", releaseID, service, ports.ErrNoImagePackages)
+	}
+	return i.r.ImagePackages, nil
+}
+
 // packager is the contract packaging tool. It accepts a contract directory
-// that exists and holds a yaml file, inside a repository root that exists.
+// that exists and holds a yaml file, inside a repository root that exists,
+// packed with a package list.
 type packager struct{ p conformance.Packager }
 
 var _ ports.ContractPackager = packager{}
 
-// Merge returns the fixture's merged contract, or its refusal.
-func (k packager) Merge(_ context.Context, contractDir, repoRoot, _, _ string) ([]byte, error) {
+// Pack returns the fixture's bundle, or its refusal.
+func (k packager) Pack(_ context.Context, contractDir, repoRoot, _, _ string, imagePackages map[string]string) ([]byte, error) {
+	if imagePackages == nil {
+		return nil, errors.New("the bundle was packed with no package list")
+	}
 	if err := isDir(repoRoot); err != nil {
 		return nil, fmt.Errorf("repository root: %w", err)
 	}
@@ -224,10 +255,10 @@ func (k packager) Merge(_ context.Context, contractDir, repoRoot, _, _ string) (
 	if k.p.Refuse != "" {
 		return nil, fmt.Errorf("%w: %s", ports.ErrContractRejected, k.p.Refuse)
 	}
-	if k.p.Merged == "" {
-		return nil, errors.New("the fixture names no merged contract")
+	if k.p.Packed == "" {
+		return nil, errors.New("the fixture names no packed bundle")
 	}
-	return []byte(k.p.Merged), nil
+	return []byte(k.p.Packed), nil
 }
 
 func isDir(p string) error {

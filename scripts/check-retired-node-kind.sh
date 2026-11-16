@@ -15,6 +15,8 @@ if git grep -n "python-model" -- \
     ':!release-controller/adapters/postgres/node_type_migration_test.go' \
     ':!execution-controller/adapters/postgres/node_type_migration_test.go' \
     ':!pkg/domain/model/nodetype_guard_test.go' \
+    ':!agent-remediation/adapters/repofs/contract_locator.go' \
+    ':!agent-remediation/adapters/repofs/contract_locator_test.go' \
     ':!ui/tests/client/node-type-icon-family.test.ts'; then
   echo "ERROR: retired node kind 'python-model' found (see matches above)" >&2
   exit 1

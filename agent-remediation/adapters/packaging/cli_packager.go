@@ -5,6 +5,7 @@ package packaging
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -15,10 +16,9 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 )
 
-// CLIPackager runs `continuo-runtime merge` — the exact command the team's
-// release CI runs after a merge to main (continuo-demo's release.yml) —
-// so a proposed fix's contract yaml is packaged and hash-folded by the same
-// tool that packages every promoted release, never a reimplementation of it.
+// CLIPackager runs `continuo-runtime pack`, the command the team's CI runs to
+// pack a release's contracts, so a proposed fix's ODCS contracts are packed by
+// the same tool that packs every release, never a reimplementation of it.
 type CLIPackager struct {
 	binPath string
 }
@@ -33,7 +33,7 @@ const runtimeBinary = "continuo-runtime"
 // an image built without it refuses to start. Resolving it here rather than at
 // call time is what turns a mis-built image into one boot failure naming the
 // missing binary, instead of every python remediation trigger failing, never
-// acking, and redelivering without end. Merge then runs the resolved path, so
+// acking, and redelivering without end. Pack then runs the resolved path, so
 // the binary that was checked is the binary that runs.
 func NewCLIPackager() (*CLIPackager, error) {
 	binPath, err := exec.LookPath(runtimeBinary)
@@ -43,29 +43,39 @@ func NewCLIPackager() (*CLIPackager, error) {
 	return &CLIPackager{binPath: binPath}, nil
 }
 
-// Merge runs:
+// Pack runs:
 //
-//	continuo-runtime merge <contractDir> --service <service> \
-//	  --repo-root <repoRoot> --dialect <dialect> --out <tmp>/contract.yaml
+//	continuo-runtime pack <contractDir> --service <service> \
+//	  --repo-root <repoRoot> --image-packages <tmp>/image-packages.json \
+//	  --dialect <dialect> --out <tmp>/odcs-bundle.json
 //
-// into a fresh temporary directory it removes before returning, and returns
-// the bytes the CLI wrote to --out. Hashing is a side effect of the CLI's
-// merge step, so no separate hash call is made.
-func (p *CLIPackager) Merge(ctx context.Context, contractDir, repoRoot, service, dialect string) ([]byte, error) {
-	tmpDir, err := os.MkdirTemp("", "contract-merge-*")
+// in a fresh temporary directory it removes before returning: imagePackages is
+// written there as one JSON object of package name to version, and the bytes
+// the CLI wrote to --out are returned.
+func (p *CLIPackager) Pack(ctx context.Context, contractDir, repoRoot, service, dialect string, imagePackages map[string]string) ([]byte, error) {
+	tmpDir, err := os.MkdirTemp("", "contract-pack-*")
 	if err != nil {
-		return nil, fmt.Errorf("create temp dir for merged contract: %w", err)
+		return nil, fmt.Errorf("create temp dir for the odcs bundle: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	outPath := filepath.Join(tmpDir, "contract.yaml")
+	packages, err := json.Marshal(imagePackages)
+	if err != nil {
+		return nil, fmt.Errorf("encode the image package list: %w", err)
+	}
+	packagesPath := filepath.Join(tmpDir, "image-packages.json")
+	if err := os.WriteFile(packagesPath, packages, 0o600); err != nil {
+		return nil, fmt.Errorf("write the image package list: %w", err)
+	}
+	outPath := filepath.Join(tmpDir, ports.ODCSBundleName)
 	// G204: exec.CommandContext runs the path resolved at construction directly
 	// (no shell), so none of contractDir/service/repoRoot/dialect can be
 	// interpreted as shell metacharacters. They land as literal argv entries
 	// under a fixed, hardcoded flag set the caller cannot alter.
-	cmd := exec.CommandContext(ctx, p.binPath, "merge", contractDir, //nolint:gosec // G204: direct execve, no shell, hardcoded flags.
+	cmd := exec.CommandContext(ctx, p.binPath, "pack", contractDir, //nolint:gosec // G204: direct execve, no shell, hardcoded flags.
 		"--service", service,
 		"--repo-root", repoRoot,
+		"--image-packages", packagesPath,
 		"--dialect", dialect,
 		"--out", outPath,
 	)
@@ -75,14 +85,14 @@ func (p *CLIPackager) Merge(ctx context.Context, contractDir, repoRoot, service,
 		return nil, classifyRunError(ctx, contractDir, err, stderr.String())
 	}
 
-	merged, err := os.ReadFile(outPath) //nolint:gosec // G304: outPath is built from a temp dir this function just created, not external input.
+	bundle, err := os.ReadFile(outPath) //nolint:gosec // G304: outPath is built from a temp dir this function just created, not external input.
 	if err != nil {
-		return nil, fmt.Errorf("read merged contract %s: %w", outPath, err)
+		return nil, fmt.Errorf("read the odcs bundle %s: %w", outPath, err)
 	}
-	return merged, nil
+	return bundle, nil
 }
 
-// classifyRunError decides whether a failed merge run is the CLI answering
+// classifyRunError decides whether a failed pack run is the CLI answering
 // "no" or the CLI never getting to answer, and returns an error the caller can
 // tell apart with errors.Is.
 //
@@ -96,12 +106,12 @@ func (p *CLIPackager) Merge(ctx context.Context, contractDir, repoRoot, service,
 // to start the binary at all.
 func classifyRunError(ctx context.Context, contractDir string, err error, stderr string) error {
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return fmt.Errorf("continuo-runtime merge %s: %w: %s", contractDir, ctxErr, stderr)
+		return fmt.Errorf("continuo-runtime pack %s: %w: %s", contractDir, ctxErr, stderr)
 	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) && exitErr.ExitCode() >= 0 {
-		return fmt.Errorf("continuo-runtime merge %s: exit status %d: %s: %w",
+		return fmt.Errorf("continuo-runtime pack %s: exit status %d: %s: %w",
 			contractDir, exitErr.ExitCode(), strings.TrimSpace(stderr), ports.ErrContractRejected)
 	}
-	return fmt.Errorf("continuo-runtime merge %s: %w: %s", contractDir, err, stderr)
+	return fmt.Errorf("continuo-runtime pack %s: %w: %s", contractDir, err, stderr)
 }

@@ -243,3 +243,29 @@ func TestAssemblePythonParseFix_ShowsTheParserError(t *testing.T) {
 	require.Equal(t, "propose_python_fix", req.ToolName)
 	require.Equal(t, AssemblePythonContractFix(ev).ToolParams, req.ToolParams)
 }
+
+// TestPythonPrompts_ShowTheCurrentContract pins that every python contract
+// prompt shows the node's current contract under its own heading when there is
+// one, and leaves the heading out when there is none.
+func TestPythonPrompts_ShowTheCurrentContract(t *testing.T) {
+	const current = "apiVersion: v3.2.0\nkind: DataContract\nid: analytics.kpis\nversion: \"4\"\n"
+	builders := map[string]func(PythonEvidence) ProposeRequest{
+		"python validation": AssemblePythonContractFix,
+		"python parse":      AssemblePythonParseFix,
+		"csv validation":    func(ev PythonEvidence) ProposeRequest { return AssembleCsvContractFix(CsvEvidence(ev)) },
+	}
+	for name, build := range builders {
+		t.Run(name, func(t *testing.T) {
+			ev := PythonEvidence{NodeID: "analytics.kpis", YAMLPath: "contracts/kpis.odcs.yaml", YAMLText: "id: analytics.kpis\n"}
+
+			without := build(ev).User
+			require.NotContains(t, without, "Current contract")
+
+			ev.CurrentContract = current
+			with := build(ev).User
+			require.Contains(t, with, "Current contract (the node's contract as continuo last promoted it):\n```yaml\n"+current+"\n```\n\n")
+			require.Less(t, strings.Index(with, "Contract file contracts/kpis.odcs.yaml"), strings.Index(with, "Current contract"),
+				"the current contract follows the file the fix edits")
+		})
+	}
+}

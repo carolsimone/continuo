@@ -9,6 +9,7 @@ context:
   - failing_siblings
   - dbt_log
   - contract_entry
+  - current_contract
   - upstream_changes
   - failure_precedents
 agent: { prompt: python-parse, tools: [], rounds: 3 }

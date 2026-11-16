@@ -105,6 +105,9 @@ type Catalog struct {
 	UpstreamChanges map[string][]prompt.UpstreamChange
 	// Precedents are the failure precedents every lookup returns.
 	Precedents []prompt.Precedent
+	// Contracts is the current contract of each node, its published ODCS
+	// YAML, by node id. A node with no entry has none.
+	Contracts map[string]string
 }
 
 // Location is the file and service that declare a node.
@@ -119,12 +122,15 @@ type Release struct {
 	ImageTag string
 	// FailingNodes is the release's failing nodes with their errors.
 	FailingNodes map[string]string
+	// ImagePackages is the package list of every service's image in the
+	// release. With none, no bundle of the release records one.
+	ImagePackages map[string]string
 }
 
-// Packager is what the contract packaging tool answers: Merged when it
-// accepts a contract directory, and a refusal carrying Refuse when Refuse is
-// set.
+// Packager is what the contract packaging tool answers: the odcs-bundle.json
+// Packed when it accepts a contract directory, and a refusal carrying Refuse
+// when Refuse is set.
 type Packager struct {
-	Merged string
+	Packed string
 	Refuse string
 }

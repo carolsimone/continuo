@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -22,11 +24,34 @@ func (a handlerArchive) Fetch(context.Context, string, string) (string, func(), 
 	return a.root, func() {}, nil
 }
 
-// handlerPackager returns a fixed merged contract.
-type handlerPackager struct{}
+// packedBundle is the odcs-bundle.json handlerPackager packs.
+const packedBundle = `{"bundle_version": 1, "service": "svc"}`
 
-func (handlerPackager) Merge(context.Context, string, string, string, string) ([]byte, error) {
-	return []byte("merged: contract\n"), nil
+// handlerPackager returns packedBundle and records the package lists it was
+// given.
+type handlerPackager struct{ packages *[]map[string]string }
+
+func (p handlerPackager) Pack(_ context.Context, _, _, _, _ string, imagePackages map[string]string) ([]byte, error) {
+	if p.packages != nil {
+		*p.packages = append(*p.packages, imagePackages)
+	}
+	return []byte(packedBundle), nil
+}
+
+// noContracts is a catalog in which no node has a contract.
+type noContracts struct{}
+
+func (noContracts) CurrentContract(context.Context, string) (string, error) { return "", nil }
+
+// handlerImages answers the image package list of every release and service,
+// or err.
+type handlerImages struct {
+	packages map[string]string
+	err      error
+}
+
+func (i handlerImages) ImagePackages(context.Context, string, string) (map[string]string, error) {
+	return i.packages, i.err
 }
 
 // pythonCheckout writes a repository checkout declaring the failing node, under
@@ -56,6 +81,8 @@ func pythonDeps(t *testing.T, u *fakeUoW, llm *fakeLLM, art *fakeArtifacts, gw *
 	d.ContractLocator = contracts
 	d.ContractInspector = contracts
 	d.Packager = handlerPackager{}
+	d.ImagePackages = handlerImages{packages: map[string]string{"pyarrow": "26.0.0"}}
+	d.CurrentContracts = noContracts{}
 	d.Pipeline = gw
 	d.Releases = gw
 	d.PriorAttempts = u.pr
@@ -98,8 +125,8 @@ func pythonFixResult() ports.ProposeResult {
 // TestProposeFix_PythonValidation_RecordsVerifying verifies what the driver has
 // to do differently for a fix that cannot be judged synchronously: it persists
 // the attempt as 'verifying' with the verification run that will judge it and
-// the raw trigger that produced it, uploads the packaged contract the run
-// reads under that run's own id, and emits nothing — the proposal is not a
+// the raw trigger that produced it, uploads the packed odcs-bundle.json the
+// run reads under that run's own id, and emits nothing — the proposal is not a
 // proposal yet, so announcing it would surface an unverified fix to operators.
 func TestProposeFix_PythonValidation_RecordsVerifying(t *testing.T) {
 	u := newFakeUoW()
@@ -121,19 +148,19 @@ func TestProposeFix_PythonValidation_RecordsVerifying(t *testing.T) {
 	require.Len(t, got.Edits, 1)
 	require.Equal(t, "analytics.py_daily_kpis", got.Edits[0].TargetNodeID)
 	require.Equal(t, []proposal.Verification{{
-		Service: "svc", Kind: ports.VerificationKindPython, RunID: "verify-r1-svc-a1", Phase: proposal.PhaseQueued,
+		Service: "svc", Kind: ports.VerificationKindPythonODCS, RunID: "verify-r1-svc-a1", Phase: proposal.PhaseQueued,
 	}}, got.Verifications)
 	require.Equal(t, proposal.StatusVerifying, got.NodeOutcomes["analytics.py_daily_kpis"].Status)
 
-	// A python verification run reads the packaged contract written under its
-	// own id; there is no project to lay a source overlay over.
-	require.Equal(t, "merged: contract\n", art.written["svc/verify-r1-svc-a1/contract.yaml"])
+	// A python verification run reads the packed bundle written under its own
+	// id; there is no project to lay a source overlay over.
+	require.Equal(t, packedBundle, art.written["svc/verify-r1-svc-a1/odcs-bundle.json"])
 	require.NotContains(t, art.written, "svc/verify-r1-svc-a1/source-overlay.tar.gz")
 
 	require.Len(t, gw.submitted, 1)
 	require.Equal(t, ports.VerificationRequest{
 		RunID: "verify-r1-svc-a1", Service: "svc", ImageTag: "ghcr.io/o/svc:v9",
-		Kind: ports.VerificationKindPython,
+		Kind: ports.VerificationKindPythonODCS,
 		// The run names the rejected release it judges, so release-controller
 		// assembles that release's candidate for the service it changed.
 		VerifiesReleaseID: "r1", Attempt: 1,
@@ -165,13 +192,13 @@ func TestProposeFix_PythonValidation_ServiceDerivedFromTheEditPath(t *testing.T)
 	got := u.pr.inserted[0]
 	require.Equal(t, proposal.StatusVerifying, got.Status)
 	require.Equal(t, []proposal.Verification{{
-		Service: "svc", Kind: ports.VerificationKindPython, RunID: "verify-r1-svc-a1", Phase: proposal.PhaseQueued,
+		Service: "svc", Kind: ports.VerificationKindPythonODCS, RunID: "verify-r1-svc-a1", Phase: proposal.PhaseQueued,
 	}}, got.Verifications)
-	require.Equal(t, "merged: contract\n", art.written["svc/verify-r1-svc-a1/contract.yaml"])
+	require.Equal(t, packedBundle, art.written["svc/verify-r1-svc-a1/odcs-bundle.json"])
 	require.NotContains(t, art.written, "svc/verify-r1-svc-a1/source-overlay.tar.gz")
 	require.Len(t, gw.submitted, 1)
 	require.Equal(t, "svc", gw.submitted[0].Service)
-	require.Equal(t, ports.VerificationKindPython, gw.submitted[0].Kind)
+	require.Equal(t, ports.VerificationKindPythonODCS, gw.submitted[0].Kind)
 }
 
 // TestProposeFix_PythonContractWithDbtEditInOneService covers the attempt that
@@ -214,7 +241,7 @@ func TestProposeFix_PythonContractWithDbtEditInOneService(t *testing.T) {
 	}
 	require.Empty(t, got.Verifications)
 	require.Empty(t, gw.submitted, "no release-queue slot is spent on a change one release cannot verify")
-	require.NotContains(t, art.written, "svc/verify-r1-svc-a1/contract.yaml",
+	require.NotContains(t, art.written, "svc/verify-r1-svc-a1/odcs-bundle.json",
 		"every service is checked before any is submitted, so nothing is uploaded either")
 	require.Empty(t, u.ob.entries)
 }
@@ -261,4 +288,64 @@ func TestProposeFix_DbtValidation_StoresNoTriggerPayload(t *testing.T) {
 	require.Len(t, u.pr.inserted, 1)
 	require.Empty(t, u.pr.inserted[0].TriggerPayload)
 	require.Empty(t, u.pr.inserted[0].VerificationRunID)
+}
+
+// TestVerify_UploadsAnODCSBundleAsPythonODCS pins what a python fix is
+// verified with: the bundle packed with the package list of the rejected
+// release's image, uploaded as <service>/<run id>/odcs-bundle.json and
+// submitted as kind python-odcs.
+func TestVerify_UploadsAnODCSBundleAsPythonODCS(t *testing.T) {
+	u := newFakeUoW()
+	llm := newFakeLLM(pythonFixResult(), nil)
+	art := &fakeArtifacts{}
+	gw := &fakeGateway{imageTag: "ghcr.io/o/svc:v9"}
+	d := pythonDeps(t, u, &llm, art, gw, pythonCheckout(t))
+	var packed []map[string]string
+	d.Packager = handlerPackager{packages: &packed}
+	d.ImagePackages = handlerImages{packages: map[string]string{"pyarrow": "26.0.0", "duckdb": "1.4.0"}}
+
+	require.NoError(t, ProposeFix(context.Background(), d, pythonTrigger()))
+
+	require.Equal(t, []map[string]string{{"pyarrow": "26.0.0", "duckdb": "1.4.0"}}, packed)
+	require.Equal(t, packedBundle, art.written["svc/verify-r1-svc-a1/odcs-bundle.json"])
+	require.Equal(t, "application/json", art.contentTypes["svc/verify-r1-svc-a1/odcs-bundle.json"])
+	require.NotContains(t, art.written, "svc/verify-r1-svc-a1/contract.yaml")
+	require.Len(t, gw.submitted, 1)
+	require.Equal(t, ports.VerificationKindPythonODCS, gw.submitted[0].Kind)
+	require.Equal(t, "python-odcs", gw.submitted[0].Kind)
+}
+
+// TestVerify_NoImagePackagesWritesNoProposalAndLogsWhy covers a release none of
+// whose bundles records the service's image packages: no fix can be packed, so
+// the model is not called, nothing is uploaded or submitted, the node is
+// recorded skipped with the reason and the reason is logged.
+func TestVerify_NoImagePackagesWritesNoProposalAndLogsWhy(t *testing.T) {
+	u := newFakeUoW()
+	llm := newFakeLLM(pythonFixResult(), nil)
+	art := &fakeArtifacts{}
+	gw := &fakeGateway{imageTag: "ghcr.io/o/svc:v9"}
+	d := pythonDeps(t, u, &llm, art, gw, pythonCheckout(t))
+	var packed []map[string]string
+	d.Packager = handlerPackager{packages: &packed}
+	noPackages := fmt.Errorf("release r1, service svc: %w", ports.ErrNoImagePackages)
+	d.ImagePackages = handlerImages{err: noPackages}
+	var logs strings.Builder
+	d.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+
+	require.NoError(t, ProposeFix(context.Background(), d, pythonTrigger()))
+
+	require.Zero(t, llm.calls, "no model call is spent on a fix that cannot be packed")
+	require.Empty(t, packed)
+	require.Empty(t, gw.submitted)
+	require.Empty(t, art.written)
+	require.Len(t, u.pr.inserted, 1)
+	got := u.pr.inserted[0]
+	require.Equal(t, proposal.StatusSkipped, got.Status)
+	require.Empty(t, got.Verifications)
+	require.Empty(t, got.Edits)
+	outcome := got.NodeOutcomes["analytics.py_daily_kpis"]
+	require.Equal(t, proposal.StatusSkipped, outcome.Status)
+	require.Equal(t, noPackages.Error(), outcome.Reason)
+	require.Contains(t, logs.String(), `"reason":"`+noPackages.Error()+`"`)
+	require.Empty(t, u.ob.entries)
 }

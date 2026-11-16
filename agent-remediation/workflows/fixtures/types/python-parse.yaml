@@ -52,17 +52,24 @@ repo_files:
     def run(ctx):
         ctx.read("orders")
         return pa.table({"id": pa.array([1], type=pa.int32())})
+catalog:
+  # The node's contract as continuo last promoted it.
+  contracts:
+    e2e_schema.py_unqualified_read: |
+      apiVersion: v3.2.0
+      kind: DataContract
+      id: e2e_schema.py_unqualified_read
+      name: py_unqualified_read
+      version: "1"
 release:
   image_tag: sha-python-parse
+  image_packages: {pyarrow: "26.0.0"}
   failing_nodes:
     e2e_schema.py_unqualified_read: "read orders references right_name, which names no schema"
 packager:
-  merged: |
-    nodes:
-      - schema: e2e_schema
-        table: py_unqualified_read
-        reads:
-          orders: select id from public.right_name
+  # The odcs-bundle.json continuo-runtime pack writes for the patched contract
+  # directory, with the release's image packages.
+  packed: '{"bundle_version": 1, "service": "svc-py-e2e", "producer": {"continuo_python_runtime": "0.13.0", "continuo_contracts": "0.2.0"}, "image_packages": {"pyarrow": "26.0.0"}, "nodes": [{"path": "contracts/py_unqualified_read.odcs.yaml", "text": "id: e2e_schema.py_unqualified_read\n", "source_hash": "", "shared_code_hash": ""}]}'
 answers:
   pass:
     - files:

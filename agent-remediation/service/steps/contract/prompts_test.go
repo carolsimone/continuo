@@ -28,6 +28,7 @@ var (
 func promptEvidence() remediation.Evidence {
 	return contractFileEvidence().
 		With(remediation.KeyContractEntry, remediation.Text(`<{"table":"rates"}>`)).
+		With(remediation.KeyCurrentContract, remediation.Text("<id: fx.rates\nversion: \"3\"\n>")).
 		With(remediation.KeyDBTLog, remediation.Text("<runner log>")).
 		With(remediation.KeyUpstreamChanges, upstreamChanges).
 		With(remediation.KeyFailurePrecedents, precedentList).
@@ -46,6 +47,7 @@ func laneEvidence(noReads bool) prompt.PythonEvidence {
 		ContractEntry:   `<{"table":"rates"}>`,
 		YAMLPath:        "svc/contracts/fx.yaml",
 		YAMLText:        "<nodes:\n  - table: rates\n>",
+		CurrentContract: "<id: fx.rates\nversion: \"3\"\n>",
 		UpstreamChanges: upstreamChanges,
 		Precedents:      precedentList,
 	}
@@ -123,8 +125,8 @@ func TestPrompts_MetaNamesTheStepAndWhatItReads(t *testing.T) {
 			assert.Equal(t, step.KindPrompt, m.Kind)
 			assert.NotEmpty(t, m.Description)
 			assert.Equal(t, []remediation.EvidenceKey{
-				remediation.KeyFailure, remediation.KeyContractFile, remediation.KeyContractEntry, remediation.KeyDBTLog,
-				remediation.KeyUpstreamChanges, remediation.KeyFailurePrecedents,
+				remediation.KeyFailure, remediation.KeyContractFile, remediation.KeyContractEntry, remediation.KeyCurrentContract,
+				remediation.KeyDBTLog, remediation.KeyUpstreamChanges, remediation.KeyFailurePrecedents,
 			}, m.Needs)
 			assert.Empty(t, m.Provides)
 		})
@@ -143,6 +145,8 @@ func TestPrompts_MakeTheLanesRequestWithOneModelCall(t *testing.T) {
 			assert.Equal(t, tc.laneResult(false), model.reqs[0])
 			assert.Contains(t, model.reqs[0].User, "## Earlier tries at this failure\n", "the first round's request shows the earlier tries")
 			assert.Contains(t, model.reqs[0].User, "Why the gate failed: <still bad>")
+			assert.Contains(t, model.reqs[0].User, "Current contract (the node's contract as continuo last promoted it):\n```yaml\n<id: fx.rates",
+				"the first round's request shows the node's current contract")
 		})
 	}
 }
@@ -166,7 +170,7 @@ func TestPrompts_EvidenceOtherThanTheContractFileMayBeAbsent(t *testing.T) {
 			proposeWith(t, tc.build(), failure(nil), contractFileEvidence(), model)
 
 			ev := laneEvidence(false)
-			ev.RunnerLog, ev.ContractEntry, ev.UpstreamChanges, ev.Precedents = "", "", nil, nil
+			ev.RunnerLog, ev.ContractEntry, ev.CurrentContract, ev.UpstreamChanges, ev.Precedents = "", "", "", nil, nil
 			want := map[string]prompt.ProposeRequest{
 				"python-contract": prompt.AssemblePythonContractFix(ev),
 				"python-parse":    prompt.AssemblePythonParseFix(ev),

@@ -58,17 +58,24 @@ objects:
   s3://logs/rel-python-1/e2e_schema.py_bad_read.log: "check_binds: relation \"public.wrong_name\" does not exist\n"
 bundle:
   e2e_schema.py_bad_read: { runtime: python, raw_code: '{"schema":"e2e_schema","table":"py_bad_read","reads":{"missing":"select id from public.wrong_name"}}' }
+catalog:
+  # The node's contract as continuo last promoted it.
+  contracts:
+    e2e_schema.py_bad_read: |
+      apiVersion: v3.2.0
+      kind: DataContract
+      id: e2e_schema.py_bad_read
+      name: py_bad_read
+      version: "1"
 release:
   image_tag: sha-python
+  image_packages: {pyarrow: "26.0.0"}
   failing_nodes:
     e2e_schema.py_bad_read: 'relation "public.wrong_name" does not exist'
 packager:
-  merged: |
-    nodes:
-      - schema: e2e_schema
-        table: py_bad_read
-        reads:
-          missing: select id from public.right_name
+  # The odcs-bundle.json continuo-runtime pack writes for the patched contract
+  # directory, with the release's image packages.
+  packed: '{"bundle_version": 1, "service": "svc-py-e2e", "producer": {"continuo_python_runtime": "0.13.0", "continuo_contracts": "0.2.0"}, "image_packages": {"pyarrow": "26.0.0"}, "nodes": [{"path": "contracts/py_bad_read.odcs.yaml", "text": "id: e2e_schema.py_bad_read\n", "source_hash": "", "shared_code_hash": ""}]}'
 answers:
   pass:
     - files:

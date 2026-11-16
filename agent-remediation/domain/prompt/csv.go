@@ -30,8 +30,12 @@ type CsvEvidence struct {
 	// YAMLPath and YAMLText locate and carry the ODCS contract file that
 	// declares the node, verbatim as the repository holds it at the failing
 	// commit.
-	YAMLPath        string
-	YAMLText        string
+	YAMLPath string
+	YAMLText string
+	// CurrentContract is the node's contract as continuo last promoted it,
+	// the published ODCS YAML the catalog holds; empty when the node has
+	// none yet.
+	CurrentContract string
 	UpstreamChanges []UpstreamChange
 	Precedents      []Precedent
 	// PriorAttempts are the earlier attempts at this same failure, oldest
@@ -79,6 +83,7 @@ func AssembleCsvContractFix(ev CsvEvidence) ProposeRequest {
 	if ev.YAMLText != "" {
 		fmt.Fprintf(&u, "Contract file %s that declares it:\n```yaml\n%s\n```\n\n", ev.YAMLPath, ev.YAMLText)
 	}
+	renderCurrentContract(&u, ev.CurrentContract)
 
 	renderUpstreamChanges(&u, ev.UpstreamChanges)
 	renderPrecedents(&u, ev.Precedents)

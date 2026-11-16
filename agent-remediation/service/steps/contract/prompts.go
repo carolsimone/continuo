@@ -33,7 +33,7 @@ var _ step.Prompt = (*contractPrompt)(nil)
 func NewPythonContract(sanitizer ports.LogSanitizer) step.Prompt {
 	return &contractPrompt{
 		name: "python-contract",
-		description: "Shows the model a python node's ODCS contract with the validation error, runner log, the contract entry the release recorded, " +
+		description: "Shows the model a python node's ODCS contract with the validation error, runner log, the contract entry the release recorded, the node's current contract, " +
 			"upstream changes, precedent and, when there are any, the earlier tries at the failure in its first-round request, and reads back the complete new content of every contract file it changes.",
 		assemble:  prompt.AssemblePythonContractFix,
 		sanitizer: sanitizer,
@@ -45,7 +45,7 @@ func NewPythonContract(sanitizer ports.LogSanitizer) step.Prompt {
 func NewPythonParse(sanitizer ports.LogSanitizer) step.Prompt {
 	return &contractPrompt{
 		name: "python-parse",
-		description: "Shows the model a python node's ODCS contract with the SQL parser's error, upstream changes, precedent and, when there are any, the earlier tries at the failure in its first-round request, " +
+		description: "Shows the model a python node's ODCS contract with the SQL parser's error, the node's current contract, upstream changes, precedent and, when there are any, the earlier tries at the failure in its first-round request, " +
 			"and reads back the complete new content of every contract file it changes.",
 		assemble:  prompt.AssemblePythonParseFix,
 		sanitizer: sanitizer,
@@ -57,7 +57,7 @@ func NewPythonParse(sanitizer ports.LogSanitizer) step.Prompt {
 func NewCSVContract(sanitizer ports.LogSanitizer) step.Prompt {
 	return &contractPrompt{
 		name: "csv-contract",
-		description: "Shows the model a python-csv node's ODCS contract with the validation error, the header check's runner log, the contract entry the release recorded, " +
+		description: "Shows the model a python-csv node's ODCS contract with the validation error, the header check's runner log, the contract entry the release recorded, the node's current contract, " +
 			"upstream changes, precedent and, when there are any, the earlier tries at the failure in its first-round request, and reads back the complete new content of every contract file it changes.",
 		assemble: func(ev prompt.PythonEvidence) prompt.ProposeRequest {
 			return prompt.AssembleCsvContractFix(prompt.CsvEvidence(ev))
@@ -76,6 +76,7 @@ func (p *contractPrompt) Meta() step.Meta {
 			remediation.KeyFailure,
 			remediation.KeyContractFile,
 			remediation.KeyContractEntry,
+			remediation.KeyCurrentContract,
 			remediation.KeyDBTLog,
 			remediation.KeyUpstreamChanges,
 			remediation.KeyFailurePrecedents,
@@ -86,8 +87,9 @@ func (p *contractPrompt) Meta() step.Meta {
 // Propose makes the model call and reads its answer into a draft. In the first
 // round it assembles what the model is shown, with the earlier tries at the
 // failure (step.WithPreviousTries). The failure text and the declaring file are
-// required; the runner log, the bundle's contract entry, upstream changes,
-// precedent and the earlier tries each degrade to their own absence, because a
+// required; the runner log, the bundle's contract entry, the node's current
+// contract, upstream changes, precedent and the earlier tries each degrade to
+// their own absence, because a
 // missing evidence section costs the model context while a blocked heal costs
 // the operator the fix entirely. The error excerpt and the
 // yaml text are sanitized here, since they leave for an external model, and the
@@ -144,6 +146,7 @@ func (p *contractPrompt) request(in step.PromptInput) (prompt.ProposeRequest, er
 		return prompt.ProposeRequest{}, fmt.Errorf("%s: the evidence holds no contract file", p.name)
 	}
 	entry, _ := remediation.Get[remediation.Text](in.Evidence, remediation.KeyContractEntry)
+	current, _ := remediation.Get[remediation.Text](in.Evidence, remediation.KeyCurrentContract)
 	dbtLog, _ := remediation.Get[remediation.Text](in.Evidence, remediation.KeyDBTLog)
 	upstream, _ := remediation.Get[[]prompt.UpstreamChange](in.Evidence, remediation.KeyUpstreamChanges)
 	precedents, _ := remediation.Get[[]prompt.Precedent](in.Evidence, remediation.KeyFailurePrecedents)
@@ -157,6 +160,7 @@ func (p *contractPrompt) request(in step.PromptInput) (prompt.ProposeRequest, er
 		ContractEntry:   string(entry),
 		YAMLPath:        file.YAMLPath,
 		YAMLText:        p.sanitizer.Sanitize(file.YAMLText),
+		CurrentContract: string(current),
 		UpstreamChanges: upstream,
 		Precedents:      precedents,
 	}), in.Evidence), nil

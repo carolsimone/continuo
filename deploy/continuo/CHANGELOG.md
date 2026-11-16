@@ -76,6 +76,7 @@ This release adds the values keys `agentRemediation.engine`, `contracts.publish.
 
 ### Changed
 
+- **The default validation image is `v0.13.0`** (`validation.imageTag`). A pinned tag of `v0.12.0` or later still renders, and agent-remediation packs a proposed Python fix with `continuo-python-runtime` 0.13.0.
 - **The node type `ingested` is now `unknown-external`.** TL;DR: a table that a node reads and no node builds is still a grey node in the DAG, now of type `unknown-external`. Its chip says `external` instead of `ingested`.
   - The gRPC API, `continuo schedule graph` and every new topology artifact name the type `unknown-external`. A script that looks for `ingested` must look for `unknown-external`.
   - A node that a 0.22.0 install stored as `ingested`, in a topology artifact, in run-controller's database or in catalog's graph, reads as `unknown-external`. Nothing is migrated.

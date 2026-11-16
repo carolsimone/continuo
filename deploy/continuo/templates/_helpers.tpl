@@ -147,7 +147,7 @@ app.kubernetes.io/name: {{ .service }}
 {{- fail (printf "validation.imageTag=%q predates seed_preflight (the seed reload check, added in v0.12.0): run-controller sends that op to every seed load that drops its table, and this runner cannot run it, so each such load would fail before dbt starts. Re-pin validation.imageTag to \"v0.12.0\" or later, or drop the override to track the chart's default." $tag) -}}
 {{- end -}}
 {{- else -}}
-{{- $tag = "v0.12.0" -}}{{/* CONTINUO_VALIDATION_DEFAULT_TAG — must equal values.yaml's validation.imageTag default */}}
+{{- $tag = "v0.13.0" -}}{{/* CONTINUO_VALIDATION_DEFAULT_TAG — must equal values.yaml's validation.imageTag default */}}
 {{- end -}}
 {{- if .Values.global.imageRegistry -}}
 {{- printf "%s/%s/continuo-python-runtime-%s:%s" .Values.global.imageRegistry .Values.global.imageRepositoryPrefix $eng $tag -}}

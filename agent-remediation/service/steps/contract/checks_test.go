@@ -57,20 +57,43 @@ func (f *fakeInspector) Declarations(text string) ([]ports.NodeDeclaration, erro
 
 var _ ports.ContractInspector = (*fakeInspector)(nil)
 
-type mergeCall struct{ contractDir, repoRoot, service, dialect string }
+type packCall struct {
+	contractDir, repoRoot, service, dialect string
+	packages                                map[string]string
+}
 
 type fakePackager struct {
 	out   []byte
 	err   error
-	calls []mergeCall
+	calls []packCall
 }
 
-func (f *fakePackager) Merge(_ context.Context, contractDir, repoRoot, service, dialect string) ([]byte, error) {
-	f.calls = append(f.calls, mergeCall{contractDir, repoRoot, service, dialect})
+func (f *fakePackager) Pack(_ context.Context, contractDir, repoRoot, service, dialect string, packages map[string]string) ([]byte, error) {
+	f.calls = append(f.calls, packCall{contractDir, repoRoot, service, dialect, packages})
 	return f.out, f.err
 }
 
 var _ ports.ContractPackager = (*fakePackager)(nil)
+
+// thePackages is the package list of every service's image in fakeImages.
+var thePackages = map[string]string{"pyarrow": "26.0.0"}
+
+// fakeImages answers the image package list of a release's service, or err,
+// and records what it was asked.
+type fakeImages struct {
+	err   error
+	asked [][2]string
+}
+
+func (f *fakeImages) ImagePackages(_ context.Context, releaseID, service string) (map[string]string, error) {
+	f.asked = append(f.asked, [2]string{releaseID, service})
+	if f.err != nil {
+		return nil, f.err
+	}
+	return thePackages, nil
+}
+
+var _ ports.ImagePackagesSource = (*fakeImages)(nil)
 
 const contractDir = "svc/contracts"
 
@@ -142,7 +165,7 @@ func TestChecks_MetaIsAPreflightCheckOnTheDraft(t *testing.T) {
 		{"csv_read_kept", contract.NewCSVReadKept(nil), draft, nil},
 		{"no_new_secret_ref", contract.NewNoNewSecretRef(nil), draft, nil},
 		{"declared_once", contract.NewDeclaredOnce(nil), withFile, nil},
-		{"contract_packages", contract.NewContractPackages(nil, ""), withFile, []remediation.EvidenceKey{remediation.KeyPackagedContract}},
+		{"contract_packages", contract.NewContractPackages(nil, nil, ""), withFile, []remediation.EvidenceKey{remediation.KeyPackagedContract}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -532,7 +555,7 @@ func TestChecksThatReadTheCheckout_NeedAScratch(t *testing.T) {
 		contract.NewCSVReadKept(&fakeInspector{}),
 		contract.NewNoNewSecretRef(&fakeInspector{}),
 		contract.NewDeclaredOnce(&fakeLocator{}),
-		contract.NewContractPackages(&fakePackager{}, "postgres"),
+		contract.NewContractPackages(&fakePackager{}, &fakeImages{}, "postgres"),
 	} {
 		_, err := c.Check(context.Background(), in)
 		require.Error(t, err, c.Meta().Name)
@@ -637,26 +660,45 @@ func TestDeclaredOnce_APathOutsideTheCheckoutIsAFindingAndNothingIsWritten(t *te
 
 func TestContractPackages(t *testing.T) {
 	p, in := declPass(t)
-	pk := &fakePackager{out: []byte("merged: contract")}
+	pk := &fakePackager{out: []byte(`{"bundle_version": 1}`)}
+	images := &fakeImages{}
 
-	out := runCheck(t, contract.NewContractPackages(pk, "trino"), in)
+	out := runCheck(t, contract.NewContractPackages(pk, images, "trino"), in)
 
 	assert.True(t, out.Result.Passed())
-	assert.Equal(t, map[remediation.EvidenceKey]any{remediation.KeyPackagedContract: remediation.Bytes("merged: contract")}, out.Evidence)
+	assert.Equal(t, map[remediation.EvidenceKey]any{remediation.KeyPackagedContract: remediation.Bytes(`{"bundle_version": 1}`)}, out.Evidence)
 	root := p.archive.dirs[0]
-	assert.Equal(t, []mergeCall{{
+	assert.Equal(t, []packCall{{
 		contractDir: filepath.Join(root, "svc", "contracts"),
 		repoRoot:    filepath.Join(root, "svc"),
 		service:     "svc",
 		dialect:     "trino",
+		packages:    thePackages,
 	}}, pk.calls)
+	assert.Equal(t, [][2]string{{"rel-1", "svc"}}, images.asked, "the package list is the rejected release's, for the failing node's service")
+}
+
+// TestContractPackages_NoImagePackagesFailsTheStep covers a release whose
+// bundles record no package list of the service's image: nothing can be
+// packed, which no revision of the draft can change, so the step fails with
+// the reason and the remediation's failure count records it.
+func TestContractPackages_NoImagePackagesFailsTheStep(t *testing.T) {
+	_, in := declPass(t)
+	pk := &fakePackager{}
+	noPackages := fmt.Errorf("release rel-1, service svc: %w", ports.ErrNoImagePackages)
+
+	_, err := contract.NewContractPackages(pk, &fakeImages{err: noPackages}, "postgres").Check(context.Background(), in)
+
+	require.ErrorIs(t, err, ports.ErrNoImagePackages)
+	assert.Contains(t, err.Error(), "release rel-1, service svc")
+	assert.Empty(t, pk.calls)
 }
 
 func TestContractPackages_APackagerRefusalIsAFindingWithTheToolsMessage(t *testing.T) {
 	_, in := declPass(t)
 	pk := &fakePackager{err: fmt.Errorf("%w: node fx.rates: duplicate read %q", ports.ErrContractRejected, "a")}
 
-	out := runCheck(t, contract.NewContractPackages(pk, "postgres"), in)
+	out := runCheck(t, contract.NewContractPackages(pk, &fakeImages{}, "postgres"), in)
 
 	assert.Equal(t, []remediation.Finding{{
 		Code: "contract_rejected",
@@ -668,7 +710,7 @@ func TestContractPackages_APackagerRefusalIsAFindingWithTheToolsMessage(t *testi
 
 func TestContractPackages_AnyOtherPackagerFailureIsReturnedSoTheWorkIsTriedAgain(t *testing.T) {
 	_, in := declPass(t)
-	_, err := contract.NewContractPackages(&fakePackager{err: errBoom}, "postgres").Check(context.Background(), in)
+	_, err := contract.NewContractPackages(&fakePackager{err: errBoom}, &fakeImages{}, "postgres").Check(context.Background(), in)
 	require.ErrorIs(t, err, errBoom)
 	assert.Contains(t, err.Error(), "package contract for py.fx.rates")
 }
@@ -676,7 +718,7 @@ func TestContractPackages_AnyOtherPackagerFailureIsReturnedSoTheWorkIsTriedAgain
 func TestContractPackages_APathOutsideTheCheckoutIsAFindingAndNothingIsPackaged(t *testing.T) {
 	p := newPass(t, nil)
 	pk := &fakePackager{}
-	got := findings(t, contract.NewContractPackages(pk, "postgres"), p.input(edit("/etc/x.yaml", "x")))
+	got := findings(t, contract.NewContractPackages(pk, &fakeImages{}, "postgres"), p.input(edit("/etc/x.yaml", "x")))
 	require.Len(t, got, 1)
 	assert.Equal(t, "path_outside_contract_dir", got[0].Code)
 	assert.Empty(t, pk.calls)
@@ -697,7 +739,7 @@ func TestScratch_RefetchesTheCheckoutInANewPass(t *testing.T) {
 		contract.NewCSVReadKept(insp),
 		contract.NewNoNewSecretRef(insp),
 		contract.NewDeclaredOnce(locator),
-		contract.NewContractPackages(packager, "postgres"),
+		contract.NewContractPackages(packager, &fakeImages{}, "postgres"),
 	}
 
 	runPass := func() {

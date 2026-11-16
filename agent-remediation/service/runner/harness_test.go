@@ -170,6 +170,18 @@ func (noVersions) CurrentVersion(context.Context, string) (ports.CurrentVersion,
 	return ports.CurrentVersion{}, false, nil
 }
 
+// fixedImages answers one package list for every release and service.
+type fixedImages struct{}
+
+func (fixedImages) ImagePackages(context.Context, string, string) (map[string]string, error) {
+	return map[string]string{"pyarrow": "26.0.0"}, nil
+}
+
+// noContracts is a catalog in which no node has a contract.
+type noContracts struct{}
+
+func (noContracts) CurrentContract(context.Context, string) (string, error) { return "", nil }
+
 // fakeReleases reads the failing release's image tag of a service as
 // "tag-<service>".
 type fakeReleases struct{}
@@ -180,6 +192,10 @@ func (fakeReleases) ImageTag(_ context.Context, _, service string) (string, erro
 
 func (fakeReleases) FailingNodes(context.Context, string) (map[string]string, error) {
 	return nil, nil
+}
+
+func (fakeReleases) ContractBundle(context.Context, string) (string, string, error) {
+	return "", "", nil
 }
 
 // fakePipeline records every verification run submitted. submitErr is
@@ -596,6 +612,8 @@ func newHarness(t *testing.T, opts ...option) *harness {
 		ContractLocator:     contractFiles,
 		ContractInspector:   contractFiles,
 		Packager:            h.packager,
+		ImagePackages:       fixedImages{},
+		CurrentContracts:    noContracts{},
 		Pipeline:            h.pipeline,
 		Clock:               h.clock,
 		VerificationTimeout: verificationTimeout,

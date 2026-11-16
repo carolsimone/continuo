@@ -373,6 +373,7 @@ func TestMain_RunnerCollaboratorsFillEveryField(t *testing.T) {
 			ports.UpstreamChangeReader
 			ports.VersionReader
 			ports.PrecedentReader
+			ports.CurrentContractReader
 		}{},
 		bundle: struct{ ports.CandidateSourceReader }{},
 		contracts: struct {
@@ -380,6 +381,7 @@ func TestMain_RunnerCollaboratorsFillEveryField(t *testing.T) {
 			ports.ContractInspector
 		}{},
 		packager: struct{ ports.ContractPackager }{},
+		images:   struct{ ports.ImagePackagesSource }{},
 		release: struct {
 			ports.ReleaseReader
 			ports.VerificationPipeline

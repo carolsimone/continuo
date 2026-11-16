@@ -126,9 +126,17 @@ type Services struct {
 	// document, so the answer's effect on it can be compared against what
 	// the repository held before it was applied.
 	ContractInspector ports.ContractInspector
-	// Packager turns a directory of python-node contract yaml files into the
-	// merged wire contract a release is submitted with.
+	// Packager packs a service's directory of ODCS contracts into the
+	// odcs-bundle.json a release is submitted with.
 	Packager ports.ContractPackager
+	// ImagePackages reads the package list of the rejected release's image of
+	// the node's service, which the bundle records. A release none of whose
+	// bundles records it gets no python fix: every python contract lane
+	// records the node skipped with the reason before the model is called.
+	ImagePackages ports.ImagePackagesSource
+	// CurrentContracts reads the node's current contract from the catalog,
+	// which the python contract lanes show the model.
+	CurrentContracts ports.CurrentContractReader
 	// Releases reads the original failing release's node-failure set. The
 	// python contract lanes use it to check whether another node declared in
 	// the same contract directory as the one being fixed also failed that
@@ -155,7 +163,7 @@ type Services struct {
 type Result struct {
 	Proposal      proposal.Proposal
 	SuspectedRoot string
-	// VerificationContract is the packaged contract.yaml a python fix must be
+	// VerificationContract is the packed odcs-bundle.json a python fix must be
 	// verified with, for the driver to upload alongside the verification run
 	// it submits; nil for a dbt fix, whose edits are verified by re-running
 	// the project directly.

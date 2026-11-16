@@ -43,8 +43,12 @@ type PythonEvidence struct {
 	// YAMLPath and YAMLText locate and carry the ODCS contract file that
 	// declares the node, verbatim as the repository holds it at the failing
 	// commit.
-	YAMLPath        string
-	YAMLText        string
+	YAMLPath string
+	YAMLText string
+	// CurrentContract is the node's contract as continuo last promoted it,
+	// the published ODCS YAML the catalog holds; empty when the node has
+	// none yet.
+	CurrentContract string
 	UpstreamChanges []UpstreamChange
 	Precedents      []Precedent
 	// PriorAttempts are the earlier attempts at this same failure, oldest
@@ -133,6 +137,7 @@ func pythonContractRequest(system, errorLabel string, ev PythonEvidence) Propose
 	if ev.YAMLText != "" {
 		fmt.Fprintf(&u, "Contract file %s that declares it:\n```yaml\n%s\n```\n\n", ev.YAMLPath, ev.YAMLText)
 	}
+	renderCurrentContract(&u, ev.CurrentContract)
 
 	renderUpstreamChanges(&u, ev.UpstreamChanges)
 	renderPrecedents(&u, ev.Precedents)
@@ -160,6 +165,15 @@ func pythonContractRequest(system, errorLabel string, ev PythonEvidence) Propose
 			{Name: "confidence", Type: "string", Description: "Your confidence: low, medium, or high.", Required: true},
 		},
 	}
+}
+
+// renderCurrentContract writes the node's current contract under the "Current
+// contract" heading. No contract → no section.
+func renderCurrentContract(b *strings.Builder, current string) {
+	if current == "" {
+		return
+	}
+	fmt.Fprintf(b, "Current contract (the node's contract as continuo last promoted it):\n```yaml\n%s\n```\n\n", current)
 }
 
 // renderUpstreamChanges writes the recently-changed-ancestor section: each
