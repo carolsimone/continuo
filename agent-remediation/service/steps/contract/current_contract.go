@@ -2,11 +2,12 @@ package contract
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
 )
 
 // CurrentContract is the context source `current_contract`: the failing node's
@@ -14,14 +15,15 @@ import (
 type CurrentContract struct {
 	contracts ports.CurrentContractReader
 	sanitizer ports.LogSanitizer
+	logger    *slog.Logger
 }
 
 var _ step.ContextSource = (*CurrentContract)(nil)
 
 // NewCurrentContract builds the current_contract step. It calls no port until
-// Gather.
-func NewCurrentContract(contracts ports.CurrentContractReader, sanitizer ports.LogSanitizer) *CurrentContract {
-	return &CurrentContract{contracts: contracts, sanitizer: sanitizer}
+// Gather; a nil logger logs to the default logger.
+func NewCurrentContract(contracts ports.CurrentContractReader, sanitizer ports.LogSanitizer, logger *slog.Logger) *CurrentContract {
+	return &CurrentContract{contracts: contracts, sanitizer: sanitizer, logger: shared.LoggerOrDefault(logger)}
 }
 
 // Meta describes the step.
@@ -30,7 +32,7 @@ func (*CurrentContract) Meta() step.Meta {
 		Name: "current_contract",
 		Kind: step.KindContext,
 		Description: "Reads the failing node's current contract from the catalog: the published ODCS YAML of the last promotion that changed it, sanitized. " +
-			"Provides an empty text when the node has no contract yet.",
+			"Provides an empty text when the node has no contract yet, or when the catalog cannot answer.",
 		Needs:    []remediation.EvidenceKey{remediation.KeyFailure},
 		Provides: []remediation.EvidenceKey{remediation.KeyCurrentContract},
 	}
@@ -38,12 +40,16 @@ func (*CurrentContract) Meta() step.Meta {
 
 // Gather returns the node's current contract, sanitized because it leaves for
 // an external model. A node the catalog holds no contract for gives an empty
-// text; a failed read is the step's error, so the runner tries it again.
+// text. The contract is reference only, so a failed read (a catalog outage,
+// or a catalog that serves no contract reads yet) is logged as a warning and
+// gives an empty text too: it never fails or declines the cluster.
 func (s *CurrentContract) Gather(ctx context.Context, in step.ContextInput) (step.ContextOutput, error) {
 	nodeID := in.Failure.Target.NodeID
 	doc, err := s.contracts.CurrentContract(ctx, nodeID)
 	if err != nil {
-		return step.ContextOutput{}, fmt.Errorf("read the current contract of %s: %w", nodeID, err)
+		s.logger.Warn("current contract unavailable; proceeding without it",
+			"node", nodeID, "error", err)
+		doc = ""
 	}
 	if doc != "" {
 		doc = s.sanitizer.Sanitize(doc)

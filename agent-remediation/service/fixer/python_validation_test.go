@@ -695,7 +695,7 @@ func TestPythonValidation_DuplicatePath_Fails(t *testing.T) {
 //
 // So every node the answer's own files declared before it was applied must
 // still be declared afterwards, with the fields that say WHICH node it is
-// (schema, table, script, owner, schedule, criticality) untouched. Anything
+// (id, script, team.name, schedule, criticality) untouched. Anything
 // else ends the attempt as failed, naming what moved.
 func TestPythonValidation_AnswerThatChangesNodeIdentity_Fails(t *testing.T) {
 	const target = "services/service-py/contracts/py_daily_kpis.odcs.yaml"
@@ -711,23 +711,23 @@ func TestPythonValidation_AnswerThatChangesNodeIdentity_Fails(t *testing.T) {
 		files    []ports.ProposedFile
 		want     string
 	}{
-		"a secret_ref is added to the failing node": {
+		"a secretRef is added to the failing node": {
 			files: []ports.ProposedFile{{Path: target, Content: with(correctedNode, func(n *odcsNode) { n.SecretRef = "continuo-api-x" })}},
-			want:  "secret_ref",
+			want:  "secretRef",
 		},
-		"the secret_ref is re-pointed": {
+		"the secretRef is re-pointed": {
 			original: apiNodeYAML,
 			files: []ports.ProposedFile{{Path: target, Content: with(apiNode, func(n *odcsNode) {
 				n.SecretRef, n.Columns = "continuo-api-y", []string{"revenue_total"}
 			})}},
-			want: "secret_ref",
+			want: "secretRef",
 		},
-		"the secret_ref is removed": {
+		"the secretRef is removed": {
 			original: apiNodeYAML,
 			files: []ports.ProposedFile{{Path: target, Content: with(apiNode, func(n *odcsNode) {
 				n.SecretRef, n.Columns = "", []string{"revenue_total"}
 			})}},
-			want: "secret_ref",
+			want: "secretRef",
 		},
 		"the failing node is deleted": {
 			files: []ports.ProposedFile{{Path: target, Content: notAContract}},
@@ -791,7 +791,7 @@ func TestPythonValidation_AnswerThatAddsANodeWithASecretRef_Fails(t *testing.T) 
 	r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
 	require.NoError(t, err)
 	require.Equal(t, proposal.StatusFailed, r.Proposal.Status)
-	require.Contains(t, r.Proposal.Rationale, "secret_ref")
+	require.Contains(t, r.Proposal.Rationale, "secretRef")
 	require.Empty(t, pkgr.calls, "a refused answer must never be packaged")
 	require.Empty(t, arts.written, "a refused answer writes no artifacts")
 }

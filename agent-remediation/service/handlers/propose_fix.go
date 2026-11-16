@@ -63,12 +63,12 @@ type Deps struct {
 	CandidateSource  ports.CandidateSourceReader
 	// RepoArchive fetches a full repo checkout at a commit, for a fixer that
 	// needs to search across many files (e.g. locating a python node's
-	// declaring contract yaml) rather than read one file at a time.
+	// declaring ODCS contract file) rather than read one file at a time.
 	RepoArchive ports.RepoArchive
-	// ContractLocator finds which contract yaml in that checkout declares a
+	// ContractLocator finds which ODCS contract file in that checkout declares a
 	// given python node.
 	ContractLocator ports.ContractLocator
-	// ContractInspector reads the node declarations out of a contract yaml
+	// ContractInspector reads the node declarations out of an ODCS contract file
 	// document, so a proposed edit can be checked against the declarations the
 	// repository already held.
 	ContractInspector ports.ContractInspector

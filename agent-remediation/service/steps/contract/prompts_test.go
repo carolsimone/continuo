@@ -145,7 +145,7 @@ func TestPrompts_MakeTheLanesRequestWithOneModelCall(t *testing.T) {
 			assert.Equal(t, tc.laneResult(false), model.reqs[0])
 			assert.Contains(t, model.reqs[0].User, "## Earlier tries at this failure\n", "the first round's request shows the earlier tries")
 			assert.Contains(t, model.reqs[0].User, "Why the gate failed: <still bad>")
-			assert.Contains(t, model.reqs[0].User, "Current contract (the node's contract as continuo last promoted it):\n```yaml\n<id: fx.rates",
+			assert.Contains(t, model.reqs[0].User, "Current contract (the node's contract as continuo last promoted it, for reference only: do not copy its version, or its provenance and reads properties, into the file):\n```yaml\n<id: fx.rates",
 				"the first round's request shows the node's current contract")
 		})
 	}

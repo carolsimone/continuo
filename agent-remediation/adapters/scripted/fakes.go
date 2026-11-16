@@ -250,7 +250,7 @@ func (k packager) Pack(_ context.Context, contractDir, repoRoot, _, _ string, im
 		return nil, fmt.Errorf("contract directory: %w", err)
 	}
 	if !holdsYAML(entries) {
-		return nil, fmt.Errorf("contract directory %s holds no contract yaml", contractDir)
+		return nil, fmt.Errorf("contract directory %s holds no ODCS contract file", contractDir)
 	}
 	if k.p.Refuse != "" {
 		return nil, fmt.Errorf("%w: %s", ports.ErrContractRejected, k.p.Refuse)

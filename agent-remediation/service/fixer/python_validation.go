@@ -186,7 +186,7 @@ func buildPythonProposeRequest(ctx context.Context, svc Services, in Input, loca
 }
 
 // contractFix is the shared skeleton of every lane whose fix is made in a
-// python contract yaml and can only be judged by a verification run: one
+// python ODCS contract file and can only be judged by a verification run: one
 // model call, applying and guarding the answer, and packing it into the
 // odcs-bundle.json a verification run would run, plus writing the audit
 // artifacts. The python validation, python-csv validation and python parse
@@ -402,7 +402,7 @@ func droppedReadBreach(node string, was, now ports.NodeDeclaration) string {
 			"or replaced, never dropped", strings.Join(quoteAll(dropped), ", "), node)
 }
 
-// buildDeclarationMaps parses every contract yaml file in an answer, before
+// buildDeclarationMaps parses every ODCS contract file in an answer, before
 // and after the edit, into declarations keyed by identityKey. It is the part
 // every contract-fix lane's post-apply guard shares, whatever it then checks
 // those declarations for: the python-node guard follows it with the
@@ -440,7 +440,7 @@ func buildDeclarationMaps(svc Services, files []ports.ProposedFile, originals ma
 
 // newNodeSecretBreach refuses an answer that adds a node naming a Secret: a
 // fix may add nodes, but never grants a node credentials. A node that already
-// existed is covered by identityBreach, which compares its secret_ref.
+// existed is covered by identityBreach, which compares its secretRef.
 func newNodeSecretBreach(svc Services, files []ports.ProposedFile, originals map[string]string) string {
 	before, after, breach := buildDeclarationMaps(svc, files, originals)
 	if breach != "" {
@@ -448,7 +448,7 @@ func newNodeSecretBreach(svc Services, files []ports.ProposedFile, originals map
 	}
 	for _, key := range sortedDeclarationKeys(after) {
 		if _, existed := before[key]; !existed && after[key].Identity.SecretRef != "" {
-			return fmt.Sprintf("the answer adds node %s with a secret_ref; a fix may not grant credentials", key)
+			return fmt.Sprintf("the answer adds node %s with a secretRef; a fix may not grant credentials", key)
 		}
 	}
 	return ""
@@ -541,21 +541,20 @@ func identityKey(id ports.NodeIdentity) string {
 }
 
 // identityDelta renders the identity fields that differ between two versions of
-// one entry, so a refused answer says which field moved instead of only that
+// one entry, each named as the ODCS contract writes it, so a refused answer says which field moved instead of only that
 // something did.
 func identityDelta(was, now ports.NodeIdentity) string {
 	fields := []struct {
 		name     string
 		was, now string
 	}{
-		{"schema", was.Schema, now.Schema},
-		{"table", was.Table, now.Table},
+		{"id", was.Schema + "." + was.Table, now.Schema + "." + now.Table},
 		{"script", was.Script, now.Script},
 		{"kind", was.Kind, now.Kind},
-		{"owner", was.Owner, now.Owner},
+		{"team.name", was.Owner, now.Owner},
 		{"schedule", was.Schedule, now.Schedule},
 		{"criticality", was.Criticality, now.Criticality},
-		{"secret_ref", was.SecretRef, now.SecretRef},
+		{"secretRef", was.SecretRef, now.SecretRef},
 	}
 	changed := make([]string, 0, len(fields))
 	for _, f := range fields {
@@ -594,7 +593,7 @@ func isContractYAMLPath(p string) bool {
 //
 // The failing set is read from the ORIGINAL release's failing nodes, keyed by
 // node id, and each other id is resolved against the same checkout to see
-// where it is declared. A node no contract yaml declares — a dbt model, or a
+// where it is declared. A node no ODCS contract file declares — a dbt model, or a
 // python node in another service — is not packaged by this fix and so cannot
 // fail its verification run.
 //

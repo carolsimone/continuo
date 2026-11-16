@@ -7,8 +7,8 @@ name: csv-validation
 match: { cluster: single, source: validation, node_types: [python-csv] }
 context:
   - contract_file
-  - image_packages
   - failing_siblings
+  - image_packages
   - dbt_log
   - contract_entry
   - current_contract

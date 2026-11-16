@@ -155,7 +155,7 @@ func withinDir(dir, p string) bool {
 
 // --- yaml_reads ---
 
-// YAMLReads is the check `yaml_reads`: every contract yaml file the answer
+// YAMLReads is the check `yaml_reads`: every ODCS contract file the answer
 // returns must be readable as a contract.
 type YAMLReads struct {
 	inspector ports.ContractInspector
@@ -262,7 +262,7 @@ func (c *declarationCheck) Check(ctx context.Context, in step.CheckInput) (step.
 	return result(name, c.judge(before, after)), nil
 }
 
-// buildDeclarationMaps parses every contract yaml file in an answer, before and
+// buildDeclarationMaps parses every ODCS contract file in an answer, before and
 // after the edit, into declarations keyed by identityKey. A prior content that
 // does not parse declared nothing the answer can be held to: the contract
 // search skips such a file too, so the node it might have named was never the
@@ -298,7 +298,7 @@ func NewNodeIdentityUnchanged(inspector ports.ContractInspector) step.Check {
 			Name: nameNodeIdentityUnchanged,
 			Kind: step.KindCheck,
 			Description: "Fails a draft after which a node the answer's files declared is no longer declared, or is declared under a " +
-				"changed identity (schema, table, script, kind, owner, schedule, criticality or secret_ref).",
+				"changed identity (id, script, kind, team.name, schedule, criticality or secretRef).",
 			Needs:  needsDraft,
 			Stages: preflightOnly,
 		},
@@ -461,14 +461,14 @@ func NewNoNewSecretRef(inspector ports.ContractInspector) step.Check {
 
 // secretRefFindings finds one secret_ref_added finding for each node the answer
 // adds that names a Secret. A node that already existed is covered by the
-// identity check, which compares its secret_ref.
+// identity check, which compares its secretRef.
 func secretRefFindings(before, after map[string]ports.NodeDeclaration) []remediation.Finding {
 	var found []remediation.Finding
 	for _, k := range sortedDeclarationKeys(after) {
 		if _, existed := before[k]; !existed && after[k].Identity.SecretRef != "" {
 			found = append(found, remediation.Finding{
 				Code:    "secret_ref_added",
-				Message: fmt.Sprintf("the answer adds node %s with a secret_ref; a fix may not grant credentials", k),
+				Message: fmt.Sprintf("the answer adds node %s with a secretRef; a fix may not grant credentials", k),
 			})
 		}
 	}
@@ -534,21 +534,20 @@ func identityKey(id ports.NodeIdentity) string {
 }
 
 // identityDelta renders the identity fields that differ between two versions of
-// one entry, so a finding says which field moved instead of only that something
+// one entry, each named as the ODCS contract writes it, so a finding says which field moved instead of only that something
 // did.
 func identityDelta(was, now ports.NodeIdentity) string {
 	fields := []struct {
 		name     string
 		was, now string
 	}{
-		{"schema", was.Schema, now.Schema},
-		{"table", was.Table, now.Table},
+		{"id", was.Schema + "." + was.Table, now.Schema + "." + now.Table},
 		{"script", was.Script, now.Script},
 		{"kind", was.Kind, now.Kind},
-		{"owner", was.Owner, now.Owner},
+		{"team.name", was.Owner, now.Owner},
 		{"schedule", was.Schedule, now.Schedule},
 		{"criticality", was.Criticality, now.Criticality},
-		{"secret_ref", was.SecretRef, now.SecretRef},
+		{"secretRef", was.SecretRef, now.SecretRef},
 	}
 	changed := make([]string, 0, len(fields))
 	for _, f := range fields {

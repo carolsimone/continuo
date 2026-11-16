@@ -33,10 +33,10 @@ type Collaborators struct {
 	// Patcher writes a draft's files over a checkout Archive fetched, for the
 	// pre-flight checks that run against the patched repository.
 	Patcher ports.CheckoutPatcher
-	// ContractLocator finds which contract yaml in that checkout declares the
+	// ContractLocator finds which ODCS contract file in that checkout declares the
 	// python node being fixed.
 	ContractLocator ports.ContractLocator
-	// ContractInspector reads the node declarations out of a contract yaml
+	// ContractInspector reads the node declarations out of an ODCS contract file
 	// document, so the answer's effect on them can be compared against what
 	// the repository held before it was applied.
 	ContractInspector ports.ContractInspector

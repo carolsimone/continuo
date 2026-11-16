@@ -62,7 +62,7 @@ type Input struct {
 	// yaml declaring it, not in the file FilePath names. Every Fixer a python
 	// node can still reach checks it before reading anything and records why
 	// it cannot help: the duplicate-table Fixer's target relation is declared
-	// in the contract yaml rather than in FilePath, a python-csv node's only
+	// in the ODCS contract file rather than in FilePath, a python-csv node's only
 	// read is an S3 URI the parser has nothing to reject in, and the dbt
 	// validation Fixer's candidate artifact is a JSON validation spec rather
 	// than SQL, so no source fix can be built from what it carries.
@@ -130,8 +130,9 @@ type Services struct {
 	// odcs-bundle.json a release is submitted with.
 	Packager ports.ContractPackager
 	// ImagePackages reads the package list of the rejected release's image of
-	// the node's service, which the bundle records. A release none of whose
-	// bundles records it gets no python fix: every python contract lane
+	// the node's service: from the release's contract bundle, or, for a
+	// release with none, from the service's odcs-bundle.json. A release whose
+	// bundle does not record it gets no python fix: every python contract lane
 	// records the node skipped with the reason before the model is called.
 	ImagePackages ports.ImagePackagesSource
 	// CurrentContracts reads the node's current contract from the catalog,
@@ -200,11 +201,11 @@ type Fixer interface {
 // five known values).
 //
 // nodeType selects a lane for the two sources where a python node's fix lives
-// somewhere other than the file the trigger names — its contract yaml — and
+// somewhere other than the file the trigger names — its ODCS contract file — and
 // is proven by a verification run rather than read back:
 //
 //   - validation: a dbt model is corrected in its SQL file; a python-node
-//     is corrected in the contract yaml that declares it, preserving
+//     is corrected in the ODCS contract file that declares it, preserving
 //     whatever reads its script performs; a python-csv node has no script at
 //     all, so its fix corrects the contract to match the csv file that is its
 //     source of truth — a narrower set of rules and a narrower post-apply
@@ -213,7 +214,7 @@ type Fixer interface {
 //     contract-fix lane, which corrects only what validation checks
 //     (output_columns and config) and never its secret_ref.
 //   - parse: a dbt model is corrected in its SQL file; a python-node's
-//     rejected SQL is one of its reads in the contract yaml, so it takes the
+//     rejected SQL is one of its reads in the ODCS contract file, so it takes the
 //     contract-fix lane. A python-csv node's only read is an S3 URI, never
 //     SQL, so the parser has nothing to reject in it; it keeps the
 //     source-file lane, which records why it cannot help. A python-api node
@@ -418,7 +419,7 @@ func writeEditArtifacts(ctx context.Context, svc Services, in Input, attempt, in
 // → (on a proposed outcome) diff the chosen file against its original content
 // and write the source + diff artifacts. The compile, parse, seed and
 // duplicate-relation lanes compose it; its counterpart for a fix made in a
-// python contract yaml is contractFix.
+// python ODCS contract file is contractFix.
 //
 // gather returns a non-empty skip reason when the lane cannot help with this
 // trigger; the reason is recorded as the proposal's rationale, so the operator

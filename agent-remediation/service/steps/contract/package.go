@@ -16,16 +16,18 @@ import (
 // checkout, is a contract the team's packaging tool accepts.
 type ContractPackages struct {
 	packager ports.ContractPackager
+	images   ports.ImagePackagesSource
 	dialect  string
 }
 
 var _ step.Check = (*ContractPackages)(nil)
 
-// NewContractPackages builds the contract_packages step. dialect is the sqlglot
-// dialect of the warehouse the install runs, which the tool checks the
-// contract's reads under.
-func NewContractPackages(packager ports.ContractPackager, dialect string) *ContractPackages {
-	return &ContractPackages{packager: packager, dialect: dialect}
+// NewContractPackages builds the contract_packages step. images reads the
+// package list when the evidence holds none; dialect is the sqlglot dialect of
+// the warehouse the install runs, which the tool checks the contract's reads
+// under.
+func NewContractPackages(packager ports.ContractPackager, images ports.ImagePackagesSource, dialect string) *ContractPackages {
+	return &ContractPackages{packager: packager, images: images, dialect: dialect}
 }
 
 const nameContractPackages workflow.StepName = "contract_packages"
@@ -47,7 +49,10 @@ func (*ContractPackages) Meta() step.Meta {
 // Check packs the contract directory of the patched checkout, resolving
 // scripts against the service's own directory, for the failing node's service,
 // with the package list of the rejected release's image of that service, which
-// the image_packages context step read once for the cluster. The order is the
+// the image_packages context step read once for the cluster. A cluster whose
+// context steps ran before image_packages was one of its type's steps has no
+// list in its evidence, so the check reads it itself; a release that records
+// none for the service is the check's error, saying why. The order is the
 // whole point: packing the checkout before the answer is written to it would
 // produce, and verify, the contract that already failed.
 //
@@ -69,7 +74,11 @@ func (c *ContractPackages) Check(ctx context.Context, in step.CheckInput) (step.
 	f := in.Failure
 	packages, ok := remediation.Get[remediation.ImagePackages](in.Evidence, remediation.KeyImagePackages)
 	if !ok {
-		return step.CheckOutput{}, fmt.Errorf("%s: the evidence holds no image packages to pack %s with", nameContractPackages, f.Target.NodeID)
+		read, err := c.images.ImagePackages(ctx, f.Trigger.ReleaseID, f.Target.Service)
+		if err != nil {
+			return step.CheckOutput{}, fmt.Errorf("%s: read the image packages to pack %s with: %w", nameContractPackages, f.Target.NodeID, err)
+		}
+		packages = remediation.ImagePackages(read)
 	}
 	bundle, err := c.packager.Pack(ctx,
 		filepath.Join(root, filepath.FromSlash(file.ContractDir)),

@@ -263,7 +263,7 @@ func TestPythonPrompts_ShowTheCurrentContract(t *testing.T) {
 
 			ev.CurrentContract = current
 			with := build(ev).User
-			require.Contains(t, with, "Current contract (the node's contract as continuo last promoted it):\n```yaml\n"+current+"\n```\n\n")
+			require.Contains(t, with, "Current contract (the node's contract as continuo last promoted it, for reference only: do not copy its version, or its provenance and reads properties, into the file):\n```yaml\n"+current+"\n```\n\n")
 			require.Less(t, strings.Index(with, "Contract file contracts/kpis.odcs.yaml"), strings.Index(with, "Current contract"),
 				"the current contract follows the file the fix edits")
 		})

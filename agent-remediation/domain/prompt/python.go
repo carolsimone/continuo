@@ -168,12 +168,14 @@ func pythonContractRequest(system, errorLabel string, ev PythonEvidence) Propose
 }
 
 // renderCurrentContract writes the node's current contract under the "Current
-// contract" heading. No contract → no section.
+// contract" heading, marked as reference only: the published form carries the
+// version continuo numbered and its provenance and reads properties, none of
+// which belongs in the authored file. No contract → no section.
 func renderCurrentContract(b *strings.Builder, current string) {
 	if current == "" {
 		return
 	}
-	fmt.Fprintf(b, "Current contract (the node's contract as continuo last promoted it):\n```yaml\n%s\n```\n\n", current)
+	fmt.Fprintf(b, "Current contract (the node's contract as continuo last promoted it, for reference only: do not copy its version, or its provenance and reads properties, into the file):\n```yaml\n%s\n```\n\n", current)
 }
 
 // renderUpstreamChanges writes the recently-changed-ancestor section: each

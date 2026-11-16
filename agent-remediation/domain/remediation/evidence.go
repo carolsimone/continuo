@@ -71,7 +71,7 @@ type CandidateSource struct {
 	Service  string
 }
 
-// ContractFile is the contract yaml that declares a python node.
+// ContractFile is the ODCS contract file that declares a python node.
 type ContractFile struct {
 	Schema      string
 	Table       string

@@ -4,17 +4,17 @@ import "errors"
 
 // ErrNodeNotDeclared reports that no ODCS contract file under the searched
 // tree declares a node matching the given schema and table.
-var ErrNodeNotDeclared = errors.New("node not declared in any contract yaml")
+var ErrNodeNotDeclared = errors.New("node not declared in any ODCS contract file")
 
 // ErrAmbiguousDeclaration reports that more than one ODCS contract file
 // declares a node with the same schema and table. The system's duplicate-node
 // gate should make this state impossible upstream, so seeing it here means the
 // repository has drifted from what the control plane believes — not that the
 // search should just pick one.
-var ErrAmbiguousDeclaration = errors.New("node declared in more than one contract yaml")
+var ErrAmbiguousDeclaration = errors.New("node declared in more than one ODCS contract file")
 
 // ErrServiceNotConverted reports that no ODCS contract file declares the node
-// but a contract yaml's "nodes:" list does: the node's service still declares
+// but a contract.yaml's "nodes:" list does: the node's service still declares
 // its Python nodes in contract.yaml, which no fix is packaged from.
 var ErrServiceNotConverted = errors.New("the service still declares its python nodes in contract.yaml")
 

@@ -16,7 +16,7 @@ import (
 // place of a dbt log, since no Job ran.
 //
 // A python-node never reaches this type: For routes it to
-// pythonParseFixer, because its rejected SQL is a read in its contract yaml.
+// pythonParseFixer, because its rejected SQL is a read in its ODCS contract file.
 // A python-csv node does reach it and is refused with a recorded reason: its
 // only read is an S3 URI, never SQL, so the parser has nothing to reject in
 // it, and a rejection naming one is not something this system can repair.
@@ -36,8 +36,8 @@ func parseGather(ctx context.Context, svc Services, in Input) (Gathered, string,
 			"the parser can reject and remediation has no fix to offer; correct the contract by hand", in.NodeID), nil
 	}
 	if pkg_model.NodeType(in.NodeType).IsPython() {
-		return Gathered{}, fmt.Sprintf("%s is a %s node: its reads are declared in its service's contract.yaml, "+
-			"which this lane does not edit; correct the contract by hand", in.NodeID, in.NodeType), nil
+		return Gathered{}, fmt.Sprintf("%s is a %s node: its reads are declared in its contract file "+
+			"(the ODCS file under contracts/, or a legacy contract.yaml), which this lane does not edit; correct the contract by hand", in.NodeID, in.NodeType), nil
 	}
 	if in.FilePath == "" {
 		return Gathered{}, "the parse rejection names no source file, so there is no file to fix", nil
