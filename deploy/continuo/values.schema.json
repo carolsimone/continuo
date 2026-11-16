@@ -512,7 +512,8 @@
             "retentionDays": {
               "type": "integer",
               "minimum": 0,
-              "description": "How many days of contract versions catalog keeps. 0 keeps every version; above 0 its retention sweeper deletes a version once its promotion is older than that, never a node's current contract or the version before it."
+              "maximum": 36500,
+              "description": "How many days of contract versions catalog keeps, from 0 to 36500 (100 years). 0 keeps every version; above 0 its retention sweeper deletes a version once its promotion is older than that, never a node's current contract or the version before it."
             }
           }
         }

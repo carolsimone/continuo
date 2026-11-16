@@ -65,6 +65,13 @@ const (
 
 	// defaultWarehouseEngine is the engine an install that never chose one runs.
 	defaultWarehouseEngine = "postgres"
+
+	// maxContractHistoryRetentionDays is the largest CONTRACT_HISTORY_RETENTION_DAYS,
+	// 100 years. The retention is a time.Duration of that many days, which
+	// overflows from 106752 days, and pkg/retention reads a retention below 1ns
+	// as its 7-day default, so a larger value would prune where "keep
+	// everything" was meant.
+	maxContractHistoryRetentionDays = 36500
 )
 
 // Config holds all configuration for the catalog service.
@@ -110,8 +117,8 @@ type Config struct {
 	ContractsServer *contractversion.Server
 
 	// ContractHistoryRetentionDays is CONTRACT_HISTORY_RETENTION_DAYS: how many
-	// days of contract versions the retention sweeper keeps. 0 keeps every
-	// version.
+	// days of contract versions the retention sweeper keeps, from 0 to 36500.
+	// 0 keeps every version.
 	ContractHistoryRetentionDays int
 }
 
@@ -236,15 +243,17 @@ func loadContractsServer(v *pkgconfig.Validator) (engine string, server *contrac
 
 // loadContractHistoryRetentionDays reads CONTRACT_HISTORY_RETENTION_DAYS
 // (default 0, which keeps every version). A value that is not a whole number
-// from 0 up is recorded on v and 0 is returned.
+// from 0 to maxContractHistoryRetentionDays is recorded on v and 0 is
+// returned.
 func loadContractHistoryRetentionDays(v *pkgconfig.Validator) int {
 	raw := os.Getenv(contractHistoryRetentionKey)
 	if raw == "" {
 		return 0
 	}
 	days, err := strconv.Atoi(raw)
-	if err != nil || days < 0 {
-		v.Add(fmt.Sprintf("%s (invalid value %q: expected a whole number from 0 up)", contractHistoryRetentionKey, raw))
+	if err != nil || days < 0 || days > maxContractHistoryRetentionDays {
+		v.Add(fmt.Sprintf("%s (invalid value %q: expected a whole number from 0 to %d)",
+			contractHistoryRetentionKey, raw, maxContractHistoryRetentionDays))
 		return 0
 	}
 	return days

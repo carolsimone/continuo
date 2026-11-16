@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	croninfra "github.com/carolsimone/continuo/catalog/adapters/cron"
 	"github.com/carolsimone/continuo/catalog/domain/contractversion"
@@ -404,6 +405,10 @@ func TestLoad_ContractHistoryRetentionDays(t *testing.T) {
 		{raw: "0", want: 0},
 		{raw: "30", want: 30},
 		{raw: "3650", want: 3650},
+		{raw: "36500", want: 36500},
+		{raw: "36501", wantBad: true},
+		{raw: "999999", wantBad: true},
+		{raw: "99999999999999999999", wantBad: true},
 		{raw: "-1", wantBad: true},
 		{raw: "x", wantBad: true},
 		{raw: "1.5", wantBad: true},
@@ -420,6 +425,12 @@ func TestLoad_ContractHistoryRetentionDays(t *testing.T) {
 				if len(problems) != 1 || !strings.HasPrefix(problems[0], "CONTRACT_HISTORY_RETENTION_DAYS ") {
 					t.Fatalf("problems = %v, want one naming CONTRACT_HISTORY_RETENTION_DAYS", problems)
 				}
+				if !strings.Contains(problems[0], "from 0 to 36500") {
+					t.Fatalf("problem = %q, want it to state the range from 0 to 36500", problems[0])
+				}
+				if cfg.ContractHistoryRetentionDays != 0 {
+					t.Fatalf("ContractHistoryRetentionDays = %d on a refused value, want 0", cfg.ContractHistoryRetentionDays)
+				}
 				return
 			}
 			if len(problems) != 0 {
@@ -429,6 +440,15 @@ func TestLoad_ContractHistoryRetentionDays(t *testing.T) {
 				t.Fatalf("ContractHistoryRetentionDays = %d, want %d", cfg.ContractHistoryRetentionDays, c.want)
 			}
 		})
+	}
+}
+
+// The largest retention, as the Duration main builds from it, stays positive:
+// an overflowed Duration is non-positive, which pkg/retention reads as its
+// 7-day default.
+func TestMaxContractHistoryRetentionDaysFitsADuration(t *testing.T) {
+	if d := time.Duration(maxContractHistoryRetentionDays) * 24 * time.Hour; d <= 0 {
+		t.Fatalf("%d days as a Duration is %v, want a positive duration", maxContractHistoryRetentionDays, d)
 	}
 }
 

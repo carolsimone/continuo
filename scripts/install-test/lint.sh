@@ -946,7 +946,7 @@ fi
 # CONTRACTS_SERVER_DATABASE and CONTRACT_HISTORY_RETENTION_DAYS. With a host, a
 # port outside 1 to 65535 or no database to bind (the database falls back to
 # validation.warehouseDatabase) fails the render and names the key, and so does
-# a retention that is not a whole number from 0 up, in the helpers as well as
+# a retention that is not a whole number from 0 to 36500, in the helpers as well as
 # in the schema (the helpers refuse them with the schema check skipped). A key
 # the schema does not name is refused, and values without a contracts or
 # catalog.contractHistory block (as `helm upgrade --reuse-values` can produce)
@@ -1039,6 +1039,16 @@ expect_contracts_refused catalog.contractHistory.retentionDays --set catalog.con
 expect_contracts_refused catalog.contractHistory.retentionDays --set-string catalog.contractHistory.retentionDays=x
 expect_contracts_refused catalog.contractHistory.retentionDays --set-string catalog.contractHistory.retentionDays=30
 expect_contracts_refused catalog.contractHistory.retentionDays --set catalog.contractHistory.retentionDays=1.5
+# 36500 days (100 years) is the largest retention. Above it, catalog's
+# time.Duration of the days would overflow into a retention the sweeper reads
+# as its 7-day default, so a "keep forever" value such as 999999 is refused.
+expect_contracts_refused catalog.contractHistory.retentionDays --set catalog.contractHistory.retentionDays=36501
+expect_contracts_refused catalog.contractHistory.retentionDays --set catalog.contractHistory.retentionDays=999999
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set catalog.contractHistory.retentionDays=36500 > "${tmp}/contracts-max-retention.yaml" \
+  || { echo "FAIL: catalog.contractHistory.retentionDays=36500 must render"; exit 1; }
+grep -qF 'CONTRACT_HISTORY_RETENTION_DAYS: "36500"' "${tmp}/contracts-max-retention.yaml" \
+  || { echo "FAIL: catalog.contractHistory.retentionDays=36500 does not reach the shared ConfigMap"; exit 1; }
 for unknown in contracts.bogus=1 contracts.publish.bogus=1 contracts.publish.server.bogus=1 catalog.contractHistory.bogus=1; do
   if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set "${unknown}" > /dev/null 2>&1; then
     echo "FAIL: ${unknown} must fail the render; the schema names no such key"; exit 1

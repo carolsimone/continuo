@@ -2171,11 +2171,12 @@ blank. Each failure names its key. catalog repeats these checks at startup.
 CONTRACT_HISTORY_RETENTION_DAYS for the shared ConfigMap:
 catalog.contractHistory.retentionDays. A release without a catalog block, or
 without the key, gets 0, which keeps every version; a value that is not a whole
-number from 0 up fails the render.
+number from 0 to 36500 (100 years, the most catalog's retention can hold) fails
+the render.
 */ -}}
 {{- define "continuo.catalog.contractHistory.retentionDays" -}}
 {{- $h := (.Values.catalog | default dict).contractHistory | default dict -}}
-{{- include "continuo.wholeNumber" (dict "key" "catalog.contractHistory.retentionDays" "value" (dig "retentionDays" 0 $h) "min" 0 "rule" "from 0 up") -}}
+{{- include "continuo.wholeNumber" (dict "key" "catalog.contractHistory.retentionDays" "value" (dig "retentionDays" 0 $h) "min" 0 "max" 36500 "rule" "from 0 to 36500") -}}
 {{- end -}}
 
 {{/*

@@ -595,12 +595,12 @@ runs:
 # until a lifecycle rule AbortIncompleteMultipartUpload removes them.
 #
 # catalog also keeps every version of every node's contract. `contractHistory`
-# bounds how long: `retentionDays` is a whole number from 0 up, and 0 (the
-# default) keeps every version. Above 0, catalog's retention sweeper deletes a
-# version once its promotion is older than that many days, never a node's
-# current contract or the version before it. It reaches catalog through the
-# shared ConfigMap as CONTRACT_HISTORY_RETENTION_DAYS; a value outside this rule
-# fails the install, and catalog refuses to start on it.
+# bounds how long: `retentionDays` is a whole number from 0 to 36500 (100
+# years), and 0 (the default) keeps every version. Above 0, catalog's retention
+# sweeper deletes a version once its promotion is older than that many days,
+# never a node's current contract or the version before it. It reaches catalog
+# through the shared ConfigMap as CONTRACT_HISTORY_RETENTION_DAYS; a value
+# outside this rule fails the install, and catalog refuses to start on it.
 catalog:
   backup:
     enabled: true
