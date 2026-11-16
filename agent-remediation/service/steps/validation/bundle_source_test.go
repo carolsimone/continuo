@@ -224,11 +224,10 @@ func TestCodeBundleSource_ANodeTypeIsTrustedOverTheExtension(t *testing.T) {
 	assert.Equal(t, "snapshot: x", candidateSource(t, out).Source)
 }
 
-// A repository fallback file over the read cap cannot be shown to the model: it
-// is no source from the repository, as a missing file is, so the cluster is
-// declined with the reason a node with no source gets and the step does not
-// fail on every retry.
-func TestCodeBundleSource_AnOversizedFallbackFileIsNoSource(t *testing.T) {
+// A repository fallback file over the read cap cannot be shown to the model:
+// the cluster is declined with a reason that names the file and the cap, and
+// the step does not fail on every retry.
+func TestCodeBundleSource_AnOversizedFallbackFileDeclinesNamingTheFileAndTheCap(t *testing.T) {
 	var logs bytes.Buffer
 	src := &fakeSource{err: fmt.Errorf("github get p@abc123: source file exceeds %d bytes: %w", ports.MaxSourceBytes, ports.ErrSourceTooLarge)}
 	s := validation.NewCodeBundleSource(&fakeBundle{}, src, &fakeLocator{}, repoPaths, slog.New(slog.NewTextHandler(&logs, nil)))
@@ -236,7 +235,8 @@ func TestCodeBundleSource_AnOversizedFallbackFileIsNoSource(t *testing.T) {
 	out := gather(t, s, failure(nil), remediation.NewEvidence())
 
 	assert.True(t, out.Declined)
-	assert.Equal(t, "the failing node model.svc.a's source is in neither the release's code bundle nor the repository at the trigger's commit", out.Decline)
+	assert.Equal(t, "the failing node model.svc.a's source is not in the release's code bundle, and its file "+
+		"services/svc/models/a.sql in the repository is over the 1048576-byte read limit, so no fix can edit it", out.Decline)
 	assert.Empty(t, out.Evidence)
 	assert.Equal(t, []string{"services/svc/models/a.sql"}, src.reads)
 	assert.Contains(t, logs.String(), "level=WARN")
