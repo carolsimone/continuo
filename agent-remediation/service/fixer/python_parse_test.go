@@ -49,7 +49,8 @@ func TestFor_ParseDispatchesOnNodeType(t *testing.T) {
 
 // TestPythonParse_HappyPath walks the lane end to end: the checkout is
 // fetched, the declaring contract file located from the node id alone (the
-// trigger's file path names the script, which the parser never reads), the
+// trigger's file path is not a repository path: the contract's path in the
+// bundle, or the script for a service of kind `python`), the
 // one model call sees the parser's error, the corrected yaml is written before
 // packaging, and the merged contract comes back as VerificationContract so
 // the driver submits a python verification run — whose parse leg is what

@@ -212,7 +212,8 @@ type Fixer interface {
 //     guard than a python-node's, hence its own lane. A python-api node
 //     declares no reads and fetches its own data, so it takes the python-node
 //     contract-fix lane, which corrects only what validation checks
-//     (output_columns and config) and never its secret_ref.
+//     (its schema's columns and its config property) and never its
+//     secretRef property.
 //   - parse: a dbt model is corrected in its SQL file; a python-node's
 //     rejected SQL is one of its reads in the ODCS contract file, so it takes the
 //     contract-fix lane. A python-csv node's only read is an S3 URI, never

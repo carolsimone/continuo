@@ -314,7 +314,7 @@ The failure model `ftable_e` runs in the `service-2` Docker image but JOINs `pub
 
 - Happy path: ~1 minute
 - Failure path: ~1 minute (3 attempts, each retry dispatched at once)
-- Whole suite: about 60 minutes in the CI e2e job for every test but the seed reload test, which
+- Whole suite: about 70 minutes in the CI e2e job for every test but the seed reload test, which
   adds an estimated 20 to 30 minutes (a release, a 60 s seed reconcile pass and three seed loads).
   The job starts the stack cold and measures the whole suite on every run.
 - Timeout: 172 minutes for the whole `tests/e2e/...` package (`go test -timeout`).

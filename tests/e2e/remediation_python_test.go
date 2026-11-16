@@ -724,8 +724,9 @@ func assertNoNodeVersionsFor(t *testing.T, ctx context.Context, clients *testCli
 //	  there is no dbt log because nothing ran
 //	→ classifier emits remediation.requested:v2 (source=parse, node_type=python-node)
 //	→ agent-remediation routes it to the python parse fixer: the trigger's
-//	  file_path names the script, which the parser never reads, so the fixer
-//	  finds the .odcs.yaml file from the node id alone, has the model qualify
+//	  file_path names the node's contract file by its path in the service's
+//	  bundle, not in the repository, so the fixer finds the .odcs.yaml file
+//	  from the node id alone, has the model qualify
 //	  the read's relation, packs the directory and POSTs it as a verification
 //	  run
 //	→ the run's own parse leg accepts the repaired SQL, its validation leg binds
@@ -795,7 +796,7 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 	edits := decodeFileEdits(t, proposed.FileEdits)
 	require.Len(t, edits, 1, "the fix changes exactly the one file that declares the node")
 	require.Equal(t, pyParseContract, edits[0].Path,
-		"the edit must land in the declaring contract file, not in the script the trigger's file_path names")
+		"the edit must land in the declaring contract file, the one the node's id is declared in")
 
 	content := string(getS3ObjectByKey(t, ctx, clients, stripS3Prefix(edits[0].ContentURI)))
 	require.Contains(t, content, "select id from "+pyBindingRelation,
@@ -818,7 +819,8 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 // assertRejectedPythonParseStage reads the release's rejection off
 // release.rejected:v1 and pins the shape the python parse lane depends on:
 // stage parse, reason unqualified_reference, one per-node entry carrying the
-// parser's detail inline, the script as file_path, the service, and
+// parser's detail inline, the contract file as file_path (its path in the
+// service's bundle, where the rejected SQL is declared), the service, and
 // node_type=python-node.
 func assertRejectedPythonParseStage(t *testing.T, ctx context.Context, rejectedTap *streamTap, releaseID string) {
 	t.Helper()
@@ -855,8 +857,8 @@ func assertRejectedPythonParseStage(t *testing.T, ctx context.Context, rejectedT
 			require.Equal(t, pyParseUniqueID, p.PerNode[0].NodeID)
 			require.Equal(t, "unqualified_reference", p.PerNode[0].Kind)
 			require.Contains(t, p.PerNode[0].Detail, "right_name")
-			require.Equal(t, "scripts/py_unqualified_read.py", p.PerNode[0].FilePath,
-				"a python node's parse failure is reported against its script, which is why the fixer must not edit the named file")
+			require.Equal(t, path.Join("contracts", path.Base(pyParseContract)), p.PerNode[0].FilePath,
+				"a python-odcs node's parse failure names its contract file, by its path in the service's bundle")
 			require.Equal(t, pyParseService, p.PerNode[0].Service)
 			require.Equal(t, "python-node", p.PerNode[0].NodeType)
 			return true, nil

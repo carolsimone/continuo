@@ -8,10 +8,11 @@ import (
 )
 
 // pythonParseFixer handles a python-node whose read SQL the release's
-// parser rejected before any Job ran. The trigger's file path names the
-// node's script, which the parser never reads; the rejected SQL is one of the
-// node's `reads` entries in the ODCS contract file that declares it. So the fix is
-// made in that file, found from the node id alone the way the validation lane
+// parser rejected before any Job ran. The rejected SQL is one of the node's
+// `readQueries` in the ODCS contract file that declares it. The trigger's file
+// path names that file by its path in the service's bundle, not in the
+// repository (for a service of kind `python` it names the script), so the fix
+// is made in the contract file found from the node id alone, the way the validation lane
 // finds it, and it is proven the same way: the corrected contract is packaged
 // and the driver submits a python verification run, whose own parse leg is
 // what decides whether the SQL now parses and resolves.

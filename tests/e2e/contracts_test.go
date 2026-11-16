@@ -92,7 +92,9 @@ func TestE2E_PythonODCSRelease_IsPromotedAndPublished(t *testing.T) {
 		assert.Equal(t, firstID, first.ReleaseID, "a new version records the release that made it current")
 	}
 	assert.True(t, first.IsCurrent, "node contract prints the current version")
-	assert.Equal(t, pyBundleContracts, first.ContinuoContracts, "the version records the library that read it")
+	// 0.2.0 is the continuo-contracts version topology-controller runs (the
+	// install's library), which reads and stores the contract.
+	assert.Equal(t, "0.2.0", first.ContinuoContracts, "the version records the library that read it")
 	assert.Equal(t, pyProbeTeam, documentTeam(t, first.DocumentYAML), "the document carries the contract's team.name")
 	assert.Equal(t, strconv.FormatInt(first.Version, 10), documentVersion(t, first.DocumentYAML),
 		"the published document's version is the counted version, as a string")
@@ -189,7 +191,9 @@ func TestE2E_PythonODCSRelease_AnInvalidContractIsRejected(t *testing.T) {
 	assert.Equal(t, true, public["terminal"])
 	assert.Equal(t, "invalid_contract", public["reject_reason"])
 	assert.Contains(t, public["reject_detail"], pyProbeUniqueID, "the public detail names the failed node")
-	assert.Equal(t, pyBundleContracts, public["continuo_contracts"],
+	// 0.2.0 is the continuo-contracts version topology-controller runs (the
+	// install's library), which refused the contract.
+	assert.Equal(t, "0.2.0", public["continuo_contracts"],
 		"the public status names the continuo-contracts version that refused the contract")
 	t.Logf("✅ release %s rejected invalid_contract on %s by continuo-contracts %v", releaseID, pyProbeUniqueID, public["continuo_contracts"])
 }
