@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import * as grpc from '@grpc/grpc-js';
 import { GrpcClient, userMetadata } from '../clients/grpc-client';
 import { GrpcGraphClient } from '../clients/grpc-graph-client';
 import { grpcToHttpStatus, sendGrpcError } from './grpc-status';
@@ -21,6 +22,31 @@ function csvSourceUri(rawCode: unknown): string {
   } catch {
     return '';
   }
+}
+
+// A contract version as the browser reads it. catalog sends its int64 fields as
+// strings; same_as_version is null unless the version reverts to an earlier one.
+function contractVersionDto(v: any) {
+  const sameAs = Number(v.same_as_version ?? 0);
+  return {
+    unique_id:          v.unique_id,
+    version:            Number(v.version ?? 0),
+    contract_hash:      v.contract_hash,
+    release_id:         v.release_id,
+    promoted_at:        v.promoted_at || null,
+    content_hash:       v.content_hash,
+    is_current:         Boolean(v.is_current),
+    same_as_version:    sameAs > 0 ? sameAs : null,
+    continuo_contracts: v.continuo_contracts,
+    ontology_version:   v.ontology_version,
+  };
+}
+
+// A contract version is a whole number from 1 up that fits in a JS integer.
+function parseContractVersion(raw: unknown): number | null {
+  if (typeof raw !== 'string' || !/^[1-9][0-9]*$/.test(raw)) return null;
+  const n = Number(raw);
+  return Number.isSafeInteger(n) ? n : null;
 }
 
 export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphClient) {
@@ -218,6 +244,57 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
             res.json({ ...meta, source_uri: sourceUri });
           },
         );
+      },
+    );
+  });
+
+  // GET /:service/:schema/:table/contract — the contract the node has now (with
+  // its published YAML) and its version history, newest first. A node with no
+  // current contract answers contract: null: a node that never had one has an
+  // empty history, a retired node keeps the versions it had. The node is
+  // addressed by its unique id, "<schema>.<table>" in lower case, as catalog
+  // stores it.
+  router.get('/:service/:schema/:table/contract', (req, res) => {
+    const uniqueId = `${req.params.schema}.${req.params.table}`.toLowerCase();
+    graphClient.getNodeContract({ unique_id: uniqueId, include_document: true }, (err: any, current: any) => {
+      if (err && err.code !== grpc.status.NOT_FOUND) {
+        return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
+      }
+      graphClient.listNodeContractVersions({ unique_id: uniqueId, limit: 0 }, (lerr: any, listed: any) => {
+        if (lerr) return res.status(grpcToHttpStatus(lerr.code)).json({ error: lerr.message });
+        const contract = err || !current?.contract
+          ? null
+          : { ...contractVersionDto(current.contract), document_yaml: current.contract.document_yaml ?? '' };
+        res.json({ contract, versions: (listed?.versions || []).map(contractVersionDto) });
+      });
+    });
+  });
+
+  // GET /:service/:schema/:table/contract/diff?from=<n>&to=<n> — the contract
+  // fields that differ between two versions of the node, one row per changed
+  // path; two equal versions have none. before_json and after_json are the
+  // value at the path as JSON text, empty where the version lacks the path.
+  router.get('/:service/:schema/:table/contract/diff', (req, res) => {
+    const from = parseContractVersion(req.query.from);
+    const to = parseContractVersion(req.query.to);
+    if (from === null || to === null) {
+      return res.status(400).json({ error: 'from and to must be whole numbers from 1 up' });
+    }
+    graphClient.getNodeContractDiff(
+      {
+        unique_id:    `${req.params.schema}.${req.params.table}`.toLowerCase(),
+        from_version: from,
+        to_version:   to,
+      },
+      (err: any, response: any) => {
+        if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
+        res.json({
+          changes: (response?.changes || []).map((c: any) => ({
+            path:        c.path,
+            before_json: c.before_json,
+            after_json:  c.after_json,
+          })),
+        });
       },
     );
   });

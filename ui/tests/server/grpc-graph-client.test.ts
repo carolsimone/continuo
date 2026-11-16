@@ -7,4 +7,11 @@ describe('createGrpcGraphClient', () => {
     expect(typeof client.getNode).toBe('function');
     expect(typeof client.getNodeVersions).toBe('function');
   });
+
+  it('exposes the three contract reads of the vendored catalog proto', () => {
+    const client = createGrpcGraphClient('localhost:50052');
+    expect(typeof client.getNodeContract).toBe('function');
+    expect(typeof client.listNodeContractVersions).toBe('function');
+    expect(typeof client.getNodeContractDiff).toBe('function');
+  });
 });
