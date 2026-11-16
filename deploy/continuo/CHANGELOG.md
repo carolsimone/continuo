@@ -18,6 +18,7 @@ shipped in those.
 - The node type `ingested` is now `unknown-external`, and nodes stored as `ingested` keep working. A script that looks for `ingested` must look for `unknown-external`.
 - You must act (steps below): check your models with no tag, upgrade with maintenance mode on, then run each dormant node whose table does not exist yet. Do not roll release-controller back afterwards.
 - No values change is needed: the new values key `agentRemediation.engine` defaults to `legacy`, and `runner` switches agent-remediation to an engine a restart continues. On 0.21.0 or earlier, upgrade to 0.22.0 first.
+- New: a Python service can be released as `python-odcs`, one ODCS contract per node, and catalog keeps every contract version and writes the live contracts folder to your bucket. With your own bucket and per-pod IAM roles, grant topology-controller `s3:GetObject` on `tenants/` and `s3:ListBucket` on the bucket for that prefix first, or every release fails `internal`. An install on the chart's own S3 key needs nothing.
 
 ### Upgrade steps
 
@@ -37,7 +38,7 @@ shipped in those.
 4. **Do not roll release-controller back below this version** after a release with `unknown-external` nodes has been promoted. An older release-controller, 0.22.0's included, counts the empty service of those nodes as uncovered at activation, so no later release activates.
 5. **Run each dormant node whose table does not exist yet.** A dormant node enters production with the first release after the upgrade, and no cron runs it. Run it once from its node page (the Dormant tile on the Topology tab opens their list) before you release a change to any node below it. Otherwise validation cannot copy its production table, and that release is rejected `upstream_clone_failed`.
 
-This release adds the values key `agentRemediation.engine` with a safe default, and it ships as a `MINOR`.
+This release adds the values keys `agentRemediation.engine`, `contracts.publish.server.host`, `contracts.publish.server.port`, `contracts.publish.server.database` and `catalog.contractHistory.retentionDays`, each with a safe default, and it ships as a `MINOR`: an unmodified values file keeps working.
 
 ### Added
 
@@ -54,6 +55,21 @@ This release adds the values key `agentRemediation.engine` with a safe default, 
   - Upgrade to this version with `legacy` first, and set `runner` in a later upgrade. While the pods roll, a pod of an older version runs only the legacy verification reconciler, which does not skip the runner's attempt rows.
   - Under `runner`, the `tries` of the `rejected-release` flow file (3) sets how many attempts a release round gets. The runner does not read `AGENT_REMEDIATION_MAX_ATTEMPTS`, which only `legacy` reads, and agent-remediation logs a warning at startup when the engine is `runner` and the variable differs from the flow's `tries`.
   - A remediation the runner cannot move on is ended as a system failure, and its attempt row (generating or verifying) is failed with the reason: a step that failed five times (a gate that failed five polls in a row), a remediation that could not be loaded or could not open its next try five times in a row, and a try still drafting or checking past its deadline. A step that runs longer than ten minutes is stopped and counts as one failure, and a remediation whose step failed is retried two minutes later.
+- **Python services can be released as ODCS contracts.** TL;DR: a Python service can be released with the kind `python-odcs`: it uploads an `odcs-bundle.json` with one ODCS contract per node, and topology-controller reads it with continuo-contracts 0.2.0, the version it pins. A service on `contract.yaml` keeps working.
+  - A bundle written by a newer continuo-contracts than the one topology-controller runs fails the release `invalid_artifact`, with the detail `the bundle was written by continuo-contracts <x> and this install runs <y>: upgrade continuo, or pin an older runtime`.
+  - A contract that is not valid fails the release `invalid_contract`, and the rejection names every such node with each issue, as `<path>: <message>`. It is not healable: remediation proposes no fix for it.
+  - Every release that passes writes a contract bundle, `tenants/<tenant>/topologies/<release>/contracts.json.gz`, beside its topology artifact, and `manifest.loaded.candidate:v2` and `release.promoted:v2` carry its URI and SHA-256. The release status shows `continuo_contracts`, the version of continuo-contracts that read the release's contracts.
+  - **With your own bucket, topology-controller needs two more grants.** It reads the bundle's key before it writes it, so that a release it parses again keeps the bundle already stored: grant `s3:GetObject` on `tenants/` and `s3:ListBucket` on the bucket for that prefix, so a key never written reads as 404 and not 403. A 403 fails the release `internal`. The chart's own S3 key already covers `tenants/`, so an install on that key needs nothing. `deploy/continuo/README.md`, "S3 access", has the table and an IAM example.
+  - No values change is needed.
+- **catalog keeps every version of each node's contract and writes the live contracts folder.** TL;DR: each promotion records, per node, the contract versions it carries, and catalog rewrites `tenants/<tenant>/contracts/live/` in your bucket: one `<unique id>.odcs.yaml` per live node and an `_index.json`, written last. An external catalog can read the folder.
+  - A node's contract gets a version number that rises each time a promotion changes the contract, a revert to an earlier contract included.
+  - catalog reads the folder's `_index.json` and writes and deletes its files. With your own bucket, its role needs `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject` and `s3:ListBucket` on `tenants/<tenant>/contracts/live/`. The chart's own S3 key already covers `tenants/`.
+  - catalog adds the series `continuo_catalog_contract_versions_written_total`, `continuo_catalog_live_contract_writes_total{op,outcome}` and `continuo_catalog_contracts_duration_seconds{step}`, each exported at 0 from boot.
+- **`contracts.publish.server.*` puts the warehouse in the published contracts.** TL;DR: with `host` set, each file of the live folder carries a `servers` entry (`server: warehouse`, the `type`, `host`, `port`, `database` and the contract's `schema`), so a catalog tool that reads the folder can bind a contract to its table. With no host (the default) no file has one.
+  - `host` and `port` are where a reader of the files reaches the warehouse. `database` is the warehouse database, and the catalog name on Trino; empty uses `validation.warehouseDatabase`. The `type` is not a value: it is `postgres` or `trino`, from `validation.engine`.
+  - With a `host`, rendering fails unless `port` is a whole number from 1 to 65535 and a database resolves, naming the key. catalog refuses to start on the same values, and on an engine it has no type for.
+  - The three reach catalog as `CONTRACTS_SERVER_HOST`, `CONTRACTS_SERVER_PORT` and `CONTRACTS_SERVER_DATABASE` on the shared ConfigMap, so a change restarts every continuo service. catalog rewrites every file of the live folder when it starts with other settings.
+- **`catalog.contractHistory.retentionDays` bounds how long catalog keeps contract versions.** TL;DR: `0` (the default) keeps every version. Above 0, catalog deletes a version once its promotion is older than that many days, never a node's current contract or the version before it. A whole number from 0 up: rendering fails on any other value, and catalog refuses to start on it. It reaches catalog as `CONTRACT_HISTORY_RETENTION_DAYS`.
 
 ### Changed
 

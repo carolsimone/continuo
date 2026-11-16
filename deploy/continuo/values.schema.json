@@ -504,6 +504,50 @@
               "description": "How many of the newest exports of each tenant catalog keeps; it deletes the rest after an export."
             }
           }
+        },
+        "contractHistory": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "retentionDays": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "How many days of contract versions catalog keeps. 0 keeps every version; above 0 its retention sweeper deletes a version once its promotion is older than that, never a node's current contract or the version before it."
+            }
+          }
+        }
+      }
+    },
+
+    "contracts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "publish": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "server": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "host": {
+                  "type": "string",
+                  "description": "Warehouse host the published contract files name in their servers entry. Empty publishes no servers entry, and port and database are then ignored."
+                },
+                "port": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 65535,
+                  "description": "Warehouse port of the servers entry. With a host set, a whole number from 1 to 65535 (0 fails the render)."
+                },
+                "database": {
+                  "type": "string",
+                  "description": "Warehouse database of the servers entry, the catalog name on trino. Empty uses validation.warehouseDatabase."
+                }
+              }
+            }
+          }
         }
       }
     },

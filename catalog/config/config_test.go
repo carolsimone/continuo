@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	croninfra "github.com/carolsimone/continuo/catalog/adapters/cron"
+	"github.com/carolsimone/continuo/catalog/domain/contractversion"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 )
@@ -251,5 +252,182 @@ func TestNeo4jPasswordMissingIsReported(t *testing.T) {
 	LoadNeo4j(&v)
 	if !slices.Contains(v.Missing(), "NEO4J_PASSWORD") {
 		t.Fatalf("missing = %v, want NEO4J_PASSWORD", v.Missing())
+	}
+}
+
+// contractsEnvKeys are the install settings of the published contracts and the
+// warehouse engine they derive from.
+var contractsEnvKeys = []string{
+	"WAREHOUSE_ENGINE", "CONTRACTS_SERVER_HOST", "CONTRACTS_SERVER_PORT", "CONTRACTS_SERVER_DATABASE",
+	"CONTRACT_HISTORY_RETENTION_DAYS",
+}
+
+// clearContractsEnv unsets every contracts install setting for the test.
+func clearContractsEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range contractsEnvKeys {
+		t.Setenv(key, "")
+	}
+}
+
+// contractsProblems returns the problems Load recorded for the contracts
+// install settings.
+func contractsProblems(missing []string) []string {
+	var out []string
+	for _, problem := range missing {
+		for _, key := range contractsEnvKeys {
+			if strings.HasPrefix(problem, key+" ") {
+				out = append(out, problem)
+			}
+		}
+	}
+	return out
+}
+
+// With no host set, the published files carry no servers entry whatever else
+// is set, and the warehouse engine is postgres.
+func TestLoad_ContractsServer_NoHostMeansNoServer(t *testing.T) {
+	clearContractsEnv(t)
+	t.Setenv("CONTRACTS_SERVER_PORT", "0")
+	t.Setenv("CONTRACTS_SERVER_DATABASE", "ignored")
+	var v pkgconfig.Validator
+	cfg := Load(&v, croninfra.BackupScheduleParser{})
+	if cfg.ContractsServer != nil {
+		t.Fatalf("ContractsServer = %+v, want nil", *cfg.ContractsServer)
+	}
+	if cfg.WarehouseEngine != "postgres" {
+		t.Fatalf("WarehouseEngine = %q, want postgres", cfg.WarehouseEngine)
+	}
+	if problems := contractsProblems(v.Missing()); len(problems) != 0 {
+		t.Fatalf("Load recorded %v", problems)
+	}
+}
+
+// A host with a port and a database is a servers entry whose type comes from
+// the warehouse engine, and a Trino install keeps the database as the catalog.
+func TestLoad_ContractsServer_ReadsTheSettings(t *testing.T) {
+	cases := []struct {
+		name, engine string
+		want         contractversion.Server
+		wantEngine   string
+	}{
+		{"unset engine is postgres", "", contractversion.Server{Type: "postgres", Host: "warehouse.internal", Port: 5432, Database: "continuo_dbt"}, "postgres"},
+		{"postgres", "postgres", contractversion.Server{Type: "postgres", Host: "warehouse.internal", Port: 5432, Database: "continuo_dbt"}, "postgres"},
+		{"trino reads the database as the catalog", "trino", contractversion.Server{Type: "trino", Host: "warehouse.internal", Port: 5432, Database: "continuo_dbt"}, "trino"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			clearContractsEnv(t)
+			t.Setenv("WAREHOUSE_ENGINE", c.engine)
+			t.Setenv("CONTRACTS_SERVER_HOST", "warehouse.internal")
+			t.Setenv("CONTRACTS_SERVER_PORT", "5432")
+			t.Setenv("CONTRACTS_SERVER_DATABASE", "continuo_dbt")
+			var v pkgconfig.Validator
+			cfg := Load(&v, croninfra.BackupScheduleParser{})
+			if cfg.ContractsServer == nil || *cfg.ContractsServer != c.want {
+				t.Fatalf("ContractsServer = %+v, want %+v", cfg.ContractsServer, c.want)
+			}
+			if cfg.WarehouseEngine != c.wantEngine {
+				t.Fatalf("WarehouseEngine = %q, want %q", cfg.WarehouseEngine, c.wantEngine)
+			}
+			if problems := contractsProblems(v.Missing()); len(problems) != 0 {
+				t.Fatalf("Load recorded %v", problems)
+			}
+		})
+	}
+}
+
+// catalog refuses to start on a servers entry it cannot publish: a host with
+// no port, a port outside 1 to 65535 or not a number, or no database.
+func TestLoad_ContractsServer_RefusesWhatItCannotPublish(t *testing.T) {
+	cases := []struct {
+		name, port, database, want string
+	}{
+		{"port unset", "", "continuo_dbt", "CONTRACTS_SERVER_PORT"},
+		{"port 0", "0", "continuo_dbt", "CONTRACTS_SERVER_PORT"},
+		{"port 70000", "70000", "continuo_dbt", "CONTRACTS_SERVER_PORT"},
+		{"port -1", "-1", "continuo_dbt", "CONTRACTS_SERVER_PORT"},
+		{"port not a number", "postgres", "continuo_dbt", "CONTRACTS_SERVER_PORT"},
+		{"database unset", "5432", "", "CONTRACTS_SERVER_DATABASE"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			clearContractsEnv(t)
+			t.Setenv("CONTRACTS_SERVER_HOST", "warehouse.internal")
+			t.Setenv("CONTRACTS_SERVER_PORT", c.port)
+			t.Setenv("CONTRACTS_SERVER_DATABASE", c.database)
+			var v pkgconfig.Validator
+			cfg := Load(&v, croninfra.BackupScheduleParser{})
+			problems := contractsProblems(v.Missing())
+			if len(problems) != 1 || !strings.HasPrefix(problems[0], c.want+" ") {
+				t.Fatalf("problems = %v, want one naming %s", problems, c.want)
+			}
+			if cfg.ContractsServer != nil {
+				t.Fatalf("ContractsServer = %+v, want nil beside a recorded problem", *cfg.ContractsServer)
+			}
+		})
+	}
+}
+
+// A WAREHOUSE_ENGINE catalog cannot map to a server type stops it, even when
+// no host is set: the install's engine is checked as every service checks it.
+func TestLoad_AnUnknownWarehouseEngineStopsCatalog(t *testing.T) {
+	for _, withHost := range []bool{false, true} {
+		t.Run(fmt.Sprintf("host=%v", withHost), func(t *testing.T) {
+			clearContractsEnv(t)
+			t.Setenv("WAREHOUSE_ENGINE", "duckdb")
+			if withHost {
+				t.Setenv("CONTRACTS_SERVER_HOST", "warehouse.internal")
+				t.Setenv("CONTRACTS_SERVER_PORT", "5432")
+				t.Setenv("CONTRACTS_SERVER_DATABASE", "continuo_dbt")
+			}
+			var v pkgconfig.Validator
+			cfg := Load(&v, croninfra.BackupScheduleParser{})
+			problems := contractsProblems(v.Missing())
+			if len(problems) != 1 || !strings.HasPrefix(problems[0], "WAREHOUSE_ENGINE ") || !strings.Contains(problems[0], `"duckdb"`) {
+				t.Fatalf("problems = %v, want one naming WAREHOUSE_ENGINE and \"duckdb\"", problems)
+			}
+			if cfg.ContractsServer != nil {
+				t.Fatalf("ContractsServer = %+v, want nil", *cfg.ContractsServer)
+			}
+		})
+	}
+}
+
+func TestLoad_ContractHistoryRetentionDays(t *testing.T) {
+	cases := []struct {
+		raw     string
+		want    int
+		wantBad bool
+	}{
+		{raw: "", want: 0},
+		{raw: "0", want: 0},
+		{raw: "30", want: 30},
+		{raw: "3650", want: 3650},
+		{raw: "-1", wantBad: true},
+		{raw: "x", wantBad: true},
+		{raw: "1.5", wantBad: true},
+		{raw: "7 days", wantBad: true},
+	}
+	for _, c := range cases {
+		t.Run(c.raw, func(t *testing.T) {
+			clearContractsEnv(t)
+			t.Setenv("CONTRACT_HISTORY_RETENTION_DAYS", c.raw)
+			var v pkgconfig.Validator
+			cfg := Load(&v, croninfra.BackupScheduleParser{})
+			problems := contractsProblems(v.Missing())
+			if c.wantBad {
+				if len(problems) != 1 || !strings.HasPrefix(problems[0], "CONTRACT_HISTORY_RETENTION_DAYS ") {
+					t.Fatalf("problems = %v, want one naming CONTRACT_HISTORY_RETENTION_DAYS", problems)
+				}
+				return
+			}
+			if len(problems) != 0 {
+				t.Fatalf("Load recorded %v", problems)
+			}
+			if cfg.ContractHistoryRetentionDays != c.want {
+				t.Fatalf("ContractHistoryRetentionDays = %d, want %d", cfg.ContractHistoryRetentionDays, c.want)
+			}
+		})
 	}
 }

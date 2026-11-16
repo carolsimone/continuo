@@ -593,11 +593,45 @@ runs:
 # upload and releases the lease. When the process ends first, the lease
 # lapses within two minutes and the parts already uploaded stay in the bucket
 # until a lifecycle rule AbortIncompleteMultipartUpload removes them.
+#
+# catalog also keeps every version of every node's contract. `contractHistory`
+# bounds how long: `retentionDays` is a whole number from 0 up, and 0 (the
+# default) keeps every version. Above 0, catalog's retention sweeper deletes a
+# version once its promotion is older than that many days, never a node's
+# current contract or the version before it. It reaches catalog through the
+# shared ConfigMap as CONTRACT_HISTORY_RETENTION_DAYS; a value outside this rule
+# fails the install, and catalog refuses to start on it.
 catalog:
   backup:
     enabled: true
     schedule: "0 2 * * *"
     keep: 7
+  contractHistory:
+    retentionDays: 0
+
+# Where the published contracts say their tables are. catalog writes the live
+# contracts folder, tenants/<tenant>/contracts/live/<unique id>.odcs.yaml in the
+# S3 bucket, after each promotion that changes it, for external catalogs and
+# tools to read. With `host` set, each file carries a `servers` entry, so such a
+# tool can bind the contract's table: {server: warehouse, type, host, port,
+# database, schema}. `type` is not a value: catalog derives it from
+# validation.engine (WAREHOUSE_ENGINE), postgres or trino. `host` and `port` are
+# where a reader of the files reaches the warehouse, which need not be the
+# address the pods use. `database` is the warehouse database, and the catalog
+# name on trino; empty (the default) uses validation.warehouseDatabase. An empty
+# `host` (the default) publishes no servers entry, and `port` and `database`
+# are then ignored. With a host, `port` must be a whole number from 1 to 65535
+# and a database must resolve, or the install fails and catalog refuses to
+# start. The three reach catalog through the shared ConfigMap as
+# CONTRACTS_SERVER_HOST, CONTRACTS_SERVER_PORT and CONTRACTS_SERVER_DATABASE, so
+# a change restarts every continuo service, and catalog rewrites every file of
+# the live folder when it starts with other settings.
+contracts:
+  publish:
+    server:
+      host: ""
+      port: 0
+      database: ""
 
 # Maintenance mode. While enabled, continuo starts no new work and lets the
 # work already running finish: ui, the public release API and the CLI refuse new

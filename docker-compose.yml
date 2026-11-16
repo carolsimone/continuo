@@ -256,6 +256,16 @@ services:
       - CATALOG_BACKUP_ENABLED=true
       - CATALOG_BACKUP_SCHEDULE=0 2 * * *
       - CATALOG_BACKUP_KEEP=7
+      # Contracts — the chart's contracts.publish.server.* and
+      # catalog.contractHistory.* values (deploy/continuo/values.yaml). An empty
+      # host publishes no servers entry. The server's type comes from
+      # WAREHOUSE_ENGINE, the chart's validation.engine: the local stack's
+      # warehouse is Postgres.
+      - WAREHOUSE_ENGINE=postgres
+      - CONTRACTS_SERVER_HOST=
+      - CONTRACTS_SERVER_PORT=0
+      - CONTRACTS_SERVER_DATABASE=continuo_dbt
+      - CONTRACT_HISTORY_RETENTION_DAYS=0
       # Application
       - GRPC_PORT=50052
       - HTTP_PORT=8087

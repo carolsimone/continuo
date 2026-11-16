@@ -2117,6 +2117,66 @@ render.
 {{- end -}}
 
 {{/*
+A whole number from .min up to .max (no upper bound when .max is absent), as an
+integer. Call: include "continuo.wholeNumber" (dict "key" "catalog.x" "value" $v
+"min" 0 "rule" "from 0 up"). A string, a fraction or a number outside the range
+fails the render naming .key, with the schema check skipped as well as with it.
+*/ -}}
+{{- define "continuo.wholeNumber" -}}
+{{- $v := .value -}}
+{{- if not (or (kindIs "float64" $v) (kindIs "int" $v) (kindIs "int64" $v)) -}}
+{{- fail (printf "%s=%v must be a whole number %s" .key $v .rule) -}}
+{{- end -}}
+{{- $f := float64 $v -}}
+{{- if or (ne $f (floor $f)) (lt $f (float64 .min)) (and (hasKey . "max") (gt $f (float64 .max))) -}}
+{{- fail (printf "%s=%v must be a whole number %s" .key $v .rule) -}}
+{{- end -}}
+{{- int64 $v -}}
+{{- end -}}
+
+{{/*
+The warehouse servers entry of the published contracts, as JSON {host, port,
+database}, from contracts.publish.server. A release without a contracts block
+gets no host, port 0 and validation.warehouseDatabase. The port is a whole
+number from 0 to 65535, and with a host set from 1; the database is the value
+or else validation.warehouseDatabase, and with a host set it must not be
+empty. Each failure names its key. catalog repeats these checks at startup.
+*/ -}}
+{{- define "continuo.contracts.server" -}}
+{{- $s := dig "publish" "server" (dict) (.Values.contracts | default (dict)) -}}
+{{- $host := dig "host" "" $s -}}
+{{- if not (kindIs "string" $host) -}}
+{{- fail (printf "contracts.publish.server.host=%v must be a string" $host) -}}
+{{- end -}}
+{{- $database := dig "database" "" $s -}}
+{{- if not (kindIs "string" $database) -}}
+{{- fail (printf "contracts.publish.server.database=%v must be a string" $database) -}}
+{{- end -}}
+{{- $database = $database | default (.Values.validation.warehouseDatabase | default "") -}}
+{{- $port := include "continuo.wholeNumber" (dict "key" "contracts.publish.server.port" "value" (dig "port" 0 $s) "min" 0 "max" 65535 "rule" "from 0 to 65535 (from 1 when contracts.publish.server.host is set)") | int -}}
+{{- if $host -}}
+{{- if lt $port 1 -}}
+{{- fail (printf "contracts.publish.server.port=%d must be a whole number from 1 to 65535 when contracts.publish.server.host is set: it is the port of the warehouse that the published contracts name" $port) -}}
+{{- end -}}
+{{- if not $database -}}
+{{- fail "contracts.publish.server.database is empty and so is validation.warehouseDatabase: contracts.publish.server.host is set, so the published contracts need the warehouse database to name" -}}
+{{- end -}}
+{{- end -}}
+{{- dict "host" $host "port" $port "database" $database | toJson -}}
+{{- end -}}
+
+{{/*
+CONTRACT_HISTORY_RETENTION_DAYS for the shared ConfigMap:
+catalog.contractHistory.retentionDays. A release without a catalog block, or
+without the key, gets 0, which keeps every version; a value that is not a whole
+number from 0 up fails the render.
+*/ -}}
+{{- define "continuo.catalog.contractHistory.retentionDays" -}}
+{{- $h := (.Values.catalog | default dict).contractHistory | default dict -}}
+{{- include "continuo.wholeNumber" (dict "key" "catalog.contractHistory.retentionDays" "value" (dig "retentionDays" 0 $h) "min" 0 "rule" "from 0 up") -}}
+{{- end -}}
+
+{{/*
 MAINTENANCE_ENABLED for the shared ConfigMap: "true" or "false". A release
 without a maintenance block (for example after helm upgrade --reuse-values)
 renders "false"; the schema refuses a non-boolean value.

@@ -266,9 +266,11 @@ func main() {
 	// work, then rewrites the tenant's live contracts folder
 	// (tenants/<tenant>/contracts/live/) under the tenant's live-folder lease,
 	// which is not the export lease, renewing the message's in-flight mark
-	// while the rewrite runs. Isolated from the swap and the code versions so
-	// neither waits on the contracts. Its series are registered here whatever
-	// the install enables, every label pair at 0.
+	// while the rewrite runs. The published files carry the install's warehouse
+	// servers entry (cfg.ContractsServer, nil when no host is set). Isolated
+	// from the swap and the code versions so neither waits on the contracts.
+	// Its series are registered here whatever the install enables, every label
+	// pair at 0.
 	contractMetrics := metricsinfra.NewContractMetrics(metricsReg)
 	liveFolderLease := neo4jinfra.NewLiveFolderLease(neo4jClient, logger)
 	liveFolder := handlers.NewLiveFolder(
@@ -278,7 +280,7 @@ func main() {
 		liveFolderLease,
 		liveFolderLease,
 		contractMetrics,
-		nil, // no warehouse server settings: the published files carry no servers entry
+		cfg.ContractsServer,
 		time.Now,
 		logger,
 	)
