@@ -31,6 +31,7 @@ from tests.fakes import (
     source_of,
     source_with_nodes,
 )
+from tests.odcs_fixtures import bundle_doc, bundle_file, demo_nodes, write_bundle
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -946,6 +947,50 @@ def test_a_python_kind_entry_is_published_as_a_python_node(tmp_path):
     assert topology[0]["unique_id"] == "test_schema.py_metrics"
     assert topology[0]["original_file_path"] == "scripts/py_metrics.py"
     assert spec_uploader.upload.call_args.kwargs["unique_id"] == "test_schema.py_metrics"
+
+
+def test_a_python_odcs_bundle_is_published_and_timed_as_the_python_parse(tmp_path):
+    publisher, writer, calls = MagicMock(), RecordingArtifactWriter(), []
+    source = source_of(bundle_file(tmp_path, demo_nodes()))
+
+    timings = python_handler(
+        source, publisher, artifact_writer=writer, progress=lambda: calls.append(1),
+    ).handle(release_id="rel-1")
+
+    publisher.publish_ok.assert_called_once()
+    assert [n["unique_id"] for n in writer.nodes if n["node_type"] != "unknown-external"] == [
+        "analytics.demo_orders_csv", "analytics.fx_eur_usd_rates", "analytics.py_daily_kpis"]
+    assert (timings.stages[Stage.PYTHON_PARSE].runs, timings.stages[Stage.PYTHON_PARSE].counts) == (
+        1, {"manifests": 1, "nodes": 3})
+    assert timings.stages[Stage.DBT_PARSE].runs == 0
+    assert timings.stages[Stage.CONTRACT_VALIDATION].counts == {"nodes": 3}
+    # one call after the manifest's parse, and one per node of the parse, the resolve and the build
+    assert len(calls) == 1 + 3 + 3 + 3
+
+
+def test_an_unreadable_odcs_bundle_fails_the_release_as_invalid_artifact(tmp_path):
+    publisher = MagicMock()
+    source = source_of(write_bundle(tmp_path, {**bundle_doc(demo_nodes()), "bundle_version": 2}))
+
+    python_handler(source, publisher).handle(release_id="rel-1")
+
+    publisher.publish_failed.assert_called_once()
+    kwargs = publisher.publish_failed.call_args.kwargs
+    assert kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
+    assert "bundle_version 2 is newer than this install reads" in kwargs["detail"]
+    publisher.publish_ok.assert_not_called()
+
+
+def test_an_odcs_bundle_with_no_node_fails_the_release_as_empty(tmp_path):
+    publisher = MagicMock()
+    source = source_of(bundle_file(tmp_path, []))
+
+    python_handler(source, publisher).handle(release_id="rel-1")
+
+    publisher.publish_failed.assert_called_once()
+    kwargs = publisher.publish_failed.call_args.kwargs
+    assert (kwargs["failure_kind"], kwargs["detail"]) == (
+        ParseFailureKind.INVALID_ARTIFACT, "service-py: bundle declares no nodes")
 
 
 def _published_python_topology(tmp_path, entry):

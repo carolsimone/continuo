@@ -1,6 +1,8 @@
 from __future__ import annotations
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
 
 from domain.contract_vocabulary import ParseFailureKind
 from domain.contract_vocabulary import NodeRuntime as Runtime
@@ -62,6 +64,17 @@ class FailedNode:
     file_path: str
     node_type: str
     detail: str
+
+
+@dataclass(frozen=True)
+class AuthoredContract:
+    """A contract file as its author wrote it: the document its text loads to,
+    the repository path of the file, the SHA-256 of the text's UTF-8 bytes (bare
+    hex) and the service of the release that carries it."""
+    document: Mapping[str, Any]
+    path: str
+    source_sha256: str
+    service: str
 
 
 @dataclass(frozen=True)
@@ -225,6 +238,8 @@ class ManifestNode:
     # "view", "incremental", "ephemeral", ...); "" for a python node
     full_refresh: bool | None = None  # a dbt seed's config.full_refresh when it is
     # a bool; None for a seed that does not set one and for every other node
+    contract: AuthoredContract | None = None  # the ODCS contract file a python
+    # node was read from; None for a node read from any other document
 
     @property
     def seed_columns(self) -> list[dict[str, str]]:
@@ -360,7 +375,16 @@ class NodeRegistry:
 class ParsedArtifact:
     """The result of parsing one service's artifact: its nodes, the shared
     code (dbt macros) they use, keyed by unit id, and, for a dbt manifest, what
-    its compile ran with (None for a python contract)."""
+    its compile ran with (None for a python contract).
+
+    A `python-odcs` bundle also reports `contracts` (the authored contract of
+    each node, in node order), `failed` (one FailedNode for each contract that
+    did not pass its checks, in path order) and `python_provenance` (the
+    producer's `continuo_python_runtime` and the `image_packages` of the image
+    the service runs); every other kind leaves them empty."""
     nodes: list[ManifestNode]
     shared_code: dict[str, dict]
     provenance: ServiceProvenance | None = None
+    contracts: tuple[AuthoredContract, ...] = ()
+    failed: tuple[FailedNode, ...] = ()
+    python_provenance: dict[str, Any] | None = None

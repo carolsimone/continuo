@@ -98,7 +98,7 @@ def build_handler(source, publisher, uploader, bundle_uploader=None, dialect="po
 
 
 def dispatch_handler(source, publisher, artifact_builders=None, dialect="postgres", artifact_writer=None,
-                     system_relations=_SYSTEM_RELATIONS["postgres"], clock=None, memory=None):
+                     system_relations=_SYSTEM_RELATIONS["postgres"], clock=None, memory=None, progress=None):
     """A handler for the parse-dispatch cases.
 
     These cases all fail (or are rejected) before any node reaches the artifact
@@ -117,15 +117,16 @@ def dispatch_handler(source, publisher, artifact_builders=None, dialect="postgre
         is_infrastructure_error=is_infrastructure,
         clock=clock or FakeClock(),
         memory=memory or ScriptedMemoryProbe(0),
+        progress=progress or (lambda: None),
     )
 
 
 def python_handler(source, publisher, spec_uploader=None, dialect="postgres", artifact_writer=None,
-                   system_relations=_SYSTEM_RELATIONS["postgres"]):
+                   system_relations=_SYSTEM_RELATIONS["postgres"], progress=None):
     """A handler wired for both kinds, for cases that publish a python node."""
     return dispatch_handler(
         source, publisher, dialect=dialect, artifact_writer=artifact_writer,
-        system_relations=system_relations,
+        system_relations=system_relations, progress=progress,
         artifact_builders={
             Runtime.DBT: DbtSqlArtifactBuilder(make_uploader()),
             Runtime.PYTHON: PythonSpecArtifactBuilder(

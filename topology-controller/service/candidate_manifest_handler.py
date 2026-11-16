@@ -284,11 +284,15 @@ class CandidateManifestHandler:
                 )
                 return
 
-            parse_stage = Stage.PYTHON_PARSE if mf.kind == ManifestKind.PYTHON else Stage.DBT_PARSE
+            parse_stage = (
+                Stage.PYTHON_PARSE if mf.kind in (ManifestKind.PYTHON, ManifestKind.PYTHON_ODCS) else Stage.DBT_PARSE
+            )
             manifest_skips: list[SkippedNode] = []
             try:
                 with self._timings.stage(parse_stage, manifests=1) as record:
-                    parsed = parser.parse(mf, skipped=manifest_skips)
+                    parsed = parser.parse(
+                        mf, skipped=manifest_skips, progress=self._progress, timings=self._timings,
+                    )
                     record.add(nodes=len(parsed.nodes))
             except parser.permanent_errors as exc:
                 # Invalid JSON or yaml, a missing required key, or a malformed
