@@ -26,9 +26,15 @@ import (
 const unfixableInfraUniqueID = "e2e_schema.unfixable_infra"
 
 // connectionRefusedRule is the classifier rule that matches the fixture's
-// error: the reason a classification_decision row records, and the detail the
-// trigger's unfixable mark and the node's outcome carry.
+// error: the reason a classification_decision row records and the reason of
+// the trigger's node. It is the rule's id, not the message a hand-over carries:
+// that is the failure's error line.
 const connectionRefusedRule = "infra:connection_refused"
+
+// connectionRefusedText is the phrase the warehouse's error for the fixture
+// holds, and so does the failure's key error line. The line's exact wording
+// belongs to the database driver, so the checks pin the phrase.
+const connectionRefusedText = "connection refused"
 
 // rejectedReleaseFlow is the agent-remediation flow every remediation trigger
 // runs.
@@ -54,11 +60,12 @@ const (
 //	→ release.rejected:v1 → the remediation classifier drops the node
 //	  (infra_transient, rule infra:connection_refused)
 //	→ ONE remediation.requested:v3 forwarding the node, marked unfixable
-//	  {reason: classifier_infra, detail: infra:connection_refused}
+//	  {reason: classifier_infra, detail: the failure's key error line}
 //	→ catalog records the message and no :Rejection for the node
 //	→ agent-remediation's runner settles the remediation with no step but the
 //	  hand-over: ONE skipped attempt whose node carries code classifier_infra,
-//	  and ONE remediation.handed_over:v1 naming the node with that reason
+//	  and ONE remediation.handed_over:v1 naming the node with that reason and
+//	  the error line as its message
 //	→ POST /releases/{id}/retry-remediation answers 202: a skipped attempt ends
 //	  the round, so the retry is not refused as in progress
 //	→ round 2 is classified and handed over the same way, its attempt
@@ -125,7 +132,7 @@ func TestE2E_Remediation_EveryNodeUnfixableIsHandedOver(t *testing.T) {
 		"only the fixture may fail")
 
 	// 3. The trigger forwards the node, marked unfixable with the classifier's
-	//    reason and rule.
+	//    reason and the failure's error line.
 	trigger := waitForBatchedTrigger(t, ctx, requestedTap, releaseID, []string{unfixableInfraUniqueID}, handoverStageBudget)
 	require.Len(t, triggersForRelease(t, requestedTap, releaseID), 1, "one trigger per rejected release and round")
 	require.Equal(t, pkgevents.DefaultTenantID, trigger.TenantID, "the trigger carries the rejection's tenant")
@@ -137,19 +144,22 @@ func TestE2E_Remediation_EveryNodeUnfixableIsHandedOver(t *testing.T) {
 	require.Contains(t, node.ErrorExcerpt, "connection refused", "the excerpt is the error the infrastructure rule matched")
 	require.NotNil(t, node.Unfixable, "a node the classifier dropped is forwarded marked unfixable")
 	require.Equal(t, string(model.HandoverReasonClassifierInfra), node.Unfixable.Reason)
-	require.Equal(t, connectionRefusedRule, node.Unfixable.Detail)
+	require.Equal(t, connectionRefusedRule, node.Reason, "the node's reason is the rule that matched")
+	detail := node.Unfixable.Detail
+	requireErrorLine(t, detail)
+	require.Equal(t, node.ErrorExcerpt, detail, "the detail is the excerpt: the failure's key error line")
 	t.Logf("✅ %s forwards %s marked unfixable: %+v", streams.RemediationRequestedV3, node.NodeID, *node.Unfixable)
 
 	// 4. The classifier recorded the drop.
 	assertDecision(t, ctx, clients, releaseID, 1)
 
 	// 5. ONE attempt, skipped, whose node carries the classifier's code.
-	assertSkippedAttempt(t, ctx, clients, releaseID, 1, 1)
+	assertSkippedAttempt(t, ctx, clients, releaseID, 1, 1, detail)
 
 	// 6. ONE hand-over naming the node with that reason, from a remediation
 	//    that ran no step but the hand-over: no model call, no verification run.
 	handOver := waitForHandOver(t, ctx, handedOverTap, releaseID, 1)
-	assertHandOver(t, ctx, clients, handOver, releaseID, 1)
+	assertHandOver(t, ctx, clients, handOver, releaseID, 1, detail)
 
 	// 7. Catalog processed the trigger and kept the node out of its case base.
 	pollUntil(t, ctx, handoverCatalogBudget, 2*time.Second, func() (bool, error) {
@@ -189,12 +199,21 @@ func TestE2E_Remediation_EveryNodeUnfixableIsHandedOver(t *testing.T) {
 	require.True(t, ok, "the round-2 trigger carries the node; got %v", triggerNodeIDs(round2))
 	require.NotNil(t, again.Unfixable, "the round-2 trigger marks the node unfixable again")
 	require.Equal(t, string(model.HandoverReasonClassifierInfra), again.Unfixable.Reason)
+	requireErrorLine(t, again.Unfixable.Detail)
 
 	assertDecision(t, ctx, clients, releaseID, 2)
-	assertSkippedAttempt(t, ctx, clients, releaseID, 2, 2)
-	assertHandOver(t, ctx, clients, waitForHandOver(t, ctx, handedOverTap, releaseID, 2), releaseID, 2)
+	assertSkippedAttempt(t, ctx, clients, releaseID, 2, 2, again.Unfixable.Detail)
+	assertHandOver(t, ctx, clients, waitForHandOver(t, ctx, handedOverTap, releaseID, 2), releaseID, 2, again.Unfixable.Detail)
 	require.EqualValues(t, 2, getReleaseDetail(t, clients, releaseID)["remediation_round"])
 	t.Logf("✅ release %s: every round hands the unfixable node over, and Try again starts the next", releaseID)
+}
+
+// requireErrorLine checks that detail says what failed, the fixture's error
+// line, and is not the id of the rule that matched it.
+func requireErrorLine(t *testing.T, detail string) {
+	t.Helper()
+	require.Contains(t, detail, connectionRefusedText, "the detail is the failure's error line")
+	require.NotEqual(t, connectionRefusedRule, detail, "the detail is not the classifier's rule id")
 }
 
 // assertDecision waits for the classification_decision row of the fixture in
@@ -222,10 +241,10 @@ func assertDecision(t *testing.T, ctx context.Context, clients *testClients, rel
 // assertSkippedAttempt waits for the release's proposal of round on the
 // agent-remediation proposals API, the surface release-controller and the UI
 // read, and checks that it is the round's one attempt, numbered attempt and
-// skipped: the fixture skipped with the classifier's code and rule, no edit,
-// no model and no verification run. It also checks the release holds exactly
-// round proposals, one per round.
-func assertSkippedAttempt(t *testing.T, ctx context.Context, clients *testClients, releaseID string, round, attempt int) {
+// skipped: the fixture skipped with the classifier's code and detail as its
+// reason, no edit, no model and no verification run. It also checks the
+// release holds exactly round proposals, one per round.
+func assertSkippedAttempt(t *testing.T, ctx context.Context, clients *testClients, releaseID string, round, attempt int, detail string) {
 	t.Helper()
 	var found *remediationv1.Proposal
 	var last string
@@ -256,7 +275,8 @@ func assertSkippedAttempt(t *testing.T, ctx context.Context, clients *testClient
 	require.NotNil(t, outcome, "the attempt records the fixture's outcome: %v", found.GetNodeOutcomes())
 	require.Equal(t, "skipped", outcome.GetStatus())
 	require.Equal(t, string(model.HandoverReasonClassifierInfra), outcome.GetCode())
-	require.Equal(t, connectionRefusedRule, outcome.GetReason())
+	require.Equal(t, detail, outcome.GetReason(), "the outcome's reason is the trigger's detail")
+	requireErrorLine(t, outcome.GetReason())
 	require.Empty(t, found.GetEdits(), "an unfixable node gets no edit")
 	require.Empty(t, found.GetModel(), "an unfixable node costs no model call")
 	require.Empty(t, found.GetVerificationRunId(), "an unfixable node starts no verification run")
@@ -286,9 +306,10 @@ func waitForHandOver(t *testing.T, ctx context.Context, tap *streamTap, releaseI
 }
 
 // assertHandOver checks that h names the fixture with the classifier's reason
-// and rule, and that the remediation it reports is done after one try that ran
-// no step but the hand-over.
-func assertHandOver(t *testing.T, ctx context.Context, clients *testClients, h tappedHandOver, releaseID string, round int) {
+// and the trigger's detail (the failure's error line) as its message, and that
+// the remediation it reports is done after one try that ran no step but the
+// hand-over.
+func assertHandOver(t *testing.T, ctx context.Context, clients *testClients, h tappedHandOver, releaseID string, round int, detail string) {
 	t.Helper()
 	require.Equal(t, pkgevents.DefaultTenantID, h.TenantID, "the hand-over carries the remediation's tenant")
 	require.Equal(t, rejectedReleaseFlow, h.Flow)
@@ -296,8 +317,9 @@ func assertHandOver(t *testing.T, ctx context.Context, clients *testClients, h t
 	require.Equal(t, []pkgevents.HandedOverNode{{
 		NodeID:  unfixableInfraUniqueID,
 		Reason:  string(model.HandoverReasonClassifierInfra),
-		Message: connectionRefusedRule,
+		Message: detail,
 	}}, h.Nodes)
+	requireErrorLine(t, h.Nodes[0].Message)
 
 	var rem struct {
 		ID         string `db:"id"`
