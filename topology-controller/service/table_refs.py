@@ -17,19 +17,26 @@ def referenced_tables(node: ManifestNode, *, dialect: str, ctes: set[str] | None
 
     A reference to a CTE and a schema-qualified read of the node's own relation
     (ManifestNode.relation, the name its build writes) are not tables the node
-    reads and are skipped. Only an unqualified name is
-    taken for a CTE reference: a CTE is always unqualified, so a qualified name
-    is a table even when a CTE of the same name is in scope. A table with no
-    schema that is not a CTE reference raises UnqualifiedTableReferenceError:
-    which relation it means depends on the session's search path, so the SQL is
-    rejected rather than guessed at. A
+    reads and are skipped. Only an unqualified name is taken for a CTE
+    reference, and only where a CTE of that name is in scope: a CTE is always
+    unqualified, so a qualified name is a table even when a CTE of the same name
+    is in scope. In a WITH list a CTE is in scope in the CTEs defined after it,
+    in the query that carries the WITH clause and in that query's subqueries,
+    and not in its own body; under WITH RECURSIVE every CTE of the list is in
+    scope in every body of the list too. A CTE is never in scope outside the
+    query that defines it, so the body of WITH orders AS (SELECT * FROM orders)
+    reads the table orders, as does an unqualified orders beside a subquery that
+    defines a CTE of that name. A table with no schema that is not a CTE
+    reference raises UnqualifiedTableReferenceError: which relation it means
+    depends on the session's search path, so the SQL is rejected rather than
+    guessed at. A
     table with a schema and no name (a schema-qualified function call such as
     public.my_fn(1) or pg_catalog.generate_series(1, 3), which sqlglot models
     as a table) names no relation and is skipped.
 
     ctes, when given, receives the lower-cased name of every CTE the node's SQLs
-    define: the dependency resolver reads an ephemeral dbt model, which dbt
-    inlines into its readers as a CTE, from those names.
+    define, in scope at a table or not: the dependency resolver reads an
+    ephemeral dbt model, which dbt inlines into its readers as a CTE, from those names.
 
     dialect is the sqlglot dialect of the warehouse the install targets; it
     decides which syntax parses, so a query valid on one engine can raise
@@ -48,9 +55,8 @@ def referenced_tables(node: ManifestNode, *, dialect: str, ctes: set[str] | None
         except (sqlglot.errors.ParseError, sqlglot.errors.TokenError) as exc:
             raise InvalidCompiledSqlError(node_table_name=node.table_name, detail=str(exc)) from exc
 
-        cte_names = {cte.alias.lower() for cte in parsed.find_all(exp.CTE)}
         if ctes is not None:
-            ctes.update(cte_names)
+            ctes.update(cte.alias.lower() for cte in parsed.find_all(exp.CTE))
 
         for table in parsed.find_all(exp.Table):
             name = table.name.lower()
@@ -59,7 +65,7 @@ def referenced_tables(node: ManifestNode, *, dialect: str, ctes: set[str] | None
             # A CTE is always unqualified, so only an unqualified name can be
             # one: skip it before the schema guard fires. A qualified name is a
             # table even when a CTE of the same name is in scope.
-            if not schema and name in cte_names:
+            if not schema and name and _cte_in_scope(table, name):
                 continue
 
             # Skip qualified self-references; unqualified self-references fall
@@ -83,3 +89,29 @@ def referenced_tables(node: ManifestNode, *, dialect: str, ctes: set[str] | None
             refs.append(ref)
 
     return refs
+
+
+def _cte_in_scope(table: exp.Table, name: str) -> bool:
+    """Whether a CTE called name (lower case) is in scope where table is written.
+
+    Walks up from the table through its parents. A parent that carries a WITH
+    clause the walk did not come up through shows every CTE of that clause.
+    Coming up out of a CTE body into its WITH list shows the CTEs defined before
+    that body, or every CTE of the list when the list is WITH RECURSIVE. The walk
+    reads the tree alone, so a statement sqlglot builds no scope for resolves the
+    same way as a SELECT.
+    """
+    child: exp.Expression = table
+    parent = table.parent
+    while parent is not None:
+        if isinstance(parent, exp.With):
+            listed = list(parent.expressions)
+            body = next((i for i, cte in enumerate(listed) if cte is child), 0)
+            in_scope = listed if parent.recursive else listed[:body]
+        else:
+            clause = parent.args.get("with_")
+            in_scope = list(clause.expressions) if isinstance(clause, exp.With) and clause is not child else []
+        if any(cte.alias.lower() == name for cte in in_scope):
+            return True
+        child, parent = parent, parent.parent
+    return False

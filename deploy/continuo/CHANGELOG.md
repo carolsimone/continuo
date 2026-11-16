@@ -75,6 +75,7 @@ This release adds the values key `agentRemediation.engine` with a safe default, 
   - Each node of a validation rejection on `release.rejected:v1` names how validation prepared it, as `validation_op`: `clone_from_prod` for a copy, and `build_from_sql`, `build_from_columns` or `check_binds` otherwise.
   - A CI pipeline that reads `reject_reason` can get the new value, and `continuo_releases_total{reject_reason}` counts it.
 - **topology-controller counts dormant nodes.** TL;DR: `continuo_topology_release_dormant_nodes` counts the dormant nodes of the last release. `continuo_topology_release_skipped_nodes{reason}` has no `no_tag` value any more: its reasons are `no_owner`, `local_stub` and `installed_package`, a node of an installed dbt package with no tag.
+- **A CTE hides a table name only where it is in scope.** TL;DR: topology-controller refuses a read that names a table without its schema behind a CTE of the same name that is not in scope there (for example `WITH orders AS (SELECT * FROM orders)`), as continuo-python-runtime 0.13.0's `validate` does; such a release fails with the unqualified-table error it gives today for `select * from orders`.
 
 ## [0.22.0] - 2026-11-14
 
