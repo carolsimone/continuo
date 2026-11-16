@@ -95,11 +95,7 @@ const HISTORY_POLL_INTERVAL_MS = 5000;
 
 // The page's tabs, as the `tab` query parameter names them; History is the
 // default and writes nothing to the URL.
-const TAB_SPECS = [
-  { slug: 'history', label: 'History' },
-  { slug: 'contract', label: 'Contract' },
-];
-const TAB_SLUGS = TAB_SPECS.map(t => t.slug);
+const TAB_SLUGS = ['history', 'contract'];
 
 export default function NodeDetailPage() {
   const { fqn } = useParams<{ fqn: string }>();
@@ -403,7 +399,15 @@ export default function NodeDetailPage() {
         </div>
       </PageHeader>
 
-      <Tabs variant="page" param="tab" defaultSlug="history" tabs={TAB_SPECS} />
+      <Tabs
+        variant="page"
+        param="tab"
+        defaultSlug="history"
+        tabs={[
+          { slug: 'history', label: 'History', count: stats.total },
+          { slug: 'contract', label: 'Contract' },
+        ]}
+      />
 
       <div className="page-action-row">
         <div className="form-field">

@@ -1905,8 +1905,8 @@ describe('NodeDetailPage — tabs', () => {
     renderAt('');
 
     const tabs = await screen.findAllByRole('tab');
-    expect(tabs.map(t => t.textContent)).toEqual(['History', 'Contract']);
-    expect(screen.getByRole('tab', { name: 'History' })).toHaveAttribute('aria-selected', 'true');
+    expect(tabs.map(t => t.textContent)).toEqual(['History0', 'Contract']);
+    expect(screen.getByRole('tab', { name: /^History/ })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tab', { name: 'Contract' })).toHaveAttribute('aria-selected', 'false');
   });
 
@@ -1953,7 +1953,7 @@ describe('NodeDetailPage — tabs', () => {
     renderAt('?tab=nope');
 
     expect(await screen.findByText('Node history')).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'History' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: /^History/ })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('keeps the explanation of the chosen operation on the Contract tab, without the sentence about the history below', async () => {
@@ -1971,6 +1971,30 @@ describe('NodeDetailPage — tabs', () => {
 
     fireEvent.change(await screen.findByLabelText('Operation'), { target: { value: 'build' } });
     expect(await screen.findByText(/These stats combine model \+ tests/)).toBeInTheDocument();
+  });
+
+  it('keeps the back link to the schedule the page was opened from when a tab is clicked', async () => {
+    serveWithContract();
+    const user = userEvent.setup();
+    renderPage({ type: 'schedule', name: 'daily', mode: 'latest' });
+
+    expect(await screen.findByRole('button', { name: /back to daily/i })).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: 'Contract' }));
+    await screen.findByRole('region', { name: 'Current contract' });
+    await user.click(screen.getByRole('tab', { name: /^History/ }));
+    await screen.findByText('Node history');
+
+    await user.click(screen.getByRole('button', { name: /back to daily/i }));
+    expect(await screen.findByText('LATEST MODE')).toBeInTheDocument();
+  });
+
+  it('counts the runs on the History tab and gives the Contract tab no count', async () => {
+    mockFetch.mockImplementation(() => jsonResp({ tasks: [mkRun({ task_id: 't1' }), mkRun({ task_id: 't2', run_id: 'r2' })] }));
+    renderAt('');
+
+    await screen.findByText('Node history');
+    expect(screen.getByRole('tab', { name: /History/ })).toHaveTextContent('History2');
+    expect(screen.getByRole('tab', { name: 'Contract' })).toHaveTextContent(/^Contract$/);
   });
 
   it('keeps the run controls on the Contract tab', async () => {

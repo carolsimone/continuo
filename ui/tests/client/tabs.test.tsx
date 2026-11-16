@@ -65,6 +65,28 @@ describe('Tabs', () => {
     expect(screen.getByTestId('location').textContent).toBe('/?filter=foo&tab=topology');
   });
 
+  it('keeps the navigation state of the page when a tab is clicked', async () => {
+    const user = userEvent.setup();
+    function StateProbe() {
+      return <div data-testid="state">{JSON.stringify(useLocation().state)}</div>;
+    }
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/', state: { from: { type: 'schedule', name: 'daily' } } }]}>
+        <Tabs
+          param="tab"
+          defaultSlug="runs"
+          tabs={[{ slug: 'runs', label: 'Runs' }, { slug: 'topology', label: 'Topology' }]}
+        />
+        <StateProbe />
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole('tab', { name: /topology/i }));
+    expect(screen.getByTestId('state').textContent).toBe('{"from":{"type":"schedule","name":"daily"}}');
+    await user.click(screen.getByRole('tab', { name: /runs/i }));
+    expect(screen.getByTestId('state').textContent).toBe('{"from":{"type":"schedule","name":"daily"}}');
+  });
+
   it('renders the count pill when count is 0 (not just truthy)', () => {
     render(
       <MemoryRouter initialEntries={['/']}>

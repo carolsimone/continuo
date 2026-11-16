@@ -1466,6 +1466,10 @@ a.release-author:hover { text-decoration: underline; }
 .contract-table-wrap { overflow-x: auto; }
 .contract-table-wrap .pill-sm + .pill-sm { margin-left: 6px; }
 
+/* A release link reads like the links of the provenance line. */
+.contract-release-link { color: #4338ca; text-decoration: none; white-space: nowrap; }
+.contract-release-link:hover { text-decoration: underline; }
+
 .contract-json {
   font-family: 'SF Mono', 'Fira Mono', monospace;
   font-size: 11.5px;
@@ -1473,6 +1477,8 @@ a.release-author:hover { text-decoration: underline; }
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
+/* A path stays on one line: the table scrolls inside its card before a path breaks. */
+.contract-path { white-space: nowrap; }
 
 /* ---- Section headers ---- */
 .section-header {

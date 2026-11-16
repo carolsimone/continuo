@@ -28,7 +28,9 @@ type DiffRead =
 
 function ReleaseLink({ releaseId }: { releaseId: string }) {
   if (!releaseId) return <span className="nodes-dash">—</span>;
-  return <Link to={`/releases/${encodeURIComponent(releaseId)}`}>{releaseId}</Link>;
+  return (
+    <Link className="contract-release-link" to={`/releases/${encodeURIComponent(releaseId)}`}>{releaseId}</Link>
+  );
 }
 
 function VersionHistory({ versions }: { versions: ContractVersion[] }) {
@@ -93,7 +95,7 @@ function ChangesTable({ changes }: { changes: ContractFieldChange[] }) {
         <tbody>
           {changes.map(c => (
             <tr key={c.path} className="nodes-row--static">
-              <td><code className="contract-json">{c.path}</code></td>
+              <td><code className="contract-json contract-path">{c.path}</code></td>
               <td>{value(c.before_json)}</td>
               <td>{value(c.after_json)}</td>
             </tr>
@@ -156,7 +158,7 @@ function CompareVersions({ base, versions }: { base: string; versions: ContractV
       {shown?.state === 'failed' && (
         <div className="info-strip info-strip--error">
           <span className="info-strip__icon">⚠</span>
-          Could not compare these versions. Pick them again to retry.
+          Could not compare these versions. Pick another pair, or reload the page.
         </div>
       )}
       {shown?.state === 'ready' && shown.changes.length === 0 && (

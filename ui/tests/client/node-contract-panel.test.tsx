@@ -47,8 +47,8 @@ const RELEASE: Record<number, string> = {
   3: 'rel-77aa0bc-230',
 };
 
-// The design's example: version 2 changes the team, version 3 puts it back, so
-// it repeats version 1.
+// A node whose version 2 changed the team and whose version 3 changed it back,
+// so version 3 repeats version 1's contract.
 const version = (n: number, over: Partial<ContractVersion> = {}): ContractVersion => ({
   unique_id: 'analytics.py_daily_kpis',
   version: n,

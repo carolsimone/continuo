@@ -934,6 +934,10 @@ Rules:
   the `.log-block`.
 - This is distinct from the Tables truncate-with-`more` rule, which
   covers short inline error text inside a single cell.
+- A block that is the main content of its card is open by default and sits
+  flush in the card, with no toggle and no link-out: the node page's Contract
+  tab shows the contract as YAML in `.log-block.contract-yaml`, which drops
+  the margin, border and radius and scrolls past 480px.
 
 ## Service accents and grouped rows
 
