@@ -25,6 +25,9 @@ type CatalogClient interface {
 	GetUpstreamChanges(ctx context.Context, uniqueID string, depth int32, since string) (*catalogv1.GetUpstreamChangesResponse, error)
 	GetCodeUnitVersions(ctx context.Context, unitID, uniqueID string, limit int32) (*catalogv1.GetCodeUnitVersionsResponse, error)
 	GetPrecedents(ctx context.Context, signature, category, reason string, limit int32, includeCode bool) (*catalogv1.GetPrecedentsResponse, error)
+	GetNodeContract(ctx context.Context, uniqueID string, includeDocument bool) (*catalogv1.GetNodeContractResponse, error)
+	ListNodeContractVersions(ctx context.Context, uniqueID string, limit int32) (*catalogv1.ListNodeContractVersionsResponse, error)
+	GetNodeContractDiff(ctx context.Context, uniqueID string, fromVersion, toVersion int64) (*catalogv1.GetNodeContractDiffResponse, error)
 	Close() error
 }
 
@@ -67,6 +70,18 @@ func (c *catalogGRPCClient) GetPrecedents(ctx context.Context, signature, catego
 		Signature: signature, Category: category, Reason: reason,
 		Limit: limit, IncludeCode: includeCode,
 	})
+}
+
+func (c *catalogGRPCClient) GetNodeContract(ctx context.Context, uniqueID string, includeDocument bool) (*catalogv1.GetNodeContractResponse, error) {
+	return c.client.GetNodeContract(ctx, &catalogv1.GetNodeContractRequest{UniqueId: uniqueID, IncludeDocument: includeDocument})
+}
+
+func (c *catalogGRPCClient) ListNodeContractVersions(ctx context.Context, uniqueID string, limit int32) (*catalogv1.ListNodeContractVersionsResponse, error) {
+	return c.client.ListNodeContractVersions(ctx, &catalogv1.ListNodeContractVersionsRequest{UniqueId: uniqueID, Limit: limit})
+}
+
+func (c *catalogGRPCClient) GetNodeContractDiff(ctx context.Context, uniqueID string, fromVersion, toVersion int64) (*catalogv1.GetNodeContractDiffResponse, error) {
+	return c.client.GetNodeContractDiff(ctx, &catalogv1.GetNodeContractDiffRequest{UniqueId: uniqueID, FromVersion: fromVersion, ToVersion: toVersion})
 }
 
 func (c *catalogGRPCClient) Close() error {
