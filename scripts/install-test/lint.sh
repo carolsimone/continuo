@@ -495,7 +495,7 @@ grep -qF 'services[run-controller].volumes[extra-config]: configMap.name is empt
 # the chart, the file's text becomes a named template (`probe.notes`) that a
 # ConfigMap includes, and `helm template --is-upgrade` or without it sets
 # .Release.IsUpgrade to true or false for it.
-echo "--- NOTES.txt: the schedules, validation re-pin, catalog backup, catalog Postgres and ServiceAccount notes print on upgrade and not on install"
+echo "--- NOTES.txt: the schedules, validation re-pin, catalog backup, catalog Postgres, ServiceAccount and remediation streams notes print on upgrade and not on install"
 schedules_note='Schedules are no longer read from the chart: every cron stops until it is set again in the ui (Edit cron) or with `continuo schedule set-cron`.'
 notes_chart="${tmp}/notes-chart"
 cp -R "$CHART" "$notes_chart"
@@ -614,6 +614,23 @@ grep -qF 'every ui user signs in once more' "${tmp}/notes-upgrade.txt" \
   || { echo "FAIL: the upgrade notes do not say that ui users sign in once more"; exit 1; }
 if grep -qF "$redis_note" "${tmp}/notes-install.txt"; then
   echo "FAIL: the install notes carry the Redis prefix upgrade note"; exit 1
+fi
+
+# An upgrading operator is told once that the remediation streams change
+# version, when to upgrade, and the consumer groups to delete when the stream
+# reaper is off; an installing one is told nothing.
+remediation_streams_note='BREAKING: remediation.requested is now v3 and remediation.retry_requested is now v2.'
+[ "$(grep -cF "$remediation_streams_note" "${tmp}/notes-upgrade.txt")" = 1 ] \
+  || { echo "FAIL: the upgrade notes do not say exactly once that the remediation streams change version"; exit 1; }
+for group in 'continuo:remediation.requested:v2 agent-remediation-remediation-requested' \
+             'continuo:remediation.requested:v2 catalog-remediation-requested-rejections' \
+             'continuo:remediation.retry_requested:v1 remediation-retry-requested'; do
+  [ "$(grep -cF "XGROUP DESTROY ${group}" "${tmp}/notes-upgrade.txt")" = 1 ] \
+    || { echo "FAIL: the upgrade notes do not name XGROUP DESTROY ${group} exactly once"; exit 1; }
+done
+if grep -qF "$remediation_streams_note" "${tmp}/notes-install.txt" \
+   || grep -qF 'XGROUP DESTROY' "${tmp}/notes-install.txt"; then
+  echo "FAIL: the install notes carry the remediation streams upgrade note"; exit 1
 fi
 
 # global.logLevel reaches every service as LOG_LEVEL, and a service refuses to

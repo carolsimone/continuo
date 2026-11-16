@@ -16,7 +16,8 @@ shipped in those.
 
 - New: a dbt model or snapshot with an owner and no tag is now a dormant node. A release checks it like any model, but no cron runs it: you run it by hand.
 - The node type `ingested` is now `unknown-external`, and nodes stored as `ingested` keep working. A script that looks for `ingested` must look for `unknown-external`.
-- You must act (steps below): check your models with no tag, upgrade with maintenance mode on, then run each dormant node whose table does not exist yet. Do not roll release-controller back afterwards.
+- You must act (steps below): check your models with no tag, upgrade with maintenance mode on and no remediation in flight, then run each dormant node whose table does not exist yet. Do not roll release-controller back afterwards.
+- Breaking: the remediation streams move to `remediation.requested:v3` and `remediation.retry_requested:v2`, and the old versions are retired.
 - No values change is needed: the new values key `agentRemediation.engine` defaults to `legacy`, and `runner` switches agent-remediation to an engine a restart continues. On 0.21.0 or earlier, upgrade to 0.22.0 first.
 
 ### Upgrade steps
@@ -30,14 +31,32 @@ shipped in those.
 3. **Hold releases with maintenance mode while you upgrade.** This version names the type of a table no node builds `unknown-external`, and that name replaces `ingested`. A release-controller older than this version, 0.22.0's included, does not know the new name: when it receives a topology with `unknown-external` nodes, it sends them to validation, which stalls that release and the queue. A release that is queued or submitted while the pods roll can be parsed by the new topology-controller while the old release-controller still runs, so keep releases from starting until every pod is new. Do it in this order:
    1. Turn maintenance mode on, on the chart version you run now: `helm upgrade <release> <chart> --version <the version you run now> --reuse-values --set maintenance.enabled=true`. Do not change the chart version in this step: without `--version`, Helm pulls the latest chart, which is this release, and the pods roll before the drain. A new release is refused with HTTP 503, release-controller activates no queued release, and the releases already in progress finish. A scheduled run that comes due while maintenance mode is on is skipped, not caught up later; the comment above `maintenance:` in `deploy/continuo/values.yaml` lists what else it refuses.
    2. Wait until no release is compiling, parsing, seed-building or validating. A fix verification of a remediation attempt already in progress still activates in maintenance mode, so wait for those too.
+      Wait too until no remediation attempt is generating or verifying, and `remediation_outbox`, `release_controller_outbox` and `agent_remediation_outbox` hold no row with status `pending` or `scheduled`. This version retires `remediation.requested:v2` and `remediation.retry_requested:v1`, and a row stored for them is never delivered after the upgrade (see Breaking).
    3. Run the upgrade to this version with maintenance mode still on: pass `--version <this version>` and keep `--set maintenance.enabled=true`, with your usual values. Its migration Job builds the index `idx_tasks_node_key_created` on run-controller's `tasks` table. run-controller cannot write a task until the index is built, so the runs in progress pause for that time. The build takes longer the more rows the `tasks` table holds, and afterwards the index adds a little work to every task insert.
    4. Turn maintenance mode off: `helm upgrade <release> <chart> --version <this version> --reuse-values --set maintenance.enabled=false`. release-controller activates the oldest queued release when it starts.
 
    Each change of `maintenance.enabled` restarts every continuo service. If you skip this and a release stalls, it stays in `validating` and the release queue stops. No API, CLI or UI action fails a release, so an operator has to fail that release directly in release-controller's database and then restart release-controller, which advances the queue as it starts. This has not been rehearsed.
 4. **Do not roll release-controller back below this version** after a release with `unknown-external` nodes has been promoted. An older release-controller, 0.22.0's included, counts the empty service of those nodes as uncovered at activation, so no later release activates.
 5. **Run each dormant node whose table does not exist yet.** A dormant node enters production with the first release after the upgrade, and no cron runs it. Run it once from its node page (the Dormant tile on the Topology tab opens their list) before you release a change to any node below it. Otherwise validation cannot copy its production table, and that release is rejected `upstream_clone_failed`.
+6. **With `streamReaper.enabled=false`, delete the consumer groups of the retired remediation streams** after the upgrade. The commands are in Breaking. With the stream reaper on, dead-letter-controller deletes those streams with their groups.
 
 This release adds the values key `agentRemediation.engine` with a safe default, and it ships as a `MINOR`.
+
+### Breaking
+
+- **The remediation streams change version.** TL;DR: remediation sends its heal trigger on `remediation.requested:v3`, and release-controller sends "Try again" on `remediation.retry_requested:v2`. `remediation.requested:v2` and `remediation.retry_requested:v1` are retired. Upgrade when no remediation is in flight (step 3).
+  - Both streams carry the envelope of the other versioned streams: `event_id`, `tenant_id`, `occurred_at`, `producer` and `schema_version` beside the `payload`. A script that reads them must read the new shape.
+  - `remediation.requested:v3` is one trigger per rejected release and round, and it carries every failing node. A node the classifier judged no fix can reach is marked `unfixable`, with the reason `classifier_infra` or `classifier_unhealable_parse`. agent-remediation proposes no fix for it, and catalog keeps it out of its case base.
+  - `remediation.retry_requested:v2` carries the release's stored `release.rejected:v1` payload unchanged, as `rejection`, with the round beside it.
+  - agent-remediation can write the new stream `remediation.handed_over:v1`. Under `agentRemediation.engine=runner`, it writes one event when a remediation ends with nodes a human must fix, each with its reason code. No service reads it.
+  - Consumer group names do not change.
+  - A row stored before the upgrade for `remediation.requested:v2`, `remediation.retry_requested:v1` or `remediation.proposed:v1` is never delivered after it. So upgrade when `remediation_outbox`, `release_controller_outbox` and `agent_remediation_outbox` hold no row with status `pending` or `scheduled`. "Try again" cannot start a remediation whose trigger was lost.
+  - dead-letter-controller deletes the two retired streams with their consumer groups, and a dead letter of either cannot be redriven. With `streamReaper.enabled=false`, delete the drained groups yourself after the upgrade:
+    ```
+    XGROUP DESTROY continuo:remediation.requested:v2 agent-remediation-remediation-requested
+    XGROUP DESTROY continuo:remediation.requested:v2 catalog-remediation-requested-rejections
+    XGROUP DESTROY continuo:remediation.retry_requested:v1 remediation-retry-requested
+    ```
 
 ### Added
 
@@ -54,6 +73,11 @@ This release adds the values key `agentRemediation.engine` with a safe default, 
   - Upgrade to this version with `legacy` first, and set `runner` in a later upgrade. While the pods roll, a pod of an older version runs only the legacy verification reconciler, which does not skip the runner's attempt rows.
   - Under `runner`, the `tries` of the `rejected-release` flow file (3) sets how many attempts a release round gets. The runner does not read `AGENT_REMEDIATION_MAX_ATTEMPTS`, which only `legacy` reads, and agent-remediation logs a warning at startup when the engine is `runner` and the variable differs from the flow's `tries`.
   - A remediation the runner cannot move on is ended as a system failure, and its attempt row (generating or verifying) is failed with the reason: a step that failed five times (a gate that failed five polls in a row), a remediation that could not be loaded or could not open its next try five times in a row, and a try still drafting or checking past its deadline. A step that runs longer than ten minutes is stopped and counts as one failure, and a remediation whose step failed is retried two minutes later.
+  - A system failure also dead-letters the remediation's heal trigger on `consumer.dead_letter:v1`, and the attempt row's reason says so. Fix the cause, then redrive the dead letter with `continuo dlq`: the same remediation goes on from the try and step it stopped at, and a step that already finished does not run again. A redrive of a round that "Try again" already replaced starts nothing.
+- **The release page says why a node was handed to a human.** TL;DR: under `agentRemediation.engine=runner`, each failing node remediation does not fix carries a reason code, and the FIX cell says what it means and what to do, with the node's own message behind `more`.
+  - The codes are `tries_spent`, `unverifiable_edits`, `preflight_rounds_spent`, `declined`, `no_type`, `no_repository`, `classifier_infra` and `classifier_unhealable_parse`. Each node outcome that agent-remediation's `remediation.v1.RemediationProposals` returns carries its code as `code`.
+  - A node the classifier judged unfixable is on the release page too. An infrastructure error says to run the release again.
+  - A node that a step declined, that no type matches or that the classifier judged unfixable is not tried again in a later try of the same round.
 
 ### Changed
 
@@ -74,7 +98,7 @@ This release adds the values key `agentRemediation.engine` with a safe default, 
   - remediation never tries to fix a copied node, in a `validation_failed` rejection either.
   - Each node of a validation rejection on `release.rejected:v1` names how validation prepared it, as `validation_op`: `clone_from_prod` for a copy, and `build_from_sql`, `build_from_columns` or `check_binds` otherwise.
   - A CI pipeline that reads `reject_reason` can get the new value, and `continuo_releases_total{reject_reason}` counts it.
-- **Redis rule changes for the remediation streams.** TL;DR: the remediation flow moves to `remediation.requested:v3` and `remediation.retry_requested:v2`, and agent-remediation can write the new `remediation.handed_over:v1`. With your own Redis, apply the new rules from `deploy/redis-acl-rules.acl` before or with the upgrade. The bundled Redis needs nothing and restarts once, because its rules change.
+- **Redis rule changes for the remediation streams.** TL;DR: the remediation flow moves to `remediation.requested:v3` and `remediation.retry_requested:v2`, and agent-remediation can write the new `remediation.handed_over:v1`. With your own Redis, apply the new rules from `deploy/redis-acl-rules.acl` with the upgrade, not before: they leave out the retired streams, so the pods still running the old version lose access to them. The bundled Redis needs nothing and restarts once, because its rules change.
   - `continuo_remediation` reads `remediation.retry_requested:v2` and writes `remediation.requested:v3`.
   - `continuo_release_controller` writes `remediation.retry_requested:v2`.
   - `continuo_agent_remediation` reads `remediation.requested:v3` and writes `remediation.handed_over:v1`.
