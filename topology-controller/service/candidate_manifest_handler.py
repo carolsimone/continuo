@@ -1,10 +1,11 @@
 import logging
 from collections.abc import Callable, Mapping, Sequence
-from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
+from domain.exceptions import InvalidCompiledSqlError, InvalidOdcsBundleError, UnqualifiedTableReferenceError
 from domain.external import SystemRelations, unknown_external_nodes
 from domain.model import (
     DEFAULT_TENANT_ID,
     FailedNode,
+    ManifestFile,
     ManifestKind,
     ManifestNode,
     NodeRegistry,
@@ -54,6 +55,16 @@ def _highest_precedence(kinds: list[ParseFailureKind]) -> ParseFailureKind:
 def _summary(failed: list[FailedNode]) -> str:
     noun = "node" if len(failed) == 1 else "nodes"
     return f"{len(failed)} {noun} failed to parse: " + ", ".join(sorted(n.node_id for n in failed))
+
+
+def _unreadable_manifest_detail(mf: ManifestFile, exc: Exception) -> str:
+    """The detail of a release whose manifest cannot be read as a whole. A bundle
+    error carries a message written for the operator, so it is the detail as it
+    is, led by the service it belongs to; any other parse error is named by its
+    type and arguments, which is all a KeyError or a JSON error says."""
+    if isinstance(exc, InvalidOdcsBundleError):
+        return f"{mf.declared_service or mf.path}: {exc.detail}"
+    return f"{mf.path}: {exc!r}"
 
 
 def _artifact_entry(node: ManifestNode) -> dict:
@@ -130,7 +141,9 @@ class CandidateManifestHandler:
     Failures publish status=failed with a typed failure_kind and return
     normally so the consumer ACKs. A node whose SQL sqlglot cannot parse, or
     that references a relation without a schema, is collected rather than
-    fatal on first sight: every node is resolved, then one publish_failed
+    fatal on first sight, and so is a python contract the parse of its bundle
+    finds invalid (the parse reports it as a failed node, with its own
+    failure kind): every valid node is resolved, then one publish_failed
     carries the whole failed set (failure_kind by contract precedence) so the
     operator sees every broken node at once. An unreadable, empty, or
     wrong-service artifact is invalid_artifact; a missing builder, missing
@@ -269,6 +282,7 @@ class CandidateManifestHandler:
             return
 
         all_nodes = []
+        contract_failures: list[FailedNode] = []
         shared_code: dict[str, dict] = {}
         provenance: dict[str, dict] = {}
         for mf in manifests:
@@ -300,10 +314,14 @@ class CandidateManifestHandler:
                 # report failed and let the consumer ACK. Transient errors
                 # (e.g. a download/IO failure) are deliberately not caught here
                 # so they stay pending.
-                self._fail(release_id, ParseFailureKind.INVALID_ARTIFACT, f"{mf.path}: {exc!r}")
+                self._fail(release_id, ParseFailureKind.INVALID_ARTIFACT, _unreadable_manifest_detail(mf, exc))
                 return
             self._progress()
             nodes, mf_shared = parsed.nodes, parsed.shared_code
+            # The contracts this manifest's parse found invalid are not nodes:
+            # they wait for the resolve below, which reports them with the
+            # failures of the valid nodes.
+            contract_failures.extend(parsed.failed)
 
             # Reported before the declared-service checks below: a manifest
             # whose every node was skipped fails as empty, and its skips are
@@ -350,7 +368,9 @@ class CandidateManifestHandler:
                 # An empty manifest would silently retire all nodes for the declared
                 # service; a wrong-service manifest would pollute the topology with
                 # foreign nodes. Both are permanent failures (a re-upload is required).
-                if not nodes:
+                # A manifest whose every contract is invalid has no node and is not
+                # empty: its failed contracts are reported after the resolve.
+                if not nodes and not parsed.failed:
                     self._fail(
                         release_id,
                         ParseFailureKind.INVALID_ARTIFACT,
@@ -386,8 +406,9 @@ class CandidateManifestHandler:
 
         # Resolve every node before building anything: a release with one broken
         # node is rejected whole, and reporting every broken node at once spares
-        # the operator a fix-push-reject loop per node.
-        failed: list[FailedNode] = []
+        # the operator a fix-push-reject loop per node. The contracts the parses
+        # found invalid are the first of the failed set; the resolve adds its own.
+        failed: list[FailedNode] = list(contract_failures)
         # Every table each node's SQL names, by node unique_id, for each node
         # that writes a relation (a dbt test writes none). unknown_external_nodes
         # decides which of them no node of the release builds.

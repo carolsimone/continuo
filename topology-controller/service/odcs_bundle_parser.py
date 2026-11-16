@@ -24,7 +24,6 @@ producer's two hash parts and the node's own code projection, and keeps its auth
 document. Every result comes in path order, whatever order the bundle lists its nodes in.
 """
 import json
-import re
 from collections.abc import Callable, Mapping
 from typing import Any, NoReturn
 
@@ -40,7 +39,7 @@ from domain.exceptions import InvalidOdcsBundleError, MalformedContractError
 from domain.model import AuthoredContract, FailedNode, ManifestFile, ManifestNode, ParsedArtifact, SkippedNode
 from domain.node_timeout import timeout_seconds
 from service.contract_validation import ContractValidator
-from service.contracts_library import LIBRARY_VERSION, VALIDATOR
+from service.contracts_library import LIBRARY_VERSION, VALIDATOR, version_triple
 from service.python_kind_rules import RULES
 from service.python_node_builder import PythonNodeFields, build_python_node
 from service.release_timings import ReleaseTimings, Stage
@@ -51,7 +50,6 @@ CONTRACT_FILE_SUFFIX = ".odcs.yaml"
 _TOP_LEVEL_KEYS = frozenset({"bundle_version", "service", "producer", "image_packages", "nodes"})
 _PRODUCER_KEYS = frozenset({"continuo_python_runtime", "continuo_contracts"})
 _NODE_KEYS = frozenset({"path", "text", "source_hash", "shared_code_hash"})
-_VERSION = re.compile(r"[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}")
 _DEFAULT_KIND = NodeType.PYTHON_NODE.value
 
 
@@ -108,14 +106,6 @@ def _check_bundle_version(bundle: Mapping[str, Any]) -> None:
         _fail(f"unsupported bundle_version {version!r}: this install reads bundle_version {BUNDLE_VERSION}")
 
 
-def _version_triple(text: str) -> tuple[int, int, int] | None:
-    """The numbers of a version written X.Y.Z, or None for any other text."""
-    if _VERSION.fullmatch(text) is None:
-        return None
-    major, minor, patch = (int(part) for part in text.split("."))
-    return major, minor, patch
-
-
 def _check_producer(producer: object, library_version: str) -> tuple[str, str]:
     """The producer's runtime version and continuo-contracts version, the latter
     refused when it is newer than `library_version`."""
@@ -123,10 +113,10 @@ def _check_producer(producer: object, library_version: str) -> tuple[str, str]:
     _check_keys(producer, _PRODUCER_KEYS, "producer")
     runtime = _text(producer["continuo_python_runtime"], "producer.continuo_python_runtime")
     written_by = _text(producer["continuo_contracts"], "producer.continuo_contracts")
-    produced = _version_triple(written_by)
+    produced = version_triple(written_by)
     if produced is None:
         _fail(f"producer.continuo_contracts {written_by!r} is not a version X.Y.Z")
-    running = _version_triple(library_version)
+    running = version_triple(library_version)
     if running is None:
         raise ValueError(f"the installed continuo-contracts version {library_version!r} is not a version X.Y.Z")
     if produced > running:
