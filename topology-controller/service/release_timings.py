@@ -39,6 +39,14 @@ class Stage(StrEnum):
     PUBLISH = "publish"
 
 
+# The stages a contract failure is counted under: the checks of the parse
+# (`validate`), the stored form of a contract (`normalise`) and its hash (`hash`).
+CONTRACT_FAILURE_STAGES = ("validate", "normalise", "hash")
+
+# How a contract validation was answered: from the cache or by running the check.
+VALIDATION_CACHE_RESULTS = ("hit", "miss")
+
+
 class ReleaseOutcome(StrEnum):
     """How a release's parse ended: published to release-controller, or
     reported to it as failed."""
@@ -128,7 +136,7 @@ class ReleaseTimings:
         self.skipped: dict[SkipReason, int] = {reason: 0 for reason in SkipReason}
         self.dormant: dict[str, int] = {}
         self.contract_failures: dict[tuple[str, str], int] = {}
-        self.validation_cache: dict[str, int] = {"hit": 0, "miss": 0}
+        self.validation_cache: dict[str, int] = {result: 0 for result in VALIDATION_CACHE_RESULTS}
 
     def stage(self, name: Stage, *, sample_memory: bool = True, **counts: int) -> AbstractContextManager[StageRecord]:
         """Time one run of a stage. On exit, also when the body raised, the
@@ -162,7 +170,11 @@ class ReleaseTimings:
             self.skipped[skip.reason] += 1
 
     def add_contract_failure(self, stage: str, reason: str) -> None:
-        """Count one contract failure under its stage and reason."""
+        """Count one contract failure under its stage (one of
+        CONTRACT_FAILURE_STAGES) and reason. Raises ValueError for another
+        stage, so every counted failure lands on a series exported from boot."""
+        if stage not in CONTRACT_FAILURE_STAGES:
+            raise ValueError(f"{stage!r} is not a contract failure stage, expected one of {CONTRACT_FAILURE_STAGES}")
         key = (stage, reason)
         self.contract_failures[key] = self.contract_failures.get(key, 0) + 1
 

@@ -164,6 +164,13 @@ def test_contract_failures_and_cache_add_up():
     assert timings.validation_cache == {"hit": 1, "miss": 2}
 
 
+def test_a_contract_failure_counts_only_under_a_stage_the_metrics_export():
+    timings = _timings()
+    with pytest.raises(ValueError, match="not a contract failure stage"):
+        timings.add_contract_failure("validation", "value")
+    assert timings.contract_failures == {}
+
+
 def test_bundle_timings_hold_the_stages_that_ran_so_far():
     clock = FakeClock()
     timings = _timings(clock)

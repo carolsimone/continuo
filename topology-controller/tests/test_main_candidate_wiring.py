@@ -15,6 +15,7 @@ from adapters.topology_artifact_writer import TopologyArtifactWriter
 from config.config import _SYSTEM_RELATIONS, SERVICE_NAME
 from config.secrets import EnvOrFileCredentialProvider
 from domain.model import ManifestRequest
+from service.contracts_library import LIBRARY_VERSION
 from service.errors import PermanentMessageError
 from streams_contract import (
     RELEASE_REQUESTED_V1,
@@ -465,6 +466,20 @@ def test_main_publishes_parse_results_on_the_v2_stream_as_this_service(monkeypat
     ((args, kwargs),) = built
     assert args[1] == MANIFEST_LOADED_CANDIDATE_V2
     assert kwargs["producer"] == SERVICE_NAME
+
+
+def test_main_announces_the_library_version_the_handler_writes_its_bundle_with(monkeypatch):
+    """The version on manifest.loaded.candidate:v2 is the installed one, the same
+    the contract bundle's `continuo_contracts` and the producer check use."""
+    _common_monkeypatches(monkeypatch)
+    built = []
+    monkeypatch.setattr(main, "CandidateManifestPublisher",
+                        lambda *a, **kw: built.append(kw) or object())
+
+    main.main()
+
+    (kwargs,) = built
+    assert kwargs["continuo_contracts"] == LIBRARY_VERSION
 
 
 def test_main_signs_in_to_redis_through_the_credential_provider(monkeypatch):

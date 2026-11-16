@@ -37,6 +37,7 @@ from config.secrets import EnvOrFileCredentialProvider, read_secret
 from domain.model import Runtime
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
+from service.contracts_library import LIBRARY_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,7 @@ def main() -> None:
     # Candidate-parse flow (release.requested:v1 -> manifest.loaded.candidate:v2).
     candidate_publisher = CandidateManifestPublisher(
         redis_client, MANIFEST_LOADED_CANDIDATE_STREAM, producer=SERVICE_NAME,
+        continuo_contracts=LIBRARY_VERSION,
     )
     candidate_uploader = CandidateSqlUploader(s3_client, S3_BUCKET)
     candidate_spec_uploader = CandidateSpecUploader(s3_client, S3_BUCKET)

@@ -60,7 +60,8 @@ class CandidatePublisherPort(Protocol):
     release-controller: publish_ok carries the references to the release's
     topology artifact and contract bundle, publish_failed a typed failure kind,
     a summary detail, and one FailedNode per node the parse could not resolve
-    (empty for artifact and internal failures)."""
+    (empty for artifact and internal failures). Both outcomes also name the
+    version of the contracts library the process runs on."""
 
     def publish_ok(
         self,
