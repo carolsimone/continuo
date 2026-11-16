@@ -145,8 +145,8 @@ func (s *CodeBundleSource) unreachable(nodeID, filePath, serviceName, source str
 // about the node's kind. Only when the trigger carries no node type does a
 // resolved path that does not end in ".sql" also return errNonDbtCandidate: a
 // trigger that does carry a node type is trusted over the extension and always
-// proceeds to the read, where a missing file leaves the source unresolved and
-// any other read error is returned.
+// proceeds to the read, where a missing file, or one over the reader's size
+// cap, leaves the source unresolved and any other read error is returned.
 func (s *CodeBundleSource) resolve(ctx context.Context, f remediation.Failure, filePath, serviceName string) (source, origin string, err error) {
 	n := f.Target
 	src, berr := s.candidates.NodeSource(ctx, f.Trigger.CodeBundleURI, n.NodeID, f.Trigger.ReleaseID)
@@ -181,6 +181,11 @@ func (s *CodeBundleSource) resolve(ctx context.Context, f remediation.Failure, f
 	content, gerr := s.source.ReadFile(ctx, f.Trigger.Repo, f.Trigger.CommitSHA, full)
 	if errors.Is(gerr, ports.ErrSourceNotFound) {
 		s.logger.Warn("repo fallback has no such file", "node", n.NodeID, "path", full)
+		return "", "", nil
+	}
+	if errors.Is(gerr, ports.ErrSourceTooLarge) {
+		s.logger.Warn("repo fallback file is over the read limit; no source from the repository",
+			"node", n.NodeID, "path", full, "max_bytes", ports.MaxSourceBytes)
 		return "", "", nil
 	}
 	if gerr != nil {

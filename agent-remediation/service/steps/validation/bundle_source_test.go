@@ -1,7 +1,11 @@
 package validation_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -218,4 +222,36 @@ func TestCodeBundleSource_ANodeTypeIsTrustedOverTheExtension(t *testing.T) {
 		}), remediation.NewEvidence())
 
 	assert.Equal(t, "snapshot: x", candidateSource(t, out).Source)
+}
+
+// A repository fallback file over the read cap cannot be shown to the model: it
+// is no source from the repository, as a missing file is, so the cluster is
+// declined with the reason a node with no source gets and the step does not
+// fail on every retry.
+func TestCodeBundleSource_AnOversizedFallbackFileIsNoSource(t *testing.T) {
+	var logs bytes.Buffer
+	src := &fakeSource{err: fmt.Errorf("github get p@abc123: source file exceeds %d bytes: %w", ports.MaxSourceBytes, ports.ErrSourceTooLarge)}
+	s := validation.NewCodeBundleSource(&fakeBundle{}, src, &fakeLocator{}, repoPaths, slog.New(slog.NewTextHandler(&logs, nil)))
+
+	out := gather(t, s, failure(nil), remediation.NewEvidence())
+
+	assert.True(t, out.Declined)
+	assert.Equal(t, "the failing node model.svc.a's source is in neither the release's code bundle nor the repository at the trigger's commit", out.Decline)
+	assert.Empty(t, out.Evidence)
+	assert.Equal(t, []string{"services/svc/models/a.sql"}, src.reads)
+	assert.Contains(t, logs.String(), "level=WARN")
+	assert.Contains(t, logs.String(), "services/svc/models/a.sql", "the log names the file")
+	assert.Contains(t, logs.String(), fmt.Sprint(ports.MaxSourceBytes), "the log names the cap")
+}
+
+// A read the repository refuses for another reason, such as a token without
+// permission, stays an error for the runner to retry.
+func TestCodeBundleSource_AForbiddenFallbackReadStaysAStepError(t *testing.T) {
+	forbidden := errors.New("github get p@abc123: status 403: Resource not accessible by integration")
+
+	_, err := newBundleSource(&fakeBundle{}, &fakeSource{err: forbidden}, &fakeLocator{}).
+		Gather(context.Background(), step.ContextInput{Failure: failure(nil), Evidence: remediation.NewEvidence()})
+
+	require.ErrorIs(t, err, forbidden)
+	assert.NotErrorIs(t, err, ports.ErrSourceTooLarge)
 }

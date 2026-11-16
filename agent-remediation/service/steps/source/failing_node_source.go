@@ -61,8 +61,9 @@ func (*FailingNodeSource) Meta() step.Meta {
 }
 
 // Gather reads the files the trigger's source calls for. A failure that has no
-// source file to fix declines the cluster with its reason. A read error other
-// than a missing file, and any error of the promoted graph (which answers an
+// source file to fix declines the cluster with its reason, and so does a file
+// to fix that is over the reader's size cap. A read error other than a missing
+// or oversized file, and any error of the promoted graph (which answers an
 // unknown node with an empty location), is transient and is returned so the
 // work is tried again.
 func (s *FailingNodeSource) Gather(ctx context.Context, in step.ContextInput) (step.ContextOutput, error) {
@@ -162,9 +163,9 @@ func (s *FailingNodeSource) duplicateTable(ctx context.Context, f remediation.Fa
 // gatherWithContext reads the offending file named by the failing node's file
 // path under the repository prefix of service and, when it is a .sql, its
 // co-located yml siblings and the service's dbt_project.yml as context. A
-// missing prefix or a missing offending file is a skip, returned as its reason.
-// A missing directory or context file is left out; any other read error is
-// transient and returned.
+// missing prefix, a missing offending file or one over the size cap is a skip,
+// returned as its reason. A missing directory or a missing or oversized context
+// file is left out; any other read error is transient and returned.
 func (s *FailingNodeSource) gatherWithContext(ctx context.Context, f remediation.Failure, service string) (remediation.SourceFiles, string, error) {
 	g, skipReason, err := s.readOffendingFile(ctx, f, service, f.Target.FilePath)
 	if err != nil || skipReason != "" {
@@ -196,7 +197,9 @@ func (s *FailingNodeSource) gatherWithContext(ctx context.Context, f remediation
 }
 
 // readOffendingFile resolves filePath under service's repository prefix and
-// reads it at the trigger's commit, returning it as a one-file SourceFiles.
+// reads it at the trigger's commit, returning it as a one-file SourceFiles. A
+// file the repository does not have, or one over the size cap, is returned as a
+// skip reason: no fix can edit a file that cannot be shown to the model.
 func (s *FailingNodeSource) readOffendingFile(ctx context.Context, f remediation.Failure, service, filePath string) (remediation.SourceFiles, string, error) {
 	prefix, ok := s.serviceRepoPaths[service]
 	if !ok {
@@ -208,6 +211,9 @@ func (s *FailingNodeSource) readOffendingFile(ctx context.Context, f remediation
 		if errors.Is(err, ports.ErrSourceNotFound) {
 			return remediation.SourceFiles{}, fmt.Sprintf("the offending file %s does not exist at commit %s", offending, f.Trigger.CommitSHA), nil
 		}
+		if errors.Is(err, ports.ErrSourceTooLarge) {
+			return remediation.SourceFiles{}, fmt.Sprintf("the offending file %s is over the %d-byte read limit, so no fix can edit it", offending, ports.MaxSourceBytes), nil
+		}
 		return remediation.SourceFiles{}, "", err // transient: tried again
 	}
 	return remediation.SourceFiles{
@@ -218,14 +224,19 @@ func (s *FailingNodeSource) readOffendingFile(ctx context.Context, f remediation
 	}, "", nil
 }
 
-// addFile reads one context file into g. A file the repository does not have
-// is left out; any other read error is returned.
+// addFile reads one context file into g. A file the repository does not have is
+// left out, and so is one over the size cap, which is logged; any other read
+// error is returned.
 func (s *FailingNodeSource) addFile(ctx context.Context, f remediation.Failure, g *remediation.SourceFiles, p string) error {
 	if _, seen := g.Files[p]; seen {
 		return nil
 	}
 	c, err := s.source.ReadFile(ctx, f.Trigger.Repo, f.Trigger.CommitSHA, p)
 	if errors.Is(err, ports.ErrSourceNotFound) {
+		return nil
+	}
+	if errors.Is(err, ports.ErrSourceTooLarge) {
+		s.logger.Warn("context file left out: over the read limit", "path", p, "max_bytes", ports.MaxSourceBytes)
 		return nil
 	}
 	if err != nil {
