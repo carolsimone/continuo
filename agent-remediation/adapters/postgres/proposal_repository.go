@@ -13,6 +13,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // Queryer is the minimal sqlx surface satisfied by both *sqlx.DB and *sqlx.Tx.
@@ -352,6 +353,7 @@ func editsOrLegacy(raw []byte, filePath, contentURI, diffURI string) []proposal.
 type nodeOutcomeRow struct {
 	Status string `json:"status"`
 	Reason string `json:"reason,omitempty"`
+	Code   string `json:"code,omitempty"`
 }
 
 // marshalNodeOutcomes encodes the per-node outcomes map as the node_outcomes
@@ -360,7 +362,7 @@ type nodeOutcomeRow struct {
 func marshalNodeOutcomes(m map[string]proposal.NodeOutcome) ([]byte, error) {
 	rows := make(map[string]nodeOutcomeRow, len(m))
 	for nodeID, o := range m {
-		rows[nodeID] = nodeOutcomeRow{Status: string(o.Status), Reason: o.Reason}
+		rows[nodeID] = nodeOutcomeRow{Status: string(o.Status), Reason: o.Reason, Code: string(o.Code)}
 	}
 	return json.Marshal(rows)
 }
@@ -376,7 +378,7 @@ func unmarshalNodeOutcomes(raw []byte) map[string]proposal.NodeOutcome {
 	}
 	outcomes := make(map[string]proposal.NodeOutcome, len(rows))
 	for nodeID, r := range rows {
-		outcomes[nodeID] = proposal.NodeOutcome{Status: proposal.Status(r.Status), Reason: r.Reason}
+		outcomes[nodeID] = proposal.NodeOutcome{Status: proposal.Status(r.Status), Reason: r.Reason, Code: model.HandoverReason(r.Code)}
 	}
 	return outcomes
 }

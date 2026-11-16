@@ -1084,11 +1084,14 @@ func (x *FileEdit) GetTargetNodeId() string {
 }
 
 // NodeOutcome is how one failing node's attempt ended: verifying, proposed,
-// failed, skipped, or escalated, with the reason for that outcome.
+// failed, skipped, or escalated, with the reason for that outcome. code is the
+// handover_reason vocabulary value that says why the node was handed over when
+// its outcome is not part of a verified fix, and is empty otherwise.
 type NodeOutcome struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Status        string                 `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
 	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	Code          string                 `protobuf:"bytes,3,opt,name=code,proto3" json:"code,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1133,6 +1136,13 @@ func (x *NodeOutcome) GetStatus() string {
 func (x *NodeOutcome) GetReason() string {
 	if x != nil {
 		return x.Reason
+	}
+	return ""
+}
+
+func (x *NodeOutcome) GetCode() string {
+	if x != nil {
+		return x.Code
 	}
 	return ""
 }
@@ -1455,10 +1465,11 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\vcontent_uri\x18\x02 \x01(\tR\n" +
 	"contentUri\x12\x19\n" +
 	"\bdiff_uri\x18\x03 \x01(\tR\adiffUri\x12$\n" +
-	"\x0etarget_node_id\x18\x04 \x01(\tR\ftargetNodeId\"=\n" +
+	"\x0etarget_node_id\x18\x04 \x01(\tR\ftargetNodeId\"Q\n" +
 	"\vNodeOutcome\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xa2\x01\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\x12\x12\n" +
+	"\x04code\x18\x03 \x01(\tR\x04code\"\xa2\x01\n" +
 	"\fVerification\x12\x18\n" +
 	"\aservice\x18\x01 \x01(\tR\aservice\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x15\n" +

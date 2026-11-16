@@ -15,6 +15,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // RemediationRepository is the Postgres-backed RemediationRepository port. Bound
@@ -145,7 +146,7 @@ func (row clusterRow) toDomain() (remediation.Cluster, error) {
 		if err := json.Unmarshal(row.Outcome, &o); err != nil {
 			return remediation.Cluster{}, fmt.Errorf("decode outcome of cluster %d of remediation %s: %w", row.Cluster, row.RemediationID, err)
 		}
-		outcome = &proposal.NodeOutcome{Status: proposal.Status(o.Status), Reason: o.Reason}
+		outcome = &proposal.NodeOutcome{Status: proposal.Status(o.Status), Reason: o.Reason, Code: model.HandoverReason(o.Code)}
 	}
 	var members []string
 	if len(row.Members) > 0 {
@@ -676,7 +677,7 @@ func (r *RemediationRepository) SaveTry(ctx context.Context, t remediation.Try) 
 func (r *RemediationRepository) SaveCluster(ctx context.Context, c remediation.Cluster) error {
 	var outcome any
 	if c.Outcome != nil {
-		raw, err := json.Marshal(nodeOutcomeRow{Status: string(c.Outcome.Status), Reason: c.Outcome.Reason})
+		raw, err := json.Marshal(nodeOutcomeRow{Status: string(c.Outcome.Status), Reason: c.Outcome.Reason, Code: string(c.Outcome.Code)})
 		if err != nil {
 			return fmt.Errorf("encode cluster outcome: %w", err)
 		}

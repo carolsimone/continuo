@@ -17,6 +17,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
@@ -1516,6 +1517,51 @@ func TestProposalRepositoryMarkVerifyFailed(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "verification run verify-rel-def failed: validation rejected 3 rows", got2.VerifyError,
 		"the no-op call must not overwrite the already-recorded verify_error")
+}
+
+// TestProposalRepository_KeepsTheNodeOutcomeCode verifies that the reason code
+// of a node outcome survives the node_outcomes column through Get and List, that
+// the stored JSON names it "code", and that an outcome with no code stores no
+// "code" key at all.
+func TestProposalRepository_KeepsTheNodeOutcomeCode(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db, nil)
+
+	outcomes := map[string]proposal.NodeOutcome{
+		"model.p.handed": {Status: proposal.StatusEscalated, Reason: "the tries are spent", Code: model.HandoverReasonTriesSpent},
+		"model.p.fixed":  {Status: proposal.StatusProposed},
+	}
+	id := seedProposal(t, repo, db, proposal.Proposal{
+		Source:          "validation",
+		ReleaseID:       "r-outcome-code-1",
+		NodeID:          "model.p.handed",
+		ResolvedNodeIDs: []string{"model.p.fixed", "model.p.handed"},
+		ErrorSignature:  "sig",
+		Attempt:         1,
+		Status:          proposal.StatusProposed,
+		NodeOutcomes:    outcomes,
+		CreatedAt:       time.Now().UTC(),
+	})
+
+	got, err := repo.Get(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, outcomes, got.NodeOutcomes, "Get must return the code of the outcome that carries one")
+
+	listed, err := repo.List(ctx, repository.ProposalFilter{ReleaseID: "r-outcome-code-1"})
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	require.Equal(t, outcomes, listed[0].NodeOutcomes, "List must return the code of the outcome that carries one")
+
+	var code string
+	require.NoError(t, db.GetContext(ctx, &code,
+		`SELECT node_outcomes->'model.p.handed'->>'code' FROM proposal WHERE id=$1`, id))
+	require.Equal(t, string(model.HandoverReasonTriesSpent), code, "stored JSON must use the key \"code\"")
+
+	var hasCode bool
+	require.NoError(t, db.GetContext(ctx, &hasCode,
+		`SELECT node_outcomes->'model.p.fixed' ? 'code' FROM proposal WHERE id=$1`, id))
+	require.False(t, hasCode, "an outcome with no code stores no \"code\" key")
 }
 
 // TestProposalRepositoryMarkVerifiedRewritesNodeOutcomes verifies that the

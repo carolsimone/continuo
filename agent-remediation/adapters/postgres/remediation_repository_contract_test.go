@@ -24,6 +24,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // contractEnv is one implementation of the repositories under test: the
@@ -548,7 +549,7 @@ func TestRemediationRepository_GetReturnsTheCurrentTryWithOrderedChildren(t *tes
 		second := newTry(r.ID, 2, remediation.TryDrafting, contractBase.Add(2*time.Hour))
 		second.FileRevisions = map[string]string{"a.sql": "r1", "b.sql": "r2"}
 		require.NoError(t, env.remediations.SaveTry(ctx, second))
-		outcome := &proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: "no fix"}
+		outcome := &proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: "no fix", Code: model.HandoverReasonDeclined}
 		require.NoError(t, env.remediations.SaveCluster(ctx, remediation.Cluster{
 			RemediationID: r.ID, Try: 2, Cluster: 2, Kind: workflow.ClusterSharedUpstream, TargetNodeID: "up",
 			Members: []string{"a", "b"}, TypeName: "dbt", Status: remediation.ClusterHandedOver, Round: 3, Outcome: outcome,
