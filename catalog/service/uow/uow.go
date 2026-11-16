@@ -53,4 +53,5 @@ type Tx interface {
 	Topology() repository.ReleasePromotionRepository
 	CodeVersions() repository.CodeVersionRepository
 	CaseBase() repository.CaseBaseRepository
+	Contracts() repository.ContractRepository
 }

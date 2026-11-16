@@ -228,7 +228,9 @@ const bulkNodes = 1201
 
 // seedEveryLabel writes a graph that holds every label and relationship type
 // of the schema: two versions of one node and versions of two nodes that
-// share a content hash (composite identities), two pull requests of one
+// share a content hash (composite identities), a contract history with a
+// revert (two promotions of one contract version) and a retired node's
+// contract, two pull requests of one
 // proposal, a retired node, a node with two labels, a self-loop, two
 // identical relationships between one pair and two that differ only in their
 // properties, relationship properties, datetimes stored with an offset
@@ -285,7 +287,23 @@ CREATE (p)-[:HAS_PR]->(prb)
 CREATE (p)-[:EDITED {service: 'svc-a', merged_at: $utc}]->(a)
 CREATE (p)-[:EDITED {service: 'svc-b'}]->(a)
 CREATE (p)-[:EDITED {service: 'svc-a'}]->(d)
-CREATE (p)-[:EDITED]->(x)`, map[string]any{
+CREATE (p)-[:EDITED]->(x)
+CREATE (ka:ContractVersion {tenant_id: $tenant_id, unique_id: 'analytics.table_a', contract_hash: 'k1', family: 'python',
+  service: 'svc', first_release_id: 'r5', document: '{"id":"analytics.table_a","team":{"name":"ü"}}', mark: $mark})
+CREATE (kb:ContractVersion {tenant_id: $tenant_id, unique_id: 'analytics.table_a', contract_hash: 'k2', family: 'python',
+  service: 'svc', first_release_id: 'r6', document: '{"id":"analytics.table_a"}', mark: $mark})
+CREATE (kd:ContractVersion {tenant_id: $tenant_id, unique_id: 'analytics.table_d', contract_hash: 'k1', family: 'python',
+  service: 'svc', first_release_id: 'r6', document: '{"id":"analytics.table_d"}', mark: $mark})
+CREATE (a)-[:CONTRACT_PROMOTED {version: 1, promotion_seq: 5, release_id: 'r5', promoted_at: $utc, content_hash: 'h1',
+  continuo_contracts: '0.2.0', source_path: 'contracts/a.odcs.yaml'}]->(ka)
+CREATE (a)-[:CONTRACT_PROMOTED {version: 2, promotion_seq: 6, release_id: 'r6', promoted_at: $utc, content_hash: 'h2',
+  continuo_contracts: '0.2.0', source_path: 'contracts/a.odcs.yaml'}]->(kb)
+CREATE (a)-[:CONTRACT_PROMOTED {version: 3, promotion_seq: 7, release_id: 'r7', promoted_at: $utc, content_hash: 'h2',
+  continuo_contracts: '0.2.0', source_path: 'contracts/a.odcs.yaml', same_as_version: 1}]->(ka)
+CREATE (a)-[:CURRENT_CONTRACT {version: 3, promotion_seq: 7, release_id: 'r7', promoted_at: $utc}]->(ka)
+CREATE (d)-[:CONTRACT_PROMOTED {version: 1, promotion_seq: 6, release_id: 'r6', promoted_at: $utc, content_hash: 'h1',
+  continuo_contracts: '0.2.0', source_path: 'contracts/d.odcs.yaml'}]->(kd)
+CREATE (d)-[:CURRENT_CONTRACT {version: 1, promotion_seq: 6, release_id: 'r6', promoted_at: $utc}]->(kd)`, map[string]any{
 		"mark": mark, "utc": utc, "long": strings.Repeat("select 1 -- ü\n", 80000),
 		"group": streams.CatalogReleaseTopology, "outbox_entry_id": uuid.NewString(),
 	})
@@ -358,6 +376,34 @@ func renderRecords(nodes []export.NodeRecord, rels []export.RelRecord) []string 
 		out = append(out, r.Type+" "+r.From.Label+renderValue(r.From.Key)+"->"+r.To.Label+renderValue(r.To.Key)+" "+renderProps(r.Props))
 	}
 	return out
+}
+
+// TestExportImport_RoundTripsContractHistory backs up and restores contract
+// history the contracts group wrote: the versions, every promotion edge and
+// the pointer survive, and the read side serves the same current contract.
+func TestExportImport_RoundTripsContractHistory(t *testing.T) {
+	s := newSwapFixture(t)
+	s.seedLiveNode(kpisNode)
+	s.designHistory()
+	g := &graphFixture{t: t, client: s.client}
+	wantNodes, wantRels := g.dump(s.tenant)
+
+	data := g.export(s.tenant)
+	h, _, _ := records(t, data)
+	assert.Equal(t, int64(2), h.Nodes[string(graphschema.ContractVersion)])
+	assert.Equal(t, int64(3), h.Relationships[string(graphschema.RelContractPromoted)])
+	assert.Equal(t, int64(1), h.Relationships[string(graphschema.RelCurrentContract)])
+
+	g.restore(s.tenant, data)
+
+	gotNodes, gotRels := g.dump(s.tenant)
+	assert.Equal(t, wantNodes, gotNodes, "the restored nodes")
+	assert.Equal(t, wantRels, gotRels, "the restored relationships")
+	cur, err := NewContractQueryRepository(s.client).Current(context.Background(), s.tenant, kpisNode)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), cur.Version)
+	assert.Equal(t, int64(1), cur.SameAsVersion)
+	assert.Equal(t, contractDocument(kpisNode, "service-py"), cur.Document)
 }
 
 func TestExportRestore_RoundTripsEveryPropertyType(t *testing.T) {

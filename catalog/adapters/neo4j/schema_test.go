@@ -34,6 +34,7 @@ var wantConstraints = map[string]schemaEntry{
 	"pull_request_unique":             {"PullRequest", []string{"tenant_id", "proposal_id", "service"}},
 	"processed_message_unique":        {"ProcessedMessage", []string{"tenant_id", "group", "message_id"}},
 	"processed_message_outbox_unique": {"ProcessedMessage", []string{"tenant_id", "group", "outbox_entry_id"}},
+	"contract_version_unique":         {"ContractVersion", []string{"tenant_id", "unique_id", "contract_hash"}},
 }
 
 // wantIndexes is the graph's range indexes that back no constraint, by name.
@@ -44,6 +45,7 @@ var wantIndexes = map[string]schemaEntry{
 	"rejection_node_id":               {"Rejection", []string{"tenant_id", "node_id"}},
 	"rejection_category_reason":       {"Rejection", []string{"tenant_id", "category", "reason"}},
 	"error_signature_category_reason": {"ErrorSignature", []string{"tenant_id", "category", "reason"}},
+	"contract_version_uid":            {"ContractVersion", []string{"tenant_id", "unique_id"}},
 }
 
 // graphSchemaState is what SHOW CONSTRAINTS and SHOW INDEXES report.
@@ -189,4 +191,36 @@ func TestCatalogSchema_EveryLabelHasItsIdentityConstraint(t *testing.T) {
 		assert.Contains(t, o.statement(), "(n.tenant_id, ", "%s leads with tenant_id", o.name)
 		assert.Contains(t, o.statement(), " IF NOT EXISTS ", "%s is created only when absent", o.name)
 	}
+}
+
+// TestInitSchema_CreatesTheContractVersionConstraint applies the schema to an
+// empty graph of its own: a contract version is unique by tenant, node and
+// contract hash, and its node's history is indexed by tenant and node.
+func TestInitSchema_CreatesTheContractVersionConstraint(t *testing.T) {
+	ctx := context.Background()
+	client := ownNeo4j(t)
+	require.NoError(t, InitSchema(ctx, client, quietLogger()))
+
+	state := readGraphSchema(t, client)
+	assert.Equal(t, schemaEntry{"ContractVersion", []string{"tenant_id", "unique_id", "contract_hash"}},
+		state.constraints["contract_version_unique"])
+	assert.Contains(t, state.constraintTypes["contract_version_unique"], "UNIQUENESS")
+	assert.Equal(t, schemaEntry{"ContractVersion", []string{"tenant_id", "unique_id"}}, state.ranges["contract_version_uid"])
+	assert.Empty(t, state.rangeOwners["contract_version_uid"], "the history index backs no constraint")
+
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer func() { _ = s.Close(ctx) }()
+	create := func(tenant, hash string) error {
+		res, err := s.Run(ctx, `CREATE (:ContractVersion {tenant_id: $tenant_id, unique_id: 'analytics.kpis', contract_hash: $hash})`,
+			map[string]any{"tenant_id": tenant, "hash": hash})
+		if err != nil {
+			return err
+		}
+		_, err = res.Consume(ctx)
+		return err
+	}
+	require.NoError(t, create("t1", "sha256:a"))
+	require.NoError(t, create("t1", "sha256:b"), "another contract of the node is another version")
+	require.NoError(t, create("t2", "sha256:a"), "another tenant's version of the same contract")
+	assert.Error(t, create("t1", "sha256:a"), "a second version with the same identity is refused")
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/carolsimone/continuo/catalog/domain"
 	"github.com/carolsimone/continuo/catalog/domain/casebase"
 	"github.com/carolsimone/continuo/catalog/domain/codeversion"
+	"github.com/carolsimone/continuo/catalog/domain/contractversion"
 	"github.com/carolsimone/continuo/catalog/domain/topology"
 	"github.com/carolsimone/continuo/catalog/serialization/exportfile"
 	"github.com/carolsimone/continuo/catalog/service/ports"
@@ -61,16 +62,19 @@ type isolationRow struct {
 }
 
 // isolationRepositories are the repositories of this package: the readers
-// the gRPC server serves from, the three that write through uow.Tx, the
+// the gRPC server and the live contracts folder serve from, the four that
+// write through uow.Tx, the
 // export lease, the unit of work, and the export and import of a tenant's
 // graph. Each exported method of each has a row.
 var isolationRepositories = []any{
 	(*NodeQueryRepository)(nil),
 	(*CodeVersionQueryRepository)(nil),
 	(*PrecedentQueryRepository)(nil),
+	(*ContractQueryRepository)(nil),
 	(*releasePromotionRepository)(nil),
 	(*codeVersionRepository)(nil),
 	(*caseBaseRepository)(nil),
+	(*contractVersionRepository)(nil),
 	(*exportLease)(nil),
 	(*unitOfWork)(nil),
 	(*graphExporter)(nil),
@@ -84,6 +88,7 @@ type isolationFixture struct {
 	nodes      *NodeQueryRepository
 	versions   *CodeVersionQueryRepository
 	precedents *PrecedentQueryRepository
+	contracts  *ContractQueryRepository
 	lease      ports.ExportLease
 	// sharedMessage is a message id B's topology group processed; A never did.
 	sharedMessage string
@@ -179,6 +184,7 @@ func newIsolationFixture(t *testing.T) *isolationFixture {
 		nodes:         NewNodeQueryRepository(a.client, quietLogger()),
 		versions:      NewCodeVersionQueryRepository(a.client, quietLogger()),
 		precedents:    NewPrecedentQueryRepository(a.client, quietLogger()),
+		contracts:     NewContractQueryRepository(a.client),
 		lease:         NewExportLease(a.client, quietLogger()),
 		sharedMessage: "iso-shared-" + uuid.NewString(),
 	}
@@ -194,8 +200,9 @@ func newIsolationFixture(t *testing.T) *isolationFixture {
 
 // seedIsolationTenant writes one tenant's graph: releases r1 and r2 carrying
 // table_up and table_down (down depends on up), two versions of each, a shared
-// unit with two versions, and a failure of table_down that a version and a
-// merged fix PR, which edited table_up, resolved. Each value a read returns
+// unit with two versions, two contracts of table_up, and a failure of
+// table_down that a version and a merged fix PR, which edited table_up,
+// resolved. Each value a read returns
 // carries mark; withOnlyB adds the node, unit and signature only B holds.
 func seedIsolationTenant(f *swapFixture, mark string, testCount int, withOnlyB bool) {
 	f.t.Helper()
@@ -224,6 +231,11 @@ func seedIsolationTenant(f *swapFixture, mark string, testCount int, withOnlyB b
 			units = append(units, codeversion.CodeUnitVersion{UnitID: isoOnlyBUnit, Checksum: unitSum, Source: "source-" + mark})
 		}
 		f.writeBatch(withUnits(in, units...))
+		contracts := []contractversion.Incoming{isoContract(isoUp, seq, mark)}
+		if withOnlyB {
+			contracts = append(contracts, isoContract(isoOnlyB, seq, mark))
+		}
+		f.writeContracts(contractPromotion(rel, seq), contracts...)
 	}
 
 	rej := rejectionOf("r-failed", isoDown, isoSig, promotedAtOf(1).Add(30*time.Minute))
@@ -240,6 +252,16 @@ func seedIsolationTenant(f *swapFixture, mark string, testCount int, withOnlyB b
 		ClosedAt: promotedAtOf(2), ResolvedNodeIDs: []string{isoDown},
 		Edits: []casebase.EditOutcome{{Path: "models/up-" + mark + ".sql", TargetNodeID: isoUp, Diff: "diff-" + mark}},
 	})
+}
+
+// isoContract is the contract uniqueID's promotion seq carries in the tenant
+// that mark names: its hash and its stored form carry the mark.
+func isoContract(uniqueID string, seq int64, mark string) contractversion.Incoming {
+	return contractversion.Incoming{
+		UniqueID: uniqueID, ContractHash: fmt.Sprintf("k%d-%s", seq, mark), ContentHash: "content-" + mark,
+		Family: "python", Service: "svc", SourcePath: "contracts/" + mark + ".odcs.yaml",
+		Document: map[string]any{"id": uniqueID, "team": map[string]any{"name": mark}},
+	}
 }
 
 func (f *isolationFixture) topologyMarker(tenant string) uow.Marker {
@@ -377,6 +399,37 @@ func (f *isolationFixture) rows() []isolationRow {
 			require.NoError(t, err)
 			assert.Empty(t, none)
 		}},
+		{"ContractQueryRepository.Current", func(t *testing.T) {
+			cur, err := f.contracts.Current(ctx, tenant(), isoUp)
+			require.NoError(t, err)
+			assert.Equal(t, int64(2), cur.Version)
+			onlyA(t, cur)
+			_, err = f.contracts.Current(ctx, tenant(), isoOnlyB)
+			assert.ErrorIs(t, err, contractversion.ErrNotFound)
+		}},
+		{"ContractQueryRepository.History", func(t *testing.T) {
+			history, err := f.contracts.History(ctx, tenant(), isoUp, 0)
+			require.NoError(t, err)
+			require.Len(t, history, 2)
+			onlyA(t, history)
+			history, err = f.contracts.History(ctx, tenant(), isoOnlyB, 0)
+			require.NoError(t, err)
+			assert.Empty(t, history)
+		}},
+		{"ContractQueryRepository.ByVersion", func(t *testing.T) {
+			first, err := f.contracts.ByVersion(ctx, tenant(), isoUp, 1)
+			require.NoError(t, err)
+			onlyA(t, first)
+			_, err = f.contracts.ByVersion(ctx, tenant(), isoOnlyB, 1)
+			assert.ErrorIs(t, err, contractversion.ErrNotFound)
+		}},
+		{"ContractQueryRepository.Live", func(t *testing.T) {
+			live, err := f.contracts.Live(ctx, tenant())
+			require.NoError(t, err)
+			require.Len(t, live, 1, "A's one live contract, not B's two")
+			assert.Equal(t, isoUp, live[0].UniqueID)
+			onlyA(t, live)
+		}},
 		{"releasePromotionRepository.PromoteRelease", func(t *testing.T) {
 			assert.Equal(t, topology.PromotionApplied, f.a.promoteAt("r3", 3, releaseOf(modelNode(isoUp)), promotedAtOf(3)))
 			assert.Equal(t, []string{isoUp}, f.a.activeIDs())
@@ -385,6 +438,17 @@ func (f *isolationFixture) rows() []isolationRow {
 			f.a.writeBatch(batchOf("r3", 3, versionOf(isoUp, "up3-"+isoMarkA), versionOf(isoOnlyB, "onlyb3-"+isoMarkA)))
 			assert.Equal(t, "up3-"+isoMarkA, f.a.current(isoUp))
 			assert.Equal(t, "onlyb3-"+isoMarkA, f.a.current(isoOnlyB), "A gets its own inactive node, not B's")
+		}},
+		{"contractVersionRepository.ReadStates", func(t *testing.T) {
+			states := f.a.contractStates(isoUp, isoOnlyB)
+			assert.Equal(t, "k2-"+isoMarkA, states[isoUp].CurrentHash)
+			assert.Equal(t, map[string]int64{"k1-" + isoMarkA: 1, "k2-" + isoMarkA: 2}, states[isoUp].FirstVersionByHash)
+			assert.Empty(t, states[isoOnlyB].CurrentHash, "A's inactive node has no contract, whatever B's has")
+		}},
+		{"contractVersionRepository.Write", func(t *testing.T) {
+			f.a.writeContracts(contractPromotion("r3", 3), isoContract(isoOnlyB, 3, isoMarkA))
+			hash, _ := f.a.contractPointer(isoOnlyB)
+			assert.Equal(t, "k3-"+isoMarkA, hash, "A's node takes A's contract")
 		}},
 		{"caseBaseRepository.RecordRejection", func(t *testing.T) {
 			f.a.recordRejection(rejectionOf("r-failed-again", isoOnlyB, isoOnlyBSig, promotedAtOf(3)))
