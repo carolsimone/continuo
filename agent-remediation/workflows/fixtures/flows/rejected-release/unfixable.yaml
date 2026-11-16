@@ -1,0 +1,36 @@
+# The classifier read a database that refused the connection: a new release run
+# clears that, and no change to the release's source fixes it. It marked the
+# node unfixable, so the runner hands it over without a model call and records
+# one skipped attempt.
+kind: fixture
+version: 1
+flow: rejected-release
+scenario: unfixable
+trigger:
+  source: validation
+  release_id: rel-flow-unfixable
+  repo: o/repo
+  commit_sha: sha-unfixable
+  code_bundle_uri: s3://continuo/code-bundles/rel-flow-unfixable/bundle.json
+  nodes:
+    - node_id: model.sales.orders
+      category: infra_transient
+      error_signature: sig-connection-refused
+      reason: "infra:connection_refused"
+      error_excerpt: 'could not connect to server: connection refused'
+      candidate_artifact_uri: s3://candidates/rel-flow-unfixable/model.sales.orders.sql
+      file_path: models/orders.sql
+      service: sales
+      node_type: dbt-model
+      unfixable:
+        reason: classifier_infra
+        detail: "infra:connection_refused"
+service_repo_paths:
+  sales: services/sales
+objects:
+  s3://candidates/rel-flow-unfixable/model.sales.orders.sql: "select id, amount from analytics.raw_orders"
+answers:
+  pass:
+    - proposed_sql: "select id, total as amount from analytics.raw_orders"
+      rationale: unused, the classifier marked the node unfixable
+      confidence: high

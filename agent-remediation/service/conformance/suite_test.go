@@ -139,6 +139,33 @@ func TestSuite_AFlowScenarioWithoutAFixtureFails(t *testing.T) {
 	}
 }
 
+// The unfixable scenario plays a failure the classifier marked unfixable: a
+// fixture whose node carries no such mark does not test it, so the scenario
+// fails, and so do the hand-over expectations the run could not meet.
+func TestSuite_TheUnfixableScenarioFailsWhenTheNodeIsNotMarkedUnfixable(t *testing.T) {
+	s := builtinSuite(t)
+	s.Fixtures = slices.Clone(s.Fixtures)
+	for i, f := range s.Fixtures {
+		if f.Scenario == conformance.FlowUnfixable {
+			trigger := f.Trigger
+			trigger.Nodes = slices.Clone(f.Trigger.Nodes)
+			for j := range trigger.Nodes {
+				trigger.Nodes[j].Unfixable = nil
+			}
+			s.Fixtures[i].Trigger = trigger
+		}
+	}
+
+	for _, r := range s.RunFlowScenarios(ctx, flowName) {
+		if r.Scenario != conformance.FlowUnfixable {
+			assert.NoError(t, r.Err, "scenario %s", r.Scenario)
+			continue
+		}
+		require.Error(t, r.Err)
+		assert.Contains(t, r.Err.Error(), "node model.sales.orders of the trigger is not marked unfixable")
+	}
+}
+
 // A fixture whose passing answer edits a file the model was never shown is
 // refused by pre-flight, so every round the scenario scripted to pass asks for
 // a revision instead, and each scenario that expects a proposal fails, most on

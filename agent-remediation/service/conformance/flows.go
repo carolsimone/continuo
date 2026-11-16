@@ -11,6 +11,8 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // The scenarios a flow runs through, each played by a flow fixture.
@@ -28,6 +30,8 @@ const (
 	FlowCrossServiceDeclines Scenario = "cross_service_declines"
 	// FlowNoType: a failure no type handles.
 	FlowNoType Scenario = "no_type"
+	// FlowUnfixable: the classifier marked the failing node unfixable.
+	FlowUnfixable Scenario = "unfixable"
 	// FlowMaintenance: the trigger arrives in maintenance mode.
 	FlowMaintenance Scenario = "maintenance"
 )
@@ -35,7 +39,7 @@ const (
 // FlowScenarios is every scenario a flow runs through, in run order.
 func FlowScenarios() []Scenario {
 	return []Scenario{FlowTwoTypesOneService, FlowTwoServices, FlowCrossClusterFails, FlowSharedUpstreamDeclines,
-		FlowCrossServiceDeclines, FlowNoType, FlowMaintenance}
+		FlowCrossServiceDeclines, FlowNoType, FlowUnfixable, FlowMaintenance}
 }
 
 // RunFlowScenarios runs the named flow through every flow scenario, each in a
@@ -127,17 +131,22 @@ func (sr *scenarioRun) expectFlow(files workflow.Set, f Fixture, sc Scenario) er
 			e.runsPerEditedService(as[0], f.ServiceRepoPaths)
 		}
 		e.runs(1)
+		e.noHandedOver()
 	case FlowTwoServices:
 		if as := e.attempts(proposal.StatusProposed); len(as) == 1 {
 			e.nodes(as[0], proposal.StatusProposed)
 			e.runsPerEditedService(as[0], f.ServiceRepoPaths)
 		}
 		e.runs(2)
+		e.noHandedOver()
 	case FlowCrossClusterFails:
 		flow := files.Flows[f.Flow]
 		failed := slices.Repeat([]proposal.Status{proposal.StatusFailed}, flow.Tries)
 		as := e.attempts(append(failed, proposal.StatusEscalated)...)
 		e.crossClusterFailedEveryTry(flow, as[:min(flow.Tries, len(as))])
+		if len(as) == flow.Tries+1 {
+			e.handedOver(as[flow.Tries], flow.Tries, codes(model.HandoverReasonUnverifiableEdits, e.trigger.NodeIDs()...))
+		}
 		e.proposedEvents(0)
 		e.runs(0)
 	case FlowSharedUpstreamDeclines:
@@ -152,28 +161,76 @@ func (sr *scenarioRun) expectFlow(files workflow.Set, f Fixture, sc Scenario) er
 	case FlowNoType:
 		if as := e.attempts(proposal.StatusSkipped); len(as) == 1 {
 			e.nodes(as[0], proposal.StatusSkipped)
+			e.handedOverInFirstTry(as[0], codes(model.HandoverReasonNoType, e.trigger.NodeIDs()...))
 		}
 		clusters := e.clustersOfTry1()
 		e.that(len(clusters) > 0, "try 1 has no cluster")
 		for _, c := range clusters {
 			e.that(c.Status == remediation.ClusterHandedOver && c.TypeName == "", "cluster %d is %s with type %q", c.Cluster, c.Status, c.TypeName)
 		}
-		ran := 0
-		for _, row := range sr.w.Steps(sr.id) {
-			if row.Cluster != remediation.FlowCluster {
-				ran++
-			}
-		}
-		e.that(ran == 0, "a cluster no type handles ran %d steps", ran)
+		e.onlyHandOverRan(files.Flows[f.Flow])
 		e.modelCalls(0)
+	case FlowUnfixable:
+		e.unfixableHandedOver(files.Flows[f.Flow])
 	case FlowMaintenance:
 		if as := e.attempts(proposal.StatusSkipped); len(as) == 1 {
 			e.nodes(as[0], proposal.StatusSkipped)
 		}
 		e.that(len(sr.w.Tries(sr.id)) == 0, "maintenance mode opened %d tries", len(sr.w.Tries(sr.id)))
 		e.modelCalls(0)
+		e.noHandedOver()
 	}
 	return e.err()
+}
+
+// onlyHandOverRan expects no step to have run in the remediation but the
+// flow's give-up output, which journals one flow-level row of try 1: no
+// cluster ran a step, and no cross-cluster check or gate ran.
+func (e *expectation) onlyHandOverRan(flow workflow.Flow) {
+	output, rows, others := string(flow.OnGiveUp.Action), 0, 0
+	for _, row := range e.sr.w.Steps(e.sr.id) {
+		if row.Cluster == remediation.FlowCluster && row.Kind == string(step.KindOutput) && row.Step == output {
+			e.that(row.Try == firstTry && row.Status == remediation.StepDone, "the %s row is %s in try %d, want done in try %d", output, row.Status, row.Try, firstTry)
+			rows++
+			continue
+		}
+		others++
+	}
+	e.that(others == 0, "a remediation that hands every node over ran %d steps besides the output %s", others, output)
+	e.that(rows == 1, "the journal holds %d rows of the output %s, want 1", rows, output)
+}
+
+// unfixableHandedOver expects every failing node of the trigger, each marked
+// unfixable by the classifier, to have been handed over with the classifier's
+// reason and detail in the remediation's first try, with no model call, no
+// step but the flow's give-up output, no verification run and one skipped
+// attempt.
+func (e *expectation) unfixableHandedOver(flow workflow.Flow) {
+	want := map[string]model.HandoverReason{}
+	for _, n := range e.trigger.Nodes {
+		e.that(n.Unfixable != nil, "node %s of the trigger is not marked unfixable, so the fixture does not test the scenario", n.NodeID)
+		if n.Unfixable != nil {
+			want[n.NodeID] = n.Unfixable.Reason
+		}
+	}
+	if as := e.attempts(proposal.StatusSkipped); len(as) == 1 {
+		e.nodes(as[0], proposal.StatusSkipped)
+		for _, n := range e.trigger.Nodes {
+			if n.Unfixable != nil {
+				o := as[0].Proposal.NodeOutcomes[n.NodeID]
+				e.that(o.Reason == n.Unfixable.Detail, "node %s ended the attempt with the reason %q, want the classifier's detail %q", n.NodeID, o.Reason, n.Unfixable.Detail)
+			}
+		}
+		e.handedOverInFirstTry(as[0], want)
+	}
+	clusters := e.clustersOfTry1()
+	e.that(len(clusters) == len(e.trigger.Nodes), "try 1 has %d clusters, want one for each of the %d nodes", len(clusters), len(e.trigger.Nodes))
+	for _, c := range clusters {
+		e.that(c.Status == remediation.ClusterHandedOver, "cluster %d is %s, not handed_over", c.Cluster, c.Status)
+	}
+	e.onlyHandOverRan(flow)
+	e.modelCalls(0)
+	e.runs(0)
 }
 
 // firstOfKind returns try 1's first cluster of kind k.
@@ -208,11 +265,7 @@ func (sc Script) everyTry(tries int) Script {
 // same calls in every try, and each later try's requests to show the finding
 // that failed the try before it.
 func (e *expectation) crossClusterFailedEveryTry(flow workflow.Flow, as []Attempt) {
-	tries := e.sr.w.Tries(e.sr.id)
-	e.that(len(tries) == flow.Tries, "the remediation made %d tries, want %d", len(tries), flow.Tries)
-	for _, t := range tries {
-		e.that(t.Status == remediation.TryFailed, "try %d is %s, not failed", t.Try, t.Status)
-	}
+	e.everyTryFailed(flow.Tries)
 	findings := make([][]remediation.Finding, len(as))
 	for i, a := range as {
 		findings[i] = e.crossClusterFindings(flow, i+1)

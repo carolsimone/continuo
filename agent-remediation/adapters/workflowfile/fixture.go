@@ -16,6 +16,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/conformance"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // fixtureFile is the shape of a `kind: fixture` document. The trigger uses the
@@ -65,6 +66,14 @@ type nodeFile struct {
 	OtherService         string         `yaml:"other_service"`
 	OtherFilePath        string         `yaml:"other_file_path"`
 	ChangedAncestors     []ancestorFile `yaml:"changed_ancestors"`
+	Unfixable            *unfixableFile `yaml:"unfixable"`
+}
+
+// unfixableFile is the classifier's verdict that no fix can reach a failing
+// node: its hand-over reason and the detail that says why.
+type unfixableFile struct {
+	Reason string `yaml:"reason"`
+	Detail string `yaml:"detail"`
 }
 
 type ancestorFile struct {
@@ -169,8 +178,9 @@ type patchFile struct {
 // recursively, in path order, and skips every other document without
 // decoding it. A fixture's fields are checked as a flow's and a type's are: an
 // unknown field, a YAML alias, an unsupported version, a fixture that names
-// both or neither of a type and a flow, a flow fixture with no scenario, and a
-// trigger with no failing node are refused, each with the file and the line.
+// both or neither of a type and a flow, a flow fixture with no scenario, a
+// trigger with no failing node and a node marked unfixable with a reason no
+// classifier gives are refused, each with the file and the line.
 // LoadFixtures returns every problem it finds, joined, and no fixture when
 // there is one.
 func LoadFixtures(fsys fs.FS) ([]conformance.Fixture, error) {
@@ -258,6 +268,7 @@ func (l *loader) loadFixture(file string, root *yaml.Node) (conformance.Fixture,
 		if n.NodeID == "" {
 			l.fail(file, nodeLine(triggerNode, i, root.Line), "a failing node of the trigger has no node_id")
 		}
+		l.checkUnfixable(file, n, nodeNode(triggerNode, i), nodeLine(triggerNode, i, root.Line))
 	}
 	if len(l.errs) > before {
 		return conformance.Fixture{}, false
@@ -302,6 +313,7 @@ func (l *loader) loadFixture(file string, root *yaml.Node) (conformance.Fixture,
 // names replaces the node's value whole and a field it leaves out keeps the
 // node's. A patch that is not a mapping is refused at line.
 func (l *loader) patchedTrigger(file string, t triggerFile, triggerNode, patch *yaml.Node, line int) (remediation.Trigger, bool) {
+	before := len(l.errs)
 	if patch == nil || patch.Kind != yaml.MappingNode {
 		if patch != nil {
 			line = patch.Line
@@ -328,9 +340,31 @@ func (l *loader) patchedTrigger(file string, t triggerFile, triggerNode, patch *
 			l.failYAML(file, err)
 			return remediation.Trigger{}, false
 		}
+		l.checkUnfixable(file, nf, merged, patch.Line)
 		patched.Nodes = append(patched.Nodes, nf)
 	}
+	if len(l.errs) > before {
+		return remediation.Trigger{}, false
+	}
 	return patched.toDomain(), true
+}
+
+// checkUnfixable refuses a failing node whose unfixable mark names a reason no
+// classifier gives, at the line of the reason, or of the mark when it names
+// none. node is the node's mapping and fallback the line to report when the
+// mapping holds no unfixable key.
+func (l *loader) checkUnfixable(file string, n nodeFile, node *yaml.Node, fallback int) {
+	if n.Unfixable == nil {
+		return
+	}
+	switch model.HandoverReason(n.Unfixable.Reason) {
+	case model.HandoverReasonClassifierInfra, model.HandoverReasonClassifierUnhealableParse:
+		return
+	}
+	mark := valueOf(node, "unfixable")
+	l.fail(file, keyLine(mark, "reason", keyLine(node, "unfixable", fallback)),
+		"unfixable reason %q is not one a classifier gives (%s, %s)",
+		n.Unfixable.Reason, model.HandoverReasonClassifierInfra, model.HandoverReasonClassifierUnhealableParse)
 }
 
 // checkFields refuses every mapping key under n that the Go type t gives no
@@ -401,14 +435,23 @@ func keyIndex(n *yaml.Node, key string) int {
 	return -1
 }
 
+// nodeNode is the mapping of the i-th failing node of the trigger mapping, or
+// nil.
+func nodeNode(trigger *yaml.Node, i int) *yaml.Node {
+	nodes := valueOf(trigger, "nodes")
+	if nodes == nil || nodes.Kind != yaml.SequenceNode || i >= len(nodes.Content) {
+		return nil
+	}
+	return nodes.Content[i]
+}
+
 // nodeLine is the line of the i-th failing node of the trigger mapping, or
 // fallback.
 func nodeLine(trigger *yaml.Node, i, fallback int) int {
-	nodes := valueOf(trigger, "nodes")
-	if nodes == nil || nodes.Kind != yaml.SequenceNode || i >= len(nodes.Content) {
-		return fallback
+	if n := nodeNode(trigger, i); n != nil {
+		return n.Line
 	}
-	return nodes.Content[i].Line
+	return fallback
 }
 
 func (t triggerFile) toDomain() remediation.Trigger {
@@ -439,6 +482,9 @@ func (t triggerFile) toDomain() remediation.Trigger {
 		}
 		for _, a := range n.ChangedAncestors {
 			node.ChangedAncestors = append(node.ChangedAncestors, remediation.ChangedAncestor(a))
+		}
+		if n.Unfixable != nil {
+			node.Unfixable = &remediation.Unfixable{Reason: model.HandoverReason(n.Unfixable.Reason), Detail: n.Unfixable.Detail}
 		}
 		out.Nodes = append(out.Nodes, node)
 	}

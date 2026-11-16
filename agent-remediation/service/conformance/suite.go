@@ -12,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // Scenario names one situation a type or a flow is run through.
@@ -28,17 +29,24 @@ const (
 	// with the first round's calls and no more.
 	PreflightRevisionPasses Scenario = "preflight_revision_passes"
 	// PreflightRoundsSpent: pre-flight refuses the draft of every round the
-	// type allows.
+	// type allows. The cluster's members are handed over as
+	// preflight_rounds_spent, in one remediation.handed_over event. The
+	// members of a shared-upstream cluster each take their own type and are
+	// proposed, and the members of a cross-service cluster are handed over as
+	// declined.
 	PreflightRoundsSpent Scenario = "preflight_rounds_spent"
 	// GateFailsNextTryLearns: the first try's verification fails, the next
 	// try's first request shows why, and its verification passes. In a flow
 	// of one try there is no next try: the failed attempt is handed over.
 	GateFailsNextTryLearns Scenario = "gate_fails_next_try_learns"
 	// TriesSpent: every try's verification fails until the flow's tries are
-	// spent.
+	// spent. The failing set is handed over as tries_spent, in one
+	// remediation.handed_over event that counts the tries, and the journal
+	// holds every try.
 	TriesSpent Scenario = "tries_spent"
 	// DeclinesBeforeModel: a context step declines before the model is
-	// called.
+	// called. The cluster's members are handed over as declined, with no
+	// model call and no later try, in one remediation.handed_over event.
 	DeclinesBeforeModel Scenario = "declines_before_model"
 	// ModelDeclines: the model first answers that it cannot fix the node, with
 	// a low confidence or no edit, which pre-flight refuses, and its revision
@@ -468,6 +476,7 @@ func (sr *scenarioRun) expectType(files workflow.Set, f Fixture, typ workflow.Ty
 			e.nodes(as[1], proposal.StatusProposed)
 		}
 		e.proposedEvents(1)
+		e.noHandedOver()
 		e.nextTryShownGateErrors(first, plan.firstTryCalls, f.GateErrors)
 	case TriesSpent:
 		e.triesSpent(f, plan)
@@ -510,13 +519,22 @@ func (e *expectation) refusedEveryRound(files workflow.Set, first remediation.Cl
 }
 
 // triesSpent expects every one of the plan's tries to have failed its
-// verification with the fixture's gate errors, the failing set handed over,
-// and no proposal.
+// verification with the fixture's gate errors, the journal to hold each try,
+// the failing set handed over as tries_spent by one remediation.handed_over
+// event that counts the tries, and no proposal.
 func (e *expectation) triesSpent(f Fixture, plan typePlan) {
 	failed := slices.Repeat([]proposal.Status{proposal.StatusFailed}, plan.tries)
 	as := e.attempts(append(failed, proposal.StatusEscalated)...)
 	for _, a := range as[:min(plan.tries, len(as))] {
 		e.verifyError(a, f.GateErrors)
+	}
+	e.everyTryFailed(plan.tries)
+	if len(as) == plan.tries+1 {
+		escalated := as[plan.tries]
+		e.handedOver(escalated, plan.tries, codes(model.HandoverReasonTriesSpent, e.trigger.NodeIDs()...))
+		for _, id := range e.trigger.NodeIDs() {
+			e.that(escalated.Proposal.NodeOutcomes[id].Reason != "", "node %s was handed over as tries_spent with no message", id)
+		}
 	}
 	e.proposedEvents(0)
 }
