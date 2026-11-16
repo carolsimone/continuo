@@ -70,6 +70,7 @@ This release adds the values keys `agentRemediation.engine`, `contracts.publish.
   - A `host` that is empty or only blanks is no host, and blanks around a host or a database are trimmed. With a `host`, rendering fails unless `port` is a whole number from 1 to 65535 and a database that is not blank resolves, naming the key. catalog refuses to start on the same values, and on an engine it has no type for.
   - The three reach catalog as `CONTRACTS_SERVER_HOST`, `CONTRACTS_SERVER_PORT` and `CONTRACTS_SERVER_DATABASE` on the shared ConfigMap, so a change restarts every continuo service. catalog rewrites every file of the live folder when it starts with other settings.
 - **`catalog.contractHistory.retentionDays` bounds how long catalog keeps contract versions.** TL;DR: `0` (the default) keeps every version. Above 0, catalog deletes a version once its promotion is older than that many days, never a node's current contract or the version before it. A whole number from 0 up: rendering fails on any other value, and catalog refuses to start on it. It reaches catalog as `CONTRACT_HISTORY_RETENTION_DAYS`.
+- **catalog serves a node's contract over gRPC.** TL;DR: three new reads on `catalog.v1.CatalogQuery`: `GetNodeContract` returns the contract a node has now (with its published YAML, without `servers`, when asked), `ListNodeContractVersions` lists its versions newest first, and `GetNodeContractDiff` lists the fields two versions differ at. They only read, and no values change is needed.
 
 ### Changed
 

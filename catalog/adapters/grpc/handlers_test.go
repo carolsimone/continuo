@@ -50,15 +50,15 @@ func (f *fakeNodeReader) GetNodeLocation(_ context.Context, tenantID, _ string) 
 }
 
 func newHandlerWithNodes(lists *fakeNodeReader) *grpcadapter.QueryHandler {
-	return grpcadapter.NewQueryHandler(lists, &fakeCodeVersionHistoryReader{}, &fakePrecedentHistoryReader{}, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	return grpcadapter.NewQueryHandler(lists, &fakeCodeVersionHistoryReader{}, &fakePrecedentHistoryReader{}, &fakeContractHistoryReader{}, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 }
 
 func newHandlerWithCodeVersions(cv *fakeCodeVersionHistoryReader) *grpcadapter.QueryHandler {
-	return grpcadapter.NewQueryHandler(&fakeNodeReader{}, cv, &fakePrecedentHistoryReader{}, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	return grpcadapter.NewQueryHandler(&fakeNodeReader{}, cv, &fakePrecedentHistoryReader{}, &fakeContractHistoryReader{}, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 }
 
 func newHandlerWithPrecedents(pr *fakePrecedentHistoryReader) *grpcadapter.QueryHandler {
-	return grpcadapter.NewQueryHandler(&fakeNodeReader{}, &fakeCodeVersionHistoryReader{}, pr, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	return grpcadapter.NewQueryHandler(&fakeNodeReader{}, &fakeCodeVersionHistoryReader{}, pr, &fakeContractHistoryReader{}, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 }
 
 // fakeCodeVersionHistoryReader satisfies grpcadapter.CodeVersionHistoryReader.
@@ -666,6 +666,18 @@ func queryHandlerCalls(h *grpcadapter.QueryHandler, ctx context.Context) map[str
 			_, err := h.GetPrecedents(ctx, &catalogv1.GetPrecedentsRequest{Signature: "sig-1"})
 			return err
 		},
+		"GetNodeContract": func() error {
+			_, err := h.GetNodeContract(ctx, &catalogv1.GetNodeContractRequest{UniqueId: "n1"})
+			return err
+		},
+		"ListNodeContractVersions": func() error {
+			_, err := h.ListNodeContractVersions(ctx, &catalogv1.ListNodeContractVersionsRequest{UniqueId: "n1"})
+			return err
+		},
+		"GetNodeContractDiff": func() error {
+			_, err := h.GetNodeContractDiff(ctx, &catalogv1.GetNodeContractDiffRequest{UniqueId: "n1", FromVersion: 1, ToVersion: 2})
+			return err
+		},
 	}
 }
 
@@ -676,7 +688,8 @@ func TestQueryHandler_NoTenantIsInternal(t *testing.T) {
 	nodes := &fakeNodeReader{location: &domain.NodeLocation{}}
 	cv := &fakeCodeVersionHistoryReader{diff: &codeversion.VersionDiff{}}
 	pr := &fakePrecedentHistoryReader{}
-	h := grpcadapter.NewQueryHandler(nodes, cv, pr, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	ct := &fakeContractHistoryReader{}
+	h := grpcadapter.NewQueryHandler(nodes, cv, pr, ct, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 
 	for name, call := range queryHandlerCalls(h, context.Background()) {
 		err := call()
@@ -686,6 +699,7 @@ func TestQueryHandler_NoTenantIsInternal(t *testing.T) {
 	assert.Empty(t, nodes.tenants, "no node read ran")
 	assert.Empty(t, cv.tenants, "no code-version read ran")
 	assert.Empty(t, pr.tenants, "no precedent read ran")
+	assert.Empty(t, ct.tenants, "no contract read ran")
 }
 
 // Every RPC reads for the tenant the interceptor placed on the request.
@@ -693,7 +707,8 @@ func TestQueryHandler_ReadsForTheRequestTenant(t *testing.T) {
 	nodes := &fakeNodeReader{location: &domain.NodeLocation{}}
 	cv := &fakeCodeVersionHistoryReader{diff: &codeversion.VersionDiff{}}
 	pr := &fakePrecedentHistoryReader{}
-	h := grpcadapter.NewQueryHandler(nodes, cv, pr, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	ct := &fakeContractHistoryReader{}
+	h := grpcadapter.NewQueryHandler(nodes, cv, pr, ct, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 
 	calls := queryHandlerCalls(h, tenantCtx())
 	for name, call := range calls {
@@ -703,6 +718,7 @@ func TestQueryHandler_ReadsForTheRequestTenant(t *testing.T) {
 	tenants = append(tenants, nodes.tenants...)
 	tenants = append(tenants, cv.tenants...)
 	tenants = append(tenants, pr.tenants...)
+	tenants = append(tenants, ct.tenants...)
 	require.Len(t, tenants, len(calls), "one read per RPC")
 	for _, got := range tenants {
 		assert.Equal(t, testTenant, got)

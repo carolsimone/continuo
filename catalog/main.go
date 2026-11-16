@@ -273,8 +273,9 @@ func main() {
 	// pair at 0.
 	contractMetrics := metricsinfra.NewContractMetrics(metricsReg)
 	liveFolderLease := neo4jinfra.NewLiveFolderLease(neo4jClient, logger)
+	contractReader := neo4jinfra.NewContractQueryRepository(neo4jClient)
 	liveFolder := handlers.NewLiveFolder(
-		neo4jinfra.NewContractQueryRepository(neo4jClient),
+		contractReader,
 		s3infra.NewLiveContractsStore(objectStore),
 		serializationinfra.ODCSYAML{},
 		liveFolderLease,
@@ -380,7 +381,8 @@ func main() {
 	codeVersionQueries := queries.NewCodeVersionQueryService(codeVersionQueryRepo)
 	precedentQueryRepo := neo4jinfra.NewPrecedentQueryRepository(neo4jClient, logger)
 	precedentQueries := queries.NewPrecedentQueryService(precedentQueryRepo)
-	queryHandler := grpcinfra.NewQueryHandler(queryRepo, codeVersionQueries, precedentQueries, logger)
+	contractQueries := queries.NewContractQueryService(contractReader, serializationinfra.ODCSYAML{}, serializationinfra.CanonicalJSON)
+	queryHandler := grpcinfra.NewQueryHandler(queryRepo, codeVersionQueries, precedentQueries, contractQueries, logger)
 
 	grpcServer, err := grpcinfra.NewServer(cfg.GRPCPort, queryHandler, logger)
 	if err != nil {
