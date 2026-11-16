@@ -36,10 +36,10 @@ func (f *uowFixture) liveNode() map[string]any {
 
 // recordLiveFolder runs transaction B's live-folder write in a final write of
 // messageID.
-func (f *uowFixture) recordLiveFolder(messageID string, seq int64, settings string) error {
+func (f *uowFixture) recordLiveFolder(messageID string, seq int64, release, settings string) error {
 	return NewUnitOfWork(f.client, quietLogger()).Write(context.Background(), f.marker(messageID, nil), true,
 		func(ctx context.Context, tx uow.Tx) error {
-			return tx.Contracts().RecordLiveFolder(ctx, f.tenant, seq, settings)
+			return tx.Contracts().RecordLiveFolder(ctx, f.tenant, seq, release, settings)
 		})
 }
 
@@ -113,36 +113,35 @@ func TestLiveFolderLease_RenewKeepsTheLeaseAndALapsedOneIsLost(t *testing.T) {
 	assert.True(t, acquired, "a lapsed lease is taken over")
 }
 
-// Transaction B stores the folder's watermark, which never goes back, and the
-// settings fingerprint; a rewrite of the whole folder stores only the
-// fingerprint.
+// Transaction B stores the folder's watermark, which never goes back and
+// takes its release with it, and the settings fingerprint unless it is empty;
+// a rewrite of the whole folder stores only the fingerprint.
 func TestLiveFolderState_ReadsWhatTransactionBAndRecordSettingsStored(t *testing.T) {
 	ctx := context.Background()
 	f := newUoWFixture(t)
 	state := NewLiveFolderLease(f.client, quietLogger())
+	read := func() ports.LiveFolderMark {
+		t.Helper()
+		mark, err := state.Read(ctx, f.tenant)
+		require.NoError(t, err)
+		return mark
+	}
 
-	seq, settings, err := state.Read(ctx, f.tenant)
-	require.NoError(t, err)
-	assert.Equal(t, int64(0), seq)
-	assert.Empty(t, settings, "a folder never written has no state")
+	assert.Equal(t, ports.LiveFolderMark{}, read(), "a folder never written has no state")
 
-	require.NoError(t, f.recordLiveFolder("1762077800000-0", 52, "sha-a"))
-	seq, settings, err = state.Read(ctx, f.tenant)
-	require.NoError(t, err)
-	assert.Equal(t, int64(52), seq)
-	assert.Equal(t, "sha-a", settings)
+	require.NoError(t, f.recordLiveFolder("1762077800000-0", 52, "rel-52", "sha-a"))
+	assert.Equal(t, ports.LiveFolderMark{PromotionSeq: 52, ReleaseID: "rel-52", SettingsSHA256: "sha-a"}, read())
 
-	require.NoError(t, f.recordLiveFolder("1762077800001-0", 40, "sha-b"))
-	seq, settings, err = state.Read(ctx, f.tenant)
-	require.NoError(t, err)
-	assert.Equal(t, int64(52), seq, "an older promotion never lowers the watermark")
-	assert.Equal(t, "sha-b", settings)
+	require.NoError(t, f.recordLiveFolder("1762077800001-0", 40, "rel-40", "sha-b"))
+	assert.Equal(t, ports.LiveFolderMark{PromotionSeq: 52, ReleaseID: "rel-52", SettingsSHA256: "sha-b"}, read(),
+		"an older promotion lowers neither the watermark nor its release")
+
+	require.NoError(t, f.recordLiveFolder("1762077800002-0", 53, "rel-53", ""))
+	assert.Equal(t, ports.LiveFolderMark{PromotionSeq: 53, ReleaseID: "rel-53", SettingsSHA256: "sha-b"}, read(),
+		"a promotion that wrote no file leaves the fingerprint as it is")
 
 	require.NoError(t, state.RecordSettings(ctx, f.tenant, "sha-c"))
-	seq, settings, err = state.Read(ctx, f.tenant)
-	require.NoError(t, err)
-	assert.Equal(t, int64(52), seq)
-	assert.Equal(t, "sha-c", settings)
+	assert.Equal(t, ports.LiveFolderMark{PromotionSeq: 53, ReleaseID: "rel-53", SettingsSHA256: "sha-c"}, read())
 	assert.NotContains(t, f.liveNode(), "_lock")
 	f.assertGateUnlocked()
 }

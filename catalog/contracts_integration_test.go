@@ -62,12 +62,13 @@ type recordedLiveRewrite struct {
 	calls int
 }
 
-func (r *recordedLiveRewrite) Rewrite(context.Context, domainModel.PromoteReleaseInput) error {
+func (r *recordedLiveRewrite) Rewrite(context.Context, domainModel.PromoteReleaseInput) (string, error) {
 	r.calls++
-	return r.err
+	if r.err != nil {
+		return "", r.err
+	}
+	return "sha-settings", nil
 }
-
-func (r *recordedLiveRewrite) SettingsSHA256() string { return "sha-settings" }
 
 var _ handlers.LiveContractsRewriter = (*recordedLiveRewrite)(nil)
 

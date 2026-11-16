@@ -20,10 +20,10 @@ import (
 // promotion's contract versions are recorded. An error leaves the message
 // unfinished, so its redelivery rewrites the folder again.
 type LiveContractsRewriter interface {
-	Rewrite(ctx context.Context, in domainModel.PromoteReleaseInput) error
-	// SettingsSHA256 is the fingerprint of the publishing settings the
-	// rewriter writes files with.
-	SettingsSHA256() string
+	// Rewrite returns the fingerprint of the publishing settings the
+	// folder's files carry once it returns, or "" when it wrote nothing and
+	// cannot tell.
+	Rewrite(ctx context.Context, in domainModel.PromoteReleaseInput) (string, error)
 }
 
 // ReleasePromotedContractsHandler consumes release.promoted:v2 on its own
@@ -46,7 +46,8 @@ type ReleasePromotedContractsHandler struct {
 
 // NewReleasePromotedContractsHandler creates a ReleasePromotedContractsHandler.
 // inflightRenew is how often a running live rewrite renews the message's
-// in-flight mark; it must be well below uow.InFlightTTL.
+// in-flight mark, and how long one renewal may take; it must be well below
+// half of uow.InFlightTTL.
 func NewReleasePromotedContractsHandler(
 	u uow.UnitOfWork,
 	bundles ports.ContractBundleReader,
@@ -77,8 +78,9 @@ func NewReleasePromotedContractsHandler(
 //     write that is not final renews the message's in-flight mark every
 //     inflightRenew, so the mark outlives a rewrite of any length.
 //  6. Transaction B records the live folder's watermark (the promotion's
-//     seq, kept when a larger one is stored) and the settings fingerprint,
-//     records the marker and clears the in-flight mark.
+//     seq and release, kept when a larger seq is stored) and, when the
+//     rewrite reports the settings the folder's files carry, their
+//     fingerprint; it records the marker and clears the in-flight mark.
 //
 // A failure after transaction A ends the message with no marker. Its
 // redelivery plans against what transaction A wrote, which records no change
@@ -188,26 +190,27 @@ func (h *ReleasePromotedContractsHandler) Handle(
 	)
 
 	rewriteStarted := time.Now()
-	if err := h.rewrite(ctx, marker, in); err != nil {
+	settings, err := h.rewrite(ctx, marker, in)
+	if err != nil {
 		return fmt.Errorf("rewrite the live contracts folder for release %s: %w", in.ReleaseID, err)
 	}
 	h.metrics.ObserveStep(ports.ContractStepLiveRewrite, time.Since(rewriteStarted))
 
-	settings := h.live.SettingsSHA256()
 	if err := h.uow.Write(ctx, marker, true, func(ctx context.Context, tx uow.Tx) error {
-		return tx.Contracts().RecordLiveFolder(ctx, in.TenantID, in.PromotionSeq, settings)
+		return tx.Contracts().RecordLiveFolder(ctx, in.TenantID, in.PromotionSeq, in.ReleaseID, settings)
 	}); err != nil {
 		return fmt.Errorf("finish release %s on the contracts group: %w", in.ReleaseID, err)
 	}
 	return nil
 }
 
-// rewrite runs the live rewrite while renewing the message's in-flight mark.
-// A renewal that fails is logged and the rewrite goes on: once the mark
-// lapses an export may start before transaction B, which then backs off, and
-// the redelivery finds transaction A's writes and the rewrite done.
-func (h *ReleasePromotedContractsHandler) rewrite(ctx context.Context, marker uow.Marker, in domainModel.PromoteReleaseInput) error {
-	stop := keepAlive(ctx, h.inflightRenew, func(ctx context.Context) error {
+// rewrite runs the live rewrite while renewing the message's in-flight mark,
+// each renewal bounded by inflightRenew. A renewal that fails or runs out of
+// time is logged and the rewrite goes on: once the mark lapses an export may
+// start before transaction B, which then backs off, and the redelivery finds
+// transaction A's writes and the rewrite done.
+func (h *ReleasePromotedContractsHandler) rewrite(ctx context.Context, marker uow.Marker, in domainModel.PromoteReleaseInput) (string, error) {
+	stop := keepAlive(ctx, h.inflightRenew, h.inflightRenew, func(ctx context.Context) error {
 		return h.uow.Write(ctx, marker, false, func(context.Context, uow.Tx) error { return nil })
 	}, func(err error) {
 		h.logger.Warn("could not renew the in-flight mark during the live rewrite",

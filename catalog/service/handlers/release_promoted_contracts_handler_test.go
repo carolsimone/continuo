@@ -69,14 +69,15 @@ func (f *fakeContractRepository) Write(_ context.Context, _ string, p contractve
 	return f.res, nil
 }
 
-func (f *fakeContractRepository) RecordLiveFolder(_ context.Context, _ string, seq int64, settings string) error {
-	f.liveFolder = append(f.liveFolder, liveFolderRecord{seq: seq, settings: settings})
+func (f *fakeContractRepository) RecordLiveFolder(_ context.Context, _ string, seq int64, release, settings string) error {
+	f.liveFolder = append(f.liveFolder, liveFolderRecord{seq: seq, release: release, settings: settings})
 	return nil
 }
 
 // liveFolderRecord is one RecordLiveFolder call.
 type liveFolderRecord struct {
 	seq      int64
+	release  string
 	settings string
 }
 
@@ -85,26 +86,29 @@ var _ repository.ContractRepository = (*fakeContractRepository)(nil)
 // ── fakes: handlers.LiveContractsRewriter ────────────────────────────────────
 
 // fakeLiveRewriter records each promotion it rewrites for and fails with err
-// when set. onRewrite, when set, runs first.
+// when set. onRewrite, when set, runs first. It reports the folder's files
+// carry fakeLiveSettings, or nothing when wroteNothing is set.
 type fakeLiveRewriter struct {
-	err       error
-	calls     []domainModel.PromoteReleaseInput
-	onRewrite func()
-}
-
-func (f *fakeLiveRewriter) Rewrite(_ context.Context, in domainModel.PromoteReleaseInput) error {
-	if f.onRewrite != nil {
-		f.onRewrite()
-	}
-	f.calls = append(f.calls, in)
-	return f.err
+	err          error
+	wroteNothing bool
+	calls        []domainModel.PromoteReleaseInput
+	onRewrite    func()
 }
 
 // fakeLiveSettings is the settings fingerprint fakeLiveRewriter publishes
 // with.
 const fakeLiveSettings = "sha-settings"
 
-func (f *fakeLiveRewriter) SettingsSHA256() string { return fakeLiveSettings }
+func (f *fakeLiveRewriter) Rewrite(_ context.Context, in domainModel.PromoteReleaseInput) (string, error) {
+	if f.onRewrite != nil {
+		f.onRewrite()
+	}
+	f.calls = append(f.calls, in)
+	if f.err != nil || f.wroteNothing {
+		return "", f.err
+	}
+	return fakeLiveSettings, nil
+}
 
 var _ handlers.LiveContractsRewriter = (*fakeLiveRewriter)(nil)
 
@@ -470,7 +474,7 @@ func TestContractsHandler_TransactionBRecordsTheLiveWatermark(t *testing.T) {
 	require.NoError(t, f.handler.Handle(context.Background(), "1-0", nil, contractsInput()))
 
 	assert.Zero(t, atRewrite, "the watermark waits for the rewrite")
-	assert.Equal(t, []liveFolderRecord{{seq: 3, settings: fakeLiveSettings}}, f.repo.liveFolder)
+	assert.Equal(t, []liveFolderRecord{{seq: 3, release: "rel-1", settings: fakeLiveSettings}}, f.repo.liveFolder)
 	require.Len(t, f.uow.writes, 2)
 	assert.True(t, f.uow.writes[1].Final, "in the final write, with the marker")
 }
@@ -504,4 +508,59 @@ func TestContractsHandler_ALongRewriteKeepsTheMessageInFlight(t *testing.T) {
 	assert.Len(t, f.repo.plans, 1, "a renewal writes no contract")
 	time.Sleep(60 * time.Millisecond)
 	assert.Len(t, f.uow.writes, len(writes), "no renewal after the rewrite ends")
+}
+
+// A rewrite that wrote nothing leaves the stored settings fingerprint as it
+// is: transaction B moves the watermark with an empty fingerprint.
+func TestContractsHandler_ARewriteThatWroteNothingKeepsTheStoredSettings(t *testing.T) {
+	f := newContractsFixture()
+	f.live.wroteNothing = true
+
+	require.NoError(t, f.handler.Handle(context.Background(), "1-0", nil, contractsInput()))
+
+	assert.Equal(t, []liveFolderRecord{{seq: 3, release: "rel-1", settings: ""}}, f.repo.liveFolder)
+}
+
+// stallingUnitOfWork blocks every write that is not final after the first
+// until its context ends, as a renewal of the in-flight mark stuck on Neo4j
+// does, and records how each blocked write ended.
+type stallingUnitOfWork struct {
+	*fakeGraphUnitOfWork
+	mu       sync.Mutex
+	nonFinal int
+	stalled  []error
+}
+
+func (s *stallingUnitOfWork) Write(ctx context.Context, m uow.Marker, final bool, fn func(ctx context.Context, tx uow.Tx) error) error {
+	if !final {
+		s.mu.Lock()
+		s.nonFinal++
+		first := s.nonFinal == 1
+		s.mu.Unlock()
+		if !first {
+			<-ctx.Done()
+			s.mu.Lock()
+			s.stalled = append(s.stalled, ctx.Err())
+			s.mu.Unlock()
+			return ctx.Err()
+		}
+	}
+	return s.fakeGraphUnitOfWork.Write(ctx, m, final, fn)
+}
+
+// A renewal of the in-flight mark that stalls is cut short by its timeout,
+// and the rewrite and transaction B go on.
+func TestContractsHandler_AStalledInFlightRenewalTimesOut(t *testing.T) {
+	f := newContractsFixture()
+	f.live.onRewrite = func() { time.Sleep(120 * time.Millisecond) }
+	stalling := &stallingUnitOfWork{fakeGraphUnitOfWork: f.uow}
+	h := handlers.NewReleasePromotedContractsHandler(stalling, f.bundles, f.live, f.metrics, 20*time.Millisecond, newTestLogger())
+
+	require.NoError(t, h.Handle(context.Background(), "1-0", nil, contractsInput()))
+
+	require.NotEmpty(t, stalling.stalled)
+	for _, err := range stalling.stalled {
+		assert.ErrorIs(t, err, context.DeadlineExceeded, "each stalled renewal ends at its timeout")
+	}
+	assert.True(t, f.uow.isRecorded(f.uow.writes[len(f.uow.writes)-1].Marker), "transaction B ran")
 }

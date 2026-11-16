@@ -12,9 +12,10 @@ import (
 )
 
 // liveFolderNodeKey is the key of the tenant's (:Meta) node that records its
-// live contracts folder: the folder's watermark promotion_seq, the publishing
-// settings' fingerprint settings_sha256, and the live-folder lease (holder,
-// kind, until), kept as the export lease keeps its own on the export node.
+// live contracts folder: the folder's watermark promotion_seq with its
+// release_id, the publishing settings' fingerprint settings_sha256, and the
+// live-folder lease (holder, kind, until), kept as the export lease keeps its
+// own on the export node.
 //
 // The node is not the export gate. A lease statement locks only this node, so
 // a rewrite holding the lease pauses no graph write and stops no export, and
@@ -27,15 +28,16 @@ const liveFolderNodeKey = "contracts-live"
 // liveFolderLeaseKind is the kind a live-folder lease records.
 const liveFolderLeaseKind = "live-folder"
 
-// recordLiveFolderCypher moves the tenant's live-folder watermark to the
-// larger of its value and the promotion's seq and stores the settings
-// fingerprint, creating the node on the first rewrite.
+// recordLiveFolderCypher moves the tenant's live-folder watermark, with its
+// release, to the promotion's seq when that is larger, and stores the settings
+// fingerprint unless it is empty, creating the node on the first rewrite.
+// Every CASE reads the node as it was before this SET.
 const recordLiveFolderCypher = `
 MERGE (m:Meta {tenant_id: $tenant_id, key: $lease_key})
-SET m.promotion_seq = CASE
-      WHEN m.promotion_seq IS NULL OR m.promotion_seq < $promotion_seq THEN $promotion_seq
-      ELSE m.promotion_seq END,
-    m.settings_sha256 = $settings_sha256`
+WITH m, m.promotion_seq IS NULL OR m.promotion_seq < $promotion_seq AS advances
+SET m.promotion_seq = CASE WHEN advances THEN $promotion_seq ELSE m.promotion_seq END,
+    m.release_id = CASE WHEN advances THEN $release_id ELSE m.release_id END,
+    m.settings_sha256 = CASE WHEN $settings_sha256 = '' THEN m.settings_sha256 ELSE $settings_sha256 END`
 
 // recordLiveSettingsCypher stores the settings fingerprint and leaves the
 // watermark as it is.
@@ -43,21 +45,23 @@ const recordLiveSettingsCypher = `
 MERGE (m:Meta {tenant_id: $tenant_id, key: $lease_key})
 SET m.settings_sha256 = $settings_sha256`
 
-// readLiveFolderCypher reads the tenant's live-folder watermark and settings
-// fingerprint. A tenant with no live-folder node returns no row.
+// readLiveFolderCypher reads the tenant's live-folder watermark, its release
+// and the settings fingerprint. A tenant with no live-folder node returns no
+// row.
 const readLiveFolderCypher = `
 MATCH (m:Meta {tenant_id: $tenant_id, key: $lease_key})
-RETURN coalesce(m.promotion_seq, 0) AS promotion_seq, coalesce(m.settings_sha256, '') AS settings_sha256`
+RETURN coalesce(m.promotion_seq, 0) AS promotion_seq, coalesce(m.release_id, '') AS release_id,
+       coalesce(m.settings_sha256, '') AS settings_sha256`
 
-// RecordLiveFolder moves the tenant's live-folder watermark and stores the
-// settings fingerprint on the open transaction. It refuses a tenantID other
-// than the transaction's.
-func (r *contractVersionRepository) RecordLiveFolder(ctx context.Context, tenantID string, promotionSeq int64, settingsSHA256 string) error {
+// RecordLiveFolder moves the tenant's live-folder watermark and its release,
+// and stores a non-empty settings fingerprint, on the open transaction. It
+// refuses a tenantID other than the transaction's.
+func (r *contractVersionRepository) RecordLiveFolder(ctx context.Context, tenantID string, promotionSeq int64, releaseID, settingsSHA256 string) error {
 	if err := r.run.requireTenant(tenantID); err != nil {
 		return err
 	}
 	if err := execCypher(ctx, r.run, recordLiveFolderCypher, leaseNodeParams(liveFolderNodeKey, map[string]any{
-		"promotion_seq": promotionSeq, "settings_sha256": settingsSHA256,
+		"promotion_seq": promotionSeq, "release_id": releaseID, "settings_sha256": settingsSHA256,
 	})); err != nil {
 		return fmt.Errorf("record the live contracts folder: %w", err)
 	}
@@ -160,35 +164,36 @@ func (l *LiveFolderLease) Release(ctx context.Context, tenantID, holder string) 
 	})
 }
 
-// Read returns the tenant's live-folder watermark and settings fingerprint,
-// 0 and "" when the tenant has no live-folder node.
-func (l *LiveFolderLease) Read(ctx context.Context, tenantID string) (int64, string, error) {
-	type state struct {
-		seq      int64
-		settings string
-	}
+// Read returns the tenant's live-folder mark, the zero value when the tenant
+// has no live-folder node.
+func (l *LiveFolderLease) Read(ctx context.Context, tenantID string) (ports.LiveFolderMark, error) {
 	session := l.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer func() { _ = session.Close(ctx) }()
-	got, err := neo4j.ExecuteRead(ctx, session, func(tx neo4j.ManagedTransaction) (state, error) {
+	mark, err := neo4j.ExecuteRead(ctx, session, func(tx neo4j.ManagedTransaction) (ports.LiveFolderMark, error) {
 		run, err := NewTenantRunner(tenantID, tx)
 		if err != nil {
-			return state{}, err
+			return ports.LiveFolderMark{}, err
 		}
 		res, err := run.Run(ctx, readLiveFolderCypher, leaseNodeParams(liveFolderNodeKey, nil))
 		if err != nil {
-			return state{}, err
+			return ports.LiveFolderMark{}, err
 		}
 		recs, err := res.Collect(ctx)
 		if err != nil || len(recs) == 0 {
-			return state{}, err
+			return ports.LiveFolderMark{}, err
 		}
+		release, _ := recordString(recs[0], "release_id")
 		settings, _ := recordString(recs[0], "settings_sha256")
-		return state{seq: toInt64(recordValue(recs[0], "promotion_seq")), settings: settings}, nil
+		return ports.LiveFolderMark{
+			PromotionSeq:   toInt64(recordValue(recs[0], "promotion_seq")),
+			ReleaseID:      release,
+			SettingsSHA256: settings,
+		}, nil
 	})
 	if err != nil {
-		return 0, "", fmt.Errorf("read the live contracts folder's state: %w", err)
+		return ports.LiveFolderMark{}, fmt.Errorf("read the live contracts folder's state: %w", err)
 	}
-	return got.seq, got.settings, nil
+	return mark, nil
 }
 
 // RecordSettings stores the settings fingerprint behind the tenant's export

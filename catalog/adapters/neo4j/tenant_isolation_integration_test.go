@@ -202,7 +202,7 @@ func newIsolationFixture(t *testing.T) *isolationFixture {
 	// them.
 	liveMarker := uow.Marker{TenantID: f.b.tenant, Group: streams.CatalogReleaseContracts, MessageID: "iso-live-" + uuid.NewString()}
 	require.NoError(t, f.b.uow.Write(f.ctx, liveMarker, true, func(ctx context.Context, tx uow.Tx) error {
-		return tx.Contracts().RecordLiveFolder(ctx, f.b.tenant, 9, "settings-"+isoMarkB)
+		return tx.Contracts().RecordLiveFolder(ctx, f.b.tenant, 9, "rel-"+isoMarkB, "settings-"+isoMarkB)
 	}))
 	acquired, err := f.live.Acquire(f.ctx, f.b.tenant, "b-live-holder", 10*time.Minute)
 	require.NoError(t, err)
@@ -475,20 +475,20 @@ func (f *isolationFixture) rows() []isolationRow {
 		{"contractVersionRepository.RecordLiveFolder", func(t *testing.T) {
 			require.NoError(t, f.a.uow.Write(ctx, uow.Marker{TenantID: tenant(), Group: streams.CatalogReleaseContracts,
 				MessageID: "iso-live-a-" + uuid.NewString()}, true, func(ctx context.Context, tx uow.Tx) error {
-				return tx.Contracts().RecordLiveFolder(ctx, tenant(), 3, "settings-"+isoMarkA)
+				return tx.Contracts().RecordLiveFolder(ctx, tenant(), 3, "rel-"+isoMarkA, "settings-"+isoMarkA)
 			}))
 		}},
 		{"LiveFolderLease.Read", func(t *testing.T) {
-			seq, settings, err := f.live.Read(ctx, tenant())
+			mark, err := f.live.Read(ctx, tenant())
 			require.NoError(t, err)
-			assert.Equal(t, int64(3), seq, "A's watermark, not B's")
-			assert.Equal(t, "settings-"+isoMarkA, settings)
+			assert.Equal(t, ports.LiveFolderMark{PromotionSeq: 3, ReleaseID: "rel-" + isoMarkA, SettingsSHA256: "settings-" + isoMarkA},
+				mark, "A's mark, not B's")
 		}},
 		{"LiveFolderLease.RecordSettings", func(t *testing.T) {
 			require.NoError(t, f.live.RecordSettings(ctx, tenant(), "settings-2-"+isoMarkA), "B's export lease does not pause A's writes")
-			_, settings, err := f.live.Read(ctx, tenant())
+			mark, err := f.live.Read(ctx, tenant())
 			require.NoError(t, err)
-			assert.Equal(t, "settings-2-"+isoMarkA, settings)
+			assert.Equal(t, "settings-2-"+isoMarkA, mark.SettingsSHA256)
 		}},
 		{"LiveFolderLease.Acquire", func(t *testing.T) {
 			acquired, err := f.live.Acquire(ctx, tenant(), isoHolder, time.Minute)

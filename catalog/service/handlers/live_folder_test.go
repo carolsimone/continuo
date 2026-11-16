@@ -2,6 +2,8 @@ package handlers_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
@@ -58,15 +60,16 @@ var _ queries.ContractReader = (*fakeContractReader)(nil)
 // "put <id>", "delete <id>" or "index", in the order it reached the store.
 // failPut fails the put of the ids it names.
 type fakeLiveStore struct {
-	mu      sync.Mutex
-	files   map[string][]byte
-	index   *ports.LiveIndex
-	ops     []string
-	failPut map[string]error
+	mu         sync.Mutex
+	files      map[string][]byte
+	index      *ports.LiveIndex
+	ops        []string
+	failPut    map[string]error
+	failDelete map[string]error
 }
 
 func newFakeLiveStore() *fakeLiveStore {
-	return &fakeLiveStore{files: map[string][]byte{}, failPut: map[string]error{}}
+	return &fakeLiveStore{files: map[string][]byte{}, failPut: map[string]error{}, failDelete: map[string]error{}}
 }
 
 func (f *fakeLiveStore) Put(_ context.Context, _, uniqueID string, body []byte) error {
@@ -83,6 +86,9 @@ func (f *fakeLiveStore) Put(_ context.Context, _, uniqueID string, body []byte) 
 func (f *fakeLiveStore) Delete(_ context.Context, _, uniqueID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err := f.failDelete[uniqueID]; err != nil {
+		return err
+	}
 	delete(f.files, uniqueID)
 	f.ops = append(f.ops, "delete "+uniqueID)
 	return nil
@@ -138,6 +144,7 @@ type fakeLiveLease struct {
 	acquires      int
 	releases      int
 	seq           int64
+	release       string
 	settings      string
 	settingsSaved []string
 }
@@ -172,10 +179,10 @@ func (f *fakeLiveLease) Release(_ context.Context, _, holder string) error {
 	return nil
 }
 
-func (f *fakeLiveLease) Read(context.Context, string) (int64, string, error) {
+func (f *fakeLiveLease) Read(context.Context, string) (ports.LiveFolderMark, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.seq, f.settings, nil
+	return ports.LiveFolderMark{PromotionSeq: f.seq, ReleaseID: f.release, SettingsSHA256: f.settings}, nil
 }
 
 func (f *fakeLiveLease) RecordSettings(_ context.Context, _, settings string) error {
@@ -227,22 +234,48 @@ func ephemeralContract(uniqueID string) contractversion.LiveContract {
 	return c
 }
 
+// fingerprintOf is the settings fingerprint a LiveFolder publishing with
+// server stores: the hex SHA-256 of the server's canonical text, nil counting
+// as a server with no host.
+func fingerprintOf(server *contractversion.Server) string {
+	s := contractversion.Server{}
+	if server != nil {
+		s = *server
+	}
+	return s.Fingerprint(func(b []byte) string {
+		sum := sha256.Sum256(b)
+		return hex.EncodeToString(sum[:])
+	})
+}
+
 // liveFolderFixture is a LiveFolder over in-memory fakes, publishing with
-// liveServer.
+// liveServer, whose fingerprint is settings. reported lists what each
+// rewrite returned.
 type liveFolderFixture struct {
-	reader  *fakeContractReader
-	store   *fakeLiveStore
-	lease   *fakeLiveLease
-	metrics *fakeContractMetrics
-	folder  *handlers.LiveFolder
+	reader   *fakeContractReader
+	store    *fakeLiveStore
+	lease    *fakeLiveLease
+	metrics  *fakeContractMetrics
+	folder   *handlers.LiveFolder
+	settings string
+	reported []string
+}
+
+// rewrite runs the folder's Rewrite for promotion seq, recording the
+// settings it reports.
+func (f *liveFolderFixture) rewrite(seq int64) error {
+	settings, err := f.folder.Rewrite(context.Background(), livePromotion(seq))
+	f.reported = append(f.reported, settings)
+	return err
 }
 
 func newLiveFolderFixture(live ...contractversion.LiveContract) *liveFolderFixture {
 	f := &liveFolderFixture{
-		reader:  &fakeContractReader{live: live},
-		store:   newFakeLiveStore(),
-		lease:   &fakeLiveLease{},
-		metrics: &fakeContractMetrics{},
+		reader:   &fakeContractReader{live: live},
+		store:    newFakeLiveStore(),
+		lease:    &fakeLiveLease{},
+		metrics:  &fakeContractMetrics{},
+		settings: fingerprintOf(liveServer),
 	}
 	f.folder = handlers.NewLiveFolder(f.reader, f.store, fakeRenderer{}, f.lease, f.lease, f.metrics,
 		liveServer, func() time.Time { return liveClock }, newTestLogger())
@@ -254,7 +287,7 @@ func newLiveFolderFixture(live ...contractversion.LiveContract) *liveFolderFixtu
 func (f *liveFolderFixture) listed(seq int64, files ...ports.LiveIndexFile) {
 	f.store.index = &ports.LiveIndex{
 		SchemaVersion: ports.LiveIndexSchemaVersion, TenantID: "default", PromotionSeq: seq, ReleaseID: "rel-0",
-		WrittenAt: liveClock.Add(-time.Hour), SettingsSHA256: f.folder.SettingsSHA256(), Files: files,
+		WrittenAt: liveClock.Add(-time.Hour), SettingsSHA256: f.settings, Files: files,
 	}
 	for _, file := range files {
 		f.store.files[file.UniqueID] = []byte("old")
@@ -282,7 +315,7 @@ func TestLiveRewrite_PutsOnlyChangedFilesThenTheIndex(t *testing.T) {
 		ports.LiveIndexFile{UniqueID: "analytics.b", Version: 1, ContractHash: "sha256:b1"},
 	)
 
-	require.NoError(t, f.folder.Rewrite(context.Background(), livePromotion(3)))
+	require.NoError(t, f.rewrite(3))
 
 	assert.Equal(t, []int64{3}, f.reader.asked, "the live set is the promotion's nodes")
 	assert.Equal(t, []string{"put analytics.a", "index"}, f.store.writes())
@@ -294,7 +327,7 @@ func TestLiveRewrite_PutsOnlyChangedFilesThenTheIndex(t *testing.T) {
 		PromotionSeq:   3,
 		ReleaseID:      "rel-3",
 		WrittenAt:      liveClock,
-		SettingsSHA256: f.folder.SettingsSHA256(),
+		SettingsSHA256: f.settings,
 		Files: []ports.LiveIndexFile{
 			{UniqueID: "analytics.a", Version: 2, ContractHash: "sha256:a2"},
 			{UniqueID: "analytics.b", Version: 1, ContractHash: "sha256:b1"},
@@ -311,7 +344,7 @@ func TestLiveRewrite_DeletesTheFileOfANodeNoLongerLive(t *testing.T) {
 		ports.LiveIndexFile{UniqueID: "analytics.retired", Version: 4, ContractHash: "sha256:r4"},
 	)
 
-	require.NoError(t, f.folder.Rewrite(context.Background(), livePromotion(3)))
+	require.NoError(t, f.rewrite(3))
 
 	assert.Equal(t, []string{"delete analytics.retired", "index"}, f.store.writes())
 	assert.NotContains(t, f.store.files, "analytics.retired")
@@ -329,9 +362,10 @@ func TestLiveRewrite_SkipsAnEphemeralContract(t *testing.T) {
 	)
 	f.listed(2, ports.LiveIndexFile{UniqueID: "analytics.was_table", Version: 1, ContractHash: "sha256:w1"})
 
-	require.NoError(t, f.folder.Rewrite(context.Background(), livePromotion(3)))
+	require.NoError(t, f.rewrite(3))
 
-	assert.Equal(t, []string{"put analytics.table", "delete analytics.was_table", "index"}, f.store.writes())
+	assert.Equal(t, []string{"index", "put analytics.table", "delete analytics.was_table", "index"}, f.store.writes(),
+		"an interim index lists the new file before it is put")
 	assert.Equal(t, []ports.LiveIndexFile{{UniqueID: "analytics.table", Version: 1, ContractHash: "sha256:t1"}}, f.store.index.Files)
 }
 
@@ -342,7 +376,7 @@ func TestLiveRewrite_APromotionAtOrBelowTheWatermarkWritesNothing(t *testing.T) 
 		f := newLiveFolderFixture(liveContract("analytics.a", 9, "sha256:a9"))
 		f.lease.seq = 52
 
-		require.NoError(t, f.folder.Rewrite(context.Background(), livePromotion(seq)), "seq %d", seq)
+		require.NoError(t, f.rewrite(seq), "seq %d", seq)
 
 		assert.Empty(t, f.store.writes(), "seq %d", seq)
 		assert.Zero(t, f.lease.acquires, "seq %d", seq)
@@ -356,7 +390,7 @@ func TestLiveRewrite_AFolderAlreadyWrittenForThePromotionWritesNothing(t *testin
 	f := newLiveFolderFixture(liveContract("analytics.a", 2, "sha256:a2"))
 	f.listed(3, ports.LiveIndexFile{UniqueID: "analytics.a", Version: 1, ContractHash: "sha256:a1"})
 
-	require.NoError(t, f.folder.Rewrite(context.Background(), livePromotion(3)))
+	require.NoError(t, f.rewrite(3))
 
 	assert.Empty(t, f.store.writes())
 	assert.Equal(t, 1, f.lease.releases)
@@ -371,9 +405,9 @@ func TestLiveRewrite_ANewNodeGetsItsFileAndADroppedNodeLosesItInTheSamePromotion
 		ports.LiveIndexFile{UniqueID: "analytics.dropped", Version: 2, ContractHash: "sha256:d2"},
 	)
 
-	require.NoError(t, f.folder.Rewrite(context.Background(), livePromotion(3)))
+	require.NoError(t, f.rewrite(3))
 
-	assert.Equal(t, []string{"put analytics.new", "delete analytics.dropped", "index"}, f.store.writes())
+	assert.Equal(t, []string{"index", "put analytics.new", "delete analytics.dropped", "index"}, f.store.writes())
 	assert.Equal(t, []ports.LiveIndexFile{
 		{UniqueID: "analytics.a", Version: 1, ContractHash: "sha256:a1"},
 		{UniqueID: "analytics.new", Version: 1, ContractHash: "sha256:n1"},
@@ -389,7 +423,7 @@ func TestLiveRewrite_AnEmptyPromotionDeletesEveryFile(t *testing.T) {
 		ports.LiveIndexFile{UniqueID: "analytics.b", Version: 1, ContractHash: "sha256:b1"},
 	)
 
-	require.NoError(t, f.folder.Rewrite(context.Background(), livePromotion(3)))
+	require.NoError(t, f.rewrite(3))
 
 	writes := f.store.writes()
 	require.Len(t, writes, 3)
@@ -407,7 +441,7 @@ func TestLiveRewrite_ANewerPromotionsContractsWriteNothing(t *testing.T) {
 	f := newLiveFolderFixture(liveContract("analytics.a", 1, "sha256:a1"))
 	f.reader.latest = 5
 
-	require.NoError(t, f.folder.Rewrite(context.Background(), livePromotion(3)))
+	require.NoError(t, f.rewrite(3))
 
 	assert.Empty(t, f.store.writes())
 	assert.Empty(t, f.reader.asked)
@@ -420,7 +454,7 @@ func TestLiveRewrite_ALeaseHeldElsewhereRetries(t *testing.T) {
 	f := newLiveFolderFixture(liveContract("analytics.a", 1, "sha256:a1"))
 	f.lease.heldElsewhere = true
 
-	err := f.folder.Rewrite(context.Background(), livePromotion(3))
+	err := f.rewrite(3)
 
 	require.ErrorIs(t, err, handlers.ErrLiveFolderBusy)
 	assert.NotErrorIs(t, err, pkgevents.ErrPermanent)
@@ -437,29 +471,86 @@ func TestLiveRewrite_ChangedSettingsPutEveryFile(t *testing.T) {
 	)
 	f.store.index.SettingsSHA256 = "settings-of-another-install"
 
-	require.NoError(t, f.folder.Rewrite(context.Background(), livePromotion(3)))
+	require.NoError(t, f.rewrite(3))
 
 	writes := f.store.writes()
 	assert.ElementsMatch(t, []string{"put analytics.a", "put analytics.b"}, writes[:2])
 	assert.Equal(t, "index", writes[2])
-	assert.Equal(t, f.folder.SettingsSHA256(), f.store.index.SettingsSHA256)
+	assert.Equal(t, f.settings, f.store.index.SettingsSHA256)
 }
 
-// A put object storage refuses fails the rewrite before the index, so the
-// old index still describes the folder, is counted failed, and releases the
-// lease.
-func TestLiveRewrite_AFailedPutWritesNoIndex(t *testing.T) {
+// A put object storage refuses fails the rewrite before the final index and
+// is counted failed; the interim index written before it lists the file, so
+// the next rewrite knows of it. The lease is released.
+func TestLiveRewrite_AFailedPutLeavesTheInterimIndex(t *testing.T) {
 	f := newLiveFolderFixture(liveContract("analytics.a", 2, "sha256:a2"))
 	outage := errors.New("503 slow down")
 	f.store.failPut["analytics.a"] = outage
 
-	err := f.folder.Rewrite(context.Background(), livePromotion(3))
+	err := f.rewrite(3)
 
 	require.ErrorIs(t, err, outage)
-	assert.Empty(t, f.store.writes())
-	assert.Nil(t, f.store.index)
-	assert.Equal(t, [][2]string{{ports.LiveWritePut, ports.LiveWriteFailed}}, f.metrics.writes())
+	assert.Equal(t, []string{"index"}, f.store.writes())
+	assert.Equal(t, ports.LiveIndex{
+		SchemaVersion: ports.LiveIndexSchemaVersion, TenantID: "default", WrittenAt: liveClock,
+		Files: []ports.LiveIndexFile{{UniqueID: "analytics.a"}},
+	}, *f.store.index, "no promotion and no settings yet, the new file at version 0")
+	assert.Equal(t, [][2]string{{ports.LiveWriteIndex, ports.LiveWriteOK}, {ports.LiveWritePut, ports.LiveWriteFailed}}, f.metrics.writes())
 	assert.Equal(t, 1, f.lease.releases)
+	assert.Equal(t, []string{""}, f.reported)
+}
+
+// A file put by a rewrite that then failed is never orphaned: the next
+// rewrite, for a promotion that no longer publishes the node, deletes it,
+// because the interim index lists it. The interim index keeps the previous
+// promotion and settings, so the next rewrite still puts what changed.
+func TestLiveRewrite_AFileOfAFailedRewriteIsDeletedByTheNextOne(t *testing.T) {
+	f := newLiveFolderFixture(liveContract("analytics.a", 1, "sha256:a1"), liveContract("analytics.x", 1, "sha256:x1"))
+	f.listed(52,
+		ports.LiveIndexFile{UniqueID: "analytics.a", Version: 1, ContractHash: "sha256:a1"},
+		ports.LiveIndexFile{UniqueID: "analytics.z", Version: 1, ContractHash: "sha256:z1"},
+	)
+	f.store.failDelete["analytics.z"] = errors.New("503 slow down")
+
+	require.Error(t, f.rewrite(53))
+	require.Contains(t, f.store.files, "analytics.x", "promotion 53 put x's file, then failed")
+	assert.Equal(t, int64(52), f.store.index.PromotionSeq, "the interim index names the last finished rewrite")
+	assert.Equal(t, "rel-0", f.store.index.ReleaseID)
+	assert.Equal(t, f.settings, f.store.index.SettingsSHA256)
+	assert.Equal(t, []ports.LiveIndexFile{
+		{UniqueID: "analytics.a", Version: 1, ContractHash: "sha256:a1"},
+		{UniqueID: "analytics.x"},
+		{UniqueID: "analytics.z", Version: 1, ContractHash: "sha256:z1"},
+	}, f.store.index.Files)
+
+	// Promotion 54 drops x.
+	delete(f.store.failDelete, "analytics.z")
+	f.reader.live = []contractversion.LiveContract{liveContract("analytics.a", 1, "sha256:a1")}
+	require.NoError(t, f.rewrite(54))
+
+	assert.NotContains(t, f.store.files, "analytics.x", "x's file is deleted")
+	assert.NotContains(t, f.store.files, "analytics.z")
+	assert.Equal(t, []ports.LiveIndexFile{{UniqueID: "analytics.a", Version: 1, ContractHash: "sha256:a1"}}, f.store.index.Files)
+}
+
+// A redelivery of a rewrite that failed after its puts puts the new file
+// again: its interim entry, at version 0, matches no contract.
+func TestLiveRewrite_ARedeliveryAfterAFailedRewritePutsTheNewFileAgain(t *testing.T) {
+	f := newLiveFolderFixture(liveContract("analytics.a", 1, "sha256:a1"), liveContract("analytics.x", 1, "sha256:x1"))
+	f.listed(52,
+		ports.LiveIndexFile{UniqueID: "analytics.a", Version: 1, ContractHash: "sha256:a1"},
+		ports.LiveIndexFile{UniqueID: "analytics.z", Version: 1, ContractHash: "sha256:z1"},
+	)
+	f.store.failDelete["analytics.z"] = errors.New("503 slow down")
+	require.Error(t, f.rewrite(53))
+	delete(f.store.failDelete, "analytics.z")
+	before := len(f.store.writes())
+
+	require.NoError(t, f.rewrite(53))
+
+	assert.Equal(t, []string{"put analytics.x", "delete analytics.z", "index"}, f.store.writes()[before:],
+		"no second interim index: x is listed already")
+	assert.Equal(t, int64(53), f.store.index.PromotionSeq)
 }
 
 // Without server settings a file carries no servers entry, and the
@@ -468,14 +559,14 @@ func TestLiveRewrite_NoServerPublishesNoServersEntry(t *testing.T) {
 	f := newLiveFolderFixture(liveContract("analytics.a", 1, "sha256:a1"))
 	f.folder = handlers.NewLiveFolder(f.reader, f.store, fakeRenderer{}, f.lease, f.lease, f.metrics,
 		nil, func() time.Time { return liveClock }, newTestLogger())
-	withServer := newLiveFolderFixture()
 
-	require.NoError(t, f.folder.Rewrite(context.Background(), livePromotion(3)))
+	require.NoError(t, f.rewrite(3))
 
 	assert.Equal(t, "analytics.a v1 servers=false", string(f.store.files["analytics.a"]))
-	assert.NotEqual(t, withServer.folder.SettingsSHA256(), f.folder.SettingsSHA256())
-	assert.Equal(t, handlers.NewLiveFolder(nil, nil, nil, nil, nil, nil, &contractversion.Server{Type: "postgres"},
-		time.Now, newTestLogger()).SettingsSHA256(), f.folder.SettingsSHA256(),
+	assert.Equal(t, fingerprintOf(nil), f.store.index.SettingsSHA256, "the fingerprint of no server")
+	assert.Equal(t, []string{fingerprintOf(nil)}, f.reported)
+	assert.NotEqual(t, fingerprintOf(liveServer), fingerprintOf(nil))
+	assert.Equal(t, fingerprintOf(&contractversion.Server{Type: "postgres"}), fingerprintOf(nil),
 		"a server with no host publishes what no server does")
 }
 
@@ -489,7 +580,7 @@ func TestLiveFolder_ChangedSettingsRewriteEveryFileAtStart(t *testing.T) {
 		ports.LiveIndexFile{UniqueID: "analytics.b", Version: 2, ContractHash: "sha256:b2"},
 	)
 	f.store.index.SettingsSHA256 = "old-settings"
-	f.lease.seq, f.lease.settings = 7, "old-settings"
+	f.lease.seq, f.lease.release, f.lease.settings = 7, "rel-7", "old-settings"
 
 	require.NoError(t, f.folder.RefreshAtStart(context.Background(), fakeTenants{"default"}, time.Millisecond))
 
@@ -498,13 +589,13 @@ func TestLiveFolder_ChangedSettingsRewriteEveryFileAtStart(t *testing.T) {
 	assert.ElementsMatch(t, []string{"put analytics.a", "put analytics.b"}, writes[:2])
 	assert.Equal(t, "index", writes[2])
 	assert.Equal(t, int64(7), f.store.index.PromotionSeq, "the index keeps the promotion it was written for")
-	assert.Equal(t, "rel-0", f.store.index.ReleaseID)
-	assert.Equal(t, f.folder.SettingsSHA256(), f.store.index.SettingsSHA256)
-	assert.Equal(t, []string{f.folder.SettingsSHA256()}, f.lease.settingsSaved)
+	assert.Equal(t, "rel-7", f.store.index.ReleaseID, "the release the watermark was recorded with")
+	assert.Equal(t, f.settings, f.store.index.SettingsSHA256)
+	assert.Equal(t, []string{f.settings}, f.lease.settingsSaved)
 	assert.Equal(t, 1, f.lease.releases)
 	assert.Equal(t, []int64{7}, f.reader.asked, "the live set of the promotion the folder's watermark names")
 
-	for name, settings := range map[string]string{"current": f.folder.SettingsSHA256(), "never written": ""} {
+	for name, settings := range map[string]string{"current": f.settings, "never written": ""} {
 		g := newLiveFolderFixture(liveContract("analytics.a", 1, "sha256:a1"))
 		g.lease.settings = settings
 		require.NoError(t, g.folder.RefreshAtStart(context.Background(), fakeTenants{"default"}, time.Millisecond), name)
@@ -546,8 +637,8 @@ func TestLiveFolder_AFailedStartRewriteIsTriedAgain(t *testing.T) {
 
 	require.NoError(t, f.folder.RefreshAtStart(context.Background(), fakeTenants{"default"}, time.Millisecond))
 
-	assert.Equal(t, []string{"put analytics.a", "index"}, f.store.writes())
-	assert.Equal(t, []string{f.folder.SettingsSHA256()}, f.lease.settingsSaved)
+	assert.Equal(t, []string{"index", "put analytics.a", "index"}, f.store.writes())
+	assert.Equal(t, []string{f.settings}, f.lease.settingsSaved)
 }
 
 // RefreshAtStart stops trying when its context ends.
@@ -583,5 +674,45 @@ func TestContractsHandler_AnEmptyBundleWritesOnlyTheIndex(t *testing.T) {
 	assert.Equal(t, []string{"index"}, live.store.writes())
 	assert.Empty(t, live.store.index.Files)
 	assert.Equal(t, int64(3), live.store.index.PromotionSeq)
-	assert.Equal(t, []liveFolderRecord{{seq: 3, settings: live.folder.SettingsSHA256()}}, f.repo.liveFolder)
+	assert.Equal(t, []liveFolderRecord{{seq: 3, release: "rel-1", settings: live.settings}}, f.repo.liveFolder)
+}
+
+// A start-up rewrite whose index names an older promotion than the
+// watermark writes the watermark's promotion and release into the index,
+// never an empty release.
+func TestLiveFolder_AStartRewriteNamesTheWatermarksRelease(t *testing.T) {
+	f := newLiveFolderFixture(liveContract("analytics.a", 1, "sha256:a1"))
+	f.listed(6, ports.LiveIndexFile{UniqueID: "analytics.a", Version: 1, ContractHash: "sha256:a1"})
+	f.store.index.SettingsSHA256 = "old-settings"
+	f.lease.seq, f.lease.release, f.lease.settings = 7, "rel-7", "old-settings"
+
+	require.NoError(t, f.folder.RefreshAtStart(context.Background(), fakeTenants{"default"}, time.Millisecond))
+
+	assert.Equal(t, int64(7), f.store.index.PromotionSeq)
+	assert.Equal(t, "rel-7", f.store.index.ReleaseID)
+}
+
+// Rewrite reports the settings the folder's files carry: this folder's when it
+// wrote the index or found it written for the promotion with them, nothing
+// when it skipped without writing.
+func TestLiveRewrite_ReportsTheSettingsOnlyWhenTheFolderCarriesThem(t *testing.T) {
+	wrote := newLiveFolderFixture(liveContract("analytics.a", 1, "sha256:a1"))
+	require.NoError(t, wrote.rewrite(3))
+
+	done := newLiveFolderFixture(liveContract("analytics.a", 1, "sha256:a1"))
+	done.listed(3, ports.LiveIndexFile{UniqueID: "analytics.a", Version: 1, ContractHash: "sha256:a1"})
+	require.NoError(t, done.rewrite(3))
+
+	atWatermark := newLiveFolderFixture(liveContract("analytics.a", 1, "sha256:a1"))
+	atWatermark.lease.seq = 5
+	require.NoError(t, atWatermark.rewrite(3))
+
+	superseded := newLiveFolderFixture(liveContract("analytics.a", 1, "sha256:a1"))
+	superseded.reader.latest = 5
+	require.NoError(t, superseded.rewrite(3))
+
+	assert.Equal(t, []string{wrote.settings}, wrote.reported)
+	assert.Equal(t, []string{done.settings}, done.reported)
+	assert.Equal(t, []string{""}, atWatermark.reported)
+	assert.Equal(t, []string{""}, superseded.reported)
 }

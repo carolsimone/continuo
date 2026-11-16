@@ -22,14 +22,21 @@ type LiveFolderLease interface {
 	Release(ctx context.Context, tenantID, holder string) error
 }
 
-// LiveFolderState is what the graph records about a tenant's live contracts
-// folder: the largest promotion seq a rewrite finished for (the folder's
-// watermark) and the fingerprint of the publishing settings it was written
-// with.
+// LiveFolderMark is what the graph records about a tenant's live contracts
+// folder: its watermark, the largest promotion seq a rewrite finished for, the
+// release of that promotion, and the fingerprint of the publishing settings
+// its files were last written with. The zero value is a folder never written.
+type LiveFolderMark struct {
+	PromotionSeq   int64
+	ReleaseID      string
+	SettingsSHA256 string
+}
+
+// LiveFolderState reads and records a tenant's LiveFolderMark.
 type LiveFolderState interface {
-	// Read returns the tenant's watermark and settings fingerprint: 0 and ""
-	// when the folder was never written.
-	Read(ctx context.Context, tenantID string) (promotionSeq int64, settingsSHA256 string, err error)
+	// Read returns the tenant's mark, the zero value when the folder was
+	// never written.
+	Read(ctx context.Context, tenantID string) (LiveFolderMark, error)
 	// RecordSettings stores the fingerprint of the settings a rewrite of the
 	// whole folder used, and leaves the watermark as it is.
 	RecordSettings(ctx context.Context, tenantID, settingsSHA256 string) error

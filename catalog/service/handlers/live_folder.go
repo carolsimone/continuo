@@ -30,6 +30,12 @@ const (
 	liveLeaseTTL = 2 * time.Minute
 	// liveLeaseRenewEvery is how often a running rewrite renews its lease.
 	liveLeaseRenewEvery = liveLeaseTTL / 3
+	// liveRenewTimeout bounds one renewal of the lease. A renewal that has
+	// not answered by then fails the rewrite and cancels its writes while the
+	// lease, renewed at most liveLeaseRenewEvery earlier, still has at least
+	// liveLeaseTTL - liveLeaseRenewEvery - liveRenewTimeout (50 s) to run, so
+	// no write of the rewrite outlives its lease.
+	liveRenewTimeout = 30 * time.Second
 	// liveReleaseTimeout bounds the release of the lease after a rewrite,
 	// which runs even when the rewrite's context has ended.
 	liveReleaseTimeout = 10 * time.Second
@@ -68,6 +74,11 @@ type LiveFolder struct {
 	settings  string
 	now       func() time.Time
 	logger    *slog.Logger
+	// leaseTTL, leaseRenewEvery and renewTimeout time the live-folder lease:
+	// liveLeaseTTL, liveLeaseRenewEvery and liveRenewTimeout.
+	leaseTTL        time.Duration
+	leaseRenewEvery time.Duration
+	renewTimeout    time.Duration
 }
 
 // NewLiveFolder creates a LiveFolder that publishes with server, the install's
@@ -94,6 +105,10 @@ func NewLiveFolder(
 		settings:  settingsFingerprint(server),
 		now:       now,
 		logger:    logger,
+
+		leaseTTL:        liveLeaseTTL,
+		leaseRenewEvery: liveLeaseRenewEvery,
+		renewTimeout:    liveRenewTimeout,
 	}
 }
 
@@ -110,12 +125,6 @@ func settingsFingerprint(server *contractversion.Server) string {
 	})
 }
 
-// SettingsSHA256 is the fingerprint of the settings this folder publishes
-// with, which transaction B and RewriteAll store with the folder's state.
-func (l *LiveFolder) SettingsSHA256() string {
-	return l.settings
-}
-
 // Rewrite brings the tenant's folder up to date after the promotion in. It
 // does nothing when in.PromotionSeq is at or below the folder's watermark,
 // when the index was already written for this promotion or a later one with
@@ -124,13 +133,20 @@ func (l *LiveFolder) SettingsSHA256() string {
 // Otherwise, holding the tenant's live-folder lease, it puts each changed file
 // of the promotion's nodes, deletes each file no longer published and puts
 // the index. A lease another rewrite holds is ErrLiveFolderBusy; a write that
-// fails ends the rewrite before the index, so the old index still describes
-// every file it lists, and the message's redelivery finishes the work.
-func (l *LiveFolder) Rewrite(ctx context.Context, in domainModel.PromoteReleaseInput) error {
+// fails ends the rewrite before the final index, so the index still lists
+// every file the folder may hold, and the message's redelivery finishes the
+// work.
+//
+// It returns the fingerprint of the settings the folder's files carry once it
+// returns: this folder's when it wrote the index, or found the index already
+// written for this promotion with them; "" when it wrote nothing and cannot
+// tell, so transaction B leaves the stored fingerprint as it is.
+func (l *LiveFolder) Rewrite(ctx context.Context, in domainModel.PromoteReleaseInput) (string, error) {
 	if done, err := l.atWatermark(ctx, in); err != nil || done {
-		return err
+		return "", err
 	}
-	return l.underLease(ctx, in.TenantID, func(ctx context.Context) error {
+	settings := ""
+	err := l.underLease(ctx, in.TenantID, func(ctx context.Context) error {
 		// Read again under the lease: a rewrite that held it meanwhile may
 		// have finished this promotion or a later one.
 		if done, err := l.atWatermark(ctx, in); err != nil || done {
@@ -143,13 +159,22 @@ func (l *LiveFolder) Rewrite(ctx context.Context, in domainModel.PromoteReleaseI
 		if found && prev.SettingsSHA256 == l.settings && prev.PromotionSeq >= in.PromotionSeq {
 			l.logger.Info("live contracts folder already written for this promotion; nothing to write",
 				"tenant_id", in.TenantID, "promotion_seq", in.PromotionSeq, "index_promotion_seq", prev.PromotionSeq)
+			settings = l.settings
 			return nil
 		}
 		if newer, err := l.superseded(ctx, in.TenantID, in.PromotionSeq); err != nil || newer {
 			return err
 		}
-		return l.write(ctx, in.TenantID, prev, found, false, in.PromotionSeq, in.ReleaseID)
+		if err := l.write(ctx, in.TenantID, prev, found, false, in.PromotionSeq, in.ReleaseID); err != nil {
+			return err
+		}
+		settings = l.settings
+		return nil
 	})
+	if err != nil {
+		return "", err
+	}
+	return settings, nil
 }
 
 // superseded reports whether a promotion newer than seq has its contracts
@@ -170,13 +195,13 @@ func (l *LiveFolder) superseded(ctx context.Context, tenantID string, seq int64)
 // atWatermark reports whether the folder's watermark is at or above the
 // promotion's seq.
 func (l *LiveFolder) atWatermark(ctx context.Context, in domainModel.PromoteReleaseInput) (bool, error) {
-	seq, _, err := l.state.Read(ctx, in.TenantID)
+	mark, err := l.state.Read(ctx, in.TenantID)
 	if err != nil {
 		return false, fmt.Errorf("read the live folder's watermark: %w", err)
 	}
-	if in.PromotionSeq <= seq {
+	if in.PromotionSeq <= mark.PromotionSeq {
 		l.logger.Info("promotion at or below the live folder's watermark; nothing to write",
-			"tenant_id", in.TenantID, "promotion_seq", in.PromotionSeq, "watermark", seq)
+			"tenant_id", in.TenantID, "promotion_seq", in.PromotionSeq, "watermark", mark.PromotionSeq)
 		return true, nil
 	}
 	return false, nil
@@ -184,31 +209,28 @@ func (l *LiveFolder) atWatermark(ctx context.Context, in domainModel.PromoteRele
 
 // RewriteAll rewrites the folder for the promotion its watermark names: it
 // puts every published file of that promotion's nodes, deletes each file the
-// index lists that is no longer published, puts the index and stores the
-// settings fingerprint. A folder with no watermark has nothing to rewrite. A
-// newer promotion whose contracts are recorded leaves the folder to that
-// promotion's own rewrite, which puts every file written with other settings.
+// index lists that is no longer published, puts the index, which names the
+// watermark's promotion and release, and stores the settings fingerprint. A
+// folder with no watermark has nothing to rewrite. A newer promotion whose
+// contracts are recorded leaves the folder to that promotion's own rewrite,
+// which puts every file written with other settings.
 func (l *LiveFolder) RewriteAll(ctx context.Context, tenantID string) error {
 	return l.underLease(ctx, tenantID, func(ctx context.Context) error {
-		seq, _, err := l.state.Read(ctx, tenantID)
+		mark, err := l.state.Read(ctx, tenantID)
 		if err != nil {
 			return fmt.Errorf("read the live folder's watermark: %w", err)
 		}
-		if seq == 0 {
+		if mark.PromotionSeq == 0 {
 			return nil
 		}
-		if newer, err := l.superseded(ctx, tenantID, seq); err != nil || newer {
+		if newer, err := l.superseded(ctx, tenantID, mark.PromotionSeq); err != nil || newer {
 			return err
 		}
 		prev, found, err := l.store.ReadIndex(ctx, tenantID)
 		if err != nil {
 			return fmt.Errorf("read the live index: %w", err)
 		}
-		releaseID := ""
-		if found && prev.PromotionSeq == seq {
-			releaseID = prev.ReleaseID
-		}
-		if err := l.write(ctx, tenantID, prev, found, true, seq, releaseID); err != nil {
+		if err := l.write(ctx, tenantID, prev, found, true, mark.PromotionSeq, mark.ReleaseID); err != nil {
 			return err
 		}
 		if err := l.state.RecordSettings(ctx, tenantID, l.settings); err != nil {
@@ -247,16 +269,16 @@ func (l *LiveFolder) refreshPass(ctx context.Context, tenants ports.GraphTenants
 	}
 	var errs []error
 	for _, tenantID := range ids {
-		_, stored, err := l.state.Read(ctx, tenantID)
+		mark, err := l.state.Read(ctx, tenantID)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("tenant %q: read the live folder's state: %w", tenantID, err))
 			continue
 		}
-		if stored == "" || stored == l.settings {
+		if mark.SettingsSHA256 == "" || mark.SettingsSHA256 == l.settings {
 			continue
 		}
 		l.logger.Info("publishing settings changed; rewriting every live contract file",
-			"tenant_id", tenantID, "stored_settings_sha256", stored, "settings_sha256", l.settings)
+			"tenant_id", tenantID, "stored_settings_sha256", mark.SettingsSHA256, "settings_sha256", l.settings)
 		if err := l.RewriteAll(ctx, tenantID); err != nil {
 			errs = append(errs, fmt.Errorf("tenant %q: %w", tenantID, err))
 		}
@@ -265,13 +287,14 @@ func (l *LiveFolder) refreshPass(ctx context.Context, tenants ports.GraphTenants
 }
 
 // underLease runs fn while holding the tenant's live-folder lease, renewing
-// it every liveLeaseRenewEvery. A renewal that finds the lease lost cancels
-// fn's context with that error, which is returned. The lease is released when
+// it every leaseRenewEvery, each renewal bounded by renewTimeout. A renewal
+// that finds the lease lost, fails or runs out of time cancels fn's context
+// with that error, which is returned. The lease is released when
 // fn returns, even after ctx ended; a release that fails leaves the lease to
 // lapse.
 func (l *LiveFolder) underLease(ctx context.Context, tenantID string, fn func(ctx context.Context) error) error {
 	holder := "live-folder-" + uuid.NewString()
-	acquired, err := l.lease.Acquire(ctx, tenantID, holder, liveLeaseTTL)
+	acquired, err := l.lease.Acquire(ctx, tenantID, holder, l.leaseTTL)
 	if err != nil {
 		return fmt.Errorf("take the live-folder lease: %w", err)
 	}
@@ -289,8 +312,8 @@ func (l *LiveFolder) underLease(ctx context.Context, tenantID string, fn func(ct
 
 	work, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	stop := keepAlive(work, liveLeaseRenewEvery, func(ctx context.Context) error {
-		return l.lease.Renew(ctx, tenantID, holder, liveLeaseTTL)
+	stop := keepAlive(work, l.leaseRenewEvery, l.renewTimeout, func(ctx context.Context) error {
+		return l.lease.Renew(ctx, tenantID, holder, l.leaseTTL)
 	}, func(err error) {
 		cancel(fmt.Errorf("renew the live-folder lease: %w", err))
 	})
@@ -309,6 +332,12 @@ func (l *LiveFolder) underLease(ctx context.Context, tenantID string, fn func(ct
 // (every one when all is set, or when prev was not found or was written with
 // other settings), deletes the files prev lists that are no longer published,
 // then puts the index naming promotionSeq and releaseID.
+//
+// Before it puts a file prev does not list, it puts an interim index: prev
+// with an entry for each such file at version 0, which no contract has. A
+// rewrite that stops after such a put leaves the file listed, so the next
+// rewrite deletes it if its node is not published, and puts it again if it
+// is, whichever promotion that rewrite is for.
 func (l *LiveFolder) write(
 	ctx context.Context,
 	tenantID string,
@@ -351,6 +380,9 @@ func (l *LiveFolder) write(
 	slices.SortFunc(puts, func(a, b contractversion.LiveContract) int { return cmp.Compare(a.UniqueID, b.UniqueID) })
 	slices.Sort(deletes)
 
+	if err := l.putInterimIndex(ctx, tenantID, prev, found, listed, puts); err != nil {
+		return err
+	}
 	if err := l.each(ctx, len(puts), ports.LiveWritePut, func(ctx context.Context, i int) error {
 		c := puts[i]
 		body, err := l.renderer.Render(contractversion.Published(c.Document, c.Version, l.server, c.Provenance))
@@ -383,6 +415,43 @@ func (l *LiveFolder) write(
 	l.logger.Info("Live contracts folder rewritten",
 		"tenant_id", tenantID, "promotion_seq", promotionSeq, "release_id", releaseID,
 		"files", len(files), "puts", len(puts), "deletes", len(deletes))
+	return nil
+}
+
+// putInterimIndex puts the interim index write describes when puts holds a
+// file prev does not list; otherwise it writes nothing. The interim index keeps
+// prev's promotion, release and settings, so a rewrite reading it still sees
+// the folder's last finished rewrite; with no prev it names no promotion and
+// no settings.
+func (l *LiveFolder) putInterimIndex(
+	ctx context.Context,
+	tenantID string,
+	prev ports.LiveIndex,
+	found bool,
+	listed map[string]ports.LiveIndexFile,
+	puts []contractversion.LiveContract,
+) error {
+	files := slices.Clone(prev.Files)
+	for _, c := range puts {
+		if _, ok := listed[c.UniqueID]; !ok {
+			files = append(files, ports.LiveIndexFile{UniqueID: c.UniqueID})
+		}
+	}
+	if len(files) == len(prev.Files) {
+		return nil
+	}
+	slices.SortFunc(files, func(a, b ports.LiveIndexFile) int { return cmp.Compare(a.UniqueID, b.UniqueID) })
+	interim := prev
+	if !found {
+		interim = ports.LiveIndex{SchemaVersion: ports.LiveIndexSchemaVersion, TenantID: tenantID}
+	}
+	interim.WrittenAt = l.now().UTC()
+	interim.Files = files
+	if err := l.store.PutIndex(ctx, tenantID, interim); err != nil {
+		l.metrics.LiveWrite(ports.LiveWriteIndex, ports.LiveWriteFailed)
+		return fmt.Errorf("put the interim live index: %w", err)
+	}
+	l.metrics.LiveWrite(ports.LiveWriteIndex, ports.LiveWriteOK)
 	return nil
 }
 
@@ -423,10 +492,11 @@ func (l *LiveFolder) each(ctx context.Context, n int, op string, do func(ctx con
 	return context.Cause(ctx)
 }
 
-// keepAlive calls renew every interval until stop is called or ctx ends,
-// handing each error renew returns to onFail. stop waits for a renewal in
-// flight, so nothing renews after it returns.
-func keepAlive(ctx context.Context, every time.Duration, renew func(context.Context) error, onFail func(error)) (stop func()) {
+// keepAlive calls renew every interval until stop is called or ctx ends, each
+// call under a context that ends after timeout, handing each error renew
+// returns (a call cut short by timeout among them) to onFail. stop waits for a
+// renewal in flight, so nothing renews after it returns.
+func keepAlive(ctx context.Context, every, timeout time.Duration, renew func(context.Context) error, onFail func(error)) (stop func()) {
 	done := make(chan struct{})
 	finished := make(chan struct{})
 	go func() {
@@ -440,7 +510,10 @@ func keepAlive(ctx context.Context, every time.Duration, renew func(context.Cont
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if err := renew(ctx); err != nil {
+				call, cancel := context.WithTimeout(ctx, timeout)
+				err := renew(call)
+				cancel()
+				if err != nil {
 					onFail(err)
 				}
 			}

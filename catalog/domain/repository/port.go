@@ -111,9 +111,12 @@ type ContractRepository interface {
 	// only while the node's watermark equals p.PromotionSeq, so an older
 	// promotion never takes a node's pointer from a newer one.
 	Write(ctx context.Context, tenantID string, p contractversion.Promotion, plan contractversion.WritePlan) (contractversion.WriteResult, error)
-	// RecordLiveFolder records that tenantID's live contracts folder was
-	// rewritten for promotionSeq with the publishing settings whose
-	// fingerprint is settingsSHA256: the folder's watermark moves to the
-	// larger of its value and promotionSeq, and the fingerprint is stored.
-	RecordLiveFolder(ctx context.Context, tenantID string, promotionSeq int64, settingsSHA256 string) error
+	// RecordLiveFolder records that the promotion promotionSeq of release
+	// releaseID is done with tenantID's live contracts folder: the folder's
+	// watermark moves to the larger of its value and promotionSeq, taking
+	// releaseID with it when it moves. settingsSHA256 is the fingerprint of
+	// the publishing settings the folder's files now carry, which is stored;
+	// an empty settingsSHA256 means the promotion wrote no file and leaves the
+	// stored fingerprint as it is.
+	RecordLiveFolder(ctx context.Context, tenantID string, promotionSeq int64, releaseID, settingsSHA256 string) error
 }
