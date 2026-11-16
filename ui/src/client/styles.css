@@ -591,6 +591,7 @@ a.release-author:hover { text-decoration: underline; }
   font-family: 'SF Mono', 'Fira Mono', monospace;
   line-height: 1.4;
 }
+/* ErrorCell's CHARS_PER_LINE is derived from this max-width and the 11px font. */
 .nodes-error-short {
   white-space: nowrap;
   overflow: hidden;

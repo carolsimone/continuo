@@ -239,12 +239,12 @@ describe('ReleaseDetailPage — hand-over reasons in the FIX cell', () => {
 
   it('shows the hand-over text and, beneath it, the message for a coded node', async () => {
     mockFetchProposals.mockResolvedValue([batched({
-      's.a': { status: 'failed', reason: 'tried 3 times; the last try failed: duplicate column', code: 'tries_spent' },
+      's.a': { status: 'failed', reason: 'duplicate column amount', code: 'tries_spent' },
     })]);
     const { container } = renderPage(releaseOf('s.a'));
     expect(await screen.findByText('Every try failed the checks. Fix it in the repository.')).toBeInTheDocument();
     expect(container.querySelector('.nodes-error-short')?.textContent)
-      .toBe('tried 3 times; the last try failed: duplicate column');
+      .toBe('duplicate column amount');
     expect(screen.queryByText(/The model could not produce a safe fix/)).toBeNull();
     // A message that fits has nothing to expand.
     expect(screen.queryByRole('button', { name: 'more' })).toBeNull();
