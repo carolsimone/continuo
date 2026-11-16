@@ -2137,10 +2137,11 @@ fails the render naming .key, with the schema check skipped as well as with it.
 {{/*
 The warehouse servers entry of the published contracts, as JSON {host, port,
 database}, from contracts.publish.server. A release without a contracts block
-gets no host, port 0 and validation.warehouseDatabase. The port is a whole
-number from 0 to 65535, and with a host set from 1; the database is the value
-or else validation.warehouseDatabase, and with a host set it must not be
-empty. Each failure names its key. catalog repeats these checks at startup.
+gets no host, port 0 and validation.warehouseDatabase. A host that is blank
+after trimming is no host. The port is a whole number from 0 to 65535, and with
+a host set from 1. The database is the value, trimmed, or else
+validation.warehouseDatabase, trimmed, and with a host set it must not be
+blank. Each failure names its key. catalog repeats these checks at startup.
 */ -}}
 {{- define "continuo.contracts.server" -}}
 {{- $s := dig "publish" "server" (dict) (.Values.contracts | default (dict)) -}}
@@ -2148,18 +2149,19 @@ empty. Each failure names its key. catalog repeats these checks at startup.
 {{- if not (kindIs "string" $host) -}}
 {{- fail (printf "contracts.publish.server.host=%v must be a string" $host) -}}
 {{- end -}}
+{{- $host = trim $host -}}
 {{- $database := dig "database" "" $s -}}
 {{- if not (kindIs "string" $database) -}}
 {{- fail (printf "contracts.publish.server.database=%v must be a string" $database) -}}
 {{- end -}}
-{{- $database = $database | default (.Values.validation.warehouseDatabase | default "") -}}
+{{- $database = trim $database | default (.Values.validation.warehouseDatabase | default "" | toString | trim) -}}
 {{- $port := include "continuo.wholeNumber" (dict "key" "contracts.publish.server.port" "value" (dig "port" 0 $s) "min" 0 "max" 65535 "rule" "from 0 to 65535 (from 1 when contracts.publish.server.host is set)") | int -}}
 {{- if $host -}}
 {{- if lt $port 1 -}}
 {{- fail (printf "contracts.publish.server.port=%d must be a whole number from 1 to 65535 when contracts.publish.server.host is set: it is the port of the warehouse that the published contracts name" $port) -}}
 {{- end -}}
 {{- if not $database -}}
-{{- fail "contracts.publish.server.database is empty and so is validation.warehouseDatabase: contracts.publish.server.host is set, so the published contracts need the warehouse database to name" -}}
+{{- fail "contracts.publish.server.database is blank and so is validation.warehouseDatabase: contracts.publish.server.host is set, so the published contracts need the warehouse database to name" -}}
 {{- end -}}
 {{- end -}}
 {{- dict "host" $host "port" $port "database" $database | toJson -}}

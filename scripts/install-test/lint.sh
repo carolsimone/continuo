@@ -981,6 +981,28 @@ helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
   --set contracts.publish.server.database=analytics > "${tmp}/contracts-database.yaml"
 grep -qF 'CONTRACTS_SERVER_DATABASE: "analytics"' "${tmp}/contracts-database.yaml" \
   || { echo "FAIL: contracts.publish.server.database must win over validation.warehouseDatabase"; exit 1; }
+# A host that is blank after trimming is no host: no servers entry, whatever
+# the port. A host and a database with blanks around them render trimmed.
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set-string 'contracts.publish.server.host=   ' > "${tmp}/contracts-blank-host.yaml" \
+  || { echo "FAIL: a blank contracts.publish.server.host must render as no host"; exit 1; }
+grep -qF 'CONTRACTS_SERVER_HOST: ""' "${tmp}/contracts-blank-host.yaml" \
+  || { echo "FAIL: a blank contracts.publish.server.host must reach the ConfigMap as an empty host"; exit 1; }
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set-string 'contracts.publish.server.host= warehouse.internal ' --set contracts.publish.server.port=5432 \
+  --set-string 'contracts.publish.server.database=  analytics ' > "${tmp}/contracts-padded.yaml" \
+  || { echo "FAIL: a padded contracts.publish.server host and database must render"; exit 1; }
+grep -qF 'CONTRACTS_SERVER_HOST: "warehouse.internal"' "${tmp}/contracts-padded.yaml" \
+  && grep -qF 'CONTRACTS_SERVER_DATABASE: "analytics"' "${tmp}/contracts-padded.yaml" \
+  || { echo "FAIL: a padded contracts.publish.server host and database must reach the ConfigMap trimmed"; exit 1; }
+# A blank database is no database: the value falls back to
+# validation.warehouseDatabase.
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set contracts.publish.server.host=warehouse.internal --set contracts.publish.server.port=5432 \
+  --set-string 'contracts.publish.server.database=   ' > "${tmp}/contracts-blank-database.yaml" \
+  || { echo "FAIL: a blank contracts.publish.server.database must fall back to validation.warehouseDatabase"; exit 1; }
+grep -qF 'CONTRACTS_SERVER_DATABASE: "continuo_dbt"' "${tmp}/contracts-blank-database.yaml" \
+  || { echo "FAIL: a blank contracts.publish.server.database must reach the ConfigMap as validation.warehouseDatabase"; exit 1; }
 # expect_contracts_refused KEY ARG...: helm template with the ARGs fails and
 # names KEY, with the schema check and again without it. The schema check names
 # a key as a JSON pointer (/a/b/c), the helpers as a dotted path (a.b.c).
@@ -1008,6 +1030,11 @@ expect_contracts_refused "${server_key}.port" --set "${server_key}.host=warehous
 expect_contracts_refused "${server_key}.port" --set "${server_key}.host=warehouse.internal" --set-string "${server_key}.port=5432"
 expect_contracts_refused "${server_key}.database" --set "${server_key}.host=warehouse.internal" --set "${server_key}.port=5432" \
   --set-string validation.warehouseDatabase=
+expect_contracts_refused "${server_key}.database" --set "${server_key}.host=warehouse.internal" --set "${server_key}.port=5432" \
+  --set-string validation.warehouseDatabase='   '
+expect_contracts_refused "${server_key}.database" --set "${server_key}.host=warehouse.internal" --set "${server_key}.port=5432" \
+  --set-string "${server_key}.database=  " --set-string validation.warehouseDatabase='  '
+expect_contracts_refused "${server_key}.port" --set-string "${server_key}.host= warehouse.internal "
 expect_contracts_refused catalog.contractHistory.retentionDays --set catalog.contractHistory.retentionDays=-1
 expect_contracts_refused catalog.contractHistory.retentionDays --set-string catalog.contractHistory.retentionDays=x
 expect_contracts_refused catalog.contractHistory.retentionDays --set-string catalog.contractHistory.retentionDays=30

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/carolsimone/continuo/catalog/domain/contractversion"
@@ -195,10 +196,12 @@ func LoadBackupKeep(v *pkgconfig.Validator) int {
 
 // loadContractsServer reads WAREHOUSE_ENGINE and the servers entry's three
 // settings. An engine with no server type is recorded on v, and the entry is
-// then nil. With no host the entry is nil and the port and database are not
-// read. With a host, a port outside 1 to 65535 or a missing database is
-// recorded on v and the entry is nil, so catalog refuses to start rather than
-// publish an entry that binds a contract to the wrong table.
+// then nil. A host that is blank after trimming is no host: the entry is nil
+// and the port and database are not read. With a host, a port outside 1 to
+// 65535 or a database that is blank after trimming is recorded on v and the
+// entry is nil, so catalog refuses to start rather than publish an entry that
+// binds a contract to the wrong table. The host and database are published
+// trimmed.
 func loadContractsServer(v *pkgconfig.Validator) (engine string, server *contractversion.Server) {
 	engine = os.Getenv(warehouseEngineKey)
 	if engine == "" {
@@ -209,7 +212,7 @@ func loadContractsServer(v *pkgconfig.Validator) (engine string, server *contrac
 		v.Add(fmt.Sprintf("%s (unsupported %q: expected postgres or trino)", warehouseEngineKey, engine))
 		return engine, nil
 	}
-	host := os.Getenv(contractsServerHostKey)
+	host := strings.TrimSpace(os.Getenv(contractsServerHostKey))
 	if host == "" {
 		return engine, nil
 	}
@@ -220,7 +223,7 @@ func loadContractsServer(v *pkgconfig.Validator) (engine string, server *contrac
 			contractsServerPortKey, os.Getenv(contractsServerPortKey), contractsServerHostKey))
 		ok = false
 	}
-	database := os.Getenv(contractsServerDatabaseKey)
+	database := strings.TrimSpace(os.Getenv(contractsServerDatabaseKey))
 	if database == "" {
 		v.Add(fmt.Sprintf("%s (required when %s is set)", contractsServerDatabaseKey, contractsServerHostKey))
 		ok = false

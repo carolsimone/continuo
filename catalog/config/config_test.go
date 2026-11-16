@@ -431,3 +431,62 @@ func TestLoad_ContractHistoryRetentionDays(t *testing.T) {
 		})
 	}
 }
+
+// A host that is blank after trimming is no host: the published files carry no
+// servers entry, and the port and database are not read.
+func TestLoad_ContractsServer_ABlankHostIsNoHost(t *testing.T) {
+	for _, host := range []string{" ", "   ", "\t", " \t "} {
+		t.Run(fmt.Sprintf("%q", host), func(t *testing.T) {
+			clearContractsEnv(t)
+			t.Setenv("CONTRACTS_SERVER_HOST", host)
+			t.Setenv("CONTRACTS_SERVER_PORT", "0")
+			var v pkgconfig.Validator
+			cfg := Load(&v, croninfra.BackupScheduleParser{})
+			if cfg.ContractsServer != nil {
+				t.Fatalf("ContractsServer = %+v, want nil", *cfg.ContractsServer)
+			}
+			if problems := contractsProblems(v.Missing()); len(problems) != 0 {
+				t.Fatalf("Load recorded %v", problems)
+			}
+		})
+	}
+}
+
+// A host or database with blanks around it is published without them.
+func TestLoad_ContractsServer_TrimsTheHostAndTheDatabase(t *testing.T) {
+	clearContractsEnv(t)
+	t.Setenv("CONTRACTS_SERVER_HOST", " warehouse.internal\t")
+	t.Setenv("CONTRACTS_SERVER_PORT", "5432")
+	t.Setenv("CONTRACTS_SERVER_DATABASE", "  continuo_dbt ")
+	var v pkgconfig.Validator
+	cfg := Load(&v, croninfra.BackupScheduleParser{})
+	want := contractversion.Server{Type: "postgres", Host: "warehouse.internal", Port: 5432, Database: "continuo_dbt"}
+	if cfg.ContractsServer == nil || *cfg.ContractsServer != want {
+		t.Fatalf("ContractsServer = %+v, want %+v", cfg.ContractsServer, want)
+	}
+	if problems := contractsProblems(v.Missing()); len(problems) != 0 {
+		t.Fatalf("Load recorded %v", problems)
+	}
+}
+
+// A set host whose database is blank after trimming is refused, as an empty
+// one is.
+func TestLoad_ContractsServer_ABlankDatabaseIsRefused(t *testing.T) {
+	for _, database := range []string{" ", "   ", "\t"} {
+		t.Run(fmt.Sprintf("%q", database), func(t *testing.T) {
+			clearContractsEnv(t)
+			t.Setenv("CONTRACTS_SERVER_HOST", "warehouse.internal")
+			t.Setenv("CONTRACTS_SERVER_PORT", "5432")
+			t.Setenv("CONTRACTS_SERVER_DATABASE", database)
+			var v pkgconfig.Validator
+			cfg := Load(&v, croninfra.BackupScheduleParser{})
+			problems := contractsProblems(v.Missing())
+			if len(problems) != 1 || !strings.HasPrefix(problems[0], "CONTRACTS_SERVER_DATABASE ") {
+				t.Fatalf("problems = %v, want one naming CONTRACTS_SERVER_DATABASE", problems)
+			}
+			if cfg.ContractsServer != nil {
+				t.Fatalf("ContractsServer = %+v, want nil", *cfg.ContractsServer)
+			}
+		})
+	}
+}

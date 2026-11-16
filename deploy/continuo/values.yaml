@@ -618,11 +618,12 @@ catalog:
 # validation.engine (WAREHOUSE_ENGINE), postgres or trino. `host` and `port` are
 # where a reader of the files reaches the warehouse, which need not be the
 # address the pods use. `database` is the warehouse database, and the catalog
-# name on trino; empty (the default) uses validation.warehouseDatabase. An empty
-# `host` (the default) publishes no servers entry, and `port` and `database`
-# are then ignored. With a host, `port` must be a whole number from 1 to 65535
-# and a database must resolve, or the install fails and catalog refuses to
-# start. The three reach catalog through the shared ConfigMap as
+# name on trino; empty (the default) uses validation.warehouseDatabase. A
+# `host` that is empty or only blanks (the default is empty) publishes no
+# servers entry, and `port` and `database` are then ignored. With a host,
+# `port` must be a whole number from 1 to 65535 and a database that is not
+# blank must resolve, or the install fails and catalog refuses to start.
+# Blanks around a host or a database are trimmed. The three reach catalog through the shared ConfigMap as
 # CONTRACTS_SERVER_HOST, CONTRACTS_SERVER_PORT and CONTRACTS_SERVER_DATABASE, so
 # a change restarts every continuo service, and catalog rewrites every file of
 # the live folder when it starts with other settings.
