@@ -4,8 +4,8 @@ import "time"
 
 // PromoteReleaseInput is the handler input for a release.promoted:v2 message:
 // the promotion's tenant, identity and seq, the location and checksum of its
-// topology artifact, the nodes it changed, and the provenance the versions
-// group stamps.
+// topology artifact and of its contract bundle, the nodes it changed, and the
+// provenance the versions group stamps.
 type PromoteReleaseInput struct {
 	// TenantID is the tenant the message's envelope names; every write the
 	// message makes is under it.
@@ -30,4 +30,9 @@ type PromoteReleaseInput struct {
 	// ignored by the topology swap.
 	CodeBundleURI string
 	Bootstrap     bool
+	// ContractBundleURI locates the release's contract bundle and
+	// ContractBundleSHA256 is the SHA-256 of its stored bytes. Both are empty
+	// for a promotion announced without a contract bundle.
+	ContractBundleURI    string
+	ContractBundleSHA256 string
 }
