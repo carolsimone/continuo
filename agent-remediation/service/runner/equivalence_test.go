@@ -343,11 +343,11 @@ func runRunner(t *testing.T, files workflow.Set, f conformance.Fixture, script c
 	}
 }
 
-// encodeTrigger is the remediation.requested:v2 payload of the trigger, the
+// encodeTrigger is the remediation.requested:v3 payload of the trigger, the
 // bytes both engines receive.
 func encodeTrigger(t *testing.T, trig remediation.Trigger) []byte {
 	t.Helper()
-	payload, err := serialization.EncodeRemediationRequestedV2(trig)
+	payload, err := serialization.EncodeTrigger(trig)
 	require.NoError(t, err)
 	return payload
 }

@@ -99,7 +99,7 @@ func (sr *scenarioRun) restart() {
 // accept delivers t as the stream message messageID and finds the remediation
 // it created.
 func (sr *scenarioRun) accept(ctx context.Context, t remediation.Trigger) error {
-	payload, err := serialization.EncodeRemediationRequestedV2(t)
+	payload, err := serialization.EncodeTrigger(t)
 	if err != nil {
 		return err
 	}

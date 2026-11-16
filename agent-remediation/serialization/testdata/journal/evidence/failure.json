@@ -29,7 +29,11 @@
             "Service": "orders",
             "Depth": 1
           }
-        ]
+        ],
+        "Unfixable": {
+          "Reason": "classifier_infra",
+          "Detail": "the warehouse timed out"
+        }
       }
     ]
   },
@@ -56,7 +60,11 @@
         "Service": "orders",
         "Depth": 1
       }
-    ]
+    ],
+    "Unfixable": {
+      "Reason": "classifier_infra",
+      "Detail": "the warehouse timed out"
+    }
   },
   "Members": [
     {
@@ -80,7 +88,11 @@
           "Service": "orders",
           "Depth": 1
         }
-      ]
+      ],
+      "Unfixable": {
+        "Reason": "classifier_infra",
+        "Detail": "the warehouse timed out"
+      }
     }
   ],
   "Attempt": 3,

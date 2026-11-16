@@ -76,7 +76,7 @@ func (v *validator) flow(f workflow.Flow) {
 	if f.Version != workflow.SupportedVersion {
 		v.refuse(f.Pos, "flow %q has version %d, and only version %d is supported", f.Name, f.Version, workflow.SupportedVersion)
 	}
-	if want := baseName(streams.RemediationRequestedV2); f.Trigger != want {
+	if want := baseName(streams.RemediationRequestedV3); f.Trigger != want {
 		v.refuse(f.Pos, "flow %q has trigger %q, and the only trigger is %q", f.Name, f.Trigger, want)
 	}
 	if f.Tries < 1 {
@@ -246,7 +246,7 @@ func (v *validator) chain(f workflow.Flow, t workflow.Type) {
 }
 
 // baseName is a stream name without its version ("remediation.requested" for
-// "remediation.requested:v2").
+// "remediation.requested:v3").
 func baseName(stream string) string {
 	name, _, _ := strings.Cut(stream, ":")
 	return name

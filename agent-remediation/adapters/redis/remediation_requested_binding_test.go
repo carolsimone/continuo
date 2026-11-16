@@ -4,15 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/handlers"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
+	"github.com/carolsimone/continuo/agent-remediation/service/uow"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 )
 
@@ -31,9 +37,10 @@ func TestTriggerFromPayload_DecodesBatch(t *testing.T) {
 	assert.Equal(t, raw, tr.RawPayload)
 }
 
-// requestedPayloadFixture is a remediation.requested:v2 wire payload with every
-// release-level and node-level field populated.
-var requestedPayloadFixture = map[string]any{
+// storedPayloadFixture is a heal trigger payload as a store holds one published
+// with an event_id of its own (remediation.requested:v2), every release-level
+// and node-level field populated.
+var storedPayloadFixture = map[string]any{
 	"event_id":          "evt-abc-123",
 	"source":            "validation",
 	"release_id":        "rel-456",
@@ -63,18 +70,81 @@ var requestedPayloadFixture = map[string]any{
 	},
 }
 
-func TestTriggerFromRequested_AllFieldsMap(t *testing.T) {
-	raw, err := json.Marshal(requestedPayloadFixture)
-	require.NoError(t, err)
-
-	msg := goredis.XMessage{
-		ID:     "1-0",
-		Values: map[string]interface{}{},
+// requestedFixture is a remediation.requested:v3 payload with every
+// release-level and node-level field populated, and a second node the
+// classifier marked unfixable.
+func requestedFixture() pkgevents.RemediationRequested {
+	return pkgevents.RemediationRequested{
+		Source:           "validation",
+		ReleaseID:        "rel-456",
+		RemediationRound: 2,
+		Repo:             "acme/dbt-project",
+		CommitSHA:        "deadbeef1234",
+		CodeBundleURI:    "s3://bucket/code-bundles/rel-456/bundle.json",
+		ClassifiedAt:     "2026-08-28T00:00:00Z",
+		Nodes: []pkgevents.RemediationRequestedNode{
+			{
+				NodeID:               "orders.model.orders_daily",
+				RelationID:           "analytics.orders_daily",
+				Category:             "sql_syntax_error",
+				ErrorSignature:       "column \"foo\" does not exist",
+				Reason:               "logic:missing_column",
+				ErrorExcerpt:         "column \"foo\" does not exist",
+				DBTLogURI:            "s3://bucket/logs/orders_daily.log",
+				CandidateArtifactURI: "s3://bucket/sql/orders_daily.sql",
+				FilePath:             "models/orders_daily.sql",
+				Service:              "svc-orders",
+				NodeType:             "dbt-model",
+				OtherService:         "svc-finance",
+				OtherFilePath:        "models/orders_legacy.sql",
+				ChangedAncestors: []pkgevents.RemediationRequestedAncestor{
+					{NodeID: "orders.model.orders_base", FilePath: "models/orders_base.sql", Service: "svc-orders"}},
+			},
+			{
+				NodeID:         "orders.model.orders_weekly",
+				Category:       "infra",
+				ErrorSignature: "connection reset",
+				Reason:         "infra:connection_reset",
+				DBTLogURI:      "s3://bucket/logs/orders_weekly.log",
+				Service:        "svc-orders",
+				NodeType:       "dbt-model",
+				Unfixable:      &pkgevents.Unfixable{Reason: string(model.HandoverReasonClassifierInfra), Detail: "the warehouse reset the connection"},
+			},
+		},
 	}
+}
 
-	trigger, err := triggerFromRequested(msg.ID, msg, raw)
+// requestedMessageOf is the remediation.requested:v3 stream message carrying p
+// for tenantID, with the payload bytes it carries.
+func requestedMessageOf(t *testing.T, id, tenantID string, p pkgevents.RemediationRequested, extra map[string]any) (goredis.XMessage, []byte) {
+	t.Helper()
+	fields, err := pkgevents.RemediationRequestedFields("evt-1", tenantID, "remediation", time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC), p)
 	require.NoError(t, err)
+	for k, v := range extra {
+		fields[k] = v
+	}
+	return goredis.XMessage{ID: id, Values: fields}, []byte(fields["payload"].(string))
+}
 
+// proposeRecorder is a propose function that records the trigger of each call.
+type proposeRecorder struct{ got []handlers.Trigger }
+
+func (r *proposeRecorder) propose(_ context.Context, t handlers.Trigger) error {
+	r.got = append(r.got, t)
+	return nil
+}
+
+// TestBinding_LegacyEngineMapsEveryFieldOfTheTrigger verifies that with the
+// legacy engine a message is decoded into the trigger it carries, with the
+// message's dedup identity and its payload bytes.
+func TestBinding_LegacyEngineMapsEveryFieldOfTheTrigger(t *testing.T) {
+	msg, payload := requestedMessageOf(t, "1-0", "default", requestedFixture(), nil)
+	rec := &proposeRecorder{}
+
+	require.NoError(t, legacyRemediationRequestedHandler(rec.propose)(context.Background(), msg))
+
+	require.Len(t, rec.got, 1)
+	trigger := rec.got[0]
 	require.Equal(t, "validation", trigger.Source)
 	require.Equal(t, "rel-456", trigger.ReleaseID)
 	require.Equal(t, 2, trigger.RemediationRound)
@@ -83,6 +153,7 @@ func TestTriggerFromRequested_AllFieldsMap(t *testing.T) {
 	require.Equal(t, "s3://bucket/code-bundles/rel-456/bundle.json", trigger.CodeBundleURI)
 	require.Equal(t, "1-0", trigger.MessageID)
 	require.Nil(t, trigger.OutboxEntryID) // no outbox_entry_id in Values
+	require.Equal(t, payload, trigger.RawPayload)
 
 	require.Len(t, trigger.Nodes, 1)
 	n := trigger.Nodes[0]
@@ -106,40 +177,118 @@ func TestTriggerFromRequested_AllFieldsMap(t *testing.T) {
 		"changed_ancestors must decode with their candidate location — without the ids every failure is fixed in its own source instead of the ancestor they share, and without the location the fix edits wherever the PROMOTED graph still places a renamed ancestor")
 }
 
-func TestTriggerFromRequested_InvalidJSON(t *testing.T) {
-	msg := goredis.XMessage{ID: "1-0", Values: map[string]interface{}{}}
-	_, err := triggerFromRequested(msg.ID, msg, []byte("not-json"))
-	require.Error(t, err)
+// TestBinding_LegacyEngineTakesTheOutboxEntryID verifies the producer's outbox
+// entry id reaches the trigger's second dedup axis.
+func TestBinding_LegacyEngineTakesTheOutboxEntryID(t *testing.T) {
+	entryID := uuid.New()
+	msg, _ := requestedMessageOf(t, "3-0", "default", requestedFixture(), map[string]any{"outbox_entry_id": entryID.String()})
+	rec := &proposeRecorder{}
+
+	require.NoError(t, legacyRemediationRequestedHandler(rec.propose)(context.Background(), msg))
+
+	require.Len(t, rec.got, 1)
+	require.NotNil(t, rec.got[0].OutboxEntryID)
+	assert.Equal(t, entryID, *rec.got[0].OutboxEntryID)
 }
 
-// TestTriggerFromRequested_SeedServiceField verifies that when a node carries
-// the service field (set for seed_build failures from the candidate topology),
-// it is decoded onto the node so the fixer can skip the NodeLocator lookup.
-func TestTriggerFromRequested_SeedServiceField(t *testing.T) {
-	payload := map[string]any{
-		"event_id":   "evt-seed-1",
-		"source":     "seed_build",
-		"release_id": "rel-seed-1",
-		"repo":       "o/r",
-		"commit_sha": "sha1",
-		"nodes": []any{
-			map[string]any{
-				"node_id":         "seed.svc.customers",
-				"category":        "logic",
-				"error_signature": "extra column",
-				"dbt_log_uri":     "s3://b/seed.log",
-				"file_path":       "seeds/customers.csv",
-				"service":         "svc-data",
-			},
+// TestBinding_LegacyEngineDropsUnfixableNodes verifies that the legacy engine
+// proposes a fix for the failing nodes a fix can reach alone: a node the
+// classifier marked unfixable never reaches the driver, while the payload bytes
+// the trigger carries stay whole.
+func TestBinding_LegacyEngineDropsUnfixableNodes(t *testing.T) {
+	msg, payload := requestedMessageOf(t, "1-0", "default", requestedFixture(), nil)
+	rec := &proposeRecorder{}
+
+	require.NoError(t, legacyRemediationRequestedHandler(rec.propose)(context.Background(), msg))
+
+	require.Len(t, rec.got, 1)
+	require.Len(t, rec.got[0].Nodes, 1)
+	assert.Equal(t, "orders.model.orders_daily", rec.got[0].Nodes[0].NodeID)
+	assert.Equal(t, payload, rec.got[0].RawPayload)
+}
+
+// TestBinding_LegacyEngineAcknowledgesATriggerOfUnfixableNodesAlone verifies
+// that a trigger whose every node is unfixable is acknowledged by the legacy
+// engine's own driver with nothing written: no unit of work is opened.
+func TestBinding_LegacyEngineAcknowledgesATriggerOfUnfixableNodesAlone(t *testing.T) {
+	p := requestedFixture()
+	p.Nodes = p.Nodes[1:]
+	msg, _ := requestedMessageOf(t, "2-0", "default", p, nil)
+	deps := handlers.Deps{
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		NewUoW: func() uow.UnitOfWork {
+			t.Fatal("a trigger with no node a fix can reach must write nothing")
+			return nil
 		},
 	}
-	raw, err := json.Marshal(payload)
+
+	require.NoError(t, newLegacyRemediationRequestedHandler(deps)(context.Background(), msg))
+}
+
+// TestTriggerFromPayload_DropsUnfixableNodes verifies the decode every legacy
+// reader shares (the binding, the drop handler and the verification
+// reconciler) leaves out a node the classifier marked unfixable.
+func TestTriggerFromPayload_DropsUnfixableNodes(t *testing.T) {
+	raw, err := json.Marshal(requestedFixture())
 	require.NoError(t, err)
 
-	msg := goredis.XMessage{ID: "2-0", Values: map[string]interface{}{}}
-	trigger, err := triggerFromRequested(msg.ID, msg, raw)
+	trigger, err := TriggerFromPayload(raw)
 	require.NoError(t, err)
 
+	require.Len(t, trigger.Nodes, 1)
+	assert.Equal(t, "orders.model.orders_daily", trigger.Nodes[0].NodeID)
+	assert.Equal(t, raw, trigger.RawPayload, "the replayed trigger carries the bytes it was decoded from")
+}
+
+// TestTriggerFromPayload_ReadsAStoredV2Payload verifies a payload stored from
+// remediation.requested:v2, with an event_id of its own and no unfixable node,
+// decodes to every node it names.
+func TestTriggerFromPayload_ReadsAStoredV2Payload(t *testing.T) {
+	raw, err := json.Marshal(storedPayloadFixture)
+	require.NoError(t, err)
+
+	trigger, err := TriggerFromPayload(raw)
+	require.NoError(t, err)
+
+	assert.Equal(t, "rel-456", trigger.ReleaseID)
+	assert.Equal(t, 2, trigger.RemediationRound)
+	require.Len(t, trigger.Nodes, 1)
+	assert.Equal(t, "orders.model.orders_daily", trigger.Nodes[0].NodeID)
+	assert.Equal(t, "svc-finance", trigger.Nodes[0].OtherService)
+}
+
+// TestTriggerFromPayload_RefusesAPayloadThatIsNotATrigger verifies the decode
+// errors on bytes that are not a heal trigger.
+func TestTriggerFromPayload_RefusesAPayloadThatIsNotATrigger(t *testing.T) {
+	for name, raw := range map[string]string{
+		"not JSON":    "not-json",
+		"no release":  `{"source":"validation","nodes":[]}`,
+		"bad source":  `{"source":"nope","release_id":"r","nodes":[]}`,
+		"empty bytes": "",
+	} {
+		_, err := TriggerFromPayload([]byte(raw))
+		assert.ErrorIs(t, err, pkgevents.ErrMalformedEnvelope, name)
+	}
+}
+
+// TestBinding_LegacyEngineReadsASeedBuildNode verifies that when a node carries
+// the service field (set for seed_build failures from the candidate topology),
+// it is decoded onto the node so the fixer can skip the NodeLocator lookup.
+func TestBinding_LegacyEngineReadsASeedBuildNode(t *testing.T) {
+	p := pkgevents.RemediationRequested{
+		Source: "seed_build", ReleaseID: "rel-seed-1", RemediationRound: 1, Repo: "o/r", CommitSHA: "sha1",
+		Nodes: []pkgevents.RemediationRequestedNode{{
+			NodeID: "seed.svc.customers", Category: "logic", ErrorSignature: "extra column",
+			DBTLogURI: "s3://b/seed.log", FilePath: "seeds/customers.csv", Service: "svc-data",
+		}},
+	}
+	msg, _ := requestedMessageOf(t, "2-0", "default", p, nil)
+	rec := &proposeRecorder{}
+
+	require.NoError(t, legacyRemediationRequestedHandler(rec.propose)(context.Background(), msg))
+
+	require.Len(t, rec.got, 1)
+	trigger := rec.got[0]
 	require.Equal(t, "seed_build", trigger.Source)
 	require.Len(t, trigger.Nodes, 1)
 	require.Equal(t, "seeds/customers.csv", trigger.Nodes[0].FilePath)
@@ -154,7 +303,7 @@ func TestTriggerFromRequested_SeedServiceField(t *testing.T) {
 // that follows a failed verification — supplies an identity of its own rather
 // than inheriting the identity of the message the first attempt consumed.
 func TestTriggerFromPayload_LeavesTheDedupIdentityToTheCaller(t *testing.T) {
-	raw, err := json.Marshal(requestedPayloadFixture)
+	raw, err := json.Marshal(storedPayloadFixture)
 	require.NoError(t, err)
 
 	trigger, err := TriggerFromPayload(raw)
@@ -171,17 +320,12 @@ func TestTriggerFromPayload_LeavesTheDedupIdentityToTheCaller(t *testing.T) {
 
 // TestBinding_RunnerEngineAcceptsTheTrigger verifies that with the runner
 // engine a message is decoded into the trigger it carries and handed to accept
-// with its tenant, its message id, the producer's outbox entry id, the payload
-// bytes and the stream's fields, and that today's proposer is never called.
+// with the envelope's tenant, its message id, the producer's outbox entry id,
+// the payload bytes and the stream's fields, and that today's proposer is never
+// called.
 func TestBinding_RunnerEngineAcceptsTheTrigger(t *testing.T) {
-	raw, err := json.Marshal(requestedPayloadFixture)
-	require.NoError(t, err)
 	entryID := uuid.New()
-	msg := goredis.XMessage{ID: "7-0", Values: map[string]any{
-		"payload":         string(raw),
-		"tenant_id":       "acme",
-		"outbox_entry_id": entryID.String(),
-	}}
+	msg, payload := requestedMessageOf(t, "7-0", "acme", requestedFixture(), map[string]any{"outbox_entry_id": entryID.String()})
 
 	var got []runner.Accepted
 	h := newRunnerRemediationRequestedHandler(func(_ context.Context, a runner.Accepted) error {
@@ -195,28 +339,53 @@ func TestBinding_RunnerEngineAcceptsTheTrigger(t *testing.T) {
 	assert.Equal(t, "acme", a.Trigger.TenantID)
 	assert.Equal(t, "rel-456", a.Trigger.ReleaseID)
 	assert.Equal(t, 2, a.Trigger.Round)
-	require.Len(t, a.Trigger.Nodes, 1)
+	require.Len(t, a.Trigger.Nodes, 2)
 	assert.Equal(t, "orders.model.orders_daily", a.Trigger.Nodes[0].NodeID)
-	assert.Equal(t, raw, a.Payload)
+	assert.Equal(t, payload, a.Payload)
 	assert.Equal(t, "7-0", a.MessageID)
 	require.NotNil(t, a.OutboxEntryID)
 	assert.Equal(t, entryID, *a.OutboxEntryID)
-	assert.Equal(t, map[string]string{"tenant_id": "acme", "outbox_entry_id": entryID.String()}, a.Fields,
-		"the stream's fields travel with the trigger, without the payload it already carries")
+	assert.Equal(t, map[string]string{
+		"event_id":        "evt-1",
+		"tenant_id":       "acme",
+		"occurred_at":     "2026-11-14T09:00:00.000000Z",
+		"producer":        "remediation",
+		"schema_version":  "1",
+		"outbox_entry_id": entryID.String(),
+	}, a.Fields, "the stream's fields travel with the trigger, without the payload it already carries")
 }
 
-// TestBinding_RunnerEngineLeavesAnAbsentTenantToAccept verifies that a message
-// with no tenant_id reaches accept with an empty tenant: the runner's Accept is
-// the one place that gives it the default tenant.
-func TestBinding_RunnerEngineLeavesAnAbsentTenantToAccept(t *testing.T) {
-	raw, err := json.Marshal(requestedPayloadFixture)
-	require.NoError(t, err)
+// TestBinding_RunnerEngineKeepsUnfixableNodes verifies that with the runner
+// engine a node the classifier marked unfixable stays on the trigger, with its
+// reason and detail: the runner hands it over itself.
+func TestBinding_RunnerEngineKeepsUnfixableNodes(t *testing.T) {
+	msg, _ := requestedMessageOf(t, "7-0", "acme", requestedFixture(), nil)
 	var got runner.Accepted
 	h := newRunnerRemediationRequestedHandler(func(_ context.Context, a runner.Accepted) error {
 		got = a
 		return nil
 	})
-	require.NoError(t, h(context.Background(), goredis.XMessage{ID: "8-0", Values: map[string]any{"payload": string(raw)}}))
+
+	require.NoError(t, h(context.Background(), msg))
+
+	require.Len(t, got.Trigger.Nodes, 2)
+	assert.Nil(t, got.Trigger.Nodes[0].Unfixable)
+	assert.Equal(t, "orders.model.orders_weekly", got.Trigger.Nodes[1].NodeID)
+	assert.Equal(t, &remediation.Unfixable{
+		Reason: model.HandoverReasonClassifierInfra, Detail: "the warehouse reset the connection"}, got.Trigger.Nodes[1].Unfixable)
+}
+
+// TestBinding_RunnerEngineLeavesAnAbsentTenantToAccept verifies that a message
+// whose envelope names no tenant reaches accept with an empty tenant: the
+// runner's Accept is the one place that gives it the default tenant.
+func TestBinding_RunnerEngineLeavesAnAbsentTenantToAccept(t *testing.T) {
+	msg, _ := requestedMessageOf(t, "8-0", "", requestedFixture(), nil)
+	var got runner.Accepted
+	h := newRunnerRemediationRequestedHandler(func(_ context.Context, a runner.Accepted) error {
+		got = a
+		return nil
+	})
+	require.NoError(t, h(context.Background(), msg))
 	assert.Empty(t, got.Trigger.TenantID)
 	assert.Equal(t, "rel-456", got.Trigger.ReleaseID)
 }
@@ -224,11 +393,10 @@ func TestBinding_RunnerEngineLeavesAnAbsentTenantToAccept(t *testing.T) {
 // TestBinding_RunnerEngineRedeliversAnAcceptError verifies that an error from
 // accept reaches the consumer as it is, so the message is delivered again.
 func TestBinding_RunnerEngineRedeliversAnAcceptError(t *testing.T) {
-	raw, err := json.Marshal(requestedPayloadFixture)
-	require.NoError(t, err)
+	msg, _ := requestedMessageOf(t, "9-0", "acme", requestedFixture(), nil)
 	boom := errors.New("database down")
 	h := newRunnerRemediationRequestedHandler(func(context.Context, runner.Accepted) error { return boom })
-	err = h(context.Background(), goredis.XMessage{ID: "9-0", Values: map[string]any{"payload": string(raw)}})
+	err := h(context.Background(), msg)
 	require.ErrorIs(t, err, boom)
 	assert.NotErrorIs(t, err, pkgevents.ErrPermanent)
 }

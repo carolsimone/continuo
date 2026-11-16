@@ -383,7 +383,7 @@ func testFiles(tries int) workflow.Set {
 	flow := workflow.Flow{
 		Version:        workflow.SupportedVersion,
 		Name:           "rejected-release",
-		Trigger:        baseName(streams.RemediationRequestedV2),
+		Trigger:        baseName(streams.RemediationRequestedV3),
 		Types:          []string{"dbt-compile", "dbt-validation", "shared-upstream", "cross-service-upstream"},
 		AcrossClusters: refs("edits_map_to_a_service", "no_path_edited_twice", "one_manifest_kind"),
 		Gate:           refs("verification_run"),
@@ -652,7 +652,7 @@ func trigger(source string, nodes ...remediation.TriggerNode) remediation.Trigge
 	}
 }
 
-// payloadOf is trig as a remediation.requested:v2 payload, in the wire field
+// payloadOf is trig as a remediation.requested:v3 payload, in the wire field
 // names.
 func payloadOf(t *testing.T, trig remediation.Trigger) []byte {
 	t.Helper()
@@ -823,6 +823,15 @@ func (h *harness) try(id uuid.UUID, n int) remediation.Try {
 // flowRows returns the flow-level journal rows of one try, by step name.
 func (h *harness) flowRows(id uuid.UUID, try int) map[string][]remediation.StepRun {
 	return h.stepRows(id, try, 0)
+}
+
+// proposedPayload is the tenant a remediation.proposed:v1 entry is stored under
+// and the event payload it wraps.
+func proposedPayload(t *testing.T, e outbox.Entry) (tenantID string, payload []byte) {
+	t.Helper()
+	tenantID, payload, err := outbox.UnwrapTenant(e.Payload)
+	require.NoError(t, err)
+	return tenantID, payload
 }
 
 // proposedEvents is every outbox entry on remediation.proposed:v1.

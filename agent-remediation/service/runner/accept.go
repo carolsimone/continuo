@@ -67,7 +67,7 @@ func (r *Runner) Accept(ctx context.Context, a Accepted) error {
 
 	msgID, dup, err := messageprocessing.DedupWithOutboxEntryID(
 		ctx, u.MessageProcessingRepo(), r.logger,
-		a.MessageID, streams.RemediationRequestedV2, a.Payload, a.OutboxEntryID,
+		a.MessageID, streams.RemediationRequestedV3, a.Payload, a.OutboxEntryID,
 	)
 	if err != nil {
 		return fmt.Errorf("dedup: %w", err)

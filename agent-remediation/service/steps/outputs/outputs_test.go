@@ -16,6 +16,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/outputs"
+	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 )
 
@@ -144,9 +145,13 @@ func TestPullRequest_MarksTheFixVerifiedAndEnqueuesTheProposedEvent(t *testing.T
 	assert.Equal(t, "pending", e.Status)
 	assert.Nil(t, e.MessageProcessingID)
 
-	// The payload is built from the row's fields, as handlers.Enqueue builds it.
+	// The payload is stored under the remediation's tenant and built from the
+	// row's fields, as handlers.Enqueue builds it.
+	tenantID, body, err := outbox.UnwrapTenant(e.Payload)
+	require.NoError(t, err)
+	assert.Equal(t, rem.TenantID, tenantID)
 	var got map[string]any
-	require.NoError(t, json.Unmarshal(e.Payload, &got))
+	require.NoError(t, json.Unmarshal(body, &got))
 	assert.Equal(t, map[string]any{
 		"event_id":          eventID.String(),
 		"source":            "validation",

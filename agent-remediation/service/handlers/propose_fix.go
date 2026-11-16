@@ -3,8 +3,9 @@
 // and hold no infrastructure dependencies directly.
 //
 // The driver here works a whole rejected release at a time. One
-// remediation.requested:v2 trigger carries the release's healable failing set;
-// the driver groups it into fix clusters, calls one Fixer per cluster, submits
+// remediation.requested:v3 trigger carries the release's failing set, and the
+// driver works the nodes a fix can reach: it groups them into fix clusters,
+// calls one Fixer per cluster, submits
 // one fix-verification run per edited service, and records a single
 // proposal row for the attempt carrying every node's outcome. Nothing is
 // announced from here: the verification reconciler emits
@@ -33,6 +34,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/promptlog"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -688,7 +690,7 @@ func alreadyProcessed(ctx context.Context, deps Deps, t Trigger) (bool, error) {
 	}
 	defer func() { _ = u.Rollback() }()
 	done, err := u.MessageProcessingRepo().AlreadyProcessed(
-		ctx, t.MessageID, streams.RemediationRequestedV2, t.OutboxEntryID)
+		ctx, t.MessageID, streams.RemediationRequestedV3, t.OutboxEntryID)
 	if err != nil {
 		return false, fmt.Errorf("dedup pre-check: %w", err)
 	}
@@ -810,7 +812,7 @@ func record(ctx context.Context, deps Deps, t Trigger, attempt int, p proposal.P
 	// whose proposal is written is marked completed before the commit.
 	msgProcID, dup, err := messageprocessing.DedupWithOutboxEntryID(
 		ctx, u.MessageProcessingRepo(), deps.Logger,
-		t.MessageID, streams.RemediationRequestedV2, t.RawPayload, t.OutboxEntryID,
+		t.MessageID, streams.RemediationRequestedV3, t.RawPayload, t.OutboxEntryID,
 	)
 	if err != nil {
 		return fmt.Errorf("dedup: %w", err)
@@ -854,7 +856,8 @@ func verificationServices(vs []proposal.Verification) []string {
 // whether the fix rewrote real version-controlled source. msgProcID is the
 // message_processing row UUID of the inbound trigger behind the write, stored
 // on the outbox entry for provenance; uuid.Nil for a write no inbound message
-// drove.
+// drove. The entry's payload is stored under events.DefaultTenantID, since the
+// legacy engine carries no tenant.
 func Enqueue(ctx context.Context, u uow.UnitOfWork, clock ports.Clock, p proposal.Proposal, sourceResolved bool, msgProcID uuid.UUID) error {
 	eventID := event.RemediationEventID(p.ReleaseID, p.Attempt)
 	edits := make([]event.ProposedEdit, 0, len(p.Edits))
@@ -888,12 +891,16 @@ func Enqueue(ctx context.Context, u uow.UnitOfWork, clock ports.Clock, p proposa
 	if err != nil {
 		return fmt.Errorf("marshal proposed event: %w", err)
 	}
+	stored, err := outbox.WrapTenant(events.DefaultTenantID, body)
+	if err != nil {
+		return fmt.Errorf("store proposed event under its tenant: %w", err)
+	}
 	entry := &outbox.Entry{
 		ID:            uuid.NewSHA1(uuid.NameSpaceOID, []byte(eventID.String())),
 		AggregateType: event.AggregateType,
 		AggregateID:   event.AggregateIDForRelease(p.ReleaseID),
 		EventType:     event.EventType,
-		Payload:       body,
+		Payload:       stored,
 		StreamName:    streams.RemediationProposedV1,
 		Status:        "pending",
 	}

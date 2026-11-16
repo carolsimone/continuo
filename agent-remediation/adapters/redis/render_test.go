@@ -173,3 +173,80 @@ func TestXAddArgs_DoNotTrim(t *testing.T) {
 		t.Fatalf("outbox_entry_id missing from %v", args.Values)
 	}
 }
+
+// TestRender_ProposedRowStoresItsTenant holds that a remediation.proposed:v1
+// row, stored under its tenant, renders as the payload it wraps beside that
+// tenant, and that a row stored under no tenant is refused as permanent:
+// no retry makes it renderable.
+func TestRender_ProposedRowStoresItsTenant(t *testing.T) {
+	p := &agentRemediationOutboxPublisher{}
+	const body = `{"release_id":"r1","attempt":1}`
+
+	t.Run("renders the wrapped payload beside the stored tenant", func(t *testing.T) {
+		stored, err := pkgoutbox.WrapTenant("acme", []byte(body))
+		require.NoError(t, err)
+		values, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), EventType: "remediation_proposed", StreamName: streams.RemediationProposedV1, Payload: stored})
+		require.NoError(t, err)
+		assert.Equal(t, map[string]any{"payload": body, "tenant_id": "acme"}, values)
+	})
+
+	t.Run("the default tenant renders as stored", func(t *testing.T) {
+		stored, err := pkgoutbox.WrapTenant(pkgevents.DefaultTenantID, []byte(body))
+		require.NoError(t, err)
+		values, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), StreamName: streams.RemediationProposedV1, Payload: stored})
+		require.NoError(t, err)
+		assert.Equal(t, map[string]any{"payload": body, "tenant_id": pkgevents.DefaultTenantID}, values)
+	})
+
+	t.Run("a row stored under no tenant is permanent", func(t *testing.T) {
+		for name, payload := range map[string]string{
+			"an unwrapped payload": body,
+			"an empty tenant":      `{"tenant_id":"","payload":{"release_id":"r1"}}`,
+			"no payload":           `{"tenant_id":"acme"}`,
+		} {
+			_, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), StreamName: streams.RemediationProposedV1, Payload: []byte(payload)})
+			require.ErrorIs(t, err, pkgevents.ErrPermanent, name)
+			require.ErrorIs(t, err, pkgoutbox.ErrNoTenant, name)
+		}
+	})
+}
+
+// TestRender_PrOpenedAndPrClosedRowsKeepTheDefaultTenant holds that the rows
+// agent-remediation announces for a pull request's lifecycle are stored as
+// their payload and render beside the default tenant.
+func TestRender_PrOpenedAndPrClosedRowsKeepTheDefaultTenant(t *testing.T) {
+	p := &agentRemediationOutboxPublisher{}
+	for _, stream := range []string{streams.RemediationPrOpenedV1, streams.RemediationPrClosedV1} {
+		values, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), StreamName: stream, Payload: []byte(`{"release_id":"r1"}`)})
+		require.NoError(t, err, stream)
+		assert.Equal(t, map[string]any{"payload": `{"release_id":"r1"}`, "tenant_id": pkgevents.DefaultTenantID}, values, stream)
+	}
+}
+
+// TestPublish_ProposedRowXAddCarriesItsStoredTenant holds that the XADD of a
+// remediation.proposed:v1 row carries the payload it wraps, the tenant it is
+// stored under and the entry's outbox_entry_id.
+func TestPublish_ProposedRowXAddCarriesItsStoredTenant(t *testing.T) {
+	capture := &captureXAdd{}
+	rc := goredis.NewClient(&goredis.Options{Addr: "127.0.0.1:0"})
+	rc.AddHook(capture)
+	t.Cleanup(func() { _ = rc.Close() })
+
+	stored, err := pkgoutbox.WrapTenant("acme", []byte(`{"release_id":"r1"}`))
+	require.NoError(t, err)
+	entry := &pkgoutbox.Entry{ID: uuid.New(), StreamName: streams.RemediationProposedV1, Payload: stored}
+	require.NoError(t, (&agentRemediationOutboxPublisher{redis: rc}).Publish(context.Background(), entry))
+
+	require.Len(t, capture.cmds, 1)
+	args := capture.cmds[0].Args()
+	assert.Equal(t, pkgredis.Key(streams.RemediationProposedV1), args[1])
+	fields := map[string]any{}
+	for i := 4; i+1 < len(args); i += 2 {
+		fields[args[i].(string)] = args[i+1]
+	}
+	assert.Equal(t, map[string]any{
+		"payload":         `{"release_id":"r1"}`,
+		"tenant_id":       "acme",
+		"outbox_entry_id": entry.ID.String(),
+	}, fields)
+}

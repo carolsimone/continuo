@@ -288,7 +288,9 @@ func TestRunner_GatePassEmitsOneProposedEvent(t *testing.T) {
 		ReleaseID string `json:"release_id"`
 		Attempt   int    `json:"attempt"`
 	}
-	require.NoError(t, json.Unmarshal(events[0].Payload, &payload))
+	tenantID, body := proposedPayload(t, events[0])
+	assert.Equal(t, "default", tenantID)
+	require.NoError(t, json.Unmarshal(body, &payload))
 	assert.Equal(t, releaseID, payload.ReleaseID)
 	assert.Equal(t, 1, payload.Attempt)
 

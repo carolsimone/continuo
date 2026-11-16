@@ -15,6 +15,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/conformance"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	"github.com/carolsimone/continuo/pkg/events"
 )
 
 const typeFixtureYAML = `kind: fixture
@@ -257,7 +258,8 @@ func TestLoadFixtures_ReportsEveryBadFixture(t *testing.T) {
 }
 
 // filled sets every field of v to a value no zero value equals: a string to
-// its field's JSON name, an int to 7, a slice to one filled element.
+// its field's JSON name, an int to 7, a slice to one filled element, a pointer
+// to a filled value.
 func filled(v reflect.Value, name string) {
 	switch v.Kind() {
 	case reflect.String:
@@ -267,6 +269,9 @@ func filled(v reflect.Value, name string) {
 	case reflect.Slice:
 		v.Set(reflect.MakeSlice(v.Type(), 1, 1))
 		filled(v.Index(0), name)
+	case reflect.Pointer:
+		v.Set(reflect.New(v.Type().Elem()))
+		filled(v.Elem(), name)
 	case reflect.Struct:
 		for i := range v.NumField() {
 			tag, _, _ := strings.Cut(v.Type().Field(i).Tag.Get("json"), ",")
@@ -277,25 +282,36 @@ func filled(v reflect.Value, name string) {
 	}
 }
 
-// A fixture's trigger takes every field of the remediation.requested:v2
-// payload, under its payload name, and keeps each value: a field the payload
-// gains must be added to the fixture format too, or this fails.
-func TestLoadFixtures_TheTriggerTakesEveryFieldOfTheV2Payload(t *testing.T) {
-	var dto serialization.RemediationRequestedV2DTO
-	filled(reflect.ValueOf(&dto).Elem(), "")
-	payload, err := json.Marshal(dto)
+// A fixture's trigger takes every field of the remediation.requested payload a
+// trigger carries, under its payload name, and keeps each value: a field the
+// payload gains must be added to the fixture format too, or this fails. A
+// trigger carries no classification time and a fixture's node no unfixable
+// marker, so those two payload fields are left out.
+func TestLoadFixtures_TheTriggerTakesEveryFieldOfThePayload(t *testing.T) {
+	var p events.RemediationRequested
+	filled(reflect.ValueOf(&p).Elem(), "")
+	for i := range p.Nodes {
+		p.Nodes[i].Unfixable = nil
+	}
+	var want map[string]any
+	filledJSON, err := json.Marshal(p)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(filledJSON, &want))
+	delete(want, "classified_at")
+	payload, err := json.Marshal(want)
 	require.NoError(t, err)
 	doc := "kind: fixture\nversion: 1\ntype: x\ntrigger: " + string(payload) + "\n"
 
 	fixtures, err := LoadFixtures(fstest.MapFS{"f.yaml": {Data: []byte(doc)}})
 	require.NoError(t, err)
 	require.Len(t, fixtures, 1)
-	encoded, err := serialization.EncodeRemediationRequestedV2(fixtures[0].Trigger)
+	encoded, err := serialization.EncodeTrigger(fixtures[0].Trigger)
 	require.NoError(t, err)
 
-	var want, got map[string]any
-	require.NoError(t, json.Unmarshal(payload, &want))
+	var got map[string]any
 	require.NoError(t, json.Unmarshal(encoded, &got))
+	assert.Equal(t, "", got["classified_at"], "a trigger has no classification time")
+	delete(got, "classified_at")
 	assert.Equal(t, want, got)
 }
 

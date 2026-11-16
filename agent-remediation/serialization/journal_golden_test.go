@@ -19,6 +19,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // The golden files under testdata/journal hold the JSON the runner's journal
@@ -104,6 +105,7 @@ func sampleNode(id string) remediation.TriggerNode {
 		ChangedAncestors: []remediation.ChangedAncestor{
 			{NodeID: "orders.model.stg_orders", FilePath: "models/stg_orders.sql", Service: "orders", Depth: 1},
 		},
+		Unfixable: &remediation.Unfixable{Reason: model.HandoverReasonClassifierInfra, Detail: "the warehouse timed out"},
 	}
 }
 
@@ -305,6 +307,24 @@ func TestJournal_EvidenceValuesKeepTheirStoredJSON(t *testing.T) {
 			assert.Equal(t, sample, got, "a stored value decodes back into the same value")
 		})
 	}
+}
+
+// A failure stored with a node that has no Unfixable key decodes with the node
+// fixable: rows stored before a node could carry the key still read.
+func TestJournal_AFailureStoredWithoutAnUnfixableKeyDecodesFixable(t *testing.T) {
+	reg := runner.NewRegistry(runner.Collaborators{})
+	stored := serialization.EncodedEvidence{
+		remediation.KeyFailure: json.RawMessage(`{"Trigger":{"Round":1,"Nodes":[{"NodeID":"n"}]},"Target":{"NodeID":"n"},"Members":[{"NodeID":"n"}]}`),
+	}
+
+	ev, err := stored.AddTo(remediation.NewEvidence(), reg.EvidenceType)
+	require.NoError(t, err)
+
+	failure, ok := remediation.Get[remediation.Failure](ev, remediation.KeyFailure)
+	require.True(t, ok)
+	require.Len(t, failure.Trigger.Nodes, 1)
+	assert.Nil(t, failure.Trigger.Nodes[0].Unfixable)
+	assert.Nil(t, failure.Target.Unfixable)
 }
 
 func TestJournal_EncodeEvidenceRefusesAKeyWithNoRegisteredType(t *testing.T) {
