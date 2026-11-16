@@ -9,6 +9,7 @@ import (
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/google/uuid"
 )
@@ -137,5 +138,81 @@ func TestRender_MalformedReleasePromotedV2RowIsPermanent(t *testing.T) {
 	_, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), EventType: ports.ReleasePromotedV2EventType, Payload: []byte(`{`)})
 	if !errors.Is(err, pkgevents.ErrPermanent) {
 		t.Fatalf("err = %v, want ErrPermanent", err)
+	}
+}
+
+// retryRow builds the outbox row RetryRemediation stores for the retry of a
+// release: the typed payload wrapped under tenantID, on the v2 stream.
+func retryRow(t *testing.T, tenantID string, created time.Time, p pkgevents.RemediationRetryRequested) *pkgoutbox.Entry {
+	t.Helper()
+	payload, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := pkgoutbox.WrapTenant(tenantID, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &pkgoutbox.Entry{
+		ID:         uuid.New(),
+		EventType:  "remediation_retry_requested",
+		Payload:    stored,
+		StreamName: streams.RemediationRetryRequestedV2,
+		CreatedAt:  created,
+	}
+}
+
+func TestRender_RetryRowCarriesTheStoredTenantAndDecodes(t *testing.T) {
+	created := time.Date(2026, 11, 12, 14, 5, 33, 0, time.UTC)
+	rejection := json.RawMessage(`{"release_id":"r1","stage":"compile","reason":"compile_failed"}`)
+	entry := retryRow(t, "acme", created, pkgevents.RemediationRetryRequested{ReleaseID: "r1", RemediationRound: 2, Rejection: rejection})
+
+	p := &releaseOutboxPublisher{}
+	values, err := p.Render(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := values["outbox_entry_id"]; ok {
+		t.Fatal("Render must not include outbox_entry_id")
+	}
+	fields, err := pkgoutbox.StringifyFields(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, got, err := pkgevents.DecodeRemediationRetryRequested(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ReleaseID != "r1" || got.RemediationRound != 2 || string(got.Rejection) != string(rejection) {
+		t.Fatalf("payload = %+v", got)
+	}
+	if env.TenantID != "acme" {
+		t.Fatalf("tenant = %q, want the stored tenant", env.TenantID)
+	}
+	if env.EventID != entry.ID.String() || env.Producer != "release-controller" || !env.OccurredAt.Equal(created) {
+		t.Fatalf("envelope = %+v", env)
+	}
+}
+
+func TestRender_RetryRowThatCannotBeRenderedIsPermanent(t *testing.T) {
+	created := time.Date(2026, 11, 12, 14, 5, 33, 0, time.UTC)
+	rejected := json.RawMessage(`{"release_id":"r1"}`)
+	unwrapped := retryRow(t, "acme", created, pkgevents.RemediationRetryRequested{ReleaseID: "r1", RemediationRound: 2, Rejection: rejected})
+	unwrapped.Payload = []byte(`{"release_id":"r1","remediation_round":2,"rejection":{}}`)
+	notJSON := retryRow(t, "acme", created, pkgevents.RemediationRetryRequested{ReleaseID: "r1", RemediationRound: 2, Rejection: rejected})
+	notJSON.Payload = []byte(`{"tenant_id":"acme","payload":"not an object"}`)
+
+	cases := map[string]*pkgoutbox.Entry{
+		"a payload with no tenant":         unwrapped,
+		"a payload that is no retry":       notJSON,
+		"a stored payload that is no JSON": {ID: uuid.New(), Payload: []byte(`{`), StreamName: streams.RemediationRetryRequestedV2, CreatedAt: created},
+	}
+	for name, entry := range cases {
+		t.Run(name, func(t *testing.T) {
+			p := &releaseOutboxPublisher{}
+			if _, err := p.Render(entry); !errors.Is(err, pkgevents.ErrPermanent) {
+				t.Fatalf("err = %v, want ErrPermanent", err)
+			}
+		})
 	}
 }

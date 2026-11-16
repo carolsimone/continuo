@@ -12,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/jmoiron/sqlx"
@@ -66,8 +67,9 @@ const envelopeProducer = "release-controller"
 
 // Render returns the field map Publish XADDs for entry, without
 // outbox_entry_id: a dead-letter row's scalar fields, a release.promoted:v2
-// row's envelope fields, or the row's JSON body as the single "payload" field.
-// Every call returns a fresh map.
+// row's envelope fields, a remediation.retry_requested:v2 row's envelope
+// fields, or the row's JSON body as the single "payload" field. Every call
+// returns a fresh map.
 func (p *releaseOutboxPublisher) Render(entry *pkgoutbox.Entry) (map[string]any, error) {
 	switch entry.EventType {
 	case pkgoutbox.DeadLetterEventType:
@@ -85,7 +87,33 @@ func (p *releaseOutboxPublisher) Render(entry *pkgoutbox.Entry) (map[string]any,
 		}
 		return pkgevents.ReleasePromotedFields(pkgevents.DefaultTenantID, envelopeProducer, entry.CreatedAt, promoted)
 	}
+	if entry.StreamName == streams.RemediationRetryRequestedV2 {
+		return renderRemediationRetryRequested(entry)
+	}
 	return map[string]any{"payload": string(entry.Payload)}, nil
+}
+
+// renderRemediationRetryRequested renders a row on remediation.retry_requested:v2:
+// the row stores the typed retry under its tenant (pkgoutbox.WrapTenant), and
+// the envelope names the row as the event, the tenant it stores and the time it
+// was written. The row is recognised by its stream rather than its event type:
+// the stream's version is what fixes the payload's contract. Every failure is
+// permanent, since the stored payload is release-controller's own and decodes
+// the same way on every attempt.
+func renderRemediationRetryRequested(entry *pkgoutbox.Entry) (map[string]any, error) {
+	tenantID, payload, err := pkgoutbox.UnwrapTenant(entry.Payload)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s: %w", pkgevents.ErrPermanent, streams.RemediationRetryRequestedV2, err)
+	}
+	var retry pkgevents.RemediationRetryRequested
+	if err := json.Unmarshal(payload, &retry); err != nil {
+		return nil, fmt.Errorf("%w: unmarshal %s: %v", pkgevents.ErrPermanent, streams.RemediationRetryRequestedV2, err)
+	}
+	values, err := pkgevents.RemediationRetryRequestedFields(entry.ID.String(), tenantID, envelopeProducer, entry.CreatedAt, retry)
+	if err != nil {
+		return nil, fmt.Errorf("%w: render %s: %v", pkgevents.ErrPermanent, streams.RemediationRetryRequestedV2, err)
+	}
+	return values, nil
 }
 
 // outboxHeartbeatStale is the liveness budget for the outbox processor's Run

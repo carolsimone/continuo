@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/maintenance"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -58,15 +59,16 @@ type RetryRemediationResult struct {
 }
 
 // RetryRemediation starts another remediation round on a rejected candidate:
-// it replays the rejection the candidate stored, tagged with the new round,
-// on remediation.retry_requested:v1. It refuses when the id names a
-// verification run rather than a candidate (a verification is not a release,
-// so it is reported the same as an unknown id), when the candidate is not
-// rejected, when its reason is not healable, when the round cap is reached,
-// when the candidate has no stored rejection, when the current round has not
-// yet produced a proposal row (a second click before the first has landed),
-// or when an attempt is still in flight or a fix is already proposed — the
-// caller should look at that instead of retrying. It refuses with
+// it writes an outbox row for remediation.retry_requested:v2 whose payload is
+// the typed retry (the release id, the new round and the stored rejection,
+// unchanged), stored under events.DefaultTenantID. It refuses when the id
+// names a verification run rather than a candidate (a verification is not a
+// release, so it is reported the same as an unknown id), when the candidate is
+// not rejected, when its reason is not healable, when the round cap is
+// reached, when the candidate has no stored rejection, when the current round
+// has not yet produced a proposal row (a second click before the first has
+// landed), or when an attempt is still in flight or a fix is already proposed
+// — the caller should look at that instead of retrying. It refuses with
 // maintenance.ErrActive while maintenance mode is on.
 func RetryRemediation(ctx context.Context, deps *Deps, releaseID string) (RetryRemediationResult, error) {
 	if deps.Maintenance {
@@ -122,14 +124,17 @@ func RetryRemediation(ctx context.Context, deps *Deps, releaseID string) (RetryR
 		return RetryRemediationResult{}, fmt.Errorf("save release: %w", err)
 	}
 
-	var body map[string]any
-	if err := json.Unmarshal(r.RejectionPayload(), &body); err != nil {
-		return RetryRemediationResult{}, fmt.Errorf("decode stored rejection: %w", err)
-	}
-	body["remediation_round"] = round
-	payload, err := json.Marshal(body)
+	retry, err := json.Marshal(events.RemediationRetryRequested{
+		ReleaseID:        releaseID,
+		RemediationRound: round,
+		Rejection:        r.RejectionPayload(),
+	})
 	if err != nil {
 		return RetryRemediationResult{}, fmt.Errorf("marshal retry payload: %w", err)
+	}
+	payload, err := pkgoutbox.WrapTenant(events.DefaultTenantID, retry)
+	if err != nil {
+		return RetryRemediationResult{}, fmt.Errorf("wrap retry payload: %w", err)
 	}
 	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
 		ID:            uuid.NewSHA1(uuid.NameSpaceOID, []byte("remediation-retry:"+releaseID+":"+strconv.Itoa(round))),
@@ -137,7 +142,7 @@ func RetryRemediation(ctx context.Context, deps *Deps, releaseID string) (RetryR
 		AggregateID:   AggregateIDForRelease(releaseID),
 		EventType:     "remediation_retry_requested",
 		Payload:       payload,
-		StreamName:    streams.RemediationRetryRequestedV1,
+		StreamName:    streams.RemediationRetryRequestedV2,
 		Status:        "pending",
 	}); err != nil {
 		return RetryRemediationResult{}, fmt.Errorf("outbox insert: %w", err)
