@@ -235,9 +235,11 @@ schema:
 Your pipeline does these steps, in this order.
 
 1. **Check the contracts.** `continuo-runtime validate contracts --dialect postgres`
-   reads every file with the same checks continuo runs at release time. Use
-   `--dialect trino` on a Trino install. It prints every problem it finds, so a
-   mistake fails the pull request and never reaches a release.
+   reads the files with the same checks continuo runs at release time. Use
+   `--dialect trino` on a Trino install. It stops at the first file that is not
+   valid and prints every problem of that file, so fix it and run the step
+   again for the next file. A mistake fails the pull request and never reaches
+   a release.
 2. **Build the image** and push it. The image base is
    `ghcr.io/carolsimone/continuo-python-runtime-<engine>:v0.13.0`.
 3. **Pack the contracts.** `pack` checks the files again, lints the scripts and
@@ -305,6 +307,8 @@ install's. Three places tell you the version:
 - `GET /api/v1/releases/<id>` has the field `continuo_contracts`: the version
   that read this release's contracts. It is `""` until the parse ends. It is set
   for a rejected release too, so a rejection tells you which version said no.
+
+A part of such an answer, with the other fields left out:
 
 ```json
 {"release_id": "rel-py-v2", "status": "rejected", "terminal": true,
@@ -490,10 +494,10 @@ that reads it is bound by [Reading releases from continuo](read-contract.md).
 
 ## Moving from `contract.yaml`
 
-The old kind `python` and its single `contract.yaml` keep working. A service
-moves when it is ready: convert the files, change the CI steps above, and post
-with the kind `python-odcs`. A release of a service uses one kind. A later
-release removes the old kind and `contract.yaml`, so move before then.
+The old kind `python` and its single `contract.yaml` still work, and new
+services use `python-odcs`. To move a service, convert the files, change the CI
+steps above, and post with the kind `python-odcs`. A release of a service uses
+one kind.
 
 Every field of the old file has a place in the new one:
 

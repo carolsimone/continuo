@@ -669,8 +669,8 @@ continuo-runtime pack services/service-py/contracts \
   --out /tmp/odcs-bundle.json
 ```
 
-`validate` prints every problem of every contract at once. `pack` checks the
-contracts again, lints the scripts, and writes one bundle with the text of each
+`validate` stops at the first contract file that is not valid and prints every
+problem of that file. `pack` checks the contracts again, lints the scripts, and writes one bundle with the text of each
 contract and the list of packages the image holds. `--image service-py:v1`
 reads that list from the image you built in chapter 2, with `docker run`. The
 [Python contracts](contracts.md#the-ci-steps) page explains each step.
@@ -723,7 +723,7 @@ line.
 ### python-api nodes
 
 A `python-api` node's script fetches its own data, usually over HTTP. It
-declares no `reads:`, so it has no upstream edges and runs first in its DAG.
+declares no `readQueries`, so it has no upstream edges and runs first in its DAG.
 
 ```yaml
 # contracts/fx_eur_usd_rates.odcs.yaml
@@ -1249,9 +1249,10 @@ aws --endpoint-url http://localhost:9000 s3 ls \
 
 **A python release is rejected with `invalid_contract`.** At least one contract
 file is not valid. The release page names each failed node with its problems,
-as `<path>: <message>`. Run `continuo-runtime validate` on the `contracts/`
-folder to see the same list on your machine, fix the files, and release again
-with a new `release_id`. The
+as `<path>: <message>`. `continuo-runtime validate` on the `contracts/` folder
+shows the problems of one file at a time on your machine: it stops at the first
+file that fails, while the release names every failed contract. Fix each file
+and release again with a new `release_id`. The
 [Python contracts](contracts.md#what-continuo-refuses) page lists what continuo
 refuses and why.
 

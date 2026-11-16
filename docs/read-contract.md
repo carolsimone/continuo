@@ -94,11 +94,11 @@ its `csvSource` as the read `csv`.
 | `contracts` | object | One entry per node that has a contract, keyed by the node's unique id: `<schema>.<table>`, lowercase. |
 | `contracts.<id>.family` | string | `python`. A reader skips a family it does not know: a new family is an added value, not a new version. |
 | `contracts.<id>.service` | string | The service that owns the node. |
-| `contracts.<id>.contract_hash` | string | The hash of `document`, `sha256:` and 64 hex characters. |
+| `contracts.<id>.contract_hash` | string | `sha256:` and 64 hex characters: the SHA-256 of the canonical JSON (RFC 8785) of `document` without its four root keys `apiVersion`, `kind`, `status` and `version`. A reader compares this value. It hashes `document` itself only by that rule, because the hash of the whole `document` is another value. |
 | `contracts.<id>.content_hash` | string | The node's code fingerprint, `sha256:` and 64 hex characters. |
 | `contracts.<id>.source.path` | string | The file the contract was read from, as a path in the service's repository. |
 | `contracts.<id>.source.sha256` | string | The SHA-256 of that file's text. |
-| `contracts.<id>.document` | object | The stored form of the contract: the ODCS document that `contract_hash` is the hash of. It holds `version: "0"` and `status: active`. The version a node's contract has is in catalog and in the [live folder](contracts.md#the-live-folder). |
+| `contracts.<id>.document` | object | The stored form of the contract: the ODCS document that `contract_hash` is the hash of, less the four root keys named there. It holds `version: "0"` and `status: active`, which `contract_hash` leaves out. The version a node's contract has is in catalog and in the [live folder](contracts.md#the-live-folder). |
 
 The keys `odcs_schema_sha256`, `ontology`, `provenance`, `summary`, `failures`
 and `timings` are in the document but not in the read set. They may change in any
