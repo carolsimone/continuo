@@ -212,7 +212,6 @@ func TestDecodeRemediationRequested_RefusesAHandoverReasonThatIsNotTheClassifier
 func TestRemediationRequestedDecoders_RefuseWhatTheContractForbids(t *testing.T) {
 	cases := map[string]func(p *events.RemediationRequested){
 		"no release id":               func(p *events.RemediationRequested) { p.ReleaseID = "" },
-		"round 0":                     func(p *events.RemediationRequested) { p.RemediationRound = 0 },
 		"negative round":              func(p *events.RemediationRequested) { p.RemediationRound = -1 },
 		"no source":                   func(p *events.RemediationRequested) { p.Source = "" },
 		"unknown source":              func(p *events.RemediationRequested) { p.Source = "plan" },
@@ -234,6 +233,50 @@ func TestRemediationRequestedDecoders_RefuseWhatTheContractForbids(t *testing.T)
 			_, err = events.DecodeRemediationRequestedPayload([]byte(fields["payload"]))
 			require.ErrorIs(t, err, events.ErrMalformedEnvelope, "stored payload decoder")
 		})
+	}
+}
+
+// A v3 entry always carries its round: the stream decoder refuses a 0 and a
+// missing round.
+func TestDecodeRemediationRequested_RefusesRoundZeroAndAMissingRound(t *testing.T) {
+	zero := validRemediationRequested()
+	zero.RemediationRound = 0
+	_, _, err := events.DecodeRemediationRequested(remediationRequestedFields(t, zero))
+	require.ErrorIs(t, err, events.ErrMalformedEnvelope, "round 0")
+
+	missing := withPayload(remediationRequestedFields(t, validRemediationRequested()),
+		`{"source":"validation","release_id":"rel_1","nodes":[{"node_id":"a.b"}]}`)
+	_, _, err = events.DecodeRemediationRequested(missing)
+	require.ErrorIs(t, err, events.ErrMalformedEnvelope, "no round")
+}
+
+// A payload stored before the round field existed has none: the stored-payload
+// decoder reads it as round 1, as the consumers of a stored payload do. The
+// rest of the payload reads as written.
+func TestDecodeRemediationRequestedPayload_ReadsAMissingRoundAsOne(t *testing.T) {
+	raw, err := os.ReadFile(remediationRequestedV2StoredFixture)
+	require.NoError(t, err)
+	var fields map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &fields))
+	require.Contains(t, fields, "remediation_round", "the golden carries a round to remove")
+	delete(fields, "remediation_round")
+	withoutRound, err := json.Marshal(fields)
+	require.NoError(t, err)
+
+	p, err := events.DecodeRemediationRequestedPayload(withoutRound)
+	require.NoError(t, err)
+	assert.Equal(t, 1, p.RemediationRound)
+	assert.Equal(t, "rel_20261112_0042", p.ReleaseID)
+	assert.Len(t, p.Nodes, 2)
+}
+
+func TestDecodeRemediationRequestedPayload_ReadsRoundZeroAsOneAndKeepsALaterRound(t *testing.T) {
+	for round, want := range map[int]int{0: 1, 1: 1, 3: 3} {
+		p := validRemediationRequested()
+		p.RemediationRound = round
+		got, err := events.DecodeRemediationRequestedPayload([]byte(remediationRequestedFields(t, p)["payload"]))
+		require.NoError(t, err, "round %d", round)
+		assert.Equal(t, want, got.RemediationRound, "round %d", round)
 	}
 }
 
