@@ -130,17 +130,114 @@ func TestLocate_AServiceStillOnContractYAMLIsNotConverted(t *testing.T) {
 	}
 }
 
-// TestLocate_AnODCSFileMeansTheTreeIsConverted verifies that a "nodes:" yaml
-// beside an ODCS file does not make the tree unconverted: a node no ODCS file
-// declares is then simply not declared.
-func TestLocate_AnODCSFileMeansTheTreeIsConverted(t *testing.T) {
+// TestLocate_AnUnconvertedServiceBesideAConvertedOneIsNotConverted verifies
+// that in a checkout holding several services, a node still declared by a
+// contract.yaml "nodes:" entry is reported as not converted even though
+// another service of the checkout has ODCS contracts.
+func TestLocate_AnUnconvertedServiceBesideAConvertedOneIsNotConverted(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, root, "svc/contracts/other_kpis.odcs.yaml", odcsContract("analytics.other_kpis"))
-	writeFile(t, root, "svc/old/py_daily_kpis.yml", legacyContract)
+	writeFile(t, root, "services/service-a/contracts/other_kpis.odcs.yaml", odcsContract("analytics.other_kpis"))
+	writeFile(t, root, "services/service-py/contracts/contract.yaml", legacyContract)
 
 	_, err := newLocator().Locate(root, "analytics", "py_daily_kpis")
-	if !errors.Is(err, ports.ErrNodeNotDeclared) {
-		t.Fatalf("err = %v, want ports.ErrNodeNotDeclared", err)
+	if !errors.Is(err, ports.ErrServiceNotConverted) {
+		t.Fatalf("err = %v, want ports.ErrServiceNotConverted", err)
+	}
+}
+
+// TestLocate_AnODCSMatchWinsOverALegacyEntry verifies that a node an ODCS
+// contract declares is found even when an old contract.yaml still names it.
+func TestLocate_AnODCSMatchWinsOverALegacyEntry(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "svc/contracts/py_daily_kpis.odcs.yaml", odcsContract("analytics.py_daily_kpis"))
+	writeFile(t, root, "svc/old/contract.yaml", legacyContract)
+
+	got, err := newLocator().Locate(root, "analytics", "py_daily_kpis")
+	if err != nil {
+		t.Fatalf("Locate: %v", err)
+	}
+	if got.YAMLPath != "svc/contracts/py_daily_kpis.odcs.yaml" {
+		t.Errorf("YAMLPath = %q", got.YAMLPath)
+	}
+}
+
+// TestLocate_ALegacyFileThatDoesNotNameTheNodeDeclaresNothing verifies that a
+// contract.yaml declaring other nodes does not make the node unconverted:
+// neither format declares it, so it is not declared.
+func TestLocate_ALegacyFileThatDoesNotNameTheNodeDeclaresNothing(t *testing.T) {
+	for name, odcs := range map[string]bool{"no ODCS file": false, "beside an ODCS file": true} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, root, "svc/contracts/contract.yaml", "nodes:\n  - schema: analytics\n    table: other\n")
+			if odcs {
+				writeFile(t, root, "svc2/contracts/other_kpis.odcs.yaml", odcsContract("analytics.other_kpis"))
+			}
+
+			_, err := newLocator().Locate(root, "analytics", "py_daily_kpis")
+			if !errors.Is(err, ports.ErrNodeNotDeclared) {
+				t.Fatalf("err = %v, want ports.ErrNodeNotDeclared", err)
+			}
+		})
+	}
+}
+
+// TestLocate_OnlyContractsDirectoriesHoldContracts verifies that an ODCS file
+// counts only directly inside a directory named contracts: a copy under a
+// test fixture tree, or nested below contracts/, is never matched.
+func TestLocate_OnlyContractsDirectoriesHoldContracts(t *testing.T) {
+	for name, rel := range map[string]string{
+		"a test fixture copy":    "svc/tests/fixtures/py_daily_kpis.odcs.yaml",
+		"nested below contracts": "svc/contracts/old/py_daily_kpis.odcs.yaml",
+		"a service root":         "svc/py_daily_kpis.odcs.yaml",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, root, "svc/contracts/py_daily_kpis.odcs.yaml", odcsContract("analytics.py_daily_kpis"))
+			writeFile(t, root, rel, odcsContract("analytics.py_daily_kpis"))
+
+			got, err := newLocator().Locate(root, "analytics", "py_daily_kpis")
+			if err != nil {
+				t.Fatalf("Locate: %v (the copy outside contracts/ must not make the node ambiguous)", err)
+			}
+			if got.YAMLPath != "svc/contracts/py_daily_kpis.odcs.yaml" {
+				t.Errorf("YAMLPath = %q", got.YAMLPath)
+			}
+
+			alone := t.TempDir()
+			writeFile(t, alone, rel, odcsContract("analytics.py_daily_kpis"))
+			if _, err := newLocator().Locate(alone, "analytics", "py_daily_kpis"); !errors.Is(err, ports.ErrNodeNotDeclared) {
+				t.Fatalf("err = %v, want ports.ErrNodeNotDeclared for a contract outside contracts/", err)
+			}
+		})
+	}
+}
+
+// TestLocate_SkipsSymlinks verifies that the walk never follows or reads a
+// symbolic link, whether it points at a contract file or at a directory of
+// them, so a checkout cannot make the search read outside itself.
+func TestLocate_SkipsSymlinks(t *testing.T) {
+	outside := t.TempDir()
+	writeFile(t, outside, "contracts/py_daily_kpis.odcs.yaml", odcsContract("analytics.py_daily_kpis"))
+
+	for name, link := range map[string]struct{ target, at string }{
+		"a linked file":      {filepath.Join(outside, "contracts", "py_daily_kpis.odcs.yaml"), "svc/contracts/py_daily_kpis.odcs.yaml"},
+		"a linked directory": {filepath.Join(outside, "contracts"), "svc/contracts"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			full := filepath.Join(root, filepath.FromSlash(link.at))
+			if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(link.target, full); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := newLocator().Locate(root, "analytics", "py_daily_kpis")
+			if !errors.Is(err, ports.ErrNodeNotDeclared) {
+				t.Fatalf("err = %v, want ports.ErrNodeNotDeclared (a symlink must not be followed)", err)
+			}
+		})
 	}
 }
 

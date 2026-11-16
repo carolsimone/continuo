@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
@@ -184,4 +185,27 @@ func TestContractFileStep_DeclinesAnUnconvertedService(t *testing.T) {
 	assert.Equal(t, want, line["msg"])
 	assert.Equal(t, "rel-1", line["release"])
 	assert.Equal(t, "py.fx.rates", line["node"])
+}
+
+// TestContractFileStep_DeclinesAnUnconvertedServiceInAMixedRepository runs the
+// step over a real checkout searched by the repofs locator: the failing node
+// is still declared in its service's contract.yaml while another service of
+// the checkout has an ODCS contract, and the cluster is declined with the
+// reason naming the failing node's service.
+func TestContractFileStep_DeclinesAnUnconvertedServiceInAMixedRepository(t *testing.T) {
+	a := &fakeArchive{t: t, files: map[string]string{
+		"services/svc/contracts/contract.yaml": "nodes:\n  - schema: fx\n    table: rates\n    script: scripts/rates.py\n",
+		"services/other/contracts/kpis.odcs.yaml": "apiVersion: v3.2.0\nkind: DataContract\nid: analytics.kpis\n" +
+			"schema:\n  - name: kpis\n    physicalType: table\n",
+	}}
+	locator := repofs.NewLocator(discardLogger())
+
+	out, err := contract.NewContractFile(a, locator, discardLogger()).Gather(context.Background(),
+		step.ContextInput{Failure: failure(nil), Evidence: remediation.NewEvidence()})
+	require.NoError(t, err)
+
+	assert.True(t, out.Declined)
+	assert.Equal(t, "service svc still uses contract.yaml; convert it to ODCS", out.Decline)
+	assert.Nil(t, out.Evidence)
+	a.requireNoCheckoutLeft()
 }

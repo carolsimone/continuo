@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -33,8 +34,10 @@ var _ ports.LogSanitizer = markSanitizer{}
 // fakeArchive hands out a real temporary directory per fetch and removes it
 // when the step calls cleanup, so a test can see whether a checkout survives.
 type fakeArchive struct {
-	t        *testing.T
-	err      error
+	t   *testing.T
+	err error
+	// files are written into every checkout handed out, by repo-relative path.
+	files    map[string]string
 	fetches  []fetchCall
 	dirs     []string
 	cleanups int
@@ -49,6 +52,11 @@ func (f *fakeArchive) Fetch(_ context.Context, repo, ref string) (string, func()
 	}
 	dir, err := os.MkdirTemp(f.t.TempDir(), "checkout")
 	require.NoError(f.t, err)
+	for rel, content := range f.files {
+		full := filepath.Join(dir, filepath.FromSlash(rel))
+		require.NoError(f.t, os.MkdirAll(filepath.Dir(full), 0o750))
+		require.NoError(f.t, os.WriteFile(full, []byte(content), 0o600))
+	}
 	f.dirs = append(f.dirs, dir)
 	return dir, func() {
 		f.cleanups++

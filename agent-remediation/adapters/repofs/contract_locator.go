@@ -28,6 +28,10 @@ const maxContractYAMLBytes = 1 << 20 // 1 MiB
 // contract is one such file, and the packager reads only these.
 const odcsSuffix = ".odcs.yaml"
 
+// contractsDir is the name of the directory a service keeps its ODCS
+// contracts in, directly: <service>/contracts/<table>.odcs.yaml.
+const contractsDir = "contracts"
+
 // continuoVendor is the vendor of the customProperties items continuo reads.
 const continuoVendor = "continuo"
 
@@ -62,19 +66,21 @@ type match struct {
 }
 
 // Locate walks rootDir for every *.odcs.yaml file of at most
-// maxContractYAMLBytes and returns the location of the one whose id names
-// schema and table ("<schema>.<table>"). The file name plays no part in the
-// match.
+// maxContractYAMLBytes directly inside a directory named contracts, and
+// returns the location of the one whose id names schema and table
+// ("<schema>.<table>"). The file name plays no part in the match, and an ODCS
+// file anywhere else (a test fixture copy, say) is not a contract. Symbolic
+// links are never followed or read.
 //
 // The match folds case on both sides. A node's identity across this system is
 // its lowercased "<schema>.<table>", so a caller derives the schema and table
 // it searches for from an already-lowercased id. Only the comparison folds:
 // the returned paths and text are exactly what is on disk.
 //
-// Zero matching files returns ports.ErrNodeNotDeclared, or
-// ports.ErrServiceNotConverted when the tree holds no ODCS file at all but
-// holds a yaml file with a "nodes:" list (a contract.yaml no fix is packaged
-// from). More than one matching file returns ports.ErrAmbiguousDeclaration,
+// Zero matching files returns ports.ErrServiceNotConverted when a yaml file's
+// "nodes:" list (a contract.yaml, which no fix is packaged from) declares
+// schema and table, whatever other services of the checkout have converted,
+// and ports.ErrNodeNotDeclared otherwise. More than one matching file returns ports.ErrAmbiguousDeclaration,
 // including two ids that differ only in case. A file over the size cap, or one
 // that fails to parse as yaml, is skipped (logged) rather than treated as a
 // search error, so one malformed or oversized file elsewhere in the tree does
@@ -83,23 +89,21 @@ func (l *Locator) Locate(rootDir, schema, table string) (ports.Located, error) {
 	want := schema + "." + table
 	var matches []match
 	var legacyCandidates []string
-	sawODCS := false
 
 	err := filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() {
+		if d.Type()&fs.ModeSymlink != 0 || d.IsDir() {
 			return nil
 		}
 		name := d.Name()
-		if !strings.HasSuffix(name, odcsSuffix) {
+		if !strings.HasSuffix(name, odcsSuffix) || filepath.Base(filepath.Dir(path)) != contractsDir {
 			if ext := filepath.Ext(name); ext == ".yml" || ext == ".yaml" {
 				legacyCandidates = append(legacyCandidates, path)
 			}
 			return nil
 		}
-		sawODCS = true
 
 		raw, ok := l.readCapped(path)
 		if !ok {
@@ -125,7 +129,7 @@ func (l *Locator) Locate(rootDir, schema, table string) (ports.Located, error) {
 
 	switch len(matches) {
 	case 0:
-		if !sawODCS && l.anyLegacyContract(legacyCandidates) {
+		if l.legacyDeclares(legacyCandidates, schema, table) {
 			return ports.Located{}, fmt.Errorf("schema %q table %q: %w", schema, table, ports.ErrServiceNotConverted)
 		}
 		return ports.Located{}, fmt.Errorf("schema %q table %q: %w", schema, table, ports.ErrNodeNotDeclared)
@@ -140,10 +144,11 @@ func (l *Locator) Locate(rootDir, schema, table string) (ports.Located, error) {
 	}
 }
 
-// anyLegacyContract reports whether one of paths is a yaml file whose
-// top-level "nodes:" is a list: a contract.yaml that declares Python nodes in
-// the format before ODCS.
-func (l *Locator) anyLegacyContract(paths []string) bool {
+// legacyDeclares reports whether one of paths is a yaml file whose top-level
+// "nodes:" list has an entry naming schema and table (compared
+// case-insensitively): a contract.yaml that still declares the node in the
+// format before ODCS.
+func (l *Locator) legacyDeclares(paths []string, schema, table string) bool {
 	for _, path := range paths {
 		raw, ok := l.readCapped(path)
 		if !ok {
@@ -153,8 +158,16 @@ func (l *Locator) anyLegacyContract(paths []string) bool {
 		if err != nil {
 			continue
 		}
-		if nodes := mappingValue(root, "nodes"); nodes != nil && nodes.Kind == yaml.SequenceNode {
-			return true
+		nodes := mappingValue(root, "nodes")
+		if nodes == nil || nodes.Kind != yaml.SequenceNode {
+			continue
+		}
+		for _, entry := range nodes.Content {
+			s, _ := scalar(mappingValue(entry, "schema"))
+			t, _ := scalar(mappingValue(entry, "table"))
+			if strings.EqualFold(s, schema) && strings.EqualFold(t, table) {
+				return true
+			}
 		}
 	}
 	return false

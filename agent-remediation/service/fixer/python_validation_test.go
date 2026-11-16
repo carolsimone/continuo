@@ -949,20 +949,34 @@ func TestPythonValidation_UnreadableFailingNodesIsTransient(t *testing.T) {
 }
 
 // TestPythonFixer_RefusesAnUnconvertedServiceAndLogsWhy verifies that a python
-// failure in a service whose repository still declares its nodes in
-// contract.yaml (no ODCS file anywhere) ends with no fix: no model call, no
-// packaging, the node recorded skipped with the reason, and the reason logged
-// at INFO with the release and the node, for every python contract lane.
+// failure in a service whose repository still declares the node in
+// contract.yaml ends with no fix: no model call, no packaging, the node
+// recorded skipped with the reason, and the reason logged at INFO with the
+// release and the node, for every python contract lane. It holds whether the
+// checkout has no ODCS file at all or another service in it has converted.
 func TestPythonFixer_RefusesAnUnconvertedServiceAndLogsWhy(t *testing.T) {
+	type tc struct {
+		lane      Fixer
+		converted bool
+	}
+	cases := map[string]tc{}
 	for name, lane := range map[string]Fixer{
 		"python validation": pythonValidationFixer{},
 		"csv validation":    csvValidationFixer{},
 		"python parse":      pythonParseFixer{},
 	} {
+		cases[name] = tc{lane: lane}
+		cases[name+", beside a converted service"] = tc{lane: lane, converted: true}
+	}
+	for name, c := range cases {
+		lane := c.lane
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			writeRepoFile(t, root, "services/service-py/contracts/contract.yaml",
 				"nodes:\n  - schema: analytics\n    table: py_daily_kpis\n    script: scripts/py_daily_kpis.py\n")
+			if c.converted {
+				writeRepoFile(t, root, "services/service-a/contracts/other.odcs.yaml", siblingYAML)
+			}
 			svc, arch, pkgr, _, arts := pythonSvc(t, root)
 			llm := &fakeLLM{}
 			svc.LLM = llm
