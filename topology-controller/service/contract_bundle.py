@@ -11,10 +11,14 @@ copy of the fixture the Go package reads, pins this builder to what that package
 
 `store_contracts` turns each node's authored contract into its stored form (the
 document the hashes are taken from, with the tables the node's read queries name) and
-hashes it, and `build_contract_bundle` assembles the document.
+hashes it, and `build_contract_bundle` assembles the document. A contract whose read
+queries name a table it cannot list (`invalid_contract_reads`) is the author's mistake: it
+is reported as an invalid contract before any stored form is built.
 """
 import copy
+import json
 import logging
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -22,8 +26,9 @@ from typing import Any
 from continuo_contracts.contract import contract_hash, normalise_python
 from continuo_contracts.schema import SCHEMA_SHA256
 
+from domain.contract_vocabulary import ParseFailureKind
 from domain.external import SystemRelations
-from domain.model import ManifestNode, TableRef
+from domain.model import FailedNode, ManifestNode, TableRef
 from service.release_timings import ReleaseTimings
 
 logger = logging.getLogger(__name__)
@@ -32,6 +37,9 @@ SCHEMA_VERSION = 1
 
 # Every contract of the bundle is a Python node's: the family that names the producer.
 _FAMILY = "python"
+
+# The control characters the library refuses in a listed table: U+0000 to U+001F and U+007F to U+009F.
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 
 def contract_bundle_key(tenant_id: str, release_id: str) -> str:
@@ -55,6 +63,83 @@ class StoredContract:
 
 def _no_progress() -> None:
     """The progress callback of a caller nobody watches."""
+
+
+def _unlistable_reason(schema: str, table: str) -> str | None:
+    """Why a contract cannot list a table as "<schema>.<table>", or None when it can.
+
+    The rule is the library's for a listed table: exactly two parts joined by a dot,
+    neither empty, and no whitespace (what `str.isspace` reads as such) or control
+    character in the entry.
+    """
+    entry = f"{schema}.{table}"
+    if len(entry.split(".")) != 2:
+        return "a name holds a dot"
+    if not schema or not table:
+        return "a name is empty"
+    if any(character.isspace() for character in entry):
+        return "a name holds whitespace"
+    if _CONTROL.search(entry):
+        return "a name holds a control character"
+    return None
+
+
+def _as_written(part: str) -> str:
+    """A name part as the message shows it: plain when it is a plain name, quoted (and
+    escaped) when it holds whitespace, a dot or a control character."""
+    needs_quotes = (
+        not part
+        or "." in part
+        or any(character.isspace() for character in part)
+        or _CONTROL.search(part) is not None
+    )
+    return json.dumps(part, ensure_ascii=False) if needs_quotes else part
+
+
+def invalid_contract_reads(
+    node: ManifestNode,
+    refs: Sequence[TableRef],
+    system: SystemRelations,
+    *,
+    timings: ReleaseTimings | None = None,
+) -> FailedNode | None:
+    """The failed node of a contract whose read queries name a table it cannot list, or
+    None when every table the node reads can be listed.
+
+    refs are the tables the node's SQL names (the resolve step's), a system relation of
+    the warehouse engine left out as `store_contracts` leaves it out. A table the
+    contract cannot list as "<schema>.<table>" (for one, a quoted name holding whitespace or
+    a dot) is the author's mistake, not a defect: the node is reported as an invalid
+    contract, named by its unique_id and the contract's file, and `detail` names each such
+    table in schema and table order. Each is counted on timings, stage `normalise`, reason
+    `value`. A node with no contract has nothing to list.
+    """
+    authored = node.contract
+    if authored is None:
+        return None
+    problems: list[str] = []
+    # A table is one problem however many catalogs the queries name it through.
+    tables = sorted({(ref.schema, ref.table) for ref in refs if not system.matches(ref)})
+    for schema, table in tables:
+        reason = _unlistable_reason(schema, table)
+        if reason is None:
+            continue
+        problems.append(
+            f"readQueries: table {_as_written(schema)}.{_as_written(table)}"
+            f" cannot be listed as <schema>.<table>: {reason}"
+        )
+        if timings is not None:
+            timings.add_contract_failure("normalise", "value")
+    if not problems:
+        return None
+    return FailedNode(
+        node_id=node.unique_id,
+        kind=ParseFailureKind.INVALID_CONTRACT,
+        service=node.service_name,
+        file_path=authored.path,
+        node_type=node.node_type,
+        detail="; ".join(problems),
+    )
 
 
 def store_contracts(

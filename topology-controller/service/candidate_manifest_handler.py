@@ -17,7 +17,7 @@ from domain.model import (
 )
 from service.candidate_artifacts import CandidateArtifactBuilder, RewriteContext
 from service.code_bundle import build_code_bundle
-from service.contract_bundle import StoredContract, build_contract_bundle, store_contracts
+from service.contract_bundle import StoredContract, build_contract_bundle, invalid_contract_reads, store_contracts
 from service.contracts_library import LIBRARY_VERSION
 from service.manifest_parsers import parser_for
 from service.ports import (
@@ -153,15 +153,18 @@ class CandidateManifestHandler:
     unreachable, a 5xx) propagates to the consumer, which pauses and redelivers
     the same message; nothing is published, so the release waits in parsing.
     Any other write failure publishes status=failed with kind internal. So does
-    a python contract the library refuses to store: it passed every check of
-    the parse, so that is a defect, counted and reported as internal.
+    a python contract the library refuses to store for any other reason: it
+    passed every check, so that is a defect, counted and reported as internal.
 
     Failures publish status=failed with a typed failure_kind and return
     normally so the consumer ACKs. A node whose SQL sqlglot cannot parse, or
     that references a relation without a schema, is collected rather than
     fatal on first sight, and so is a python contract the parse of its bundle
     finds invalid (the parse reports it as a failed node, with its own
-    failure kind): every valid node is resolved, then one publish_failed
+    failure kind) and a python contract whose read queries name a table it
+    cannot list as <schema>.<table> (invalid_contract, found by the resolve
+    step, which has the tables each node reads): every valid node is resolved,
+    then one publish_failed
     carries the whole failed set (failure_kind by contract precedence) so the
     operator sees every broken node at once, in node id order whatever the
     order of the manifests. An unreadable, empty, or wrong-service artifact
@@ -457,6 +460,11 @@ class CandidateManifestHandler:
                     )
                     if node.node_type != NodeType.DBT_TEST:
                         reads[node.unique_id] = refs
+                    # A contract that names a table it cannot list is invalid, and
+                    # reported with the failures of the other nodes.
+                    unlistable = invalid_contract_reads(node, refs, self._system_relations, timings=self._timings)
+                    if unlistable is not None:
+                        failed.append(unlistable)
                 except (UnqualifiedTableReferenceError, InvalidCompiledSqlError) as exc:
                     failed.append(FailedNode(
                         node_id=node.unique_id,

@@ -8,10 +8,12 @@ from unittest.mock import MagicMock, create_autospec
 import botocore.exceptions
 import continuo_contracts
 import pytest
+from continuo_contracts.errors import CanonicalJsonError
 
+import service.contract_bundle as contract_bundle_module
 from adapters.redis.error_class import is_infrastructure
 from domain.contract_vocabulary import ParseFailureKind
-from domain.model import ManifestFile, ManifestKind
+from domain.model import FailedNode, ManifestFile, ManifestKind
 from service.ports import ManifestSourcePort
 from service.release_timings import ReleaseOutcome, Stage
 from tests.fakes import (
@@ -277,16 +279,116 @@ def test_no_contract_bundle_is_written_for_a_rejected_release(tmp_path, release)
     assert timings.stages[Stage.CONTRACT_BUNDLE].runs == 0
 
 
-# --- a library error is a bug: the release fails as internal ---------------------
+# --- a table the contract cannot list is the author's mistake ---------------------
 
-def test_a_table_the_library_refuses_fails_the_release_as_internal_and_counts_it(tmp_path):
-    """A read query naming a table with a space in its name passes every check of the
-    contract and no check of the SQL; the stored form refuses it. It is reported as a
-    failure of the release, counted, and nothing is written."""
-    text = demo_text("py_daily_kpis").replace(
-        "from analytics.daily_transactions", 'from analytics."daily transactions"')
+def _kpis_reading(table: str, *, name: str = "py_daily_kpis") -> dict:
+    """The demo kpis contract (or a copy of it under another name) with its read query on `table`."""
+    text = demo_text("py_daily_kpis").replace("py_daily_kpis", name).replace(
+        "from analytics.daily_transactions", f"from {table}")
+    return bundle_node(f"contracts/{name}.odcs.yaml", text)
+
+
+@pytest.mark.parametrize(
+    ("table", "written", "reason"),
+    [
+        ('analytics."daily transactions"', 'analytics."daily transactions"', "a name holds whitespace"),
+        ('analytics."daily.transactions"', 'analytics."daily.transactions"', "a name holds a dot"),
+        ('"my schema".daily_transactions', '"my schema".daily_transactions', "a name holds whitespace"),
+    ],
+    ids=["whitespace", "dot", "schema-whitespace"])
+def test_a_table_the_contract_cannot_list_rejects_the_release_as_an_invalid_contract(tmp_path, table, written, reason):
     publisher, bundle_writer, topology_writer = MagicMock(), RecordingContractBundleWriter(), RecordingArtifactWriter()
+    log: list[str] = []
+    source = source_of(bundle_file(tmp_path, [_kpis_reading(table), demo_node("demo_orders_csv")]))
+
+    timings = python_handler(
+        source, publisher, contract_bundle_writer=bundle_writer, artifact_writer=topology_writer,
+        bundle_uploader=FakeBundleUploader(log=log),
+    ).handle(release_id="rel-1")
+
+    kwargs = _failed_kwargs(publisher)
+    assert kwargs["failure_kind"] == ParseFailureKind.INVALID_CONTRACT
+    assert kwargs["detail"] == "1 node failed to parse: analytics.py_daily_kpis"
+    assert kwargs["failed_nodes"] == [FailedNode(
+        node_id="analytics.py_daily_kpis",
+        kind=ParseFailureKind.INVALID_CONTRACT,
+        service="service-py",
+        file_path=KPIS_PATH,
+        node_type="python-node",
+        detail=f"readQueries: table {written} cannot be listed as <schema>.<table>: {reason}",
+    )]
+    assert timings.contract_failures == {("normalise", "value"): 1}
+    assert (timings.outcome, timings.failure_kind) == (ReleaseOutcome.FAILED, ParseFailureKind.INVALID_CONTRACT)
+    assert bundle_writer.writes == [] and topology_writer.writes == [] and log == []
+    assert timings.stages[Stage.CANONICAL_HASHING].runs == 0
+
+
+def test_every_contract_with_such_a_table_is_named_on_the_one_publish_with_the_other_failures(tmp_path):
+    """Each failing contract is one failed node, whatever the order of the bundle, and a broken
+    SQL node of another service is reported in the same publish."""
+    publisher = MagicMock()
+    broken_sql = {**dbt_node("broken"), "compiled_code": "SELECT FROM WHERE((("}
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"nodes": {broken_sql["unique_id"]: broken_sql}}))
+    source = source_of(
+        bundle_file(tmp_path, [
+            _kpis_reading('analytics."a b"', name="py_other_kpis"),
+            _kpis_reading('analytics."c.d"'),
+            _kpis_reading('analytics."e f"', name="py_third_kpis"),
+            demo_node("demo_orders_csv"),
+        ]),
+        ManifestFile(path=str(manifest), image_tag="", declared_service="service-1"),
+    )
+
+    timings = python_handler(source, publisher).handle(release_id="rel-1")
+
+    kwargs = _failed_kwargs(publisher)
+    assert kwargs["failure_kind"] == ParseFailureKind.INVALID_SQL
+    assert [(n.node_id, n.kind) for n in kwargs["failed_nodes"]] == [
+        ("analytics.py_daily_kpis", ParseFailureKind.INVALID_CONTRACT),
+        ("analytics.py_other_kpis", ParseFailureKind.INVALID_CONTRACT),
+        ("analytics.py_third_kpis", ParseFailureKind.INVALID_CONTRACT),
+        ("test_schema.broken", ParseFailureKind.INVALID_SQL),
+    ]
+    assert timings.contract_failures == {("normalise", "value"): 3}
+
+
+def test_a_contract_reading_two_such_tables_names_both_in_one_node(tmp_path):
+    publisher = MagicMock()
+    text = demo_text("py_daily_kpis").replace(
+        "from analytics.daily_transactions", 'from analytics."b c" join analytics."a b" on true')
     source = source_of(bundle_file(tmp_path, [bundle_node(KPIS_PATH, text)]))
+
+    timings = python_handler(source, publisher).handle(release_id="rel-1")
+
+    [failure] = _failed_kwargs(publisher)["failed_nodes"]
+    assert failure.detail == (
+        'readQueries: table analytics."a b" cannot be listed as <schema>.<table>: a name holds whitespace; '
+        'readQueries: table analytics."b c" cannot be listed as <schema>.<table>: a name holds whitespace')
+    assert timings.contract_failures == {("normalise", "value"): 2}
+
+
+def test_a_system_relation_with_an_odd_name_is_not_a_table_the_contract_lists(tmp_path):
+    publisher, bundle_writer = MagicMock(), RecordingContractBundleWriter()
+    source = source_of(bundle_file(tmp_path, [_kpis_reading('pg_catalog."odd name"')]))
+
+    python_handler(source, publisher, contract_bundle_writer=bundle_writer).handle(release_id="rel-1")
+
+    publisher.publish_ok.assert_called_once()
+    [table] = bundle_writer.document["contracts"]["analytics.py_daily_kpis"]["document"]["schema"]
+    assert [p for p in table.get("customProperties", []) if p["property"] == "reads"] == []
+
+
+@pytest.mark.parametrize("failing", ["normalise_python", "contract_hash"])
+def test_a_genuine_library_error_still_fails_the_release_as_internal_and_counts_it(tmp_path, monkeypatch, failing):
+    """A contract that passed every check and whose tables can all be listed is refused by the
+    library only through a defect: internal, counted by stage, and nothing is written."""
+    def refuse(*_args, **_kwargs):
+        raise CanonicalJsonError("$: not writable")
+
+    monkeypatch.setattr(contract_bundle_module, failing, refuse)
+    publisher, bundle_writer, topology_writer = MagicMock(), RecordingContractBundleWriter(), RecordingArtifactWriter()
+    source = source_of(bundle_file(tmp_path, demo_nodes()))
 
     timings = python_handler(
         source, publisher, contract_bundle_writer=bundle_writer, artifact_writer=topology_writer,
@@ -295,8 +397,8 @@ def test_a_table_the_library_refuses_fails_the_release_as_internal_and_counts_it
     kwargs = _failed_kwargs(publisher)
     assert kwargs["failure_kind"] == ParseFailureKind.INTERNAL
     assert kwargs["failed_nodes"] == []
-    assert "analytics.daily transactions" in kwargs["detail"]
-    assert timings.contract_failures == {("normalise", "value"): 1}
+    assert "not writable" in kwargs["detail"]
+    assert timings.contract_failures == {("normalise" if failing == "normalise_python" else "hash", "value"): 1}
     assert bundle_writer.writes == [] and topology_writer.writes == []
 
 

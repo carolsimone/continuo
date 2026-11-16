@@ -6,14 +6,22 @@ import continuo_contracts
 import pytest
 from continuo_contracts import yaml_strict
 from continuo_contracts.canonical import canonical_json
+from continuo_contracts.contract import normalise_python
 from continuo_contracts.errors import CanonicalJsonError, HashInputError
 from continuo_contracts.hashing import sha256_hex
 from continuo_contracts.schema import SCHEMA_SHA256
 
 import service.contract_bundle as contract_bundle_module
 from config.config import _SYSTEM_RELATIONS
-from domain.model import AuthoredContract, ManifestNode, NodeType, Runtime, TableRef
-from service.contract_bundle import StoredContract, build_contract_bundle, contract_bundle_key, store_contracts
+from domain.contract_vocabulary import ParseFailureKind
+from domain.model import AuthoredContract, FailedNode, ManifestNode, NodeType, Runtime, TableRef
+from service.contract_bundle import (
+    StoredContract,
+    build_contract_bundle,
+    contract_bundle_key,
+    invalid_contract_reads,
+    store_contracts,
+)
 from tests.odcs_fixtures import demo_text, release_timings
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -189,13 +197,15 @@ def test_every_valid_library_vector_stores_to_its_stored_form_and_hash(name):
 
 # --- library errors are bugs: counted and re-raised ----------------------------
 
-def test_a_table_the_library_refuses_is_counted_as_a_normalise_failure_and_raised():
+def test_a_normalise_the_library_refuses_is_counted_and_raised(monkeypatch):
+    def refuse(*_args, **_kwargs):
+        raise HashInputError("service '': blank")
+
+    monkeypatch.setattr(contract_bundle_module, "normalise_python", refuse)
     timings = release_timings()
 
     with pytest.raises(HashInputError):
-        store_contracts(
-            [_kpis_node()], {"analytics.py_daily_kpis": [TableRef("analytics", "a b", "")]}, POSTGRES_SYSTEM,
-            timings=timings)
+        store_contracts([_kpis_node()], {}, POSTGRES_SYSTEM, timings=timings)
 
     assert timings.contract_failures == {("normalise", "value"): 1}
 
@@ -221,6 +231,92 @@ def test_progress_is_reported_after_each_contract():
         progress=lambda: calls.append(1))
 
     assert len(calls) == 2
+
+
+# --- tables a contract cannot list -----------------------------------------------
+
+_KPIS_ID = "analytics.py_daily_kpis"
+
+
+def test_every_table_the_library_lists_passes_the_check_and_every_one_it_refuses_fails_it():
+    """The check is the library's rule for a listed table: it agrees with normalise_python on
+    each of these, so a table the check passes never reaches a HashInputError."""
+    document = yaml_strict.load(demo_text("py_daily_kpis"))
+    cases = [
+        ("analytics", "orders"), ("Analytics", "Orders"), ("é", "t"), ("a-b", "c_d"), ("a1", "2b"),
+        ("a.b", "c"), ("a", "b.c"), ("a", "b.c.d"), ("", "t"), ("s", ""),
+        ("my schema", "t"), ("s", "my table"), (" s", "t"), ("s", "t "), ("s", "t\tu"), ("s", "t\nu"),
+        ("s", "t\u00a0u"), ("s", "t\u2003u"), ("s", "t\u0085u"), ("s", "t\x1fu"), ("s", "t\x00u"),
+        ("s", "t\x7fu"), ("s", "t\x9fu"), ("s", "t\u200bu"),
+    ]
+    node = _kpis_node()
+    for schema, table in cases:
+        try:
+            normalise_python(document, service="service-py", reads=[f"{schema}.{table}"])
+            library_accepts = True
+        except HashInputError:
+            library_accepts = False
+        failure = invalid_contract_reads(node, [TableRef(schema, table, "")], POSTGRES_SYSTEM)
+        assert (failure is None) == library_accepts, (schema, table)
+
+
+def test_the_failed_node_of_an_unlistable_table_is_named_like_any_invalid_contract():
+    timings = release_timings()
+
+    failure = invalid_contract_reads(
+        _kpis_node(), [TableRef("analytics", "daily_transactions", ""), TableRef("analytics", "a b", "")],
+        POSTGRES_SYSTEM, timings=timings)
+
+    assert failure == FailedNode(
+        node_id=_KPIS_ID, kind=ParseFailureKind.INVALID_CONTRACT, service="service-py",
+        file_path="contracts/py_daily_kpis.odcs.yaml", node_type=NodeType.PYTHON_NODE,
+        detail='readQueries: table analytics."a b" cannot be listed as <schema>.<table>: a name holds whitespace')
+    assert timings.contract_failures == {("normalise", "value"): 1}
+
+
+@pytest.mark.parametrize(
+    ("ref", "shown", "reason"),
+    [
+        (TableRef("analytics", "a.b", ""), 'analytics."a.b"', "a name holds a dot"),
+        (TableRef("a.b", "c", ""), '"a.b".c', "a name holds a dot"),
+        (TableRef("analytics", "t\x00u", ""), 'analytics."t\\u0000u"', "a name holds a control character"),
+        (TableRef("analytics", "t\u00a0u", ""), 'analytics."t\u00a0u"', "a name holds whitespace"),
+        (TableRef("", "t", ""), '"".t', "a name is empty"),
+    ],
+    ids=["table-dot", "schema-dot", "control", "no-break-space", "empty"])
+def test_the_detail_shows_the_name_and_says_why(ref, shown, reason):
+    failure = invalid_contract_reads(_kpis_node(), [ref], POSTGRES_SYSTEM)
+
+    assert failure.detail == f"readQueries: table {shown} cannot be listed as <schema>.<table>: {reason}"
+
+
+def test_a_table_read_through_two_catalogs_is_one_problem():
+    timings = release_timings()
+
+    failure = invalid_contract_reads(
+        _kpis_node(), [TableRef("analytics", "a b", "c1"), TableRef("analytics", "a b", "c2")], POSTGRES_SYSTEM,
+        timings=timings)
+
+    assert failure.detail.count("cannot be listed") == 1
+    assert timings.contract_failures == {("normalise", "value"): 1}
+
+
+def test_a_system_relation_is_not_checked_and_a_node_without_a_contract_has_nothing_to_list():
+    timings = release_timings()
+    dbt_like = ManifestNode(
+        table_name="users", schema_name="test_schema", service_name="service-1", owner="t", schedule_name="daily",
+        criticality="CORE")
+
+    assert invalid_contract_reads(_kpis_node(), [TableRef("pg_catalog", "a b", "")], POSTGRES_SYSTEM, timings=timings) is None
+    assert invalid_contract_reads(dbt_like, [TableRef("analytics", "a b", "")], POSTGRES_SYSTEM, timings=timings) is None
+    assert timings.contract_failures == {}
+
+
+def test_the_details_of_one_node_come_in_table_order_whatever_the_order_of_the_queries():
+    one = invalid_contract_reads(_kpis_node(), [TableRef("analytics", "b c", ""), TableRef("analytics", "a b", "")], POSTGRES_SYSTEM)
+    other = invalid_contract_reads(_kpis_node(), [TableRef("analytics", "a b", ""), TableRef("analytics", "b c", "")], POSTGRES_SYSTEM)
+
+    assert one == other and one.detail.index('"a b"') < one.detail.index('"b c"')
 
 
 # --- the bundle -----------------------------------------------------------------
