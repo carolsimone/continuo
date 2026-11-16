@@ -214,18 +214,20 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipe
 	}
 
 	if err := enqueueReleasePromoted(ctx, u, events.ReleasePromoted{
-		ReleaseID:       releaseID,
-		PromotedAt:      now.UTC(),
-		PromotionSeq:    seq,
-		TopologyURI:     ref.URI,
-		TopologySHA256:  ref.SHA256,
-		ChangedNodeIDs:  changed,
-		CandidateSchema: CandidateSchemaFor(releaseID),
-		CodeBundleURI:   r.CodeBundleURI(),
-		Repo:            r.Repo(),
-		CommitSHA:       r.CommitSHA(),
-		Bootstrap:       r.IsBootstrap(),
-		Rebaseline:      r.IsRebaseline(),
+		ReleaseID:            releaseID,
+		PromotedAt:           now.UTC(),
+		PromotionSeq:         seq,
+		TopologyURI:          ref.URI,
+		TopologySHA256:       ref.SHA256,
+		ChangedNodeIDs:       changed,
+		CandidateSchema:      CandidateSchemaFor(releaseID),
+		CodeBundleURI:        r.CodeBundleURI(),
+		Repo:                 r.Repo(),
+		CommitSHA:            r.CommitSHA(),
+		Bootstrap:            r.IsBootstrap(),
+		Rebaseline:           r.IsRebaseline(),
+		ContractBundleURI:    r.CandidateContractBundle().URI,
+		ContractBundleSHA256: r.CandidateContractBundle().SHA256,
 	}); err != nil {
 		return err
 	}

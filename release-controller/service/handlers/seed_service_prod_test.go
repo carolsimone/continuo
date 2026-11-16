@@ -215,6 +215,38 @@ func TestSeedServiceProd_CsvServiceClassifiedPython(t *testing.T) {
 	assert.Equal(t, release.ManifestKindPython, sp.ManifestKind())
 }
 
+func TestSeedServiceProd_TellsThePythonKindsApartByTheKey(t *testing.T) {
+	now := time.Unix(1_000_000, 0).UTC()
+
+	// Both services hold only python nodes; the artifact each pointer names says
+	// which kind it is.
+	cp := buildCurrentProd("rel-1",
+		release.Node{UniqueID: "n1", ServiceName: "service-odcs", ImageTag: "t1", NodeType: "python-node"},
+		release.Node{UniqueID: "n2", ServiceName: "service-legacy", ImageTag: "t2", NodeType: "python-node"},
+	)
+	existingKeys := map[string]string{
+		"service-odcs":   "s3://bucket/service-odcs/rel-1/odcs-bundle.json",
+		"service-legacy": "s3://bucket/service-legacy/rel-1/contract.yaml",
+	}
+
+	store := newFakeStore()
+	repo := &fakeServiceProdRepo{store: store}
+
+	n, err := handlers.SeedServiceProd(context.Background(), cp.releaseID, cp.topo, existingKeys, repo, now)
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+
+	odcs, err := repo.Get(context.Background(), "service-odcs")
+	require.NoError(t, err)
+	require.NotNil(t, odcs)
+	assert.Equal(t, release.ManifestKindPythonODCS, odcs.ManifestKind())
+
+	legacy, err := repo.Get(context.Background(), "service-legacy")
+	require.NoError(t, err)
+	require.NotNil(t, legacy)
+	assert.Equal(t, release.ManifestKindPython, legacy.ManifestKind())
+}
+
 func TestSeedServiceProd_MixedKindServiceErrorsAndWritesNothing(t *testing.T) {
 	now := time.Unix(1_000_000, 0).UTC()
 

@@ -44,6 +44,7 @@ func TestReceiveVerification_Validation(t *testing.T) {
 		"missing verifies":       func(in *handlers.ReceiveVerificationInput) { in.VerifiesReleaseID = "" },
 		"attempt below one":      func(in *handlers.ReceiveVerificationInput) { in.Attempt = 0 },
 		"overlay on python kind": func(in *handlers.ReceiveVerificationInput) { in.Kind = "python" },
+		"overlay on python-odcs": func(in *handlers.ReceiveVerificationInput) { in.Kind = "python-odcs" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			in := validVerification()
@@ -53,6 +54,32 @@ func TestReceiveVerification_Validation(t *testing.T) {
 			assert.ErrorIs(t, err, handlers.ErrInvalidInput)
 		})
 	}
+}
+
+func TestReceiveVerification_AcceptsPythonODCS(t *testing.T) {
+	deps, store := newDeps(time.Unix(1_700_000_000, 0).UTC())
+	in := validVerification()
+	in.Kind = "python-odcs"
+	in.SourceOverlayURI = ""
+	require.NoError(t, handlers.ReceiveVerification(context.Background(), deps, in))
+
+	got, err := store.GetRelease(in.RunID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, release.ManifestKindPythonODCS, got.ManifestKind())
+	assert.Empty(t, got.SourceOverlayURI())
+}
+
+func TestReceiveVerification_RefusesASourceOverlayForPythonODCS(t *testing.T) {
+	deps, store := newDeps(time.Unix(1_700_000_000, 0).UTC())
+	in := validVerification()
+	in.Kind = "python-odcs" // validVerification carries a source overlay
+	err := handlers.ReceiveVerification(context.Background(), deps, in)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, handlers.ErrInvalidInput)
+	assert.Contains(t, err.Error(), "source_overlay_uri")
+	_, getErr := store.GetRelease(in.RunID)
+	assert.Error(t, getErr, "a refused verification stores nothing")
 }
 
 func TestReceiveVerification_IdempotentOnRunID_ConflictsWithACandidate(t *testing.T) {

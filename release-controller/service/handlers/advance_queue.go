@@ -112,7 +112,7 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 	set := assembleFor(ctx, u, d.Logger, next, pointers, d.Bucket)
 	next.SetAssembledImageTags(set.ImageTags)
 
-	if next.ManifestKind() == release.ManifestKindPython {
+	if next.ManifestKind().IsPython() {
 		// A python release has no compile leg: CI compiled and uploaded the
 		// contract artifact before POST /releases, so activation goes straight
 		// to Parsing and requests the manifest load with keys assembled from

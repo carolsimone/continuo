@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
@@ -16,11 +17,12 @@ import (
 // key); a service present in topo but absent from existingKeys is an error (we
 // cannot point at a manifest we do not know). image_tag is the first non-empty tag among the
 // service's nodes. manifest_kind is derived from the service's own nodes: any
-// node whose NodeType.IsPython() is true (python-node, python-csv or python-api) makes
-// the service ManifestKindPython, otherwise ManifestKindDbt; a service whose
+// node whose NodeType.IsPython() is true (python-node, python-csv or python-api)
+// makes the service a python service, otherwise ManifestKindDbt; a service whose
 // nodes mix python and non-python types is an error (a service is either a
-// dbt project or a python service, never both). Idempotent: re-running
-// upserts the same rows.
+// dbt project or a python service, never both). A python service is
+// ManifestKindPythonODCS when its manifest key names an odcs-bundle.json and
+// ManifestKindPython otherwise. Idempotent: re-running upserts the same rows.
 // Returns the count of services seeded.
 func SeedServiceProd(
 	ctx context.Context,
@@ -75,6 +77,9 @@ func SeedServiceProd(
 		kind := release.ManifestKindDbt
 		if entries[svc].hasPython {
 			kind = release.ManifestKindPython
+			if strings.HasSuffix(existingKeys[svc], "/"+odcsBundleName) {
+				kind = release.ManifestKindPythonODCS
+			}
 		}
 		sp := release.NewServiceProd(svc, releaseID, existingKeys[svc], entries[svc].imageTag, kind, now)
 		if err := repo.Upsert(ctx, sp); err != nil {

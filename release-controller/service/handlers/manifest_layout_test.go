@@ -14,3 +14,8 @@ func TestCanonicalManifestKey_PerKindArtifactName(t *testing.T) {
 	assert.Equal(t, "s3://b/svc-py/r1/contract.yaml",
 		handlers.CanonicalManifestKey("b", "svc-py", "r1", release.ManifestKindPython))
 }
+
+func TestCanonicalManifestKey_PythonODCSIsTheBundle(t *testing.T) {
+	assert.Equal(t, "s3://b/svc-py/r1/odcs-bundle.json",
+		handlers.CanonicalManifestKey("b", "svc-py", "r1", release.ManifestKindPythonODCS))
+}

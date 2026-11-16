@@ -118,3 +118,57 @@ func TestPromote_VerificationNeverTakesASeq(t *testing.T) {
 	assert.Equal(t, int64(0), store.LastPromotionSeq())
 	assert.Nil(t, lastEntryOn(store, streams.ReleasePromotedV2))
 }
+
+// The contract bundle the parse named travels on release.promoted:v2, whether
+// the promotion follows a validation or is a bootstrap that skips it.
+func TestPromoteToProduction_CarriesTheContractBundle(t *testing.T) {
+	ref := func(id string) release.ContractBundleRef {
+		return release.ContractBundleRef{
+			URI:    "s3://continuo/tenants/default/topologies/" + id + "/contracts.json.gz",
+			SHA256: "9b0c4d1e7a52f3860be1d9c4a7f08e35b216d0a94c7e53f1a8b20d6e49c71f3a",
+		}
+	}
+	topo := release.Topology{{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h1", UpstreamUniqueIDs: []string{}}}
+
+	t.Run("after a validation", func(t *testing.T) {
+		deps, store := newDeps(time.Unix(100, 0).UTC())
+		deps.Bucket = "continuo"
+		ctx := context.Background()
+		require.NoError(t, handlers.ReceiveCandidate(ctx, deps, handlers.ReceiveCandidateInput{
+			Service: "svc-a", ReleaseID: "rV", ImageTag: "sha-rV", Repo: "acme/demo", CommitSHA: "deadbeef", Kind: "python-odcs",
+		}))
+		require.NoError(t, handlers.AdvanceQueue(ctx, deps))
+		require.NoError(t, handlers.HandleParsedManifest(ctx, deps, handlers.HandleParsedManifestInput{
+			ReleaseID: "rV", Status: "ok", TopologyRef: putTopology(t, deps, "rV", topo),
+			ContractBundle: ref("rV"), ContinuoContracts: "0.2.0",
+		}))
+		seedValidationNodes(t, deps, "rV", []handlers.NodeResult{{NodeID: "a", Status: "ok"}})
+		require.NoError(t, handlers.HandleValidationResult(ctx, deps, handlers.HandleValidationResultInput{ReleaseID: "rV", AggregateStatus: "ok"}))
+
+		p := promotedEvent(t, findEntry(t, store, streams.ReleasePromotedV2))
+		assert.Equal(t, ref("rV").URI, p.ContractBundleURI)
+		assert.Equal(t, ref("rV").SHA256, p.ContractBundleSHA256)
+	})
+
+	t.Run("a bootstrap", func(t *testing.T) {
+		deps, store := seedToParsingBootstrap(t, "rB", map[string]string{"svc-a": "sha-a"})
+		require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+			ReleaseID: "rB", Status: "ok", TopologyRef: putTopology(t, deps, "rB", topo),
+			ContractBundle: ref("rB"), ContinuoContracts: "0.2.0",
+		}))
+
+		p := promotedEvent(t, findEntry(t, store, streams.ReleasePromotedV2))
+		assert.Equal(t, ref("rB").URI, p.ContractBundleURI)
+		assert.Equal(t, ref("rB").SHA256, p.ContractBundleSHA256)
+	})
+
+	t.Run("a release with no bundle announces none", func(t *testing.T) {
+		deps, store := newDeps(time.Unix(100, 0).UTC())
+		deps.Bucket = "continuo"
+		promoteCandidate(t, deps, "rN", topo)
+
+		p := promotedEvent(t, findEntry(t, store, streams.ReleasePromotedV2))
+		assert.Empty(t, p.ContractBundleURI)
+		assert.Empty(t, p.ContractBundleSHA256)
+	})
+}
