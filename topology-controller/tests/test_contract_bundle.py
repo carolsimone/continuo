@@ -20,6 +20,7 @@ from service.contract_bundle import (
     build_contract_bundle,
     contract_bundle_key,
     invalid_contract_reads,
+    shared_unique_ids,
     store_contracts,
 )
 from tests.odcs_fixtures import demo_text, release_timings
@@ -51,7 +52,6 @@ def _node(name: str, text: str, *, path: str | None = None, service: str = "serv
             document=document,
             path=path or f"contracts/{name}.odcs.yaml",
             source_sha256=sha256_hex(text.encode("utf-8")),
-            service=service,
         ),
     )
 
@@ -94,7 +94,7 @@ def test_the_fixture_document_is_the_stored_form_the_library_computes():
     [contract] = fx["input"]["contracts"]
 
     [stored] = store_contracts(
-        [_kpis_node()], {"analytics.py_daily_kpis": [TableRef("analytics", "daily_transactions", "")]},
+        [_kpis_node()], {("service-py", "analytics.py_daily_kpis"): [TableRef("analytics", "daily_transactions", "")]},
         POSTGRES_SYSTEM)
 
     assert stored.document == contract["document"]
@@ -108,7 +108,7 @@ def test_the_fixture_document_is_the_stored_form_the_library_computes():
 def test_the_stored_form_carries_the_tables_the_queries_name():
     [kpis] = store_contracts(
         [_kpis_node()],
-        {"analytics.py_daily_kpis": [
+        {("service-py", "analytics.py_daily_kpis"): [
             TableRef("analytics", "daily_transactions", ""), TableRef("pg_catalog", "pg_class", "")]},
         POSTGRES_SYSTEM)
 
@@ -121,7 +121,7 @@ def test_the_stored_form_carries_the_tables_the_queries_name():
 def test_a_catalog_qualified_table_is_named_by_its_schema_and_table():
     [kpis] = store_contracts(
         [_kpis_node()],
-        {"analytics.py_daily_kpis": [TableRef("analytics", "daily_transactions", "warehouse")]},
+        {("service-py", "analytics.py_daily_kpis"): [TableRef("analytics", "daily_transactions", "warehouse")]},
         POSTGRES_SYSTEM)
 
     assert _reads(kpis.document) == [["analytics.daily_transactions"]]
@@ -130,7 +130,7 @@ def test_a_catalog_qualified_table_is_named_by_its_schema_and_table():
 def test_a_table_two_queries_name_through_two_catalogs_is_listed_once_in_lower_case():
     [kpis] = store_contracts(
         [_kpis_node()],
-        {"analytics.py_daily_kpis": [
+        {("service-py", "analytics.py_daily_kpis"): [
             TableRef("Analytics", "Orders", "a"), TableRef("analytics", "orders", "b"),
             TableRef("analytics", "fx", "")]},
         POSTGRES_SYSTEM)
@@ -148,7 +148,7 @@ def test_a_contract_that_reads_nothing_has_no_reads_property():
 
 def test_only_system_relations_read_means_no_reads_property():
     [kpis] = store_contracts(
-        [_kpis_node()], {"analytics.py_daily_kpis": [TableRef("pg_catalog", "pg_class", "")]}, POSTGRES_SYSTEM)
+        [_kpis_node()], {("service-py", "analytics.py_daily_kpis"): [TableRef("pg_catalog", "pg_class", "")]}, POSTGRES_SYSTEM)
 
     assert _reads(kpis.document) == []
 
@@ -175,7 +175,7 @@ def test_the_authored_document_is_not_changed():
     node = _kpis_node()
     before = json.dumps(node.contract.document, sort_keys=True)
 
-    store_contracts([node], {"analytics.py_daily_kpis": [TableRef("analytics", "daily_transactions", "")]}, POSTGRES_SYSTEM)
+    store_contracts([node], {("service-py", "analytics.py_daily_kpis"): [TableRef("analytics", "daily_transactions", "")]}, POSTGRES_SYSTEM)
 
     assert json.dumps(node.contract.document, sort_keys=True) == before
 
@@ -189,7 +189,7 @@ def test_every_valid_library_vector_stores_to_its_stored_form_and_hash(name):
     schema, table = node.schema_name, node.table_name
     refs = [TableRef(*ref.lower().split("."), "") for ref in vector["reads"]]
 
-    [stored] = store_contracts([node], {f"{schema}.{table}": refs}, POSTGRES_SYSTEM)
+    [stored] = store_contracts([node], {node.node_key: refs}, POSTGRES_SYSTEM)
 
     assert stored.document == vector["stored"]
     assert stored.contract_hash == vector["contract_hash"]
@@ -372,9 +372,24 @@ def test_the_bundle_is_the_same_whatever_the_order_of_the_contracts():
     assert canonical_json(one) == canonical_json(other)
 
 
-def test_two_contracts_of_one_unique_id_are_a_bug_not_an_overwrite():
+def test_two_contracts_of_one_unique_id_reaching_the_builder_are_a_bug_not_an_overwrite():
+    """The handler leaves out every contract of an id shared_unique_ids names, so two
+    contracts of one id never reach the builder; if they did, it refuses them."""
     with pytest.raises(ValueError, match="analytics.a"):
         _bundle([_stored("analytics.a", service="s1"), _stored("analytics.a", service="s2")])
+
+
+def test_shared_unique_ids_names_each_id_two_services_declare_with_its_services_in_order():
+    def node(service, table, node_type=NodeType.PYTHON_NODE):
+        return ManifestNode(
+            table_name=table, schema_name="analytics", service_name=service, owner="t", schedule_name="daily",
+            criticality="CORE", node_type=node_type)
+
+    nodes = [node("s2", "a"), node("s1", "a"), node("s1", "b"), node("s3", "A")]
+
+    assert shared_unique_ids(nodes) == {"analytics.a": ["s1", "s2", "s3"]}
+    assert shared_unique_ids(list(reversed(nodes))) == {"analytics.a": ["s1", "s2", "s3"]}
+    assert shared_unique_ids([node("s1", "b")]) == {}
 
 
 def test_the_bundle_does_not_share_its_inputs():

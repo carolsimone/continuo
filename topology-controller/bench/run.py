@@ -134,7 +134,9 @@ def _run_child(args: argparse.Namespace) -> int:
             estate, store, clock=MonotonicClock(), memory=ResidentMemoryProbe(), dialect=args.dialect,
         )
         started = time.perf_counter()
-        timings = handler.handle(estate.release_id)
+        # Each pass parses a release of its own: the contract bundle is written once
+        # per release, so a pass that reused the cold pass's id would read it back.
+        timings = handler.handle(f"{estate.release_id}-{pass_name}")
         handler_seconds = time.perf_counter() - started
         if not publisher.ok:
             logger.error("the %s pass of size %d did not publish: %s", pass_name, args.size, publisher.failure)

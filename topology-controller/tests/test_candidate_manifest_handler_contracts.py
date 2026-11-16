@@ -291,3 +291,19 @@ def test_an_artifact_level_error_fails_the_release_with_no_failed_nodes(
     assert kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
     assert kwargs["detail"].startswith(detail)
     assert kwargs["failed_nodes"] == []
+
+
+def test_a_python_odcs_node_whose_query_fails_to_resolve_is_named_by_its_contract_file(tmp_path):
+    """The SQL of a python-odcs node lives in its contract, so a resolve failure names the
+    contract file, not the script."""
+    publisher = MagicMock()
+    unqualified = demo_text("py_daily_kpis").replace(
+        "from analytics.daily_transactions", "from daily_transactions")
+    source = source_of(bundle_file(tmp_path, [bundle_node(KPIS_PATH, unqualified)]))
+
+    python_handler(source, publisher).handle(release_id="rel-1")
+
+    kwargs = _failed_kwargs(publisher)
+    [failed] = kwargs["failed_nodes"]
+    assert (failed.node_id, failed.kind, failed.file_path) == (
+        "analytics.py_daily_kpis", ParseFailureKind.UNQUALIFIED_REFERENCE, KPIS_PATH)

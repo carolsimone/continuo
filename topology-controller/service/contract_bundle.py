@@ -26,7 +26,7 @@ from typing import Any
 from continuo_contracts.contract import contract_hash, normalise_python
 from continuo_contracts.schema import SCHEMA_SHA256
 
-from domain.contract_vocabulary import ParseFailureKind
+from domain.contract_vocabulary import NodeType, ParseFailureKind
 from domain.external import SystemRelations
 from domain.model import FailedNode, ManifestNode, TableRef
 from service.release_timings import ReleaseTimings
@@ -142,9 +142,23 @@ def invalid_contract_reads(
     )
 
 
+def shared_unique_ids(nodes: Sequence[ManifestNode]) -> dict[str, list[str]]:
+    """Each unique_id that more than one node of the release declares (a dbt test, which
+    writes no relation, aside), with the services that declare it, sorted.
+
+    Such a release is release-controller's to reject as duplicate_table, which names
+    every service involved. Its contracts stay out of the bundle: the bundle keys a
+    contract by unique_id and cannot hold two."""
+    services: dict[str, list[str]] = {}
+    for node in nodes:
+        if node.node_type != NodeType.DBT_TEST:
+            services.setdefault(node.unique_id, []).append(node.service_name)
+    return {uid: sorted(names) for uid, names in sorted(services.items()) if len(names) > 1}
+
+
 def store_contracts(
     nodes: Sequence[ManifestNode],
-    reads: Mapping[str, Sequence[TableRef]],
+    reads: Mapping[tuple[str, str], Sequence[TableRef]],
     system: SystemRelations,
     *,
     progress: Callable[[], None] = _no_progress,
@@ -152,7 +166,7 @@ def store_contracts(
 ) -> list[StoredContract]:
     """The stored form and hash of the contract of each node that has one, in node order.
 
-    reads holds the tables each node's SQL names, by the node's unique_id (the resolve
+    reads holds the tables each node's SQL names, by the node's node_key (the resolve
     step's map). The stored form of a contract names the tables its node reads, each as
     "<schema>.<table>": a system relation of the warehouse engine is left out, and the
     catalog of a table, which a contract has no place for, is dropped. The library
@@ -168,7 +182,7 @@ def store_contracts(
         authored = node.contract
         if authored is None:
             continue
-        tables = [f"{ref.schema}.{ref.table}" for ref in reads.get(node.unique_id, ()) if not system.matches(ref)]
+        tables = [f"{ref.schema}.{ref.table}" for ref in reads.get(node.node_key, ()) if not system.matches(ref)]
         document = _library_call(
             "normalise", node, timings,
             lambda: normalise_python(authored.document, service=node.service_name, reads=tables))
@@ -212,7 +226,8 @@ def build_contract_bundle(
 ) -> dict[str, Any]:
     """The bundle document of a release.
 
-    contracts are keyed by unique_id in the document. provenance holds, per service whose
+    contracts are keyed by unique_id in the document, so no two may share one: the
+    caller leaves out the contracts of every id shared_unique_ids names. provenance holds, per service whose
     contracts a producer bundle carried, the runtime that packed them and the packages of
     its image; timings is the release's ReleaseTimings.bundle_timings(). The summary counts
     the contracts the bundle holds, by family (no key for a release with none). Its

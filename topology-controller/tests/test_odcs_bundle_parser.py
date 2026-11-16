@@ -91,9 +91,8 @@ def test_a_node_keeps_its_authored_contract(tmp_path):
     parsed = parse(bundle_file(tmp_path, demo_nodes()))
     kpis = parsed.nodes[2]
     assert kpis.contract.document == yaml_strict.load(text)
-    assert kpis.contract.service == SERVICE
     assert kpis.contract.source_sha256 == hashlib.sha256(text.encode("utf-8")).hexdigest()
-    assert parsed.contracts == tuple(node.contract for node in parsed.nodes)
+    assert kpis.contract.path == KPIS_PATH
 
 
 def test_the_demo_content_hash_equals_the_wire_parsers(tmp_path):
@@ -290,7 +289,7 @@ def test_a_bundle_that_names_no_service_is_read_as_the_service_it_names(tmp_path
 
 def test_an_empty_node_list_is_an_empty_artifact(tmp_path):
     parsed = parse(bundle_file(tmp_path, []))
-    assert (parsed.nodes, parsed.failed, parsed.contracts, parsed.shared_code) == ([], (), (), {})
+    assert (parsed.nodes, parsed.failed, parsed.shared_code) == ([], (), {})
 
 
 def test_two_contracts_with_one_id_are_invalid_artifact(tmp_path):
@@ -332,20 +331,51 @@ def test_a_valid_contract_and_an_invalid_one_with_one_id_are_not_a_bundle_error(
     assert [(f.node_id, f.file_path) for f in parsed.failed] == [("analytics.py_daily_kpis", "contracts/kpis.odcs.yaml")]
 
 
-def test_the_ids_of_two_contracts_are_compared_in_lower_case(tmp_path):
-    # The library lowers only ASCII letters, so `É` and `é` make two valid ids that name one node.
+def test_an_id_the_node_would_key_in_another_case_is_an_invalid_contract(tmp_path):
+    # The library lowers only ASCII letters, so `analytics.Ölstand` passes its checks, while
+    # continuo keys the node as `analytics.ölstand`: the contract fails, naming its file and both ids.
+    path = "contracts/Ölstand.odcs.yaml"
+    text = demo_text("py_daily_kpis").replace("py_daily_kpis", "Ölstand")
+    timings = release_timings()
+    parsed = parse(bundle_file(tmp_path, [bundle_node(path, text)]), timings=timings)
+    assert parsed.nodes == []
+    assert parsed.failed == (FailedNode(
+        node_id="analytics.ölstand",
+        kind=ParseFailureKind.INVALID_CONTRACT,
+        service=SERVICE,
+        file_path=path,
+        node_type="python-node",
+        detail=f"id: {path} declares the id 'analytics.Ölstand', and continuo names its node"
+        " 'analytics.ölstand': write the id in lower case",
+    ),)
+    assert timings.contract_failures == {("validate", "identity"): 1}
+
+
+def test_two_ids_that_differ_only_in_a_non_ascii_case_are_one_valid_node_and_one_invalid_contract(tmp_path):
     upper, lower = ("contracts/%s.odcs.yaml" % table for table in ("Éa", "éa"))
     texts = [demo_text("py_daily_kpis").replace("py_daily_kpis", table) for table in ("Éa", "éa")]
-    with pytest.raises(InvalidOdcsBundleError) as excinfo:
-        parse(bundle_file(tmp_path, [bundle_node(upper, texts[0]), bundle_node(lower, texts[1])]))
-    assert excinfo.value.detail == f"two contracts declare analytics.éa: {upper} and {lower}"
+    parsed = parse(bundle_file(tmp_path, [bundle_node(upper, texts[0]), bundle_node(lower, texts[1])]))
+    assert [n.unique_id for n in parsed.nodes] == ["analytics.éa"]
+    assert [(f.node_id, f.file_path) for f in parsed.failed] == [("analytics.éa", upper)]
+
+
+@pytest.mark.parametrize(("identifier", "node_id"), [
+    ("Analytics.Py_Daily_Kpis", "analytics.py_daily_kpis"),
+    ("ANALYTICS.ÖLSTAND", "analytics.ölstand"),
+    ("not-an-id", "not-an-id"),
+    ("a.b.C", "a.b.C"),
+])
+def test_a_failed_node_named_by_its_id_is_named_in_lower_case_when_the_id_is_schema_and_table(tmp_path, identifier, node_id):
+    text = demo_text("py_daily_kpis").replace("id: analytics.py_daily_kpis\n", f"id: {identifier}\n")
+    (failed,) = parse(bundle_file(tmp_path, [bundle_node(KPIS_PATH, text)])).failed
+    assert failed.node_id == node_id
 
 
 def test_the_order_of_the_bundle_does_not_change_what_the_parse_returns(tmp_path):
     nodes = [KPIS_WITH_NUMERIC_12, CSV_WITH_SERVERS, demo_node("fx_eur_usd_rates")]
     one = parse(bundle_file(tmp_path, nodes))
     other = parse(bundle_file(tmp_path, list(reversed(nodes))))
-    assert (one.nodes, one.failed, one.contracts) == (other.nodes, other.failed, other.contracts)
+    assert (one.nodes, one.failed) == (other.nodes, other.failed)
     valid = demo_nodes()
     assert parse(bundle_file(tmp_path, valid)).nodes == parse(bundle_file(tmp_path, list(reversed(valid)))).nodes
 

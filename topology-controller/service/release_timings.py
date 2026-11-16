@@ -23,7 +23,11 @@ from service.ports import ClockPort, MemoryProbePort
 
 class Stage(StrEnum):
     """The stages of a release's parse, in pipeline order; a value is the key
-    `ReleaseTimings.stages_ms` reports the stage under."""
+    `ReleaseTimings.stages_ms` reports the stage under.
+
+    `contract_validation` runs inside `python_parse`: a python-odcs bundle's
+    contracts are checked while it is parsed, so `python_parse` time includes
+    the `contract_validation` time of the same bundle."""
     DOWNLOAD = "download"
     DBT_PARSE = "dbt_parse"
     PYTHON_PARSE = "python_parse"

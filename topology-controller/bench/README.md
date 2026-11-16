@@ -54,9 +54,11 @@ the estate, then parses the release twice with the same estate and one in-memory
 S3:
 
 - the `cold` pass is the first parse of a new process, so nothing in it is warm;
-- the `warm` pass parses the same release again in the same process, so the
+- the `warm` pass parses the same manifests again in the same process, so the
   contract validator's cache already holds every contract and the warm pass runs
-  no ODCS schema check.
+  no ODCS schema check. Each pass has a release id of its own (`rel-bench-cold`,
+  `rel-bench-warm`): the contract bundle is written once per release, so the warm
+  pass writes its own instead of reading back the cold pass's.
 
 The child's own log lines go to its stderr, formatted as `main.py` formats them,
 so the handler pays the logging cost it pays in production. The parent drops a

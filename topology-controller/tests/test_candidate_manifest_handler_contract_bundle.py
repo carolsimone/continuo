@@ -193,6 +193,49 @@ def test_each_python_odcs_service_has_its_own_provenance(tmp_path):
     }
 
 
+@pytest.mark.parametrize("first_service", ["service-a", "service-b"])
+def test_an_id_two_python_odcs_services_declare_is_left_out_of_the_bundle_and_the_release_publishes(
+    tmp_path, first_service, caplog,
+):
+    """Two services that each declare analytics.py_daily_kpis are release-controller's
+    duplicate_table to reject (it names both services): the parse publishes ok, the topology
+    holds both nodes, and the bundle holds neither contract of the shared id, whichever
+    service comes first. Each node keeps the tables its own SQL reads."""
+    bundle_writer, topology_writer, publisher = RecordingContractBundleWriter(), RecordingArtifactWriter(), MagicMock()
+    other_reads = demo_text("py_daily_kpis").replace(
+        "from analytics.daily_transactions", "from raw.other_transactions")
+    files = {}
+    for service, nodes in (
+        ("service-a", [demo_node("py_daily_kpis"), demo_node("demo_orders_csv")]),
+        ("service-b", [bundle_node(KPIS_PATH, other_reads)]),
+    ):
+        folder = tmp_path / service
+        folder.mkdir()
+        files[service] = bundle_file(folder, nodes, declared_service=service, service=service)
+    second_service = "service-b" if first_service == "service-a" else "service-a"
+
+    with caplog.at_level("WARNING"):
+        python_handler(
+            source_of(files[first_service], files[second_service]), publisher,
+            contract_bundle_writer=bundle_writer, artifact_writer=topology_writer,
+        ).handle(release_id="rel-1")
+
+    publisher.publish_failed.assert_not_called()
+    publisher.publish_ok.assert_called_once()
+    assert sorted(bundle_writer.document["contracts"]) == ["analytics.demo_orders_csv"]
+    assert bundle_writer.document["summary"]["contracts"] == 1
+    kpis = sorted(
+        (n["service_name"], sorted(n["upstream_unique_ids"]))
+        for n in topology_writer.nodes if n["unique_id"] == "analytics.py_daily_kpis")
+    assert kpis == [
+        ("service-a", ["analytics.daily_transactions"]),
+        ("service-b", ["raw.other_transactions"]),
+    ]
+    [record] = [r for r in caplog.records if "more than one node" in r.getMessage()]
+    assert record.unique_id == "analytics.py_daily_kpis"
+    assert record.services == ["service-a", "service-b"]
+
+
 # --- the bundle's timings and the stages ------------------------------------------
 
 def test_the_bundle_timings_hold_every_stage_before_its_own_write(tmp_path):

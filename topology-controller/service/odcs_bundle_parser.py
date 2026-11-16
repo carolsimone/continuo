@@ -17,8 +17,10 @@ another service, that a newer continuo-contracts wrote, or whose nodes share a p
 resolve to one node is refused whole (`InvalidOdcsBundleError`), because no node of it can
 be trusted or none can be told from another. Each contract is read on its own, through
 continuo-contracts: the strict YAML loader, the schema and rules check (cached, see
-`ContractValidator`), then the node it declares. A contract that fails a check is not an
-exception but one `FailedNode` of the result, so a release reports every invalid contract
+`ContractValidator`), then the node it declares, whose unique_id must equal the contract's
+`id` (the library accepts a non-ASCII capital, which the unique_id lowers). A contract that
+fails a check is not an exception but one `FailedNode` of the result, named by its id in
+lower case when the id is `<schema>.<table>`, so a release reports every invalid contract
 at once; a valid one becomes a ManifestNode built by `build_python_node`, hashed over the
 producer's two hash parts and the node's own code projection, and keeps its authored
 document. Every result comes in path order, whatever order the bundle lists its nodes in.
@@ -170,12 +172,38 @@ def _failed_node(timings: ReleaseTimings, doc: object, path: str, service: str, 
         timings.add_contract_failure("validate", issue.reason)
     identifier = doc.get("id") if isinstance(doc, Mapping) else None
     return FailedNode(
-        node_id=identifier if isinstance(identifier, str) and identifier.strip() else path,
+        node_id=_failed_node_id(identifier) if isinstance(identifier, str) and identifier.strip() else path,
         kind=ParseFailureKind.INVALID_CONTRACT,
         service=service,
         file_path=path,
         node_type=_node_type(doc),
         detail="; ".join(str(issue) for issue in issues),
+    )
+
+
+def _failed_node_id(identifier: str) -> str:
+    """The name of a failed contract from its id: in lower case, as a node's unique_id is
+    minted, when the id has the shape <schema>.<table>; as written otherwise."""
+    parts = identifier.split(".")
+    if len(parts) == 2 and all(parts):
+        return identifier.lower()
+    return identifier
+
+
+def _id_issue(doc: Mapping[str, Any], node: ManifestNode, path: str) -> Issue | None:
+    """The issue of a contract whose id is not the unique_id of the node it declares, or
+    None when the two are equal.
+
+    The library accepts an id whose ASCII letters are in lower case, while a node's
+    unique_id is the id lowered by `str.lower`, which lowers every letter. A non-ASCII
+    capital (`analytics.Ölstand`) would key the node and its contract under two ids."""
+    identifier = doc["id"]
+    if identifier == node.unique_id:
+        return None
+    return Issue(
+        "id", "identity",
+        f"{path} declares the id {identifier!r}, and continuo names its node {node.unique_id!r}:"
+        " write the id in lower case",
     )
 
 
@@ -241,7 +269,6 @@ def _build_node(doc: Mapping[str, Any], entry: Mapping[str, str], *, service: st
         document=doc,
         path=entry["path"],
         source_sha256=sha256_hex(entry["text"].encode("utf-8")),
-        service=service,
     )
     return node
 
@@ -259,9 +286,13 @@ def _read_node(
     if issues:
         return _failed_node(timings, doc, path, service, issues)
     try:
-        return _build_node(doc, entry, service=service, image_tag=image_tag)
+        node = _build_node(doc, entry, service=service, image_tag=image_tag)
     except (ContractsError, MalformedContractError) as exc:
         return _failed_node(timings, doc, path, service, [Issue("$", "value", str(exc))])
+    mismatch = _id_issue(doc, node, path)
+    if mismatch is not None:
+        return _failed_node(timings, doc, path, service, [mismatch])
+    return node
 
 
 def _check_one_node_per_id(nodes: list[ManifestNode]) -> None:
@@ -331,7 +362,6 @@ def parse_odcs_bundle(
     return ParsedArtifact(
         nodes=nodes,
         shared_code={},
-        contracts=tuple(node.contract for node in nodes),
         failed=tuple(failed),
         python_provenance={"continuo_python_runtime": runtime_version, "image_packages": image_packages},
     )

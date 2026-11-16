@@ -17,7 +17,13 @@ from domain.model import (
 )
 from service.candidate_artifacts import CandidateArtifactBuilder, RewriteContext
 from service.code_bundle import build_code_bundle
-from service.contract_bundle import StoredContract, build_contract_bundle, invalid_contract_reads, store_contracts
+from service.contract_bundle import (
+    StoredContract,
+    build_contract_bundle,
+    invalid_contract_reads,
+    shared_unique_ids,
+    store_contracts,
+)
 from service.contracts_library import LIBRARY_VERSION
 from service.manifest_parsers import parser_for
 from service.ports import (
@@ -441,10 +447,10 @@ class CandidateManifestHandler:
         # the operator a fix-push-reject loop per node. The contracts the parses
         # found invalid are the first of the failed set; the resolve adds its own.
         failed: list[FailedNode] = list(contract_failures)
-        # Every table each node's SQL names, by node unique_id, for each node
-        # that writes a relation (a dbt test writes none). unknown_external_nodes
+        # Every table each node's SQL names, by node_key, for each node that
+        # writes a relation (a dbt test writes none). unknown_external_nodes
         # decides which of them no node of the release builds.
-        reads: dict[str, list[TableRef]] = {}
+        reads: dict[tuple[str, str], list[TableRef]] = {}
         unknown_external: list[ManifestNode] = []
         with self._timings.stage(Stage.RESOLVE, nodes=len(all_nodes)):
             for node in all_nodes:
@@ -459,7 +465,7 @@ class CandidateManifestHandler:
                         service_name=node.service_name, ctes=ctes, ephemeral_ctes=ephemeral_ctes,
                     )
                     if node.node_type != NodeType.DBT_TEST:
-                        reads[node.unique_id] = refs
+                        reads[node.node_key] = refs
                     # A contract that names a table it cannot list is invalid, and
                     # reported with the failures of the other nodes.
                     unlistable = invalid_contract_reads(node, refs, self._system_relations, timings=self._timings)
@@ -470,7 +476,8 @@ class CandidateManifestHandler:
                         node_id=node.unique_id,
                         kind=exc.kind,
                         service=node.service_name,
-                        file_path=node.original_file_path,
+                        # A python-odcs node's SQL is in its contract file, not its script.
+                        file_path=node.contract.path if node.contract is not None else node.original_file_path,
                         node_type=node.node_type,
                         detail=str(exc),
                     ))
@@ -488,11 +495,21 @@ class CandidateManifestHandler:
             )
             return
 
+        # An id two services declare is release-controller's duplicate_table to
+        # reject, naming both: the release publishes, and the bundle, which keys a
+        # contract by id, holds no contract of that id.
+        shared = shared_unique_ids(all_nodes)
+        for unique_id, services in shared.items():
+            logger.warning(
+                "candidate: a unique id more than one node declares has no contract in the bundle",
+                extra={"release_id": release_id, "unique_id": unique_id, "services": services},
+            )
         contracts: list[StoredContract] = []
         try:
             with self._timings.stage(Stage.CANONICAL_HASHING) as record:
                 contracts = store_contracts(
-                    all_nodes, reads, self._system_relations, progress=self._progress, timings=self._timings,
+                    [node for node in all_nodes if node.unique_id not in shared], reads, self._system_relations,
+                    progress=self._progress, timings=self._timings,
                 )
                 record.add(contracts=len(contracts))
         except Exception as exc:

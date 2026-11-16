@@ -82,7 +82,7 @@ def test_the_wire_python_entry_ignores_the_progress_callback_and_the_timings(tmp
     parsed = _parse(ManifestKind.PYTHON, mf)
 
     assert [n.unique_id for n in parsed.nodes] == ["test_schema.py_metrics"]
-    assert parsed.failed == () and parsed.contracts == ()
+    assert parsed.failed == () and all(n.contract is None for n in parsed.nodes)
 
 
 def test_the_odcs_entry_parses_a_bundle_with_the_library_this_install_runs_on(tmp_path):

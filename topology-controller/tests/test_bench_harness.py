@@ -1,3 +1,4 @@
+import argparse
 import gzip
 import json
 import posixpath
@@ -10,7 +11,7 @@ from continuo_contracts.vocabulary import continuo_values
 from bench.compare import compare
 from bench.estate import generate_estate
 from bench.memory_s3 import MemoryS3
-from bench.run import build_handler
+from bench.run import _run_child, build_handler
 from domain.model import ManifestFile, ManifestKind
 from service.compile_extras import load_compile_extras
 from service.contract_bundle import contract_bundle_key
@@ -61,10 +62,10 @@ def test_the_estate_writes_the_python_service_as_one_odcs_bundle(tmp_path):
     )
     assert not parsed.failed
     assert len(parsed.nodes) == estate.python_nodes
-    assert len(parsed.contracts) == estate.python_nodes
+    contracts = [node.contract for node in parsed.nodes]
     assert timings.contract_failures == {}
     reads = sum(
-        len(continuo_values(contract.document["customProperties"])["readQueries"]) for contract in parsed.contracts
+        len(continuo_values(contract.document["customProperties"])["readQueries"]) for contract in contracts
     )
     assert reads == estate.python_reads
 
@@ -116,6 +117,18 @@ def test_the_handler_writes_one_contract_bundle_and_keeps_it_on_the_next_pass():
     assert document["provenance"] == {
         "svc-py": {"continuo_python_runtime": "0.13.0", "image_packages": {"pyarrow": "26.0.0"}},
     }
+
+
+def test_the_warm_pass_writes_as_many_objects_as_the_cold_one(capsys):
+    """Each pass parses a release of its own, so a write-once object of the cold pass
+    (the contract bundle) is not read back in place of the warm pass's write."""
+    args = argparse.Namespace(size=20, columns=4, put_latency_ms=0.0, dialect="postgres", rep=0)
+
+    assert _run_child(args) == 0
+
+    cold, warm = (json.loads(line) for line in capsys.readouterr().out.splitlines())
+    assert (cold["pass"], warm["pass"]) == ("cold", "warm")
+    assert warm["puts"] == cold["puts"]
 
 
 def _line(rep, **stage_seconds):

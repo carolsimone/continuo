@@ -69,12 +69,11 @@ class FailedNode:
 @dataclass(frozen=True)
 class AuthoredContract:
     """A contract file as its author wrote it: the document its text loads to,
-    the repository path of the file, the SHA-256 of the text's UTF-8 bytes (bare
-    hex) and the service of the release that carries it."""
+    the repository path of the file and the SHA-256 of the text's UTF-8 bytes
+    (bare hex)."""
     document: Mapping[str, Any]
     path: str
     source_sha256: str
-    service: str
 
 
 @dataclass(frozen=True)
@@ -280,6 +279,13 @@ class ManifestNode:
         return f"{self.schema_name.lower()}.{self.table_name.lower()}"
 
     @property
+    def node_key(self) -> tuple[str, str]:
+        """(service_name, unique_id): one node of a release. Two services may declare
+        one unique_id, which release-controller rejects as duplicate_table, so a map
+        over a release's nodes keys by both and keeps each node's own entry."""
+        return (self.service_name, self.unique_id)
+
+    @property
     def resolved_relation_id(self) -> str:
         """The physical warehouse relation this node's build actually writes:
         "<schema>.<resolved name>", lowercased, mirroring how unique_id is
@@ -385,14 +391,14 @@ class ParsedArtifact:
     code (dbt macros) they use, keyed by unit id, and, for a dbt manifest, what
     its compile ran with (None for a python contract).
 
-    A `python-odcs` bundle also reports `contracts` (the authored contract of
-    each node, in node order), `failed` (one FailedNode for each contract that
-    did not pass its checks, in path order) and `python_provenance` (the
-    producer's `continuo_python_runtime` and the `image_packages` of the image
-    the service runs); every other kind leaves them empty."""
+    A `python-odcs` bundle also reports `failed` (one FailedNode for each
+    contract that did not pass its checks, in path order) and
+    `python_provenance` (the producer's `continuo_python_runtime` and the
+    `image_packages` of the image the service runs); every other kind leaves
+    them empty. Each of its nodes carries its authored contract
+    (ManifestNode.contract)."""
     nodes: list[ManifestNode]
     shared_code: dict[str, dict]
     provenance: ServiceProvenance | None = None
-    contracts: tuple[AuthoredContract, ...] = ()
     failed: tuple[FailedNode, ...] = ()
     python_provenance: dict[str, Any] | None = None
