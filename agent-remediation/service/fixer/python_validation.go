@@ -263,9 +263,13 @@ func contractFix(
 	// Re-running the search over the patched checkout covers what it cannot: the
 	// node must still be declared, exactly once, and still inside the directory
 	// this fix packages.
+	// A legacy contract.yaml entry that still names the node reads as an
+	// unconverted service; after the answer that too means no ODCS contract
+	// declares the node any more.
 	relocated, err := svc.ContractLocator.Locate(root, schema, table)
 	switch {
-	case errors.Is(err, ports.ErrNodeNotDeclared), errors.Is(err, ports.ErrAmbiguousDeclaration):
+	case errors.Is(err, ports.ErrNodeNotDeclared), errors.Is(err, ports.ErrAmbiguousDeclaration),
+		errors.Is(err, ports.ErrServiceNotConverted):
 		return failPython(svc, in, fmt.Sprintf(
 			"after applying the model's answer, %s is no longer declared by exactly one contract file (%s); "+
 				"a fix may correct what a node declares but never change which node is declared", in.NodeID, err))
@@ -607,11 +611,12 @@ func siblingFailure(ctx context.Context, svc Services, in Input, located ports.L
 		}
 		other, lerr := svc.ContractLocator.Locate(root, schema, table)
 		if lerr != nil {
-			// Not declared anywhere, declared twice, or unsearchable: in none of
-			// those cases is this node known to share the directory being
-			// packaged, and uncertainty about someone else's node is not a
-			// reason to abandon a fix for this one.
-			if !errors.Is(lerr, ports.ErrNodeNotDeclared) {
+			// Not declared anywhere, declared only by a legacy contract.yaml
+			// entry, declared twice, or unsearchable: in none of those cases is
+			// this node known to share the directory being packaged, and
+			// uncertainty about someone else's node is not a reason to abandon
+			// a fix for this one. Only the last two are logged.
+			if !errors.Is(lerr, ports.ErrNodeNotDeclared) && !errors.Is(lerr, ports.ErrServiceNotConverted) {
 				svc.Logger.Warn("could not place another failing node; proceeding as if it is declared elsewhere",
 					"node", nodeID, "release", in.ReleaseID, "error", lerr)
 			}

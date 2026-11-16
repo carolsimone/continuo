@@ -1006,3 +1006,39 @@ func TestPythonFixer_RefusesAnUnconvertedServiceAndLogsWhy(t *testing.T) {
 		})
 	}
 }
+
+// relocateLocator answers the first search with the wrapped locator and every
+// later one with err, so a test can make the search over the patched checkout
+// disagree with the search over the repository.
+type relocateLocator struct {
+	ports.ContractLocator
+	err   error
+	calls int
+}
+
+func (l *relocateLocator) Locate(root, schema, table string) (ports.Located, error) {
+	l.calls++
+	if l.calls == 1 {
+		return l.ContractLocator.Locate(root, schema, table)
+	}
+	return ports.Located{}, l.err
+}
+
+// TestPythonValidation_AnswerLeavingOnlyALegacyEntry_Fails covers an answer
+// after which no ODCS contract declares the node while a stale contract.yaml
+// entry still names it: the search reads that as an unconverted service, and
+// it is the answer that removed the node, so the attempt fails with the
+// reason and nothing is packaged.
+func TestPythonValidation_AnswerLeavingOnlyALegacyEntry_Fails(t *testing.T) {
+	root := pythonRepoTree(t)
+	svc, _, pkgr, _, _ := pythonSvc(t, root)
+	loc := &relocateLocator{ContractLocator: svc.ContractLocator, err: ports.ErrServiceNotConverted}
+	svc.ContractLocator = loc
+
+	r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
+	require.NoError(t, err)
+	require.Equal(t, proposal.StatusFailed, r.Proposal.Status)
+	require.Contains(t, r.Proposal.Rationale, "is no longer declared by exactly one contract file")
+	require.Contains(t, r.Proposal.Rationale, ports.ErrServiceNotConverted.Error())
+	require.Empty(t, pkgr.calls)
+}

@@ -590,8 +590,9 @@ func (*DeclaredOnce) Meta() step.Meta {
 // Check searches the patched checkout for the node again. The before and after
 // comparison sees only the files the answer returned; this covers what it
 // cannot: the node must still be declared, exactly once, and still inside the
-// directory this fix packages. A node that is not declared once, or is declared
-// elsewhere, is a not_declared_once finding. A search that fails is returned so
+// directory this fix packages. A node that is not declared once, is declared
+// only by a legacy contract.yaml entry, or is declared elsewhere, is a
+// not_declared_once finding. A search that fails is returned so
 // the work is tried again. A draft with a path outside the checkout is never
 // applied: it is reported as path_outside_contract_dir, as the path check does.
 func (c *DeclaredOnce) Check(ctx context.Context, in step.CheckInput) (step.CheckOutput, error) {
@@ -606,7 +607,8 @@ func (c *DeclaredOnce) Check(ctx context.Context, in step.CheckInput) (step.Chec
 	nodeID := in.Failure.Target.NodeID
 	relocated, err := c.locator.Locate(root, file.Schema, file.Table)
 	switch {
-	case errors.Is(err, ports.ErrNodeNotDeclared), errors.Is(err, ports.ErrAmbiguousDeclaration):
+	case errors.Is(err, ports.ErrNodeNotDeclared), errors.Is(err, ports.ErrAmbiguousDeclaration),
+		errors.Is(err, ports.ErrServiceNotConverted):
 		return result(nameDeclaredOnce, []remediation.Finding{{
 			Code: "not_declared_once",
 			Message: fmt.Sprintf(
