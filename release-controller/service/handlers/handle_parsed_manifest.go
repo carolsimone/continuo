@@ -110,6 +110,7 @@ func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestI
 var parseReasons = map[pkg_model.ParseFailureKind]pkg_model.RejectReason{
 	pkg_model.ParseFailureKindInvalidSQL:           pkg_model.RejectReasonInvalidSQL,
 	pkg_model.ParseFailureKindUnqualifiedReference: pkg_model.RejectReasonUnqualifiedReference,
+	pkg_model.ParseFailureKindInvalidContract:      pkg_model.RejectReasonInvalidContract,
 	pkg_model.ParseFailureKindInvalidArtifact:      pkg_model.RejectReasonInvalidArtifact,
 	pkg_model.ParseFailureKindInternal:             pkg_model.RejectReasonInternalError,
 }

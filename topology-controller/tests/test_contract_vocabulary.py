@@ -70,12 +70,32 @@ def test_healable_frozensets_match_the_contract_flags():
 
 
 def test_parse_failure_kind_healable_set():
-    """The two SQL kinds are fixable by a source change; the other two are not."""
+    """The two SQL kinds are fixable by a source change; the other three are not."""
     kind = contract_vocabulary.ParseFailureKind
     assert contract_vocabulary.PARSE_FAILURE_KIND_HEALABLE == {
         kind.INVALID_SQL,
         kind.UNQUALIFIED_REFERENCE,
     }
+
+
+def test_parse_failure_kind_invalid_contract_comes_after_the_healable_kinds():
+    """invalid_contract follows the two SQL kinds and precedes the artifact and internal kinds."""
+    kind = contract_vocabulary.ParseFailureKind
+    assert kind.INVALID_CONTRACT.value == "invalid_contract"
+    assert [m.value for m in kind] == [
+        "invalid_sql",
+        "unqualified_reference",
+        "invalid_contract",
+        "invalid_artifact",
+        "internal",
+    ]
+    assert kind.INVALID_CONTRACT not in contract_vocabulary.PARSE_FAILURE_KIND_HEALABLE
+
+
+def test_reject_reason_invalid_contract_is_not_healable():
+    reason = contract_vocabulary.RejectReason
+    assert reason.INVALID_CONTRACT.value == "invalid_contract"
+    assert reason.INVALID_CONTRACT not in contract_vocabulary.REJECT_REASON_HEALABLE
 
 
 def test_upstream_clone_failed_is_not_healable():

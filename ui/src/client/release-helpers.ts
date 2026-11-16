@@ -57,6 +57,7 @@ const STAGE_LABELS: Record<string, string> = {
   duplicate_table: 'Duplicate table',
   invalid_sql: 'Invalid SQL',
   unqualified_reference: 'Unqualified reference',
+  invalid_contract: 'Invalid contract',
   invalid_artifact: 'Invalid artifact',
   internal_error: 'Internal error',
   parse_rehearsal: 'Parse rehearsal',

@@ -7,6 +7,7 @@ import {
 } from './release-helpers';
 import { NodeValidationResult } from './types';
 import type { ProposalDTO } from './types';
+import { REJECT_REASONS } from '../server/generated/vocabulary.gen';
 
 const n = (stage: string, node_id: string): NodeValidationResult => ({
   stage, node_id, status: 'failed',
@@ -61,28 +62,9 @@ describe('reasonLabel', () => {
   });
 });
 
-// Every value of the `reject_reason` vocabulary declared in
-// pkg/streams/contract.yaml, in declaration order. The list is duplicated here
-// rather than read from the YAML because the UI has no YAML parser among its
-// dependencies; contract.yaml stays the source of truth, and a reason added
-// there without a label here shows the operator a raw token.
-const REJECT_REASONS = [
-  'compile_failed',
-  'parse_rehearsal_failed',
-  'artifact_upload_failed',
-  'invalid_sql',
-  'unqualified_reference',
-  'invalid_artifact',
-  'internal_error',
-  'duplicate_table',
-  'unbuildable_cross_service_upstream',
-  'nothing_to_validate',
-  'seed_build_failed',
-  'validation_failed',
-  'upgrade_interrupted',
-  'upstream_clone_failed',
-];
-
+// Every value of the `reject_reason` vocabulary comes from the file generated
+// from pkg/streams/contract.yaml, so a reason added there without a label here
+// fails this test instead of showing the operator a raw token.
 describe('reject_reason vocabulary coverage', () => {
   it.each(REJECT_REASONS)('labels %s as prose, not as a raw token', (reason) => {
     const label = reasonLabel(reason);
@@ -98,6 +80,7 @@ describe('parse stage vocabulary', () => {
     expect(reasonLabel('invalid_sql')).toBe('Invalid SQL');
     expect(reasonLabel('unqualified_reference')).toBe('Unqualified reference');
     expect(reasonLabel('invalid_artifact')).toBe('Invalid artifact');
+    expect(reasonLabel('invalid_contract')).toBe('Invalid contract');
     expect(reasonLabel('internal_error')).toBe('Internal error');
     expect(reasonLabel('compile_failed')).toBe('Compilation');
   });

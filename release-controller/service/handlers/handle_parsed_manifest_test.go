@@ -256,6 +256,7 @@ func TestHandleParsedManifest_Failed_ReasonPerKind(t *testing.T) {
 	cases := map[pkg_model.ParseFailureKind]string{
 		pkg_model.ParseFailureKindInvalidSQL:           "invalid_sql",
 		pkg_model.ParseFailureKindUnqualifiedReference: "unqualified_reference",
+		pkg_model.ParseFailureKindInvalidContract:      "invalid_contract",
 		pkg_model.ParseFailureKindInvalidArtifact:      "invalid_artifact",
 		pkg_model.ParseFailureKindInternal:             "internal_error",
 	}
@@ -288,6 +289,7 @@ func TestHandleParsedManifest_Failed_HealableKindWithoutNodesWarns(t *testing.T)
 	for kind, wantWarn := range map[pkg_model.ParseFailureKind]bool{
 		pkg_model.ParseFailureKindInvalidSQL:           true,
 		pkg_model.ParseFailureKindUnqualifiedReference: true,
+		pkg_model.ParseFailureKindInvalidContract:      false,
 		pkg_model.ParseFailureKindInvalidArtifact:      false,
 		pkg_model.ParseFailureKindInternal:             false,
 	} {
