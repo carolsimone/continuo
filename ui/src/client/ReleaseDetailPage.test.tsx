@@ -237,35 +237,66 @@ describe('ReleaseDetailPage — hand-over reasons in the FIX cell', () => {
   const releaseOf = (...ids: string[]) =>
     makeRelease(ids.map(id => node({ stage: 'validation', node_id: id })), 'validation_failed');
 
-  it('shows the hand-over text and message for a coded node', async () => {
+  it('shows the hand-over text and, beneath it, the message for a coded node', async () => {
     mockFetchProposals.mockResolvedValue([batched({
       's.a': { status: 'failed', reason: 'tried 3 times; the last try failed: duplicate column', code: 'tries_spent' },
     })]);
-    renderPage(releaseOf('s.a'));
-    expect(await screen.findByText(
-      'Every try failed the checks. Fix it in the repository. tried 3 times; the last try failed: duplicate column',
-    )).toBeInTheDocument();
+    const { container } = renderPage(releaseOf('s.a'));
+    expect(await screen.findByText('Every try failed the checks. Fix it in the repository.')).toBeInTheDocument();
+    expect(container.querySelector('.nodes-error-short')?.textContent)
+      .toBe('tried 3 times; the last try failed: duplicate column');
     expect(screen.queryByText(/The model could not produce a safe fix/)).toBeNull();
+    // A message that fits has nothing to expand.
+    expect(screen.queryByRole('button', { name: 'more' })).toBeNull();
   });
 
   it('shows the text alone for a coded node with no message', async () => {
     mockFetchProposals.mockResolvedValue([batched({
       's.a': { status: 'skipped', reason: '', code: 'no_repository' },
     })]);
-    renderPage(releaseOf('s.a'));
+    const { container } = renderPage(releaseOf('s.a'));
     expect(await screen.findByText('The release names no repository, so no fix can be opened.')).toBeInTheDocument();
     expect(screen.queryByText(/No source to fix at this commit/)).toBeNull();
+    expect(container.querySelector('.nodes-error-text')).toBeNull();
   });
 
-  it('shows each coded node its own text in one batched attempt', async () => {
+  it('shows each coded node its own text and message in one batched attempt', async () => {
     mockFetchProposals.mockResolvedValue([batched({
       's.a': { status: 'failed', reason: 'first', code: 'declined' },
       's.b': { status: 'escalated', reason: 'second', code: 'preflight_rounds_spent' },
     })]);
-    renderPage(releaseOf('s.a', 's.b'));
-    expect(await screen.findByText('The agent could not start a fix. Fix it in the repository. first')).toBeInTheDocument();
-    expect(screen.getByText("The agent's drafts kept failing its own checks. Fix it in the repository. second")).toBeInTheDocument();
+    const { container } = renderPage(releaseOf('s.a', 's.b'));
+    expect(await screen.findByText('The agent could not start a fix. Fix it in the repository.')).toBeInTheDocument();
+    expect(screen.getByText("The agent's drafts kept failing its own checks. Fix it in the repository.")).toBeInTheDocument();
+    expect(Array.from(container.querySelectorAll('.nodes-error-short')).map(el => el.textContent)).toEqual(['first', 'second']);
     expect(screen.queryByText(/Attempt budget spent/)).toBeNull();
+  });
+
+  it('truncates a long message behind a more toggle and keeps the hand-over text visible', async () => {
+    const long = 'the change that broke this node lives in finance; a fix in this node\'s own service cannot ship before it: '
+      + 'column amount_cents is missing from the upstream model';
+    mockFetchProposals.mockResolvedValue([batched({
+      's.a': { status: 'failed', reason: long, code: 'tries_spent' },
+    })]);
+    const { container } = renderPage(releaseOf('s.a'));
+    const text = await screen.findByText('Every try failed the checks. Fix it in the repository.');
+    expect(text).toBeInTheDocument();
+
+    const short = container.querySelector('.nodes-error-short') as HTMLElement;
+    const full = container.querySelector('.nodes-error-full') as HTMLElement;
+    expect(short.textContent).toBe(long);
+    expect(short).not.toHaveClass('nodes-error-short--hidden');
+    expect(full).not.toHaveClass('nodes-error-full--visible');
+
+    fireEvent.click(screen.getByRole('button', { name: 'more' }));
+    expect(short).toHaveClass('nodes-error-short--hidden');
+    expect(full).toHaveClass('nodes-error-full--visible');
+    expect(full.textContent).toBe(long);
+    expect(text).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'less' }));
+    expect(short).not.toHaveClass('nodes-error-short--hidden');
+    expect(full).not.toHaveClass('nodes-error-full--visible');
   });
 
   it('does not show the proposal rationale under a hand-over text', async () => {
@@ -282,9 +313,9 @@ describe('ReleaseDetailPage — hand-over reasons in the FIX cell', () => {
       's.a': { status: 'failed', reason: '<b>bold</b> <img src=x onerror=alert(1)>', code: 'declined' },
     })]);
     const { container } = renderPage(releaseOf('s.a'));
-    expect(await screen.findByText(/<b>bold<\/b> <img src=x onerror=alert\(1\)>/)).toBeInTheDocument();
-    expect(container.querySelector('.nodes-reason b')).toBeNull();
-    expect(container.querySelector('.nodes-reason img')).toBeNull();
+    expect((await screen.findAllByText(/<b>bold<\/b> <img src=x onerror=alert\(1\)>/)).length).toBeGreaterThan(0);
+    expect(container.querySelector('.nodes-error-text b')).toBeNull();
+    expect(container.querySelector('.nodes-error-text img')).toBeNull();
   });
 
   it.each([
