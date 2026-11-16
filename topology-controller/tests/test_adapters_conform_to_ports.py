@@ -10,6 +10,7 @@ so they fail the moment an adapter stops providing the port's surface.
 import pytest
 
 from adapters.code_bundle_uploader import CodeBundleUploader
+from adapters.contract_bundle_writer import ContractBundleWriter
 from adapters.metrics.prometheus import TopologyMetrics
 from adapters.process import MonotonicClock, ResidentMemoryProbe
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
@@ -19,6 +20,7 @@ from service.ports import (
     CandidatePublisherPort,
     ClockPort,
     CodeBundleUploaderPort,
+    ContractBundleWriterPort,
     ManifestSourcePort,
     MemoryProbePort,
     ReleaseObserverPort,
@@ -28,6 +30,7 @@ from service.ports import (
 CONCRETE_PORT_PAIRS = [
     (CandidateManifestPublisher, CandidatePublisherPort),
     (CodeBundleUploader, CodeBundleUploaderPort),
+    (ContractBundleWriter, ContractBundleWriterPort),
     (MonotonicClock, ClockPort),
     (ResidentMemoryProbe, MemoryProbePort),
     (S3Source, ManifestSourcePort),
@@ -53,7 +56,7 @@ def test_check_is_structural_not_nominal():
     guard inspects the surface rather than trusting inheritance."""
 
     class MissingPublishFailed:
-        def publish_ok(self, *, release_id, artifact, code_bundle_uri):
+        def publish_ok(self, *, release_id, artifact, code_bundle_uri, contract_bundle):
             ...
 
     assert not issubclass(MissingPublishFailed, CandidatePublisherPort)

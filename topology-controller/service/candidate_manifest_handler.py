@@ -1,5 +1,6 @@
 import logging
 from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 from domain.exceptions import InvalidCompiledSqlError, InvalidOdcsBundleError, UnqualifiedTableReferenceError
 from domain.external import SystemRelations, unknown_external_nodes
 from domain.model import (
@@ -16,11 +17,14 @@ from domain.model import (
 )
 from service.candidate_artifacts import CandidateArtifactBuilder, RewriteContext
 from service.code_bundle import build_code_bundle
+from service.contract_bundle import StoredContract, build_contract_bundle, store_contracts
+from service.contracts_library import LIBRARY_VERSION
 from service.manifest_parsers import parser_for
 from service.ports import (
     CandidatePublisherPort,
     ClockPort,
     CodeBundleUploaderPort,
+    ContractBundleWriterPort,
     ManifestSourcePort,
     MemoryProbePort,
     NoReleaseObserver,
@@ -135,15 +139,22 @@ class CandidateManifestHandler:
     A single code-bundle document (one per release, covering every published
     node plus the shared-code units they depend on, the tracked dbt tests, and
     each dbt service's provenance with the image tag the request names for it)
-    is uploaded via bundle_uploader, then the topology artifact via
+    is uploaded via bundle_uploader, then the release's contract bundle via
+    contract_bundle_writer (the stored form and hash of each python-odcs
+    contract, built from the tables each contract's read queries name, and the
+    provenance of each python-odcs service), then the topology artifact via
     artifact_writer, and only then is the outcome published, so a published
-    reference never dangles. An empty release (no manifests) writes an artifact
-    with no nodes and publishes an empty code_bundle_uri.
+    reference never dangles. A release that publishes ok writes a contract
+    bundle even with no python-odcs contract. An empty release (no manifests)
+    writes an empty contract bundle and an artifact with no nodes and publishes
+    an empty code_bundle_uri.
 
     A write that fails with an S3 outage (is_infrastructure_error: S3
     unreachable, a 5xx) propagates to the consumer, which pauses and redelivers
     the same message; nothing is published, so the release waits in parsing.
-    Any other write failure publishes status=failed with kind internal.
+    Any other write failure publishes status=failed with kind internal. So does
+    a python contract the library refuses to store: it passed every check of
+    the parse, so that is a defect, counted and reported as internal.
 
     Failures publish status=failed with a typed failure_kind and return
     normally so the consumer ACKs. A node whose SQL sqlglot cannot parse, or
@@ -222,9 +233,11 @@ class CandidateManifestHandler:
       (in-memory work linear in the number of nodes), then that resolve;
     - from the last node's resolve through the first node's build: the
       unknown-external step (in-memory work linear in the number of table references),
-      then that build;
+      then the stored form of the first contract (progress is called after each
+      contract, so the stretch from one to the next is one contract's), then
+      that build;
     - from the last node's build through the code bundle, its upload, the
-      topology artifact and the publish.
+      contract bundle and its write, the topology artifact and the publish.
     A release that ends early, with no manifest or with a failure, ends in the
     stretch it is in, after the publish of its outcome.
     """
@@ -235,6 +248,7 @@ class CandidateManifestHandler:
         publisher: CandidatePublisherPort,
         bundle_uploader: CodeBundleUploaderPort,
         artifact_writer: TopologyArtifactWriterPort,
+        contract_bundle_writer: ContractBundleWriterPort,
         artifact_builders: dict[str, CandidateArtifactBuilder],
         dialect: str,
         system_relations: SystemRelations,
@@ -249,6 +263,7 @@ class CandidateManifestHandler:
         self._publisher = publisher
         self._bundle_uploader = bundle_uploader
         self._artifact_writer = artifact_writer
+        self._contract_bundle_writer = contract_bundle_writer
         self._artifact_builders = artifact_builders
         self._dialect = dialect
         self._system_relations = system_relations
@@ -289,13 +304,14 @@ class CandidateManifestHandler:
                 "candidate: no manifest files found — publishing empty topology",
                 extra={"release_id": release_id},
             )
-            self._publish(release_id, topology=[], code_bundle_uri="")
+            self._publish(release_id, topology=[], code_bundle_uri="", contracts=[], python_provenance={})
             return
 
         all_nodes = []
         contract_failures: list[FailedNode] = []
         shared_code: dict[str, dict] = {}
         provenance: dict[str, dict] = {}
+        python_provenance: dict[str, dict] = {}
         for mf in manifests:
             parser = parser_for(mf.kind)
             if parser is None:
@@ -350,6 +366,8 @@ class CandidateManifestHandler:
             namespace = mf.declared_service or (nodes[0].service_name if nodes else "")
             if parsed.provenance is not None and namespace:
                 provenance[namespace] = self._service_provenance(release_id, namespace, parsed.provenance)
+            if parsed.python_provenance is not None and namespace:
+                python_provenance[namespace] = parsed.python_provenance
 
             for unit_id, unit in mf_shared.items():
                 namespaced_id = f"{namespace}:{unit_id}"
@@ -462,6 +480,17 @@ class CandidateManifestHandler:
             )
             return
 
+        contracts: list[StoredContract] = []
+        try:
+            with self._timings.stage(Stage.CANONICAL_HASHING) as record:
+                contracts = store_contracts(
+                    all_nodes, reads, self._system_relations, progress=self._progress, timings=self._timings,
+                )
+                record.add(contracts=len(contracts))
+        except Exception as exc:
+            self._reject_internal_unless_infra(release_id, exc)
+            return
+
         topology: list[dict] = []
         for node in all_nodes:
             builder = self._artifact_builders.get(node.runtime)
@@ -509,12 +538,38 @@ class CandidateManifestHandler:
             self._reject_internal_unless_infra(release_id, upload_error)
             return
 
-        self._publish(release_id, topology=topology, code_bundle_uri=code_bundle_uri)
+        self._publish(
+            release_id, topology=topology, code_bundle_uri=code_bundle_uri,
+            contracts=contracts, python_provenance=python_provenance,
+        )
 
-    def _publish(self, release_id: str, *, topology: list[dict], code_bundle_uri: str) -> None:
-        """Write the release's topology artifact, then publish the reference to
-        it. The write follows the same outage rule as every other write."""
+    def _publish(
+        self,
+        release_id: str,
+        *,
+        topology: list[dict],
+        code_bundle_uri: str,
+        contracts: Sequence[StoredContract],
+        python_provenance: Mapping[str, Mapping[str, Any]],
+    ) -> None:
+        """Write the release's contract bundle, then its topology artifact, then
+        publish the references to both. The bundle's timings are those of the
+        stages that ran before its own write. Each write follows the same outage
+        rule as every other write."""
         try:
+            with self._timings.stage(Stage.CONTRACT_BUNDLE, contracts=len(contracts)):
+                contract_bundle = self._contract_bundle_writer.write(
+                    tenant_id=DEFAULT_TENANT_ID,
+                    release_id=release_id,
+                    document=build_contract_bundle(
+                        tenant_id=DEFAULT_TENANT_ID,
+                        release_id=release_id,
+                        library_version=LIBRARY_VERSION,
+                        contracts=contracts,
+                        provenance=python_provenance,
+                        timings=self._timings.bundle_timings(),
+                    ),
+                )
             with self._timings.stage(Stage.TOPOLOGY_ARTIFACT, nodes=len(topology)):
                 artifact = self._artifact_writer.write(
                     tenant_id=DEFAULT_TENANT_ID, release_id=release_id, nodes=topology,
@@ -526,6 +581,7 @@ class CandidateManifestHandler:
         with self._timings.stage(Stage.PUBLISH):
             self._publisher.publish_ok(
                 release_id=release_id, artifact=artifact, code_bundle_uri=code_bundle_uri,
+                contract_bundle=contract_bundle,
             )
         self._timings.outcome = ReleaseOutcome.OK
 

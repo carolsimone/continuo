@@ -171,11 +171,17 @@ class ReleaseTimings:
         self.validation_cache["hit" if hit else "miss"] += 1
 
     def bundle_timings(self) -> dict[str, object]:
-        """The `timings` of the contract bundle: every stage's milliseconds so far,
-        the nodes and columns per runtime, and the validation cache's counts, as
-        copies the record's later changes do not reach."""
+        """The `timings` of the contract bundle: the milliseconds of each stage
+        that has run so far, the nodes and columns of every runtime, and the
+        validation cache's counts, as copies the record's later changes do not
+        reach. A stage with no run has no entry, so a stage that comes after
+        the bundle is built (its own write, the topology artifact, the publish)
+        and one the release never reaches (the dbt parse of a release with no
+        dbt manifest) are not in `stages_ms`."""
         return {
-            "stages_ms": self.stages_ms(),
+            "stages_ms": {
+                stage.value: round(record.seconds * 1000) for stage, record in self.stages.items() if record.runs
+            },
             "nodes": dict(self.nodes),
             "columns": dict(self.columns),
             "validation_cache": dict(self.validation_cache),

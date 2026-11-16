@@ -26,6 +26,7 @@ import yaml
 from adapters.candidate_spec_uploader import CandidateSpecUploader
 from adapters.candidate_sql_uploader import CandidateSqlUploader
 from adapters.code_bundle_uploader import CodeBundleUploader
+from adapters.contract_bundle_writer import ContractBundleWriter
 from adapters.json_log import configure_logging
 from adapters.process import MonotonicClock, ResidentMemoryProbe
 from adapters.sources.s3 import S3Source
@@ -34,7 +35,7 @@ from bench.estate import Estate, generate_estate
 from bench.memory_s3 import MemoryS3
 from config.config import system_relations_for
 from domain.contract_vocabulary import ParseFailureKind
-from domain.model import FailedNode, Runtime, TopologyArtifactRef
+from domain.model import ContractBundleRef, FailedNode, Runtime, TopologyArtifactRef
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
 from service.ports import ClockPort, MemoryProbePort
@@ -59,7 +60,14 @@ class RecordingPublisher:
         self.failure = ""
         self.node_count = 0
 
-    def publish_ok(self, *, release_id: str, artifact: TopologyArtifactRef, code_bundle_uri: str) -> None:
+    def publish_ok(
+        self,
+        *,
+        release_id: str,
+        artifact: TopologyArtifactRef,
+        code_bundle_uri: str,
+        contract_bundle: ContractBundleRef,
+    ) -> None:
         self.ok = True
         self.node_count = artifact.node_count
 
@@ -91,6 +99,7 @@ def build_handler(
         publisher=publisher,
         bundle_uploader=CodeBundleUploader(store, BUCKET),
         artifact_writer=TopologyArtifactWriter(store, BUCKET),
+        contract_bundle_writer=ContractBundleWriter(store, BUCKET),
         artifact_builders={
             Runtime.DBT: DbtSqlArtifactBuilder(CandidateSqlUploader(store, BUCKET)),
             Runtime.PYTHON: PythonSpecArtifactBuilder(CandidateSpecUploader(store, BUCKET)),

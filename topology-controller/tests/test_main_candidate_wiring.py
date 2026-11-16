@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 import main
+from adapters.contract_bundle_writer import ContractBundleWriter
 from adapters.metrics.prometheus import TopologyMetrics
 from adapters.process import MonotonicClock, ResidentMemoryProbe
 from adapters.redis.error_class import ErrorClass, classify, is_infrastructure
@@ -434,6 +435,23 @@ def test_main_hands_each_handler_the_artifact_writer_and_the_outage_test(monkeyp
 
     assert isinstance(captured["artifact_writer"], TopologyArtifactWriter)
     assert captured["is_infrastructure_error"] is is_infrastructure
+
+
+def test_main_hands_each_handler_the_contract_bundle_writer_over_the_installs_bucket(monkeypatch):
+    _common_monkeypatches(monkeypatch)
+    captured = {}
+    monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None))
+    monkeypatch.setattr(main, "CandidateManifestHandler",
+                        lambda **kw: captured.update(kw) or SimpleNamespace(handle=lambda release_id: None))
+    main.main()
+
+    _RecordingConsumer.instances[0].message_handler({b"payload": json.dumps({
+        "release_id": "rel-1", "manifest_keys": [], "image_tags": {},
+    }).encode()})
+
+    writer = captured["contract_bundle_writer"]
+    assert isinstance(writer, ContractBundleWriter)
+    assert writer._bucket == "continuo"
 
 
 def test_main_publishes_parse_results_on_the_v2_stream_as_this_service(monkeypatch):

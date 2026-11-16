@@ -88,6 +88,14 @@ class TopologyArtifactRef:
 
 
 @dataclass(frozen=True)
+class ContractBundleRef:
+    """Where a release's contract bundle lives and the SHA-256 of its stored
+    bytes: the reference the parse result carries instead of the contracts."""
+    uri: str
+    sha256: str
+
+
+@dataclass(frozen=True)
 class ManifestRequest:
     """One service's artifact to fetch for a release: its S3 object key plus the
     kind that decides which parser reads it."""

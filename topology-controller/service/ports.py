@@ -5,10 +5,10 @@ depends on the protocol, never on the concrete class, so the dependency arrow
 runs adapter -> port. Ports the conformance test checks (test_adapters_conform
 _to_ports.py) are runtime_checkable so a renamed adapter method is caught.
 """
-from collections.abc import Sequence
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from domain.model import FailedNode, ManifestFile, TopologyArtifactRef
+from domain.model import ContractBundleRef, FailedNode, ManifestFile, TopologyArtifactRef
 from domain.contract_vocabulary import ParseFailureKind
 
 if TYPE_CHECKING:
@@ -45,14 +45,31 @@ class TopologyArtifactWriterPort(Protocol):
 
 
 @runtime_checkable
+class ContractBundleWriterPort(Protocol):
+    def write(self, *, tenant_id: str, release_id: str, document: Mapping[str, Any]) -> ContractBundleRef:
+        """Store a release's contract bundle and return where it lives and the
+        SHA-256 of its stored bytes. A release's bundle is written once: a
+        second write of the same release returns the reference of the bytes
+        already stored."""
+        ...
+
+
+@runtime_checkable
 class CandidatePublisherPort(Protocol):
     """Publishes the outcome of a candidate-parse attempt back to
-    release-controller: publish_ok carries the reference to the release's
-    topology artifact, publish_failed a typed failure kind, a summary detail,
-    and one FailedNode per node the parse could not resolve (empty for
-    artifact and internal failures)."""
+    release-controller: publish_ok carries the references to the release's
+    topology artifact and contract bundle, publish_failed a typed failure kind,
+    a summary detail, and one FailedNode per node the parse could not resolve
+    (empty for artifact and internal failures)."""
 
-    def publish_ok(self, *, release_id: str, artifact: TopologyArtifactRef, code_bundle_uri: str) -> None:
+    def publish_ok(
+        self,
+        *,
+        release_id: str,
+        artifact: TopologyArtifactRef,
+        code_bundle_uri: str,
+        contract_bundle: ContractBundleRef,
+    ) -> None:
         ...
 
     def publish_failed(

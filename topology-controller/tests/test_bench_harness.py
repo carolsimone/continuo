@@ -1,5 +1,10 @@
+import gzip
+import json
 import posixpath
 import re
+
+import pytest
+from botocore.exceptions import ClientError
 
 from bench.compare import compare
 from bench.estate import generate_estate
@@ -7,6 +12,7 @@ from bench.memory_s3 import MemoryS3
 from bench.run import build_handler
 from domain.model import ManifestKind
 from service.compile_extras import load_compile_extras
+from service.contract_bundle import contract_bundle_key
 from service.python_contract_parser import parse_python_contract
 from tests.fakes import FakeClock, ScriptedMemoryProbe
 
@@ -64,6 +70,27 @@ def test_memory_s3_counts_puts_and_serves_downloads(tmp_path):
     store.put_object(Bucket="bench", Key="k", Body=b"abc")
     store.download_file("bench", "svc/rel/manifest.json", str(tmp_path / "m.json"))
     assert (store.puts, store.put_bytes, (tmp_path / "m.json").read_bytes()) == (1, 3, b"{}")
+
+
+def test_memory_s3_serves_an_object_it_holds_and_refuses_a_key_it_does_not():
+    store = MemoryS3({"k": b"abc"})
+    assert store.get_object(Bucket="bench", Key="k")["Body"].read() == b"abc"
+    with pytest.raises(ClientError) as missing:
+        store.get_object(Bucket="bench", Key="absent")
+    assert missing.value.response["Error"]["Code"] == "NoSuchKey"
+
+
+def test_the_handler_writes_one_contract_bundle_and_keeps_it_on_the_next_pass():
+    estate = generate_estate(20, columns=4)
+    store = MemoryS3(estate.objects)
+    key = contract_bundle_key("default", estate.release_id)
+    for _ in range(2):
+        handler, publisher = build_handler(estate, store, clock=FakeClock(), memory=ScriptedMemoryProbe(0))
+        handler.handle(estate.release_id)
+        assert publisher.ok, publisher.failure
+    document = json.loads(gzip.decompress(store.get_object(Bucket="bench", Key=key)["Body"].read()))
+    assert document["release_id"] == estate.release_id
+    assert document["contracts"] == {}
 
 
 def _line(rep, **stage_seconds):

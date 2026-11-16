@@ -20,6 +20,7 @@ from config.config import (
 from adapters.candidate_spec_uploader import CandidateSpecUploader
 from adapters.candidate_sql_uploader import CandidateSqlUploader
 from adapters.code_bundle_uploader import CodeBundleUploader
+from adapters.contract_bundle_writer import ContractBundleWriter
 from adapters.health.server import start_health_server
 from adapters.json_log import configure_logging
 from adapters.metrics.prometheus import TopologyMetrics
@@ -90,6 +91,7 @@ def main() -> None:
     candidate_uploader = CandidateSqlUploader(s3_client, S3_BUCKET)
     candidate_spec_uploader = CandidateSpecUploader(s3_client, S3_BUCKET)
     code_bundle_uploader = CodeBundleUploader(s3_client, S3_BUCKET)
+    contract_bundle_writer = ContractBundleWriter(s3_client, S3_BUCKET)
     topology_artifact_writer = TopologyArtifactWriter(s3_client, S3_BUCKET)
 
     # Resolved once at boot: validate() has already rejected an unsupported
@@ -108,6 +110,7 @@ def main() -> None:
             source=source,
             publisher=candidate_publisher,
             bundle_uploader=code_bundle_uploader,
+            contract_bundle_writer=contract_bundle_writer,
             artifact_writer=topology_artifact_writer,
             artifact_builders={
                 Runtime.DBT: DbtSqlArtifactBuilder(candidate_uploader),

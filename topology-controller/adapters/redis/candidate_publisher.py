@@ -1,8 +1,9 @@
 """Publishes manifest.loaded.candidate:v2 entries back to release-controller.
 
 Each entry carries the envelope (see adapters/redis/envelope.py) and a payload:
-publish_ok a reference to the release's topology artifact (its URI, the
-SHA-256 of its stored bytes and its node count), never the nodes themselves;
+publish_ok the references to the release's topology artifact (its URI, the
+SHA-256 of its stored bytes and its node count) and contract bundle (its URI and
+the SHA-256 of its stored bytes), never the nodes or contracts themselves;
 publish_failed the failure kind, a summary detail and the per-node failures.
 release-controller decodes both with pkg/events.DecodeManifestLoadedCandidate,
 and tests/fixtures/manifest_loaded_candidate_v2_{ok,failed}.json pin the two
@@ -17,7 +18,7 @@ from datetime import datetime, timezone
 from adapters.redis.keys import xadd_existing
 from adapters.redis.envelope import EVENT_ID_NAMESPACE, envelope_fields
 from domain.contract_vocabulary import ParseFailureKind
-from domain.model import DEFAULT_TENANT_ID, FailedNode, TopologyArtifactRef
+from domain.model import DEFAULT_TENANT_ID, ContractBundleRef, FailedNode, TopologyArtifactRef
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,14 @@ class CandidateManifestPublisher:
         self._producer = producer
         self._clock = clock
 
-    def publish_ok(self, *, release_id: str, artifact: TopologyArtifactRef, code_bundle_uri: str) -> None:
+    def publish_ok(
+        self,
+        *,
+        release_id: str,
+        artifact: TopologyArtifactRef,
+        code_bundle_uri: str,
+        contract_bundle: ContractBundleRef,
+    ) -> None:
         self._xadd(release_id, {
             "release_id": release_id,
             "status": "ok",
@@ -61,6 +69,8 @@ class CandidateManifestPublisher:
             "topology_sha256": artifact.sha256,
             "node_count": artifact.node_count,
             "code_bundle_uri": code_bundle_uri,
+            "contract_bundle_uri": contract_bundle.uri,
+            "contract_bundle_sha256": contract_bundle.sha256,
         })
         logger.info(
             "Published manifest.loaded.candidate ok",

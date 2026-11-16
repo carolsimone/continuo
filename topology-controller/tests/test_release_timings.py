@@ -164,7 +164,7 @@ def test_contract_failures_and_cache_add_up():
     assert timings.validation_cache == {"hit": 1, "miss": 2}
 
 
-def test_bundle_timings_hold_the_stages_so_far():
+def test_bundle_timings_hold_the_stages_that_ran_so_far():
     clock = FakeClock()
     timings = _timings(clock)
     timings.add_nodes([_node(Runtime.PYTHON, 2), _node(Runtime.PYTHON, 3), _node(Runtime.DBT, 4)])
@@ -174,13 +174,24 @@ def test_bundle_timings_hold_the_stages_so_far():
         clock.t += 0.011
     timings.add_validation_cache(False)
     assert timings.bundle_timings() == {
-        "stages_ms": timings.stages_ms(),
+        "stages_ms": {"contract_validation": 551, "canonical_hashing": 11},
         "nodes": {"dbt": 1, "python": 2, "external": 0},
         "columns": {"dbt": 4, "python": 5, "external": 0},
         "validation_cache": {"hit": 0, "miss": 1},
     }
-    assert timings.bundle_timings()["stages_ms"]["contract_validation"] == 551
-    assert timings.bundle_timings()["stages_ms"]["canonical_hashing"] == 11
+
+
+def test_a_stage_that_ran_in_no_time_is_still_in_the_bundle_timings():
+    timings = _timings()
+    with timings.stage(Stage.REGISTRY):
+        pass
+    assert timings.bundle_timings()["stages_ms"] == {"registry": 0}
+
+
+def test_a_stage_with_no_run_is_left_out_of_the_bundle_timings_but_not_of_the_log_line():
+    timings = _timings()
+    assert timings.bundle_timings()["stages_ms"] == {}
+    assert set(timings.stages_ms()) == {stage.value for stage in Stage}
 
 
 def test_bundle_timings_are_a_copy_the_record_does_not_share():

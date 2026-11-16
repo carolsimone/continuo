@@ -24,11 +24,12 @@ def test_each_sql_is_parsed_twice_once_to_resolve_and_once_to_rewrite(monkeypatc
     assert len(parses) == 2 * (estate.dbt_nodes_with_sql + estate.python_reads)
 
 
-def test_a_release_puts_one_object_per_node_with_sql_or_spec_plus_the_two_bundles():
+def test_a_release_puts_one_object_per_node_with_sql_or_spec_plus_the_three_release_documents():
+    """The documents are the code bundle, the contract bundle and the topology artifact."""
     estate = generate_estate(20, columns=4)
     store = MemoryS3(estate.objects)
     _run(estate, store)
-    assert store.puts == estate.dbt_nodes_with_sql + estate.python_nodes + 2
+    assert store.puts == estate.dbt_nodes_with_sql + estate.python_nodes + 3
 
 
 def test_progress_is_reported_after_every_manifest_and_every_node_of_every_per_node_stage(monkeypatch):
