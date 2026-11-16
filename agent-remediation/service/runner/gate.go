@@ -119,13 +119,14 @@ func (r *Runner) submitGate(ctx context.Context, run tryRun, checked []checkedCl
 //
 // While the gate waits, each run whose phase changed is written to the
 // attempt's proposal row, and nothing else. A passed gate runs the flow's pass
-// output, passes the try and ends the remediation, in one transaction. A failed
-// gate fails the attempt with the gate's verify error and fails the try, in
-// one transaction, and then opens the next try, which hands the failure over
-// once the tries are spent. A proposal row that is no longer verifying already
-// says how the attempt ended: the try fails and the remediation ends with
-// nothing emitted. An error is counted on the gate's row, which keeps waiting,
-// and a lost lease returns nil with nothing written.
+// output, hands over the nodes the fix leaves to a human, passes the try and
+// ends the remediation, in one transaction. A failed gate fails the attempt
+// with the gate's verify error and fails the try, in one transaction, and then
+// opens the next try, which hands the failure over once the tries are spent. A
+// proposal row that is no longer verifying already says how the attempt ended:
+// the try fails and the remediation ends with nothing emitted. An error is
+// counted on the gate's row, which keeps waiting, and a lost lease returns nil
+// with nothing written.
 func (r *Runner) PollGate(ctx context.Context, snap remediation.Snapshot) error {
 	id := snap.Remediation.ID
 	sctx, cancel := r.stepContext(ctx)
@@ -315,10 +316,11 @@ func (r *Runner) concluded(row remediation.StepRun, res remediation.CheckResult)
 	return row, nil
 }
 
-// passGate runs the flow's pass output on the verified drafts, passes the try
+// passGate runs the flow's pass output on the verified drafts, hands over the
+// nodes the attempt's final row leaves to a human (handOver), passes the try
 // and ends the remediation, in one transaction with the gate's row. When the
-// attempt's proposal row is no longer verifying, the output does not run: the
-// try fails and the remediation ends.
+// attempt's proposal row is no longer verifying, no output runs: the try fails
+// and the remediation ends.
 func (r *Runner) passGate(ctx context.Context, run tryRun, row remediation.StepRun, attempt proposal.View, checked []checkedCluster, verdict step.GateVerdict) error {
 	outName := workflow.StepName(run.flow.OnPass.Action)
 	out, err := lookup[step.PassOutput](r.d.Registry, outName, step.KindOutput)
@@ -355,6 +357,13 @@ func (r *Runner) passGate(ctx context.Context, run tryRun, row remediation.StepR
 		}
 		if err := repo.SaveStep(ctx, outRow); err != nil {
 			return fmt.Errorf("save step %s: %w", outRow.Step, err)
+		}
+		final, err := u.ProposalRepo().Get(ctx, attempt.ID)
+		if err != nil {
+			return fmt.Errorf("read proposal %s: %w", attempt.ID, err)
+		}
+		if err := r.handOver(ctx, u, run, final.NodeOutcomes); err != nil {
+			return err
 		}
 		return r.endTry(ctx, u, run, remediation.TryPassed)
 	})

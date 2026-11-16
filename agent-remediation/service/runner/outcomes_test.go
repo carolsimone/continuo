@@ -138,7 +138,7 @@ func TestRunner_NoType(t *testing.T) {
 	p := h.attempt(1).Proposal
 	assert.Equal(t, proposal.StatusSkipped, p.Status)
 	assert.Equal(t, want, p.NodeOutcomes)
-	assert.Empty(t, h.store.Steps(id))
+	assert.Equal(t, []string{"hand_over"}, stepNames(h.store.Steps(id)), "no step runs, and the hand-over is recorded")
 	assert.Zero(t, h.llm.calls())
 }
 
@@ -162,7 +162,7 @@ func TestRunner_APythonParseFailureNoTypeMatchesIsHandedOverWithoutAModelCall(t 
 			assert.Equal(t, "", c.TypeName)
 			assert.Equal(t, remediation.ClusterHandedOver, c.Status)
 			assert.Equal(t, &want, c.Outcome)
-			assert.Empty(t, h.store.Steps(id), "no step runs")
+			assert.Equal(t, []string{"hand_over"}, stepNames(h.store.Steps(id)), "no step runs, and the hand-over is recorded")
 			assert.Zero(t, h.llm.calls())
 			p := h.attempt(1).Proposal
 			assert.Equal(t, proposal.StatusSkipped, p.Status)
@@ -527,7 +527,7 @@ func TestRunner_AllUnfixableWritesOneSkippedAttempt(t *testing.T) {
 	assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
 	assert.Len(t, h.store.Tries(id), 1)
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
-	assert.Empty(t, h.store.Steps(id))
+	assert.Equal(t, []string{"hand_over"}, stepNames(h.store.Steps(id)), "no step runs, and the hand-over is recorded")
 	assert.Zero(t, h.llm.calls())
 	assert.Empty(t, h.pipeline.runs())
 }

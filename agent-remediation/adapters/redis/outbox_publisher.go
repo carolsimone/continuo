@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/postgres"
+	"github.com/carolsimone/continuo/agent-remediation/config"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
@@ -64,10 +66,12 @@ var _ pkgoutbox.Renderer = (*agentRemediationOutboxPublisher)(nil)
 // outbox_entry_id: a dead-letter row's scalar fields, or the row's JSON body as
 // the "payload" field beside its tenant as "tenant_id". A
 // remediation.proposed:v1 row stores its payload under its tenant
-// (outbox.WrapTenant), which renders as the payload beside that tenant; every
-// other row carries the default tenant. The tenant is stamped here, not in
-// xaddArgs, because the fields an outbox dead letter stores come from Render, so
-// a redrive republishes the tenant too. Every call returns a fresh map.
+// (outbox.WrapTenant), which renders as the payload beside that tenant. A
+// remediation.handed_over:v1 row, stored the same way, renders as the event's
+// envelope (renderRemediationHandedOver). Every other row carries the default
+// tenant. The tenant is stamped here, not in xaddArgs, because the fields an
+// outbox dead letter stores come from Render, so a redrive republishes the
+// tenant too. Every call returns a fresh map.
 func (p *agentRemediationOutboxPublisher) Render(entry *pkgoutbox.Entry) (map[string]any, error) {
 	if entry.EventType == pkgoutbox.DeadLetterEventType {
 		values, err := pkgoutbox.DeadLetterValues(entry)
@@ -78,8 +82,11 @@ func (p *agentRemediationOutboxPublisher) Render(entry *pkgoutbox.Entry) (map[st
 		delete(values, "outbox_entry_id")
 		return values, nil
 	}
-	if entry.StreamName == streams.RemediationProposedV1 {
+	switch entry.StreamName {
+	case streams.RemediationProposedV1:
 		return renderRemediationProposed(entry)
+	case streams.RemediationHandedOverV1:
+		return renderRemediationHandedOver(entry)
 	}
 	return map[string]any{"payload": string(entry.Payload), "tenant_id": pkgevents.DefaultTenantID}, nil
 }
@@ -94,6 +101,43 @@ func renderRemediationProposed(entry *pkgoutbox.Entry) (map[string]any, error) {
 		return nil, fmt.Errorf("%w: %s: %w", pkgevents.ErrPermanent, streams.RemediationProposedV1, err)
 	}
 	return map[string]any{"payload": string(payload), "tenant_id": tenantID}, nil
+}
+
+// renderRemediationHandedOver renders a remediation.handed_over:v1 row as the
+// event's envelope: the row's id as event_id, the tenant its payload is stored
+// under, the row's creation time as occurred_at, agent-remediation as producer
+// and the event as payload. The envelope is read back with the event's decoder
+// before it is returned, so only an entry that decodes is published. The
+// stored payload is our own, so a row that is not stored under a tenant, whose
+// payload is not the event, or whose event the decoder refuses is permanent:
+// no retry makes it renderable.
+func renderRemediationHandedOver(entry *pkgoutbox.Entry) (map[string]any, error) {
+	tenantID, payload, err := pkgoutbox.UnwrapTenant(entry.Payload)
+	if err != nil {
+		return nil, handedOverPermanent(err)
+	}
+	var p pkgevents.RemediationHandedOver
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return nil, handedOverPermanent(fmt.Errorf("decode payload: %w", err))
+	}
+	values, err := pkgevents.RemediationHandedOverFields(entry.ID.String(), tenantID, config.ServiceName, entry.CreatedAt, p)
+	if err != nil {
+		return nil, handedOverPermanent(err)
+	}
+	fields, err := pkgoutbox.StringifyFields(values)
+	if err != nil {
+		return nil, handedOverPermanent(err)
+	}
+	if _, _, err := pkgevents.DecodeRemediationHandedOver(fields); err != nil {
+		return nil, handedOverPermanent(err)
+	}
+	return values, nil
+}
+
+// handedOverPermanent marks err, met rendering a remediation.handed_over:v1
+// row, as permanent.
+func handedOverPermanent(err error) error {
+	return fmt.Errorf("%w: %s: %w", pkgevents.ErrPermanent, streams.RemediationHandedOverV1, err)
 }
 
 // outboxHeartbeatStale is the liveness budget for the outbox processor's Run

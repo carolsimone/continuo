@@ -392,7 +392,7 @@ func testFiles(tries int) workflow.Set {
 		Gate:           refs("verification_run"),
 		Tries:          tries,
 		OnPass:         workflow.Output{Action: workflow.OutputPullRequest, Emits: baseName(streams.RemediationProposedV1)},
-		OnGiveUp:       workflow.Output{Action: workflow.OutputHandOver},
+		OnGiveUp:       workflow.Output{Action: workflow.OutputHandOver, Emits: baseName(streams.RemediationHandedOverV1)},
 		Revision:       flowRevision,
 		File:           flowFile,
 	}

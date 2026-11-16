@@ -91,7 +91,7 @@ func (r *Runner) NextTry(ctx context.Context, id uuid.UUID) error {
 // openTry opens the remediation's next try in one transaction, checking in
 // order:
 //   - the terminal attempts of the trigger's round reached the flow's tries:
-//     the flow's give-up output runs and the remediation is done;
+//     the failing set is handed over (giveUp) and the remediation is done;
 //   - maintenance mode: the attempt is recorded skipped for every node, with
 //     no code, and the remediation is done;
 //   - the trigger names no repository: the attempt is recorded failed, every
@@ -102,7 +102,9 @@ func (r *Runner) NextTry(ctx context.Context, id uuid.UUID) error {
 //     a type, and the attempt's in-flight proposal row.
 //
 // In both attempts recorded without a try, a node the classifier marked
-// unfixable keeps the outcome the classifier gave it.
+// unfixable keeps the outcome the classifier gave it, and the nodes whose
+// outcome carries a code are handed over (handOver): none in maintenance mode
+// but the unfixable ones.
 func (r *Runner) openTry(ctx context.Context, run tryRun) error {
 	t := run.trigger
 	rem := run.snap.Remediation
@@ -114,7 +116,7 @@ func (r *Runner) openTry(ctx context.Context, run tryRun) error {
 		attempt := total + 1
 		switch {
 		case inRound >= run.flow.Tries:
-			return r.giveUp(ctx, u, run)
+			return r.giveUp(ctx, u, run, attempt, inRound)
 		case r.d.Maintenance:
 			r.logger.Info("remediation try skipped: maintenance mode is on",
 				"remediation", rem.ID, "release", t.ReleaseID, "round", t.Round, "attempt", attempt)
@@ -283,52 +285,139 @@ func (r *Runner) settledCluster(rem remediation.Remediation, try remediation.Try
 	}
 }
 
-// giveUp runs the flow's give-up output and ends the remediation in u's
-// transaction, so the output is never run twice: a remediation that is done is
-// never driven again. A remediation that made a try records the output on that
-// try's journal.
-func (r *Runner) giveUp(ctx context.Context, u uow.UnitOfWork, run tryRun) error {
+// giveUp hands the failing set over once the tries of the trigger's round are
+// spent, after tried terminal attempts, in u's transaction: the attempt is
+// recorded escalated with how each node ends (escalatedOutcomes), the nodes are
+// handed over and the remediation is done. The give-up output therefore never
+// runs twice: a remediation that is done is never driven again.
+func (r *Runner) giveUp(ctx context.Context, u uow.UnitOfWork, run tryRun, attempt, tried int) error {
+	outcomes, err := escalatedOutcomes(ctx, u, run, tried)
+	if err != nil {
+		return err
+	}
+	r.logger.Info("remediation tries spent; handing over", "remediation", run.snap.Remediation.ID,
+		"release", run.trigger.ReleaseID, "round", run.trigger.Round, "attempt", attempt)
+	return r.endWithAttempt(ctx, u, run, attempt, proposal.Proposal{Status: proposal.StatusEscalated, NodeOutcomes: outcomes})
+}
+
+// escalatedOutcomes is how each failing node ends once the tries of the
+// trigger's round are spent, after tried terminal attempts. A node the
+// classifier marked unfixable keeps the classifier's outcome. Every other node
+// is judged by the outcome the remediation's last try recorded for it
+// (lastTry): one handed over with a settled code (settledCode), or because its
+// pre-flight rounds were spent, keeps that outcome; a drafted member of a try a
+// check refused is escalated with unverifiable_edits; and every other node,
+// one a failed verification judged among them, is escalated with tries_spent.
+// Both escalated codes carry the message triedMessage builds.
+func escalatedOutcomes(ctx context.Context, u uow.UnitOfWork, run tryRun, tried int) (map[string]proposal.NodeOutcome, error) {
+	last, why, err := lastTry(ctx, u, run)
+	if err != nil {
+		return nil, err
+	}
+	message := triedMessage(tried, why)
+	out := make(map[string]proposal.NodeOutcome, len(run.trigger.Nodes))
+	for _, n := range run.trigger.Nodes {
+		if n.Unfixable != nil {
+			out[n.NodeID] = unfixableOutcome(*n.Unfixable)
+			continue
+		}
+		o := last[n.NodeID]
+		switch {
+		case settledCode(o.Code) || o.Code == pkg_model.HandoverReasonPreflightRoundsSpent:
+			out[n.NodeID] = o
+		case o.Code == pkg_model.HandoverReasonUnverifiableEdits:
+			out[n.NodeID] = proposal.NodeOutcome{Status: proposal.StatusEscalated, Reason: message, Code: pkg_model.HandoverReasonUnverifiableEdits}
+		default:
+			out[n.NodeID] = proposal.NodeOutcome{Status: proposal.StatusEscalated, Reason: message, Code: pkg_model.HandoverReasonTriesSpent}
+		}
+	}
+	return out, nil
+}
+
+// lastTry reads, in u's transaction, how the remediation's last try ended for
+// each node and why it failed, from the try's attempt row, which records the
+// outcome each of the try's clusters handed its members over with. Why is the
+// row's rationale when a check refused the try's drafts, which marks each
+// drafted member unverifiable_edits, and its verify error otherwise. A
+// remediation that made no try has neither.
+func lastTry(ctx context.Context, u uow.UnitOfWork, run tryRun) (outcomes map[string]proposal.NodeOutcome, why string, err error) {
+	if run.snap.Try == nil {
+		return nil, "", nil
+	}
+	row, err := attemptRow(ctx, u.ProposalRepo(), run)
+	if err != nil {
+		return nil, "", err
+	}
+	why = row.VerifyError
+	for _, o := range row.NodeOutcomes {
+		if o.Code == pkg_model.HandoverReasonUnverifiableEdits {
+			why = row.Rationale
+			break
+		}
+	}
+	return row.NodeOutcomes, why, nil
+}
+
+// triedMessage is the message of a node escalated once the tries are spent:
+// how many times the round was tried and, when it is known, why the last try
+// failed.
+func triedMessage(tried int, why string) string {
+	times := "times"
+	if tried == 1 {
+		times = "time"
+	}
+	msg := fmt.Sprintf("tried %d %s", tried, times)
+	if why == "" {
+		return msg
+	}
+	return msg + "; the last try failed: " + why
+}
+
+// endWithAttempt records the attempt's terminal proposal row, hands over the
+// nodes whose outcome in it carries a code and ends the remediation, in u's
+// transaction.
+func (r *Runner) endWithAttempt(ctx context.Context, u uow.UnitOfWork, run tryRun, attempt int, p proposal.Proposal) error {
+	if err := r.recordAttempt(ctx, u, run, attempt, p); err != nil {
+		return err
+	}
+	if err := r.handOver(ctx, u, run, p.NodeOutcomes); err != nil {
+		return err
+	}
+	return r.endRemediation(ctx, u, run.snap.Remediation)
+}
+
+// handOver runs the flow's give-up output, in u's transaction, for every node
+// of an ending remediation whose final outcome carries a code
+// (remediation.HandOvers). A remediation that made a try records the output on
+// that try's journal. With no node to hand over, nothing runs and nothing is
+// written.
+func (r *Runner) handOver(ctx context.Context, u uow.UnitOfWork, run tryRun, outcomes map[string]proposal.NodeOutcome) error {
+	handed := remediation.HandOvers(outcomes)
+	if len(handed) == 0 {
+		return nil
+	}
 	name := workflow.StepName(run.flow.OnGiveUp.Action)
 	out, err := lookup[step.GiveUpOutput](r.d.Registry, name, step.KindOutput)
 	if err != nil {
 		return err
 	}
-	rem := run.snap.Remediation
-	in := step.OutputInput{Remediation: rem, Trigger: run.trigger, Snapshot: run.snap}
+	in := step.OutputInput{Remediation: run.snap.Remediation, Trigger: run.trigger, Snapshot: run.snap, HandedOver: handed}
 	if run.snap.Try != nil {
 		in.Try = *run.snap.Try
 	}
-	r.logger.Info("remediation tries spent; handing over", "remediation", rem.ID, "release", run.trigger.ReleaseID, "round", run.trigger.Round)
 	if err := out.GiveUp(ctx, u, in); err != nil {
 		return fmt.Errorf("step %s: %w", name, err)
 	}
 	if run.snap.Try != nil {
-		now := r.clock.Now()
-		row := remediation.StepRun{
-			RemediationID: rem.ID,
-			Try:           run.snap.Try.Try,
-			Step:          string(name),
-			Kind:          kindOutput,
-			Round:         1,
-			Status:        remediation.StepDone,
-			FileRevision:  run.flow.Revision,
-			StartedAt:     now,
-			FinishedAt:    &now,
-		}
+		row := r.newRow(run, flowCluster, string(name), kindOutput, flowRound, run.flow.Revision)
+		r.finish(&row)
 		if err := u.RemediationRepo().SaveStep(ctx, row); err != nil {
 			return fmt.Errorf("save step %s: %w", name, err)
 		}
 	}
-	return r.endRemediation(ctx, u, rem)
-}
-
-// endWithAttempt records the attempt's terminal proposal row and ends the
-// remediation, in u's transaction.
-func (r *Runner) endWithAttempt(ctx context.Context, u uow.UnitOfWork, run tryRun, attempt int, p proposal.Proposal) error {
-	if err := r.recordAttempt(ctx, u, run, attempt, p); err != nil {
-		return err
-	}
-	return r.endRemediation(ctx, u, run.snap.Remediation)
+	r.logger.Info("nodes handed over", "remediation", run.snap.Remediation.ID, "release", run.trigger.ReleaseID,
+		"nodes", len(handed), "output", name)
+	return nil
 }
 
 // recordAttempt stamps the trigger's identity and the remediation onto the
@@ -360,7 +449,8 @@ func (r *Runner) recordAttempt(ctx context.Context, u uow.UnitOfWork, run tryRun
 // finishTry takes the next committed step of a try whose every cluster has
 // ended. A drafting try with no checked draft that has an edit, every cluster
 // having been handed over or fallen back, is settled: its attempt is recorded
-// with what its clusters reported, the try fails and the remediation is done. Any other drafting try moves to checking. A
+// with what its clusters reported, its nodes are handed over, the try fails
+// and the remediation is done. Any other drafting try moves to checking. A
 // checking try runs the flow's cross-cluster checks one at a time, in file
 // order, each committed on its own; a finding fails the attempt and the try,
 // like a gate that did not pass the fix, and the remediation's next try opens
@@ -399,14 +489,18 @@ func (r *Runner) finishTry(ctx context.Context, run tryRun) error {
 	return r.submitGate(ctx, run, checked)
 }
 
-// settleTry records the attempt of a try that has nothing to verify, fails
-// the try and ends the remediation, in one transaction. The attempt is skipped
-// when every node was skipped, and failed as soon as one node was attempted.
+// settleTry records the attempt of a try that has nothing to verify, hands
+// over its nodes, fails the try and ends the remediation, in one transaction.
+// The attempt is skipped when every node was skipped, and failed as soon as one
+// node was attempted.
 func (r *Runner) settleTry(ctx context.Context, run tryRun) error {
 	outcomes := nodeOutcomes(run.snap.Clusters)
 	p := proposal.Proposal{Status: settledStatus(outcomes), NodeOutcomes: outcomes}
 	if err := r.commit(ctx, run.snap.Remediation.ID, func(u uow.UnitOfWork) error {
 		if err := r.recordAttempt(ctx, u, run, run.snap.Try.Attempt, p); err != nil {
+			return err
+		}
+		if err := r.handOver(ctx, u, run, outcomes); err != nil {
 			return err
 		}
 		return r.endTry(ctx, u, run, remediation.TryFailed)

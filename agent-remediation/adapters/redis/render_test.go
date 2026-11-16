@@ -2,8 +2,11 @@ package redis
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
+	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
@@ -249,4 +252,56 @@ func TestPublish_ProposedRowXAddCarriesItsStoredTenant(t *testing.T) {
 		"tenant_id":       "acme",
 		"outbox_entry_id": entry.ID.String(),
 	}, fields)
+}
+
+// TestRender_HandedOverCarriesTheRowsTenant holds that a
+// remediation.handed_over:v1 row, stored under its tenant, renders as the
+// event's envelope: the row's id as event_id, the tenant the row is stored
+// under, the row's creation time, agent-remediation as producer and the event
+// it wraps as payload; and that a row stored under no tenant, whose stored
+// payload is not the event, or whose event the event's decoder refuses, is
+// refused as permanent: no retry makes it renderable.
+func TestRender_HandedOverCarriesTheRowsTenant(t *testing.T) {
+	p := &agentRemediationOutboxPublisher{}
+	handed := pkgevents.RemediationHandedOver{
+		RemediationID: "0b6f8c4e-3a1d-4d2b-9f7e-5c8a1b2d3e4f", ReleaseID: "rel-1", RemediationRound: 1, Flow: "rejected-release", Tries: 3,
+		Nodes: []pkgevents.HandedOverNode{{NodeID: "model.a", Reason: string(model.HandoverReasonTriesSpent), Message: "tried 3 times"}},
+	}
+	body, err := json.Marshal(handed)
+	require.NoError(t, err)
+	stored, err := pkgoutbox.WrapTenant("acme", body)
+	require.NoError(t, err)
+	entry := &pkgoutbox.Entry{
+		ID: uuid.New(), EventType: "remediation_handed_over", StreamName: streams.RemediationHandedOverV1,
+		Payload: stored, CreatedAt: time.Date(2026, 11, 16, 9, 30, 0, 0, time.UTC),
+	}
+
+	values, err := p.Render(entry)
+	require.NoError(t, err)
+
+	want, err := pkgevents.RemediationHandedOverFields(entry.ID.String(), "acme", "agent-remediation", entry.CreatedAt, handed)
+	require.NoError(t, err)
+	assert.Equal(t, want, values)
+	assert.Equal(t, "acme", values["tenant_id"])
+	fields, err := pkgoutbox.StringifyFields(values)
+	require.NoError(t, err)
+	env, got, err := pkgevents.DecodeRemediationHandedOver(fields)
+	require.NoError(t, err)
+	assert.Equal(t, entry.ID.String(), env.EventID)
+	assert.Equal(t, "acme", env.TenantID)
+	assert.Equal(t, "agent-remediation", env.Producer)
+	assert.True(t, entry.CreatedAt.Equal(env.OccurredAt))
+	assert.Equal(t, handed, got)
+
+	for name, payload := range map[string]string{
+		"an unwrapped payload":         string(body),
+		"an empty tenant":              `{"tenant_id":"","payload":{"release_id":"rel-1"}}`,
+		"a payload that is not the event": `{"tenant_id":"acme","payload":["not","the","event"]}`,
+		"a reason outside the vocabulary": `{"tenant_id":"acme","payload":{"remediation_id":"r","release_id":"rel-1","remediation_round":1,"flow":"rejected-release","tries":1,` +
+			`"nodes":[{"node_id":"model.a","reason":"gave_up","message":"m"}]}}`,
+		"no remediation round": `{"tenant_id":"acme","payload":{"remediation_id":"r","release_id":"rel-1","remediation_round":0,"flow":"rejected-release","tries":1,"nodes":[]}}`,
+	} {
+		_, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), StreamName: streams.RemediationHandedOverV1, Payload: []byte(payload)})
+		require.ErrorIs(t, err, pkgevents.ErrPermanent, name)
+	}
 }

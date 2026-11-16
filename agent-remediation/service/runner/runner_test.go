@@ -287,7 +287,7 @@ func TestRunner_DbtTestTargetIsSkipped(t *testing.T) {
 		Reason: "no remediation type matches this failure",
 		Code:   model.HandoverReasonNoType,
 	}, byTarget[python.NodeID].Outcome)
-	assert.Empty(t, h.store.Steps(id))
+	assert.Equal(t, []string{"hand_over"}, stepNames(h.store.Steps(id)), "no step runs, and the hand-over is recorded")
 	assert.Zero(t, h.llm.calls())
 }
 
@@ -307,7 +307,7 @@ func TestRunner_DbtTestTargetIsSkippedEvenWhenATypeWouldSelectIt(t *testing.T) {
 		Reason: "dbt tests are not fix targets; fix the model or edit the test by hand",
 		Code:   model.HandoverReasonNoType,
 	}, c.Outcome)
-	assert.Empty(t, h.store.Steps(id))
+	assert.Equal(t, []string{"hand_over"}, stepNames(h.store.Steps(id)), "no step runs, and the hand-over is recorded")
 	assert.Zero(t, h.llm.calls())
 }
 
@@ -534,6 +534,10 @@ func TestRunner_TriesSpentHandsOverOnce(t *testing.T) {
 	require.Len(t, escalated, 1)
 	assert.Equal(t, 4, escalated[0].Attempt)
 	assert.Equal(t, id.String(), escalated[0].RemediationID)
+	spent := proposal.NodeOutcome{Status: proposal.StatusEscalated, Reason: "tried 3 times", Code: model.HandoverReasonTriesSpent}
+	assert.Equal(t, map[string]proposal.NodeOutcome{"svc-a": spent}, escalated[0].NodeOutcomes,
+		"with no try of its own, the node is escalated with how many times the round was tried")
+	assert.Equal(t, handedOverOf(id, 1, 0, handedOverNode("svc-a", spent)), h.handedOverEvent(), "the hand-over emits once")
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 	assert.Empty(t, h.store.Tries(id))
 	assert.Zero(t, h.llm.calls())
