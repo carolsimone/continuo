@@ -7,7 +7,6 @@ import (
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 )
 
@@ -118,59 +117,27 @@ func tryOpenTime(status remediation.TryStatus) time.Duration {
 }
 
 // reopenAttempt moves the attempt row of snap's try, which the system failure
-// failed, back to status to with the per-node outcomes it had before
-// (reopenedOutcomes), in u's transaction. A row that is not failed already
+// failed, back to status to, in u's transaction: a row reopened generating
+// takes back the per-node outcomes the failure rewrote, which the proposal
+// repository undoes, and a row reopened verifying the outcomes the try's
+// clusters give (nodeOutcomes), which the clusters still give, since nothing
+// changes them once the try is verifying. A row that is not failed already
 // says how its attempt ended and is left as it is: the drive or the poll that
 // follows acts on it as it finds it.
 func (r *Runner) reopenAttempt(ctx context.Context, u uow.UnitOfWork, snap remediation.Snapshot, to proposal.Status) error {
 	rem := snap.Remediation
 	attempt := snap.Try.Attempt
-	views, err := u.ProposalRepo().List(ctx, repository.ProposalFilter{ReleaseID: rem.ReleaseID})
-	if err != nil {
-		return fmt.Errorf("list the proposals of release %s: %w", rem.ReleaseID, err)
-	}
-	if v, ok := remediationAttemptRow(views, rem.ID.String(), attempt); ok && v.Status == proposal.StatusFailed {
-		reopened, err := u.RemediationRepo().ReopenTryAttempt(ctx, rem.ID, attempt, to, reopenedOutcomes(v, to, snap.Clusters))
-		if err != nil {
-			return fmt.Errorf("reopen the row of attempt %d: %w", attempt, err)
-		}
-		if reopened {
-			return nil
-		}
-	}
-	r.logger.Warn("the resumed try's attempt row is not failed; it is left as it is",
-		"remediation", rem.ID, "release", rem.ReleaseID, "try", snap.Try.Try, "attempt", attempt)
-	return nil
-}
-
-// remediationAttemptRow returns the row of views that records attempt of the
-// remediation remediationID.
-func remediationAttemptRow(views []proposal.View, remediationID string, attempt int) (proposal.View, bool) {
-	for _, v := range views {
-		if v.Attempt == attempt && v.RemediationID == remediationID {
-			return v, true
-		}
-	}
-	return proposal.View{}, false
-}
-
-// reopenedOutcomes is the per-node outcomes the attempt row v had before a
-// system failure failed it, for the row to go back to status to. A verifying
-// row had the outcomes the try's clusters give (nodeOutcomes), which the
-// clusters still give, since nothing changes them once the try is verifying. A
-// generating row had each node the failure rewrote as generating: the failure
-// left those failed with the row's own rationale as reason and no code, and
-// every other node as it was.
-func reopenedOutcomes(v proposal.View, to proposal.Status, clusters []remediation.Cluster) map[string]proposal.NodeOutcome {
+	var outcomes map[string]proposal.NodeOutcome
 	if to == proposal.StatusVerifying {
-		return nodeOutcomes(clusters)
+		outcomes = nodeOutcomes(snap.Clusters)
 	}
-	out := make(map[string]proposal.NodeOutcome, len(v.NodeOutcomes))
-	for node, o := range v.NodeOutcomes {
-		if o.Status == proposal.StatusFailed && o.Code == "" && o.Reason == v.Rationale {
-			o = proposal.NodeOutcome{Status: proposal.StatusGenerating}
-		}
-		out[node] = o
+	reopened, err := u.ProposalRepo().ReopenTryAttempt(ctx, rem.ID, attempt, to, outcomes)
+	if err != nil {
+		return fmt.Errorf("reopen the row of attempt %d: %w", attempt, err)
 	}
-	return out
+	if !reopened {
+		r.logger.Warn("the resumed try's attempt row is not failed; it is left as it is",
+			"remediation", rem.ID, "release", rem.ReleaseID, "try", snap.Try.Try, "attempt", attempt)
+	}
+	return nil
 }

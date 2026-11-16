@@ -4,14 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"sort"
 	"time"
 
 	"github.com/google/uuid"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
@@ -145,31 +143,6 @@ func (r *remediationRepository) HasLaterRound(_ context.Context, tenantID, relea
 		return nil
 	})
 	return later, err
-}
-
-// ReopenTryAttempt moves the failed proposal row of the remediation's attempt
-// back to status with outcomes, clearing the failure the row records.
-func (r *remediationRepository) ReopenTryAttempt(_ context.Context, remediationID uuid.UUID, attempt int, status proposal.Status, outcomes map[string]proposal.NodeOutcome) (bool, error) {
-	if status != proposal.StatusGenerating && status != proposal.StatusVerifying {
-		return false, fmt.Errorf("reopen attempt %d: status %q is not generating or verifying", attempt, status)
-	}
-	var reopened bool
-	err := r.gate(func(d *data) error {
-		for _, row := range d.proposals {
-			if row.p.RemediationID != remediationID.String() || row.p.Attempt != attempt || row.p.Status != proposal.StatusFailed {
-				continue
-			}
-			row.p.Status = status
-			row.p.NodeOutcomes = maps.Clone(outcomes)
-			row.verifyError = ""
-			if status == proposal.StatusGenerating {
-				row.p.Rationale = ""
-			}
-			reopened = true
-		}
-		return nil
-	})
-	return reopened, err
 }
 
 // snapshot loads one remediation with its current try, clusters and steps. It

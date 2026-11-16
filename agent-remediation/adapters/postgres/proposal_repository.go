@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/lib/pq"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
@@ -1104,6 +1105,66 @@ func (r *ProposalRepository) MarkVerifyFailed(ctx context.Context, id, verifyErr
 	}
 	return n > 0, nil
 }
+
+// ReopenTryAttempt moves the failed row of the remediation's attempt back to
+// status in one UPDATE whose WHERE clause is the whole check: the row's
+// remediation, attempt and failed status. The verify error is cleared.
+// Reopened generating, the rationale is cleared and node_outcomes undoes
+// FailGenerating's rewrite (reopenGeneratingOutcomes); reopened verifying,
+// node_outcomes is outcomes.
+func (r *ProposalRepository) ReopenTryAttempt(ctx context.Context, remediationID uuid.UUID, attempt int, status proposal.Status, outcomes map[string]proposal.NodeOutcome) (bool, error) {
+	var (
+		res sql.Result
+		err error
+	)
+	switch status {
+	case proposal.StatusGenerating:
+		if outcomes != nil {
+			return false, fmt.Errorf("reopen attempt %d: a row reopened generating takes back the outcomes it had, not outcomes given", attempt)
+		}
+		res, err = r.q.ExecContext(ctx, `
+			UPDATE proposal
+			   SET status = $3, verify_error = '', rationale = '', `+reopenGeneratingOutcomes+`
+			 WHERE remediation_id = $1 AND attempt = $2 AND status = $4`,
+			remediationID, attempt, string(proposal.StatusGenerating), string(proposal.StatusFailed))
+	case proposal.StatusVerifying:
+		raw, merr := marshalNodeOutcomes(outcomes)
+		if merr != nil {
+			return false, fmt.Errorf("reopen attempt %d: %w", attempt, merr)
+		}
+		res, err = r.q.ExecContext(ctx, `
+			UPDATE proposal
+			   SET status = $3, verify_error = '', node_outcomes = $5
+			 WHERE remediation_id = $1 AND attempt = $2 AND status = $4`,
+			remediationID, attempt, string(proposal.StatusVerifying), string(proposal.StatusFailed), raw)
+	default:
+		return false, fmt.Errorf("reopen attempt %d: status %q is not generating or verifying", attempt, status)
+	}
+	if err != nil {
+		return false, fmt.Errorf("reopen attempt %d: %w", attempt, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("reopen attempt %d: rows affected: %w", attempt, err)
+	}
+	return n > 0, nil
+}
+
+// reopenGeneratingOutcomes is the node_outcomes assignment that undoes
+// FailGenerating's rewrite of a row's per-node outcomes ($3 is 'generating'
+// and $4 'failed'): an entry failed with the row's rationale as its reason
+// and no code, which is how FailGenerating fails an entry that was
+// generating, is generating again, and every other entry is kept. The
+// expressions of an UPDATE's SET read the row as it was, so rationale is the
+// reason FailGenerating recorded even when the same UPDATE clears it. A row
+// with no entries keeps its empty object.
+const reopenGeneratingOutcomes = `
+	node_outcomes = COALESCE((
+		SELECT jsonb_object_agg(k, CASE
+			WHEN v->>'status' = $4 AND COALESCE(v->>'code', '') = '' AND COALESCE(v->>'reason', '') = COALESCE(rationale, '')
+			THEN jsonb_build_object('status', $3::text) ELSE v END)
+		FROM jsonb_each(node_outcomes) AS e(k, v)
+	), node_outcomes)`
 
 // UpdateVerificationPhase rewrites one element of the verifications array,
 // matched by run_id, with the phase and activation time given. Elements for

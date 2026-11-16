@@ -7,7 +7,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 )
 
@@ -44,8 +43,8 @@ type TryLister interface {
 //
 // An implementation bound to a unit of work's transaction is what a step's
 // commit uses (Hold, Load and the Save methods), and what resumes a
-// remediation a redriven trigger names (LockByRelease, HasLaterRound,
-// ReopenTryAttempt and the Save methods). One bound to the database
+// remediation a redriven trigger names (LockByRelease, HasLaterRound and the
+// Save methods). One bound to the database
 // serves the worker, the verification poller, the retention sweeper and the
 // previous_tries step, which call ClaimNext, Claim, ReleaseLease, the list
 // methods and DeleteFinishedOlderThan outside any transaction. Get is a read-only snapshot
@@ -136,16 +135,6 @@ type RemediationRepository interface {
 	// cluster, step, round). The row's id is assigned on insert and kept on
 	// update; s.ID is ignored.
 	SaveStep(ctx context.Context, s remediation.StepRun) error
-
-	// ReopenTryAttempt moves the proposal row of one attempt of the
-	// remediation back in flight, to status, which is generating or
-	// verifying, with outcomes as its per-node outcomes and no failure on it:
-	// a row reopened generating loses its rationale, and one reopened
-	// verifying its verify error, keeping its rationale, edits and
-	// verifications. It changes only the row of that attempt whose remediation
-	// is remediationID and whose status is failed, and reports whether it
-	// changed one. Any other status is an error, with nothing written.
-	ReopenTryAttempt(ctx context.Context, remediationID uuid.UUID, attempt int, status proposal.Status, outcomes map[string]proposal.NodeOutcome) (bool, error)
 
 	TryLister
 
