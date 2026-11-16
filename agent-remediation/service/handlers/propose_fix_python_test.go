@@ -315,11 +315,12 @@ func TestVerify_UploadsAnODCSBundleAsPythonODCS(t *testing.T) {
 	require.Equal(t, "python-odcs", gw.submitted[0].Kind)
 }
 
-// TestVerify_NoImagePackagesWritesNoProposalAndLogsWhy covers a release none of
-// whose bundles records the service's image packages: no fix can be packed, so
-// the model is not called, nothing is uploaded or submitted, the node is
-// recorded skipped with the reason and the reason is logged.
-func TestVerify_NoImagePackagesWritesNoProposalAndLogsWhy(t *testing.T) {
+// TestProposeFix_NoImagePackagesRecordsASkippedRowAndLogsWhy covers a release
+// none of whose bundles records the service's image packages: no fix can be
+// packed, so the model is not called and nothing is uploaded or submitted. The
+// attempt's row is skipped, with the node skipped for the reason, and the
+// reason is logged.
+func TestProposeFix_NoImagePackagesRecordsASkippedRowAndLogsWhy(t *testing.T) {
 	u := newFakeUoW()
 	llm := newFakeLLM(pythonFixResult(), nil)
 	art := &fakeArtifacts{}

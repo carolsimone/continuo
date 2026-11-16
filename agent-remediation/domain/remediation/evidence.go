@@ -33,6 +33,8 @@ const (
 	KeyContractEntry EvidenceKey = "contract_entry"
 	// KeyCurrentContract holds Text.
 	KeyCurrentContract EvidenceKey = "current_contract"
+	// KeyImagePackages holds ImagePackages.
+	KeyImagePackages EvidenceKey = "image_packages"
 	// KeyPreviousTries holds []TryRecord.
 	KeyPreviousTries EvidenceKey = "previous_tries"
 	// KeyUpstreamTarget holds UpstreamTarget.
@@ -46,6 +48,10 @@ type Text string
 
 // Bytes is a block of binary evidence.
 type Bytes []byte
+
+// ImagePackages is the package list (package name to version) of the image a
+// service runs in the rejected release.
+type ImagePackages map[string]string
 
 // SourceFiles is the source of the failing node's service: its files by name,
 // the order to show them in, the primary file and the owning service.

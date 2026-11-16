@@ -71,6 +71,8 @@ catalog:
       version: "1"
 release:
   image_tag: sha-csv
+  # The package list of the image, which the image_packages context step reads
+  # and contract_packages packs with. Without it the step declines the cluster.
   image_packages: {pyarrow: "26.0.0"}
   failing_nodes:
     analytics.py_csv_orders: "csv header missing declared column(s): ['customer_id']"

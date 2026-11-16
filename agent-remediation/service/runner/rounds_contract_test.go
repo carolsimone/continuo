@@ -2,6 +2,7 @@ package runner_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -64,18 +65,20 @@ func (c *checkoutOf) Fetch(context.Context, string, string) (string, func(), err
 // refusingPackager is the packaging tool, which refuses the first contracts it
 // is given with refusal and accepts every later one.
 type refusingPackager struct {
-	mu      sync.Mutex
-	refuse  int
-	refusal string
-	calls   int
+	mu       sync.Mutex
+	refuse   int
+	refusal  string
+	calls    int
+	packages []map[string]string
 }
 
 var _ ports.ContractPackager = (*refusingPackager)(nil)
 
-func (p *refusingPackager) Pack(context.Context, string, string, string, string, map[string]string) ([]byte, error) {
+func (p *refusingPackager) Pack(_ context.Context, _, _, _, _ string, packages map[string]string) ([]byte, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.calls++
+	p.packages = append(p.packages, packages)
 	if p.calls <= p.refuse {
 		return nil, fmt.Errorf("%w: %s", ports.ErrContractRejected, p.refusal)
 	}
@@ -97,7 +100,7 @@ func withContractType(rounds int, packager ports.ContractPackager) option {
 			Version: workflow.SupportedVersion,
 			Name:    "python-validation",
 			Match:   workflow.Match{Cluster: workflow.ClusterSingle, Source: "validation", NodeTypes: []string{"python-node"}},
-			Context: refs("contract_file", "failing_siblings", "dbt_log", "contract_entry", "current_contract", "upstream_changes", "failure_precedents"),
+			Context: refs("contract_file", "image_packages", "failing_siblings", "dbt_log", "contract_entry", "current_contract", "upstream_changes", "failure_precedents"),
 			Agent: workflow.Agent{
 				Prompt: workflow.StepRef{Name: "python-contract"}, Tools: []workflow.StepRef{}, Rounds: rounds,
 			},
@@ -156,6 +159,8 @@ func TestContractPackages_ARefusalGoesBackToTheModel(t *testing.T) {
 	assert.Contains(t, reqs[1].User, "- "+step.FindingLines(passes[1].Findings)[0]+"\n", "as a finding line")
 
 	assert.Equal(t, 2, packager.calls)
+	assert.Equal(t, []map[string]string{harnessPackages, harnessPackages}, packager.packages, "each round packs with the release's package list")
+	assert.Equal(t, 1, h.images.count(), "the package list is read once, by the context step, never again per round")
 	require.Len(t, h.store.Tries(id), 1, "the revision stays in the same try")
 	c := h.cluster(id, 1, 1)
 	assert.Equal(t, remediation.ClusterChecked, c.Status)
@@ -182,4 +187,48 @@ func TestContractPackages_ARefusalInTheLastRoundHandsTheClusterOver(t *testing.T
 	assert.Contains(t, c.Outcome.Reason, "pre-flight rounds spent: ")
 	assert.Contains(t, c.Outcome.Reason, toolRefusal)
 	assert.Empty(t, h.pipeline.runs())
+}
+
+// A release that records no package list of the service's image is known
+// before any draft: the image_packages context step declines the cluster with
+// the reason, no model is called and nothing is packed.
+func TestImagePackages_AReleaseWithNoListDeclinesBeforeTheModel(t *testing.T) {
+	packager := &refusingPackager{}
+	h := newHarness(t, withContractType(2, packager))
+	noPackages := fmt.Errorf("release rel-1, service svc-a: %w (the release has no contract bundle)", ports.ErrNoImagePackages)
+	h.images.err = noPackages
+	h.llm.answer = contractAnswer
+	id := h.accept(trigger("validation", contractNode()))
+
+	require.NoError(t, h.runner.Drive(ctx, id))
+
+	assert.Zero(t, h.llm.calls())
+	assert.Zero(t, packager.calls)
+	c := h.cluster(id, 1, 1)
+	assert.Equal(t, remediation.ClusterHandedOver, c.Status)
+	require.NotNil(t, c.Outcome)
+	assert.Equal(t, proposal.StatusSkipped, c.Outcome.Status)
+	assert.Equal(t, noPackages.Error(), c.Outcome.Reason)
+	assert.Empty(t, h.pipeline.runs())
+}
+
+// A read of the package list a retry may clear is the context step's error:
+// the runner records a failure and the step runs again, never a decline.
+func TestImagePackages_AReadErrorIsRetriedNotDeclined(t *testing.T) {
+	h := newHarness(t, withContractType(2, &refusingPackager{}))
+	h.images.err = errors.New("release-controller unavailable")
+	h.llm.answer = contractAnswer
+	id := h.accept(trigger("validation", contractNode()))
+
+	require.Error(t, h.runner.Drive(ctx, id))
+	assert.Equal(t, 1, h.images.count())
+	assert.Zero(t, h.llm.calls())
+	c := h.cluster(id, 1, 1)
+	assert.Equal(t, remediation.ClusterGathering, c.Status, "the cluster still gathers its context")
+	assert.Nil(t, c.Outcome)
+
+	h.images.err = nil
+	require.NoError(t, h.runner.Drive(ctx, id))
+	assert.Equal(t, 2, h.images.count(), "the failed step runs again")
+	assert.Equal(t, remediation.ClusterChecked, h.cluster(id, 1, 1).Status)
 }

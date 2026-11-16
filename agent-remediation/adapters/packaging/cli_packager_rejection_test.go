@@ -160,3 +160,22 @@ printf '{"bundle_version": 1}' > "$out"
 		t.Errorf("--out names %q, want an odcs-bundle.json", got)
 	}
 }
+
+// TestPack_RefusesANilPackageList pins that a bundle is never packed without
+// the package list of the image: the CLI is not run at all.
+func TestPack_RefusesANilPackageList(t *testing.T) {
+	ran := filepath.Join(t.TempDir(), "ran")
+	p := stubPackager(t, "#!/bin/sh\n: > \""+ran+"\"\nexit 0\n")
+
+	_, err := p.Pack(context.Background(), t.TempDir(), t.TempDir(), "svc-py", "postgres", nil)
+
+	if err == nil {
+		t.Fatal("Pack succeeded with no package list")
+	}
+	if errors.Is(err, ports.ErrContractRejected) {
+		t.Errorf("error = %v, want a caller error, not the CLI refusing the contract", err)
+	}
+	if _, statErr := os.Stat(ran); statErr == nil {
+		t.Error("the CLI ran although no package list was given")
+	}
+}

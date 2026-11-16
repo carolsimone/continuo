@@ -6,6 +6,7 @@ name: python-parse
 match: { cluster: single, source: parse, node_types: [python-node] }
 context:
   - contract_file
+  - image_packages
   - failing_siblings
   - dbt_log
   - contract_entry

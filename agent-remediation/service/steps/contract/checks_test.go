@@ -130,10 +130,16 @@ func newPass(t *testing.T, seed map[string]string) pass {
 func (p pass) input(edits ...remediation.Edit) step.CheckInput {
 	return step.CheckInput{
 		Failure:  failure(nil),
-		Evidence: contractFileEvidence(),
+		Evidence: passEvidence(),
 		Draft:    remediation.Draft{Edits: edits},
 		Scratch:  p.scratch,
 	}
+}
+
+// passEvidence is what the context steps leave for the pre-flight checks: the
+// declaring file and the release's image package list.
+func passEvidence() remediation.Evidence {
+	return contractFileEvidence().With(remediation.KeyImagePackages, remediation.ImagePackages(thePackages))
 }
 
 func runCheck(t *testing.T, c step.Check, in step.CheckInput) step.CheckOutput {
@@ -165,7 +171,7 @@ func TestChecks_MetaIsAPreflightCheckOnTheDraft(t *testing.T) {
 		{"csv_read_kept", contract.NewCSVReadKept(nil), draft, nil},
 		{"no_new_secret_ref", contract.NewNoNewSecretRef(nil), draft, nil},
 		{"declared_once", contract.NewDeclaredOnce(nil), withFile, nil},
-		{"contract_packages", contract.NewContractPackages(nil, nil, ""), withFile, []remediation.EvidenceKey{remediation.KeyPackagedContract}},
+		{"contract_packages", contract.NewContractPackages(nil, ""), []remediation.EvidenceKey{remediation.KeyDraft, remediation.KeyContractFile, remediation.KeyImagePackages}, []remediation.EvidenceKey{remediation.KeyPackagedContract}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -555,7 +561,7 @@ func TestChecksThatReadTheCheckout_NeedAScratch(t *testing.T) {
 		contract.NewCSVReadKept(&fakeInspector{}),
 		contract.NewNoNewSecretRef(&fakeInspector{}),
 		contract.NewDeclaredOnce(&fakeLocator{}),
-		contract.NewContractPackages(&fakePackager{}, &fakeImages{}, "postgres"),
+		contract.NewContractPackages(&fakePackager{}, "postgres"),
 	} {
 		_, err := c.Check(context.Background(), in)
 		require.Error(t, err, c.Meta().Name)
@@ -661,9 +667,8 @@ func TestDeclaredOnce_APathOutsideTheCheckoutIsAFindingAndNothingIsWritten(t *te
 func TestContractPackages(t *testing.T) {
 	p, in := declPass(t)
 	pk := &fakePackager{out: []byte(`{"bundle_version": 1}`)}
-	images := &fakeImages{}
 
-	out := runCheck(t, contract.NewContractPackages(pk, images, "trino"), in)
+	out := runCheck(t, contract.NewContractPackages(pk, "trino"), in)
 
 	assert.True(t, out.Result.Passed())
 	assert.Equal(t, map[remediation.EvidenceKey]any{remediation.KeyPackagedContract: remediation.Bytes(`{"bundle_version": 1}`)}, out.Evidence)
@@ -674,23 +679,39 @@ func TestContractPackages(t *testing.T) {
 		service:     "svc",
 		dialect:     "trino",
 		packages:    thePackages,
-	}}, pk.calls)
-	assert.Equal(t, [][2]string{{"rel-1", "svc"}}, images.asked, "the package list is the rejected release's, for the failing node's service")
+	}}, pk.calls, "the bundle records the package list the image_packages step left in the evidence")
 }
 
-// TestContractPackages_NoImagePackagesFailsTheStep covers a release whose
-// bundles record no package list of the service's image: nothing can be
-// packed, which no revision of the draft can change, so the step fails with
-// the reason and the remediation's failure count records it.
-func TestContractPackages_NoImagePackagesFailsTheStep(t *testing.T) {
+// TestContractPackages_PacksEveryRoundWithTheListTheContextStepRead pins that
+// the package list is read once, by the image_packages context step, and each
+// pre-flight round packs with that evidence: the check itself reads no release
+// and no bundle.
+func TestContractPackages_PacksEveryRoundWithTheListTheContextStepRead(t *testing.T) {
+	pk := &fakePackager{out: []byte(`{"bundle_version": 1}`)}
+	check := contract.NewContractPackages(pk, "postgres")
+	evidence := contractFileEvidence().With(remediation.KeyImagePackages, remediation.ImagePackages{"duckdb": "1.4.0"})
+
+	for range 2 {
+		_, in := declPass(t)
+		in.Evidence = evidence
+		runCheck(t, check, in)
+	}
+
+	require.Len(t, pk.calls, 2)
+	for _, c := range pk.calls {
+		assert.Equal(t, map[string]string{"duckdb": "1.4.0"}, c.packages)
+	}
+}
+
+func TestContractPackages_NeedsTheImagePackagesEvidence(t *testing.T) {
 	_, in := declPass(t)
+	in.Evidence = contractFileEvidence()
 	pk := &fakePackager{}
-	noPackages := fmt.Errorf("release rel-1, service svc: %w", ports.ErrNoImagePackages)
 
-	_, err := contract.NewContractPackages(pk, &fakeImages{err: noPackages}, "postgres").Check(context.Background(), in)
+	_, err := contract.NewContractPackages(pk, "postgres").Check(context.Background(), in)
 
-	require.ErrorIs(t, err, ports.ErrNoImagePackages)
-	assert.Contains(t, err.Error(), "release rel-1, service svc")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "image packages")
 	assert.Empty(t, pk.calls)
 }
 
@@ -698,7 +719,7 @@ func TestContractPackages_APackagerRefusalIsAFindingWithTheToolsMessage(t *testi
 	_, in := declPass(t)
 	pk := &fakePackager{err: fmt.Errorf("%w: node fx.rates: duplicate read %q", ports.ErrContractRejected, "a")}
 
-	out := runCheck(t, contract.NewContractPackages(pk, &fakeImages{}, "postgres"), in)
+	out := runCheck(t, contract.NewContractPackages(pk, "postgres"), in)
 
 	assert.Equal(t, []remediation.Finding{{
 		Code: "contract_rejected",
@@ -710,7 +731,7 @@ func TestContractPackages_APackagerRefusalIsAFindingWithTheToolsMessage(t *testi
 
 func TestContractPackages_AnyOtherPackagerFailureIsReturnedSoTheWorkIsTriedAgain(t *testing.T) {
 	_, in := declPass(t)
-	_, err := contract.NewContractPackages(&fakePackager{err: errBoom}, &fakeImages{}, "postgres").Check(context.Background(), in)
+	_, err := contract.NewContractPackages(&fakePackager{err: errBoom}, "postgres").Check(context.Background(), in)
 	require.ErrorIs(t, err, errBoom)
 	assert.Contains(t, err.Error(), "package contract for py.fx.rates")
 }
@@ -718,7 +739,7 @@ func TestContractPackages_AnyOtherPackagerFailureIsReturnedSoTheWorkIsTriedAgain
 func TestContractPackages_APathOutsideTheCheckoutIsAFindingAndNothingIsPackaged(t *testing.T) {
 	p := newPass(t, nil)
 	pk := &fakePackager{}
-	got := findings(t, contract.NewContractPackages(pk, &fakeImages{}, "postgres"), p.input(edit("/etc/x.yaml", "x")))
+	got := findings(t, contract.NewContractPackages(pk, "postgres"), p.input(edit("/etc/x.yaml", "x")))
 	require.Len(t, got, 1)
 	assert.Equal(t, "path_outside_contract_dir", got[0].Code)
 	assert.Empty(t, pk.calls)
@@ -739,7 +760,7 @@ func TestScratch_RefetchesTheCheckoutInANewPass(t *testing.T) {
 		contract.NewCSVReadKept(insp),
 		contract.NewNoNewSecretRef(insp),
 		contract.NewDeclaredOnce(locator),
-		contract.NewContractPackages(packager, &fakeImages{}, "postgres"),
+		contract.NewContractPackages(packager, "postgres"),
 	}
 
 	runPass := func() {
@@ -747,7 +768,7 @@ func TestScratch_RefetchesTheCheckoutInANewPass(t *testing.T) {
 		defer s.Close()
 		in := step.CheckInput{
 			Failure:  failure(nil),
-			Evidence: contractFileEvidence(),
+			Evidence: passEvidence(),
 			Draft:    remediation.Draft{Edits: []remediation.Edit{edit("svc/contracts/fx.yaml", afterText)}},
 			Scratch:  s,
 		}

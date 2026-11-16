@@ -51,8 +51,12 @@ func NewCLIPackager() (*CLIPackager, error) {
 //
 // in a fresh temporary directory it removes before returning: imagePackages is
 // written there as one JSON object of package name to version, and the bytes
-// the CLI wrote to --out are returned.
+// the CLI wrote to --out are returned. A nil imagePackages is refused before
+// the CLI runs: a bundle always records the package list of the image.
 func (p *CLIPackager) Pack(ctx context.Context, contractDir, repoRoot, service, dialect string, imagePackages map[string]string) ([]byte, error) {
+	if imagePackages == nil {
+		return nil, fmt.Errorf("pack %s for %s: no package list of the service's image was given", contractDir, service)
+	}
 	tmpDir, err := os.MkdirTemp("", "contract-pack-*")
 	if err != nil {
 		return nil, fmt.Errorf("create temp dir for the odcs bundle: %w", err)

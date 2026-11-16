@@ -280,9 +280,9 @@ func (l *loader) loadFixture(file string, root *yaml.Node) (conformance.Fixture,
 		Release: conformance.Release{
 			ImageTag: f.Release.ImageTag, FailingNodes: f.Release.FailingNodes, ImagePackages: f.Release.ImagePackages,
 		},
-		Packager: conformance.Packager{Packed: f.Packager.Packed, Refuse: f.Packager.Refuse},
-		Answers:          f.Answers.toConformance(),
-		GateErrors:       f.GateErrors,
+		Packager:   conformance.Packager{Packed: f.Packager.Packed, Refuse: f.Packager.Refuse},
+		Answers:    f.Answers.toConformance(),
+		GateErrors: f.GateErrors,
 	}
 	if len(f.MemberAnswers) > 0 {
 		fixture.MemberAnswers = make(map[string]conformance.Answers, len(f.MemberAnswers))
