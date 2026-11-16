@@ -1,5 +1,6 @@
 // Package metrics holds catalog's own Prometheus series: those of the
-// nightly export of each tenant's graph.
+// nightly export of each tenant's graph and those of its contract versions
+// and live contracts folder.
 package metrics
 
 import (

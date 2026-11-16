@@ -33,8 +33,8 @@ func parseFile(t *testing.T, path string) *ast.File {
 const backupCommandMain = "cmd/catalog-backup/main.go"
 
 // TestMain_ConsumesOnlyTopologyAndCaseBaseStreams pins the streams catalog
-// reads: the two release.promoted:v2 groups (topology swap, code versions) and
-// the three case-base groups. run-controller plans, dispatches, unblocks and finalizes
+// reads: the three release.promoted:v2 groups (topology swap, code versions,
+// contract versions) and the three case-base groups. run-controller plans, dispatches, unblocks and finalizes
 // runs, so catalog consumes no run stream.
 func TestMain_ConsumesOnlyTopologyAndCaseBaseStreams(t *testing.T) {
 	seen := map[string]bool{}
@@ -54,6 +54,7 @@ func TestMain_ConsumesOnlyTopologyAndCaseBaseStreams(t *testing.T) {
 	}
 	slices.Sort(got)
 	want := []string{
+		"CatalogReleaseContracts",
 		"CatalogReleaseTopology",
 		"CatalogReleaseVersions",
 		"CatalogRemediationPrClosedProvenance",
@@ -66,6 +67,67 @@ func TestMain_ConsumesOnlyTopologyAndCaseBaseStreams(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("main.go names streams %v, want %v", got, want)
+	}
+}
+
+// TestMainWiring_UsesTheContractsGroup pins how main.go consumes the contract
+// versions: a row of the consumers table on release.promoted:v2 under the
+// group catalog-release-contracts, with the contracts binding and the
+// timeout of the handlers that write a whole release; and the contract series
+// registered whatever the install enables, outside the backup block, so every
+// label pair is exported from boot.
+func TestMainWiring_UsesTheContractsGroup(t *testing.T) {
+	file := parseMain(t)
+
+	var row *ast.CompositeLit
+	ast.Inspect(file, func(n ast.Node) bool {
+		lit, ok := n.(*ast.CompositeLit)
+		if !ok || len(lit.Elts) != 5 {
+			return true
+		}
+		if isSelector(lit.Elts[2], "streams", "CatalogReleaseContracts") {
+			row = lit
+			return false
+		}
+		return true
+	})
+	if row == nil {
+		t.Fatal("main.go has no consumers row on streams.CatalogReleaseContracts")
+	}
+	if lit, ok := row.Elts[0].(*ast.BasicLit); !ok || lit.Value != `"release_promoted_contracts"` {
+		t.Errorf("the row's name = %s, want \"release_promoted_contracts\"", exprText(row.Elts[0]))
+	}
+	if !isSelector(row.Elts[1], "streams", "ReleasePromotedV2") {
+		t.Errorf("the row's stream = %s, want streams.ReleasePromotedV2", exprText(row.Elts[1]))
+	}
+	binding, ok := row.Elts[3].(*ast.CallExpr)
+	if !ok || !isSelector(binding.Fun, "redis", "NewReleasePromotedContractsBinding") {
+		t.Errorf("the row's binding = %s, want redis.NewReleasePromotedContractsBinding(...)", exprText(row.Elts[3]))
+	}
+	if id, ok := row.Elts[4].(*ast.Ident); !ok || id.Name != "topologyHandlerTimeout" {
+		t.Errorf("the row's timeout = %s, want topologyHandlerTimeout", exprText(row.Elts[4]))
+	}
+
+	var backupBlock *ast.IfStmt
+	ast.Inspect(file, func(n ast.Node) bool {
+		if s, ok := n.(*ast.IfStmt); ok && exprText(s.Cond) == "cfg.Backup.Enabled" {
+			backupBlock = s
+			return false
+		}
+		return true
+	})
+	registered := 0
+	ast.Inspect(file, func(n ast.Node) bool {
+		if n == backupBlock {
+			return false
+		}
+		if call, ok := n.(*ast.CallExpr); ok && isSelector(call.Fun, "metricsinfra", "NewContractMetrics") {
+			registered++
+		}
+		return true
+	})
+	if registered != 1 {
+		t.Errorf("main.go calls metricsinfra.NewContractMetrics %d times outside the backup block, want 1", registered)
 	}
 }
 

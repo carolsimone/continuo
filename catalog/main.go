@@ -16,6 +16,7 @@ import (
 	"github.com/carolsimone/continuo/catalog/adapters/redis"
 	s3infra "github.com/carolsimone/continuo/catalog/adapters/s3"
 	"github.com/carolsimone/continuo/catalog/config"
+	domainModel "github.com/carolsimone/continuo/catalog/domain/model"
 	"github.com/carolsimone/continuo/catalog/service/backup"
 	"github.com/carolsimone/continuo/catalog/service/handlers"
 	"github.com/carolsimone/continuo/catalog/service/queries"
@@ -221,9 +222,10 @@ func main() {
 	// ========================================================================
 
 	// One object-storage client, passed to each adapter as the roles it uses:
-	// the topology artifact reader of both promotion groups and the
-	// code-bundle reader of the versions and rejections groups read objects,
-	// and the backup store streams, lists and deletes each tenant's exports.
+	// the topology artifact reader of the topology and versions groups, the
+	// code-bundle reader of the versions and rejections groups and the
+	// contract-bundle reader of the contracts group read objects, and the
+	// backup store streams, lists and deletes each tenant's exports.
 	objectStore, err := objectstore.New(ctx, objectstore.ConfigFromS3(cfg.S3))
 	if err != nil {
 		logger.Error("Failed to build the object-storage client", "error", err)
@@ -252,6 +254,18 @@ func main() {
 	releasePromotedVersionsHandler := handlers.NewReleasePromotedVersionsHandler(
 		graphUnitOfWork, codeBundleReader, topologyArtifactReader, logger)
 
+	// release.promoted:v2 (contracts) — a third independent consumer group. It
+	// reads the release's contract bundle from object storage, verifies it
+	// against the promotion's SHA-256, records each node's contract versions,
+	// promotion edges and current-contract pointer through the Neo4j unit of
+	// work, then runs its live-folder step, noLiveContractsRewrite, which
+	// writes nothing. Isolated from the swap and the code versions so neither
+	// waits on the contracts. Its series are registered here whatever the
+	// install enables, every label pair at 0.
+	contractMetrics := metricsinfra.NewContractMetrics(metricsReg)
+	releasePromotedContractsHandler := handlers.NewReleasePromotedContractsHandler(
+		graphUnitOfWork, s3infra.NewContractBundleReader(objectStore), noLiveContractsRewrite{}, contractMetrics, logger)
+
 	// remediation.requested:v2 (rejections) + remediation.pr_opened:v1
 	// (proposals) + remediation.pr_closed:v1 (provenance) — the
 	// failure-precedent case base, written under the tenant each message names
@@ -278,6 +292,7 @@ func main() {
 	}{
 		{"release_promoted", streams.ReleasePromotedV2, streams.CatalogReleaseTopology, redis.NewReleasePromotedBinding(releasePromotedHandler, logger), topologyHandlerTimeout},
 		{"release_promoted_versions", streams.ReleasePromotedV2, streams.CatalogReleaseVersions, redis.NewReleasePromotedVersionsBinding(releasePromotedVersionsHandler, logger), topologyHandlerTimeout},
+		{"release_promoted_contracts", streams.ReleasePromotedV2, streams.CatalogReleaseContracts, redis.NewReleasePromotedContractsBinding(releasePromotedContractsHandler, logger), topologyHandlerTimeout},
 		{"remediation_requested_rejections", streams.RemediationRequestedV2, streams.CatalogRemediationRequestedRejections, redis.NewRemediationRequestedBinding(rejectionsHandler, logger), 0},
 		{"remediation_pr_opened_proposals", streams.RemediationPrOpenedV1, streams.CatalogRemediationPrOpenedProposals, redis.NewPrOpenedBinding(proposalsHandler, logger), 0},
 		{"remediation_pr_closed_provenance", streams.RemediationPrClosedV1, streams.CatalogRemediationPrClosedProvenance, redis.NewPrClosedBinding(provenanceHandler, logger), 0},
@@ -363,4 +378,13 @@ func main() {
 	// intake, drain in-flight goroutines, then close infra. No fixed sleep.
 	<-lifecycleManager.Done()
 	logger.Info("Catalog service stopped")
+}
+
+// noLiveContractsRewrite is the contracts group's live-folder step while catalog
+// publishes no live contracts folder: it writes nothing.
+type noLiveContractsRewrite struct{}
+
+// Rewrite writes nothing.
+func (noLiveContractsRewrite) Rewrite(context.Context, domainModel.PromoteReleaseInput) error {
+	return nil
 }
