@@ -499,7 +499,10 @@ class CandidateManifestHandler:
         # reject, naming both: the release publishes, and the bundle, which keys a
         # contract by id, holds no contract of that id.
         shared = shared_unique_ids(all_nodes)
+        with_contract = {node.unique_id for node in all_nodes if node.contract is not None}
         for unique_id, services in shared.items():
+            if unique_id not in with_contract:
+                continue
             logger.warning(
                 "candidate: a unique id more than one node declares has no contract in the bundle",
                 extra={"release_id": release_id, "unique_id": unique_id, "services": services},
