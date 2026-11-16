@@ -68,10 +68,12 @@ var _ pkgoutbox.Renderer = (*agentRemediationOutboxPublisher)(nil)
 // remediation.proposed:v1 row stores its payload under its tenant
 // (outbox.WrapTenant), which renders as the payload beside that tenant. A
 // remediation.handed_over:v1 row, stored the same way, renders as the event's
-// envelope (renderRemediationHandedOver). Every other row carries the default
-// tenant. The tenant is stamped here, not in xaddArgs, because the fields an
-// outbox dead letter stores come from Render, so a redrive republishes the
-// tenant too. Every call returns a fresh map.
+// envelope (renderRemediationHandedOver), and a consumer.dead_letter:v1 row,
+// the dead letter of a heal trigger whose remediation ended as a system
+// failure, as the dead letter's fields (renderConsumerDeadLetter). Every other
+// row carries the default tenant. The tenant is stamped here, not in
+// xaddArgs, because the fields an outbox dead letter stores come from Render,
+// so a redrive republishes the tenant too. Every call returns a fresh map.
 func (p *agentRemediationOutboxPublisher) Render(entry *pkgoutbox.Entry) (map[string]any, error) {
 	if entry.EventType == pkgoutbox.DeadLetterEventType {
 		values, err := pkgoutbox.DeadLetterValues(entry)
@@ -87,6 +89,8 @@ func (p *agentRemediationOutboxPublisher) Render(entry *pkgoutbox.Entry) (map[st
 		return renderRemediationProposed(entry)
 	case streams.RemediationHandedOverV1:
 		return renderRemediationHandedOver(entry)
+	case streams.ConsumerDeadLetterV1:
+		return renderConsumerDeadLetter(entry)
 	}
 	return map[string]any{"payload": string(entry.Payload), "tenant_id": pkgevents.DefaultTenantID}, nil
 }
@@ -130,6 +134,38 @@ func renderRemediationHandedOver(entry *pkgoutbox.Entry) (map[string]any, error)
 // row, as permanent.
 func handedOverPermanent(err error) error {
 	return fmt.Errorf("%w: %s: %w", pkgevents.ErrPermanent, streams.RemediationHandedOverV1, err)
+}
+
+// renderConsumerDeadLetter renders a consumer.dead_letter:v1 row, the
+// runner's dead letter of a heal trigger stored under the remediation's tenant
+// as an events.DeadLetteredMessage, as the fields of that dead letter
+// (events.ConsumerDeadLetterFields): the tenant the row is stored under and
+// agent-remediation as producer, with the message, its fields and its failure
+// as stored. The stored payload is our own, so a row that is not stored under
+// a tenant, or whose payload is not the message, is permanent: no retry makes
+// it renderable.
+func renderConsumerDeadLetter(entry *pkgoutbox.Entry) (map[string]any, error) {
+	tenantID, payload, err := pkgoutbox.UnwrapTenant(entry.Payload)
+	if err != nil {
+		return nil, consumerDeadLetterPermanent(err)
+	}
+	var m pkgevents.DeadLetteredMessage
+	if err := json.Unmarshal(payload, &m); err != nil {
+		return nil, consumerDeadLetterPermanent(fmt.Errorf("decode payload: %w", err))
+	}
+	m.TenantID = tenantID
+	m.Producer = config.ServiceName
+	values, err := pkgevents.ConsumerDeadLetterFields(m)
+	if err != nil {
+		return nil, consumerDeadLetterPermanent(err)
+	}
+	return values, nil
+}
+
+// consumerDeadLetterPermanent marks err, met rendering a
+// consumer.dead_letter:v1 row, as permanent.
+func consumerDeadLetterPermanent(err error) error {
+	return fmt.Errorf("%w: %s: %w", pkgevents.ErrPermanent, streams.ConsumerDeadLetterV1, err)
 }
 
 // outboxHeartbeatStale is the liveness budget for the outbox processor's Run

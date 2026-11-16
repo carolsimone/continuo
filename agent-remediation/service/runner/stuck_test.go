@@ -49,20 +49,34 @@ func (h *harness) countRemediationFailures(id uuid.UUID, n int) {
 	}
 }
 
+// deadLetteredReason is what the attempt row of a remediation that ended as a
+// system failure is failed with: the remediation's failure, and how to resume
+// it.
+func deadLetteredReason(rem remediation.Remediation) string {
+	return rem.Failure + "; dead-lettered as remediation " + rem.ID.String() + ", redrive it once the cause is fixed"
+}
+
 // requireEndedAsStuck checks that the remediation ended as a system failure
-// whose reason holds want, with its current try failed and the attempt's row
-// failed for the same reason.
-func (h *harness) requireEndedAsStuck(id uuid.UUID, want string) {
+// whose reason holds want, with its current try left in tryStatus, the status
+// it stopped in, for a redrive to resume, the attempt's row failed with the
+// reason and how to resume it, and its trigger dead-lettered once.
+func (h *harness) requireEndedAsStuck(id uuid.UUID, want string, tryStatus remediation.TryStatus) {
 	h.t.Helper()
 	rem := h.remediation(id)
 	require.Equal(h.t, remediation.StatusSystemFailure, rem.Status, rem.Failure)
 	assert.Contains(h.t, rem.Failure, want)
-	assert.Equal(h.t, remediation.TryFailed, h.try(id, rem.CurrentTry).Status)
+	assert.Equal(h.t, tryStatus, h.try(id, rem.CurrentTry).Status, "the try is left where it stopped")
 	p := h.attempt(h.try(id, rem.CurrentTry).Attempt)
 	assert.Equal(h.t, proposal.StatusFailed, p.Proposal.Status, "the attempt row is failed with the reason")
+	reason := p.Proposal.Rationale
+	if tryStatus == remediation.TryVerifying {
+		reason = p.VerifyError
+	}
+	assert.Equal(h.t, deadLetteredReason(rem), reason)
 	for _, o := range p.Proposal.NodeOutcomes {
 		assert.Equal(h.t, proposal.StatusFailed, o.Status)
 	}
+	assert.Len(h.t, h.deadLetters(), 1, "the trigger is dead-lettered")
 }
 
 // A drafting try whose deadline passes while a step runs is ended before the
@@ -78,7 +92,7 @@ func TestRunner_ADraftingTryPastItsDeadlineEndsBeforeItsNextStep(t *testing.T) {
 
 	require.NoError(t, h.runner.Drive(ctx, id))
 
-	h.requireEndedAsStuck(id, "try 1 was still drafting at its deadline")
+	h.requireEndedAsStuck(id, "try 1 was still drafting at its deadline", remediation.TryDrafting)
 	rows := h.stepRows(id, 1, 1)
 	require.Len(t, rows["failing_node_source"], 1)
 	assert.Equal(t, remediation.StepDone, rows["failing_node_source"][0].Status, "the step that was running commits")
@@ -104,7 +118,7 @@ func TestRunner_ACheckingTryPastItsDeadlineDoesNotSubmitTheGate(t *testing.T) {
 
 	require.NoError(t, h.runner.Drive(ctx, id))
 
-	h.requireEndedAsStuck(id, "try 1 was still checking at its deadline")
+	h.requireEndedAsStuck(id, "try 1 was still checking at its deadline", remediation.TryChecking)
 	assert.Empty(t, h.flowRows(id, 1), "no cross-cluster check and no gate ran")
 	assert.Empty(t, h.pipeline.runs(), "the gate was not submitted")
 	assert.Equal(t, 1, h.llm.calls())
@@ -137,7 +151,7 @@ func TestRunner_ADriveEndsAStuckRemediationBeforeItsNextStep(t *testing.T) {
 
 		require.NoError(t, h.drive(id))
 
-		h.requireEndedAsStuck(id, `step "failing_node_source" failed 5 times, the last time with: s3 is down`)
+		h.requireEndedAsStuck(id, `step "failing_node_source" failed 5 times, the last time with: s3 is down`, remediation.TryDrafting)
 		assert.Zero(t, reads, "the step does not run again")
 		assert.Zero(t, h.llm.calls())
 	})
@@ -204,7 +218,7 @@ func TestRunner_PollGateEndsAStuckRemediationBeforeItReadsTheGate(t *testing.T) 
 
 			require.NoError(t, h.poll(id))
 
-			h.requireEndedAsStuck(id, tc.want)
+			h.requireEndedAsStuck(id, tc.want, remediation.TryVerifying)
 			assert.Zero(t, h.pipeline.statusReads(), "the gate is not read")
 			assert.Empty(t, h.proposedEvents())
 			assert.Equal(t, []proposal.Verification{{Service: "svc-a", Kind: "dbt", RunID: svcARun1, Phase: proposal.PhaseQueued}},
@@ -222,7 +236,7 @@ func TestRunner_ADriveOfATryPastItsDeadlineRunsNoStep(t *testing.T) {
 
 	require.NoError(t, h.drive(id))
 
-	h.requireEndedAsStuck(id, "try 1 was still drafting at its deadline")
+	h.requireEndedAsStuck(id, "try 1 was still drafting at its deadline", remediation.TryDrafting)
 	assert.Empty(t, h.store.Steps(id))
 	assert.Zero(t, h.llm.calls())
 }

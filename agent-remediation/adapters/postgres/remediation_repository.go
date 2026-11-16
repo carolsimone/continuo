@@ -341,6 +341,68 @@ func (r *RemediationRepository) FindByRelease(ctx context.Context, tenantID, rel
 	return rem, true, nil
 }
 
+// LockByRelease locks the remediation row of the key with SELECT … FOR UPDATE
+// on the unit of work's transaction, which holds the lock until it ends, and
+// reads the remediation as Load does. A second transaction's lock of the row
+// waits for the first to end and then reads the row as it committed.
+func (r *RemediationRepository) LockByRelease(ctx context.Context, tenantID, releaseID string, round int) (remediation.Snapshot, bool, error) {
+	var id uuid.UUID
+	err := r.q.GetContext(ctx, &id, `SELECT id FROM remediation
+		WHERE tenant_id=$1 AND release_id=$2 AND remediation_round=$3 FOR UPDATE`,
+		tenantID, releaseID, round)
+	if errors.Is(err, sql.ErrNoRows) {
+		return remediation.Snapshot{}, false, nil
+	}
+	if err != nil {
+		return remediation.Snapshot{}, false, fmt.Errorf("lock remediation by release: %w", err)
+	}
+	snap, err := r.snapshot(ctx, id)
+	if err != nil {
+		return remediation.Snapshot{}, false, err
+	}
+	return snap, true, nil
+}
+
+// HasLaterRound reports whether the tenant's release has a remediation of a
+// round after round.
+func (r *RemediationRepository) HasLaterRound(ctx context.Context, tenantID, releaseID string, round int) (bool, error) {
+	var later bool
+	if err := r.q.GetContext(ctx, &later, `SELECT EXISTS (SELECT 1 FROM remediation
+		WHERE tenant_id=$1 AND release_id=$2 AND remediation_round > $3)`,
+		tenantID, releaseID, round); err != nil {
+		return false, fmt.Errorf("look for a later remediation round: %w", err)
+	}
+	return later, nil
+}
+
+// ReopenTryAttempt moves the failed proposal row of the remediation's attempt
+// back to status with outcomes in one UPDATE whose WHERE clause is the whole
+// check: the row's remediation, attempt and failed status. The verify error is
+// cleared, and the rationale too when the row is reopened generating.
+func (r *RemediationRepository) ReopenTryAttempt(ctx context.Context, remediationID uuid.UUID, attempt int, status proposal.Status, outcomes map[string]proposal.NodeOutcome) (bool, error) {
+	if status != proposal.StatusGenerating && status != proposal.StatusVerifying {
+		return false, fmt.Errorf("reopen attempt %d: status %q is not generating or verifying", attempt, status)
+	}
+	raw, err := marshalNodeOutcomes(outcomes)
+	if err != nil {
+		return false, fmt.Errorf("reopen attempt %d: %w", attempt, err)
+	}
+	res, err := r.q.ExecContext(ctx, `
+		UPDATE proposal
+		   SET status = $3, node_outcomes = $4, verify_error = '',
+		       rationale = CASE WHEN $3::text = $6::text THEN '' ELSE rationale END
+		 WHERE remediation_id = $1 AND attempt = $2 AND status = $5`,
+		remediationID, attempt, string(status), raw, string(proposal.StatusFailed), string(proposal.StatusGenerating))
+	if err != nil {
+		return false, fmt.Errorf("reopen attempt %d: %w", attempt, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("reopen attempt %d: rows affected: %w", attempt, err)
+	}
+	return n > 0, nil
+}
+
 // Get returns a read-only snapshot of the remediation with its current try,
 // and that try's clusters and steps. The reads are separate statements that
 // take no lock, so a Get is consistent only while no one else writes the

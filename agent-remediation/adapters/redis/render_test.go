@@ -309,3 +309,67 @@ func TestRender_HandedOverCarriesTheRowsTenant(t *testing.T) {
 		assert.Nil(t, values, name)
 	}
 }
+
+// TestRender_ConsumerDeadLetterCarriesTheRowsTenant holds that a
+// consumer.dead_letter:v1 row, the dead letter of a heal trigger the runner
+// gave up on stored under the remediation's tenant, renders as the dead
+// letter dead-letter-controller decodes: the tenant the row is stored under,
+// agent-remediation as producer, the event id of the message's dead letter in
+// its group, and the trigger's stream, group, message, fields and failure; and
+// that a row stored under no tenant, or whose stored payload is not the
+// message, is refused as permanent: no retry makes it renderable.
+func TestRender_ConsumerDeadLetterCarriesTheRowsTenant(t *testing.T) {
+	p := &agentRemediationOutboxPublisher{}
+	occurred := time.Date(2026, 11, 16, 9, 30, 0, 0, time.UTC)
+	key := pkgredis.Key(streams.RemediationRequestedV3)
+	message := pkgevents.DeadLetteredMessage{
+		OccurredAt:    occurred,
+		Stream:        streams.RemediationRequestedV3,
+		Group:         streams.AgentRemediationRemediationRequested,
+		MessageID:     "1700000000000-0",
+		Key:           key,
+		Fields:        map[string]string{"tenant_id": "acme", "event_id": "ev-1", "payload": `{"release_id":"rel-1"}`},
+		FailureKind:   model.DeadLetterKindTransientExhausted,
+		Error:         `remediation r, try 1, step "dbt_log": step "dbt_log" failed 5 times`,
+		DeliveryCount: 5,
+	}
+	body, err := json.Marshal(message)
+	require.NoError(t, err)
+	stored, err := pkgoutbox.WrapTenant("acme", body)
+	require.NoError(t, err)
+	entry := &pkgoutbox.Entry{ID: uuid.New(), EventType: "remediation_dead_lettered", StreamName: streams.ConsumerDeadLetterV1, Payload: stored}
+
+	values, err := p.Render(entry)
+	require.NoError(t, err)
+
+	fields, err := pkgoutbox.StringifyFields(values)
+	require.NoError(t, err)
+	env, dl, err := pkgevents.DecodeConsumerDeadLetter(fields)
+	require.NoError(t, err)
+	assert.Equal(t, "acme", env.TenantID)
+	assert.Equal(t, "agent-remediation", env.Producer)
+	assert.True(t, occurred.Equal(env.OccurredAt))
+	assert.Equal(t, pkgevents.ConsumerDeadLetterEventID("acme", streams.AgentRemediationRemediationRequested,
+		streams.RemediationRequestedV3, "1700000000000-0@"+key), env.EventID)
+	assert.Equal(t, pkgevents.ConsumerDeadLetter{
+		OriginalStream:    streams.RemediationRequestedV3,
+		OriginalGroup:     streams.AgentRemediationRemediationRequested,
+		OriginalMessageID: "1700000000000-0",
+		OriginalKey:       key,
+		Fields:            message.Fields,
+		FailureKind:       model.DeadLetterKindTransientExhausted,
+		Error:             message.Error,
+		DeliveryCount:     5,
+	}, dl)
+	assert.NotContains(t, values, "outbox_entry_id")
+
+	for name, payload := range map[string]string{
+		"an unwrapped payload":              string(body),
+		"an empty tenant":                   `{"tenant_id":"","payload":{"Stream":"s"}}`,
+		"a payload that is not the message": `{"tenant_id":"acme","payload":["not","the","message"]}`,
+	} {
+		values, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), StreamName: streams.ConsumerDeadLetterV1, Payload: []byte(payload)})
+		require.ErrorIs(t, err, pkgevents.ErrPermanent, name)
+		assert.Nil(t, values, name)
+	}
+}

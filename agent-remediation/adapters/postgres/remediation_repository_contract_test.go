@@ -1241,3 +1241,203 @@ func TestProposalRepository_ListNamesTheRemediationOfEachRow(t *testing.T) {
 		require.Equal(t, map[int]string{1: "", 2: r.ID.String()}, byAttempt)
 	})
 }
+
+// LockByRelease reads the remediation of one tenant, release and round with
+// its current try and that try's clusters and steps, and holds its row until
+// the transaction ends: a second transaction's LockByRelease of the same key
+// waits for it.
+func TestRemediationRepository_LockByReleaseReadsAndLocksTheRemediationOfTheKey(t *testing.T) {
+	forEachImpl(t, func(t *testing.T, env contractEnv) {
+		ctx := context.Background()
+		r := mustCreate(t, env, newRemediation("rel-lock", 1, contractBase))
+		startTry(t, env, r, remediation.TryChecking, contractBase.Add(time.Hour))
+		require.NoError(t, env.remediations.SaveCluster(ctx, remediation.Cluster{
+			RemediationID: r.ID, Try: 1, Cluster: 1, Kind: workflow.ClusterSingle, TargetNodeID: "model.a",
+			Members: []string{"model.a"}, Status: remediation.ClusterChecked, Round: 1,
+		}))
+		require.NoError(t, env.remediations.SaveStep(ctx, remediation.StepRun{
+			RemediationID: r.ID, Try: 1, Cluster: 0, Step: "verification_run", Kind: "check", Round: 1,
+			Status: remediation.StepFailed, Failures: 5, LastError: "down", StartedAt: contractBase,
+		}))
+
+		u := env.newUoW()
+		require.NoError(t, u.Begin(ctx))
+		defer func() { _ = u.Rollback() }()
+		snap, found, err := u.RemediationRepo().LockByRelease(ctx, "default", "rel-lock", 1)
+		require.NoError(t, err)
+		require.True(t, found)
+		require.Equal(t, r.ID, snap.Remediation.ID)
+		require.NotNil(t, snap.Try)
+		require.Equal(t, remediation.TryChecking, snap.Try.Status)
+		require.Len(t, snap.Clusters, 1)
+		require.Len(t, snap.Steps, 1)
+		require.Equal(t, 5, snap.Steps[0].Failures)
+		for name, key := range map[string][3]string{
+			"another round":   {"default", "rel-lock", "2"},
+			"another tenant":  {"acme", "rel-lock", "1"},
+			"another release": {"default", "rel-other", "1"},
+		} {
+			round := 1
+			if key[2] == "2" {
+				round = 2
+			}
+			_, found, err := u.RemediationRepo().LockByRelease(ctx, key[0], key[1], round)
+			require.NoError(t, err, name)
+			require.False(t, found, name)
+		}
+
+		locked := make(chan error, 1)
+		go func() {
+			u2 := env.newUoW()
+			if err := u2.Begin(ctx); err != nil {
+				locked <- err
+				return
+			}
+			defer func() { _ = u2.Rollback() }()
+			_, _, err := u2.RemediationRepo().LockByRelease(ctx, "default", "rel-lock", 1)
+			locked <- err
+		}()
+		select {
+		case err := <-locked:
+			t.Fatalf("a second lock of the key returned while the first transaction holds it: %v", err)
+		case <-time.After(300 * time.Millisecond):
+		}
+		require.NoError(t, u.Commit())
+		select {
+		case err := <-locked:
+			require.NoError(t, err)
+		case <-time.After(10 * time.Second):
+			t.Fatal("the second lock never returned after the first transaction ended")
+		}
+	})
+}
+
+// HasLaterRound reports whether the tenant's release has a remediation of a
+// round after the given one, whatever its status.
+func TestRemediationRepository_HasLaterRound(t *testing.T) {
+	forEachImpl(t, func(t *testing.T, env contractEnv) {
+		ctx := context.Background()
+		mustCreate(t, env, newRemediation("rel-rounds", 1, contractBase))
+		second := newRemediation("rel-rounds", 2, contractBase)
+		second.Status = remediation.StatusSystemFailure
+		mustCreate(t, env, second)
+		otherTenant := newRemediation("rel-rounds", 5, contractBase)
+		otherTenant.TenantID = "acme"
+		mustCreate(t, env, otherTenant)
+		mustCreate(t, env, newRemediation("rel-elsewhere", 7, contractBase))
+
+		for _, tc := range []struct {
+			tenant, release string
+			round           int
+			want            bool
+		}{
+			{"default", "rel-rounds", 1, true},
+			{"default", "rel-rounds", 2, false},
+			{"acme", "rel-rounds", 4, true},
+			{"acme", "rel-rounds", 5, false},
+			{"default", "rel-unknown", 1, false},
+		} {
+			got, err := env.remediations.HasLaterRound(ctx, tc.tenant, tc.release, tc.round)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got, "%s %s round %d", tc.tenant, tc.release, tc.round)
+		}
+	})
+}
+
+// ReopenTryAttempt moves the failed proposal row of one attempt of a
+// remediation back in flight with the outcomes given: generating without the
+// rationale its failure recorded, or verifying without its verify error and
+// with its edits, runs and rationale. It changes no row of another
+// remediation, no row of the driver and no row that is not failed.
+func TestRemediationRepository_ReopenTryAttemptMovesOnlyItsFailedRowBack(t *testing.T) {
+	forEachImpl(t, func(t *testing.T, env contractEnv) {
+		ctx := context.Background()
+		r := mustCreate(t, env, newRemediation("rel-reopen", 1, contractBase))
+		other := mustCreate(t, env, newRemediation("rel-reopen-other", 1, contractBase))
+		get := func(id string) proposal.View {
+			t.Helper()
+			v, err := env.proposals.Get(ctx, id)
+			require.NoError(t, err)
+			return v
+		}
+		generating := map[string]proposal.NodeOutcome{"model.a": {Status: proposal.StatusGenerating}}
+
+		require.NoError(t, env.proposals.InsertGenerating(ctx, proposal.Proposal{
+			Source: "validation", ReleaseID: "rel-reopen", RemediationID: r.ID.String(), NodeID: "model.a",
+			ResolvedNodeIDs: []string{"model.a"}, NodeOutcomes: generating, Attempt: 1, CreatedAt: contractBase,
+		}))
+		_, err := env.proposals.FailGenerating(ctx, "rel-reopen", "stuck; dead-lettered")
+		require.NoError(t, err)
+		first := findAttempt(t, env, "rel-reopen", 1)
+		require.Equal(t, proposal.StatusFailed, first.Status)
+
+		hit, err := env.remediations.ReopenTryAttempt(ctx, r.ID, 1, proposal.StatusGenerating, generating)
+		require.NoError(t, err)
+		require.True(t, hit)
+		got := get(first.ID)
+		require.Equal(t, proposal.StatusGenerating, got.Status)
+		require.Empty(t, got.Rationale, "the reason of the failure is gone")
+		require.Equal(t, generating, got.NodeOutcomes)
+
+		hit, err = env.remediations.ReopenTryAttempt(ctx, r.ID, 1, proposal.StatusGenerating, generating)
+		require.NoError(t, err)
+		require.False(t, hit, "a row in flight is not reopened")
+
+		edits := []proposal.FileEdit{{Path: "models/a.sql", ContentURI: "s3://c", DiffURI: "s3://d", TargetNodeID: "model.a", MemberNodeIDs: []string{"model.a"}}}
+		runs := []proposal.Verification{{Service: "svc", Kind: "dbt", RunID: "run-1", Phase: proposal.PhaseQueued}}
+		verifyingOutcomes := map[string]proposal.NodeOutcome{"model.a": {Status: proposal.StatusVerifying}}
+		require.NoError(t, env.proposals.Upsert(ctx, proposal.Proposal{
+			Source: "validation", ReleaseID: "rel-reopen", RemediationID: r.ID.String(), NodeID: "model.a",
+			ResolvedNodeIDs: []string{"model.a"}, NodeOutcomes: verifyingOutcomes, Attempt: 2, Status: proposal.StatusVerifying,
+			Edits: edits, Verifications: runs, Rationale: "the fix", SourceResolved: true, CreatedAt: contractBase,
+		}))
+		second := findAttempt(t, env, "rel-reopen", 2)
+		_, err = env.proposals.MarkVerifyFailed(ctx, second.ID, "stuck; dead-lettered", runs)
+		require.NoError(t, err)
+		require.Equal(t, proposal.StatusFailed, get(second.ID).Status)
+
+		hit, err = env.remediations.ReopenTryAttempt(ctx, r.ID, 2, proposal.StatusVerifying, verifyingOutcomes)
+		require.NoError(t, err)
+		require.True(t, hit)
+		got = get(second.ID)
+		require.Equal(t, proposal.StatusVerifying, got.Status)
+		require.Empty(t, got.VerifyError)
+		require.Equal(t, "the fix", got.Rationale)
+		require.Equal(t, edits, got.Edits)
+		require.Equal(t, runs, got.Verifications)
+		require.Equal(t, verifyingOutcomes, got.NodeOutcomes)
+
+		require.NoError(t, env.proposals.Upsert(ctx, proposal.Proposal{
+			Source: "validation", ReleaseID: "rel-reopen", NodeID: "model.a", Attempt: 3, Status: proposal.StatusFailed,
+			Rationale: "the driver's", CreatedAt: contractBase,
+		}))
+		require.NoError(t, env.proposals.Upsert(ctx, proposal.Proposal{
+			Source: "validation", ReleaseID: "rel-reopen-other", RemediationID: other.ID.String(), NodeID: "model.a",
+			Attempt: 4, Status: proposal.StatusFailed, Rationale: "the other's", CreatedAt: contractBase,
+		}))
+		for _, attempt := range []int{3, 4} {
+			hit, err = env.remediations.ReopenTryAttempt(ctx, r.ID, attempt, proposal.StatusGenerating, generating)
+			require.NoError(t, err)
+			require.False(t, hit, "attempt %d belongs to no try of the remediation", attempt)
+		}
+		require.Equal(t, proposal.StatusFailed, findAttempt(t, env, "rel-reopen", 3).Status)
+		require.Equal(t, proposal.StatusFailed, findAttempt(t, env, "rel-reopen-other", 4).Status)
+
+		_, err = env.remediations.ReopenTryAttempt(ctx, r.ID, 3, proposal.StatusProposed, generating)
+		require.Error(t, err, "a row is reopened generating or verifying")
+	})
+}
+
+// findAttempt returns the proposal row of one attempt of a release.
+func findAttempt(t *testing.T, env contractEnv, release string, attempt int) proposal.View {
+	t.Helper()
+	views, err := env.proposals.List(context.Background(), repository.ProposalFilter{ReleaseID: release})
+	require.NoError(t, err)
+	for _, v := range views {
+		if v.Attempt == attempt {
+			return v
+		}
+	}
+	require.Failf(t, "no proposal row", "release %s attempt %d", release, attempt)
+	return proposal.View{}
+}

@@ -21,9 +21,12 @@ type Remediation struct {
 	Status RemediationStatus
 	// TriggerPayload is the raw payload of the heal trigger the run was
 	// created from.
-	TriggerPayload   []byte
+	TriggerPayload []byte
+	// TriggerMessageID is the dedup id of the message the run answers to: the
+	// heal trigger it was created from, or the redrive of that trigger's dead
+	// letter that resumed it after a system failure.
 	TriggerMessageID string
-	// TriggerFields is the trigger message's stream fields.
+	// TriggerFields is that message's stream fields, without its payload.
 	TriggerFields map[string]string
 	CurrentTry    int
 	// LeaseOwner and LeaseUntil name the worker holding the run and when its
