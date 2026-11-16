@@ -82,11 +82,17 @@ func TestLiveContractsStore_RefusesAnUnreadableIndex(t *testing.T) {
 
 	require.NoError(t, mem.Put(ctx, ref, []byte("not json"), "application/json"))
 	_, _, err := store.ReadIndex(ctx, "default")
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, ports.ErrLiveIndexUnreadable)
+	assert.ErrorContains(t, err, ref.Key, "the error names the index to delete")
 
 	require.NoError(t, mem.Put(ctx, ref, []byte(`{"schema_version": 2, "files": []}`), "application/json"))
 	_, _, err = store.ReadIndex(ctx, "default")
 	assert.ErrorContains(t, err, "schema_version 2")
+	assert.ErrorIs(t, err, ports.ErrLiveIndexUnreadable)
+
+	require.NoError(t, mem.Put(ctx, ref, []byte(`{"schema_version": 1, "written_at": "yesterday", "files": []}`), "application/json"))
+	_, _, err = store.ReadIndex(ctx, "default")
+	assert.ErrorIs(t, err, ports.ErrLiveIndexUnreadable)
 }
 
 func TestLiveContractsStore_RefusesAnIdThatNamesNoFile(t *testing.T) {

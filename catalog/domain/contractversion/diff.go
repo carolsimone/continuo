@@ -1,7 +1,6 @@
 package contractversion
 
 import (
-	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -26,7 +25,8 @@ type FieldChange struct {
 // a bracket or a quote is written `["key"]`, so two paths never read alike.
 //
 // render writes a value the way the caller stores it (an adapter passes its
-// canonical JSON); it is called only for values that sit at a changed path.
+// canonical JSON). Two scalars are equal when render writes them alike, so a
+// number compares by its value's text whatever Go type decoded it.
 func Diff(before, after map[string]any, render func(any) string) []FieldChange {
 	d := differ{render: render}
 	d.objects("", before, after)
@@ -95,8 +95,11 @@ func (d *differ) values(path string, before, after any) {
 			return
 		}
 	}
-	if !reflect.DeepEqual(before, after) {
-		d.changes = append(d.changes, FieldChange{Path: path, BeforeJSON: d.render(before), AfterJSON: d.render(after)})
+	// Scalars, and an object or array against a value of another kind, compare
+	// as the renderer writes them: a number holds the same value whatever Go
+	// type its decoder chose when it renders to the same text.
+	if beforeText, afterText := d.render(before), d.render(after); beforeText != afterText {
+		d.changes = append(d.changes, FieldChange{Path: path, BeforeJSON: beforeText, AfterJSON: afterText})
 	}
 }
 

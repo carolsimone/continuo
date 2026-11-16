@@ -1,11 +1,13 @@
 package handlers_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"sync"
 	"testing"
@@ -63,6 +65,7 @@ type fakeLiveStore struct {
 	mu         sync.Mutex
 	files      map[string][]byte
 	index      *ports.LiveIndex
+	readErr    error
 	ops        []string
 	failPut    map[string]error
 	failDelete map[string]error
@@ -97,6 +100,9 @@ func (f *fakeLiveStore) Delete(_ context.Context, _, uniqueID string) error {
 func (f *fakeLiveStore) ReadIndex(context.Context, string) (ports.LiveIndex, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.readErr != nil {
+		return ports.LiveIndex{}, false, f.readErr
+	}
 	if f.index == nil {
 		return ports.LiveIndex{}, false, nil
 	}
@@ -349,10 +355,13 @@ func TestLiveRewrite_DeletesTheFileOfANodeNoLongerLive(t *testing.T) {
 
 	require.NoError(t, f.rewrite(3))
 
-	assert.Equal(t, []string{"delete analytics.retired", "index"}, f.store.writes())
+	assert.Equal(t, []string{"index", "delete analytics.retired", "index"}, f.store.writes(),
+		"an interim index lists the file before it is deleted")
 	assert.NotContains(t, f.store.files, "analytics.retired")
 	assert.Equal(t, []ports.LiveIndexFile{{UniqueID: "analytics.a", Version: 1, ContractHash: "sha256:a1"}}, f.store.index.Files)
-	assert.Equal(t, [][2]string{{ports.LiveWriteDelete, ports.LiveWriteOK}, {ports.LiveWriteIndex, ports.LiveWriteOK}}, f.metrics.writes())
+	assert.Equal(t, [][2]string{
+		{ports.LiveWriteIndex, ports.LiveWriteOK}, {ports.LiveWriteDelete, ports.LiveWriteOK}, {ports.LiveWriteIndex, ports.LiveWriteOK},
+	}, f.metrics.writes())
 }
 
 // An ephemeral model gets no file and no index entry; one whose file was
@@ -429,9 +438,10 @@ func TestLiveRewrite_AnEmptyPromotionDeletesEveryFile(t *testing.T) {
 	require.NoError(t, f.rewrite(3))
 
 	writes := f.store.writes()
-	require.Len(t, writes, 3)
-	assert.ElementsMatch(t, []string{"delete analytics.a", "delete analytics.b"}, writes[:2], "deletes run at once, in any order")
-	assert.Equal(t, "index", writes[2])
+	require.Len(t, writes, 4)
+	assert.Equal(t, "index", writes[0], "the interim index")
+	assert.ElementsMatch(t, []string{"delete analytics.a", "delete analytics.b"}, writes[1:3], "deletes run at once, in any order")
+	assert.Equal(t, "index", writes[3])
 	assert.Empty(t, f.store.index.Files)
 	assert.Empty(t, f.store.files)
 }
@@ -525,8 +535,8 @@ func TestLiveRewrite_AFileOfAFailedRewriteIsDeletedByTheNextOne(t *testing.T) {
 	assert.Equal(t, []ports.LiveIndexFile{
 		{UniqueID: "analytics.a", Version: 1, ContractHash: "sha256:a1"},
 		{UniqueID: "analytics.x"},
-		{UniqueID: "analytics.z", Version: 1, ContractHash: "sha256:z1"},
-	}, f.store.index.Files)
+		{UniqueID: "analytics.z"},
+	}, f.store.index.Files, "the file put and the file about to be deleted, each at version 0")
 
 	// Promotion 54 drops x.
 	delete(f.store.failDelete, "analytics.z")
@@ -553,8 +563,8 @@ func TestLiveRewrite_ARollbackAfterAFailedOverwritePutsTheFileAgain(t *testing.T
 	require.Equal(t, "analytics.y v2 servers=true", string(f.store.files["analytics.y"]), "53 overwrote y at v2, then failed")
 	assert.Equal(t, []ports.LiveIndexFile{
 		{UniqueID: "analytics.y"},
-		{UniqueID: "analytics.z", Version: 1, ContractHash: "sha256:z1"},
-	}, f.store.index.Files, "the overwritten file is marked at version 0")
+		{UniqueID: "analytics.z"},
+	}, f.store.index.Files, "the overwritten file and the file about to be deleted are marked at version 0")
 
 	// Promotion 54 brings y back to the contract the index listed at v1.
 	delete(f.store.failDelete, "analytics.z")
@@ -592,6 +602,55 @@ func TestLiveRewrite_ASettingsFlipAfterAFailedRewritePutsEveryFileAgain(t *testi
 	assert.Equal(t, "analytics.a v1 servers=false", string(f.store.files["analytics.a"]))
 	assert.Equal(t, "analytics.b v1 servers=false", string(f.store.files["analytics.b"]))
 	assert.Equal(t, oldSettings, f.store.index.SettingsSHA256)
+}
+
+// A delete that ran before a rewrite failed is never forgotten: the interim
+// index lists the deleted file at version 0, so a later promotion that brings
+// the node back unchanged puts its file again instead of trusting an index
+// entry whose object is gone.
+func TestLiveRewrite_ANodeBroughtBackAfterAFailedDeleteIsPutAgain(t *testing.T) {
+	f := newLiveFolderFixture()
+	f.lease.seq = 5
+	f.listed(5,
+		ports.LiveIndexFile{UniqueID: "analytics.x", Version: 1, ContractHash: "sha256:x"},
+		ports.LiveIndexFile{UniqueID: "analytics.y", Version: 1, ContractHash: "sha256:y"},
+	)
+	f.store.failDelete["analytics.y"] = errors.New("503 slow down")
+
+	// Promotion 6 drops both nodes; y's delete fails after x's file is gone.
+	require.Error(t, f.rewrite(6))
+	require.NotContains(t, f.store.files, "analytics.x", "the failed rewrite deleted x's file")
+	assert.Equal(t, []ports.LiveIndexFile{{UniqueID: "analytics.x"}, {UniqueID: "analytics.y"}}, f.store.index.Files,
+		"the interim index lists both files about to be deleted at version 0")
+
+	// Promotion 7, handled before 6's redelivery, brings x back unchanged.
+	delete(f.store.failDelete, "analytics.y")
+	f.reader.live = []contractversion.LiveContract{liveContract("analytics.x", 1, "sha256:x")}
+	require.NoError(t, f.rewrite(7))
+
+	assert.Equal(t, "analytics.x v1 servers=true", string(f.store.files["analytics.x"]), "x is live again, so its file exists")
+	assert.NotContains(t, f.store.files, "analytics.y")
+	assert.Equal(t, []ports.LiveIndexFile{{UniqueID: "analytics.x", Version: 1, ContractHash: "sha256:x"}}, f.store.index.Files)
+}
+
+// An index the store cannot read (corrupt, or of a newer schema) fails every
+// rewrite until an operator deletes it, so the failure is logged as an error
+// that names the fix: delete the index, and the next rewrite puts every file.
+func TestLiveRewrite_AnUnreadableIndexIsLoggedWithItsFix(t *testing.T) {
+	f := newLiveFolderFixture(liveContract("analytics.a", 1, "sha256:a1"))
+	var logs bytes.Buffer
+	f.folder = handlers.NewLiveFolder(f.reader, f.store, fakeRenderer{}, f.lease, f.lease, f.metrics,
+		liveServer, func() time.Time { return liveClock }, slog.New(slog.NewTextHandler(&logs, nil)))
+	f.store.readErr = fmt.Errorf("%w: decode the live index tenants/default/contracts/live/_index.json: bad json",
+		ports.ErrLiveIndexUnreadable)
+
+	err := f.rewrite(3)
+
+	require.ErrorIs(t, err, ports.ErrLiveIndexUnreadable)
+	assert.Empty(t, f.store.writes(), "nothing is written")
+	assert.Contains(t, logs.String(), "level=ERROR")
+	assert.Contains(t, logs.String(), "tenants/default/contracts/live/_index.json")
+	assert.Contains(t, logs.String(), "delete the index")
 }
 
 // A redelivery of a rewrite that failed after its puts puts the new file

@@ -9,8 +9,10 @@ import (
 // ContractReader is the read surface over a tenant's contract history. Every
 // method reads one tenant's graph only. A node's history is its promotion
 // edges, one per change of its contract, each numbered by the node's counter.
-// A retired node keeps its history and its pointer, but none of its versions
-// is current and it has no current contract.
+// A retired node, and a node the newest promotion the live folder recorded did
+// not carry (its service no longer releases ODCS contracts), keeps its history
+// and its pointer, but none of its versions is current and it has no current
+// contract.
 type ContractReader interface {
 	// Current returns the version the live node's pointer names, with its
 	// stored document. A node with no current contract returns

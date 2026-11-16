@@ -1,6 +1,7 @@
 package serialization_test
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -200,4 +201,21 @@ func TestODCSYAML_RefusesAValueOfAnotherType(t *testing.T) {
 	_, err := serialization.ODCSYAML{}.Render(map[string]any{"id": struct{}{}})
 
 	require.Error(t, err)
+}
+
+// A number decoded as its text is written as that number, exactly: an
+// integer beyond float64's exact range keeps every digit and reads back as
+// the same integer, a fraction reads back as a float.
+func TestODCSYAML_WritesANumberAsItsText(t *testing.T) {
+	doc := map[string]any{"limit": json.Number("9007199254740993"), "ratio": json.Number("0.1"), "big": json.Number("1e+21")}
+
+	got, err := serialization.ODCSYAML{}.Render(doc)
+	require.NoError(t, err)
+
+	assert.Equal(t, "big: 1e+21\nlimit: 9007199254740993\nratio: 0.1\n", string(got))
+	var back map[string]any
+	require.NoError(t, yaml.Unmarshal(got, &back))
+	assert.Equal(t, 9007199254740993, back["limit"])
+	assert.InDelta(t, 0.1, back["ratio"], 0)
+	assert.InDelta(t, 1e21, back["big"], 0)
 }

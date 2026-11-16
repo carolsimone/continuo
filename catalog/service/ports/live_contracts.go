@@ -39,6 +39,12 @@ type LiveIndexFile struct {
 	ContractHash string
 }
 
+// ErrLiveIndexUnreadable is the error of an index the store holds but cannot
+// read: not JSON, of another schema version, too large or with a bad field.
+// No rewrite can go on from it; deleting the index lets the next rewrite put
+// every file again.
+var ErrLiveIndexUnreadable = errors.New("the live contracts index cannot be read")
+
 // LiveContractsStore writes a tenant's live contracts folder in object
 // storage: one published contract file per unique id, and the folder's
 // index.
@@ -49,7 +55,8 @@ type LiveContractsStore interface {
 	// exist is not an error.
 	Delete(ctx context.Context, tenantID, uniqueID string) error
 	// ReadIndex reads the tenant's index; found is false when the folder has
-	// none.
+	// none. An index it cannot read is ErrLiveIndexUnreadable, naming the
+	// index's key.
 	ReadIndex(ctx context.Context, tenantID string) (idx LiveIndex, found bool, err error)
 	// PutIndex writes the tenant's index.
 	PutIndex(ctx context.Context, tenantID string, idx LiveIndex) error

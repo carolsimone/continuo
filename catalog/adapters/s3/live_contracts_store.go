@@ -95,8 +95,8 @@ func (s *LiveContractsStore) Delete(ctx context.Context, tenantID, uniqueID stri
 }
 
 // ReadIndex reads the tenant's index. A missing index is found false; an
-// index that is not JSON, of another schema version or too large is an
-// error.
+// index that is not JSON, of another schema version, too large or with an
+// unreadable written_at is ports.ErrLiveIndexUnreadable, naming its key.
 func (s *LiveContractsStore) ReadIndex(ctx context.Context, tenantID string) (ports.LiveIndex, bool, error) {
 	ref, err := liveIndexRef(tenantID)
 	if err != nil {
@@ -106,20 +106,22 @@ func (s *LiveContractsStore) ReadIndex(ctx context.Context, tenantID string) (po
 	switch {
 	case errors.Is(err, objectstore.ErrNotFound):
 		return ports.LiveIndex{}, false, nil
+	case errors.Is(err, objectstore.ErrTooLarge):
+		return ports.LiveIndex{}, false, fmt.Errorf("%w: the live index %s: %w", ports.ErrLiveIndexUnreadable, ref.Key, err)
 	case err != nil:
 		return ports.LiveIndex{}, false, fmt.Errorf("read the live index %s: %w", ref.Key, err)
 	}
 	var dto liveIndexDTO
 	if err := json.Unmarshal(body, &dto); err != nil {
-		return ports.LiveIndex{}, false, fmt.Errorf("decode the live index %s: %w", ref.Key, err)
+		return ports.LiveIndex{}, false, fmt.Errorf("%w: decode the live index %s: %w", ports.ErrLiveIndexUnreadable, ref.Key, err)
 	}
 	if dto.SchemaVersion != ports.LiveIndexSchemaVersion {
-		return ports.LiveIndex{}, false, fmt.Errorf("the live index %s has schema_version %d, this build reads %d",
-			ref.Key, dto.SchemaVersion, ports.LiveIndexSchemaVersion)
+		return ports.LiveIndex{}, false, fmt.Errorf("%w: the live index %s has schema_version %d, this build reads %d",
+			ports.ErrLiveIndexUnreadable, ref.Key, dto.SchemaVersion, ports.LiveIndexSchemaVersion)
 	}
 	writtenAt, err := time.Parse(liveIndexTimeStamp, dto.WrittenAt)
 	if err != nil {
-		return ports.LiveIndex{}, false, fmt.Errorf("decode the live index %s: written_at: %w", ref.Key, err)
+		return ports.LiveIndex{}, false, fmt.Errorf("%w: decode the live index %s: written_at: %w", ports.ErrLiveIndexUnreadable, ref.Key, err)
 	}
 	idx := ports.LiveIndex{
 		SchemaVersion:  dto.SchemaVersion,

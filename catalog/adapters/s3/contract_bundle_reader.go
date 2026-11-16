@@ -1,6 +1,7 @@
 package s3
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -114,11 +115,14 @@ func incomingContracts(contracts map[string]contractbundle.Contract) ([]contract
 }
 
 // decodeContractDocument decodes a stored contract to a map: objects as
-// map[string]any, arrays as []any, numbers as float64. A document that is not
-// a JSON object is an error.
+// map[string]any, arrays as []any, numbers as json.Number, the text the bundle
+// holds, so a number keeps the exact value the contract hash was taken over.
+// A document that is not a JSON object is an error.
 func decodeContractDocument(raw json.RawMessage) (map[string]any, error) {
 	var document map[string]any
-	if err := json.Unmarshal(raw, &document); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&document); err != nil {
 		return nil, fmt.Errorf("the document is not a JSON object: %w", err)
 	}
 	if document == nil {

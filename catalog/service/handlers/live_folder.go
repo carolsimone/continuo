@@ -153,9 +153,9 @@ func (l *LiveFolder) Rewrite(ctx context.Context, in domainModel.PromoteReleaseI
 		if done, err := l.atWatermark(ctx, in); err != nil || done {
 			return err
 		}
-		prev, found, err := l.store.ReadIndex(ctx, in.TenantID)
+		prev, found, err := l.readIndex(ctx, in.TenantID)
 		if err != nil {
-			return fmt.Errorf("read the live index: %w", err)
+			return err
 		}
 		if found && prev.SettingsSHA256 == l.settings && prev.PromotionSeq >= in.PromotionSeq {
 			l.logger.Info("live contracts folder already written for this promotion; nothing to write",
@@ -176,6 +176,22 @@ func (l *LiveFolder) Rewrite(ctx context.Context, in domainModel.PromoteReleaseI
 		return "", err
 	}
 	return settings, nil
+}
+
+// readIndex reads the tenant's index. An index the store cannot read fails
+// every rewrite until someone deletes it, so it is logged as an error that
+// names the fix.
+func (l *LiveFolder) readIndex(ctx context.Context, tenantID string) (ports.LiveIndex, bool, error) {
+	prev, found, err := l.store.ReadIndex(ctx, tenantID)
+	if errors.Is(err, ports.ErrLiveIndexUnreadable) {
+		l.logger.Error("live contracts index unreadable; no rewrite can go on until it is fixed:"+
+			" delete the index the error names, and the next rewrite puts every file again",
+			"tenant_id", tenantID, "error", err)
+	}
+	if err != nil {
+		return ports.LiveIndex{}, false, fmt.Errorf("read the live index: %w", err)
+	}
+	return prev, found, nil
 }
 
 // superseded reports whether a promotion newer than seq has its contracts
@@ -227,9 +243,9 @@ func (l *LiveFolder) RewriteAll(ctx context.Context, tenantID string) error {
 		if newer, err := l.superseded(ctx, tenantID, mark.PromotionSeq); err != nil || newer {
 			return err
 		}
-		prev, found, err := l.store.ReadIndex(ctx, tenantID)
+		prev, found, err := l.readIndex(ctx, tenantID)
 		if err != nil {
-			return fmt.Errorf("read the live index: %w", err)
+			return err
 		}
 		if err := l.write(ctx, tenantID, prev, found, true, mark.PromotionSeq, mark.ReleaseID); err != nil {
 			return err
@@ -334,13 +350,13 @@ func (l *LiveFolder) underLease(ctx context.Context, tenantID string, fn func(ct
 // other settings), deletes the files prev lists that are no longer published,
 // then puts the index naming promotionSeq and releaseID.
 //
-// Before its puts it puts an interim index: prev with every file about to be
-// put listed at version 0 and an empty hash, which match no contract. A
-// rewrite that stops after a put leaves that file listed at version 0, so the
-// next rewrite, whichever promotion and settings it is for, deletes the file
-// if its node is not published and puts it again if it is: a file a failed
-// rewrite added, or overwrote with another version or other settings, is
-// never left in place.
+// Before its writes it puts an interim index: prev with every file about to be
+// put or deleted listed at version 0 and an empty hash, which match no
+// contract. A rewrite that stops after a put or a delete leaves that file
+// listed at version 0, so the next rewrite, whichever promotion and settings
+// it is for, deletes the file if its node is not published and puts it again
+// if it is: a file a failed rewrite added, overwrote with another version or
+// other settings, or deleted, is never left as the index does not say.
 func (l *LiveFolder) write(
 	ctx context.Context,
 	tenantID string,
@@ -383,7 +399,7 @@ func (l *LiveFolder) write(
 	slices.SortFunc(puts, func(a, b contractversion.LiveContract) int { return cmp.Compare(a.UniqueID, b.UniqueID) })
 	slices.Sort(deletes)
 
-	if err := l.putInterimIndex(ctx, tenantID, prev, found, puts, promotionSeq, releaseID); err != nil {
+	if err := l.putInterimIndex(ctx, tenantID, prev, found, puts, deletes, promotionSeq, releaseID); err != nil {
 		return err
 	}
 	if err := l.each(ctx, len(puts), ports.LiveWritePut, func(ctx context.Context, i int) error {
@@ -421,8 +437,8 @@ func (l *LiveFolder) write(
 	return nil
 }
 
-// putInterimIndex puts the interim index write describes when puts is not
-// empty; otherwise it writes nothing. The interim index keeps prev's
+// putInterimIndex puts the interim index write describes when puts or
+// deletes is not empty; otherwise it writes nothing. The interim index keeps prev's
 // promotion, release and settings, so a rewrite reading it still sees the
 // folder's last finished rewrite. With no prev it names the promotion and
 // release being written and no settings, which no rewrite takes as finished.
@@ -432,15 +448,19 @@ func (l *LiveFolder) putInterimIndex(
 	prev ports.LiveIndex,
 	found bool,
 	puts []contractversion.LiveContract,
+	deletes []string,
 	promotionSeq int64,
 	releaseID string,
 ) error {
-	if len(puts) == 0 {
+	if len(puts) == 0 && len(deletes) == 0 {
 		return nil
 	}
-	pending := make(map[string]bool, len(puts))
+	pending := make(map[string]bool, len(puts)+len(deletes))
 	for _, c := range puts {
 		pending[c.UniqueID] = true
+	}
+	for _, id := range deletes {
+		pending[id] = true
 	}
 	files := make([]ports.LiveIndexFile, 0, len(prev.Files)+len(puts))
 	for _, f := range prev.Files {
@@ -448,8 +468,8 @@ func (l *LiveFolder) putInterimIndex(
 			files = append(files, f)
 		}
 	}
-	for _, c := range puts {
-		files = append(files, ports.LiveIndexFile{UniqueID: c.UniqueID})
+	for id := range pending {
+		files = append(files, ports.LiveIndexFile{UniqueID: id})
 	}
 	slices.SortFunc(files, func(a, b ports.LiveIndexFile) int { return cmp.Compare(a.UniqueID, b.UniqueID) })
 	interim := prev

@@ -1,6 +1,7 @@
 package serialization_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -33,4 +34,9 @@ func TestCanonicalJSON_DoesNotEscapeHTMLCharacters(t *testing.T) {
 func TestCanonicalJSON_WritesAnEmptyContainerAsItself(t *testing.T) {
 	assert.Equal(t, `{}`, serialization.CanonicalJSON(map[string]any{}))
 	assert.Equal(t, `[]`, serialization.CanonicalJSON([]any{}))
+}
+
+func TestCanonicalJSON_WritesANumberAsItsText(t *testing.T) {
+	assert.Equal(t, `9007199254740993`, serialization.CanonicalJSON(json.Number("9007199254740993")))
+	assert.Equal(t, `{"a":1.5}`, serialization.CanonicalJSON(map[string]any{"a": json.Number("1.5")}))
 }

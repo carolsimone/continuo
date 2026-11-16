@@ -17,12 +17,15 @@ import (
 // live-folder lease (holder, kind, until), kept as the export lease keeps its
 // own on the export node.
 //
-// The node is not the export gate. A lease statement locks only this node, so
-// a rewrite holding the lease pauses no graph write and stops no export, and
-// an export holding the tenant's lease does not stop a rewrite from taking
-// it. The writes of the watermark and the fingerprint change the graph, so
-// they run behind the export gate: transaction B's through the unit of work,
-// RecordSettings by taking the gate itself.
+// The node is not the export gate. Renew and Release lock only this node, so a
+// rewrite holding the lease pauses no graph write and stops no export. Taking
+// the lease creates the node on a tenant's first rewrite, a graph write, so
+// Acquire runs behind the export gate and refuses while an export or a
+// restore holds the tenant's lease: a restore between its wipe and its import
+// meets no node it did not write. The writes of the watermark and the
+// fingerprint change the graph, so they run behind the export gate too:
+// transaction B's through the unit of work, RecordSettings by taking the gate
+// itself.
 const liveFolderNodeKey = "contracts-live"
 
 // liveFolderLeaseKind is the kind a live-folder lease records.
@@ -87,15 +90,25 @@ func NewLiveFolderLease(client Neo4jClient, logger *slog.Logger) *LiveFolderLeas
 }
 
 // Acquire takes the tenant's live-folder lease for holder. A live lease,
-// whoever holds it, is refused (acquired false); an expired one is taken
-// over.
+// whoever holds it, is refused (acquired false), and so is any take while an
+// export or a restore holds the tenant's export lease; an expired lease is
+// taken over.
 func (l *LiveFolderLease) Acquire(ctx context.Context, tenantID, holder string, ttl time.Duration) (bool, error) {
 	ttlMs, err := leaseRequest(tenantID, holder, ttl)
 	if err != nil {
 		return false, err
 	}
-	acquired := false
+	acquired, paused := false, false
 	err = inWriteTx(ctx, l.client, tenantID, func(run TenantRunner) (bool, error) {
+		exportGate, err := lockExportGate(ctx, run)
+		if err != nil {
+			return false, err
+		}
+		if exportGate.held {
+			// Rolled back: no lock property and no live-folder node persists.
+			paused = true
+			return false, nil
+		}
 		gate, err := lockLeaseGate(ctx, run, liveFolderNodeKey)
 		if err != nil {
 			return false, fmt.Errorf("lock the live-folder lease: %w", err)
@@ -109,11 +122,18 @@ func (l *LiveFolderLease) Acquire(ctx context.Context, tenantID, holder string, 
 		})); err != nil {
 			return false, fmt.Errorf("take the live-folder lease: %w", err)
 		}
+		if err := unlockExportGate(ctx, run); err != nil {
+			return false, err
+		}
 		acquired = true
 		return true, nil
 	})
 	if err != nil {
 		return false, err
+	}
+	if paused {
+		l.logger.Info("live-folder lease not taken while an export or a restore holds the tenant's lease",
+			"tenant_id", tenantID, "holder", holder)
 	}
 	if acquired {
 		l.logger.Debug("live-folder lease acquired", "tenant_id", tenantID, "holder", holder, "ttl", ttl.String())

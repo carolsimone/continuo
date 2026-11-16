@@ -4,8 +4,10 @@ package serialization
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
@@ -66,7 +68,9 @@ const (
 )
 
 // Render returns doc as YAML. A value that is not a string, a bool, an
-// integer, a float64, nil, a map[string]any or a []any is an error.
+// integer, a float64, a json.Number, nil, a map[string]any or a []any is an
+// error. A json.Number is written as its own text, so a number keeps every
+// digit the stored document holds.
 func (ODCSYAML) Render(doc map[string]any) ([]byte, error) {
 	root, err := buildMapping(doc, orderRoot, 0)
 	if err != nil {
@@ -134,6 +138,8 @@ func buildValue(v any, order keyOrder, column int) (*yaml.Node, error) {
 		return buildSequence(t, order, column-yamlIndent)
 	case string:
 		return stringNode(t), nil
+	case json.Number:
+		return numberNode(t), nil
 	case nil, bool, int, int32, int64, float64:
 		node := &yaml.Node{}
 		if err := node.Encode(t); err != nil {
@@ -220,6 +226,16 @@ func holdsSequence(node *yaml.Node) bool {
 		return true
 	}
 	return slices.ContainsFunc(node.Content, holdsSequence)
+}
+
+// numberNode is n as a plain number scalar holding n's text: an integer when
+// the text has no fraction or exponent, a float otherwise.
+func numberNode(n json.Number) *yaml.Node {
+	tag := "!!int"
+	if strings.ContainsAny(string(n), ".eE") {
+		tag = "!!float"
+	}
+	return &yaml.Node{Kind: yaml.ScalarNode, Tag: tag, Value: string(n)}
 }
 
 // stringNode is s as a string scalar, double-quoted when YAML would not read

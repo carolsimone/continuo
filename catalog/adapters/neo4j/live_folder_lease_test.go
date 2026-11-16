@@ -43,8 +43,9 @@ func (f *uowFixture) recordLiveFolder(messageID string, seq int64, release, sett
 		})
 }
 
-// The live-folder lease lives on its own node: an export holding the tenant's
-// lease does not stop a rewrite from taking the live-folder lease, and a
+// The live-folder lease lives on its own node, and taking it is a graph write:
+// while an export or a restore holds the tenant's lease a rewrite cannot take
+// it (and creates no live-folder node a restore's import would meet), while a
 // rewrite holding it pauses no graph write and stops no export.
 func TestLiveFolderLease_IsNotTheExportLease(t *testing.T) {
 	ctx := context.Background()
@@ -52,11 +53,19 @@ func TestLiveFolderLease_IsNotTheExportLease(t *testing.T) {
 	exportLease := NewExportLease(f.client, quietLogger())
 	live := NewLiveFolderLease(f.client, quietLogger())
 
-	require.NoError(t, exportLease.Acquire(ctx, f.tenant, ports.LeaseExport, "exporter-1", time.Minute))
+	for _, kind := range []ports.LeaseKind{ports.LeaseExport, ports.LeaseRestore} {
+		require.NoError(t, exportLease.Acquire(ctx, f.tenant, kind, "exporter-1", time.Minute))
+		acquired, err := live.Acquire(ctx, f.tenant, "rewrite-1", time.Minute)
+		require.NoError(t, err)
+		assert.False(t, acquired, "an %s holds the tenant's writes, the live-folder lease among them", kind)
+		assert.Nil(t, f.liveNode(), "a refused take creates no live-folder node")
+		require.NoError(t, exportLease.Release(ctx, f.tenant, "exporter-1"))
+	}
+
 	acquired, err := live.Acquire(ctx, f.tenant, "rewrite-1", time.Minute)
 	require.NoError(t, err)
-	assert.True(t, acquired, "an export does not hold the live folder")
-	require.NoError(t, exportLease.Release(ctx, f.tenant, "exporter-1"))
+	require.True(t, acquired, "the lease is taken once the export lease is released")
+	assert.NotContains(t, f.leaseNode(), "_lock", "the export gate's lock never persists")
 
 	require.NoError(t, NewUnitOfWork(f.client, quietLogger()).Write(ctx, f.marker("1762077700000-0", nil), true,
 		func(ctx context.Context, tx uow.Tx) error { return f.writeProbe(ctx, tx, "during-rewrite") }),

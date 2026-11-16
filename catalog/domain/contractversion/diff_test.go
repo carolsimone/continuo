@@ -177,3 +177,16 @@ func TestDiff_LeavesBothDocumentsAlone(t *testing.T) {
 	assert.Equal(t, kpisDocument("NUMERIC(12,2)"), before)
 	assert.Equal(t, kpisDocument("NUMERIC(14,2)"), after)
 }
+
+// Two scalars are compared through the caller's renderer, so a number decoded
+// as its text and the same number decoded as a float, which the renderer
+// writes alike, are not a change, while two numbers it writes apart are.
+func TestDiff_ComparesScalarsAsTheRendererWritesThem(t *testing.T) {
+	type numberText string
+	before := map[string]any{"limit": numberText("9007199254740993"), "same": numberText("12")}
+	after := map[string]any{"limit": numberText("9007199254740992"), "same": float64(12)}
+
+	assert.Equal(t, []contractversion.FieldChange{
+		{Path: "limit", BeforeJSON: "9007199254740993", AfterJSON: "9007199254740992"},
+	}, contractversion.Diff(before, after, render))
+}

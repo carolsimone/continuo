@@ -24,10 +24,13 @@ import (
 // goes backwards. The current version is the edge whose counter the node's
 // :CURRENT_CONTRACT pointer carries, so after a revert the first edge to the
 // same stored contract is not current. Current, History and ByVersion read
-// the pointer through a live node: a retired node keeps its pointer as the
-// record of its last contract, but none of its versions is current and it has
-// no current contract. Live instead reads the nodes a promotion's bundle
-// named, by their contract watermark, whatever their active flag.
+// the pointer through a live node whose contract watermark is at or above the
+// live folder's: a retired node, or a node the newest promotion the folder
+// recorded did not carry (its service no longer releases ODCS contracts),
+// keeps its pointer as the record of its last contract, but none of its
+// versions is current and it has no current contract, as the folder holds no
+// file of it. Live instead reads the nodes a promotion's bundle named, by
+// their contract watermark, whatever their active flag.
 type ContractQueryRepository struct {
 	client Neo4jClient
 }
@@ -41,13 +44,27 @@ func NewContractQueryRepository(client Neo4jClient) *ContractQueryRepository {
 	return &ContractQueryRepository{client: client}
 }
 
+// liveFolderMarkCypher binds folder_seq to the promotion the tenant's live
+// contracts folder was last recorded for, 0 before its first rewrite.
+const liveFolderMarkCypher = `
+OPTIONAL MATCH (folder:Meta {tenant_id: $tenant_id, key: '` + liveFolderNodeKey + `'})
+WITH coalesce(folder.promotion_seq, 0) AS folder_seq
+`
+
+// currentContractWhere keeps a node n whose pointer is current: n is live and
+// its contract watermark is at or above folder_seq, so the newest promotion
+// the folder recorded carried its contract.
+const currentContractWhere = `
+WHERE coalesce(n.active, true) AND coalesce(n.contract_promotion_seq, 0) >= folder_seq`
+
 // liveContractVersionCypher binds current_version to the counter of the
-// tenant's live :Node $uid's pointer, or to null when the node is retired, has
-// no contract or does not exist. It is the head of every query that marks
-// is_current.
-const liveContractVersionCypher = `
+// tenant's :Node $uid's pointer when that pointer is current
+// (currentContractWhere), or to null when the node is retired, was left out
+// of the newest promotion the folder recorded, has no contract or does not
+// exist. It is the head of every query that marks is_current.
+const liveContractVersionCypher = liveFolderMarkCypher + `
 OPTIONAL MATCH (n:Node {tenant_id: $tenant_id, unique_id: $uid})-[cur:CURRENT_CONTRACT]->(:ContractVersion {tenant_id: $tenant_id})
-WHERE coalesce(n.active, true)
+` + currentContractWhere + `
 WITH cur.version AS current_version
 `
 
@@ -90,12 +107,12 @@ LIMIT $limit`
 	return views, nil
 }
 
-// Current returns the promotion edge whose counter the live node's pointer
-// carries, with its document.
+// Current returns the promotion edge whose counter the node's current pointer
+// (currentContractWhere) carries, with its document.
 func (r *ContractQueryRepository) Current(ctx context.Context, tenantID, uniqueID string) (contractversion.VersionView, error) {
-	query := `
+	query := liveFolderMarkCypher + `
 MATCH (n:Node {tenant_id: $tenant_id, unique_id: $uid})-[cur:CURRENT_CONTRACT]->(v:ContractVersion {tenant_id: $tenant_id})
-WHERE coalesce(n.active, true)
+` + currentContractWhere + `
 MATCH (n)-[e:CONTRACT_PROMOTED]->(v)
 WHERE e.version = cur.version
 WITH e, v, cur.version AS current_version

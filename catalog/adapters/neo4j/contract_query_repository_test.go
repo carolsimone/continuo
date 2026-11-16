@@ -9,6 +9,7 @@ import (
 
 	"github.com/carolsimone/continuo/catalog/domain/contractversion"
 	"github.com/carolsimone/continuo/catalog/domain/topology"
+	"github.com/carolsimone/continuo/catalog/service/uow"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -210,4 +211,44 @@ func TestContractQueryRepository_ReadsOneTenant(t *testing.T) {
 	assert.Empty(t, history)
 	_, err = f.contractReader().Current(ctx, f.tenant, kpisNode)
 	assert.ErrorIs(t, err, contractversion.ErrNotFound)
+}
+
+// recordLiveFolder runs transaction B's live-folder write for the promotion.
+func (f *swapFixture) recordLiveFolder(seq int64, release string) {
+	f.t.Helper()
+	require.NoError(f.t, f.uow.Write(context.Background(), f.contractsMarker(), true, func(ctx context.Context, tx uow.Tx) error {
+		return tx.Contracts().RecordLiveFolder(ctx, f.tenant, seq, release, "settings")
+	}))
+}
+
+// A live node whose contract the newest recorded promotion did not carry (its
+// service went back from python-odcs to python) has no current contract once
+// that promotion's live folder is recorded, as its file is gone from the
+// folder. Until then, and for a node the promotion carried, the pointer is
+// current.
+func TestContractQueryRepository_ANodeTheNewestPromotionLeftOutHasNoCurrentContract(t *testing.T) {
+	f := newSwapFixture(t)
+	f.seedLiveNode(kpisNode)
+	f.seedLiveNode("analytics.reverted")
+	ctx := context.Background()
+	r := f.contractReader()
+	f.writeContracts(contractPromotion("rel-41", 41),
+		contractOf(kpisNode, contractA, "service-py"), contractOf("analytics.reverted", contractA, "service-old"))
+	f.recordLiveFolder(41, "rel-41")
+	f.writeContracts(contractPromotion("rel-42", 42), contractOf(kpisNode, contractB, "service-py"))
+
+	_, err := r.Current(ctx, f.tenant, "analytics.reverted")
+	require.NoError(t, err, "before promotion 42's folder is recorded the node keeps its contract")
+
+	f.recordLiveFolder(42, "rel-42")
+
+	_, err = r.Current(ctx, f.tenant, "analytics.reverted")
+	assert.ErrorIs(t, err, contractversion.ErrNotFound)
+	history, err := r.History(ctx, f.tenant, "analytics.reverted", 0)
+	require.NoError(t, err)
+	require.Len(t, history, 1, "the node keeps its history")
+	assert.False(t, history[0].IsCurrent)
+	cur, err := r.Current(ctx, f.tenant, kpisNode)
+	require.NoError(t, err)
+	assert.Equal(t, contractB, cur.ContractHash, "a node the promotion carried keeps its current contract")
 }

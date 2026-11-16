@@ -300,3 +300,19 @@ func TestContractBundleReader_OtherFailuresKeepTheirCause(t *testing.T) {
 	assert.NotErrorIs(t, err, ports.ErrContractBundleInvalid)
 	assert.Equal(t, pkgredis.ClassInfrastructure, pkgredis.Classify(err))
 }
+
+// A number beyond float64's exact range (2^53 + 1) reaches the domain as the
+// text the bundle holds, so the stored version keeps the value its
+// contract_hash was taken over.
+func TestContractBundleReader_KeepsANumberAsItsText(t *testing.T) {
+	entry := `{"family":"python","service":"service-py","contract_hash":"sha256:h","content_hash":"sha256:c","source":{"path":"contracts/t.odcs.yaml","sha256":"sha256:s"},"document":{"id":"analytics.t","limit":9007199254740993,"ratio":0.1}}`
+	mem := objectstoretest.NewMemory(defaultBucket)
+	sha := putContractBundle(t, mem, contractBundleOf([2]string{"analytics.t", entry}))
+
+	bundle, err := fetchContractBundle(t, mem, sha)
+	require.NoError(t, err)
+
+	require.Len(t, bundle.Contracts, 1)
+	assert.Equal(t, json.Number("9007199254740993"), bundle.Contracts[0].Document["limit"])
+	assert.Equal(t, json.Number("0.1"), bundle.Contracts[0].Document["ratio"])
+}
