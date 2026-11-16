@@ -1,0 +1,25 @@
+# Non-conforming node: passes validation, which only creates an empty typed
+# table from the declared columns and never runs the script, then fails at run
+# time with ConformError when the harness's strict cast rejects the result.
+apiVersion: v3.2.0
+kind: DataContract
+id: e2e_schema.py_bad_shape
+name: py_bad_shape
+version: "0"
+description:
+  purpose: python node whose script returns a non-conforming column type
+team:
+  name: e2e
+customProperties:
+  - {vendor: continuo, property: schedule, value: daily}
+  - {vendor: continuo, property: criticality, value: SECONDARY}
+  - {vendor: continuo, property: script, value: scripts/py_bad_shape.py}
+  - vendor: continuo
+    property: readQueries
+    value:
+      tables: select schemaname from pg_catalog.pg_tables
+schema:
+  - name: py_bad_shape
+    physicalType: table
+    properties:
+      - {name: id, physicalType: INTEGER, required: true}

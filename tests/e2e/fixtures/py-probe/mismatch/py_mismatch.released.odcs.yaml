@@ -1,0 +1,27 @@
+# The contract the release carries. The e2e test packs it with the image's own
+# continuo-runtime and uploads the bundle, so the release hashes this read.
+# py_mismatch.baked.odcs.yaml, which the mismatch image holds instead, reads
+# another column, so the image cannot reproduce the released content_hash.
+apiVersion: v3.2.0
+kind: DataContract
+id: e2e_schema.py_mismatch
+name: py_mismatch
+version: "0"
+description:
+  purpose: python node whose image holds another contract than its release
+team:
+  name: e2e
+customProperties:
+  - {vendor: continuo, property: schedule, value: e2e-py-mismatch}
+  - {vendor: continuo, property: criticality, value: SECONDARY}
+  - {vendor: continuo, property: script, value: scripts/py_probe.py}
+  - vendor: continuo
+    property: readQueries
+    value:
+      tables: select schemaname from pg_catalog.pg_tables
+schema:
+  - name: py_mismatch
+    physicalType: table
+    properties:
+      - {name: id, physicalType: INTEGER, required: true}
+      - {name: label, physicalType: "VARCHAR(16)"}

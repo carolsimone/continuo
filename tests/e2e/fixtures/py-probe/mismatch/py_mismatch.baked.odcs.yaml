@@ -1,0 +1,27 @@
+# The contract the mismatch image holds. It is py_mismatch.released.odcs.yaml
+# with one read changed in meaning (tablename, not schemaname), so the harness's
+# start check recomputes another content_hash than the release's and refuses to
+# run the node.
+apiVersion: v3.2.0
+kind: DataContract
+id: e2e_schema.py_mismatch
+name: py_mismatch
+version: "0"
+description:
+  purpose: python node whose image holds another contract than its release
+team:
+  name: e2e
+customProperties:
+  - {vendor: continuo, property: schedule, value: e2e-py-mismatch}
+  - {vendor: continuo, property: criticality, value: SECONDARY}
+  - {vendor: continuo, property: script, value: scripts/py_probe.py}
+  - vendor: continuo
+    property: readQueries
+    value:
+      tables: select tablename from pg_catalog.pg_tables
+schema:
+  - name: py_mismatch
+    physicalType: table
+    properties:
+      - {name: id, physicalType: INTEGER, required: true}
+      - {name: label, physicalType: "VARCHAR(16)"}

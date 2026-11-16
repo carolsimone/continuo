@@ -1,0 +1,28 @@
+# Conforming node: returns exactly the declared columns and types, so the run
+# path materializes real rows in the warehouse.
+apiVersion: v3.2.0
+kind: DataContract
+id: e2e_schema.py_probe
+name: py_probe
+version: "0"
+description:
+  purpose: conforming python node for the e2e run path
+team:
+  name: e2e
+customProperties:
+  - {vendor: continuo, property: schedule, value: daily}
+  - {vendor: continuo, property: criticality, value: SECONDARY}
+  - {vendor: continuo, property: script, value: scripts/py_probe.py}
+  # pg_catalog is always present and outside continuo's registry, so this read
+  # produces no upstream edge and the fixture stays independent of warehouse
+  # table state.
+  - vendor: continuo
+    property: readQueries
+    value:
+      tables: select schemaname from pg_catalog.pg_tables
+schema:
+  - name: py_probe
+    physicalType: table
+    properties:
+      - {name: id, physicalType: INTEGER, required: true}
+      - {name: label, physicalType: "VARCHAR(16)"}

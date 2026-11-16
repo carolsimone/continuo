@@ -6,24 +6,30 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"encoding/json"
 	"io/fs"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 )
 
 const (
-	// pyTimeoutUniqueID declares timeout_minutes in its authored contract;
-	// pyNoTimeoutUniqueID, in the same contract, declares none.
+	// pyTimeoutUniqueID declares timeoutMinutes in its contract;
+	// pyNoTimeoutUniqueID, in the contract beside it, declares none.
 	pyTimeoutUniqueID   = "e2e_schema.py_timeout"
 	pyNoTimeoutUniqueID = "e2e_schema.py_no_timeout"
 
-	// pyTimeoutMinutes is the authored timeout_minutes, and pyTimeoutSeconds
+	// pyTimeoutContract and pyNoTimeoutContract are the two contract files,
+	// by the path the bundle names them.
+	pyTimeoutContract   = "contracts/py_timeout.odcs.yaml"
+	pyNoTimeoutContract = "contracts/py_no_timeout.odcs.yaml"
+
+	// pyTimeoutMinutes is the authored timeoutMinutes, and pyTimeoutSeconds
 	// the same value as the topology carries it.
 	pyTimeoutMinutes = 90
 	pyTimeoutSeconds = pyTimeoutMinutes * 60
@@ -31,34 +37,47 @@ const (
 	// pyTimeoutFixtureRoot is the fixture's directory inside pyTimeoutFixture.
 	pyTimeoutFixtureRoot = "fixtures/py-timeout"
 
-	// mergeContractScript builds the wire contract from a tar archive of a
-	// domain repository (contracts/ and scripts/) read on stdin, exactly as a
-	// domain repository's CI runs `continuo-runtime merge`, and writes the
-	// merged contract to stdout. The CLI logs to stderr. $1 is the service name.
+	// packBundleScript builds a service's odcs-bundle.json from a tar archive
+	// of a domain repository (contracts/ and scripts/) read on stdin, as a
+	// domain repository's CI runs `continuo-runtime pack`, and writes the
+	// bundle to stdout. The package list it records is the one the image's
+	// own `continuo-runtime packages` prints, given to pack with
+	// --image-packages: the image the command runs in is the image the
+	// release names. The CLI logs to stderr. $1 is the service name.
 	// --dialect postgres matches the e2e stack's warehouse engine.
-	mergeContractScript = `set -eu
+	packBundleScript = `set -eu
 work="$(mktemp -d)"
 tar -x -C "$work"
-continuo-runtime merge "$work/contracts" --service "$1" --repo-root "$work" --dialect postgres --out "$work/contract.yaml" >&2
-cat "$work/contract.yaml"`
+continuo-runtime packages > "$work/image-packages.json"
+continuo-runtime pack "$work/contracts" --service "$1" --repo-root "$work" --image-packages "$work/image-packages.json" --dialect postgres --out "$work/odcs-bundle.json" >&2
+cat "$work/odcs-bundle.json"`
+
+	// hashContractsScript prints the relation and content_hash of every node
+	// of a domain repository read on stdin as a tar archive, one node per
+	// line, as `continuo-runtime hash` computes them.
+	hashContractsScript = `set -eu
+work="$(mktemp -d)"
+tar -x -C "$work"
+continuo-runtime hash "$work/contracts" --repo-root "$work" --dialect postgres`
 )
 
-// pyTimeoutFixture is the authored contracts and scripts of the timeout
-// fixture. It is not baked into the fixture image: the test streams it into the
+// pyTimeoutFixture is the ODCS contracts and scripts of the timeout fixture.
+// It is not baked into the fixture image: the test streams it into the
 // image's runtime CLI.
 //
 //go:embed fixtures/py-timeout/contracts fixtures/py-timeout/scripts
 var pyTimeoutFixture embed.FS
 
 // TestE2E_PythonNodeTimeout_ReachesRunControllerThroughTheRuntimeCLI proves that a
-// Python node's timeout_minutes travels from its authored contract to run-controller's
-// topology through the real runtime, not through a contract the test writes:
+// Python node's timeoutMinutes travels from its ODCS contract to run-controller's
+// topology through the real runtime, not through a bundle the test writes:
 //
-//	py_timeout.yml declares timeout_minutes: 90 on one of its two nodes
-//	→ `continuo-runtime merge`, run inside the fixture image (built on the
+//	py_timeout.odcs.yaml declares timeoutMinutes: 90, py_no_timeout.odcs.yaml
+//	  none
+//	→ `continuo-runtime pack`, run inside the fixture image (built on the
 //	  runtime base image the Helm chart's validation.imageTag defaults to),
-//	  writes the wire contract, with timeout_minutes outside config_hash
-//	→ the contract is uploaded and a kind=python release posted, as a domain
+//	  checks both contracts and writes the bundle
+//	→ the bundle is uploaded and a python-odcs release posted, as a domain
 //	  repository's CI does
 //	→ topology-controller publishes timeout_seconds = 5400 on that node
 //	→ the release validates, promotes and run-controller stores it: that node carries
@@ -77,15 +96,15 @@ func TestE2E_PythonNodeTimeout_ReachesRunControllerThroughTheRuntimeCLI(t *testi
 	verifyK8sAvailable(t, ctx)
 	requireReleaseControllerHealthy(t, clients)
 
-	contract := mergeContractWithRuntime(t, ctx, pyFixtureImage, pyE2EService, pyTimeoutFixture, pyTimeoutFixtureRoot)
-	requireWireEntryTimeout(t, contract, pyTimeoutUniqueID, pyTimeoutMinutes)
-	requireWireEntryTimeout(t, contract, pyNoTimeoutUniqueID, 0)
+	bundle := packBundleWithRuntime(t, ctx, pyFixtureImage, pyE2EService, pyTimeoutFixture, pyTimeoutFixtureRoot)
+	requireBundledTimeout(t, bundle, pyTimeoutContract, pyTimeoutMinutes)
+	requireBundledTimeout(t, bundle, pyNoTimeoutContract, 0)
 
 	// Tap the stream before the release is posted: the trim loop removes
 	// consumed entries, so the validation check reads what the tap recorded.
 	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
 
-	releaseID, cleanup := promotePythonContractRelease(t, ctx, clients, validationTap, string(contract),
+	releaseID, cleanup := promotePythonContractRelease(t, ctx, clients, validationTap, bundle,
 		[]string{pyTimeoutUniqueID, pyNoTimeoutUniqueID}, pyTimeoutUniqueID)
 	defer cleanup()
 
@@ -96,12 +115,42 @@ func TestE2E_PythonNodeTimeout_ReachesRunControllerThroughTheRuntimeCLI(t *testi
 		releaseID, pyTimeoutUniqueID, pyTimeoutSeconds)
 }
 
-// mergeContractWithRuntime runs the runtime CLI's `merge` inside image over a
-// domain repository fixture, the tree under root in fixture (its contracts/ and
-// scripts/), and returns the wire contract it writes. The fixture travels on
-// stdin as a tar archive, so the run needs no bind mount: the docker daemon may
-// live on another filesystem than this process.
-func mergeContractWithRuntime(t *testing.T, ctx context.Context, image, service string, fixture fs.FS, root string) []byte {
+// packBundleWithRuntime runs the runtime CLI's `pack` inside image over a
+// domain repository fixture, the tree under root in fixture (its contracts/
+// and scripts/), and returns the odcs-bundle.json it writes, recording the
+// package list of image.
+func packBundleWithRuntime(t *testing.T, ctx context.Context, image, service string, fixture fs.FS, root string) []byte {
+	t.Helper()
+	bundle := runRuntimeOverFixture(t, ctx, image, fixture, root, packBundleScript, service)
+	require.NotEmpty(t, bundle, "continuo-runtime pack in %s wrote no bundle", image)
+	return bundle
+}
+
+// hashContractsWithRuntime runs the runtime CLI's `hash` inside image over the
+// tree under root in fixture and returns each node's content_hash by relation.
+func hashContractsWithRuntime(t *testing.T, ctx context.Context, image string, fixture fs.FS, root string) map[string]string {
+	t.Helper()
+	return parseRuntimeHashes(string(runRuntimeOverFixture(t, ctx, image, fixture, root, hashContractsScript)))
+}
+
+// parseRuntimeHashes reads the output of `continuo-runtime hash`, one
+// "<relation> <content_hash>" line per node.
+func parseRuntimeHashes(out string) map[string]string {
+	hashes := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		if fields := strings.Fields(line); len(fields) == 2 {
+			hashes[fields[0]] = fields[1]
+		}
+	}
+	return hashes
+}
+
+// runRuntimeOverFixture runs script with sh inside image, the tree under root
+// in fixture streamed to it on stdin as a tar archive, and returns what it
+// prints to stdout. args are the script's positional parameters. The fixture
+// travels on stdin, so the run needs no bind mount: the docker daemon may live
+// on another filesystem than this process.
+func runRuntimeOverFixture(t *testing.T, ctx context.Context, image string, fixture fs.FS, root, script string, args ...string) []byte {
 	t.Helper()
 
 	var archive bytes.Buffer
@@ -127,44 +176,37 @@ func mergeContractWithRuntime(t *testing.T, ctx context.Context, image, service 
 	}), "archive the fixture under %s", root)
 	require.NoError(t, tw.Close())
 
-	cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "-i", "--entrypoint", "sh", //nolint:gosec // fixed arguments; image and service are test constants
-		image, "-c", mergeContractScript, "sh", service)
+	argv := append([]string{"run", "--rm", "-i", "--entrypoint", "sh", image, "-c", script, "sh"}, args...)
+	cmd := exec.CommandContext(ctx, "docker", argv...) //nolint:gosec // fixed arguments; image, script and args are test constants
 	cmd.Stdin = &archive
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	require.NoError(t, cmd.Run(),
-		"continuo-runtime merge in %s failed (a stale local image built on an older runtime rejects newer contract keys; rebuild it with scripts/setup.sh): %s",
+		"continuo-runtime in %s failed (an image built on a runtime older than 0.13.0 reads no .odcs.yaml file; rebuild it with scripts/setup.sh): %s",
 		image, stderr.String())
-	require.NotEmpty(t, stdout.Bytes(), "continuo-runtime merge wrote no contract: %s", stderr.String())
 	return stdout.Bytes()
 }
 
-// requireWireEntryTimeout asserts the merged contract carries timeout_minutes =
-// want on the node, or no timeout_minutes at all when want is 0. The key is a
-// sibling of config, never inside it.
-func requireWireEntryTimeout(t *testing.T, contract []byte, uniqueID string, want int) {
+// requireBundledTimeout asserts the bundle's contract at contractPath carries
+// the continuo property timeoutMinutes = want, or none at all when want is 0.
+func requireBundledTimeout(t *testing.T, bundle []byte, contractPath string, want int) {
 	t.Helper()
-	var doc struct {
-		Nodes []map[string]any `yaml:"nodes"`
-	}
-	require.NoError(t, yaml.Unmarshal(contract, &doc), "parse the merged contract")
+	var doc odcsBundle
+	require.NoError(t, json.Unmarshal(bundle, &doc), "parse the bundle")
 	for _, node := range doc.Nodes {
-		schema, _ := node["schema"].(string)
-		table, _ := node["table"].(string)
-		if schema+"."+table != uniqueID {
+		if node.Path != contractPath {
 			continue
 		}
-		got, declared := node["timeout_minutes"]
+		got, declared := continuoProperties(t, contractPath, node.Text)["timeoutMinutes"]
 		if want == 0 {
-			require.False(t, declared, "%s must carry no timeout_minutes", uniqueID)
+			require.False(t, declared, "%s must declare no timeoutMinutes", contractPath)
 			return
 		}
-		require.True(t, declared, "%s must carry timeout_minutes in the merged contract", uniqueID)
-		require.EqualValues(t, want, got, "timeout_minutes of %s", uniqueID)
-		require.NotContains(t, node["config"], "timeout_minutes", "timeout_minutes belongs outside config")
+		require.True(t, declared, "%s must declare timeoutMinutes in the bundle", contractPath)
+		require.EqualValues(t, want, got, "timeoutMinutes of %s", contractPath)
 		return
 	}
-	require.Failf(t, "node missing", "%s is not in the merged contract", uniqueID)
+	require.Failf(t, "contract missing", "%s is not in the bundle", contractPath)
 }
 
 // requireNodeWithoutTimeout asserts that run-controller's copy of releaseID holds nodeKey
