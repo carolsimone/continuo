@@ -407,6 +407,40 @@ func TestReadLogs_ASeedBuildWithoutAPreflightReadsNoPreflightLog(t *testing.T) {
 	assert.Nil(t, f.SeedPreflight)
 }
 
+// "Nothing to do" in a log is dbt's word that its selector matched no node,
+// which fails an attempt that exited 0, only for a node that is not Python: a
+// Python task that prints those words as ordinary output succeeds. A
+// production attempt and a validation leg each read the node type from their
+// own command.
+func TestReadLogs_NothingToDoFailsOnlyANodeThatIsNotPython(t *testing.T) {
+	deployments := map[string]func(pkgmodel.NodeType) *model.Deployment{
+		"production": func(nodeType pkgmodel.NodeType) *model.Deployment {
+			return model.NewDeployment(command.DeployTask{NodeType: string(nodeType), ServiceName: "analytics", SchemaName: "public", TableName: "orders"}, nil, time.Now())
+		},
+		"validation": func(nodeType pkgmodel.NodeType) *model.Deployment {
+			return model.NewValidationDeployment(command.ValidationDeployTask{NodeType: string(nodeType), ServiceName: "analytics", SchemaName: "public", TableName: "orders"}, nil, time.Now(), false)
+		},
+	}
+	for _, nodeType := range []pkgmodel.NodeType{pkgmodel.NodeTypePythonNode, pkgmodel.NodeTypePythonCsv, pkgmodel.NodeTypePythonApi, pkgmodel.NodeTypeDbtModel} {
+		for mode, deployment := range deployments {
+			t.Run(string(nodeType)+"/"+mode, func(t *testing.T) {
+				o := observerWithLogs(t, &fakeLogs{full: "Nothing to do with this diagnostic: processed 4 rows"})
+
+				f := o.readLogs(context.Background(), deployment(nodeType))
+				exit := int32(0)
+				f.ExitCode = &exit
+
+				verdict := model.Classify(f)
+				if nodeType.IsPython() {
+					assert.True(t, verdict.Succeeded)
+				} else {
+					assert.Equal(t, pkgmodel.FailureReasonDbtNothingToDo, verdict.Reason)
+				}
+			})
+		}
+	}
+}
+
 // A Job found missing adds job_missing to its attempt only when nothing
 // recorded of the attempt explains how it ended: a deadline, a memory kill, an
 // eviction, an exit code or a stop request keeps its own outcome, and only an

@@ -589,6 +589,16 @@ func (d *Deployment) JobName() string {
 	return d.validationCmd.JobName
 }
 
+// NodeType is the type of the node the deployment runs: the production
+// command's for a production attempt, the release leg's for any other. A
+// compile leg compiles a whole service rather than one node and has none.
+func (d *Deployment) NodeType() pkgmodel.NodeType {
+	if d.mode == ModeProduction {
+		return pkgmodel.NodeType(d.command.NodeType)
+	}
+	return pkgmodel.NodeType(d.validationCmd.NodeType)
+}
+
 // RetriesLeft reports whether a transient failure of the current deploy try
 // leaves another try in the budget: RegisterFailure then returns the
 // deployment to pending rather than failing it.

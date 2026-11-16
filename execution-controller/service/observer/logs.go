@@ -11,7 +11,9 @@ import (
 	"github.com/carolsimone/continuo/pkg/validationresult"
 )
 
-// nothingToDo is what dbt prints when its selector matched no node.
+// nothingToDo is what dbt prints when its selector matched no node. Only the
+// log of a node that is not Python is read for it: a Python task may print the
+// same words as ordinary output.
 const nothingToDo = "Nothing to do"
 
 // readLogs reads the log of d's pod and uploads it, with the structured result
@@ -51,7 +53,7 @@ func (o *Observer) readLogs(ctx context.Context, d *model.Deployment) model.Atte
 			blockReason = model.ReasonFromResultBlock(r.Reason)
 		}
 	}
-	f := model.AttemptFacts{NothingToDo: strings.Contains(tail, nothingToDo), LogMessage: o.truncate(blockMessage), Reason: blockReason}
+	f := model.AttemptFacts{NothingToDo: !d.NodeType().IsPython() && strings.Contains(tail, nothingToDo), LogMessage: o.truncate(blockMessage), Reason: blockReason}
 	if p := o.readSeedPreflight(ioCtx, d); p != nil {
 		f.SeedPreflight = p.findings
 		if p.reason != "" {
