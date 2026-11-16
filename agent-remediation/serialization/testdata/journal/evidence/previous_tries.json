@@ -26,7 +26,7 @@
             }
           ]
         ],
-        "Outcome": "failed: pre-flight rounds spent"
+        "Outcome": "failed (preflight_rounds_spent): the answer repeats the original"
       }
     ],
     "CrossCluster": [

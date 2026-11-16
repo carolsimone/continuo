@@ -246,7 +246,7 @@ func TestPrompt_ALaterRoundWithoutThePreviousCallIsAnErrorAndCallsNoModel(t *tes
 func TestPrompt_TheFirstRoundIsShownTheEarlierTries(t *testing.T) {
 	tries := []remediation.TryRecord{{
 		Round: 1, Try: 1, Attempt: 1,
-		Clusters: []remediation.ClusterRecord{{Members: []string{"model.up-svc.m1"}, Outcome: "<failed: pre-flight rounds spent>"}},
+		Clusters: []remediation.ClusterRecord{{Members: []string{"model.up-svc.m1"}, Outcome: "failed (preflight_rounds_spent): the answer repeats the original"}},
 	}}
 	ev := upstreamEvidence().With(remediation.KeyPreviousTries, tries)
 	model := &fakeModel{res: answer(fixedSource, "high")}
@@ -255,5 +255,5 @@ func TestPrompt_TheFirstRoundIsShownTheEarlierTries(t *testing.T) {
 
 	require.Len(t, model.reqs, 1)
 	assert.Equal(t, step.WithPreviousTries(expectedRequest(false), ev), model.reqs[0])
-	assert.Contains(t, model.reqs[0].User, "- outcome: <failed: pre-flight rounds spent>")
+	assert.Contains(t, model.reqs[0].User, "- outcome: failed (preflight_rounds_spent): the answer repeats the original")
 }

@@ -27,7 +27,7 @@ func TestWithPreviousTries_ShowsEachRecordedTry(t *testing.T) {
 					{{Code: "content_unchanged", Message: "the answer repeats the original"}},
 					{},
 				},
-				Outcome: "failed: pre-flight rounds spent",
+				Outcome: "failed (preflight_rounds_spent): the answer repeats the original",
 			}},
 			CrossCluster: []remediation.Finding{{Code: "path_edited_twice", Message: "models/a.sql is edited by two clusters", File: "models/a.sql"}},
 			Gate: []remediation.Finding{
@@ -50,7 +50,7 @@ func TestWithPreviousTries_ShowsEachRecordedTry(t *testing.T) {
 			Diffs: []prompt.AttemptDiff{{Path: "models/a.sql", Diff: "-a\n+c"}},
 			Findings: []string{
 				"round 1: content_unchanged: the answer repeats the original",
-				"outcome: failed: pre-flight rounds spent",
+				"outcome: failed (preflight_rounds_spent): the answer repeats the original",
 				"across clusters: path_edited_twice: models/a.sql is edited by two clusters (models/a.sql)",
 			},
 			GateError: "model.a: still broken; model.b: broken too",
