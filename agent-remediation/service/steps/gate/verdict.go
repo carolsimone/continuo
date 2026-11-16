@@ -188,8 +188,8 @@ func draftedNodes(drafts []step.ClusterDraft) []string {
 // what actually failed. A failure carrying no per-node error at all still
 // records which run failed it, so the try never ends with a blank reason.
 func verifyError(own []string, nodeErrors map[string]string, runs []proposal.Verification) string {
-	if own := namedErrors(nodeErrors, stillFailing(own, nodeErrors)); own != "" {
-		return own
+	if named := namedErrors(nodeErrors, stillFailing(own, nodeErrors)); named != "" {
+		return named
 	}
 	if all := namedErrors(nodeErrors, sortedNodes(nodeErrors)); all != "" {
 		return all
