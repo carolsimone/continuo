@@ -88,6 +88,9 @@ func TestE2E_PythonODCSRelease_IsPromotedAndPublished(t *testing.T) {
 		require.Contains(t, []int64{before, before + 1}, first.Version,
 			"a promotion adds one version when it changes the contract and none when it does not (highest before: %d)", before)
 	}
+	if first.Version > before {
+		assert.Equal(t, firstID, first.ReleaseID, "a new version records the release that made it current")
+	}
 	assert.True(t, first.IsCurrent, "node contract prints the current version")
 	assert.Equal(t, pyBundleContracts, first.ContinuoContracts, "the version records the library that read it")
 	assert.Equal(t, pyProbeTeam, documentTeam(t, first.DocumentYAML), "the document carries the contract's team.name")
@@ -289,7 +292,7 @@ func waitForLiveIndexOf(t *testing.T, ctx context.Context, clients *testClients,
 	t.Helper()
 	var index liveIndex
 	var last string
-	pollUntil(t, ctx, timeout, 2*time.Second, func() (bool, error) {
+	pollUntilDescribed(t, ctx, timeout, 2*time.Second, func() (bool, error) {
 		body := getS3ObjectIfPresent(t, ctx, clients, liveFolderKey("_index.json"))
 		if body == nil {
 			return false, nil
@@ -305,7 +308,9 @@ func waitForLiveIndexOf(t *testing.T, ctx context.Context, clients *testClients,
 			}
 		}
 		return true, nil
-	}, fmt.Sprintf("timeout waiting for the live folder's _index.json of release %s (last read: %s)", releaseID, last))
+	}, func() string {
+		return fmt.Sprintf("timeout waiting for the live folder's _index.json of release %s (last read: %s)", releaseID, last)
+	})
 	return index
 }
 
