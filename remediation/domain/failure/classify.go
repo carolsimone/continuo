@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // Classification is the result of triaging one failed node.
@@ -12,6 +14,10 @@ type Classification struct {
 	Signature string
 	Decision  Decision
 	Reason    string // matched rule, e.g. "infra:connection_refused" or "logic:missing_relation"
+	// Unfixable says why no fix proposal can help the node: set on every
+	// DecisionDrop and on nothing else. A dropped failure is still forwarded on
+	// the trigger, marked with this reason and with Reason as its detail.
+	Unfixable model.HandoverReason
 	// Excerpt is the raw key error line the signature was derived from, kept
 	// for the precedent case base. Capped at maxExcerptBytes; empty when no
 	// log text exists.
@@ -93,9 +99,7 @@ func classifyLogText(logText string) Classification {
 	line := keyErrorLine(logText)
 
 	if r, ok := firstMatch(lower, infraRules); ok {
-		return Classification{Category: CategoryInfraTransient,
-			Signature: NormalizeSignature(CategoryInfraTransient, line),
-			Decision:  DecisionDrop, Reason: r.reason, Excerpt: excerptOf(line)}
+		return infraDrop(r, line)
 	}
 	if r, ok := firstMatch(lower, testRules); ok {
 		return Classification{Category: CategoryTest,
@@ -141,9 +145,7 @@ func classifyStructured(structured *StructuredResult, logText string) Classifica
 	}
 	lower := strings.ToLower(msg)
 	if r, ok := firstMatch(lower, infraRules); ok {
-		return Classification{Category: CategoryInfraTransient,
-			Signature: NormalizeSignature(CategoryInfraTransient, msg),
-			Decision:  DecisionDrop, Reason: r.reason, Excerpt: excerptOf(msg)}
+		return infraDrop(r, msg)
 	}
 	if r, ok := firstMatch(lower, logicRules); ok {
 		return Classification{Category: CategoryLogic,
@@ -153,6 +155,20 @@ func classifyStructured(structured *StructuredResult, logText string) Classifica
 	return Classification{Category: CategoryUnknown,
 		Signature: NormalizeSignature(CategoryUnknown, msg),
 		Decision:  DecisionEmit, Reason: "unknown:unmatched", Excerpt: excerptOf(msg)}
+}
+
+// infraDrop is the classification of a failure an infrastructure rule matched:
+// a new release run clears it, so no fix proposal can help. key is the error
+// text the signature and the excerpt derive from.
+func infraDrop(r rule, key string) Classification {
+	return Classification{
+		Category:  CategoryInfraTransient,
+		Signature: NormalizeSignature(CategoryInfraTransient, key),
+		Decision:  DecisionDrop,
+		Reason:    r.reason,
+		Excerpt:   excerptOf(key),
+		Unfixable: model.HandoverReasonClassifierInfra,
+	}
 }
 
 // ClassifyDuplicateTable classifies a duplicate-relation rejection from the
@@ -184,8 +200,8 @@ func ClassifyDuplicateTable(ev FailureEvidence) Classification {
 // kind topology-controller assigned already says whether a source change can
 // fix it, so no text rule runs: a healable kind is a logic failure keyed on
 // (kind, node), any other kind — or one this build does not declare — is
-// dropped. The excerpt is the parser's detail, which is what the fixer shows
-// the model in place of a dbt log.
+// dropped as unfixable. The excerpt is the parser's detail, which is what the
+// fixer shows the model in place of a dbt log.
 func ClassifyParse(ev FailureEvidence) Classification {
 	kind := ev.ParseKind
 	if !kind.IsValid() || !kind.Healable() {
@@ -195,6 +211,7 @@ func ClassifyParse(ev FailureEvidence) Classification {
 			Decision:  DecisionDrop,
 			Reason:    "parse:not_healable",
 			Excerpt:   excerptOf(ev.Detail),
+			Unfixable: model.HandoverReasonClassifierUnhealableParse,
 		}
 	}
 	return Classification{

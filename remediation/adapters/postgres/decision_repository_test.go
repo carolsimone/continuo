@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/testmigrations"
 	"github.com/carolsimone/continuo/remediation/domain/failure"
 	"github.com/carolsimone/continuo/remediation/domain/repository"
@@ -108,7 +109,7 @@ func TestDecisionRepositoryUpsertIdempotent(t *testing.T) {
 	require.NoError(t, err)
 	repo := NewDecisionRepository(tx) // bound to the tx, matching the UnitOfWork
 	d := repository.ClassificationDecision{
-		Source: failure.SourceValidation, ReleaseID: "r1", RemediationRound: 1, NodeID: "s.n",
+		Source: pkg_model.RemediationSourceValidation, ReleaseID: "r1", RemediationRound: 1, NodeID: "s.n",
 		Category: failure.CategoryLogic, ErrorSignature: "sig",
 		Decision: failure.DecisionEmit, Reason: "logic:x", CreatedAt: time.Now().UTC(),
 	}
@@ -133,7 +134,7 @@ func TestDecisionRepositoryUpsertScopedByRound(t *testing.T) {
 	repo := NewDecisionRepository(tx)
 
 	base := repository.ClassificationDecision{
-		Source: failure.SourceValidation, ReleaseID: "r1", NodeID: "s.n",
+		Source: pkg_model.RemediationSourceValidation, ReleaseID: "r1", NodeID: "s.n",
 		Category: failure.CategoryLogic, ErrorSignature: "sig",
 		Decision: failure.DecisionEmit, Reason: "logic:x", CreatedAt: time.Now().UTC(),
 	}

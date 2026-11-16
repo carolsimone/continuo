@@ -1,11 +1,13 @@
-// Package event defines the remediation.requested:v2 trigger payload and the
-// deterministic identifiers used for outbox dedup.
+// Package event defines the remediation trigger the classifier emits for a
+// rejected release and the deterministic identifiers used for outbox dedup.
 package event
 
 import (
 	"strconv"
 
 	"github.com/google/uuid"
+
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // EventType is the outbox event_type discriminator for remediation triggers.
@@ -16,10 +18,11 @@ const EventType = "remediation_requested"
 var remediationEventNamespace = uuid.MustParse("b8c4d2e1-6f3a-4b9c-8d7e-1a2b3c4d5e6f")
 
 // RemediationEventID maps (releaseID, round) to a stable UUID. One rejected
-// release yields one batched trigger per remediation round, and the agent's
-// dedup keys off this id, so a redelivered rejection collapses to one logical
-// trigger. For round <= 1 the name is the release id alone; round >= 2
-// appends "|round|N", so a human's "try again" mints a distinct id per round.
+// release yields one batched trigger per remediation round, and the trigger's
+// outbox row id derives from this id, so a redelivered rejection collapses to
+// one logical trigger. For round <= 1 the name is the release id alone;
+// round >= 2 appends "|round|N", so a human's "try again" mints a distinct id
+// per round.
 func RemediationEventID(releaseID string, round int) uuid.UUID {
 	name := releaseID
 	if round > 1 {
@@ -36,13 +39,14 @@ func AggregateIDForRelease(releaseID string) uuid.UUID {
 }
 
 // RemediationRequested is the batched trigger emitted once per rejected
-// release: the release-level facts every fix needs, and one FailingNode per
-// healable failure the classifier decided to emit. It is pointer-first: logs
-// stay behind each node's DBTLogURI and code behind CodeBundleURI; the only
-// inline error text is each node's ErrorExcerpt (capped at 4 KiB).
+// release and remediation round: the release-level facts every fix needs, and
+// one FailingNode per failure the classifier recorded in this batch, the
+// unfixable ones included. It is pointer-first: logs stay behind each node's
+// DBTLogURI and code behind CodeBundleURI; the only inline error text is each
+// node's ErrorExcerpt (capped at 4 KiB). Its identity is RemediationEventID of
+// its release and round.
 type RemediationRequested struct {
-	EventID   string
-	Source    string
+	Source    model.RemediationSource
 	ReleaseID string
 	// RemediationRound is the release's remediation round this trigger belongs
 	// to: 1 for the rejection itself, +1 per human "try again" on the release.
@@ -80,6 +84,18 @@ type FailingNode struct {
 	// the file path and service the candidate declares for it so the fix edits
 	// the ancestor where THIS release holds it.
 	ChangedAncestors []ChangedAncestor
+	// Unfixable is set when the classifier judged that no change to the
+	// release's source fixes the failure; nil for a failure a fix can reach.
+	Unfixable *Unfixable
+}
+
+// Unfixable is the classifier's verdict on a failing node no fix proposal can
+// help: Reason is model.HandoverReasonClassifierInfra or
+// model.HandoverReasonClassifierUnhealableParse, and Detail is the rule that
+// matched, in the classifier's words.
+type Unfixable struct {
+	Reason model.HandoverReason
+	Detail string
 }
 
 // ChangedAncestor is one changed upstream of a failing node, with the location

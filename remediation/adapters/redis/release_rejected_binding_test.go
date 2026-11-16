@@ -35,7 +35,7 @@ func TestEvidenceFromRejected(t *testing.T) {
 		t.Fatalf("want 2 failed-node evidences, got %d", len(got))
 	}
 	a := got[0]
-	if a.Source != failure.SourceValidation || a.ReleaseID != "r1" || a.NodeID != "s.a" ||
+	if a.Source != pkg_model.RemediationSourceValidation || a.ReleaseID != "r1" || a.NodeID != "s.a" ||
 		a.DBTLogURI != "s3://b/a.log" || a.CandidateArtifactURI != "s3://b/a.sql" ||
 		a.Repo != "o/r" || a.CommitSHA != "abc" {
 		t.Fatalf("bad evidence: %+v", a)
@@ -49,8 +49,9 @@ func TestEvidenceFromRejected(t *testing.T) {
 }
 
 // TestEvidenceFromRejected_Compile verifies that a compile-stage rejection sets
-// Source=SourceCompile, and that a seed-stage rejection sets Source=SourceSeed.
-// The existing validation path must still yield SourceValidation. The fallback
+// Source=RemediationSourceCompile, and that a seed-stage rejection sets
+// Source=RemediationSourceSeedBuild.
+// The existing validation path must still yield RemediationSourceValidation. The fallback
 // path (no stage field, only reason) must also map correctly.
 func TestEvidenceFromRejected_Compile(t *testing.T) {
 	t.Run("compile stage", func(t *testing.T) {
@@ -64,8 +65,8 @@ func TestEvidenceFromRejected_Compile(t *testing.T) {
 		if len(evs) != 1 {
 			t.Fatalf("want 1 evidence, got %d", len(evs))
 		}
-		if evs[0].Source != failure.SourceCompile {
-			t.Errorf("Source = %q, want %q", evs[0].Source, failure.SourceCompile)
+		if evs[0].Source != pkg_model.RemediationSourceCompile {
+			t.Errorf("Source = %q, want %q", evs[0].Source, pkg_model.RemediationSourceCompile)
 		}
 		if evs[0].NodeID != "core" {
 			t.Errorf("NodeID = %q, want %q", evs[0].NodeID, "core")
@@ -86,8 +87,8 @@ func TestEvidenceFromRejected_Compile(t *testing.T) {
 		if len(evs) != 1 {
 			t.Fatalf("want 1 evidence, got %d", len(evs))
 		}
-		if evs[0].Source != failure.SourceSeed {
-			t.Errorf("Source = %q, want %q", evs[0].Source, failure.SourceSeed)
+		if evs[0].Source != pkg_model.RemediationSourceSeedBuild {
+			t.Errorf("Source = %q, want %q", evs[0].Source, pkg_model.RemediationSourceSeedBuild)
 		}
 	})
 
@@ -102,8 +103,8 @@ func TestEvidenceFromRejected_Compile(t *testing.T) {
 		if len(evs) != 1 {
 			t.Fatalf("want 1 evidence, got %d", len(evs))
 		}
-		if evs[0].Source != failure.SourceValidation {
-			t.Errorf("Source = %q, want %q", evs[0].Source, failure.SourceValidation)
+		if evs[0].Source != pkg_model.RemediationSourceValidation {
+			t.Errorf("Source = %q, want %q", evs[0].Source, pkg_model.RemediationSourceValidation)
 		}
 	})
 
@@ -118,8 +119,8 @@ func TestEvidenceFromRejected_Compile(t *testing.T) {
 		if len(evs) != 1 {
 			t.Fatalf("want 1 evidence, got %d", len(evs))
 		}
-		if evs[0].Source != failure.SourceCompile {
-			t.Errorf("Source = %q, want %q", evs[0].Source, failure.SourceCompile)
+		if evs[0].Source != pkg_model.RemediationSourceCompile {
+			t.Errorf("Source = %q, want %q", evs[0].Source, pkg_model.RemediationSourceCompile)
 		}
 	})
 
@@ -127,7 +128,7 @@ func TestEvidenceFromRejected_Compile(t *testing.T) {
 
 // TestEvidenceFromRejected_ParseStage verifies that a parse-stage rejection —
 // topology-controller's own gate, before any Job runs — is routed to
-// SourceParse and carries each node's contract kind and parser detail text
+// RemediationSourceParse and carries each node's contract kind and parser detail text
 // alongside the location fields threaded from the candidate topology.
 func TestEvidenceFromRejected_ParseStage(t *testing.T) {
 	raw := []byte(`{"release_id":"rel-9","stage":"parse","reason":"invalid_sql",
@@ -143,7 +144,7 @@ func TestEvidenceFromRejected_ParseStage(t *testing.T) {
 	if len(evs) != 2 {
 		t.Fatalf("want 2 evidence, got %d", len(evs))
 	}
-	if evs[0].Source != failure.SourceParse || evs[0].ParseKind != pkg_model.ParseFailureKindInvalidSQL || evs[0].Detail != "Expecting )" {
+	if evs[0].Source != pkg_model.RemediationSourceParse || evs[0].ParseKind != pkg_model.ParseFailureKindInvalidSQL || evs[0].Detail != "Expecting )" {
 		t.Errorf("first evidence: %+v", evs[0])
 	}
 	if evs[0].FilePath != "models/b.sql" || evs[0].Service != "s" || evs[0].NodeType != "dbt-model" || evs[0].Repo != "o/r" {
@@ -199,8 +200,8 @@ func TestEvidenceFromRejected_ParseExportLegRejections(t *testing.T) {
 		if len(evs) != 1 {
 			t.Fatalf("want 1 evidence, got %d", len(evs))
 		}
-		if evs[0].Source != failure.SourceCompile {
-			t.Errorf("Source = %q, want %q", evs[0].Source, failure.SourceCompile)
+		if evs[0].Source != pkg_model.RemediationSourceCompile {
+			t.Errorf("Source = %q, want %q", evs[0].Source, pkg_model.RemediationSourceCompile)
 		}
 	})
 }
@@ -227,8 +228,8 @@ func TestEvidenceFromRejected_SeedFilePathAndService(t *testing.T) {
 		t.Fatalf("want 1 failed evidence, got %d", len(got))
 	}
 	e := got[0]
-	if e.Source != failure.SourceSeed {
-		t.Errorf("Source = %q, want %q", e.Source, failure.SourceSeed)
+	if e.Source != pkg_model.RemediationSourceSeedBuild {
+		t.Errorf("Source = %q, want %q", e.Source, pkg_model.RemediationSourceSeedBuild)
 	}
 	if e.FilePath != "seeds/customers.csv" {
 		t.Errorf("FilePath = %q, want seeds/customers.csv", e.FilePath)
@@ -266,8 +267,8 @@ func TestEvidenceFromRejected_DuplicateTable(t *testing.T) {
 		t.Fatalf("want 1 evidence, got %d", len(evs))
 	}
 	e := evs[0]
-	if e.Source != failure.SourceDuplicateTable {
-		t.Errorf("Source = %q, want %q", e.Source, failure.SourceDuplicateTable)
+	if e.Source != pkg_model.RemediationSourceDuplicateTable {
+		t.Errorf("Source = %q, want %q", e.Source, pkg_model.RemediationSourceDuplicateTable)
 	}
 	if e.NodeID != "analytics.orders_v2" {
 		t.Errorf("NodeID = %q, want analytics.orders_v2", e.NodeID)
@@ -366,7 +367,7 @@ func TestEvidenceFromRejected_DropsNonHealableParseRejections(t *testing.T) {
 		evs, err := evidenceFromRejected(rejection("invalid_sql", "invalid_sql"))
 		require.NoError(t, err)
 		require.Len(t, evs, 1)
-		assert.Equal(t, failure.SourceParse, evs[0].Source)
+		assert.Equal(t, pkg_model.RemediationSourceParse, evs[0].Source)
 	})
 }
 
@@ -386,7 +387,7 @@ func TestEvidenceFromRejected_SkipsClonedNodes(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, evs, 1, "the cloned node is never fixed")
 	assert.Equal(t, "analytics.s", evs[0].NodeID)
-	assert.Equal(t, failure.SourceValidation, evs[0].Source)
+	assert.Equal(t, pkg_model.RemediationSourceValidation, evs[0].Source)
 }
 
 // TestEvidenceFromRejected_KeepsAFailedNodeThatIsNotACopy verifies that a
@@ -432,7 +433,7 @@ func TestEvidenceFromRejected_KeepsAFailedNodeWithAnUndeclaredValidationOp(t *te
 	require.NoError(t, err)
 	require.Len(t, evs, 1)
 	assert.Equal(t, "analytics.s", evs[0].NodeID)
-	assert.Equal(t, failure.SourceValidation, evs[0].Source)
+	assert.Equal(t, pkg_model.RemediationSourceValidation, evs[0].Source)
 }
 
 // TestRejectionHandler_LogsARejectionWithNoNodeToClassifyAtDebug verifies that
@@ -471,7 +472,7 @@ func TestEvidenceFromRejected_UnknownReasonKeepsTodaysPath(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, evs, 1)
 			assert.Equal(t, "analytics.s", evs[0].NodeID)
-			assert.Equal(t, failure.SourceValidation, evs[0].Source)
+			assert.Equal(t, pkg_model.RemediationSourceValidation, evs[0].Source)
 		})
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/validationresult"
 	"github.com/carolsimone/continuo/remediation/domain/failure"
 	"github.com/carolsimone/continuo/remediation/service/ports"
@@ -30,10 +31,10 @@ type Deps struct {
 // rejection. ev is a pointer because the compile path fills in FilePath from
 // the log text.
 func classify(ctx context.Context, deps Deps, ev *failure.FailureEvidence) (failure.Classification, error) {
-	if ev.Source == failure.SourceDuplicateTable {
+	if ev.Source == model.RemediationSourceDuplicateTable {
 		return failure.ClassifyDuplicateTable(*ev), nil
 	}
-	if ev.Source == failure.SourceParse {
+	if ev.Source == model.RemediationSourceParse {
 		return failure.ClassifyParse(*ev), nil
 	}
 
@@ -74,7 +75,7 @@ func classify(ctx context.Context, deps Deps, ev *failure.FailureEvidence) (fail
 	// the log is the only source of the file path. Seed_build failures carry
 	// FilePath and Service from the candidate topology via the rejection
 	// payload, so no extraction is needed.
-	if ev.Source == failure.SourceCompile && ev.FilePath == "" {
+	if ev.Source == model.RemediationSourceCompile && ev.FilePath == "" {
 		ev.FilePath = failure.ExtractDbtFilePath(logText)
 	}
 
