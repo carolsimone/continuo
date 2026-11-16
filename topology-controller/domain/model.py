@@ -15,10 +15,13 @@ class ManifestKind(StrEnum):
     """Which artifact dialect a service's release payload speaks.
 
     Carried per manifest_keys entry on release.requested:v1. Absent means dbt,
-    so a producer that predates python support needs no change.
+    so a producer that predates python support needs no change. `python` is a
+    service's wire contract (`contract.yaml`), `python-odcs` its ODCS bundle
+    (`odcs-bundle.json`).
     """
     DBT = "dbt"
     PYTHON = "python"
+    PYTHON_ODCS = "python-odcs"
 
 
 class SkipReason(StrEnum):

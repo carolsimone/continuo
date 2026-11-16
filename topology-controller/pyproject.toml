@@ -10,7 +10,7 @@ dependencies = [
     "boto3>=1.43.126",
     "PyYAML>=6.0",
     "prometheus-client==0.26.0",
-    "continuo-contracts==0.1.0",
+    "continuo-contracts==0.2.0",
 ]
 
 [project.optional-dependencies]

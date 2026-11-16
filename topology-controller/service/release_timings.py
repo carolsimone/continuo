@@ -32,6 +32,9 @@ class Stage(StrEnum):
     REWRITE = "rewrite"
     CANDIDATE_UPLOAD = "candidate_upload"
     CODE_BUNDLE = "code_bundle"
+    CONTRACT_VALIDATION = "contract_validation"
+    CANONICAL_HASHING = "canonical_hashing"
+    CONTRACT_BUNDLE = "contract_bundle"
     TOPOLOGY_ARTIFACT = "topology_artifact"
     PUBLISH = "publish"
 
@@ -106,7 +109,9 @@ class ReleaseTimings:
     `nodes`, `columns` and `skipped` name every runtime or reason from
     construction. `dormant` holds, per service, the dormant nodes the release
     holds (the nodes a release builds that belong to no schedule); a service
-    with none has no entry.
+    with none has no entry. `contract_failures` counts the contract failures
+    the release met by (stage, reason), and `validation_cache` counts the
+    contract validations answered from the cache (`hit`) and run (`miss`).
     `outcome` and `failure_kind` stay unset until the release ends.
     """
 
@@ -122,6 +127,8 @@ class ReleaseTimings:
         self.columns: dict[str, int] = {runtime.value: 0 for runtime in Runtime}
         self.skipped: dict[SkipReason, int] = {reason: 0 for reason in SkipReason}
         self.dormant: dict[str, int] = {}
+        self.contract_failures: dict[tuple[str, str], int] = {}
+        self.validation_cache: dict[str, int] = {"hit": 0, "miss": 0}
 
     def stage(self, name: Stage, *, sample_memory: bool = True, **counts: int) -> AbstractContextManager[StageRecord]:
         """Time one run of a stage. On exit, also when the body raised, the
@@ -153,6 +160,26 @@ class ReleaseTimings:
         """Count the nodes a parse left out, under each skip's reason."""
         for skip in skips:
             self.skipped[skip.reason] += 1
+
+    def add_contract_failure(self, stage: str, reason: str) -> None:
+        """Count one contract failure under its stage and reason."""
+        key = (stage, reason)
+        self.contract_failures[key] = self.contract_failures.get(key, 0) + 1
+
+    def add_validation_cache(self, hit: bool) -> None:
+        """Count one contract validation as answered from the cache or run."""
+        self.validation_cache["hit" if hit else "miss"] += 1
+
+    def bundle_timings(self) -> dict[str, object]:
+        """The `timings` of the contract bundle: every stage's milliseconds so far,
+        the nodes and columns per runtime, and the validation cache's counts, as
+        copies the record's later changes do not reach."""
+        return {
+            "stages_ms": self.stages_ms(),
+            "nodes": dict(self.nodes),
+            "columns": dict(self.columns),
+            "validation_cache": dict(self.validation_cache),
+        }
 
     def log_fields(self) -> dict[str, object]:
         """The fields of the release's log line. `failure_kind` is present only

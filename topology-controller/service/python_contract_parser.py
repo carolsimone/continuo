@@ -4,10 +4,10 @@ The artifact is one yaml document per service, produced by the domain repo's
 CI: {contract_version: 1, service: <name>, nodes: [...]}. Every entry carries
 CI-computed hash parts (source_hash, shared_code_hash, config_hash) and their
 fold (content_hash). The parser keeps the CI source_hash and shared_code_hash,
-which hash files that never reach topology-controller, and computes the config
-part itself: the node's config_hash is the `projection_hash` of its code
-projection (`continuo_contracts.python`), and its content_hash folds the two CI
-parts with it. The CI config_hash and content_hash must be present but are not
+which hash files that never reach topology-controller, and `build_python_node`
+computes the config part: the node's config_hash is the `projection_hash` of its
+code projection (`continuo_contracts.python`), and its content_hash folds the two
+CI parts with it. The CI config_hash and content_hash must be present but are not
 trusted; a CI content_hash that differs from the computed one is logged.
 
 Any malformed entry rejects the WHOLE artifact: the producing CI validates
@@ -16,20 +16,17 @@ dropped node would retire it from production on promote. Schema evolution goes
 through contract_version — incompatible schema changes require a
 contract_version bump, so an unknown field is an error.
 """
-import json
 import logging
 
 import yaml
-from continuo_contracts.errors import ContractsError
-from continuo_contracts.hashing import fold3
-from continuo_contracts.python import PythonNode, code_projection, projection_hash
 
 from domain.exceptions import MalformedContractError
 from domain.contract_vocabulary import NodeType
-from domain.model import ManifestNode, ParsedArtifact, Runtime, SkippedNode
+from domain.model import ManifestNode, ParsedArtifact, SkippedNode
 from domain.node_timeout import timeout_seconds
 from domain.secret_ref import validate_secret_ref
 from service.python_kind_rules import RULES, KindRules, resolve_kind
+from service.python_node_builder import DEFAULT_MODE_TYPE, PythonNodeFields, build_python_node
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +44,6 @@ _OPTIONAL_ENTRY_KEYS = {
     "description", "extra_columns", "config", "kind", "secret_ref", "timeout_minutes",
     "mode_type", "primary_key", "assets",
 }
-_DEFAULT_MODE_TYPE = "replace"
 _COLUMN_REQUIRED_KEYS = {"name", "type"}
 _COLUMN_ALLOWED_KEYS = {"name", "type", "nullable"}
 
@@ -91,7 +87,7 @@ def _parse_columns(raw, label: str) -> list[dict]:
 
 
 def _parse_mode_type(entry: dict, rules: KindRules, node_type: NodeType, label: str) -> str:
-    mode_type = entry.get("mode_type", _DEFAULT_MODE_TYPE)
+    mode_type = entry.get("mode_type", DEFAULT_MODE_TYPE)
     if not isinstance(mode_type, str) or mode_type not in rules.mode_types:
         _fail(
             f"{label}: mode_type must be one of {sorted(rules.mode_types)}"
@@ -145,21 +141,6 @@ def _parse_assets(entry: dict, rules: KindRules, node_type: NodeType, label: str
     if len(set(raw_assets)) != len(raw_assets):
         _fail(f"{label}: assets must not list a path twice")
     return list(raw_assets)
-
-
-def _project(projection_input: dict) -> tuple[str, str]:
-    """The code projection of a validated entry as pretty JSON text, and its hash.
-
-    A node the library refuses (a type outside its grammar, a config value
-    canonical JSON cannot hold) is a malformed contract.
-    """
-    try:
-        node = PythonNode.from_mapping(projection_input)
-        projection = code_projection(node)
-        config_hash = projection_hash(node)
-    except ContractsError as error:
-        raise MalformedContractError(str(error)) from error
-    return json.dumps(projection, sort_keys=True, indent=2), config_hash
 
 
 def _parse_entry(
@@ -244,22 +225,34 @@ def _parse_entry(
             ' ("" when the script has no in-repo imports)'
         )
 
-    projection, config_hash = _project({
-        "schema": schema,
-        "table": table,
-        "kind": str(node_type),
-        "script": script,
-        "reads": dict(parsed.reads),
-        "output_columns": columns,
-        "extra_columns": extra_columns,
-        "config": config,
-        "secret_ref": secret_ref,
-        "mode_type": mode_type,
-        "primary_key": primary_key,
-        "assets": assets,
-    })
-    content_hash = fold3(source_hash, shared_code_hash, config_hash)
-    if ci_content_hash != content_hash:
+    node = build_python_node(
+        PythonNodeFields(
+            schema=schema,
+            table=table,
+            owner=owner,
+            schedule=schedule,
+            criticality=criticality,
+            kind=node_type,
+            description=description,
+            script=script,
+            reads=parsed.reads,
+            dependency_sqls=parsed.dependency_sqls,
+            csv_source=parsed.csv_source,
+            output_columns=columns,
+            extra_columns=extra_columns,
+            config=config,
+            secret_ref=secret_ref,
+            mode_type=mode_type,
+            primary_key=primary_key,
+            assets=assets,
+            timeout_seconds=task_timeout_seconds,
+        ),
+        service=service,
+        image_tag=image_tag,
+        source_hash=source_hash,
+        shared_code_hash=shared_code_hash,
+    )
+    if ci_content_hash != node.content_hash:
         logger.warning(
             "python contract: the producer CI's content_hash differs from the one"
             " topology-controller computes: a CI on continuo-python-runtime older than"
@@ -269,72 +262,10 @@ def _parse_entry(
                 "node_id": f"{schema}.{table}".lower(),
                 "service": service,
                 "ci_content_hash": ci_content_hash,
-                "content_hash": content_hash,
+                "content_hash": node.content_hash,
             },
         )
-
-    # The contract entry the code bundle's read set names (docs/read-contract.md):
-    # the entry's parsed fields, hash fields and timeout excluded, with
-    # `script`, `secret_ref`, `mode_type`, `primary_key` and `assets` only where
-    # they apply or differ from the default, serialized deterministically for the
-    # code bundle and the remediation LLM. The hashed code projection rides beside
-    # it in `projection`.
-    raw_entry = {
-        "schema": schema,
-        "table": table,
-        "owner": owner,
-        "schedule": schedule,
-        "criticality": criticality,
-        "kind": str(node_type),
-        "description": description,
-        "extra_columns": extra_columns,
-        "reads": dict(parsed.reads),
-        "output_columns": columns,
-        "config": config,
-    }
-    if rules.script_required:
-        raw_entry["script"] = script
-    if secret_ref:
-        raw_entry["secret_ref"] = secret_ref
-    if mode_type != _DEFAULT_MODE_TYPE:
-        raw_entry["mode_type"] = mode_type
-    if primary_key:
-        raw_entry["primary_key"] = primary_key
-    if assets:
-        raw_entry["assets"] = assets
-
-    raw_code = json.dumps(raw_entry, sort_keys=True, indent=2)
-
-    return ManifestNode(
-        table_name=table,
-        schema_name=schema,
-        # A python contract has no alias concept: the relation it writes is
-        # always the declared table.
-        resolved_relation=table,
-        service_name=service,
-        owner=owner,
-        schedule_name=schedule,
-        criticality=criticality,
-        dependency_sqls=parsed.dependency_sqls,
-        candidate_sql="",
-        node_type=node_type,
-        content_hash=content_hash,
-        image_tag=image_tag,
-        original_file_path=script,
-        raw_code=raw_code,
-        config=config,
-        source_hash=source_hash,
-        shared_code_hash=shared_code_hash,
-        config_hash=config_hash,
-        code_unit_ids=[],
-        output_columns=columns,
-        runtime=Runtime.PYTHON,
-        csv_source=parsed.csv_source,
-        secret_ref=secret_ref,
-        timeout_seconds=task_timeout_seconds,
-        declared_columns=len(columns),
-        projection=projection,
-    )
+    return node
 
 
 def parse_python_contract(

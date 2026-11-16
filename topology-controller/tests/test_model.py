@@ -2,6 +2,7 @@ import json
 
 from domain.model import (
     ManifestFile,
+    ManifestKind,
     ManifestNode,
     NodeRegistry,
     NodeRegistryEntry,
@@ -166,3 +167,7 @@ def test_the_registry_of_nodes_leaves_tests_out_and_marks_ephemeral_models():
     ])
     assert [(e.table_name, e.relation, e.ephemeral) for e in registry.entries] == [
         ("orders", "orders_tbl", False), ("eph", "eph", True)]
+
+
+def test_the_manifest_kinds_are_the_values_a_release_names():
+    assert [kind.value for kind in ManifestKind] == ["dbt", "python", "python-odcs"]

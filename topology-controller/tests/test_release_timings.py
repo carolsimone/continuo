@@ -68,7 +68,8 @@ def test_stages_ms_names_every_stage_in_pipeline_order_and_zero_for_one_that_did
         clock.t += 0.6604
     ms = timings.stages_ms()
     assert list(ms) == ["download", "dbt_parse", "python_parse", "registry", "resolve", "rewrite",
-                        "candidate_upload", "code_bundle", "topology_artifact", "publish"]
+                        "candidate_upload", "code_bundle", "contract_validation", "canonical_hashing",
+                        "contract_bundle", "topology_artifact", "publish"]
     assert (ms["resolve"], ms["python_parse"]) == (660, 0)
 
 
@@ -136,3 +137,56 @@ def test_add_nodes_counts_a_dormant_node_under_its_service_and_nothing_else_as_d
     ])
     assert timings.dormant == {"svc-b": 2, "svc-a": 1}
     assert list(timings.log_fields()["dormant"]) == ["svc-a", "svc-b"]
+
+
+def test_the_contract_stages_exist():
+    assert (Stage.CONTRACT_VALIDATION.value, Stage.CANONICAL_HASHING.value, Stage.CONTRACT_BUNDLE.value) == (
+        "contract_validation", "canonical_hashing", "contract_bundle")
+    assert [stage.value for stage in Stage][-5:] == [
+        "contract_validation", "canonical_hashing", "contract_bundle", "topology_artifact", "publish"]
+
+
+def test_a_release_that_checked_no_contract_has_no_failures_and_an_empty_cache():
+    timings = _timings()
+    assert timings.contract_failures == {}
+    assert timings.validation_cache == {"hit": 0, "miss": 0}
+
+
+def test_contract_failures_and_cache_add_up():
+    timings = _timings()
+    timings.add_contract_failure("validate", "column_type")
+    timings.add_contract_failure("validate", "column_type")
+    timings.add_contract_failure("hash", "unhashable")
+    timings.add_validation_cache(True)
+    timings.add_validation_cache(False)
+    timings.add_validation_cache(False)
+    assert timings.contract_failures == {("validate", "column_type"): 2, ("hash", "unhashable"): 1}
+    assert timings.validation_cache == {"hit": 1, "miss": 2}
+
+
+def test_bundle_timings_hold_the_stages_so_far():
+    clock = FakeClock()
+    timings = _timings(clock)
+    timings.add_nodes([_node(Runtime.PYTHON, 2), _node(Runtime.PYTHON, 3), _node(Runtime.DBT, 4)])
+    with timings.stage(Stage.CONTRACT_VALIDATION):
+        clock.t += 0.551
+    with timings.stage(Stage.CANONICAL_HASHING):
+        clock.t += 0.011
+    timings.add_validation_cache(False)
+    assert timings.bundle_timings() == {
+        "stages_ms": timings.stages_ms(),
+        "nodes": {"dbt": 1, "python": 2, "external": 0},
+        "columns": {"dbt": 4, "python": 5, "external": 0},
+        "validation_cache": {"hit": 0, "miss": 1},
+    }
+    assert timings.bundle_timings()["stages_ms"]["contract_validation"] == 551
+    assert timings.bundle_timings()["stages_ms"]["canonical_hashing"] == 11
+
+
+def test_bundle_timings_are_a_copy_the_record_does_not_share():
+    timings = _timings()
+    snapshot = timings.bundle_timings()
+    timings.add_nodes([_node(Runtime.PYTHON, 1)])
+    timings.add_validation_cache(True)
+    assert snapshot["nodes"]["python"] == 0
+    assert snapshot["validation_cache"] == {"hit": 0, "miss": 0}
