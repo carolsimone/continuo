@@ -18,25 +18,29 @@ def referenced_tables(node: ManifestNode, *, dialect: str, ctes: set[str] | None
     A reference to a CTE and a schema-qualified read of the node's own relation
     (ManifestNode.relation, the name its build writes) are not tables the node
     reads and are skipped. Only an unqualified name is taken for a CTE
-    reference, and only where a CTE of that name is in scope: a CTE is always
+    reference, and only where a CTE of that name is in scope. A CTE is always
     unqualified, so a qualified name is a table even when a CTE of the same name
-    is in scope. In a WITH list a CTE is in scope in the CTEs defined after it,
-    in the query that carries the WITH clause and in that query's subqueries,
-    and not in its own body; under WITH RECURSIVE every CTE of the list is in
-    scope in every body of the list too. A CTE is never in scope outside the
-    query that defines it, so the body of WITH orders AS (SELECT * FROM orders)
-    reads the table orders, as does an unqualified orders beside a subquery that
-    defines a CTE of that name. A table with no schema that is not a CTE
-    reference raises UnqualifiedTableReferenceError: which relation it means
-    depends on the session's search path, so the SQL is rejected rather than
-    guessed at. A
+    is in scope.
+
+    In a WITH list a CTE is in scope in the CTEs defined after it, in the query
+    that carries the WITH clause and in that query's subqueries. It is not in
+    scope in its own body. Under WITH RECURSIVE every CTE of the list is also in
+    scope in every body of the list. A CTE is never in scope outside the query
+    that defines it. So the body of WITH orders AS (SELECT * FROM orders) reads
+    the table orders. So does an unqualified orders beside a subquery that
+    defines a CTE of that name.
+
+    A table with no schema that is not a CTE reference raises
+    UnqualifiedTableReferenceError. Which relation it means depends on the
+    session's search path, so the SQL is rejected rather than guessed at. A
     table with a schema and no name (a schema-qualified function call such as
     public.my_fn(1) or pg_catalog.generate_series(1, 3), which sqlglot models
     as a table) names no relation and is skipped.
 
     ctes, when given, receives the lower-cased name of every CTE the node's SQLs
-    define, in scope at a table or not: the dependency resolver reads an
-    ephemeral dbt model, which dbt inlines into its readers as a CTE, from those names.
+    define. A CTE's name is added whether or not any table is in its scope. The
+    dependency resolver reads these names to find the ephemeral dbt models,
+    which dbt inlines into their readers as CTEs.
 
     dialect is the sqlglot dialect of the warehouse the install targets; it
     decides which syntax parses, so a query valid on one engine can raise

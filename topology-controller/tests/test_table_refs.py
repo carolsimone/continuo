@@ -205,3 +205,72 @@ def test_ctes_still_lists_every_cte_name(dialect):
             _node("WITH orders AS (SELECT * FROM orders) SELECT * FROM orders"), dialect=dialect, ctes=shadowing,
         )
     assert shadowing == {"orders"}
+
+
+# Shapes where sqlglot decides which node carries a WITH clause: a set
+# operation in a CTE body, a WITH nested in a CTE body, a subquery in a CTE
+# body and a CTE local to one subquery. Each pins what the scope rule sees there.
+SCOPE_SHAPES_THAT_READ_ONLY_CTES = [
+    pytest.param(
+        "WITH a AS (SELECT 1 AS x), b AS (SELECT * FROM a UNION ALL SELECT * FROM a) SELECT * FROM b",
+        [],
+        id="a-union-in-a-cte-body-sees-an-earlier-cte",
+    ),
+    pytest.param(
+        "WITH a AS (WITH inner_cte AS (SELECT 1 AS x) SELECT * FROM inner_cte) SELECT * FROM a",
+        [],
+        id="a-with-nested-in-a-cte-body-is-seen-inside-that-body",
+    ),
+    pytest.param(
+        "WITH a AS (SELECT 1 AS x), b AS (SELECT (SELECT max(x) FROM a) AS m) SELECT * FROM b",
+        [],
+        id="a-scalar-subquery-in-a-cte-body-sees-an-earlier-cte",
+    ),
+    pytest.param(
+        "WITH a AS (SELECT 1 AS x), b AS (SELECT 1 AS y WHERE EXISTS (SELECT 1 FROM a)) SELECT * FROM b",
+        [],
+        id="an-exists-subquery-in-a-cte-body-sees-an-earlier-cte",
+    ),
+    pytest.param(
+        "WITH a AS (SELECT 1 AS x), b AS (SELECT * FROM raw.t CROSS JOIN LATERAL (SELECT * FROM a) l) SELECT * FROM b",
+        ["raw.t"],
+        id="a-lateral-subquery-in-a-cte-body-sees-an-earlier-cte",
+    ),
+]
+
+
+@pytest.mark.parametrize("dialect", ENGINE_DIALECTS)
+@pytest.mark.parametrize(("sql", "keys"), SCOPE_SHAPES_THAT_READ_ONLY_CTES)
+def test_a_cte_in_scope_is_seen_whatever_node_carries_the_with(sql, keys, dialect):
+    assert [r.key for r in referenced_tables(_node(sql), dialect=dialect)] == keys
+
+
+SCOPE_SHAPES_THAT_READ_A_TABLE = [
+    pytest.param(
+        "WITH b AS (SELECT 1 AS x UNION ALL SELECT * FROM b) SELECT * FROM b",
+        "b",
+        id="a-union-in-a-cte-body-does-not-see-its-own-cte",
+    ),
+    pytest.param(
+        "WITH a AS (SELECT 1 AS x UNION ALL SELECT * FROM c), c AS (SELECT 1 AS x) SELECT * FROM a",
+        "c",
+        id="a-union-in-a-cte-body-does-not-see-a-later-cte",
+    ),
+    pytest.param(
+        "WITH a AS (WITH inner_cte AS (SELECT 1 AS x) SELECT * FROM inner_cte), "
+        "b AS (SELECT * FROM inner_cte) SELECT * FROM b",
+        "inner_cte",
+        id="a-with-nested-in-a-cte-body-is-not-seen-by-a-later-sibling-cte",
+    ),
+    pytest.param(
+        "SELECT * FROM (WITH u AS (SELECT 1 AS id) SELECT * FROM u) s1 JOIN (SELECT * FROM u) s2 ON 1 = 1",
+        "u",
+        id="a-subquery-local-cte-is-not-seen-by-a-sibling-subquery",
+    ),
+]
+
+
+@pytest.mark.parametrize("dialect", ENGINE_DIALECTS)
+@pytest.mark.parametrize(("sql", "table_name"), SCOPE_SHAPES_THAT_READ_A_TABLE)
+def test_a_cte_out_of_scope_is_not_seen_whatever_node_carries_the_with(sql, table_name, dialect):
+    assert _unqualified_table(sql, dialect) == table_name
