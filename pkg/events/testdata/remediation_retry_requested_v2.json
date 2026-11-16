@@ -1,0 +1,69 @@
+{
+  "input": {
+    "event_id": "d1f8b3c6-2e97-4a40-8c5b-6a9e0f3d7b21",
+    "tenant_id": "default",
+    "producer": "release-controller",
+    "occurred_at": "2026-11-12T14:05:33.000094Z",
+    "payload": {
+      "release_id": "rel_20261112_0042",
+      "remediation_round": 2,
+      "rejection": {
+        "release_id": "rel_20261112_0042",
+        "stage": "validation",
+        "reason": "validation_failed",
+        "repo": "acme/analytics-dbt",
+        "commit_sha": "9f1c2e7a4b6d8031c5e7f9a2b4d6081a3c5e7f90",
+        "code_bundle_uri": "s3://continuo/tenants/default/releases/rel_20261112_0042/code-bundle.json.gz",
+        "per_node": [
+          {
+            "node_id": "analytics.orders_enriched",
+            "status": "failed",
+            "validation_op": "build_from_sql",
+            "dbt_log_uri": "s3://continuo/tenants/default/releases/rel_20261112_0042/validation/analytics.orders_enriched/dbt.log",
+            "run_results_uri": "s3://continuo/tenants/default/releases/rel_20261112_0042/validation/analytics.orders_enriched/run_results.json",
+            "candidate_artifact_uri": "s3://continuo/tenants/default/releases/rel_20261112_0042/validation/analytics.orders_enriched/candidate.json"
+          },
+          {
+            "node_id": "analytics.daily_revenue",
+            "status": "succeeded",
+            "validation_op": "build_from_sql"
+          }
+        ]
+      }
+    }
+  },
+  "fields": {
+    "event_id": "d1f8b3c6-2e97-4a40-8c5b-6a9e0f3d7b21",
+    "tenant_id": "default",
+    "occurred_at": "2026-11-12T14:05:33.000094Z",
+    "producer": "release-controller",
+    "schema_version": "1",
+    "payload": {
+      "release_id": "rel_20261112_0042",
+      "remediation_round": 2,
+      "rejection": {
+        "release_id": "rel_20261112_0042",
+        "stage": "validation",
+        "reason": "validation_failed",
+        "repo": "acme/analytics-dbt",
+        "commit_sha": "9f1c2e7a4b6d8031c5e7f9a2b4d6081a3c5e7f90",
+        "code_bundle_uri": "s3://continuo/tenants/default/releases/rel_20261112_0042/code-bundle.json.gz",
+        "per_node": [
+          {
+            "node_id": "analytics.orders_enriched",
+            "status": "failed",
+            "validation_op": "build_from_sql",
+            "dbt_log_uri": "s3://continuo/tenants/default/releases/rel_20261112_0042/validation/analytics.orders_enriched/dbt.log",
+            "run_results_uri": "s3://continuo/tenants/default/releases/rel_20261112_0042/validation/analytics.orders_enriched/run_results.json",
+            "candidate_artifact_uri": "s3://continuo/tenants/default/releases/rel_20261112_0042/validation/analytics.orders_enriched/candidate.json"
+          },
+          {
+            "node_id": "analytics.daily_revenue",
+            "status": "succeeded",
+            "validation_op": "build_from_sql"
+          }
+        ]
+      }
+    }
+  }
+}

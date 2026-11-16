@@ -1,0 +1,141 @@
+{
+  "input": {
+    "event_id": "b6e3a7d1-5f42-4c08-93ab-0d7e1f2c8a54",
+    "tenant_id": "default",
+    "producer": "remediation",
+    "occurred_at": "2026-11-12T10:31:07.000518Z",
+    "payload": {
+      "source": "validation",
+      "release_id": "rel_20261112_0042",
+      "remediation_round": 2,
+      "repo": "acme/analytics-dbt",
+      "commit_sha": "9f1c2e7a4b6d8031c5e7f9a2b4d6081a3c5e7f90",
+      "code_bundle_uri": "s3://continuo/tenants/default/releases/rel_20261112_0042/code-bundle.json.gz",
+      "classified_at": "2026-11-12T10:31:07Z",
+      "nodes": [
+        {
+          "node_id": "analytics.orders_enriched",
+          "category": "code_defect",
+          "error_signature": "sha256:1f0c9ab3",
+          "reason": "validation_failed",
+          "error_excerpt": "column \"customer_segment\" does not exist",
+          "dbt_log_uri": "s3://continuo/tenants/default/releases/rel_20261112_0042/validation/analytics.orders_enriched/dbt.log",
+          "candidate_artifact_uri": "s3://continuo/tenants/default/releases/rel_20261112_0042/validation/analytics.orders_enriched/candidate.json",
+          "file_path": "models/analytics/orders_enriched.sql",
+          "service": "service-1",
+          "node_type": "dbt-model",
+          "changed_ancestors": [
+            {
+              "node_id": "analytics.customers_clean",
+              "file_path": "models/analytics/customers_clean.sql",
+              "service": "service-1",
+              "depth": 1
+            },
+            {
+              "node_id": "staging.stg_customers",
+              "file_path": "models/staging/stg_customers.sql",
+              "service": "service-1",
+              "depth": 2
+            }
+          ]
+        },
+        {
+          "node_id": "analytics.daily_revenue",
+          "category": "code_defect",
+          "error_signature": "sha256:7d44e0c2",
+          "reason": "validation_failed",
+          "error_excerpt": "division by zero",
+          "dbt_log_uri": "s3://continuo/tenants/default/releases/rel_20261112_0042/validation/analytics.daily_revenue/dbt.log",
+          "file_path": "models/analytics/daily_revenue.sql",
+          "service": "service-1",
+          "node_type": "dbt-model"
+        },
+        {
+          "node_id": "analytics.payments_current",
+          "category": "infra",
+          "error_signature": "sha256:b2a91f65",
+          "reason": "validation_failed",
+          "error_excerpt": "connection reset by peer",
+          "dbt_log_uri": "s3://continuo/tenants/default/releases/rel_20261112_0042/validation/analytics.payments_current/dbt.log",
+          "file_path": "models/analytics/payments_current.sql",
+          "service": "service-1",
+          "node_type": "dbt-model",
+          "unfixable": {
+            "reason": "classifier_infra",
+            "detail": "the warehouse connection was reset, a new release run clears it"
+          }
+        }
+      ]
+    }
+  },
+  "fields": {
+    "event_id": "b6e3a7d1-5f42-4c08-93ab-0d7e1f2c8a54",
+    "tenant_id": "default",
+    "occurred_at": "2026-11-12T10:31:07.000518Z",
+    "producer": "remediation",
+    "schema_version": "1",
+    "payload": {
+      "source": "validation",
+      "release_id": "rel_20261112_0042",
+      "remediation_round": 2,
+      "repo": "acme/analytics-dbt",
+      "commit_sha": "9f1c2e7a4b6d8031c5e7f9a2b4d6081a3c5e7f90",
+      "code_bundle_uri": "s3://continuo/tenants/default/releases/rel_20261112_0042/code-bundle.json.gz",
+      "classified_at": "2026-11-12T10:31:07Z",
+      "nodes": [
+        {
+          "node_id": "analytics.orders_enriched",
+          "category": "code_defect",
+          "error_signature": "sha256:1f0c9ab3",
+          "reason": "validation_failed",
+          "error_excerpt": "column \"customer_segment\" does not exist",
+          "dbt_log_uri": "s3://continuo/tenants/default/releases/rel_20261112_0042/validation/analytics.orders_enriched/dbt.log",
+          "candidate_artifact_uri": "s3://continuo/tenants/default/releases/rel_20261112_0042/validation/analytics.orders_enriched/candidate.json",
+          "file_path": "models/analytics/orders_enriched.sql",
+          "service": "service-1",
+          "node_type": "dbt-model",
+          "changed_ancestors": [
+            {
+              "node_id": "analytics.customers_clean",
+              "file_path": "models/analytics/customers_clean.sql",
+              "service": "service-1",
+              "depth": 1
+            },
+            {
+              "node_id": "staging.stg_customers",
+              "file_path": "models/staging/stg_customers.sql",
+              "service": "service-1",
+              "depth": 2
+            }
+          ]
+        },
+        {
+          "node_id": "analytics.daily_revenue",
+          "category": "code_defect",
+          "error_signature": "sha256:7d44e0c2",
+          "reason": "validation_failed",
+          "error_excerpt": "division by zero",
+          "dbt_log_uri": "s3://continuo/tenants/default/releases/rel_20261112_0042/validation/analytics.daily_revenue/dbt.log",
+          "file_path": "models/analytics/daily_revenue.sql",
+          "service": "service-1",
+          "node_type": "dbt-model"
+        },
+        {
+          "node_id": "analytics.payments_current",
+          "category": "infra",
+          "error_signature": "sha256:b2a91f65",
+          "reason": "validation_failed",
+          "error_excerpt": "connection reset by peer",
+          "dbt_log_uri": "s3://continuo/tenants/default/releases/rel_20261112_0042/validation/analytics.payments_current/dbt.log",
+          "file_path": "models/analytics/payments_current.sql",
+          "service": "service-1",
+          "node_type": "dbt-model",
+          "unfixable": {
+            "reason": "classifier_infra",
+            "detail": "the warehouse connection was reset, a new release run clears it"
+          }
+        }
+      ]
+    }
+  }
+}
