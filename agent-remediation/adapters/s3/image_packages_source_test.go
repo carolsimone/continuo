@@ -92,27 +92,63 @@ func TestImagePackages_AReleaseRejectedAtParseUsesItsProducerBundle(t *testing.T
 	assert.Equal(t, []objectstoretest.Read{{Ref: producerBundleRef, MaxBytes: maxProducerBundleBytes}}, mem.Reads())
 }
 
-func TestImagePackages_AContractBundleWithoutTheServiceFallsBackToTheProducerBundle(t *testing.T) {
-	mem, rel := storeWithContractBundle(t, `{"schema_version":1,"tenant_id":"default","release_id":"rel-1","provenance":{},"contracts":{}}`)
-	require.NoError(t, mem.Put(context.Background(), producerBundleRef, []byte(producerBundleDoc), "application/json"))
+// TestImagePackages_AContractBundleThatMissesIsNeverReplacedByTheProducerBundle
+// pins that a release whose parse wrote a contract bundle is answered by that
+// bundle alone: whatever is wrong with it is ErrNoImagePackages naming why,
+// and the producer bundle, which the parse may not have read, is not read.
+func TestImagePackages_AContractBundleThatMissesIsNeverReplacedByTheProducerBundle(t *testing.T) {
+	cases := map[string]struct {
+		setup func(t *testing.T) (*objectstoretest.Memory, *fakeBundles)
+		why   string
+	}{
+		"the service absent": {func(t *testing.T) (*objectstoretest.Memory, *fakeBundles) {
+			return storeWithContractBundle(t, `{"schema_version":1,"tenant_id":"default","release_id":"rel-1","provenance":{},"contracts":{}}`)
+		}, "records no package list for the service"},
+		"a checksum mismatch": {func(t *testing.T) (*objectstoretest.Memory, *fakeBundles) {
+			mem, rel := storeWithContractBundle(t, contractBundleDoc)
+			rel.sha = "00"
+			return mem, rel
+		}, "contract bundle checksum mismatch"},
+		"malformed": {func(t *testing.T) (*objectstoretest.Memory, *fakeBundles) {
+			return storeWithContractBundle(t, "not json")
+		}, "malformed contract bundle"},
+		"not found": {func(*testing.T) (*objectstoretest.Memory, *fakeBundles) {
+			return objectstoretest.NewMemory(testBucket), &fakeBundles{uri: contractBundleRef.String(), sha: "00"}
+		}, "cannot be read"},
+		"a uri that names no object": {func(*testing.T) (*objectstoretest.Memory, *fakeBundles) {
+			return objectstoretest.NewMemory(testBucket), &fakeBundles{uri: "s3://test-bucket", sha: "00"}
+		}, "names no object"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			mem, rel := c.setup(t)
+			require.NoError(t, mem.Put(context.Background(), producerBundleRef, []byte(producerBundleDoc), "application/json"))
 
-	got, err := NewImagePackagesSource(mem, rel, testBucket).ImagePackages(context.Background(), "rel-1", "svc-py")
+			_, err := NewImagePackagesSource(mem, rel, testBucket).ImagePackages(context.Background(), "rel-1", "svc-py")
 
-	require.NoError(t, err)
-	assert.Equal(t, map[string]string{"pyarrow": "25.0.0"}, got)
+			require.ErrorIs(t, err, ports.ErrNoImagePackages)
+			assert.Contains(t, err.Error(), "rel-1")
+			assert.Contains(t, err.Error(), "svc-py")
+			assert.Contains(t, err.Error(), c.why)
+			for _, r := range mem.Reads() {
+				assert.NotEqual(t, producerBundleRef, r.Ref, "the producer bundle is read only when the release has no contract bundle")
+			}
+		})
+	}
 }
 
+// TestImagePackages_NeitherHoldsTheServiceIsErrNoImagePackages covers a release
+// with no contract bundle whose producer bundle does not hold the service.
 func TestImagePackages_NeitherHoldsTheServiceIsErrNoImagePackages(t *testing.T) {
 	cases := map[string]func(t *testing.T) (*objectstoretest.Memory, *fakeBundles){
 		"no bundle at all": func(*testing.T) (*objectstoretest.Memory, *fakeBundles) {
 			return objectstoretest.NewMemory(testBucket), &fakeBundles{}
 		},
-		"bundles of another service": func(t *testing.T) (*objectstoretest.Memory, *fakeBundles) {
-			mem, rel := storeWithContractBundle(t,
-				`{"schema_version":1,"tenant_id":"default","release_id":"rel-1","provenance":{"svc-other":{"image_packages":{"a":"1"}}},"contracts":{}}`)
+		"a producer bundle of another service": func(t *testing.T) (*objectstoretest.Memory, *fakeBundles) {
+			mem := objectstoretest.NewMemory(testBucket)
 			require.NoError(t, mem.Put(context.Background(), producerBundleRef,
 				[]byte(`{"bundle_version":1,"service":"svc-other","image_packages":{"a":"1"},"nodes":[]}`), "application/json"))
-			return mem, rel
+			return mem, &fakeBundles{}
 		},
 		"a producer bundle with no package list": func(t *testing.T) (*objectstoretest.Memory, *fakeBundles) {
 			mem := objectstoretest.NewMemory(testBucket)
@@ -120,11 +156,10 @@ func TestImagePackages_NeitherHoldsTheServiceIsErrNoImagePackages(t *testing.T) 
 				[]byte(`{"bundle_version":1,"service":"svc-py","nodes":[]}`), "application/json"))
 			return mem, &fakeBundles{}
 		},
-		"a contract bundle whose checksum is wrong and a producer bundle that is not JSON": func(t *testing.T) (*objectstoretest.Memory, *fakeBundles) {
-			mem, rel := storeWithContractBundle(t, contractBundleDoc)
-			rel.sha = "00"
+		"a producer bundle that is not JSON": func(t *testing.T) (*objectstoretest.Memory, *fakeBundles) {
+			mem := objectstoretest.NewMemory(testBucket)
 			require.NoError(t, mem.Put(context.Background(), producerBundleRef, []byte("not json"), "application/json"))
-			return mem, rel
+			return mem, &fakeBundles{}
 		},
 	}
 	for name, setup := range cases {

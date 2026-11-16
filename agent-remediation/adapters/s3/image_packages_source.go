@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/pkg/contractbundle"
@@ -22,9 +21,9 @@ const maxProducerBundleBytes int64 = 64 << 20
 
 // ImagePackagesSource implements ports.ImagePackagesSource over an
 // object-store reader. It reads the package list from the rejected release's
-// contract bundle, and from the odcs-bundle.json the service's CI uploaded for
-// the release when the contract bundle does not record the service (a release
-// rejected before its parse ended has no contract bundle at all).
+// contract bundle, and, only for a release that has none (one rejected before
+// its parse ended), from the odcs-bundle.json the service's CI uploaded for
+// the release.
 type ImagePackagesSource struct {
 	objects  objectstore.Reader
 	releases ports.ContractBundleReader
@@ -47,34 +46,34 @@ type producerBundle struct {
 }
 
 // ImagePackages returns the package list of service's image in release
-// releaseID: Provenance[service].ImagePackages of the release's contract bundle
-// when the bundle records the service, otherwise the image_packages of the
+// releaseID. A release whose parse wrote a contract bundle is answered by that
+// bundle alone, with Provenance[service].ImagePackages: the bundle is what the
+// release's parse read, so another document never stands in for it. Only a
+// release with no contract bundle is answered by the image_packages of the
 // service's odcs-bundle.json for the release. A bundle that is missing, cannot
 // be read for good (too large, a wrong checksum, not the document it should
-// be) or records another service does not hold the service; when neither
-// holds it the error wraps ports.ErrNoImagePackages and says why each did
-// not. A release read or an object read a retry may clear is returned as is.
+// be) or does not record the service gives an error wrapping
+// ports.ErrNoImagePackages that names the release, the service and why. A
+// release read or an object read a retry may clear is returned as is.
 func (s *ImagePackagesSource) ImagePackages(ctx context.Context, releaseID, service string) (map[string]string, error) {
 	uri, sha, err := s.releases.ContractBundle(ctx, releaseID)
 	if err != nil {
 		return nil, fmt.Errorf("read the contract bundle of release %s: %w", releaseID, err)
 	}
-	var misses []string
-	if uri == "" {
-		misses = append(misses, "the release has no contract bundle")
+	var packages map[string]string
+	var miss string
+	if uri != "" {
+		packages, miss, err = s.fromContractBundle(ctx, uri, sha, service)
 	} else {
-		packages, miss, err := s.fromContractBundle(ctx, uri, sha, service)
-		if err != nil || miss == "" {
-			return packages, err
+		packages, miss, err = s.fromProducerBundle(ctx, releaseID, service)
+		if miss != "" {
+			miss = "the release has no contract bundle, and " + miss
 		}
-		misses = append(misses, miss)
 	}
-	packages, miss, err := s.fromProducerBundle(ctx, releaseID, service)
 	if err != nil || miss == "" {
 		return packages, err
 	}
-	misses = append(misses, miss)
-	return nil, fmt.Errorf("release %s, service %s: %w (%s)", releaseID, service, ports.ErrNoImagePackages, strings.Join(misses, "; "))
+	return nil, fmt.Errorf("release %s, service %s: %w (%s)", releaseID, service, ports.ErrNoImagePackages, miss)
 }
 
 // fromContractBundle reads the package list out of the contract bundle at uri.
@@ -86,7 +85,7 @@ func (s *ImagePackagesSource) fromContractBundle(ctx context.Context, uri, sha, 
 	}
 	body, err := s.objects.Get(ctx, ref, maxContractBundleBytes)
 	switch {
-	case errors.Is(err, objectstore.ErrNotFound), errors.Is(err, objectstore.ErrTooLarge):
+	case errors.Is(err, objectstore.ErrNotFound), errors.Is(err, objectstore.ErrTooLarge), errors.Is(err, objectstore.ErrInvalidRef):
 		return nil, fmt.Sprintf("the contract bundle %s cannot be read: %v", uri, err), nil
 	case err != nil:
 		return nil, "", fmt.Errorf("get the contract bundle %s: %w", uri, err)
