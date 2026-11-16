@@ -274,7 +274,10 @@ upgrade.
    bare short SHA, for example
    `"image_tag":"docker.io/<user>/service-py:4e5f6a7"`. Rebuild a Python service
    on 0.12.0 only inside these steps: a normal release on 0.12.0 outside them
-   moves its hashes outside the window and starts a validation.
+   moves its hashes outside the window and starts a validation. A service
+   released as `python-odcs` follows the same step with `"kind": "python-odcs"`,
+   through the pipeline that uploads its `odcs-bundle.json` packed by
+   `continuo-runtime pack`.
 5. **Check.** Release any one service normally with no change. Its release must
    validate nothing.
 6. **Unfreeze.**

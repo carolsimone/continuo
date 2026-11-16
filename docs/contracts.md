@@ -147,7 +147,7 @@ exception: it rejects the release as `unqualified_reference`.
 | A `provenance` property | continuo writes it into the published file. Inside your file it would freeze at the first release. |
 | A `service` other than the release's | A contract belongs to one service. |
 | A `name`, a `physicalName` or a column `physicalName` other than the real one | A table must not have two names. |
-| An `id` with an upper case letter | Table names in continuo are lower case. |
+| An `id` with an upper case letter, a non-ASCII one (`Ö`) included | Table names in continuo are lower case. The library refuses an ASCII capital; continuo refuses any other, naming the file and the id it keys the node by. |
 | `partitioned: true`, a `partitionKeyPosition` that is not the default | The runtime cannot honour them. |
 | `filePath`, `materialization`, `contractEnforced`, `access`, `group`, `deprecationDate`, `freshnessBuildAfter`, `snapshot`, `quoteColumns` | These describe how dbt builds a node. Nothing reads them on a Python node, so a stored one would say something untrue. |
 | A continuo property that does not exist | Most often a spelling mistake. |
@@ -162,6 +162,10 @@ Two details of the last rule:
 - A name defined by `WITH` hides a table of the same name only inside the part
   of the query where that `WITH` is in scope. Outside it, the name is a real
   table again, and it needs its schema.
+
+Two services that each declare the same `id` are not refused here: the release
+is rejected as `duplicate_table`, which names both services, and the contract
+bundle of that parse holds neither contract.
 
 Everything else that ODCS allows, for example `description.usage`, `domain`,
 `tags`, `quality` or a column's `description`, stays in the file as you wrote
@@ -357,6 +361,11 @@ catalog:
 version once its promotion is older than that many days. catalog never deletes
 the current contract of a node, or the one before it.
 
+A node has a current contract while it is live and the newest promotion the
+live folder was written for carried its contract. When its service goes back
+to `contract.yaml`, the next promotion carries none: its file leaves the live
+folder, the node has no current contract any more, and its history stays.
+
 ## The live folder
 
 catalog writes the contracts that are in production to your bucket:
@@ -402,8 +411,19 @@ customProperties:
 ```
 
 While catalog is part way through a rewrite, the index lists each file it is
-about to put with `"version": 0` and an empty `contract_hash`. A file at
-version 0 is one that no index vouches for, so wait for the final index.
+about to put or delete with `"version": 0` and an empty `contract_hash`. A file
+at version 0 is one that no index vouches for, so wait for the final index.
+A rewrite that stops part way leaves those entries, so the next rewrite puts
+every one of them again or deletes it.
+
+A rewrite needs the index. If `_index.json` cannot be read (it is not JSON, or
+a newer catalog wrote another `schema_version`), every rewrite fails, and
+catalog logs an error that names the key. Delete
+`tenants/<tenant>/contracts/live/_index.json`: the next rewrite puts every file
+again and writes a new index.
+
+catalog does not start a rewrite while an export or a restore of the tenant's
+graph runs; it tries the promotion again once that ends.
 
 ### The `servers` entry
 
@@ -436,7 +456,10 @@ servers:
   chart does not render and catalog does not start.
 
 When catalog starts with other settings than it last used, it rewrites every
-file.
+file. While the catalog pods roll after a change of these settings, a pod still
+on the old settings can rewrite the folder after the new pod's start: those
+files keep the old entry until the next promotion, or the next catalog start,
+rewrites every file again.
 
 ### Access
 
@@ -495,7 +518,9 @@ that reads it is bound by [Reading releases from continuo](read-contract.md).
 ## Moving from `contract.yaml`
 
 The old kind `python` and its single `contract.yaml` still work, and new
-services use `python-odcs`. To move a service, convert the files, change the CI
+services use `python-odcs`. agent-remediation proposes fixes only for a service
+whose contracts are `.odcs.yaml` files: a service still on `contract.yaml` gets
+no fix proposals for its Python nodes. To move a service, convert the files, change the CI
 steps above, and post with the kind `python-odcs`. A release of a service uses
 one kind.
 

@@ -490,6 +490,7 @@ the key of each release's contract bundle before it writes it, so it needs
 |---|---|---|
 | `tenants/` (topology artifacts, `tenants/<tenant>/topologies/<release>/topology.json.gz`, and contract bundles, `tenants/<tenant>/topologies/<release>/contracts.json.gz`) | topology-controller | `s3:GetObject`, `s3:PutObject`, `s3:ListBucket` |
 | | release-controller | `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket` |
+| | agent-remediation | `s3:GetObject`, `s3:ListBucket` |
 | | run-controller, catalog | `s3:GetObject` |
 | `code-bundles/` (`code-bundles/<release>/bundle.json`) | topology-controller | `s3:PutObject` |
 | | catalog, agent-remediation | `s3:GetObject` |
@@ -528,6 +529,17 @@ WARNING in topology-controller's log that names the key, so the release parses
 with dbt's checksum for its seeds until the grant is in place. A 404 is also
 "no extras", logged at INFO; any other S3 error pauses the release and
 redelivers it.
+
+agent-remediation packs a Python fix with the package list of the rejected
+release's image of the service. It reads the list from the release's contract
+bundle, `tenants/<tenant>/topologies/<release>/contracts.json.gz`, or, only for
+a release that has none, from `<service>/<release>/odcs-bundle.json`, the
+bundle the service's CI uploaded. With your own bucket, grant it `s3:GetObject`
+on both keys and `s3:ListBucket` on the bucket for the prefix `tenants/` and
+each Python service's own prefix, so that a missing bundle reads as 404, not
+403. A 404 means the release records no list: no verification starts and no fix
+is proposed for the node. A 403 is a read a retry may clear, so the remediation
+tries again and, under the `runner` engine, ends as a system failure.
 
 topology-controller writes each release's contract bundle once: it reads the key
 `tenants/<tenant>/topologies/<release>/contracts.json.gz` first, and a release

@@ -109,7 +109,7 @@ To run no exports, set catalog.backup.enabled=false.
 
 {{- if and .Release.IsUpgrade (not .Values.minio.enabled) }}
 
-With your own bucket (s3.*), two grants change:
+With your own bucket (s3.*), three grants change:
   * topology-controller now reads the contract bundle key before it writes it
     (tenants/<tenant>/topologies/<release>/contracts.json.gz, so a release
     that is redelivered never rewrites it). Grant its role s3:GetObject on
@@ -119,6 +119,13 @@ With your own bucket (s3.*), two grants change:
   * catalog writes the live contracts folder, tenants/<tenant>/contracts/live/:
     grant its role s3:GetObject, s3:PutObject, s3:DeleteObject and
     s3:ListBucket on that prefix.
+  * agent-remediation reads the package list of a Python fix's image from the
+    rejected release's contract bundle (tenants/<tenant>/topologies/<release>/
+    contracts.json.gz) or, for a release with none, from
+    <service>/<release>/odcs-bundle.json. Grant its role s3:GetObject on both
+    and s3:ListBucket on the bucket for the prefixes tenants/ and each Python
+    service's own, so a missing bundle reads as 404 (no fix is proposed for the
+    node) and not 403 (the remediation retries and ends as a system failure).
 The chart's shared key already covers tenants/, so an install on the key the
 chart configures needs nothing. deploy/continuo/README.md, "S3 access", has
 the table.

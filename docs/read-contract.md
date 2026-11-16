@@ -98,7 +98,7 @@ its `csvSource` as the read `csv`.
 | `contracts.<id>.content_hash` | string | The node's code fingerprint, `sha256:` and 64 hex characters. |
 | `contracts.<id>.source.path` | string | The file the contract was read from, as a path in the service's repository. |
 | `contracts.<id>.source.sha256` | string | The SHA-256 of that file's text. |
-| `contracts.<id>.document` | object | The stored form of the contract: the ODCS document that `contract_hash` is the hash of, less the four root keys named there. It holds `version: "0"` and `status: active`, which `contract_hash` leaves out. The version a node's contract has is in catalog and in the [live folder](contracts.md#the-live-folder). |
+| `contracts.<id>.document` | object | The stored form of the contract, as a whole ODCS document: it holds every root key, `apiVersion`, `kind`, `status` (`active`) and `version` (`"0"`) among them. `contract_hash` is taken over this document with those four root keys removed, so a reader that recomputes it removes them first. The version a node's contract has is in catalog and in the [live folder](contracts.md#the-live-folder). |
 
 The keys `odcs_schema_sha256`, `ontology`, `provenance`, `summary`, `failures`
 and `timings` are in the document but not in the read set. They may change in any
