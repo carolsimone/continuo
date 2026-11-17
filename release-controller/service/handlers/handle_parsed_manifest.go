@@ -64,6 +64,9 @@ type HandleParsedManifestInput struct {
 // and emits release.rejected:v1 with stage `parse`.
 // On success: reads the candidate topology artifact, computes the validation closure,
 // transitions to Validating, and emits validation.requested:v1.
+// A stored run of the kind python is rejected invalid_artifact whatever the
+// result (rejectStoredPythonRun), so neither a bootstrap nor a
+// nothing-to-validate promotion reaches it.
 func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestInput) error {
 	u := d.NewUoW()
 	if err := u.Begin(ctx); err != nil {
@@ -101,6 +104,9 @@ func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestI
 	}
 
 	now := d.Clock.Now()
+	if isStoredPythonRun(r) {
+		return rejectStoredPythonRun(ctx, d, u, r, now)
+	}
 
 	// Both outcomes name the continuo-contracts version that read the release's
 	// contracts; the run keeps it whether the parse ended ok or failed.
@@ -813,7 +819,7 @@ func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.U
 // dbt-snapshot, python-node, python-csv, or python-api) so remediation can tell, without a topology
 // lookup of its own, whether the target's source is a single file this
 // system can read. A python node's relation is declared in the service's
-// contract.yaml, whose repository path this system does not carry — only
+// ODCS contract file, whose repository path this system does not carry — only
 // file_path for the contract's script entry — so the fixer must skip a
 // python target rather than editing a file that cannot produce the fix.
 //

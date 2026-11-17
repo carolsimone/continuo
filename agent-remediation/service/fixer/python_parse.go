@@ -11,11 +11,11 @@ import (
 // parser rejected before any Job ran. The rejected SQL is one of the node's
 // `readQueries` in the ODCS contract file that declares it. The trigger's file
 // path names that file by its path in the service's bundle, not in the
-// repository (for a service of kind `python` it names the script), so the fix
-// is made in the contract file found from the node id alone, the way the validation lane
-// finds it, and it is proven the same way: the corrected contract is packaged
-// and the driver submits a python verification run, whose own parse leg is
-// what decides whether the SQL now parses and resolves.
+// repository, so the fix is made in the contract file found from the node id
+// alone, the way the validation lane finds it, and it is proven the same way:
+// the corrected contract is packaged and the driver submits a python-odcs
+// verification run, whose own parse leg is what decides whether the SQL now
+// parses and resolves.
 //
 // Everything but the evidence is shared with pythonValidationFixer: the same
 // locate step, the same contractFix orchestration, and the same declaration

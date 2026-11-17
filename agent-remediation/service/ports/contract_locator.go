@@ -13,11 +13,6 @@ var ErrNodeNotDeclared = errors.New("node not declared in any ODCS contract file
 // search should just pick one.
 var ErrAmbiguousDeclaration = errors.New("node declared in more than one ODCS contract file")
 
-// ErrServiceNotConverted reports that no ODCS contract file declares the node
-// but a contract.yaml's "nodes:" list does: the node's service still declares
-// its Python nodes in contract.yaml, which no fix is packaged from.
-var ErrServiceNotConverted = errors.New("the service still declares its python nodes in contract.yaml")
-
 // Located is the ODCS contract file that declares a python node, and the
 // repository locations derived from where that file lives.
 type Located struct {
@@ -44,11 +39,9 @@ type ContractLocator interface {
 	// RepoArchive.Fetch — for the ODCS file declaring the node identified by
 	// schema and table, and returns where that file lives.
 	//
-	// Zero declaring files returns ErrServiceNotConverted when a contract
-	// yaml's "nodes:" list declares the node, and ErrNodeNotDeclared
-	// otherwise; more than one returns
-	// ErrAmbiguousDeclaration. All three are permanent for a given checkout,
-	// so a caller records them rather than retrying. Any other error is a
-	// failure of the search itself.
+	// Zero declaring files returns ErrNodeNotDeclared and more than one
+	// returns ErrAmbiguousDeclaration. Both are permanent for a given
+	// checkout, so a caller records them rather than retrying. Any other
+	// error is a failure of the search itself.
 	Locate(rootDir, schema, table string) (Located, error)
 }

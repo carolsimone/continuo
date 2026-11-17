@@ -68,7 +68,7 @@ EXPOSE 8092
 
 # Runs unprivileged. The service writes to temporary directories at runtime —
 # it extracts a repository tarball to search for a python node's contract file,
-# and the packaging CLI writes the merged contract to a temp file — so it needs
+# and the packaging CLI writes the odcs bundle to a temp file — so it needs
 # a writable /tmp, which the base image provides world-writable. Nothing outside
 # temporary directories is written.
 USER 65532:65532

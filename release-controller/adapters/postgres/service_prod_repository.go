@@ -95,3 +95,30 @@ func (r *ServiceProdRepository) Upsert(ctx context.Context, sp *release.ServiceP
 	}
 	return nil
 }
+
+// ServicesWithKind returns the names of the services whose pointer has the
+// given manifest kind, sorted ascending. When none has it the list is empty.
+func (r *ServiceProdRepository) ServicesWithKind(ctx context.Context, kind release.ManifestKind) ([]string, error) {
+	rows, err := r.q.QueryxContext(ctx,
+		`SELECT service_name
+		   FROM service_prod
+		  WHERE manifest_kind = $1
+		  ORDER BY service_name`, string(kind))
+	if err != nil {
+		return nil, fmt.Errorf("list service_prod of kind %q: %w", kind, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	names := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scan service_prod name: %w", err)
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate service_prod of kind %q: %w", kind, err)
+	}
+	return names, nil
+}

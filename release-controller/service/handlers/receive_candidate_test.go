@@ -124,15 +124,31 @@ func TestReceiveCandidate_DefaultsAbsentKindToDbt(t *testing.T) {
 	assert.Equal(t, release.ManifestKindDbt, r.ManifestKind())
 }
 
-func TestReceiveCandidate_PersistsPythonKind(t *testing.T) {
+func TestReceiveCandidate_PersistsPythonODCSKind(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Service: "svc", ReleaseID: "rK2", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
-		Kind: "python",
+		Kind: "python-odcs",
 	}))
 	r, err := store.GetRelease("rK2")
 	require.NoError(t, err)
-	assert.Equal(t, release.ManifestKindPython, r.ManifestKind())
+	assert.Equal(t, release.ManifestKindPythonODCS, r.ManifestKind())
+}
+
+// The python kind names a contract.yaml artifact no parser reads: a new
+// release naming it is refused as an invalid candidate, with the message that
+// names the kind to use, and persists nothing.
+func TestReceiveCandidate_RefusesPython(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service: "svc", ReleaseID: "rK4", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
+		Kind: "python",
+	})
+	require.ErrorIs(t, err, handlers.ErrInvalidCandidate)
+	assert.ErrorContains(t, err,
+		`kind "python" is no longer accepted: release the service as "python-odcs", one ODCS contract per node (docs/contracts.md)`)
+	r, _ := store.GetRelease("rK4")
+	assert.Nil(t, r, "a refused kind must not persist a release")
 }
 
 func TestReceiveCandidate_RejectsUnknownKind(t *testing.T) {
@@ -181,7 +197,7 @@ func TestReceiveCandidate_ConflictingResubmitWrapsErrReleaseIDConflict(t *testin
 	for name, mutate := range map[string]func(*handlers.ReceiveCandidateInput){
 		"service":    func(in *handlers.ReceiveCandidateInput) { in.Service = "billing" },
 		"image tag":  func(in *handlers.ReceiveCandidateInput) { in.ImageTag = "img:2" },
-		"kind":       func(in *handlers.ReceiveCandidateInput) { in.Kind = "python" },
+		"kind":       func(in *handlers.ReceiveCandidateInput) { in.Kind = "python-odcs" },
 		"bootstrap":  func(in *handlers.ReceiveCandidateInput) { in.Bootstrap = true },
 		"repo":       func(in *handlers.ReceiveCandidateInput) { in.Repo = "acme/fork" },
 		"commit sha": func(in *handlers.ReceiveCandidateInput) { in.CommitSHA = "cafebabe" },

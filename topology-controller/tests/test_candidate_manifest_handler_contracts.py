@@ -8,13 +8,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from domain.contract_vocabulary import ParseFailureKind
-from domain.model import FailedNode, ManifestFile, ManifestKind
+from domain.model import FailedNode, ManifestFile
 from service.release_timings import ReleaseOutcome
 from tests.fakes import (
     RecordingArtifactWriter,
     dbt_node,
-    python_contract,
-    python_entry,
     python_handler,
     source_of,
 )
@@ -144,29 +142,6 @@ def test_the_valid_nodes_of_a_rejected_release_are_still_resolved(tmp_path):
 
     kwargs = _failed_kwargs(publisher)
     assert sorted(n.node_id for n in kwargs["failed_nodes"]) == ["analytics.py_daily_kpis", "test_schema.broken"]
-
-
-def test_both_python_kinds_in_one_release(tmp_path):
-    publisher, writer = MagicMock(), RecordingArtifactWriter()
-    wire_dir, odcs_dir = tmp_path / "wire", tmp_path / "odcs"
-    wire_dir.mkdir()
-    odcs_dir.mkdir()
-    source = source_of(
-        ManifestFile(
-            path=python_contract(wire_dir, python_entry(), service="service-wire"),
-            declared_service="service-wire", kind=ManifestKind.PYTHON,
-        ),
-        bundle_file(odcs_dir, demo_nodes()),
-    )
-
-    python_handler(source, publisher, artifact_writer=writer).handle(release_id="rel-1")
-
-    publisher.publish_ok.assert_called_once()
-    publisher.publish_failed.assert_not_called()
-    assert sorted(n["unique_id"] for n in writer.nodes if n["node_type"] != "unknown-external") == [
-        "analytics.demo_orders_csv", "analytics.fx_eur_usd_rates", "analytics.py_daily_kpis", "test_schema.py_metrics"]
-    assert {n["service_name"] for n in writer.nodes if n["node_type"] != "unknown-external"} == {
-        "service-py", "service-wire"}
 
 
 def test_a_failed_release_counts_each_issue(tmp_path):

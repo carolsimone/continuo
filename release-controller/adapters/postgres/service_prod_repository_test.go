@@ -4,6 +4,7 @@ package postgres_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,11 +55,75 @@ func TestServiceProdRepository_UpsertListGet(t *testing.T) {
 	assert.Nil(t, missing)
 
 	// manifest_kind survives the Upsert -> Get roundtrip.
-	spPy := release.NewServiceProd("svc-py", "rel-1", "s3://b/svc-py/rel-1/contract.yaml",
-		"img:1", release.ManifestKindPython, now)
+	spPy := release.NewServiceProd("svc-py", "rel-1", "s3://b/svc-py/rel-1/odcs-bundle.json",
+		"img:1", release.ManifestKindPythonODCS, now)
 	require.NoError(t, repo.Upsert(ctx, spPy))
 	gotPy, err := repo.Get(ctx, "svc-py")
 	require.NoError(t, err)
 	require.NotNil(t, gotPy)
-	assert.Equal(t, release.ManifestKindPython, gotPy.ManifestKind())
+	assert.Equal(t, release.ManifestKindPythonODCS, gotPy.ManifestKind())
+}
+
+// TestServicesWithKind_ListsThePythonServices writes service_prod rows of its
+// own, in reverse name order, and reads them back by kind. It deletes only the rows
+// it wrote, so rows other tests left in the table stay.
+func TestServicesWithKind_ListsThePythonServices(t *testing.T) {
+	db := connectTestDB(t)
+	// One connection, with index scans off, makes a query that does not sort
+	// return the rows in the order they were written: the rows below are
+	// written in reverse name order, so only an ORDER BY returns them sorted.
+	db.SetMaxOpenConns(1)
+	for _, setting := range []string{"enable_indexscan", "enable_indexonlyscan", "enable_bitmapscan"} {
+		_, err := db.Exec("SET " + setting + " = off")
+		require.NoError(t, err)
+	}
+	repo := postgres.NewServiceProdRepository(db)
+	ctx := context.Background()
+	now := time.Unix(1_000_000, 0).UTC()
+
+	const prefix = "kind-test-"
+	rows := []struct {
+		name string
+		kind release.ManifestKind
+	}{
+		{prefix + "py-c", release.ManifestKindPython},
+		{prefix + "dbt", release.ManifestKindDbt},
+		{prefix + "py-b", release.ManifestKindPython},
+		{prefix + "odcs", release.ManifestKindPythonODCS},
+		{prefix + "py-a", release.ManifestKindPython},
+	}
+	t.Cleanup(func() {
+		_, err := db.Exec(`DELETE FROM service_prod WHERE service_name LIKE $1`, prefix+"%")
+		require.NoError(t, err)
+	})
+	for _, r := range rows {
+		require.NoError(t, repo.Upsert(ctx, release.NewServiceProd(r.name, "rel-1", "s3://b/"+r.name+"/manifest.json", "img:1", r.kind, now)))
+	}
+
+	// named keeps the services this test wrote, in the order the repository
+	// returned them: another test's leftover row of the kind cannot fail it.
+	named := func(names []string) []string {
+		out := []string{}
+		for _, n := range names {
+			if strings.HasPrefix(n, prefix) {
+				out = append(out, n)
+			}
+		}
+		return out
+	}
+
+	python, err := repo.ServicesWithKind(ctx, release.ManifestKindPython)
+	require.NoError(t, err)
+	assert.Equal(t, []string{prefix + "py-a", prefix + "py-b", prefix + "py-c"}, named(python))
+
+	odcs, err := repo.ServicesWithKind(ctx, release.ManifestKindPythonODCS)
+	require.NoError(t, err)
+	assert.Equal(t, []string{prefix + "odcs"}, named(odcs))
+
+	// A kind that no row of this test holds yields an empty list, not an error.
+	_, err = db.Exec(`DELETE FROM service_prod WHERE service_name LIKE $1 AND manifest_kind = 'python'`, prefix+"%")
+	require.NoError(t, err)
+	python, err = repo.ServicesWithKind(ctx, release.ManifestKindPython)
+	require.NoError(t, err)
+	assert.Empty(t, named(python))
 }

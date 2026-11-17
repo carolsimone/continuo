@@ -47,7 +47,6 @@ def test_the_estate_writes_the_python_service_as_one_odcs_bundle(tmp_path):
     estate = generate_estate(20, columns=4)
     (request,) = [request for request in estate.requests if request.kind is ManifestKind.PYTHON_ODCS]
     assert request.key == f"svc-py/{estate.release_id}/odcs-bundle.json"
-    assert not [key for key in estate.objects if key.endswith("/contract.yaml")]
     path = tmp_path / "odcs-bundle.json"
     path.write_bytes(estate.objects[request.key])
     bundle = json.loads(path.read_bytes())

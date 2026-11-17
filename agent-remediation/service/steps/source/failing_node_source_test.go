@@ -156,7 +156,7 @@ func TestFailingNodeSource_Declines(t *testing.T) {
 				"the parser can reject and remediation has no fix to offer; correct the contract by hand"},
 		{"parse of a python-node", "parse", remediation.TriggerNode{NodeID: "n1", NodeType: string(pkg_model.NodeTypePythonNode)},
 			"n1 is a python-node node: its reads are declared in its contract file " +
-				"(the ODCS file under contracts/, or a legacy contract.yaml), which this lane does not edit; correct the contract by hand"},
+				"(the ODCS file under contracts/), which this lane does not edit; correct the contract by hand"},
 		{"parse with no file", "parse", remediation.TriggerNode{NodeID: "n1", Service: "svc"},
 			"the parse rejection names no source file, so there is no file to fix"},
 		{"parse with no service", "parse", remediation.TriggerNode{NodeID: "n1", FilePath: "models/x.sql"},
@@ -165,7 +165,7 @@ func TestFailingNodeSource_Declines(t *testing.T) {
 			"neither the trigger nor the graph names the seed's csv file and service, so there is no file to fix"},
 		{"duplicate_table of a python node", "duplicate_table", remediation.TriggerNode{NodeID: "n1", NodeType: string(pkg_model.NodeTypePythonNode)},
 			"the claimant is a python node, whose relation is declared in its contract file (the ODCS file under " +
-				"contracts/, or a legacy contract.yaml) rather than in the file the trigger names; rename it in the contract by hand"},
+				"contracts/) rather than in the file the trigger names; rename it in the contract by hand"},
 		{"duplicate_table of a dbt seed", "duplicate_table", remediation.TriggerNode{NodeID: "n1", NodeType: string(pkg_model.NodeTypeDbtSeed)},
 			"the claimant is a dbt seed, whose relation name comes from the csv filename or " +
 				"project config, never from the csv's contents; an edited csv would alter the seed's data, " +

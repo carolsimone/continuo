@@ -2,10 +2,7 @@ package contract_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"log/slog"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -159,42 +156,12 @@ func TestContractFile_ReturnsAnyOtherLocateErrorAndRemovesTheCheckout(t *testing
 	a.requireNoCheckoutLeft()
 }
 
-// TestContractFileStep_DeclinesAnUnconvertedService verifies that a node of a
-// service whose repository still declares its python nodes in contract.yaml
-// declines the cluster with the reason naming the service, logged at INFO with
-// the release and the node, and leaves no checkout behind.
-func TestContractFileStep_DeclinesAnUnconvertedService(t *testing.T) {
-	a := &fakeArchive{t: t}
-	l := &fakeLocator{errs: map[string]error{"fx.rates": fmt.Errorf("fx.rates: %w", ports.ErrServiceNotConverted)}}
-	var logs strings.Builder
-	s := contract.NewContractFile(a, l, slog.New(slog.NewJSONHandler(&logs, nil)))
-
-	out, err := s.Gather(context.Background(), step.ContextInput{Failure: failure(nil), Evidence: remediation.NewEvidence()})
-	require.NoError(t, err)
-
-	want := "service svc still uses contract.yaml; convert it to ODCS"
-	assert.True(t, out.Declined)
-	assert.Equal(t, want, out.Decline)
-	assert.Nil(t, out.Evidence)
-	a.requireNoCheckoutLeft()
-
-	var line map[string]any
-	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(logs.String())), &line),
-		"exactly one log line: %s", logs.String())
-	assert.Equal(t, "INFO", line["level"])
-	assert.Equal(t, want, line["msg"])
-	assert.Equal(t, "rel-1", line["release"])
-	assert.Equal(t, "py.fx.rates", line["node"])
-}
-
-// TestContractFileStep_DeclinesAnUnconvertedServiceInAMixedRepository runs the
-// step over a real checkout searched by the repofs locator: the failing node
-// is still declared in its service's contract.yaml while another service of
-// the checkout has an ODCS contract, and the cluster is declined with the
-// reason naming the failing node's service.
-func TestContractFileStep_DeclinesAnUnconvertedServiceInAMixedRepository(t *testing.T) {
+// TestContractFileStep_DeclinesANodeNoFileOfARealCheckoutDeclares runs the
+// step over a real checkout searched by the repofs locator: the failing node is
+// declared by no ODCS contract while another service of the checkout has one,
+// and the cluster is declined with the locator's reason.
+func TestContractFileStep_DeclinesANodeNoFileOfARealCheckoutDeclares(t *testing.T) {
 	a := &fakeArchive{t: t, files: map[string]string{
-		"services/svc/contracts/contract.yaml": "nodes:\n  - schema: fx\n    table: rates\n    script: scripts/rates.py\n",
 		"services/other/contracts/kpis.odcs.yaml": "apiVersion: v3.2.0\nkind: DataContract\nid: analytics.kpis\n" +
 			"schema:\n  - name: kpis\n    physicalType: table\n",
 	}}
@@ -205,7 +172,7 @@ func TestContractFileStep_DeclinesAnUnconvertedServiceInAMixedRepository(t *test
 	require.NoError(t, err)
 
 	assert.True(t, out.Declined)
-	assert.Equal(t, "service svc still uses contract.yaml; convert it to ODCS", out.Decline)
+	assert.Equal(t, `schema "fx" table "rates": `+ports.ErrNodeNotDeclared.Error(), out.Decline)
 	assert.Nil(t, out.Evidence)
 	a.requireNoCheckoutLeft()
 }

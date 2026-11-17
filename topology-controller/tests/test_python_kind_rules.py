@@ -1,44 +1,13 @@
-import continuo_contracts.python
 import pytest
 
-from domain.contract_vocabulary import NODE_TYPE_RUNTIME, NODE_TYPES_WITH_SECRET_REF, NodeRuntime, NodeType
+from domain.contract_vocabulary import NODE_TYPE_RUNTIME, NodeRuntime, NodeType
 from domain.exceptions import MalformedContractError
-from service.python_kind_rules import RULES, STORED_KIND_ALIASES, CsvRead, NoReads, SqlReads, resolve_kind
+from service.python_kind_rules import RULES, CsvRead, NoReads, SqlReads
 
 
 def test_every_python_node_type_has_rules():
     python_types = {t for t, r in NODE_TYPE_RUNTIME.items() if r is NodeRuntime.PYTHON}
     assert set(RULES) == python_types
-
-
-def test_secret_allowed_kinds_match_the_contract_vocabulary():
-    """The kinds whose contract may name a Secret are declared once, in
-    pkg/streams/contract.yaml (secret_ref: true); execution-controller enforces
-    the same generated set at Job creation."""
-    assert {t for t, r in RULES.items() if r.secret_allowed} == NODE_TYPES_WITH_SECRET_REF
-
-
-def test_the_kind_rules_mode_types_are_the_librarys():
-    assert {t for r in RULES.values() for t in r.mode_types} == set(continuo_contracts.python.MODE_TYPES)
-
-
-def test_aliases_point_at_declared_kinds_only():
-    assert set(STORED_KIND_ALIASES.values()) <= set(RULES)
-    assert not set(STORED_KIND_ALIASES) & {str(t) for t in NodeType}
-
-
-def test_absent_kind_defaults_to_python_node():
-    assert resolve_kind(None, "L") is NodeType.PYTHON_NODE
-
-
-def test_stored_python_model_resolves_to_python_node():
-    assert resolve_kind("python-model", "L") is NodeType.PYTHON_NODE
-
-
-@pytest.mark.parametrize("raw", ["dbt-model", "spark", "", 7])
-def test_non_python_or_unknown_kind_is_rejected(raw):
-    with pytest.raises(MalformedContractError, match="kind must be one of"):
-        resolve_kind(raw, "L")
 
 
 def test_sql_reads_rejects_an_empty_mapping():
@@ -58,15 +27,12 @@ def test_csv_read_has_no_dependency_sqls_and_carries_the_uri():
     assert parsed.csv_source == "s3://b/k.csv"
 
 
-def test_python_api_rules():
-    rules = RULES[NodeType.PYTHON_API]
-    assert rules.script_required is True
-    assert isinstance(rules.reads, NoReads)
-    assert rules.secret_allowed is True
+def test_a_script_is_required_of_every_kind_but_csv():
+    assert {t for t, r in RULES.items() if not r.script_required} == {NodeType.PYTHON_CSV}
 
 
-def test_only_python_api_may_name_a_secret():
-    assert {t for t, r in RULES.items() if r.secret_allowed} == {NodeType.PYTHON_API}
+def test_python_api_reads_nothing():
+    assert isinstance(RULES[NodeType.PYTHON_API].reads, NoReads)
 
 
 def test_no_reads_accepts_empty_and_yields_no_dependencies():
@@ -78,3 +44,31 @@ def test_no_reads_accepts_empty_and_yields_no_dependencies():
 def test_no_reads_rejects_anything_but_an_empty_mapping(raw):
     with pytest.raises(MalformedContractError, match="python-api node declares no reads"):
         NoReads().parse(raw, "L")
+
+
+@pytest.mark.parametrize("uri", [
+    "s3://bucket/path/to/orders.csv",
+    "https://example.com",
+    "https://example.com/orders.csv",
+])
+def test_csv_read_accepts_an_s3_object_or_an_https_host(uri):
+    parsed = CsvRead().parse({"csv": uri}, "L")
+    assert parsed.reads == {"csv": uri} and parsed.csv_source == uri
+
+
+@pytest.mark.parametrize("uri, match", [
+    ("s3://bucket", "bucket or key"),
+    ("s3:///key", "bucket or key"),
+    ("https://", "host"),
+    ("http://example.com/orders.csv", "s3://bucket/key or https"),
+    ("ftp://bad", "s3://bucket/key or https"),
+])
+def test_csv_read_refuses_what_the_runners_uri_parser_refuses(uri, match):
+    with pytest.raises(MalformedContractError, match=match):
+        CsvRead().parse({"csv": uri}, "L")
+
+
+@pytest.mark.parametrize("raw", [{"csv": "s3://b/k", "other": "select 1"}, {}, {"uri": "s3://b/k"}, None])
+def test_csv_read_takes_exactly_one_csv_key(raw):
+    with pytest.raises(MalformedContractError, match="exactly"):
+        CsvRead().parse(raw, "L")

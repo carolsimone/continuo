@@ -114,7 +114,7 @@ func (s *FailingNodeSource) parse(ctx context.Context, f remediation.Failure) (r
 			"the parser can reject and remediation has no fix to offer; correct the contract by hand", n.NodeID), nil
 	case pkg_model.NodeType(n.NodeType).IsPython():
 		return remediation.SourceFiles{}, fmt.Sprintf("%s is a %s node: its reads are declared in its contract file "+
-			"(the ODCS file under contracts/, or a legacy contract.yaml), which this lane does not edit; correct the contract by hand", n.NodeID, n.NodeType), nil
+			"(the ODCS file under contracts/), which this lane does not edit; correct the contract by hand", n.NodeID, n.NodeType), nil
 	case n.FilePath == "":
 		return remediation.SourceFiles{}, "the parse rejection names no source file, so there is no file to fix", nil
 	case n.Service == "":
@@ -153,7 +153,7 @@ func (s *FailingNodeSource) duplicateTable(ctx context.Context, f remediation.Fa
 	n := f.Target
 	if pkg_model.NodeType(n.NodeType).IsPython() {
 		return remediation.SourceFiles{}, "the claimant is a python node, whose relation is declared in its contract file (the ODCS file under " +
-			"contracts/, or a legacy contract.yaml) rather than in the file the trigger names; rename it in the contract by hand", nil
+			"contracts/) rather than in the file the trigger names; rename it in the contract by hand", nil
 	}
 	if n.NodeType == string(pkg_model.NodeTypeDbtSeed) {
 		return remediation.SourceFiles{}, "the claimant is a dbt seed, whose relation name comes from the csv filename or " +

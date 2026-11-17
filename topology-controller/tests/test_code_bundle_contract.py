@@ -6,18 +6,18 @@ fixtures/code_bundle_v1.json, a copy of the fixture pkg/codebundle's tests read,
 so the Go reader and this writer agree on one document.
 
 The fixture holds a dbt node and a python node. The python node comes from
-`parse_python_contract`, so its `raw_code` JSON (whose `kind`, `owner` and
-`reads` keys are part of the declared read set), its `projection` (the code
-projection, outside the read set) and its hashes are what the real parser
-writes.
+`build_python_node`, which builds every python node, so its `raw_code` JSON
+(whose `kind`, `owner` and `reads` keys are part of the declared read set), its
+`projection` (the code projection, outside the read set) and its hashes are what
+the real builder writes.
 """
 import json
 from pathlib import Path
 
+from domain.contract_vocabulary import NodeType
 from domain.model import ManifestNode
 from service.code_bundle import CONTRACT_VERSION, build_code_bundle
-from service.python_contract_parser import parse_python_contract
-from tests.test_python_contract_parser import make_entry, write_contract
+from service.python_node_builder import PythonNodeFields, build_python_node
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "code_bundle_v1.json"
 
@@ -46,20 +46,35 @@ def _dbt_node() -> ManifestNode:
     )
 
 
-def _bundle(tmp_path) -> dict:
-    python_nodes = parse_python_contract(
-        write_contract(tmp_path, make_entry(owner="marketing")), "img:1"
-    ).nodes
+def _python_node() -> ManifestNode:
+    return build_python_node(
+        PythonNodeFields(
+            schema="analytics", table="table_test", owner="marketing", schedule="daily",
+            criticality="SECONDARY", kind=NodeType.PYTHON_NODE, description="",
+            script="scripts/table_test.py",
+            reads={"joined": "select a from analytics.table_a", "ids": "select id from analytics.table_b"},
+            dependency_sqls=["select id from analytics.table_b", "select a from analytics.table_a"],
+            csv_source="",
+            output_columns=[{"name": "id", "type": "INTEGER", "nullable": False},
+                            {"name": "amount", "type": "NUMERIC(10,2)", "nullable": True}],
+            extra_columns="raise", config={}, secret_ref="", mode_type="replace",
+            primary_key=[], assets=[], timeout_seconds=None,
+        ),
+        service="marketing-py", image_tag="img:1", source_hash="aaa111", shared_code_hash="bbb222",
+    )
+
+
+def _bundle() -> dict:
     shared = {
         "service-a:macro.svc.m1": {"source": "select 1", "checksum": "u1", "depends_on": []},
     }
-    return build_code_bundle("rel-1", [_dbt_node(), *python_nodes], shared, tests=[], provenance={})
+    return build_code_bundle("rel-1", [_dbt_node(), _python_node()], shared, tests=[], provenance={})
 
 
-def test_the_bundle_matches_the_v1_fixture(tmp_path):
+def test_the_bundle_matches_the_v1_fixture():
     fixture = json.loads(_FIXTURE.read_text(encoding="utf-8"))
 
-    assert _bundle(tmp_path) == fixture, _CHANGED
+    assert _bundle() == fixture, _CHANGED
 
 
 def test_the_fixture_is_the_version_the_writer_declares():

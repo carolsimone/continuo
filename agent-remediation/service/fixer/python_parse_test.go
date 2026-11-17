@@ -49,11 +49,10 @@ func TestFor_ParseDispatchesOnNodeType(t *testing.T) {
 
 // TestPythonParse_HappyPath walks the lane end to end: the checkout is
 // fetched, the declaring contract file located from the node id alone (the
-// trigger's file path is not a repository path: the contract's path in the
-// bundle, or the script for a service of kind `python`), the
-// one model call sees the parser's error, the corrected yaml is written before
-// packaging, and the merged contract comes back as VerificationContract so
-// the driver submits a python verification run — whose parse leg is what
+// trigger's file path is not a repository path: it is the contract's path in
+// the bundle), the one model call sees the parser's error, the corrected yaml
+// is written before packaging, and the packed bundle comes back as VerificationContract so
+// the driver submits a python-odcs verification run — whose parse leg is what
 // proves the fix.
 func TestPythonParse_HappyPath(t *testing.T) {
 	root := t.TempDir()
@@ -101,7 +100,7 @@ func TestPythonParse_HappyPath(t *testing.T) {
 	require.Equal(t, filepath.Join(root, "services", "service-py", "contracts"), call.contractDir)
 	require.Equal(t, parseCorrectedYAML, call.sawOnDisk["py_daily_kpis.odcs.yaml"])
 	require.Equal(t, siblingYAML, call.sawOnDisk["other.odcs.yaml"])
-	require.Equal(t, []byte("merged: contract\n"), r.VerificationContract)
+	require.Equal(t, []byte(`{"bundle_version": 1}`), r.VerificationContract)
 
 	// The sibling check read the original rejected release.
 	require.Equal(t, []string{"rel-1"}, rel.failingNodesCalls)

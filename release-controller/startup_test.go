@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -10,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -47,4 +50,59 @@ func TestRetryWhileUnreachable_StopsWhenTheContextEnds(t *testing.T) {
 	cancel()
 	err := retryWhileUnreachable(ctx, discardLogger(), "test", func(context.Context) error { return refused() }, time.Hour, time.Hour)
 	assert.ErrorIs(t, err, context.Canceled)
+}
+
+// logLines runs fn with a logger that writes JSON lines to a buffer and returns
+// what it logged.
+func logLines(t *testing.T, fn func(*slog.Logger)) string {
+	t.Helper()
+	var buf bytes.Buffer
+	fn(slog.New(slog.NewJSONHandler(&buf, nil)))
+	return buf.String()
+}
+
+// A service still released as kind python is logged as exactly that, naming the
+// services, and stops the process with a failure.
+func TestPythonKindCheckExitCode_NamesTheServicesAndFails(t *testing.T) {
+	err := fmt.Errorf("wrapped: %w", &handlers.PythonKindServicesError{Services: []string{"svc-a", "svc-b"}})
+	var code int
+	out := logLines(t, func(l *slog.Logger) { code = pythonKindCheckExitCode(context.Background(), l, err) })
+
+	assert.Equal(t, 1, code)
+	assert.Contains(t, out, "Refusing to start: services are still released as kind python")
+	assert.Contains(t, out, "svc-a")
+	assert.Contains(t, out, "svc-b")
+}
+
+// A read that fails for any other reason, such as a lost connection, is not
+// reported as a python service: it is logged as a failed check.
+func TestPythonKindCheckExitCode_AnyOtherErrorIsLoggedAsAFailedCheck(t *testing.T) {
+	var code int
+	out := logLines(t, func(l *slog.Logger) {
+		code = pythonKindCheckExitCode(context.Background(), l, errors.New("list the services: connection refused"))
+	})
+
+	assert.Equal(t, 1, code)
+	assert.Contains(t, out, "Failed to check")
+	assert.Contains(t, out, "connection refused")
+	assert.NotContains(t, out, "Refusing to start")
+}
+
+// A shutdown signal that arrives during the check ends the process quietly, as
+// a shutdown during the Postgres connect does: exit code 0 and no error logged.
+func TestPythonKindCheckExitCode_ShutdownDuringTheCheckExitsCleanly(t *testing.T) {
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	for name, err := range map[string]error{
+		"the read reports the cancellation": fmt.Errorf("list the services: %w", context.Canceled),
+		"the read reports another error":    errors.New("driver: bad connection"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			var code int
+			out := logLines(t, func(l *slog.Logger) { code = pythonKindCheckExitCode(cancelled, l, err) })
+
+			assert.Equal(t, 0, code)
+			assert.NotContains(t, out, `"level":"ERROR"`)
+		})
+	}
 }

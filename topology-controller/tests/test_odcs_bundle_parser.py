@@ -1,27 +1,21 @@
 import collections
-import dataclasses
 import hashlib
 import importlib.resources
 import json
 from pathlib import Path
 
 import pytest
-import yaml
 from continuo_contracts import yaml_strict
 from continuo_contracts.contract import contract_hash, normalise_python
 
-from domain.contract_vocabulary import NodeType, ParseFailureKind
+from domain.contract_vocabulary import NODE_TYPE_RUNTIME, NODE_TYPES_WITH_SECRET_REF, NodeRuntime, NodeType, ParseFailureKind
 from domain.exceptions import InvalidOdcsBundleError, MalformedContractError
 from domain.model import FailedNode, Runtime
 from service import odcs_bundle_parser
 from service.contract_validation import ContractValidator
 from service.odcs_bundle_parser import parse_odcs_bundle
-from service.python_contract_parser import parse_python_contract
 from service.release_timings import Stage
-from tests.fakes import python_contract
 from tests.odcs_fixtures import (
-    DEMO_DIR,
-    DEMO_NAMES,
     IMAGE_TAG,
     SERVICE,
     bundle_doc,
@@ -30,6 +24,7 @@ from tests.odcs_fixtures import (
     demo_node,
     demo_nodes,
     demo_text,
+    python_node,
     release_timings,
     write_bundle,
 )
@@ -93,31 +88,6 @@ def test_a_node_keeps_its_authored_contract(tmp_path):
     assert kpis.contract.document == yaml_strict.load(text)
     assert kpis.contract.source_sha256 == hashlib.sha256(text.encode("utf-8")).hexdigest()
     assert kpis.contract.path == KPIS_PATH
-
-
-def test_the_demo_content_hash_equals_the_wire_parsers(tmp_path):
-    odcs = {n.unique_id: n for n in parse(bundle_file(tmp_path, demo_nodes())).nodes}
-    wire = {n.unique_id: n for n in _wire_nodes(tmp_path)}
-    assert {uid: n.content_hash for uid, n in odcs.items()} == {uid: n.content_hash for uid, n in wire.items()}
-    # Nothing else about a converted node moves either, so it writes no new code version.
-    assert {uid: dataclasses.replace(n, contract=None) for uid, n in odcs.items()} == wire
-
-
-def _wire_nodes(tmp_path):
-    """The old entries of the demo through the wire parser, with the CI hash parts the bundle's nodes carry.
-    The runtime's merge wrote `script` and `reads` on every wire entry, empty when the kind has none."""
-    entries = []
-    for name in DEMO_NAMES:
-        (entry,) = yaml.safe_load((DEMO_DIR / "old" / f"{name}.yml").read_text())["nodes"]
-        parts = demo_node(name)
-        entry.setdefault("script", "")
-        entry.setdefault("reads", {})
-        entry.update(
-            source_hash=parts["source_hash"], shared_code_hash=parts["shared_code_hash"],
-            config_hash="ci-placeholder", content_hash="ci-placeholder",
-        )
-        entries.append(entry)
-    return parse_python_contract(python_contract(tmp_path, *entries), IMAGE_TAG).nodes
 
 
 def test_every_invalid_node_is_named(tmp_path):
@@ -455,6 +425,31 @@ def test_a_csv_node_reads_its_file_and_runs_no_script(tmp_path):
     assert (node.csv_source, node.dependency_sqls, node.original_file_path, node.timeout_seconds) == (
         "s3://continuo-dev/static-files/full/orders.csv", [], "", 30 * 60)
     assert "script" not in json.loads(node.raw_code)
+
+
+PYTHON_KINDS = sorted((t for t, runtime in NODE_TYPE_RUNTIME.items() if runtime is NodeRuntime.PYTHON), key=str)
+
+
+@pytest.mark.parametrize("kind", PYTHON_KINDS, ids=str)
+def test_a_contract_names_a_secret_only_on_the_kinds_the_vocabulary_allows(tmp_path, kind):
+    """The kinds whose contract may name a Secret are declared once, in pkg/streams/contract.yaml
+    (secret_ref: true), and execution-controller enforces the same set at Job creation: the
+    parser accepts a secretRef on exactly those kinds and fails the contract on every other."""
+    parsed = parse(bundle_file(tmp_path, [python_node(kind=str(kind), secret_ref="continuo-api-x")]))
+
+    if kind in NODE_TYPES_WITH_SECRET_REF:
+        assert parsed.failed == ()
+        assert [(n.node_type, n.secret_ref) for n in parsed.nodes] == [(kind, "continuo-api-x")]
+    else:
+        assert parsed.nodes == []
+        assert [(f.node_id, f.kind) for f in parsed.failed] == [("test_schema.py_metrics", ParseFailureKind.INVALID_CONTRACT)]
+        assert "secretRef" in parsed.failed[0].detail
+
+
+def test_a_secret_name_outside_the_api_prefix_fails_the_contract(tmp_path):
+    parsed = parse(bundle_file(tmp_path, [python_node(kind="python-api", secret_ref="continuo-app-credentials")]))
+    assert parsed.nodes == []
+    assert [f.kind for f in parsed.failed] == [ParseFailureKind.INVALID_CONTRACT]
 
 
 def _vector_cases():

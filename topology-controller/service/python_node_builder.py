@@ -1,9 +1,8 @@
 """Builds the ManifestNode of a Python node from its validated fields.
 
-Every reader of a Python contract (the wire parser of `contract.yaml`, the ODCS
-parser of `odcs-bundle.json`) checks its own document and hands the node's
+The ODCS parser of `odcs-bundle.json` checks a contract and hands the node's
 fields to `build_python_node`, so one rule decides how the node is projected,
-hashed and described whatever document declared it:
+hashed and described:
 
 - the code projection (`continuo_contracts.python`) is the node's hashed config
   part, and its pretty JSON text rides on the node as `projection`;

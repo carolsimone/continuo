@@ -169,7 +169,7 @@ func TestSeedServiceProd_DerivesManifestKindPerService(t *testing.T) {
 	)
 	existingKeys := map[string]string{
 		"service-1": "s3://bucket/service-1/manifest.json",
-		"service-2": "s3://bucket/service-2/contract.yaml",
+		"service-2": "s3://bucket/service-2/rel-1/odcs-bundle.json",
 	}
 
 	store := newFakeStore()
@@ -187,10 +187,10 @@ func TestSeedServiceProd_DerivesManifestKindPerService(t *testing.T) {
 	sp2, err := repo.Get(context.Background(), "service-2")
 	require.NoError(t, err)
 	require.NotNil(t, sp2)
-	assert.Equal(t, release.ManifestKindPython, sp2.ManifestKind())
+	assert.Equal(t, release.ManifestKindPythonODCS, sp2.ManifestKind())
 }
 
-func TestSeedServiceProd_CsvServiceClassifiedPython(t *testing.T) {
+func TestSeedServiceProd_CsvServiceClassifiedPythonODCS(t *testing.T) {
 	now := time.Unix(1_000_000, 0).UTC()
 
 	// service-1 has only python-csv nodes: it must classify as python, same
@@ -199,7 +199,7 @@ func TestSeedServiceProd_CsvServiceClassifiedPython(t *testing.T) {
 		release.Node{UniqueID: "n1", ServiceName: "service-1", ImageTag: "t1", NodeType: "python-csv"},
 	)
 	existingKeys := map[string]string{
-		"service-1": "s3://bucket/service-1/contract.yaml",
+		"service-1": "s3://bucket/service-1/rel-1/odcs-bundle.json",
 	}
 
 	store := newFakeStore()
@@ -212,14 +212,16 @@ func TestSeedServiceProd_CsvServiceClassifiedPython(t *testing.T) {
 	sp, err := repo.Get(context.Background(), "service-1")
 	require.NoError(t, err)
 	require.NotNil(t, sp)
-	assert.Equal(t, release.ManifestKindPython, sp.ManifestKind())
+	assert.Equal(t, release.ManifestKindPythonODCS, sp.ManifestKind())
 }
 
-func TestSeedServiceProd_TellsThePythonKindsApartByTheKey(t *testing.T) {
+// A python service's pointer must name an odcs-bundle.json: the only artifact
+// any parser reads for a python service. One that names anything else (a
+// contract.yaml) is an error naming the service, and nothing is written,
+// including the pointer of the clean service beside it.
+func TestSeedServiceProd_AContractYAMLKeyIsAnError(t *testing.T) {
 	now := time.Unix(1_000_000, 0).UTC()
 
-	// Both services hold only python nodes; the artifact each pointer names says
-	// which kind it is.
 	cp := buildCurrentProd("rel-1",
 		release.Node{UniqueID: "n1", ServiceName: "service-odcs", ImageTag: "t1", NodeType: "python-node"},
 		release.Node{UniqueID: "n2", ServiceName: "service-legacy", ImageTag: "t2", NodeType: "python-node"},
@@ -233,18 +235,18 @@ func TestSeedServiceProd_TellsThePythonKindsApartByTheKey(t *testing.T) {
 	repo := &fakeServiceProdRepo{store: store}
 
 	n, err := handlers.SeedServiceProd(context.Background(), cp.releaseID, cp.topo, existingKeys, repo, now)
-	require.NoError(t, err)
-	assert.Equal(t, 2, n)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "service-legacy")
+	assert.Contains(t, err.Error(), "odcs-bundle.json")
+	assert.NotContains(t, err.Error(), "service-odcs")
+	assert.Equal(t, 0, n)
 
 	odcs, err := repo.Get(context.Background(), "service-odcs")
 	require.NoError(t, err)
-	require.NotNil(t, odcs)
-	assert.Equal(t, release.ManifestKindPythonODCS, odcs.ManifestKind())
-
+	assert.Nil(t, odcs, "no service must be written when one pointer is refused")
 	legacy, err := repo.Get(context.Background(), "service-legacy")
 	require.NoError(t, err)
-	require.NotNil(t, legacy)
-	assert.Equal(t, release.ManifestKindPython, legacy.ManifestKind())
+	assert.Nil(t, legacy)
 }
 
 func TestSeedServiceProd_MixedKindServiceErrorsAndWritesNothing(t *testing.T) {

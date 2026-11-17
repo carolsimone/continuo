@@ -77,18 +77,15 @@ type match struct {
 // it searches for from an already-lowercased id. Only the comparison folds:
 // the returned paths and text are exactly what is on disk.
 //
-// Zero matching files returns ports.ErrServiceNotConverted when a yaml file's
-// "nodes:" list (a contract.yaml, which no fix is packaged from) declares
-// schema and table, whatever other services of the checkout have converted,
-// and ports.ErrNodeNotDeclared otherwise. More than one matching file returns ports.ErrAmbiguousDeclaration,
-// including two ids that differ only in case. A file over the size cap, or one
-// that fails to parse as yaml, is skipped (logged) rather than treated as a
-// search error, so one malformed or oversized file elsewhere in the tree does
-// not prevent finding the real match.
+// Zero matching files returns ports.ErrNodeNotDeclared. More than one matching
+// file returns ports.ErrAmbiguousDeclaration, including two ids that differ
+// only in case. A file over the size cap, or one that fails to parse as yaml,
+// is skipped (logged) rather than treated as a search error, so one malformed
+// or oversized file elsewhere in the tree does not prevent finding the real
+// match.
 func (l *Locator) Locate(rootDir, schema, table string) (ports.Located, error) {
 	want := schema + "." + table
 	var matches []match
-	var legacyCandidates []string
 
 	err := filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -99,9 +96,6 @@ func (l *Locator) Locate(rootDir, schema, table string) (ports.Located, error) {
 		}
 		name := d.Name()
 		if !strings.HasSuffix(name, odcsSuffix) || filepath.Base(filepath.Dir(path)) != contractsDir {
-			if ext := filepath.Ext(name); ext == ".yml" || ext == ".yaml" {
-				legacyCandidates = append(legacyCandidates, path)
-			}
 			return nil
 		}
 
@@ -129,9 +123,6 @@ func (l *Locator) Locate(rootDir, schema, table string) (ports.Located, error) {
 
 	switch len(matches) {
 	case 0:
-		if l.legacyDeclares(legacyCandidates, schema, table) {
-			return ports.Located{}, fmt.Errorf("schema %q table %q: %w", schema, table, ports.ErrServiceNotConverted)
-		}
 		return ports.Located{}, fmt.Errorf("schema %q table %q: %w", schema, table, ports.ErrNodeNotDeclared)
 	case 1:
 		return buildLocated(matches[0]), nil
@@ -142,35 +133,6 @@ func (l *Locator) Locate(rootDir, schema, table string) (ports.Located, error) {
 		}
 		return ports.Located{}, fmt.Errorf("schema %q table %q found in %v: %w", schema, table, paths, ports.ErrAmbiguousDeclaration)
 	}
-}
-
-// legacyDeclares reports whether one of paths is a yaml file whose top-level
-// "nodes:" list has an entry naming schema and table (compared
-// case-insensitively): a contract.yaml that still declares the node in the
-// format before ODCS.
-func (l *Locator) legacyDeclares(paths []string, schema, table string) bool {
-	for _, path := range paths {
-		raw, ok := l.readCapped(path)
-		if !ok {
-			continue
-		}
-		root, err := parseRoot(raw)
-		if err != nil {
-			continue
-		}
-		nodes := mappingValue(root, "nodes")
-		if nodes == nil || nodes.Kind != yaml.SequenceNode {
-			continue
-		}
-		for _, entry := range nodes.Content {
-			s, _ := scalar(mappingValue(entry, "schema"))
-			t, _ := scalar(mappingValue(entry, "table"))
-			if strings.EqualFold(s, schema) && strings.EqualFold(t, table) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // readCapped reads path when it is at most maxContractYAMLBytes. ok is false,

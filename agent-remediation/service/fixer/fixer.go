@@ -117,10 +117,8 @@ type Services struct {
 	// has to search the tree rather than read one known file.
 	Archive ports.RepoArchive
 	// ContractLocator finds which ODCS contract file in that checkout
-	// declares the python node being fixed. A service whose repository still
-	// declares its python nodes in contract.yaml gets no python fix: every
-	// python contract lane records the node skipped and logs that the service
-	// must be converted to ODCS.
+	// declares the python node being fixed. A node no contract file declares
+	// gets no python fix: every python contract lane records it skipped.
 	ContractLocator ports.ContractLocator
 	// ContractInspector reads the node declaration out of an ODCS contract
 	// document, so the answer's effect on it can be compared against what

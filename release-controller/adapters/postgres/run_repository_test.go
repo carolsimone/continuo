@@ -50,7 +50,8 @@ func (f *fakeDeleter) prefixes() []string {
 	return out
 }
 
-func openTestDB(t *testing.T) *sqlx.DB {
+// connectTestDB opens the shared release database and leaves its rows alone.
+func connectTestDB(t *testing.T) *sqlx.DB {
 	t.Helper()
 	dsn := os.Getenv("RELEASE_TEST_PG_DSN")
 	if dsn == "" {
@@ -58,8 +59,16 @@ func openTestDB(t *testing.T) *sqlx.DB {
 	}
 	db, err := sqlx.Connect("postgres", dsn)
 	require.NoError(t, err)
+	return db
+}
+
+// openTestDB opens the shared release database with the tables the tests write
+// emptied.
+func openTestDB(t *testing.T) *sqlx.DB {
+	t.Helper()
+	db := connectTestDB(t)
 	_, _ = db.Exec("TRUNCATE release_pipeline_runs, current_prod, release_controller_outbox, message_processing, service_prod RESTART IDENTITY CASCADE")
-	_, err = db.Exec("UPDATE promotion_sequence SET last_seq = 0 WHERE id = 1")
+	_, err := db.Exec("UPDATE promotion_sequence SET last_seq = 0 WHERE id = 1")
 	require.NoError(t, err, "promotion_sequence is missing: run make test-deps-up to apply the release migrations")
 	return db
 }
@@ -114,7 +123,7 @@ func TestRunRepository_CreateInsertsOnlyAFreeID(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, inserted)
 
-	second := pipeline.NewCandidate("rCreate", "svc", "img:2", true, false, "acme/fork", "cafebabe", release.ManifestKindPython, time.Unix(200, 0).UTC())
+	second := pipeline.NewCandidate("rCreate", "svc", "img:2", true, false, "acme/fork", "cafebabe", release.ManifestKindPythonODCS, time.Unix(200, 0).UTC())
 	inserted, err = repo.Create(ctx, second)
 	require.NoError(t, err)
 	require.False(t, inserted)
@@ -136,7 +145,7 @@ func TestRunRepository_CreateInsertsOnlyAFreeID(t *testing.T) {
 }
 
 // TestRunRepository_ManifestKindRoundTrips verifies that the manifest kind a
-// run was constructed with (dbt or python) survives a Save/Get round trip
+// run was constructed with (dbt or python-odcs) survives a Save/Get round trip
 // through the manifest_kind column, which is immutable after insert.
 func TestRunRepository_ManifestKindRoundTrips(t *testing.T) {
 	db := openTestDB(t)
@@ -144,13 +153,51 @@ func TestRunRepository_ManifestKindRoundTrips(t *testing.T) {
 	ctx := context.Background()
 
 	r := pipeline.NewCandidate("rel-kind", "svc-py", "img:1", false, false, "acme/py", "cafebabe",
-		release.ManifestKindPython, time.Unix(100, 0).UTC())
+		release.ManifestKindPythonODCS, time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(ctx, r))
 
 	got, err := repo.Get(ctx, "rel-kind")
 	require.NoError(t, err)
 	require.NotNil(t, got)
+	assert.Equal(t, release.ManifestKindPythonODCS, got.ManifestKind())
+}
+
+// TestRunRepository_AnOldPythonRunStillLoads proves a run row stored with the
+// python manifest kind, a kind no new release or verification can name, still
+// loads: the repository rehydrates the stored kind as it is and never parses
+// it, and saving the loaded run keeps the kind.
+func TestRunRepository_AnOldPythonRunStillLoads(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewRunRepository(db, nil)
+	ctx := context.Background()
+
+	const runID = "rOldPython"
+	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM release_pipeline_runs WHERE run_id = $1`, runID) })
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO release_pipeline_runs
+		  (run_id, status, image_tags, created_at, resolved_at, repo, commit_sha, changed_service, manifest_kind, run_kind)
+		VALUES ($1, 'promoted', '{"svc-py":"img:1"}', $2, $3, 'acme/py', 'cafebabe', 'svc-py', 'python', 'candidate')`,
+		runID, time.Unix(100, 0).UTC(), time.Unix(200, 0).UTC())
+	require.NoError(t, err)
+
+	got, err := repo.Get(ctx, runID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
 	assert.Equal(t, release.ManifestKindPython, got.ManifestKind())
+	assert.True(t, got.ManifestKind().IsPython())
+	assert.Equal(t, pipeline.StatusPromoted, got.Status())
+	assert.Equal(t, "svc-py", got.ChangedService())
+
+	locked, err := repo.Load(ctx, runID)
+	require.NoError(t, err)
+	require.NotNil(t, locked)
+	assert.Equal(t, release.ManifestKindPython, locked.ManifestKind())
+
+	require.NoError(t, repo.Save(ctx, got))
+	resaved, err := repo.Get(ctx, runID)
+	require.NoError(t, err)
+	require.NotNil(t, resaved)
+	assert.Equal(t, release.ManifestKindPython, resaved.ManifestKind())
 }
 
 func TestRunRepository_BootstrapRoundTrips(t *testing.T) {
@@ -926,7 +973,7 @@ func TestRunRepository_NextQueuedOfKind(t *testing.T) {
 	repo := postgres.NewRunRepository(db, nil)
 	ctx := context.Background()
 	cand := pipeline.NewCandidate("rCAND", "svc", "t", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
-	verify := pipeline.NewVerification("rVERIFY", "svc", "t", "rCAND", 1, "", release.ManifestKindPython, time.Unix(200, 0).UTC())
+	verify := pipeline.NewVerification("rVERIFY", "svc", "t", "rCAND", 1, "", release.ManifestKindPythonODCS, time.Unix(200, 0).UTC())
 	require.NoError(t, repo.Save(ctx, cand))
 	require.NoError(t, repo.Save(ctx, verify))
 

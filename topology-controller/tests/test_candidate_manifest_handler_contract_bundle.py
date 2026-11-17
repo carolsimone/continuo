@@ -13,7 +13,7 @@ from continuo_contracts.errors import CanonicalJsonError
 import service.contract_bundle as contract_bundle_module
 from adapters.redis.error_class import is_infrastructure
 from domain.contract_vocabulary import ParseFailureKind
-from domain.model import FailedNode, ManifestFile, ManifestKind
+from domain.model import FailedNode, ManifestFile
 from service.ports import ManifestSourcePort
 from service.release_timings import ReleaseOutcome, Stage
 from tests.fakes import (
@@ -24,8 +24,6 @@ from tests.fakes import (
     build_handler,
     dbt_node,
     make_uploader,
-    python_contract,
-    python_entry,
     python_handler,
     source_of,
 )
@@ -152,25 +150,6 @@ def test_a_contract_reads_the_tables_its_queries_name_and_no_system_relation(tmp
     [table] = bundle_writer.document["contracts"]["analytics.py_daily_kpis"]["document"]["schema"]
     assert table["customProperties"] == [
         {"property": "reads", "value": ["analytics.daily_transactions"], "vendor": "continuo"}]
-
-
-def test_a_wire_python_contract_has_no_entry_in_the_bundle(tmp_path):
-    bundle_writer = RecordingContractBundleWriter()
-    wire_dir, odcs_dir = tmp_path / "wire", tmp_path / "odcs"
-    wire_dir.mkdir()
-    odcs_dir.mkdir()
-    source = source_of(
-        ManifestFile(
-            path=python_contract(wire_dir, python_entry(), service="service-wire"),
-            declared_service="service-wire", kind=ManifestKind.PYTHON),
-        bundle_file(odcs_dir, demo_nodes()),
-    )
-
-    python_handler(source, MagicMock(), contract_bundle_writer=bundle_writer).handle(release_id="rel-1")
-
-    doc = bundle_writer.document
-    assert sorted(doc["contracts"]) == ["analytics.demo_orders_csv", "analytics.fx_eur_usd_rates", "analytics.py_daily_kpis"]
-    assert list(doc["provenance"]) == ["service-py"]
 
 
 def test_each_python_odcs_service_has_its_own_provenance(tmp_path):

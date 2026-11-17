@@ -68,11 +68,9 @@ are `kind` (string), `owner` (string) and `reads` (object: each read's name to
 the `SELECT` text it runs). A node of `kind` `python-csv` has one read, `csv`,
 which is a file location, not SQL. Every other key of the entry may change.
 
-A Python node has the same three keys whichever kind of release declared it:
-a service released as `python` (a `contract.yaml`) and one released as
-`python-odcs` (one ODCS file per node) give the same JSON. For an ODCS file,
-`owner` is the contract's `team.name` and `reads` holds its `readQueries`, or
-its `csvSource` as the read `csv`.
+A Python node's entry comes from its ODCS file (a service is released as
+`python-odcs`, one ODCS file per node): `owner` is the contract's `team.name`
+and `reads` holds its `readQueries`, or its `csvSource` as the read `csv`.
 
 **Topology artifact, `schema_version` 1**
 

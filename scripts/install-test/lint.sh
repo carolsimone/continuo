@@ -495,7 +495,7 @@ grep -qF 'services[run-controller].volumes[extra-config]: configMap.name is empt
 # the chart, the file's text becomes a named template (`probe.notes`) that a
 # ConfigMap includes, and `helm template --is-upgrade` or without it sets
 # .Release.IsUpgrade to true or false for it.
-echo "--- NOTES.txt: the schedules, validation re-pin, catalog backup, contracts S3, catalog Postgres and ServiceAccount notes print on upgrade and not on install"
+echo "--- NOTES.txt: the schedules, validation re-pin, catalog backup, contracts S3, catalog Postgres, ServiceAccount and python kind notes print on upgrade and not on install"
 schedules_note='Schedules are no longer read from the chart: every cron stops until it is set again in the ui (Edit cron) or with `continuo schedule set-cron`.'
 notes_chart="${tmp}/notes-chart"
 cp -R "$CHART" "$notes_chart"
@@ -620,6 +620,29 @@ grep -qF 'set imagePullSecrets' "${tmp}/notes-upgrade.txt" \
   || { echo "FAIL: the ServiceAccount upgrade note does not name imagePullSecrets"; exit 1; }
 if grep -qF "$service_account_note" "${tmp}/notes-install.txt"; then
   echo "FAIL: the install notes carry the ServiceAccount upgrade note"; exit 1
+fi
+
+# An upgrading operator is told once that release kind python is no longer
+# accepted and that the upgrade stops while a service is still released as
+# python; an installing one has no service to move and is told nothing.
+python_kind_note='release kind "python" (contract.yaml) is no longer accepted'
+[ "$(grep -cF "$python_kind_note" "${tmp}/notes-upgrade.txt")" = 1 ] \
+  || { echo "FAIL: the upgrade notes do not say exactly once that release kind python is no longer accepted"; exit 1; }
+grep -qF 'If a service is still released as "python", release it as "python-odcs"' "${tmp}/notes-upgrade.txt" \
+  || { echo "FAIL: the python kind upgrade note does not tell an operator to release a service as python-odcs"; exit 1; }
+grep -qF 'Run helm rollback continuo, release them as "python-odcs", then upgrade again.' "${tmp}/notes-upgrade.txt" \
+  || { echo "FAIL: the python kind upgrade note does not say how to recover with the bundled Postgres"; exit 1; }
+if grep -qF "$python_kind_note" "${tmp}/notes-install.txt"; then
+  echo "FAIL: the install notes carry the python kind upgrade note"; exit 1
+fi
+# The re-baseline note agrees with deploy/README.md: a Python service is
+# released as python-odcs, built on runtime 0.13.0 or later, and no older
+# runtime is named.
+grep -qF 'a Python service is released as "python-odcs", built on' "${tmp}/notes-upgrade.txt" \
+  && grep -qF 'continuo-python-runtime 0.13.0 or later' "${tmp}/notes-upgrade.txt" \
+  || { echo "FAIL: the re-baseline upgrade note does not say a Python service is released as python-odcs on runtime 0.13.0 or later"; exit 1; }
+if grep -qE 'continuo-python-runtime 0\.1[0-2]\.' "${tmp}/notes-upgrade.txt"; then
+  echo "FAIL: the upgrade notes name a continuo-python-runtime older than 0.13.0"; exit 1
 fi
 
 # An upgrading operator is told once about the `continuo:` Redis prefix, that
