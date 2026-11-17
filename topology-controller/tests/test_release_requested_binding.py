@@ -96,10 +96,10 @@ def test_kind_defaults_to_dbt_and_is_threaded_when_present():
 
 def test_an_explicitly_empty_kind_is_not_defaulted_to_dbt():
     """Only an absent kind defaults. A producer that set the field to "" chose a
-    value, and it is not a kind this build can parse — passing it through keeps
-    the handler's UnknownManifestKind failure available. Defaulting it would
-    parse a python contract with the dbt parser and misreport the release as
-    MalformedManifest, pointing the operator at the wrong artifact."""
+    value, and it is not a kind this build can parse — passing it through lets
+    the handler report it as a permanent invalid_artifact failure. Defaulting it
+    would parse another kind's artifact with the dbt parser and misreport it as
+    an unreadable manifest, pointing the operator at the wrong artifact."""
     got = parse_release_requested(
         _fields({
             "release_id": "rel-1",

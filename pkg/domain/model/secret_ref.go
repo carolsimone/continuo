@@ -18,8 +18,9 @@ const apiSecretRefMaxLen = 253
 var apiSecretRefPattern = regexp.MustCompile("^" + regexp.QuoteMeta(ApiSecretRefPrefix) + "[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 
 // ValidateApiSecretRef reports whether ref is a Secret name a python-api node
-// may receive. topology-controller holds the same rule; both are pinned to
-// testdata/secret_ref_cases.json.
+// may receive. continuo-contracts, which validates the secretRef of a Python
+// node's contract, holds the same rule; both are pinned to byte-identical
+// copies of testdata/secret_ref_cases.json.
 func ValidateApiSecretRef(ref string) error {
 	if len(ref) > apiSecretRefMaxLen || !apiSecretRefPattern.MatchString(ref) {
 		return fmt.Errorf("secret_ref %q must be a Kubernetes Secret name starting with %q "+
