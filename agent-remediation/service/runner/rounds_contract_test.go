@@ -236,12 +236,13 @@ func TestImagePackages_AReadErrorIsRetriedNotDeclined(t *testing.T) {
 	assert.Equal(t, remediation.ClusterChecked, h.cluster(id, 1, 1).Status)
 }
 
-// A checked cluster whose contract_packages row holds a merged contract.yaml,
-// not an ODCS producer bundle, is rebuilt from that row when its try reaches
-// the gate, and its contract is verified as kind python from contract.yaml.
-func TestGate_ACheckedClusterHoldingMergedContractYAMLIsVerifiedAsKindPython(t *testing.T) {
-	const merged = "version: 1\nnodes:\n  - id: sales.loader\n    script: scripts/loader.py\n"
-	h := newHarness(t, withContractType(1, &refusingPackager{}))
+// A checked cluster whose contract_packages row holds bytes that are not an
+// ODCS producer bundle fails its try when the try reaches the gate: the gate
+// submits no run, and the next try starts or the tries being spent the failing
+// set is handed over.
+func TestGate_ACheckedClusterHoldingANonBundleContractFailsTheTry(t *testing.T) {
+	const notABundle = "version: 1\nnodes:\n  - id: sales.loader\n    script: scripts/loader.py\n"
+	h := newHarness(t, withTries(1), withContractType(1, &refusingPackager{}))
 	h.llm.answer = contractAnswer
 	h.pipeline.submitErr = errors.New("release-controller unavailable")
 	id := h.accept(trigger("validation", contractNode()))
@@ -253,7 +254,7 @@ func TestGate_ACheckedClusterHoldingMergedContractYAMLIsVerifiedAsKindPython(t *
 	row := rows[0]
 	rec, err := serialization.DecodeRecord[serialization.CheckRecord](row.Output)
 	require.NoError(t, err)
-	raw, err := json.Marshal(remediation.Bytes(merged))
+	raw, err := json.Marshal(remediation.Bytes(notABundle))
 	require.NoError(t, err)
 	rec.Evidence[remediation.KeyPackagedContract] = raw
 	row.Output, err = serialization.EncodeRecord(rec)
@@ -266,13 +267,17 @@ func TestGate_ACheckedClusterHoldingMergedContractYAMLIsVerifiedAsKindPython(t *
 	h.clock.set(t0.Add(time.Minute))
 	require.NoError(t, h.drive(id))
 
-	submitted := h.pipeline.runs()
-	require.Len(t, submitted, 1)
-	assert.Equal(t, "python", submitted[0].Kind)
-	body, ok := h.artifacts.get("svc-a/" + submitted[0].RunID + "/contract.yaml")
-	require.True(t, ok, "the merged yaml is uploaded as contract.yaml")
-	assert.Equal(t, merged, body)
-	_, wroteBundle := h.artifacts.get("svc-a/" + submitted[0].RunID + "/odcs-bundle.json")
-	assert.False(t, wroteBundle, "no odcs-bundle.json is written for it")
-	assert.Equal(t, proposal.StatusVerifying, h.attempt(1).Proposal.Status)
+	assert.Empty(t, h.pipeline.runs(), "nothing is submitted to the release pipeline")
+	_, wroteContract := h.artifacts.get("svc-a/verify-rel-1-svc-a-a1/contract.yaml")
+	assert.False(t, wroteContract, "no contract.yaml is written")
+	_, wroteBundle := h.artifacts.get("svc-a/verify-rel-1-svc-a-a1/odcs-bundle.json")
+	assert.False(t, wroteBundle, "no bundle is written for bytes that are not one")
+	const reason = "the packaged contract is not an ODCS producer bundle: service svc-a"
+	p := h.attempt(1).Proposal
+	assert.Equal(t, proposal.StatusFailed, p.Status)
+	assert.Equal(t, reason, p.Rationale)
+	assert.Equal(t, map[string]proposal.NodeOutcome{"sales.loader": {Status: proposal.StatusFailed, Reason: reason}}, p.NodeOutcomes)
+	assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
+	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status, "the only try being spent, the remediation ends")
+	assert.Equal(t, proposal.StatusEscalated, h.attempt(2).Proposal.Status, "the failing set is handed over")
 }

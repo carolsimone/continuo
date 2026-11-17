@@ -132,17 +132,6 @@ func locateContractForFix(ctx context.Context, svc Services, in Input) (
 	// past: both end the attempt with the reason recorded, so an operator sees
 	// why the heal stopped instead of finding nothing at all.
 	located, err = svc.ContractLocator.Locate(root, schema, table)
-	// A service that still declares its python nodes in contract.yaml has no
-	// ODCS contract a fix could be packaged from, so no fix is made for it:
-	// the node is recorded skipped with the reason, which is logged so the
-	// operator knows to convert the service.
-	if errors.Is(err, ports.ErrServiceNotConverted) {
-		reason := proposal.ServiceNotConvertedReason(in.Service)
-		svc.Logger.Info(reason, "release", in.ReleaseID, "node", in.NodeID, "node_type", in.NodeType)
-		skip = &Result{Proposal: proposal.Proposal{Status: proposal.StatusSkipped, Rationale: reason}}
-		err = nil
-		return
-	}
 	if errors.Is(err, ports.ErrNodeNotDeclared) || errors.Is(err, ports.ErrAmbiguousDeclaration) {
 		skip = skipResult(svc, in, err.Error())
 		err = nil
@@ -276,13 +265,9 @@ func contractFix(
 	// Re-running the search over the patched checkout covers what it cannot: the
 	// node must still be declared, exactly once, and still inside the directory
 	// this fix packages.
-	// A legacy contract.yaml entry that still names the node reads as an
-	// unconverted service; after the answer that too means no ODCS contract
-	// declares the node any more.
 	relocated, err := svc.ContractLocator.Locate(root, schema, table)
 	switch {
-	case errors.Is(err, ports.ErrNodeNotDeclared), errors.Is(err, ports.ErrAmbiguousDeclaration),
-		errors.Is(err, ports.ErrServiceNotConverted):
+	case errors.Is(err, ports.ErrNodeNotDeclared), errors.Is(err, ports.ErrAmbiguousDeclaration):
 		return failPython(svc, in, fmt.Sprintf(
 			"after applying the model's answer, %s is no longer declared by exactly one contract file (%s); "+
 				"a fix may correct what a node declares but never change which node is declared", in.NodeID, err))
@@ -623,12 +608,12 @@ func siblingFailure(ctx context.Context, svc Services, in Input, located ports.L
 		}
 		other, lerr := svc.ContractLocator.Locate(root, schema, table)
 		if lerr != nil {
-			// Not declared anywhere, declared only by a legacy contract.yaml
-			// entry, declared twice, or unsearchable: in none of those cases is
-			// this node known to share the directory being packaged, and
-			// uncertainty about someone else's node is not a reason to abandon
-			// a fix for this one. Only the last two are logged.
-			if !errors.Is(lerr, ports.ErrNodeNotDeclared) && !errors.Is(lerr, ports.ErrServiceNotConverted) {
+			// Not declared anywhere, declared twice, or unsearchable: in none
+			// of those cases is this node known to share the directory being
+			// packaged, and uncertainty about someone else's node is not a
+			// reason to abandon a fix for this one. Only the last two are
+			// logged.
+			if !errors.Is(lerr, ports.ErrNodeNotDeclared) {
 				svc.Logger.Warn("could not place another failing node; proceeding as if it is declared elsewhere",
 					"node", nodeID, "release", in.ReleaseID, "error", lerr)
 			}

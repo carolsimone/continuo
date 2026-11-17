@@ -55,7 +55,7 @@ type packagerCall struct {
 
 // fakePackager records every Pack and returns a fixed bundle.
 type fakePackager struct {
-	merged []byte
+	bundle []byte
 	err    error
 	calls  []packagerCall
 }
@@ -80,7 +80,7 @@ func (f *fakePackager) Pack(_ context.Context, contractDir, repoRoot, service, d
 	if f.err != nil {
 		return nil, f.err
 	}
-	return f.merged, nil
+	return f.bundle, nil
 }
 
 // fakeReleases answers the sibling-failure check's read of the ORIGINAL
@@ -204,7 +204,7 @@ func pythonSvc(t *testing.T, root string) (Services, *fakeArchive, *fakePackager
 	// The real repofs adapter answers both contract ports, so a test cannot
 	// pass a search and an inspection that disagree about a document's shape.
 	locator := repofs.NewLocator(testLogger())
-	pkgr := &fakePackager{merged: []byte("merged: contract\n")}
+	pkgr := &fakePackager{bundle: []byte(`{"bundle_version": 1}`)}
 	arts := &fakeArtifacts{}
 	rel := &fakeReleases{}
 	svc := Services{
@@ -239,7 +239,7 @@ func pythonSvc(t *testing.T, root string) (Services, *fakeArchive, *fakePackager
 // TestPythonValidation_HappyPath walks the whole lane end to end and pins the
 // property a reordering would break: the contract directory is packaged only
 // after the model's files are written into it, never from the still-failing
-// tree. The merged contract comes back as Result.VerificationContract for the
+// tree. The packed bundle comes back as Result.VerificationContract for the
 // driver to submit and verify — this lane never uploads or submits anything
 // itself — and the edit names the node it repairs.
 func TestPythonValidation_HappyPath(t *testing.T) {
@@ -272,8 +272,8 @@ func TestPythonValidation_HappyPath(t *testing.T) {
 	require.Equal(t, siblingYAML, call.sawOnDisk["other.odcs.yaml"],
 		"a file the model did not return must be left exactly as the repository holds it")
 
-	// The merged contract is returned in memory for the driver, not uploaded.
-	require.Equal(t, []byte("merged: contract\n"), r.VerificationContract)
+	// The bundle is returned in memory for the driver, not uploaded.
+	require.Equal(t, []byte(`{"bundle_version": 1}`), r.VerificationContract)
 
 	// The sibling check read the ORIGINAL failing release, not a verification run.
 	require.Equal(t, []string{"rel-1"}, rel.failingNodesCalls)
@@ -797,8 +797,8 @@ func TestPythonValidation_AnswerThatAddsANodeWithASecretRef_Fails(t *testing.T) 
 }
 
 // TestPythonValidation_AnswerAddsExplicitDefaultKind_Verifies covers the
-// companion case to the kind-flip check above: declaringYAML, like every
-// legacy contract, omits "kind:" entirely, and both the runtime parsers and
+// companion case to the kind-flip check above: declaringYAML omits "kind:"
+// entirely, as a contract may, and both the runtime parsers and
 // this locator default an absent kind to "python-node". An answer that
 // writes that default explicitly is a no-op normalization, not an identity
 // change, and must reach verification exactly like any other accepted fix —
@@ -1004,16 +1004,16 @@ func TestPythonValidation_UnreadableFailingNodesIsTransient(t *testing.T) {
 	require.Empty(t, pkgr.calls)
 }
 
-// TestPythonFixer_RefusesAnUnconvertedServiceAndLogsWhy verifies that a python
-// failure in a service whose repository still declares the node in
-// contract.yaml ends with no fix: no model call, no packaging, the node
-// recorded skipped with the reason, and the reason logged at INFO with the
-// release and the node, for every python contract lane. It holds whether the
-// checkout has no ODCS file at all or another service in it has converted.
-func TestPythonFixer_RefusesAnUnconvertedServiceAndLogsWhy(t *testing.T) {
+// TestPythonFixer_SkipsANodeNoContractFileDeclaresAndLogsWhy verifies that a
+// python failure whose node no ODCS contract file of the checkout declares
+// ends with no fix: no model call, no packaging, the node recorded skipped with
+// the reason, and the reason logged at INFO with the node, for every python
+// contract lane. It holds whether the checkout has no ODCS file at all or only
+// files declaring other nodes.
+func TestPythonFixer_SkipsANodeNoContractFileDeclaresAndLogsWhy(t *testing.T) {
 	type tc struct {
 		lane      Fixer
-		converted bool
+		otherNode bool
 	}
 	cases := map[string]tc{}
 	for name, lane := range map[string]Fixer{
@@ -1021,16 +1021,15 @@ func TestPythonFixer_RefusesAnUnconvertedServiceAndLogsWhy(t *testing.T) {
 		"csv validation":    csvValidationFixer{},
 		"python parse":      pythonParseFixer{},
 	} {
-		cases[name] = tc{lane: lane}
-		cases[name+", beside a converted service"] = tc{lane: lane, converted: true}
+		cases[name+", no ODCS file"] = tc{lane: lane}
+		cases[name+", only another node's ODCS file"] = tc{lane: lane, otherNode: true}
 	}
 	for name, c := range cases {
 		lane := c.lane
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
-			writeRepoFile(t, root, "services/service-py/contracts/contract.yaml",
-				"nodes:\n  - schema: analytics\n    table: py_daily_kpis\n    script: scripts/py_daily_kpis.py\n")
-			if c.converted {
+			writeRepoFile(t, root, "services/service-py/scripts/py_daily_kpis.py", "print('kpis')\n")
+			if c.otherNode {
 				writeRepoFile(t, root, "services/service-a/contracts/other.odcs.yaml", siblingYAML)
 			}
 			svc, arch, pkgr, _, arts := pythonSvc(t, root)
@@ -1042,7 +1041,7 @@ func TestPythonFixer_RefusesAnUnconvertedServiceAndLogsWhy(t *testing.T) {
 			r, err := lane.Propose(context.Background(), svc, pythonInput())
 			require.NoError(t, err)
 
-			want := "service svc-py still uses contract.yaml; convert it to ODCS"
+			want := `schema "analytics" table "py_daily_kpis": ` + ports.ErrNodeNotDeclared.Error()
 			require.Equal(t, proposal.StatusSkipped, r.Proposal.Status)
 			require.Equal(t, want, r.Proposal.Rationale)
 			require.Empty(t, r.Proposal.Edits)
@@ -1056,8 +1055,8 @@ func TestPythonFixer_RefusesAnUnconvertedServiceAndLogsWhy(t *testing.T) {
 			require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(logs.String())), &line),
 				"exactly one log line: %s", logs.String())
 			require.Equal(t, "INFO", line["level"])
-			require.Equal(t, want, line["msg"])
-			require.Equal(t, "rel-1", line["release"])
+			require.Equal(t, "python contract fix skipped", line["msg"])
+			require.Equal(t, want, line["reason"])
 			require.Equal(t, "analytics.py_daily_kpis", line["node"])
 		})
 	}
@@ -1080,22 +1079,20 @@ func (l *relocateLocator) Locate(root, schema, table string) (ports.Located, err
 	return ports.Located{}, l.err
 }
 
-// TestPythonValidation_AnswerLeavingOnlyALegacyEntry_Fails covers an answer
-// after which no ODCS contract declares the node while a stale contract.yaml
-// entry still names it: the search reads that as an unconverted service, and
-// it is the answer that removed the node, so the attempt fails with the
+// TestPythonValidation_AnswerLeavingNoDeclaration_Fails covers an answer after
+// which no ODCS contract declares the node any more: the attempt fails with the
 // reason and nothing is packaged.
-func TestPythonValidation_AnswerLeavingOnlyALegacyEntry_Fails(t *testing.T) {
+func TestPythonValidation_AnswerLeavingNoDeclaration_Fails(t *testing.T) {
 	root := pythonRepoTree(t)
 	svc, _, pkgr, _, _ := pythonSvc(t, root)
-	loc := &relocateLocator{ContractLocator: svc.ContractLocator, err: ports.ErrServiceNotConverted}
+	loc := &relocateLocator{ContractLocator: svc.ContractLocator, err: ports.ErrNodeNotDeclared}
 	svc.ContractLocator = loc
 
 	r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
 	require.NoError(t, err)
 	require.Equal(t, proposal.StatusFailed, r.Proposal.Status)
 	require.Contains(t, r.Proposal.Rationale, "is no longer declared by exactly one contract file")
-	require.Contains(t, r.Proposal.Rationale, ports.ErrServiceNotConverted.Error())
+	require.Contains(t, r.Proposal.Rationale, ports.ErrNodeNotDeclared.Error())
 	require.Empty(t, pkgr.calls)
 }
 

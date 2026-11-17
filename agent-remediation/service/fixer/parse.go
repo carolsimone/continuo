@@ -37,7 +37,7 @@ func parseGather(ctx context.Context, svc Services, in Input) (Gathered, string,
 	}
 	if pkg_model.NodeType(in.NodeType).IsPython() {
 		return Gathered{}, fmt.Sprintf("%s is a %s node: its reads are declared in its contract file "+
-			"(the ODCS file under contracts/, or a legacy contract.yaml), which this lane does not edit; correct the contract by hand", in.NodeID, in.NodeType), nil
+			"(the ODCS file under contracts/), which this lane does not edit; correct the contract by hand", in.NodeID, in.NodeType), nil
 	}
 	if in.FilePath == "" {
 		return Gathered{}, "the parse rejection names no source file, so there is no file to fix", nil

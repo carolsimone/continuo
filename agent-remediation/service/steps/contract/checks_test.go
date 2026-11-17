@@ -593,14 +593,6 @@ func TestDeclaredOnce(t *testing.T) {
 			Message: "after applying the model's answer, py.fx.rates is no longer declared by exactly one contract file " +
 				"(node declared in more than one ODCS contract file); a fix may correct what a node declares but never change which node is declared",
 		}}},
-		// The answer dropped the ODCS declaration while a stale legacy entry
-		// still names the node: the search reads that as an unconverted
-		// service, and the answer is what removed the node.
-		{"declared only by a legacy entry", &fakeLocator{errs: map[string]error{"fx.rates": ports.ErrServiceNotConverted}}, []remediation.Finding{{
-			Code: "not_declared_once",
-			Message: "after applying the model's answer, py.fx.rates is no longer declared by exactly one contract file " +
-				"(" + ports.ErrServiceNotConverted.Error() + "); a fix may correct what a node declares but never change which node is declared",
-		}}},
 		{"moved to another directory", relocated("svc/other"), []remediation.Finding{{
 			Code: "not_declared_once",
 			Message: `the model's answer moved py.fx.rates out of the contract directory "svc/contracts" into "svc/other", ` +

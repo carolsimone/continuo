@@ -46,10 +46,6 @@ func odcsContract(id string) string {
 		"      - {name: day, physicalType: DATE, required: true}\n"
 }
 
-// legacyContract is a contract.yaml in the format a service uses before it is
-// converted to ODCS: a "nodes:" list.
-const legacyContract = "nodes:\n  - schema: analytics\n    table: py_daily_kpis\n    script: scripts/py_daily_kpis.py\n"
-
 // TestLocate_FindsTheODCSFileByID verifies that Locate returns the ODCS file
 // whose id names the node, even when it is not the first contract the walk
 // reads, and derives the contract directory and the application root from
@@ -117,67 +113,17 @@ func TestLocate_TwoFilesWithOneIDAreAmbiguous(t *testing.T) {
 	}
 }
 
-// TestLocate_AServiceStillOnContractYAMLIsNotConverted verifies that a tree
-// holding no ODCS file but a contract yaml with a "nodes:" list is reported as
-// a service that has not been converted, not as a node no contract declares.
-func TestLocate_AServiceStillOnContractYAMLIsNotConverted(t *testing.T) {
+// TestLocate_ATreeWithNoODCSFileDeclaresNoNode verifies that a tree holding no
+// ODCS file, only a yaml file with a "nodes:" list naming the node, is a tree
+// no contract declares the node in.
+func TestLocate_ATreeWithNoODCSFileDeclaresNoNode(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, root, "services/service-py/contracts/py_daily_kpis.yml", legacyContract)
+	writeFile(t, root, "services/service-py/contracts/contract.yaml",
+		"nodes:\n  - schema: analytics\n    table: py_daily_kpis\n")
 
 	_, err := newLocator().Locate(root, "analytics", "py_daily_kpis")
-	if !errors.Is(err, ports.ErrServiceNotConverted) {
-		t.Fatalf("err = %v, want ports.ErrServiceNotConverted", err)
-	}
-}
-
-// TestLocate_AnUnconvertedServiceBesideAConvertedOneIsNotConverted verifies
-// that in a checkout holding several services, a node still declared by a
-// contract.yaml "nodes:" entry is reported as not converted even though
-// another service of the checkout has ODCS contracts.
-func TestLocate_AnUnconvertedServiceBesideAConvertedOneIsNotConverted(t *testing.T) {
-	root := t.TempDir()
-	writeFile(t, root, "services/service-a/contracts/other_kpis.odcs.yaml", odcsContract("analytics.other_kpis"))
-	writeFile(t, root, "services/service-py/contracts/contract.yaml", legacyContract)
-
-	_, err := newLocator().Locate(root, "analytics", "py_daily_kpis")
-	if !errors.Is(err, ports.ErrServiceNotConverted) {
-		t.Fatalf("err = %v, want ports.ErrServiceNotConverted", err)
-	}
-}
-
-// TestLocate_AnODCSMatchWinsOverALegacyEntry verifies that a node an ODCS
-// contract declares is found even when an old contract.yaml still names it.
-func TestLocate_AnODCSMatchWinsOverALegacyEntry(t *testing.T) {
-	root := t.TempDir()
-	writeFile(t, root, "svc/contracts/py_daily_kpis.odcs.yaml", odcsContract("analytics.py_daily_kpis"))
-	writeFile(t, root, "svc/old/contract.yaml", legacyContract)
-
-	got, err := newLocator().Locate(root, "analytics", "py_daily_kpis")
-	if err != nil {
-		t.Fatalf("Locate: %v", err)
-	}
-	if got.YAMLPath != "svc/contracts/py_daily_kpis.odcs.yaml" {
-		t.Errorf("YAMLPath = %q", got.YAMLPath)
-	}
-}
-
-// TestLocate_ALegacyFileThatDoesNotNameTheNodeDeclaresNothing verifies that a
-// contract.yaml declaring other nodes does not make the node unconverted:
-// neither format declares it, so it is not declared.
-func TestLocate_ALegacyFileThatDoesNotNameTheNodeDeclaresNothing(t *testing.T) {
-	for name, odcs := range map[string]bool{"no ODCS file": false, "beside an ODCS file": true} {
-		t.Run(name, func(t *testing.T) {
-			root := t.TempDir()
-			writeFile(t, root, "svc/contracts/contract.yaml", "nodes:\n  - schema: analytics\n    table: other\n")
-			if odcs {
-				writeFile(t, root, "svc2/contracts/other_kpis.odcs.yaml", odcsContract("analytics.other_kpis"))
-			}
-
-			_, err := newLocator().Locate(root, "analytics", "py_daily_kpis")
-			if !errors.Is(err, ports.ErrNodeNotDeclared) {
-				t.Fatalf("err = %v, want ports.ErrNodeNotDeclared", err)
-			}
-		})
+	if !errors.Is(err, ports.ErrNodeNotDeclared) {
+		t.Fatalf("err = %v, want ports.ErrNodeNotDeclared", err)
 	}
 }
 
@@ -501,7 +447,7 @@ func TestDeclarations_DocumentDeclaringNoNodeIsNotAnError(t *testing.T) {
 	for name, doc := range map[string]string{
 		"empty":            "",
 		"unrelated object": "version: 2\nmodels:\n  - name: orders\n",
-		"legacy contract":  legacyContract,
+		"a nodes list":     "nodes:\n  - schema: analytics\n    table: py_daily_kpis\n",
 		"a list":           "- a\n- b\n",
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -60,10 +60,9 @@ func TestDuplicateTable_ReadsOnlyTheChangedFileAndProposesARename(t *testing.T) 
 
 // TestDuplicateTable_PythonTarget_NeverCallsLLMOrPrecedents proves the fixer
 // never reads, prompts, or queries precedents for a python claimant: its
-// relation is declared in the service's contract.yaml, whose repository path
-// this system does not carry, so the script named by FilePath cannot contain
-// the fix. Before the NodeType check existed, this Fixer read the script (the
-// fake source map below would have served it) and would have proposed a
+// relation is declared in the node's ODCS contract file, not in the script
+// named by FilePath, so that script cannot contain the fix. Were the script
+// read (the fake source map below would serve it), the Fixer would propose a
 // cosmetic, non-fixing edit.
 //
 // This is a non-negotiable project invariant: no remediation path may ever
@@ -105,8 +104,8 @@ func TestDuplicateTable_PythonTarget_NeverCallsLLMOrPrecedents(t *testing.T) {
 // TestDuplicateTable_PythonCsvTarget_NeverCallsLLMOrPrecedents mirrors
 // TestDuplicateTable_PythonTarget_NeverCallsLLMOrPrecedents for the
 // python-csv node kind: a csv node is part of the python family (IsPython),
-// so its relation is likewise declared in the service's contract.yaml rather
-// than the file named by FilePath, and it must be skipped the same way.
+// so its relation is likewise declared in its ODCS contract file rather than
+// the file named by FilePath, and it must be skipped the same way.
 func TestDuplicateTable_PythonCsvTarget_NeverCallsLLMOrPrecedents(t *testing.T) {
 	fs := &fakeSourceMap{files: map[string]string{"services/marketing/data/orders.csv": "id,name\n1,a"}}
 	llm := &fakeLLM{}

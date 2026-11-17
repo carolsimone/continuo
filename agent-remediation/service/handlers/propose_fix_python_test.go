@@ -309,7 +309,6 @@ func TestVerify_UploadsAnODCSBundleAsPythonODCS(t *testing.T) {
 	require.Equal(t, []map[string]string{{"pyarrow": "26.0.0", "duckdb": "1.4.0"}}, packed)
 	require.Equal(t, packedBundle, art.written["svc/verify-r1-svc-a1/odcs-bundle.json"])
 	require.Equal(t, "application/json", art.contentTypes["svc/verify-r1-svc-a1/odcs-bundle.json"])
-	require.NotContains(t, art.written, "svc/verify-r1-svc-a1/contract.yaml")
 	require.Len(t, gw.submitted, 1)
 	require.Equal(t, ports.VerificationKindPythonODCS, gw.submitted[0].Kind)
 	require.Equal(t, "python-odcs", gw.submitted[0].Kind)

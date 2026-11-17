@@ -27,7 +27,13 @@ const nameVerificationRun workflow.StepName = "verification_run"
 var (
 	errNoEdits      = errors.New("the try has no edit to verify")
 	errNoSubmitTime = errors.New("the gate input names no time its runs were submitted at")
+	// errNotABundle marks a service whose packaged contract is not an ODCS
+	// producer bundle, the only contract format a verification run reads.
+	errNotABundle = errors.New("the packaged contract is not an ODCS producer bundle")
 )
+
+// codeNotABundle is the finding code of errNotABundle.
+const codeNotABundle = "packaged_contract_not_a_bundle"
 
 // VerificationRun is the long check `verification_run`. It runs the real
 // release pipeline over the try's edits: a verification run carries the full
@@ -75,43 +81,39 @@ func (*VerificationRun) Meta() step.Meta {
 }
 
 // plannedRun is one run that judges part of a try, with the manifest kind it
-// is verified as and the id it is submitted under. contract is how a python
-// service's packaged contract is uploaded; a dbt run has none.
+// is verified as and the id it is submitted under. A python service's run
+// uploads the packaged contract in its edits; a dbt run has none.
 type plannedRun struct {
-	edits    shared.ServiceEdits
-	kind     string
-	runID    string
-	contract contractArtifact
+	edits shared.ServiceEdits
+	kind  string
+	runID string
 }
 
-// contractArtifact is how a packaged contract is uploaded for its verification
-// run: the manifest kind the run is verified as, and the object name (under
-// <service>/<run id>/) and content type it is written with.
-type contractArtifact struct {
-	kind        string
-	name        string
-	contentType string
-}
-
-// artifactOf tells the format of a packaged contract apart from its bytes. An
-// ODCS producer bundle, a JSON object with a bundle_version key, is verified as
-// kind python-odcs from odcs-bundle.json. Any other bytes are a service's
-// merged contract.yaml, which a cluster's journal holds when its
-// contract_packages row stored the merged yaml: it is verified as kind python
-// from contract.yaml, so the run judges the bytes the check accepted.
-func artifactOf(contract []byte) contractArtifact {
+// isODCSBundle reports whether contract is an ODCS producer bundle: a JSON
+// object with a bundle_version key.
+func isODCSBundle(contract []byte) bool {
 	var doc map[string]json.RawMessage
-	if json.Unmarshal(contract, &doc) == nil {
-		if _, ok := doc["bundle_version"]; ok {
-			return contractArtifact{
-				kind: ports.VerificationKindPythonODCS, name: ports.ODCSBundleName, contentType: "application/json",
-			}
-		}
+	if json.Unmarshal(contract, &doc) != nil {
+		return false
 	}
-	return contractArtifact{kind: ports.VerificationKindPython, name: ports.ContractYAMLName, contentType: "application/yaml"}
+	_, ok := doc["bundle_version"]
+	return ok
+}
+
+// refusalFinding reports the finding for an error plan returned that no run
+// could judge: a refusal of the edit groups, or a packaged contract that is not
+// an ODCS producer bundle. It reports false for any other error.
+func refusalFinding(err error) (remediation.Finding, bool) {
+	if errors.Is(err, errNotABundle) {
+		return remediation.Finding{Code: codeNotABundle, Message: err.Error()}, true
+	}
+	return shared.RefusalFinding(err)
 }
 
 // plan groups the try's edits into the runs that judge them, sorted by service.
+// A service with a packaged contract is verified as kind python-odcs, and the
+// try is refused with errNotABundle when that contract is not an ODCS producer
+// bundle.
 func (g *VerificationRun) plan(in step.GateInput) ([]plannedRun, error) {
 	if len(shared.EditsOf(in.Drafts)) == 0 {
 		return nil, errNoEdits
@@ -124,8 +126,10 @@ func (g *VerificationRun) plan(in step.GateInput) ([]plannedRun, error) {
 	for i, grp := range groups {
 		run := plannedRun{edits: grp, kind: ports.VerificationKindDbt, runID: RunID(in.Trigger.ReleaseID, grp.Service, in.Try.Attempt)}
 		if grp.Contract != nil {
-			run.contract = artifactOf(grp.Contract)
-			run.kind = run.contract.kind
+			if !isODCSBundle(grp.Contract) {
+				return nil, fmt.Errorf("%w: service %s", errNotABundle, grp.Service)
+			}
+			run.kind = ports.VerificationKindPythonODCS
 		}
 		runs[i] = run
 	}
@@ -133,9 +137,8 @@ func (g *VerificationRun) plan(in step.GateInput) ([]plannedRun, error) {
 }
 
 // Submit posts one verification run per service the try edits. A python service
-// is verified by the contract its fix packed, uploaded under the run's own id:
-// an odcs-bundle.json as kind python-odcs, a merged contract.yaml as kind
-// python (artifactOf). A dbt service is verified by re-running its
+// is verified by the odcs-bundle.json its fix packed, uploaded under the run's
+// own id as kind python-odcs. A dbt service is verified by re-running its
 // project with the proposed content laid over it, so each edit's content is
 // read back from the artifact the draft stored and packed into one source
 // overlay, keyed by the edit's path within that service's project.
@@ -146,7 +149,7 @@ func (g *VerificationRun) plan(in step.GateInput) ([]plannedRun, error) {
 // reports the runs' services, kinds and phases.
 func (g *VerificationRun) Submit(ctx context.Context, in step.GateInput) (step.GateVerdict, error) {
 	runs, err := g.plan(in)
-	if f, refused := shared.RefusalFinding(err); refused {
+	if f, refused := refusalFinding(err); refused {
 		g.logger.Error("the attempt's edits cannot be verified by any release",
 			"release", in.Trigger.ReleaseID, "attempt", in.Try.Attempt, "error", err)
 		return step.GateVerdict{
@@ -163,11 +166,11 @@ func (g *VerificationRun) Submit(ctx context.Context, in step.GateInput) (step.G
 		service := r.edits.Service
 		overlayURI := ""
 		if r.edits.Contract != nil {
-			// A python service's artifact IS the packed contract: there is no
-			// project to overlay, so the run reads the contract written under
+			// A python service's artifact IS the packed bundle: there is no
+			// project to overlay, so the run reads the bundle written under
 			// its own id.
 			if _, err := g.artifacts.Write(ctx,
-				service+"/"+r.runID+"/"+r.contract.name, string(r.edits.Contract), r.contract.contentType); err != nil {
+				service+"/"+r.runID+"/"+ports.ODCSBundleName, string(r.edits.Contract), "application/json"); err != nil {
 				return step.GateVerdict{}, fmt.Errorf("write verification contract for %s: %w", service, err)
 			}
 		} else {

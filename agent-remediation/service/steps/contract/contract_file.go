@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
@@ -37,8 +36,7 @@ func (*ContractFile) Meta() step.Meta {
 		Kind: step.KindContext,
 		Description: "Finds the ODCS contract file (*.odcs.yaml, matched by its id) that declares the failing python node in the repository " +
 			"at the trigger's commit and keeps its repository-relative paths and its text. Declines a node id that names no schema and table, " +
-			"a trigger with no service, a repository that is not available, a service that still declares its nodes in contract.yaml, and a " +
-			"node that no contract file declares or several do.",
+			"a trigger with no service, a repository that is not available, and a node that no contract file declares or several do.",
 		Needs:    []remediation.EvidenceKey{remediation.KeyFailure},
 		Provides: []remediation.EvidenceKey{remediation.KeyContractFile},
 	}
@@ -52,11 +50,9 @@ func (*ContractFile) Meta() step.Meta {
 //
 // A node id that names no schema and table, a trigger that names no service
 // (the fix would have no release to be verified under), a repository or commit
-// that does not exist, a service whose repository holds no ODCS contract but
-// a contract.yaml (no fix is packaged from it; the reason is logged so the
-// operator knows to convert the service), and a node that no contract file
-// declares or that several declare are settled facts, and each declines the
-// cluster with the reason as its text. Any other fetch or locate failure is
+// that does not exist, and a node that no contract file declares or that
+// several declare are settled facts, and each declines the cluster with the
+// reason as its text. Any other fetch or locate failure is
 // transient and is returned so the work is tried again.
 func (s *ContractFile) Gather(ctx context.Context, in step.ContextInput) (step.ContextOutput, error) {
 	f := in.Failure
@@ -82,11 +78,6 @@ func (s *ContractFile) Gather(ctx context.Context, in step.ContextInput) (step.C
 	// A python node's contract path is recorded nowhere in the control plane,
 	// so the whole tree is searched.
 	located, err := s.locator.Locate(root, schema, table)
-	if errors.Is(err, ports.ErrServiceNotConverted) {
-		reason := proposal.ServiceNotConvertedReason(f.Target.Service)
-		s.logger.Info(reason, "release", f.Trigger.ReleaseID, "node", nodeID, "node_type", f.Target.NodeType)
-		return step.ContextOutput{Declined: true, Decline: reason}, nil
-	}
 	if errors.Is(err, ports.ErrNodeNotDeclared) || errors.Is(err, ports.ErrAmbiguousDeclaration) {
 		return s.decline(f, err.Error()), nil
 	}

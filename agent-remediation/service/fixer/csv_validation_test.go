@@ -78,7 +78,7 @@ func csvSvc(t *testing.T, root string) (Services, *fakeArchive, *fakePackager, *
 	t.Helper()
 	arch := &fakeArchive{root: root}
 	locator := repofs.NewLocator(testLogger())
-	pkgr := &fakePackager{merged: []byte("merged: contract\n")}
+	pkgr := &fakePackager{bundle: []byte(`{"bundle_version": 1}`)}
 	arts := &fakeArtifacts{}
 	rel := &fakeReleases{}
 	svc := Services{
@@ -112,7 +112,7 @@ func csvSvc(t *testing.T, root string) (Services, *fakeArchive, *fakePackager, *
 
 // TestCsvValidation_HappyPath walks the whole lane end to end: an answer that
 // only corrects output_columns is applied and packaged from the whole
-// contract directory into the merged contract returned as
+// contract directory into the odcs-bundle.json returned as
 // Result.VerificationContract for the driver to submit — and the LLM request it
 // was built from carries the csv-specific system prompt and tool name, not
 // the python-node ones.
@@ -135,8 +135,8 @@ func TestCsvValidation_HappyPath(t *testing.T) {
 	require.Equal(t, csvSiblingYAML, call.sawOnDisk["other.odcs.yaml"],
 		"a file the model did not return must be left exactly as the repository holds it")
 
-	// The merged contract is returned in memory for the driver, not uploaded.
-	require.Equal(t, []byte("merged: contract\n"), r.VerificationContract)
+	// The bundle is returned in memory for the driver, not uploaded.
+	require.Equal(t, []byte(`{"bundle_version": 1}`), r.VerificationContract)
 
 	p := r.Proposal
 	require.Equal(t, proposal.StatusProposed, p.Status,
@@ -145,8 +145,8 @@ func TestCsvValidation_HappyPath(t *testing.T) {
 	require.Equal(t, "services/service-csv/contracts/py_csv_orders.odcs.yaml", p.Edits[0].Path)
 	require.Equal(t, "analytics.py_csv_orders", p.Edits[0].TargetNodeID)
 	for key := range arts.written {
-		require.NotContains(t, key, "contract.yaml",
-			"this lane never uploads the merged contract itself; the driver does, from Result.VerificationContract")
+		require.NotContains(t, key, "odcs-bundle.json",
+			"this lane never uploads the bundle itself; the driver does, from Result.VerificationContract")
 	}
 
 	// The prompt sent to the model is the csv lane's own: its rules, not the
