@@ -23,11 +23,10 @@ import (
 // Fixer skips rather than proposing a change to a file it cannot see.
 //
 // A python target is skipped outright, before any read is attempted. A python
-// node's schema and table are declared in its service's contract.yaml, not in
-// the file named by FilePath (that path is the contract's script entry, a
-// program that produces the relation but does not name it) — and this system
-// carries no repository path for contract.yaml at all, only for the object it
-// reaches topology-controller through. Reading and renaming the script would
+// node's schema and table are declared in its contract file (the ODCS file
+// under contracts/, or a legacy contract.yaml), not in the file named by
+// FilePath (that path is the contract's script entry, a program that produces
+// the relation but does not name it), and this lane does not edit the contract. Reading and renaming the script would
 // therefore change nothing about which relation the node claims, so the
 // rejection would recur on the next release; the operator resolves it by hand
 // from the release page instead, which names every claimant.
@@ -52,8 +51,8 @@ func (duplicateTableFixer) Propose(ctx context.Context, svc Services, in Input) 
 
 func duplicateTableGather(ctx context.Context, svc Services, in Input) (Gathered, string, error) {
 	if pkg_model.NodeType(in.NodeType).IsPython() {
-		return Gathered{}, "the claimant is a python node, whose relation is declared in its service's " +
-			"contract.yaml rather than in the file the trigger names; rename it in the contract by hand", nil
+		return Gathered{}, "the claimant is a python node, whose relation is declared in its contract file (the ODCS file under " +
+			"contracts/, or a legacy contract.yaml) rather than in the file the trigger names; rename it in the contract by hand", nil
 	}
 	if in.NodeType == string(pkg_model.NodeTypeDbtSeed) {
 		return Gathered{}, "the claimant is a dbt seed, whose relation name comes from the csv filename or " +

@@ -66,9 +66,11 @@ func TestGetReleaseResponse_IncludesProvenance(t *testing.T) {
 	assert.Equal(t, "deadbeefcafe1234", decoded["commit_sha"])
 	// Guard the full response shape so an accidental field drop in the extracted
 	// helper is caught: 11 pre-existing keys plus repo + commit_sha +
-	// remediation_round + rebaseline + notices. There is no shadow key: a candidate response never
-	// carries one, since GET /releases/{id} only ever returns a candidate.
-	assert.Len(t, decoded, 17)
+	// remediation_round + rebaseline + notices + continuo_contracts +
+	// contract_bundle_uri + contract_bundle_sha256. There is no shadow key: a
+	// candidate response never carries one, since GET /releases/{id} only ever
+	// returns a candidate.
+	assert.Len(t, decoded, 20)
 	assert.Equal(t, "rPROV", decoded["release_id"])
 	_, hasShadow := decoded["shadow"]
 	assert.False(t, hasShadow, "a candidate response must not carry a shadow key")
@@ -177,4 +179,54 @@ func TestGetRelease_ReturnsTheNotices(t *testing.T) {
 	assert.Equal(t, "analytics.fx_rates_latest_eur", n["rebuilds"].([]any)[1].(map[string]any)["node_id"])
 
 	assert.Equal(t, []any{}, get("rel-none")["notices"])
+}
+
+// GET /releases/{id} names the continuo-contracts version that read the
+// release's contracts and the contract bundle the parse wrote: both empty until
+// the parse ends, and the version stays on a release the parse rejected.
+func TestGetRelease_ReturnsContinuoContracts(t *testing.T) {
+	bundle := release.ContractBundleRef{
+		URI:    "s3://continuo/tenants/default/topologies/rel-1/contracts.json.gz",
+		SHA256: "9b0c4d1e7a52f3860be1d9c4a7f08e35b216d0a94c7e53f1a8b20d6e49c71f3a",
+	}
+	cases := map[string]struct {
+		in         pipeline.RehydrateInput
+		wantLib    string
+		wantBundle release.ContractBundleRef
+	}{
+		"before the parse": {
+			in: pipeline.RehydrateInput{ID: "rel-1", Status: pipeline.StatusParsing, ManifestKind: release.ManifestKindPythonODCS},
+		},
+		"a promoted release": {
+			in: pipeline.RehydrateInput{
+				ID: "rel-1", Status: pipeline.StatusPromoted, ManifestKind: release.ManifestKindPythonODCS,
+				CandidateContractBundle: bundle, ContinuoContracts: "0.2.0",
+			},
+			wantLib: "0.2.0", wantBundle: bundle,
+		},
+		"a rejected release": {
+			in: pipeline.RehydrateInput{
+				ID: "rel-1", Status: pipeline.StatusRejected, ManifestKind: release.ManifestKindPythonODCS,
+				ContinuoContracts: "0.2.0",
+			},
+			wantLib: "0.2.0",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			deps, releases := newRetryRemediationDeps(time.Unix(1, 0).UTC())
+			tc.in.Kind = pipeline.KindCandidate
+			releases.releases["rel-1"] = pipeline.Rehydrate(tc.in)
+
+			rec := httptest.NewRecorder()
+			newTestServer(deps).Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/releases/rel-1", nil))
+			require.Equal(t, http.StatusOK, rec.Code)
+			var decoded map[string]any
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &decoded))
+
+			assert.Equal(t, tc.wantLib, decoded["continuo_contracts"])
+			assert.Equal(t, tc.wantBundle.URI, decoded["contract_bundle_uri"])
+			assert.Equal(t, tc.wantBundle.SHA256, decoded["contract_bundle_sha256"])
+		})
+	}
 }

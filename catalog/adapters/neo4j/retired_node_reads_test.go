@@ -10,7 +10,6 @@ import (
 	grpcadapter "github.com/carolsimone/continuo/catalog/adapters/grpc"
 	catalogv1 "github.com/carolsimone/continuo/catalog/api/catalog/v1"
 	"github.com/carolsimone/continuo/catalog/domain/codeversion"
-	"github.com/carolsimone/continuo/catalog/service/queries"
 	"github.com/carolsimone/continuo/pkg/identity"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -47,11 +46,7 @@ func newRetiredNodeFixture(t *testing.T) *retiredNodeFixture {
 	f := &retiredNodeFixture{swapFixture: newSwapFixture(t)}
 	f.ctx = identity.WithTenant(context.Background(), f.tenant)
 	f.versions = NewCodeVersionQueryRepository(f.client, quietLogger())
-	f.handler = grpcadapter.NewQueryHandler(
-		NewNodeQueryRepository(f.client, quietLogger()),
-		queries.NewCodeVersionQueryService(f.versions),
-		queries.NewPrecedentQueryService(NewPrecedentQueryRepository(f.client, quietLogger())),
-		quietLogger())
+	f.handler = f.newQueryHandler(f.versions)
 
 	unit := codeversion.UnitRef{UnitID: retiredUnit, Checksum: "u-1"}
 	for _, step := range []struct {

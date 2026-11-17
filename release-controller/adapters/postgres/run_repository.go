@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/contractbundle"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/topologyartifact"
 	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
@@ -51,7 +52,8 @@ const runColumns = `run_id, run_kind, status, image_tags, changed_service,
 	bootstrap, repo, commit_sha, remediation_round, rejection_payload,
 	verifies_release_id, attempt, source_overlay_uri,
 	candidate_topology_uri, candidate_topology_sha256, candidate_node_count,
-	rebaseline, notices`
+	rebaseline, notices,
+	candidate_contract_bundle_uri, candidate_contract_bundle_sha256, continuo_contracts`
 
 const activeStatuses = `('compiling','parsing','seed_building','validating')`
 
@@ -84,6 +86,10 @@ type runRow struct {
 	CandidateNodeCount      sql.NullInt32  `db:"candidate_node_count"`
 	Rebaseline              bool           `db:"rebaseline"`
 	Notices                 []byte         `db:"notices"`
+
+	CandidateContractBundleURI    string `db:"candidate_contract_bundle_uri"`
+	CandidateContractBundleSHA256 string `db:"candidate_contract_bundle_sha256"`
+	ContinuoContracts             string `db:"continuo_contracts"`
 }
 
 func (r *RunRepository) getOne(ctx context.Context, where string, args ...any) (*pipeline.Run, error) {
@@ -160,7 +166,7 @@ func (r *RunRepository) Save(ctx context.Context, run *pipeline.Run) error {
 	// beforehand.
 	res, err := r.q.ExecContext(ctx,
 		`INSERT INTO release_pipeline_runs (`+runColumns+`)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
 		 ON CONFLICT (run_id) DO UPDATE SET
 		   status = EXCLUDED.status,
 		   image_tags = EXCLUDED.image_tags,
@@ -176,7 +182,10 @@ func (r *RunRepository) Save(ctx context.Context, run *pipeline.Run) error {
 		   candidate_topology_uri = EXCLUDED.candidate_topology_uri,
 		   candidate_topology_sha256 = EXCLUDED.candidate_topology_sha256,
 		   candidate_node_count = EXCLUDED.candidate_node_count,
-		   notices = EXCLUDED.notices
+		   notices = EXCLUDED.notices,
+		   candidate_contract_bundle_uri = EXCLUDED.candidate_contract_bundle_uri,
+		   candidate_contract_bundle_sha256 = EXCLUDED.candidate_contract_bundle_sha256,
+		   continuo_contracts = EXCLUDED.continuo_contracts
 		 WHERE release_pipeline_runs.run_kind = EXCLUDED.run_kind`,
 		args...)
 	if err != nil {
@@ -200,7 +209,7 @@ func (r *RunRepository) Create(ctx context.Context, run *pipeline.Run) (bool, er
 	}
 	res, err := r.q.ExecContext(ctx,
 		`INSERT INTO release_pipeline_runs (`+runColumns+`)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
 		 ON CONFLICT (run_id) DO NOTHING`,
 		args...)
 	if err != nil {
@@ -246,6 +255,7 @@ func encodeRun(run *pipeline.Run) ([]any, error) {
 	if !ref.IsZero() {
 		nodeCount = ref.NodeCount
 	}
+	bundle := run.CandidateContractBundle()
 	return []any{
 		run.ID(), string(run.Kind()), string(run.Status()), imageTagsJSON, run.ChangedService(),
 		pq.StringArray(run.ValidationNodeIDs()), failReason, run.FailDetail(), pq.StringArray(run.FailingNodes()),
@@ -253,6 +263,7 @@ func encodeRun(run *pipeline.Run) ([]any, error) {
 		run.IsBootstrap(), run.Repo(), run.CommitSHA(), max(run.RemediationRound(), 1), rejectionPayload,
 		run.VerifiesReleaseID(), run.Attempt(), run.SourceOverlayURI(),
 		topologyURI, topologySHA256, nodeCount, run.IsRebaseline(), noticesJSON,
+		bundle.URI, bundle.SHA256, run.ContinuoContracts(),
 	}, nil
 }
 
@@ -299,6 +310,11 @@ func rowToRun(row runRow) (*pipeline.Run, error) {
 			SHA256:    row.CandidateTopologySHA256.String,
 			NodeCount: int(row.CandidateNodeCount.Int32),
 		},
+		CandidateContractBundle: release.ContractBundleRef{
+			URI:    row.CandidateContractBundleURI,
+			SHA256: row.CandidateContractBundleSHA256,
+		},
+		ContinuoContracts: row.ContinuoContracts,
 		ValidationNodeIDs: []string(row.ValidationNodeIDs),
 		PerNodeResults:    perNode,
 		FailReason:        row.FailReason.String,
@@ -386,8 +402,9 @@ func (r *RunRepository) List(ctx context.Context, f repository.ListFilter) ([]*p
 // DeleteFinishedBefore removes terminal runs of either kind created before
 // cutoff and not in keepIDs. For each removed run it then deletes the
 // candidate-SQL and code-bundle prefixes from S3, plus the topology artifact
-// of a run that was never promoted. A promoted run's artifact is kept: it
-// records a topology that ran in production. S3 deletion soft-fails: an object
+// and the contract bundle of a run that was never promoted. A promoted run's
+// artifact and contract bundle are kept: they record a topology and contracts
+// that ran in production. S3 deletion soft-fails: an object
 // whose deletion fails stays in the bucket, and only the candidate SQL has a
 // bucket lifecycle rule behind it (an age rule on the code bundles could delete
 // the bundle of the live release, so the bundles have none).
@@ -422,6 +439,7 @@ func (r *RunRepository) DeleteFinishedBefore(ctx context.Context, cutoff time.Ti
 			_ = r.deleter.DeletePrefix(ctx, "code-bundles/"+p.id+"/")
 			if p.status != string(pipeline.StatusPromoted) {
 				_ = r.deleter.DeletePrefix(ctx, topologyartifact.Key(pkgevents.DefaultTenantID, p.id))
+				_ = r.deleter.DeletePrefix(ctx, contractbundle.Key(pkgevents.DefaultTenantID, p.id))
 			}
 		}
 	}

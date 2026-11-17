@@ -8,7 +8,7 @@ from continuo_contracts.python import PythonNode, projection_hash
 
 from adapters.redis.error_class import is_infrastructure
 from config.config import _SYSTEM_RELATIONS
-from domain.model import ManifestFile, Runtime, TopologyArtifactRef
+from domain.model import ContractBundleRef, ManifestFile, Runtime, TopologyArtifactRef
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
 from service.ports import ManifestSourcePort, NoReleaseObserver
@@ -17,16 +17,20 @@ from service.ports import ManifestSourcePort, NoReleaseObserver
 class RecordingArtifactWriter:
     """A TopologyArtifactWriterPort that records every write and returns a
     reference shaped like the real writer's. Pass `fail` to make write raise
-    it instead."""
+    it instead, and `log` to have each write append "topology_artifact" to a
+    list the test shares with the other recording fakes."""
 
-    def __init__(self, fail: BaseException | None = None) -> None:
+    def __init__(self, fail: BaseException | None = None, log: list[str] | None = None) -> None:
         self.writes: list[dict] = []
         self.refs: list[TopologyArtifactRef] = []
         self._fail = fail
+        self._log = log
 
     def write(self, *, tenant_id: str, release_id: str, nodes: list[dict]) -> TopologyArtifactRef:
         if self._fail is not None:
             raise self._fail
+        if self._log is not None:
+            self._log.append("topology_artifact")
         self.writes.append({"tenant_id": tenant_id, "release_id": release_id, "nodes": list(nodes)})
         ref = TopologyArtifactRef(
             uri=f"s3://continuo/tenants/{tenant_id}/topologies/{release_id}/topology.json.gz",
@@ -43,6 +47,38 @@ class RecordingArtifactWriter:
         return self.writes[0]["nodes"]
 
 
+class RecordingContractBundleWriter:
+    """A ContractBundleWriterPort that records every write and returns a
+    reference shaped like the real writer's. Pass `fail` to make write raise
+    it instead, and `log` to have each write append "contract_bundle" to a
+    list the test shares with the other recording fakes."""
+
+    def __init__(self, fail: BaseException | None = None, log: list[str] | None = None) -> None:
+        self.writes: list[dict] = []
+        self.refs: list[ContractBundleRef] = []
+        self._fail = fail
+        self._log = log
+
+    def write(self, *, tenant_id: str, release_id: str, document: dict) -> ContractBundleRef:
+        if self._fail is not None:
+            raise self._fail
+        if self._log is not None:
+            self._log.append("contract_bundle")
+        self.writes.append({"tenant_id": tenant_id, "release_id": release_id, "document": document})
+        ref = ContractBundleRef(
+            uri=f"s3://continuo/tenants/{tenant_id}/topologies/{release_id}/contracts.json.gz",
+            sha256=f"{len(self.writes):064x}",
+        )
+        self.refs.append(ref)
+        return ref
+
+    @property
+    def document(self) -> dict:
+        """The document of the one bundle this writer stored."""
+        assert len(self.writes) == 1, f"expected one contract bundle write, got {len(self.writes)}"
+        return self.writes[0]["document"]
+
+
 def make_uploader(uri=""):
     uploader = MagicMock()
     uploader.upload.return_value = uri
@@ -53,29 +89,35 @@ class FakeBundleUploader:
     """Records (release_id, bundle) calls and returns a canned URI.
 
     Pass `fail` to make `upload` raise instead — the failing variant used to
-    exercise the CodeBundleUploadFailed path.
+    exercise the CodeBundleUploadFailed path — and `log` to have each upload
+    append "code_bundle" to a list the test shares with the other recording
+    fakes.
     """
 
-    def __init__(self, uri: str = "s3://continuo/code-bundles/rel-1/bundle.json", fail: Exception | None = None):
+    def __init__(self, uri: str = "s3://continuo/code-bundles/rel-1/bundle.json", fail: Exception | None = None,
+                 log: list[str] | None = None):
         self.uploads: list[tuple[str, dict]] = []
         self._uri = uri
         self._fail = fail
+        self._log = log
 
     def upload(self, release_id: str, bundle: dict) -> str:
         if self._fail is not None:
             raise self._fail
+        if self._log is not None:
+            self._log.append("code_bundle")
         self.uploads.append((release_id, bundle))
         return self._uri
 
 
 def build_handler(source, publisher, uploader, bundle_uploader=None, dialect="postgres",
-                  image_tags=None, artifact_writer=None,
+                  image_tags=None, artifact_writer=None, contract_bundle_writer=None,
                   system_relations=_SYSTEM_RELATIONS["postgres"], clock=None, memory=None,
                   observer=None) -> CandidateManifestHandler:
     """Build a handler pinned to the postgres dialect and its system relations,
-    a fake bundle uploader, a recording artifact writer, an empty image-tag map
-    and no release observer unless a test names otherwise. Outages are
-    recognised by the consumer's own classifier.
+    a fake bundle uploader, a recording artifact writer, a recording contract
+    bundle writer, an empty image-tag map and no release observer unless a test
+    names otherwise. Outages are recognised by the consumer's own classifier.
 
     `uploader` is the dbt candidate-SQL uploader; it is wrapped in the dbt
     artifact builder here so these cases keep asserting directly on the upload
@@ -86,6 +128,8 @@ def build_handler(source, publisher, uploader, bundle_uploader=None, dialect="po
         publisher=publisher,
         bundle_uploader=bundle_uploader if bundle_uploader is not None else FakeBundleUploader(),
         artifact_writer=artifact_writer if artifact_writer is not None else RecordingArtifactWriter(),
+        contract_bundle_writer=(
+            contract_bundle_writer if contract_bundle_writer is not None else RecordingContractBundleWriter()),
         artifact_builders={Runtime.DBT: DbtSqlArtifactBuilder(uploader)},
         dialect=dialect,
         system_relations=system_relations,
@@ -98,7 +142,8 @@ def build_handler(source, publisher, uploader, bundle_uploader=None, dialect="po
 
 
 def dispatch_handler(source, publisher, artifact_builders=None, dialect="postgres", artifact_writer=None,
-                     system_relations=_SYSTEM_RELATIONS["postgres"], clock=None, memory=None):
+                     system_relations=_SYSTEM_RELATIONS["postgres"], clock=None, memory=None, progress=None,
+                     contract_bundle_writer=None, bundle_uploader=None):
     """A handler for the parse-dispatch cases.
 
     These cases all fail (or are rejected) before any node reaches the artifact
@@ -108,8 +153,10 @@ def dispatch_handler(source, publisher, artifact_builders=None, dialect="postgre
     return CandidateManifestHandler(
         source=source,
         publisher=publisher,
-        bundle_uploader=FakeBundleUploader(),
+        bundle_uploader=bundle_uploader if bundle_uploader is not None else FakeBundleUploader(),
         artifact_writer=artifact_writer if artifact_writer is not None else RecordingArtifactWriter(),
+        contract_bundle_writer=(
+            contract_bundle_writer if contract_bundle_writer is not None else RecordingContractBundleWriter()),
         artifact_builders=artifact_builders or {Runtime.DBT: DbtSqlArtifactBuilder(make_uploader())},
         dialect=dialect,
         system_relations=system_relations,
@@ -117,15 +164,18 @@ def dispatch_handler(source, publisher, artifact_builders=None, dialect="postgre
         is_infrastructure_error=is_infrastructure,
         clock=clock or FakeClock(),
         memory=memory or ScriptedMemoryProbe(0),
+        progress=progress or (lambda: None),
     )
 
 
 def python_handler(source, publisher, spec_uploader=None, dialect="postgres", artifact_writer=None,
-                   system_relations=_SYSTEM_RELATIONS["postgres"]):
+                   system_relations=_SYSTEM_RELATIONS["postgres"], progress=None, contract_bundle_writer=None,
+                   bundle_uploader=None, clock=None, memory=None):
     """A handler wired for both kinds, for cases that publish a python node."""
     return dispatch_handler(
         source, publisher, dialect=dialect, artifact_writer=artifact_writer,
-        system_relations=system_relations,
+        system_relations=system_relations, progress=progress, contract_bundle_writer=contract_bundle_writer,
+        bundle_uploader=bundle_uploader, clock=clock, memory=memory,
         artifact_builders={
             Runtime.DBT: DbtSqlArtifactBuilder(make_uploader()),
             Runtime.PYTHON: PythonSpecArtifactBuilder(

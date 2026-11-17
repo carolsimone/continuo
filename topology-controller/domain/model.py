@@ -1,6 +1,8 @@
 from __future__ import annotations
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
 
 from domain.contract_vocabulary import ParseFailureKind
 from domain.contract_vocabulary import NodeRuntime as Runtime
@@ -15,10 +17,13 @@ class ManifestKind(StrEnum):
     """Which artifact dialect a service's release payload speaks.
 
     Carried per manifest_keys entry on release.requested:v1. Absent means dbt,
-    so a producer that predates python support needs no change.
+    so a producer that predates python support needs no change. `python` is a
+    service's wire contract (`contract.yaml`), `python-odcs` its ODCS bundle
+    (`odcs-bundle.json`).
     """
     DBT = "dbt"
     PYTHON = "python"
+    PYTHON_ODCS = "python-odcs"
 
 
 class SkipReason(StrEnum):
@@ -62,6 +67,16 @@ class FailedNode:
 
 
 @dataclass(frozen=True)
+class AuthoredContract:
+    """A contract file as its author wrote it: the document its text loads to,
+    the repository path of the file and the SHA-256 of the text's UTF-8 bytes
+    (bare hex)."""
+    document: Mapping[str, Any]
+    path: str
+    source_sha256: str
+
+
+@dataclass(frozen=True)
 class TopologyArtifactRef:
     """Where a release's topology artifact lives, the SHA-256 of its stored
     bytes, and how many nodes it holds: the reference the parse result carries
@@ -69,6 +84,14 @@ class TopologyArtifactRef:
     uri: str
     sha256: str
     node_count: int
+
+
+@dataclass(frozen=True)
+class ContractBundleRef:
+    """Where a release's contract bundle lives and the SHA-256 of its stored
+    bytes: the reference the parse result carries instead of the contracts."""
+    uri: str
+    sha256: str
 
 
 @dataclass(frozen=True)
@@ -222,6 +245,8 @@ class ManifestNode:
     # "view", "incremental", "ephemeral", ...); "" for a python node
     full_refresh: bool | None = None  # a dbt seed's config.full_refresh when it is
     # a bool; None for a seed that does not set one and for every other node
+    contract: AuthoredContract | None = None  # the ODCS contract file a python
+    # node was read from; None for a node read from any other document
 
     @property
     def seed_columns(self) -> list[dict[str, str]]:
@@ -252,6 +277,13 @@ class ManifestNode:
         if self.identity:
             return self.identity
         return f"{self.schema_name.lower()}.{self.table_name.lower()}"
+
+    @property
+    def node_key(self) -> tuple[str, str]:
+        """(service_name, unique_id): one node of a release. Two services may declare
+        one unique_id, which release-controller rejects as duplicate_table, so a map
+        over a release's nodes keys by both and keeps each node's own entry."""
+        return (self.service_name, self.unique_id)
 
     @property
     def resolved_relation_id(self) -> str:
@@ -357,7 +389,16 @@ class NodeRegistry:
 class ParsedArtifact:
     """The result of parsing one service's artifact: its nodes, the shared
     code (dbt macros) they use, keyed by unit id, and, for a dbt manifest, what
-    its compile ran with (None for a python contract)."""
+    its compile ran with (None for a python contract).
+
+    A `python-odcs` bundle also reports `failed` (one FailedNode for each
+    contract that did not pass its checks, in path order) and
+    `python_provenance` (the producer's `continuo_python_runtime` and the
+    `image_packages` of the image the service runs); every other kind leaves
+    them empty. Each of its nodes carries its authored contract
+    (ManifestNode.contract)."""
     nodes: list[ManifestNode]
     shared_code: dict[str, dict]
     provenance: ServiceProvenance | None = None
+    failed: tuple[FailedNode, ...] = ()
+    python_provenance: dict[str, Any] | None = None

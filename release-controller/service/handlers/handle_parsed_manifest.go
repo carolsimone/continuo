@@ -47,9 +47,14 @@ type HandleParsedManifestInput struct {
 	Status        string // "ok" or "failed"
 	TopologyRef   release.TopologyRef
 	CodeBundleURI string
-	FailureKind   pkg_model.ParseFailureKind
-	Detail        string
-	FailedNodes   []ParsedFailedNode
+	// ContractBundle is the contract bundle an ok parse wrote. ContinuoContracts
+	// is the version of the continuo-contracts library that read the release's
+	// contracts, named by both outcomes.
+	ContractBundle    release.ContractBundleRef
+	ContinuoContracts string
+	FailureKind       pkg_model.ParseFailureKind
+	Detail            string
+	FailedNodes       []ParsedFailedNode
 }
 
 // HandleParsedManifest handles the manifest parse result from topology-controller.
@@ -97,6 +102,10 @@ func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestI
 
 	now := d.Clock.Now()
 
+	// Both outcomes name the continuo-contracts version that read the release's
+	// contracts; the run keeps it whether the parse ended ok or failed.
+	r.SetContinuoContracts(in.ContinuoContracts)
+
 	if in.Status == "failed" {
 		return handleParseFailed(ctx, d, u, r, in, now)
 	}
@@ -110,6 +119,7 @@ func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestI
 var parseReasons = map[pkg_model.ParseFailureKind]pkg_model.RejectReason{
 	pkg_model.ParseFailureKindInvalidSQL:           pkg_model.RejectReasonInvalidSQL,
 	pkg_model.ParseFailureKindUnqualifiedReference: pkg_model.RejectReasonUnqualifiedReference,
+	pkg_model.ParseFailureKindInvalidContract:      pkg_model.RejectReasonInvalidContract,
 	pkg_model.ParseFailureKindInvalidArtifact:      pkg_model.RejectReasonInvalidArtifact,
 	pkg_model.ParseFailureKindInternal:             pkg_model.RejectReasonInternalError,
 }
@@ -224,6 +234,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 		return fmt.Errorf("load candidate topology %s: %w", in.TopologyRef.URI, err)
 	}
 	r.SetCodeBundleURI(in.CodeBundleURI)
+	r.SetCandidateContractBundle(in.ContractBundle)
 
 	// A relation must be produced by exactly one node, and a unique_id must
 	// identify exactly one node — two independent checks. Two nodes claiming

@@ -13,26 +13,10 @@ import (
 // parseRejectedYAML declares the failing node with a read whose SQL names its
 // relation without a schema — the shape topology-controller's parser rejects
 // as unqualified_reference before any Job runs.
-const parseRejectedYAML = `nodes:
-  - schema: analytics
-    table: py_daily_kpis
-    script: scripts/py_daily_kpis.py
-    reads:
-      orders: select id from orders
-    output_columns:
-      - name: revenue
-`
+var parseRejectedYAML = withReads(failingNode, [2]string{"orders", "select id from orders"})
 
 // parseCorrectedYAML is the same declaration with the read qualified.
-const parseCorrectedYAML = `nodes:
-  - schema: analytics
-    table: py_daily_kpis
-    script: scripts/py_daily_kpis.py
-    reads:
-      orders: select id from analytics.orders
-    output_columns:
-      - name: revenue
-`
+var parseCorrectedYAML = withReads(failingNode, [2]string{"orders", "select id from analytics.orders"})
 
 // pythonParseInput is the trigger a python-node's parse rejection
 // produces: the parser's own text as the excerpt, the script as the file
@@ -65,21 +49,22 @@ func TestFor_ParseDispatchesOnNodeType(t *testing.T) {
 
 // TestPythonParse_HappyPath walks the lane end to end: the checkout is
 // fetched, the declaring contract file located from the node id alone (the
-// trigger's file path names the script, which the parser never reads), the
+// trigger's file path is not a repository path: the contract's path in the
+// bundle, or the script for a service of kind `python`), the
 // one model call sees the parser's error, the corrected yaml is written before
 // packaging, and the merged contract comes back as VerificationContract so
 // the driver submits a python verification run — whose parse leg is what
 // proves the fix.
 func TestPythonParse_HappyPath(t *testing.T) {
 	root := t.TempDir()
-	writeRepoFile(t, root, "services/service-py/contracts/py_daily_kpis.yml", parseRejectedYAML)
-	writeRepoFile(t, root, "services/service-py/contracts/other.yml", siblingYAML)
+	writeRepoFile(t, root, "services/service-py/contracts/py_daily_kpis.odcs.yaml", parseRejectedYAML)
+	writeRepoFile(t, root, "services/service-py/contracts/other.odcs.yaml", siblingYAML)
 	writeRepoFile(t, root, "services/service-py/scripts/py_daily_kpis.py", "print('hi')\n")
 
 	svc, arch, pkgr, rel, arts := pythonSvc(t, root)
 	llm := &fakeLLM{queue: []ports.ProposeResult{{
 		Files: []ports.ProposedFile{
-			{Path: "services/service-py/contracts/py_daily_kpis.yml", Content: parseCorrectedYAML},
+			{Path: "services/service-py/contracts/py_daily_kpis.odcs.yaml", Content: parseCorrectedYAML},
 		},
 		Rationale: "qualified the orders read with its schema", Confidence: "high", Model: "test-model",
 	}}}
@@ -114,8 +99,8 @@ func TestPythonParse_HappyPath(t *testing.T) {
 	require.Len(t, pkgr.calls, 1)
 	call := pkgr.calls[0]
 	require.Equal(t, filepath.Join(root, "services", "service-py", "contracts"), call.contractDir)
-	require.Equal(t, parseCorrectedYAML, call.sawOnDisk["py_daily_kpis.yml"])
-	require.Equal(t, siblingYAML, call.sawOnDisk["other.yml"])
+	require.Equal(t, parseCorrectedYAML, call.sawOnDisk["py_daily_kpis.odcs.yaml"])
+	require.Equal(t, siblingYAML, call.sawOnDisk["other.odcs.yaml"])
 	require.Equal(t, []byte("merged: contract\n"), r.VerificationContract)
 
 	// The sibling check read the original rejected release.
@@ -126,7 +111,7 @@ func TestPythonParse_HappyPath(t *testing.T) {
 	require.True(t, p.SourceResolved)
 	require.Equal(t, "qualified the orders read with its schema", p.Rationale)
 	require.Len(t, p.Edits, 1)
-	require.Equal(t, "services/service-py/contracts/py_daily_kpis.yml", p.Edits[0].Path)
+	require.Equal(t, "services/service-py/contracts/py_daily_kpis.odcs.yaml", p.Edits[0].Path)
 	require.Equal(t, "analytics.py_daily_kpis", p.Edits[0].TargetNodeID)
 	require.Equal(t, parseCorrectedYAML, arts.written["proposed-fix/rel-1/analytics.py_daily_kpis/attempt-1/edit-0.content"])
 	require.Contains(t, arts.written["proposed-fix/rel-1/analytics.py_daily_kpis/attempt-1/edit-0.diff"], "+      orders: select id from analytics.orders")
@@ -138,15 +123,14 @@ func TestPythonParse_HappyPath(t *testing.T) {
 // still performs that read, so the answer is refused with the reason recorded.
 func TestPythonParse_AnswerThatDropsTheRejectedRead_Fails(t *testing.T) {
 	root := t.TempDir()
-	writeRepoFile(t, root, "services/service-py/contracts/py_daily_kpis.yml", parseRejectedYAML)
+	writeRepoFile(t, root, "services/service-py/contracts/py_daily_kpis.odcs.yaml", parseRejectedYAML)
 	writeRepoFile(t, root, "services/service-py/scripts/py_daily_kpis.py", "print('hi')\n")
 
 	svc, _, pkgr, _, _ := pythonSvc(t, root)
 	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{
 		Files: []ports.ProposedFile{{
-			Path: "services/service-py/contracts/py_daily_kpis.yml",
-			Content: "nodes:\n  - schema: analytics\n    table: py_daily_kpis\n    script: scripts/py_daily_kpis.py\n" +
-				"    reads: {}\n    output_columns:\n      - name: revenue\n",
+			Path:    "services/service-py/contracts/py_daily_kpis.odcs.yaml",
+			Content: withReads(failingNode),
 		}},
 		Rationale: "removed the read", Confidence: "high",
 	}}}
@@ -165,7 +149,7 @@ func TestPythonParse_AnswerThatDropsTheRejectedRead_Fails(t *testing.T) {
 // release sees why no fix was attempted.
 func TestPythonParse_NodeNotDeclared_SkipsWithReason(t *testing.T) {
 	root := t.TempDir()
-	writeRepoFile(t, root, "services/service-py/contracts/other.yml", siblingYAML)
+	writeRepoFile(t, root, "services/service-py/contracts/other.odcs.yaml", siblingYAML)
 
 	svc, _, pkgr, _, _ := pythonSvc(t, root)
 	llm := &fakeLLM{}

@@ -79,7 +79,7 @@ type TriggerNode struct {
 	// dbt-snapshot, python-node, python-csv, or python-api), set on validation,
 	// duplicate-relation and parse failures. It selects the Fixer for a
 	// validation or parse failure — a python-node, whose source is not
-	// a single readable file, is fixed in the contract yaml declaring it —
+	// a single readable file, is fixed in the ODCS contract file declaring it —
 	// and lets the duplicate-table Fixer, and the parse Fixer for a
 	// python-csv node, refuse a python node with a recorded reason and no
 	// topology lookup of their own.

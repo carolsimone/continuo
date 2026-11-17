@@ -5,10 +5,10 @@
 #
 # Two targets. `probe` is the fixture image every python e2e test releases
 # (scripts/setup.sh builds it as continuo-e2e-py-probe:latest). `mismatch` adds
-# the py_mismatch node with a contract that differs in one read from the one its
-# release carries (continuo-e2e-py-probe:mismatch), so the harness's start check
-# refuses to run it.
-FROM ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.12.0 AS probe
+# the py_mismatch node's ODCS contract, which differs in one read from the one
+# its release carries (continuo-e2e-py-probe:mismatch), so the harness's start
+# check refuses to run it. The runtime reads every contracts/*.odcs.yaml file.
+FROM ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.13.0 AS probe
 COPY contracts/ /app/contracts/
 COPY scripts/ /app/scripts/
 # The runtime base already declares USER 65532:65532 — a frozen cross-repo
@@ -21,5 +21,5 @@ COPY scripts/ /app/scripts/
 USER 65532:65532
 
 FROM probe AS mismatch
-COPY mismatch/py_mismatch.baked.yml /app/contracts/py_mismatch.yml
+COPY mismatch/py_mismatch.baked.odcs.yaml /app/contracts/py_mismatch.odcs.yaml
 USER 65532:65532

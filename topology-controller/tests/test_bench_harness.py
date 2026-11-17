@@ -1,13 +1,23 @@
+import argparse
+import gzip
+import json
 import posixpath
 import re
+
+import pytest
+from botocore.exceptions import ClientError
+from continuo_contracts.vocabulary import continuo_values
 
 from bench.compare import compare
 from bench.estate import generate_estate
 from bench.memory_s3 import MemoryS3
-from bench.run import build_handler
-from domain.model import ManifestKind
+from bench.run import _run_child, build_handler
+from domain.model import ManifestFile, ManifestKind
 from service.compile_extras import load_compile_extras
-from service.python_contract_parser import parse_python_contract
+from service.contract_bundle import contract_bundle_key
+from service.contract_validation import ContractValidator
+from service.odcs_bundle_parser import parse_odcs_bundle
+from service.release_timings import ReleaseTimings
 from tests.fakes import FakeClock, ScriptedMemoryProbe
 
 
@@ -30,16 +40,34 @@ def test_the_real_handler_parses_the_estate():
     assert publisher.node_count == estate.dbt_nodes + estate.python_nodes
 
 
-def test_the_estate_python_nodes_carry_the_hashes_the_parser_computes(tmp_path, caplog):
-    """Each python entry's CI hashes are the ones a CI on runtime 0.12.0 writes,
-    so parsing the contract logs no content_hash difference per node."""
+def test_the_estate_writes_the_python_service_as_one_odcs_bundle(tmp_path):
+    """The Python service is one `odcs-bundle.json` of kind python-odcs with one
+    ODCS contract per node, each valid under the library the bundle names, and
+    its reads are the ones the estate counts."""
     estate = generate_estate(20, columns=4)
-    (key,) = [request.key for request in estate.requests if request.kind is ManifestKind.PYTHON]
-    path = tmp_path / "contract.yaml"
-    path.write_bytes(estate.objects[key])
-    nodes = parse_python_contract(str(path)).nodes
-    assert len(nodes) == estate.python_nodes
-    assert not [r for r in caplog.records if hasattr(r, "ci_content_hash")]
+    (request,) = [request for request in estate.requests if request.kind is ManifestKind.PYTHON_ODCS]
+    assert request.key == f"svc-py/{estate.release_id}/odcs-bundle.json"
+    assert not [key for key in estate.objects if key.endswith("/contract.yaml")]
+    path = tmp_path / "odcs-bundle.json"
+    path.write_bytes(estate.objects[request.key])
+    bundle = json.loads(path.read_bytes())
+    assert (bundle["bundle_version"], bundle["service"]) == (1, "svc-py")
+    assert bundle["producer"]["continuo_contracts"] == "0.2.0"
+    assert len(bundle["nodes"]) == estate.python_nodes
+
+    timings = ReleaseTimings(estate.release_id, FakeClock(), ScriptedMemoryProbe(0))
+    parsed = parse_odcs_bundle(
+        ManifestFile(path=str(path), image_tag="bench", declared_service="svc-py", kind=ManifestKind.PYTHON_ODCS),
+        progress=lambda: None, timings=timings, validator=ContractValidator(),
+    )
+    assert not parsed.failed
+    assert len(parsed.nodes) == estate.python_nodes
+    contracts = [node.contract for node in parsed.nodes]
+    assert timings.contract_failures == {}
+    reads = sum(
+        len(continuo_values(contract.document["customProperties"])["readQueries"]) for contract in contracts
+    )
+    assert reads == estate.python_reads
 
 
 # The benchmark estate must stay parseable now that the parser reads its extras.
@@ -64,6 +92,43 @@ def test_memory_s3_counts_puts_and_serves_downloads(tmp_path):
     store.put_object(Bucket="bench", Key="k", Body=b"abc")
     store.download_file("bench", "svc/rel/manifest.json", str(tmp_path / "m.json"))
     assert (store.puts, store.put_bytes, (tmp_path / "m.json").read_bytes()) == (1, 3, b"{}")
+
+
+def test_memory_s3_serves_an_object_it_holds_and_refuses_a_key_it_does_not():
+    store = MemoryS3({"k": b"abc"})
+    assert store.get_object(Bucket="bench", Key="k")["Body"].read() == b"abc"
+    with pytest.raises(ClientError) as missing:
+        store.get_object(Bucket="bench", Key="absent")
+    assert missing.value.response["Error"]["Code"] == "NoSuchKey"
+
+
+def test_the_handler_writes_one_contract_bundle_and_keeps_it_on_the_next_pass():
+    estate = generate_estate(20, columns=4)
+    store = MemoryS3(estate.objects)
+    key = contract_bundle_key("default", estate.release_id)
+    for _ in range(2):
+        handler, publisher = build_handler(estate, store, clock=FakeClock(), memory=ScriptedMemoryProbe(0))
+        handler.handle(estate.release_id)
+        assert publisher.ok, publisher.failure
+    document = json.loads(gzip.decompress(store.get_object(Bucket="bench", Key=key)["Body"].read()))
+    assert document["release_id"] == estate.release_id
+    assert sorted(document["contracts"]) == [f"py.py_{position:05d}" for position in range(estate.python_nodes)]
+    assert document["summary"]["contracts"] == estate.python_nodes
+    assert document["provenance"] == {
+        "svc-py": {"continuo_python_runtime": "0.13.0", "image_packages": {"pyarrow": "26.0.0"}},
+    }
+
+
+def test_the_warm_pass_writes_as_many_objects_as_the_cold_one(capsys):
+    """Each pass parses a release of its own, so a write-once object of the cold pass
+    (the contract bundle) is not read back in place of the warm pass's write."""
+    args = argparse.Namespace(size=20, columns=4, put_latency_ms=0.0, dialect="postgres", rep=0)
+
+    assert _run_child(args) == 0
+
+    cold, warm = (json.loads(line) for line in capsys.readouterr().out.splitlines())
+    assert (cold["pass"], warm["pass"]) == ("cold", "warm")
+    assert warm["puts"] == cold["puts"]
 
 
 def _line(rep, **stage_seconds):

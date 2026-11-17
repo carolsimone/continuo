@@ -9,10 +9,11 @@ import (
 
 // VerificationRequest is a fix-verification run to submit: the edited
 // service's delta, the rejected release the fix answers, and the attempt it
-// belongs to. Kind is the service's manifest kind, VerificationKindDbt or
-// VerificationKindPython — required, never defaulted. SourceOverlayURI is
-// the tarball of proposed source a dbt run lays over the project; a python
-// run is verified by its packaged contract and carries none.
+// belongs to. Kind is the service's manifest kind, VerificationKindDbt,
+// VerificationKindPythonODCS or VerificationKindPython — required, never
+// defaulted. SourceOverlayURI is the tarball of proposed source a dbt run lays
+// over the project; a python run is verified by its packaged contract
+// (odcs-bundle.json, or contract.yaml for kind python) and carries none.
 type VerificationRequest struct {
 	RunID             string
 	Service           string
@@ -25,9 +26,22 @@ type VerificationRequest struct {
 
 // Manifest kinds a verification request may carry.
 const (
-	VerificationKindDbt    = "dbt"
+	VerificationKindDbt        = "dbt"
+	VerificationKindPythonODCS = "python-odcs"
+	// VerificationKindPython verifies a python service by one merged
+	// contract.yaml, uploaded at <service>/<run id>/contract.yaml.
 	VerificationKindPython = "python"
 )
+
+// ODCSBundleName is the object name of a python-odcs service's bundle of
+// ODCS contracts: its CI uploads one for a release at
+// <service>/<release id>/odcs-bundle.json, and a fix's verification run reads
+// the packed one at <service>/<run id>/odcs-bundle.json.
+const ODCSBundleName = "odcs-bundle.json"
+
+// ContractYAMLName is the object name of a kind python verification run's
+// merged contract, read at <service>/<run id>/contract.yaml.
+const ContractYAMLName = "contract.yaml"
 
 // VerificationStatus is one read of a verification run. Phase is derived
 // from the run's status; ActivatedAt is when it left the pipeline's queue
@@ -48,12 +62,21 @@ type VerificationPipeline interface {
 	Status(ctx context.Context, runID string) (VerificationStatus, error)
 }
 
-// ReleaseReader reads facts about a candidate release: the image tag its
-// changed service was posted with, which a verification of a fix to that
-// service reuses verbatim (a verification never promotes, so the tag never
-// reaches the path a promotion would drive), and the release's own failing
-// validation nodes.
+// ContractBundleReader reads where a candidate release's contract bundle is.
+type ContractBundleReader interface {
+	// ContractBundle returns the URI and SHA-256 of the contract bundle the
+	// release's parse wrote. An empty uri means the release has none: it was
+	// rejected before a parse ended ok.
+	ContractBundle(ctx context.Context, releaseID string) (uri, sha256 string, err error)
+}
+
+// ReleaseReader reads facts about a candidate release: where its contract
+// bundle is, the image tag its changed service was posted with, which a
+// verification of a fix to that service reuses verbatim (a verification never
+// promotes, so the tag never reaches the path a promotion would drive), and
+// the release's own failing validation nodes.
 type ReleaseReader interface {
+	ContractBundleReader
 	ImageTag(ctx context.Context, releaseID, service string) (string, error)
 	// FailingNodes returns the ORIGINAL candidate release's failing validation
 	// nodes: node_id -> error text, one entry per node that failed validation

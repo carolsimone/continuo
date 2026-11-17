@@ -24,10 +24,10 @@ type PriorAttempt struct {
 }
 
 // PythonEvidence is the failure evidence for a python node whose contract
-// failed validation. A python node's fix is made in the yaml that declares it,
-// not in a SQL file, so the evidence pairs the control plane's normalized view
-// of the node (ContractEntry, canonical JSON built by the release's parse) with
-// the declaring file's verbatim text (YAMLText at YAMLPath) — the model reads
+// failed validation. A python node's fix is made in its ODCS contract file, not
+// in a SQL file, so the evidence pairs the control plane's normalized view of
+// the node (ContractEntry, canonical JSON built by the release's parse) with
+// the contract file's verbatim text (YAMLText at YAMLPath) — the model reads
 // the first to see what the release recorded and edits the second.
 //
 // Every other field is optional: an absent one renders no section at all.
@@ -40,10 +40,15 @@ type PythonEvidence struct {
 	// ContractEntry is the node's entry from the release's code bundle: its
 	// normalized contract as canonical JSON.
 	ContractEntry string
-	// YAMLPath and YAMLText locate and carry the contract file that declares
-	// the node, verbatim as the repository holds it at the failing commit.
-	YAMLPath        string
-	YAMLText        string
+	// YAMLPath and YAMLText locate and carry the ODCS contract file that
+	// declares the node, verbatim as the repository holds it at the failing
+	// commit.
+	YAMLPath string
+	YAMLText string
+	// CurrentContract is the node's contract as continuo last promoted it,
+	// the published ODCS YAML the catalog holds; empty when the node has
+	// none yet.
+	CurrentContract string
 	UpstreamChanges []UpstreamChange
 	Precedents      []Precedent
 	// PriorAttempts are the earlier attempts at this same failure, oldest
@@ -53,14 +58,19 @@ type PythonEvidence struct {
 	NoReads bool
 }
 
+// pythonContractDescription describes the ODCS contract file a python node is
+// declared in, for every python prompt. Its reads clause is the one
+// noReadsSystemPrompt rewrites.
+const pythonContractDescription = `A python node is declared in its own ODCS contract file, contracts/<table>.odcs.yaml: one contract per node. Its id is "<schema>.<table>". Its continuo customProperties name the script that produces it and, under readQueries, the upstream relations it reads: each query is one SELECT that names every table it reads with its schema. The columns it promises to produce are the properties of its one schema object (schema[0].properties), each with a name, a physicalType and whether it is required.`
+
 const pythonContractFixSystemPrompt = `You are a data-engineering assistant that fixes a Continuo python node whose contract failed blue/green validation.
 
-A python node is declared in a contract yaml file: an entry under "nodes:" naming its schema and table, the script that produces it, the upstream relations it reads (each with the SQL that selects them), and the output_columns it promises to produce. Validation runs the node's script against the candidate schema and checks that what it produced matches what the contract declares. It does NOT run the script's python source, which you are not shown and cannot change.
+` + pythonContractDescription + ` Validation runs the node's script against the candidate schema and checks that what it produced matches what the contract declares. It does NOT run the script's python source, which you are not shown and cannot change.
 
 Rules:
-- Change ONLY what validation checks: the node's declared reads (including their SQL), its output_columns, and its config. Never touch its schema, table, script path, owner, schedule, criticality, or secret_ref — those identify the node (or name the credentials it runs with), and changing one makes it a different node rather than a fixed one.
-- Keep every read the node declares. Correcting a read's SQL is a fix, and adding a read is allowed, but deleting a read or renaming its key is not: the script still performs that read, and you cannot change the script. A contract that no longer declares it passes validation while the node stays broken.
-- A contract file may declare several nodes. Leave every node other than the failing one byte-for-byte unchanged.
+- Change ONLY what validation checks: the node's declared reads (its readQueries, including their SQL), the columns in schema[0].properties, and its config. Never touch its id, the schema object's name, its script, kind, team, schedule, criticality, or secretRef — those identify the node (or name the credentials it runs with), and changing one makes it a different node rather than a fixed one.
+- Keep every read the node declares. Correcting a query's SQL is a fix, and adding a read is allowed, but deleting a read or renaming its key in readQueries is not: the script still performs that read, and you cannot change the script. A contract that no longer declares it passes validation while the node stays broken.
+- Each contract file declares exactly one node. Leave the contract of every node other than the failing one unchanged, and never declare the failing node in a second file.
 - Return the COMPLETE new content of every file you change, never a diff and never a fragment. A file you do not change must not appear in your answer at all.
 - Fix the contract to match what the node genuinely produces; do not weaken a declared column type or drop a column merely to make the check pass, unless the evidence shows the declaration itself is what is wrong.
 - When earlier attempts are shown, read what each one changed and why its verification failed, and do not repeat a change that has already been rejected.
@@ -69,13 +79,13 @@ Rules:
 
 const pythonParseFixSystemPrompt = `You are a data-engineering assistant that fixes a Continuo python node one of whose declared reads has SQL that the release's SQL parser rejected before any run.
 
-A python node is declared in a contract yaml file: an entry under "nodes:" naming its schema and table, the script that produces it, the upstream relations it reads (each with the SQL that selects them), and the output_columns it promises to produce. Before a release runs anything, every read's SQL is parsed and every relation it names must be schema-qualified so the release can resolve it to an upstream node. The parser rejected one of this node's reads, and its error names the line and column where parsing stopped. The script's python source is not parsed, is not shown to you, and cannot be changed.
+` + pythonContractDescription + ` Before a release runs anything, every query's SQL is parsed and every relation it names must be schema-qualified so the release can resolve it to an upstream node. The parser rejected one of this node's reads, and its error names the line and column where parsing stopped. The script's python source is not parsed, is not shown to you, and cannot be changed.
 
 Rules:
-- Change ONLY the SQL of the node's declared reads, so that every read parses and every relation it references is schema-qualified. Never touch the node's schema, table, script path, owner, schedule, criticality, secret_ref, or output_columns — those identify the node (or name the credentials it runs with) or are checked later by validation, not by the parser.
-- Keep every read the node declares. Correcting a read's SQL is the fix; deleting a read or renaming its key is not: the script still performs that read, and you cannot change the script. A contract that no longer declares it parses while the node stays broken.
-- Qualify a relation with the schema the evidence shows it lives in; do not invent a schema, and do not rewrite what the read selects beyond what parsing requires.
-- A contract file may declare several nodes. Leave every node other than the failing one byte-for-byte unchanged.
+- Change ONLY the SQL of the node's readQueries, so that every query parses and every relation it references is schema-qualified. Never touch the node's id, the schema object's name, its script, kind, team, schedule, criticality, secretRef, or the columns in schema[0].properties — those identify the node (or name the credentials it runs with) or are checked later by validation, not by the parser.
+- Keep every read the node declares. Correcting a query's SQL is the fix; deleting a read or renaming its key in readQueries is not: the script still performs that read, and you cannot change the script. A contract that no longer declares it parses while the node stays broken.
+- Qualify a relation with the schema the evidence shows it lives in; do not invent a schema, and do not rewrite what the query selects beyond what parsing requires.
+- Each contract file declares exactly one node. Leave the contract of every node other than the failing one unchanged, and never declare the failing node in a second file.
 - Return the COMPLETE new content of every file you change, never a diff and never a fragment. A file you do not change must not appear in your answer at all.
 - When earlier attempts are shown, read what each one changed and why its verification failed, and do not repeat a change that has already been rejected.
 - When past precedents are shown, weigh how the same error was resolved before; follow a precedent's approach only where it fits the contract you are shown.
@@ -87,10 +97,9 @@ Rules:
 var pythonNoReadsContractFixSystemPrompt = noReadsSystemPrompt(pythonContractFixSystemPrompt)
 
 // AssemblePythonContractFix builds the request that asks the model to correct
-// the contract yaml declaring a python node that failed validation. The answer
-// is a list of complete files rather than one file's content, because a fix
-// can legitimately span the declaring file and a sibling it shares definitions
-// with.
+// the ODCS contract declaring a python node that failed validation. The answer
+// is a list of complete files rather than one file's content, the shape every
+// python contract fix shares.
 func AssemblePythonContractFix(ev PythonEvidence) ProposeRequest {
 	system := pythonContractFixSystemPrompt
 	if ev.NoReads {
@@ -100,7 +109,7 @@ func AssemblePythonContractFix(ev PythonEvidence) ProposeRequest {
 }
 
 // AssemblePythonParseFix builds the request that asks the model to correct a
-// read's SQL in the contract yaml declaring a python node the release's SQL
+// read's SQL in the ODCS contract declaring a python node the release's SQL
 // parser rejected. It has the validation fix's answer shape — the same tool
 // and the same complete-files contract — so one adapter parses both; the
 // evidence differs in that the error is the parser's own text and there is no
@@ -128,6 +137,7 @@ func pythonContractRequest(system, errorLabel string, ev PythonEvidence) Propose
 	if ev.YAMLText != "" {
 		fmt.Fprintf(&u, "Contract file %s that declares it:\n```yaml\n%s\n```\n\n", ev.YAMLPath, ev.YAMLText)
 	}
+	renderCurrentContract(&u, ev.CurrentContract)
 
 	renderUpstreamChanges(&u, ev.UpstreamChanges)
 	renderPrecedents(&u, ev.Precedents)
@@ -155,6 +165,17 @@ func pythonContractRequest(system, errorLabel string, ev PythonEvidence) Propose
 			{Name: "confidence", Type: "string", Description: "Your confidence: low, medium, or high.", Required: true},
 		},
 	}
+}
+
+// renderCurrentContract writes the node's current contract under the "Current
+// contract" heading, marked as reference only: the published form carries the
+// version continuo numbered and its provenance and reads properties, none of
+// which belongs in the authored file. No contract → no section.
+func renderCurrentContract(b *strings.Builder, current string) {
+	if current == "" {
+		return
+	}
+	fmt.Fprintf(b, "Current contract (the node's contract as continuo last promoted it, for reference only: do not copy its version, or its provenance and reads properties, into the file):\n```yaml\n%s\n```\n\n", current)
 }
 
 // renderUpstreamChanges writes the recently-changed-ancestor section: each
@@ -227,16 +248,16 @@ func renderPriorAttempts(b *strings.Builder, as []PriorAttempt) {
 // noReadsSystemPrompt rewrites the python validation system prompt for a node
 // that declares no reads: the clause describing the reads it performs goes, the
 // description says the script fetches its own data, the edit scope shrinks to
-// output_columns and config, and the keep-every-read rule becomes a rule
-// against adding one. Each substitution must find its text, so a wording change
+// the columns and config, and the keep-every-read rule becomes a rule against
+// adding one. Each substitution must find its text, so a wording change
 // in the base prompt fails loudly (a panic at package initialisation)
 // instead of silently leaving the reads wording behind.
 func noReadsSystemPrompt(system string) string {
 	const (
-		readsClause = "the script that produces it, the upstream relations it reads (each with the SQL that selects them), and the output_columns it promises to produce."
-		noReadsDesc = "the script that produces it, and the output_columns it promises to produce. This node declares no reads: its script fetches its own data (for example from an HTTP API)."
-		scopeBefore = "the node's declared reads (including their SQL), its output_columns, and its config."
-		scopeAfter  = "its output_columns and its config."
+		readsClause = "the script that produces it and, under readQueries, the upstream relations it reads: each query is one SELECT that names every table it reads with its schema."
+		noReadsDesc = "the script that produces it. This node declares no reads (it has no readQueries): its script fetches its own data (for example from an HTTP API)."
+		scopeBefore = "the node's declared reads (its readQueries, including their SQL), the columns in schema[0].properties, and its config."
+		scopeAfter  = "the columns in schema[0].properties and its config."
 	)
 	system = mustReplace(system, readsClause, noReadsDesc)
 	system = mustReplace(system, scopeBefore, scopeAfter)
@@ -244,7 +265,7 @@ func noReadsSystemPrompt(system string) string {
 	lines := strings.Split(system, "\n")
 	for i, l := range lines {
 		if strings.HasPrefix(l, "- Keep every read the node declares.") {
-			lines[i] = "- Never add a read: this node declares none, and its script fetches its own data. Only output_columns and config may change."
+			lines[i] = "- Never add a read: this node declares none, and its script fetches its own data. Only the columns in schema[0].properties and config may change."
 			return strings.Join(lines, "\n")
 		}
 	}

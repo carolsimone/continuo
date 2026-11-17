@@ -36,6 +36,24 @@ func TestParsedManifestInput_OKCarriesTheTopologyReference(t *testing.T) {
 	assert.Equal(t, "s3://continuo/code-bundles/r1/bundle.json", in.CodeBundleURI)
 }
 
+func TestParsedManifestInput_CarriesTheContractBundleAndTheLibraryVersion(t *testing.T) {
+	ok := parsedManifestInput(pkgevents.ManifestLoadedCandidate{
+		ReleaseID: "r1", Status: pkgevents.ManifestStatusOK,
+		TopologyURI: "s3://continuo/tenants/default/topologies/r1/topology.json.gz", TopologySHA256: "ab", NodeCount: 3,
+		ContractBundleURI:    "s3://continuo/tenants/default/topologies/r1/contracts.json.gz",
+		ContractBundleSHA256: "cd", ContinuoContracts: "0.2.0",
+	}, slog.Default())
+	assert.Equal(t, release.ContractBundleRef{URI: "s3://continuo/tenants/default/topologies/r1/contracts.json.gz", SHA256: "cd"}, ok.ContractBundle)
+	assert.Equal(t, "0.2.0", ok.ContinuoContracts)
+
+	failed := parsedManifestInput(pkgevents.ManifestLoadedCandidate{
+		ReleaseID: "r1", Status: pkgevents.ManifestStatusFailed, FailureKind: "invalid_contract", Detail: "x",
+		ContinuoContracts: "0.2.0",
+	}, slog.Default())
+	assert.Equal(t, "0.2.0", failed.ContinuoContracts, "a failed parse names the library version too")
+	assert.Equal(t, release.ContractBundleRef{}, failed.ContractBundle)
+}
+
 func TestParsedManifestInput_Failed(t *testing.T) {
 	in := parsedManifestInput(pkgevents.ManifestLoadedCandidate{
 		ReleaseID: "r1", Status: pkgevents.ManifestStatusFailed, FailureKind: "invalid_sql", Detail: "1 node failed to parse: a.b",

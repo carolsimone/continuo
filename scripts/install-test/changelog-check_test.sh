@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Test for changelog-check.sh and changelog-placement-check.sh. Each case
-# builds a throwaway git repository holding copies of both scripts and a
-# fixture chart, commits a base CHANGELOG.md and the PR's version of it, and
-# runs changelog-check.sh with BASE_SHA set to the base commit.
+# builds a throwaway git repository holding copies of both scripts, a fixture
+# chart and a fixture topology-controller/pyproject.toml, commits a base
+# CHANGELOG.md and the PR's version of it, and runs changelog-check.sh with
+# BASE_SHA set to the base commit.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT; fail=0
@@ -32,15 +33,17 @@ Intro of 0.2.0. **MINOR.**
 
 First release.'
 
-# new_repo NAME: a repository whose base commit holds the chart and
-# BASE_CHANGELOG; sets $repo, $base and $out.
+# new_repo NAME: a repository whose base commit holds the chart, a
+# topology-controller that pins continuo-contracts 0.2.0, and BASE_CHANGELOG;
+# sets $repo, $base and $out.
 new_repo(){
   repo="$tmp/$1"; out="$tmp/$1.out"
   git init -q -b main "$repo"
-  mkdir -p "$repo/scripts/install-test" "$repo/deploy/continuo/templates"
+  mkdir -p "$repo/scripts/install-test" "$repo/deploy/continuo/templates" "$repo/topology-controller"
   cp "$HERE/changelog-check.sh" "$HERE/changelog-placement-check.sh" "$repo/scripts/install-test/"
   printf 'a: 1\n' > "$repo/deploy/continuo/values.yaml"
   printf 'user continuo_x on ~continuo:a -@all +ping\n' > "$repo/deploy/redis-acl-rules.acl"
+  printf 'dependencies = [\n    "sqlglot>=30.30.0",\n    "continuo-contracts==0.2.0",\n]\n' > "$repo/topology-controller/pyproject.toml"
   printf '%s\n' "$BASE_CHANGELOG" > "$repo/deploy/continuo/CHANGELOG.md"
   base="$(commit base)"
 }
@@ -51,6 +54,11 @@ edit_changelog(){
 }
 touch_rules(){ printf 'user continuo_x on ~continuo:a -@all +ping +xadd\n' > "$repo/deploy/redis-acl-rules.acl"; }
 touch_chart(){ printf 'a: 2\n' > "$repo/deploy/continuo/values.yaml"; }
+# pin_contracts VERSION: moves topology-controller's continuo-contracts pin.
+pin_contracts(){
+  local f="$repo/topology-controller/pyproject.toml"
+  sed "s/continuo-contracts==[0-9.]*/continuo-contracts==$1/" "$f" > "$f.new" && mv "$f.new" "$f"
+}
 check(){ BASE_SHA="$1" bash "$repo/scripts/install-test/changelog-check.sh" >"$out" 2>&1; rc=$?; }
 
 ADD_UNRELEASED='s/^- pending value\.$/&\n- bar value./'
@@ -158,6 +166,67 @@ new_repo rules-untouched
 touch_chart; edit_changelog "$ADD_UNRELEASED"
 commit pr >/dev/null; check "$base"
 assert "a chart change that leaves the Redis rules alone needs no 'Redis rule' line" "[ $rc -eq 0 ]"
+
+# A change of topology-controller's continuo-contracts pin is named in the
+# CHANGELOG with the words "continuo-contracts <new version>".
+new_repo pin-named
+pin_contracts 0.2.1; edit_changelog 's/^- pending value\.$/&\n- topology-controller reads contracts with continuo-contracts 0.2.1./'
+commit pr >/dev/null; check "$base"
+assert "a pin change with a 'continuo-contracts <version>' line under [Unreleased] passes" "[ $rc -eq 0 ]"
+
+new_repo pin-named-backticks
+pin_contracts 0.2.1; edit_changelog 's/^- pending value\.$/&\n- The `continuo-contracts` 0.2.1 library reads contracts./'
+commit pr >/dev/null; check "$base"
+assert "a pin change whose line writes the library name in backticks passes" "[ $rc -eq 0 ]"
+
+new_repo pin-unnamed
+pin_contracts 0.2.1
+commit pr >/dev/null; check "$base"
+assert "a pin change without a CHANGELOG.md change fails" "[ $rc -ne 0 ]"
+assert "the failure names the pin and the new version" "grep -qF 'continuo-contracts 0.2.1' \"$out\""
+
+new_repo pin-other-entry
+pin_contracts 0.2.1; edit_changelog "$ADD_UNRELEASED"
+commit pr >/dev/null; check "$base"
+assert "a pin change whose CHANGELOG.md line does not name the library fails" "[ $rc -ne 0 ] && grep -qF 'continuo-contracts 0.2.1' \"$out\""
+
+new_repo pin-wrong-version
+pin_contracts 0.2.1; edit_changelog 's/^- pending value\.$/&\n- topology-controller reads contracts with continuo-contracts 0.2.0./'
+commit pr >/dev/null; check "$base"
+assert "a pin change whose line names another version fails" "[ $rc -ne 0 ] && grep -qF 'continuo-contracts 0.2.1' \"$out\""
+
+new_repo pin-longer-version
+pin_contracts 0.2.1; edit_changelog 's/^- pending value\.$/&\n- topology-controller reads contracts with continuo-contracts 0.2.10./'
+commit pr >/dev/null; check "$base"
+assert "a pin change whose line names a longer version fails" "[ $rc -ne 0 ] && grep -qF 'continuo-contracts 0.2.1' \"$out\""
+
+# A line an earlier PR added does not name this PR's pin.
+new_repo pin-stale-note
+edit_changelog 's/^- pending value\.$/&\n- topology-controller reads contracts with continuo-contracts 0.2.1./'
+base="$(commit older-note)"
+pin_contracts 0.2.1; edit_changelog 's/^- pending value\.$/&\n- bar value./'
+commit pr >/dev/null; check "$base"
+assert "a pin change that only has an older line naming the version fails" "[ $rc -ne 0 ] && grep -qF 'continuo-contracts 0.2.1' \"$out\""
+
+new_repo pin-untouched
+touch_chart; edit_changelog "$ADD_UNRELEASED"
+commit pr >/dev/null; check "$base"
+assert "a PR that leaves the pin alone needs no 'continuo-contracts' line" "[ $rc -eq 0 ]"
+
+new_repo pin-unrelated-edit
+printf 'dependencies = [\n    "sqlglot>=31.0.0",\n    "continuo-contracts==0.2.0",\n]\n' > "$repo/topology-controller/pyproject.toml"
+commit pr >/dev/null; check "$base"
+assert "a pyproject change that leaves the pin alone passes" "[ $rc -eq 0 ]"
+
+new_repo pin-comment
+printf '# continuo-contracts is pinned to one exact version.\ndependencies = [\n    "sqlglot>=30.30.0",\n    "continuo-contracts==0.2.0",\n]\n' > "$repo/topology-controller/pyproject.toml"
+commit pr >/dev/null; check "$base"
+assert "a comment that names the library is no pin change" "[ $rc -eq 0 ]"
+
+new_repo pin-unversioned
+sed 's/continuo-contracts==0.2.0/continuo-contracts/' "$repo/topology-controller/pyproject.toml" > "$repo/pyproject.new" && mv "$repo/pyproject.new" "$repo/topology-controller/pyproject.toml"
+commit pr >/dev/null; check "$base"
+assert "a pin with no version fails" "[ $rc -ne 0 ] && grep -qF 'without a version number' \"$out\""
 
 # The surface check this script started with still holds.
 new_repo no-entry

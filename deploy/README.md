@@ -126,11 +126,12 @@ whose repository matches no binding is refused on every route, including
 The workflow requests a token whose audience is the same origin continuo expects,
 then submits the release and polls it to a terminal status. This example
 releases a dbt service, so it sends only the three required fields. `kind`
-names how continuo reads the service's artifact: `dbt` (the default when absent)
-or `python`. The first release of a service has no production version to
-validate against, so it is sent with `"bootstrap": true`, which needs a binding
-with `allowBootstrap: true`. These and the other submit fields are described
-below.
+names how continuo reads the service's artifact: `dbt` (the default when absent),
+`python-odcs` (a Python service's `odcs-bundle.json`, see
+[Python contracts](../docs/contracts.md)) or `python` (its `contract.yaml`).
+The first release of a service has no production version to validate against,
+so it is sent with `"bootstrap": true`, which needs a binding with
+`allowBootstrap: true`. These and the other submit fields are described below.
 
 ```yaml
 permissions:
@@ -179,8 +180,8 @@ All three routes live under `/api/v1` on the `ui`. Each takes
 | `GET /api/v1/current-prod` | Which release production is serving: `{current_prod_release_id, node_count, updated_at}`. An empty `current_prod_release_id` means production has never been seeded. |
 
 **Submit body.** `release_id`, `service` and `image_tag` are required;
-`bootstrap` and `rebaseline` (JSON booleans), `kind` (`dbt`, the default, or
-`python`), `repo` and `commit_sha` are optional. Any other field is a `400`. `release_id` must
+`bootstrap` and `rebaseline` (JSON booleans), `kind` (`dbt`, the default,
+`python-odcs` or `python`), `repo` and `commit_sha` are optional. Any other field is a `400`. `release_id` must
 match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`: it starts with a letter or digit and
 continues with letters, digits, `.`, `_` or `-`, at most 128 characters in all;
 anything else is a `400`. With a CI token, `repo` and `commit_sha` are taken from
@@ -202,7 +203,10 @@ release.
 **Release read.** The answer carries `release_id`, `service`, `status`,
 `terminal` (`true` once the status is `promoted`, `rejected` or `superseded`),
 `bootstrap`, `rebaseline`, `repo`, `commit_sha`, `reject_reason`, `reject_detail`, `ui_url`,
-the release's page in the dashboard, and `notices`. `notices` is an array with
+the release's page in the dashboard, `continuo_contracts` and `notices`.
+`continuo_contracts` is the version of the `continuo-contracts` library that
+read the release's contracts: the version topology-controller runs, or `""`
+until the parse ends. `notices` is an array with
 one entry for each seed whose change reloads its table (`[]` when the release
 has none): `kind`, `node_id`, `service`, `change`, `load` (the operation of the
 seed's own load), `columns` (`added`, `removed` and `retyped` column names),
@@ -270,7 +274,10 @@ upgrade.
    bare short SHA, for example
    `"image_tag":"docker.io/<user>/service-py:4e5f6a7"`. Rebuild a Python service
    on 0.12.0 only inside these steps: a normal release on 0.12.0 outside them
-   moves its hashes outside the window and starts a validation.
+   moves its hashes outside the window and starts a validation. A service
+   released as `python-odcs` follows the same step with `"kind": "python-odcs"`.
+   Its pipeline packs the `odcs-bundle.json` with `continuo-runtime pack` and
+   uploads it.
 5. **Check.** Release any one service normally with no change. Its release must
    validate nothing.
 6. **Unfreeze.**

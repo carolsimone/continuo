@@ -37,6 +37,15 @@ type VersionReader interface {
 	CurrentVersion(ctx context.Context, uniqueID string) (v CurrentVersion, ok bool, err error)
 }
 
+// CurrentContractReader reads the contract a node has now in the live
+// topology.
+type CurrentContractReader interface {
+	// CurrentContract returns the node's current contract as its published
+	// ODCS YAML. A node with no contract, or one the catalog does not know,
+	// degrades to ("", nil).
+	CurrentContract(ctx context.Context, uniqueID string) (string, error)
+}
+
 // PrecedentQuery addresses past rejections by exact signature, falling back
 // to the broader (category, reason) class.
 type PrecedentQuery struct {

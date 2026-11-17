@@ -1,0 +1,18 @@
+nodes:
+  # A python-api node: no reads. The script calls the public Frankfurter API
+  # (https://frankfurter.dev) for the latest EUR->USD reference rate.
+  # Frankfurter needs no key; secret_ref exercises the credentials path.
+  - schema: analytics
+    table: fx_eur_usd_rates
+    description: "Latest EUR to USD reference rate from Frankfurter."
+    owner: "service-py"
+    schedule: daily
+    criticality: SECONDARY
+    kind: python-api
+    script: scripts/fx_eur_usd_rates.py
+    secret_ref: continuo-api-demo-fx
+    output_columns:
+      - {name: rate_date, type: DATE, nullable: false}
+      - {name: base, type: VARCHAR(3), nullable: false}
+      - {name: quote, type: VARCHAR(3), nullable: false}
+      - {name: rate, type: DOUBLE PRECISION, nullable: false}

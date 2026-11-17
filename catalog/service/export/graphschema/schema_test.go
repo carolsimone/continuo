@@ -8,8 +8,8 @@ import (
 
 func TestGraphSchema_EveryLabelHasAnIdentity(t *testing.T) {
 	labels := graphschema.Labels()
-	if len(labels) != 10 {
-		t.Fatalf("Labels() returned %d labels, want 10: %v", len(labels), labels)
+	if len(labels) != 11 {
+		t.Fatalf("Labels() returned %d labels, want 11: %v", len(labels), labels)
 	}
 	seen := map[graphschema.Label]bool{}
 	for _, l := range labels {
@@ -44,6 +44,7 @@ func TestGraphSchema_IdentitiesMatchTheDesign(t *testing.T) {
 		graphschema.Proposal:         {"proposal_id"},
 		graphschema.PullRequest:      {"proposal_id", "service"},
 		graphschema.ProcessedMessage: {"group", "message_id"},
+		graphschema.ContractVersion:  {"unique_id", "contract_hash"},
 	}
 	for l, props := range want {
 		got := graphschema.Identity(l)
@@ -69,7 +70,7 @@ func TestGraphSchema_IdentityIsACopy(t *testing.T) {
 }
 
 func TestGraphSchema_RelTypes(t *testing.T) {
-	want := []string{"CURRENT", "DEPENDS_ON", "USES_CODE", "RESOLVED_BY", "HAS_SIGNATURE", "FAILED", "PROPOSED", "HAS_PR", "EDITED"}
+	want := []string{"CURRENT", "DEPENDS_ON", "USES_CODE", "RESOLVED_BY", "HAS_SIGNATURE", "FAILED", "PROPOSED", "HAS_PR", "EDITED", "CONTRACT_PROMOTED", "CURRENT_CONTRACT"}
 	got := graphschema.RelTypes()
 	if len(got) != len(want) {
 		t.Fatalf("RelTypes() = %v, want %v", got, want)

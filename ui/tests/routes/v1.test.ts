@@ -278,8 +278,50 @@ describe('GET /api/v1/releases/:id', () => {
     expect(res.body).toEqual({
       release_id: 'r.1', service: 'core', status: 'rejected', terminal: true, bootstrap: false, rebaseline: false,
       repo: 'carolsimone/continuo-demo', commit_sha: 'abc', reject_reason: 'validation_failed', reject_detail: 'x',
-      ui_url: 'https://continuo.example.com/releases/r.1', notices: [],
+      ui_url: 'https://continuo.example.com/releases/r.1', notices: [], continuo_contracts: '',
     });
+  });
+
+  it('returns continuo_contracts for a rejected release', async () => {
+    const rejected = {
+      release_id: 'rel-4e5f6a7-213', changed_service: 'service-py', status: 'rejected', bootstrap: false,
+      repo: 'carolsimone/continuo-demo', commit_sha: '4e5f6a7', reject_reason: 'invalid_contract',
+      reject_detail: '1 node failed to parse: analytics.py_daily_kpis', continuo_contracts: '0.2.0',
+    };
+    const client = fakeClient({ getRelease: vi.fn(async () => rejected) });
+    const res = await request(appAs(ci({ 'service-py': false }), client)).get('/api/v1/releases/rel-4e5f6a7-213');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      release_id: 'rel-4e5f6a7-213', service: 'service-py', status: 'rejected', terminal: true, bootstrap: false, rebaseline: false,
+      repo: 'carolsimone/continuo-demo', commit_sha: '4e5f6a7', reject_reason: 'invalid_contract',
+      reject_detail: '1 node failed to parse: analytics.py_daily_kpis',
+      ui_url: 'https://continuo.example.com/releases/rel-4e5f6a7-213', notices: [], continuo_contracts: '0.2.0',
+    });
+  });
+
+  it('returns an empty continuo_contracts before the parse ends', async () => {
+    const parsing = { ...rel, status: 'validating', reject_reason: '', reject_detail: '', continuo_contracts: '' };
+    const client = fakeClient({ getRelease: vi.fn(async () => parsing) });
+    const res = await request(appAs(ci(), client)).get('/api/v1/releases/r.1');
+    expect(res.status).toBe(200);
+    expect(res.body.continuo_contracts).toBe('');
+    // A release-controller answer without the field reads the same.
+    expect(projectRelease({ ...rel, status: 'validating' }).continuo_contracts).toBe('');
+  });
+
+  it('does not return the contract bundle uri or its hash', async () => {
+    const bundled = {
+      ...rel, status: 'validating', continuo_contracts: '0.2.0',
+      contract_bundle_uri: 's3://continuo-dev/tenants/default/topologies/r.1/contracts.json.gz',
+      contract_bundle_sha256: '9b0c4f',
+    };
+    const client = fakeClient({ getRelease: vi.fn(async () => bundled) });
+    const res = await request(appAs(ci(), client)).get('/api/v1/releases/r.1');
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body).filter((k) => k.startsWith('contract_bundle'))).toEqual([]);
+    expect(JSON.stringify(res.body)).not.toContain('contracts.json.gz');
+    expect(JSON.stringify(res.body)).not.toContain('9b0c4f');
+    expect(res.body.continuo_contracts).toBe('0.2.0');
   });
 
   it('projects the seed reload notices of a release, field by field', async () => {
@@ -368,8 +410,14 @@ describe('GET /api/v1/releases/:id', () => {
     const odd = { release_id: 7, status: null, changed_service: ['core'], bootstrap: 'true', repo: 1, commit_sha: {}, reject_reason: false, reject_detail: { msg: 'x' } };
     expect(projectRelease(odd)).toEqual({
       release_id: '', service: '', status: '', terminal: false, bootstrap: false, rebaseline: false,
-      repo: '', commit_sha: '', reject_reason: '', reject_detail: '', ui_url: null, notices: [],
+      repo: '', commit_sha: '', reject_reason: '', reject_detail: '', ui_url: null, notices: [], continuo_contracts: '',
     });
+  });
+
+  it('projectRelease: a continuo_contracts of the wrong type is the empty string', () => {
+    for (const odd of [0.2, null, ['0.2.0'], { v: '0.2.0' }, true]) {
+      expect(projectRelease({ ...rel, continuo_contracts: odd }).continuo_contracts).toBe('');
+    }
   });
 
   it('503 when release-controller answers a body that is not a JSON object', async () => {

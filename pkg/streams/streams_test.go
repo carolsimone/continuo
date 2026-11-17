@@ -60,6 +60,7 @@ func TestReleasePromotedV2_ReplacesV1(t *testing.T) {
 	want := map[string]bool{
 		CatalogReleaseTopology:             false,
 		CatalogReleaseVersions:             false,
+		CatalogReleaseContracts:            false,
 		ExecutionControllerReleasePromoted: false,
 		RunControllerReleasePromoted:       false,
 	}

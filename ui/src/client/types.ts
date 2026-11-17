@@ -239,6 +239,44 @@ export interface NodeRunsResponse {
   outage?: NodeOutage | null;
 }
 
+// One version of a node's contract. catalog numbers a node's versions 1, 2, 3
+// and so on, one for each promotion that changed its contract. same_as_version
+// is the earlier version a revert repeats, null on any other version. The
+// published YAML is on the current contract only.
+export interface ContractVersion {
+  unique_id: string;
+  version: number;
+  contract_hash: string;
+  release_id: string;
+  promoted_at: string | null;
+  content_hash: string;
+  is_current: boolean;
+  same_as_version: number | null;
+  continuo_contracts: string;
+  ontology_version: string;
+  document_yaml?: string;
+}
+
+// A node's current contract (null when it has none) and every version catalog
+// kept of it, newest first.
+export interface NodeContractResponse {
+  contract: ContractVersion | null;
+  versions: ContractVersion[];
+}
+
+// One path at which two versions of a contract differ. before_json and
+// after_json hold the value at the path as JSON text, and are empty where that
+// version has no value there.
+export interface ContractFieldChange {
+  path: string;
+  before_json: string;
+  after_json: string;
+}
+
+export interface NodeContractDiffResponse {
+  changes: ContractFieldChange[];
+}
+
 export interface ScheduleTopologySummary {
   schedule_name: string;
   node_count: number;

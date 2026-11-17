@@ -1,12 +1,15 @@
 """An in-memory stand-in for the boto3 S3 client the parse writes through.
 
-It implements the two calls the release parse makes, `put_object` and
-`download_file`, counts the puts and their bytes, and can sleep a fixed time in
-every call to stand in for a network round trip.
+It implements the three calls the release parse makes, `put_object`,
+`get_object` and `download_file`, counts the puts and their bytes, and can sleep
+a fixed time in every call to stand in for a network round trip.
 """
+import io
 import time
 from collections.abc import Mapping
 from pathlib import Path
+
+from botocore.exceptions import ClientError
 
 
 class MemoryS3:
@@ -25,6 +28,17 @@ class MemoryS3:
         self.puts += 1
         self.put_bytes += len(Body)
         return {}
+
+    def get_object(self, *, Bucket: str, Key: str) -> dict:
+        """The object's body, or the ClientError S3 answers for a key that is not there."""
+        self._wait()
+        if Key not in self._objects:
+            raise ClientError(
+                {"Error": {"Code": "NoSuchKey", "Message": "The specified key does not exist."},
+                 "ResponseMetadata": {"HTTPStatusCode": 404}},
+                "GetObject",
+            )
+        return {"Body": io.BytesIO(self._objects[Key])}
 
     def download_file(self, Bucket: str, Key: str, Filename: str) -> None:
         self._wait()

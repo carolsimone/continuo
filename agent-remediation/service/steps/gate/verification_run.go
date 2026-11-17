@@ -5,6 +5,7 @@ package gate
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -74,11 +75,40 @@ func (*VerificationRun) Meta() step.Meta {
 }
 
 // plannedRun is one run that judges part of a try, with the manifest kind it
-// is verified as and the id it is submitted under.
+// is verified as and the id it is submitted under. contract is how a python
+// service's packaged contract is uploaded; a dbt run has none.
 type plannedRun struct {
-	edits shared.ServiceEdits
-	kind  string
-	runID string
+	edits    shared.ServiceEdits
+	kind     string
+	runID    string
+	contract contractArtifact
+}
+
+// contractArtifact is how a packaged contract is uploaded for its verification
+// run: the manifest kind the run is verified as, and the object name (under
+// <service>/<run id>/) and content type it is written with.
+type contractArtifact struct {
+	kind        string
+	name        string
+	contentType string
+}
+
+// artifactOf tells the format of a packaged contract apart from its bytes. An
+// ODCS producer bundle, a JSON object with a bundle_version key, is verified as
+// kind python-odcs from odcs-bundle.json. Any other bytes are a service's
+// merged contract.yaml, which a cluster's journal holds when its
+// contract_packages row stored the merged yaml: it is verified as kind python
+// from contract.yaml, so the run judges the bytes the check accepted.
+func artifactOf(contract []byte) contractArtifact {
+	var doc map[string]json.RawMessage
+	if json.Unmarshal(contract, &doc) == nil {
+		if _, ok := doc["bundle_version"]; ok {
+			return contractArtifact{
+				kind: ports.VerificationKindPythonODCS, name: ports.ODCSBundleName, contentType: "application/json",
+			}
+		}
+	}
+	return contractArtifact{kind: ports.VerificationKindPython, name: ports.ContractYAMLName, contentType: "application/yaml"}
 }
 
 // plan groups the try's edits into the runs that judge them, sorted by service.
@@ -92,21 +122,23 @@ func (g *VerificationRun) plan(in step.GateInput) ([]plannedRun, error) {
 	}
 	runs := make([]plannedRun, len(groups))
 	for i, grp := range groups {
-		kind := ports.VerificationKindDbt
+		run := plannedRun{edits: grp, kind: ports.VerificationKindDbt, runID: RunID(in.Trigger.ReleaseID, grp.Service, in.Try.Attempt)}
 		if grp.Contract != nil {
-			kind = ports.VerificationKindPython
+			run.contract = artifactOf(grp.Contract)
+			run.kind = run.contract.kind
 		}
-		runs[i] = plannedRun{edits: grp, kind: kind, runID: RunID(in.Trigger.ReleaseID, grp.Service, in.Try.Attempt)}
+		runs[i] = run
 	}
 	return runs, nil
 }
 
 // Submit posts one verification run per service the try edits. A python service
-// is verified by the contract yaml its fix packaged, uploaded under the run's
-// own id. A dbt service is verified by re-running its project with the proposed
-// content laid over it, so each edit's content is read back from the artifact
-// the draft stored and packed into one source overlay, keyed by the edit's path
-// within that service's project.
+// is verified by the contract its fix packed, uploaded under the run's own id:
+// an odcs-bundle.json as kind python-odcs, a merged contract.yaml as kind
+// python (artifactOf). A dbt service is verified by re-running its
+// project with the proposed content laid over it, so each edit's content is
+// read back from the artifact the draft stored and packed into one source
+// overlay, keyed by the edit's path within that service's project.
 //
 // Both the artifact writes and the submission are idempotent on the try's keys,
 // since the run id is a pure function of (release, service, attempt), so a
@@ -130,12 +162,12 @@ func (g *VerificationRun) Submit(ctx context.Context, in step.GateInput) (step.G
 	for _, r := range runs {
 		service := r.edits.Service
 		overlayURI := ""
-		if r.kind == ports.VerificationKindPython {
-			// A python service's artifact IS the packaged contract: there is no
-			// project to overlay, so the run reads the contract written under its
-			// own id.
+		if r.edits.Contract != nil {
+			// A python service's artifact IS the packed contract: there is no
+			// project to overlay, so the run reads the contract written under
+			// its own id.
 			if _, err := g.artifacts.Write(ctx,
-				service+"/"+r.runID+"/contract.yaml", string(r.edits.Contract), "application/yaml"); err != nil {
+				service+"/"+r.runID+"/"+r.contract.name, string(r.edits.Contract), r.contract.contentType); err != nil {
 				return step.GateVerdict{}, fmt.Errorf("write verification contract for %s: %w", service, err)
 			}
 		} else {

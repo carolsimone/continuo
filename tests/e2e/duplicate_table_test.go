@@ -14,7 +14,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 )
 
 // TestE2E_DuplicateTable_RejectsBeforePromotion proves the duplicate-relation
@@ -22,7 +21,7 @@ import (
 // relation is rejected at parse time, before any validation Job runs and before
 // current_prod moves.
 //
-// A python release is used because it has no compile leg — the contract is
+// A python-odcs release is used because it has no compile leg — the bundle is
 // uploaded directly and parsed on arrival — so the collision is reachable
 // without rebuilding a dbt service image, and no service's committed models are
 // left permanently colliding.
@@ -87,32 +86,38 @@ func TestE2E_DuplicateTable_RejectsBeforePromotion(t *testing.T) {
 		}
 	}()
 
-	// The parser recomputes content_hash as sha256(source|shared|config) and
-	// rejects the whole artifact on a mismatch, so the fold is computed here
-	// exactly as the python fixture's contract does.
-	const sourceHash, sharedHash, configHash = "dup-src", "", "dup-cfg"
-	contract, err := yaml.Marshal(map[string]any{
-		"contract_version": 1,
-		"service":          dupE2EService,
-		"nodes": []map[string]any{{
-			"schema":           victimSchema,
-			"table":            victimTable,
-			"script":           "models/collider.py",
-			"owner":            "data-team",
-			"schedule":         "daily",
-			"criticality":      "SECONDARY",
-			"reads":            map[string]string{"upstream": "select 1"}, // non-empty: a python node must declare a read; "select 1" has no FROM, so it introduces no cross-service upstream
-			"output_columns":   []map[string]any{{"name": "id", "type": "integer", "nullable": false}},
-			"source_hash":      sourceHash,
-			"shared_code_hash": sharedHash,
-			"config_hash":      configHash,
-			"content_hash":     "sha256:" + sha256Hex(sourceHash+"|"+sharedHash+"|"+configHash),
-		}},
-	})
-	require.NoError(t, err)
-
-	putS3Object(t, ctx, clients,
-		fmt.Sprintf("%s/%s/contract.yaml", dupE2EService, releaseID), contract)
+	// One ODCS contract declaring the victim's relation. Its read is non-empty,
+	// since a python node must declare one, and names no table, so it brings no
+	// upstream. topology-controller folds the bundle's source_hash with the
+	// config part it computes from the contract, so any source_hash is
+	// accepted. The release names an image no Job runs, so its bundle records
+	// no package.
+	contract := fmt.Sprintf(`apiVersion: v3.2.0
+kind: DataContract
+id: %s.%s
+version: "0"
+team:
+  name: data-team
+customProperties:
+  - {vendor: continuo, property: schedule, value: daily}
+  - {vendor: continuo, property: criticality, value: SECONDARY}
+  - {vendor: continuo, property: script, value: models/collider.py}
+  - vendor: continuo
+    property: readQueries
+    value:
+      upstream: select 1
+schema:
+  - name: %s
+    physicalType: table
+    properties:
+      - {name: id, physicalType: integer, required: true}
+`, victimSchema, victimTable, victimTable)
+	bundle := encodeODCSBundle(t, dupE2EService, map[string]string{}, []odcsBundleNode{{
+		Path:       "contracts/" + victimTable + ".odcs.yaml",
+		Text:       contract,
+		SourceHash: sha256Hex("models/collider.py"),
+	}})
+	putODCSBundle(t, ctx, clients, dupE2EService, releaseID, bundle)
 
 	postPythonRelease(t, clients, dupE2EService, releaseID, dupE2EImage, false)
 

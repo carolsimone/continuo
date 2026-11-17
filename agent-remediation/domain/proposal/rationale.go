@@ -113,3 +113,10 @@ func hops(n int) string {
 	}
 	return fmt.Sprintf("%d hops", n)
 }
+
+// ServiceNotConvertedReason is why no Python fix is made for a node of a
+// service whose repository still declares its Python nodes in contract.yaml: a
+// fix is packaged from the service's ODCS contract files, and it has none.
+func ServiceNotConvertedReason(service string) string {
+	return fmt.Sprintf("service %s still uses contract.yaml; convert it to ODCS", service)
+}

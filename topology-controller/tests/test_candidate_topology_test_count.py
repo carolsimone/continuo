@@ -8,7 +8,7 @@ from domain.model import ManifestFile, Runtime
 from service.candidate_artifacts import DbtSqlArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
 from service.ports import ManifestSourcePort
-from tests.fakes import FakeClock, RecordingArtifactWriter, ScriptedMemoryProbe
+from tests.fakes import FakeClock, RecordingArtifactWriter, RecordingContractBundleWriter, ScriptedMemoryProbe
 
 
 def _write(tmp_path, manifest: dict) -> str:
@@ -74,7 +74,8 @@ def test_candidate_topology_carries_test_count(tmp_path):
 
     handler = CandidateManifestHandler(
         source=source, publisher=publisher, bundle_uploader=bundle_uploader,
-        artifact_writer=writer, is_infrastructure_error=is_infrastructure,
+        artifact_writer=writer, contract_bundle_writer=RecordingContractBundleWriter(),
+        is_infrastructure_error=is_infrastructure,
         artifact_builders={Runtime.DBT: DbtSqlArtifactBuilder(uploader)},
         dialect="postgres",
         system_relations=_SYSTEM_RELATIONS["postgres"],

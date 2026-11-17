@@ -683,9 +683,11 @@ func TestRunRepository_DeleteFinishedBefore_DeletesCandidateSQLPrefixes(t *testi
 			"candidate-sql/prune-b/",
 			"code-bundles/prune-a/",
 			"code-bundles/prune-b/",
+			"tenants/default/topologies/prune-a/contracts.json.gz",
 			"tenants/default/topologies/prune-a/topology.json.gz",
+			"tenants/default/topologies/prune-b/contracts.json.gz",
 			"tenants/default/topologies/prune-b/topology.json.gz",
-		}, got, "a rejected run loses its candidate SQL, its code bundle and its topology artifact")
+		}, got, "a rejected run loses its candidate SQL, its code bundle, its contract bundle and its topology artifact")
 	})
 
 	// Reseed because the previous sub-test deleted prune-a and prune-b.
@@ -699,10 +701,9 @@ func TestRunRepository_DeleteFinishedBefore_DeletesCandidateSQLPrefixes(t *testi
 		require.NoError(t, err, "prune must succeed even when S3 deletion fails")
 		assert.Equal(t, 2, n, "both runs must be counted as pruned despite S3 error")
 
-		// Both the candidate-sql and code-bundles prefix were attempted for each
-		// pruned run despite every call failing.
+		// Every object of every pruned run was attempted despite every call failing.
 		got := fd.prefixes()
-		assert.Len(t, got, 6, "deleter must be attempted for every object of every pruned run")
+		assert.Len(t, got, 8, "deleter must be attempted for every object of every pruned run")
 	})
 
 	t.Run("a promoted run keeps its topology artifact", func(t *testing.T) {
@@ -719,6 +720,103 @@ func TestRunRepository_DeleteFinishedBefore_DeletesCandidateSQLPrefixes(t *testi
 		assert.Equal(t, []string{"candidate-sql/prune-promoted/", "code-bundles/prune-promoted/"}, fd.prefixes(),
 			"a promoted run's artifact records a topology that ran in production and is kept")
 	})
+}
+
+func TestRunRepository_StoresTheContractBundleAndTheLibraryVersion(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewRunRepository(db, nil)
+	ctx := context.Background()
+
+	r := pipeline.NewCandidate("rCB", "svc-py", "img:1", false, false, "acme/py", "cafebabe",
+		release.ManifestKindPythonODCS, time.Unix(100, 0).UTC())
+	require.NoError(t, repo.Save(ctx, r))
+
+	got, err := repo.Get(ctx, "rCB")
+	require.NoError(t, err)
+	assert.Equal(t, release.ContractBundleRef{}, got.CandidateContractBundle(), "no bundle until the parse result arrives")
+	assert.Empty(t, got.ContinuoContracts())
+
+	bundle := release.ContractBundleRef{
+		URI:    "s3://b/tenants/default/topologies/rCB/contracts.json.gz",
+		SHA256: "9b0c4d1e7a52f3860be1d9c4a7f08e35b216d0a94c7e53f1a8b20d6e49c71f3a",
+	}
+	got.SetCandidateContractBundle(bundle)
+	got.SetContinuoContracts("0.2.0")
+	require.NoError(t, repo.Save(ctx, got))
+
+	reloaded, err := repo.Get(ctx, "rCB")
+	require.NoError(t, err)
+	assert.Equal(t, bundle, reloaded.CandidateContractBundle())
+	assert.Equal(t, "0.2.0", reloaded.ContinuoContracts())
+	assert.Equal(t, release.ManifestKindPythonODCS, reloaded.ManifestKind())
+
+	listed, _, err := repo.List(ctx, repository.ListFilter{})
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	assert.Equal(t, bundle, listed[0].CandidateContractBundle(), "List reads the same columns as Get")
+}
+
+// The manifest_kind CHECK of both tables that hold a kind admits python-odcs
+// and still refuses an unknown value, and each table keeps exactly one CHECK on
+// the column.
+func TestRunRepository_TheMigrationAcceptsPythonODCS(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewRunRepository(db, nil)
+	spRepo := postgres.NewServiceProdRepository(db)
+	ctx := context.Background()
+	now := time.Unix(100, 0).UTC()
+
+	require.NoError(t, repo.Save(ctx, pipeline.NewCandidate("rOdcs", "svc-py", "img:1", false, false, "acme/py", "cafebabe",
+		release.ManifestKindPythonODCS, now)))
+	require.NoError(t, spRepo.Upsert(ctx, release.NewServiceProd("svc-py", "rOdcs", "s3://b/svc-py/rOdcs/odcs-bundle.json", "img:1",
+		release.ManifestKindPythonODCS, now)))
+	sp, err := spRepo.Get(ctx, "svc-py")
+	require.NoError(t, err)
+	require.NotNil(t, sp)
+	assert.Equal(t, release.ManifestKindPythonODCS, sp.ManifestKind())
+
+	err = repo.Save(ctx, pipeline.NewCandidate("rOther", "svc-x", "img:1", false, false, "acme/x", "cafebabe",
+		release.ManifestKind("other"), now))
+	require.Error(t, err, "release_pipeline_runs refuses a kind outside dbt, python and python-odcs")
+	err = spRepo.Upsert(ctx, release.NewServiceProd("svc-x", "rOther", "s3://b/svc-x/x", "img:1", release.ManifestKind("other"), now))
+	require.Error(t, err, "service_prod refuses a kind outside dbt, python and python-odcs")
+
+	for _, table := range []string{"release_pipeline_runs", "service_prod"} {
+		var n int
+		require.NoError(t, db.GetContext(ctx, &n, `
+			SELECT count(*) FROM pg_constraint con JOIN pg_class rel ON rel.oid = con.conrelid
+			WHERE con.contype = 'c' AND rel.relname = $1 AND pg_get_constraintdef(con.oid) LIKE '%manifest_kind%'`, table))
+		assert.Equal(t, 1, n, "%s keeps exactly one CHECK on manifest_kind", table)
+	}
+}
+
+// A run that was never promoted loses its contract bundle with its other
+// artifacts; a promoted run keeps it, since its contracts are the ones that ran
+// in production.
+func TestDeleteFinishedBefore_DeletesTheContractBundleOfANeverPromotedRun(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	cutoff := time.Unix(1000, 0).UTC()
+
+	rejected := pipeline.NewCandidate("cb-rejected", "svc-py", "t", false, false, "acme/py", "deadbeef", release.ManifestKindPythonODCS, time.Unix(100, 0).UTC())
+	require.NoError(t, rejected.TransitionToParsing(time.Unix(101, 0).UTC()))
+	require.NoError(t, rejected.Fail("invalid_contract", "", nil, time.Unix(102, 0).UTC()))
+	promoted := pipeline.NewCandidate("cb-promoted", "svc-py", "t", false, false, "acme/py", "deadbeef", release.ManifestKindPythonODCS, time.Unix(100, 0).UTC())
+	require.NoError(t, promoted.TransitionToParsing(time.Unix(101, 0).UTC()))
+	require.NoError(t, promoted.TransitionToValidating(release.TopologyRef{}, nil, time.Unix(102, 0).UTC()))
+	require.NoError(t, promoted.Promote(time.Unix(103, 0).UTC()))
+	for _, r := range []*pipeline.Run{rejected, promoted} {
+		require.NoError(t, postgres.NewRunRepository(db, nil).Save(ctx, r))
+	}
+
+	fd := &fakeDeleter{}
+	n, err := postgres.NewRunRepository(db, fd).DeleteFinishedBefore(ctx, cutoff, []string{})
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+
+	got := fd.prefixes()
+	assert.Contains(t, got, "tenants/default/topologies/cb-rejected/contracts.json.gz")
+	assert.NotContains(t, got, "tenants/default/topologies/cb-promoted/contracts.json.gz")
 }
 
 // TestRunRepository_VerificationKindRoundTrips verifies that a run's kind

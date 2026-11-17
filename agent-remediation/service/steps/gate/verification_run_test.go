@@ -75,6 +75,10 @@ func (fakeReleases) FailingNodes(context.Context, string) (map[string]string, er
 	return nil, nil
 }
 
+func (fakeReleases) ContractBundle(context.Context, string) (string, string, error) {
+	return "", "", errors.New("the gate never reads the release's contract bundle")
+}
+
 type fakePipeline struct {
 	submitted   []ports.VerificationRequest
 	submitErr   error
@@ -157,7 +161,7 @@ func dbtCluster() step.ClusterDraft {
 	}
 }
 
-const pythonContract = "nodes:\n  - id: postings\n"
+const pythonContract = `{"bundle_version": 1, "service": "ledger", "image_packages": {"pyarrow": "26.0.0"}, "nodes": []}`
 
 func pythonCluster() step.ClusterDraft {
 	return step.ClusterDraft{
@@ -243,13 +247,44 @@ func TestSubmit_DbtServiceSubmitsAnOverlayOfTheEditsContent(t *testing.T) {
 	assert.Equal(t, string(want), w.body)
 }
 
-func TestSubmit_PythonServiceSubmitsThePackagedContractAndNoOverlay(t *testing.T) {
+func TestVerificationRun_UploadsAnODCSBundle(t *testing.T) {
 	r := newRig()
 	res, err := r.step.Submit(context.Background(), gateInput(pythonCluster()))
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"verify-rel-1-ledger-a2"}, res.Result.RunIDs)
 	assert.True(t, res.Result.Waiting)
+	assert.Equal(t, []proposal.Verification{
+		{Service: "ledger", Kind: "python-odcs", RunID: "verify-rel-1-ledger-a2", Phase: proposal.PhaseQueued},
+	}, res.Verifications)
+	assert.Equal(t, []ports.VerificationRequest{{
+		RunID:             "verify-rel-1-ledger-a2",
+		Service:           "ledger",
+		ImageTag:          "tag-rel-1-ledger",
+		Kind:              "python-odcs",
+		VerifiesReleaseID: "rel-1",
+		Attempt:           2,
+	}}, r.pipeline.submitted)
+	assert.Equal(t, []write{{
+		key: "ledger/verify-rel-1-ledger-a2/odcs-bundle.json", body: pythonContract, contentType: "application/json",
+	}}, r.artifacts.writes)
+}
+
+// mergedContractYAML is a packaged contract that is a service's merged
+// contract.yaml: YAML, not a JSON object with a bundle_version key.
+const mergedContractYAML = "version: 1\nnodes:\n  - id: python.ledger.postings\n    script: scripts/postings.py\n"
+
+func mergedYAMLCluster() step.ClusterDraft {
+	c := pythonCluster()
+	c.Evidence = remediation.NewEvidence().With(remediation.KeyPackagedContract, remediation.Bytes(mergedContractYAML))
+	return c
+}
+
+func TestVerificationRun_UploadsMergedContractYAMLAsKindPython(t *testing.T) {
+	r := newRig()
+	res, err := r.step.Submit(context.Background(), gateInput(mergedYAMLCluster()))
+	require.NoError(t, err)
+
 	assert.Equal(t, []proposal.Verification{
 		{Service: "ledger", Kind: "python", RunID: "verify-rel-1-ledger-a2", Phase: proposal.PhaseQueued},
 	}, res.Verifications)
@@ -260,10 +295,45 @@ func TestSubmit_PythonServiceSubmitsThePackagedContractAndNoOverlay(t *testing.T
 		Kind:              "python",
 		VerifiesReleaseID: "rel-1",
 		Attempt:           2,
-	}}, r.pipeline.submitted)
+	}}, r.pipeline.submitted, "a merged contract.yaml is verified as the kind its bytes are")
 	assert.Equal(t, []write{{
-		key: "ledger/verify-rel-1-ledger-a2/contract.yaml", body: pythonContract, contentType: "application/yaml",
+		key: "ledger/verify-rel-1-ledger-a2/contract.yaml", body: mergedContractYAML, contentType: "application/yaml",
 	}}, r.artifacts.writes)
+}
+
+func TestVerificationRun_TellsTheFormatOfThePackagedContractApart(t *testing.T) {
+	for name, tc := range map[string]struct {
+		contract string
+		kind     string
+	}{
+		"an ODCS producer bundle":              {contract: pythonContract, kind: "python-odcs"},
+		"an ODCS bundle with spacing":          {contract: "\n  {\"nodes\": [], \"bundle_version\": 1}\n", kind: "python-odcs"},
+		"merged contract yaml":                 {contract: mergedContractYAML, kind: "python"},
+		"a JSON object with no bundle_version": {contract: `{"version": 1, "nodes": []}`, kind: "python"},
+		"a JSON array":                         {contract: `[{"bundle_version": 1}]`, kind: "python"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRig()
+			c := pythonCluster()
+			c.Evidence = remediation.NewEvidence().With(remediation.KeyPackagedContract, remediation.Bytes(tc.contract))
+			res, err := r.step.Submit(context.Background(), gateInput(c))
+			require.NoError(t, err)
+			require.Len(t, res.Verifications, 1)
+			assert.Equal(t, tc.kind, res.Verifications[0].Kind)
+		})
+	}
+}
+
+func TestPoll_ReportsTheKindTheRunWasSubmittedAs(t *testing.T) {
+	r := newRig()
+	in := gateInput(mergedYAMLCluster())
+	submitted, err := r.step.Submit(context.Background(), in)
+	require.NoError(t, err)
+
+	res, err := r.step.Poll(context.Background(), in, submitted.Result)
+	require.NoError(t, err)
+	require.Len(t, res.Verifications, 1)
+	assert.Equal(t, "python", res.Verifications[0].Kind, "Poll rebuilds the runs with the kind Submit gave them")
 }
 
 func TestSubmit_TwoServicesSubmitOneRunEachInServiceOrder(t *testing.T) {
@@ -272,11 +342,11 @@ func TestSubmit_TwoServicesSubmitOneRunEachInServiceOrder(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"verify-rel-1-ledger-a2", "verify-rel-1-sales-a2"}, res.Result.RunIDs)
 	assert.Equal(t, []proposal.Verification{
-		{Service: "ledger", Kind: "python", RunID: "verify-rel-1-ledger-a2", Phase: proposal.PhaseQueued},
+		{Service: "ledger", Kind: "python-odcs", RunID: "verify-rel-1-ledger-a2", Phase: proposal.PhaseQueued},
 		{Service: "sales", Kind: "dbt", RunID: "verify-rel-1-sales-a2", Phase: proposal.PhaseQueued},
 	}, res.Verifications)
 	require.Len(t, r.pipeline.submitted, 2)
-	assert.Equal(t, "python", r.pipeline.submitted[0].Kind)
+	assert.Equal(t, "python-odcs", r.pipeline.submitted[0].Kind)
 	assert.Equal(t, "dbt", r.pipeline.submitted[1].Kind)
 }
 
@@ -375,7 +445,7 @@ func TestPoll_QueuedAndRunningRunsKeepTheGateWaiting(t *testing.T) {
 	assert.Empty(t, v.VerifyError)
 	act := t0.Add(30 * time.Second)
 	want := []proposal.Verification{
-		{Service: "ledger", Kind: "python", RunID: ledgerRun, Phase: proposal.PhaseRunning, ActivatedAt: &act},
+		{Service: "ledger", Kind: "python-odcs", RunID: ledgerRun, Phase: proposal.PhaseRunning, ActivatedAt: &act},
 		{Service: "sales", Kind: "dbt", RunID: salesRun, Phase: proposal.PhaseQueued},
 	}
 	assert.Equal(t, want, v.Verifications)
@@ -559,7 +629,7 @@ func TestPoll_AnUnreadableRunStopsTheReadAndKeepsWhatWasRead(t *testing.T) {
 	// Only the run that was read is reported: writing the unread one as queued
 	// would reset the phase and activation time recorded for it.
 	act := t0
-	want := []proposal.Verification{{Service: "ledger", Kind: "python", RunID: ledgerRun, Phase: proposal.PhaseRunning, ActivatedAt: &act}}
+	want := []proposal.Verification{{Service: "ledger", Kind: "python-odcs", RunID: ledgerRun, Phase: proposal.PhaseRunning, ActivatedAt: &act}}
 	assert.Equal(t, want, v.Verifications)
 	assert.Equal(t, want, v.Phases)
 }

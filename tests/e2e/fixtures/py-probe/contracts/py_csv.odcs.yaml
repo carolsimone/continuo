@@ -1,0 +1,23 @@
+# python-csv node: no script. The runtime harness fetches csvSource itself
+# (RUN) and the validation runner range-fetches only its header (VALIDATE) to
+# check it against the declared columns before materializing an empty table.
+apiVersion: v3.2.0
+kind: DataContract
+id: e2e_schema.py_csv
+name: py_csv
+version: "0"
+description:
+  purpose: csv-sourced python node for the e2e run path
+team:
+  name: e2e
+customProperties:
+  - {vendor: continuo, property: kind, value: python-csv}
+  - {vendor: continuo, property: schedule, value: daily}
+  - {vendor: continuo, property: criticality, value: SECONDARY}
+  - {vendor: continuo, property: csvSource, value: "s3://continuo/fixtures/orders.csv"}
+schema:
+  - name: py_csv
+    physicalType: table
+    properties:
+      - {name: order_id, physicalType: INTEGER, required: true}
+      - {name: amount, physicalType: DOUBLE PRECISION}

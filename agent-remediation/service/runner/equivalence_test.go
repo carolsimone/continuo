@@ -97,10 +97,10 @@ func TestEquivalence(t *testing.T) {
 				require.Equal(t, sc.attempts, statusesOf(legacy.attempts), "today's attempts end as the scenario plays")
 				require.NotEmpty(t, legacy.requests, "today's driver sent no model request")
 				assertSameModelRequests(t, legacy.requests, next.requests)
-				if f.Packager.Merged != "" {
-					require.NotEmpty(t, legacy.merges, "today's driver never ran the contract packaging tool")
+				if f.Packager.Packed != "" {
+					require.NotEmpty(t, legacy.packs, "today's driver never ran the contract packaging tool")
 				}
-				assertSameMerges(t, legacy.merges, next.merges)
+				assertSamePacks(t, legacy.packs, next.packs)
 				require.NotEmpty(t, legacy.runs, "today's driver submitted no verification run")
 				assertSameVerificationRuns(t, legacy.runs, next.runs)
 				for _, a := range legacy.attempts {
@@ -151,19 +151,20 @@ func equivalenceScript(t *testing.T, f conformance.Fixture, sc conformance.Scena
 // artifacts written for it, and every proposal row it left.
 type observed struct {
 	requests []string
-	merges   []observedMerge
+	packs    []observedPack
 	runs     []observedRun
 	attempts []observedAttempt
 }
 
-// observedMerge is one call of the contract packaging tool: the service and
-// the dialect it was given, the contract directory relative to the repository
+// observedPack is one call of the contract packaging tool: the service, the
+// dialect and the image package list it was given, the contract directory relative to the repository
 // root, and the bytes of every file under the contract directory, by its path
 // relative to that directory. Error is why the files could not be read, empty
 // when they were.
-type observedMerge struct {
+type observedPack struct {
 	Service     string
 	Dialect     string
+	Packages    map[string]string
 	ContractDir string
 	Files       map[string]string
 	Error       string
@@ -231,6 +232,8 @@ func runLegacy(t *testing.T, flow workflow.Flow, f conformance.Fixture, script c
 		ContractLocator:   locator,
 		ContractInspector: locator,
 		Packager:          pack,
+		ImagePackages:     collab.ImagePackages,
+		CurrentContracts:  collab.CurrentContracts,
 		Pipeline:          collab.Pipeline,
 		Releases:          collab.Releases,
 		PriorAttempts:     store.ProposalRepository(),
@@ -264,7 +267,7 @@ func runLegacy(t *testing.T, flow workflow.Flow, f conformance.Fixture, script c
 
 	return observed{
 		requests: llm.marshalled(t),
-		merges:   pack.observed(),
+		packs:    pack.observed(),
 		runs:     observeRuns(w.Runs(), arts),
 		attempts: observeAttempts(store),
 	}
@@ -337,7 +340,7 @@ func runRunner(t *testing.T, files workflow.Set, f conformance.Fixture, script c
 
 	return observed{
 		requests: llm.marshalled(t),
-		merges:   pack.observed(),
+		packs:    pack.observed(),
 		runs:     observeRuns(w.Runs(), arts),
 		attempts: observeAttempts(store),
 	}
@@ -436,11 +439,11 @@ func assertSameVerificationRuns(t *testing.T, legacy, next []observedRun) {
 	}
 }
 
-// assertSameMerges compares the calls of the contract packaging tool, in call
+// assertSamePacks compares the calls of the contract packaging tool, in call
 // order.
-func assertSameMerges(t *testing.T, legacy, next []observedMerge) {
+func assertSamePacks(t *testing.T, legacy, next []observedPack) {
 	t.Helper()
-	assert.Equal(t, legacy, next, "the contract packaging calls: service, dialect, contract directory and its files")
+	assert.Equal(t, legacy, next, "the contract packaging calls: service, dialect, image packages, contract directory and its files")
 }
 
 // assertSameAttempts compares the proposal rows, in attempt order.
@@ -513,13 +516,13 @@ func (a *recordingArtifacts) under(prefix string) map[string]string {
 // given, the files under the contract directory as the call finds them, and
 // passes the call on.
 type recordingPackager struct {
-	mu     sync.Mutex
-	next   ports.ContractPackager
-	merges []observedMerge
+	mu    sync.Mutex
+	next  ports.ContractPackager
+	packs []observedPack
 }
 
-func (p *recordingPackager) Merge(ctx context.Context, contractDir, repoRoot, service, dialect string) ([]byte, error) {
-	m := observedMerge{Service: service, Dialect: dialect}
+func (p *recordingPackager) Pack(ctx context.Context, contractDir, repoRoot, service, dialect string, packages map[string]string) ([]byte, error) {
+	m := observedPack{Service: service, Dialect: dialect, Packages: packages}
 	if rel, err := filepath.Rel(repoRoot, contractDir); err != nil {
 		m.Error = err.Error()
 	} else {
@@ -530,16 +533,16 @@ func (p *recordingPackager) Merge(ctx context.Context, contractDir, repoRoot, se
 		}
 	}
 	p.mu.Lock()
-	p.merges = append(p.merges, m)
+	p.packs = append(p.packs, m)
 	p.mu.Unlock()
-	return p.next.Merge(ctx, contractDir, repoRoot, service, dialect)
+	return p.next.Pack(ctx, contractDir, repoRoot, service, dialect, packages)
 }
 
 // observed is every recorded call, in call order.
-func (p *recordingPackager) observed() []observedMerge {
+func (p *recordingPackager) observed() []observedPack {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return append([]observedMerge(nil), p.merges...)
+	return append([]observedPack(nil), p.packs...)
 }
 
 // filesUnder is the bytes of every file under dir, by its slash-separated

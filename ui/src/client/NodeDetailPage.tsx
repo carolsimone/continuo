@@ -2,6 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useParams } from 'react-router';
 import PageHeader from './PageHeader';
+import Tabs, { useActiveTab } from './Tabs';
+import NodeContractPanel from './NodeContractPanel';
 import { useSingleNodeRun } from './useSingleNodeRun';
 import type { NodeOutage, NodeRun, NodeRunsResponse, NodeDetailFrom, NodesResponse } from './types';
 import { kindLabel, computeNodeStats, dormantTitle, formatDuration, formatRelative, formatTimeout } from './node-helpers';
@@ -91,6 +93,10 @@ function NodeRunRow({ run: r }: { run: NodeRun }) {
 
 const HISTORY_POLL_INTERVAL_MS = 5000;
 
+// The page's tabs, as the `tab` query parameter names them; History is the
+// default and writes nothing to the URL.
+const TAB_SLUGS = ['history', 'contract'];
+
 export default function NodeDetailPage() {
   const { fqn } = useParams<{ fqn: string }>();
   const navigate = useNavigate();
@@ -130,6 +136,7 @@ export default function NodeDetailPage() {
   // node-list row.
   const [dormant, setDormant] = useState<{ lastRunAt: string | null } | null>(null);
   const genRef = useRef(0);
+  const activeTab = useActiveTab('tab', 'history', TAB_SLUGS);
 
   const parts = (fqn ?? '').split('.');
   const service = parts[0] ?? '';
@@ -392,6 +399,16 @@ export default function NodeDetailPage() {
         </div>
       </PageHeader>
 
+      <Tabs
+        variant="page"
+        param="tab"
+        defaultSlug="history"
+        tabs={[
+          { slug: 'history', label: 'History', count: stats.total },
+          { slug: 'contract', label: 'Contract' },
+        ]}
+      />
+
       <div className="page-action-row">
         <div className="form-field">
           <label htmlFor="node-operation">Operation</label>
@@ -450,7 +467,7 @@ export default function NodeDetailPage() {
           <span className="info-strip__icon">ℹ</span>
           Build runs <code>dbt build</code> — it materializes each model and runs its
           attached tests together in a single execution (one pod), in dependency
-          order. These stats combine model + tests, not either on its own.
+          order.{activeTab === 'history' && ' These stats combine model + tests, not either on its own.'}
         </div>
       )}
 
@@ -458,7 +475,7 @@ export default function NodeDetailPage() {
         <div className="info-strip info-strip--info">
           <span className="info-strip__icon">ℹ</span>
           Full refresh runs this node alone with <code>--full-refresh</code>: its table is dropped
-          and rebuilt from scratch. History below shows this node's runs, full refreshes included.
+          and rebuilt from scratch.{activeTab === 'history' && " History below shows this node's runs, full refreshes included."}
         </div>
       )}
 
@@ -475,42 +492,45 @@ export default function NodeDetailPage() {
       )}
 
       <main className="page-content">
-        <section className="detail-card">
-          <div className="section-header">
-            <div className="section-header__main">
-              <span className="section-header__title">Node history</span>
-              <span className="section-header__count">{stats.total}</span>
+        {activeTab === 'contract' && <NodeContractPanel service={service} schema={schema} table={table} />}
+        {activeTab === 'history' && (
+          <section className="detail-card">
+            <div className="section-header">
+              <div className="section-header__main">
+                <span className="section-header__title">Node history</span>
+                <span className="section-header__count">{stats.total}</span>
+              </div>
+              <div className="section-header__sub">
+                {stats.successRatePct !== null ? `${stats.successRatePct}% succeeded` : 'no terminal runs'}
+                {' · '}avg {formatDuration(stats.avgDurationSec)}
+                {' · '}p95 {formatDuration(stats.p95DurationSec)}
+                {stats.lastRunAt && <> {' · '}last {formatRelative(stats.lastRunAt)}</>}
+              </div>
             </div>
-            <div className="section-header__sub">
-              {stats.successRatePct !== null ? `${stats.successRatePct}% succeeded` : 'no terminal runs'}
-              {' · '}avg {formatDuration(stats.avgDurationSec)}
-              {' · '}p95 {formatDuration(stats.p95DurationSec)}
-              {stats.lastRunAt && <> {' · '}last {formatRelative(stats.lastRunAt)}</>}
-            </div>
-          </div>
-          {runs.length === 0 ? (
-            <p className="empty">No runs yet on this node.</p>
-          ) : (
-            <table className="nodes-table">
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Kind</th>
-                  <th>Status</th>
-                  <th>Attempt</th>
-                  <th>Duration</th>
-                  <th>Image tag</th>
-                  <th>Logs</th>
-                </tr>
-              </thead>
-              <tbody>
-                {runs.map(r => (
-                  <NodeRunRow key={r.task_id} run={r} />
-                ))}
-              </tbody>
-            </table>
-          )}
-        </section>
+            {runs.length === 0 ? (
+              <p className="empty">No runs yet on this node.</p>
+            ) : (
+              <table className="nodes-table">
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Kind</th>
+                    <th>Status</th>
+                    <th>Attempt</th>
+                    <th>Duration</th>
+                    <th>Image tag</th>
+                    <th>Logs</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {runs.map(r => (
+                    <NodeRunRow key={r.task_id} run={r} />
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </section>
+        )}
       </main>
     </div>
   );

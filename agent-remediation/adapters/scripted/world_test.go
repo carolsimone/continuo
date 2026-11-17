@@ -218,19 +218,24 @@ func TestPackager_PackagesAContractDirectoryAndRefusesAsTheFixtureSays(t *testin
 	contracts := filepath.Join(root, "contracts")
 	require.NoError(t, os.MkdirAll(contracts, 0o750))
 
-	_, err := packager{p: conformance.Packager{Merged: "merged"}}.Merge(ctx, contracts, root, "svc", "")
+	pkgs := map[string]string{"pyarrow": "26.0.0"}
+	packed := conformance.Packager{Packed: "packed"}
+	_, err := packager{p: packed}.Pack(ctx, contracts, root, "svc", "", pkgs)
 	require.Error(t, err, "a directory with no contract yaml")
 
-	require.NoError(t, os.WriteFile(filepath.Join(contracts, "n.yml"), []byte("nodes: []\n"), 0o600))
-	merged, err := packager{p: conformance.Packager{Merged: "merged"}}.Merge(ctx, contracts, root, "svc", "")
+	require.NoError(t, os.WriteFile(filepath.Join(contracts, "n.odcs.yaml"), []byte("id: s.n\n"), 0o600))
+	bundle, err := packager{p: packed}.Pack(ctx, contracts, root, "svc", "", pkgs)
 	require.NoError(t, err)
-	assert.Equal(t, []byte("merged"), merged)
+	assert.Equal(t, []byte("packed"), bundle)
 
-	_, err = packager{p: conformance.Packager{Refuse: "bad read"}}.Merge(ctx, contracts, root, "svc", "")
+	_, err = packager{p: packed}.Pack(ctx, contracts, root, "svc", "", nil)
+	require.Error(t, err, "a bundle packed with no package list")
+
+	_, err = packager{p: conformance.Packager{Refuse: "bad read"}}.Pack(ctx, contracts, root, "svc", "", pkgs)
 	assert.ErrorIs(t, err, ports.ErrContractRejected)
 	assert.Contains(t, err.Error(), "bad read")
 
-	_, err = packager{p: conformance.Packager{Merged: "merged"}}.Merge(ctx, filepath.Join(root, "missing"), root, "svc", "")
+	_, err = packager{p: packed}.Pack(ctx, filepath.Join(root, "missing"), root, "svc", "", pkgs)
 	assert.Error(t, err)
 }
 
@@ -255,6 +260,26 @@ func TestCatalog_AnswersFromTheFixture(t *testing.T) {
 	_, ok, err = c.CurrentVersion(ctx, "model.b")
 	require.NoError(t, err)
 	assert.False(t, ok)
+}
+
+func TestCatalog_AnswersTheCurrentContractFromTheFixture(t *testing.T) {
+	c := catalog{c: conformance.Catalog{Contracts: map[string]string{"py.a": "id: py.a\n"}}}
+
+	doc, err := c.CurrentContract(ctx, "py.a")
+	require.NoError(t, err)
+	assert.Equal(t, "id: py.a\n", doc)
+	doc, err = c.CurrentContract(ctx, "py.b")
+	require.NoError(t, err, "a node with no contract is no error")
+	assert.Empty(t, doc)
+}
+
+func TestImagePackages_AnswerFromTheFixtureOrNone(t *testing.T) {
+	got, err := imagePackages{r: conformance.Release{ImagePackages: map[string]string{"pyarrow": "26.0.0"}}}.ImagePackages(ctx, "rel", "svc")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"pyarrow": "26.0.0"}, got)
+
+	_, err = imagePackages{}.ImagePackages(ctx, "rel", "svc")
+	assert.ErrorIs(t, err, ports.ErrNoImagePackages)
 }
 
 func TestWorld_ReadsBackWhatTheStoreHolds(t *testing.T) {

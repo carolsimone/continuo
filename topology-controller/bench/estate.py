@@ -2,7 +2,8 @@
 
 `generate_estate` builds what release-controller would have uploaded for a
 release that carries dbt services and one python service: a dbt `manifest.json`
-and `compile-extras.json` per dbt service, and a python `contract.yaml`. Every
+and `compile-extras.json` per dbt service, and the python service's
+`odcs-bundle.json` (kind `python-odcs`), one ODCS contract per node. Every
 value comes from one `random.Random(seed)`, so the same arguments always give
 the same bytes and two baselines parse the same estate.
 
@@ -21,8 +22,6 @@ from functools import cache
 from pathlib import Path
 
 import yaml
-from continuo_contracts.hashing import fold3
-from continuo_contracts.python import PythonNode, projection_hash
 
 from domain.model import ManifestKind, ManifestRequest
 
@@ -38,6 +37,11 @@ _RUN_STARTED_AT = "2026-11-10T06:00:00.000000+00:00"
 _DATABASE = "warehouse"
 _PYTHON_SERVICE = "svc-py"
 _PYTHON_SCHEMA = "py"
+# What `continuo-runtime pack` writes into the bundle's producer: its own version
+# and the continuo-contracts version it checked the contracts with.
+_PYTHON_RUNTIME_VERSION = "0.13.0"
+_CONTRACTS_VERSION = "0.2.0"
+_PYTHON_IMAGE_PACKAGES = {"pyarrow": "26.0.0"}
 _DBT_PACKAGES = {
     "dbt-core": "1.12.0b1",
     "dbt-adapters": "1.24.5",
@@ -205,29 +209,42 @@ def _compile_extras(service: int, release_id: str, seed: dict) -> dict:
     }
 
 
-def _python_node(index: int, columns: list[str], reads: dict[str, str]) -> dict:
-    """A python contract entry with the hash fields a CI on
-    continuo-python-runtime 0.12.0 writes: config_hash is the entry's
-    projection hash, so the parser computes the CI's content_hash."""
-    table = f"py_{index:05d}"
-    source_hash = "sha256:" + _sha256(table)
-    shared_code_hash = ""
-    entry = {
-        "schema": _PYTHON_SCHEMA,
-        "table": table,
-        "owner": "team-py",
-        "schedule": "daily",
-        "criticality": "SECONDARY",
-        "script": f"scripts/{table}.py",
-        "reads": reads,
-        "output_columns": [{"name": column, "type": "INTEGER", "nullable": True} for column in columns],
+def _python_contract(table: str, columns: list[str], reads: dict[str, str]) -> dict:
+    """The ODCS contract of a python node: its read queries, its schedule and one
+    INTEGER column for each of `columns`."""
+    return {
+        "apiVersion": "v3.2.0",
+        "kind": "DataContract",
+        "id": f"{_PYTHON_SCHEMA}.{table}",
+        "name": table,
+        "version": "0",
+        "description": {"purpose": f"The {table} node of the benchmark estate."},
+        "team": {"name": "team-py"},
+        "customProperties": [
+            {"vendor": "continuo", "property": "schedule", "value": "daily"},
+            {"vendor": "continuo", "property": "criticality", "value": "SECONDARY"},
+            {"vendor": "continuo", "property": "script", "value": f"scripts/{table}.py"},
+            {"vendor": "continuo", "property": "readQueries", "value": dict(reads)},
+        ],
+        "schema": [{
+            "name": table,
+            "physicalType": "table",
+            "properties": [{"name": column, "physicalType": "INTEGER"} for column in columns],
+        }],
     }
-    config_hash = projection_hash(PythonNode.from_mapping(entry))
-    return entry | {
-        "source_hash": source_hash,
-        "shared_code_hash": shared_code_hash,
-        "config_hash": config_hash,
-        "content_hash": fold3(source_hash, shared_code_hash, config_hash),
+
+
+def _python_bundle_node(index: int, columns: list[str], reads: dict[str, str]) -> dict:
+    """One entry of the producer bundle's `nodes`: the contract file's path and
+    text, and the hash of the node's source the producer computes (the estate's
+    nodes share no code with each other)."""
+    table = f"py_{index:05d}"
+    contract = _python_contract(table, columns, reads)
+    return {
+        "path": f"contracts/{table}.odcs.yaml",
+        "text": yaml.safe_dump(contract, sort_keys=False),
+        "source_hash": _sha256(table),
+        "shared_code_hash": "",
     }
 
 
@@ -244,7 +261,8 @@ def generate_estate(
     """Build the estate of `models` dbt models spread over `services` dbt
     services, each with `columns` columns and `tests_per_model` not-null tests,
     one seed per service, and, when `python_share` is above zero, one python
-    service of `round(models * python_share)` nodes (at least one)."""
+    service of `round(models * python_share)` nodes (at least one), each node
+    one contract of the service's ODCS bundle."""
     if models < 1 or services < 1:
         raise ValueError("an estate needs at least one model and one service")
     if columns < _MIN_COLUMNS:
@@ -303,7 +321,7 @@ def generate_estate(
     python_reads = 0
     if python_share > 0:
         python_nodes = max(1, round(models * python_share))
-        entries = []
+        bundle_nodes = []
         for position in range(python_nodes):
             # One read on an even index, two on an odd one.
             wanted = 1 if position % 2 == 0 else 2
@@ -313,11 +331,20 @@ def generate_estate(
                 for read, pick in enumerate(picks)
             }
             python_reads += len(reads)
-            entries.append(_python_node(position, column_names, reads))
-        contract = {"contract_version": 1, "service": _PYTHON_SERVICE, "nodes": entries}
-        contract_key = f"{_PYTHON_SERVICE}/{release_id}/contract.yaml"
-        objects[contract_key] = yaml.safe_dump(contract, sort_keys=False).encode()
-        requests.append(ManifestRequest(service=_PYTHON_SERVICE, key=contract_key, kind=ManifestKind.PYTHON))
+            bundle_nodes.append(_python_bundle_node(position, column_names, reads))
+        bundle = {
+            "bundle_version": 1,
+            "service": _PYTHON_SERVICE,
+            "producer": {
+                "continuo_python_runtime": _PYTHON_RUNTIME_VERSION,
+                "continuo_contracts": _CONTRACTS_VERSION,
+            },
+            "image_packages": dict(_PYTHON_IMAGE_PACKAGES),
+            "nodes": bundle_nodes,
+        }
+        bundle_key = f"{_PYTHON_SERVICE}/{release_id}/odcs-bundle.json"
+        objects[bundle_key] = json.dumps(bundle, sort_keys=True).encode()
+        requests.append(ManifestRequest(service=_PYTHON_SERVICE, key=bundle_key, kind=ManifestKind.PYTHON_ODCS))
         image_tags[_PYTHON_SERVICE] = _IMAGE_TAG
 
     return Estate(

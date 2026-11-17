@@ -253,7 +253,7 @@ Every container in this chart, bundled or not, gets:
 | `global.env` | Names the install's environment (`ENV` on the shared ConfigMap, default `production`). No service reads it yet. |
 | `global.logLevel` | Level every Go service and topology-controller log at (`LOG_LEVEL` on the shared ConfigMap, default `INFO`): `DEBUG`, `INFO`, `WARN`, `WARNING` or `ERROR`, in any case. Rendering fails on any other value. ui's server log has no level. |
 | `global.teamImagePrefix` | Registry/namespace prefix execution-controller uses to compose per-team dbt images for compile/seed/scheduled Jobs (unrelated to `global.imageRepositoryPrefix`, which names continuo's own images). |
-| `validation.engine` / `validation.imageTag` | Select and pin the external `continuo-python-runtime-<engine>` image, composed as `<registry>/<prefix>/continuo-python-runtime-<engine>:<imageTag>` (one image ships both the python-node runtime and the validation runner). It ships from a separate repository (`github.com/carolsimone/continuo-python-runtime`) on its own release train, so `imageTag` (default `v0.12.0`) is versioned independently of `global.imageTag`/`appVersion` and must be non-empty. The engine is part of the image name, not the tag, leaving the tag position free for a digest. A plain tag is mutable — the publish workflow re-pushes `:vX.Y.Z` (and `:latest`) on every tag, so re-running a tag moves it under existing installs. For an immutable pin, set `imageTag` to `"vX.Y.Z@sha256:<digest>"`. If you mirror images into a private registry, mirror this ref explicitly — `global.imageTag`'s same-appVersion mirroring does not cover it. A tag below `v0.12.0` fails the render: the seed preflight runs on it. The validation warehouse Secret's role must be able to list the objects that depend on a seed's table (the Postgres catalog) and, on Trino, read the views outside continuo that the probe checks; without it the preflight reports the warehouse unreachable, or each probe as failed. |
+| `validation.engine` / `validation.imageTag` | Select and pin the external `continuo-python-runtime-<engine>` image, composed as `<registry>/<prefix>/continuo-python-runtime-<engine>:<imageTag>` (one image ships both the python-node runtime and the validation runner). It ships from a separate repository (`github.com/carolsimone/continuo-python-runtime`) on its own release train, so `imageTag` (default `v0.13.0`) is versioned independently of `global.imageTag`/`appVersion` and must be non-empty. The engine is part of the image name, not the tag, leaving the tag position free for a digest. A plain tag is mutable — the publish workflow re-pushes `:vX.Y.Z` (and `:latest`) on every tag, so re-running a tag moves it under existing installs. For an immutable pin, set `imageTag` to `"vX.Y.Z@sha256:<digest>"`. If you mirror images into a private registry, mirror this ref explicitly — `global.imageTag`'s same-appVersion mirroring does not cover it. A tag below `v0.12.0` fails the render: the seed preflight runs on it. The validation warehouse Secret's role must be able to list the objects that depend on a seed's table (the Postgres catalog) and, on Trino, read the views outside continuo that the probe checks; without it the preflight reports the warehouse unreachable, or each probe as failed. |
 | `global.storageClass` | Default `StorageClass` for every bundled datastore PVC (Persistent Volume Claim); each datastore's own `persistence.storageClass` overrides it. |
 | `postgresql.enabled` / `redis.enabled` / `neo4j.enabled` / `minio.enabled` / `dex.enabled` | Toggle the bundled quickstart instance of each datastore/identity-provider off to bring your own. |
 | `postgresql.auth.existingSecret` / `redis.auth.existingSecret` / `neo4j.auth.existingSecret` / `minio.auth.existingSecret` | Pre-created Secret for the *bundled* instance's credentials (see the reinstall table above for keys), instead of letting the chart generate one. Empty (default) = generate and keep stable across upgrades. |
@@ -286,6 +286,8 @@ Every container in this chart, bundled or not, gets:
 | `catalog.backup.enabled` | Whether catalog exports each tenant's graph on `catalog.backup.schedule` (default `true`; `CATALOG_BACKUP_ENABLED`). `false` runs no scheduled exports; `catalog-backup export` still works. See [Catalog backup and restore](#5-catalog-backup-and-restore). |
 | `catalog.backup.schedule` | When catalog exports, in UTC: a five-field cron or an `@` descriptor such as `@daily` or `@every 6h` (default `0 2 * * *`; `CATALOG_BACKUP_SCHEDULE`). A slot catalog misses while it is down is not caught up; the next slot runs. Rendering fails on a value that is neither five fields nor an `@` descriptor, and catalog refuses to start on a schedule its cron parser rejects, one that starts with `CRON_TZ=` or `TZ=`, or an `@every` under a minute. |
 | `catalog.backup.keep` | How many of each tenant's newest exports catalog keeps (default `7`; `CATALOG_BACKUP_KEEP`); after each stored export it deletes the rest. A whole number of at least 1. A hand-run `catalog-backup export` prunes with the same value. |
+| `catalog.contractHistory.retentionDays` | How many days of contract versions catalog keeps (default `0`, which keeps every version; `CONTRACT_HISTORY_RETENTION_DAYS`). Above 0, catalog's retention sweeper deletes a version once its promotion is older than that, never a node's current contract or the version before it. A whole number from 0 to 36500 (100 years): rendering fails on any other value, and catalog refuses to start on it. |
+| `contracts.publish.server.host` / `.port` / `.database` | The warehouse entry (`servers`) of the contract files catalog writes to `tenants/<tenant>/contracts/live/` in the bucket (default empty, 0, empty; `CONTRACTS_SERVER_HOST`, `CONTRACTS_SERVER_PORT`, `CONTRACTS_SERVER_DATABASE`). With a `host`, each file names the warehouse (`type`, `host`, `port`, `database`, and the contract's `schema`), so a catalog tool that reads the folder can bind a contract to its table. The `type` is `postgres` or `trino`, from `validation.engine`. `database` is the catalog name on `trino`, and an empty one uses `validation.warehouseDatabase`. A `host` that is empty or only blanks is no host: no file carries a `servers` entry, and `port` and `database` are ignored. Blanks around a host or a database are trimmed. With a host, rendering fails unless `port` is a whole number from 1 to 65535 and a database that is not blank resolves. catalog refuses to start on the same values. A change rewrites every file when catalog restarts. |
 | `credentials.delivery` | How the chart hands the credentials (`POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `NEO4J_PASSWORD`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `LLM_API_KEY`, `GITHUB_TOKEN`, `GITHUB_APP_PRIVATE_KEY`, `AUTH_OIDC_CLIENT_SECRET`) to the pods. `env` (default): each is an environment variable read from its Secret. `file`: the chart mounts the same Secret keys read-only under `/var/run/secrets/continuo`, one file per variable named after it, and sets `<VAR>_FILE` to the file, so no credential is in the environment; a key the chart knows is empty (`llm.apiKey` or a GitHub key left unset) is left out. Rendering fails on any other value. Install-time only: it shapes the Deployments, and every service reads both forms (see the note below the table). |
 | `credentials.files` | Credentials your company puts in the pod as files of its own (the Vault Agent injector, a Secrets Store CSI volume), per service: `{<service>: {<VAR>: <path>}}`, default `{}`. The chart attaches no Secret for those and sets `<VAR>_FILE` to the path, whatever the delivery; add the pod annotations, ServiceAccount annotations and volumes that put the file there to the service's `services` entry. A service with no enabled `services` entry, or a key that is not one of the credentials above, fails the render. With the Vault Agent injector, a Postgres or Redis password given this way also needs the pod annotation `vault.hashicorp.com/agent-init-first: "true"`, so the file exists before the service's wait init containers read it. Install-time only. |
 | `execution.jobS3Secret.name` / `.accessKeyIdKey` / `.secretAccessKeyKey` | The Kubernetes Secret and its two keys the validation, seed-build and compile Job pods read the S3 key pair from, by reference (`JOB_S3_SECRET_NAME`, `JOB_S3_ACCESS_KEY_ID_KEY`, `JOB_S3_SECRET_ACCESS_KEY_KEY` on the shared ConfigMap). Empty name (default): the chart's own S3 Secret and keys (MinIO's, `s3.existingSecret`'s, or the chart's credentials Secret). With a name, the keys default to `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Required when execution-controller's S3 keys are listed in `credentials.files`, since a Job pod can only reference a Kubernetes Secret: rendering fails without it. |
@@ -480,12 +482,14 @@ An install on the bundled MinIO needs nothing here. With an external bucket
 (`s3.*`), the access key, or each pod's IAM role, must allow these actions. The
 shared key already covers `tenants/` for release-controller; the action the
 backup adds is `s3:AbortMultipartUpload`, which catalog needs on its own prefix
-to discard an export it cancels or that fails.
+to discard an export it cancels or that fails. topology-controller's reads on
+`tenants/` are explained below the table.
 
 | Prefix | Component | Actions |
 |---|---|---|
-| `tenants/` (topology artifacts, `tenants/<tenant>/topologies/<release>/topology.json.gz`) | topology-controller | `s3:PutObject` |
+| `tenants/` (topology artifacts, `tenants/<tenant>/topologies/<release>/topology.json.gz`, and contract bundles, `tenants/<tenant>/topologies/<release>/contracts.json.gz`) | topology-controller | `s3:GetObject`, `s3:PutObject`, `s3:ListBucket` |
 | | release-controller | `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket` |
+| | agent-remediation | `s3:GetObject`, `s3:ListBucket` |
 | | run-controller, catalog | `s3:GetObject` |
 | `code-bundles/` (`code-bundles/<release>/bundle.json`) | topology-controller | `s3:PutObject` |
 | | catalog, agent-remediation | `s3:GetObject` |
@@ -494,6 +498,7 @@ to discard an export it cancels or that fails.
 | | validation Jobs, agent-remediation | `s3:GetObject` |
 | | release-controller | `s3:DeleteObject`, `s3:ListBucket` |
 | `tenants/<tenant>/backups/catalog/` (the exports) | catalog | `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket`, `s3:AbortMultipartUpload` |
+| `tenants/<tenant>/contracts/live/` (the live contracts folder, `<unique id>.odcs.yaml` and `_index.json`) | catalog | `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket` |
 
 Set no lifecycle expiry rule on `code-bundles/` or `tenants/`. They hold the code
 bundle and the topology artifact of the release in production, which external
@@ -523,6 +528,34 @@ WARNING in topology-controller's log that names the key, so the release parses
 with dbt's checksum for its seeds until the grant is in place. A 404 is also
 "no extras", logged at INFO; any other S3 error pauses the release and
 redelivers it.
+
+agent-remediation packs a Python fix with the package list of the rejected
+release's image of the service. It reads the list from the release's contract
+bundle, `tenants/<tenant>/topologies/<release>/contracts.json.gz`, or, only for
+a release that has none, from `<service>/<release>/odcs-bundle.json`, the
+bundle the service's CI uploaded. With your own bucket, grant it `s3:GetObject`
+on both keys and `s3:ListBucket` on the bucket for the prefix `tenants/` and
+each Python service's own prefix, so that a missing bundle reads as 404, not
+403. A 404 means the release records no list: no verification starts and no fix
+is proposed for the node. A 403 is a read a retry may clear, so the remediation
+tries again and, under the `runner` engine, ends as a system failure.
+
+topology-controller writes each release's contract bundle once. It reads the key
+`tenants/<tenant>/topologies/<release>/contracts.json.gz` first. A release it
+parses again (a redelivered request) keeps the bundle already stored, whose
+SHA-256 the event of the first parse carries. With your own bucket, grant it
+`s3:GetObject` on `tenants/` and `s3:ListBucket` on the bucket for that prefix,
+so that a key never written reads as 404, not 403. A 403 fails the release with
+the reason `internal`, since topology-controller cannot tell whether a bundle is
+already there. It creates the bundle with a conditional write
+(`If-None-Match: *`). That needs no other action, but it needs a store that
+supports conditional writes, as AWS S3 and MinIO do.
+
+catalog reads `_index.json` of the live contracts folder to decide what to
+rewrite, and a folder never written has none, so catalog's `s3:ListBucket` on
+`tenants/<tenant>/contracts/live/` is what makes that read a 404. It deletes the
+file of a node that is no longer live. The external catalog or tool that reads
+the folder needs only `s3:GetObject` and `s3:ListBucket` on that prefix.
 
 ```json
 {
@@ -554,6 +587,32 @@ redelivers it.
           "s3:prefix": ["tenants/*", "code-bundles/*", "candidate-sql/*"]
         }
       }
+    }
+  ]
+}
+```
+
+The first statement of that example covers the topology and contract bundles
+under `tenants/*` and catalog's live contracts folder, and its last statement
+holds the `s3:ListBucket` they need. With per-pod IAM roles, the part of
+topology-controller's role for `tenants/` is:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "TopologyAndContractBundles",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject"],
+      "Resource": "arn:aws:s3:::continuo/tenants/*"
+    },
+    {
+      "Sid": "ListTenants",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::continuo",
+      "Condition": {"StringLike": {"s3:prefix": ["tenants/*"]}}
     }
   ]
 }

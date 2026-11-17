@@ -1,0 +1,32 @@
+# Node whose declared read names its relation without a schema. The release's
+# SQL parser requires every relation a read references to be schema-qualified
+# so it can resolve it to an upstream node, so it rejects this node before any
+# Job runs (unqualified_reference), and the release is rejected at the parse
+# stage. continuo-runtime refuses the same read, so the e2e test builds this
+# service's bundle itself instead of running `continuo-runtime pack`.
+#
+# The fix a remediation attempt has to find is in this file and nowhere else:
+# the read must qualify the relation (public.right_name, which the test creates
+# in the warehouse so the fix's verification run can bind it).
+apiVersion: v3.2.0
+kind: DataContract
+id: e2e_schema.py_unqualified_read
+name: py_unqualified_read
+version: "0"
+description:
+  purpose: python node whose declared read is not schema-qualified
+team:
+  name: e2e
+customProperties:
+  - {vendor: continuo, property: schedule, value: daily}
+  - {vendor: continuo, property: criticality, value: SECONDARY}
+  - {vendor: continuo, property: script, value: scripts/py_unqualified_read.py}
+  - vendor: continuo
+    property: readQueries
+    value:
+      orders: select id from right_name
+schema:
+  - name: py_unqualified_read
+    physicalType: table
+    properties:
+      - {name: id, physicalType: INTEGER, required: true}

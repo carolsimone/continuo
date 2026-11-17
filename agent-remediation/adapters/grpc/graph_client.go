@@ -22,6 +22,7 @@ var _ ports.NodeLocator = (*GraphClient)(nil)
 var _ ports.UpstreamChangeReader = (*GraphClient)(nil)
 var _ ports.VersionReader = (*GraphClient)(nil)
 var _ ports.PrecedentReader = (*GraphClient)(nil)
+var _ ports.CurrentContractReader = (*GraphClient)(nil)
 
 // upstreamDepth is the hop bound requested from GetUpstreamChanges — the
 // server's validated maximum, approximating the full ancestry closure.
@@ -65,6 +66,21 @@ func (c *GraphClient) UpstreamChanges(ctx context.Context, uniqueID string) ([]p
 		return nil, err
 	}
 	return MapUpstreamChanges(resp), nil
+}
+
+// CurrentContract returns the node's current contract as its published ODCS
+// YAML. A NOT_FOUND response (a node with no contract, a retired node or an
+// unknown one) degrades to ("", nil); other gRPC errors are returned to the
+// caller.
+func (c *GraphClient) CurrentContract(ctx context.Context, uniqueID string) (string, error) {
+	resp, err := c.client.GetNodeContract(ctx, &catalogv1.GetNodeContractRequest{UniqueId: uniqueID, IncludeDocument: true})
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return "", nil
+		}
+		return "", err
+	}
+	return resp.GetContract().GetDocumentYaml(), nil
 }
 
 // CurrentVersion returns the node's running version. A NOT_FOUND response

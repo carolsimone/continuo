@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os/exec"
 	"path"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -33,7 +34,7 @@ const (
 	pyAPIUniqueID      = "e2e_schema.py_api"
 
 	// pyAPISecret is the continuo-api-* Secret the py_api node's contract
-	// names in secret_ref. The run subtests create and delete it themselves in
+	// names in secretRef. The run subtests create and delete it themselves in
 	// the namespace the e2e Jobs run in, so its presence is under test control.
 	pyAPISecret = "continuo-api-probe"
 
@@ -49,23 +50,18 @@ const (
 	pyCsvSourceKey = "fixtures/orders.csv"
 )
 
-// The fixture's authored contracts and scripts are embedded from the same
-// files the fixture image's Dockerfile COPYs, so the artifact this test
-// uploads and the artifact the container runs cannot drift. Embedding rather
+// pyFixtureRoot is the py-probe fixture's directory inside pyFixtureRepo: the
+// repository root its contracts name their scripts from.
+const pyFixtureRoot = "fixtures/py-probe"
+
+// pyFixtureRepo holds the fixture's ODCS contracts and scripts, embedded from
+// the same files the fixture image's Dockerfile COPYs, so the bundle this test
+// uploads and the contracts the container runs cannot drift. Embedding rather
 // than reading from disk also frees the test from assuming where the
 // repository is mounted.
 //
-//go:embed fixtures/py-probe/contracts/py_probe.yml
-var pyFixtureContract []byte
-
-//go:embed fixtures/py-probe/contracts/py_csv.yml
-var pyCsvFixtureContract []byte
-
-//go:embed fixtures/py-probe/contracts/py_api.yml
-var pyAPIFixtureContract []byte
-
-//go:embed fixtures/py-probe/scripts
-var pyFixtureScripts embed.FS
+//go:embed fixtures/py-probe/contracts fixtures/py-probe/scripts
+var pyFixtureRepo embed.FS
 
 // pyCsvFixtureData is the csv object the py_csv node's contract names — it is
 // never baked into the fixture image (only contracts/ and scripts/ are), so
@@ -74,93 +70,161 @@ var pyFixtureScripts embed.FS
 //go:embed fixtures/py-probe/data/orders.csv
 var pyCsvFixtureData []byte
 
-// pythonContractYAML renders the merged contract_version-1 wire artifact for the
-// python e2e service from the fixture image's own authored contract files,
-// adding the per-node hash fields a domain repository's CI would compute.
-//
-// Deriving it from the same files the image bakes is what keeps the shape
-// validation checks and the shape the container actually runs identical;
-// duplicating the node definitions here would let the two drift, so a release
-// could validate one contract while the pod executed another.
-//
-// A scripted node's source_hash is the real sha256 of its script file, so
-// editing a script genuinely re-fingerprints its node. A scripted node that
-// declares no reads (the python-api node) gets "reads": {}, because the
-// shipped merge tool's node_entry() emits node.reads unconditionally and a
-// node without reads carries an empty map there. A python-csv node runs
-// no script, but the shipped merge tool's node_entry() still emits
-// "script": node.script unconditionally, so its wire entry carries an empty
-// string rather than an absent key — mirroring what a domain repository's CI
-// computes for one (see topology-controller/tests/test_python_contract_parser.py's
-// make_csv_entry), its source_hash is the sha256 of its declared csv uri
-// instead, so editing the uri re-fingerprints the node. shared_code_hash is
-// empty for every node (nothing here imports in-repo code). topology-controller
-// computes the config part itself, from the node's code projection, and ignores
-// the config_hash and content_hash CI sends: it keeps the CI source_hash and
-// shared_code_hash and folds them with its own config part, so these hand-built
-// values only have to be present. An entry that leaves out kind, extra_columns
-// and config hashes as one stating their defaults, which is what lets these
-// hand-built entries match the hash the validation runtime's harness computes
-// from the contract baked into the fixture image.
-func pythonContractYAML(t *testing.T) string {
+const (
+	// odcsBundleName is the object a python-odcs service's CI uploads for a
+	// release, at <service>/<release_id>/odcs-bundle.json.
+	odcsBundleName = "odcs-bundle.json"
+	// pyBundleRuntime and pyBundleContracts are the producer versions a
+	// hand-built bundle names: continuo-python-runtime 0.13.0, the runtime the
+	// fixture image is built on, and the continuo-contracts 0.2.0 it carries.
+	pyBundleRuntime   = "0.13.0"
+	pyBundleContracts = "0.2.0"
+)
+
+// odcsBundle is the document a python-odcs service's CI uploads, as
+// `continuo-runtime pack` writes it.
+type odcsBundle struct {
+	BundleVersion int               `json:"bundle_version"`
+	Service       string            `json:"service"`
+	Producer      map[string]string `json:"producer"`
+	ImagePackages map[string]string `json:"image_packages"`
+	Nodes         []odcsBundleNode  `json:"nodes"`
+}
+
+// odcsBundleNode is one contract of a bundle: its path in the repository, its
+// text as written, and the two hash parts the producer computes from the
+// repository's files.
+type odcsBundleNode struct {
+	Path           string `json:"path"`
+	Text           string `json:"text"`
+	SourceHash     string `json:"source_hash"`
+	SharedCodeHash string `json:"shared_code_hash"`
+}
+
+// odcsContracts returns the text of every contract file in the contracts/
+// folder under root in repo, keyed by its path relative to root, the path a
+// bundle names it by.
+func odcsContracts(t *testing.T, repo fs.FS, root string) map[string]string {
 	t.Helper()
-
-	var nodes []map[string]any
-	for _, raw := range [][]byte{pyFixtureContract, pyCsvFixtureContract, pyAPIFixtureContract} {
-		var doc struct {
-			Nodes []map[string]any `yaml:"nodes"`
-		}
-		require.NoError(t, yaml.Unmarshal(raw, &doc), "parse fixture contract")
-		require.NotEmpty(t, doc.Nodes, "fixture contract declares no nodes")
-		nodes = append(nodes, doc.Nodes...)
+	paths, err := fs.Glob(repo, path.Join(root, "contracts", "*.odcs.yaml"))
+	require.NoError(t, err)
+	require.NotEmpty(t, paths, "%s/contracts holds no .odcs.yaml file", root)
+	contracts := make(map[string]string, len(paths))
+	for _, p := range paths {
+		text, err := fs.ReadFile(repo, p)
+		require.NoError(t, err, "read %s", p)
+		contracts[strings.TrimPrefix(p, root+"/")] = string(text)
 	}
+	return contracts
+}
 
-	for _, node := range nodes {
+// buildODCSBundle builds the odcs-bundle.json of service from contracts (path
+// relative to root → text as written), the bundle `continuo-runtime pack`
+// writes for the same files, without running the runtime's checks: a test
+// that releases a contract the runtime refuses builds its bundle here.
+//
+// A node's source_hash is the sha256 of the script its contract names, read
+// from root in repo, or of its csvSource uri for a python-csv node, as the
+// runtime computes it, so the hash a release stores is the one the fixture
+// image's harness recomputes at run time. shared_code_hash is empty: no
+// fixture script imports code of its repository or declares an asset.
+// topology-controller computes the third part, the config hash, from the
+// contract itself.
+func buildODCSBundle(t *testing.T, repo fs.FS, root, service string, imagePackages map[string]string, contracts map[string]string) []byte {
+	t.Helper()
+	nodes := make([]odcsBundleNode, 0, len(contracts))
+	for p, text := range contracts {
+		props := continuoProperties(t, p, text)
+		script, _ := props["script"].(string)
+		csvSource, _ := props["csvSource"].(string)
 		var sourceHash string
-		if scriptPath, _ := node["script"].(string); scriptPath != "" {
-			script, err := fs.ReadFile(pyFixtureScripts, path.Join("fixtures/py-probe", scriptPath))
-			require.NoError(t, err, "read fixture script %s", scriptPath)
-			sourceHash = sha256Hex(string(script))
-			if _, ok := node["reads"]; !ok {
-				node["reads"] = map[string]any{}
-			}
-		} else {
-			reads, _ := node["reads"].(map[string]any)
-			csvURI, _ := reads["csv"].(string)
-			require.NotEmpty(t, csvURI, "python-csv fixture node is missing reads.csv")
-			sourceHash = sha256Hex(csvURI)
-			// The shipped merge tool's node_entry() emits "script": node.script
-			// unconditionally, so every real csv wire entry carries an empty
-			// string, never an absent key. Match that shape here so this test
-			// exercises the document topology-controller actually receives.
-			node["script"] = ""
+		switch {
+		case script != "":
+			body, err := fs.ReadFile(repo, path.Join(root, script))
+			require.NoError(t, err, "read the script %s that %s names", script, p)
+			sourceHash = sha256Hex(string(body))
+		case csvSource != "":
+			sourceHash = sha256Hex(csvSource)
+		default:
+			require.Failf(t, "contract names no source", "%s names neither a script nor a csvSource", p)
 		}
-
-		entryJSON, err := json.Marshal(node)
-		require.NoError(t, err)
-
-		configHash := sha256Hex(string(entryJSON))
-		node["source_hash"] = sourceHash
-		node["shared_code_hash"] = ""
-		node["config_hash"] = configHash
-		node["content_hash"] = "sha256:" + sha256Hex(sourceHash+"|"+""+"|"+configHash)
+		nodes = append(nodes, odcsBundleNode{Path: p, Text: text, SourceHash: sourceHash})
 	}
+	return encodeODCSBundle(t, service, imagePackages, nodes)
+}
 
-	merged, err := yaml.Marshal(map[string]any{
-		"contract_version": 1,
-		"service":          pyE2EService,
-		"nodes":            nodes,
+// continuoProperties returns the continuo custom properties the ODCS contract
+// text at contractPath declares, by property name.
+func continuoProperties(t *testing.T, contractPath, text string) map[string]any {
+	t.Helper()
+	var doc struct {
+		CustomProperties []struct {
+			Vendor   string `yaml:"vendor"`
+			Property string `yaml:"property"`
+			Value    any    `yaml:"value"`
+		} `yaml:"customProperties"`
+	}
+	require.NoError(t, yaml.Unmarshal([]byte(text), &doc), "parse the contract %s", contractPath)
+	props := map[string]any{}
+	for _, prop := range doc.CustomProperties {
+		if prop.Vendor == "continuo" {
+			props[prop.Property] = prop.Value
+		}
+	}
+	return props
+}
+
+// encodeODCSBundle writes the bundle of service holding nodes, in path order,
+// with the producer versions of a bundle runtime 0.13.0 packs.
+func encodeODCSBundle(t *testing.T, service string, imagePackages map[string]string, nodes []odcsBundleNode) []byte {
+	t.Helper()
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Path < nodes[j].Path })
+	raw, err := json.Marshal(odcsBundle{
+		BundleVersion: 1,
+		Service:       service,
+		Producer:      map[string]string{"continuo_python_runtime": pyBundleRuntime, "continuo_contracts": pyBundleContracts},
+		ImagePackages: imagePackages,
+		Nodes:         nodes,
 	})
-	require.NoError(t, err, "marshal merged contract")
-	return string(merged)
+	require.NoError(t, err, "encode the bundle of %s", service)
+	return raw
+}
+
+// imagePackages returns the package list image carries, as the image's own
+// `continuo-runtime packages` prints it: the list `continuo-runtime pack
+// --image <image>` records in a bundle.
+func imagePackages(t *testing.T, ctx context.Context, image string) map[string]string {
+	t.Helper()
+	cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "--entrypoint", "continuo-runtime", image, "packages") //nolint:gosec // fixed arguments; the image is a test constant
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	require.NoError(t, cmd.Run(), "continuo-runtime packages in %s (rebuild it with scripts/setup.sh): %s", image, stderr.String())
+	var packages map[string]string
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &packages), "continuo-runtime packages in %s printed %s", image, stdout.String())
+	require.NotEmpty(t, packages, "continuo-runtime packages in %s printed no package", image)
+	return packages
+}
+
+// pyFixtureBundle is the odcs-bundle.json of the python e2e service, built
+// from the fixture image's own contract files with contracts' text replaced
+// where the caller names a path, and the package list of the fixture image.
+func pyFixtureBundle(t *testing.T, ctx context.Context, replace map[string]string) []byte {
+	t.Helper()
+	contracts := odcsContracts(t, pyFixtureRepo, pyFixtureRoot)
+	for p, text := range replace {
+		require.Contains(t, contracts, p, "the fixture has no contract %s to replace", p)
+		contracts[p] = text
+	}
+	return buildODCSBundle(t, pyFixtureRepo, pyFixtureRoot, pyE2EService, imagePackages(t, ctx, pyFixtureImage), contracts)
 }
 
 // TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes proves the
-// python release path end to end: a kind=python release skips the compile
-// leg, parses the contract, validates every node — including a python-csv
-// node in the same mixed DAG — via a real build_from_columns Job against the
-// published runner image, promotes, swaps the Neo4j topology, and records
-// the python kind + contract pointer on service_prod.
+// python release path end to end: a python-odcs release skips the compile
+// leg, reads every ODCS contract of its bundle, validates every node —
+// including a python-csv node in the same mixed DAG — via a real
+// build_from_columns Job against the published runner image, promotes, swaps
+// the Neo4j topology, and records the python-odcs kind and the bundle pointer
+// on service_prod.
 func TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -195,21 +259,21 @@ func TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes(t *testing.T) 
 	assertValidationNodeOp(t, ctx, validationTap, releaseID, pyAPIUniqueID, model.ValidationOpBuildFromColumns, ".json")
 	assertNoCompileRequested(t, compileTap, releaseID)
 
-	// The promoted pointer records the python kind and the contract artifact.
+	// The promoted pointer records the python-odcs kind and the bundle.
 	var kind, s3Key string
 	require.NoError(t, clients.releaseDB.QueryRowContext(ctx,
 		`SELECT manifest_kind, manifest_s3_key FROM service_prod WHERE service_name = $1`,
 		pyE2EService).Scan(&kind, &s3Key))
-	assert.Equal(t, "python", kind)
-	assert.True(t, strings.HasSuffix(s3Key, "/contract.yaml"),
-		"pointer must be the contract artifact, got %s", s3Key)
+	assert.Equal(t, "python-odcs", kind)
+	assert.True(t, strings.HasSuffix(s3Key, "/"+odcsBundleName),
+		"pointer must be the service's bundle, got %s", s3Key)
 	t.Log("✅ python release skipped compile, validated via build_from_columns, promoted, and swapped topology")
 }
 
-// promotePythonFixtureRelease promotes the python fixture service's merged
-// contract (see pythonContractYAML): it seeds the csv object the py_csv node
-// reads, then drives the release through promotePythonContractRelease. The
-// caller MUST defer the returned cleanup.
+// promotePythonFixtureRelease promotes the python fixture service's bundle
+// (see pyFixtureBundle): it seeds the csv object the py_csv node reads, then
+// drives the release through promotePythonContractRelease. The caller MUST
+// defer the returned cleanup.
 func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *testClients, validationTap *streamTap) (string, func()) {
 	t.Helper()
 
@@ -218,14 +282,14 @@ func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *tes
 	// a later run) the harness's full fetch resolve against real content.
 	putS3Object(t, ctx, clients, pyCsvSourceKey, pyCsvFixtureData)
 
-	return promotePythonContractRelease(t, ctx, clients, validationTap, pythonContractYAML(t),
+	return promotePythonContractRelease(t, ctx, clients, validationTap, pyFixtureBundle(t, ctx, nil),
 		[]string{pyProbeUniqueID, pyBadShapeUniqueID, pyCsvUniqueID, pyAPIUniqueID}, pyProbeUniqueID)
 }
 
 // promotePythonContractRelease drives pyE2EService through a full release of
-// the given merged contract: it seeds the baseline pointers, uploads the
-// contract to S3 before the POST (the ordering a domain repository's CI must
-// honour), posts kind=python naming the side-loaded fixture image, checks the
+// the given odcs-bundle.json: it seeds the baseline pointers, uploads the
+// bundle to S3 before the POST (the ordering a domain repository's CI must
+// honour), posts a python-odcs release naming the side-loaded fixture image, checks the
 // validation request names exactly validationNodes, waits for promotion, and
 // waits for swapNode to appear in the swapped topology. It returns the release
 // id and a cleanup the caller MUST defer.
@@ -236,7 +300,7 @@ func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *tes
 // service_prod pointer would drag this service's contract into every later
 // test's assembled manifest set.
 func promotePythonContractRelease(t *testing.T, ctx context.Context, clients *testClients, validationTap *streamTap,
-	contractYAML string, validationNodes []string, swapNode string) (string, func()) {
+	bundle []byte, validationNodes []string, swapNode string) (string, func()) {
 	t.Helper()
 
 	releaseID := "e2e-py-" + uuid.NewString()[:8]
@@ -264,9 +328,7 @@ func promotePythonContractRelease(t *testing.T, ctx context.Context, clients *te
 		}
 	}
 
-	contractKey := fmt.Sprintf("%s/%s/contract.yaml", pyE2EService, releaseID)
-	putS3Object(t, ctx, clients, contractKey, []byte(contractYAML))
-
+	putODCSBundle(t, ctx, clients, pyE2EService, releaseID, bundle)
 	postPythonRelease(t, clients, pyE2EService, releaseID, pyFixtureImage, false)
 
 	assertValidationRequestedNodes(t, ctx, validationTap, releaseID, validationNodes)
@@ -465,7 +527,7 @@ func triggerPythonNodeRun(t *testing.T, ctx context.Context, clients *testClient
 	return runID, resp.ScheduleName
 }
 
-// postPythonRelease submits a kind=python release through the public API as
+// postPythonRelease submits a python-odcs release through the public API as
 // the CI pipeline of the python fixture repository. When bootstrap is true the
 // release promotes without validation.
 func postPythonRelease(t *testing.T, clients *testClients, service, releaseID, imageTag string, bootstrap bool) {
@@ -475,10 +537,19 @@ func postPythonRelease(t *testing.T, clients *testClients, service, releaseID, i
 		"service":    service,
 		"release_id": releaseID,
 		"image_tag":  imageTag,
-		"kind":       "python",
+		"kind":       "python-odcs",
 		"bootstrap":  bootstrap,
 	})
 	require.Equal(t, http.StatusAccepted, status, "POST /api/v1/releases: expected 202, got %d: %v", status, body)
+}
+
+// putODCSBundle uploads bundle as service's odcs-bundle.json for releaseID,
+// the object a python-odcs release reads, and returns its key.
+func putODCSBundle(t *testing.T, ctx context.Context, clients *testClients, service, releaseID string, bundle []byte) string {
+	t.Helper()
+	key := fmt.Sprintf("%s/%s/%s", service, releaseID, odcsBundleName)
+	putS3Object(t, ctx, clients, key, bundle)
+	return key
 }
 
 // putS3Object uploads an object into the e2e bucket.

@@ -62,7 +62,7 @@ def test_a_relation_matches_on_any_one_of_the_three_rules():
 def test_a_table_no_node_builds_becomes_one_unknown_external_node_with_an_edge_per_reader():
     a, b = _model("probe_reads_source"), _model("probe_reads_raw_name")
     out = unknown_external_nodes(
-        [a, b], {a.unique_id: [_ref("raw.ingest_probe")], b.unique_id: [_ref("raw.ingest_probe")]}, system=PG,
+        [a, b], {a.node_key: [_ref("raw.ingest_probe")], b.node_key: [_ref("raw.ingest_probe")]}, system=PG,
     )
     assert [n.unique_id for n in out] == ["raw.ingest_probe"]
     n = out[0]
@@ -79,20 +79,20 @@ def test_a_table_a_dormant_model_writes_is_not_unknown_external():
     writes is a table a node builds: its reader gets no unknown-external node."""
     dormant = _model("dormant", schedule="")
     reader = _model("reader")
-    assert unknown_external_nodes([dormant, reader], {reader.unique_id: [_ref("analytics.dormant")]}, system=PG) == []
+    assert unknown_external_nodes([dormant, reader], {reader.node_key: [_ref("analytics.dormant")]}, system=PG) == []
     assert reader.upstream_deps == []
 
 
 def test_an_unknown_external_node_carries_no_owner_criticality_or_sql():
     a = _model("reader")
-    (n,) = unknown_external_nodes([a], {a.unique_id: [_ref("raw.ext")]}, system=PG)
+    (n,) = unknown_external_nodes([a], {a.node_key: [_ref("raw.ext")]}, system=PG)
     assert (n.owner, n.criticality, n.dependency_sqls, n.candidate_sql, n.raw_code, n.code_unit_ids) == ("", "", [], "", "", [])
     assert (n.table_name, n.schema_name) == ("ext", "raw")
 
 
 def test_the_edge_an_unknown_external_table_gives_its_reader_names_no_service():
     a = _model("reader")
-    unknown_external_nodes([a], {a.unique_id: [_ref("raw.ext")]}, system=PG)
+    unknown_external_nodes([a], {a.node_key: [_ref("raw.ext")]}, system=PG)
     (dep,) = a.upstream_deps
     assert (dep.schema_name, dep.table_name, dep.service_name) == ("raw", "ext", "")
 
@@ -103,7 +103,7 @@ def test_one_node_for_every_spelling_of_a_table():
     a = _model("reader_a", sql='SELECT * FROM "continuo_dbt"."RAW"."Ingest_Probe"')
     b = _model("reader_b", sql="SELECT * FROM raw.ingest_probe")
     c = _model("reader_c", sql='SELECT * FROM "other_db".raw."INGEST_PROBE"')
-    reads = {n.unique_id: referenced_tables(n, dialect="postgres") for n in (a, b, c)}
+    reads = {n.node_key: referenced_tables(n, dialect="postgres") for n in (a, b, c)}
     out = unknown_external_nodes([a, b, c], reads, system=PG)
     assert [(n.unique_id, n.schema_name, n.table_name) for n in out] == [("raw.ingest_probe", "raw", "ingest_probe")]
     for reader in (a, b, c):
@@ -112,7 +112,7 @@ def test_one_node_for_every_spelling_of_a_table():
 
 def test_a_reader_gets_one_edge_for_two_reads_of_the_same_table():
     a = _model("reader")
-    out = unknown_external_nodes([a], {a.unique_id: [_ref("raw.ext"), TableRef("raw", "ext", catalog="other")]}, system=PG)
+    out = unknown_external_nodes([a], {a.node_key: [_ref("raw.ext"), TableRef("raw", "ext", catalog="other")]}, system=PG)
     assert [n.unique_id for n in out] == ["raw.ext"]
     assert [d.unique_id for d in a.upstream_deps] == ["raw.ext"]
 
@@ -125,21 +125,21 @@ def test_a_system_read_before_or_after_a_real_one_gives_the_same_node_and_edge()
     results = []
     for reads in ([system_ref, real_ref], [real_ref, system_ref]):
         reader = _model("reader")
-        out = unknown_external_nodes([reader], {reader.unique_id: reads}, system=TRINO)
+        out = unknown_external_nodes([reader], {reader.node_key: reads}, system=TRINO)
         results.append(([n.unique_id for n in out], [d.unique_id for d in reader.upstream_deps]))
     assert results == [(["runtime.nodes"], ["runtime.nodes"])] * 2
 
 
 def test_a_reader_of_only_a_system_catalog_table_gets_no_node_and_no_edge():
     reader = _model("reader")
-    reads = {reader.unique_id: [TableRef("runtime", "nodes", catalog="system")]}
+    reads = {reader.node_key: [TableRef("runtime", "nodes", catalog="system")]}
     assert unknown_external_nodes([reader], reads, system=TRINO) == []
     assert reader.upstream_deps == []
 
 
 def test_one_table_read_under_two_non_system_catalogs_is_one_node_and_one_edge():
     reader = _model("reader")
-    reads = {reader.unique_id: [TableRef("raw", "orders", catalog="hive"), TableRef("raw", "orders", catalog="other")]}
+    reads = {reader.node_key: [TableRef("raw", "orders", catalog="hive"), TableRef("raw", "orders", catalog="other")]}
     out = unknown_external_nodes([reader], reads, system=TRINO)
     assert [n.unique_id for n in out] == ["raw.orders"]
     assert [d.unique_id for d in reader.upstream_deps] == ["raw.orders"]
@@ -152,7 +152,7 @@ def test_the_real_table_is_an_unknown_external_node_from_the_sql_in_either_order
         "SELECT * FROM warehouse.runtime.nodes JOIN system.runtime.nodes ON 1=1",
     ):
         reader = _model("reader", sql=sql)
-        out = unknown_external_nodes([reader], {reader.unique_id: referenced_tables(reader, dialect="trino")}, system=TRINO)
+        out = unknown_external_nodes([reader], {reader.node_key: referenced_tables(reader, dialect="trino")}, system=TRINO)
         results.append(([n.unique_id for n in out], [d.unique_id for d in reader.upstream_deps]))
     assert results == [(["runtime.nodes"], ["runtime.nodes"])] * 2
 
@@ -174,7 +174,7 @@ def test_the_real_table_is_one_unknown_external_node_beside_a_system_read_howeve
     ]
     reader = _model("reader", node_type=NodeType.PYTHON_NODE)
     reader.dependency_sqls = sqls
-    out = unknown_external_nodes([reader], {reader.unique_id: referenced_tables(reader, dialect="trino")}, system=TRINO)
+    out = unknown_external_nodes([reader], {reader.node_key: referenced_tables(reader, dialect="trino")}, system=TRINO)
     assert [n.unique_id for n in out] == ["runtime.nodes"]
     assert [d.unique_id for d in reader.upstream_deps] == ["runtime.nodes"]
 
@@ -182,30 +182,30 @@ def test_the_real_table_is_one_unknown_external_node_beside_a_system_read_howeve
 def test_a_reader_keeps_the_edges_it_already_has():
     reader = _model("reader")
     reader.upstream_deps = [UpstreamDep(table_name="orders", schema_name="analytics", service_name="service-1")]
-    unknown_external_nodes([reader], {reader.unique_id: [_ref("raw.ext")]}, system=PG)
+    unknown_external_nodes([reader], {reader.node_key: [_ref("raw.ext")]}, system=PG)
     assert [d.unique_id for d in reader.upstream_deps] == ["analytics.orders", "raw.ext"]
 
 
 def test_a_table_a_node_builds_is_not_unknown_external():
     reader, builder = _model("reader"), _model("x", schema="raw")
-    assert unknown_external_nodes([reader, builder], {reader.unique_id: [_ref("raw.x")]}, system=PG) == []
+    assert unknown_external_nodes([reader, builder], {reader.node_key: [_ref("raw.x")]}, system=PG) == []
     assert reader.upstream_deps == []
 
 
 def test_a_table_is_built_under_the_name_its_builder_declares_in_any_case():
     reader, builder = _model("reader"), _model("Orders", schema="RAW")
-    assert unknown_external_nodes([reader, builder], {reader.unique_id: [_ref("raw.orders")]}, system=PG) == []
+    assert unknown_external_nodes([reader, builder], {reader.node_key: [_ref("raw.orders")]}, system=PG) == []
 
 
 def test_a_table_written_under_an_alias_is_not_unknown_external():
     reader, builder = _model("reader"), _model("orders_v2", alias="orders")
-    assert unknown_external_nodes([reader, builder], {reader.unique_id: [_ref("analytics.orders")]}, system=PG) == []
+    assert unknown_external_nodes([reader, builder], {reader.node_key: [_ref("analytics.orders")]}, system=PG) == []
     assert reader.upstream_deps == []
 
 
 def test_a_table_read_under_the_declared_name_of_an_aliased_node_is_not_unknown_external():
     reader, builder = _model("reader"), _model("orders_v2", alias="orders")
-    assert unknown_external_nodes([reader, builder], {reader.unique_id: [_ref("analytics.orders_v2")]}, system=PG) == []
+    assert unknown_external_nodes([reader, builder], {reader.node_key: [_ref("analytics.orders_v2")]}, system=PG) == []
 
 
 def test_a_test_does_not_build_the_table_it_is_named_after():
@@ -213,20 +213,20 @@ def test_a_test_does_not_build_the_table_it_is_named_after():
     matches is still read from outside."""
     reader = _model("reader")
     test = _model("probe", schema="raw", node_type=NodeType.DBT_TEST)
-    out = unknown_external_nodes([reader, test], {reader.unique_id: [_ref("raw.probe")]}, system=PG)
+    out = unknown_external_nodes([reader, test], {reader.node_key: [_ref("raw.probe")]}, system=PG)
     assert [n.unique_id for n in out] == ["raw.probe"]
 
 
 def test_system_tables_never_make_a_node():
     reader = _model("reader")
-    reads = {reader.unique_id: [_ref("pg_catalog.pg_class"), _ref("information_schema.tables")]}
+    reads = {reader.node_key: [_ref("pg_catalog.pg_class"), _ref("information_schema.tables")]}
     assert unknown_external_nodes([reader], reads, system=PG) == []
     assert reader.upstream_deps == []
 
 
 def test_a_system_table_beside_an_outside_table_leaves_only_the_outside_one():
     reader = _model("reader")
-    reads = {reader.unique_id: [_ref("pg_catalog.pg_class"), _ref("raw.ext")]}
+    reads = {reader.node_key: [_ref("pg_catalog.pg_class"), _ref("raw.ext")]}
     assert [n.unique_id for n in unknown_external_nodes([reader], reads, system=PG)] == ["raw.ext"]
     assert [d.unique_id for d in reader.upstream_deps] == ["raw.ext"]
 
@@ -236,7 +236,7 @@ def test_a_test_reading_an_outside_table_makes_nothing():
     that reads nothing outside yields no node and keeps its upstreams."""
     model = _model("orders")
     test = _model("not_null_orders_id", schema="analytics_audit", node_type=NodeType.DBT_TEST)
-    assert unknown_external_nodes([model, test], {model.unique_id: []}, system=PG) == []
+    assert unknown_external_nodes([model, test], {model.node_key: []}, system=PG) == []
     assert test.upstream_deps == []
 
 
@@ -244,26 +244,26 @@ def test_a_test_with_reads_still_gets_no_edge_and_makes_no_node():
     """A test that reaches the function with reads is ignored all the same: the
     function never gives a test an edge."""
     test = _model("probe", schema="analytics_audit", node_type=NodeType.DBT_TEST)
-    assert unknown_external_nodes([test], {test.unique_id: [_ref("raw.ext")]}, system=PG) == []
+    assert unknown_external_nodes([test], {test.node_key: [_ref("raw.ext")]}, system=PG) == []
     assert test.upstream_deps == []
 
 
 def test_two_services_reading_one_table_share_one_node():
     a, b = _model("reader_a", service="service-1"), _model("reader_b", service="service-2")
-    out = unknown_external_nodes([a, b], {a.unique_id: [_ref("raw.ext")], b.unique_id: [_ref("raw.ext")]}, system=PG)
+    out = unknown_external_nodes([a, b], {a.node_key: [_ref("raw.ext")], b.node_key: [_ref("raw.ext")]}, system=PG)
     assert [n.unique_id for n in out] == ["raw.ext"]
     assert [d.unique_id for d in a.upstream_deps] == ["raw.ext"] == [d.unique_id for d in b.upstream_deps]
 
 
 def test_nodes_come_out_sorted_by_unique_id():
     a = _model("reader")
-    out = unknown_external_nodes([a], {a.unique_id: [_ref("raw.z"), _ref("raw.a"), _ref("raw.m")]}, system=PG)
+    out = unknown_external_nodes([a], {a.node_key: [_ref("raw.z"), _ref("raw.a"), _ref("raw.m")]}, system=PG)
     assert [n.unique_id for n in out] == ["raw.a", "raw.m", "raw.z"]
 
 
 def test_the_output_does_not_depend_on_the_order_of_the_readers():
     a, b = _model("reader_a"), _model("reader_b")
-    reads = {a.unique_id: [_ref("raw.z")], b.unique_id: [_ref("raw.a")]}
+    reads = {a.node_key: [_ref("raw.z")], b.node_key: [_ref("raw.a")]}
     forward = [n.unique_id for n in unknown_external_nodes([a, b], reads, system=PG)]
     c, d = _model("reader_a"), _model("reader_b")
     backward = [n.unique_id for n in unknown_external_nodes([d, c], reads, system=PG)]
@@ -274,15 +274,15 @@ def test_a_python_csv_node_makes_nothing():
     """A python-csv node has no SQL, so the handler records no table for it."""
     csv = _model("prices", schema="raw", node_type=NodeType.PYTHON_CSV)
     csv.csv_source = "s3://bucket/prices.csv"
-    reads = {csv.unique_id: referenced_tables(csv, dialect="postgres")}
-    assert reads == {csv.unique_id: []}
+    reads = {csv.node_key: referenced_tables(csv, dialect="postgres")}
+    assert reads == {csv.node_key: []}
     assert unknown_external_nodes([csv], reads, system=PG) == []
     assert csv.upstream_deps == []
 
 
 def test_a_python_node_reading_an_outside_table_behaves_like_a_dbt_model():
     py = _model("scores", node_type=NodeType.PYTHON_NODE, sql="SELECT id FROM raw.ext")
-    reads = {py.unique_id: referenced_tables(py, dialect="postgres")}
+    reads = {py.node_key: referenced_tables(py, dialect="postgres")}
     out = unknown_external_nodes([py], reads, system=PG)
     assert [n.unique_id for n in out] == ["raw.ext"]
     assert [d.unique_id for d in py.upstream_deps] == ["raw.ext"]
@@ -290,12 +290,12 @@ def test_a_python_node_reading_an_outside_table_behaves_like_a_dbt_model():
 
 def test_a_node_with_no_reads_entry_gets_no_edge():
     a, b = _model("reader"), _model("silent")
-    unknown_external_nodes([a, b], {a.unique_id: [_ref("raw.ext")]}, system=PG)
+    unknown_external_nodes([a, b], {a.node_key: [_ref("raw.ext")]}, system=PG)
     assert b.upstream_deps == []
 
 
 def test_no_outside_table_means_no_node_and_no_change():
     a = _model("reader")
-    assert unknown_external_nodes([a], {a.unique_id: []}, system=PG) == []
+    assert unknown_external_nodes([a], {a.node_key: []}, system=PG) == []
     assert unknown_external_nodes([], {}, system=PG) == []
     assert a.upstream_deps == []

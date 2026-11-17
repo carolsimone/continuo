@@ -16,8 +16,8 @@ func csvEvidence() CsvEvidence {
 		ErrorExcerpt:  "csv header missing declared column(s): ['customer_id']",
 		RunnerLog:     "continuo-runtime: validating analytics.py_csv_orders\nFAILED",
 		ContractEntry: `{"output_columns":[{"name":"customer_id"}],"reads":{"csv":"s3://exports/orders/orders.csv"}}`,
-		YAMLPath:      "services/service-csv/contracts/py_csv_orders.yml",
-		YAMLText:      "nodes:\n  - schema: analytics\n    table: py_csv_orders\n    kind: python-csv\n",
+		YAMLPath:      "services/service-csv/contracts/py_csv_orders.odcs.yaml",
+		YAMLText:      "apiVersion: v3.2.0\nkind: DataContract\nid: analytics.py_csv_orders\n",
 		UpstreamChanges: []UpstreamChange{
 			{NodeID: "analytics.orders", Depth: 1, CodeDiff: "-  revenue\n+  revenue_amount", ConfigDiff: "+materialized: table"},
 		},
@@ -31,7 +31,7 @@ func csvEvidence() CsvEvidence {
 				Attempt:     1,
 				VerifyError: "verification failed: customer_id still missing",
 				Diffs: []AttemptDiff{
-					{Path: "services/service-csv/contracts/py_csv_orders.yml", Diff: "-    - name: cust_id\n+    - name: customer_id"},
+					{Path: "services/service-csv/contracts/py_csv_orders.odcs.yaml", Diff: "-    - name: cust_id\n+    - name: customer_id"},
 				},
 			},
 		},
@@ -55,8 +55,8 @@ func TestAssembleCsvContractFix_RendersEverySection(t *testing.T) {
 	// The contract entry is canonical JSON and the declaring file is yaml; each
 	// is fenced as what it is so the model does not have to guess.
 	require.Contains(t, u, "```json\n"+`{"output_columns":[{"name":"customer_id"}],"reads":{"csv":"s3://exports/orders/orders.csv"}}`)
-	require.Contains(t, u, "```yaml\nnodes:\n  - schema: analytics\n    table: py_csv_orders\n    kind: python-csv\n")
-	require.Contains(t, u, "services/service-csv/contracts/py_csv_orders.yml")
+	require.Contains(t, u, "```yaml\napiVersion: v3.2.0\nkind: DataContract\nid: analytics.py_csv_orders\n")
+	require.Contains(t, u, "services/service-csv/contracts/py_csv_orders.odcs.yaml")
 
 	// Upstream changes and precedent.
 	require.Contains(t, u, "analytics.orders")
@@ -78,8 +78,8 @@ func TestAssembleCsvContractFix_SectionsOmittedWhenAbsent(t *testing.T) {
 	req := AssembleCsvContractFix(CsvEvidence{
 		NodeID:       "analytics.py_csv_orders",
 		ErrorExcerpt: "boom",
-		YAMLPath:     "contracts/py.yml",
-		YAMLText:     "nodes: []\n",
+		YAMLPath:     "contracts/py_csv_orders.odcs.yaml",
+		YAMLText:     "id: analytics.py_csv_orders\n",
 	})
 	u := req.User
 
@@ -121,15 +121,22 @@ func TestAssembleCsvContractFix_ToolSchema(t *testing.T) {
 // TestAssembleCsvContractFix_SystemPromptScopesTheEdit pins the rules that
 // keep a csv contract fix from breaking the release it is meant to repair,
 // and that keep it a genuinely different prompt from the python-node lane's:
-// the model must be told what a fix may touch (output_columns, the csv uri),
-// that the "csv" read may never be deleted or renamed, and that the node's
-// kind is identity it may never change.
+// the model must be told what a fix may touch (the columns of
+// schema[0].properties, the csvSource uri), that the csvSource may never be
+// deleted or renamed, and that the node's kind is identity it may never
+// change. The file it edits is described as it is: one ODCS contract per node
+// at contracts/<table>.odcs.yaml with its id.
 func TestAssembleCsvContractFix_SystemPromptScopesTheEdit(t *testing.T) {
 	sys := AssembleCsvContractFix(csvEvidence()).System
 	lower := strings.ToLower(sys)
 
-	require.Contains(t, lower, "output_columns")
-	require.Contains(t, lower, "csv:")
+	require.Contains(t, sys, "contracts/<table>.odcs.yaml")
+	require.Contains(t, sys, "one contract per node")
+	require.Contains(t, sys, `id is "<schema>.<table>"`)
+	require.Contains(t, sys, "schema[0].properties")
+	require.Contains(t, sys, "csvSource")
+	require.NotContains(t, sys, "nodes:")
+	require.NotContains(t, sys, "output_columns")
 	require.Contains(t, lower, "never")
 	require.Contains(t, lower, "deleted or renamed")
 	require.Contains(t, lower, "kind")

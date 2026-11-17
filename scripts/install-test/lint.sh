@@ -495,7 +495,7 @@ grep -qF 'services[run-controller].volumes[extra-config]: configMap.name is empt
 # the chart, the file's text becomes a named template (`probe.notes`) that a
 # ConfigMap includes, and `helm template --is-upgrade` or without it sets
 # .Release.IsUpgrade to true or false for it.
-echo "--- NOTES.txt: the schedules, validation re-pin, catalog backup, catalog Postgres and ServiceAccount notes print on upgrade and not on install"
+echo "--- NOTES.txt: the schedules, validation re-pin, catalog backup, contracts S3, catalog Postgres and ServiceAccount notes print on upgrade and not on install"
 schedules_note='Schedules are no longer read from the chart: every cron stops until it is set again in the ui (Edit cron) or with `continuo schedule set-cron`.'
 notes_chart="${tmp}/notes-chart"
 cp -R "$CHART" "$notes_chart"
@@ -550,6 +550,26 @@ helm template continuo "$notes_chart" --kube-version "$KUBE_VERSION" --is-upgrad
   || { echo "FAIL: rendering NOTES.txt as an upgrade with the backup off failed"; exit 1; }
 if grep -qF "$backup_note" "${tmp}/notes-upgrade-backup-off.txt"; then
   echo "FAIL: the upgrade notes carry the catalog backup note although the backup is off"; exit 1
+fi
+# An upgrading operator on their own bucket (minio.enabled=false) is told once
+# what S3 access topology-controller's contract bundle needs and what catalog's
+# live folder needs; an installing one, and one on the bundled MinIO, are told
+# nothing.
+contracts_s3_note='topology-controller now reads the contract bundle key before it writes it'
+helm template continuo "$notes_chart" --kube-version "$KUBE_VERSION" --is-upgrade \
+  --set minio.enabled=false --set s3.endpointUrl=https://s3.eu-central-1.amazonaws.com \
+  --set s3.bucket=continuo --set s3.region=eu-central-1 --set s3.accessKeyId=probe --set s3.secretKey=probe \
+  --show-only templates/probe.yaml > "${tmp}/notes-upgrade-byo.txt" \
+  || { echo "FAIL: rendering NOTES.txt as an upgrade on an external bucket failed"; exit 1; }
+[ "$(grep -cF "$contracts_s3_note" "${tmp}/notes-upgrade-byo.txt")" = 1 ] \
+  || { echo "FAIL: the upgrade notes on an external bucket do not say exactly once what S3 access the contract bundle needs"; exit 1; }
+grep -qF 'tenants/<tenant>/contracts/live/' "${tmp}/notes-upgrade-byo.txt" \
+  || { echo "FAIL: the upgrade notes on an external bucket do not name catalog's live folder prefix"; exit 1; }
+if grep -qF "$contracts_s3_note" "${tmp}/notes-upgrade.txt"; then
+  echo "FAIL: the upgrade notes on the bundled MinIO carry the contract bundle S3 note"; exit 1
+fi
+if grep -qF "$contracts_s3_note" "${tmp}/notes-install.txt"; then
+  echo "FAIL: the install notes carry the contract bundle S3 note"; exit 1
 fi
 # An upgrading operator is told once that catalog's services entry carries no
 # Postgres keys, since a POSTGRES_DB left there renders an init container that
@@ -918,6 +938,134 @@ shadows="$(deployment_env_entries catalog "${tmp}/defaults.yaml" 'CATALOG_BACKUP
   || { echo "FAIL: the default render has no Deployment named catalog"; exit 1; }
 if [ -n "$shadows" ]; then
   echo "FAIL: catalog's own env must not shadow the ConfigMap's CATALOG_BACKUP_* keys:"; echo "$shadows"; exit 1
+fi
+
+# contracts.publish.server.{host,port,database} and
+# catalog.contractHistory.retentionDays reach catalog through the shared
+# ConfigMap as CONTRACTS_SERVER_HOST, CONTRACTS_SERVER_PORT,
+# CONTRACTS_SERVER_DATABASE and CONTRACT_HISTORY_RETENTION_DAYS. With a host, a
+# port outside 1 to 65535 or no database to bind (the database falls back to
+# validation.warehouseDatabase) fails the render and names the key, and so does
+# a retention that is not a whole number from 0 to 36500, in the helpers as well as
+# in the schema (the helpers refuse them with the schema check skipped). A key
+# the schema does not name is refused, and values without a contracts or
+# catalog.contractHistory block (as `helm upgrade --reuse-values` can produce)
+# render the defaults.
+echo "--- contracts.publish.server and catalog.contractHistory reach the ConfigMap; values catalog cannot honour are refused"
+grep -qF 'CONTRACTS_SERVER_HOST: ""' "${tmp}/defaults.yaml" \
+  || { echo "FAIL: the default render does not set CONTRACTS_SERVER_HOST to empty"; exit 1; }
+grep -qF 'CONTRACTS_SERVER_PORT: "0"' "${tmp}/defaults.yaml" \
+  || { echo "FAIL: the default render does not set CONTRACTS_SERVER_PORT to 0"; exit 1; }
+grep -qF 'CONTRACTS_SERVER_DATABASE: "continuo_dbt"' "${tmp}/defaults.yaml" \
+  || { echo "FAIL: the default render does not fall back to validation.warehouseDatabase for CONTRACTS_SERVER_DATABASE"; exit 1; }
+grep -qF 'CONTRACT_HISTORY_RETENTION_DAYS: "0"' "${tmp}/defaults.yaml" \
+  || { echo "FAIL: the default render does not set CONTRACT_HISTORY_RETENTION_DAYS to 0"; exit 1; }
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set contracts.publish.server.host=warehouse.internal --set contracts.publish.server.port=5432 \
+  --set catalog.contractHistory.retentionDays=30 > "${tmp}/contracts-set.yaml"
+grep -qF 'CONTRACTS_SERVER_HOST: "warehouse.internal"' "${tmp}/contracts-set.yaml" \
+  || { echo "FAIL: contracts.publish.server.host does not reach the shared ConfigMap"; exit 1; }
+grep -qF 'CONTRACTS_SERVER_PORT: "5432"' "${tmp}/contracts-set.yaml" \
+  || { echo "FAIL: contracts.publish.server.port does not reach the shared ConfigMap"; exit 1; }
+grep -qF 'CONTRACTS_SERVER_DATABASE: "continuo_dbt"' "${tmp}/contracts-set.yaml" \
+  || { echo "FAIL: a host with no database must use validation.warehouseDatabase"; exit 1; }
+grep -qF 'CONTRACT_HISTORY_RETENTION_DAYS: "30"' "${tmp}/contracts-set.yaml" \
+  || { echo "FAIL: catalog.contractHistory.retentionDays does not reach the shared ConfigMap"; exit 1; }
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set contracts.publish.server.host=warehouse.internal --set contracts.publish.server.port=5432 \
+  --set validation.warehouseDatabase=other_dbt > "${tmp}/contracts-fallback.yaml"
+grep -qF 'CONTRACTS_SERVER_DATABASE: "other_dbt"' "${tmp}/contracts-fallback.yaml" \
+  || { echo "FAIL: contracts.publish.server.database must fall back to a changed validation.warehouseDatabase"; exit 1; }
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set contracts.publish.server.host=warehouse.internal --set contracts.publish.server.port=5432 \
+  --set contracts.publish.server.database=analytics > "${tmp}/contracts-database.yaml"
+grep -qF 'CONTRACTS_SERVER_DATABASE: "analytics"' "${tmp}/contracts-database.yaml" \
+  || { echo "FAIL: contracts.publish.server.database must win over validation.warehouseDatabase"; exit 1; }
+# A host that is blank after trimming is no host: no servers entry, whatever
+# the port. A host and a database with blanks around them render trimmed.
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set-string 'contracts.publish.server.host=   ' > "${tmp}/contracts-blank-host.yaml" \
+  || { echo "FAIL: a blank contracts.publish.server.host must render as no host"; exit 1; }
+grep -qF 'CONTRACTS_SERVER_HOST: ""' "${tmp}/contracts-blank-host.yaml" \
+  || { echo "FAIL: a blank contracts.publish.server.host must reach the ConfigMap as an empty host"; exit 1; }
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set-string 'contracts.publish.server.host= warehouse.internal ' --set contracts.publish.server.port=5432 \
+  --set-string 'contracts.publish.server.database=  analytics ' > "${tmp}/contracts-padded.yaml" \
+  || { echo "FAIL: a padded contracts.publish.server host and database must render"; exit 1; }
+grep -qF 'CONTRACTS_SERVER_HOST: "warehouse.internal"' "${tmp}/contracts-padded.yaml" \
+  && grep -qF 'CONTRACTS_SERVER_DATABASE: "analytics"' "${tmp}/contracts-padded.yaml" \
+  || { echo "FAIL: a padded contracts.publish.server host and database must reach the ConfigMap trimmed"; exit 1; }
+# A blank database is no database: the value falls back to
+# validation.warehouseDatabase.
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set contracts.publish.server.host=warehouse.internal --set contracts.publish.server.port=5432 \
+  --set-string 'contracts.publish.server.database=   ' > "${tmp}/contracts-blank-database.yaml" \
+  || { echo "FAIL: a blank contracts.publish.server.database must fall back to validation.warehouseDatabase"; exit 1; }
+grep -qF 'CONTRACTS_SERVER_DATABASE: "continuo_dbt"' "${tmp}/contracts-blank-database.yaml" \
+  || { echo "FAIL: a blank contracts.publish.server.database must reach the ConfigMap as validation.warehouseDatabase"; exit 1; }
+# expect_contracts_refused KEY ARG...: helm template with the ARGs fails and
+# names KEY, with the schema check and again without it. The schema check names
+# a key as a JSON pointer (/a/b/c), the helpers as a dotted path (a.b.c).
+expect_contracts_refused() {
+  local key="$1" out
+  local pointer
+  pointer="/$(printf '%s' "$key" | tr . /)"
+  shift
+  if out="$(helm template continuo "$CHART" --kube-version "$KUBE_VERSION" "$@" 2>&1)"; then
+    echo "FAIL: $* must fail the render"; exit 1
+  fi
+  { grep -qF "$key" <<<"$out" || grep -qF "$pointer" <<<"$out"; } \
+    || { echo "FAIL: the render refusing $* does not name ${key}:"; echo "$out"; exit 1; }
+  if out="$(helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --skip-schema-validation "$@" 2>&1)"; then
+    echo "FAIL: $* must fail the render even with the schema check skipped"; exit 1
+  fi
+  grep -qF "$key" <<<"$out" \
+    || { echo "FAIL: the render refusing $* with the schema check skipped does not name ${key}:"; echo "$out"; exit 1; }
+}
+server_key=contracts.publish.server
+expect_contracts_refused "${server_key}.port" --set "${server_key}.host=warehouse.internal"
+expect_contracts_refused "${server_key}.port" --set "${server_key}.host=warehouse.internal" --set "${server_key}.port=0"
+expect_contracts_refused "${server_key}.port" --set "${server_key}.host=warehouse.internal" --set "${server_key}.port=70000"
+expect_contracts_refused "${server_key}.port" --set "${server_key}.host=warehouse.internal" --set "${server_key}.port=-1"
+expect_contracts_refused "${server_key}.port" --set "${server_key}.host=warehouse.internal" --set-string "${server_key}.port=5432"
+expect_contracts_refused "${server_key}.database" --set "${server_key}.host=warehouse.internal" --set "${server_key}.port=5432" \
+  --set-string validation.warehouseDatabase=
+expect_contracts_refused "${server_key}.database" --set "${server_key}.host=warehouse.internal" --set "${server_key}.port=5432" \
+  --set-string validation.warehouseDatabase='   '
+expect_contracts_refused "${server_key}.database" --set "${server_key}.host=warehouse.internal" --set "${server_key}.port=5432" \
+  --set-string "${server_key}.database=  " --set-string validation.warehouseDatabase='  '
+expect_contracts_refused "${server_key}.port" --set-string "${server_key}.host= warehouse.internal "
+expect_contracts_refused catalog.contractHistory.retentionDays --set catalog.contractHistory.retentionDays=-1
+expect_contracts_refused catalog.contractHistory.retentionDays --set-string catalog.contractHistory.retentionDays=x
+expect_contracts_refused catalog.contractHistory.retentionDays --set-string catalog.contractHistory.retentionDays=30
+expect_contracts_refused catalog.contractHistory.retentionDays --set catalog.contractHistory.retentionDays=1.5
+# 36500 days (100 years) is the largest retention. Above it, catalog's
+# time.Duration of the days would overflow into a retention the sweeper reads
+# as its 7-day default, so a "keep forever" value such as 999999 is refused.
+expect_contracts_refused catalog.contractHistory.retentionDays --set catalog.contractHistory.retentionDays=36501
+expect_contracts_refused catalog.contractHistory.retentionDays --set catalog.contractHistory.retentionDays=999999
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set catalog.contractHistory.retentionDays=36500 > "${tmp}/contracts-max-retention.yaml" \
+  || { echo "FAIL: catalog.contractHistory.retentionDays=36500 must render"; exit 1; }
+grep -qF 'CONTRACT_HISTORY_RETENTION_DAYS: "36500"' "${tmp}/contracts-max-retention.yaml" \
+  || { echo "FAIL: catalog.contractHistory.retentionDays=36500 does not reach the shared ConfigMap"; exit 1; }
+for unknown in contracts.bogus=1 contracts.publish.bogus=1 contracts.publish.server.bogus=1 catalog.contractHistory.bogus=1; do
+  if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set "${unknown}" > /dev/null 2>&1; then
+    echo "FAIL: ${unknown} must fail the render; the schema names no such key"; exit 1
+  fi
+done
+for absent in contracts=null contracts.publish=null contracts.publish.server=null catalog.contractHistory=null catalog=null; do
+  helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set "${absent}" > "${tmp}/contracts-absent.yaml" \
+    || { echo "FAIL: rendering with ${absent} failed; values without a contracts block must render"; exit 1; }
+  grep -qF 'CONTRACTS_SERVER_HOST: ""' "${tmp}/contracts-absent.yaml" \
+    && grep -qF 'CONTRACTS_SERVER_PORT: "0"' "${tmp}/contracts-absent.yaml" \
+    && grep -qF 'CONTRACT_HISTORY_RETENTION_DAYS: "0"' "${tmp}/contracts-absent.yaml" \
+    || { echo "FAIL: a release with ${absent} must get the default contracts settings"; exit 1; }
+done
+shadows="$(deployment_env_entries catalog "${tmp}/defaults.yaml" 'CONTRACTS_SERVER_HOST|CONTRACTS_SERVER_PORT|CONTRACTS_SERVER_DATABASE|CONTRACT_HISTORY_RETENTION_DAYS')" \
+  || { echo "FAIL: the default render has no Deployment named catalog"; exit 1; }
+if [ -n "$shadows" ]; then
+  echo "FAIL: catalog's own env must not shadow the ConfigMap's CONTRACTS_* keys:"; echo "$shadows"; exit 1
 fi
 
 # maintenance.enabled reaches every service through the shared ConfigMap as

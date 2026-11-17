@@ -11,8 +11,8 @@ import (
 // The loop scenario's contract fixture, as this test's working directory sees
 // it and as the repository path the prompt names it by.
 const (
-	loopFixtureFile = "../fixtures/py-remediation-repo/services/svc-py-e2e-loop/contracts/py_loop_read.yml"
-	loopFixturePath = "services/svc-py-e2e-loop/contracts/py_loop_read.yml"
+	loopFixtureFile = "../fixtures/py-remediation-repo/services/svc-py-e2e-loop/contracts/py_loop_read.odcs.yaml"
+	loopFixturePath = "services/svc-py-e2e-loop/contracts/py_loop_read.odcs.yaml"
 )
 
 // priorAttemptSection is the earlier-attempts section a retry's prompt carries,
@@ -133,7 +133,7 @@ func TestProposePythonFix_LoopFixture_FirstAttemptStaysBroken(t *testing.T) {
 // comments name every relation the stub knows about must still get a first
 // attempt's answer.
 func TestProposePythonFix_LoopFixture_CommentsCannotAnswerForTheModel(t *testing.T) {
-	contract := strings.Replace(readLoopFixture(t), "nodes:\n", "nodes:\n"+
+	contract := strings.Replace(readLoopFixture(t), "customProperties:\n", "customProperties:\n"+
 		"  # the first answer points at "+stillBrokenRead+", the retry at "+bindingRead+"\n"+
 		"  # "+priorAttemptsHeading+"\n", 1)
 
@@ -246,7 +246,7 @@ func TestProposePythonFix_LoopFixture_RevisionInTheFirstTryStaysBroken(t *testin
 // scenario, whose node is repaired in a single attempt: the fixture declaring
 // badReadBrokenRead gets the binding relation straight away.
 func TestProposePythonFix_BadReadFixtureBindsImmediately(t *testing.T) {
-	raw, err := os.ReadFile("../fixtures/py-remediation-repo/services/svc-py-e2e/contracts/py_bad_read.yml")
+	raw, err := os.ReadFile("../fixtures/py-remediation-repo/services/svc-py-e2e/contracts/py_bad_read.odcs.yaml")
 	if err != nil {
 		t.Fatalf("read the single-attempt contract fixture: %v", err)
 	}
@@ -278,7 +278,7 @@ func pythonParseFixPrompt(contract string) string {
 	var b strings.Builder
 	b.WriteString("Failed python node: e2e_schema.py_unqualified_read\n\n")
 	b.WriteString("SQL parse error:\n```\nunqualified table reference `right_name` in node `py_unqualified_read`\n```\n\n")
-	b.WriteString("Contract file services/svc-py-e2e-parse/contracts/py_unqualified_read.yml that declares it:\n```yaml\n" + contract + "\n```\n\n")
+	b.WriteString("Contract file services/svc-py-e2e-parse/contracts/py_unqualified_read.odcs.yaml that declares it:\n```yaml\n" + contract + "\n```\n\n")
 	b.WriteString("Return the complete new content of every file you change.")
 	return b.String()
 }
@@ -287,14 +287,14 @@ func pythonParseFixPrompt(contract string) string {
 // prompt carrying the parser's error gets the fixture's read back with its
 // relation schema-qualified, and nothing else about the contract changed.
 func TestProposePythonFix_ParseFixtureQualifiesTheRead(t *testing.T) {
-	raw, err := os.ReadFile("../fixtures/py-remediation-repo/services/svc-py-e2e-parse/contracts/py_unqualified_read.yml")
+	raw, err := os.ReadFile("../fixtures/py-remediation-repo/services/svc-py-e2e-parse/contracts/py_unqualified_read.odcs.yaml")
 	if err != nil {
 		t.Fatalf("read the parse contract fixture: %v", err)
 	}
 
 	path, content := proposedFile(t, pythonParseFixPrompt(string(raw)))
 
-	if path != "services/svc-py-e2e-parse/contracts/py_unqualified_read.yml" {
+	if path != "services/svc-py-e2e-parse/contracts/py_unqualified_read.odcs.yaml" {
 		t.Errorf("the answer must name the declaring contract file; got %q", path)
 	}
 	if !strings.Contains(content, "select id from "+bindingRead) {
@@ -303,7 +303,7 @@ func TestProposePythonFix_ParseFixtureQualifiesTheRead(t *testing.T) {
 	if strings.Contains(content, "select id from "+unqualifiedRead+"\n") {
 		t.Errorf("the unqualified read must not survive the repair; got:\n%s", content)
 	}
-	if !strings.Contains(content, "table: py_unqualified_read") {
+	if !strings.Contains(content, "id: e2e_schema.py_unqualified_read") {
 		t.Errorf("the repair must keep declaring the same node; got:\n%s", content)
 	}
 }

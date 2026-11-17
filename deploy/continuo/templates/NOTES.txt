@@ -28,7 +28,7 @@ UPGRADE NOTES
   rebuilt on continuo-python-runtime 0.12.0 first) with "bootstrap": true and
   "rebaseline": true, so nothing is validated or reloaded; the steps are in
   deploy/README.md, "Re-baseline after a fingerprint change".
-  The default validation image is now v0.12.0.
+  The default validation image is now v0.13.0.
   An overridden dbt-commands file whose run commands parse with other --vars,
   --target, --profile, --profiles-dir or --project-dir values than its compile
   command stops execution-controller from starting.
@@ -105,6 +105,30 @@ catalog needs the same access to tenants/ as release-controller (read, write
 and delete) plus s3:AbortMultipartUpload; an install with per-pod IAM roles
 grants it to catalog's role.
 To run no exports, set catalog.backup.enabled=false.
+{{- end }}
+
+{{- if and .Release.IsUpgrade (not .Values.minio.enabled) }}
+
+With your own bucket (s3.*), three grants change:
+  * topology-controller now reads the contract bundle key before it writes it
+    (tenants/<tenant>/topologies/<release>/contracts.json.gz, so a release
+    that is redelivered never rewrites it). Grant its role s3:GetObject on
+    tenants/ and s3:ListBucket on the bucket, scoped to the prefix tenants/,
+    so that a key never written reads as missing (404), not as forbidden
+    (403): a 403 fails the release with the reason internal.
+  * catalog writes the live contracts folder, tenants/<tenant>/contracts/live/:
+    grant its role s3:GetObject, s3:PutObject, s3:DeleteObject and
+    s3:ListBucket on that prefix.
+  * agent-remediation reads the package list of a Python fix's image from the
+    rejected release's contract bundle (tenants/<tenant>/topologies/<release>/
+    contracts.json.gz) or, for a release with none, from
+    <service>/<release>/odcs-bundle.json. Grant its role s3:GetObject on both
+    and s3:ListBucket on the bucket for the prefixes tenants/ and each Python
+    service's own, so a missing bundle reads as 404 (no fix is proposed for the
+    node) and not 403 (the remediation retries and ends as a system failure).
+The chart's shared key already covers tenants/, so an install on the key the
+chart configures needs nothing. deploy/continuo/README.md, "S3 access", has
+the table.
 {{- end }}
 
 {{- if and .Release.IsUpgrade (not .Values.postgresql.enabled) }}

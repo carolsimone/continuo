@@ -54,7 +54,11 @@ the estate, then parses the release twice with the same estate and one in-memory
 S3:
 
 - the `cold` pass is the first parse of a new process, so nothing in it is warm;
-- the `warm` pass parses the same release again in the same process.
+- the `warm` pass parses the same manifests again in the same process. The
+  contract validator's cache already holds every contract, so the warm pass runs
+  no ODCS schema check. Each pass has a release id of its own (`rel-bench-cold`,
+  `rel-bench-warm`). The contract bundle is written once per release, so the
+  warm pass writes its own instead of reading back the cold pass's.
 
 The child's own log lines go to its stderr, formatted as `main.py` formats them,
 so the handler pays the logging cost it pays in production. The parent drops a
@@ -68,7 +72,9 @@ of that child's stderr and exits 1.
 bytes and every baseline parses the same estate.
 
 - 10 dbt services, `svc-0` to `svc-9`, with the models split evenly, and one
-  python service, `svc-py`, of one node per ten models.
+  python service, `svc-py`, of one node per ten models. `svc-py` is written as
+  its `odcs-bundle.json` (kind `python-odcs`), one ODCS contract per node with
+  its read queries, valid under continuo-contracts 0.2.0.
 - Each model has `--columns` columns, a compiled SQL of a CTE over one upstream,
   a window sum and a left join to a second, and two generic not-null tests.
 - Each dbt service has one seed, and a `compile-extras.json` beside its manifest.

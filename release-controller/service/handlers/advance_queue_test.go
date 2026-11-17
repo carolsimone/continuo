@@ -261,6 +261,45 @@ func TestAdvanceQueue_PythonRelease_SkipsCompile_EmitsReleaseRequested(t *testin
 		"release.requested carries the run's assembled image tags: topology-controller joins exactly these onto every node")
 }
 
+func TestAdvanceQueue_APythonODCSReleaseSkipsCompile(t *testing.T) {
+	deps, store := newDeps(time.Unix(200, 0).UTC())
+	deps.Bucket = "b"
+	store.SeedServiceProd(release.NewServiceProd("svc-dbt", "rOld", "s3://b/svc-dbt/rOld/manifest.json", "t-old", release.ManifestKindDbt, time.Unix(0, 0)))
+	store.SeedServiceProd(release.NewServiceProd("svc-legacy", "rOld", "s3://b/svc-legacy/rOld/contract.yaml", "t-leg", release.ManifestKindPython, time.Unix(0, 0)))
+
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service: "svc-py", ReleaseID: "rOdcs", ImageTag: "img:1", Repo: "acme/py", CommitSHA: "cafebabe",
+		Kind: "python-odcs",
+	}))
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+
+	r, _ := store.GetRelease("rOdcs")
+	assert.Equal(t, release.ManifestKindPythonODCS, r.ManifestKind())
+	assert.Equal(t, pipeline.StatusParsing, r.Status(), "a python-odcs release activates straight into Parsing")
+
+	entries := outboxEntries(store)
+	require.Len(t, entries, 1)
+	assert.Equal(t, streams.ReleaseRequestedV1, entries[0].StreamName, "no compile.requested for a python-odcs release")
+
+	var p struct {
+		ManifestKeys []struct {
+			Service string `json:"service"`
+			S3URI   string `json:"s3_uri"`
+			Kind    string `json:"kind"`
+		} `json:"manifest_keys"`
+	}
+	require.NoError(t, json.Unmarshal(entries[0].Payload, &p))
+	kinds := map[string]string{}
+	uris := map[string]string{}
+	for _, k := range p.ManifestKeys {
+		kinds[k.Service] = k.Kind
+		uris[k.Service] = k.S3URI
+	}
+	assert.Equal(t, map[string]string{"svc-py": "python-odcs", "svc-dbt": "dbt", "svc-legacy": "python"}, kinds)
+	assert.Equal(t, "s3://b/svc-py/rOdcs/odcs-bundle.json", uris["svc-py"])
+	assert.Equal(t, "s3://b/svc-legacy/rOld/contract.yaml", uris["svc-legacy"], "a contract.yaml service keeps its pointer")
+}
+
 func TestAdvanceQueue_DbtRelease_StillCompiles(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"

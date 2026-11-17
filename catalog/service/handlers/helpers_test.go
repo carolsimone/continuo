@@ -143,10 +143,12 @@ type fakeGraphTx struct {
 	topology     repository.ReleasePromotionRepository
 	codeVersions repository.CodeVersionRepository
 	caseBase     repository.CaseBaseRepository
+	contracts    repository.ContractRepository
 }
 
 func (t *fakeGraphTx) Topology() repository.ReleasePromotionRepository { return t.topology }
 func (t *fakeGraphTx) CodeVersions() repository.CodeVersionRepository  { return t.codeVersions }
 func (t *fakeGraphTx) CaseBase() repository.CaseBaseRepository         { return t.caseBase }
+func (t *fakeGraphTx) Contracts() repository.ContractRepository        { return t.contracts }
 
 var _ uow.Tx = (*fakeGraphTx)(nil)

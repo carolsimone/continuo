@@ -22,7 +22,9 @@ const TERMINAL = new Set(['promoted', 'rejected', 'superseded']);
 // downstream, so the public API admits only this shape.
 export const RELEASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
-// A release as GET /api/v1/releases/:id answers it.
+// A release as GET /api/v1/releases/:id answers it. continuo_contracts is the
+// version of the continuo-contracts library that read the release's contracts,
+// empty until the parse ends. The contract bundle's location stays internal.
 export interface PublicRelease {
   release_id: string;
   service: string;
@@ -36,6 +38,7 @@ export interface PublicRelease {
   reject_detail: string;
   ui_url: string | null;
   notices: PublicNotice[];
+  continuo_contracts: string;
 }
 
 // A seed reload notice of a release as GET /api/v1/releases/:id answers it:
@@ -151,6 +154,7 @@ export function projectRelease(rel: Record<string, unknown>, publicUrl?: string)
     reject_detail: str(rel.reject_detail),
     ui_url: publicUrl ? `${publicUrl}/releases/${encodeURIComponent(id)}` : null,
     notices: asArray(rel.notices).filter(isObject).map(projectNotice),
+    continuo_contracts: str(rel.continuo_contracts),
   };
 }
 

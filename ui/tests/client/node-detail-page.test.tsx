@@ -1867,3 +1867,140 @@ describe('NodeDetailPage — dialogs of the node the page has left', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 });
+
+describe('NodeDetailPage — tabs', () => {
+  const contractV1 = {
+    unique_id: 'schema.tbl', version: 1, contract_hash: 'sha256:a', release_id: 'rel-1',
+    promoted_at: '2026-11-13T09:02:44Z', content_hash: 'sha256:c', is_current: true,
+    same_as_version: null, continuo_contracts: '0.2.0', ontology_version: '',
+    document_yaml: 'id: schema.tbl\n',
+  };
+
+  // Answers the contract with one version and every other read with an empty history.
+  function serveWithContract() {
+    mockFetch.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/nodes/svc/schema/tbl/contract') {
+        return jsonResp({ contract: contractV1, versions: [{ ...contractV1, document_yaml: undefined }] });
+      }
+      return jsonResp({ tasks: [] });
+    });
+  }
+
+  const contractReads = () =>
+    mockFetch.mock.calls.filter(c => String(c[0]).startsWith('/api/nodes/svc/schema/tbl/contract'));
+
+  function renderAt(search: string) {
+    return render(
+      <MemoryRouter initialEntries={[`/node/svc.schema.tbl${search}`]}>
+        <Routes>
+          <Route path="/node/:fqn" element={<NodeDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+  }
+
+  it('shows the History and Contract tabs, History first and selected', async () => {
+    serveWithContract();
+    renderAt('');
+
+    const tabs = await screen.findAllByRole('tab');
+    expect(tabs.map(t => t.textContent)).toEqual(['History0', 'Contract']);
+    expect(screen.getByRole('tab', { name: /^History/ })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Contract' })).toHaveAttribute('aria-selected', 'false');
+  });
+
+  it('puts the tabs directly under the page header', async () => {
+    serveWithContract();
+    const { container } = renderAt('');
+
+    await screen.findAllByRole('tab');
+    expect(container.querySelector('.page-header')?.nextElementSibling).toBe(screen.getByRole('tablist'));
+  });
+
+  it('shows the node history and reads no contract while History is selected', async () => {
+    serveWithContract();
+    renderAt('');
+
+    expect(await screen.findByText('Node history')).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Current contract' })).not.toBeInTheDocument();
+    expect(contractReads()).toHaveLength(0);
+  });
+
+  it('shows the contract and hides the node history when Contract is selected', async () => {
+    serveWithContract();
+    const user = userEvent.setup();
+    renderAt('');
+
+    await user.click(await screen.findByRole('tab', { name: 'Contract' }));
+
+    expect(await screen.findByRole('region', { name: 'Current contract' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Contract' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByText('Node history')).not.toBeInTheDocument();
+    expect(contractReads()).toHaveLength(1);
+  });
+
+  it('opens on the Contract tab for ?tab=contract', async () => {
+    serveWithContract();
+    renderAt('?tab=contract');
+
+    expect(await screen.findByRole('region', { name: 'Current contract' })).toBeInTheDocument();
+    expect(screen.queryByText('Node history')).not.toBeInTheDocument();
+  });
+
+  it('falls back to History for an unknown tab', async () => {
+    serveWithContract();
+    renderAt('?tab=nope');
+
+    expect(await screen.findByText('Node history')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /^History/ })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('keeps the explanation of the chosen operation on the Contract tab, without the sentence about the history below', async () => {
+    serveWithContract();
+    renderAt('?tab=contract');
+
+    fireEvent.change(await screen.findByLabelText('Operation'), { target: { value: 'build' } });
+    expect(await screen.findByText(/Build runs/)).toBeInTheDocument();
+    expect(screen.queryByText(/These stats combine/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the sentence about the history on the History tab', async () => {
+    serveWithContract();
+    renderAt('');
+
+    fireEvent.change(await screen.findByLabelText('Operation'), { target: { value: 'build' } });
+    expect(await screen.findByText(/These stats combine model \+ tests/)).toBeInTheDocument();
+  });
+
+  it('keeps the back link to the schedule the page was opened from when a tab is clicked', async () => {
+    serveWithContract();
+    const user = userEvent.setup();
+    renderPage({ type: 'schedule', name: 'daily', mode: 'latest' });
+
+    expect(await screen.findByRole('button', { name: /back to daily/i })).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: 'Contract' }));
+    await screen.findByRole('region', { name: 'Current contract' });
+    await user.click(screen.getByRole('tab', { name: /^History/ }));
+    await screen.findByText('Node history');
+
+    await user.click(screen.getByRole('button', { name: /back to daily/i }));
+    expect(await screen.findByText('LATEST MODE')).toBeInTheDocument();
+  });
+
+  it('counts the runs on the History tab and gives the Contract tab no count', async () => {
+    mockFetch.mockImplementation(() => jsonResp({ tasks: [mkRun({ task_id: 't1' }), mkRun({ task_id: 't2', run_id: 'r2' })] }));
+    renderAt('');
+
+    await screen.findByText('Node history');
+    expect(screen.getByRole('tab', { name: /History/ })).toHaveTextContent('History2');
+    expect(screen.getByRole('tab', { name: 'Contract' })).toHaveTextContent(/^Contract$/);
+  });
+
+  it('keeps the run controls on the Contract tab', async () => {
+    serveWithContract();
+    renderAt('?tab=contract');
+
+    expect(await screen.findByRole('button', { name: /run this node/i })).toBeInTheDocument();
+  });
+});

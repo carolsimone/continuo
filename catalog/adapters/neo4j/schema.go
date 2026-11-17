@@ -73,6 +73,8 @@ func (o schemaObject) statement() string {
 //     costs little to keep.
 //   - processed_message_outbox_unique is the marker's second key: a producer's
 //     outbox row re-sent under a new stream message id is the same message.
+//   - contract_version_uid backs the contract reads that start from a node's
+//     unique_id; the identity constraint covers only the full (id, hash) pair.
 var catalogSchema = []schemaObject{
 	identityConstraint("node_unique", graphschema.Node),
 	rangeIndex("node_fqn", graphschema.Node, "service_name", "schema_name", "table_name"),
@@ -91,6 +93,8 @@ var catalogSchema = []schemaObject{
 	identityConstraint("pull_request_unique", graphschema.PullRequest),
 	identityConstraint("processed_message_unique", graphschema.ProcessedMessage),
 	uniqueConstraint("processed_message_outbox_unique", graphschema.ProcessedMessage, "group", "outbox_entry_id"),
+	identityConstraint("contract_version_unique", graphschema.ContractVersion),
+	rangeIndex("contract_version_uid", graphschema.ContractVersion, "unique_id"),
 }
 
 // awaitIndexTimeoutSeconds bounds how long createSchema waits for the indexes

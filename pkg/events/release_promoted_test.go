@@ -110,6 +110,37 @@ func TestDecodeReleasePromoted_RejectsMalformedEntries(t *testing.T) {
 	}
 }
 
+func TestReleasePromoted_CarriesTheContractBundle(t *testing.T) {
+	fx := loadReleasePromotedFixture(t)
+	p := fx.Input.Payload
+	require.Equal(t, "s3://continuo/tenants/default/topologies/rel-2026-10-08-0001/contracts.json.gz", p.ContractBundleURI)
+	require.Equal(t, "9b0c4d1e7a52f3860be1d9c4a7f08e35b216d0a94c7e53f1a8b20d6e49c71f3a", p.ContractBundleSHA256)
+
+	fields, err := events.ReleasePromotedFields("default", "release-controller", time.Unix(0, 0), p)
+	require.NoError(t, err)
+	assert.Contains(t, fields["payload"], `"contract_bundle_uri":"`+p.ContractBundleURI+`"`)
+	assert.Contains(t, fields["payload"], `"contract_bundle_sha256":"`+p.ContractBundleSHA256+`"`)
+
+	_, got, err := events.DecodeReleasePromoted(stringFields(fields))
+	require.NoError(t, err)
+	assert.Equal(t, p.ContractBundleURI, got.ContractBundleURI)
+	assert.Equal(t, p.ContractBundleSHA256, got.ContractBundleSHA256)
+}
+
+func TestDecodeReleasePromoted_AnEntryWithoutTheContractBundleDecodes(t *testing.T) {
+	_, p, err := events.DecodeReleasePromoted(map[string]string{
+		"event_id":       "e",
+		"tenant_id":      "default",
+		"occurred_at":    "2026-10-08T09:31:00.000000Z",
+		"producer":       "release-controller",
+		"schema_version": "1",
+		"payload":        `{"release_id":"rel-1","promotion_seq":3,"topology_uri":"s3://b/k","topology_sha256":"abc","changed_node_ids":[]}`,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, p.ContractBundleURI)
+	assert.Empty(t, p.ContractBundleSHA256)
+}
+
 func TestReleasePromoted_RoundTripsRebaseline(t *testing.T) {
 	fields, err := events.ReleasePromotedFields("default", "release-controller", time.Unix(0, 0), events.ReleasePromoted{
 		ReleaseID: "rel-1", PromotionSeq: 1, TopologyURI: "s3://b/k", TopologySHA256: "abc", Bootstrap: true, Rebaseline: true,

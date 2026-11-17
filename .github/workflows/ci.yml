@@ -51,7 +51,7 @@ jobs:
     # Hard backstop against runaway runs. Without this the job inherits GitHub's
     # 6-hour default, so a stuck step (e.g. a hung image build) can silently burn
     # hours of Actions minutes. Deliberately below the sum of the two step caps
-    # below (50 + 177) and above the e2e step's own cap, so the e2e step's go
+    # below (50 + 187) and above the e2e step's own cap, so the e2e step's go
     # test timeout fires first when setup finishes within its cap, and names
     # the wedged test: it is a backstop against a hang, not a budget any
     # healthy run approaches.
@@ -389,10 +389,10 @@ jobs:
         # Start the ui container, wait for it to become healthy, deploy
         # execution-controller, then run the full e2e suite inside the catalog
         # container where the test code lives. Comfortably exceeds the go
-        # test -timeout below (162m) plus the ui-wait/deploy steps that run
+        # test -timeout below (172m) plus the ui-wait/deploy steps that run
         # first in this same step.
         #
-        # The 162m go timeout is derived, not measured, from the per-test
+        # The 172m go timeout is derived, not measured, from the per-test
         # context deadlines the suite actually carries. Every per-test context
         # must be able to fire first, or an operator gets a goroutine dump
         # instead of a named assertion. It is the sum of:
@@ -406,17 +406,19 @@ jobs:
         #     another. Covering two is the minimum that still buys a named
         #     assertion; covering all thirteen would put the ceiling past 9
         #     hours.
-        #   - 75m for the rest of the suite. A healthy run of every test but
+        #   - 85m for the rest of the suite. A healthy run of every test but
         #     those two in this job, which starts the stack cold, takes at most
-        #     about 60m; 75m leaves about 15m for a slower run.
-        timeout-minutes: 177
+        #     about 70m, the two python-odcs contract tests (28m and 6m
+        #     ceilings) adding about 10m to it; 85m leaves about 15m for a
+        #     slower run.
+        timeout-minutes: 187
         run: |
           source scripts/lib/common.sh
           # CI_HOST_IP is the lane's bind IP on the self-hosted runner (each kind
           # lane's own Docker daemon publishes there); unset on GitHub-hosted.
           docker compose up -d ui && wait_for_http_host "http://${CI_HOST_IP:-localhost}:8090/api/schedules"
           bash tests/e2e/deploy-execution-controller.sh
-          docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -timeout 162m /app/tests/e2e/...
+          docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -timeout 172m /app/tests/e2e/...
 
       - name: Cleanup execution-controller
         if: always()

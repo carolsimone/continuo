@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/carolsimone/continuo/catalog/domain/contractversion"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 )
@@ -51,6 +53,27 @@ const (
 	defaultBackupKeep     = 7
 )
 
+// The environment keys of the contracts install settings, the chart's
+// contracts.publish.server.* and catalog.contractHistory.* values, and the
+// warehouse engine the servers entry's type derives from.
+const (
+	warehouseEngineKey          = "WAREHOUSE_ENGINE"
+	contractsServerHostKey      = "CONTRACTS_SERVER_HOST"
+	contractsServerPortKey      = "CONTRACTS_SERVER_PORT"
+	contractsServerDatabaseKey  = "CONTRACTS_SERVER_DATABASE"
+	contractHistoryRetentionKey = "CONTRACT_HISTORY_RETENTION_DAYS"
+
+	// defaultWarehouseEngine is the engine an install that never chose one runs.
+	defaultWarehouseEngine = "postgres"
+
+	// maxContractHistoryRetentionDays is the largest CONTRACT_HISTORY_RETENTION_DAYS,
+	// 100 years. The retention is a time.Duration of that many days, which
+	// overflows from 106752 days, and pkg/retention reads a retention below 1ns
+	// as its 7-day default, so a larger value would prune where "keep
+	// everything" was meant.
+	maxContractHistoryRetentionDays = 36500
+)
+
 // Config holds all configuration for the catalog service.
 type Config struct {
 	Redis pkgconfig.RedisConfig
@@ -80,11 +103,29 @@ type Config struct {
 
 	// Backup is the nightly export of each tenant's graph.
 	Backup BackupConfig
+
+	// WarehouseEngine is WAREHOUSE_ENGINE, the install's warehouse engine
+	// (postgres or trino; an unset value is postgres). Catalog derives the
+	// published servers entry's type from it and stops at boot on an engine it
+	// cannot map.
+	WarehouseEngine string
+
+	// ContractsServer is the warehouse entry the published contracts carry in
+	// their servers list, from CONTRACTS_SERVER_HOST, CONTRACTS_SERVER_PORT and
+	// CONTRACTS_SERVER_DATABASE. It is nil when no host is set: the published
+	// files then carry no servers entry.
+	ContractsServer *contractversion.Server
+
+	// ContractHistoryRetentionDays is CONTRACT_HISTORY_RETENTION_DAYS: how many
+	// days of contract versions the retention sweeper keeps, from 0 to 36500.
+	// 0 keeps every version.
+	ContractHistoryRetentionDays int
 }
 
 // Load reads configuration from environment variables.
 // v accumulates missing required vars; check v.Missing() after calling.
 func Load(v *pkgconfig.Validator, schedules ports.BackupScheduleParser) Config {
+	engine, server := loadContractsServer(v)
 	return Config{
 		Redis: pkgconfig.LoadRedis(v),
 		Neo4j: LoadNeo4j(v),
@@ -101,6 +142,10 @@ func Load(v *pkgconfig.Validator, schedules ports.BackupScheduleParser) Config {
 		MetricsPort: pkgconfig.LoadMetricsPort(v),
 
 		Backup: loadBackup(v, schedules),
+
+		WarehouseEngine:              engine,
+		ContractsServer:              server,
+		ContractHistoryRetentionDays: loadContractHistoryRetentionDays(v),
 	}
 }
 
@@ -154,6 +199,64 @@ func LoadBackupKeep(v *pkgconfig.Validator) int {
 		return defaultBackupKeep
 	}
 	return keep
+}
+
+// loadContractsServer reads WAREHOUSE_ENGINE and the servers entry's three
+// settings. An engine with no server type is recorded on v, and the entry is
+// then nil. A host that is blank after trimming is no host: the entry is nil
+// and the port and database are not read. With a host, a port outside 1 to
+// 65535 or a database that is blank after trimming is recorded on v and the
+// entry is nil, so catalog refuses to start rather than publish an entry that
+// binds a contract to the wrong table. The host and database are published
+// trimmed.
+func loadContractsServer(v *pkgconfig.Validator) (engine string, server *contractversion.Server) {
+	engine = os.Getenv(warehouseEngineKey)
+	if engine == "" {
+		engine = defaultWarehouseEngine
+	}
+	serverType, err := contractversion.ServerType(engine)
+	if err != nil {
+		v.Add(fmt.Sprintf("%s (unsupported %q: expected postgres or trino)", warehouseEngineKey, engine))
+		return engine, nil
+	}
+	host := strings.TrimSpace(os.Getenv(contractsServerHostKey))
+	if host == "" {
+		return engine, nil
+	}
+	ok := true
+	port, err := strconv.Atoi(os.Getenv(contractsServerPortKey))
+	if err != nil || port < 1 || port > 65535 {
+		v.Add(fmt.Sprintf("%s (invalid value %q: expected a whole number from 1 to 65535 when %s is set)",
+			contractsServerPortKey, os.Getenv(contractsServerPortKey), contractsServerHostKey))
+		ok = false
+	}
+	database := strings.TrimSpace(os.Getenv(contractsServerDatabaseKey))
+	if database == "" {
+		v.Add(fmt.Sprintf("%s (required when %s is set)", contractsServerDatabaseKey, contractsServerHostKey))
+		ok = false
+	}
+	if !ok {
+		return engine, nil
+	}
+	return engine, &contractversion.Server{Type: serverType, Host: host, Port: port, Database: database}
+}
+
+// loadContractHistoryRetentionDays reads CONTRACT_HISTORY_RETENTION_DAYS
+// (default 0, which keeps every version). A value that is not a whole number
+// from 0 to maxContractHistoryRetentionDays is recorded on v and 0 is
+// returned.
+func loadContractHistoryRetentionDays(v *pkgconfig.Validator) int {
+	raw := os.Getenv(contractHistoryRetentionKey)
+	if raw == "" {
+		return 0
+	}
+	days, err := strconv.Atoi(raw)
+	if err != nil || days < 0 || days > maxContractHistoryRetentionDays {
+		v.Add(fmt.Sprintf("%s (invalid value %q: expected a whole number from 0 to %d)",
+			contractHistoryRetentionKey, raw, maxContractHistoryRetentionDays))
+		return 0
+	}
+	return days
 }
 
 func envInt(key string, fallback int) int { return pkgconfig.EnvIntOrDefault(key, fallback) }

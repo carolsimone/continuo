@@ -8,7 +8,8 @@ import (
 
 // fakeNodeCatalog is the client.CatalogClient fake shared by every
 // node-package test file that exercises a code-version-history command
-// (versions, diff, upstream-changes, code-units) plus history's degrade-path
+// (versions, diff, upstream-changes, code-units), the contract commands
+// (contract, contract-history, contract-diff) and history's degrade-path
 // join. Each RPC records the arguments it was called with so tests can assert
 // on them without a real gRPC server.
 type fakeNodeCatalog struct {
@@ -44,6 +45,25 @@ type fakeNodeCatalog struct {
 	gotPrecedentsLimit       int32
 	gotPrecedentsIncludeCode bool
 
+	contractResp               *catalogv1.GetNodeContractResponse
+	contractErr                error
+	gotContractUniqueID        string
+	gotContractIncludeDocument bool
+	contractCalls              int
+
+	contractVersionsResp        *catalogv1.ListNodeContractVersionsResponse
+	contractVersionsErr         error
+	gotContractVersionsUniqueID string
+	gotContractVersionsLimit    int32
+	contractVersionsCalls       int
+
+	contractDiffResp        *catalogv1.GetNodeContractDiffResponse
+	contractDiffErr         error
+	gotContractDiffUniqueID string
+	gotContractDiffFrom     int64
+	gotContractDiffTo       int64
+	contractDiffCalls       int
+
 	closeErr error
 }
 
@@ -74,6 +94,24 @@ func (f *fakeNodeCatalog) GetPrecedents(_ context.Context, signature, category, 
 		return &catalogv1.GetPrecedentsResponse{}, nil
 	}
 	return f.precedentsResp, f.precedentsErr
+}
+
+func (f *fakeNodeCatalog) GetNodeContract(_ context.Context, uniqueID string, includeDocument bool) (*catalogv1.GetNodeContractResponse, error) {
+	f.contractCalls++
+	f.gotContractUniqueID, f.gotContractIncludeDocument = uniqueID, includeDocument
+	return f.contractResp, f.contractErr
+}
+
+func (f *fakeNodeCatalog) ListNodeContractVersions(_ context.Context, uniqueID string, limit int32) (*catalogv1.ListNodeContractVersionsResponse, error) {
+	f.contractVersionsCalls++
+	f.gotContractVersionsUniqueID, f.gotContractVersionsLimit = uniqueID, limit
+	return f.contractVersionsResp, f.contractVersionsErr
+}
+
+func (f *fakeNodeCatalog) GetNodeContractDiff(_ context.Context, uniqueID string, fromVersion, toVersion int64) (*catalogv1.GetNodeContractDiffResponse, error) {
+	f.contractDiffCalls++
+	f.gotContractDiffUniqueID, f.gotContractDiffFrom, f.gotContractDiffTo = uniqueID, fromVersion, toVersion
+	return f.contractDiffResp, f.contractDiffErr
 }
 
 func (f *fakeNodeCatalog) Close() error { return f.closeErr }

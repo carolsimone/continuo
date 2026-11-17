@@ -20,6 +20,7 @@ const (
 	Proposal         Label = "Proposal"
 	PullRequest      Label = "PullRequest"
 	ProcessedMessage Label = "ProcessedMessage"
+	ContractVersion  Label = "ContractVersion"
 )
 
 // labels lists every label with the properties that, beside tenant_id,
@@ -38,6 +39,7 @@ var labels = []struct {
 	{Proposal, []string{"proposal_id"}},
 	{PullRequest, []string{"proposal_id", "service"}},
 	{ProcessedMessage, []string{"group", "message_id"}},
+	{ContractVersion, []string{"unique_id", "contract_hash"}},
 }
 
 // Labels returns every node label of the catalog graph.
@@ -76,12 +78,17 @@ const (
 	RelProposed     RelType = "PROPOSED"
 	RelHasPR        RelType = "HAS_PR"
 	RelEdited       RelType = "EDITED"
+	// RelContractPromoted joins a :Node to a :ContractVersion once for each
+	// promotion that changed the node's contract.
+	RelContractPromoted RelType = "CONTRACT_PROMOTED"
+	// RelCurrentContract points a :Node at its current :ContractVersion.
+	RelCurrentContract RelType = "CURRENT_CONTRACT"
 )
 
 // RelTypes returns every relationship type of the catalog graph.
 func RelTypes() []RelType {
 	return []RelType{
 		RelCurrent, RelDependsOn, RelUsesCode, RelResolvedBy, RelHasSignature,
-		RelFailed, RelProposed, RelHasPR, RelEdited,
+		RelFailed, RelProposed, RelHasPR, RelEdited, RelContractPromoted, RelCurrentContract,
 	}
 }

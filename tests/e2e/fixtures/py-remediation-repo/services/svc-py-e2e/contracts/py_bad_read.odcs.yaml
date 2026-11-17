@@ -1,0 +1,29 @@
+# Node whose declared read cannot bind: public.wrong_name does not exist and is
+# outside the node registry, so the rewriter passes it through verbatim and
+# check_binds fails the validation Job before any table is created.
+#
+# The fix a remediation attempt has to find is in this file and nowhere else:
+# the read must name a relation that exists (public.right_name, which the test
+# creates in the warehouse).
+apiVersion: v3.2.0
+kind: DataContract
+id: e2e_schema.py_bad_read
+name: py_bad_read
+version: "0"
+description:
+  purpose: python node whose declared read cannot bind
+team:
+  name: e2e
+customProperties:
+  - {vendor: continuo, property: schedule, value: daily}
+  - {vendor: continuo, property: criticality, value: SECONDARY}
+  - {vendor: continuo, property: script, value: scripts/py_bad_read.py}
+  - vendor: continuo
+    property: readQueries
+    value:
+      missing: select id from public.wrong_name
+schema:
+  - name: py_bad_read
+    physicalType: table
+    properties:
+      - {name: id, physicalType: INTEGER, required: true}

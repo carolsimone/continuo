@@ -10,6 +10,7 @@ import (
 
 	"github.com/carolsimone/continuo/catalog/service/export"
 	"github.com/carolsimone/continuo/catalog/service/ports"
+	"github.com/carolsimone/continuo/catalog/service/uow"
 )
 
 // The tenant's export lease lives on its (:Meta {tenant_id, key:'export'})
@@ -37,10 +38,8 @@ import (
 // batches; a crashed handler's mark lapses on its own. A write never waits for
 // a mark.
 
-// inflightTTL is how long a non-final write keeps its message's mark live. It
-// exceeds the time one batch takes, and a message that dies mid-way holds an
-// export back for at most this long after its last batch.
-const inflightTTL = 2 * time.Minute
+// inflightTTL is how long a non-final write keeps its message's mark live.
+const inflightTTL = uow.InFlightTTL
 
 // inflightMarkCypher adds a mark, once, and moves its lapse time to ttl from
 // now. It drops the marks that have lapsed, so an abandoned message does not
@@ -114,12 +113,19 @@ const leaseClearCypher = `
 MATCH (m:Meta {tenant_id: $tenant_id, key: $lease_key})
 REMOVE m.holder, m.kind, m.until, m._lock`
 
-// leaseParams returns params with $lease_key, the key of the tenant's lease
-// node, which every statement on that node binds.
+// leaseParams returns params with $lease_key, the key of the tenant's export
+// lease node, which every statement on that node binds.
 func leaseParams(params map[string]any) map[string]any {
+	return leaseNodeParams(export.LeaseNodeKey, params)
+}
+
+// leaseNodeParams returns params with $lease_key set to key, the key of the
+// tenant's (:Meta) node a lease statement acts on: the export lease node or
+// the live-folder node.
+func leaseNodeParams(key string, params map[string]any) map[string]any {
 	out := make(map[string]any, len(params)+1)
 	maps.Copy(out, params)
-	out["lease_key"] = export.LeaseNodeKey
+	out["lease_key"] = key
 	return out
 }
 
@@ -135,20 +141,31 @@ type gateState struct {
 // lockExportGate takes the tenant's export gate on the open transaction and
 // reads the lease and the in-flight mark.
 func lockExportGate(ctx context.Context, run TenantRunner) (gateState, error) {
-	res, err := run.Run(ctx, exportGateCypher, leaseParams(nil))
+	gate, err := lockLeaseGate(ctx, run, export.LeaseNodeKey)
 	if err != nil {
 		return gateState{}, fmt.Errorf("lock export gate: %w", err)
 	}
+	return gate, nil
+}
+
+// lockLeaseGate locks the tenant's (:Meta) node of key on the open
+// transaction, creating it when missing, and reads its lease and in-flight
+// mark.
+func lockLeaseGate(ctx context.Context, run TenantRunner, key string) (gateState, error) {
+	res, err := run.Run(ctx, exportGateCypher, leaseNodeParams(key, nil))
+	if err != nil {
+		return gateState{}, err
+	}
 	rec, err := res.Single(ctx)
 	if err != nil {
-		return gateState{}, fmt.Errorf("lock export gate: %w", err)
+		return gateState{}, err
 	}
 	held, _ := rec.Get("held")
 	inflight, _ := rec.Get("inflight")
 	heldB, heldOK := held.(bool)
 	inflightB, inflightOK := inflight.(bool)
 	if !heldOK || !inflightOK {
-		return gateState{}, fmt.Errorf("lock export gate: columns are %T and %T, want booleans", held, inflight)
+		return gateState{}, fmt.Errorf("columns are %T and %T, want booleans", held, inflight)
 	}
 	return gateState{held: heldB, inflight: inflightB}, nil
 }
@@ -289,16 +306,23 @@ func (l *exportLease) Release(ctx context.Context, tenantID, holder string) erro
 	return nil
 }
 
-// lockLease locks the tenant's lease node and reads its holder and whether its
-// lease is live; found is false when the tenant has no lease node.
+// lockLease locks the tenant's export lease node and reads its holder and
+// whether its lease is live; found is false when the tenant has no lease node.
 func lockLease(ctx context.Context, run TenantRunner) (holder string, live, found bool, err error) {
-	res, err := run.Run(ctx, leaseLockCypher, leaseParams(nil))
+	return lockLeaseNode(ctx, run, export.LeaseNodeKey)
+}
+
+// lockLeaseNode locks the tenant's existing (:Meta) node of key and reads its
+// lease's holder and whether the lease is live; found is false when the
+// tenant has no such node.
+func lockLeaseNode(ctx context.Context, run TenantRunner, key string) (holder string, live, found bool, err error) {
+	res, err := run.Run(ctx, leaseLockCypher, leaseNodeParams(key, nil))
 	if err != nil {
-		return "", false, false, fmt.Errorf("lock export lease: %w", err)
+		return "", false, false, fmt.Errorf("lock lease node %q: %w", key, err)
 	}
 	recs, err := res.Collect(ctx)
 	if err != nil {
-		return "", false, false, fmt.Errorf("lock export lease: %w", err)
+		return "", false, false, fmt.Errorf("lock lease node %q: %w", key, err)
 	}
 	if len(recs) == 0 {
 		return "", false, false, nil
@@ -316,7 +340,7 @@ func leaseParties(tenantID, holder string) error {
 		return errEmptyTenant
 	}
 	if holder == "" {
-		return errors.New("neo4j: an export lease needs a holder")
+		return errors.New("neo4j: a lease needs a holder")
 	}
 	return nil
 }
@@ -329,7 +353,7 @@ func leaseRequest(tenantID, holder string, ttl time.Duration) (int64, error) {
 	}
 	ttlMs := ttl.Milliseconds()
 	if ttlMs < 1 {
-		return 0, fmt.Errorf("neo4j: an export lease needs a ttl of at least 1ms, got %s", ttl)
+		return 0, fmt.Errorf("neo4j: a lease needs a ttl of at least 1ms, got %s", ttl)
 	}
 	return ttlMs, nil
 }

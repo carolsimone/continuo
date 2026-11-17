@@ -1435,6 +1435,51 @@ a.release-author:hover { text-decoration: underline; }
   font-size: 12px;
 }
 
+/* ---- Contract tab of the node page ---- */
+.contract-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* The card draws the frame of the YAML, so the block sits flush in it. */
+.contract-yaml {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  max-height: 480px;
+  white-space: pre;
+}
+
+.contract-diff-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 12px 16px;
+}
+.contract-diff-picker .form-field { margin: 0; }
+
+.contract-panel .detail-card > .info-strip { margin: 12px 16px; }
+
+/* A wide table scrolls inside its card instead of widening the page. */
+.contract-table-wrap { overflow-x: auto; }
+.contract-table-wrap .pill-sm + .pill-sm { margin-left: 6px; }
+
+/* A release link reads like the links of the provenance line. */
+.contract-release-link { color: #4338ca; text-decoration: none; white-space: nowrap; }
+.contract-release-link:hover { text-decoration: underline; }
+
+.contract-json {
+  font-family: 'SF Mono', 'Fira Mono', monospace;
+  font-size: 11.5px;
+  color: #334155;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+/* A path stays on one line: the table scrolls inside its card before a path breaks. */
+.contract-path { white-space: nowrap; }
+
 /* ---- Section headers ---- */
 .section-header {
   padding: 10px 16px;

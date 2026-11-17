@@ -30,6 +30,20 @@ class MalformedContractError(ValueError):
         super().__init__(f"Malformed python contract: {detail}")
 
 
+class InvalidOdcsBundleError(ValueError):
+    """A `python-odcs` producer bundle (`odcs-bundle.json`) that cannot be read
+    as a whole: it is not the JSON document of a version this install reads, it
+    names another service, one of its keys is missing or mistyped, two of its
+    nodes share a path or resolve to one node, or its producer's
+    continuo-contracts is newer than the install's. A re-delivery cannot fix
+    it. A contract that is invalid on its own is not this error: it is one
+    failed node of an otherwise readable bundle."""
+
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(detail)
+
+
 class InvalidNodeSettingError(ValueError):
     """A node declares a setting the system cannot honour (a bad value for one
     of its `meta` keys). The detail names the node and the key."""

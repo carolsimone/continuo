@@ -28,6 +28,12 @@ func getReleaseResponse(rel *pipeline.Run) map[string]any {
 		"commit_sha":          rel.CommitSHA(),
 		"remediation_round":   rel.RemediationRound(),
 		"notices":             serialization.NoticesFromDomain(rel.Notices()),
+		// continuo_contracts is the version of the continuo-contracts library that
+		// read the release's contracts, empty until the parse ends. The contract
+		// bundle is empty until a parse that ended ok names one.
+		"continuo_contracts":     rel.ContinuoContracts(),
+		"contract_bundle_uri":    rel.CandidateContractBundle().URI,
+		"contract_bundle_sha256": rel.CandidateContractBundle().SHA256,
 	}
 }
 

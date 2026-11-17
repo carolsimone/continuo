@@ -60,3 +60,33 @@ func TestBuiltinFilesValidate(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, warnings)
 }
+
+// TestBuiltinTypesCheckSiblingsBeforeImagePackages: a python or csv cluster
+// whose sibling also failed and whose release records no image packages
+// qualifies for two declines. The legacy lanes check the sibling first, so
+// every built-in type that runs both steps runs failing_siblings before
+// image_packages, and both engines record the same reason.
+func TestBuiltinTypesCheckSiblingsBeforeImagePackages(t *testing.T) {
+	set, err := workflowfile.Load(workflows.Builtin)
+	require.NoError(t, err)
+
+	checked := 0
+	for name, ty := range set.Types {
+		siblings, images := -1, -1
+		for i, r := range ty.Context {
+			switch r.Name {
+			case "failing_siblings":
+				siblings = i
+			case "image_packages":
+				images = i
+			}
+		}
+		if images < 0 {
+			continue
+		}
+		checked++
+		require.GreaterOrEqual(t, siblings, 0, "type %s reads image packages but checks no sibling", name)
+		require.Less(t, siblings, images, "type %s checks image packages before its siblings", name)
+	}
+	require.Equal(t, 3, checked, "python-validation, csv-validation and python-parse read image packages")
+}
