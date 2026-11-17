@@ -18,6 +18,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/objectstore"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
+	rmetrics "github.com/carolsimone/continuo/remediation/adapters/metrics"
 	"github.com/carolsimone/continuo/remediation/adapters/postgres"
 	rredis "github.com/carolsimone/continuo/remediation/adapters/redis"
 	rs3 "github.com/carolsimone/continuo/remediation/adapters/s3"
@@ -180,6 +181,7 @@ func main() {
 		LogReader: logReader,
 		Clock:     ports.SystemClock{},
 		Logger:    logger,
+		Metrics:   rmetrics.NewClassifierMetrics(metricsReg),
 	}
 
 	// The outbox relay wakes on the notification a committed insert into its

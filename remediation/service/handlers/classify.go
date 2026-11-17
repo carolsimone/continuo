@@ -16,11 +16,22 @@ import (
 )
 
 // Deps holds the collaborators ClassifyRejection needs, all behind ports.
+// Metrics may be left nil, which counts nothing.
 type Deps struct {
 	NewUoW    func() uow.UnitOfWork
 	LogReader ports.LogReader
 	Clock     ports.Clock
 	Logger    *slog.Logger
+	Metrics   ports.ClassifierMetrics
+}
+
+// classifierMetrics is the metrics the handler counts with: the one wired, or
+// one that counts nothing.
+func (d Deps) classifierMetrics() ports.ClassifierMetrics {
+	if d.Metrics == nil {
+		return ports.NopClassifierMetrics{}
+	}
+	return d.Metrics
 }
 
 // classify produces the classification for one piece of evidence, fetching only

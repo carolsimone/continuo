@@ -101,6 +101,29 @@ func (u *fakeUoW) Rollback() error                                           { r
 func (u *fakeUoW) DecisionRepo() repository.ClassificationDecisionRepository { return u.dec }
 func (u *fakeUoW) OutboxRepo() outbox.Repository                             { return u.ob }
 
+// classifiedCall is one decision a fakeClassifierMetrics counted, with whether
+// the unit of work had committed by then.
+type classifiedCall struct {
+	decision, rule string
+	committed      bool
+}
+
+// fakeClassifierMetrics records every decision it is asked to count, and
+// whether the unit of work it watches had committed when each was counted.
+type fakeClassifierMetrics struct {
+	u     *fakeUoW
+	calls []classifiedCall
+}
+
+func (m *fakeClassifierMetrics) Classified(decision, rule string) {
+	m.calls = append(m.calls, classifiedCall{decision: decision, rule: rule, committed: m.u.committed})
+}
+
+// failingCommitUoW is a unit of work whose commit fails.
+type failingCommitUoW struct{ *fakeUoW }
+
+func (failingCommitUoW) Commit() error { return errors.New("commit failed") }
+
 func depsWith(u *fakeUoW, log string, err error) Deps {
 	return Deps{
 		NewUoW:    func() uow.UnitOfWork { return u },
@@ -826,4 +849,131 @@ func TestClassifyRejection_ParseEvidenceReadsNoLog(t *testing.T) {
 	assert.Equal(t, "Expecting )", w.Nodes[0].ErrorExcerpt)
 	assert.Equal(t, "models/b.sql", w.Nodes[0].FilePath)
 	assert.Nil(t, w.Nodes[0].Unfixable)
+}
+
+// TestClassifyRejection_CountsEachNewDecisionOnceCommitted holds that every
+// newly recorded decision is counted with its decision and its rule, emit and
+// drop alike, and only after the transaction that records it has committed.
+func TestClassifyRejection_CountsEachNewDecisionOnceCommitted(t *testing.T) {
+	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
+	m := &fakeClassifierMetrics{u: u}
+	deps := Deps{
+		NewUoW: func() uow.UnitOfWork { return u },
+		LogReader: mapLogReader{byURI: map[string]string{
+			"s3://b/a": `Database Error: column "x" does not exist`,
+			"s3://b/b": "could not connect to database: connection refused",
+			"s3://b/c": "some entirely novel failure mode",
+		}},
+		Clock:   fakeClock{},
+		Logger:  slog.Default(),
+		Metrics: m,
+	}
+	base := failure.FailureEvidence{Source: pkg_model.RemediationSourceValidation, ReleaseID: "r1", Repo: "o/r", CommitSHA: "abc"}
+	a, b, c := base, base, base
+	a.NodeID, a.DBTLogURI = "s.a", "s3://b/a"
+	b.NodeID, b.DBTLogURI = "s.b", "s3://b/b"
+	c.NodeID, c.DBTLogURI = "s.c", "s3://b/c"
+
+	require.NoError(t, ClassifyRejection(context.Background(), deps, testTenant, []failure.FailureEvidence{a, b, c}))
+
+	assert.Equal(t, []classifiedCall{
+		{decision: "emit", rule: "logic:missing_object", committed: true},
+		{decision: "drop", rule: "infra:connection_refused", committed: true},
+		{decision: "emit", rule: "unknown:unmatched", committed: true},
+	}, m.calls)
+}
+
+// TestClassifyRejection_CountsAClassifierRuleOfEverySource holds that the
+// decisions of a duplicate-relation rejection and of a parse rejection, healable
+// or not, are counted too, with the rules their classifiers record.
+func TestClassifyRejection_CountsAClassifierRuleOfEverySource(t *testing.T) {
+	cases := map[string]struct {
+		ev       failure.FailureEvidence
+		decision string
+		rule     string
+	}{
+		"duplicate table": {
+			ev:       failure.FailureEvidence{Source: pkg_model.RemediationSourceDuplicateTable, ReleaseID: "r1", NodeID: "a.b", RelationID: "a.b"},
+			decision: "emit", rule: "logic:duplicate_table",
+		},
+		"healable parse": {
+			ev:       failure.FailureEvidence{Source: pkg_model.RemediationSourceParse, ReleaseID: "r1", NodeID: "a.b", ParseKind: pkg_model.ParseFailureKindInvalidSQL},
+			decision: "emit", rule: "logic:invalid_sql",
+		},
+		"unhealable parse": {
+			ev:       failure.FailureEvidence{Source: pkg_model.RemediationSourceParse, ReleaseID: "r1", NodeID: "a.b", ParseKind: pkg_model.ParseFailureKindInternal},
+			decision: "drop", rule: "parse:not_healable",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
+			m := &fakeClassifierMetrics{u: u}
+			deps := depsWith(u, "", nil)
+			deps.Metrics = m
+
+			require.NoError(t, ClassifyRejection(context.Background(), deps, testTenant, []failure.FailureEvidence{tc.ev}))
+
+			assert.Equal(t, []classifiedCall{{decision: tc.decision, rule: tc.rule, committed: true}}, m.calls)
+		})
+	}
+}
+
+// TestClassifyRejection_ARedeliveryCountsNothing holds that a rejection whose
+// nodes were all recorded before counts no decision, and that a rejection with
+// one new node among recorded ones counts only the new node.
+func TestClassifyRejection_ARedeliveryCountsNothing(t *testing.T) {
+	log := `Database Error: column "x" does not exist`
+	base := failure.FailureEvidence{Source: pkg_model.RemediationSourceValidation, ReleaseID: "r1", Repo: "o/r", CommitSHA: "abc", DBTLogURI: "s3://b/k"}
+	a, b := base, base
+	a.NodeID, b.NodeID = "s.a", "s.b"
+
+	t.Run("every node recorded before", func(t *testing.T) {
+		u := &fakeUoW{dec: &fakeDecisionRepo{inserted: false}, ob: &fakeOutbox{}}
+		m := &fakeClassifierMetrics{u: u}
+		deps := depsWith(u, log, nil)
+		deps.Metrics = m
+
+		require.NoError(t, ClassifyRejection(context.Background(), deps, testTenant, []failure.FailureEvidence{a, b}))
+
+		assert.Empty(t, m.calls, "a redelivered rejection records nothing, so it counts nothing")
+		assert.True(t, u.committed)
+	})
+
+	t.Run("one node new", func(t *testing.T) {
+		u := &fakeUoW{dec: &fakeDecisionRepo{insertedByNode: map[string]bool{"s.a": false, "s.b": true}}, ob: &fakeOutbox{}}
+		m := &fakeClassifierMetrics{u: u}
+		deps := depsWith(u, log, nil)
+		deps.Metrics = m
+
+		require.NoError(t, ClassifyRejection(context.Background(), deps, testTenant, []failure.FailureEvidence{a, b}))
+
+		assert.Equal(t, []classifiedCall{{decision: "emit", rule: "logic:missing_object", committed: true}}, m.calls)
+	})
+}
+
+// TestClassifyRejection_ARolledBackTransactionCountsNothing holds that a
+// decision whose transaction fails to commit is not counted, so the redelivery
+// that records it counts it once.
+func TestClassifyRejection_ARolledBackTransactionCountsNothing(t *testing.T) {
+	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
+	m := &fakeClassifierMetrics{u: u}
+	deps := depsWith(u, `Database Error: column "x" does not exist`, nil)
+	deps.NewUoW = func() uow.UnitOfWork { return failingCommitUoW{u} }
+	deps.Metrics = m
+	ev := failure.FailureEvidence{Source: pkg_model.RemediationSourceValidation, ReleaseID: "r1", NodeID: "s.a", DBTLogURI: "s3://b/k"}
+
+	err := ClassifyRejection(context.Background(), deps, testTenant, []failure.FailureEvidence{ev})
+
+	require.Error(t, err)
+	assert.Empty(t, m.calls)
+}
+
+// TestClassifyRejection_NoMetricsCountsNothingAndDoesNotFail holds that a Deps
+// with no metrics wired still classifies.
+func TestClassifyRejection_NoMetricsCountsNothingAndDoesNotFail(t *testing.T) {
+	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
+	ev := failure.FailureEvidence{Source: pkg_model.RemediationSourceValidation, ReleaseID: "r1", NodeID: "s.a", DBTLogURI: "s3://b/k"}
+
+	require.NoError(t, ClassifyRejection(context.Background(), depsWith(u, "x does not exist", nil), testTenant, []failure.FailureEvidence{ev}))
 }

@@ -285,3 +285,37 @@ func indexOf(s, sub string) int {
 	}
 	return -1
 }
+
+// ruleFamilies are the prefixes, before the first colon, of every reason a
+// classifier records: the closed set a metric may label a decision with.
+var ruleFamilies = map[string]bool{"infra": true, "test": true, "logic": true, "unknown": true, "parse": true}
+
+// TestClassifier_EveryReasonIsAFamilyAndADetail holds that every reason the
+// classifier can record reads family:detail with a family from a closed set, so
+// the text before the first colon is a bounded label.
+func TestClassifier_EveryReasonIsAFamilyAndADetail(t *testing.T) {
+	var reasons []string
+	for _, rules := range [][]rule{infraRules, testRules, logicRules} {
+		for _, r := range rules {
+			reasons = append(reasons, r.reason)
+		}
+	}
+	reasons = append(reasons,
+		Classify("").Reason,
+		Classify("some entirely novel failure mode").Reason,
+		ClassifyWithStructured(&StructuredResult{Status: "fail", Message: "x"}, "").Reason,
+		ClassifyWithStructured(&StructuredResult{Status: "error", Message: "x"}, "").Reason,
+		ClassifyDuplicateTable(FailureEvidence{NodeID: "a.b"}).Reason,
+		ClassifyParse(FailureEvidence{ParseKind: model.ParseFailureKind("not a kind")}).Reason,
+		ClassifyParse(FailureEvidence{ParseKind: model.ParseFailureKindInternal}).Reason,
+	)
+	for _, k := range model.ParseFailureKinds() {
+		reasons = append(reasons, ClassifyParse(FailureEvidence{ParseKind: k}).Reason)
+	}
+	for _, reason := range reasons {
+		family, detail, ok := strings.Cut(reason, ":")
+		assert.True(t, ok, "reason %q has no colon", reason)
+		assert.True(t, ruleFamilies[family], "reason %q has family %q outside the closed set", reason, family)
+		assert.NotEmpty(t, detail, "reason %q has no detail", reason)
+	}
+}
