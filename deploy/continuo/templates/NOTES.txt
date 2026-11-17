@@ -93,6 +93,15 @@ UPGRADE NOTES
 
 {{- if .Release.IsUpgrade }}
 
+BREAKING: release kind "python" (contract.yaml) is no longer accepted.
+Before this upgrade, release each Python service as "python-odcs", on the continuo version you run now (docs/contracts.md).
+While any service is still released as "python", the upgrade stops and names it.
+With your own database, release migration V30 fails in the db-init-migrate hook Job, before any pod changes.
+With the bundled Postgres, the Job fails and release-controller refuses to start, and its log names the services.
+{{- end }}
+
+{{- if .Release.IsUpgrade }}
+
 Schedules are no longer read from the chart: every cron stops until it is set again in the ui (Edit cron) or with `continuo schedule set-cron`.
 {{- end }}
 

@@ -172,6 +172,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	// topology-controller reads no contract.yaml, so a service still released
+	// as kind python could not be released again. The release migration V30
+	// stops an upgrade on such a service; with the bundled Postgres the
+	// migration Job is no hook, so this check keeps release-controller from
+	// starting and names the services. Nothing but the health routes has
+	// started yet.
+	if err := handlers.CheckNoServiceOnPythonKind(ctx, postgres.NewServiceProdRepository(db)); err != nil {
+		logger.Error("Refusing to start: services are still released as kind python", "error", err)
+		os.Exit(1)
+	}
+
 	// One object-storage client, passed to each adapter as the role it uses:
 	// prune-time prefix deletion (objectstore.PrefixDeleter), and topology
 	// artifact reads and writes (objectstore.ReadWriter).

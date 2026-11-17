@@ -50,7 +50,8 @@ func (f *fakeDeleter) prefixes() []string {
 	return out
 }
 
-func openTestDB(t *testing.T) *sqlx.DB {
+// connectTestDB opens the shared release database and leaves its rows alone.
+func connectTestDB(t *testing.T) *sqlx.DB {
 	t.Helper()
 	dsn := os.Getenv("RELEASE_TEST_PG_DSN")
 	if dsn == "" {
@@ -58,8 +59,16 @@ func openTestDB(t *testing.T) *sqlx.DB {
 	}
 	db, err := sqlx.Connect("postgres", dsn)
 	require.NoError(t, err)
+	return db
+}
+
+// openTestDB opens the shared release database with the tables the tests write
+// emptied.
+func openTestDB(t *testing.T) *sqlx.DB {
+	t.Helper()
+	db := connectTestDB(t)
 	_, _ = db.Exec("TRUNCATE release_pipeline_runs, current_prod, release_controller_outbox, message_processing, service_prod RESTART IDENTITY CASCADE")
-	_, err = db.Exec("UPDATE promotion_sequence SET last_seq = 0 WHERE id = 1")
+	_, err := db.Exec("UPDATE promotion_sequence SET last_seq = 0 WHERE id = 1")
 	require.NoError(t, err, "promotion_sequence is missing: run make test-deps-up to apply the release migrations")
 	return db
 }

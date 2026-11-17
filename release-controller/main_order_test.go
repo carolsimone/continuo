@@ -51,3 +51,32 @@ func TestStartupChecksTheReleaseSchemaFirst(t *testing.T) {
 		}
 	}
 }
+
+// A release database that still holds a service released as kind python is
+// refused before release-controller serves an API request, runs a startup step
+// or starts a consumer. The check reads service_prod, so it comes after the
+// schema check, which refuses a database that has no such table yet.
+func TestStartupRefusesPythonKindServicesBeforeAnythingServes(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	body := string(src)
+	schema := strings.Index(body, "handlers.CheckLegacyTopologyColumnsDropped(")
+	check := strings.Index(body, "handlers.CheckNoServiceOnPythonKind(")
+	if check < 0 {
+		t.Fatal("main.go must call handlers.CheckNoServiceOnPythonKind")
+	}
+	if check < schema {
+		t.Fatal("main.go must call handlers.CheckNoServiceOnPythonKind after handlers.CheckLegacyTopologyColumnsDropped")
+	}
+	for _, later := range []string{"objectstore.New(", "srv.ServeAPI(", "pkgredis.Connect(", "handlers.AdvanceQueue(", `runConsumer("`} {
+		at := strings.Index(body, later)
+		if at < 0 {
+			t.Fatalf("expected main.go to contain %q", later)
+		}
+		if check > at {
+			t.Fatalf("main.go must call handlers.CheckNoServiceOnPythonKind before %s", later)
+		}
+	}
+}

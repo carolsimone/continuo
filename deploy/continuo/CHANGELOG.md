@@ -107,6 +107,15 @@ This release adds the values keys `agentRemediation.engine`, `contracts.publish.
 - **topology-controller counts dormant nodes.** TL;DR: `continuo_topology_release_dormant_nodes` counts the dormant nodes of the last release. `continuo_topology_release_skipped_nodes{reason}` has no `no_tag` value any more: its reasons are `no_owner`, `local_stub` and `installed_package`, a node of an installed dbt package with no tag.
 - **A CTE hides a table name only where it is in scope.** TL;DR: a read can name a table without its schema where a CTE of the same name is defined but not in scope, as in `WITH orders AS (SELECT * FROM orders)`. topology-controller refuses such a read, as continuo-python-runtime 0.13.0's `validate` does. The release fails with the same unqualified-table error as `select * from orders`.
 
+### Removed
+
+- **BREAKING: the release kind `python` (`contract.yaml`) is no longer accepted.** TL;DR: release every Python service as `python-odcs` on the continuo version you run now, then upgrade. The upgrade stops while any service is still on `python`, and the message names them.
+  - topology-controller reads no `contract.yaml`. release-controller refuses a release or a verification that names the kind `python`, and the refusal says to use `python-odcs`.
+  - Release migration V30 fails with `these services are still released as kind "python": <names>. Release each one as "python-odcs" (docs/contracts.md) on the continuo version you run now, then upgrade.` The names are sorted and separated by commas. With your own database, the migration runs in the `db-init-migrate` hook Job before any pod changes, so `helm upgrade` fails and nothing rolls. With the bundled Postgres the Job is not a hook, so the pods roll while it fails: release-controller refuses to start and logs the same message.
+  - To fix it, release each named service as `python-odcs` on the version you run now. `docs/contracts.md`, "Moving from `contract.yaml`", says how. Then upgrade. `helm upgrade` prints the same note.
+  - A run or a release stored with the kind `python` keeps its row and its history. A service already released as `python-odcs` is not affected.
+  - No values change is needed. MINOR.
+
 ## [0.22.0] - 2026-11-14
 
 **TL;DR**
