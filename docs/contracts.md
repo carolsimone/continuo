@@ -20,9 +20,9 @@ This page is for the team that writes a Python service. It covers:
 - [the CI steps](#the-ci-steps) and [the library version](#the-library-version-ci-must-pin)
 - [reading a contract back](#reading-a-contract-back) and [the history](#the-history-of-a-contract)
 - [the live folder](#the-live-folder) and [a DataHub recipe](#a-datahub-recipe)
+- [the contract bundle](#the-contract-bundle)
 - [moving from `contract.yaml`](#moving-from-contractyaml)
-- [dbt nodes](#dbt-nodes): where continuo finds the same facts for a dbt model,
-  seed, snapshot or test
+- [dbt nodes](#dbt-nodes)
 
 A dbt node has no contract file. continuo builds it from the `manifest.json`
 of your dbt project. [dbt nodes](#dbt-nodes) says what continuo reads there and
@@ -89,10 +89,14 @@ What each part says:
 | `team.name` | The owner of the node. |
 | `schedule` | The schedule the node runs on. |
 | `criticality` | `REGULATORY`, `CORE` or `SECONDARY`. |
-| `script` | The script that builds the table, as a path relative to the folder you give `pack` as `--repo-root` (the service's directory, such as `services/service-py`). |
+| `script` | The path of the script that builds the table. |
 | `readQueries` | The queries the script reads, by name. Each one is a single `SELECT`. |
 | `schema` | One object, with `physicalType: table`, the table name and its columns. |
-| `properties` | The columns, with at least one. `physicalType` is the column's type, and `required: true` means the column never holds NULL. |
+| `properties` | The columns. There is at least one. `physicalType` is the column's type. `required: true` means the column never holds NULL. |
+
+A path in `script`, and in `assets` below, is relative to the folder you give
+`pack` as `--repo-root`. That folder is the service's directory, such as
+`services/service-py`.
 
 The same file may also carry these, when the node needs them:
 
@@ -102,7 +106,7 @@ The same file may also carry these, when the node needs them:
 | `modeType` | `replace` (the default), `append` or `upsert`. A `python-csv` node allows only `replace`. |
 | `primaryKey: true` on columns, with `primaryKeyPosition` | The key of an `upsert` node. Each key column is `required: true` and is not `DOUBLE PRECISION`. On a `replace` or `append` node the key only describes the data. |
 | `extraColumns` | `raise` (the default) or `warn`: what happens when the script returns a column the contract does not declare. |
-| `assets` | Files the script reads besides its own code, as paths relative to the folder you give `pack` as `--repo-root` (the service's directory, such as `services/service-py`). Your Dockerfile copies each one into the image at the same path. |
+| `assets` | The paths of files the script reads besides its own code. Your Dockerfile copies each one into the image at the same path. |
 | `config` | Table layout, such as indexes. |
 
 The runtime's README describes how each setting changes a run:
@@ -141,9 +145,9 @@ schema:
 
 ## What continuo refuses
 
-Each refusal has a reason. A refusal rejects the release as
-`invalid_contract`, and the message names the field. The last row is the one
-exception: it rejects the release as `unqualified_reference`.
+Each row below rejects the release as `invalid_contract`, and the message names
+the field. The last row is the one exception: it rejects the release as
+`unqualified_reference`.
 
 | Refused | Why |
 |---|---|
@@ -151,7 +155,7 @@ exception: it rejects the release as `unqualified_reference`.
 | A `provenance` property | continuo writes it into the published file. Inside your file it would freeze at the first release. |
 | A `service` other than the release's | A contract belongs to one service. |
 | A `name`, a `physicalName` or a column `physicalName` other than the real one | A table must not have two names. |
-| An `id` with an upper case letter, a non-ASCII one (`Ö`) included | Table names in continuo are lower case. The library refuses an ASCII capital; continuo refuses any other, naming the file and the id it keys the node by. |
+| An `id` with an upper case letter, a non-ASCII one (`Ö`) included | Table names in continuo are lower case. The contract library refuses an ASCII capital. continuo refuses any other, and the message names the file and the id continuo keys the node by. |
 | `partitioned: true`, a `partitionKeyPosition` that is not the default | The runtime cannot honour them. |
 | `filePath`, `materialization`, `contractEnforced`, `access`, `group`, `deprecationDate`, `freshnessBuildAfter`, `snapshot`, `quoteColumns` | These describe how dbt builds a node. Nothing reads them on a Python node, so a stored one would say something untrue. |
 | A continuo property that does not exist | Most often a spelling mistake. |
@@ -244,10 +248,10 @@ Your pipeline does these steps, in this order.
 
 1. **Check the contracts.** `continuo-runtime validate contracts --dialect postgres`
    reads the files with the same checks continuo runs at release time. Use
-   `--dialect trino` on a Trino install. It stops at the first file that is not
-   valid and prints every problem of that file, so fix it and run the step
-   again for the next file. A mistake fails the pull request and never reaches
-   a release.
+   `--dialect trino` on a Trino install. The step stops at the first file that
+   is not valid and prints every problem of that file. Fix the file, then run
+   the step again to check the next one. A mistake fails the pull request and
+   never reaches a release.
 2. **Build the image** and push it. The image base is
    `ghcr.io/carolsimone/continuo-python-runtime-<engine>:v0.13.0`.
 3. **Pack the contracts.** `pack` checks the files again, lints the scripts and
@@ -284,9 +288,9 @@ Your pipeline does these steps, in this order.
 
 If a contract is not valid, the release is rejected with the reason
 `invalid_contract`. One rejection names every contract that failed. For each
-one it gives the node, the file and every issue, as `<path>: <message>` joined
-by `; `. The release page in the dashboard lists them. continuo does not try
-to fix this rejection for you.
+one it gives the node, the file and every issue. Each issue reads
+`<path>: <message>`, and `; ` joins them. The release page in the dashboard
+lists them. continuo does not try to fix this rejection for you.
 
 A read that names a table without its schema is rejected as
 `unqualified_reference` instead, and continuo can propose a fix for that one.
@@ -365,10 +369,14 @@ catalog:
 version once its promotion is older than that many days. catalog never deletes
 the current contract of a node, or the one before it.
 
-A node has a current contract while it is live and the newest promotion the
-live folder was written for carried its contract. When its service goes back
-to `contract.yaml`, the next promotion carries none: its file leaves the live
-folder, the node has no current contract any more, and its history stays.
+A node has a current contract while two things are true:
+
+- the node is live, and
+- the newest promotion the live folder was written for carried its contract.
+
+When its service goes back to `contract.yaml`, the next promotion carries no
+contract for the node. Its file leaves the live folder and the node has no
+current contract. Its history stays.
 
 ## The live folder
 
@@ -461,8 +469,8 @@ servers:
 
 When catalog starts with other settings than it last used, it rewrites every
 file. While the catalog pods roll after a change of these settings, a pod still
-on the old settings can rewrite the folder after the new pod's start: those
-files keep the old entry until the next promotion, or the next catalog start,
+on the old settings can rewrite the folder after the new pod starts. Those
+files keep the old entry. The next promotion, or the next catalog start,
 rewrites every file again.
 
 ### Access
@@ -516,17 +524,17 @@ tenants/default/topologies/<release_id>/contracts.json.gz
 ```
 
 It is canonical JSON, compressed with gzip. The events that announce a release
-carry its URI and its SHA-256. It is written once and never changes. A tool
-that reads it is bound by [Reading releases from continuo](read-contract.md).
+carry its URI and its SHA-256. It is written once and never changes.
+[Reading releases from continuo](read-contract.md) says which of its fields a
+tool may rely on.
 
 ## Moving from `contract.yaml`
 
-The old kind `python` and its single `contract.yaml` still work, and new
-services use `python-odcs`. agent-remediation proposes fixes only for a service
-whose contracts are `.odcs.yaml` files: a service still on `contract.yaml` gets
-no fix proposals for its Python nodes. To move a service, convert the files, change the CI
-steps above, and post with the kind `python-odcs`. A release of a service uses
-one kind.
+The kind `python` and its single `contract.yaml` still work, and new services
+use `python-odcs`. agent-remediation proposes no fixes for the Python nodes of a
+service on `contract.yaml`. To move a service, convert the files, change the
+CI steps above, and post with the kind `python-odcs`. A release of a service
+uses one kind.
 
 Every field of the old file has a place in the new one:
 
@@ -548,8 +556,8 @@ a node does not change, so the move leaves it as it was.
 
 ## dbt nodes
 
-A dbt node has no contract file. Everything continuo knows about it comes from
-your dbt project. When you post a release, continuo runs `dbt compile` in your
+Everything continuo knows about a dbt node comes from your dbt project. When
+you post a release, continuo runs `dbt compile` in your
 image and reads two files from that compile:
 
 - `manifest.json`, which dbt writes. It holds every node of your project, its
@@ -570,7 +578,7 @@ continuo needs, and where it comes from for each kind of node.
 | The table it writes | the table of `id` | the node's `alias`, or its `name` when it has no alias |
 | Owner | `team.name` | `meta.owner` |
 | Schedule | `schedule` | the first tag |
-| Criticality | `criticality` | `meta.criticality` (read, but continuo does not use it for a dbt node) |
+| Criticality | `criticality` | `meta.criticality` (unused, see below) |
 | Task timeout | `timeoutMinutes` | `meta.timeout_minutes` |
 | The tables it reads | `readQueries` | the compiled SQL (`compiled_code`) |
 | Its columns | `properties` | none for a model or snapshot; a seed's header and column types from `compile-extras.json` |
@@ -606,14 +614,15 @@ A node left out does not fail the release. continuo logs it and counts it in
 
 Which service a node belongs to is the first part of its dbt `fqn`, with `_`
 written as `-`. Your project is the manifest's `metadata.project_name`, written
-the same way, or the service the release names when the manifest has none. A
-node of an installed package that has an owner and a tag is not left out: it
-rejects the release as `invalid_artifact`, because a release of a service holds
-only the nodes of its own project. A manifest where no node is kept rejects the
-release as `invalid_artifact` too.
+the same way, or the service the release names when the manifest has none.
+
+A node of an installed package that has an owner and a tag is not left out.
+It rejects the release as `invalid_artifact`, because a release of a service
+holds only the nodes of its own project. A manifest where no node is kept
+rejects the release as `invalid_artifact` too.
 
 A model or snapshot with an owner and no tag is a dormant node. It has no
-schedule, a release checks it like any other model, and you run it by hand. A
+schedule, and you run it by hand. A release checks it like any other model. A
 seed with no tag takes the schedule `seed`. Rule 4 of
 [the four rules a dbt project must follow](run-projects-in-continuo.md#the-four-rules-a-dbt-project-must-follow)
 explains dormant nodes, packages and `local_stub` in full.
@@ -695,10 +704,10 @@ a dormant model counts as built.
 
 ### Columns
 
-continuo keeps no list of the columns of a model or snapshot. When a model's dbt contract is
-enforced (`contract: {enforced: true}`), its declared columns (name,
-`data_type`, constraints and `quote`) and its model constraints are part of its
-code version, so a change to them is a change of code.
+continuo keeps no list of the columns of a model or snapshot. When a model
+enforces its dbt contract (`contract: {enforced: true}`), its declared columns
+and its model constraints are part of its code version. Each declared column
+counts with its name, `data_type`, constraints and `quote`.
 
 A seed's columns come from `compile-extras.json`: the CSV header in file order
 and the column types your seed config sets. continuo uses them to tell a change
@@ -722,9 +731,10 @@ These change a node's code version:
   `var()`, an `env_var()`, a `ref()` that points somewhere else, or an
   ephemeral model it pastes in.
 - A seed's CSV file, byte for byte.
-- A macro that you or a package wrote and that the node's build reaches,
-  a dbt function the node calls, and a model's unit tests. dbt's own built-in
-  macros do not count.
+- A macro that you or a package wrote and that the node's build reaches.
+  dbt's own built-in macros do not count.
+- A dbt function the node calls.
+- A model's unit tests.
 - The parts every build of your project runs: `on-run-start` and `on-run-end`
   hooks, your project's `generate_schema_name` and `generate_alias_name`, and
   the `flags:` block of `dbt_project.yml` when it is not empty.
@@ -737,15 +747,17 @@ These change a node's code version:
 These do not change it:
 
 - `meta` keys, `owner`, `criticality` and `timeout_minutes` among them, and
-  tags. A node whose only change is one of these is not built again in
-  validation. Two exceptions:
-  a `meta` value your SQL reads changes the compiled SQL, and a tag you set in
-  the SQL file's own `config()` line changes the SQL file.
+  tags.
 - `description`, `docs`, a column's description, `grants`, `access`, `group`
   and `freshness`.
 - The values that change on every compile: dbt's invocation id, the time the
   compile started, and the node's database name. continuo replaces them with
   fixed text before it hashes.
+
+So a node whose only change is a `meta` key or a tag is not built again in
+validation. There are two exceptions. A `meta` value your SQL reads changes
+the compiled SQL. A tag you set in the SQL file's own `config()` line changes
+the SQL file.
 
 A seed's file hash comes from `compile-extras.json`. When that file has no
 entry for the seed, continuo uses dbt's own checksum instead. For a seed over

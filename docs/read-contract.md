@@ -1,8 +1,8 @@
 # Reading releases from continuo
 
 External tools can read what continuo knows about a release: which release is in
-production, the code of each node, the topology, and the data contracts. This page declares what a
-reader may rely on, which version of each document that holds for, and what a
+production, the code of each node, the topology, and the data contracts. This
+page declares what a reader may rely on, which version of each document that holds for, and what a
 version bump means. It is the whole promise: anything not named here may change
 in any release.
 
@@ -35,13 +35,14 @@ is `default`: releases are submitted under the default tenant.
 
 The code bundle is JSON. The topology artifact and the contract bundle are JSON
 compressed with gzip and stored as they are, with no `Content-Encoding`, so a
-client decompresses them itself. The contract bundle is canonical JSON (RFC
-8785), and `manifest.loaded.candidate:v2` and `release.promoted:v2` carry the
-SHA-256 of its stored bytes, so a reader can check what it fetched. All three
-objects are immutable: a release's documents never change after they are
-written, so reading them for one release id always gives a consistent set. Every
-release that passes writes a contract bundle, and it is empty when the release
-has no Python contract.
+client decompresses them itself. All three objects are immutable: a release's
+documents never change after they are written, so reading them for one release
+id always gives a consistent set.
+
+Every release that passes writes a contract bundle. It is empty when the release
+has no `python-odcs` contract. The bundle is canonical JSON (RFC 8785).
+`manifest.loaded.candidate:v2` and `release.promoted:v2` carry the SHA-256 of
+its stored bytes, so a reader can check what it fetched.
 
 The three versions are integers, count independently of each other and of the
 chart's version, and are all `1`.
@@ -94,11 +95,16 @@ its `csvSource` as the read `csv`.
 | `contracts` | object | One entry per node that has a contract, keyed by the node's unique id: `<schema>.<table>`, lowercase. |
 | `contracts.<id>.family` | string | `python`. A reader skips a family it does not know: a new family is an added value, not a new version. |
 | `contracts.<id>.service` | string | The service that owns the node. |
-| `contracts.<id>.contract_hash` | string | `sha256:` and 64 hex characters: the SHA-256 of the canonical JSON (RFC 8785) of `document` without its four root keys `apiVersion`, `kind`, `status` and `version`. A reader compares this value. It hashes `document` itself only by that rule, because the hash of the whole `document` is another value. |
+| `contracts.<id>.contract_hash` | string | `sha256:` and 64 hex characters. A reader compares this value. How it is computed is below the table. |
 | `contracts.<id>.content_hash` | string | The node's code fingerprint, `sha256:` and 64 hex characters. |
 | `contracts.<id>.source.path` | string | The file the contract was read from, as a path in the service's repository. |
 | `contracts.<id>.source.sha256` | string | The SHA-256 of that file's text. |
-| `contracts.<id>.document` | object | The stored form of the contract, as a whole ODCS document: it holds every root key, `apiVersion`, `kind`, `status` (`active`) and `version` (`"0"`) among them. `contract_hash` is taken over this document with those four root keys removed, so a reader that recomputes it removes them first. The version a node's contract has is in catalog and in the [live folder](contracts.md#the-live-folder). |
+| `contracts.<id>.document` | object | The stored form of the contract, as a whole ODCS document with every root key. Its `status` is `active` and its `version` is `"0"`. The version number a node's contract has is in catalog and in the [live folder](contracts.md#the-live-folder). |
+
+`contract_hash` is the SHA-256 of the canonical JSON (RFC 8785) of `document`
+without its four root keys `apiVersion`, `kind`, `status` and `version`. A
+reader that recomputes it removes those keys first: the hash of the whole
+`document` is a different value.
 
 The keys `odcs_schema_sha256`, `ontology`, `provenance`, `summary`, `failures`
 and `timings` are in the document but not in the read set. They may change in any

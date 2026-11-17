@@ -287,7 +287,7 @@ Every container in this chart, bundled or not, gets:
 | `catalog.backup.schedule` | When catalog exports, in UTC: a five-field cron or an `@` descriptor such as `@daily` or `@every 6h` (default `0 2 * * *`; `CATALOG_BACKUP_SCHEDULE`). A slot catalog misses while it is down is not caught up; the next slot runs. Rendering fails on a value that is neither five fields nor an `@` descriptor, and catalog refuses to start on a schedule its cron parser rejects, one that starts with `CRON_TZ=` or `TZ=`, or an `@every` under a minute. |
 | `catalog.backup.keep` | How many of each tenant's newest exports catalog keeps (default `7`; `CATALOG_BACKUP_KEEP`); after each stored export it deletes the rest. A whole number of at least 1. A hand-run `catalog-backup export` prunes with the same value. |
 | `catalog.contractHistory.retentionDays` | How many days of contract versions catalog keeps (default `0`, which keeps every version; `CONTRACT_HISTORY_RETENTION_DAYS`). Above 0, catalog's retention sweeper deletes a version once its promotion is older than that, never a node's current contract or the version before it. A whole number from 0 to 36500 (100 years): rendering fails on any other value, and catalog refuses to start on it. |
-| `contracts.publish.server.host` / `.port` / `.database` | The warehouse entry (`servers`) of the contract files catalog writes to `tenants/<tenant>/contracts/live/` in the bucket (default empty, 0, empty; `CONTRACTS_SERVER_HOST`, `CONTRACTS_SERVER_PORT`, `CONTRACTS_SERVER_DATABASE`). With a `host`, each file names the warehouse (`type`, `host`, `port`, `database`, and the contract's `schema`), so a catalog tool that reads the folder can bind a contract to its table; the `type` is `postgres` or `trino` from `validation.engine`, and `database` is the catalog name on `trino`. Empty `database` uses `validation.warehouseDatabase`. A `host` that is empty or only blanks is no host: no file carries a `servers` entry, and `port` and `database` are ignored. Blanks around a host or a database are trimmed. With a host, rendering fails unless `port` is a whole number from 1 to 65535 and a database that is not blank resolves, and catalog refuses to start on the same values. A change rewrites every file when catalog restarts. |
+| `contracts.publish.server.host` / `.port` / `.database` | The warehouse entry (`servers`) of the contract files catalog writes to `tenants/<tenant>/contracts/live/` in the bucket (default empty, 0, empty; `CONTRACTS_SERVER_HOST`, `CONTRACTS_SERVER_PORT`, `CONTRACTS_SERVER_DATABASE`). With a `host`, each file names the warehouse (`type`, `host`, `port`, `database`, and the contract's `schema`), so a catalog tool that reads the folder can bind a contract to its table. The `type` is `postgres` or `trino`, from `validation.engine`. `database` is the catalog name on `trino`, and an empty one uses `validation.warehouseDatabase`. A `host` that is empty or only blanks is no host: no file carries a `servers` entry, and `port` and `database` are ignored. Blanks around a host or a database are trimmed. With a host, rendering fails unless `port` is a whole number from 1 to 65535 and a database that is not blank resolves. catalog refuses to start on the same values. A change rewrites every file when catalog restarts. |
 | `credentials.delivery` | How the chart hands the credentials (`POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `NEO4J_PASSWORD`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `LLM_API_KEY`, `GITHUB_TOKEN`, `GITHUB_APP_PRIVATE_KEY`, `AUTH_OIDC_CLIENT_SECRET`) to the pods. `env` (default): each is an environment variable read from its Secret. `file`: the chart mounts the same Secret keys read-only under `/var/run/secrets/continuo`, one file per variable named after it, and sets `<VAR>_FILE` to the file, so no credential is in the environment; a key the chart knows is empty (`llm.apiKey` or a GitHub key left unset) is left out. Rendering fails on any other value. Install-time only: it shapes the Deployments, and every service reads both forms (see the note below the table). |
 | `credentials.files` | Credentials your company puts in the pod as files of its own (the Vault Agent injector, a Secrets Store CSI volume), per service: `{<service>: {<VAR>: <path>}}`, default `{}`. The chart attaches no Secret for those and sets `<VAR>_FILE` to the path, whatever the delivery; add the pod annotations, ServiceAccount annotations and volumes that put the file there to the service's `services` entry. A service with no enabled `services` entry, or a key that is not one of the credentials above, fails the render. With the Vault Agent injector, a Postgres or Redis password given this way also needs the pod annotation `vault.hashicorp.com/agent-init-first: "true"`, so the file exists before the service's wait init containers read it. Install-time only. |
 | `execution.jobS3Secret.name` / `.accessKeyIdKey` / `.secretAccessKeyKey` | The Kubernetes Secret and its two keys the validation, seed-build and compile Job pods read the S3 key pair from, by reference (`JOB_S3_SECRET_NAME`, `JOB_S3_ACCESS_KEY_ID_KEY`, `JOB_S3_SECRET_ACCESS_KEY_KEY` on the shared ConfigMap). Empty name (default): the chart's own S3 Secret and keys (MinIO's, `s3.existingSecret`'s, or the chart's credentials Secret). With a name, the keys default to `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Required when execution-controller's S3 keys are listed in `credentials.files`, since a Job pod can only reference a Kubernetes Secret: rendering fails without it. |
@@ -482,12 +482,8 @@ An install on the bundled MinIO needs nothing here. With an external bucket
 (`s3.*`), the access key, or each pod's IAM role, must allow these actions. The
 shared key already covers `tenants/` for release-controller; the action the
 backup adds is `s3:AbortMultipartUpload`, which catalog needs on its own prefix
-to discard an export it cancels or that fails. topology-controller also reads
-the key of each release's contract bundle before it writes it, so it needs
-`s3:GetObject` and `s3:ListBucket` on `tenants/` as well as `s3:PutObject`.
-It creates the bundle with a conditional write (`If-None-Match: *`), which
-needs no other action but needs a store that supports conditional writes, as
-AWS S3 and MinIO do.
+to discard an export it cancels or that fails. topology-controller's reads on
+`tenants/` are explained below the table.
 
 | Prefix | Component | Actions |
 |---|---|---|
@@ -544,14 +540,16 @@ each Python service's own prefix, so that a missing bundle reads as 404, not
 is proposed for the node. A 403 is a read a retry may clear, so the remediation
 tries again and, under the `runner` engine, ends as a system failure.
 
-topology-controller writes each release's contract bundle once: it reads the key
-`tenants/<tenant>/topologies/<release>/contracts.json.gz` first, and a release
-it parses again (a redelivered request) keeps the bundle already stored, whose
+topology-controller writes each release's contract bundle once. It reads the key
+`tenants/<tenant>/topologies/<release>/contracts.json.gz` first. A release it
+parses again (a redelivered request) keeps the bundle already stored, whose
 SHA-256 the event of the first parse carries. With your own bucket, grant it
 `s3:GetObject` on `tenants/` and `s3:ListBucket` on the bucket for that prefix,
-so that a key never written reads as 404, not 403. A 403 is not read as "never written": it fails the release with
+so that a key never written reads as 404, not 403. A 403 fails the release with
 the reason `internal`, since topology-controller cannot tell whether a bundle is
-already there.
+already there. It creates the bundle with a conditional write
+(`If-None-Match: *`). That needs no other action, but it needs a store that
+supports conditional writes, as AWS S3 and MinIO do.
 
 catalog reads `_index.json` of the live contracts folder to decide what to
 rewrite, and a folder never written has none, so catalog's `s3:ListBucket` on

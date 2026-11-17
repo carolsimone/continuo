@@ -37,10 +37,10 @@ self-contained dbt projects: each with its own `dbt_project.yml`,
 `profiles.yml`, models, seeds, and `Dockerfile`. `service-py` is different — it
 is a **python-node service**, declaring `contracts/*.odcs.yaml` and `scripts/*.py`
 instead of dbt models. Each contract file describes one table: who owns it, when
-it runs, what it reads and which columns it has
-([Python contracts](contracts.md) explains every line). It onboards through the
-same `POST /api/v1/releases` call but a different artifact, which chapter 4
-covers.
+it runs, what it reads and which columns it has.
+[Python contracts](contracts.md) explains every line. The service onboards
+through the same `POST /api/v1/releases` call but a different artifact, which
+chapter 4 covers.
 
 You need all four. A dbt model in `core` reads a table `service-py` produces, so
 releasing only the dbt services leaves the graph with a node that cannot build.
@@ -189,11 +189,12 @@ a model inherits the project value and a model-level `timeout_minutes` replaces
 it; the other `meta` keys, such as `owner`, still come from the project.
 
 A python node declares it as the continuo property `timeoutMinutes` of its
-contract. Both the CLI that checks and packs the contracts and the image base
-the service's nodes run in (`FROM ghcr.io/carolsimone/continuo-python-runtime-<engine>:v0.13.0`
-or later) must be `continuo-python-runtime` 0.13.0 or later, the first release
-that reads `.odcs.yaml` files. With an older image base, every run of every
-node of that service fails when it loads its contracts.
+contract. This needs `continuo-python-runtime` 0.13.0 or later, the first
+release that reads `.odcs.yaml` files, in two places: the CLI that checks and
+packs the contracts, and the image base the service's nodes run in
+(`FROM ghcr.io/carolsimone/continuo-python-runtime-<engine>:v0.13.0` or later).
+With an older image base, every run of every node of that service fails when it
+loads its contracts.
 
 ```yaml
 # services/service-py/contracts/py_daily_kpis.odcs.yaml (excerpt), with timeoutMinutes added
@@ -670,11 +671,11 @@ continuo-runtime pack services/service-py/contracts \
   --out /tmp/odcs-bundle.json
 ```
 
-`validate` stops at the first contract file that is not valid and prints every
-problem of that file. `pack` checks the contracts again, lints the scripts, and writes one bundle with the text of each
-contract and the list of packages the image holds. `--image service-py:v1`
-reads that list from the image you built in chapter 2, with `docker run`. The
-[Python contracts](contracts.md#the-ci-steps) page explains each step.
+`pack` checks the contracts again and lints the scripts. It writes one bundle
+with the text of each contract and the list of packages the image holds.
+`--image service-py:v1` reads that list from the image you built in chapter 2,
+with `docker run`. The [Python contracts](contracts.md#the-ci-steps) page
+explains each step.
 
 Then upload it to the canonical key, `<service>/<release_id>/odcs-bundle.json` —
 the same `aws s3 cp` your CD runs, aimed at the MinIO you forwarded a moment
@@ -711,10 +712,10 @@ curl -s -X POST $API/releases \
 If you post this before the upload, the release parks in `parsing` and stays
 there: the parse is retrying against a 404 for an object that does not exist.
 
-If a contract is not valid, the release is rejected as `invalid_contract` and
-the rejection names every contract that failed, with each problem. Read the
-release back with `GET $API/releases/rel-py-v1`: its `continuo_contracts` field
-names the version of the contract library that read your files.
+Read the release back with `GET $API/releases/rel-py-v1`. Its
+`continuo_contracts` field names the version of the contract library that read
+your files. If the release is rejected as `invalid_contract`,
+[Troubleshooting](#troubleshooting) says what to do.
 
 Open the platform UI and the new `service-py` node now appears in the topology.
 Its page has a Contract tab with the contract as continuo stores it, and
@@ -1250,8 +1251,8 @@ aws --endpoint-url http://localhost:9000 s3 ls \
 
 **A python release is rejected with `invalid_contract`.** At least one contract
 file is not valid. The release page names each failed node with its problems,
-as `<path>: <message>`. `continuo-runtime validate` on the `contracts/` folder
-shows the problems of one file at a time on your machine: it stops at the first
+as `<path>: <message>`. On your machine, `continuo-runtime validate` on the
+`contracts/` folder shows the problems one file at a time. It stops at the first
 file that fails, while the release names every failed contract. Fix each file
 and release again with a new `release_id`. The
 [Python contracts](contracts.md#what-continuo-refuses) page lists what continuo
