@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	rametrics "github.com/carolsimone/continuo/agent-remediation/adapters/metrics"
 	"github.com/carolsimone/continuo/agent-remediation/config"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
@@ -30,6 +31,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 	"github.com/carolsimone/continuo/agent-remediation/workflows"
 	"github.com/carolsimone/continuo/pkg/liveness"
+	pkgmetrics "github.com/carolsimone/continuo/pkg/metrics"
 )
 
 func discardLogger() *slog.Logger {
@@ -216,7 +218,8 @@ func TestMain_RunnerGetsTheConfiguredVerificationTimeout(t *testing.T) {
 		ServiceRepoPaths:    map[string]string{"svc": "path"},
 	}
 	collab := runnerCollaborators(cfg, runnerAdapters{}, discardLogger())
-	deps := newRunnerDeps(cfg, collab, workflow.Set{}, nil, nil, "host:7", discardLogger())
+	counted := rametrics.NewRemediationMetrics(pkgmetrics.New(config.ServiceName))
+	deps := newRunnerDeps(cfg, collab, workflow.Set{}, runnerWiring{owner: "host:7", logger: discardLogger(), metrics: counted})
 
 	assert.Equal(t, 37*time.Minute, deps.VerificationTimeout)
 	assert.Equal(t, 37*time.Minute, deps.Collab.VerificationTimeout)
@@ -226,6 +229,7 @@ func TestMain_RunnerGetsTheConfiguredVerificationTimeout(t *testing.T) {
 	assert.Equal(t, "host:7", deps.Owner)
 	assert.NotNil(t, deps.Registry)
 	assert.NotNil(t, deps.Collab.Clock, "the gate and the runner read the same clock")
+	assert.Same(t, counted, deps.Metrics, "the runner counts on the metrics main built")
 }
 
 func TestMain_LeaseOwnerNamesHostAndProcess(t *testing.T) {

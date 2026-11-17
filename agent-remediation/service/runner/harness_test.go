@@ -498,6 +498,9 @@ type harness struct {
 	blockBeginUnderADeadline atomic.Bool
 	// phaseWrites counts the runner's UpdateVerificationPhase calls.
 	phaseWrites atomic.Int64
+	// metrics is what every runner the harness builds counts on, nil unless a
+	// test sets it.
+	metrics ports.RemediationMetrics
 }
 
 // verificationTimeout is how long the gate lets a verification run take.
@@ -547,6 +550,9 @@ type option func(*harness)
 func withMaintenance() option { return func(h *harness) { h.maintenance = true } }
 
 func withStepTimeout(d time.Duration) option { return func(h *harness) { h.stepTimeout = d } }
+
+// withMetrics makes every runner, worker and sweeper of the harness count on m.
+func withMetrics(m ports.RemediationMetrics) option { return func(h *harness) { h.metrics = m } }
 
 func withTries(n int) option {
 	return func(h *harness) { h.files = testFiles(n) }
@@ -708,6 +714,7 @@ func (h *harness) runnerOwnedBy(files workflow.Set, owner string) *runner.Runner
 		Owner:               owner,
 		VerificationTimeout: verificationTimeout,
 		StepTimeout:         h.stepTimeout,
+		Metrics:             h.metrics,
 	})
 }
 

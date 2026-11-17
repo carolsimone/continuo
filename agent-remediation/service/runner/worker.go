@@ -69,7 +69,7 @@ func NewWorker(r *Runner, repo func() repository.RemediationRepository, owner st
 		wake:   make(chan struct{}, 1),
 		drive:  r.Drive,
 		stuck: func(ctx context.Context, id uuid.UUID) (bool, error) {
-			return stuckEnder{newUoW: r.d.NewUoW, clock: clock, logger: logger}.endIfStuck(ctx, id, owner)
+			return stuckEnder{newUoW: r.d.NewUoW, clock: clock, logger: logger, metrics: r.metrics}.endIfStuck(ctx, id, owner)
 		},
 		heartbeat: leaseDuration / 3,
 		idleWait:  workerIdleWait,

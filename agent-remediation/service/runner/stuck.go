@@ -25,11 +25,14 @@ import (
 
 // stuckEnder ends a remediation that can go no further. The runner uses it
 // before every step it starts, the worker on the remediation of a drive that
-// failed, and the sweeper on the remediations nobody drives.
+// failed, and the sweeper on the remediations nobody drives. Whoever ends a
+// remediation counts it as a system failure, once its transaction committed,
+// on metrics; a nil metrics counts nothing.
 type stuckEnder struct {
-	newUoW func() uow.UnitOfWork
-	clock  ports.Clock
-	logger *slog.Logger
+	newUoW  func() uow.UnitOfWork
+	clock   ports.Clock
+	logger  *slog.Logger
+	metrics ports.RemediationMetrics
 }
 
 // endIfStuck, in one transaction after holding the lease as owner, reads the
@@ -86,6 +89,9 @@ func (e stuckEnder) endIfStuck(ctx context.Context, id uuid.UUID, owner string) 
 	if err := u.Commit(); err != nil {
 		return false, fmt.Errorf("commit: %w", err)
 	}
+	if e.metrics != nil {
+		e.metrics.SystemFailure(rem.Flow, string(why.kind))
+	}
 	e.logger.Error("remediation ended as a system failure; its trigger is dead-lettered, and a redrive resumes it",
 		"remediation", id, "tenant", rem.TenantID, "release", rem.ReleaseID, "round", rem.Round,
 		"trigger_message_id", rem.TriggerMessageID, "reason", why.reason)
@@ -104,7 +110,7 @@ func (r *Runner) endIfStuck(ctx context.Context, run tryRun) (ended bool, err er
 	if whyStuck(run.snap, r.clock.Now()).reason == "" {
 		return false, nil
 	}
-	return stuckEnder{newUoW: r.d.NewUoW, clock: r.clock, logger: r.logger}.endIfStuck(ctx, run.snap.Remediation.ID, r.d.Owner)
+	return stuckEnder{newUoW: r.d.NewUoW, clock: r.clock, logger: r.logger, metrics: r.metrics}.endIfStuck(ctx, run.snap.Remediation.ID, r.d.Owner)
 }
 
 // deadLetteredReason is what the attempt row of a remediation that ended as a
@@ -226,12 +232,28 @@ func failAttemptRow(ctx context.Context, repo repository.ProposalRepository, sna
 	return nil
 }
 
+// stuckKind is the kind of failure that stopped a remediation, which the
+// system failure metric counts it under.
+type stuckKind string
+
+const (
+	// stuckStepFailures: a step of the current try failed too often.
+	stuckStepFailures stuckKind = "step_failures"
+	// stuckRemediationFailures: the remediation failed too often in a row
+	// before a step could run.
+	stuckRemediationFailures stuckKind = "remediation_failures"
+	// stuckDeadline: a drafting or checking try ran past its deadline.
+	stuckDeadline stuckKind = "deadline"
+)
+
 // stuck is why a remediation can make no more progress. reason says it, and
-// is empty when the remediation can go on; step names the step of the current
-// try that failed too often, when that is what stopped it; failures is how
-// many times what stopped it failed, zero for a try past its deadline.
+// is empty when the remediation can go on; kind is the kind of failure it is;
+// step names the step of the current try that failed too often, when that is
+// what stopped it; failures is how many times what stopped it failed, zero for
+// a try past its deadline.
 type stuck struct {
 	reason   string
+	kind     stuckKind
 	step     string
 	failures int
 }
@@ -251,14 +273,14 @@ func whyStuck(snap remediation.Snapshot, now time.Time) stuck {
 		if st.LastError != "" {
 			reason += ", the last time with: " + st.LastError
 		}
-		return stuck{reason: reason, step: st.Step, failures: st.Failures}
+		return stuck{reason: reason, kind: stuckStepFailures, step: st.Step, failures: st.Failures}
 	}
 	if rem := snap.Remediation; rem.Failures >= stepFailureLimit {
 		reason := fmt.Sprintf("the remediation failed %d times in a row before a step could run", rem.Failures)
 		if rem.LastError != "" {
 			reason += ", the last time with: " + rem.LastError
 		}
-		return stuck{reason: reason, failures: rem.Failures}
+		return stuck{reason: reason, kind: stuckRemediationFailures, failures: rem.Failures}
 	}
 	t := snap.Try
 	if t == nil || !t.DeadlineAt.Before(now) {
@@ -266,7 +288,10 @@ func whyStuck(snap remediation.Snapshot, now time.Time) stuck {
 	}
 	switch t.Status {
 	case remediation.TryDrafting, remediation.TryChecking:
-		return stuck{reason: fmt.Sprintf("try %d was still %s at its deadline, %s", t.Try, t.Status, t.DeadlineAt.UTC().Format(time.RFC3339))}
+		return stuck{
+			reason: fmt.Sprintf("try %d was still %s at its deadline, %s", t.Try, t.Status, t.DeadlineAt.UTC().Format(time.RFC3339)),
+			kind:   stuckDeadline,
+		}
 	}
 	return stuck{}
 }

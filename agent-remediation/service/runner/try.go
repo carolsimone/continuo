@@ -16,6 +16,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/typology"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
+	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
@@ -108,7 +109,7 @@ func (r *Runner) NextTry(ctx context.Context, id uuid.UUID) error {
 func (r *Runner) openTry(ctx context.Context, run tryRun) error {
 	t := run.trigger
 	rem := run.snap.Remediation
-	return r.commit(ctx, rem.ID, func(u uow.UnitOfWork) error {
+	return r.commitRun(ctx, run, func(u uow.UnitOfWork) error {
 		inRound, total, err := countAttempts(ctx, u.ProposalRepo(), t)
 		if err != nil {
 			return err
@@ -376,7 +377,8 @@ func triedMessage(tried int, why string) string {
 
 // endWithAttempt records the attempt's terminal proposal row, hands over the
 // nodes whose outcome in it carries a code and ends the remediation, in u's
-// transaction.
+// transaction. Once the transaction commits, each node counts with how it
+// ended.
 func (r *Runner) endWithAttempt(ctx context.Context, u uow.UnitOfWork, run tryRun, attempt int, p proposal.Proposal) error {
 	if err := r.recordAttempt(ctx, u, run, attempt, p); err != nil {
 		return err
@@ -384,7 +386,11 @@ func (r *Runner) endWithAttempt(ctx context.Context, u uow.UnitOfWork, run tryRu
 	if err := r.handOver(ctx, u, run, p.NodeOutcomes); err != nil {
 		return err
 	}
-	return r.endRemediation(ctx, u, run.snap.Remediation)
+	if err := r.endRemediation(ctx, u, run.snap.Remediation); err != nil {
+		return err
+	}
+	run.countOutcomes(p.NodeOutcomes)
+	return nil
 }
 
 // handOver runs the flow's give-up output, in u's transaction, for every node
@@ -403,18 +409,20 @@ func (r *Runner) handOver(ctx context.Context, u uow.UnitOfWork, run tryRun, out
 		return err
 	}
 	in := step.OutputInput{Remediation: run.snap.Remediation, Trigger: run.trigger, Snapshot: run.snap, HandedOver: handed}
+	var row remediation.StepRun
 	if run.snap.Try != nil {
 		in.Try = *run.snap.Try
+		row = r.newRow(run, flowCluster, string(name), kindOutput, flowRound, run.flow.Revision)
 	}
 	if err := out.GiveUp(ctx, u, in); err != nil {
 		return fmt.Errorf("step %s: %w", name, err)
 	}
 	if run.snap.Try != nil {
-		row := r.newRow(run, flowCluster, string(name), kindOutput, flowRound, run.flow.Revision)
 		r.finish(&row)
 		if err := u.RemediationRepo().SaveStep(ctx, row); err != nil {
 			return fmt.Errorf("save step %s: %w", name, err)
 		}
+		run.countStage("", ports.StageOutput, row)
 	}
 	r.logger.Info("nodes handed over", "remediation", run.snap.Remediation.ID, "release", run.trigger.ReleaseID,
 		"nodes", len(handed), "output", name)
@@ -497,14 +505,19 @@ func (r *Runner) finishTry(ctx context.Context, run tryRun) error {
 func (r *Runner) settleTry(ctx context.Context, run tryRun) error {
 	outcomes := nodeOutcomes(run.snap.Clusters)
 	p := proposal.Proposal{Status: settledStatus(outcomes), NodeOutcomes: outcomes}
-	if err := r.commit(ctx, run.snap.Remediation.ID, func(u uow.UnitOfWork) error {
+	if err := r.commitRun(ctx, run, func(u uow.UnitOfWork) error {
 		if err := r.recordAttempt(ctx, u, run, run.snap.Try.Attempt, p); err != nil {
 			return err
 		}
 		if err := r.handOver(ctx, u, run, outcomes); err != nil {
 			return err
 		}
-		return r.endTry(ctx, u, run, remediation.TryFailed)
+		if err := r.endTry(ctx, u, run, remediation.TryFailed); err != nil {
+			return err
+		}
+		run.countTries("")
+		run.countOutcomes(outcomes)
+		return nil
 	}); err != nil {
 		return err
 	}
@@ -535,6 +548,7 @@ func (r *Runner) runCrossCheck(ctx context.Context, run tryRun, checked []checke
 	}
 	row.Findings = res.Findings
 	r.finish(&row)
+	run.countStage("", ports.StageCrossCluster, row)
 	return r.commitFlowStep(ctx, run, row, func(u uow.UnitOfWork) error {
 		if len(res.Findings) == 0 {
 			return nil
@@ -545,10 +559,11 @@ func (r *Runner) runCrossCheck(ctx context.Context, run tryRun, checked []checke
 
 // commitFlowStep commits a flow-level step's row and what fn writes, in one
 // transaction after holding the lease, and clears the failures run's
-// remediation counted in a row before it (clearFailures). A commit that fails
-// is recorded as a failure of the step.
+// remediation counted in a row before it (clearFailures). The metric samples
+// the step collected are counted once it committed. A commit that fails is
+// recorded as a failure of the step.
 func (r *Runner) commitFlowStep(ctx context.Context, run tryRun, row remediation.StepRun, fn func(u uow.UnitOfWork) error) error {
-	err := r.commit(ctx, row.RemediationID, func(u uow.UnitOfWork) error {
+	err := r.commitRun(ctx, run, func(u uow.UnitOfWork) error {
 		if err := r.clearFailures(ctx, u, run); err != nil {
 			return err
 		}
@@ -577,7 +592,11 @@ func (r *Runner) failTryOnFindings(ctx context.Context, u uow.UnitOfWork, run tr
 	if err := r.recordRefusal(ctx, u, run, checked, reason); err != nil {
 		return err
 	}
-	return r.saveTry(ctx, u, *run.snap.Try, remediation.TryFailed, time.Time{})
+	if err := r.saveTry(ctx, u, *run.snap.Try, remediation.TryFailed, time.Time{}); err != nil {
+		return err
+	}
+	run.countTries(ports.TryChecksFailed)
+	return nil
 }
 
 // recordRefusal records the attempt of the current try failed for reason, in

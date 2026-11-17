@@ -9,6 +9,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
+	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/promptlog"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
@@ -168,6 +169,7 @@ func (r *Runner) runContext(ctx context.Context, run tryRun, c remediation.Clust
 	if err != nil {
 		return err
 	}
+	run.countStage(c.TypeName, ports.StageContext, row)
 	return r.commitStep(ctx, run, row, []remediation.StepRun{row}, append([]remediation.Cluster{next}, added...))
 }
 
@@ -197,7 +199,7 @@ func (r *Runner) runPrompt(ctx context.Context, run tryRun, c remediation.Cluste
 		ReleaseID: run.trigger.ReleaseID,
 		NodeID:    c.TargetNodeID,
 		Attempt:   run.snap.Try.Attempt,
-	})
+	}, r.tokenCounter(run.snap.Remediation.Flow, c.TypeName))
 	out, err := p.Propose(ctx, in, m)
 	row.Model, row.PromptVersion = m.lastModel, m.promptVersion
 	row.TokensIn, row.TokensOut, row.CacheHit = m.tokensIn, m.tokensOut, m.cacheHit()
@@ -224,6 +226,7 @@ func (r *Runner) runPrompt(ctx context.Context, run tryRun, c remediation.Cluste
 	if err != nil {
 		return err
 	}
+	run.countStage(c.TypeName, ports.StagePropose, row)
 	return r.commitStep(ctx, run, row, []remediation.StepRun{row}, append([]remediation.Cluster{next}, added...))
 }
 
@@ -313,11 +316,14 @@ func (r *Runner) runPreflight(ctx context.Context, run tryRun, c remediation.Clu
 
 	next := c
 	var added []remediation.Cluster
+	round := ports.RoundPassed
 	if first, refused := firstFinding(results); refused {
 		if c.Round < plan.typ.Agent.Rounds {
+			round = ports.RoundRevised
 			next.Round++
 			err = moveCluster(&next, remediation.ClusterProposing)
 		} else {
+			round = ports.RoundSpent
 			added, err = r.settle(run, &next, proposal.NodeOutcome{
 				Status: proposal.StatusFailed, Reason: first.Message, Code: pkg_model.HandoverReasonPreflightRoundsSpent,
 			})
@@ -350,6 +356,8 @@ func (r *Runner) runPreflight(ctx context.Context, run tryRun, c remediation.Clu
 	pass.Findings = findings
 	r.finish(&pass)
 	rows = append(rows, pass)
+	run.countStage(c.TypeName, ports.StagePreflight, pass)
+	run.countRound(c.TypeName, round)
 	return r.commitStep(ctx, run, pass, rows, append([]remediation.Cluster{next}, added...))
 }
 

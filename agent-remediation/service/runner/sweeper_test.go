@@ -20,7 +20,7 @@ func (h *harness) sweeper() *runner.Sweeper { return h.sweeperAs("host:1/sweeper
 func (h *harness) sweeperAs(owner string) *runner.Sweeper {
 	return runner.NewSweeper(
 		func() uow.UnitOfWork { return memory.NewUnitOfWork(h.store) },
-		h.store.RemediationRepository, owner, h.clock, discard)
+		h.store.RemediationRepository, owner, h.clock, discard, h.metrics)
 }
 
 // drafting accepts the trigger and opens its first try, leaving the
