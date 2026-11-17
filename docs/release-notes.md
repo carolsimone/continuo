@@ -17,6 +17,23 @@ app changes can still be a `PATCH`.
 
 ---
 
+## 0.24.0 · 2026-11-17 · `MINOR`
+
+**TL;DR**
+
+- The release kind `python` (`contract.yaml`) is no longer accepted. A Python service is released as `python-odcs`, one ODCS contract per node.
+- You must act first: release every Python service as `python-odcs` before you upgrade. The upgrade stops, or release-controller refuses to start, while any service is still on `python`, and the message names the services.
+- On 0.22.0 or earlier with a Python service, upgrade to 0.23.0 first: it is the first release that accepts `python-odcs`. Follow the [upgrade steps](https://github.com/carolsimone/continuo/blob/main/deploy/continuo/CHANGELOG.md#0240---2026-11-17).
+- No values change is needed.
+
+What else is new:
+
+- **A run stored with the kind `python` is rejected, not promoted.** One still queued or in flight when the new version starts ends `invalid_artifact` and promotes nothing, so it cannot leave a service stuck on the kind `python`.
+- **A release page shows the right stages for a `python-odcs` release.** It no longer lists a compile or a seed-build stage ahead.
+- **agent-remediation refuses a non-bundle contract.** A packaged contract that is not an ODCS bundle fails the try with a finding, and nothing is submitted.
+
+[Changelog](https://github.com/carolsimone/continuo/blob/main/deploy/continuo/CHANGELOG.md#0240---2026-11-17) · [Release](https://github.com/carolsimone/continuo/releases/tag/v0.24.0)
+
 ## 0.23.0 · 2026-11-17 · `MINOR`
 
 **TL;DR**
