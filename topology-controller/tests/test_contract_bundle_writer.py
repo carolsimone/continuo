@@ -21,14 +21,27 @@ def _client_error(code: str, status: int, operation: str) -> botocore.exceptions
 
 class FakeS3:
     """The two calls the writer makes, over a dict. A key that is not there answers
-    the way S3 does: a ClientError whose code is NoSuchKey."""
+    the way S3 does: a ClientError whose code is NoSuchKey. A put with
+    IfNoneMatch="*" on a key that is there answers 412 PreconditionFailed and
+    stores nothing. before_put runs before each put is applied, so a test can
+    store another writer's bytes between the writer's read and its put; put_errors
+    are raised by the puts in order, one each, before anything is stored."""
 
-    def __init__(self, *, get_error: Exception | None = None, put_error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        get_error: Exception | None = None,
+        put_error: Exception | None = None,
+        put_errors: list[Exception] | None = None,
+        before_put=None,
+    ) -> None:
         self.objects: dict[tuple[str, str], bytes] = {}
         self.puts: list[dict] = []
         self.gets: list[dict] = []
         self._get_error = get_error
         self._put_error = put_error
+        self._put_errors = list(put_errors or [])
+        self._before_put = before_put
 
     def get(self, bucket: str, key: str) -> bytes:
         return self.objects[(bucket, key)]
@@ -42,11 +55,27 @@ class FakeS3:
         return {"Body": io.BytesIO(self.objects[(Bucket, Key)])}
 
     def put_object(self, *, Bucket: str, Key: str, Body: bytes, **kwargs) -> dict:
+        self.puts.append({"Bucket": Bucket, "Key": Key, "Body": Body, **kwargs})
+        if self._before_put is not None:
+            self._before_put(self)
         if self._put_error is not None:
             raise self._put_error
-        self.puts.append({"Bucket": Bucket, "Key": Key, "Body": Body, **kwargs})
+        if self._put_errors:
+            raise self._put_errors.pop(0)
+        if kwargs.get("IfNoneMatch") == "*" and (Bucket, Key) in self.objects:
+            raise _client_error("PreconditionFailed", 412, "PutObject")
         self.objects[(Bucket, Key)] = Body
         return {}
+
+
+def _another_writer_stores(body: bytes):
+    """A before_put hook: another writer's put of the same key lands between this
+    writer's read (which found nothing) and its own put."""
+
+    def store(s3: FakeS3) -> None:
+        s3.objects.setdefault(("b", KEY), body)
+
+    return store
 
 
 @pytest.fixture
@@ -61,6 +90,7 @@ def test_the_writer_stores_the_gzipped_canonical_document_and_returns_its_refere
 
     [put] = fake_s3.puts
     assert (put["Bucket"], put["Key"], put["ContentType"]) == ("b", KEY, "application/gzip")
+    assert put["IfNoneMatch"] == "*", "the put must create the object only when no other writer has"
     assert "ContentEncoding" not in put, "a Content-Encoding header would let an HTTP client gunzip it in transit"
     assert put["Body"] == gzip.compress(canonical_json(document), mtime=0)
     assert gzip.decompress(put["Body"]) == canonical_json(document)
@@ -132,6 +162,78 @@ def test_a_read_failure_other_than_a_missing_object_reaches_the_caller_and_write
 
     assert raised.value is error
     assert s3.puts == []
+
+
+def test_a_writer_that_loses_the_race_returns_the_reference_of_the_winners_bytes():
+    winner = gzip.compress(b'{"written":"by the other replica"}', mtime=0)
+    s3 = FakeS3(before_put=_another_writer_stores(winner))
+
+    ref = ContractBundleWriter(s3, "b").write(tenant_id="default", release_id="r1", document={"a": 1})
+
+    assert ref == ContractBundleRef(uri=f"s3://b/{KEY}", sha256=hashlib.sha256(winner).hexdigest())
+    assert s3.get("b", KEY) == winner, "the losing writer must not replace the stored bytes"
+    assert len(s3.puts) == 1
+
+
+def test_a_conflicting_conditional_write_reads_the_object_the_other_writer_stored():
+    winner = gzip.compress(b'{"written":"by the other replica"}', mtime=0)
+
+    def conflict_then_land(s3: FakeS3) -> None:
+        s3.objects.setdefault(("b", KEY), winner)
+
+    s3 = FakeS3(
+        put_errors=[_client_error("ConditionalRequestConflict", 409, "PutObject")],
+        before_put=conflict_then_land,
+    )
+
+    ref = ContractBundleWriter(s3, "b", sleep=lambda _: None).write(
+        tenant_id="default", release_id="r1", document={"a": 1})
+
+    assert ref == ContractBundleRef(uri=f"s3://b/{KEY}", sha256=hashlib.sha256(winner).hexdigest())
+    assert len(s3.puts) == 1
+
+
+def test_a_conflict_whose_object_is_not_there_yet_is_tried_again():
+    s3 = FakeS3(put_errors=[_client_error("ConditionalRequestConflict", 409, "PutObject")])
+    waits: list[float] = []
+
+    ref = ContractBundleWriter(s3, "b", sleep=waits.append).write(
+        tenant_id="default", release_id="r1", document={"a": 1})
+
+    assert len(s3.puts) == 2 and all(p["IfNoneMatch"] == "*" for p in s3.puts)
+    assert ref.sha256 == hashlib.sha256(s3.get("b", KEY)).hexdigest()
+    assert len(waits) == 1 and waits[0] > 0
+
+
+def test_conflicts_that_never_settle_reach_the_caller():
+    conflict = _client_error("ConditionalRequestConflict", 409, "PutObject")
+    s3 = FakeS3(put_error=conflict)
+
+    with pytest.raises(botocore.exceptions.ClientError) as raised:
+        ContractBundleWriter(s3, "b", sleep=lambda _: None).write(
+            tenant_id="default", release_id="r1", document={})
+
+    assert raised.value is conflict
+    assert 1 < len(s3.puts) <= 10
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        botocore.exceptions.EndpointConnectionError(endpoint_url="http://minio:9000"),
+        _client_error("SlowDown", 503, "PutObject"),
+        _client_error("AccessDenied", 403, "PutObject"),
+    ],
+    ids=["unreachable", "503", "403"],
+)
+def test_a_put_failure_other_than_a_lost_race_reaches_the_caller_unchanged(error):
+    s3 = FakeS3(put_error=error)
+
+    with pytest.raises(type(error)) as raised:
+        ContractBundleWriter(s3, "b").write(tenant_id="default", release_id="r1", document={})
+
+    assert raised.value is error
+    assert len(s3.puts) == 1
 
 
 def test_a_put_failure_reaches_the_caller():

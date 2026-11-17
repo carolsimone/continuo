@@ -485,6 +485,9 @@ backup adds is `s3:AbortMultipartUpload`, which catalog needs on its own prefix
 to discard an export it cancels or that fails. topology-controller also reads
 the key of each release's contract bundle before it writes it, so it needs
 `s3:GetObject` and `s3:ListBucket` on `tenants/` as well as `s3:PutObject`.
+It creates the bundle with a conditional write (`If-None-Match: *`), which
+needs no other action but needs a store that supports conditional writes, as
+AWS S3 and MinIO do.
 
 | Prefix | Component | Actions |
 |---|---|---|
