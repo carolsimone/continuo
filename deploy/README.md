@@ -256,8 +256,11 @@ upgrade.
 1. **Freeze producer merges.** No pipeline may release a service until step 6
    ends: an ordinary release inside the window validates a large set of nodes
    and reloads every seed.
-2. **Upgrade continuo.** The upgrade stops while a service in production is
-   still released as the kind `python`: release each one as `python-odcs` first
+2. **Upgrade continuo.** The upgrade does not complete while a service in
+   production is still released as the kind `python`: with your own database the
+   migration Job fails before any pod changes, and with the bundled Postgres
+   release-controller refuses to start and `helm rollback` recovers. Both name
+   the services. Release each one as `python-odcs` first
    ([Python contracts](../docs/contracts.md#moving-from-contractyaml)).
 3. **Release each dbt service** with its current `image_tag` and both flags.
    The pipeline that posts these releases needs `allowBootstrap: true` on its CI
@@ -268,15 +271,13 @@ upgrade.
    {"release_id":"rel-rebase-finance-1","service":"finance","image_tag":"cddbcbc","bootstrap":true,"rebaseline":true,"repo":"carolsimone/continuo-demo","commit_sha":"cddbcbc981380257edf435e2a0627246e9908129"}
    ```
 
-4. **Release each Python service.** Rebuild its image on
-   `continuo-python-runtime` 0.12.0 (the image's `FROM` tag and the runtime your
-   CI installs) with no other change, and release it with the same two flags and
-   `"kind": "python-odcs"`. Its pipeline packs the `odcs-bundle.json` with
-   `continuo-runtime pack` and uploads it. Its `image_tag` is the full registry
-   reference, not the bare short SHA, for example
-   `"image_tag":"docker.io/<user>/service-py:4e5f6a7"`. Rebuild a Python service
-   on 0.12.0 only inside these steps: a normal release on 0.12.0 outside them
-   moves its hashes outside the window and starts a validation.
+4. **Release each Python service.** Build its image on
+   `continuo-python-runtime` 0.13.0 or later (the image's `FROM` tag and the
+   runtime your CI installs), pack its contracts with `continuo-runtime pack`,
+   upload the `odcs-bundle.json` ([Python contracts](../docs/contracts.md#the-ci-steps))
+   and release it with the same two flags and `"kind": "python-odcs"`. Its
+   `image_tag` is the full registry reference, not the bare short SHA, for
+   example `"image_tag":"docker.io/<user>/service-py:4e5f6a7"`.
 5. **Check.** Release any one service normally with no change. Its release must
    validate nothing.
 6. **Unfreeze.**

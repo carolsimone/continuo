@@ -535,9 +535,12 @@ A Python service releases as `python-odcs`. The kind `python`, one
 answers `400` with a message that says `kind "python" is no longer accepted`
 and names `python-odcs`.
 
-An upgrade of continuo stops while a service in production is still released
-as the kind `python`. The message names the services. Release each of them as
-`python-odcs` before you upgrade, then upgrade.
+An upgrade of continuo does not complete while a service in production is
+still released as the kind `python`. With your own database the migration Job
+fails and `helm upgrade` stops before any pod changes. With the bundled
+Postgres the pods roll, release-controller refuses to start, and `helm
+rollback` recovers. Either way the message names the services. Release each of
+them as `python-odcs` before you upgrade, then upgrade.
 
 To move a service, convert the files, change the CI steps above, and post with
 the kind `python-odcs`. Every field of a `contract.yaml` has a place in the
