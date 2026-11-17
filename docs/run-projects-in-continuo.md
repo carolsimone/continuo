@@ -1264,6 +1264,14 @@ contracts carries a newer contract library than the one your install runs.
 Pin an older `continuo-python-runtime` in CI, or upgrade continuo. See
 [the library version CI must pin](contracts.md#the-library-version-ci-must-pin).
 
+**A python release is refused with a `400` that says `kind "python" is no longer
+accepted`.** The post names the kind `python`, which stands for one
+`contract.yaml` per service. Post the release with `"kind": "python-odcs"` and
+the bundle that `continuo-runtime pack` writes from the service's
+`contracts/*.odcs.yaml` files. [Moving from
+`contract.yaml`](contracts.md#moving-from-contractyaml) maps each field of the
+old file to the new one.
+
 **A release sits in `compiling` and then rejects with `compile_failed`.** Your
 dbt project does not compile. The most common cause is a `{{ ref() }}` pointing
 at a model in a *different* service — see the cross-project rule in chapter 1.

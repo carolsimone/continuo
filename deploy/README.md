@@ -126,9 +126,9 @@ whose repository matches no binding is refused on every route, including
 The workflow requests a token whose audience is the same origin continuo expects,
 then submits the release and polls it to a terminal status. This example
 releases a dbt service, so it sends only the three required fields. `kind`
-names how continuo reads the service's artifact: `dbt` (the default when absent),
-`python-odcs` (a Python service's `odcs-bundle.json`, see
-[Python contracts](../docs/contracts.md)) or `python` (its `contract.yaml`).
+names how continuo reads the service's artifact: `dbt` (the default when absent)
+or `python-odcs` (a Python service's `odcs-bundle.json`, see
+[Python contracts](../docs/contracts.md)).
 The first release of a service has no production version to validate against,
 so it is sent with `"bootstrap": true`, which needs a binding with
 `allowBootstrap: true`. These and the other submit fields are described below.
@@ -180,8 +180,8 @@ All three routes live under `/api/v1` on the `ui`. Each takes
 | `GET /api/v1/current-prod` | Which release production is serving: `{current_prod_release_id, node_count, updated_at}`. An empty `current_prod_release_id` means production has never been seeded. |
 
 **Submit body.** `release_id`, `service` and `image_tag` are required;
-`bootstrap` and `rebaseline` (JSON booleans), `kind` (`dbt`, the default,
-`python-odcs` or `python`), `repo` and `commit_sha` are optional. Any other field is a `400`. `release_id` must
+`bootstrap` and `rebaseline` (JSON booleans), `kind` (`dbt`, the default, or
+`python-odcs`), `repo` and `commit_sha` are optional. Any other field is a `400`. `release_id` must
 match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`: it starts with a letter or digit and
 continues with letters, digits, `.`, `_` or `-`, at most 128 characters in all;
 anything else is a `400`. With a CI token, `repo` and `commit_sha` are taken from
@@ -222,7 +222,7 @@ one read every few seconds.
 
 | Status | `code` | Meaning |
 |---|---|---|
-| 400 | `bad_request` | Malformed JSON, an unknown or mistyped field, a missing required field, `rebaseline` without `"bootstrap": true`, or a `release_id` outside the pattern above. |
+| 400 | `bad_request` | Malformed JSON, an unknown or mistyped field, a missing required field, `rebaseline` without `"bootstrap": true`, a `release_id` outside the pattern above, or a `kind` other than `dbt` or `python-odcs`: the kind `python` is refused with a message that says to release the service as `python-odcs`. |
 | 401 | `invalid_token` | The bearer token is malformed, expired, for the wrong audience, from an untrusted issuer, signed with an algorithm other than RS256, or valid for longer than one hour. The response carries `WWW-Authenticate: Bearer error="invalid_token"`. A request with no credential at all answers `401` with code `unauthenticated`. |
 | 403 | `forbidden` | The identity may not do this: a repository not bound to the service it submits, a repository bound to no service at all (on every route), a viewer submitting, or a CI token calling any other route. |
 | 403 | `claim_mismatch` | The body's `repo` or `commit_sha` differs from the token's. |
@@ -256,7 +256,9 @@ upgrade.
 1. **Freeze producer merges.** No pipeline may release a service until step 6
    ends: an ordinary release inside the window validates a large set of nodes
    and reloads every seed.
-2. **Upgrade continuo.**
+2. **Upgrade continuo.** The upgrade stops while a service in production is
+   still released as the kind `python`: release each one as `python-odcs` first
+   ([Python contracts](../docs/contracts.md#moving-from-contractyaml)).
 3. **Release each dbt service** with its current `image_tag` and both flags.
    The pipeline that posts these releases needs `allowBootstrap: true` on its CI
    binding. `repo` and `commit_sha` (the full SHA) are required for a call with
@@ -269,15 +271,12 @@ upgrade.
 4. **Release each Python service.** Rebuild its image on
    `continuo-python-runtime` 0.12.0 (the image's `FROM` tag and the runtime your
    CI installs) with no other change, and release it with the same two flags and
-   `"kind": "python"`, through the pipeline that uploads its contract written
-   by 0.12.0. Its `image_tag` is the full registry reference, not the
-   bare short SHA, for example
+   `"kind": "python-odcs"`. Its pipeline packs the `odcs-bundle.json` with
+   `continuo-runtime pack` and uploads it. Its `image_tag` is the full registry
+   reference, not the bare short SHA, for example
    `"image_tag":"docker.io/<user>/service-py:4e5f6a7"`. Rebuild a Python service
    on 0.12.0 only inside these steps: a normal release on 0.12.0 outside them
-   moves its hashes outside the window and starts a validation. A service
-   released as `python-odcs` follows the same step with `"kind": "python-odcs"`.
-   Its pipeline packs the `odcs-bundle.json` with `continuo-runtime pack` and
-   uploads it.
+   moves its hashes outside the window and starts a validation.
 5. **Check.** Release any one service normally with no change. Its release must
    validate nothing.
 6. **Unfreeze.**

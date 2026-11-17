@@ -374,9 +374,9 @@ A node has a current contract while two things are true:
 - the node is live, and
 - the newest promotion the live folder was written for carried its contract.
 
-When its service goes back to `contract.yaml`, the next promotion carries no
-contract for the node. Its file leaves the live folder and the node has no
-current contract. Its history stays.
+When a node stops having a contract, for example because it becomes a dbt
+model, the next promotion carries no contract for it. Its file leaves the live
+folder and the node has no current contract. Its history stays.
 
 ## The live folder
 
@@ -530,13 +530,18 @@ tool may rely on.
 
 ## Moving from `contract.yaml`
 
-The kind `python` and its single `contract.yaml` still work, and new services
-use `python-odcs`. agent-remediation proposes no fixes for the Python nodes of a
-service on `contract.yaml`. To move a service, convert the files, change the
-CI steps above, and post with the kind `python-odcs`. A release of a service
-uses one kind.
+A Python service releases as `python-odcs`. The kind `python`, one
+`contract.yaml` for the whole service, is not accepted: `POST /api/v1/releases`
+answers `400` with a message that says `kind "python" is no longer accepted`
+and names `python-odcs`.
 
-Every field of the old file has a place in the new one:
+An upgrade of continuo stops while a service in production is still released
+as the kind `python`. The message names the services. Release each of them as
+`python-odcs` before you upgrade, then upgrade.
+
+To move a service, convert the files, change the CI steps above, and post with
+the kind `python-odcs`. Every field of a `contract.yaml` has a place in the
+`.odcs.yaml` file:
 
 | In `contract.yaml` | In the `.odcs.yaml` file |
 |---|---|
