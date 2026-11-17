@@ -109,10 +109,10 @@ This release adds the values keys `agentRemediation.engine`, `contracts.publish.
 
 ### Removed
 
-- **BREAKING: the release kind `python` (`contract.yaml`) is no longer accepted.** TL;DR: release every Python service as `python-odcs` on the continuo version you run now, then upgrade. The upgrade stops while any service is still on `python`, and the message names them.
+- **BREAKING: the release kind `python` (`contract.yaml`) is no longer accepted.** TL;DR: release every Python service as `python-odcs` on the continuo version you run now, then upgrade. The upgrade stops, or release-controller refuses to start, while any service is still on `python`, and the message names them.
   - topology-controller reads no `contract.yaml`. release-controller refuses a release or a verification that names the kind `python`, and the refusal says to use `python-odcs`.
   - Release migration V30 fails with `these services are still released as kind "python": <names>. Release each one as "python-odcs" (docs/contracts.md) on the continuo version you run now, then upgrade.` The names are sorted and separated by commas.
-  - With your own database, the migration runs in the `db-init-migrate` hook Job before any pod changes, so `helm upgrade` fails on the hook and nothing rolls. The names are in that Job's log: `kubectl -n <namespace> logs -l app.kubernetes.io/name=db-init-migrate -c migrate`.
+  - With your own database, the migration runs in the `db-init-migrate` hook Job before any pod changes, so `helm upgrade` fails on the hook and nothing rolls. The names are in that Job's log: `kubectl -n <namespace> logs -l app.kubernetes.io/name=db-init-migrate -c migrate --tail=-1`.
   - With the bundled Postgres, the Job is not a hook, so the pods roll while it fails. release-controller on the new version refuses to start, and its log has the same message. Run `helm rollback <release>`, release the listed services as `python-odcs`, then upgrade again.
   - To fix it, release each named service as `python-odcs` on the version you run now. `docs/contracts.md`, "Moving from `contract.yaml`", says how.
   - A run or a release stored with the kind `python` keeps its row and its history. A service already released as `python-odcs` is not affected.
