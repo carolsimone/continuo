@@ -21,8 +21,12 @@ This page is for the team that writes a Python service. It covers:
 - [reading a contract back](#reading-a-contract-back) and [the history](#the-history-of-a-contract)
 - [the live folder](#the-live-folder) and [a DataHub recipe](#a-datahub-recipe)
 - [moving from `contract.yaml`](#moving-from-contractyaml)
+- [dbt nodes](#dbt-nodes): where continuo finds the same facts for a dbt model,
+  seed, snapshot or test
 
-A dbt node has no contract file. continuo reads it from your dbt project.
+A dbt node has no contract file. continuo builds it from the `manifest.json`
+of your dbt project. [dbt nodes](#dbt-nodes) says what continuo reads there and
+what it does with each part.
 
 ## The file and its name
 
@@ -541,3 +545,231 @@ Every field of the old file has a place in the new one:
 
 Copy each read query, type and script path as it is. The code fingerprint of
 a node does not change, so the move leaves it as it was.
+
+## dbt nodes
+
+A dbt node has no contract file. Everything continuo knows about it comes from
+your dbt project. When you post a release, continuo runs `dbt compile` in your
+image and reads two files from that compile:
+
+- `manifest.json`, which dbt writes. It holds every node of your project, its
+  SQL, its config and its `meta`.
+- `compile-extras.json`, which continuo's own script writes beside it in the
+  same compile Job. It holds what the manifest leaves out: each seed's file
+  hash, its CSV header and its column types, the `flags:` block of
+  `dbt_project.yml`, and the versions of the dbt packages in your image.
+  [deploy/dbt-image-contract.md](../deploy/dbt-image-contract.md) says what the
+  compile Job needs from your image.
+
+The table below puts a Python contract next to a dbt node. Each row is one fact
+continuo needs, and where it comes from for each kind of node.
+
+| Fact | Python contract | dbt node |
+|---|---|---|
+| The node's name | `id` | `<schema>.<name>` of the manifest node, in lower case |
+| The table it writes | the table of `id` | the node's `alias`, or its `name` when it has no alias |
+| Owner | `team.name` | `meta.owner` |
+| Schedule | `schedule` | the first tag |
+| Criticality | `criticality` | `meta.criticality` (read, but continuo does not use it for a dbt node) |
+| Task timeout | `timeoutMinutes` | `meta.timeout_minutes` |
+| The tables it reads | `readQueries` | the compiled SQL (`compiled_code`) |
+| Its columns | `properties` | none for a model or snapshot; a seed's header and column types from `compile-extras.json` |
+| The code continuo fingerprints | the script, its shared code and the contract's code fields | SQL, macros, config and seed files (see [the code version](#the-code-version-of-a-dbt-node)) |
+
+`meta` here means the node's `config.meta`. dbt fills it from
+`dbt_project.yml`, the folder and the model itself, so a key set on the model
+wins over the same key set for the whole project.
+
+### Which nodes continuo keeps
+
+continuo looks at every entry of the manifest's `nodes`:
+
+| dbt resource | In continuo |
+|---|---|
+| model | a `dbt-model` node |
+| seed | a `dbt-seed` node |
+| snapshot | a `dbt-snapshot` node |
+| test | a `dbt-test` node, but only when it tests a model, seed or snapshot that continuo keeps |
+| anything else, such as an analysis or a hook | no node |
+
+continuo leaves out a model, seed or snapshot when one of these is true. It
+checks them in this order:
+
+1. It has no `meta.owner`, or the owner is empty.
+2. One of its tags is `local_stub`.
+3. It comes from an installed dbt package (one your `packages.yml` names) and
+   has no tag.
+
+A node left out does not fail the release. continuo logs it and counts it in
+`continuo_topology_release_skipped_nodes`, with the reason `no_owner`,
+`local_stub` or `installed_package`.
+
+Which service a node belongs to is the first part of its dbt `fqn`, with `_`
+written as `-`. Your project is the manifest's `metadata.project_name`, written
+the same way, or the service the release names when the manifest has none. A
+node of an installed package that has an owner and a tag is not left out: it
+rejects the release as `invalid_artifact`, because a release of a service holds
+only the nodes of its own project. A manifest where no node is kept rejects the
+release as `invalid_artifact` too.
+
+A model or snapshot with an owner and no tag is a dormant node. It has no
+schedule, a release checks it like any other model, and you run it by hand. A
+seed with no tag takes the schedule `seed`. Rule 4 of
+[the four rules a dbt project must follow](run-projects-in-continuo.md#the-four-rules-a-dbt-project-must-follow)
+explains dormant nodes, packages and `local_stub` in full.
+
+A test writes no table. Its name in continuo is dbt's own `unique_id`, which
+starts with `test.`. A test needs no owner and no tag, and no schedule runs
+it. During validation, continuo checks the test's compiled SQL against the
+release's new tables, so a test that names a column the release dropped
+rejects the release. Each test also adds one to the `test_count` of each node
+it tests, and so does each unit test of a model.
+
+### The name and the table
+
+A dbt node's name in continuo is `<schema>.<name>`, in lower case. `<schema>`
+is the schema dbt worked out for the node, after your `generate_schema_name`.
+`<name>` is the node's `name`. A versioned model is `<schema>.<name>.v<version>`,
+so each version is a node of its own.
+
+The table the node writes is its `alias` when it has one. Another node's SQL
+reaches it through that table. Two nodes that write the same table are rejected
+as `duplicate_table`.
+
+### Owner, schedule and the other `meta` keys
+
+continuo reads these keys of `meta` and tags, and no others:
+
+| Key | What continuo does with it |
+|---|---|
+| `meta.owner` | It must be there and not empty, or the node is left out. |
+| First tag | The schedule the node belongs to. A schedule runs on its own only once you give it a cron. |
+| `local_stub` tag | The node is left out. |
+| `meta.timeout_minutes` | How long a task of the node may run: a whole number from 1 to 10,080. Any other value rejects the release as `invalid_artifact` and names the node. See [Declare the task timeout of a node](run-projects-in-continuo.md#declare-the-task-timeout-of-a-node). |
+| `meta.criticality` | Read, with `SECONDARY` when it is missing. continuo does not check it or use it for a dbt node. |
+
+### Materialization
+
+continuo reads the node's `config.materialized` and keeps it on the node.
+
+- `ephemeral`: dbt writes no table. It pastes the model into each reader as a
+  `WITH` part named `__dbt__cte__<name>`. continuo sees that part and makes the
+  ephemeral model an upstream of the reader, when both are in the same service.
+- `view` and `materialized_view`: when a seed load drops the seed's table,
+  continuo rebuilds the views and materialized views below that seed in the
+  same run. It walks through ephemeral models on the way.
+  [Seeds that change](run-projects-in-continuo.md#seeds-that-change) has the
+  details, and it covers a seed's `full_refresh` setting, which continuo also
+  reads.
+- Every materialization is part of the node's config, so changing it changes
+  the node's code version.
+
+### The tables a node reads
+
+continuo does not use dbt's `ref()` graph. It reads each node's compiled SQL
+with sqlglot, in the SQL dialect of your warehouse, and lists every table the
+SQL names. When some node builds that table, the reader depends on that node.
+That is why a raw name such as `analytics.fx_transactions_eur` works across two
+projects, where `ref()` cannot. The rules:
+
+- Every table needs its schema. A table named without one rejects the release
+  as `unqualified_reference`, and continuo can propose a fix. `ref()` and
+  `source()` normally compile to a name with a schema.
+- A name defined by `WITH` hides a table of the same name only where that
+  `WITH` is in scope, as for a Python read query.
+- A read of the node's own table is not a dependency.
+- A function called with a schema, such as `pg_catalog.generate_series(1, 3)`,
+  is not a table.
+- continuo matches a table by schema and name. A catalog or database in front
+  of them does not change which node it is.
+- SQL that the parser cannot read rejects the release as `invalid_sql`.
+
+A table that a node reads and no node builds becomes a node of type
+`unknown-external`: `<schema>.<table>`, with no service, no schedule and no
+code. A table you read with `source()` usually ends up as one. continuo never
+runs it. The warehouse's own tables never become nodes: `information_schema`
+and every `pg_` schema on Postgres, and `information_schema` and the `system`
+catalog on Trino. The table of a left-out model becomes an `unknown-external`
+node when another node reads it. The table of a dormant model does not, because
+a dormant model counts as built.
+
+### Columns
+
+continuo keeps no list of the columns of a model or snapshot. When a model's dbt contract is
+enforced (`contract: {enforced: true}`), its declared columns (name,
+`data_type`, constraints and `quote`) and its model constraints are part of its
+code version, so a change to them is a change of code.
+
+A seed's columns come from `compile-extras.json`: the CSV header in file order
+and the column types your seed config sets. continuo uses them to tell a change
+of columns from a change of rows, which decides how the seed loads again (see
+[Seeds that change](run-projects-in-continuo.md#seeds-that-change)). Without an
+entry for the seed in `compile-extras.json`, the seed has no column list.
+
+### The code version of a dbt node
+
+Each node has a code version, its `content_hash`. continuo uses it to tell
+which nodes a release changes. A changed node, and every node below it, is
+built again in the release's validation. A seed whose code version changes is
+loaded again after the release is promoted. catalog keeps the history of each
+node's code versions.
+
+These change a node's code version:
+
+- The node's SQL file. Only line endings and blank space at the very start and
+  end of the file are ignored.
+- Its compiled SQL. So does anything that changes what `dbt compile` writes: a
+  `var()`, an `env_var()`, a `ref()` that points somewhere else, or an
+  ephemeral model it pastes in.
+- A seed's CSV file, byte for byte.
+- A macro that you or a package wrote and that the node's build reaches,
+  a dbt function the node calls, and a model's unit tests. dbt's own built-in
+  macros do not count.
+- The parts every build of your project runs: `on-run-start` and `on-run-end`
+  hooks, your project's `generate_schema_name` and `generate_alias_name`, and
+  the `flags:` block of `dbt_project.yml` when it is not empty.
+- The schema and the table the node writes.
+- Every key of the node's `config` except `access`, `description`, `docs`,
+  `freshness`, `grants`, `group`, `meta` and `tags`. So `materialized`,
+  `unique_key`, `full_refresh`, `pre_hook`, `post_hook` and the rest all count.
+- The columns and constraints of an enforced dbt contract.
+
+These do not change it:
+
+- `meta` keys, `owner`, `criticality` and `timeout_minutes` among them, and
+  tags. A node whose only change is one of these is not built again in
+  validation. Two exceptions:
+  a `meta` value your SQL reads changes the compiled SQL, and a tag you set in
+  the SQL file's own `config()` line changes the SQL file.
+- `description`, `docs`, a column's description, `grants`, `access`, `group`
+  and `freshness`.
+- The values that change on every compile: dbt's invocation id, the time the
+  compile started, and the node's database name. continuo replaces them with
+  fixed text before it hashes.
+
+A seed's file hash comes from `compile-extras.json`. When that file has no
+entry for the seed, continuo uses dbt's own checksum instead. For a seed over
+1 MiB, dbt's checksum is only the file's path, so a change of rows does not
+change the code version. continuo logs a warning for each such seed.
+
+`compile-extras.json` must be valid. A file that is not JSON, has another
+`version`, names another service, or holds a value of the wrong type rejects
+the release as `invalid_artifact`.
+
+The code bundle of each release (`code-bundles/<release>/bundle.json`) holds
+each dbt node's SQL, compiled SQL, config and the four parts of its code
+version. [Reading releases from continuo](read-contract.md) says which of its
+fields a tool may rely on.
+
+### No contract for a dbt node
+
+A dbt node has no ODCS contract in continuo:
+
+- It has no `contract_hash` and no contract history.
+- The contract bundle of a release holds no entry for it.
+- The [live folder](#the-live-folder) has no file for it.
+- Its Contract tab says the node has no contract, and
+  `continuo node contract <unique_id>` answers `not_found` (exit 3).
+
+Your dbt project, its YAML and its SQL, is where these facts live. To change
+one, change the project and post a release.
