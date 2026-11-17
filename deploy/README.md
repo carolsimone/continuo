@@ -247,21 +247,29 @@ produces. The release notes of a version that needs this say so; a fresh
 install needs none of it, because its first release is a bootstrap with the new
 fingerprint.
 
-Before you start, check every dbt team image: the compile Job runs
-`compile_extras.py` with the image's `python3`, so
-`docker run --rm --entrypoint python3 <team-image> -c 'import yaml, dbt'` must
-succeed for each one. An image where it fails fails its compile after the
-upgrade.
+Before you start:
+
+- Release every Python service as `python-odcs`, on a continuo version that
+  accepts it, before the upgrade
+  ([Python contracts](../docs/contracts.md#moving-from-contractyaml)). The
+  upgrade stops while a service in production is still released as the kind
+  `python`.
+- Check every dbt team image: the compile Job runs `compile_extras.py` with the
+  image's `python3`, so
+  `docker run --rm --entrypoint python3 <team-image> -c 'import yaml, dbt'` must
+  succeed for each one. An image where it fails fails its compile after the
+  upgrade.
 
 1. **Freeze producer merges.** No pipeline may release a service until step 6
    ends: an ordinary release inside the window validates a large set of nodes
    and reloads every seed.
-2. **Upgrade continuo.** The upgrade does not complete while a service in
-   production is still released as the kind `python`: with your own database the
-   migration Job fails before any pod changes, and with the bundled Postgres
-   release-controller refuses to start and `helm rollback` recovers. Both name
-   the services. Release each one as `python-odcs` first
-   ([Python contracts](../docs/contracts.md#moving-from-contractyaml)).
+2. **Upgrade continuo.** The upgrade stops while a service in production is
+   still released as the kind `python`, in one of two ways. With your own
+   database the migration Job fails and `helm upgrade` fails before any pod
+   changes. With the bundled Postgres `helm upgrade` can report success while
+   the pods roll, and release-controller refuses to start; `helm rollback`
+   recovers. Both name the services, which "Before you start" had not released
+   as `python-odcs`.
 3. **Release each dbt service** with its current `image_tag` and both flags.
    The pipeline that posts these releases needs `allowBootstrap: true` on its CI
    binding. `repo` and `commit_sha` (the full SHA) are required for a call with

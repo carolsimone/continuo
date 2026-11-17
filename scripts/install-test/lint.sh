@@ -635,6 +635,15 @@ grep -qF 'Run helm rollback continuo, release them as "python-odcs", then upgrad
 if grep -qF "$python_kind_note" "${tmp}/notes-install.txt"; then
   echo "FAIL: the install notes carry the python kind upgrade note"; exit 1
 fi
+# The re-baseline note agrees with deploy/README.md: a Python service is
+# released as python-odcs, built on runtime 0.13.0 or later, and no older
+# runtime is named.
+grep -qF 'a Python service is released as "python-odcs", built on' "${tmp}/notes-upgrade.txt" \
+  && grep -qF 'continuo-python-runtime 0.13.0 or later' "${tmp}/notes-upgrade.txt" \
+  || { echo "FAIL: the re-baseline upgrade note does not say a Python service is released as python-odcs on runtime 0.13.0 or later"; exit 1; }
+if grep -qE 'continuo-python-runtime 0\.1[0-2]\.' "${tmp}/notes-upgrade.txt"; then
+  echo "FAIL: the upgrade notes name a continuo-python-runtime older than 0.13.0"; exit 1
+fi
 
 # An upgrading operator is told once about the `continuo:` Redis prefix, that
 # ui users sign in once more, and how to turn stream creation off; an

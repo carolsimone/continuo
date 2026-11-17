@@ -24,10 +24,11 @@ UPGRADE NOTES
   rendering/validation error before retrying for real.
 
   From continuo 0.21.x or earlier: this version computes every node's content_hash
-  anew. Freeze producer merges, then release each service once (Python services
-  rebuilt on continuo-python-runtime 0.12.0 first) with "bootstrap": true and
-  "rebaseline": true, so nothing is validated or reloaded; the steps are in
-  deploy/README.md, "Re-baseline after a fingerprint change".
+  anew. Freeze producer merges, then release each service once with
+  "bootstrap": true and "rebaseline": true, so nothing is validated or
+  reloaded; a Python service is released as "python-odcs", built on
+  continuo-python-runtime 0.13.0 or later. The steps are in deploy/README.md,
+  "Re-baseline after a fingerprint change".
   The default validation image is now v0.13.0.
   An overridden dbt-commands file whose run commands parse with other --vars,
   --target, --profile, --profiles-dir or --project-dir values than its compile
@@ -94,9 +95,11 @@ UPGRADE NOTES
 {{- if .Release.IsUpgrade }}
 
 BREAKING: release kind "python" (contract.yaml) is no longer accepted.
-If a service is still released as "python", release it as "python-odcs" (docs/contracts.md).
+If a service is still released as "python", release it as "python-odcs" (docs/contracts.md) on a continuo version that accepts it.
+The upgrade stops while a service is still released as "python".
 With your own database, release migration V30 stops the upgrade in the db-init-migrate hook Job, before any pod changes. The Job's log names the services.
 With the bundled Postgres, the Job is not a hook, so the pods roll and release-controller refuses to start. Its log names the services. Run helm rollback {{ .Release.Name }}, release them as "python-odcs", then upgrade again.
+A run of kind "python" still queued or in flight is rejected invalid_artifact.
 {{- end }}
 
 {{- if .Release.IsUpgrade }}
