@@ -12,6 +12,34 @@ shipped in those.
 
 ## [Unreleased]
 
+**TL;DR**
+
+- Removed: the release kind `python` (`contract.yaml`) is no longer accepted. Release every Python service as `python-odcs` before you upgrade.
+- You must act first: the upgrade stops, or release-controller refuses to start, while any service is still on `python`. The message names the services.
+- On 0.22.0 or earlier with a Python service, upgrade to 0.23.0 first: it is the first release that accepts `python-odcs`.
+- No values change is needed.
+
+### Upgrade steps
+
+1. **On 0.22.0 or earlier:** upgrade to 0.23.0 first and follow its steps (0.21.0 or earlier: to 0.22.0 first). The steps below start from 0.23.0.
+2. **Release every Python service as `python-odcs`**, built on continuo-python-runtime 0.13.0 or later. `docs/contracts.md`, "Moving from `contract.yaml`", says how.
+3. **Upgrade with no release in flight.** A queued or running release of a service still on `python` is rejected when the new version starts (see below).
+4. **If the upgrade stops, or release-controller will not start,** the migration Job's log or release-controller's log names the services (the commands are under Removed). Release them as `python-odcs`, then upgrade again.
+
+### Removed
+
+- **BREAKING: the release kind `python` (`contract.yaml`) is no longer accepted.** TL;DR: release every Python service as `python-odcs` on a continuo version that accepts it, then upgrade. The upgrade stops, or release-controller refuses to start, while any service is still on `python`, and the message names them.
+  - topology-controller reads no `contract.yaml`. release-controller refuses a release or a verification that names the kind `python`, and the refusal says to use `python-odcs`.
+  - Release migration V30 fails with `these services are still released as kind "python": <names>. Release each one as "python-odcs" (docs/contracts.md) on a continuo version that accepts it, then upgrade.` The names are sorted and separated by commas.
+  - With your own database, the migration runs in the `db-init-migrate` hook Job before any pod changes, so `helm upgrade` fails on the hook and nothing rolls. The names are in that Job's log: `kubectl -n <namespace> logs -l app.kubernetes.io/name=db-init-migrate -c migrate --tail=-1`.
+  - With the bundled Postgres, the Job is not a hook, so the pods roll while it fails and `helm upgrade` can still report success. release-controller on the new version refuses to start, and its log has the same message. Run `helm rollback <release>`, release the listed services as `python-odcs` on a continuo version that accepts it, then upgrade again.
+  - To fix it, release each named service as `python-odcs` on a continuo version that accepts it. `docs/contracts.md`, "Moving from `contract.yaml`", says how.
+  - An install on 0.22.0 or earlier with a Python service upgrades to 0.23.0 first (0.21.0 or earlier: to 0.22.0 first, then 0.23.0). 0.23.0 is the first release that accepts `python-odcs`. Release the Python services as `python-odcs` there, then upgrade to this version.
+  - A run of the kind `python` that is still queued or in flight when the new version starts is rejected `invalid_artifact`, with the refusal of the kind `python` as its detail, and promotes nothing; a verification of that kind fails. Upgrade with no release in flight: turn maintenance mode on, on the version you run now (`helm upgrade <release> <chart> --version <the version you run now> --reuse-values --set maintenance.enabled=true`), let the active release finish, upgrade, then turn it off.
+  - The upgrade notes and `deploy/README.md`, "Re-baseline after a fingerprint change", say the same thing: release every Python service as `python-odcs` before the upgrade, built on continuo-python-runtime 0.13.0 or later. The re-baseline steps no longer ask for a release during the freeze.
+  - A run or a release stored with the kind `python` keeps its row and its history. A service already released as `python-odcs` is not affected.
+  - No values change is needed. MINOR.
+
 ## [0.23.0] - 2026-11-17
 
 **TL;DR**
@@ -106,20 +134,6 @@ This release adds the values keys `agentRemediation.engine`, `contracts.publish.
   - A CI pipeline that reads `reject_reason` can get the new value, and `continuo_releases_total{reject_reason}` counts it.
 - **topology-controller counts dormant nodes.** TL;DR: `continuo_topology_release_dormant_nodes` counts the dormant nodes of the last release. `continuo_topology_release_skipped_nodes{reason}` has no `no_tag` value any more: its reasons are `no_owner`, `local_stub` and `installed_package`, a node of an installed dbt package with no tag.
 - **A CTE hides a table name only where it is in scope.** TL;DR: a read can name a table without its schema where a CTE of the same name is defined but not in scope, as in `WITH orders AS (SELECT * FROM orders)`. topology-controller refuses such a read, as continuo-python-runtime 0.13.0's `validate` does. The release fails with the same unqualified-table error as `select * from orders`.
-
-### Removed
-
-- **BREAKING: the release kind `python` (`contract.yaml`) is no longer accepted.** TL;DR: release every Python service as `python-odcs` on a continuo version that accepts it, then upgrade. The upgrade stops, or release-controller refuses to start, while any service is still on `python`, and the message names them.
-  - topology-controller reads no `contract.yaml`. release-controller refuses a release or a verification that names the kind `python`, and the refusal says to use `python-odcs`.
-  - Release migration V30 fails with `these services are still released as kind "python": <names>. Release each one as "python-odcs" (docs/contracts.md) on a continuo version that accepts it, then upgrade.` The names are sorted and separated by commas.
-  - With your own database, the migration runs in the `db-init-migrate` hook Job before any pod changes, so `helm upgrade` fails on the hook and nothing rolls. The names are in that Job's log: `kubectl -n <namespace> logs -l app.kubernetes.io/name=db-init-migrate -c migrate --tail=-1`.
-  - With the bundled Postgres, the Job is not a hook, so the pods roll while it fails and `helm upgrade` can still report success. release-controller on the new version refuses to start, and its log has the same message. Run `helm rollback <release>`, release the listed services as `python-odcs` on a continuo version that accepts it, then upgrade again.
-  - To fix it, release each named service as `python-odcs` on a continuo version that accepts it. `docs/contracts.md`, "Moving from `contract.yaml`", says how.
-  - An install on a version from before the `python-odcs` kind, with a Python service, upgrades first to a chart release whose CHANGELOG lists the `python-odcs` kind, releases its Python services as `python-odcs` there, then upgrades to this one.
-  - A run of the kind `python` that is still queued or in flight when the new version starts is rejected `invalid_artifact`, with the refusal of the kind `python` as its detail, and promotes nothing; a verification of that kind fails. Upgrade with no release in flight: turn maintenance mode on, on the version you run now (`--set maintenance.enabled=true`), let the active release finish, upgrade, then turn it off.
-  - The upgrade notes and `deploy/README.md`, "Re-baseline after a fingerprint change", say the same thing: release every Python service as `python-odcs` before the upgrade, built on continuo-python-runtime 0.13.0 or later. The re-baseline steps no longer ask for a release during the freeze.
-  - A run or a release stored with the kind `python` keeps its row and its history. A service already released as `python-odcs` is not affected.
-  - No values change is needed. MINOR.
 
 ## [0.22.0] - 2026-11-14
 
