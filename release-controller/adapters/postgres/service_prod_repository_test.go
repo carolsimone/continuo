@@ -54,11 +54,11 @@ func TestServiceProdRepository_UpsertListGet(t *testing.T) {
 	assert.Nil(t, missing)
 
 	// manifest_kind survives the Upsert -> Get roundtrip.
-	spPy := release.NewServiceProd("svc-py", "rel-1", "s3://b/svc-py/rel-1/contract.yaml",
-		"img:1", release.ManifestKindPython, now)
+	spPy := release.NewServiceProd("svc-py", "rel-1", "s3://b/svc-py/rel-1/odcs-bundle.json",
+		"img:1", release.ManifestKindPythonODCS, now)
 	require.NoError(t, repo.Upsert(ctx, spPy))
 	gotPy, err := repo.Get(ctx, "svc-py")
 	require.NoError(t, err)
 	require.NotNil(t, gotPy)
-	assert.Equal(t, release.ManifestKindPython, gotPy.ManifestKind())
+	assert.Equal(t, release.ManifestKindPythonODCS, gotPy.ManifestKind())
 }

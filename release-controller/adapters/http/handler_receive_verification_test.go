@@ -51,16 +51,36 @@ func TestHandleReceiveVerification_ValidationIs400(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, _ := newRetryRemediationDeps(now)
 	for name, mutate := range map[string]func(*ReceiveVerificationRequest){
-		"missing run_id":         func(in *ReceiveVerificationRequest) { in.RunID = "" },
-		"bad kind":               func(in *ReceiveVerificationRequest) { in.Kind = "yaml" },
-		"attempt below one":      func(in *ReceiveVerificationRequest) { in.Attempt = 0 },
-		"overlay on python kind": func(in *ReceiveVerificationRequest) { in.Kind = "python" },
+		"missing run_id":    func(in *ReceiveVerificationRequest) { in.RunID = "" },
+		"bad kind":          func(in *ReceiveVerificationRequest) { in.Kind = "yaml" },
+		"attempt below one": func(in *ReceiveVerificationRequest) { in.Attempt = 0 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			in := validVerificationInput()
 			mutate(&in)
 			rec := postVerificationRun(newTestServer(deps), in)
 			require.Equal(t, http.StatusBadRequest, rec.Code)
+		})
+	}
+}
+
+// The python kind names a contract.yaml artifact no parser reads: POST
+// /verification-runs refuses it, with or without a source overlay, as a client
+// error whose body names the kind to use instead, and stores nothing.
+func TestHandleReceiveVerification_RefusesPythonWith400AndTheMessage(t *testing.T) {
+	for name, overlay := range map[string]string{"without an overlay": "", "with an overlay": "s3://b/core/overlay.tar.gz"} {
+		t.Run(name, func(t *testing.T) {
+			deps, releases := newRetryRemediationDeps(time.Unix(100, 0).UTC())
+			in := validVerificationInput()
+			in.Kind = "python"
+			in.SourceOverlayURI = overlay
+
+			rec := postVerificationRun(newTestServer(deps), in)
+
+			require.Equal(t, http.StatusBadRequest, rec.Code)
+			assert.Contains(t, rec.Body.String(),
+				`kind "python" is no longer accepted: release the service as "python-odcs", one ODCS contract per node (docs/contracts.md)`)
+			assert.Empty(t, releases.releases)
 		})
 	}
 }

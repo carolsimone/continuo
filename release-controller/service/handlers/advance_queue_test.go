@@ -218,24 +218,25 @@ func TestAdvanceQueue_NoQueued_DoesNothing(t *testing.T) {
 	assert.Empty(t, outboxEntries(store))
 }
 
-func TestAdvanceQueue_PythonRelease_SkipsCompile_EmitsReleaseRequested(t *testing.T) {
+func TestAdvanceQueue_PythonODCSRelease_SkipsCompile_EmitsReleaseRequested(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	store.SeedServiceProd(release.NewServiceProd("svc-dbt", "rOld", "s3://b/svc-dbt/rOld/manifest.json", "t-old", release.ManifestKindDbt, time.Unix(0, 0)))
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Service: "svc-py", ReleaseID: "rPy", ImageTag: "img:1", Repo: "acme/py", CommitSHA: "cafebabe",
-		Kind: "python",
+		Kind: "python-odcs",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	r, _ := store.GetRelease("rPy")
-	assert.Equal(t, pipeline.StatusParsing, r.Status(), "python releases activate straight into Parsing")
+	assert.Equal(t, release.ManifestKindPythonODCS, r.ManifestKind())
+	assert.Equal(t, pipeline.StatusParsing, r.Status(), "python-odcs releases activate straight into Parsing")
 	assert.Equal(t, map[string]string{"svc-py": "img:1", "svc-dbt": "t-old"}, r.ImageTags())
 
 	entries := outboxEntries(store)
 	require.Len(t, entries, 1)
-	assert.Equal(t, streams.ReleaseRequestedV1, entries[0].StreamName, "no compile.requested for a python release")
+	assert.Equal(t, streams.ReleaseRequestedV1, entries[0].StreamName, "no compile.requested for a python-odcs release")
 
 	var p struct {
 		ReleaseID    string `json:"release_id"`
@@ -254,50 +255,11 @@ func TestAdvanceQueue_PythonRelease_SkipsCompile_EmitsReleaseRequested(t *testin
 		byService[k.Service] = k.Kind
 		uris[k.Service] = k.S3URI
 	}
-	assert.Equal(t, map[string]string{"svc-py": "python", "svc-dbt": "dbt"}, byService)
-	assert.Equal(t, "s3://b/svc-py/rPy/contract.yaml", uris["svc-py"])
+	assert.Equal(t, map[string]string{"svc-py": "python-odcs", "svc-dbt": "dbt"}, byService)
+	assert.Equal(t, "s3://b/svc-py/rPy/odcs-bundle.json", uris["svc-py"])
 	assert.Equal(t, "s3://b/svc-dbt/rOld/manifest.json", uris["svc-dbt"])
 	assert.Equal(t, map[string]string{"svc-py": "img:1", "svc-dbt": "t-old"}, releaseRequestedImageTags(t, entries[0].Payload),
 		"release.requested carries the run's assembled image tags: topology-controller joins exactly these onto every node")
-}
-
-func TestAdvanceQueue_APythonODCSReleaseSkipsCompile(t *testing.T) {
-	deps, store := newDeps(time.Unix(200, 0).UTC())
-	deps.Bucket = "b"
-	store.SeedServiceProd(release.NewServiceProd("svc-dbt", "rOld", "s3://b/svc-dbt/rOld/manifest.json", "t-old", release.ManifestKindDbt, time.Unix(0, 0)))
-	store.SeedServiceProd(release.NewServiceProd("svc-legacy", "rOld", "s3://b/svc-legacy/rOld/contract.yaml", "t-leg", release.ManifestKindPython, time.Unix(0, 0)))
-
-	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc-py", ReleaseID: "rOdcs", ImageTag: "img:1", Repo: "acme/py", CommitSHA: "cafebabe",
-		Kind: "python-odcs",
-	}))
-	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
-
-	r, _ := store.GetRelease("rOdcs")
-	assert.Equal(t, release.ManifestKindPythonODCS, r.ManifestKind())
-	assert.Equal(t, pipeline.StatusParsing, r.Status(), "a python-odcs release activates straight into Parsing")
-
-	entries := outboxEntries(store)
-	require.Len(t, entries, 1)
-	assert.Equal(t, streams.ReleaseRequestedV1, entries[0].StreamName, "no compile.requested for a python-odcs release")
-
-	var p struct {
-		ManifestKeys []struct {
-			Service string `json:"service"`
-			S3URI   string `json:"s3_uri"`
-			Kind    string `json:"kind"`
-		} `json:"manifest_keys"`
-	}
-	require.NoError(t, json.Unmarshal(entries[0].Payload, &p))
-	kinds := map[string]string{}
-	uris := map[string]string{}
-	for _, k := range p.ManifestKeys {
-		kinds[k.Service] = k.Kind
-		uris[k.Service] = k.S3URI
-	}
-	assert.Equal(t, map[string]string{"svc-py": "python-odcs", "svc-dbt": "dbt", "svc-legacy": "python"}, kinds)
-	assert.Equal(t, "s3://b/svc-py/rOdcs/odcs-bundle.json", uris["svc-py"])
-	assert.Equal(t, "s3://b/svc-legacy/rOld/contract.yaml", uris["svc-legacy"], "a contract.yaml service keeps its pointer")
 }
 
 func TestAdvanceQueue_DbtRelease_StillCompiles(t *testing.T) {
@@ -385,7 +347,7 @@ func TestAdvanceQueue_VerificationVerifiesTheRejectedReleasesCandidate(t *testin
 	store.SeedRelease(verifiedOriginal("rO", deps.Clock.Now()))
 	store.SeedServiceProd(release.NewServiceProd("svc-a", "rProd", "s3://b/svc-a/rProd/manifest.json", "tag-a-prod", release.ManifestKindDbt, time.Unix(0, 0)))
 
-	store.SeedRelease(pipeline.NewVerification("rVerify", "svc-b", "img:1", "rO", 1, "", release.ManifestKindPython, deps.Clock.Now()))
+	store.SeedRelease(pipeline.NewVerification("rVerify", "svc-b", "img:1", "rO", 1, "", release.ManifestKindPythonODCS, deps.Clock.Now()))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	entries := outboxEntries(store)
@@ -394,7 +356,7 @@ func TestAdvanceQueue_VerificationVerifiesTheRejectedReleasesCandidate(t *testin
 	uris := manifestKeyURIs(t, entries[0].Payload)
 	assert.Equal(t, "s3://b/svc-a/rO/manifest.json", uris["svc-a"],
 		"svc-a must be assembled from the rejected release's candidate, not from its production pointer")
-	assert.Equal(t, "s3://b/svc-b/rVerify/contract.yaml", uris["svc-b"], "the verification run's own service is its own delta")
+	assert.Equal(t, "s3://b/svc-b/rVerify/odcs-bundle.json", uris["svc-b"], "the verification run's own service is its own delta")
 
 	r, _ := store.GetRelease("rVerify")
 	assert.Equal(t, "tag-a-candidate", r.ImageTags()["svc-a"],
@@ -412,7 +374,7 @@ func TestAdvanceQueue_VerificationVerifyingAnUnknownRelease_FallsBackToProd(t *t
 	deps.Bucket = "b"
 	store.SeedServiceProd(release.NewServiceProd("svc-a", "rProd", "s3://b/svc-a/rProd/manifest.json", "tag-a-prod", release.ManifestKindDbt, time.Unix(0, 0)))
 
-	store.SeedRelease(pipeline.NewVerification("rVerify2", "svc-b", "img:1", "rGone", 1, "", release.ManifestKindPython, deps.Clock.Now()))
+	store.SeedRelease(pipeline.NewVerification("rVerify2", "svc-b", "img:1", "rGone", 1, "", release.ManifestKindPythonODCS, deps.Clock.Now()))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	entries := outboxEntries(store)
@@ -433,13 +395,13 @@ func TestAdvanceQueue_VerificationVerifyingItsOwnServicesRelease_ChangesNothing(
 	deps.Bucket = "b"
 	store.SeedRelease(verifiedOriginal("rO2", deps.Clock.Now()))
 
-	store.SeedRelease(pipeline.NewVerification("rVerify3", "svc-a", "img:2", "rO2", 1, "", release.ManifestKindPython, deps.Clock.Now()))
+	store.SeedRelease(pipeline.NewVerification("rVerify3", "svc-a", "img:2", "rO2", 1, "", release.ManifestKindPythonODCS, deps.Clock.Now()))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	entries := outboxEntries(store)
 	require.Len(t, entries, 1)
 	uris := manifestKeyURIs(t, entries[0].Payload)
-	assert.Equal(t, "s3://b/svc-a/rVerify3/contract.yaml", uris["svc-a"], "the verification run's own delta wins")
+	assert.Equal(t, "s3://b/svc-a/rVerify3/odcs-bundle.json", uris["svc-a"], "the verification run's own delta wins")
 
 	r, _ := store.GetRelease("rVerify3")
 	assert.Equal(t, "img:2", r.ImageTags()["svc-a"])

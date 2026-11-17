@@ -813,7 +813,7 @@ func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.U
 // dbt-snapshot, python-node, python-csv, or python-api) so remediation can tell, without a topology
 // lookup of its own, whether the target's source is a single file this
 // system can read. A python node's relation is declared in the service's
-// contract.yaml, whose repository path this system does not carry — only
+// ODCS contract file, whose repository path this system does not carry — only
 // file_path for the contract's script entry — so the fixer must skip a
 // python target rather than editing a file that cannot produce the fix.
 //
