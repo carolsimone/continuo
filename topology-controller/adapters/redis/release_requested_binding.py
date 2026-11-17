@@ -67,13 +67,12 @@ def _manifest_request(entry: object) -> tuple[str, ManifestRequest]:
         ) from exc
     # parse_s3_uri appends a trailing slash to all non-empty paths; strip it
     # because object keys never end with "/" in S3.
-    # Only an ABSENT kind defaults to dbt — that is the compatibility path for
-    # producers that predate python support. Any value the producer actually
-    # set is passed through verbatim, empty string included, so the use case
-    # reports it as a permanent UnknownManifestKind failure the operator sees.
-    # Defaulting a present-but-invalid value would parse a python contract with
-    # the dbt parser and misreport it as MalformedManifest, sending the
-    # operator to the wrong artifact.
+    # Only an ABSENT kind defaults to dbt. Any value the producer actually set
+    # is passed through verbatim, empty string included, so the handler
+    # reports one it cannot parse as a permanent invalid_artifact failure the
+    # operator sees. Defaulting a present-but-invalid value would parse another
+    # kind's artifact with the dbt parser and misreport it as an unreadable
+    # manifest, sending the operator to the wrong artifact.
     return bucket, ManifestRequest(
         service=svc,
         key=key.rstrip("/"),

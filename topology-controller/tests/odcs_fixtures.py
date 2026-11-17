@@ -1,14 +1,16 @@
 """The ODCS demo contracts and the producer bundle that carries them, for the tests of the
 `python-odcs` path.
 
-`fixtures/odcs_demo/contracts` holds the three demo contracts of the service-py demo and
-`fixtures/odcs_demo/old` the wire entries they replace, one `nodes:` file each. `bundle_file`
-writes a bundle the way `continuo-runtime pack` does: UTF-8 JSON from
+`fixtures/odcs_demo/contracts` holds the three demo contracts of the service-py demo, and
+`python_node` writes the contract of one more node from the few settings a test varies.
+`bundle_file` writes a bundle the way `continuo-runtime pack` does: UTF-8 JSON from
 `json.dumps(doc, sort_keys=True, indent=2, ensure_ascii=False)` and a newline.
 """
 import hashlib
 import json
 from pathlib import Path
+
+import yaml
 
 from domain.model import ManifestFile, ManifestKind
 from service.release_timings import ReleaseTimings
@@ -37,6 +39,54 @@ def bundle_node(path: str, text: str, *, source_hash: str | None = None, shared_
             shared_code_hash if shared_code_hash is not None else hashlib.sha256(f"shared:{path}".encode()).hexdigest()
         ),
     }
+
+
+def python_node(
+    table: str = "py_metrics",
+    *,
+    schema: str = "test_schema",
+    kind: str = "python-node",
+    reads: dict[str, str] | None = None,
+    csv_source: str = "s3://drops/orders.csv",
+    secret_ref: str | None = None,
+    timeout_minutes: int | None = None,
+) -> dict:
+    """One entry of a bundle's `nodes` whose contract declares the python node `schema.table`:
+    daily, SECONDARY, with one INTEGER column `id`. A `python-node` runs `scripts/<table>.py` and
+    reads `reads` (by default one query on `test_schema.orders`), a `python-api` node runs its
+    script and reads nothing, and a `python-csv` node reads `csv_source` and runs no script."""
+    properties = [
+        {"vendor": "continuo", "property": "kind", "value": kind},
+        {"vendor": "continuo", "property": "schedule", "value": "daily"},
+        {"vendor": "continuo", "property": "criticality", "value": "SECONDARY"},
+    ]
+    if kind == "python-csv":
+        properties.append({"vendor": "continuo", "property": "csvSource", "value": csv_source})
+    else:
+        properties.append({"vendor": "continuo", "property": "script", "value": f"scripts/{table}.py"})
+    if kind == "python-node":
+        queries = {"orders": "select id from test_schema.orders"} if reads is None else reads
+        properties.append({"vendor": "continuo", "property": "readQueries", "value": queries})
+    if secret_ref is not None:
+        properties.append({"vendor": "continuo", "property": "secretRef", "value": secret_ref})
+    if timeout_minutes is not None:
+        properties.append({"vendor": "continuo", "property": "timeoutMinutes", "value": timeout_minutes})
+    contract = {
+        "apiVersion": "v3.2.0",
+        "kind": "DataContract",
+        "id": f"{schema}.{table}",
+        "name": table,
+        "version": "0",
+        "description": {"purpose": f"The {table} node."},
+        "team": {"name": "team-py"},
+        "customProperties": properties,
+        "schema": [{
+            "name": table,
+            "physicalType": "table",
+            "properties": [{"name": "id", "physicalType": "INTEGER", "required": True}],
+        }],
+    }
+    return bundle_node(f"contracts/{table}.odcs.yaml", yaml.safe_dump(contract, sort_keys=False))
 
 
 def demo_node(name: str) -> dict:

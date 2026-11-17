@@ -1,11 +1,10 @@
 """Which parser reads which kind of release artifact, and how each one fails.
 
-One release may carry a dbt manifest.json, a python contract.yaml and a python
-odcs-bundle.json at once. They are parsed by different code with different
-failure vocabularies, but they produce the same ParsedArtifact, so this is the
-only place downstream code has to know a kind exists. A dbt manifest is parsed
-together with the compile-extras.json downloaded beside it, when the release has
-one.
+One release may carry a dbt manifest.json and a python odcs-bundle.json per
+service. They are parsed by different code with different failure vocabularies,
+but they produce the same ParsedArtifact, so this is the only place downstream
+code has to know a kind exists. A dbt manifest is parsed together with the
+compile-extras.json downloaded beside it, when the release has one.
 """
 import json
 from collections.abc import Callable
@@ -16,13 +15,11 @@ from domain.exceptions import (
     InvalidCompileExtrasError,
     InvalidNodeSettingError,
     InvalidOdcsBundleError,
-    MalformedContractError,
 )
 from domain.model import ManifestFile, ManifestKind, ParsedArtifact, SkippedNode
 from service.compile_extras import load_compile_extras
 from service.odcs_bundle_parser import parse_odcs_bundle
 from service.parser import parse_manifest
-from service.python_contract_parser import parse_python_contract
 from service.release_timings import ReleaseTimings
 
 
@@ -56,13 +53,6 @@ def _parse_dbt(
     return parse_manifest(mf.path, mf.image_tag, extras, skipped=skipped, declared_service=mf.declared_service)
 
 
-def _parse_python(
-    mf: ManifestFile, *, skipped: list[SkippedNode] | None = None,
-    progress: Callable[[], None], timings: ReleaseTimings,
-) -> ParsedArtifact:
-    return parse_python_contract(mf.path, mf.image_tag, skipped=skipped)
-
-
 @dataclass(frozen=True)
 class ManifestParser:
     """A kind's parser plus everything the handler needs to report its failures.
@@ -83,11 +73,6 @@ _PARSERS: dict[str, ManifestParser] = {
             json.JSONDecodeError, KeyError, IndexError, InvalidNodeSettingError, InvalidCompileExtrasError,
         ),
         empty_detail="manifest contains no model/seed nodes",
-    ),
-    ManifestKind.PYTHON: ManifestParser(
-        parse=_parse_python,
-        permanent_errors=(MalformedContractError,),
-        empty_detail="contract declares no nodes",
     ),
     ManifestKind.PYTHON_ODCS: ManifestParser(
         parse=parse_odcs_bundle,

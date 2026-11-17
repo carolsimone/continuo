@@ -3,10 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from domain.exceptions import InvalidCompileExtrasError, InvalidOdcsBundleError, MalformedContractError
+from domain.exceptions import InvalidCompileExtrasError, InvalidOdcsBundleError
 from domain.model import ManifestFile, ManifestKind, ParsedArtifact, SkippedNode, SkipReason
 from service.manifest_parsers import parser_for
-from tests.fakes import python_contract, python_entry
 from tests.odcs_fixtures import bundle_file, demo_nodes, release_timings
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -20,12 +19,10 @@ def _parse(kind, mf, **kwargs):
 
 def test_each_kind_resolves_to_its_own_failure_vocabulary():
     dbt = parser_for(ManifestKind.DBT)
-    python = parser_for(ManifestKind.PYTHON)
     odcs = parser_for(ManifestKind.PYTHON_ODCS)
 
     assert json.JSONDecodeError in dbt.permanent_errors
     assert InvalidCompileExtrasError in dbt.permanent_errors
-    assert python.permanent_errors == (MalformedContractError,)
     assert odcs.permanent_errors == (InvalidOdcsBundleError,)
     assert odcs.empty_detail == "bundle declares no nodes"
 
@@ -76,15 +73,6 @@ def test_the_dbt_entry_reads_a_manifest_that_names_no_project_against_the_declar
     ]
 
 
-def test_the_wire_python_entry_ignores_the_progress_callback_and_the_timings(tmp_path):
-    mf = ManifestFile(path=python_contract(tmp_path, python_entry()), image_tag="img:1", declared_service="service-py")
-
-    parsed = _parse(ManifestKind.PYTHON, mf)
-
-    assert [n.unique_id for n in parsed.nodes] == ["test_schema.py_metrics"]
-    assert parsed.failed == () and all(n.contract is None for n in parsed.nodes)
-
-
 def test_the_odcs_entry_parses_a_bundle_with_the_library_this_install_runs_on(tmp_path):
     timings = release_timings()
     calls = []
@@ -100,10 +88,11 @@ def test_the_odcs_entry_parses_a_bundle_with_the_library_this_install_runs_on(tm
 
 def test_a_plain_string_resolves_the_same_as_the_enum_member():
     """main.py passes the raw wire value through, so lookups must work on str."""
-    assert parser_for("python") is parser_for(ManifestKind.PYTHON)
+    assert parser_for("dbt") is parser_for(ManifestKind.DBT)
     assert parser_for("python-odcs") is parser_for(ManifestKind.PYTHON_ODCS)
 
 
 def test_an_unrecognized_kind_resolves_to_nothing():
     assert parser_for("spark") is None
+    assert parser_for("python") is None
     assert parser_for("") is None

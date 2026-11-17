@@ -16,13 +16,11 @@ the topology artifact's key and stamps every event this service writes."""
 class ManifestKind(StrEnum):
     """Which artifact dialect a service's release payload speaks.
 
-    Carried per manifest_keys entry on release.requested:v1. Absent means dbt,
-    so a producer that predates python support needs no change. `python` is a
-    service's wire contract (`contract.yaml`), `python-odcs` its ODCS bundle
+    Carried per manifest_keys entry on release.requested:v1. Absent means dbt.
+    `dbt` is a service's `manifest.json`, `python-odcs` its ODCS bundle
     (`odcs-bundle.json`).
     """
     DBT = "dbt"
-    PYTHON = "python"
     PYTHON_ODCS = "python-odcs"
 
 
