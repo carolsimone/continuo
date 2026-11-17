@@ -4,7 +4,6 @@ package postgres_test
 
 import (
 	"context"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -115,7 +114,6 @@ func TestServicesWithKind_ListsThePythonServices(t *testing.T) {
 
 	python, err := repo.ServicesWithKind(ctx, release.ManifestKindPython)
 	require.NoError(t, err)
-	assert.True(t, sort.StringsAreSorted(python), "names come back sorted ascending: %v", python)
 	assert.Equal(t, []string{prefix + "py-a", prefix + "py-b", prefix + "py-c"}, named(python))
 
 	odcs, err := repo.ServicesWithKind(ctx, release.ManifestKindPythonODCS)

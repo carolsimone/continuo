@@ -179,8 +179,7 @@ func main() {
 	// starting and names the services. Nothing but the health routes has
 	// started yet.
 	if err := handlers.CheckNoServiceOnPythonKind(ctx, postgres.NewServiceProdRepository(db)); err != nil {
-		logger.Error("Refusing to start: services are still released as kind python", "error", err)
-		os.Exit(1)
+		os.Exit(pythonKindCheckExitCode(ctx, logger, err))
 	}
 
 	// One object-storage client, passed to each adapter as the role it uses:

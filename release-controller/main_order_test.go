@@ -79,4 +79,14 @@ func TestStartupRefusesPythonKindServicesBeforeAnythingServes(t *testing.T) {
 			t.Fatalf("main.go must call handlers.CheckNoServiceOnPythonKind before %s", later)
 		}
 	}
+
+	// A refusal ends the process: the if block that holds the call exits.
+	block, _, found := strings.Cut(body[check:], "\n\t}\n")
+	if !found {
+		t.Fatal("expected the handlers.CheckNoServiceOnPythonKind call to open an if block in main.go")
+	}
+	if !strings.Contains(block, "os.Exit(") {
+		t.Fatal("main.go must exit when handlers.CheckNoServiceOnPythonKind returns an error, " +
+			"or release-controller would start while a service is still released as kind python")
+	}
 }

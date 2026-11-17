@@ -94,10 +94,9 @@ UPGRADE NOTES
 {{- if .Release.IsUpgrade }}
 
 BREAKING: release kind "python" (contract.yaml) is no longer accepted.
-Before this upgrade, release each Python service as "python-odcs", on the continuo version you run now (docs/contracts.md).
-While any service is still released as "python", the upgrade stops and names it.
-With your own database, release migration V30 fails in the db-init-migrate hook Job, before any pod changes.
-With the bundled Postgres, the Job fails and release-controller refuses to start, and its log names the services.
+If a service is still released as "python", release it as "python-odcs" (docs/contracts.md).
+With your own database, release migration V30 stops the upgrade in the db-init-migrate hook Job, before any pod changes. The Job's log names the services.
+With the bundled Postgres, the Job is not a hook, so the pods roll and release-controller refuses to start. Its log names the services. Run helm rollback {{ .Release.Name }}, release them as "python-odcs", then upgrade again.
 {{- end }}
 
 {{- if .Release.IsUpgrade }}

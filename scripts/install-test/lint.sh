@@ -628,8 +628,10 @@ fi
 python_kind_note='release kind "python" (contract.yaml) is no longer accepted'
 [ "$(grep -cF "$python_kind_note" "${tmp}/notes-upgrade.txt")" = 1 ] \
   || { echo "FAIL: the upgrade notes do not say exactly once that release kind python is no longer accepted"; exit 1; }
-grep -qF 'release each Python service as "python-odcs"' "${tmp}/notes-upgrade.txt" \
-  || { echo "FAIL: the python kind upgrade note does not name python-odcs"; exit 1; }
+grep -qF 'If a service is still released as "python", release it as "python-odcs"' "${tmp}/notes-upgrade.txt" \
+  || { echo "FAIL: the python kind upgrade note does not tell an operator to release a service as python-odcs"; exit 1; }
+grep -qF 'Run helm rollback continuo, release them as "python-odcs", then upgrade again.' "${tmp}/notes-upgrade.txt" \
+  || { echo "FAIL: the python kind upgrade note does not say how to recover with the bundled Postgres"; exit 1; }
 if grep -qF "$python_kind_note" "${tmp}/notes-install.txt"; then
   echo "FAIL: the install notes carry the python kind upgrade note"; exit 1
 fi
