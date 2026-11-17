@@ -12,6 +12,8 @@ shipped in those.
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-11-17
+
 **TL;DR**
 
 - Removed: the release kind `python` (`contract.yaml`) is no longer accepted. Release every Python service as `python-odcs` before you upgrade.
