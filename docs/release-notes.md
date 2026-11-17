@@ -17,6 +17,26 @@ app changes can still be a `PATCH`.
 
 ---
 
+## 0.23.0 · 2026-11-17 · `MINOR`
+
+**TL;DR**
+
+- A dbt model or snapshot with an owner and no tag is now a dormant node: no cron runs it, you run it by hand.
+- A Python service can be released as `python-odcs`, one ODCS contract per node, and catalog keeps every version of each contract.
+- The node type `ingested` is now `unknown-external`. Nodes stored as `ingested` keep working.
+- You must act: check your models with no tag, upgrade with maintenance mode on, then run each dormant node whose table does not exist yet. Follow the [upgrade steps](https://github.com/carolsimone/continuo/blob/main/deploy/continuo/CHANGELOG.md#0230---2026-11-17).
+
+What else is new:
+
+- **Read a node's contract.** `continuo node contract`, `node contract-history` and `node contract-diff`, catalog's gRPC reads, and a Contract tab on the node page show the contract a node has and its versions.
+- **A live contracts folder.** catalog writes `tenants/<tenant>/contracts/live/` in your bucket: one `<unique id>.odcs.yaml` per live node and an `_index.json`. `contracts.publish.server.*` puts the warehouse in each file.
+- **Dormant nodes show up.** The Topology tab has a Dormant tile, and the Nodes tab lists every node of the live release with a `Dormant only` filter.
+- **Pick agent-remediation's engine.** `agentRemediation.engine` is `legacy` by default. `runner` works each heal trigger as steps a restart continues.
+- **A new reject reason, `upstream_clone_failed`,** when only the copies of unchanged upstream tables fail.
+- The default validation image is `v0.13.0`.
+
+[Changelog](https://github.com/carolsimone/continuo/blob/main/deploy/continuo/CHANGELOG.md#0230---2026-11-17) · [Release](https://github.com/carolsimone/continuo/releases/tag/v0.23.0)
+
 ## 0.22.0 · 2026-11-14 · `MINOR`
 
 **TL;DR**

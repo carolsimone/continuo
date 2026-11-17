@@ -12,14 +12,14 @@ shipped in those.
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-11-17
+
 **TL;DR**
 
-- New: a dbt model or snapshot with an owner and no tag is now a dormant node. A release checks it like any model, but no cron runs it: you run it by hand.
+- New: a dbt model or snapshot with an owner and no tag is a dormant node: no cron runs it, you run it by hand. A Python service can be released as `python-odcs`, one ODCS contract per node, and catalog keeps every contract version.
 - The node type `ingested` is now `unknown-external`, and nodes stored as `ingested` keep working. A script that looks for `ingested` must look for `unknown-external`.
 - You must act (steps below): check your models with no tag, upgrade with maintenance mode on, then run each dormant node whose table does not exist yet. Do not roll release-controller back afterwards.
-- No values change is needed: the new values key `agentRemediation.engine` defaults to `legacy`, and `runner` switches agent-remediation to an engine a restart continues. On 0.21.0 or earlier, upgrade to 0.22.0 first.
-- New: a Python service can be released as `python-odcs`, one ODCS contract per node. catalog keeps every contract version and writes the live contracts folder to your bucket. agent-remediation proposes Python fixes only for a service released as `python-odcs`.
-- With your own bucket and per-pod IAM roles, grant topology-controller `s3:GetObject` on `tenants/` and `s3:ListBucket` on the bucket for that prefix first, or every release fails `internal`. Grant agent-remediation the reads listed under Added too. An install on the chart's own S3 key needs nothing.
+- With your own bucket and per-pod IAM roles, grant topology-controller `s3:GetObject` on `tenants/` and `s3:ListBucket` on the bucket for that prefix first, or every release fails `internal` (agent-remediation needs the reads listed under Added). The chart's own S3 key needs nothing. No values change is needed: the new keys have safe defaults. On 0.21.0 or earlier, upgrade to 0.22.0 first.
 
 ### Upgrade steps
 
