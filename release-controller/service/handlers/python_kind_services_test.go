@@ -47,7 +47,7 @@ func TestStartup_RefusesWhileAServiceIsStillPython(t *testing.T) {
 	require.ErrorAs(t, err, &refusal)
 	assert.Equal(t, []string{"service-py"}, refusal.Services)
 	assert.Equal(t, `these services are still released as kind "python": service-py. `+
-		`Release each one as "python-odcs" (docs/contracts.md) on the continuo version you run now, then upgrade.`, err.Error())
+		`Release each one as "python-odcs" (docs/contracts.md) on a continuo version that accepts it, then upgrade.`, err.Error())
 }
 
 // Every service of kind python is named, sorted and comma-separated.

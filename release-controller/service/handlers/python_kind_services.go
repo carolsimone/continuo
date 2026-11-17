@@ -20,7 +20,7 @@ type PythonKindServicesError struct {
 
 func (e *PythonKindServicesError) Error() string {
 	return fmt.Sprintf("these services are still released as kind %q: %s. "+
-		"Release each one as %q (docs/contracts.md) on the continuo version you run now, then upgrade.",
+		"Release each one as %q (docs/contracts.md) on a continuo version that accepts it, then upgrade.",
 		release.ManifestKindPython, strings.Join(e.Services, ", "), release.ManifestKindPythonODCS)
 }
 

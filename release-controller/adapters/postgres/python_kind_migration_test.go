@@ -56,7 +56,7 @@ func TestV30_RefusesWhileAServiceIsStillPython(t *testing.T) {
 		_, err := db.Exec(v30)
 		require.Error(t, err, "the migration must refuse")
 		assert.Contains(t, err.Error(), `these services are still released as kind "python": svc-py. `+
-			`Release each one as "python-odcs" (docs/contracts.md) on the continuo version you run now, then upgrade.`)
+			`Release each one as "python-odcs" (docs/contracts.md) on a continuo version that accepts it, then upgrade.`)
 		assert.Equal(t, 3, rows(), "a refused migration changes no row")
 	})
 
