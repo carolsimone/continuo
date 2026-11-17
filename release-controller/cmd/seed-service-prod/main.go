@@ -4,9 +4,11 @@
 // a production pointer for the first incremental release cycle.
 //
 // The --keys flag accepts a JSON object mapping service names to their existing
-// manifest S3 keys, e.g.:
+// manifest S3 keys: a dbt service's manifest.json, and a python service's
+// odcs-bundle.json (a python service whose key ends in anything else is
+// refused), e.g.:
 //
-//	--keys '{"service-1":"s3://bucket/svc1/manifest.json","service-2":"s3://bucket/svc2/manifest.json"}'
+//	--keys '{"service-1":"s3://bucket/svc1/manifest.json","service-py":"s3://bucket/service-py/<release>/odcs-bundle.json"}'
 //
 // Manifest keys are recorded verbatim — no S3 objects are moved or copied.
 // The command is idempotent: re-running it upserts the same rows.
@@ -34,7 +36,7 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	var keysJSON string
-	flag.StringVar(&keysJSON, "keys", "", `JSON map of service_name -> manifest S3 key, e.g. '{"svc":"s3://..."}'`)
+	flag.StringVar(&keysJSON, "keys", "", `JSON map of service_name -> manifest S3 key (a python service's key ends in odcs-bundle.json), e.g. '{"svc":"s3://..."}'`)
 	flag.Parse()
 
 	if keysJSON == "" {

@@ -23,6 +23,8 @@ func TestParseManifestKind_RefusesPythonNamingPythonODCS(t *testing.T) {
 	assert.Empty(t, k)
 	assert.EqualError(t, err,
 		`kind "python" is no longer accepted: release the service as "python-odcs", one ODCS contract per node (docs/contracts.md)`)
+	assert.ErrorIs(t, err, release.ErrPythonKindNotAccepted,
+		"the refusal is one value, which the rejection of a stored kind-python run reuses")
 }
 
 func TestParseManifestKind_AcceptsPythonODCS(t *testing.T) {

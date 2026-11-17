@@ -1,8 +1,10 @@
 package handlers_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -384,6 +386,45 @@ func TestAdvanceQueue_VerificationVerifyingAnUnknownRelease_FallsBackToProd(t *t
 
 	r, _ := store.GetRelease("rVerify2")
 	assert.Equal(t, "tag-a-prod", r.ImageTags()["svc-a"])
+}
+
+// TestAdvanceQueue_VerificationVerifyingAStoredPythonRelease_FallsBackToProd
+// covers a verified release stored with the kind python: its candidate
+// artifact is a contract.yaml no parser reads, and its canonical key would
+// name a manifest.json that does not exist, so the verification is assembled
+// from the live production pointers, as for a release that never parsed.
+func TestAdvanceQueue_VerificationVerifyingAStoredPythonRelease_FallsBackToProd(t *testing.T) {
+	deps, store := newDeps(time.Unix(200, 0).UTC())
+	deps.Bucket = "b"
+	var logBuf bytes.Buffer
+	deps.Logger = slog.New(slog.NewTextHandler(&logBuf, nil))
+	original := verifiedOriginal("rOPy", deps.Clock.Now())
+	store.SeedRelease(pipeline.Rehydrate(pipeline.RehydrateInput{
+		ID:                original.ID(),
+		Status:            original.Status(),
+		ImageTags:         original.ImageTags(),
+		ChangedService:    original.ChangedService(),
+		CandidateTopology: original.CandidateTopologyRef(),
+		ManifestKind:      release.ManifestKindPython,
+		CreatedAt:         original.CreatedAt(),
+	}))
+	store.SeedServiceProd(release.NewServiceProd("svc-a", "rProd", "s3://b/svc-a/rProd/odcs-bundle.json", "tag-a-prod", release.ManifestKindPythonODCS, time.Unix(0, 0)))
+
+	store.SeedRelease(pipeline.NewVerification("rVerifyPy", "svc-b", "img:1", "rOPy", 1, "", release.ManifestKindPythonODCS, deps.Clock.Now()))
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+
+	entries := outboxEntries(store)
+	require.Len(t, entries, 1)
+	require.Equal(t, streams.ReleaseRequestedV1, entries[0].StreamName)
+	uris := manifestKeyURIs(t, entries[0].Payload)
+	assert.Equal(t, "s3://b/svc-a/rProd/odcs-bundle.json", uris["svc-a"],
+		"a verified release of the kind python contributes no candidate key")
+	assert.NotContains(t, string(entries[0].Payload), `"kind":"python"`,
+		"no manifest key of the kind python reaches topology-controller")
+
+	r, _ := store.GetRelease("rVerifyPy")
+	assert.Equal(t, "tag-a-prod", r.ImageTags()["svc-a"])
+	assert.Contains(t, logBuf.String(), "assembling from production instead")
 }
 
 // TestAdvanceQueue_VerificationVerifyingItsOwnServicesRelease_ChangesNothing

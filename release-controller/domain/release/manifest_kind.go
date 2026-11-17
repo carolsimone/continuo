@@ -16,10 +16,18 @@ const (
 	ManifestKindDbt ManifestKind = "dbt"
 	// ManifestKindPython is the kind of a contract.yaml service. Only a stored
 	// run or service_prod row holds it: ParseManifestKind refuses it, so no new
-	// release or verification carries it.
+	// release or verification carries it, and a stored run of it is rejected
+	// before it can reach production.
 	ManifestKindPython     ManifestKind = "python"
 	ManifestKindPythonODCS ManifestKind = "python-odcs"
 )
+
+// ErrPythonKindNotAccepted is the refusal of the kind python: the error
+// ParseManifestKind returns for it, and the detail a stored run of that kind
+// ends with.
+var ErrPythonKindNotAccepted = fmt.Errorf(
+	"kind %q is no longer accepted: release the service as %q, one ODCS contract per node (docs/contracts.md)",
+	ManifestKindPython, ManifestKindPythonODCS)
 
 // IsPython reports whether the kind is one of the two python kinds: a python
 // service has no compile leg and no source overlay, whichever artifact it ships.
@@ -38,7 +46,7 @@ func ParseManifestKind(s string) (ManifestKind, error) {
 	case ManifestKindDbt, ManifestKindPythonODCS:
 		return ManifestKind(s), nil
 	case ManifestKindPython:
-		return "", fmt.Errorf("kind %q is no longer accepted: release the service as %q, one ODCS contract per node (docs/contracts.md)", ManifestKindPython, ManifestKindPythonODCS)
+		return "", ErrPythonKindNotAccepted
 	default:
 		return "", fmt.Errorf("unknown manifest kind %q (expected %q or %q)", s, ManifestKindDbt, ManifestKindPythonODCS)
 	}

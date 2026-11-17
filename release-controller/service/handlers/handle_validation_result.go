@@ -41,7 +41,8 @@ type HandleValidationResultInput struct {
 // verification passes without touching either. Otherwise a candidate rejects
 // and emits release.rejected:v1, while a verification fails and emits no
 // release event. A run of either kind, on either outcome, emits
-// pipeline.run.finished:v1.
+// pipeline.run.finished:v1. A stored run of the kind python is rejected
+// invalid_artifact whatever the result (rejectStoredPythonRun).
 func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationResultInput) error {
 	u := d.NewUoW()
 	if err := u.Begin(ctx); err != nil {
@@ -76,6 +77,9 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 	}
 
 	now := d.Clock.Now()
+	if isStoredPythonRun(r) {
+		return rejectStoredPythonRun(ctx, d, u, r, now)
+	}
 
 	// Per-node content lives in the read model, projected from the earlier
 	// kind=node messages on validation.result:v1. Read the validation-stage
