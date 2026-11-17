@@ -19,7 +19,9 @@ own conditional put is still in progress; the writer then reads the object again
 and returns the reference of the bytes stored there, trying the put again (after
 a short wait) only while no object is there yet. Every writer of a release
 therefore returns the checksum of the one object the store holds. Conflicts that
-never settle, and every other failure of the put, reach the caller unchanged.
+never settle, and every other failure of the put, reach the caller unchanged: the
+consumer waits out an unsettled 409 like an outage (adapters/redis/error_class.py),
+so the redelivered message's read finds the other writer's object.
 """
 import gzip
 import time

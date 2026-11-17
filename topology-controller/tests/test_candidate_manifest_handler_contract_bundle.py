@@ -452,10 +452,15 @@ _OUTAGES = [
     botocore.exceptions.ClientError(
         {"Error": {"Code": "SlowDown", "Message": "reduce your request rate"},
          "ResponseMetadata": {"HTTPStatusCode": 503}}, "PutObject"),
+    # What the writer raises when its last conditional put still met another
+    # writer's put in progress: the redelivery reads the object that writer stored.
+    botocore.exceptions.ClientError(
+        {"Error": {"Code": "ConditionalRequestConflict", "Message": "a conflicting conditional write is in progress"},
+         "ResponseMetadata": {"HTTPStatusCode": 409}}, "PutObject"),
 ]
 
 
-@pytest.mark.parametrize("outage", _OUTAGES, ids=["s3-unreachable", "s3-503"])
+@pytest.mark.parametrize("outage", _OUTAGES, ids=["s3-unreachable", "s3-503", "unsettled-conditional-write"])
 def test_a_failed_bundle_write_follows_the_outage_rule(outage):
     """An outage reaches the consumer to wait out, publishes nothing and leaves the topology
     artifact unwritten, so the release waits in parsing."""

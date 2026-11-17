@@ -45,6 +45,13 @@ _INFRASTRUCTURE = (
 )
 
 
+# The S3 error code of a conditional write that met another conditional write
+# to the same key still in progress. The contract bundle writer raises it once
+# its last put still meets one; it is waited out like an outage, since the
+# redelivery's read of the key finds the object the other writer stored.
+_CONDITIONAL_WRITE_CONFLICT = "ConditionalRequestConflict"
+
+
 # Raised by an S3 managed transfer (download_file) once its own retries are
 # spent, with the failure of the last attempt in last_exception. boto3 raises its
 # own wrapper over the one s3transfer raises underneath it.
@@ -80,7 +87,8 @@ def classify(exc: BaseException) -> ErrorClass:
     reply (redis-py's NoPermissionError: a key or command the login's rule does
     not grant) is transient, as in pkg/redis's Classify: retried within the
     delivery limit and then dead-lettered, ready for a redrive once the rule is
-    fixed."""
+    fixed. An S3 ConditionalRequestConflict (another conditional write to the
+    key still in progress) is waited out like an outage."""
     exc = _underlying_failure(exc)
     if isinstance(exc, PermanentMessageError):
         return ErrorClass.PERMANENT
@@ -89,6 +97,8 @@ def classify(exc: BaseException) -> ErrorClass:
     if isinstance(exc, botocore.exceptions.ClientError):
         status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0)
         if status >= 500:
+            return ErrorClass.INFRASTRUCTURE
+        if exc.response.get("Error", {}).get("Code") == _CONDITIONAL_WRITE_CONFLICT:
             return ErrorClass.INFRASTRUCTURE
     return ErrorClass.TRANSIENT
 

@@ -32,6 +32,15 @@ def _client_error(status):
     (botocore.exceptions.IncompleteReadError(actual_bytes=10, expected_bytes=100), ErrorClass.INFRASTRUCTURE),
     (botocore.exceptions.ResponseStreamingError(error="Connection broken"), ErrorClass.INFRASTRUCTURE),
     (_client_error(404), ErrorClass.TRANSIENT),
+    # A conditional write that kept meeting another writer's write in progress:
+    # the redelivery's read finds the object that writer stored.
+    (botocore.exceptions.ClientError(
+        {"Error": {"Code": "ConditionalRequestConflict"}, "ResponseMetadata": {"HTTPStatusCode": 409}}, "PutObject"),
+     ErrorClass.INFRASTRUCTURE),
+    (botocore.exceptions.ClientError(
+        {"Error": {"Code": "PreconditionFailed"}, "ResponseMetadata": {"HTTPStatusCode": 412}}, "PutObject"),
+     ErrorClass.TRANSIENT),
+    (_client_error(409), ErrorClass.TRANSIENT),
     # A grant the login's rule lacks: retried within the delivery limit, then
     # dead-lettered for a redrive once the rule is fixed, as in pkg/redis.
     (redis.exceptions.NoPermissionError("User u has no permissions to access the 'k' key"),

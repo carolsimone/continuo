@@ -270,9 +270,8 @@ func TestVerificationRun_UploadsAnODCSBundle(t *testing.T) {
 	}}, r.artifacts.writes)
 }
 
-// mergedContractYAML is a packaged contract in the form a cluster checked by an
-// earlier release of agent-remediation carries in its journal: the merged
-// contract.yaml of the service, not an ODCS producer bundle.
+// mergedContractYAML is a packaged contract that is a service's merged
+// contract.yaml: YAML, not a JSON object with a bundle_version key.
 const mergedContractYAML = "version: 1\nnodes:\n  - id: python.ledger.postings\n    script: scripts/postings.py\n"
 
 func mergedYAMLCluster() step.ClusterDraft {

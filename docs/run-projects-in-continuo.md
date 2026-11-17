@@ -646,10 +646,11 @@ node starts, and a node whose image does not hash to it fails with
 `image_contract_mismatch` and is not retried.
 
 A node's `assets` lists the files its script reads besides its own code, such
-as a lookup table or a trained model, as paths from the repository root. Their
-bytes are part of the node's fingerprint, so editing one changes its
+as a lookup table or a trained model, as paths relative to the folder you give
+`pack` as `--repo-root`: the service's directory, `services/service-py` below.
+Their bytes are part of the node's fingerprint, so editing one changes its
 `content_hash`. Your Dockerfile must copy every listed file into the image, at
-the same path under the app directory as in the repository: the harness hashes
+the same path under the app directory as under that folder: the harness hashes
 what the image holds, and a file that is missing or different fails the node
 with `image_contract_mismatch`.
 

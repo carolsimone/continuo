@@ -85,7 +85,7 @@ What each part says:
 | `team.name` | The owner of the node. |
 | `schedule` | The schedule the node runs on. |
 | `criticality` | `REGULATORY`, `CORE` or `SECONDARY`. |
-| `script` | The script that builds the table, as a path from the repository root. |
+| `script` | The script that builds the table, as a path relative to the folder you give `pack` as `--repo-root` (the service's directory, such as `services/service-py`). |
 | `readQueries` | The queries the script reads, by name. Each one is a single `SELECT`. |
 | `schema` | One object, with `physicalType: table`, the table name and its columns. |
 | `properties` | The columns, with at least one. `physicalType` is the column's type, and `required: true` means the column never holds NULL. |
@@ -98,7 +98,7 @@ The same file may also carry these, when the node needs them:
 | `modeType` | `replace` (the default), `append` or `upsert`. A `python-csv` node allows only `replace`. |
 | `primaryKey: true` on columns, with `primaryKeyPosition` | The key of an `upsert` node. Each key column is `required: true` and is not `DOUBLE PRECISION`. On a `replace` or `append` node the key only describes the data. |
 | `extraColumns` | `raise` (the default) or `warn`: what happens when the script returns a column the contract does not declare. |
-| `assets` | Files the script reads besides its own code, as paths from the repository root. Your Dockerfile copies each one into the image at the same path. |
+| `assets` | Files the script reads besides its own code, as paths relative to the folder you give `pack` as `--repo-root` (the service's directory, such as `services/service-py`). Your Dockerfile copies each one into the image at the same path. |
 | `config` | Table layout, such as indexes. |
 
 The runtime's README describes how each setting changes a run:
