@@ -424,7 +424,6 @@ dependencies = [
     { name = "grpcio" },
     { name = "prometheus-client" },
     { name = "protobuf" },
-    { name = "pyyaml" },
     { name = "redis" },
     { name = "sqlglot" },
 ]
@@ -434,6 +433,7 @@ dev = [
     { name = "grpcio-tools" },
     { name = "pytest" },
     { name = "pytest-mock" },
+    { name = "pyyaml" },
 ]
 
 [package.metadata]
@@ -446,7 +446,7 @@ requires-dist = [
     { name = "protobuf", specifier = ">=7.36.2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.2.0" },
     { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.17.0" },
-    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "pyyaml", marker = "extra == 'dev'", specifier = ">=6.0" },
     { name = "redis", specifier = ">=8.1.0" },
     { name = "sqlglot", specifier = ">=30.30.0" },
 ]

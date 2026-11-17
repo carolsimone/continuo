@@ -27,8 +27,9 @@ import (
 var errBoom = errors.New("boom")
 
 var repoPaths = map[string]string{
-	"sales":  "dbt/services/sales",
-	"ledger": "python/ledger",
+	"sales":     "dbt/services/sales",
+	"ledger":    "python/ledger",
+	"zz-ledger": "python/zz-ledger",
 }
 
 type write struct{ key, body, contentType string }
@@ -297,11 +298,25 @@ func TestVerificationRun_VerifiesAnODCSBundleAsKindPythonODCS(t *testing.T) {
 	}
 }
 
+// zzLedgerCluster is a python cluster of the service zz-ledger, whose name
+// sorts after the dbt service sales, packaging contract.
+func zzLedgerCluster(contract string) step.ClusterDraft {
+	return step.ClusterDraft{
+		Cluster: remediation.Cluster{Cluster: 3, Members: []string{"python.zz-ledger.postings"}},
+		Draft: remediation.Draft{Edits: []remediation.Edit{
+			{Path: "python/zz-ledger/contracts/postings.yaml", ContentURI: "s3://c/unused", TargetNodeID: "python.zz-ledger.postings"},
+		}},
+		Evidence: remediation.NewEvidence().With(remediation.KeyPackagedContract, remediation.Bytes(contract)),
+	}
+}
+
 // Any other packaged contract is no run the release pipeline can judge: the
 // gate refuses the try with a finding before it writes or submits anything, so
-// the try fails and the next one starts.
+// the try fails and the next one starts. The refusing service sorts after the
+// dbt service, so a check made while the runs are written would already have
+// written the dbt run's overlay.
 func TestSubmit_RefusesAPackagedContractThatIsNotAnODCSBundle(t *testing.T) {
-	const msg = "the packaged contract is not an ODCS producer bundle: service ledger"
+	const msg = "the packaged contract is not an ODCS producer bundle: service zz-ledger"
 	for name, contract := range map[string]string{
 		"a yaml document":                      "version: 1\nnodes:\n  - id: python.ledger.postings\n    script: scripts/postings.py\n",
 		"a JSON object with no bundle_version": `{"version": 1, "nodes": []}`,
@@ -311,7 +326,9 @@ func TestSubmit_RefusesAPackagedContractThatIsNotAnODCSBundle(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newRig()
-			in := gateInput(dbtCluster(), notABundleCluster(contract))
+			in := gateInput(dbtCluster(), zzLedgerCluster(contract))
+			in.Trigger.Nodes = append(in.Trigger.Nodes,
+				remediation.TriggerNode{NodeID: "python.zz-ledger.postings", NodeType: "python-node", Service: "zz-ledger"})
 
 			v, err := r.step.Submit(context.Background(), in)
 			require.NoError(t, err)

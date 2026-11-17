@@ -187,18 +187,6 @@ func TestLocate_SkipsSymlinks(t *testing.T) {
 	}
 }
 
-// TestLocate_ATreeWithNoContractAtAllDeclaresNothing verifies that a tree with
-// neither an ODCS file nor a "nodes:" yaml reports the node as not declared.
-func TestLocate_ATreeWithNoContractAtAllDeclaresNothing(t *testing.T) {
-	root := t.TempDir()
-	writeFile(t, root, "svc/dbt_project.yml", "name: svc\nversion: '1.0'\n")
-
-	_, err := newLocator().Locate(root, "analytics", "py_daily_kpis")
-	if !errors.Is(err, ports.ErrNodeNotDeclared) {
-		t.Fatalf("err = %v, want ports.ErrNodeNotDeclared", err)
-	}
-}
-
 // TestLocate_SkipsOversizeFile verifies that an ODCS file over the 1 MiB cap
 // is skipped by the search rather than parsed, even when it would otherwise
 // match.

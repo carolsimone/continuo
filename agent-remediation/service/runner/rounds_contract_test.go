@@ -268,10 +268,10 @@ func TestGate_ACheckedClusterHoldingANonBundleContractFailsTheTry(t *testing.T) 
 	require.NoError(t, h.drive(id))
 
 	assert.Empty(t, h.pipeline.runs(), "nothing is submitted to the release pipeline")
-	_, wroteContract := h.artifacts.get("svc-a/verify-rel-1-svc-a-a1/contract.yaml")
-	assert.False(t, wroteContract, "no contract.yaml is written")
-	_, wroteBundle := h.artifacts.get("svc-a/verify-rel-1-svc-a-a1/odcs-bundle.json")
-	assert.False(t, wroteBundle, "no bundle is written for bytes that are not one")
+	h.artifacts.mu.Lock()
+	written := h.artifacts.objects
+	h.artifacts.mu.Unlock()
+	assert.Empty(t, written, "no artifact is written for bytes that are not a bundle")
 	const reason = "the packaged contract is not an ODCS producer bundle: service svc-a"
 	p := h.attempt(1).Proposal
 	assert.Equal(t, proposal.StatusFailed, p.Status)
