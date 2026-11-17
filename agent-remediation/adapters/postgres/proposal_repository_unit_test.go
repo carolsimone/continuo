@@ -1,9 +1,11 @@
 package postgres
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -34,6 +36,24 @@ func TestNodeOutcomesAndVerificationsRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, vs, unmarshalVerifications(rawV))
 	assert.Nil(t, unmarshalVerifications([]byte("[]")))
+}
+
+// TestNodeOutcomesCodecCarriesTheCode verifies that the reason code of a node
+// outcome round-trips through the node_outcomes codec under the key "code", and
+// that an outcome with no code encodes without that key.
+func TestNodeOutcomesCodecCarriesTheCode(t *testing.T) {
+	outcomes := map[string]proposal.NodeOutcome{
+		"s.a": {Status: proposal.StatusEscalated, Reason: "no type matches", Code: model.HandoverReasonNoType},
+		"s.b": {Status: proposal.StatusProposed},
+	}
+	raw, err := marshalNodeOutcomes(outcomes)
+	require.NoError(t, err)
+	assert.Equal(t, outcomes, unmarshalNodeOutcomes(raw))
+
+	var stored map[string]map[string]any
+	require.NoError(t, json.Unmarshal(raw, &stored))
+	assert.Equal(t, string(model.HandoverReasonNoType), stored["s.a"]["code"])
+	assert.NotContains(t, stored["s.b"], "code")
 }
 
 // TestResolvedNodeIDsDefaultsToNodeIDForLegacyRows verifies that a row written

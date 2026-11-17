@@ -203,10 +203,13 @@ message FileEdit {
 }
 
 // NodeOutcome is how one failing node's attempt ended: verifying, proposed,
-// failed, skipped, or escalated, with the reason for that outcome.
+// failed, skipped, or escalated, with the reason for that outcome. code is the
+// handover_reason vocabulary value that says why the node was handed over when
+// its outcome is not part of a verified fix, and is empty otherwise.
 message NodeOutcome {
   string status = 1;
   string reason = 2;
+  string code = 3;
 }
 
 // Verification is one fix-verification run per edited service and the

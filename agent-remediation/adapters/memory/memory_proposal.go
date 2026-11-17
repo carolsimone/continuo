@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"time"
 
@@ -352,6 +353,59 @@ func (r *proposalRepository) MarkVerifyFailed(_ context.Context, id, verifyErr s
 		return nil
 	})
 	return hit, err
+}
+
+// ReopenTryAttempt moves the failed row of the remediation's attempt back to
+// status, clearing the failure the row records. Reopened generating, the
+// rationale is cleared and each outcome FailGenerating failed is generating
+// again (reopenedGenerating); reopened verifying, the outcomes are outcomes.
+func (r *proposalRepository) ReopenTryAttempt(_ context.Context, remediationID uuid.UUID, attempt int, status proposal.Status, outcomes map[string]proposal.NodeOutcome) (bool, error) {
+	switch status {
+	case proposal.StatusGenerating:
+		if outcomes != nil {
+			return false, fmt.Errorf("reopen attempt %d: a row reopened generating takes back the outcomes it had, not outcomes given", attempt)
+		}
+	case proposal.StatusVerifying:
+	default:
+		return false, fmt.Errorf("reopen attempt %d: status %q is not generating or verifying", attempt, status)
+	}
+	var reopened bool
+	err := r.gate(func(d *data) error {
+		for _, row := range d.proposals {
+			if row.p.RemediationID != remediationID.String() || row.p.Attempt != attempt || row.p.Status != proposal.StatusFailed {
+				continue
+			}
+			if status == proposal.StatusGenerating {
+				row.p.NodeOutcomes = reopenedGenerating(row.p.NodeOutcomes, row.p.Rationale)
+				row.p.Rationale = ""
+			} else {
+				row.p.NodeOutcomes = maps.Clone(outcomes)
+			}
+			row.p.Status = status
+			row.verifyError = ""
+			reopened = true
+		}
+		return nil
+	})
+	return reopened, err
+}
+
+// reopenedGenerating undoes FailGenerating's rewrite of outcomes, failed with
+// reason: an outcome failed with reason and no code, which is how
+// FailGenerating fails an outcome that was generating, is generating again,
+// and every other outcome is kept.
+func reopenedGenerating(outcomes map[string]proposal.NodeOutcome, reason string) map[string]proposal.NodeOutcome {
+	if outcomes == nil {
+		return nil
+	}
+	out := make(map[string]proposal.NodeOutcome, len(outcomes))
+	for node, o := range outcomes {
+		if o.Status == proposal.StatusFailed && o.Code == "" && o.Reason == reason {
+			o = proposal.NodeOutcome{Status: proposal.StatusGenerating}
+		}
+		out[node] = o
+	}
+	return out
 }
 
 // UpdateVerificationPhase sets the phase and activation time of the

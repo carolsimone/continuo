@@ -1,5 +1,5 @@
 import type { WireOperation } from '../server/shared/operation';
-import type { AttemptStatus, RunStatus, TaskStatus } from '../server/generated/vocabulary.gen';
+import type { AttemptStatus, HandoverReason, RunStatus, TaskStatus } from '../server/generated/vocabulary.gen';
 
 // ScheduleSummary is one schedule name: its cron when it has one, how many
 // models of the live release carry its tag, and its last run.
@@ -472,9 +472,13 @@ export interface FileEditDTO {
 }
 
 // How a batched remediation attempt ended for one specific node it resolved.
+// code is the handover_reason a node was handed over for when its outcome is
+// not part of a verified fix; the server sends "" when the outcome carries no
+// code. An absent or empty code reads as no code.
 export interface NodeOutcomeDTO {
   status: string;
   reason: string;
+  code?: HandoverReason | '';
 }
 
 // One pull request opened from a proposal. A proposal splits into one entry

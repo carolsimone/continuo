@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -55,10 +56,10 @@ func TestReadFile_404IsErrSourceNotFound(t *testing.T) {
 	}
 }
 
-// TestReadFile_OversizeBodyReturnsError verifies that a response body larger
-// than maxSourceBytes causes ReadFile to return an error rather than silently
-// returning truncated content.
-func TestReadFile_OversizeBodyReturnsError(t *testing.T) {
+// TestSourceReader_AFileOverTheCapIsTooLarge verifies that a response body one
+// byte over the cap makes ReadFile return ports.ErrSourceTooLarge, naming the
+// file, the ref and the cap, rather than truncated content or a plain failure.
+func TestSourceReader_AFileOverTheCapIsTooLarge(t *testing.T) {
 	oversized := make([]byte, maxSourceBytes+1)
 	for i := range oversized {
 		oversized[i] = 'x'
@@ -70,9 +71,35 @@ func TestReadFile_OversizeBodyReturnsError(t *testing.T) {
 	defer srv.Close()
 
 	gh := NewSourceReader(srv.URL, "tok", srv.Client())
-	_, err := gh.ReadFile(context.Background(), "o/r", "ref", "p")
-	if err == nil {
-		t.Fatal("expected error for oversize body, got nil")
+	_, err := gh.ReadFile(context.Background(), "o/r", "ref", "models/big.sql")
+
+	if !errors.Is(err, ports.ErrSourceTooLarge) {
+		t.Fatalf("err = %v, want ErrSourceTooLarge", err)
+	}
+	for _, want := range []string{"models/big.sql", "ref", fmt.Sprint(ports.MaxSourceBytes)} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %q, want it to name %q", err, want)
+		}
+	}
+}
+
+// TestSourceReader_AFileAtTheCapIsRead verifies that a body of exactly the cap
+// is returned whole.
+func TestSourceReader_AFileAtTheCapIsRead(t *testing.T) {
+	atCap := strings.Repeat("x", maxSourceBytes)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(atCap))
+	}))
+	defer srv.Close()
+
+	gh := NewSourceReader(srv.URL, "tok", srv.Client())
+	body, err := gh.ReadFile(context.Background(), "o/r", "ref", "p")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(body) != maxSourceBytes {
+		t.Fatalf("read %d bytes, want %d", len(body), maxSourceBytes)
 	}
 }
 

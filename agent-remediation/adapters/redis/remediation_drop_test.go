@@ -30,7 +30,7 @@ func TestFailInFlightOnDrop_FailsRowForDroppedTrigger(t *testing.T) {
 		return 1, nil
 	})
 
-	raw, err := json.Marshal(requestedPayloadFixture)
+	raw, err := json.Marshal(requestedFixture())
 	require.NoError(t, err)
 	drop(context.Background(),
 		goredis.XMessage{ID: "9-0", Values: map[string]any{"payload": string(raw)}},

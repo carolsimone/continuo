@@ -325,7 +325,7 @@ func main() {
 		}
 	})
 
-	// remediation.requested:v2 (rejections) + remediation.pr_opened:v1
+	// remediation.requested:v3 (rejections) + remediation.pr_opened:v1
 	// (proposals) + remediation.pr_closed:v1 (provenance) — the
 	// failure-precedent case base, written under the tenant each message names
 	// through the Neo4j unit of work. The rejections handler reuses the
@@ -352,7 +352,7 @@ func main() {
 		{"release_promoted", streams.ReleasePromotedV2, streams.CatalogReleaseTopology, redis.NewReleasePromotedBinding(releasePromotedHandler, logger), topologyHandlerTimeout},
 		{"release_promoted_versions", streams.ReleasePromotedV2, streams.CatalogReleaseVersions, redis.NewReleasePromotedVersionsBinding(releasePromotedVersionsHandler, logger), topologyHandlerTimeout},
 		{"release_promoted_contracts", streams.ReleasePromotedV2, streams.CatalogReleaseContracts, redis.NewReleasePromotedContractsBinding(releasePromotedContractsHandler, logger), topologyHandlerTimeout},
-		{"remediation_requested_rejections", streams.RemediationRequestedV2, streams.CatalogRemediationRequestedRejections, redis.NewRemediationRequestedBinding(rejectionsHandler, logger), 0},
+		{"remediation_requested_rejections", streams.RemediationRequestedV3, streams.CatalogRemediationRequestedRejections, redis.NewRemediationRequestedBinding(rejectionsHandler, logger), 0},
 		{"remediation_pr_opened_proposals", streams.RemediationPrOpenedV1, streams.CatalogRemediationPrOpenedProposals, redis.NewPrOpenedBinding(proposalsHandler, logger), 0},
 		{"remediation_pr_closed_provenance", streams.RemediationPrClosedV1, streams.CatalogRemediationPrClosedProvenance, redis.NewPrClosedBinding(provenanceHandler, logger), 0},
 	}

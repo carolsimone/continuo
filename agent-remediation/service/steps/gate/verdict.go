@@ -2,6 +2,7 @@ package gate
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -85,7 +86,7 @@ func (g *VerificationRun) decide(in step.GateInput, got read) step.GateVerdict {
 	}
 	switch {
 	case anyFailed:
-		verifyErr := verifyError(in.Trigger.NodeIDs(), got.nodeErrors, got.runs)
+		verifyErr := verifyError(draftedNodes(in.Drafts), got.nodeErrors, got.runs)
 		return step.GateVerdict{
 			Result: remediation.CheckResult{
 				Check:    name,
@@ -167,16 +168,28 @@ func failureFindings(nodeErrors map[string]string, verifyErr string) []remediati
 	return findings
 }
 
+// draftedNodes is the try's own nodes: every member of a cluster whose draft
+// the gate judged, sorted. A node handed over (unfixable, or settled by an
+// earlier try) has no draft, so it is never one of them.
+func draftedNodes(drafts []step.ClusterDraft) []string {
+	var nodes []string
+	for _, d := range drafts {
+		nodes = append(nodes, d.Cluster.Members...)
+	}
+	sort.Strings(nodes)
+	return slices.Compact(nodes)
+}
+
 // verifyError is the text recorded on a rejected try, and the evidence the next
-// try is shown. The errors of the nodes this try fixed come first, named and in
-// a stable order; when every one of them passed and other nodes did not (a fix
-// that broke something downstream of itself) every failing node is named
-// instead, so the reason describes what actually failed. A failure carrying no
-// per-node error at all still records which run failed it, so the try never
-// ends with a blank reason.
-func verifyError(resolved []string, nodeErrors map[string]string, runs []proposal.Verification) string {
-	if own := namedErrors(nodeErrors, stillFailing(resolved, nodeErrors)); own != "" {
-		return own
+// try is shown. The errors of the try's own nodes (own) come first, named and
+// in a stable order; when every one of them passed and other nodes did not (a
+// fix that broke something downstream of itself, or a handed-over node that
+// still fails) every failing node is named instead, so the reason describes
+// what actually failed. A failure carrying no per-node error at all still
+// records which run failed it, so the try never ends with a blank reason.
+func verifyError(own []string, nodeErrors map[string]string, runs []proposal.Verification) string {
+	if named := namedErrors(nodeErrors, stillFailing(own, nodeErrors)); named != "" {
+		return named
 	}
 	if all := namedErrors(nodeErrors, sortedNodes(nodeErrors)); all != "" {
 		return all
@@ -184,12 +197,12 @@ func verifyError(resolved []string, nodeErrors map[string]string, runs []proposa
 	return fmt.Sprintf("verification run %s failed without a per-node error", runs[0].RunID)
 }
 
-// stillFailing is the try's own nodes that the failure still reports an error
-// for. Nodes the failure names that this try never addressed are not returned:
-// the trigger carries no failure for them, so there is nothing to re-fix.
-func stillFailing(resolved []string, nodeErrors map[string]string) []string {
-	still := make([]string, 0, len(resolved))
-	for _, id := range resolved {
+// stillFailing is the nodes of own that the failure still reports an error
+// for, in the order own gives. A node the failure names that no draft of the
+// try addresses is not returned: it is not this try's to re-fix.
+func stillFailing(own []string, nodeErrors map[string]string) []string {
+	still := make([]string, 0, len(own))
+	for _, id := range own {
 		if nodeErrors[id] != "" {
 			still = append(still, id)
 		}

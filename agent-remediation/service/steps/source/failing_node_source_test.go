@@ -1,7 +1,11 @@
 package source_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -148,15 +152,6 @@ func TestFailingNodeSource_Declines(t *testing.T) {
 			`service "ghost" has no repository path mapping, so its source cannot be read`},
 		{"compile with a missing file", "compile", remediation.TriggerNode{NodeID: "svc", FilePath: "models/x.sql"},
 			"the offending file services/svc/models/x.sql does not exist at commit abc123"},
-		{"parse of a python-csv node", "parse", remediation.TriggerNode{NodeID: "n1", NodeType: string(pkg_model.NodeTypePythonCsv)},
-			"n1 is a python-csv node: its only read is an S3 URI, not SQL the parser can reject, " +
-				"so remediation has no fix to offer; correct the contract by hand"},
-		{"parse of a python-api node", "parse", remediation.TriggerNode{NodeID: "n1", NodeType: string(pkg_model.NodeTypePythonApi)},
-			"n1 is a python-api node: python-api has no reads, so there is no SQL " +
-				"the parser can reject and remediation has no fix to offer; correct the contract by hand"},
-		{"parse of a python-node", "parse", remediation.TriggerNode{NodeID: "n1", NodeType: string(pkg_model.NodeTypePythonNode)},
-			"n1 is a python-node node: its reads are declared in its contract file " +
-				"(the ODCS file under contracts/), which this lane does not edit; correct the contract by hand"},
 		{"parse with no file", "parse", remediation.TriggerNode{NodeID: "n1", Service: "svc"},
 			"the parse rejection names no source file, so there is no file to fix"},
 		{"parse with no service", "parse", remediation.TriggerNode{NodeID: "n1", FilePath: "models/x.sql"},
@@ -274,4 +269,101 @@ func TestFailingNodeSource_ASourceItDoesNotReadIsAnError(t *testing.T) {
 	_, err := s.Gather(context.Background(), step.ContextInput{Failure: failure("validation", remediation.TriggerNode{})})
 
 	assert.ErrorContains(t, err, `"validation"`)
+}
+
+// errTooLarge is the error the reader returns for a file over its cap.
+var errTooLarge = fmt.Errorf("github get p@abc123: source file exceeds %d bytes: %w", ports.MaxSourceBytes, ports.ErrSourceTooLarge)
+
+// A yml beside the model or the project file that is over the read cap cannot
+// be shown to the model, and is not a reason to fail: it is left out, and the
+// step gathers the rest.
+func TestFailingNodeSource_AnOversizedSideFileIsLeftOut(t *testing.T) {
+	src := &fakeSource{
+		files: map[string]string{
+			"services/svc/models/x.sql":      "select 1",
+			"services/svc/models/schema.yml": "version: 2",
+			"services/svc/models/huge.yml":   "never read",
+			"services/svc/dbt_project.yml":   "never read",
+		},
+		readErr: map[string]error{
+			"services/svc/models/huge.yml": errTooLarge,
+			"services/svc/dbt_project.yml": errTooLarge,
+		},
+	}
+	var logs bytes.Buffer
+	s := source.NewFailingNodeSource(src, nil, repoPaths, slog.New(slog.NewTextHandler(&logs, nil)))
+
+	out := gather(t, s, failure("compile", remediation.TriggerNode{NodeID: "svc", FilePath: "models/x.sql"}))
+
+	sf := sourceFiles(t, out)
+	assert.Equal(t, []string{"services/svc/models/x.sql", "services/svc/models/schema.yml"}, sf.Order)
+	assert.NotContains(t, sf.Files, "services/svc/models/huge.yml")
+	assert.NotContains(t, sf.Files, "services/svc/dbt_project.yml")
+	for _, left := range []string{"services/svc/models/huge.yml", "services/svc/dbt_project.yml"} {
+		assert.Contains(t, logs.String(), "level=WARN")
+		assert.Contains(t, logs.String(), left, "the log names each file left out")
+	}
+	assert.Contains(t, logs.String(), fmt.Sprint(ports.MaxSourceBytes), "the log names the cap")
+}
+
+// The file to fix cannot be edited when it cannot be read, so the cluster is
+// declined with a reason naming the file and the cap, and the step does not
+// fail on every retry.
+func TestFailingNodeSource_AnOversizedTargetFileDeclines(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		node remediation.TriggerNode
+		file string
+	}{
+		{"compile", "compile", remediation.TriggerNode{NodeID: "svc", FilePath: "models/x.sql"}, "services/svc/models/x.sql"},
+		{"parse", "parse", remediation.TriggerNode{NodeID: "n1", Service: "svc", FilePath: "models/x.sql"}, "services/svc/models/x.sql"},
+		{"seed_build", "seed_build", remediation.TriggerNode{NodeID: "n1", Service: "svc", FilePath: "seeds/a.csv"}, "services/svc/seeds/a.csv"},
+		{"duplicate_table", "duplicate_table", remediation.TriggerNode{NodeID: "n1", Service: "svc", FilePath: "models/x.sql", NodeType: "dbt-model"}, "services/svc/models/x.sql"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			src := &fakeSource{readErr: map[string]error{c.file: errTooLarge}}
+			s := source.NewFailingNodeSource(src, &fakeLocator{}, repoPaths, discardLogger())
+
+			out := gather(t, s, failure(c.src, c.node))
+
+			assert.True(t, out.Declined)
+			assert.Equal(t, "the offending file "+c.file+" is over the "+fmt.Sprint(ports.MaxSourceBytes)+"-byte read limit, so no fix can edit it", out.Decline)
+			assert.Empty(t, out.Evidence)
+		})
+	}
+}
+
+// A read the repository refuses for another reason, such as a token without
+// permission, is a fault of the install and not a fact about the file: it is
+// returned so the runner retries it and, at the limit, ends the remediation as
+// a system failure.
+func TestFailingNodeSource_AForbiddenReadStaysAStepError(t *testing.T) {
+	forbidden := errors.New("github get p@abc123: status 403: Resource not accessible by integration")
+	cases := map[string]map[string]error{
+		"the file to fix":  {"services/svc/models/x.sql": forbidden},
+		"a yml beside it":  {"services/svc/models/schema.yml": forbidden},
+		"the project file": {"services/svc/dbt_project.yml": forbidden},
+	}
+	for name, readErr := range cases {
+		t.Run(name, func(t *testing.T) {
+			src := &fakeSource{
+				files:   map[string]string{"services/svc/models/x.sql": "select 1", "services/svc/models/schema.yml": "version: 2"},
+				readErr: readErr,
+			}
+			s := source.NewFailingNodeSource(src, nil, repoPaths, discardLogger())
+
+			out, err := s.Gather(context.Background(), step.ContextInput{
+				Failure:  failure("compile", remediation.TriggerNode{NodeID: "svc", FilePath: "models/x.sql"}),
+				Evidence: remediation.NewEvidence(),
+			})
+
+			require.ErrorIs(t, err, forbidden)
+			assert.NotErrorIs(t, err, ports.ErrSourceTooLarge)
+			assert.NotErrorIs(t, err, ports.ErrSourceNotFound)
+			assert.False(t, out.Declined)
+			assert.Empty(t, out.Evidence)
+		})
+	}
 }

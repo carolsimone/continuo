@@ -26,6 +26,20 @@ import (
 // be a .yml file). Neither can be sent to the model or read as model source.
 var errNonDbtCandidate = errors.New("candidate source is not a dbt model")
 
+// sourceTooLargeError reports that the release's code bundle holds no source
+// for the failing node and the repository file the step falls back to, Path,
+// is over ports.MaxSourceBytes, so it can be neither shown to the model nor
+// edited. Its text is the decline.
+type sourceTooLargeError struct {
+	NodeID string
+	Path   string
+}
+
+func (e *sourceTooLargeError) Error() string {
+	return fmt.Sprintf("the failing node %s's source is not in the release's code bundle, and its file %s in the repository is over the %d-byte read limit, so no fix can edit it",
+		e.NodeID, e.Path, ports.MaxSourceBytes)
+}
+
 // CodeBundleSource is the context source `code_bundle_source`: the failing
 // node's source as the release holds it, with the location it was found at.
 type CodeBundleSource struct {
@@ -57,8 +71,9 @@ func (*CodeBundleSource) Meta() step.Meta {
 		Name: "code_bundle_source",
 		Kind: step.KindContext,
 		Description: "Reads the failing dbt node's source from the release's code bundle, falling back to the repository at the trigger's commit, " +
-			"with the file path and service it was found for. Declines a node whose source is not a dbt model and one whose source, " +
-			"file path, service or the service's repository path is unknown, since no fix can edit it.",
+			"with the file path and service it was found for. Declines a node whose source is not a dbt model, one whose repository " +
+			"file is over the read limit, and one whose source, file path, service or the service's repository path is unknown, " +
+			"since no fix can edit it.",
 		Needs:    []remediation.EvidenceKey{remediation.KeyFailure},
 		Provides: []remediation.EvidenceKey{remediation.KeyCodeBundleSource},
 	}
@@ -73,8 +88,9 @@ func (*CodeBundleSource) Meta() step.Meta {
 // which leave the location or the source empty and are not errors. A failed
 // lookup or read is transient and is returned so the work is tried again.
 //
-// A source that is not a dbt model declines the cluster, and so does a node
-// whose location or source stayed unknown: a fix edits the file the node's
+// A source that is not a dbt model declines the cluster, and so does a
+// repository fallback file over the read limit, and a node whose location or
+// source stayed unknown: a fix edits the file the node's
 // source lives in, so with no source, file path, service or repository path
 // for the service there is no edit to make, and no model call is worth making.
 // Each decline carries its reason.
@@ -95,6 +111,10 @@ func (s *CodeBundleSource) Gather(ctx context.Context, in step.ContextInput) (st
 		s.logger.Info("validation fix: failing node's candidate source is not a dbt model; skipping",
 			"node", n.NodeID, "error", err)
 		return step.ContextOutput{Declined: true, Decline: err.Error()}, nil
+	}
+	var tooLarge *sourceTooLargeError
+	if errors.As(err, &tooLarge) {
+		return step.ContextOutput{Declined: true, Decline: tooLarge.Error()}, nil
 	}
 	if err != nil {
 		return step.ContextOutput{}, err
@@ -145,8 +165,9 @@ func (s *CodeBundleSource) unreachable(nodeID, filePath, serviceName, source str
 // about the node's kind. Only when the trigger carries no node type does a
 // resolved path that does not end in ".sql" also return errNonDbtCandidate: a
 // trigger that does carry a node type is trusted over the extension and always
-// proceeds to the read, where a missing file leaves the source unresolved and
-// any other read error is returned.
+// proceeds to the read, where a missing file leaves the source unresolved, a
+// file over the reader's size cap returns a *sourceTooLargeError naming it,
+// and any other read error is returned.
 func (s *CodeBundleSource) resolve(ctx context.Context, f remediation.Failure, filePath, serviceName string) (source, origin string, err error) {
 	n := f.Target
 	src, berr := s.candidates.NodeSource(ctx, f.Trigger.CodeBundleURI, n.NodeID, f.Trigger.ReleaseID)
@@ -182,6 +203,11 @@ func (s *CodeBundleSource) resolve(ctx context.Context, f remediation.Failure, f
 	if errors.Is(gerr, ports.ErrSourceNotFound) {
 		s.logger.Warn("repo fallback has no such file", "node", n.NodeID, "path", full)
 		return "", "", nil
+	}
+	if errors.Is(gerr, ports.ErrSourceTooLarge) {
+		s.logger.Warn("repo fallback file is over the read limit; no source from the repository",
+			"node", n.NodeID, "path", full, "max_bytes", ports.MaxSourceBytes)
+		return "", "", &sourceTooLargeError{NodeID: n.NodeID, Path: full}
 	}
 	if gerr != nil {
 		return "", "", fmt.Errorf("read %s: %w", full, gerr)

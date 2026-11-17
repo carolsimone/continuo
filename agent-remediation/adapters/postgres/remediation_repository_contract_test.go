@@ -24,6 +24,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // contractEnv is one implementation of the repositories under test: the
@@ -548,7 +549,7 @@ func TestRemediationRepository_GetReturnsTheCurrentTryWithOrderedChildren(t *tes
 		second := newTry(r.ID, 2, remediation.TryDrafting, contractBase.Add(2*time.Hour))
 		second.FileRevisions = map[string]string{"a.sql": "r1", "b.sql": "r2"}
 		require.NoError(t, env.remediations.SaveTry(ctx, second))
-		outcome := &proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: "no fix"}
+		outcome := &proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: "no fix", Code: model.HandoverReasonDeclined}
 		require.NoError(t, env.remediations.SaveCluster(ctx, remediation.Cluster{
 			RemediationID: r.ID, Try: 2, Cluster: 2, Kind: workflow.ClusterSharedUpstream, TargetNodeID: "up",
 			Members: []string{"a", "b"}, TypeName: "dbt", Status: remediation.ClusterHandedOver, Round: 3, Outcome: outcome,
@@ -1238,5 +1239,107 @@ func TestProposalRepository_ListNamesTheRemediationOfEachRow(t *testing.T) {
 			byAttempt[v.Attempt] = v.RemediationID
 		}
 		require.Equal(t, map[int]string{1: "", 2: r.ID.String()}, byAttempt)
+	})
+}
+
+// LockByRelease reads the remediation of one tenant, release and round with
+// its current try and that try's clusters and steps, and holds its row until
+// the transaction ends: a second transaction's LockByRelease of the same key
+// waits for it.
+func TestRemediationRepository_LockByReleaseReadsAndLocksTheRemediationOfTheKey(t *testing.T) {
+	forEachImpl(t, func(t *testing.T, env contractEnv) {
+		ctx := context.Background()
+		r := mustCreate(t, env, newRemediation("rel-lock", 1, contractBase))
+		startTry(t, env, r, remediation.TryChecking, contractBase.Add(time.Hour))
+		require.NoError(t, env.remediations.SaveCluster(ctx, remediation.Cluster{
+			RemediationID: r.ID, Try: 1, Cluster: 1, Kind: workflow.ClusterSingle, TargetNodeID: "model.a",
+			Members: []string{"model.a"}, Status: remediation.ClusterChecked, Round: 1,
+		}))
+		require.NoError(t, env.remediations.SaveStep(ctx, remediation.StepRun{
+			RemediationID: r.ID, Try: 1, Cluster: 0, Step: "verification_run", Kind: "check", Round: 1,
+			Status: remediation.StepFailed, Failures: 5, LastError: "down", StartedAt: contractBase,
+		}))
+
+		u := env.newUoW()
+		require.NoError(t, u.Begin(ctx))
+		defer func() { _ = u.Rollback() }()
+		snap, found, err := u.RemediationRepo().LockByRelease(ctx, "default", "rel-lock", 1)
+		require.NoError(t, err)
+		require.True(t, found)
+		require.Equal(t, r.ID, snap.Remediation.ID)
+		require.NotNil(t, snap.Try)
+		require.Equal(t, remediation.TryChecking, snap.Try.Status)
+		require.Len(t, snap.Clusters, 1)
+		require.Len(t, snap.Steps, 1)
+		require.Equal(t, 5, snap.Steps[0].Failures)
+		for name, key := range map[string][3]string{
+			"another round":   {"default", "rel-lock", "2"},
+			"another tenant":  {"acme", "rel-lock", "1"},
+			"another release": {"default", "rel-other", "1"},
+		} {
+			round := 1
+			if key[2] == "2" {
+				round = 2
+			}
+			_, found, err := u.RemediationRepo().LockByRelease(ctx, key[0], key[1], round)
+			require.NoError(t, err, name)
+			require.False(t, found, name)
+		}
+
+		locked := make(chan error, 1)
+		go func() {
+			u2 := env.newUoW()
+			if err := u2.Begin(ctx); err != nil {
+				locked <- err
+				return
+			}
+			defer func() { _ = u2.Rollback() }()
+			_, _, err := u2.RemediationRepo().LockByRelease(ctx, "default", "rel-lock", 1)
+			locked <- err
+		}()
+		select {
+		case err := <-locked:
+			t.Fatalf("a second lock of the key returned while the first transaction holds it: %v", err)
+		case <-time.After(300 * time.Millisecond):
+		}
+		require.NoError(t, u.Commit())
+		select {
+		case err := <-locked:
+			require.NoError(t, err)
+		case <-time.After(10 * time.Second):
+			t.Fatal("the second lock never returned after the first transaction ended")
+		}
+	})
+}
+
+// HasLaterRound reports whether the tenant's release has a remediation of a
+// round after the given one, whatever its status.
+func TestRemediationRepository_HasLaterRound(t *testing.T) {
+	forEachImpl(t, func(t *testing.T, env contractEnv) {
+		ctx := context.Background()
+		mustCreate(t, env, newRemediation("rel-rounds", 1, contractBase))
+		second := newRemediation("rel-rounds", 2, contractBase)
+		second.Status = remediation.StatusSystemFailure
+		mustCreate(t, env, second)
+		otherTenant := newRemediation("rel-rounds", 5, contractBase)
+		otherTenant.TenantID = "acme"
+		mustCreate(t, env, otherTenant)
+		mustCreate(t, env, newRemediation("rel-elsewhere", 7, contractBase))
+
+		for _, tc := range []struct {
+			tenant, release string
+			round           int
+			want            bool
+		}{
+			{"default", "rel-rounds", 1, true},
+			{"default", "rel-rounds", 2, false},
+			{"acme", "rel-rounds", 4, true},
+			{"acme", "rel-rounds", 5, false},
+			{"default", "rel-unknown", 1, false},
+		} {
+			got, err := env.remediations.HasLaterRound(ctx, tc.tenant, tc.release, tc.round)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got, "%s %s round %d", tc.tenant, tc.release, tc.round)
+		}
 	})
 }

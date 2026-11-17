@@ -241,6 +241,7 @@ func nodeOutcomesToProto(outcomes map[string]proposal.NodeOutcome) map[string]*r
 		out[nodeID] = &remediationv1.NodeOutcome{
 			Status: string(o.Status),
 			Reason: o.Reason,
+			Code:   string(o.Code),
 		}
 	}
 	return out

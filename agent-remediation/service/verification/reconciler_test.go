@@ -23,6 +23,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/handlers"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
+	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -482,6 +483,18 @@ func (h *harness) handlerDeps(maxAttempts int) handlers.Deps {
 	}
 }
 
+// proposedPayload is the event a remediation.proposed:v1 entry carries. The
+// legacy engine stores the entry under the default tenant.
+func proposedPayload(t *testing.T, entry *outbox.Entry) serialization.RemediationProposedDTO {
+	t.Helper()
+	tenantID, body, err := outbox.UnwrapTenant(entry.Payload)
+	require.NoError(t, err)
+	assert.Equal(t, events.DefaultTenantID, tenantID)
+	var payload serialization.RemediationProposedDTO
+	require.NoError(t, json.Unmarshal(body, &payload))
+	return payload
+}
+
 // TestReconcileOnce_PassedVerificationProposesTheFix covers the branch that
 // makes a verified fix reachable by a human: a verification run that passed
 // finalizes the proposal to 'proposed' and emits exactly one
@@ -499,8 +512,7 @@ func TestReconcileOnce_PassedVerificationProposesTheFix(t *testing.T) {
 	entry := h.uow.ob.entries[0]
 	assert.Equal(t, streams.RemediationProposedV1, entry.StreamName)
 	assert.Equal(t, event.EventType, entry.EventType)
-	var payload serialization.RemediationProposedDTO
-	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+	payload := proposedPayload(t, entry)
 	assert.Equal(t, "rel-1", payload.ReleaseID)
 	assert.Equal(t, "analytics.orders", payload.NodeID)
 	assert.Equal(t, []string{"analytics.orders"}, payload.ResolvedNodeIDs)
@@ -528,8 +540,7 @@ func TestReconcileOnce_PassedVerificationCarriesTheRemediationRound(t *testing.T
 	h.reconciler.ReconcileOnce(context.Background())
 
 	require.Len(t, h.uow.ob.entries, 1)
-	var payload serialization.RemediationProposedDTO
-	require.NoError(t, json.Unmarshal(h.uow.ob.entries[0].Payload, &payload))
+	payload := proposedPayload(t, h.uow.ob.entries[0])
 	assert.Equal(t, 2, payload.RemediationRound)
 }
 
@@ -574,8 +585,7 @@ func TestReconcileOnce_TwoVerificationsProposesOnlyWhenBothPassed(t *testing.T) 
 
 	assert.Equal(t, proposal.StatusProposed, h.repo.row("p1").Status)
 	require.Len(t, h.uow.ob.entries, 1)
-	var payload serialization.RemediationProposedDTO
-	require.NoError(t, json.Unmarshal(h.uow.ob.entries[0].Payload, &payload))
+	payload := proposedPayload(t, h.uow.ob.entries[0])
 	assert.Equal(t, []string{"analytics.orders"}, payload.ResolvedNodeIDs)
 }
 
@@ -757,7 +767,7 @@ func TestReconcileOnce_RetryCarriesAFreshDedupIdentity(t *testing.T) {
 	// its recording transaction does in production.
 	upstream := uuid.New()
 	_, _, err := h.uow.mp.InsertIfNotExists(context.Background(), &messageprocessing.MessageProcessing{
-		MessageID: originalMessageID, StreamName: streams.RemediationRequestedV2, OutboxEntryID: &upstream,
+		MessageID: originalMessageID, StreamName: streams.RemediationRequestedV3, OutboxEntryID: &upstream,
 	})
 	require.NoError(t, err)
 
@@ -790,7 +800,7 @@ func TestReconcileOnce_RetryCarriesAFreshDedupIdentity(t *testing.T) {
 func TestProposeFix_ReplayedMessageIDIsANoOp(t *testing.T) {
 	h := newHarness(t)
 	_, _, err := h.uow.mp.InsertIfNotExists(context.Background(), &messageprocessing.MessageProcessing{
-		MessageID: originalMessageID, StreamName: streams.RemediationRequestedV2,
+		MessageID: originalMessageID, StreamName: streams.RemediationRequestedV3,
 	})
 	require.NoError(t, err)
 

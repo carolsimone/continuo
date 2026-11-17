@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -14,8 +15,12 @@ import (
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/remediation/adapters/postgres"
 )
+
+// producer is the envelope's producer of every entry the service renders.
+const producer = "remediation"
 
 // remediationOutboxPublisher implements pkgoutbox.Publisher by XADDing each
 // outbox entry to the Redis stream stored in entry.StreamName.
@@ -60,11 +65,14 @@ func (p *remediationOutboxPublisher) xaddArgs(entry *pkgoutbox.Entry, values map
 var _ pkgoutbox.Renderer = (*remediationOutboxPublisher)(nil)
 
 // Render returns the field map Publish XADDs for entry, without
-// outbox_entry_id: a dead-letter row's scalar fields, or the row's JSON body as
-// the "payload" field beside the default tenant as "tenant_id". The tenant is
-// stamped here, not in xaddArgs, because the fields an outbox dead letter stores
-// come from Render, so a redrive republishes the tenant too. Every call returns
-// a fresh map.
+// outbox_entry_id. A dead-letter row's scalar fields come from
+// outbox.DeadLetterValues. A remediation.requested:v3 row stores its payload
+// under its tenant (outbox.WrapTenant) and renders under an envelope that names
+// the row as the event, the tenant it stores and the time it was written. Any
+// other row's JSON body is the "payload" field beside the default tenant as
+// "tenant_id". The tenant is stamped here, not in xaddArgs, because the fields
+// an outbox dead letter stores come from Render, so a redrive republishes the
+// tenant too. Every call returns a fresh map.
 func (p *remediationOutboxPublisher) Render(entry *pkgoutbox.Entry) (map[string]any, error) {
 	if entry.EventType == pkgoutbox.DeadLetterEventType {
 		values, err := pkgoutbox.DeadLetterValues(entry)
@@ -75,7 +83,29 @@ func (p *remediationOutboxPublisher) Render(entry *pkgoutbox.Entry) (map[string]
 		delete(values, "outbox_entry_id")
 		return values, nil
 	}
+	if entry.StreamName == streams.RemediationRequestedV3 {
+		return renderRemediationRequested(entry)
+	}
 	return map[string]any{"payload": string(entry.Payload), "tenant_id": pkgevents.DefaultTenantID}, nil
+}
+
+// renderRemediationRequested renders a remediation.requested:v3 row. The row's
+// stored payload is our own, so a row that is not stored under a tenant or does
+// not hold a trigger is permanent: no retry makes it renderable.
+func renderRemediationRequested(entry *pkgoutbox.Entry) (map[string]any, error) {
+	tenantID, payload, err := pkgoutbox.UnwrapTenant(entry.Payload)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s: %w", pkgevents.ErrPermanent, streams.RemediationRequestedV3, err)
+	}
+	var trigger pkgevents.RemediationRequested
+	if err := json.Unmarshal(payload, &trigger); err != nil {
+		return nil, fmt.Errorf("%w: unmarshal %s: %v", pkgevents.ErrPermanent, streams.RemediationRequestedV3, err)
+	}
+	values, err := pkgevents.RemediationRequestedFields(entry.ID.String(), tenantID, producer, entry.CreatedAt, trigger)
+	if err != nil {
+		return nil, fmt.Errorf("%w: render %s: %v", pkgevents.ErrPermanent, streams.RemediationRequestedV3, err)
+	}
+	return values, nil
 }
 
 // outboxHeartbeatStale is the liveness budget for the outbox processor's Run

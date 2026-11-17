@@ -12,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // journalRow is one done journal row of try 1 holding rec as its output.
@@ -45,6 +46,10 @@ func TestTryRecordOf_ReadsEachClustersEditsAndFindingsAndTheTrysOwn(t *testing.T
 			{Cluster: 1, Kind: workflow.ClusterSingle, TargetNodeID: "model.a", Members: []string{"model.a"}, TypeName: "dbt-validation", Status: remediation.ClusterChecked, Round: 2},
 			{Cluster: 2, Kind: workflow.ClusterSingle, TargetNodeID: "model.b", Members: []string{"model.b"}, TypeName: "dbt-validation",
 				Status: remediation.ClusterHandedOver, Round: 1, Outcome: &proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: "the model declined"}},
+			{Cluster: 3, Kind: workflow.ClusterSingle, TargetNodeID: "model.c", Members: []string{"model.c"}, TypeName: "dbt-validation",
+				Status: remediation.ClusterHandedOver, Round: 1, Outcome: &proposal.NodeOutcome{
+					Status: proposal.StatusSkipped, Reason: "the node's source is not in the release's code bundle", Code: model.HandoverReasonDeclined,
+				}},
 		},
 		Steps: []remediation.StepRun{
 			journalRow(t, 1, "dbt-validation", "prompt", 1, serialization.PromptRecord{Draft: first}),
@@ -87,6 +92,10 @@ func TestTryRecordOf_ReadsEachClustersEditsAndFindingsAndTheTrysOwn(t *testing.T
 			{
 				Type: "dbt-validation", TargetNodeID: "model.b", Members: []string{"model.b"},
 				Outcome: "skipped: the model declined",
+			},
+			{
+				Type: "dbt-validation", TargetNodeID: "model.c", Members: []string{"model.c"},
+				Outcome: "skipped (declined): the node's source is not in the release's code bundle",
 			},
 		},
 		CrossCluster: []remediation.Finding{twice, kinds},

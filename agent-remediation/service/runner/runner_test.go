@@ -17,8 +17,10 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/llmcache"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
+	"github.com/carolsimone/continuo/pkg/streams"
 )
 
 func TestRunner_AcceptTwiceCreatesOneRemediation(t *testing.T) {
@@ -50,6 +52,7 @@ func TestRunner_AcceptTwiceCreatesOneRemediation(t *testing.T) {
 	msgs := h.store.ProcessedMessages()
 	require.Len(t, msgs, 1)
 	assert.Equal(t, messageprocessing.StateCompleted, msgs[0].State)
+	assert.Equal(t, streams.RemediationRequestedV3, msgs[0].StreamName, "the message is claimed on the stream it was read from")
 }
 
 // Accept is the one place a trigger with no tenant gets the default tenant: the
@@ -207,6 +210,7 @@ func TestRunner_CrossServiceDeclineSkipsTheMembers(t *testing.T) {
 		Status: proposal.StatusSkipped,
 		Reason: "the change that broke this node lives in service core; a fix in this node's own service cannot ship before it: " +
 			"the changed ancestor's source is not in the release's code bundle",
+		Code: model.HandoverReasonDeclined,
 	}, clusters[0].Outcome)
 	assert.Zero(t, h.llm.calls())
 }
@@ -250,7 +254,9 @@ func TestRunner_NoRepositoryRecordsFailed(t *testing.T) {
 	assert.Equal(t, proposal.StatusFailed, p.Status)
 	assert.Equal(t, reason, p.Rationale)
 	assert.Equal(t, id.String(), p.RemediationID)
-	assert.Equal(t, map[string]proposal.NodeOutcome{"svc-a": {Status: proposal.StatusFailed, Reason: reason}}, p.NodeOutcomes)
+	assert.Equal(t, map[string]proposal.NodeOutcome{
+		"svc-a": {Status: proposal.StatusFailed, Reason: reason, Code: model.HandoverReasonNoRepository},
+	}, p.NodeOutcomes)
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 	assert.Zero(t, h.llm.calls())
 }
@@ -273,13 +279,15 @@ func TestRunner_DbtTestTargetIsSkipped(t *testing.T) {
 	assert.Equal(t, &proposal.NodeOutcome{
 		Status: proposal.StatusSkipped,
 		Reason: "dbt tests are not fix targets; fix the model or edit the test by hand",
+		Code:   model.HandoverReasonNoType,
 	}, byTarget[test.NodeID].Outcome)
 	assert.Equal(t, remediation.ClusterHandedOver, byTarget[python.NodeID].Status)
 	assert.Equal(t, &proposal.NodeOutcome{
 		Status: proposal.StatusSkipped,
 		Reason: "no remediation type matches this failure",
+		Code:   model.HandoverReasonNoType,
 	}, byTarget[python.NodeID].Outcome)
-	assert.Empty(t, h.store.Steps(id))
+	assert.Equal(t, []string{"hand_over"}, stepNames(h.store.Steps(id)), "no step runs, and the hand-over is recorded")
 	assert.Zero(t, h.llm.calls())
 }
 
@@ -297,8 +305,9 @@ func TestRunner_DbtTestTargetIsSkippedEvenWhenATypeWouldSelectIt(t *testing.T) {
 	assert.Equal(t, &proposal.NodeOutcome{
 		Status: proposal.StatusSkipped,
 		Reason: "dbt tests are not fix targets; fix the model or edit the test by hand",
+		Code:   model.HandoverReasonNoType,
 	}, c.Outcome)
-	assert.Empty(t, h.store.Steps(id))
+	assert.Equal(t, []string{"hand_over"}, stepNames(h.store.Steps(id)), "no step runs, and the hand-over is recorded")
 	assert.Zero(t, h.llm.calls())
 }
 
@@ -312,7 +321,10 @@ func TestRunner_ADeclineWithNoTextHandsTheClusterOver(t *testing.T) {
 	c := h.cluster(id, 1, 1)
 	assert.Equal(t, "dbt-validation", c.TypeName)
 	assert.Equal(t, remediation.ClusterHandedOver, c.Status)
-	assert.Equal(t, &proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: ""}, c.Outcome)
+	want := proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: "step candidate_sql declined the fix", Code: model.HandoverReasonDeclined}
+	assert.Equal(t, &want, c.Outcome, "a step that gives no reason is recorded as having declined the fix")
+	assert.Equal(t, map[string]proposal.NodeOutcome{"model.sales.orders": want}, h.attempt(1).Proposal.NodeOutcomes)
+	assert.Equal(t, handedOverOf(id, 1, 1, handedOverNode("model.sales.orders", want)), h.handedOverEvent(), "and so is the event")
 	rows := h.stepRows(id, 1, 1)
 	require.Len(t, rows, 1, "the cluster stops at the declining step")
 	require.Len(t, rows["candidate_sql"], 1)
@@ -469,13 +481,14 @@ func TestRunner_PreflightFindingHandsTheClusterOver(t *testing.T) {
 			name:   "a target the model was not shown is failed",
 			answer: func(r *ports.ProposeResult) { r.TargetFile = "models/elsewhere.sql" },
 			outcome: proposal.NodeOutcome{Status: proposal.StatusFailed,
-				Reason: `pre-flight rounds spent: the model named "models/elsewhere.sql" as the file to change, which is not one of the files it was shown`},
+				Reason: `the model named "models/elsewhere.sql" as the file to change, which is not one of the files it was shown`,
+				Code:   model.HandoverReasonPreflightRoundsSpent},
 			findings: []string{"target_not_shown", "content_unchanged"},
 		},
 		{
 			name:     "a low-confidence draft is failed",
 			answer:   func(r *ports.ProposeResult) { r.Confidence = "low" },
-			outcome:  proposal.NodeOutcome{Status: proposal.StatusFailed, Reason: "pre-flight rounds spent: the model could not determine a safe fix with confidence"},
+			outcome:  proposal.NodeOutcome{Status: proposal.StatusFailed, Reason: lowConfidenceReason, Code: model.HandoverReasonPreflightRoundsSpent},
 			findings: []string{"low_confidence"},
 		},
 	}
@@ -524,6 +537,10 @@ func TestRunner_TriesSpentHandsOverOnce(t *testing.T) {
 	require.Len(t, escalated, 1)
 	assert.Equal(t, 4, escalated[0].Attempt)
 	assert.Equal(t, id.String(), escalated[0].RemediationID)
+	spent := proposal.NodeOutcome{Status: proposal.StatusEscalated, Reason: "tried 3 times", Code: model.HandoverReasonTriesSpent}
+	assert.Equal(t, map[string]proposal.NodeOutcome{"svc-a": spent}, escalated[0].NodeOutcomes,
+		"with no try of its own, the node is escalated with how many times the round was tried")
+	assert.Equal(t, handedOverOf(id, 1, 0, handedOverNode("svc-a", spent)), h.handedOverEvent(), "the hand-over emits once")
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 	assert.Empty(t, h.store.Tries(id))
 	assert.Zero(t, h.llm.calls())

@@ -12,6 +12,59 @@ shipped in those.
 
 ## [Unreleased]
 
+**TL;DR**
+
+- Breaking: the remediation streams move to `remediation.requested:v3` and `remediation.retry_requested:v2`, and the old versions are retired.
+- New: under `agentRemediation.engine=runner`, the release page says why each node was handed to a human, and a remediation that ends as a system failure is dead-lettered and can be redriven.
+- You must act (steps below): upgrade with no remediation in flight and the remediation outboxes drained. With your own Redis, apply the new Redis rules with the upgrade, not before.
+- No values change is needed. On 0.23.0 or earlier, upgrade to 0.24.0 first.
+
+### Upgrade steps
+
+1. **On 0.23.0 or earlier:** upgrade to 0.24.0 first and follow its steps (0.22.0 or earlier: to 0.23.0 first). The steps below start from 0.24.0.
+2. **Upgrade with no remediation in flight.** This version retires `remediation.requested:v2` and `remediation.retry_requested:v1`, and a row stored for them is never delivered after the upgrade (see Breaking). Do it in this order:
+   1. Turn maintenance mode on, on the chart version you run now: `helm upgrade <release> <chart> --version <the version you run now> --reuse-values --set maintenance.enabled=true`. No new release starts, so no new release is rejected while you wait.
+   2. Wait until no release is compiling, parsing, seed-building or validating, no remediation attempt is generating or verifying, and `remediation_outbox`, `release_controller_outbox` and `agent_remediation_outbox` hold no row with status `pending` or `scheduled`.
+   3. Run the upgrade to this version with maintenance mode still on: pass `--version <this version>` and keep `--set maintenance.enabled=true`, with your usual values.
+   4. Turn maintenance mode off: `helm upgrade <release> <chart> --version <this version> --reuse-values --set maintenance.enabled=false`.
+3. **With your own Redis, apply the new rules from `deploy/redis-acl-rules.acl` with the upgrade, not before** (see Changed).
+4. **With `streamReaper.enabled=false`, delete the consumer groups of the retired remediation streams** after the upgrade. The commands are in Breaking. With the stream reaper on, dead-letter-controller deletes those streams with their groups.
+
+This release changes no values key, and it ships as a `MINOR`.
+
+### Breaking
+
+- **The remediation streams change version.** TL;DR: remediation sends its heal trigger on `remediation.requested:v3`, and release-controller sends "Try again" on `remediation.retry_requested:v2`. `remediation.requested:v2` and `remediation.retry_requested:v1` are retired. Upgrade when no remediation is in flight (step 2).
+  - Both streams carry the envelope of the other versioned streams: `event_id`, `tenant_id`, `occurred_at`, `producer` and `schema_version` beside the `payload`. A script that reads them must read the new shape.
+  - `remediation.requested:v3` is one trigger per rejected release and round, and it carries every failing node. A node the classifier judged no fix can reach is marked `unfixable`, with the reason `classifier_infra` or `classifier_unhealable_parse`. agent-remediation proposes no fix for it, and catalog keeps it out of its case base.
+  - `remediation.retry_requested:v2` carries the release's stored `release.rejected:v1` payload unchanged, as `rejection`, with the round beside it.
+  - agent-remediation can write the new stream `remediation.handed_over:v1`. Under `agentRemediation.engine=runner`, it writes one event when a remediation ends with nodes a human must fix, each with its reason code. No service reads it.
+  - Consumer group names do not change.
+  - A row stored before the upgrade for `remediation.requested:v2`, `remediation.retry_requested:v1` or `remediation.proposed:v1` is never delivered after it. So upgrade when `remediation_outbox`, `release_controller_outbox` and `agent_remediation_outbox` hold no row with status `pending` or `scheduled`. "Try again" cannot start a remediation whose trigger was lost.
+  - dead-letter-controller deletes the two retired streams with their consumer groups, and a dead letter of either cannot be redriven. With `streamReaper.enabled=false`, delete the drained groups yourself after the upgrade:
+    ```
+    XGROUP DESTROY continuo:remediation.requested:v2 agent-remediation-remediation-requested
+    XGROUP DESTROY continuo:remediation.requested:v2 catalog-remediation-requested-rejections
+    XGROUP DESTROY continuo:remediation.retry_requested:v1 remediation-retry-requested
+    ```
+
+### Added
+
+- **A runner system failure is dead-lettered, and a redrive resumes it.** TL;DR: under `agentRemediation.engine=runner`, a system failure also dead-letters the remediation's heal trigger on `consumer.dead_letter:v1`, and the attempt row's reason says so. Fix the cause, then redrive the dead letter with `continuo dlq`: the same remediation goes on from the try and step it stopped at, and a step that already finished does not run again. A redrive of a round that "Try again" already replaced starts nothing.
+- **The release page says why a node was handed to a human.** TL;DR: under `agentRemediation.engine=runner`, each failing node remediation does not fix carries a reason code, and the FIX cell says what it means and what to do, with the node's own message behind `more`.
+  - The codes are `tries_spent`, `unverifiable_edits`, `preflight_rounds_spent`, `declined`, `no_type`, `no_repository`, `classifier_infra` and `classifier_unhealable_parse`. Each node outcome that agent-remediation's `remediation.v1.RemediationProposals` returns carries its code as `code`.
+  - A node the classifier judged unfixable is on the release page too. An infrastructure error says to run the release again.
+  - A node that a step declined, that no type matches or that the classifier judged unfixable is not tried again in a later try of the same round.
+
+### Changed
+
+- **Redis rule changes for the remediation streams.** TL;DR: the remediation flow moves to `remediation.requested:v3` and `remediation.retry_requested:v2`, and agent-remediation can write the new `remediation.handed_over:v1`. With your own Redis, apply the new rules from `deploy/redis-acl-rules.acl` with the upgrade, not before: they leave out the retired streams, so the pods still running the old version lose access to them. The bundled Redis needs nothing and restarts once, because its rules change.
+  - `continuo_remediation` reads `remediation.retry_requested:v2` and writes `remediation.requested:v3`.
+  - `continuo_release_controller` writes `remediation.retry_requested:v2`.
+  - `continuo_agent_remediation` reads `remediation.requested:v3` and writes `remediation.handed_over:v1`.
+  - `continuo_catalog` reads `remediation.requested:v3`.
+  - `remediation.requested:v2` and `remediation.retry_requested:v1` are retired streams: no login names them, and dead-letter-controller deletes their keys from Redis.
+
 ## [0.24.0] - 2026-11-17
 
 **TL;DR**

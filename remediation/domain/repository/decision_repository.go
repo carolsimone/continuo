@@ -6,13 +6,14 @@ import (
 	"context"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/remediation/domain/failure"
 )
 
 // ClassificationDecision is the append-only audit record for one classified
 // node — recorded for both emit and drop so no dropped failure is invisible.
 type ClassificationDecision struct {
-	Source    failure.Source
+	Source    model.RemediationSource
 	ReleaseID string
 	// RemediationRound is the release's remediation round this decision
 	// belongs to: 1 for the rejection itself, +1 per human "try again" on

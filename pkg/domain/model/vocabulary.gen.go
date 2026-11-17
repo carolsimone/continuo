@@ -223,6 +223,113 @@ func (v ValidationOp) IsValid() bool {
 	return false
 }
 
+// HandoverReason — Why a failing node of a rejected release is left to a human instead of a fix proposal. Remediation records one code on each node it hands over, and the release page tells the operator what to do from it.
+// Values come from the vocabulary "handover_reason" in contract.yaml, in
+// declaration order.
+type HandoverReason string
+
+const (
+	// HandoverReasonTriesSpent — the tries are spent and the last try failed at the verification runs.
+	HandoverReasonTriesSpent HandoverReason = "tries_spent"
+	// HandoverReasonPreflightRoundsSpent — the model's drafts for the node's cluster were refused by pre-flight in every round its type allows.
+	HandoverReasonPreflightRoundsSpent HandoverReason = "preflight_rounds_spent"
+	// HandoverReasonDeclined — a context or prompt step found that no fix can reach the node, so no model call was made for it.
+	HandoverReasonDeclined HandoverReason = "declined"
+	// HandoverReasonNoType — no type of the flow matches the node's failure, so no model call was made for it.
+	HandoverReasonNoType HandoverReason = "no_type"
+	// HandoverReasonClassifierInfra — the classifier judged the failure an infrastructure error that a new release run clears, and marked the node unfixable.
+	HandoverReasonClassifierInfra HandoverReason = "classifier_infra"
+	// HandoverReasonClassifierUnhealableParse — the classifier judged the parse failure one no change to the release's source fixes, and marked the node unfixable.
+	HandoverReasonClassifierUnhealableParse HandoverReason = "classifier_unhealable_parse"
+	// HandoverReasonNoRepository — the trigger names no repository, so no fix pull request can be opened.
+	HandoverReasonNoRepository HandoverReason = "no_repository"
+	// HandoverReasonUnverifiableEdits — the tries are spent and the last try's edits could not be checked by a release, because a cross-cluster check refused them or the gate refused them before starting a run.
+	HandoverReasonUnverifiableEdits HandoverReason = "unverifiable_edits"
+)
+
+// HandoverReasons returns every value in contract.yaml declaration order.
+func HandoverReasons() []HandoverReason {
+	return []HandoverReason{
+		HandoverReasonTriesSpent,
+		HandoverReasonPreflightRoundsSpent,
+		HandoverReasonDeclined,
+		HandoverReasonNoType,
+		HandoverReasonClassifierInfra,
+		HandoverReasonClassifierUnhealableParse,
+		HandoverReasonNoRepository,
+		HandoverReasonUnverifiableEdits,
+	}
+}
+
+// IsValid reports whether v is a value declared in contract.yaml.
+func (v HandoverReason) IsValid() bool {
+	switch v {
+	case HandoverReasonTriesSpent:
+		return true
+	case HandoverReasonPreflightRoundsSpent:
+		return true
+	case HandoverReasonDeclined:
+		return true
+	case HandoverReasonNoType:
+		return true
+	case HandoverReasonClassifierInfra:
+		return true
+	case HandoverReasonClassifierUnhealableParse:
+		return true
+	case HandoverReasonNoRepository:
+		return true
+	case HandoverReasonUnverifiableEdits:
+		return true
+	}
+	return false
+}
+
+// RemediationSource — The pipeline stage that produced the failure of a node a remediation works on.
+// Values come from the vocabulary "remediation_source" in contract.yaml, in
+// declaration order.
+type RemediationSource string
+
+const (
+	// RemediationSourceValidation — the per-node validation of a candidate release.
+	RemediationSourceValidation RemediationSource = "validation"
+	// RemediationSourceCompile — the compile leg of a candidate release.
+	RemediationSourceCompile RemediationSource = "compile"
+	// RemediationSourceSeedBuild — the seed-build leg of a candidate release.
+	RemediationSourceSeedBuild RemediationSource = "seed_build"
+	// RemediationSourceDuplicateTable — release-controller's rejection of a candidate topology in which two nodes claim the same relation, before any Job runs.
+	RemediationSourceDuplicateTable RemediationSource = "duplicate_table"
+	// RemediationSourceParse — topology-controller's rejection of a node whose SQL it could not resolve, before any Job runs.
+	RemediationSourceParse RemediationSource = "parse"
+)
+
+// RemediationSources returns every value in contract.yaml declaration order.
+func RemediationSources() []RemediationSource {
+	return []RemediationSource{
+		RemediationSourceValidation,
+		RemediationSourceCompile,
+		RemediationSourceSeedBuild,
+		RemediationSourceDuplicateTable,
+		RemediationSourceParse,
+	}
+}
+
+// IsValid reports whether v is a value declared in contract.yaml.
+func (v RemediationSource) IsValid() bool {
+	switch v {
+	case RemediationSourceValidation:
+		return true
+	case RemediationSourceCompile:
+		return true
+	case RemediationSourceSeedBuild:
+		return true
+	case RemediationSourceDuplicateTable:
+		return true
+	case RemediationSourceParse:
+		return true
+	}
+	return false
+}
+
 // DeadLetterKind — Why a stream message or an outbox row was dead-lettered. An operational vocabulary — delivery outcomes of the transport, used by pkg/redis, pkg/outbox and the dead-letter streams — that the generator emits into the shared domain packages with the other vocabularies.
 // Values come from the vocabulary "dead_letter_kind" in contract.yaml, in
 // declaration order.

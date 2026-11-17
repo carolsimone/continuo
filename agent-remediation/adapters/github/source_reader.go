@@ -18,7 +18,7 @@ import (
 // maxSourceBytes is the maximum file size accepted from the GitHub Contents
 // API. Files larger than this limit are rejected to prevent unbounded memory
 // use and LLM token overruns.
-const maxSourceBytes = 1 << 20 // 1 MiB
+const maxSourceBytes = ports.MaxSourceBytes
 
 type GitHub struct {
 	baseURL string
@@ -38,8 +38,9 @@ func NewSourceReader(baseURL, token string, hc *http.Client) *GitHub {
 }
 
 // ReadFile returns the raw text of repo/path at ref. 404 → ErrSourceNotFound.
-// Returns an error if the response body exceeds maxSourceBytes or cannot be
-// read fully, so the caller never receives silently truncated content.
+// A response body over maxSourceBytes → an error wrapping ErrSourceTooLarge, and
+// a body that cannot be read fully is an error, so the caller never receives
+// silently truncated content.
 func (g *GitHub) ReadFile(ctx context.Context, repo, ref, path string) (string, error) {
 	u := fmt.Sprintf("%s/repos/%s/contents/%s?ref=%s", g.baseURL, repo, path, url.QueryEscape(ref))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
@@ -71,7 +72,7 @@ func (g *GitHub) ReadFile(ctx context.Context, repo, ref, path string) (string, 
 		return "", fmt.Errorf("github get %s@%s: read body: %w", path, ref, err)
 	}
 	if len(body) > maxSourceBytes {
-		return "", fmt.Errorf("github get %s@%s: source file exceeds %d bytes", path, ref, maxSourceBytes)
+		return "", fmt.Errorf("github get %s@%s: source file exceeds %d bytes: %w", path, ref, maxSourceBytes, ports.ErrSourceTooLarge)
 	}
 	return string(body), nil
 }

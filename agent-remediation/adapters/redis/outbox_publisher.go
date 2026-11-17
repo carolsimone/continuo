@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -11,10 +12,12 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/postgres"
+	"github.com/carolsimone/continuo/agent-remediation/config"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
+	"github.com/carolsimone/continuo/pkg/streams"
 )
 
 // agentRemediationOutboxPublisher implements pkgoutbox.Publisher by XADDing each
@@ -61,10 +64,16 @@ var _ pkgoutbox.Renderer = (*agentRemediationOutboxPublisher)(nil)
 
 // Render returns the field map Publish XADDs for entry, without
 // outbox_entry_id: a dead-letter row's scalar fields, or the row's JSON body as
-// the "payload" field beside the default tenant as "tenant_id". The tenant is
-// stamped here, not in xaddArgs, because the fields an outbox dead letter stores
-// come from Render, so a redrive republishes the tenant too. Every call returns
-// a fresh map.
+// the "payload" field beside its tenant as "tenant_id". A
+// remediation.proposed:v1 row stores its payload under its tenant
+// (outbox.WrapTenant), which renders as the payload beside that tenant. A
+// remediation.handed_over:v1 row, stored the same way, renders as the event's
+// envelope (renderRemediationHandedOver), and a consumer.dead_letter:v1 row,
+// the dead letter of a heal trigger whose remediation ended as a system
+// failure, as the dead letter's fields (renderConsumerDeadLetter). Every other
+// row carries the default tenant. The tenant is stamped here, not in
+// xaddArgs, because the fields an outbox dead letter stores come from Render,
+// so a redrive republishes the tenant too. Every call returns a fresh map.
 func (p *agentRemediationOutboxPublisher) Render(entry *pkgoutbox.Entry) (map[string]any, error) {
 	if entry.EventType == pkgoutbox.DeadLetterEventType {
 		values, err := pkgoutbox.DeadLetterValues(entry)
@@ -75,7 +84,88 @@ func (p *agentRemediationOutboxPublisher) Render(entry *pkgoutbox.Entry) (map[st
 		delete(values, "outbox_entry_id")
 		return values, nil
 	}
+	switch entry.StreamName {
+	case streams.RemediationProposedV1:
+		return renderRemediationProposed(entry)
+	case streams.RemediationHandedOverV1:
+		return renderRemediationHandedOver(entry)
+	case streams.ConsumerDeadLetterV1:
+		return renderConsumerDeadLetter(entry)
+	}
 	return map[string]any{"payload": string(entry.Payload), "tenant_id": pkgevents.DefaultTenantID}, nil
+}
+
+// renderRemediationProposed renders a remediation.proposed:v1 row: its stored
+// payload as the "payload" field, beside the tenant it is stored under. The
+// stored payload is our own, so a row that is not stored under a tenant is
+// permanent: no retry makes it renderable.
+func renderRemediationProposed(entry *pkgoutbox.Entry) (map[string]any, error) {
+	tenantID, payload, err := pkgoutbox.UnwrapTenant(entry.Payload)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s: %w", pkgevents.ErrPermanent, streams.RemediationProposedV1, err)
+	}
+	return map[string]any{"payload": string(payload), "tenant_id": tenantID}, nil
+}
+
+// renderRemediationHandedOver renders a remediation.handed_over:v1 row as the
+// event's envelope: the row's id as event_id, the tenant its payload is stored
+// under, the row's creation time as occurred_at, agent-remediation as producer
+// and the event as payload. The stored payload is our own, so a row that is
+// not stored under a tenant, whose payload is not the event, or whose event
+// the contract forbids (events.RemediationHandedOverFields refuses it) is
+// permanent: no retry makes it renderable.
+func renderRemediationHandedOver(entry *pkgoutbox.Entry) (map[string]any, error) {
+	tenantID, payload, err := pkgoutbox.UnwrapTenant(entry.Payload)
+	if err != nil {
+		return nil, handedOverPermanent(err)
+	}
+	var p pkgevents.RemediationHandedOver
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return nil, handedOverPermanent(fmt.Errorf("decode payload: %w", err))
+	}
+	values, err := pkgevents.RemediationHandedOverFields(entry.ID.String(), tenantID, config.ServiceName, entry.CreatedAt, p)
+	if err != nil {
+		return nil, handedOverPermanent(err)
+	}
+	return values, nil
+}
+
+// handedOverPermanent marks err, met rendering a remediation.handed_over:v1
+// row, as permanent.
+func handedOverPermanent(err error) error {
+	return fmt.Errorf("%w: %s: %w", pkgevents.ErrPermanent, streams.RemediationHandedOverV1, err)
+}
+
+// renderConsumerDeadLetter renders a consumer.dead_letter:v1 row, the
+// runner's dead letter of a heal trigger stored under the remediation's tenant
+// as an events.DeadLetteredMessage, as the fields of that dead letter
+// (events.ConsumerDeadLetterFields): the tenant the row is stored under and
+// agent-remediation as producer, with the message, its fields and its failure
+// as stored. The stored payload is our own, so a row that is not stored under
+// a tenant, or whose payload is not the message, is permanent: no retry makes
+// it renderable.
+func renderConsumerDeadLetter(entry *pkgoutbox.Entry) (map[string]any, error) {
+	tenantID, payload, err := pkgoutbox.UnwrapTenant(entry.Payload)
+	if err != nil {
+		return nil, consumerDeadLetterPermanent(err)
+	}
+	var m pkgevents.DeadLetteredMessage
+	if err := json.Unmarshal(payload, &m); err != nil {
+		return nil, consumerDeadLetterPermanent(fmt.Errorf("decode payload: %w", err))
+	}
+	m.TenantID = tenantID
+	m.Producer = config.ServiceName
+	values, err := pkgevents.ConsumerDeadLetterFields(m)
+	if err != nil {
+		return nil, consumerDeadLetterPermanent(err)
+	}
+	return values, nil
+}
+
+// consumerDeadLetterPermanent marks err, met rendering a
+// consumer.dead_letter:v1 row, as permanent.
+func consumerDeadLetterPermanent(err error) error {
+	return fmt.Errorf("%w: %s: %w", pkgevents.ErrPermanent, streams.ConsumerDeadLetterV1, err)
 }
 
 // outboxHeartbeatStale is the liveness budget for the outbox processor's Run

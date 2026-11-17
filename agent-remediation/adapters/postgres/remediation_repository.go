@@ -15,6 +15,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // RemediationRepository is the Postgres-backed RemediationRepository port. Bound
@@ -145,7 +146,7 @@ func (row clusterRow) toDomain() (remediation.Cluster, error) {
 		if err := json.Unmarshal(row.Outcome, &o); err != nil {
 			return remediation.Cluster{}, fmt.Errorf("decode outcome of cluster %d of remediation %s: %w", row.Cluster, row.RemediationID, err)
 		}
-		outcome = &proposal.NodeOutcome{Status: proposal.Status(o.Status), Reason: o.Reason}
+		outcome = &proposal.NodeOutcome{Status: proposal.Status(o.Status), Reason: o.Reason, Code: model.HandoverReason(o.Code)}
 	}
 	var members []string
 	if len(row.Members) > 0 {
@@ -338,6 +339,40 @@ func (r *RemediationRepository) FindByRelease(ctx context.Context, tenantID, rel
 		return remediation.Remediation{}, false, err
 	}
 	return rem, true, nil
+}
+
+// LockByRelease locks the remediation row of the key with SELECT … FOR UPDATE
+// on the unit of work's transaction, which holds the lock until it ends, and
+// reads the remediation as Load does. A second transaction's lock of the row
+// waits for the first to end and then reads the row as it committed.
+func (r *RemediationRepository) LockByRelease(ctx context.Context, tenantID, releaseID string, round int) (remediation.Snapshot, bool, error) {
+	var id uuid.UUID
+	err := r.q.GetContext(ctx, &id, `SELECT id FROM remediation
+		WHERE tenant_id=$1 AND release_id=$2 AND remediation_round=$3 FOR UPDATE`,
+		tenantID, releaseID, round)
+	if errors.Is(err, sql.ErrNoRows) {
+		return remediation.Snapshot{}, false, nil
+	}
+	if err != nil {
+		return remediation.Snapshot{}, false, fmt.Errorf("lock remediation by release: %w", err)
+	}
+	snap, err := r.snapshot(ctx, id)
+	if err != nil {
+		return remediation.Snapshot{}, false, err
+	}
+	return snap, true, nil
+}
+
+// HasLaterRound reports whether the tenant's release has a remediation of a
+// round after round.
+func (r *RemediationRepository) HasLaterRound(ctx context.Context, tenantID, releaseID string, round int) (bool, error) {
+	var later bool
+	if err := r.q.GetContext(ctx, &later, `SELECT EXISTS (SELECT 1 FROM remediation
+		WHERE tenant_id=$1 AND release_id=$2 AND remediation_round > $3)`,
+		tenantID, releaseID, round); err != nil {
+		return false, fmt.Errorf("look for a later remediation round: %w", err)
+	}
+	return later, nil
 }
 
 // Get returns a read-only snapshot of the remediation with its current try,
@@ -676,7 +711,7 @@ func (r *RemediationRepository) SaveTry(ctx context.Context, t remediation.Try) 
 func (r *RemediationRepository) SaveCluster(ctx context.Context, c remediation.Cluster) error {
 	var outcome any
 	if c.Outcome != nil {
-		raw, err := json.Marshal(nodeOutcomeRow{Status: string(c.Outcome.Status), Reason: c.Outcome.Reason})
+		raw, err := json.Marshal(nodeOutcomeRow{Status: string(c.Outcome.Status), Reason: c.Outcome.Reason, Code: string(c.Outcome.Code)})
 		if err != nil {
 			return fmt.Errorf("encode cluster outcome: %w", err)
 		}

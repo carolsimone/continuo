@@ -2,7 +2,9 @@ package redis
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
+	"time"
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
@@ -95,14 +97,14 @@ func TestPublish_XAddCarriesTenantAndOutboxEntryID(t *testing.T) {
 	rc.AddHook(capture)
 	t.Cleanup(func() { _ = rc.Close() })
 
-	entry := &pkgoutbox.Entry{ID: uuid.New(), EventType: "release_promoted", StreamName: streams.RemediationRequestedV2, Payload: []byte(`{"release_id":"r1"}`)}
+	entry := &pkgoutbox.Entry{ID: uuid.New(), EventType: "release_promoted", StreamName: streams.ReleaseRejectedV1, Payload: []byte(`{"release_id":"r1"}`)}
 	require.NoError(t, (&remediationOutboxPublisher{redis: rc}).Publish(context.Background(), entry))
 
 	require.Len(t, capture.cmds, 1)
 	args := capture.cmds[0].Args()
 	require.GreaterOrEqual(t, len(args), 4)
 	assert.Equal(t, "xadd", args[0])
-	assert.Equal(t, pkgredis.Key(streams.RemediationRequestedV2), args[1])
+	assert.Equal(t, pkgredis.Key(streams.ReleaseRejectedV1), args[1])
 	assert.Equal(t, "nomkstream", args[2], "the XADD never creates the stream")
 	assert.Equal(t, "*", args[3], "the XADD sets no length cap")
 	fields := map[string]any{}
@@ -114,6 +116,118 @@ func TestPublish_XAddCarriesTenantAndOutboxEntryID(t *testing.T) {
 		"tenant_id":       "default",
 		"outbox_entry_id": entry.ID.String(),
 	}, fields)
+}
+
+// remediationRequestedFixture is a trigger with a fixable node and an unfixable
+// one, as the classifier stores it.
+func remediationRequestedFixture() pkgevents.RemediationRequested {
+	return pkgevents.RemediationRequested{
+		Source: "validation", ReleaseID: "rel-1", RemediationRound: 2, Repo: "o/r", CommitSHA: "abc",
+		CodeBundleURI: "s3://b/code-bundles/rel-1/bundle.json", ClassifiedAt: "2026-06-23T00:00:00Z",
+		Nodes: []pkgevents.RemediationRequestedNode{
+			{NodeID: "s.a", Category: "logic", ErrorSignature: "sig-a", Reason: "logic:missing_object", DBTLogURI: "s3://b/a.log"},
+			{
+				NodeID: "s.b", Category: "infra_transient", ErrorSignature: "sig-b", Reason: "infra:connection_refused", DBTLogURI: "s3://b/b.log",
+				Unfixable: &pkgevents.Unfixable{Reason: "classifier_infra", Detail: "could not connect to server: connection refused"},
+			},
+		},
+	}
+}
+
+// remediationRequestedRow is the outbox row of a trigger stored under tenantID.
+func remediationRequestedRow(t *testing.T, tenantID string, p pkgevents.RemediationRequested) *pkgoutbox.Entry {
+	t.Helper()
+	body, err := json.Marshal(p)
+	require.NoError(t, err)
+	stored, err := pkgoutbox.WrapTenant(tenantID, body)
+	require.NoError(t, err)
+	return &pkgoutbox.Entry{
+		ID: uuid.New(), EventType: "remediation_requested", StreamName: streams.RemediationRequestedV3, Payload: stored,
+		CreatedAt: time.Date(2026, 6, 23, 1, 2, 3, 456789000, time.UTC),
+	}
+}
+
+// TestRender_RemediationRequestedV3CarriesTheRowsTenant holds that a
+// remediation.requested:v3 row renders under the envelope of the row: the row's
+// id as the event, the tenant its payload is stored under, the service as the
+// producer and the time the row was written. The fields read back through the
+// typed decoder, and the rendered fields are what an outbox dead letter stores,
+// so a redrive keeps the tenant.
+func TestRender_RemediationRequestedV3CarriesTheRowsTenant(t *testing.T) {
+	p := &remediationOutboxPublisher{}
+	want := remediationRequestedFixture()
+
+	for _, tenantID := range []string{"globex", pkgevents.DefaultTenantID} {
+		t.Run(tenantID, func(t *testing.T) {
+			entry := remediationRequestedRow(t, tenantID, want)
+
+			values, err := p.Render(entry)
+			require.NoError(t, err)
+
+			assert.Equal(t, entry.ID.String(), values["event_id"])
+			assert.Equal(t, tenantID, values["tenant_id"])
+			assert.Equal(t, "remediation", values["producer"])
+			assert.Equal(t, "1", values["schema_version"])
+			assert.Equal(t, "2026-06-23T01:02:03.456789Z", values["occurred_at"])
+			assert.NotContains(t, values, "outbox_entry_id", "Publish adds it, Render does not")
+
+			stored, err := pkgoutbox.StringifyFields(values)
+			require.NoError(t, err)
+			env, got, err := pkgevents.DecodeRemediationRequested(stored)
+			require.NoError(t, err)
+			assert.Equal(t, tenantID, env.TenantID)
+			assert.Equal(t, entry.ID.String(), env.EventID)
+			assert.Equal(t, want, got)
+		})
+	}
+}
+
+// TestRender_RemediationRequestedV3RefusesARowItCannotRender holds that a
+// trigger row stored without a tenant, or with a payload that is not a trigger,
+// is permanent: no retry makes it renderable.
+func TestRender_RemediationRequestedV3RefusesARowItCannotRender(t *testing.T) {
+	p := &remediationOutboxPublisher{}
+	row := func(payload string) *pkgoutbox.Entry {
+		return &pkgoutbox.Entry{ID: uuid.New(), EventType: "remediation_requested", StreamName: streams.RemediationRequestedV3, Payload: []byte(payload)}
+	}
+	for name, payload := range map[string]string{
+		"a payload stored with no tenant":      `{"release_id":"rel-1","nodes":[]}`,
+		"a tenant row with no payload":         `{"tenant_id":"acme"}`,
+		"a tenant row of a payload that fails": `{"tenant_id":"acme","payload":"not a trigger"}`,
+		"not JSON":                             `{not json`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := p.Render(row(payload))
+			require.Error(t, err)
+			assert.ErrorIs(t, err, pkgevents.ErrPermanent)
+		})
+	}
+}
+
+// TestPublish_RemediationRequestedV3XAddCarriesTheEnvelope holds that the XADD
+// of a trigger row names the v3 stream and carries the envelope fields beside
+// the payload and the row's outbox_entry_id.
+func TestPublish_RemediationRequestedV3XAddCarriesTheEnvelope(t *testing.T) {
+	capture := &captureXAdd{}
+	rc := goredis.NewClient(&goredis.Options{Addr: "127.0.0.1:0"})
+	rc.AddHook(capture)
+	t.Cleanup(func() { _ = rc.Close() })
+
+	entry := remediationRequestedRow(t, "globex", remediationRequestedFixture())
+	require.NoError(t, (&remediationOutboxPublisher{redis: rc}).Publish(context.Background(), entry))
+
+	require.Len(t, capture.cmds, 1)
+	args := capture.cmds[0].Args()
+	assert.Equal(t, pkgredis.Key(streams.RemediationRequestedV3), args[1])
+	fields := map[string]any{}
+	for i := 4; i+1 < len(args); i += 2 {
+		fields[args[i].(string)] = args[i+1]
+	}
+	assert.Equal(t, "globex", fields["tenant_id"])
+	assert.Equal(t, entry.ID.String(), fields["event_id"])
+	assert.Equal(t, entry.ID.String(), fields["outbox_entry_id"])
+	assert.Equal(t, "remediation", fields["producer"])
+	assert.Contains(t, fields, "payload")
 }
 
 func TestRender_DeadLetterRowOmitsOutboxEntryID(t *testing.T) {
@@ -154,13 +268,13 @@ func TestRender_ReturnsAFreshMapEachCall(t *testing.T) {
 // dead-letter-controller's trim loop is the only thing that bounds them.
 func TestXAddArgs_DoNotTrim(t *testing.T) {
 	p := &remediationOutboxPublisher{}
-	entry := &pkgoutbox.Entry{ID: uuid.New(), EventType: "release_promoted", StreamName: streams.RemediationRequestedV2, Payload: []byte(`{}`)}
+	entry := &pkgoutbox.Entry{ID: uuid.New(), EventType: "release_promoted", StreamName: streams.ReleaseRejectedV1, Payload: []byte(`{}`)}
 	values, err := p.Render(entry)
 	if err != nil {
 		t.Fatal(err)
 	}
 	args := p.xaddArgs(entry, values)
-	if args.Stream != pkgredis.Key(streams.RemediationRequestedV2) {
+	if args.Stream != pkgredis.Key(streams.ReleaseRejectedV1) {
 		t.Fatalf("stream = %q", args.Stream)
 	}
 	if !args.NoMkStream {

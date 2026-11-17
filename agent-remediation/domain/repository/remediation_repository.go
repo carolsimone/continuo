@@ -42,7 +42,9 @@ type TryLister interface {
 // a remediation through a lease, which only the lease methods change.
 //
 // An implementation bound to a unit of work's transaction is what a step's
-// commit uses (Hold, Load and the Save methods). One bound to the database
+// commit uses (Hold, Load and the Save methods), and what resumes a
+// remediation a redriven trigger names (LockByRelease, HasLaterRound and the
+// Save methods). One bound to the database
 // serves the worker, the verification poller, the retention sweeper and the
 // previous_tries step, which call ClaimNext, Claim, ReleaseLease, the list
 // methods and DeleteFinishedOlderThan outside any transaction. Get is a read-only snapshot
@@ -56,6 +58,17 @@ type RemediationRepository interface {
 
 	// FindByRelease returns the remediation of one tenant, release and round.
 	FindByRelease(ctx context.Context, tenantID, releaseID string, round int) (remediation.Remediation, bool, error)
+
+	// LockByRelease returns the remediation of one tenant, release and round
+	// as Load does, and holds its row lock until the unit of work's
+	// transaction ends, so a second transaction's LockByRelease of the same
+	// key waits for the first to end and then reads what it committed. found
+	// is false when the key has no remediation.
+	LockByRelease(ctx context.Context, tenantID, releaseID string, round int) (snap remediation.Snapshot, found bool, err error)
+
+	// HasLaterRound reports whether the tenant's release has a remediation of
+	// a round after round, whatever its status.
+	HasLaterRound(ctx context.Context, tenantID, releaseID string, round int) (bool, error)
 
 	// Get returns a read-only snapshot of the remediation: the remediation
 	// with its current try, and that try's clusters (ordered by cluster) and

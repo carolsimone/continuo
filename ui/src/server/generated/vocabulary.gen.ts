@@ -13,6 +13,12 @@ export const REJECT_REASONS: readonly RejectReason[] = ['compile_failed', 'parse
 export type ValidationOp = 'build_from_sql' | 'build_from_columns' | 'check_binds' | 'clone_from_prod';
 export const VALIDATION_OPS: readonly ValidationOp[] = ['build_from_sql', 'build_from_columns', 'check_binds', 'clone_from_prod'];
 
+export type HandoverReason = 'tries_spent' | 'preflight_rounds_spent' | 'declined' | 'no_type' | 'classifier_infra' | 'classifier_unhealable_parse' | 'no_repository' | 'unverifiable_edits';
+export const HANDOVER_REASONS: readonly HandoverReason[] = ['tries_spent', 'preflight_rounds_spent', 'declined', 'no_type', 'classifier_infra', 'classifier_unhealable_parse', 'no_repository', 'unverifiable_edits'];
+
+export type RemediationSource = 'validation' | 'compile' | 'seed_build' | 'duplicate_table' | 'parse';
+export const REMEDIATION_SOURCES: readonly RemediationSource[] = ['validation', 'compile', 'seed_build', 'duplicate_table', 'parse'];
+
 export type DeadLetterKind = 'permanent' | 'transient_exhausted' | 'trimmed';
 export const DEAD_LETTER_KINDS: readonly DeadLetterKind[] = ['permanent', 'transient_exhausted', 'trimmed'];
 

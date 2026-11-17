@@ -29,6 +29,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
+	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/pkg/outbox"
 )
@@ -368,6 +369,10 @@ func (r *fakeProposalRepo) MarkVerifyFailed(_ context.Context, _, _ string, _ []
 }
 
 func (r *fakeProposalRepo) MarkFixVerified(_ context.Context, _ remediation.Verified) (bool, error) {
+	return false, nil
+}
+
+func (r *fakeProposalRepo) ReopenTryAttempt(_ context.Context, _ uuid.UUID, _ int, _ proposal.Status, _ map[string]proposal.NodeOutcome) (bool, error) {
 	return false, nil
 }
 
@@ -2257,8 +2262,11 @@ func TestEnqueue_CarriesTheResolvedSetAndEveryEdit(t *testing.T) {
 	require.NoError(t, Enqueue(context.Background(), u, fakeClock{}, p, true, uuid.Nil))
 
 	require.Len(t, u.ob.entries, 1)
+	tenantID, body, err := outbox.UnwrapTenant(u.ob.entries[0].Payload)
+	require.NoError(t, err)
+	require.Equal(t, events.DefaultTenantID, tenantID, "the legacy engine carries no tenant, so its rows are stored under the default one")
 	var got serialization.RemediationProposedDTO
-	require.NoError(t, json.Unmarshal(u.ob.entries[0].Payload, &got))
+	require.NoError(t, json.Unmarshal(body, &got))
 	require.Equal(t, event.AggregateType, u.ob.entries[0].AggregateType, "the service's events share one outbox aggregate type")
 	require.Equal(t, event.RemediationEventID("r1", 2).String(), got.EventID)
 	require.Equal(t, "s.a", got.NodeID)

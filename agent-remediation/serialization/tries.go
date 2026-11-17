@@ -15,11 +15,12 @@ import (
 // cluster's edits are the draft of its last pre-flight round, one per edit that
 // changes its file, with the diff from the file's original; its rounds are the
 // findings of each pre-flight round; its outcome is the outcome it ended with,
-// if any. The flow-level check rows give the try's cross-cluster findings and,
-// from the row marked Gate, the gate's, in the order the rows were written (by
-// id). Clusters come in cluster order. The record does not depend on the order
-// snap lists its clusters and steps in. A snapshot with no try, or a row whose
-// output does not decode, is an error.
+// if any, as its status, the code it was handed over with and its reason. The
+// flow-level check rows give the try's cross-cluster findings and, from the row
+// marked Gate, the gate's, in the order the rows were written (by id). Clusters
+// come in cluster order. The record does not depend on the order snap lists
+// its clusters and steps in. A snapshot with no try, or a row whose output does
+// not decode, is an error.
 func TryRecordOf(snap remediation.Snapshot) (remediation.TryRecord, error) {
 	if snap.Try == nil {
 		return remediation.TryRecord{}, errors.New("the snapshot holds no try")
@@ -58,6 +59,15 @@ func TryRecordOf(snap remediation.Snapshot) (remediation.TryRecord, error) {
 	return rec, nil
 }
 
+// outcomeText is how a later try is shown the outcome a cluster ended with: its
+// status, the code in parentheses when it carries one, then its reason.
+func outcomeText(o proposal.NodeOutcome) string {
+	if o.Code == "" {
+		return string(o.Status) + ": " + o.Reason
+	}
+	return string(o.Status) + " (" + string(o.Code) + "): " + o.Reason
+}
+
 // clusterRecord is cluster c of a try with its done pre-flight rows.
 func clusterRecord(c remediation.Cluster, rows []remediation.StepRun) (remediation.ClusterRecord, error) {
 	cr := remediation.ClusterRecord{
@@ -66,7 +76,7 @@ func clusterRecord(c remediation.Cluster, rows []remediation.StepRun) (remediati
 		Members:      append([]string(nil), c.Members...),
 	}
 	if c.Outcome != nil {
-		cr.Outcome = string(c.Outcome.Status) + ": " + c.Outcome.Reason
+		cr.Outcome = outcomeText(*c.Outcome)
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Round < rows[j].Round })
 	for _, row := range rows {

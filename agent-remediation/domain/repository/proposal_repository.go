@@ -7,6 +7,8 @@ import (
 	"errors"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 )
@@ -263,6 +265,20 @@ type ProposalRepository interface {
 	// the final per-run summary, written in the same statement. hit reports
 	// whether the CAS fired, with the same semantics as MarkVerified.
 	MarkVerifyFailed(ctx context.Context, id, verifyErr string, verifications []proposal.Verification) (hit bool, err error)
+
+	// ReopenTryAttempt moves the failed row of one attempt of the remediation
+	// remediationID back in flight, to status, which is generating or
+	// verifying, with no failure on it. A row reopened generating undoes
+	// FailGenerating: it loses its rationale, and each per-node outcome
+	// FailGenerating failed (status failed, the row's rationale as reason, no
+	// code) is generating again, every other outcome kept as it is; outcomes
+	// must be nil. A row reopened verifying loses its verify error, keeps its
+	// rationale, edits and verifications, and takes outcomes as its per-node
+	// outcomes. It changes only the row of that attempt whose status is
+	// failed, and reports whether it changed one. Any other status, or
+	// outcomes given for a row reopened generating, is an error, with nothing
+	// written.
+	ReopenTryAttempt(ctx context.Context, remediationID uuid.UUID, attempt int, status proposal.Status, outcomes map[string]proposal.NodeOutcome) (reopened bool, err error)
 
 	// UpdateVerificationPhase records the phase (and, once known, the
 	// activation time) of one of the proposal's verification runs, leaving

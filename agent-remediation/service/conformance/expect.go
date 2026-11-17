@@ -1,6 +1,7 @@
 package conformance
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -12,12 +13,15 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 )
 
-// roundsSpentPrefix starts the outcome of the members of a cluster whose last
-// pre-flight round refused its draft.
-const roundsSpentPrefix = "pre-flight rounds spent: "
+// firstTry is the try a remediation ends in when every cluster of its first
+// try is handed over before any draft is made: nothing is left to try again.
+const firstTry = 1
 
 // expectation collects every way a run differs from what its scenario
 // expects.
@@ -124,6 +128,123 @@ func (e *expectation) proposedEvents(n int) {
 	e.that(got == n, "%d remediation.proposed events were enqueued, want %d", got, n)
 }
 
+// handedOverEvent is one remediation.handed_over event of the outbox, with the
+// tenant its row is stored under.
+type handedOverEvent struct {
+	tenant  string
+	payload events.RemediationHandedOver
+}
+
+// handedOverEvents is every remediation.handed_over event in the outbox, as
+// the publisher reads a row: its tenant unwrapped, its payload decoded. A row
+// that cannot be read is recorded as a problem.
+func (e *expectation) handedOverEvents() []handedOverEvent {
+	var out []handedOverEvent
+	for _, entry := range e.sr.w.Outbox() {
+		if entry.StreamName != streams.RemediationHandedOverV1 {
+			continue
+		}
+		tenant, raw, err := outbox.UnwrapTenant(entry.Payload)
+		if err != nil {
+			e.that(false, "a remediation.handed_over row does not carry its tenant: %v", err)
+			continue
+		}
+		var p events.RemediationHandedOver
+		if err := json.Unmarshal(raw, &p); err != nil {
+			e.that(false, "a remediation.handed_over row does not hold a hand-over payload: %v", err)
+			continue
+		}
+		out = append(out, handedOverEvent{tenant: tenant, payload: p})
+	}
+	return out
+}
+
+// noHandedOver expects no remediation.handed_over event: every node ended
+// fixed or in a proposal, and none is left to a human.
+func (e *expectation) noHandedOver() {
+	got := e.handedOverEvents()
+	e.that(len(got) == 0, "%d remediation.handed_over events were enqueued, want none", len(got))
+}
+
+// codes is the want of handedOver: every named node with the code.
+func codes(code model.HandoverReason, nodeIDs ...string) map[string]model.HandoverReason {
+	out := make(map[string]model.HandoverReason, len(nodeIDs))
+	for _, id := range nodeIDs {
+		out[id] = code
+	}
+	return out
+}
+
+// handedOver expects the nodes of want to have ended attempt a, the
+// remediation's last, with the code want names for them, and the remediation
+// to have enqueued exactly one remediation.handed_over event, under the
+// remediation's tenant, that carries the remediation's identity and the tries
+// it made and names exactly the nodes of want, in node id order, each with its
+// code and the message its outcome on attempt a carries, which is never empty.
+func (e *expectation) handedOver(a Attempt, tries int, want map[string]model.HandoverReason) {
+	for _, id := range sortedKeys(want) {
+		o := a.Proposal.NodeOutcomes[id]
+		e.that(o.Code == want[id], "node %s ended attempt %d with the code %q (%s), want %q", id, a.Proposal.Attempt, o.Code, o.Reason, want[id])
+	}
+	got := e.handedOverEvents()
+	if len(got) != 1 {
+		e.that(false, "%d remediation.handed_over events were enqueued, want 1", len(got))
+		return
+	}
+	var rem remediation.Remediation
+	for _, r := range e.sr.w.Remediations() {
+		if r.ID == e.sr.id {
+			rem = r
+		}
+	}
+	p := got[0].payload
+	e.that(got[0].tenant == rem.TenantID, "the hand-over event is stored under the tenant %q, want %q", got[0].tenant, rem.TenantID)
+	e.that(p.RemediationID == e.sr.id.String(), "the hand-over event names the remediation %q, want %q", p.RemediationID, e.sr.id)
+	e.that(p.ReleaseID == e.trigger.ReleaseID, "the hand-over event names the release %q, want %q", p.ReleaseID, e.trigger.ReleaseID)
+	e.that(p.RemediationRound == e.trigger.Round, "the hand-over event names the round %d, want %d", p.RemediationRound, e.trigger.Round)
+	e.that(p.Flow == rem.Flow, "the hand-over event names the flow %q, want %q", p.Flow, rem.Flow)
+	e.that(p.Tries == tries, "the hand-over event counts %d tries, want %d", p.Tries, tries)
+
+	named := make([]string, 0, len(p.Nodes))
+	for _, n := range p.Nodes {
+		named = append(named, n.NodeID)
+		w, ok := want[n.NodeID]
+		e.that(ok, "the hand-over event names node %s (%s), which the scenario does not hand over", n.NodeID, n.Reason)
+		e.that(ok && n.Reason == string(w), "the hand-over event gives node %s the reason %q, want %q", n.NodeID, n.Reason, w)
+		e.that(strings.TrimSpace(n.Message) != "", "the hand-over event gives node %s (%s) no message", n.NodeID, n.Reason)
+		e.that(n.Message == a.Proposal.NodeOutcomes[n.NodeID].Reason, "the hand-over event's message for node %s is %q, but its outcome says %q",
+			n.NodeID, n.Message, a.Proposal.NodeOutcomes[n.NodeID].Reason)
+	}
+	e.that(slices.Equal(named, sortedKeys(want)), "the hand-over event names the nodes %v, want %v", named, sortedKeys(want))
+}
+
+// noLaterTry expects the remediation to have made no try but its first: a node
+// handed over before it is drafted for is not tried again.
+func (e *expectation) noLaterTry() {
+	tries := e.sr.w.Tries(e.sr.id)
+	e.that(len(tries) == firstTry, "the remediation made %d tries, want %d", len(tries), firstTry)
+	for _, c := range e.sr.w.Clusters(e.sr.id) {
+		e.that(c.Try == firstTry, "cluster %d of try %d exists, but no try follows the first", c.Cluster, c.Try)
+	}
+}
+
+// handedOverInFirstTry expects the remediation to have ended in its first try
+// with the nodes of want handed over in attempt a (handedOver).
+func (e *expectation) handedOverInFirstTry(a Attempt, want map[string]model.HandoverReason) {
+	e.noLaterTry()
+	e.handedOver(a, firstTry, want)
+}
+
+// everyTryFailed expects the remediation to have made n tries, each failed.
+func (e *expectation) everyTryFailed(n int) {
+	tries := e.sr.w.Tries(e.sr.id)
+	e.that(len(tries) == n, "the remediation made %d tries, want %d", len(tries), n)
+	for i, t := range tries {
+		e.that(t.Try == i+1, "the remediation's try number %d is numbered %d", i+1, t.Try)
+		e.that(t.Status == remediation.TryFailed, "try %d is %s, not failed", t.Try, t.Status)
+	}
+}
+
 // modelCalls expects n calls to reach the model.
 func (e *expectation) modelCalls(n int) {
 	got := len(e.sr.w.ModelCalls())
@@ -169,6 +290,7 @@ func (e *expectation) proposed(f Fixture) {
 		e.runsPerEditedService(as[0], f.ServiceRepoPaths)
 	}
 	e.proposedEvents(1)
+	e.noHandedOver()
 }
 
 // cluster returns cluster n of try 1.
@@ -243,13 +365,19 @@ func (e *expectation) membersRanTheirTypes(files workflow.Set, c remediation.Clu
 	if as := e.attempts(proposal.StatusProposed); len(as) == 1 {
 		e.nodes(as[0], proposal.StatusProposed)
 	}
+	e.noHandedOver()
 }
 
 // membersSkipped expects the cross-service cluster c to have fallen back with
-// every member skipped in attempt a, and no verification run.
-func (e *expectation) membersSkipped(c remediation.Cluster, a Attempt) {
+// every member skipped in attempt a and handed over with code, the cause of
+// the fall back, in the remediation's first and only try, and no verification
+// run. The code is declined when a step declined the upstream fix and
+// preflight_rounds_spent when pre-flight refused every round of it.
+func (e *expectation) membersSkipped(c remediation.Cluster, a Attempt, code model.HandoverReason) {
 	e.that(c.Status == remediation.ClusterFellBack, "cluster %d is %s, not fell_back", c.Cluster, c.Status)
+	e.that(c.Outcome != nil && c.Outcome.Code == code, "cluster %d ended with %+v, want the code %q", c.Cluster, c.Outcome, code)
 	e.members(a, c.Members, proposal.StatusSkipped)
+	e.handedOverInFirstTry(a, codes(code, c.Members...))
 	e.runs(0)
 }
 
@@ -371,23 +499,26 @@ func (e *expectation) firstFinding(c remediation.Cluster, typ workflow.Type) (re
 }
 
 // singleHandedOver expects the single cluster c handed over with no
-// verification run: when roundsSpent, by its last pre-flight round, which
-// refused its draft, failed with that round's first finding; otherwise by a
-// context step that declined, skipped with no model call.
+// verification run, in the remediation's first and only try: when roundsSpent,
+// by its last pre-flight round, which refused its draft, failed with that
+// round's first finding as its reason and the code preflight_rounds_spent;
+// otherwise by a context step that declined, skipped with the code declined
+// and no model call.
 func (e *expectation) singleHandedOver(c remediation.Cluster, typ workflow.Type, roundsSpent bool) {
 	e.that(c.Status == remediation.ClusterHandedOver, "cluster %d is %s, not handed_over", c.Cluster, c.Status)
-	want := proposal.StatusFailed
+	want, code := proposal.StatusFailed, model.HandoverReasonPreflightRoundsSpent
 	if roundsSpent {
 		finding, ok := e.firstFinding(c, typ)
 		e.that(ok, "pre-flight refused nothing in cluster %d", c.Cluster)
-		reason := roundsSpentPrefix + finding.Message
-		e.that(c.Outcome != nil && c.Outcome.Reason == reason, "cluster %d ended with %+v, want the reason %q", c.Cluster, c.Outcome, reason)
+		e.that(c.Outcome != nil && c.Outcome.Reason == finding.Message, "cluster %d ended with %+v, want the reason %q", c.Cluster, c.Outcome, finding.Message)
 	} else {
-		want = proposal.StatusSkipped
+		want, code = proposal.StatusSkipped, model.HandoverReasonDeclined
 		e.modelCalls(0)
 	}
+	e.that(c.Outcome != nil && c.Outcome.Code == code, "cluster %d ended with %+v, want the code %q", c.Cluster, c.Outcome, code)
 	if as := e.attempts(want); len(as) == 1 {
 		e.nodes(as[0], want)
+		e.handedOverInFirstTry(as[0], codes(code, e.trigger.NodeIDs()...))
 	}
 	e.runs(0)
 }

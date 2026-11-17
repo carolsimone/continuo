@@ -214,7 +214,7 @@ func (r *Runner) readRun(ctx context.Context, id uuid.UUID) (run tryRun, running
 	if !ok {
 		return tryRun{}, false, fmt.Errorf("remediation %s follows flow %q, which the loaded files do not define", id, rem.Flow)
 	}
-	t, err := serialization.DecodeRemediationRequestedV2(rem.TriggerPayload)
+	t, err := serialization.DecodeTrigger(rem.TriggerPayload)
 	if err != nil {
 		return tryRun{}, false, fmt.Errorf("remediation %s: %w", id, err)
 	}

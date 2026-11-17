@@ -158,10 +158,10 @@ func TestSweeper_EndsAVerifyingRemediationThatCannotBeLoaded(t *testing.T) {
 	rem := h.remediation(id)
 	assert.Equal(t, remediation.StatusSystemFailure, rem.Status)
 	assert.Contains(t, rem.Failure, "the remediation failed 5 times in a row before a step could run")
-	assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
+	assert.Equal(t, remediation.TryVerifying, h.try(id, 1).Status, "the try is left for a redrive to resume")
 	row := h.attempt(1)
 	assert.Equal(t, proposal.StatusFailed, row.Proposal.Status)
-	assert.Equal(t, rem.Failure, row.VerifyError, "the verifying attempt row is failed with the reason")
+	assert.Equal(t, deadLetteredReason(rem), row.VerifyError, "the verifying attempt row is failed with the reason")
 	assert.Equal(t, []string{svcARun1}, []string{row.Proposal.Verifications[0].RunID}, "it keeps the run it recorded")
 }
 

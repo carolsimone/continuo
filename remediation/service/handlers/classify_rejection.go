@@ -17,16 +17,22 @@ import (
 
 // ClassifyRejection triages every failed node of one rejected release: each
 // node is classified deterministically and its decision recorded (emit and
-// drop alike), and — when at least one node is newly recorded with an emit
-// decision — ONE batched remediation.requested trigger carrying exactly those
-// nodes is enqueued, all in a single transaction. The release, not the node,
-// is the unit of remediation, so a release failing on several nodes yields
-// one trigger, one proposal and one pull request downstream. Idempotency is
-// the decision repository's natural key: a redelivered rejection re-records
-// nothing new and therefore re-emits nothing.
-func ClassifyRejection(ctx context.Context, deps Deps, evs []failure.FailureEvidence) error {
+// drop alike), and, when at least one node is newly recorded, ONE batched
+// remediation.requested trigger carrying exactly those nodes is enqueued, all
+// in a single transaction. A node the classifier drops (no change to the
+// release's source fixes it) is carried too, marked unfixable with its reason,
+// so the release page can name it and why no fix was proposed. The release,
+// not the node, is the unit of remediation, so a release failing on several
+// nodes yields one trigger, one proposal and one pull request downstream. The
+// trigger's outbox row is stored under tenantID, the tenant of the message the
+// rejection came from. Idempotency is the decision repository's natural key: a
+// redelivered rejection re-records nothing new and therefore re-emits nothing.
+func ClassifyRejection(ctx context.Context, deps Deps, tenantID string, evs []failure.FailureEvidence) error {
 	if len(evs) == 0 {
 		return nil
+	}
+	if tenantID == "" {
+		return fmt.Errorf("classify release %s: %w", evs[0].ReleaseID, outbox.ErrNoTenant)
 	}
 	round := evs[0].RemediationRound
 	if round < 1 {
@@ -54,7 +60,7 @@ func ClassifyRejection(ctx context.Context, deps Deps, evs []failure.FailureEvid
 	}
 	defer func() { _ = u.Rollback() }()
 
-	var emit []classified
+	var recorded []classified
 	for _, it := range items {
 		inserted, err := u.DecisionRepo().Upsert(ctx, repository.ClassificationDecision{
 			Source: it.ev.Source, ReleaseID: it.ev.ReleaseID, RemediationRound: it.ev.RemediationRound,
@@ -64,24 +70,23 @@ func ClassifyRejection(ctx context.Context, deps Deps, evs []failure.FailureEvid
 		if err != nil {
 			return fmt.Errorf("upsert decision %s: %w", it.ev.NodeID, err)
 		}
-		// The classifier's Decision is the single gate on emitting (drop for an
-		// infrastructure failure); only a newly-recorded emit joins the batch,
-		// so a redelivery never re-emits.
-		emitted := inserted && it.c.Decision == failure.DecisionEmit
+		// Only a newly recorded node joins the batch, so a redelivery never
+		// re-emits. The classifier's Decision says whether a fix can reach the
+		// node, not whether the trigger carries it: both kinds do.
 		deps.Logger.Info("classified failure",
 			"node", it.ev.NodeID, "release", it.ev.ReleaseID,
 			"category", it.c.Category, "decision", it.c.Decision, "reason", it.c.Reason,
-			"emitted", emitted)
-		if emitted {
-			emit = append(emit, it)
+			"unfixable", string(it.c.Unfixable), "recorded", inserted)
+		if inserted {
+			recorded = append(recorded, it)
 		}
 	}
 
-	if len(emit) > 0 {
-		head := emit[0].ev
+	if len(recorded) > 0 {
+		head := recorded[0].ev
+		eventID := event.RemediationEventID(head.ReleaseID, round).String()
 		payload := event.RemediationRequested{
-			EventID:          event.RemediationEventID(head.ReleaseID, round).String(),
-			Source:           string(head.Source),
+			Source:           head.Source,
 			ReleaseID:        head.ReleaseID,
 			RemediationRound: round,
 			Repo:             head.Repo,
@@ -89,27 +94,38 @@ func ClassifyRejection(ctx context.Context, deps Deps, evs []failure.FailureEvid
 			CodeBundleURI:    head.CodeBundleURI,
 			ClassifiedAt:     deps.Clock.Now().Format("2006-01-02T15:04:05Z07:00"),
 		}
-		for _, it := range emit {
-			payload.Nodes = append(payload.Nodes, event.FailingNode{
+		for _, it := range recorded {
+			node := event.FailingNode{
 				NodeID: it.ev.NodeID, RelationID: it.ev.RelationID,
 				Category: string(it.c.Category), ErrorSignature: it.c.Signature, Reason: it.c.Reason, ErrorExcerpt: it.c.Excerpt,
 				DBTLogURI: it.ev.DBTLogURI, CandidateArtifactURI: it.ev.CandidateArtifactURI,
 				FilePath: it.ev.FilePath, Service: it.ev.Service, NodeType: it.ev.NodeType,
 				OtherService: it.ev.OtherService, OtherFilePath: it.ev.OtherFilePath,
 				ChangedAncestors: changedAncestorsOf(it.ev),
-			})
+			}
+			if it.c.Decision == failure.DecisionDrop {
+				if !it.c.Unfixable.IsValid() {
+					return fmt.Errorf("node %s of release %s is dropped (%s) with no unfixable reason", it.ev.NodeID, it.ev.ReleaseID, it.c.Reason)
+				}
+				node.Unfixable = &event.Unfixable{Reason: it.c.Unfixable, Detail: it.c.UnfixableDetail()}
+			}
+			payload.Nodes = append(payload.Nodes, node)
 		}
 		body, err := json.Marshal(serialization.RemediationRequestedFromDomain(payload))
 		if err != nil {
 			return fmt.Errorf("marshal trigger: %w", err)
 		}
+		stored, err := outbox.WrapTenant(tenantID, body)
+		if err != nil {
+			return fmt.Errorf("store trigger under tenant %q: %w", tenantID, err)
+		}
 		if err := u.OutboxRepo().Create(ctx, &outbox.Entry{
-			ID:            uuid.NewSHA1(uuid.NameSpaceOID, []byte(payload.EventID)),
+			ID:            uuid.NewSHA1(uuid.NameSpaceOID, []byte(eventID)),
 			AggregateType: "remediation",
 			AggregateID:   event.AggregateIDForRelease(head.ReleaseID),
 			EventType:     event.EventType,
-			Payload:       body,
-			StreamName:    streams.RemediationRequestedV2,
+			Payload:       stored,
+			StreamName:    streams.RemediationRequestedV3,
 			Status:        "pending",
 		}); err != nil {
 			return fmt.Errorf("enqueue trigger: %w", err)
@@ -120,7 +136,7 @@ func ClassifyRejection(ctx context.Context, deps Deps, evs []failure.FailureEvid
 		return fmt.Errorf("commit: %w", err)
 	}
 	deps.Logger.Info("rejection classified", "release", evs[0].ReleaseID, "round", round,
-		"nodes", len(items), "emitted_nodes", len(emit))
+		"nodes", len(items), "recorded_nodes", len(recorded))
 	return nil
 }
 

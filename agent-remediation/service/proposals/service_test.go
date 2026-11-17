@@ -129,6 +129,9 @@ func (r *fakeRepo) MarkVerifyFailed(_ context.Context, _, _ string, _ []proposal
 func (r *fakeRepo) MarkFixVerified(_ context.Context, _ remediation.Verified) (bool, error) {
 	return false, nil
 }
+func (r *fakeRepo) ReopenTryAttempt(_ context.Context, _ uuid.UUID, _ int, _ proposal.Status, _ map[string]proposal.NodeOutcome) (bool, error) {
+	return false, nil
+}
 
 func (r *fakeRepo) UpdateVerificationPhase(_ context.Context, _, _ string, _ proposal.Phase, _ *time.Time) error {
 	return nil

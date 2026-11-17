@@ -61,10 +61,10 @@ func TestSweeper_FiveFailuresIsASystemFailure(t *testing.T) {
 	assert.Equal(t, remediation.StatusSystemFailure, rem.Status)
 	assert.Equal(t, `step "dbt_log" failed 5 times, the last time with: s3 is down`, rem.Failure)
 	assert.Empty(t, rem.LeaseOwner, "the sweeper lets go of the lease")
-	assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
+	assert.Equal(t, remediation.TryDrafting, h.try(id, 1).Status, "the try is left for a redrive to resume")
 	p := h.inFlightRow()
 	assert.Equal(t, proposal.StatusFailed, p.Status, "today's in-flight row is failed with the reason")
-	assert.Equal(t, rem.Failure, p.Rationale)
+	assert.Equal(t, deadLetteredReason(rem), p.Rationale)
 	assert.Equal(t, proposal.StatusFailed, p.NodeOutcomes["svc-a"].Status)
 }
 
@@ -127,9 +127,9 @@ func TestSweeper_ADraftingTryPastItsDeadline(t *testing.T) {
 	assert.Equal(t, remediation.StatusSystemFailure, rem.Status)
 	assert.Contains(t, rem.Failure, "still drafting")
 	assert.Contains(t, rem.Failure, "deadline")
-	assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
+	assert.Equal(t, remediation.TryDrafting, h.try(id, 1).Status, "the try is left for a redrive to resume")
 	assert.Equal(t, proposal.StatusFailed, h.inFlightRow().Status)
-	assert.Equal(t, rem.Failure, h.inFlightRow().Rationale)
+	assert.Equal(t, deadLetteredReason(rem), h.inFlightRow().Rationale)
 }
 
 func TestSweeper_ACheckingTryPastItsDeadline(t *testing.T) {
@@ -147,7 +147,7 @@ func TestSweeper_ACheckingTryPastItsDeadline(t *testing.T) {
 	rem := h.remediation(id)
 	assert.Equal(t, remediation.StatusSystemFailure, rem.Status)
 	assert.Contains(t, rem.Failure, "still checking")
-	assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
+	assert.Equal(t, remediation.TryChecking, h.try(id, 1).Status, "the try is left for a redrive to resume")
 }
 
 func TestSweeper_NeverEndsAVerifyingTryByItsDeadline(t *testing.T) {
@@ -178,19 +178,21 @@ func TestSweeper_EndsAVerifyingTryWhoseGateKeepsFailing(t *testing.T) {
 
 	assert.Equal(t, remediation.StatusSystemFailure, h.remediation(id).Status)
 	assert.Contains(t, h.remediation(id).Failure, "verification_run")
-	assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
+	assert.Equal(t, remediation.TryVerifying, h.try(id, 1).Status, "the try is left for a redrive to resume")
 
 	// The attempt row does not stay verifying: it is failed with the runs it
-	// had recorded, and a later attempt of the release counts it.
+	// had recorded, and until a redrive reopens it a later attempt of the
+	// release counts it.
 	p := h.attempt(1).Proposal
 	assert.Equal(t, proposal.StatusFailed, p.Status)
 	assert.Equal(t, []proposal.Verification{{Service: "svc-a", Kind: "dbt", RunID: svcARun1, Phase: proposal.PhaseQueued}}, p.Verifications)
 	assert.Equal(t, proposal.StatusFailed, p.NodeOutcomes["svc-a"].Status)
-	assert.Equal(t, h.remediation(id).Failure, h.attempt(1).VerifyError, "the row carries the reason")
+	assert.Equal(t, deadLetteredReason(h.remediation(id)), h.attempt(1).VerifyError, "the row carries the reason")
 }
 
-// The remediation ends and the attempt row fails together: a commit that does
-// not happen leaves both as they were, for the next sweep.
+// The remediation ends, the attempt row fails and the trigger is dead-lettered
+// together: a commit that does not happen leaves all three as they were, for
+// the next sweep.
 func TestSweeper_TheFailureAndTheAttemptRowCommitTogether(t *testing.T) {
 	h := newHarness(t)
 	id := h.drafting()
@@ -201,11 +203,13 @@ func TestSweeper_TheFailureAndTheAttemptRowCommitTogether(t *testing.T) {
 
 	assert.Equal(t, remediation.StatusRunning, h.remediation(id).Status)
 	assert.Equal(t, proposal.StatusGenerating, h.inFlightRow().Status)
+	assert.Empty(t, h.deadLetters())
 	assert.Empty(t, h.remediation(id).LeaseOwner, "the lease is let go after a failed sweep too")
 
 	require.NoError(t, h.sweeper().Sweep(ctx))
 	assert.Equal(t, remediation.StatusSystemFailure, h.remediation(id).Status)
 	assert.Equal(t, proposal.StatusFailed, h.inFlightRow().Status)
+	assert.Len(t, h.deadLetters(), 1, "the dead letter commits with them")
 }
 
 // A done step keeps the failures it counted before it succeeded; when a try

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -49,7 +50,7 @@ const parseFixBrokenService = "service-2"
 //	  {status: failed, failure_kind: invalid_sql, failed_nodes: [ftable_e]}
 //	→ release-controller: Fail(invalid_sql), RecordStageResults("parse")
 //	→ release.rejected:v1 {stage: parse, per_node: [{kind, detail, file_path, service}]}
-//	→ remediation: ClassifyParse → remediation.requested:v2 (source=parse)
+//	→ remediation: ClassifyParse → remediation.requested:v3 (source=parse)
 //	→ agent-remediation parseFixer: reads the model from stub-github under
 //	  service-2's repo prefix, asks stub-llm → proposal row (source=parse)
 //	→ one fix-verification run lays the corrected model over service-2's dbt
@@ -123,7 +124,7 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
 	rejectedTap := startStreamTap(t, ctx, clients.redisClient, streams.ReleaseRejectedV1)
-	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV2)
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV3)
 	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationProposedV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
@@ -194,24 +195,14 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	// 2. release.rejected:v1 carries stage=parse and the per-node kind/detail.
 	assertRejectedParseStage(t, ctx, rejectedTap, releaseID, filePath)
 
-	// 3. remediation.requested:v2 carries source=parse with the parser detail.
-	var trigger parseTriggerPayload
-	pollUntil(t, ctx, 4*time.Minute, 2*time.Second, func() (bool, error) {
-		msgs := requestedTap.Entries()
-		for _, msg := range msgs {
-			raw, _ := msg.Values["payload"].(string)
-			var p parseTriggerPayload
-			if raw == "" || json.Unmarshal([]byte(raw), &p) != nil || p.ReleaseID != releaseID {
-				continue
-			}
-			trigger = p
-			return true, nil
-		}
-		return false, nil
-	}, fmt.Sprintf("timeout waiting for %s for release %s", streams.RemediationRequestedV2, releaseID))
-	require.Equal(t, "parse", trigger.Source)
+	// 3. remediation.requested:v3 carries source=parse with the parser detail.
+	//    invalid_sql is a parse kind a source change fixes, so the node is
+	//    not marked unfixable.
+	trigger := waitForBatchedTrigger(t, ctx, requestedTap, releaseID, []string{ftableEUniqueID}, 4*time.Minute)
+	require.Equal(t, string(model.RemediationSourceParse), trigger.Source)
 	require.Len(t, trigger.Nodes, 1)
 	assert.Equal(t, ftableEUniqueID, trigger.Nodes[0].NodeID)
+	assert.Nil(t, trigger.Nodes[0].Unfixable, "an invalid_sql rejection is healable")
 	assert.Equal(t, filePath, trigger.Nodes[0].FilePath)
 	// The service is what resolves the repository prefix for a parse fix: a
 	// parse failure's node id is a real node id, not compile's synthetic
@@ -362,27 +353,6 @@ func pinServiceProd(t *testing.T, ctx context.Context, clients *testClients, ser
 		   updated_at = EXCLUDED.updated_at`,
 		service, releaseID, canonicalManifestS3URI(service, releaseID), imageTag)
 	require.NoError(t, err, "pin service_prod for %s at %s", service, releaseID)
-}
-
-// parseTriggerPayload mirrors remediation.requested:v2 for a parse-stage
-// rejection. It carries `service` alongside the compile-stage fields because
-// that is what resolves the repository prefix on this lane.
-type parseTriggerPayload struct {
-	Source    string           `json:"source"`
-	ReleaseID string           `json:"release_id"`
-	Nodes     []parseNodeEntry `json:"nodes"`
-}
-
-// parseNodeEntry is one failing node inside a parse-stage batched trigger.
-type parseNodeEntry struct {
-	NodeID         string `json:"node_id"`
-	Category       string `json:"category"`
-	ErrorSignature string `json:"error_signature"`
-	ErrorExcerpt   string `json:"error_excerpt"`
-	DBTLogURI      string `json:"dbt_log_uri"`
-	FilePath       string `json:"file_path"`
-	Service        string `json:"service"`
-	NodeType       string `json:"node_type"`
 }
 
 // assertRejectedParseStage waits for this release's release.rejected:v1 and

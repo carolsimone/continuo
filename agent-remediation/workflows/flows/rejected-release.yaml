@@ -23,4 +23,4 @@ gate: [verification_run]
 tries: 3
 output:
   on_pass: { action: pull_request, emits: remediation.proposed }
-  on_give_up: { action: hand_over }
+  on_give_up: { action: hand_over, emits: remediation.handed_over }

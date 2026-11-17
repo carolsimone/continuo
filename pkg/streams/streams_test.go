@@ -4,15 +4,75 @@ import (
 	"testing"
 )
 
-func TestRemediationRequestedV2_ReplacesV1(t *testing.T) {
-	if RemediationRequestedV2 != "remediation.requested:v2" {
-		t.Fatalf("RemediationRequestedV2 = %q", RemediationRequestedV2)
+func retiredHas(name string) bool {
+	for _, r := range Retired {
+		if r == name {
+			return true
+		}
+	}
+	return false
+}
+
+func groupsOf(t *testing.T, stream string, want ...string) {
+	t.Helper()
+	got := Groups[stream]
+	if len(got) != len(want) {
+		t.Fatalf("%s groups = %v, want %v", stream, got, want)
+	}
+	have := map[string]bool{}
+	for _, g := range got {
+		have[g] = true
+	}
+	for _, g := range want {
+		if !have[g] {
+			t.Errorf("%s is missing group %q (has %v)", stream, g, got)
+		}
+	}
+}
+
+func TestRemediationRequestedV3_ReplacesV2(t *testing.T) {
+	if RemediationRequestedV3 != "remediation.requested:v3" {
+		t.Fatalf("RemediationRequestedV3 = %q", RemediationRequestedV3)
 	}
 	if AgentRemediationRemediationRequested != "agent-remediation-remediation-requested" {
 		t.Fatalf("consumer group renamed: %q", AgentRemediationRemediationRequested)
 	}
 	if CatalogRemediationRequestedRejections != "catalog-remediation-requested-rejections" {
 		t.Fatalf("consumer group renamed: %q", CatalogRemediationRequestedRejections)
+	}
+	groupsOf(t, RemediationRequestedV3, AgentRemediationRemediationRequested, CatalogRemediationRequestedRejections)
+	if _, live := Groups["remediation.requested:v2"]; live {
+		t.Error("remediation.requested:v2 is still a live stream")
+	}
+	if !retiredHas("remediation.requested:v2") {
+		t.Fatal("remediation.requested:v2 must be listed in retired_streams")
+	}
+}
+
+func TestRemediationRetryRequestedV2_ReplacesV1(t *testing.T) {
+	if RemediationRetryRequestedV2 != "remediation.retry_requested:v2" {
+		t.Fatalf("RemediationRetryRequestedV2 = %q", RemediationRetryRequestedV2)
+	}
+	if RemediationRetryRequested != "remediation-retry-requested" {
+		t.Fatalf("consumer group renamed: %q", RemediationRetryRequested)
+	}
+	groupsOf(t, RemediationRetryRequestedV2, RemediationRetryRequested)
+	if _, live := Groups["remediation.retry_requested:v1"]; live {
+		t.Error("remediation.retry_requested:v1 is still a live stream")
+	}
+	if !retiredHas("remediation.retry_requested:v1") {
+		t.Fatal("remediation.retry_requested:v1 must be listed in retired_streams")
+	}
+}
+
+// remediation.handed_over:v1 has a producer and no consumer: a human reads it.
+func TestRemediationHandedOverV1_HasNoConsumer(t *testing.T) {
+	if RemediationHandedOverV1 != "remediation.handed_over:v1" {
+		t.Fatalf("RemediationHandedOverV1 = %q", RemediationHandedOverV1)
+	}
+	groupsOf(t, RemediationHandedOverV1)
+	if retiredHas(RemediationHandedOverV1) {
+		t.Error("remediation.handed_over:v1 is retired")
 	}
 }
 

@@ -4,10 +4,12 @@ import PageHeader from './PageHeader';
 import { ReleaseDetail, NodeValidationResult, ProposalDTO, VerificationRunSummary } from './types';
 import {
   releasePillClass, proposalKey, reasonLabel,
-  proposalNodeIds, proposalStatusForNode, proposalReasonForNode,
+  proposalNodeIds, proposalStatusForNode, proposalReasonForNode, proposalCodeForNode,
   proposalPullRequests, proposalPrServices, proposalPrStateForService,
   verificationPhase, verificationRunPhase, effectiveRound, shortSha,
 } from './release-helpers';
+import ErrorCell from './ErrorCell';
+import { HANDOVER_TEXT } from './handover-text';
 import { fetchProposals } from './remediation-api';
 import { NodeResultsTable } from './node-results';
 import ServiceTiles from './ServiceTiles';
@@ -126,6 +128,14 @@ function verifyLabel(phase?: 'queued' | 'running'): string {
   return phase === 'queued' ? 'Queued for verification' : 'Verifying fix…';
 }
 
+// FixNote explains why remediation stopped for one node. text is the short
+// sentence shown in full; message, when present, is the node's own (possibly
+// long) error text, which the cell truncates behind a `more` toggle.
+interface FixNote {
+  text: string;
+  message?: string;
+}
+
 // FixCell renders one node's remediation state: a link to the proposal once a
 // fix is ready to review, a non-actionable chip while one is still being
 // produced or verified, and — when no attempt is in flight — a note
@@ -136,7 +146,7 @@ function verifyLabel(phase?: 'queued' | 'running'): string {
 function FixCell({ state, verifyPhase, note }: {
   state?: FixState;
   verifyPhase?: 'queued' | 'running';
-  note?: string;
+  note?: FixNote;
 }) {
   if (state === 'proposed') {
     return (
@@ -152,7 +162,14 @@ function FixCell({ state, verifyPhase, note }: {
       </span>
     );
   }
-  if (note) return <span className="nodes-reason">{note}</span>;
+  if (note) {
+    return (
+      <>
+        <span className="nodes-reason">{note.text}</span>
+        {note.message && <ErrorCell message={note.message} />}
+      </>
+    );
+  }
   return null;
 }
 
@@ -172,7 +189,7 @@ export default function ReleaseDetailPage() {
   // Per (stage, node_id) explanation for a node whose latest attempt landed on
   // a terminal-but-blank status, so the FIX cell says why instead of leaving
   // that cell empty. Only ever read where fixState has no entry for the key.
-  const [fixNote, setFixNote] = useState<Map<string, string>>(new Map());
+  const [fixNote, setFixNote] = useState<Map<string, FixNote>>(new Map());
   // The last polled proposal list for this release, kept alongside fixState so
   // the dead-end check below can recompute in-flight/PR state per remediation
   // round (fixState itself is a rendering-only summary across every round).
@@ -371,13 +388,24 @@ export default function ReleaseDetailPage() {
             }
           }
           setVerifyPhaseByKey(phaseByKey);
-          const noteByKey = new Map<string, string>();
+          const noteByKey = new Map<string, FixNote>();
           for (const [k, { proposal: p, nodeId: nid }] of latestByKey) {
+            // A node outcome with a handover code says why the node went to a
+            // human: the code's text, and the node's own message beneath it.
+            // It reads the outcome's own reason, never the proposal's
+            // rationale, which on a batched attempt describes other nodes'
+            // fixes.
+            const code = proposalCodeForNode(p, nid);
+            if (code) {
+              const message = p.node_outcomes?.[nid]?.reason?.trim();
+              noteByKey.set(k, { text: HANDOVER_TEXT[code], message: message || undefined });
+              continue;
+            }
             const status = proposalStatusForNode(p, nid);
             const reason = proposalReasonForNode(p, nid);
-            if (status === 'escalated') noteByKey.set(k, 'Attempt budget spent.');
-            else if (status === 'failed') noteByKey.set(k, reason || 'The model could not produce a safe fix.');
-            else if (status === 'skipped') noteByKey.set(k, `${reason || 'No source to fix at this commit.'} Fix it in the repository.`);
+            if (status === 'escalated') noteByKey.set(k, { text: 'Attempt budget spent.' });
+            else if (status === 'failed') noteByKey.set(k, { text: reason || 'The model could not produce a safe fix.' });
+            else if (status === 'skipped') noteByKey.set(k, { text: `${reason || 'No source to fix at this commit.'} Fix it in the repository.` });
           }
           setFixNote(noteByKey);
           verifying = failed.some(k => byKey.get(k) === 'verifying');

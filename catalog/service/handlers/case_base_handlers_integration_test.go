@@ -114,6 +114,56 @@ func TestRejectionsHandler_MarkerAtomicWithRecord(t *testing.T) {
 	assert.Equal(t, []string{streams.CatalogRemediationRequestedRejections}, g.markerGroups("rej-1"))
 }
 
+// A trigger carries every failing node, the unfixable ones included. On Neo4j
+// only the fixable nodes leave a :Rejection (and its signature hub and FAILED
+// edge); a trigger with no fixable node commits its marker alone, reads no
+// bundle, and a redelivery of it finds the marker.
+func TestRejectionsHandler_UnfixableNodesLeaveNoRejectionInTheGraph(t *testing.T) {
+	ctx := context.Background()
+	g := newVersionsGroupFixture(t)
+	g.promoteNodes("svc.public.a", "svc.public.b")
+	const uri = "s3://continuo/code-bundles/r2/bundle.json"
+	g.bundles.bundles[uri] = codebundle.Bundle{ContractVersion: 1, ReleaseID: "r2", Nodes: map[string]codebundle.Node{
+		"svc.public.a": {RawCode: "select a", ContentHash: "ha"},
+		"svc.public.b": {RawCode: "select b", ContentHash: "hb"},
+	}}
+	handler := handlers.NewRemediationRequestedRejectionsHandler(g.uow, g.bundles, newTestLogger())
+	const (
+		rejectionNodes = `MATCH (:Node {tenant_id: $tenant_id})-[:FAILED]->(r:Rejection {tenant_id: $tenant_id}) RETURN count(r) AS v`
+		rejectionCount = `MATCH (r:Rejection {tenant_id: $tenant_id}) RETURN count(r) AS v`
+	)
+
+	mixed := domainEvent.RemediationRequested{
+		Source: "validation", ReleaseID: "r2", CodeBundleURI: uri, ClassifiedAt: "2026-10-30T09:00:00Z",
+		Nodes: []domainEvent.RemediationRequestedNode{
+			{NodeID: "svc.public.a", Category: "logic", ErrorSignature: "sig-a", Reason: "logic:missing_object"},
+			{NodeID: "svc.public.b", Category: "infra_transient", ErrorSignature: "sig-b", Reason: "infra:oomkilled", Unfixable: true},
+		},
+	}
+	require.NoError(t, handler.Handle(ctx, g.tenant, "rej-mixed", nil, mixed))
+	assert.Equal(t, int64(1), g.count(rejectionCount), "only the fixable node is a precedent")
+	assert.Equal(t, int64(1), g.count(rejectionNodes))
+	assert.Equal(t, []string{streams.CatalogRemediationRequestedRejections}, g.markerGroups("rej-mixed"))
+
+	g.bundles.calls = nil
+	onlyUnfixable := domainEvent.RemediationRequested{
+		Source: "validation", ReleaseID: "r3", CodeBundleURI: uri, ClassifiedAt: "2026-10-30T10:00:00Z",
+		Nodes: []domainEvent.RemediationRequestedNode{
+			{NodeID: "svc.public.a", Category: "infra_transient", ErrorSignature: "sig-c", Reason: "infra:connection_refused", Unfixable: true},
+			{NodeID: "svc.public.b", Category: "infra_transient", ErrorSignature: "sig-d", Reason: "infra:oomkilled", Unfixable: true},
+		},
+	}
+	require.NoError(t, handler.Handle(ctx, g.tenant, "rej-unfixable", nil, onlyUnfixable))
+	assert.Equal(t, int64(1), g.count(rejectionCount), "an all-unfixable trigger adds no :Rejection")
+	assert.Empty(t, g.bundles.calls, "and reads no bundle")
+	assert.Equal(t, []string{streams.CatalogRemediationRequestedRejections}, g.markerGroups("rej-unfixable"),
+		"the marker commits alone")
+
+	require.NoError(t, handler.Handle(ctx, g.tenant, "rej-unfixable", nil, onlyUnfixable))
+	assert.Equal(t, int64(1), g.count(rejectionCount))
+	assert.Equal(t, []string{streams.CatalogRemediationRequestedRejections}, g.markerGroups("rej-unfixable"))
+}
+
 // A crash after the proposals' statements ran rolls back every proposal, PR
 // and stub rejection with the marker; the redelivery records them and the
 // marker in one write.

@@ -2,8 +2,11 @@ package redis
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
+	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
@@ -171,5 +174,202 @@ func TestXAddArgs_DoNotTrim(t *testing.T) {
 	}
 	if args.Values.(map[string]any)["outbox_entry_id"] != entry.ID.String() {
 		t.Fatalf("outbox_entry_id missing from %v", args.Values)
+	}
+}
+
+// TestRender_ProposedRowStoresItsTenant holds that a remediation.proposed:v1
+// row, stored under its tenant, renders as the payload it wraps beside that
+// tenant, and that a row stored under no tenant is refused as permanent:
+// no retry makes it renderable.
+func TestRender_ProposedRowStoresItsTenant(t *testing.T) {
+	p := &agentRemediationOutboxPublisher{}
+	const body = `{"release_id":"r1","attempt":1}`
+
+	t.Run("renders the wrapped payload beside the stored tenant", func(t *testing.T) {
+		stored, err := pkgoutbox.WrapTenant("acme", []byte(body))
+		require.NoError(t, err)
+		values, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), EventType: "remediation_proposed", StreamName: streams.RemediationProposedV1, Payload: stored})
+		require.NoError(t, err)
+		assert.Equal(t, map[string]any{"payload": body, "tenant_id": "acme"}, values)
+	})
+
+	t.Run("the default tenant renders as stored", func(t *testing.T) {
+		stored, err := pkgoutbox.WrapTenant(pkgevents.DefaultTenantID, []byte(body))
+		require.NoError(t, err)
+		values, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), StreamName: streams.RemediationProposedV1, Payload: stored})
+		require.NoError(t, err)
+		assert.Equal(t, map[string]any{"payload": body, "tenant_id": pkgevents.DefaultTenantID}, values)
+	})
+
+	t.Run("a row stored under no tenant is permanent", func(t *testing.T) {
+		for name, payload := range map[string]string{
+			"an unwrapped payload": body,
+			"an empty tenant":      `{"tenant_id":"","payload":{"release_id":"r1"}}`,
+			"no payload":           `{"tenant_id":"acme"}`,
+		} {
+			_, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), StreamName: streams.RemediationProposedV1, Payload: []byte(payload)})
+			require.ErrorIs(t, err, pkgevents.ErrPermanent, name)
+			require.ErrorIs(t, err, pkgoutbox.ErrNoTenant, name)
+		}
+	})
+}
+
+// TestRender_PrOpenedAndPrClosedRowsKeepTheDefaultTenant holds that the rows
+// agent-remediation announces for a pull request's lifecycle are stored as
+// their payload and render beside the default tenant.
+func TestRender_PrOpenedAndPrClosedRowsKeepTheDefaultTenant(t *testing.T) {
+	p := &agentRemediationOutboxPublisher{}
+	for _, stream := range []string{streams.RemediationPrOpenedV1, streams.RemediationPrClosedV1} {
+		values, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), StreamName: stream, Payload: []byte(`{"release_id":"r1"}`)})
+		require.NoError(t, err, stream)
+		assert.Equal(t, map[string]any{"payload": `{"release_id":"r1"}`, "tenant_id": pkgevents.DefaultTenantID}, values, stream)
+	}
+}
+
+// TestPublish_ProposedRowXAddCarriesItsStoredTenant holds that the XADD of a
+// remediation.proposed:v1 row carries the payload it wraps, the tenant it is
+// stored under and the entry's outbox_entry_id.
+func TestPublish_ProposedRowXAddCarriesItsStoredTenant(t *testing.T) {
+	capture := &captureXAdd{}
+	rc := goredis.NewClient(&goredis.Options{Addr: "127.0.0.1:0"})
+	rc.AddHook(capture)
+	t.Cleanup(func() { _ = rc.Close() })
+
+	stored, err := pkgoutbox.WrapTenant("acme", []byte(`{"release_id":"r1"}`))
+	require.NoError(t, err)
+	entry := &pkgoutbox.Entry{ID: uuid.New(), StreamName: streams.RemediationProposedV1, Payload: stored}
+	require.NoError(t, (&agentRemediationOutboxPublisher{redis: rc}).Publish(context.Background(), entry))
+
+	require.Len(t, capture.cmds, 1)
+	args := capture.cmds[0].Args()
+	assert.Equal(t, pkgredis.Key(streams.RemediationProposedV1), args[1])
+	fields := map[string]any{}
+	for i := 4; i+1 < len(args); i += 2 {
+		fields[args[i].(string)] = args[i+1]
+	}
+	assert.Equal(t, map[string]any{
+		"payload":         `{"release_id":"r1"}`,
+		"tenant_id":       "acme",
+		"outbox_entry_id": entry.ID.String(),
+	}, fields)
+}
+
+// TestRender_HandedOverCarriesTheRowsTenant holds that a
+// remediation.handed_over:v1 row, stored under its tenant, renders as the
+// event's envelope: the row's id as event_id, the tenant the row is stored
+// under, the row's creation time, agent-remediation as producer and the event
+// it wraps as payload; and that a row stored under no tenant, whose stored
+// payload is not the event, or whose event the contract forbids, is refused
+// as permanent: no retry makes it renderable.
+func TestRender_HandedOverCarriesTheRowsTenant(t *testing.T) {
+	p := &agentRemediationOutboxPublisher{}
+	handed := pkgevents.RemediationHandedOver{
+		RemediationID: "0b6f8c4e-3a1d-4d2b-9f7e-5c8a1b2d3e4f", ReleaseID: "rel-1", RemediationRound: 1, Flow: "rejected-release", Tries: 3,
+		Nodes: []pkgevents.HandedOverNode{{NodeID: "model.a", Reason: string(model.HandoverReasonTriesSpent), Message: "tried 3 times"}},
+	}
+	body, err := json.Marshal(handed)
+	require.NoError(t, err)
+	stored, err := pkgoutbox.WrapTenant("acme", body)
+	require.NoError(t, err)
+	entry := &pkgoutbox.Entry{
+		ID: uuid.New(), EventType: "remediation_handed_over", StreamName: streams.RemediationHandedOverV1,
+		Payload: stored, CreatedAt: time.Date(2026, 11, 16, 9, 30, 0, 0, time.UTC),
+	}
+
+	values, err := p.Render(entry)
+	require.NoError(t, err)
+
+	want, err := pkgevents.RemediationHandedOverFields(entry.ID.String(), "acme", "agent-remediation", entry.CreatedAt, handed)
+	require.NoError(t, err)
+	assert.Equal(t, want, values)
+	assert.Equal(t, "acme", values["tenant_id"])
+	fields, err := pkgoutbox.StringifyFields(values)
+	require.NoError(t, err)
+	env, published, err := pkgevents.ParseEnvelope(fields)
+	require.NoError(t, err)
+	var got pkgevents.RemediationHandedOver
+	require.NoError(t, json.Unmarshal(published, &got))
+	assert.Equal(t, entry.ID.String(), env.EventID)
+	assert.Equal(t, "acme", env.TenantID)
+	assert.Equal(t, "agent-remediation", env.Producer)
+	assert.True(t, entry.CreatedAt.Equal(env.OccurredAt))
+	assert.Equal(t, pkgevents.RemediationHandedOverSchemaVersion, env.SchemaVersion)
+	assert.Equal(t, handed, got)
+
+	for name, payload := range map[string]string{
+		"an unwrapped payload":            string(body),
+		"an empty tenant":                 `{"tenant_id":"","payload":{"release_id":"rel-1"}}`,
+		"a payload that is not the event": `{"tenant_id":"acme","payload":["not","the","event"]}`,
+		"a reason outside the vocabulary": `{"tenant_id":"acme","payload":{"remediation_id":"r","release_id":"rel-1","remediation_round":1,"flow":"rejected-release","tries":1,` +
+			`"nodes":[{"node_id":"model.a","reason":"gave_up","message":"m"}]}}`,
+		"no remediation round": `{"tenant_id":"acme","payload":{"remediation_id":"r","release_id":"rel-1","remediation_round":0,"flow":"rejected-release","tries":1,"nodes":[]}}`,
+	} {
+		values, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), StreamName: streams.RemediationHandedOverV1, Payload: []byte(payload)})
+		require.ErrorIs(t, err, pkgevents.ErrPermanent, name)
+		assert.Nil(t, values, name)
+	}
+}
+
+// TestRender_ConsumerDeadLetterCarriesTheRowsTenant holds that a
+// consumer.dead_letter:v1 row, the dead letter of a heal trigger the runner
+// gave up on stored under the remediation's tenant, renders as the dead
+// letter dead-letter-controller decodes: the tenant the row is stored under,
+// agent-remediation as producer, the event id of the message's dead letter in
+// its group, and the trigger's stream, group, message, fields and failure; and
+// that a row stored under no tenant, or whose stored payload is not the
+// message, is refused as permanent: no retry makes it renderable.
+func TestRender_ConsumerDeadLetterCarriesTheRowsTenant(t *testing.T) {
+	p := &agentRemediationOutboxPublisher{}
+	occurred := time.Date(2026, 11, 16, 9, 30, 0, 0, time.UTC)
+	key := pkgredis.Key(streams.RemediationRequestedV3)
+	message := pkgevents.DeadLetteredMessage{
+		OccurredAt:    occurred,
+		Stream:        streams.RemediationRequestedV3,
+		Group:         streams.AgentRemediationRemediationRequested,
+		MessageID:     "1700000000000-0",
+		Key:           key,
+		Fields:        map[string]string{"tenant_id": "acme", "event_id": "ev-1", "payload": `{"release_id":"rel-1"}`},
+		FailureKind:   model.DeadLetterKindTransientExhausted,
+		Error:         `remediation r, try 1, step "dbt_log": step "dbt_log" failed 5 times`,
+		DeliveryCount: 5,
+	}
+	body, err := json.Marshal(message)
+	require.NoError(t, err)
+	stored, err := pkgoutbox.WrapTenant("acme", body)
+	require.NoError(t, err)
+	entry := &pkgoutbox.Entry{ID: uuid.New(), EventType: "remediation_dead_lettered", StreamName: streams.ConsumerDeadLetterV1, Payload: stored}
+
+	values, err := p.Render(entry)
+	require.NoError(t, err)
+
+	fields, err := pkgoutbox.StringifyFields(values)
+	require.NoError(t, err)
+	env, dl, err := pkgevents.DecodeConsumerDeadLetter(fields)
+	require.NoError(t, err)
+	assert.Equal(t, "acme", env.TenantID)
+	assert.Equal(t, "agent-remediation", env.Producer)
+	assert.True(t, occurred.Equal(env.OccurredAt))
+	assert.Equal(t, pkgevents.ConsumerDeadLetterEventID("acme", streams.AgentRemediationRemediationRequested,
+		streams.RemediationRequestedV3, "1700000000000-0@"+key), env.EventID)
+	assert.Equal(t, pkgevents.ConsumerDeadLetter{
+		OriginalStream:    streams.RemediationRequestedV3,
+		OriginalGroup:     streams.AgentRemediationRemediationRequested,
+		OriginalMessageID: "1700000000000-0",
+		OriginalKey:       key,
+		Fields:            message.Fields,
+		FailureKind:       model.DeadLetterKindTransientExhausted,
+		Error:             message.Error,
+		DeliveryCount:     5,
+	}, dl)
+	assert.NotContains(t, values, "outbox_entry_id")
+
+	for name, payload := range map[string]string{
+		"an unwrapped payload":              string(body),
+		"an empty tenant":                   `{"tenant_id":"","payload":{"Stream":"s"}}`,
+		"a payload that is not the message": `{"tenant_id":"acme","payload":["not","the","message"]}`,
+	} {
+		values, err := p.Render(&pkgoutbox.Entry{ID: uuid.New(), StreamName: streams.ConsumerDeadLetterV1, Payload: []byte(payload)})
+		require.ErrorIs(t, err, pkgevents.ErrPermanent, name)
+		assert.Nil(t, values, name)
 	}
 }

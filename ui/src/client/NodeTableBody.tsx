@@ -13,6 +13,7 @@ import {
   taskPillClass,
   taskStatusTitle,
 } from './detail-page-helpers';
+import ErrorCell from './ErrorCell';
 import LeaseWaitPill from './LeaseWaitPill';
 
 interface Props {
@@ -356,29 +357,5 @@ function PreflightFindings({ preflight }: { preflight: SeedPreflight | null | un
         </div>
       </td>
     </tr>
-  );
-}
-
-function ErrorCell({ message }: { message: string }) {
-  const [expanded, setExpanded] = useState(false);
-  const isLong = message.length > 60;
-  return (
-    <div className="nodes-error-text">
-      <span className={`nodes-error-short${expanded ? ' nodes-error-short--hidden' : ''}`}>
-        {message}
-      </span>
-      <div className={`nodes-error-full${expanded ? ' nodes-error-full--visible' : ''}`}>
-        {message}
-      </div>
-      {isLong && (
-        <button
-          className="nodes-error-toggle"
-          onClick={e => { e.stopPropagation(); setExpanded(v => !v); }}
-          onKeyDown={e => { e.stopPropagation(); }}
-        >
-          {expanded ? 'less' : 'more'}
-        </button>
-      )}
-    </div>
   );
 }

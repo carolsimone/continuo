@@ -8,9 +8,9 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 )
 
-// Trigger is the decoded remediation.requested:v2 payload that drives one
+// Trigger is the decoded remediation.requested payload that drives one
 // ProposeFix invocation: the release-level facts every fix needs, and one
-// TriggerNode per failing node the classifier judged healable. One rejected
+// TriggerNode per failing node a fix can reach. One rejected
 // release yields one trigger per remediation round, so a trigger names a whole
 // failing set rather than a single node.
 type Trigger struct {
@@ -29,7 +29,7 @@ type Trigger struct {
 	// Nodes is the release's healable failing set, one entry per node.
 	Nodes []TriggerNode
 	// MessageID is the Redis Stream message ID of the inbound
-	// remediation.requested:v2 message. It is the primary dedup key.
+	// remediation.requested:v3 message. It is the primary dedup key.
 	MessageID string
 	// OutboxEntryID, when non-nil, is the upstream pkg/outbox row UUID carried
 	// in the message's outbox_entry_id field. It provides a secondary dedup axis
@@ -146,102 +146,4 @@ func (t Trigger) idempotencyKey() string {
 		return "outbox:" + t.OutboxEntryID.String()
 	}
 	return "msg:" + t.MessageID
-}
-
-// TriggerWire is the remediation.requested:v2 wire shape: what the classifier
-// publishes and what the stream adapter decodes. It is declared once here so
-// every reader of the payload agrees on its shape.
-type TriggerWire struct {
-	EventID   string `json:"event_id,omitempty"`
-	Source    string `json:"source"`
-	ReleaseID string `json:"release_id"`
-	// RemediationRound is the release's remediation round this trigger belongs
-	// to; missing or 0 means round 1 (the rejection itself).
-	RemediationRound int    `json:"remediation_round"`
-	Repo             string `json:"repo"`
-	CommitSHA        string `json:"commit_sha"`
-	// CodeBundleURI locates the release's code-bundle document; empty when
-	// parse never completed (compile-stage and parse-stage failures).
-	CodeBundleURI string            `json:"code_bundle_uri,omitempty"`
-	ClassifiedAt  string            `json:"classified_at,omitempty"`
-	Nodes         []TriggerNodeWire `json:"nodes"`
-}
-
-// TriggerNodeWire is one failing node inside a TriggerWire.
-type TriggerNodeWire struct {
-	NodeID string `json:"node_id"`
-	// RelationID is the contested physical relation for a duplicate_table
-	// failure, distinct from NodeID; empty for every other source.
-	RelationID           string `json:"relation_id,omitempty"`
-	Category             string `json:"category"`
-	ErrorSignature       string `json:"error_signature"`
-	Reason               string `json:"reason"`
-	ErrorExcerpt         string `json:"error_excerpt,omitempty"`
-	DBTLogURI            string `json:"dbt_log_uri"`
-	CandidateArtifactURI string `json:"candidate_artifact_uri,omitempty"`
-	FilePath             string `json:"file_path,omitempty"`
-	Service              string `json:"service,omitempty"`
-	NodeType             string `json:"node_type,omitempty"`
-	OtherService         string `json:"other_service,omitempty"`
-	OtherFilePath        string `json:"other_file_path,omitempty"`
-	// ChangedAncestors are the node's transitive upstream ancestors whose
-	// content changed in the rejected release, each with the file path and
-	// service the candidate topology declares for it.
-	ChangedAncestors []ChangedAncestorWire `json:"changed_ancestors,omitempty"`
-}
-
-// ChangedAncestorWire is one entry of a failing node's changed_ancestors array.
-type ChangedAncestorWire struct {
-	NodeID   string `json:"node_id"`
-	FilePath string `json:"file_path,omitempty"`
-	Service  string `json:"service,omitempty"`
-	Depth    int    `json:"depth,omitempty"`
-}
-
-// TriggerFromWire builds a Trigger from a decoded v2 payload. The dedup
-// identity fields (MessageID, OutboxEntryID) and RawPayload belong to the
-// message that delivered the payload rather than to the payload itself, so the
-// caller sets them.
-func TriggerFromWire(w TriggerWire) Trigger {
-	nodes := make([]TriggerNode, 0, len(w.Nodes))
-	for _, n := range w.Nodes {
-		nodes = append(nodes, TriggerNode{
-			NodeID:               n.NodeID,
-			RelationID:           n.RelationID,
-			ErrorSignature:       n.ErrorSignature,
-			Category:             n.Category,
-			Reason:               n.Reason,
-			ErrorExcerpt:         n.ErrorExcerpt,
-			DBTLogURI:            n.DBTLogURI,
-			CandidateArtifactURI: n.CandidateArtifactURI,
-			FilePath:             n.FilePath,
-			Service:              n.Service,
-			NodeType:             n.NodeType,
-			OtherService:         n.OtherService,
-			OtherFilePath:        n.OtherFilePath,
-			ChangedAncestors:     changedAncestorsFromWire(n.ChangedAncestors),
-		})
-	}
-	return Trigger{
-		Source:           w.Source,
-		ReleaseID:        w.ReleaseID,
-		RemediationRound: w.RemediationRound,
-		Repo:             w.Repo,
-		CommitSHA:        w.CommitSHA,
-		CodeBundleURI:    w.CodeBundleURI,
-		Nodes:            nodes,
-	}
-}
-
-// changedAncestorsFromWire decodes a failing node's changed ancestors, keeping
-// the payload's order (release-controller sorts them by id).
-func changedAncestorsFromWire(in []ChangedAncestorWire) []ChangedAncestor {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]ChangedAncestor, 0, len(in))
-	for _, a := range in {
-		out = append(out, ChangedAncestor(a))
-	}
-	return out
 }

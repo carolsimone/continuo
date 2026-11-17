@@ -262,7 +262,7 @@ var pythonValidationLanes = map[pkg_model.NodeType]Fixer{
 	pkg_model.NodeTypePythonApi:  pythonValidationFixer{},
 }
 
-// Source discriminators carried on remediation.requested:v2.
+// Source discriminators carried on remediation.requested:v3.
 const (
 	sourceParse          = "parse"
 	sourceCompile        = "compile"

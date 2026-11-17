@@ -94,6 +94,23 @@ UPGRADE NOTES
 
 {{- if .Release.IsUpgrade }}
 
+BREAKING: remediation.requested is now v3 and remediation.retry_requested is now v2.
+Upgrade when no rejected release is being remediated and the outboxes of
+remediation, release-controller and agent-remediation hold no pending row
+(remediation_outbox, release_controller_outbox, agent_remediation_outbox). A
+row stored before the upgrade for remediation.requested:v2,
+remediation.retry_requested:v1 or remediation.proposed:v1 is never delivered
+after it, and Try again cannot start a remediation whose trigger was lost.
+dead-letter-controller deletes the retired streams remediation.requested:v2
+and remediation.retry_requested:v1 with their consumer groups. With
+streamReaper.enabled=false, delete the drained consumer groups after upgrading:
+  XGROUP DESTROY continuo:remediation.requested:v2 agent-remediation-remediation-requested
+  XGROUP DESTROY continuo:remediation.requested:v2 catalog-remediation-requested-rejections
+  XGROUP DESTROY continuo:remediation.retry_requested:v1 remediation-retry-requested
+{{- end }}
+
+{{- if .Release.IsUpgrade }}
+
 BREAKING: release kind "python" (contract.yaml) is no longer accepted.
 If a service is still released as "python", release it as "python-odcs" (docs/contracts.md) on a continuo version that accepts it.
 The upgrade stops while a service is still released as "python".

@@ -94,7 +94,6 @@ func rejectionsBundle() codebundle.Bundle {
 
 func rejectionInput() domainEvent.RemediationRequested {
 	return domainEvent.RemediationRequested{
-		EventID:       "evt-1",
 		Source:        "validation",
 		ReleaseID:     "rel-1",
 		CodeBundleURI: rejectionsBundleURI,
@@ -150,7 +149,7 @@ func TestRejectionsHandler_RecordsRejectionWithBundleCode(t *testing.T) {
 	assert.True(t, u.isRecorded(rejectionsMarker("1-0", nil)))
 }
 
-// The batched trigger carries every healable node from one rejected release
+// The batched trigger carries every fixable node from one rejected release
 // in a single message; the case base gets one :Rejection per node, in the one
 // Write, and the bundle backing all of them is fetched exactly once.
 func TestRejectionsHandler_RecordsOneRejectionPerNode(t *testing.T) {
@@ -181,6 +180,75 @@ func TestRejectionsHandler_RecordsOneRejectionPerNode(t *testing.T) {
 	assert.Equal(t, "hb", repo.recordRejectionCalls[1].ContentHash)
 	assert.Len(t, reader.calls, 1, "the bundle is read once per message, not once per node")
 	assert.Len(t, u.writes, 1, "every node's rejection is recorded in the one Write")
+}
+
+// The trigger carries every failing node, the ones the classifier marked
+// unfixable included. The case base records only the failures a fix can reach,
+// so an unfixable node gets no :Rejection and its code is not looked up, while
+// the fixable nodes of the same message are recorded as before, in the one
+// Write that carries the marker.
+func TestRejectionsHandler_SkipsUnfixableNodes(t *testing.T) {
+	repo := &fakeCaseBaseRepository{}
+	u := newCaseBaseUnitOfWork(repo)
+	reader := &fakeBundleReader{bundle: codebundle.Bundle{
+		ContractVersion: 1,
+		ReleaseID:       "rel-1",
+		Nodes: map[string]codebundle.Node{
+			"s.a": {RawCode: "select a", ContentHash: "ha"},
+			"s.b": {RawCode: "select b", ContentHash: "hb"},
+			"s.c": {RawCode: "select c", ContentHash: "hc"},
+		},
+	}}
+
+	in := domainEvent.RemediationRequested{
+		Source: "validation", ReleaseID: "rel-1", CodeBundleURI: rejectionsBundleURI,
+		ClassifiedAt: "2026-08-28T10:00:00Z",
+		Nodes: []domainEvent.RemediationRequestedNode{
+			{NodeID: "s.a", Category: "logic", ErrorSignature: "sig-a", Reason: "logic:missing_object", DBTLogURI: "s3://l/a"},
+			{NodeID: "s.b", Category: "infra_transient", ErrorSignature: "sig-b", Reason: "infra:connection_refused", DBTLogURI: "s3://l/b", Unfixable: true},
+			{NodeID: "s.c", Category: "logic", ErrorSignature: "sig-c", Reason: "logic:syntax_error", DBTLogURI: "s3://l/c"},
+		},
+	}
+	require.NoError(t, newRejectionsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil, in))
+
+	require.Len(t, repo.recordRejectionCalls, 2)
+	assert.Equal(t, "s.a", repo.recordRejectionCalls[0].NodeID)
+	assert.Equal(t, "select a", repo.recordRejectionCalls[0].RawCode)
+	assert.Equal(t, "s.c", repo.recordRejectionCalls[1].NodeID)
+	assert.Equal(t, "hc", repo.recordRejectionCalls[1].ContentHash)
+	assert.Equal(t, []string{rejectionsBundleURI}, reader.calls, "the bundle is read once, for the fixable nodes")
+	assert.Equal(t, []fakeGraphWrite{{Marker: rejectionsMarker("1-0", nil), Final: true}}, u.writes,
+		"one final Write: the marker commits with the fixable nodes' rejections")
+	assert.True(t, u.isRecorded(rejectionsMarker("1-0", nil)))
+}
+
+// A trigger whose every node is unfixable has nothing for the case base: it
+// is not an error, so the message is acknowledged, and the marker alone is
+// written (in one final Write) so a redelivery finds the message processed.
+// The code bundle is not read: no node of the message needs its code.
+func TestRejectionsHandler_AllUnfixableRecordsOnlyTheMarker(t *testing.T) {
+	repo := &fakeCaseBaseRepository{}
+	u := newCaseBaseUnitOfWork(repo)
+	reader := &fakeBundleReader{bundle: rejectionsBundle()}
+	handler := newRejectionsHandler(u, reader)
+
+	in := rejectionInput()
+	in.Nodes[0].Unfixable = true
+	in.Nodes = append(in.Nodes, domainEvent.RemediationRequestedNode{
+		NodeID: "analytics.orders", Category: "infra_transient", ErrorSignature: "sig-2",
+		Reason: "infra:oomkilled", Unfixable: true,
+	})
+
+	require.NoError(t, handler.Handle(context.Background(), caseBaseTenant, "1-0", nil, in))
+
+	assert.Empty(t, repo.recordRejectionCalls, "no :Rejection for an unfixable node")
+	assert.Empty(t, reader.calls, "no bundle is read for a message with nothing to record")
+	assert.Equal(t, []fakeGraphWrite{{Marker: rejectionsMarker("1-0", nil), Final: true}}, u.writes,
+		"the marker alone is written, in one final Write")
+	assert.True(t, u.isRecorded(rejectionsMarker("1-0", nil)))
+
+	require.NoError(t, handler.Handle(context.Background(), caseBaseTenant, "1-0", nil, in))
+	assert.Len(t, u.writes, 1, "a redelivery finds the marker and writes nothing")
 }
 
 func TestRejectionsHandler_EmptyNodesIsPermanent(t *testing.T) {
@@ -261,7 +329,7 @@ func TestRejectionsHandler_NodeAbsentFromBundleRecordsWithoutCode(t *testing.T) 
 	assert.True(t, u.isRecorded(rejectionsMarker("1-0", nil)))
 }
 
-// A payload missing an identity field, carrying no healable nodes, or an
+// A payload missing an identity field, carrying no nodes, or an
 // unparseable classified_at can never be fixed by redelivery: it is refused
 // as permanent before any marker lookup or transaction, and never reaches the
 // repository. An unparseable classified_at is caught here rather than left to
@@ -276,6 +344,14 @@ func TestRejectionsHandler_PoisonPayloadIsPermanent(t *testing.T) {
 		{"no nodes", func(in *domainEvent.RemediationRequested) { in.Nodes = nil }},
 		{"empty node_id", func(in *domainEvent.RemediationRequested) { in.Nodes[0].NodeID = "" }},
 		{"empty error_signature", func(in *domainEvent.RemediationRequested) { in.Nodes[0].ErrorSignature = "" }},
+		{"empty node_id on an unfixable node", func(in *domainEvent.RemediationRequested) {
+			in.Nodes[0].Unfixable = true
+			in.Nodes[0].NodeID = ""
+		}},
+		{"empty error_signature on an unfixable node", func(in *domainEvent.RemediationRequested) {
+			in.Nodes[0].Unfixable = true
+			in.Nodes[0].ErrorSignature = ""
+		}},
 		{"unparseable classified_at", func(in *domainEvent.RemediationRequested) { in.ClassifiedAt = "not-a-time" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

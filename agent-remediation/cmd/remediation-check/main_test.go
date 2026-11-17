@@ -53,15 +53,30 @@ func TestFiles_BuiltinDirPasses(t *testing.T) {
 	require.Equal(t, 0, code, "stderr: %s\nstdout: %s", stderr, stdout)
 	assert.Empty(t, r.Errors)
 	assert.Empty(t, r.Warnings)
-	// 1 flow, 10 types, 10 type fixtures and 7 flow fixtures.
-	assert.Equal(t, 28, r.Files)
-	// 10 types x 8 type scenarios, then 1 flow x 7 flow scenarios.
-	require.Len(t, r.Scenarios, 87)
+	// 1 flow, 10 types, 10 type fixtures and 8 flow fixtures.
+	assert.Equal(t, 29, r.Files)
+	// 10 types x 8 type scenarios, then 1 flow x 8 flow scenarios.
+	require.Len(t, r.Scenarios, 88)
 	for _, s := range r.Scenarios {
 		assert.True(t, s.OK, "%s %s: %s", s.Type, s.Scenario, s.Error)
 		assert.Empty(t, s.Error)
 	}
 	assert.Equal(t, "rejected-release", r.Scenarios[len(r.Scenarios)-1].Type)
+}
+
+// The report names the flow scenario in which the classifier marked the node
+// unfixable, and it passes.
+func TestFiles_TheReportHoldsTheUnfixableFlowScenario(t *testing.T) {
+	_, stdout, _ := runFiles(t, "files", builtinDir)
+
+	var found []wireScenario
+	for _, s := range decode(t, stdout).Scenarios {
+		if s.Type == "rejected-release" && s.Scenario == "unfixable" {
+			found = append(found, s)
+		}
+	}
+	require.Len(t, found, 1)
+	assert.True(t, found[0].OK, found[0].Error)
 }
 
 func TestFiles_OutputKeysFollowTheDocumentedOrder(t *testing.T) {

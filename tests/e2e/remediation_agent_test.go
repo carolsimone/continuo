@@ -28,7 +28,7 @@ import (
 //	POST /releases (service-2, ftable_e as changed node)
 //	→ validation fails (ftable_e references public.wrong_name)
 //	→ release reaches "rejected" status
-//	→ remediation classifier emits one remediation.requested:v2 for the release
+//	→ remediation classifier emits one remediation.requested:v3 for the release
 //	→ agent-remediation consumes it and groups its failing set
 //	→ calls stub-llm (propose_fix tool call → deterministic SQL fix)
 //	→ writes proposed SQL and diff to S3
@@ -97,7 +97,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	//    service_prod for every baseline service.
 	// Tap the remediation streams before the release is posted: the trim loop
 	// removes consumed entries, so the polls below read what the taps recorded.
-	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV2)
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV3)
 	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationProposedV1)
 
 	resetReleaseControllerQueue(t, ctx, clients)
@@ -119,29 +119,10 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	// 5. Wait for the release to reach "rejected" status.
 	waitForReleaseRejected(t, ctx, clients, releaseID, 10*time.Minute)
 
-	// 6. Poll remediation.requested:v2 to confirm the classifier consumed the
+	// 6. Poll remediation.requested:v3 to confirm the classifier consumed the
 	//    rejection and emitted the release's batched trigger with an entry for
 	//    ftable_e. This is a precondition for the agent-remediation to pick it up.
-	pollUntil(t, ctx, 3*time.Minute, 2*time.Second, func() (bool, error) {
-		msgs := requestedTap.Entries()
-		for _, msg := range msgs {
-			raw, ok := msg.Values["payload"].(string)
-			if !ok || raw == "" {
-				continue
-			}
-			var p remediationRequestedPayload
-			if json.Unmarshal([]byte(raw), &p) != nil {
-				continue
-			}
-			if p.ReleaseID != releaseID {
-				continue
-			}
-			if _, ok := p.findNode(ftableEUniqueID); ok {
-				return true, nil
-			}
-		}
-		return false, nil
-	}, fmt.Sprintf("timeout waiting for %s for release %s node %s", streams.RemediationRequestedV2, releaseID, ftableEUniqueID))
+	waitForBatchedTrigger(t, ctx, requestedTap, releaseID, []string{ftableEUniqueID}, 3*time.Minute)
 
 	// 7. Poll remediation.proposed:v1. The agent-remediation consumes the trigger,
 	//    calls the stub-llm (which returns a deterministic propose_fix tool call),

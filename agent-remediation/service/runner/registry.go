@@ -105,7 +105,7 @@ func NewRegistry(c Collaborators) *Registry {
 	r.register(cross.NewOneManifestKind(c.ServiceRepoPaths, c.Logger))
 	r.register(gate.NewVerificationRun(c.Evidence, c.Artifacts, c.Releases, c.Pipeline, c.ServiceRepoPaths, c.Clock, c.VerificationTimeout, c.Logger))
 	r.register(outputs.NewPullRequest(c.Clock))
-	r.register(outputs.NewHandOver(c.Clock))
+	r.register(outputs.NewHandOver())
 	return r
 }
 

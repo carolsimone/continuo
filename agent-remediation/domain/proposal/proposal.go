@@ -6,6 +6,8 @@ package proposal
 import (
 	"sort"
 	"time"
+
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // Status is the lifecycle outcome of one proposal attempt.
@@ -65,7 +67,11 @@ type FileEdit struct {
 // failed, skipped, or escalated, with the reason for that outcome.
 type NodeOutcome struct {
 	Status Status
+	// Reason is the human-readable message for the outcome.
 	Reason string
+	// Code is the reason the node was handed over when its outcome is not part
+	// of a verified fix. It is empty when the outcome carries no code.
+	Code model.HandoverReason
 }
 
 // Verification is one fix-verification run posted to judge the edits made to

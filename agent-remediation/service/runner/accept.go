@@ -41,8 +41,13 @@ type Accepted struct {
 // Accept records a heal trigger as a running remediation, in one transaction
 // that also claims the message: a redelivered message, or the same outbox entry
 // republished under a new message id, commits nothing and returns nil. A
-// trigger for a release and round that already has a remediation only marks
-// its message completed. A trigger with no failing node is acknowledged with
+// trigger for a release and round that already has a remediation
+// (acceptExisting) resumes it when it ended as a system failure, which is what
+// a redrive of its dead letter delivers: a message with a new id and a new
+// outbox entry id. The remediation then goes on from the try and step it
+// stopped at, with no second remediation. A trigger for a remediation that
+// runs or is done, or for a round a later round replaced, only marks its
+// message completed. A trigger with no failing node is acknowledged with
 // nothing written. The work itself starts when a worker drives the
 // remediation.
 func (r *Runner) Accept(ctx context.Context, a Accepted) error {
@@ -67,7 +72,7 @@ func (r *Runner) Accept(ctx context.Context, a Accepted) error {
 
 	msgID, dup, err := messageprocessing.DedupWithOutboxEntryID(
 		ctx, u.MessageProcessingRepo(), r.logger,
-		a.MessageID, streams.RemediationRequestedV2, a.Payload, a.OutboxEntryID,
+		a.MessageID, streams.RemediationRequestedV3, a.Payload, a.OutboxEntryID,
 	)
 	if err != nil {
 		return fmt.Errorf("dedup: %w", err)
@@ -96,9 +101,11 @@ func (r *Runner) Accept(ctx context.Context, a Accepted) error {
 	if err != nil {
 		return fmt.Errorf("create remediation: %w", err)
 	}
+	resumed := false
 	if !created {
-		r.logger.Info("remediation.requested trigger for a release round that already has a remediation — nothing to start",
-			"message_id", a.MessageID, "release", t.ReleaseID, "round", t.Round)
+		if resumed, err = r.acceptExisting(ctx, u, t, a); err != nil {
+			return err
+		}
 	}
 	if err := u.MessageProcessingRepo().UpdateState(ctx, msgID, messageprocessing.StateCompleted); err != nil {
 		return fmt.Errorf("mark completed: %w", err)
@@ -106,8 +113,11 @@ func (r *Runner) Accept(ctx context.Context, a Accepted) error {
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit (accept): %w", err)
 	}
-	if created {
+	switch {
+	case created:
 		r.logger.Info("remediation accepted", "remediation", rem.ID, "release", t.ReleaseID, "round", t.Round, "nodes", len(t.Nodes))
+	case resumed:
+		r.logger.Info("remediation resumed by a redriven trigger", "message_id", a.MessageID, "release", t.ReleaseID, "round", t.Round)
 	}
 	return nil
 }

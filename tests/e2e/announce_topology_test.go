@@ -189,18 +189,6 @@ func waitForAnnouncedTopology(t *testing.T, ctx context.Context, clients *testCl
 	})
 }
 
-// entryFields returns a stream entry's string-valued fields, the form the
-// pkg/events decoders read.
-func entryFields(msg goredis.XMessage) map[string]string {
-	out := make(map[string]string, len(msg.Values))
-	for k, v := range msg.Values {
-		if s, ok := v.(string); ok {
-			out[k] = s
-		}
-	}
-	return out
-}
-
 // findPromotionEntry returns the release.promoted:v2 entry the tap recorded for
 // releaseID.
 func findPromotionEntry(t *testing.T, ctx context.Context, tap *streamTap, releaseID string) goredis.XMessage {

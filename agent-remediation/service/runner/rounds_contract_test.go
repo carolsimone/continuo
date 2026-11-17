@@ -21,6 +21,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 const (
@@ -187,14 +188,16 @@ func TestContractPackages_ARefusalInTheLastRoundHandsTheClusterOver(t *testing.T
 	assert.Equal(t, 2, c.Round)
 	require.NotNil(t, c.Outcome)
 	assert.Equal(t, proposal.StatusFailed, c.Outcome.Status)
-	assert.Contains(t, c.Outcome.Reason, "pre-flight rounds spent: ")
+	assert.Equal(t, model.HandoverReasonPreflightRoundsSpent, c.Outcome.Code)
 	assert.Contains(t, c.Outcome.Reason, toolRefusal)
 	assert.Empty(t, h.pipeline.runs())
 }
 
 // A release that records no package list of the service's image is known
 // before any draft: the image_packages context step declines the cluster with
-// the reason, no model is called and nothing is packed.
+// the reason, no model is called and nothing is packed. The node is handed
+// over with the code declined, on the attempt row and on the
+// remediation.handed_over event.
 func TestImagePackages_AReleaseWithNoListDeclinesBeforeTheModel(t *testing.T) {
 	packager := &refusingPackager{}
 	h := newHarness(t, withContractType(2, packager))
@@ -210,9 +213,14 @@ func TestImagePackages_AReleaseWithNoListDeclinesBeforeTheModel(t *testing.T) {
 	c := h.cluster(id, 1, 1)
 	assert.Equal(t, remediation.ClusterHandedOver, c.Status)
 	require.NotNil(t, c.Outcome)
-	assert.Equal(t, proposal.StatusSkipped, c.Outcome.Status)
-	assert.Equal(t, noPackages.Error(), c.Outcome.Reason)
+	want := proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: noPackages.Error(), Code: model.HandoverReasonDeclined}
+	assert.Equal(t, &want, c.Outcome)
 	assert.Empty(t, h.pipeline.runs())
+	p := h.attempt(1).Proposal
+	assert.Equal(t, proposal.StatusSkipped, p.Status)
+	assert.Equal(t, map[string]proposal.NodeOutcome{contractNodeID: want}, p.NodeOutcomes)
+	assert.Equal(t, handedOverOf(id, 1, 1, handedOverNode(contractNodeID, want)), h.handedOverEvent())
+	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 }
 
 // A read of the package list a retry may clear is the context step's error:
@@ -238,8 +246,9 @@ func TestImagePackages_AReadErrorIsRetriedNotDeclined(t *testing.T) {
 
 // A checked cluster whose contract_packages row holds bytes that are not an
 // ODCS producer bundle fails its try when the try reaches the gate: the gate
-// submits no run, and the next try starts or the tries being spent the failing
-// set is handed over.
+// submits no run, its drafted member fails with unverifiable_edits, and the
+// next try starts or, the tries being spent, the failing set is handed over
+// with unverifiable_edits and the refusal as why the last try failed.
 func TestGate_ACheckedClusterHoldingANonBundleContractFailsTheTry(t *testing.T) {
 	const notABundle = "version: 1\nnodes:\n  - id: sales.loader\n    script: scripts/loader.py\n"
 	h := newHarness(t, withTries(1), withContractType(1, &refusingPackager{}))
@@ -276,8 +285,17 @@ func TestGate_ACheckedClusterHoldingANonBundleContractFailsTheTry(t *testing.T) 
 	p := h.attempt(1).Proposal
 	assert.Equal(t, proposal.StatusFailed, p.Status)
 	assert.Equal(t, reason, p.Rationale)
-	assert.Equal(t, map[string]proposal.NodeOutcome{"sales.loader": {Status: proposal.StatusFailed, Reason: reason}}, p.NodeOutcomes)
+	refused := proposal.NodeOutcome{Status: proposal.StatusFailed, Reason: reason, Code: model.HandoverReasonUnverifiableEdits}
+	assert.Equal(t, map[string]proposal.NodeOutcome{contractNodeID: refused}, p.NodeOutcomes)
 	assert.Equal(t, remediation.TryFailed, h.try(id, 1).Status)
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status, "the only try being spent, the remediation ends")
-	assert.Equal(t, proposal.StatusEscalated, h.attempt(2).Proposal.Status, "the failing set is handed over")
+	escalated := h.attempt(2).Proposal
+	assert.Equal(t, proposal.StatusEscalated, escalated.Status, "the failing set is handed over")
+	unverifiable := proposal.NodeOutcome{
+		Status: proposal.StatusEscalated,
+		Reason: "tried 1 time; the last try failed: " + reason,
+		Code:   model.HandoverReasonUnverifiableEdits,
+	}
+	assert.Equal(t, map[string]proposal.NodeOutcome{contractNodeID: unverifiable}, escalated.NodeOutcomes)
+	assert.Equal(t, handedOverOf(id, 1, 1, handedOverNode(contractNodeID, unverifiable)), h.handedOverEvent())
 }

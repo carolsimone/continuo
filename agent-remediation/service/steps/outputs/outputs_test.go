@@ -16,6 +16,9 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/outputs"
+	"github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 )
 
@@ -94,7 +97,7 @@ func TestPullRequest_Meta(t *testing.T) {
 }
 
 func TestHandOver_Meta(t *testing.T) {
-	m := outputs.NewHandOver(fixedClock{}).Meta()
+	m := outputs.NewHandOver().Meta()
 	assert.Equal(t, "hand_over", string(m.Name))
 	assert.Equal(t, step.KindOutput, m.Kind)
 	assert.NotEmpty(t, m.Description)
@@ -144,9 +147,13 @@ func TestPullRequest_MarksTheFixVerifiedAndEnqueuesTheProposedEvent(t *testing.T
 	assert.Equal(t, "pending", e.Status)
 	assert.Nil(t, e.MessageProcessingID)
 
-	// The payload is built from the row's fields, as handlers.Enqueue builds it.
+	// The payload is stored under the remediation's tenant and built from the
+	// row's fields, as handlers.Enqueue builds it.
+	tenantID, body, err := outbox.UnwrapTenant(e.Payload)
+	require.NoError(t, err)
+	assert.Equal(t, rem.TenantID, tenantID)
 	var got map[string]any
-	require.NoError(t, json.Unmarshal(e.Payload, &got))
+	require.NoError(t, json.Unmarshal(body, &got))
 	assert.Equal(t, map[string]any{
 		"event_id":          eventID.String(),
 		"source":            "validation",
@@ -187,79 +194,115 @@ func TestPullRequest_ASecondPassOnAFinalizedRowWritesNothing(t *testing.T) {
 	assert.Equal(t, proposal.StatusProposed, store.Proposals()[0].Proposal.Status)
 }
 
-func TestHandOver_WritesTheEscalatedRowForTheWholeFailingSet(t *testing.T) {
-	store := memory.NewStore()
+// handedOverEntryID is the id of the outbox entry that carries the
+// remediation.handed_over:v1 event of remediation id.
+func handedOverEntryID(id uuid.UUID) uuid.UUID {
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte("handed_over|"+id.String()))
+}
+
+// endedRemediation is a remediation of tenant acme that made three tries.
+func endedRemediation(t *testing.T, store *memory.Store) remediation.Remediation {
+	t.Helper()
 	rem := newRemediation(t, store)
-	// Two terminal attempts of round 1: the next attempt is 3.
-	for i, st := range []proposal.Status{proposal.StatusFailed, proposal.StatusFailed} {
-		p := verifying(rem)
-		p.Attempt, p.Status = i+1, st
-		seed(t, store, p)
+	rem.TenantID = "acme"
+	rem.Flow = "rejected-release"
+	rem.CurrentTry = 3
+	return rem
+}
+
+// handedOver is two nodes left to a human, sorted by node id.
+func handedOver() []remediation.HandOver {
+	return []remediation.HandOver{
+		{NodeID: "model.a", Code: model.HandoverReasonTriesSpent, Message: "tried 3 times; the last try failed: model.a: still broken"},
+		{NodeID: "model.b", Code: model.HandoverReasonDeclined, Message: "the compile error names no source file, so there is no file to fix"},
 	}
+}
 
+func giveUp(t *testing.T, store *memory.Store, in step.OutputInput) error {
+	t.Helper()
 	u := memory.NewUnitOfWork(store)
 	require.NoError(t, u.Begin(ctx))
-	require.NoError(t, outputs.NewHandOver(fixedClock{}).GiveUp(ctx, u, step.OutputInput{Remediation: rem, Trigger: trigger()}))
-	require.NoError(t, u.Commit())
+	defer func() { _ = u.Rollback() }()
+	if err := outputs.NewHandOver().GiveUp(ctx, u, in); err != nil {
+		return err
+	}
+	return u.Commit()
+}
 
-	rows := store.Proposals()
-	require.Len(t, rows, 3)
-	got := rows[2].Proposal
-	assert.Equal(t, 3, got.Attempt)
-	assert.Equal(t, proposal.StatusEscalated, got.Status)
-	assert.Equal(t, rem.ID.String(), got.RemediationID)
-	assert.Equal(t, "validation", got.Source)
-	assert.Equal(t, "rel-1", got.ReleaseID)
-	assert.Equal(t, 1, got.RemediationRound)
-	assert.Equal(t, []string{"model.a", "model.b"}, got.ResolvedNodeIDs)
-	assert.Equal(t, "model.a", got.NodeID)
-	assert.Equal(t, "sig-a", got.ErrorSignature)
-	assert.Equal(t, []string{"finance", "sales"}, got.Services)
-	assert.Equal(t, map[string]proposal.NodeOutcome{
-		"model.a": {Status: proposal.StatusEscalated},
-		"model.b": {Status: proposal.StatusEscalated},
-	}, got.NodeOutcomes)
-	assert.Empty(t, got.Rationale)
-	assert.Equal(t, now, got.CreatedAt)
+func TestHandOver_EmitsOneEventWithEveryHandedOverNode(t *testing.T) {
+	store := memory.NewStore()
+	rem := endedRemediation(t, store)
+
+	require.NoError(t, giveUp(t, store, step.OutputInput{Remediation: rem, Trigger: trigger(), HandedOver: handedOver()}))
+
+	assert.Empty(t, store.Proposals(), "the output writes no proposal row")
+	entries := store.OutboxEntries()
+	require.Len(t, entries, 1)
+	e := entries[0]
+	assert.Equal(t, handedOverEntryID(rem.ID), e.ID)
+	assert.Equal(t, event.AggregateType, e.AggregateType)
+	assert.Equal(t, event.AggregateIDForRelease("rel-1"), e.AggregateID)
+	assert.Equal(t, event.HandedOverEventType, e.EventType)
+	assert.Equal(t, streams.RemediationHandedOverV1, e.StreamName)
+	assert.Equal(t, "pending", e.Status)
+	assert.Nil(t, e.MessageProcessingID)
+
+	tenantID, body, err := outbox.UnwrapTenant(e.Payload)
+	require.NoError(t, err)
+	assert.Equal(t, "acme", tenantID, "the event is stored under the remediation's tenant")
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(body, &got))
+	assert.Equal(t, map[string]any{
+		"remediation_id":    rem.ID.String(),
+		"release_id":        "rel-1",
+		"remediation_round": float64(1),
+		"flow":              "rejected-release",
+		"tries":             float64(3),
+		"nodes": []any{
+			map[string]any{"node_id": "model.a", "reason": string(model.HandoverReasonTriesSpent), "message": "tried 3 times; the last try failed: model.a: still broken"},
+			map[string]any{"node_id": "model.b", "reason": string(model.HandoverReasonDeclined), "message": "the compile error names no source file, so there is no file to fix"},
+		},
+	}, got)
+	var p events.RemediationHandedOver
+	require.NoError(t, json.Unmarshal(body, &p))
+	assert.Len(t, p.Nodes, 2)
+}
+
+// The entry id is derived from the remediation: two runs of one remediation's
+// end name the same entry, and the second collides with the first, so the
+// outbox keeps one row. Another remediation's event has another id.
+func TestHandOver_EventIdIsStableSoARerunEmitsOnce(t *testing.T) {
+	store := memory.NewStore()
+	rem := endedRemediation(t, store)
+	in := step.OutputInput{Remediation: rem, Trigger: trigger(), HandedOver: handedOver()}
+
+	require.NoError(t, giveUp(t, store, in))
+	require.Error(t, giveUp(t, store, in), "a rerun of the same end collides with the event already enqueued")
+
+	entries := store.OutboxEntries()
+	require.Len(t, entries, 1, "the outbox keeps one row")
+	assert.Equal(t, handedOverEntryID(rem.ID), entries[0].ID)
+
+	again := memory.NewStore()
+	require.NoError(t, giveUp(t, again, in))
+	require.Len(t, again.OutboxEntries(), 1)
+	assert.Equal(t, entries[0].ID, again.OutboxEntries()[0].ID, "another run of the same remediation's end names the same entry")
+
+	other := rem
+	other.ID = uuid.New()
+	require.NoError(t, giveUp(t, store, step.OutputInput{Remediation: other, Trigger: trigger(), HandedOver: handedOver()}))
+	entries = store.OutboxEntries()
+	require.Len(t, entries, 2)
+	assert.Equal(t, handedOverEntryID(other.ID), entries[1].ID)
+	assert.NotEqual(t, entries[0].ID, entries[1].ID, "another remediation's event has another id")
+}
+
+func TestHandOver_NoNodeToHandOverWritesNothing(t *testing.T) {
+	store := memory.NewStore()
+	rem := endedRemediation(t, store)
+
+	require.NoError(t, giveUp(t, store, step.OutputInput{Remediation: rem, Trigger: trigger()}))
+
 	assert.Empty(t, store.OutboxEntries())
-}
-
-func TestHandOver_CountsTheTerminalAttemptsOfEveryRoundUpToTheTriggersRound(t *testing.T) {
-	store := memory.NewStore()
-	rem := newRemediation(t, store)
-	p := verifying(rem)
-	p.Attempt, p.Status, p.RemediationRound = 1, proposal.StatusFailed, 1
-	seed(t, store, p)
-	p.Attempt, p.Status = 2, proposal.StatusEscalated
-	seed(t, store, p)
-
-	tr := trigger()
-	tr.Round = 2
-	u := memory.NewUnitOfWork(store)
-	require.NoError(t, u.Begin(ctx))
-	require.NoError(t, outputs.NewHandOver(fixedClock{}).GiveUp(ctx, u, step.OutputInput{Remediation: rem, Trigger: tr}))
-	require.NoError(t, u.Commit())
-
-	rows := store.Proposals()
-	require.Len(t, rows, 3)
-	assert.Equal(t, 3, rows[2].Proposal.Attempt)
-	assert.Equal(t, 2, rows[2].Proposal.RemediationRound)
-}
-
-func TestHandOver_FinalizesTheInFlightRowOfTheAttemptItChooses(t *testing.T) {
-	store := memory.NewStore()
-	rem := newRemediation(t, store)
-	p := verifying(rem)
-	p.Attempt, p.Status = 1, proposal.StatusGenerating
-	seed(t, store, p)
-
-	u := memory.NewUnitOfWork(store)
-	require.NoError(t, u.Begin(ctx))
-	require.NoError(t, outputs.NewHandOver(fixedClock{}).GiveUp(ctx, u, step.OutputInput{Remediation: rem, Trigger: trigger()}))
-	require.NoError(t, u.Commit())
-
-	rows := store.Proposals()
-	require.Len(t, rows, 1, "an in-flight row is not counted, so the escalated row finalizes it")
-	assert.Equal(t, proposal.StatusEscalated, rows[0].Proposal.Status)
-	assert.Equal(t, rem.ID.String(), rows[0].Proposal.RemediationID)
+	assert.Empty(t, store.Proposals())
 }

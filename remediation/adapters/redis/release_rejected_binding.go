@@ -24,11 +24,6 @@ type rejectedPayload struct {
 	Reason    string `json:"reason"` // one of the reject_reason vocabulary values (pkg/domain/model.RejectReason)
 	Repo      string `json:"repo"`
 	CommitSHA string `json:"commit_sha"`
-	// RemediationRound is set by release-controller on a
-	// remediation.retry_requested:v1 replay of this payload — a human's "try
-	// again" on the release. Absent (and thus zero) on the original
-	// release.rejected:v1 rejection, which is round 1.
-	RemediationRound int `json:"remediation_round"`
 	// CodeBundleURI locates the rejected release's code-bundle document,
 	// stamped by release-controller. Empty when the rejection carries no
 	// bundle: a compile- or parse-stage rejection precedes the parse that
@@ -126,36 +121,38 @@ func changedAncestors(in []changedAncestorPayload) []failure.ChangedAncestor {
 // false when the rejection is not remediable — a stage this build does not
 // know, or a stage-less reason that names no pipeline leg; the caller then
 // produces no evidence rather than misrouting it.
-func sourceFromPayload(stage, reason string) (failure.Source, bool) {
+func sourceFromPayload(stage, reason string) (pkg_model.RemediationSource, bool) {
 	switch stage {
 	case "parse":
-		return failure.SourceParse, true
+		return pkg_model.RemediationSourceParse, true
 	case "compile":
-		return failure.SourceCompile, true
+		return pkg_model.RemediationSourceCompile, true
 	case "seed_build":
-		return failure.SourceSeed, true
+		return pkg_model.RemediationSourceSeedBuild, true
 	case "validation":
-		return failure.SourceValidation, true
+		return pkg_model.RemediationSourceValidation, true
 	case "":
 		switch reason {
 		case "compile_failed":
-			return failure.SourceCompile, true
+			return pkg_model.RemediationSourceCompile, true
 		case "seed_build_failed":
-			return failure.SourceSeed, true
+			return pkg_model.RemediationSourceSeedBuild, true
 		case "validation_failed":
-			return failure.SourceValidation, true
+			return pkg_model.RemediationSourceValidation, true
 		case "duplicate_table":
-			return failure.SourceDuplicateTable, true
+			return pkg_model.RemediationSourceDuplicateTable, true
 		}
 	}
 	return "", false
 }
 
 // evidenceFromRejected translates a release.rejected:v1 payload into one
-// FailureEvidence per failed node. Nodes with status != "failed" are skipped,
-// and so is a node validation copied from its production table: no change to
-// the release's code fixes a copy of production. A rejection whose reason the
-// contract declares and marks not healable yields no evidence at all.
+// FailureEvidence per failed node, none of which names a remediation round: 0
+// is round 1, and a retry stamps its own round on the evidence. Nodes with
+// status != "failed" are skipped, and so is a node validation copied from its
+// production table: no change to the release's code fixes a copy of
+// production. A rejection whose reason the contract declares and marks not
+// healable yields no evidence at all.
 // The Source field is derived from the payload's stage field; when stage is
 // absent, the reason field is used as a fallback. FilePath and Service carry
 // whatever the rejection payload set directly (populated by release-controller
@@ -207,7 +204,6 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 		out = append(out, failure.FailureEvidence{
 			Source:               src,
 			ReleaseID:            p.ReleaseID,
-			RemediationRound:     p.RemediationRound,
 			NodeID:               n.NodeID,
 			RelationID:           n.RelationID,
 			DBTLogURI:            n.DBTLogURI,
@@ -229,44 +225,55 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 	return out, nil
 }
 
-// classifyRejectionMessages builds a StreamConsumer over the given stream and
-// consumer group that decodes each message with the release.rejected:v1
-// payload shape and classifies its whole failed-node set via one call to
-// handlers.ClassifyRejection, so one rejected release yields one batched
-// remediation.requested:v2 trigger. release.rejected:v1 and its per-round
-// retry replay on remediation.retry_requested:v1 share this exact shape (the
-// retry payload adds only the top-level remediation_round field), so one
-// handler serves both consumers. The consumer group is created idempotently
-// by StreamConsumer.Start; call Start(ctx) in a goroutine to begin consuming.
-func classifyRejectionMessages(rc *goredis.Client, stream, group string, deps handlers.Deps, logger *slog.Logger) *pkgredis.StreamConsumer {
-	return pkgredis.NewStreamConsumer(rc, stream, group, newRejectionHandler(stream, deps, logger), logger)
+// classifyRejectionBody classifies the failed-node set of one rejection with
+// one call to handlers.ClassifyRejection, so one rejected release yields one
+// batched remediation.requested:v3 trigger. A rejection that cannot be decoded
+// is a permanent failure: the error wraps events.ErrPermanent, so the consumer
+// dead-letters it. A rejection that yields no failed node to classify (a reason
+// the contract marks not healable, a shadow rejection, a stage this build does
+// not know, or only copies of production) is acknowledged with one DEBUG line
+// naming its release, stage and reason. round, when above 0, is the remediation
+// round the evidence is stamped with. Any error from classification is
+// returned as is, so the consumer redelivers it.
+func classifyRejectionBody(ctx context.Context, deps handlers.Deps, logger *slog.Logger, stream, tenantID string, rejection []byte, round int) error {
+	evs, err := evidenceFromRejected(rejection)
+	if err != nil {
+		return fmt.Errorf("%w: %s decode: %v", pkgevents.ErrPermanent, stream, err)
+	}
+	if len(evs) == 0 {
+		logNothingToClassify(ctx, logger, stream, rejection)
+		return nil
+	}
+	if round > 0 {
+		for i := range evs {
+			evs[i].RemediationRound = round
+		}
+	}
+	return handlers.ClassifyRejection(ctx, deps, tenantID, evs)
 }
 
 // newRejectionHandler returns the MessageHandler that classifies the failed
-// nodes of one release.rejected:v1-shaped message from the named stream. A
-// message with no payload field, or one whose payload cannot be decoded, is a
-// permanent failure: the handler returns events.ErrPermanent, so the consumer
-// dead-letters it. A message that yields no failed node to classify (a reason
-// the contract marks not healable, a shadow rejection, a stage this build does
-// not know, or only copies of production) is acknowledged with one DEBUG line
-// naming its release, stage and reason. Any error from classification is
-// returned as is, so the consumer redelivers it.
+// nodes of one release.rejected:v1 message from the named stream, under the
+// tenant the message names, or the default tenant when it names none. A message
+// with no payload field is a permanent failure, as is one whose payload cannot
+// be decoded (see classifyRejectionBody).
 func newRejectionHandler(stream string, deps handlers.Deps, logger *slog.Logger) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		raw, ok := msg.Values["payload"].(string)
 		if !ok {
 			return fmt.Errorf("%w: %s message has no payload field", pkgevents.ErrPermanent, stream)
 		}
-		evs, err := evidenceFromRejected([]byte(raw))
-		if err != nil {
-			return fmt.Errorf("%w: %s decode: %v", pkgevents.ErrPermanent, stream, err)
-		}
-		if len(evs) == 0 {
-			logNothingToClassify(ctx, logger, stream, []byte(raw))
-			return nil
-		}
-		return handlers.ClassifyRejection(ctx, deps, evs)
+		return classifyRejectionBody(ctx, deps, logger, stream, messageTenant(msg), []byte(raw), 0)
 	}
+}
+
+// messageTenant returns the tenant_id the message carries, or the default
+// tenant when it carries none.
+func messageTenant(msg goredis.XMessage) string {
+	if t, ok := msg.Values["tenant_id"].(string); ok && t != "" {
+		return t
+	}
+	return pkgevents.DefaultTenantID
 }
 
 // logNothingToClassify logs at DEBUG that a rejection yields no failed node to
@@ -289,5 +296,6 @@ func logNothingToClassify(ctx context.Context, logger *slog.Logger, stream strin
 // The consumer group is created idempotently by StreamConsumer.Start; call
 // Start(ctx) in a goroutine to begin consuming.
 func NewReleaseRejectedConsumer(rc *goredis.Client, deps handlers.Deps, logger *slog.Logger) *pkgredis.StreamConsumer {
-	return classifyRejectionMessages(rc, streams.ReleaseRejectedV1, streams.RemediationReleaseRejected, deps, logger)
+	return pkgredis.NewStreamConsumer(rc, streams.ReleaseRejectedV1, streams.RemediationReleaseRejected,
+		newRejectionHandler(streams.ReleaseRejectedV1, deps, logger), logger)
 }

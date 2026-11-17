@@ -15,6 +15,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/proposals"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // fakeSvc is a test double that implements grpcadapter.ProposalService.
@@ -236,6 +237,35 @@ func TestProposalsServer_GetProposal_HappyPath(t *testing.T) {
 	assert.Equal(t, "models/b.sql", p.Edits[1].Path)
 	assert.Equal(t, "s3://bucket/b.sql", p.Edits[1].ContentUri)
 	assert.Equal(t, "s3://bucket/b.diff", p.Edits[1].DiffUri)
+}
+
+// TestProposalsServer_MapsTheNodeOutcomeCode verifies that GetProposal and
+// ListProposals put the reason code of each node outcome on the wire beside its
+// status and reason, and that an outcome with no code leaves the field empty.
+func TestProposalsServer_MapsTheNodeOutcomeCode(t *testing.T) {
+	view := proposal.View{
+		ID:        "p-code",
+		ReleaseID: "rel-code",
+		NodeOutcomes: map[string]proposal.NodeOutcome{
+			"s.handed": {Status: proposal.StatusEscalated, Reason: "no type matches", Code: model.HandoverReasonNoType},
+			"s.fixed":  {Status: proposal.StatusProposed},
+		},
+	}
+	svc := &fakeSvc{getView: view, listViews: []proposal.View{view}}
+	s := grpcadapter.NewProposalsServer(svc)
+
+	got, err := s.GetProposal(context.Background(), &remediationv1.GetProposalRequest{Id: "p-code"})
+	require.NoError(t, err)
+	require.Len(t, got.NodeOutcomes, 2)
+	assert.Equal(t, "escalated", got.NodeOutcomes["s.handed"].Status)
+	assert.Equal(t, "no type matches", got.NodeOutcomes["s.handed"].Reason)
+	assert.Equal(t, string(model.HandoverReasonNoType), got.NodeOutcomes["s.handed"].Code)
+	assert.Empty(t, got.NodeOutcomes["s.fixed"].Code, "an outcome with no code carries an empty code")
+
+	list, err := s.ListProposals(context.Background(), &remediationv1.ListProposalsRequest{})
+	require.NoError(t, err)
+	require.Len(t, list.Proposals, 1)
+	assert.Equal(t, string(model.HandoverReasonNoType), list.Proposals[0].NodeOutcomes["s.handed"].Code)
 }
 
 // TestProposalsServer_GetProposal_PullRequestsAndPrServices verifies that

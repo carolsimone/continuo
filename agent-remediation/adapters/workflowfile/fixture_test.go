@@ -15,6 +15,8 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/conformance"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	"github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/events"
 )
 
 const typeFixtureYAML = `kind: fixture
@@ -147,6 +149,39 @@ trigger: { source: compile, release_id: rel-1, nodes: [{ node_id: svc }] }
 	assert.Nil(t, fixtures[0].DeclineBeforeModel)
 }
 
+// A failing node the classifier marked unfixable carries its reason and detail
+// into the trigger, whichever of the two classifier reasons it names, and a
+// node with no mark stays fixable.
+func TestLoadFixtures_ReadsAnUnfixableNode(t *testing.T) {
+	fsys := fstest.MapFS{"f.yaml": {Data: []byte(`kind: fixture
+version: 1
+flow: rejected-release
+scenario: unfixable
+trigger:
+  source: validation
+  release_id: rel-1
+  nodes:
+    - node_id: infra
+      unfixable: { reason: classifier_infra, detail: "could not connect to server: connection refused" }
+    - node_id: parse
+      unfixable:
+        reason: classifier_unhealable_parse
+        detail: the manifest cannot be read
+    - node_id: fixable
+`)}}
+
+	fixtures, err := LoadFixtures(fsys)
+
+	require.NoError(t, err)
+	require.Len(t, fixtures, 1)
+	assert.Equal(t, conformance.FlowUnfixable, fixtures[0].Scenario)
+	assert.Equal(t, []remediation.TriggerNode{
+		{NodeID: "infra", Unfixable: &remediation.Unfixable{Reason: model.HandoverReasonClassifierInfra, Detail: "could not connect to server: connection refused"}},
+		{NodeID: "parse", Unfixable: &remediation.Unfixable{Reason: model.HandoverReasonClassifierUnhealableParse, Detail: "the manifest cannot be read"}},
+		{NodeID: "fixable"},
+	}, fixtures[0].Trigger.Nodes)
+}
+
 func TestLoadFixtures_SkipsFlowsAndTypesAndLoadSkipsFixtures(t *testing.T) {
 	fsys := fstest.MapFS{
 		"flows/rejected-release.yaml":   {Data: []byte(flowYAML)},
@@ -226,6 +261,26 @@ func TestLoadFixtures_NamesTheFileAndLineOfEachProblem(t *testing.T) {
 			yaml: "kind: fixture\nversion: 1\ntype: x\ntrigger:\n  nodes:\n    - node_id: a\n    - category: compile\n",
 			want: []string{`f.yaml:7: a failing node of the trigger has no node_id`},
 		},
+		"an unknown unfixable reason": {
+			yaml: "kind: fixture\nversion: 1\ntype: x\ntrigger:\n  nodes:\n    - node_id: a\n      unfixable:\n        reason: cosmic_rays\n        detail: d\n",
+			want: []string{`f.yaml:8: unfixable reason "cosmic_rays" is not one a classifier gives (classifier_infra, classifier_unhealable_parse)`},
+		},
+		"an unfixable reason that is not a classifier's": {
+			yaml: "kind: fixture\nversion: 1\ntype: x\ntrigger:\n  nodes:\n    - node_id: a\n      unfixable: { reason: tries_spent, detail: d }\n",
+			want: []string{`f.yaml:7: unfixable reason "tries_spent" is not one a classifier gives`},
+		},
+		"an unfixable mark with no reason": {
+			yaml: "kind: fixture\nversion: 1\ntype: x\ntrigger:\n  nodes:\n    - node_id: a\n      unfixable: { detail: d }\n",
+			want: []string{`f.yaml:7: unfixable reason "" is not one a classifier gives`},
+		},
+		"an unknown field of the unfixable mark": {
+			yaml: "kind: fixture\nversion: 1\ntype: x\ntrigger:\n  nodes:\n    - node_id: a\n      unfixable:\n        reason: classifier_infra\n        why: d\n",
+			want: []string{`f.yaml:9: field "why" is not known here (allowed: reason, detail)`},
+		},
+		"an unknown unfixable reason in the patch": {
+			yaml: "kind: fixture\nversion: 1\ntype: x\ntrigger: { nodes: [{ node_id: a }] }\ndecline_before_model:\n  node:\n    unfixable: { reason: cosmic_rays, detail: d }\n",
+			want: []string{`f.yaml:7: unfixable reason "cosmic_rays" is not one a classifier gives`},
+		},
 		"a value of the wrong type": {
 			yaml: "kind: fixture\nversion: 1\ntype: x\ntrigger: { nodes: [{ node_id: a }] }\nrepo_files: [a, b]\n",
 			want: []string{`f.yaml:5:`},
@@ -261,7 +316,8 @@ func TestLoadFixtures_ReportsEveryBadFixture(t *testing.T) {
 }
 
 // filled sets every field of v to a value no zero value equals: a string to
-// its field's JSON name, an int to 7, a slice to one filled element.
+// its field's JSON name, an int to 7, a slice to one filled element, a pointer
+// to a filled value.
 func filled(v reflect.Value, name string) {
 	switch v.Kind() {
 	case reflect.String:
@@ -271,6 +327,9 @@ func filled(v reflect.Value, name string) {
 	case reflect.Slice:
 		v.Set(reflect.MakeSlice(v.Type(), 1, 1))
 		filled(v.Index(0), name)
+	case reflect.Pointer:
+		v.Set(reflect.New(v.Type().Elem()))
+		filled(v.Elem(), name)
 	case reflect.Struct:
 		for i := range v.NumField() {
 			tag, _, _ := strings.Cut(v.Type().Field(i).Tag.Get("json"), ",")
@@ -281,25 +340,39 @@ func filled(v reflect.Value, name string) {
 	}
 }
 
-// A fixture's trigger takes every field of the remediation.requested:v2
-// payload, under its payload name, and keeps each value: a field the payload
-// gains must be added to the fixture format too, or this fails.
-func TestLoadFixtures_TheTriggerTakesEveryFieldOfTheV2Payload(t *testing.T) {
-	var dto serialization.RemediationRequestedV2DTO
-	filled(reflect.ValueOf(&dto).Elem(), "")
-	payload, err := json.Marshal(dto)
+// A fixture's trigger takes every field of the remediation.requested payload a
+// trigger carries, under its payload name, and keeps each value: a field the
+// payload gains must be added to the fixture format too, or this fails. A
+// trigger carries no classification time, so that payload field is left out. A
+// node's unfixable mark takes a reason a classifier gives, the one value the
+// fixture format accepts.
+func TestLoadFixtures_TheTriggerTakesEveryFieldOfThePayload(t *testing.T) {
+	var p events.RemediationRequested
+	filled(reflect.ValueOf(&p).Elem(), "")
+	require.NotEmpty(t, p.Nodes)
+	for i := range p.Nodes {
+		require.NotNil(t, p.Nodes[i].Unfixable, "the filled payload marks its nodes unfixable")
+		p.Nodes[i].Unfixable.Reason = string(model.HandoverReasonClassifierInfra)
+	}
+	var want map[string]any
+	filledJSON, err := json.Marshal(p)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(filledJSON, &want))
+	delete(want, "classified_at")
+	payload, err := json.Marshal(want)
 	require.NoError(t, err)
 	doc := "kind: fixture\nversion: 1\ntype: x\ntrigger: " + string(payload) + "\n"
 
 	fixtures, err := LoadFixtures(fstest.MapFS{"f.yaml": {Data: []byte(doc)}})
 	require.NoError(t, err)
 	require.Len(t, fixtures, 1)
-	encoded, err := serialization.EncodeRemediationRequestedV2(fixtures[0].Trigger)
+	encoded, err := serialization.EncodeTrigger(fixtures[0].Trigger)
 	require.NoError(t, err)
 
-	var want, got map[string]any
-	require.NoError(t, json.Unmarshal(payload, &want))
+	var got map[string]any
 	require.NoError(t, json.Unmarshal(encoded, &got))
+	assert.Equal(t, "", got["classified_at"], "a trigger has no classification time")
+	delete(got, "classified_at")
 	assert.Equal(t, want, got)
 }
 

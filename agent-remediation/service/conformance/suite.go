@@ -12,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // Scenario names one situation a type or a flow is run through.
@@ -28,17 +29,23 @@ const (
 	// with the first round's calls and no more.
 	PreflightRevisionPasses Scenario = "preflight_revision_passes"
 	// PreflightRoundsSpent: pre-flight refuses the draft of every round the
-	// type allows.
+	// type allows. The members of a single or a cross-service cluster are
+	// handed over as preflight_rounds_spent, in one remediation.handed_over
+	// event. The members of a shared-upstream cluster each take their own type
+	// and are proposed.
 	PreflightRoundsSpent Scenario = "preflight_rounds_spent"
 	// GateFailsNextTryLearns: the first try's verification fails, the next
 	// try's first request shows why, and its verification passes. In a flow
 	// of one try there is no next try: the failed attempt is handed over.
 	GateFailsNextTryLearns Scenario = "gate_fails_next_try_learns"
 	// TriesSpent: every try's verification fails until the flow's tries are
-	// spent.
+	// spent. The failing set is handed over as tries_spent, in one
+	// remediation.handed_over event that counts the tries, and the journal
+	// holds every try.
 	TriesSpent Scenario = "tries_spent"
 	// DeclinesBeforeModel: a context step declines before the model is
-	// called.
+	// called. The cluster's members are handed over as declined, with no
+	// model call and no later try, in one remediation.handed_over event.
 	DeclinesBeforeModel Scenario = "declines_before_model"
 	// ModelDeclines: the model first answers that it cannot fix the node, with
 	// a low confidence or no edit, which pre-flight refuses, and its revision
@@ -468,6 +475,7 @@ func (sr *scenarioRun) expectType(files workflow.Set, f Fixture, typ workflow.Ty
 			e.nodes(as[1], proposal.StatusProposed)
 		}
 		e.proposedEvents(1)
+		e.noHandedOver()
 		e.nextTryShownGateErrors(first, plan.firstTryCalls, f.GateErrors)
 	case TriesSpent:
 		e.triesSpent(f, plan)
@@ -478,7 +486,7 @@ func (sr *scenarioRun) expectType(files workflow.Set, f Fixture, typ workflow.Ty
 			e.that(!e.reachedModel(first, typ), "the upstream cluster that declined before the model reached it")
 		case workflow.ClusterCrossService:
 			if as := e.attempts(proposal.StatusSkipped); len(as) == 1 {
-				e.membersSkipped(first, as[0])
+				e.membersSkipped(first, as[0], model.HandoverReasonDeclined)
 			}
 			e.that(!e.reachedModel(first, typ), "the upstream cluster that declined before the model reached it")
 			e.modelCalls(0)
@@ -492,8 +500,10 @@ func (sr *scenarioRun) expectType(files workflow.Set, f Fixture, typ workflow.Ty
 // refusedEveryRound expects pre-flight to have refused the first cluster's
 // draft in every round its type allows, with the plan's calls of one try, and
 // the cluster to have ended by its shape: a shared-upstream cluster's members
-// each ran their own type, a cross-service cluster's members were skipped, and
-// a single cluster was handed over with its last round's first finding.
+// each ran their own type, a cross-service cluster's members were skipped with
+// the code preflight_rounds_spent and the last round's first finding in their
+// reason, and a single cluster was handed over with its last round's first
+// finding.
 func (e *expectation) refusedEveryRound(files workflow.Set, first remediation.Cluster, typ workflow.Type, plan typePlan) {
 	e.roundsSpent(first, typ, plan.firstTryCalls)
 	switch typ.Match.Cluster {
@@ -501,8 +511,12 @@ func (e *expectation) refusedEveryRound(files workflow.Set, first remediation.Cl
 		e.membersRanTheirTypes(files, first)
 	case workflow.ClusterCrossService:
 		if as := e.attempts(proposal.StatusSkipped); len(as) == 1 {
-			e.membersSkipped(first, as[0])
+			e.membersSkipped(first, as[0], model.HandoverReasonPreflightRoundsSpent)
 		}
+		finding, ok := e.firstFinding(first, typ)
+		e.that(ok, "pre-flight refused nothing in cluster %d", first.Cluster)
+		e.that(first.Outcome != nil && strings.HasSuffix(first.Outcome.Reason, ": "+finding.Message),
+			"cluster %d ended with %+v, want a reason that ends with the first finding %q", first.Cluster, first.Outcome, finding.Message)
 		e.modelCalls(plan.firstTryCalls)
 	default:
 		e.singleHandedOver(first, typ, true)
@@ -510,13 +524,18 @@ func (e *expectation) refusedEveryRound(files workflow.Set, first remediation.Cl
 }
 
 // triesSpent expects every one of the plan's tries to have failed its
-// verification with the fixture's gate errors, the failing set handed over,
-// and no proposal.
+// verification with the fixture's gate errors, the journal to hold each try,
+// the failing set handed over as tries_spent by one remediation.handed_over
+// event that counts the tries, and no proposal.
 func (e *expectation) triesSpent(f Fixture, plan typePlan) {
 	failed := slices.Repeat([]proposal.Status{proposal.StatusFailed}, plan.tries)
 	as := e.attempts(append(failed, proposal.StatusEscalated)...)
 	for _, a := range as[:min(plan.tries, len(as))] {
 		e.verifyError(a, f.GateErrors)
+	}
+	e.everyTryFailed(plan.tries)
+	if len(as) == plan.tries+1 {
+		e.handedOver(as[plan.tries], plan.tries, codes(model.HandoverReasonTriesSpent, e.trigger.NodeIDs()...))
 	}
 	e.proposedEvents(0)
 }

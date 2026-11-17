@@ -107,6 +107,44 @@ func (r *remediationRepository) FindByRelease(_ context.Context, tenantID, relea
 	return out, found, err
 }
 
+// LockByRelease reads the remediation of the key as Load does. A unit of work
+// holds the store's lock from Begin to Commit or Rollback, which is the lock
+// on every row.
+func (r *remediationRepository) LockByRelease(_ context.Context, tenantID, releaseID string, round int) (remediation.Snapshot, bool, error) {
+	var (
+		snap  remediation.Snapshot
+		found bool
+	)
+	err := r.gate(func(d *data) error {
+		for _, rem := range d.remediations {
+			if rem.TenantID != tenantID || rem.ReleaseID != releaseID || rem.Round != round {
+				continue
+			}
+			var err error
+			snap, err = d.snapshot(rem)
+			found = err == nil
+			return err
+		}
+		return nil
+	})
+	return snap, found, err
+}
+
+// HasLaterRound reports whether the tenant's release has a remediation of a
+// round after round.
+func (r *remediationRepository) HasLaterRound(_ context.Context, tenantID, releaseID string, round int) (bool, error) {
+	var later bool
+	err := r.gate(func(d *data) error {
+		for _, rem := range d.remediations {
+			if rem.TenantID == tenantID && rem.ReleaseID == releaseID && rem.Round > round {
+				later = true
+			}
+		}
+		return nil
+	})
+	return later, err
+}
+
 // snapshot loads one remediation with its current try, clusters and steps. It
 // errors when current_try names a try that does not exist.
 func (d *data) snapshot(rem *remediation.Remediation) (remediation.Snapshot, error) {

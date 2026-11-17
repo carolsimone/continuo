@@ -8,45 +8,6 @@ import (
 	"github.com/carolsimone/continuo/catalog/domain/event"
 )
 
-// RemediationRequestedNodeDTO is the JSON shape of one classified failure.
-type RemediationRequestedNodeDTO struct {
-	NodeID         string `json:"node_id"`
-	Category       string `json:"category"`
-	ErrorSignature string `json:"error_signature"`
-	Reason         string `json:"reason"`
-	ErrorExcerpt   string `json:"error_excerpt"`
-	DBTLogURI      string `json:"dbt_log_uri"`
-}
-
-// RemediationRequestedDTO is the JSON shape of the remediation.requested:v2 payload.
-type RemediationRequestedDTO struct {
-	EventID       string                        `json:"event_id"`
-	Source        string                        `json:"source"`
-	ReleaseID     string                        `json:"release_id"`
-	CodeBundleURI string                        `json:"code_bundle_uri"`
-	ClassifiedAt  string                        `json:"classified_at"`
-	Nodes         []RemediationRequestedNodeDTO `json:"nodes"`
-}
-
-// ToDomain maps a decoded DTO back to the domain event.
-func (d RemediationRequestedDTO) ToDomain() event.RemediationRequested {
-	var nodes []event.RemediationRequestedNode
-	if d.Nodes != nil {
-		nodes = make([]event.RemediationRequestedNode, len(d.Nodes))
-		for i, n := range d.Nodes {
-			nodes[i] = event.RemediationRequestedNode(n)
-		}
-	}
-	return event.RemediationRequested{
-		EventID:       d.EventID,
-		Source:        d.Source,
-		ReleaseID:     d.ReleaseID,
-		CodeBundleURI: d.CodeBundleURI,
-		ClassifiedAt:  d.ClassifiedAt,
-		Nodes:         nodes,
-	}
-}
-
 // PROpenedDTO is the JSON shape of the remediation.pr_opened:v1 payload.
 type PROpenedDTO struct {
 	ProposalID      string   `json:"proposal_id"`

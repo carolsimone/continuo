@@ -5,13 +5,14 @@ import (
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // Trigger is the decoded heal trigger that starts one remediation: the
 // release-level facts every fix needs, and one TriggerNode per failing node the
-// classifier judged healable. One rejected release yields one trigger per
-// remediation round, so a trigger names a whole failing set rather than a
-// single node.
+// classifier recorded, the unfixable ones included. One rejected release yields
+// one trigger per remediation round, so a trigger names a whole failing set
+// rather than a single node.
 type Trigger struct {
 	TenantID  string
 	Source    string
@@ -27,7 +28,7 @@ type Trigger struct {
 	// produces the bundle; every later rejection (duplicate_table included)
 	// carries it.
 	CodeBundleURI string
-	// Nodes is the release's healable failing set, one entry per node.
+	// Nodes is the release's failing set, one entry per node.
 	Nodes []TriggerNode
 }
 
@@ -80,6 +81,18 @@ type TriggerNode struct {
 	// edited where THIS release holds it: an ancestor the release renamed or
 	// moved is still at its old path in the promoted graph.
 	ChangedAncestors []ChangedAncestor
+	// Unfixable is set on a node the classifier judged no change to the
+	// release's source fixes; the runner hands it over without a model call.
+	// Nil on a node a fix can reach.
+	Unfixable *Unfixable
+}
+
+// Unfixable is the classifier's verdict that no fix proposal can help a node:
+// Reason is the hand-over reason it is given, Detail is what actually failed,
+// the failure's key error line.
+type Unfixable struct {
+	Reason model.HandoverReason
+	Detail string
 }
 
 // ChangedAncestor is one changed upstream of a failing node. FilePath and

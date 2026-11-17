@@ -62,3 +62,12 @@ models:
       +tags: ["e2e-tests-bind"]
     tbind_ok:
       +tags: ["e2e-tests-bind"]
+    # unfixable_infra exists for the remediation hand-over e2e. It selects the
+    # quoted column "connection refused", which no relation provides, so its
+    # validation fails with `column "connection refused" does not exist`, and
+    # the remediation classifier's infrastructure rule for the phrase
+    # "connection refused" marks the node unfixable. It reads no table and
+    # nothing reads it, so only a release that changes it validates it. Its own
+    # tag keeps it off every shared schedule.
+    unfixable_infra:
+      +tags: ["e2e-remediation-handover"]

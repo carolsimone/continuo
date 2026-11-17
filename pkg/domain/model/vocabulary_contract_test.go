@@ -333,3 +333,58 @@ func TestValidationOp_DeclaresTheFourNodeOps(t *testing.T) {
 		}
 	}
 }
+
+// The two vocabularies remediation outcomes name: why a failing node was handed
+// to a human, and which source a failure was read from. Declaration order is
+// the contract's.
+func TestHandoverReason_DeclaresTheEightReasons(t *testing.T) {
+	want := []model.HandoverReason{
+		model.HandoverReasonTriesSpent,
+		model.HandoverReasonPreflightRoundsSpent,
+		model.HandoverReasonDeclined,
+		model.HandoverReasonNoType,
+		model.HandoverReasonClassifierInfra,
+		model.HandoverReasonClassifierUnhealableParse,
+		model.HandoverReasonNoRepository,
+		model.HandoverReasonUnverifiableEdits,
+	}
+	wantText := []string{
+		"tries_spent", "preflight_rounds_spent", "declined", "no_type",
+		"classifier_infra", "classifier_unhealable_parse", "no_repository", "unverifiable_edits",
+	}
+	got := model.HandoverReasons()
+	if len(got) != len(want) {
+		t.Fatalf("HandoverReasons() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] || string(got[i]) != wantText[i] || !got[i].IsValid() {
+			t.Errorf("HandoverReasons()[%d] = %q (valid %v), want %q", i, got[i], got[i].IsValid(), wantText[i])
+		}
+	}
+	if model.HandoverReason("made_up").IsValid() {
+		t.Error("an undeclared handover reason is valid")
+	}
+}
+
+func TestRemediationSource_DeclaresTheFiveSources(t *testing.T) {
+	want := []model.RemediationSource{
+		model.RemediationSourceValidation,
+		model.RemediationSourceCompile,
+		model.RemediationSourceSeedBuild,
+		model.RemediationSourceDuplicateTable,
+		model.RemediationSourceParse,
+	}
+	wantText := []string{"validation", "compile", "seed_build", "duplicate_table", "parse"}
+	got := model.RemediationSources()
+	if len(got) != len(want) {
+		t.Fatalf("RemediationSources() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] || string(got[i]) != wantText[i] || !got[i].IsValid() {
+			t.Errorf("RemediationSources()[%d] = %q (valid %v), want %q", i, got[i], got[i].IsValid(), wantText[i])
+		}
+	}
+	if model.RemediationSource("made_up").IsValid() {
+		t.Error("an undeclared remediation source is valid")
+	}
+}

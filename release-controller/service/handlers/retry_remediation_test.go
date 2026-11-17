@@ -7,7 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/events"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
@@ -46,13 +50,68 @@ func TestRetryRemediation_DeadEndStartsRoundTwo(t *testing.T) {
 
 	entries := outboxEntries(store)
 	require.Len(t, entries, 1)
+	require.Equal(t, streams.RemediationRetryRequestedV2, entries[0].StreamName)
+	require.Equal(t, "remediation_retry_requested", entries[0].EventType)
+}
+
+// TestRetryRemediation_WritesTheTypedRetry pins the row the retry stores: the
+// typed remediation.retry_requested:v2 payload, wrapped under the default
+// tenant, carrying the later round and the release's stored rejection
+// unchanged.
+func TestRetryRemediation_WritesTheTypedRetry(t *testing.T) {
+	const rejection = `{"release_id":"rel-1","stage":"compile","reason":"compile_failed","per_node":[{"node_id":"finance","error":"boom"}]}`
+	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
+	store.SeedRelease(rejectedRelease(t, "rel-1", rejection))
+	deps.Proposals = &fakeProposals{items: []ports.ProposalSummary{{NodeID: "finance", Attempt: 3, Status: "escalated", RemediationRound: 1}}}
+
+	res, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
+	require.NoError(t, err)
+	require.Equal(t, 2, res.RemediationRound)
+
+	entries := outboxEntries(store)
+	require.Len(t, entries, 1)
 	e := entries[0]
-	require.Equal(t, streams.RemediationRetryRequestedV1, e.StreamName)
+	require.Equal(t, streams.RemediationRetryRequestedV2, e.StreamName)
 	require.Equal(t, "remediation_retry_requested", e.EventType)
-	var body map[string]any
-	require.NoError(t, json.Unmarshal(e.Payload, &body))
-	require.EqualValues(t, 2, body["remediation_round"])
-	require.Equal(t, "compile_failed", body["reason"])
+	require.Equal(t, "release-controller", e.AggregateType)
+	require.Equal(t, handlers.AggregateIDForRelease("rel-1"), e.AggregateID)
+	require.Equal(t, uuid.NewSHA1(uuid.NameSpaceOID, []byte("remediation-retry:rel-1:2")), e.ID, "one row per release and round")
+
+	tenantID, payload, err := pkgoutbox.UnwrapTenant(e.Payload)
+	require.NoError(t, err)
+	require.Equal(t, events.DefaultTenantID, tenantID)
+	var got events.RemediationRetryRequested
+	require.NoError(t, json.Unmarshal(payload, &got))
+	require.Equal(t, "rel-1", got.ReleaseID)
+	require.Equal(t, 2, got.RemediationRound)
+	require.Equal(t, rejection, string(got.Rejection), "the stored rejection travels unchanged")
+
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(payload, &raw))
+	require.NotContains(t, raw, "reason", "the rejection is nested, not spread into the payload")
+}
+
+// TestRetryRemediation_AllHandedOverRoundIsRetryable pins that a round whose
+// every attempt ended skipped (the classifier or the engine handed each node
+// over without a fix; release-controller reads the status, not the code) has
+// nothing in flight and nothing proposed, so the operator can start the next
+// round.
+func TestRetryRemediation_AllHandedOverRoundIsRetryable(t *testing.T) {
+	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
+	store.SeedRelease(rejectedRelease(t, "rel-1", `{"release_id":"rel-1","stage":"compile","reason":"compile_failed"}`))
+	deps.Proposals = &fakeProposals{items: []ports.ProposalSummary{
+		{ID: "p1", NodeID: "finance", Attempt: 1, Status: "skipped", RemediationRound: 1},
+		{ID: "p2", NodeID: "ledger", Attempt: 1, Status: "skipped", RemediationRound: 1},
+	}}
+
+	res, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
+	require.NoError(t, err)
+	require.Equal(t, 2, res.RemediationRound)
+
+	r, err := store.GetRelease("rel-1")
+	require.NoError(t, err)
+	require.Equal(t, 2, r.RemediationRound())
+	require.Len(t, outboxEntries(store), 1)
 }
 
 func TestRetryRemediation_RefusesWhenAProposalIsOpen(t *testing.T) {

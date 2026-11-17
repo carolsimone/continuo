@@ -16,6 +16,7 @@ import (
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/memory"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
+	"github.com/carolsimone/continuo/agent-remediation/adapters/workflowfile"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
@@ -25,6 +26,8 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
+	"github.com/carolsimone/continuo/agent-remediation/workflows"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 )
@@ -419,13 +422,13 @@ func testFiles(tries int) workflow.Set {
 	flow := workflow.Flow{
 		Version:        workflow.SupportedVersion,
 		Name:           "rejected-release",
-		Trigger:        baseName(streams.RemediationRequestedV2),
+		Trigger:        baseName(streams.RemediationRequestedV3),
 		Types:          []string{"dbt-compile", "dbt-validation", "shared-upstream", "cross-service-upstream"},
 		AcrossClusters: refs("edits_map_to_a_service", "no_path_edited_twice", "one_manifest_kind"),
 		Gate:           refs("verification_run"),
 		Tries:          tries,
 		OnPass:         workflow.Output{Action: workflow.OutputPullRequest, Emits: baseName(streams.RemediationProposedV1)},
-		OnGiveUp:       workflow.Output{Action: workflow.OutputHandOver},
+		OnGiveUp:       workflow.Output{Action: workflow.OutputHandOver, Emits: baseName(streams.RemediationHandedOverV1)},
 		Revision:       flowRevision,
 		File:           flowFile,
 	}
@@ -484,6 +487,9 @@ type harness struct {
 	images *fakeImages
 	collab runner.Collaborators
 	runner *runner.Runner
+	// replaced are the steps that stand in for the registered steps of their
+	// names in every runner the harness builds.
+	replaced []any
 
 	// afterCommit runs after every unit of work of the runner commits.
 	afterCommit func()
@@ -563,6 +569,24 @@ func withoutCrossClusterChecks() option {
 		flow := h.files.Flows["rejected-release"]
 		flow.AcrossClusters = nil
 		h.files.Flows[flow.Name] = flow
+	}
+}
+
+// withPreflight gives the type typeName the pre-flight checks checks.
+func withPreflight(typeName string, checks ...string) option {
+	return func(h *harness) {
+		typ := h.files.Types[typeName]
+		typ.Preflight = refs(checks...)
+		h.files.Types[typeName] = typ
+	}
+}
+
+// withBuiltinFiles runs the flows and types built into the binary.
+func withBuiltinFiles() option {
+	return func(h *harness) {
+		set, err := workflowfile.Load(workflows.Builtin)
+		require.NoError(h.t, err)
+		h.files = set
 	}
 }
 
@@ -647,6 +671,23 @@ func newHarness(t *testing.T, opts ...option) *harness {
 	return h
 }
 
+// registry is the registry built from the harness's fakes, with each replaced
+// step in place of the registered step of its name.
+func (h *harness) registry() *runner.Registry {
+	reg := runner.NewRegistry(h.collab)
+	for _, s := range h.replaced {
+		reg.ReplaceStep(s)
+	}
+	return reg
+}
+
+// replaceStep puts s in place of the registered step of its name, in the
+// harness's runner and in every runner it builds after.
+func (h *harness) replaceStep(s any) {
+	h.replaced = append(h.replaced, s)
+	h.runner = h.runnerOver(h.files)
+}
+
 // runnerOver is a runner over the harness's store and fakes that runs files.
 func (h *harness) runnerOver(files workflow.Set) *runner.Runner {
 	return h.runnerOwnedBy(files, workerOwner)
@@ -657,7 +698,7 @@ func (h *harness) runnerOver(files workflow.Set) *runner.Runner {
 func (h *harness) runnerOwnedBy(files workflow.Set, owner string) *runner.Runner {
 	return runner.New(runner.Deps{
 		NewUoW:              func() uow.UnitOfWork { return hookedUoW{UnitOfWork: memory.NewUnitOfWork(h.store), h: h} },
-		Registry:            runner.NewRegistry(h.collab),
+		Registry:            h.registry(),
 		Files:               files,
 		LLM:                 llmcache.New(h.llm, h.cache, "test-model", discard),
 		Collab:              h.collab,
@@ -681,6 +722,12 @@ func compileNode(id string) remediation.TriggerNode {
 	}
 }
 
+// unfixable is n marked unfixable by the classifier, for reason.
+func unfixable(n remediation.TriggerNode, reason model.HandoverReason, detail string) remediation.TriggerNode {
+	n.Unfixable = &remediation.Unfixable{Reason: reason, Detail: detail}
+	return n
+}
+
 func trigger(source string, nodes ...remediation.TriggerNode) remediation.Trigger {
 	return remediation.Trigger{
 		TenantID:  "default",
@@ -693,7 +740,7 @@ func trigger(source string, nodes ...remediation.TriggerNode) remediation.Trigge
 	}
 }
 
-// payloadOf is trig as a remediation.requested:v2 payload, in the wire field
+// payloadOf is trig as a remediation.requested:v3 payload, in the wire field
 // names.
 func payloadOf(t *testing.T, trig remediation.Trigger) []byte {
 	t.Helper()
@@ -705,6 +752,9 @@ func payloadOf(t *testing.T, trig remediation.Trigger) []byte {
 			"dbt_log_uri": n.DBTLogURI, "candidate_artifact_uri": n.CandidateArtifactURI,
 			"file_path": n.FilePath, "service": n.Service, "node_type": n.NodeType,
 			"other_service": n.OtherService, "other_file_path": n.OtherFilePath,
+		}
+		if n.Unfixable != nil {
+			node["unfixable"] = map[string]any{"reason": string(n.Unfixable.Reason), "detail": n.Unfixable.Detail}
 		}
 		if len(n.ChangedAncestors) > 0 {
 			ancestors := make([]map[string]any, 0, len(n.ChangedAncestors))
@@ -864,6 +914,15 @@ func (h *harness) try(id uuid.UUID, n int) remediation.Try {
 // flowRows returns the flow-level journal rows of one try, by step name.
 func (h *harness) flowRows(id uuid.UUID, try int) map[string][]remediation.StepRun {
 	return h.stepRows(id, try, 0)
+}
+
+// proposedPayload is the tenant a remediation.proposed:v1 entry is stored under
+// and the event payload it wraps.
+func proposedPayload(t *testing.T, e outbox.Entry) (tenantID string, payload []byte) {
+	t.Helper()
+	tenantID, payload, err := outbox.UnwrapTenant(e.Payload)
+	require.NoError(t, err)
+	return tenantID, payload
 }
 
 // proposedEvents is every outbox entry on remediation.proposed:v1.

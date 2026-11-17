@@ -195,17 +195,19 @@ type PassOutput interface {
 	Pass(ctx context.Context, u uow.UnitOfWork, in OutputInput, v remediation.Verified) error
 }
 
-// GiveUpOutput records that a remediation ended without a proposal, inside the
-// unit of work that commits the end.
+// GiveUpOutput hands over the nodes a remediation leaves to a human, inside
+// the unit of work that commits the remediation's end.
 type GiveUpOutput interface {
 	Meta() Meta
 	GiveUp(ctx context.Context, u uow.UnitOfWork, in OutputInput) error
 }
 
-// OutputInput is what an output step reads.
+// OutputInput is what an output step reads. HandedOver is set for the give-up
+// output: every node the remediation leaves to a human, sorted by node id.
 type OutputInput struct {
 	Remediation remediation.Remediation
 	Try         remediation.Try
 	Trigger     remediation.Trigger
 	Snapshot    remediation.Snapshot
+	HandedOver  []remediation.HandOver
 }

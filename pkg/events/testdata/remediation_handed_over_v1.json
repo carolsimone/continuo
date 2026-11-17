@@ -1,0 +1,63 @@
+{
+  "input": {
+    "event_id": "8a2e5c9d-1b64-4f73-b0d8-4c7a9e1f3b65",
+    "tenant_id": "default",
+    "producer": "agent-remediation",
+    "occurred_at": "2026-11-12T10:47:19.000713Z",
+    "payload": {
+      "remediation_id": "3f9d2b8e-6c15-4a07-9e43-1b5a7c0d8f26",
+      "release_id": "rel_20261112_0042",
+      "remediation_round": 2,
+      "flow": "rejected-release",
+      "tries": 3,
+      "nodes": [
+        {
+          "node_id": "analytics.orders_enriched",
+          "reason": "tries_spent",
+          "message": "the last try failed at the verification runs: column \"customer_segment\" does not exist"
+        },
+        {
+          "node_id": "analytics.payments_current",
+          "reason": "classifier_infra",
+          "message": "the warehouse connection was reset, a new release run clears it"
+        },
+        {
+          "node_id": "analytics.daily_revenue",
+          "reason": "no_type",
+          "message": "no type of the flow matches a division by zero in a window function"
+        }
+      ]
+    }
+  },
+  "fields": {
+    "event_id": "8a2e5c9d-1b64-4f73-b0d8-4c7a9e1f3b65",
+    "tenant_id": "default",
+    "occurred_at": "2026-11-12T10:47:19.000713Z",
+    "producer": "agent-remediation",
+    "schema_version": "1",
+    "payload": {
+      "remediation_id": "3f9d2b8e-6c15-4a07-9e43-1b5a7c0d8f26",
+      "release_id": "rel_20261112_0042",
+      "remediation_round": 2,
+      "flow": "rejected-release",
+      "tries": 3,
+      "nodes": [
+        {
+          "node_id": "analytics.orders_enriched",
+          "reason": "tries_spent",
+          "message": "the last try failed at the verification runs: column \"customer_segment\" does not exist"
+        },
+        {
+          "node_id": "analytics.payments_current",
+          "reason": "classifier_infra",
+          "message": "the warehouse connection was reset, a new release run clears it"
+        },
+        {
+          "node_id": "analytics.daily_revenue",
+          "reason": "no_type",
+          "message": "no type of the flow matches a division by zero in a window function"
+        }
+      ]
+    }
+  }
+}

@@ -14,7 +14,8 @@ import (
 )
 
 // ServiceName names this service as the producer of the dead letters its
-// stream consumers write.
+// stream consumers write and of the events whose envelope its outbox publisher
+// renders.
 const ServiceName = "agent-remediation"
 
 // The fix-proposing engines AGENT_REMEDIATION_ENGINE accepts: the handler that

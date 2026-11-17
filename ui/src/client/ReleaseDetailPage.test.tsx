@@ -228,6 +228,132 @@ describe('ReleaseDetailPage — FIX cell is status-aware', () => {
   });
 });
 
+describe('ReleaseDetailPage — hand-over reasons in the FIX cell', () => {
+  const batched = (outcomes: Record<string, { status: string; reason: string; code?: string }>, rationale = '') =>
+    proposal({
+      source: 'validation', node_id: 's.a', status: 'failed', rationale,
+      resolved_node_ids: Object.keys(outcomes), node_outcomes: outcomes as ProposalDTO['node_outcomes'],
+    });
+  const releaseOf = (...ids: string[]) =>
+    makeRelease(ids.map(id => node({ stage: 'validation', node_id: id })), 'validation_failed');
+
+  it('shows the hand-over text and, beneath it, the message for a coded node', async () => {
+    mockFetchProposals.mockResolvedValue([batched({
+      's.a': { status: 'failed', reason: 'duplicate column amount', code: 'tries_spent' },
+    })]);
+    const { container } = renderPage(releaseOf('s.a'));
+    expect(await screen.findByText('Every try failed the checks. Fix it in the repository.')).toBeInTheDocument();
+    expect(container.querySelector('.nodes-error-short')?.textContent)
+      .toBe('duplicate column amount');
+    expect(screen.queryByText(/The model could not produce a safe fix/)).toBeNull();
+    // A message that fits has nothing to expand.
+    expect(screen.queryByRole('button', { name: 'more' })).toBeNull();
+  });
+
+  it('shows the text alone for a coded node with no message', async () => {
+    mockFetchProposals.mockResolvedValue([batched({
+      's.a': { status: 'skipped', reason: '', code: 'no_repository' },
+    })]);
+    const { container } = renderPage(releaseOf('s.a'));
+    expect(await screen.findByText('The release names no repository, so no fix can be opened.')).toBeInTheDocument();
+    expect(screen.queryByText(/No source to fix at this commit/)).toBeNull();
+    expect(container.querySelector('.nodes-error-text')).toBeNull();
+  });
+
+  it('shows each coded node its own text and message in one batched attempt', async () => {
+    mockFetchProposals.mockResolvedValue([batched({
+      's.a': { status: 'failed', reason: 'first', code: 'declined' },
+      's.b': { status: 'escalated', reason: 'second', code: 'preflight_rounds_spent' },
+    })]);
+    const { container } = renderPage(releaseOf('s.a', 's.b'));
+    expect(await screen.findByText('The agent could not start a fix. Fix it in the repository.')).toBeInTheDocument();
+    expect(screen.getByText("The agent's drafts kept failing its own checks. Fix it in the repository.")).toBeInTheDocument();
+    expect(Array.from(container.querySelectorAll('.nodes-error-short')).map(el => el.textContent)).toEqual(['first', 'second']);
+    expect(screen.queryByText(/Attempt budget spent/)).toBeNull();
+  });
+
+  it('truncates a long message behind a more toggle and keeps the hand-over text visible', async () => {
+    const long = 'the change that broke this node lives in finance; a fix in this node\'s own service cannot ship before it: '
+      + 'column amount_cents is missing from the upstream model';
+    mockFetchProposals.mockResolvedValue([batched({
+      's.a': { status: 'failed', reason: long, code: 'tries_spent' },
+    })]);
+    const { container } = renderPage(releaseOf('s.a'));
+    const text = await screen.findByText('Every try failed the checks. Fix it in the repository.');
+    expect(text).toBeInTheDocument();
+
+    const short = container.querySelector('.nodes-error-short') as HTMLElement;
+    const full = container.querySelector('.nodes-error-full') as HTMLElement;
+    expect(short.textContent).toBe(long);
+    expect(short).not.toHaveClass('nodes-error-short--hidden');
+    expect(full).not.toHaveClass('nodes-error-full--visible');
+
+    fireEvent.click(screen.getByRole('button', { name: 'more' }));
+    expect(short).toHaveClass('nodes-error-short--hidden');
+    expect(full).toHaveClass('nodes-error-full--visible');
+    expect(full.textContent).toBe(long);
+    expect(text).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'less' }));
+    expect(short).not.toHaveClass('nodes-error-short--hidden');
+    expect(full).not.toHaveClass('nodes-error-full--visible');
+  });
+
+  it('does not show the proposal rationale under a hand-over text', async () => {
+    mockFetchProposals.mockResolvedValue([batched({
+      's.a': { status: 'failed', reason: '', code: 'no_type' },
+    }, 'rationale of another node\'s fix')]);
+    renderPage(releaseOf('s.a'));
+    expect(await screen.findByText('continuo has no fix type for this failure yet. Fix it in the repository.')).toBeInTheDocument();
+    expect(screen.queryByText(/rationale of another node/)).toBeNull();
+  });
+
+  it('renders the message as plain text, never as HTML', async () => {
+    mockFetchProposals.mockResolvedValue([batched({
+      's.a': { status: 'failed', reason: '<b>bold</b> <img src=x onerror=alert(1)>', code: 'declined' },
+    })]);
+    const { container } = renderPage(releaseOf('s.a'));
+    expect((await screen.findAllByText(/<b>bold<\/b> <img src=x onerror=alert\(1\)>/)).length).toBeGreaterThan(0);
+    expect(container.querySelector('.nodes-error-text b')).toBeNull();
+    expect(container.querySelector('.nodes-error-text img')).toBeNull();
+  });
+
+  it.each([
+    ['tries_spent', 'Every try failed the checks. Fix it in the repository.'],
+    ['preflight_rounds_spent', "The agent's drafts kept failing its own checks. Fix it in the repository."],
+    ['declined', 'The agent could not start a fix. Fix it in the repository.'],
+    ['no_type', 'continuo has no fix type for this failure yet. Fix it in the repository.'],
+    ['classifier_infra', 'An infrastructure error failed this node. Run the release again.'],
+    ['classifier_unhealable_parse', 'A fix cannot change this parse failure. Fix it in the repository.'],
+    ['no_repository', 'The release names no repository, so no fix can be opened.'],
+    ['unverifiable_edits', "The agent's edits could not be checked by a release. Fix it in the repository."],
+  ])('shows the text of %s', async (code, text) => {
+    mockFetchProposals.mockResolvedValue([batched({ 's.a': { status: 'failed', reason: '', code } })]);
+    renderPage(releaseOf('s.a'));
+    expect(await screen.findByText(text)).toBeInTheDocument();
+  });
+
+  it("keeps today's note for a node whose outcome has no code", async () => {
+    mockFetchProposals.mockResolvedValue([batched({
+      's.a': { status: 'failed', reason: '', code: '' },
+      's.b': { status: 'skipped', reason: 'No source to fix at this commit.' },
+      's.c': { status: 'escalated', reason: '', code: '' },
+    }, '')]);
+    renderPage(releaseOf('s.a', 's.b', 's.c'));
+    expect(await screen.findByText('The model could not produce a safe fix.')).toBeInTheDocument();
+    expect(screen.getByText('No source to fix at this commit. Fix it in the repository.')).toBeInTheDocument();
+    expect(screen.getByText('Attempt budget spent.')).toBeInTheDocument();
+  });
+
+  it("keeps today's note for a proposal with no node outcomes at all", async () => {
+    mockFetchProposals.mockResolvedValue([proposal({
+      source: 'validation', node_id: 's.a', status: 'failed', rationale: 'the model gave up',
+    })]);
+    renderPage(releaseOf('s.a'));
+    expect(await screen.findByText('the model gave up')).toBeInTheDocument();
+  });
+});
+
 describe('ReleaseDetailPage — live polling while non-terminal', () => {
   it('polls while validating and stops once the release reaches a terminal status', async () => {
     vi.useFakeTimers();

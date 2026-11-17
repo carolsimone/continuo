@@ -48,11 +48,12 @@ func (*PullRequest) Meta() step.Meta {
 }
 
 // Pass finalizes the proposal v names with the verifications v carries, and
-// enqueues its remediation.proposed:v1 event in the same transaction, so the
-// row and the announcement cannot disagree. The status change is a
+// enqueues its remediation.proposed:v1 event in the same transaction, stored
+// under the remediation's tenant, so the row and the announcement cannot
+// disagree. The status change is a
 // compare-and-set: when the row is no longer verifying, nothing is written and
 // nothing is announced.
-func (p *PullRequest) Pass(ctx context.Context, u uow.UnitOfWork, _ step.OutputInput, v remediation.Verified) error {
+func (p *PullRequest) Pass(ctx context.Context, u uow.UnitOfWork, in step.OutputInput, v remediation.Verified) error {
 	repo := u.ProposalRepo()
 	hit, err := repo.MarkFixVerified(ctx, v)
 	if err != nil {
@@ -65,7 +66,7 @@ func (p *PullRequest) Pass(ctx context.Context, u uow.UnitOfWork, _ step.OutputI
 	if err != nil {
 		return fmt.Errorf("read verified proposal %s: %w", v.ProposalID(), err)
 	}
-	return p.enqueue(ctx, u, proposedEvent(row), row.SourceResolved)
+	return p.enqueue(ctx, u, in.Remediation.TenantID, proposedEvent(row), row.SourceResolved)
 }
 
 // proposedEvent is the attempt as it was recorded. The verification decided
@@ -92,11 +93,12 @@ func proposedEvent(v proposal.View) proposal.Proposal {
 }
 
 // enqueue writes the remediation.proposed:v1 outbox entry for p in u's
-// transaction. The entry id is derived from the event id, which is derived
-// from (release, attempt), so one attempt announces once. sourceResolved says
-// whether the fix rewrote real version-controlled source. No inbound message
-// drove the write, so the entry carries no message-processing provenance.
-func (p *PullRequest) enqueue(ctx context.Context, u uow.UnitOfWork, pr proposal.Proposal, sourceResolved bool) error {
+// transaction, its payload stored under tenantID. The entry id is derived from
+// the event id, which is derived from (release, attempt), so one attempt
+// announces once. sourceResolved says whether the fix rewrote real
+// version-controlled source. No inbound message drove the write, so the entry
+// carries no message-processing provenance.
+func (p *PullRequest) enqueue(ctx context.Context, u uow.UnitOfWork, tenantID string, pr proposal.Proposal, sourceResolved bool) error {
 	eventID := event.RemediationEventID(pr.ReleaseID, pr.Attempt)
 	edits := make([]event.ProposedEdit, 0, len(pr.Edits))
 	for _, e := range pr.Edits {
@@ -129,12 +131,16 @@ func (p *PullRequest) enqueue(ctx context.Context, u uow.UnitOfWork, pr proposal
 	if err != nil {
 		return fmt.Errorf("marshal proposed event: %w", err)
 	}
+	stored, err := outbox.WrapTenant(tenantID, body)
+	if err != nil {
+		return fmt.Errorf("store proposed event under its tenant: %w", err)
+	}
 	return u.OutboxRepo().Create(ctx, &outbox.Entry{
 		ID:            uuid.NewSHA1(uuid.NameSpaceOID, []byte(eventID.String())),
 		AggregateType: event.AggregateType,
 		AggregateID:   event.AggregateIDForRelease(pr.ReleaseID),
 		EventType:     event.EventType,
-		Payload:       body,
+		Payload:       stored,
 		StreamName:    streams.RemediationProposedV1,
 		Status:        "pending",
 	})

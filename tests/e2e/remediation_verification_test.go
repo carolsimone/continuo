@@ -80,7 +80,7 @@ func TestE2E_Verification_FailsConsumerFixThatIgnoresChangedUpstream(t *testing.
 
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
-	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV2)
+	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV3)
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
@@ -102,7 +102,7 @@ func TestE2E_Verification_FailsConsumerFixThatIgnoresChangedUpstream(t *testing.
 	require.Len(t, trigger.Nodes, 1, "the trigger must carry exactly the failing consumer; got %v", triggerNodeIDs(trigger))
 	down, ok := trigger.findNode(ybreakDownUniqueID)
 	require.True(t, ok)
-	require.Equal(t, []string{ybreakUpUniqueID}, down.ancestorIDs(), "the consumer's only changed ancestor")
+	require.Equal(t, []string{ybreakUpUniqueID}, ancestorIDs(down), "the consumer's only changed ancestor")
 
 	verifying := waitForBatchProposal(t, ctx, clients, releaseID, 1, "verifying", batchProposalBudget)
 	edits := decodeFileEdits(t, verifying.FileEdits)

@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
@@ -10,11 +11,13 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/promptlog"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 )
 
-// roundsSpentPrefix starts the outcome of the members of a cluster whose last
-// pre-flight round refused its draft; the first finding of that round follows.
-const roundsSpentPrefix = "pre-flight rounds spent: "
+// noEditReason is the outcome of the members of a cluster whose draft passed
+// pre-flight with no edit: nothing a verification run could run, and nothing
+// a pull request could carry. Such members are recorded declined.
+const noEditReason = "the fix could not be applied to version-controlled source, so there is nothing to verify"
 
 // contextRound is the round a cluster's context steps run in. They run once
 // per try, in its first round and only while the cluster is gathering; every
@@ -130,8 +133,8 @@ func (r *Runner) pendingRow(run tryRun, c remediation.Cluster, plan clusterPlan)
 	return r.newRow(run, c.Cluster, stepPreflight, kindRunner, c.Round, plan.typ.Revision)
 }
 
-// runContext runs one context step. A decline ends the cluster; the last
-// context step moves it on to the prompt.
+// runContext runs one context step. A decline ends the cluster with its members
+// declined; the last context step moves it on to the prompt.
 func (r *Runner) runContext(ctx context.Context, run tryRun, c remediation.Cluster, f remediation.Failure, ev remediation.Evidence, ps plannedStep, last bool) error {
 	row := r.newRow(run, c.Cluster, string(ps.name), string(step.KindContext), contextRound, ps.revision)
 	src, err := lookup[step.ContextSource](r.d.Registry, ps.name, step.KindContext)
@@ -158,7 +161,7 @@ func (r *Runner) runContext(ctx context.Context, run tryRun, c remediation.Clust
 	var added []remediation.Cluster
 	switch {
 	case out.Declined:
-		added, err = r.settle(run, &next, proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: out.Decline})
+		added, err = r.settle(run, &next, declined(ps.name, out.Decline))
 	case last:
 		err = moveCluster(&next, remediation.ClusterProposing)
 	}
@@ -171,7 +174,8 @@ func (r *Runner) runContext(ctx context.Context, run tryRun, c remediation.Clust
 // runPrompt runs the cluster's prompt step through a model handle keyed by the
 // remediation, try, cluster and round. In a round after the first the step is
 // given the round before it, read from the journal (previousRound). A decline
-// ends the cluster; a draft moves it on to pre-flight.
+// ends the cluster with its members declined; a draft moves it on to
+// pre-flight.
 func (r *Runner) runPrompt(ctx context.Context, run tryRun, c remediation.Cluster, plan clusterPlan, f remediation.Failure, ev remediation.Evidence) error {
 	ps := plan.prompt
 	row := r.newRow(run, c.Cluster, string(ps.name), string(step.KindPrompt), c.Round, ps.revision)
@@ -208,7 +212,7 @@ func (r *Runner) runPrompt(ctx context.Context, run tryRun, c remediation.Cluste
 	next := c
 	var added []remediation.Cluster
 	if out.Declined {
-		added, err = r.settle(run, &next, proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: out.Decline})
+		added, err = r.settle(run, &next, declined(ps.name, out.Decline))
 	} else {
 		if next.Status == remediation.ClusterGathering {
 			err = moveCluster(&next, remediation.ClusterProposing)
@@ -272,10 +276,13 @@ func promptRecord(out step.PromptOutput, m *model) serialization.PromptRecord {
 //
 // When every check passed, each edit with no original gets the one the pass's
 // checkout read, the edits' content and diff are stored, and the cluster is
-// checked. Otherwise, while the cluster has rounds left of the ones its type
+// checked. A draft that passed every check with no edit is a decline: the
+// cluster settles with its members failed for noEditReason, with the code
+// declined, and an upstream cluster falls back as on any decline. Otherwise, while the cluster has rounds left of the ones its type
 // allows, it goes back to proposing in the next round, where the prompt step
 // revises the draft with every finding of this pass. In its last round the
-// cluster settles with its members failed on the pass's first finding.
+// cluster settles with its members failed on the pass's first finding, with
+// the code preflight_rounds_spent.
 func (r *Runner) runPreflight(ctx context.Context, run tryRun, c remediation.Cluster, plan clusterPlan, f remediation.Failure, ev remediation.Evidence, draft remediation.Draft) error {
 	pass := r.newRow(run, c.Cluster, stepPreflight, kindRunner, c.Round, plan.typ.Revision)
 	ev = ev.With(remediation.KeyDraft, draft)
@@ -311,9 +318,17 @@ func (r *Runner) runPreflight(ctx context.Context, run tryRun, c remediation.Clu
 			next.Round++
 			err = moveCluster(&next, remediation.ClusterProposing)
 		} else {
-			added, err = r.settle(run, &next, proposal.NodeOutcome{Status: proposal.StatusFailed, Reason: roundsSpentPrefix + first.Message})
+			added, err = r.settle(run, &next, proposal.NodeOutcome{
+				Status: proposal.StatusFailed, Reason: first.Message, Code: pkg_model.HandoverReasonPreflightRoundsSpent,
+			})
 		}
 		if err != nil {
+			return err
+		}
+	} else if len(draft.Edits) == 0 {
+		if added, err = r.settle(run, &next, proposal.NodeOutcome{
+			Status: proposal.StatusFailed, Reason: noEditReason, Code: pkg_model.HandoverReasonDeclined,
+		}); err != nil {
 			return err
 		}
 	} else {
@@ -422,8 +437,12 @@ func (r *Runner) writeArtifacts(ctx context.Context, d remediation.Draft) (remed
 // as its members' outcome. A single cluster is handed over. An upstream cluster
 // falls back: each member of a shared-upstream cluster is added as a single
 // cluster of its own, returned for the same commit, and the members of a
-// cross-service cluster are skipped, because a fix in their own service cannot
-// ship before the change in the other service that broke them.
+// cross-service cluster are skipped with the code of o, because a fix in their
+// own service cannot ship before the change in the other service that broke
+// them. The code says why the upstream fix failed: declined when a step or the
+// draft declined it, which settles the members for good, and
+// preflight_rounds_spent when pre-flight refused every round, which leaves
+// them to be grouped again in the next try.
 func (r *Runner) settle(run tryRun, c *remediation.Cluster, o proposal.NodeOutcome) ([]remediation.Cluster, error) {
 	switch c.Kind {
 	case workflow.ClusterSharedUpstream:
@@ -442,6 +461,7 @@ func (r *Runner) settle(run tryRun, c *remediation.Cluster, o proposal.NodeOutco
 			Status: proposal.StatusSkipped,
 			Reason: fmt.Sprintf("the change that broke this node lives in %s; a fix in this node's own service cannot ship before it: %s",
 				describeService(service), o.Reason),
+			Code: o.Code,
 		}
 		r.logger.Info("cross-service upstream fix unavailable; members are skipped, not fixed in their own service",
 			"release", run.trigger.ReleaseID, "target", c.TargetNodeID, "members", c.Members, "reason", o.Reason)
@@ -468,6 +488,17 @@ func (r *Runner) memberClusters(run tryRun, c remediation.Cluster) []remediation
 			workflow.ClusterSingle, m, []string{m}))
 	}
 	return out
+}
+
+// declined is the outcome of the members of a cluster the step named declined,
+// for reason: skipped, with the code declined. A step that gives no reason is
+// recorded as having declined the fix, so a hand-over never carries an empty
+// message.
+func declined(name workflow.StepName, reason string) proposal.NodeOutcome {
+	if strings.TrimSpace(reason) == "" {
+		reason = fmt.Sprintf("step %s declined the fix", name)
+	}
+	return proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: reason, Code: pkg_model.HandoverReasonDeclined}
 }
 
 // moveCluster moves c to the status to, refusing a move the cluster's states do

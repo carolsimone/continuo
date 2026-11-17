@@ -2,12 +2,10 @@ package redis
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 
 	"github.com/carolsimone/continuo/catalog/domain/event"
-	"github.com/carolsimone/continuo/catalog/serialization"
 	"github.com/carolsimone/continuo/catalog/service/handlers"
 	"github.com/carolsimone/continuo/pkg/events"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
@@ -15,24 +13,47 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// ParseRemediationRequested decodes a remediation.requested:v2 entry into the
-// tenant its tenant_id field names and the case-base event. A missing or
-// undecodable payload, and an entry without a tenant, are events.ErrPermanent:
-// the consumer dead-letters the entry, so nothing is written under no tenant.
+// ParseRemediationRequested decodes a remediation.requested:v3 entry into the
+// tenant its envelope names and the case-base event. A malformed envelope, a
+// payload that does not decode, another schema_version and an envelope without
+// a tenant are events.ErrPermanent: the consumer dead-letters the entry, so
+// nothing is written under no tenant.
 func ParseRemediationRequested(msg goredis.XMessage) (string, event.RemediationRequested, error) {
-	tenantID, err := tenantField(msg, "remediation.requested")
+	env, p, err := events.DecodeRemediationRequested(stringFields(msg.Values))
 	if err != nil {
-		return "", event.RemediationRequested{}, err
+		return "", event.RemediationRequested{}, fmt.Errorf("%w: decode remediation.requested (message %s): %v",
+			events.ErrPermanent, msg.ID, err)
 	}
-	raw, ok := msg.Values["payload"].(string)
-	if !ok || raw == "" {
-		return "", event.RemediationRequested{}, fmt.Errorf("%w: missing or empty payload field in message %s", events.ErrPermanent, msg.ID)
+	if env.TenantID == "" {
+		return "", event.RemediationRequested{}, fmt.Errorf("%w: remediation.requested message %s carries no tenant_id",
+			events.ErrPermanent, msg.ID)
 	}
-	var dto serialization.RemediationRequestedDTO
-	if err := json.Unmarshal([]byte(raw), &dto); err != nil {
-		return "", event.RemediationRequested{}, fmt.Errorf("%w: unmarshal remediation.requested payload (message %s): %v", events.ErrPermanent, msg.ID, err)
+	return env.TenantID, remediationRequestedEvent(p), nil
+}
+
+// remediationRequestedEvent maps the decoded trigger to the case-base event,
+// keeping the fields the case base records and, per node, whether the
+// classifier marked it unfixable.
+func remediationRequestedEvent(p events.RemediationRequested) event.RemediationRequested {
+	nodes := make([]event.RemediationRequestedNode, len(p.Nodes))
+	for i, n := range p.Nodes {
+		nodes[i] = event.RemediationRequestedNode{
+			NodeID:         n.NodeID,
+			Category:       n.Category,
+			ErrorSignature: n.ErrorSignature,
+			Reason:         n.Reason,
+			ErrorExcerpt:   n.ErrorExcerpt,
+			DBTLogURI:      n.DBTLogURI,
+			Unfixable:      n.Unfixable != nil,
+		}
 	}
-	return tenantID, dto.ToDomain(), nil
+	return event.RemediationRequested{
+		Source:        p.Source,
+		ReleaseID:     p.ReleaseID,
+		CodeBundleURI: p.CodeBundleURI,
+		ClassifiedAt:  p.ClassifiedAt,
+		Nodes:         nodes,
+	}
 }
 
 // NewRemediationRequestedBinding wires ParseRemediationRequested into the

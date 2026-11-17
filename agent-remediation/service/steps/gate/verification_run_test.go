@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -22,6 +23,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/gate"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 var errBoom = errors.New("boom")
@@ -408,6 +410,25 @@ func TestSubmit_RefusesWhatNoRunCouldJudgeBeforeWritingAnything(t *testing.T) {
 	assert.Error(t, err, "a try with no edit at all is a defect of the caller, not a refusal")
 }
 
+// A refusal fails the try and the next try is shown why, so it is logged as a
+// warning, not as an error.
+func TestSubmit_LogsARefusalAsAWarning(t *testing.T) {
+	var logs bytes.Buffer
+	r := newRig()
+	r.step = gate.NewVerificationRun(r.evidence, r.artifacts, r.releases, r.pipeline, repoPaths, r.clock, timeout,
+		slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	twice := dbtCluster()
+	twice.Draft.Edits = append(twice.Draft.Edits, twice.Draft.Edits[0])
+
+	v, err := r.step.Submit(context.Background(), gateInput(twice))
+
+	require.NoError(t, err)
+	require.NotEmpty(t, v.Result.Findings)
+	assert.Contains(t, logs.String(), "level=WARN")
+	assert.Contains(t, logs.String(), "the try fails and the next try is shown why")
+	assert.NotContains(t, logs.String(), "level=ERROR")
+}
+
 func TestSubmit_ReturnsTheErrorOfEachCollaborator(t *testing.T) {
 	cases := map[string]func(*rig){
 		"evidence":  func(r *rig) { r.evidence.err = errBoom },
@@ -669,10 +690,11 @@ func TestPoll_WhenTheFirstRunIsUnreadableNothingIsReportedForAnyRun(t *testing.T
 	assert.Equal(t, []string{ledgerRun}, r.pipeline.statusReads, "the read stops at the first unreadable run")
 }
 
-func TestPoll_TheReasonNamesOnlyTheNodesTheTriggerCarries(t *testing.T) {
+func TestPoll_WhenNoDraftedNodeFailsEveryFailingNodeIsNamed(t *testing.T) {
 	r := newRig()
-	// The cluster covers one trigger node. The failure names another trigger
-	// node no draft covers, and a node the trigger never carried.
+	// The draft covers one trigger node, which passed. The failure names
+	// another trigger node no draft covers, and a node the trigger never
+	// carried: neither is the try's own, so every failing node is named.
 	narrow := dbtCluster()
 	narrow.Cluster.Members = []string{"model.sales.orders"}
 	r.pipeline.statuses[salesRun] = status(proposal.PhaseFailed, t0, map[string]string{
@@ -680,7 +702,27 @@ func TestPoll_TheReasonNamesOnlyTheNodesTheTriggerCarries(t *testing.T) {
 		"model.zeta.other":    "other broke",
 	})
 	v := poll(t, r, gateInput(narrow))
-	assert.Equal(t, "model.sales.margins: margins broke", v.VerifyError)
+	assert.Equal(t, "model.sales.margins: margins broke; model.zeta.other: other broke", v.VerifyError)
+}
+
+func TestPoll_ASettledNodesErrorDoesNotLeadTheReason(t *testing.T) {
+	r := newRig()
+	// model.sales.margins is handed over (unfixable, so settled for every
+	// try): it is in the trigger, sorts before the drafted node, and its run
+	// error is reported beside the drafted node's. Only the drafted node's
+	// error is the try's own.
+	in := gateInput(func() step.ClusterDraft {
+		d := dbtCluster()
+		d.Cluster.Members = []string{"model.sales.orders"}
+		return d
+	}())
+	in.Trigger.Nodes[1].Unfixable = &remediation.Unfixable{Reason: model.HandoverReasonClassifierInfra, Detail: "could not connect to server: connection refused"}
+	r.pipeline.statuses[salesRun] = status(proposal.PhaseFailed, t0, map[string]string{
+		"model.sales.margins": "connection refused",
+		"model.sales.orders":  "column x does not exist",
+	})
+	v := poll(t, r, in)
+	assert.Equal(t, "model.sales.orders: column x does not exist", v.VerifyError)
 }
 
 func TestPoll_RefusesRunsThatAreNotTheOnesTheWaitingResultNames(t *testing.T) {

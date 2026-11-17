@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,12 +14,12 @@ import (
 	"github.com/stretchr/testify/require"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/remediation/domain/event"
 	"github.com/carolsimone/continuo/remediation/domain/failure"
 	"github.com/carolsimone/continuo/remediation/domain/repository"
-	"github.com/carolsimone/continuo/remediation/serialization"
 	"github.com/carolsimone/continuo/remediation/service/ports"
 	"github.com/carolsimone/continuo/remediation/service/uow"
 )
@@ -109,12 +110,34 @@ func depsWith(u *fakeUoW, log string, err error) Deps {
 	}
 }
 
+// testTenant is the tenant of the message the tests classify.
+const testTenant = "acme"
+
+// triggerOf returns the payload of a trigger's outbox row, which the handler
+// stores under the tenant of the message it classified. It fails the test when
+// the row is not stored under testTenant.
+func triggerOf(t *testing.T, e *outbox.Entry) pkgevents.RemediationRequested {
+	t.Helper()
+	tenantID, payload, err := outbox.UnwrapTenant(e.Payload)
+	require.NoError(t, err, "the trigger row is stored under a tenant")
+	require.Equal(t, testTenant, tenantID)
+	var p pkgevents.RemediationRequested
+	require.NoError(t, json.Unmarshal(payload, &p))
+	return p
+}
+
+// rowIDOf is the outbox row id of the trigger of one release and round, which
+// the publisher renders as the entry's event_id.
+func rowIDOf(releaseID string, round int) uuid.UUID {
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(event.RemediationEventID(releaseID, round).String()))
+}
+
 // --- tests ---
 
 func TestClassifyFailure_LogicEmitsTrigger(t *testing.T) {
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
 	ev := failure.FailureEvidence{
-		Source:        failure.SourceValidation,
+		Source:        pkg_model.RemediationSourceValidation,
 		ReleaseID:     "r1",
 		NodeID:        "s.n",
 		Repo:          "o/r",
@@ -122,7 +145,7 @@ func TestClassifyFailure_LogicEmitsTrigger(t *testing.T) {
 		DBTLogURI:     "s3://b/k",
 		CodeBundleURI: "s3://b/code-bundles/rel-1/bundle.json",
 	}
-	err := ClassifyRejection(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), []failure.FailureEvidence{ev})
+	err := ClassifyRejection(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), testTenant, []failure.FailureEvidence{ev})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,14 +155,16 @@ func TestClassifyFailure_LogicEmitsTrigger(t *testing.T) {
 	if len(u.ob.entries) != 1 {
 		t.Fatalf("expected 1 outbox trigger, got %d", len(u.ob.entries))
 	}
-	var p serialization.RemediationRequestedDTO
-	_ = json.Unmarshal(u.ob.entries[0].Payload, &p)
+	p := triggerOf(t, u.ob.entries[0])
 	if len(p.Nodes) != 1 {
 		t.Fatalf("expected 1 node in batched trigger, got %d", len(p.Nodes))
 	}
 	n := p.Nodes[0]
-	if n.Category != "logic" || n.NodeID != "s.n" || p.EventID != event.RemediationEventID("r1", 1).String() {
+	if n.Category != "logic" || n.NodeID != "s.n" || u.ob.entries[0].ID != rowIDOf("r1", 1) {
 		t.Fatalf("bad trigger payload: %+v", p)
+	}
+	if n.Unfixable != nil {
+		t.Fatalf("a failure a fix can reach carries no unfixable marker: %+v", n.Unfixable)
 	}
 	if n.Reason != "logic:missing_object" {
 		t.Fatalf("trigger reason = %q, want logic:missing_object", n.Reason)
@@ -160,12 +185,12 @@ func TestClassifyFailure_EmitsHealableNodes(t *testing.T) {
 	// enqueues exactly one trigger for it.
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
 	ev := failure.FailureEvidence{
-		Source:    failure.SourceValidation,
+		Source:    pkg_model.RemediationSourceValidation,
 		ReleaseID: "r1",
 		NodeID:    "s.n",
 		DBTLogURI: "s3://b/k",
 	}
-	err := ClassifyRejection(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), []failure.FailureEvidence{ev})
+	err := ClassifyRejection(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), testTenant, []failure.FailureEvidence{ev})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,11 +210,11 @@ func TestClassifyFailure_EmitsHealableNodes(t *testing.T) {
 }
 
 func TestClassifyFailure_StructuredBranchWinsOverLog(t *testing.T) {
-	// The text log alone would classify infra (drop, no trigger); the structured
+	// The text log alone would classify infra (drop, forwarded unfixable); the structured
 	// run_results says status=fail (a test), which is healable and must emit.
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
 	ev := failure.FailureEvidence{
-		Source:        failure.SourceValidation,
+		Source:        pkg_model.RemediationSourceValidation,
 		ReleaseID:     "r1",
 		NodeID:        "s.n",
 		DBTLogURI:     "s3://b/log",
@@ -205,7 +230,7 @@ func TestClassifyFailure_StructuredBranchWinsOverLog(t *testing.T) {
 		Clock:     fakeClock{},
 		Logger:    slog.Default(),
 	}
-	if err := ClassifyRejection(context.Background(), deps, []failure.FailureEvidence{ev}); err != nil {
+	if err := ClassifyRejection(context.Background(), deps, testTenant, []failure.FailureEvidence{ev}); err != nil {
 		t.Fatal(err)
 	}
 	if len(u.dec.saved) != 1 || u.dec.saved[0].Category != failure.CategoryTest {
@@ -226,7 +251,7 @@ func TestClassifyFailure_StructuredBranchWinsOverLog(t *testing.T) {
 func TestClassifyFailure_MalformedRunResultsFallsBackToLog(t *testing.T) {
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
 	ev := failure.FailureEvidence{
-		Source:        failure.SourceValidation,
+		Source:        pkg_model.RemediationSourceValidation,
 		ReleaseID:     "r1",
 		NodeID:        "s.n",
 		DBTLogURI:     "s3://b/log",
@@ -242,30 +267,54 @@ func TestClassifyFailure_MalformedRunResultsFallsBackToLog(t *testing.T) {
 		Clock:     fakeClock{},
 		Logger:    slog.Default(),
 	}
-	if err := ClassifyRejection(context.Background(), deps, []failure.FailureEvidence{ev}); err != nil {
+	if err := ClassifyRejection(context.Background(), deps, testTenant, []failure.FailureEvidence{ev}); err != nil {
 		t.Fatal(err)
 	}
 	if len(u.dec.saved) != 1 || u.dec.saved[0].Category != failure.CategoryInfraTransient {
 		t.Fatalf("expected text-log fallback classification (infra_transient), got %+v", u.dec.saved)
 	}
-	if len(u.ob.entries) != 0 {
-		t.Fatalf("infra_transient is dropped, not healable → expected 0 triggers, got %d", len(u.ob.entries))
-	}
+	// The infra verdict is forwarded unfixable: the malformed structured result
+	// did not decide it, the text log did.
+	require.Len(t, u.ob.entries, 1)
+	p := triggerOf(t, u.ob.entries[0])
+	require.Len(t, p.Nodes, 1)
+	require.NotNil(t, p.Nodes[0].Unfixable)
+	assert.Equal(t, string(pkg_model.HandoverReasonClassifierInfra), p.Nodes[0].Unfixable.Reason)
 }
 
-func TestClassifyFailure_InfraDropsNoTrigger(t *testing.T) {
+// TestClassifyFailure_InfraIsForwardedUnfixable holds that a failure the
+// classifier judges an infrastructure error is recorded as a drop and still
+// reaches the trigger, marked unfixable with the reason classifier_infra and the
+// failure's key error line as its detail (the rule that matched stays in the
+// node's reason), with every other field of a forwarded node.
+func TestClassifyFailure_InfraIsForwardedUnfixable(t *testing.T) {
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
-	ev := failure.FailureEvidence{Source: failure.SourceValidation, ReleaseID: "r1", NodeID: "s.n"}
-	err := ClassifyRejection(context.Background(), depsWith(u, "could not connect to database: connection refused", nil), []failure.FailureEvidence{ev})
+	ev := failure.FailureEvidence{
+		Source: pkg_model.RemediationSourceValidation, ReleaseID: "r1", NodeID: "s.n",
+		Repo: "o/r", CommitSHA: "abc", DBTLogURI: "s3://b/k", FilePath: "models/n.sql", Service: "svc", NodeType: "dbt-model",
+	}
+	err := ClassifyRejection(context.Background(), depsWith(u, "could not connect to database: connection refused", nil), testTenant, []failure.FailureEvidence{ev})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(u.dec.saved) != 1 || u.dec.saved[0].Decision != failure.DecisionDrop {
-		t.Fatalf("infra failure must be recorded as drop: %+v", u.dec.saved)
+		t.Fatalf("infra failure must still be recorded as drop: %+v", u.dec.saved)
 	}
-	if len(u.ob.entries) != 0 {
-		t.Fatalf("dropped failure must not emit a trigger, got %d", len(u.ob.entries))
-	}
+	require.Len(t, u.ob.entries, 1, "a dropped failure is forwarded, not withheld")
+	assert.Equal(t, streams.RemediationRequestedV3, u.ob.entries[0].StreamName)
+	p := triggerOf(t, u.ob.entries[0])
+	require.Len(t, p.Nodes, 1)
+	n := p.Nodes[0]
+	assert.Equal(t, "s.n", n.NodeID)
+	assert.Equal(t, string(failure.CategoryInfraTransient), n.Category)
+	assert.Equal(t, "infra:connection_refused", n.Reason)
+	assert.NotEmpty(t, n.ErrorSignature)
+	assert.Equal(t, "s3://b/k", n.DBTLogURI)
+	assert.Equal(t, "models/n.sql", n.FilePath)
+	assert.Equal(t, "svc", n.Service)
+	require.NotNil(t, n.Unfixable)
+	assert.Equal(t, pkgevents.Unfixable{Reason: string(pkg_model.HandoverReasonClassifierInfra), Detail: "could not connect to database: connection refused"}, *n.Unfixable)
+	assert.True(t, u.committed)
 }
 
 func TestClassifyFailure_IdempotentSkipsTrigger(t *testing.T) {
@@ -275,8 +324,8 @@ func TestClassifyFailure_IdempotentSkipsTrigger(t *testing.T) {
 	// same round's rejection is a no-op, but a later round for the same node
 	// is a fresh insert (see TestClassifyFailure_DifferentRoundsBothInsertAndEmit).
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: false}, ob: &fakeOutbox{}}
-	ev := failure.FailureEvidence{Source: failure.SourceValidation, ReleaseID: "r1", NodeID: "s.n", RemediationRound: 1}
-	err := ClassifyRejection(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), []failure.FailureEvidence{ev})
+	ev := failure.FailureEvidence{Source: pkg_model.RemediationSourceValidation, ReleaseID: "r1", NodeID: "s.n", RemediationRound: 1}
+	err := ClassifyRejection(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), testTenant, []failure.FailureEvidence{ev})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,18 +345,18 @@ func TestClassifyFailure_DifferentRoundsBothInsertAndEmit(t *testing.T) {
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
 	deps := depsWith(u, `Database Error: column "x" does not exist`, nil)
 	ev := failure.FailureEvidence{
-		Source:    failure.SourceValidation,
+		Source:    pkg_model.RemediationSourceValidation,
 		ReleaseID: "r1",
 		NodeID:    "s.n",
 		DBTLogURI: "s3://b/k",
 	}
 
 	ev.RemediationRound = 1
-	if err := ClassifyRejection(context.Background(), deps, []failure.FailureEvidence{ev}); err != nil {
+	if err := ClassifyRejection(context.Background(), deps, testTenant, []failure.FailureEvidence{ev}); err != nil {
 		t.Fatal(err)
 	}
 	ev.RemediationRound = 2
-	if err := ClassifyRejection(context.Background(), deps, []failure.FailureEvidence{ev}); err != nil {
+	if err := ClassifyRejection(context.Background(), deps, testTenant, []failure.FailureEvidence{ev}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -321,23 +370,21 @@ func TestClassifyFailure_DifferentRoundsBothInsertAndEmit(t *testing.T) {
 	if len(u.ob.entries) != 2 {
 		t.Fatalf("expected 2 outbox triggers (one per round), got %d", len(u.ob.entries))
 	}
-	var p1, p2 serialization.RemediationRequestedDTO
-	_ = json.Unmarshal(u.ob.entries[0].Payload, &p1)
-	_ = json.Unmarshal(u.ob.entries[1].Payload, &p2)
+	p1, p2 := triggerOf(t, u.ob.entries[0]), triggerOf(t, u.ob.entries[1])
 	if p1.RemediationRound != 1 {
 		t.Fatalf("first trigger remediation_round = %d, want 1", p1.RemediationRound)
 	}
 	if p2.RemediationRound != 2 {
 		t.Fatalf("second trigger remediation_round = %d, want 2", p2.RemediationRound)
 	}
-	if p1.EventID == p2.EventID {
-		t.Fatal("triggers from different rounds must have different event_id")
+	if u.ob.entries[0].ID == u.ob.entries[1].ID {
+		t.Fatal("triggers from different rounds must be different outbox rows")
 	}
-	if p1.EventID != event.RemediationEventID("r1", 1).String() {
-		t.Fatalf("first trigger event_id = %q, want RemediationEventID(r1,1)", p1.EventID)
+	if u.ob.entries[0].ID != rowIDOf("r1", 1) {
+		t.Fatalf("first trigger row id = %s, want the row of RemediationEventID(r1,1)", u.ob.entries[0].ID)
 	}
-	if p2.EventID != event.RemediationEventID("r1", 2).String() {
-		t.Fatalf("second trigger event_id = %q, want RemediationEventID(r1,2)", p2.EventID)
+	if u.ob.entries[1].ID != rowIDOf("r1", 2) {
+		t.Fatalf("second trigger row id = %s, want the row of RemediationEventID(r1,2)", u.ob.entries[1].ID)
 	}
 }
 
@@ -352,22 +399,21 @@ func TestClassifyFailure_SeedSourceFilePathIsEmpty(t *testing.T) {
 	logText := `Runtime Error in seed fx_rates_eur (seeds/customers.csv)
   Could not find file seeds/customers.csv`
 	ev := failure.FailureEvidence{
-		Source:    failure.SourceSeed,
+		Source:    pkg_model.RemediationSourceSeedBuild,
 		ReleaseID: "r3",
 		NodeID:    "analytics.seed_fx_rates_eur",
 		Repo:      "org/repo",
 		CommitSHA: "abc123",
 		DBTLogURI: "s3://bucket/seed.log",
 	}
-	err := ClassifyRejection(context.Background(), depsWith(u, logText, nil), []failure.FailureEvidence{ev})
+	err := ClassifyRejection(context.Background(), depsWith(u, logText, nil), testTenant, []failure.FailureEvidence{ev})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(u.ob.entries) != 1 {
 		t.Fatalf("expected 1 outbox trigger, got %d", len(u.ob.entries))
 	}
-	var p serialization.RemediationRequestedDTO
-	_ = json.Unmarshal(u.ob.entries[0].Payload, &p)
+	p := triggerOf(t, u.ob.entries[0])
 	if len(p.Nodes) != 1 {
 		t.Fatalf("expected 1 node, got %d", len(p.Nodes))
 	}
@@ -387,14 +433,14 @@ func TestClassifyFailure_CompileSourceThreadsFilePath(t *testing.T) {
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
 	logText := "Compilation Error in model daily_transactions (models/daily_transactions.sql)\n  got '='"
 	ev := failure.FailureEvidence{
-		Source:    failure.SourceCompile,
+		Source:    pkg_model.RemediationSourceCompile,
 		ReleaseID: "r2",
 		NodeID:    "svc.daily_transactions",
 		Repo:      "org/repo",
 		CommitSHA: "def456",
 		DBTLogURI: "s3://bucket/compile.log",
 	}
-	err := ClassifyRejection(context.Background(), depsWith(u, logText, nil), []failure.FailureEvidence{ev})
+	err := ClassifyRejection(context.Background(), depsWith(u, logText, nil), testTenant, []failure.FailureEvidence{ev})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,8 +452,7 @@ func TestClassifyFailure_CompileSourceThreadsFilePath(t *testing.T) {
 	if len(u.ob.entries) != 1 {
 		t.Fatalf("expected 1 outbox trigger, got %d", len(u.ob.entries))
 	}
-	var p serialization.RemediationRequestedDTO
-	_ = json.Unmarshal(u.ob.entries[0].Payload, &p)
+	p := triggerOf(t, u.ob.entries[0])
 	if len(p.Nodes) != 1 {
 		t.Fatalf("expected 1 node, got %d", len(p.Nodes))
 	}
@@ -436,7 +481,7 @@ func TestClassifyFailure_DuplicateTableReadsNoLog(t *testing.T) {
 	// case OtherFilePath exists for, since OtherService alone cannot
 	// discriminate the competing node here.
 	ev := failure.FailureEvidence{
-		Source:        failure.SourceDuplicateTable,
+		Source:        pkg_model.RemediationSourceDuplicateTable,
 		ReleaseID:     "rel-1",
 		NodeID:        "analytics.orders_v2",
 		RelationID:    "analytics.orders",
@@ -448,7 +493,7 @@ func TestClassifyFailure_DuplicateTableReadsNoLog(t *testing.T) {
 		Repo:          "owner/repo",
 		CommitSHA:     "abc123",
 	}
-	err := ClassifyRejection(context.Background(), deps, []failure.FailureEvidence{ev})
+	err := ClassifyRejection(context.Background(), deps, testTenant, []failure.FailureEvidence{ev})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -466,8 +511,7 @@ func TestClassifyFailure_DuplicateTableReadsNoLog(t *testing.T) {
 	if len(u.ob.entries) != 1 {
 		t.Fatalf("expected 1 outbox trigger, got %d", len(u.ob.entries))
 	}
-	var p serialization.RemediationRequestedDTO
-	_ = json.Unmarshal(u.ob.entries[0].Payload, &p)
+	p := triggerOf(t, u.ob.entries[0])
 	if p.Source != "duplicate_table" {
 		t.Fatalf("trigger source = %q, want duplicate_table", p.Source)
 	}
@@ -501,7 +545,7 @@ func TestClassifyFailure_DuplicateTableReadsNoLog(t *testing.T) {
 func TestClassifyRejection_TwoNodesEmitOneBatchedTrigger(t *testing.T) {
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
 	base := failure.FailureEvidence{
-		Source: failure.SourceValidation, ReleaseID: "r1", Repo: "o/r", CommitSHA: "abc",
+		Source: pkg_model.RemediationSourceValidation, ReleaseID: "r1", Repo: "o/r", CommitSHA: "abc",
 		DBTLogURI: "s3://b/k", CodeBundleURI: "s3://b/code-bundles/r1/bundle.json",
 	}
 	a, b := base, base
@@ -509,7 +553,7 @@ func TestClassifyRejection_TwoNodesEmitOneBatchedTrigger(t *testing.T) {
 	a.NodeID, a.ChangedAncestors = "s.a", anc
 	b.NodeID, b.ChangedAncestors = "s.b", anc
 
-	err := ClassifyRejection(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), []failure.FailureEvidence{a, b})
+	err := ClassifyRejection(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), testTenant, []failure.FailureEvidence{a, b})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -519,12 +563,11 @@ func TestClassifyRejection_TwoNodesEmitOneBatchedTrigger(t *testing.T) {
 	if len(u.ob.entries) != 1 {
 		t.Fatalf("one rejected release emits ONE trigger, got %d", len(u.ob.entries))
 	}
-	if u.ob.entries[0].StreamName != streams.RemediationRequestedV2 {
+	if u.ob.entries[0].StreamName != streams.RemediationRequestedV3 {
 		t.Fatalf("stream = %q", u.ob.entries[0].StreamName)
 	}
-	var p serialization.RemediationRequestedDTO
-	_ = json.Unmarshal(u.ob.entries[0].Payload, &p)
-	if p.EventID != event.RemediationEventID("r1", 1).String() || p.ReleaseID != "r1" || p.Source != "validation" {
+	p := triggerOf(t, u.ob.entries[0])
+	if u.ob.entries[0].ID != rowIDOf("r1", 1) || p.ReleaseID != "r1" || p.Source != "validation" {
 		t.Fatalf("bad batch header: %+v", p)
 	}
 	if len(p.Nodes) != 2 || p.Nodes[0].NodeID != "s.a" || p.Nodes[1].NodeID != "s.b" {
@@ -540,35 +583,205 @@ func TestClassifyRejection_TwoNodesEmitOneBatchedTrigger(t *testing.T) {
 	}
 }
 
-func TestClassifyRejection_OnlyNewlyRecordedEmitNodesAreCarried(t *testing.T) {
+func TestClassifyRejection_OnlyNewlyRecordedNodesAreCarried(t *testing.T) {
 	u := &fakeUoW{dec: &fakeDecisionRepo{insertedByNode: map[string]bool{"s.a": false, "s.b": true}}, ob: &fakeOutbox{}}
-	base := failure.FailureEvidence{Source: failure.SourceValidation, ReleaseID: "r1", DBTLogURI: "s3://b/k"}
+	base := failure.FailureEvidence{Source: pkg_model.RemediationSourceValidation, ReleaseID: "r1", DBTLogURI: "s3://b/k"}
 	a, b := base, base
 	a.NodeID, b.NodeID = "s.a", "s.b"
 
-	err := ClassifyRejection(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), []failure.FailureEvidence{a, b})
+	err := ClassifyRejection(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), testTenant, []failure.FailureEvidence{a, b})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var p serialization.RemediationRequestedDTO
-	_ = json.Unmarshal(u.ob.entries[0].Payload, &p)
+	p := triggerOf(t, u.ob.entries[0])
 	if len(p.Nodes) != 1 || p.Nodes[0].NodeID != "s.b" {
 		t.Fatalf("a node already recorded must not be re-emitted: %+v", p.Nodes)
 	}
 }
 
-func TestClassifyRejection_NoEmitDecisionsWritesNoTrigger(t *testing.T) {
+// TestClassifyRejection_MixedBatchCarriesFixableAndUnfixable holds that one
+// trigger carries every newly recorded node of the rejection, in evidence
+// order, the unfixable one marked and the others not. Each node reads its own
+// log, so the infra verdict of one does not touch the others.
+func TestClassifyRejection_MixedBatchCarriesFixableAndUnfixable(t *testing.T) {
+	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
+	deps := Deps{
+		NewUoW: func() uow.UnitOfWork { return u },
+		LogReader: mapLogReader{byURI: map[string]string{
+			"s3://b/a": `Database Error: column "x" does not exist`,
+			"s3://b/b": "could not connect to database: connection refused",
+			"s3://b/c": "Failure in test not_null_c (got 3 results, configured to fail if != 0)",
+		}},
+		Clock:  fakeClock{},
+		Logger: slog.Default(),
+	}
+	base := failure.FailureEvidence{Source: pkg_model.RemediationSourceValidation, ReleaseID: "r1", Repo: "o/r", CommitSHA: "abc"}
+	a, b, c := base, base, base
+	a.NodeID, a.DBTLogURI = "s.a", "s3://b/a"
+	b.NodeID, b.DBTLogURI = "s.b", "s3://b/b"
+	c.NodeID, c.DBTLogURI = "s.c", "s3://b/c"
+
+	require.NoError(t, ClassifyRejection(context.Background(), deps, testTenant, []failure.FailureEvidence{a, b, c}))
+
+	require.Len(t, u.ob.entries, 1, "one rejected release is ONE trigger")
+	p := triggerOf(t, u.ob.entries[0])
+	require.Len(t, p.Nodes, 3)
+	assert.Equal(t, []string{"s.a", "s.b", "s.c"}, []string{p.Nodes[0].NodeID, p.Nodes[1].NodeID, p.Nodes[2].NodeID})
+	assert.Nil(t, p.Nodes[0].Unfixable)
+	require.NotNil(t, p.Nodes[1].Unfixable)
+	assert.Equal(t, string(pkg_model.HandoverReasonClassifierInfra), p.Nodes[1].Unfixable.Reason)
+	assert.Nil(t, p.Nodes[2].Unfixable)
+	assert.Len(t, u.dec.saved, 3, "every node is recorded, emit and drop alike")
+}
+
+// TestClassifyRejection_AllUnfixableStillEmitsOneTrigger holds that a release
+// whose every failure is unfixable still writes its trigger, so the release
+// page names each node and why no fix was proposed.
+func TestClassifyRejection_AllUnfixableStillEmitsOneTrigger(t *testing.T) {
+	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
+	base := failure.FailureEvidence{Source: pkg_model.RemediationSourceValidation, ReleaseID: "r1", Repo: "o/r", CommitSHA: "abc", DBTLogURI: "s3://b/k"}
+	a, b := base, base
+	a.NodeID, b.NodeID = "s.a", "s.b"
+
+	require.NoError(t, ClassifyRejection(context.Background(), depsWith(u, "OOMKilled: container exceeded its memory limit", nil), testTenant, []failure.FailureEvidence{a, b}))
+
+	require.Len(t, u.ob.entries, 1, "every node unfixable still writes ONE trigger")
+	assert.Equal(t, rowIDOf("r1", 1), u.ob.entries[0].ID)
+	p := triggerOf(t, u.ob.entries[0])
+	require.Len(t, p.Nodes, 2)
+	for _, n := range p.Nodes {
+		require.NotNil(t, n.Unfixable, n.NodeID)
+		assert.Equal(t, string(pkg_model.HandoverReasonClassifierInfra), n.Unfixable.Reason)
+		assert.Equal(t, "OOMKilled: container exceeded its memory limit", n.Unfixable.Detail)
+		assert.Equal(t, "infra:oomkilled", n.Reason, "the rule that matched stays on the node's reason")
+	}
+	for _, d := range u.dec.saved {
+		assert.Equal(t, failure.DecisionDrop, d.Decision, "the decision row still says drop")
+	}
+	assert.True(t, u.committed)
+}
+
+// TestClassifyRejection_RedeliveryOfUnfixableNodesWritesNothing holds that a
+// redelivered rejection whose nodes were all recorded before writes no trigger,
+// whether the nodes were fixable or not.
+func TestClassifyRejection_RedeliveryOfUnfixableNodesWritesNothing(t *testing.T) {
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: false}, ob: &fakeOutbox{}}
-	ev := failure.FailureEvidence{Source: failure.SourceValidation, ReleaseID: "r1", NodeID: "s.a", DBTLogURI: "s3://b/k"}
-	if err := ClassifyRejection(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), []failure.FailureEvidence{ev}); err != nil {
-		t.Fatal(err)
+	ev := failure.FailureEvidence{Source: pkg_model.RemediationSourceValidation, ReleaseID: "r1", NodeID: "s.a", DBTLogURI: "s3://b/k"}
+
+	require.NoError(t, ClassifyRejection(context.Background(), depsWith(u, "could not connect to database: connection refused", nil), testTenant, []failure.FailureEvidence{ev}))
+
+	assert.Empty(t, u.ob.entries, "a redelivered rejection must not re-emit")
+	assert.True(t, u.committed, "the decisions are still committed")
+}
+
+// TestClassifyRejection_ParseNotHealableIsForwardedUnfixable holds that a
+// parse failure of a kind no source change fixes is forwarded unfixable with the
+// reason classifier_unhealable_parse and the parser's own text as its detail,
+// and that the rule id stays on the node's reason.
+func TestClassifyRejection_ParseNotHealableIsForwardedUnfixable(t *testing.T) {
+	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
+	var fetches int
+	deps := Deps{
+		NewUoW:    func() uow.UnitOfWork { return u },
+		LogReader: fakeLogReader{err: errors.New("log reader must not be called"), calls: &fetches},
+		Clock:     fakeClock{},
+		Logger:    slog.Default(),
 	}
-	if len(u.ob.entries) != 0 {
-		t.Fatal("a redelivered rejection must not re-emit")
+	ev := failure.FailureEvidence{
+		Source: pkg_model.RemediationSourceParse, ReleaseID: "rel-1", NodeID: "a.b",
+		ParseKind: pkg_model.ParseFailureKindInternal, Detail: "parser crashed",
+		FilePath: "models/b.sql", Service: "s", Repo: "o/r", CommitSHA: "sha",
 	}
-	if !u.committed {
-		t.Fatal("decisions are still committed")
+
+	require.NoError(t, ClassifyRejection(context.Background(), deps, testTenant, []failure.FailureEvidence{ev}))
+
+	require.Equal(t, 0, fetches)
+	require.Len(t, u.dec.saved, 1)
+	assert.Equal(t, failure.DecisionDrop, u.dec.saved[0].Decision)
+	require.Len(t, u.ob.entries, 1)
+	p := triggerOf(t, u.ob.entries[0])
+	assert.Equal(t, "parse", p.Source)
+	require.Len(t, p.Nodes, 1)
+	n := p.Nodes[0]
+	assert.Equal(t, "a.b", n.NodeID)
+	assert.Equal(t, "parse:not_healable", n.Reason)
+	assert.Equal(t, "parser crashed", n.ErrorExcerpt)
+	assert.Equal(t, "models/b.sql", n.FilePath)
+	require.NotNil(t, n.Unfixable)
+	assert.Equal(t, pkgevents.Unfixable{Reason: string(pkg_model.HandoverReasonClassifierUnhealableParse), Detail: "parser crashed"}, *n.Unfixable)
+}
+
+// TestClassifyRejection_UnfixableDetailFallsBackToTheRule holds that a dropped
+// node whose classification has no key error line is still handed over with a
+// message: the rule that matched.
+func TestClassifyRejection_UnfixableDetailFallsBackToTheRule(t *testing.T) {
+	for name, detail := range map[string]string{"no detail": "", "a blank detail": " \n\t "} {
+		t.Run(name, func(t *testing.T) {
+			u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
+			deps := Deps{
+				NewUoW:    func() uow.UnitOfWork { return u },
+				LogReader: fakeLogReader{err: errors.New("log reader must not be called")},
+				Clock:     fakeClock{},
+				Logger:    slog.Default(),
+			}
+			ev := failure.FailureEvidence{
+				Source: pkg_model.RemediationSourceParse, ReleaseID: "rel-1", NodeID: "a.b",
+				ParseKind: pkg_model.ParseFailureKindInternal, Detail: detail,
+			}
+
+			require.NoError(t, ClassifyRejection(context.Background(), deps, testTenant, []failure.FailureEvidence{ev}))
+
+			require.Len(t, u.ob.entries, 1)
+			n := triggerOf(t, u.ob.entries[0]).Nodes[0]
+			require.NotNil(t, n.Unfixable)
+			assert.Equal(t, "parse:not_healable", n.Unfixable.Detail)
+		})
 	}
+}
+
+// TestClassifyRejection_UnfixableDetailIsTheCappedErrorLine holds that an
+// infrastructure failure's detail is its key error line, cut to the excerpt's
+// cap, never the whole log.
+func TestClassifyRejection_UnfixableDetailIsTheCappedErrorLine(t *testing.T) {
+	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
+	ev := failure.FailureEvidence{Source: pkg_model.RemediationSourceValidation, ReleaseID: "r1", NodeID: "s.n", DBTLogURI: "s3://b/k"}
+	log := "12:00:01  Encountered an error:\nconnection refused " + strings.Repeat("x", 10_000) + "\n12:00:02  next line"
+
+	require.NoError(t, ClassifyRejection(context.Background(), depsWith(u, log, nil), testTenant, []failure.FailureEvidence{ev}))
+
+	n := triggerOf(t, u.ob.entries[0]).Nodes[0]
+	require.NotNil(t, n.Unfixable)
+	assert.Equal(t, n.ErrorExcerpt, n.Unfixable.Detail, "the detail is the excerpt the trigger carries")
+	assert.True(t, strings.HasPrefix(n.Unfixable.Detail, "connection refused xxx"), n.Unfixable.Detail[:40])
+	assert.LessOrEqual(t, len(n.Unfixable.Detail), 4*1024)
+	assert.NotContains(t, n.Unfixable.Detail, "next line")
+}
+
+// TestClassifyRejection_StoresTheTriggerUnderTheMessagesTenant holds that the
+// trigger's outbox row carries the tenant of the message the rejection came
+// from, and that a message with no tenant is refused before any row is written.
+func TestClassifyRejection_StoresTheTriggerUnderTheMessagesTenant(t *testing.T) {
+	ev := failure.FailureEvidence{Source: pkg_model.RemediationSourceValidation, ReleaseID: "r1", NodeID: "s.a", DBTLogURI: "s3://b/k"}
+
+	t.Run("the row is stored under that tenant", func(t *testing.T) {
+		u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
+		require.NoError(t, ClassifyRejection(context.Background(), depsWith(u, `column "x" does not exist`, nil), "globex", []failure.FailureEvidence{ev}))
+		require.Len(t, u.ob.entries, 1)
+		tenantID, payload, err := outbox.UnwrapTenant(u.ob.entries[0].Payload)
+		require.NoError(t, err)
+		assert.Equal(t, "globex", tenantID)
+		var p pkgevents.RemediationRequested
+		require.NoError(t, json.Unmarshal(payload, &p), "the wrapped payload is the typed trigger")
+		assert.Equal(t, "r1", p.ReleaseID)
+	})
+
+	t.Run("no tenant is refused", func(t *testing.T) {
+		u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
+		err := ClassifyRejection(context.Background(), depsWith(u, `column "x" does not exist`, nil), "", []failure.FailureEvidence{ev})
+		require.ErrorIs(t, err, outbox.ErrNoTenant)
+		assert.Empty(t, u.ob.entries)
+		assert.False(t, u.committed, "a refused message commits nothing")
+	})
 }
 
 // TestClassifyRejection_NoEvidenceRecordsAndEmitsNothing pins what a dropped
@@ -580,7 +793,7 @@ func TestClassifyRejection_NoEvidenceRecordsAndEmitsNothing(t *testing.T) {
 	begun := false
 	deps.NewUoW = func() uow.UnitOfWork { begun = true; return u }
 
-	require.NoError(t, ClassifyRejection(context.Background(), deps, nil))
+	require.NoError(t, ClassifyRejection(context.Background(), deps, testTenant, nil))
 
 	assert.False(t, begun, "a rejection with no evidence opens no transaction")
 	assert.Empty(t, u.dec.saved, "no decision is recorded")
@@ -598,28 +811,19 @@ func TestClassifyRejection_ParseEvidenceReadsNoLog(t *testing.T) {
 		Logger:    slog.Default(),
 	}
 	ev := failure.FailureEvidence{
-		Source: failure.SourceParse, ReleaseID: "rel-1", NodeID: "a.b",
+		Source: pkg_model.RemediationSourceParse, ReleaseID: "rel-1", NodeID: "a.b",
 		ParseKind: pkg_model.ParseFailureKindInvalidSQL, Detail: "Expecting )",
 		FilePath: "models/b.sql", Service: "s", Repo: "o/r", CommitSHA: "sha",
 	}
-	require.NoError(t, ClassifyRejection(context.Background(), deps, []failure.FailureEvidence{ev}))
+	require.NoError(t, ClassifyRejection(context.Background(), deps, testTenant, []failure.FailureEvidence{ev}))
 	require.Equal(t, 0, fetches, "a parse failure has no log to fetch")
 	require.Len(t, u.ob.entries, 1, "one trigger must be emitted")
-	require.Equal(t, failure.SourceParse, u.dec.saved[0].Source)
-	var w struct {
-		Source string `json:"source"`
-		Nodes  []struct {
-			NodeID       string `json:"node_id"`
-			Reason       string `json:"reason"`
-			ErrorExcerpt string `json:"error_excerpt"`
-			FilePath     string `json:"file_path"`
-			Service      string `json:"service"`
-		} `json:"nodes"`
-	}
-	require.NoError(t, json.Unmarshal(u.ob.entries[0].Payload, &w))
+	require.Equal(t, pkg_model.RemediationSourceParse, u.dec.saved[0].Source)
+	w := triggerOf(t, u.ob.entries[0])
 	assert.Equal(t, "parse", w.Source)
 	require.Len(t, w.Nodes, 1)
 	assert.Equal(t, "logic:invalid_sql", w.Nodes[0].Reason)
 	assert.Equal(t, "Expecting )", w.Nodes[0].ErrorExcerpt)
 	assert.Equal(t, "models/b.sql", w.Nodes[0].FilePath)
+	assert.Nil(t, w.Nodes[0].Unfixable)
 }
