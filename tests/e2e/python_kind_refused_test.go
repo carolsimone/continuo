@@ -12,7 +12,9 @@ import (
 )
 
 // pythonKindRefusal is the text release-controller refuses a release of the
-// python kind with, and the ui relays unchanged in the body of its 400.
+// python kind with. The body of the 400 carries it behind the prefix
+// `invalid candidate: ` that release-controller's candidate handler adds, and
+// the ui relays that body trimmed.
 const pythonKindRefusal = `kind "python" is no longer accepted: release the service as "python-odcs", one ODCS contract per node (docs/contracts.md)`
 
 // TestE2E_PythonKindIsRefused proves the refusal of the python kind is
