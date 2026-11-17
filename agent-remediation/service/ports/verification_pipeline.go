@@ -9,10 +9,11 @@ import (
 
 // VerificationRequest is a fix-verification run to submit: the edited
 // service's delta, the rejected release the fix answers, and the attempt it
-// belongs to. Kind is the service's manifest kind, VerificationKindDbt or
-// VerificationKindPythonODCS — required, never defaulted. SourceOverlayURI is
-// the tarball of proposed source a dbt run lays over the project; a python
-// run is verified by its packaged odcs-bundle.json and carries none.
+// belongs to. Kind is the service's manifest kind, VerificationKindDbt,
+// VerificationKindPythonODCS or VerificationKindPython — required, never
+// defaulted. SourceOverlayURI is the tarball of proposed source a dbt run lays
+// over the project; a python run is verified by its packaged contract
+// (odcs-bundle.json, or contract.yaml for kind python) and carries none.
 type VerificationRequest struct {
 	RunID             string
 	Service           string
@@ -27,6 +28,9 @@ type VerificationRequest struct {
 const (
 	VerificationKindDbt        = "dbt"
 	VerificationKindPythonODCS = "python-odcs"
+	// VerificationKindPython verifies a python service by one merged
+	// contract.yaml, uploaded at <service>/<run id>/contract.yaml.
+	VerificationKindPython = "python"
 )
 
 // ODCSBundleName is the object name of a python-odcs service's bundle of
@@ -34,6 +38,10 @@ const (
 // <service>/<release id>/odcs-bundle.json, and a fix's verification run reads
 // the packed one at <service>/<run id>/odcs-bundle.json.
 const ODCSBundleName = "odcs-bundle.json"
+
+// ContractYAMLName is the object name of a kind python verification run's
+// merged contract, read at <service>/<run id>/contract.yaml.
+const ContractYAMLName = "contract.yaml"
 
 // VerificationStatus is one read of a verification run. Phase is derived
 // from the run's status; ActivatedAt is when it left the pipeline's queue

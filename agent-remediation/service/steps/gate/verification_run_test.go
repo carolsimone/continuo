@@ -270,6 +270,73 @@ func TestVerificationRun_UploadsAnODCSBundle(t *testing.T) {
 	}}, r.artifacts.writes)
 }
 
+// mergedContractYAML is a packaged contract in the form a cluster checked by an
+// earlier release of agent-remediation carries in its journal: the merged
+// contract.yaml of the service, not an ODCS producer bundle.
+const mergedContractYAML = "version: 1\nnodes:\n  - id: python.ledger.postings\n    script: scripts/postings.py\n"
+
+func mergedYAMLCluster() step.ClusterDraft {
+	c := pythonCluster()
+	c.Evidence = remediation.NewEvidence().With(remediation.KeyPackagedContract, remediation.Bytes(mergedContractYAML))
+	return c
+}
+
+func TestVerificationRun_UploadsMergedContractYAMLAsKindPython(t *testing.T) {
+	r := newRig()
+	res, err := r.step.Submit(context.Background(), gateInput(mergedYAMLCluster()))
+	require.NoError(t, err)
+
+	assert.Equal(t, []proposal.Verification{
+		{Service: "ledger", Kind: "python", RunID: "verify-rel-1-ledger-a2", Phase: proposal.PhaseQueued},
+	}, res.Verifications)
+	assert.Equal(t, []ports.VerificationRequest{{
+		RunID:             "verify-rel-1-ledger-a2",
+		Service:           "ledger",
+		ImageTag:          "tag-rel-1-ledger",
+		Kind:              "python",
+		VerifiesReleaseID: "rel-1",
+		Attempt:           2,
+	}}, r.pipeline.submitted, "a merged contract.yaml is verified as the kind its bytes are")
+	assert.Equal(t, []write{{
+		key: "ledger/verify-rel-1-ledger-a2/contract.yaml", body: mergedContractYAML, contentType: "application/yaml",
+	}}, r.artifacts.writes)
+}
+
+func TestVerificationRun_TellsTheFormatOfThePackagedContractApart(t *testing.T) {
+	for name, tc := range map[string]struct {
+		contract string
+		kind     string
+	}{
+		"an ODCS producer bundle":              {contract: pythonContract, kind: "python-odcs"},
+		"an ODCS bundle with spacing":          {contract: "\n  {\"nodes\": [], \"bundle_version\": 1}\n", kind: "python-odcs"},
+		"merged contract yaml":                 {contract: mergedContractYAML, kind: "python"},
+		"a JSON object with no bundle_version": {contract: `{"version": 1, "nodes": []}`, kind: "python"},
+		"a JSON array":                         {contract: `[{"bundle_version": 1}]`, kind: "python"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRig()
+			c := pythonCluster()
+			c.Evidence = remediation.NewEvidence().With(remediation.KeyPackagedContract, remediation.Bytes(tc.contract))
+			res, err := r.step.Submit(context.Background(), gateInput(c))
+			require.NoError(t, err)
+			require.Len(t, res.Verifications, 1)
+			assert.Equal(t, tc.kind, res.Verifications[0].Kind)
+		})
+	}
+}
+
+func TestPoll_ReportsTheKindTheRunWasSubmittedAs(t *testing.T) {
+	r := newRig()
+	in := gateInput(mergedYAMLCluster())
+	submitted, err := r.step.Submit(context.Background(), in)
+	require.NoError(t, err)
+
+	res, err := r.step.Poll(context.Background(), in, submitted.Result)
+	require.NoError(t, err)
+	require.Len(t, res.Verifications, 1)
+	assert.Equal(t, "python", res.Verifications[0].Kind, "Poll rebuilds the runs with the kind Submit gave them")
+}
+
 func TestSubmit_TwoServicesSubmitOneRunEachInServiceOrder(t *testing.T) {
 	r := newRig()
 	res, err := r.step.Submit(context.Background(), gateInput(dbtCluster(), pythonCluster()))

@@ -2,12 +2,14 @@ package runner_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,6 +18,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 )
@@ -231,4 +234,45 @@ func TestImagePackages_AReadErrorIsRetriedNotDeclined(t *testing.T) {
 	require.NoError(t, h.runner.Drive(ctx, id))
 	assert.Equal(t, 2, h.images.count(), "the failed step runs again")
 	assert.Equal(t, remediation.ClusterChecked, h.cluster(id, 1, 1).Status)
+}
+
+// A checked cluster whose contract_packages row holds a merged contract.yaml,
+// not an ODCS producer bundle, is rebuilt from that row when its try reaches
+// the gate, and its contract is verified as kind python from contract.yaml.
+func TestGate_ACheckedClusterHoldingMergedContractYAMLIsVerifiedAsKindPython(t *testing.T) {
+	const merged = "version: 1\nnodes:\n  - id: sales.loader\n    script: scripts/loader.py\n"
+	h := newHarness(t, withContractType(1, &refusingPackager{}))
+	h.llm.answer = contractAnswer
+	h.pipeline.submitErr = errors.New("release-controller unavailable")
+	id := h.accept(trigger("validation", contractNode()))
+	require.Error(t, h.runner.Drive(ctx, id), "the gate's submit fails, so the cluster stays checked")
+	require.Equal(t, remediation.ClusterChecked, h.cluster(id, 1, 1).Status)
+
+	rows := h.stepRows(id, 1, 1)["contract_packages"]
+	require.Len(t, rows, 1)
+	row := rows[0]
+	rec, err := serialization.DecodeRecord[serialization.CheckRecord](row.Output)
+	require.NoError(t, err)
+	raw, err := json.Marshal(remediation.Bytes(merged))
+	require.NoError(t, err)
+	rec.Evidence[remediation.KeyPackagedContract] = raw
+	row.Output, err = serialization.EncodeRecord(rec)
+	require.NoError(t, err)
+	h.saveStep(row)
+
+	h.artifacts.mu.Lock()
+	h.artifacts.objects = nil
+	h.artifacts.mu.Unlock()
+	h.clock.set(t0.Add(time.Minute))
+	require.NoError(t, h.drive(id))
+
+	submitted := h.pipeline.runs()
+	require.Len(t, submitted, 1)
+	assert.Equal(t, "python", submitted[0].Kind)
+	body, ok := h.artifacts.get("svc-a/" + submitted[0].RunID + "/contract.yaml")
+	require.True(t, ok, "the merged yaml is uploaded as contract.yaml")
+	assert.Equal(t, merged, body)
+	_, wroteBundle := h.artifacts.get("svc-a/" + submitted[0].RunID + "/odcs-bundle.json")
+	assert.False(t, wroteBundle, "no odcs-bundle.json is written for it")
+	assert.Equal(t, proposal.StatusVerifying, h.attempt(1).Proposal.Status)
 }
