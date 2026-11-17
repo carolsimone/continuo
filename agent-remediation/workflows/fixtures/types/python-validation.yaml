@@ -1,5 +1,5 @@
 # A python node whose declared read names a relation that does not exist.
-# The fix corrects the read in the contract yaml that declares the node.
+# The fix corrects the read in the node's ODCS contract.
 # Built from the e2e fixture tests/e2e/fixtures/py-remediation-repo
 # (services/svc-py-e2e) and the python lane's tests
 # (service/fixer/python_validation_test.go).
@@ -24,19 +24,29 @@ trigger:
 service_repo_paths:
   svc-py-e2e: services/svc-py-e2e
 repo_files:
-  services/svc-py-e2e/contracts/py_bad_read.yml: |
-    nodes:
-      - schema: e2e_schema
-        table: py_bad_read
-        owner: e2e
-        schedule: daily
-        criticality: SECONDARY
-        script: scripts/py_bad_read.py
-        description: "python node whose declared read cannot bind"
-        reads:
+  services/svc-py-e2e/contracts/py_bad_read.odcs.yaml: |
+    apiVersion: v3.2.0
+    kind: DataContract
+    id: e2e_schema.py_bad_read
+    name: py_bad_read
+    version: "0"
+    description:
+      purpose: "python node whose declared read cannot bind"
+    team:
+      name: e2e
+    customProperties:
+      - {vendor: continuo, property: schedule, value: daily}
+      - {vendor: continuo, property: criticality, value: SECONDARY}
+      - {vendor: continuo, property: script, value: scripts/py_bad_read.py}
+      - vendor: continuo
+        property: readQueries
+        value:
           missing: select id from public.wrong_name
-        output_columns:
-          - {name: id, type: INTEGER, nullable: false}
+    schema:
+      - name: py_bad_read
+        physicalType: table
+        properties:
+          - {name: id, physicalType: INTEGER, required: true}
   services/svc-py-e2e/scripts/py_bad_read.py: |
     import pyarrow as pa
 
@@ -48,53 +58,79 @@ objects:
   s3://logs/rel-python-1/e2e_schema.py_bad_read.log: "check_binds: relation \"public.wrong_name\" does not exist\n"
 bundle:
   e2e_schema.py_bad_read: { runtime: python, raw_code: '{"schema":"e2e_schema","table":"py_bad_read","reads":{"missing":"select id from public.wrong_name"}}' }
+catalog:
+  # The node's contract as continuo last promoted it.
+  contracts:
+    e2e_schema.py_bad_read: |
+      apiVersion: v3.2.0
+      kind: DataContract
+      id: e2e_schema.py_bad_read
+      name: py_bad_read
+      version: "1"
 release:
   image_tag: sha-python
+  # The package list of the image, which the image_packages context step reads
+  # and contract_packages packs with. Without it the step declines the cluster.
+  image_packages: {pyarrow: "26.0.0"}
   failing_nodes:
     e2e_schema.py_bad_read: 'relation "public.wrong_name" does not exist'
 packager:
-  merged: |
-    nodes:
-      - schema: e2e_schema
-        table: py_bad_read
-        reads:
-          missing: select id from public.right_name
+  # The odcs-bundle.json continuo-runtime pack writes for the patched contract
+  # directory, with the release's image packages.
+  packed: '{"bundle_version": 1, "service": "svc-py-e2e", "producer": {"continuo_python_runtime": "0.13.0", "continuo_contracts": "0.2.0"}, "image_packages": {"pyarrow": "26.0.0"}, "nodes": [{"path": "contracts/py_bad_read.odcs.yaml", "text": "id: e2e_schema.py_bad_read\n", "source_hash": "", "shared_code_hash": ""}]}'
 answers:
   pass:
     - files:
-        - path: services/svc-py-e2e/contracts/py_bad_read.yml
+        - path: services/svc-py-e2e/contracts/py_bad_read.odcs.yaml
           content: |
-            nodes:
-              - schema: e2e_schema
-                table: py_bad_read
-                owner: e2e
-                schedule: daily
-                criticality: SECONDARY
-                script: scripts/py_bad_read.py
-                description: "python node whose declared read cannot bind"
-                reads:
+            apiVersion: v3.2.0
+            kind: DataContract
+            id: e2e_schema.py_bad_read
+            name: py_bad_read
+            version: "0"
+            description:
+              purpose: "python node whose declared read cannot bind"
+            team:
+              name: e2e
+            customProperties:
+              - {vendor: continuo, property: schedule, value: daily}
+              - {vendor: continuo, property: criticality, value: SECONDARY}
+              - {vendor: continuo, property: script, value: scripts/py_bad_read.py}
+              - vendor: continuo
+                property: readQueries
+                value:
                   missing: select id from public.right_name
-                output_columns:
-                  - {name: id, type: INTEGER, nullable: false}
+            schema:
+              - name: py_bad_read
+                physicalType: table
+                properties:
+                  - {name: id, physicalType: INTEGER, required: true}
       rationale: the read names public.right_name, which exists
       confidence: high
       model: claude-test
   fail:
     # The read deleted rather than corrected, which pre-flight refuses.
     - files:
-        - path: services/svc-py-e2e/contracts/py_bad_read.yml
+        - path: services/svc-py-e2e/contracts/py_bad_read.odcs.yaml
           content: |
-            nodes:
-              - schema: e2e_schema
-                table: py_bad_read
-                owner: e2e
-                schedule: daily
-                criticality: SECONDARY
-                script: scripts/py_bad_read.py
-                description: "python node whose declared read cannot bind"
-                reads: {}
-                output_columns:
-                  - {name: id, type: INTEGER, nullable: false}
+            apiVersion: v3.2.0
+            kind: DataContract
+            id: e2e_schema.py_bad_read
+            name: py_bad_read
+            version: "0"
+            description:
+              purpose: "python node whose declared read cannot bind"
+            team:
+              name: e2e
+            customProperties:
+              - {vendor: continuo, property: schedule, value: daily}
+              - {vendor: continuo, property: criticality, value: SECONDARY}
+              - {vendor: continuo, property: script, value: scripts/py_bad_read.py}
+            schema:
+              - name: py_bad_read
+                physicalType: table
+                properties:
+                  - {name: id, physicalType: INTEGER, required: true}
       rationale: removed the read that cannot bind
       confidence: high
       model: claude-test

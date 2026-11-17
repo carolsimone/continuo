@@ -1,0 +1,36 @@
+# Same unbindable-read failure as svc-py-e2e's py_bad_read, declared under a
+# second service so the two remediation scenarios never share a contract
+# directory: the packaging step packs a whole directory, so one still-broken
+# node beside the node under repair would sink the other scenario's
+# verification run.
+#
+# The node is repaired over two attempts: the canned model in
+# tests/e2e/stub-llm answers a first attempt with a read that still cannot
+# bind, and answers a retry — one whose prompt carries what the rejected
+# attempt changed and why it was rejected — with a read that binds.
+#
+# Nothing in this file decides which of those two answers comes back. The
+# stub reads only the sections the prompt assembler writes AROUND this file,
+# so no comment here can change what a test observes.
+apiVersion: v3.2.0
+kind: DataContract
+id: e2e_schema.py_loop_read
+name: py_loop_read
+version: "0"
+description:
+  purpose: python node whose declared read cannot bind, repaired over two attempts
+team:
+  name: e2e
+customProperties:
+  - {vendor: continuo, property: schedule, value: daily}
+  - {vendor: continuo, property: criticality, value: SECONDARY}
+  - {vendor: continuo, property: script, value: scripts/py_loop_read.py}
+  - vendor: continuo
+    property: readQueries
+    value:
+      missing: select id from public.loop_wrong_name
+schema:
+  - name: py_loop_read
+    physicalType: table
+    properties:
+      - {name: id, physicalType: INTEGER, required: true}

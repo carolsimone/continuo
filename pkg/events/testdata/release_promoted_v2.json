@@ -18,7 +18,9 @@
       "repo": "carolsimone/continuo-demo",
       "commit_sha": "0123456789abcdef0123456789abcdef01234567",
       "bootstrap": false,
-      "rebaseline": false
+      "rebaseline": false,
+      "contract_bundle_uri": "s3://continuo/tenants/default/topologies/rel-2026-10-08-0001/contracts.json.gz",
+      "contract_bundle_sha256": "9b0c4d1e7a52f3860be1d9c4a7f08e35b216d0a94c7e53f1a8b20d6e49c71f3a"
     }
   },
   "fields": {
@@ -42,7 +44,9 @@
       "repo": "carolsimone/continuo-demo",
       "commit_sha": "0123456789abcdef0123456789abcdef01234567",
       "bootstrap": false,
-      "rebaseline": false
+      "rebaseline": false,
+      "contract_bundle_uri": "s3://continuo/tenants/default/topologies/rel-2026-10-08-0001/contracts.json.gz",
+      "contract_bundle_sha256": "9b0c4d1e7a52f3860be1d9c4a7f08e35b216d0a94c7e53f1a8b20d6e49c71f3a"
     }
   }
 }

@@ -1,9 +1,9 @@
-"""Per-kind rules for python contract entries.
+"""Per-kind rules for python contract nodes.
 
-Each python node type is one KindRules entry: whether it carries a script, how
-its reads are validated and turned into upstream SQL or a csv source, which
-write modes it takes and whether it may list assets. The parser looks the kind
-up here instead of branching on its name.
+Each python node type is one KindRules entry: whether it carries a script, and
+how its reads are validated and turned into upstream SQL or a csv source. The
+ODCS bundle parser and the node builder look the kind up here instead of
+branching on its name.
 """
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ class NoReads(ReadsRule):
 
     def parse(self, raw, label: str) -> ParsedReads:
         if not isinstance(raw, dict) or raw:
-            _fail(f"{label}: a python-api node declares no reads; its wire entry carries reads: {{}}")
+            _fail(f"{label}: a python-api node declares no reads")
         return ParsedReads(reads={}, dependency_sqls=[], csv_source="")
 
 
@@ -103,49 +103,14 @@ def _validate_csv_uri(uri: str, label: str) -> None:
         )
 
 
-# The write modes a python node declares in `mode_type`; absent means replace.
-_ALL_MODE_TYPES = frozenset({"replace", "append", "upsert"})
-
-
 @dataclass(frozen=True)
 class KindRules:
     script_required: bool
     reads: ReadsRule
-    mode_types: frozenset[str]
-    # Whether the entry may list `assets`, the files its script reads; a kind
-    # without a script has nothing that reads a file.
-    assets_allowed: bool
-    secret_allowed: bool = False
 
 
 RULES: dict[NodeType, KindRules] = {
-    NodeType.PYTHON_NODE: KindRules(
-        script_required=True, reads=SqlReads(), mode_types=_ALL_MODE_TYPES, assets_allowed=True,
-    ),
-    NodeType.PYTHON_CSV: KindRules(
-        script_required=False, reads=CsvRead(), mode_types=frozenset({"replace"}), assets_allowed=False,
-    ),
-    NodeType.PYTHON_API: KindRules(
-        script_required=True, reads=NoReads(), mode_types=_ALL_MODE_TYPES, assets_allowed=True,
-        secret_allowed=True,
-    ),
+    NodeType.PYTHON_NODE: KindRules(script_required=True, reads=SqlReads()),
+    NodeType.PYTHON_CSV: KindRules(script_required=False, reads=CsvRead()),
+    NodeType.PYTHON_API: KindRules(script_required=True, reads=NoReads()),
 }
-
-# Contracts produced by continuo-python-runtime < 0.6.0 declare python-node as
-# "python-model". Every release re-parses every service's stored production
-# contract, so those contracts keep resolving until their service releases
-# again on a newer runtime.
-STORED_KIND_ALIASES: dict[str, NodeType] = {"python-model": NodeType.PYTHON_NODE}
-
-
-def resolve_kind(raw, label: str) -> NodeType:
-    """The python NodeType an entry declares; absent means python-node."""
-    if raw is None:
-        return NodeType.PYTHON_NODE
-    if isinstance(raw, str):
-        if raw in STORED_KIND_ALIASES:
-            return STORED_KIND_ALIASES[raw]
-        for node_type in RULES:
-            if raw == node_type:
-                return node_type
-    _fail(f"{label}: kind must be one of {sorted(str(t) for t in RULES)}, got {raw!r}")

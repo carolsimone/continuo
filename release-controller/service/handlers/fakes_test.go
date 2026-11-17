@@ -411,6 +411,19 @@ func (f *fakeServiceProdRepo) Upsert(_ context.Context, sp *release.ServiceProd)
 	return nil
 }
 
+func (f *fakeServiceProdRepo) ServicesWithKind(_ context.Context, kind release.ManifestKind) ([]string, error) {
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+	var names []string
+	for name, sp := range f.store.serviceProd {
+		if sp.ManifestKind() == kind {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return names, nil
+}
+
 var _ repository.ServiceProdRepository = (*fakeServiceProdRepo)(nil)
 
 // --- fakeOutbox ---

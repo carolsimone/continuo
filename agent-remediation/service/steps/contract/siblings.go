@@ -51,7 +51,7 @@ func (*FailingSiblings) Meta() step.Meta {
 //
 // The release's failing nodes are read from the original release, and each
 // other id is resolved against a fresh checkout of the repository to see where
-// it is declared. A node no contract yaml declares, such as a dbt model or a
+// it is declared. A node no ODCS contract file declares, such as a dbt model or a
 // python node in another service, is not packaged by this fix and cannot fail
 // its verification run. The checkout is removed before returning.
 func (s *FailingSiblings) Gather(ctx context.Context, in step.ContextInput) (step.ContextOutput, error) {
@@ -111,10 +111,11 @@ func (s *FailingSiblings) siblingFailure(ctx context.Context, f remediation.Fail
 		}
 		other, lerr := s.locator.Locate(root, schema, table)
 		if lerr != nil {
-			// Not declared anywhere, declared twice, or unsearchable: in none of
-			// those cases is this node known to share the directory being
+			// Not declared anywhere, declared twice, or unsearchable: in none
+			// of those cases is this node known to share the directory being
 			// packaged, and uncertainty about someone else's node is not a
-			// reason to abandon a fix for this one.
+			// reason to abandon a fix for this one. Only the last two are
+			// logged.
 			if !errors.Is(lerr, ports.ErrNodeNotDeclared) {
 				s.logger.Warn("could not place another failing node; proceeding as if it is declared elsewhere",
 					"node", id, "release", releaseID, "error", lerr)

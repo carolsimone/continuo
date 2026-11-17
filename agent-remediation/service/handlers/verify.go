@@ -50,11 +50,12 @@ func unverifiable(err error) bool {
 // these edits actually fix the failing release.
 //
 // What the run verifies depends on the service's manifest kind. A python
-// service is verified by the contract yaml its fix packaged, uploaded under
-// the run's own id. A dbt service is verified by re-running its project with
-// the proposed content laid over it, so each edit's content is read back from
-// the artifact the Fixer wrote and packed into one source overlay, keyed by
-// the edit's path within that service's project.
+// service is verified as kind python-odcs by the odcs-bundle.json its fix
+// packed, uploaded under the run's own id. A dbt service is verified by
+// re-running its project with the proposed content laid over it, so each
+// edit's content is read back from the artifact the Fixer wrote and packed
+// into one source overlay, keyed by the edit's path within that service's
+// project.
 //
 // Both the artifact writes and the submission are idempotent on the attempt's
 // keys — the run id is a pure function of (release, service, attempt) — so a
@@ -112,14 +113,14 @@ func submitVerifications(
 		kind := ports.VerificationKindDbt
 		overlayURI := ""
 
-		if contract := contracts[service]; contract != nil {
-			// A python service's artifact IS the packaged contract: there is no
-			// project to overlay, so the run reads the contract written under its
+		if bundle := contracts[service]; bundle != nil {
+			// A python service's artifact IS the packed bundle: there is no
+			// project to overlay, so the run reads the bundle written under its
 			// own id.
-			kind = ports.VerificationKindPython
+			kind = ports.VerificationKindPythonODCS
 			if _, err := deps.Artifacts.Write(ctx,
-				service+"/"+runID+"/contract.yaml", string(contract), "application/yaml"); err != nil {
-				return nil, fmt.Errorf("write verification contract for %s: %w", service, err)
+				service+"/"+runID+"/"+ports.ODCSBundleName, string(bundle), "application/json"); err != nil {
+				return nil, fmt.Errorf("write verification bundle for %s: %w", service, err)
 			}
 		} else {
 			files := make([]overlay.File, 0, len(byService[service]))

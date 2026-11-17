@@ -173,6 +173,38 @@ func (noVersions) CurrentVersion(context.Context, string) (ports.CurrentVersion,
 	return ports.CurrentVersion{}, false, nil
 }
 
+// harnessPackages is the package list fakeImages answers.
+var harnessPackages = map[string]string{"pyarrow": "26.0.0"}
+
+// fakeImages answers harnessPackages, or err, for every release and service,
+// and counts the reads.
+type fakeImages struct {
+	mu    sync.Mutex
+	err   error
+	reads int
+}
+
+func (f *fakeImages) ImagePackages(context.Context, string, string) (map[string]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reads++
+	if f.err != nil {
+		return nil, f.err
+	}
+	return harnessPackages, nil
+}
+
+func (f *fakeImages) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.reads
+}
+
+// noContracts is a catalog in which no node has a contract.
+type noContracts struct{}
+
+func (noContracts) CurrentContract(context.Context, string) (string, error) { return "", nil }
+
 // fakeReleases reads the failing release's image tag of a service as
 // "tag-<service>".
 type fakeReleases struct{}
@@ -183,6 +215,10 @@ func (fakeReleases) ImageTag(_ context.Context, _, service string) (string, erro
 
 func (fakeReleases) FailingNodes(context.Context, string) (map[string]string, error) {
 	return nil, nil
+}
+
+func (fakeReleases) ContractBundle(context.Context, string) (string, string, error) {
+	return "", "", nil
 }
 
 // fakePipeline records every verification run submitted. submitErr is
@@ -447,8 +483,10 @@ type harness struct {
 	// packaging tool the contract steps read, nil unless a test sets them.
 	archive  ports.RepoArchive
 	packager ports.ContractPackager
-	collab   runner.Collaborators
-	runner   *runner.Runner
+	// images answers the image package list of every release and service.
+	images *fakeImages
+	collab runner.Collaborators
+	runner *runner.Runner
 	// replaced are the steps that stand in for the registered steps of their
 	// names in every runner the harness builds.
 	replaced []any
@@ -592,6 +630,7 @@ func newHarness(t *testing.T, opts ...option) *harness {
 		pipeline:  &fakePipeline{},
 		llm:       &scriptedLLM{answer: fixAnswer},
 		cache:     &memCache{},
+		images:    &fakeImages{},
 		files:     testFiles(3),
 	}
 	for _, o := range opts {
@@ -620,6 +659,8 @@ func newHarness(t *testing.T, opts ...option) *harness {
 		ContractLocator:     contractFiles,
 		ContractInspector:   contractFiles,
 		Packager:            h.packager,
+		ImagePackages:       h.images,
+		CurrentContracts:    noContracts{},
 		Pipeline:            h.pipeline,
 		Clock:               h.clock,
 		VerificationTimeout: verificationTimeout,

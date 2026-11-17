@@ -172,13 +172,13 @@ def test_source_carries_the_declared_kind_onto_each_manifest_file():
     handler is what decides how to parse it."""
     source = _make_s3_source(keys=[
         ManifestRequest(service="service-1", key="service-1/rel-1/manifest.json"),
-        ManifestRequest(service="marketing-py", key="marketing-py/rel-1/contract.yaml",
-                        kind=ManifestKind.PYTHON),
+        ManifestRequest(service="marketing-py", key="marketing-py/rel-1/odcs-bundle.json",
+                        kind=ManifestKind.PYTHON_ODCS),
     ])
     try:
         files = source.list_manifests()
 
-        assert [f.kind for f in files] == ["dbt", "python"]
+        assert [f.kind for f in files] == ["dbt", "python-odcs"]
         assert [f.declared_service for f in files] == ["service-1", "marketing-py"]
     finally:
         source.cleanup()
@@ -272,8 +272,9 @@ def test_s3_source_propagates_an_extras_outage():
         source.cleanup()
 
 
-def test_s3_source_reads_no_extras_for_a_python_contract():
-    source, s3 = _source(_write, [ManifestRequest(service="py", key="py/rel-1/contract.yaml", kind=ManifestKind.PYTHON)])
+def test_s3_source_reads_no_extras_for_a_python_odcs_bundle():
+    source, s3 = _source(
+        _write, [ManifestRequest(service="py", key="py/rel-1/odcs-bundle.json", kind=ManifestKind.PYTHON_ODCS)])
     try:
         assert source.list_manifests()[0].extras_path == "" and s3.download_file.call_count == 1
     finally:

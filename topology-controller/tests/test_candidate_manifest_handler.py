@@ -1,3 +1,4 @@
+import dataclasses
 import hashlib
 import json
 import logging
@@ -7,7 +8,7 @@ import pytest
 import botocore.exceptions
 from adapters.redis.error_class import is_infrastructure
 from config.config import _SYSTEM_RELATIONS
-from domain.model import FailedNode, ManifestFile, ManifestKind, Runtime, SeedExtras, SkipReason
+from domain.model import FailedNode, ManifestFile, Runtime, SeedExtras, SkipReason
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
 from service import candidate_artifacts, candidate_manifest_handler
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
@@ -20,17 +21,17 @@ from tests.fakes import (
     FakeBundleUploader,
     FakeClock,
     RecordingArtifactWriter,
+    RecordingContractBundleWriter,
     ScriptedMemoryProbe,
     build_handler,
     dbt_node,
     dispatch_handler,
     make_uploader,
-    python_contract,
-    python_entry,
     python_handler,
     source_of,
     source_with_nodes,
 )
+from tests.odcs_fixtures import bundle_doc, bundle_file, demo_nodes, python_node, write_bundle
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -103,11 +104,15 @@ def test_handle_publishes_ok_with_empty_topology_when_no_manifests():
     source.list_manifests.return_value = []
     publisher = MagicMock()
     writer = RecordingArtifactWriter()
+    bundle_writer = RecordingContractBundleWriter()
 
-    build_handler(source, publisher, make_uploader(), artifact_writer=writer).handle(release_id="rel-empty")
+    build_handler(
+        source, publisher, make_uploader(), artifact_writer=writer, contract_bundle_writer=bundle_writer,
+    ).handle(release_id="rel-empty")
 
     assert writer.writes == [{"tenant_id": "default", "release_id": "rel-empty", "nodes": []}]
-    publisher.publish_ok.assert_called_once_with(release_id="rel-empty", artifact=writer.refs[0], code_bundle_uri="")
+    publisher.publish_ok.assert_called_once_with(
+        release_id="rel-empty", artifact=writer.refs[0], code_bundle_uri="", contract_bundle=bundle_writer.refs[0])
     publisher.publish_failed.assert_not_called()
 
 
@@ -480,7 +485,7 @@ def test_a_request_without_image_tags_fails_the_release_as_internal():
     writer = RecordingArtifactWriter()
     handler = CandidateManifestHandler(
         source=source, publisher=publisher, bundle_uploader=FakeBundleUploader(),
-        artifact_writer=writer,
+        artifact_writer=writer, contract_bundle_writer=RecordingContractBundleWriter(),
         artifact_builders={Runtime.DBT: DbtSqlArtifactBuilder(make_uploader())},
         dialect="postgres",
         system_relations=_SYSTEM_RELATIONS["postgres"],
@@ -708,11 +713,13 @@ def test_empty_manifests_publish_empty_bundle_uri():
     publisher = MagicMock()
     bundle_uploader = FakeBundleUploader()
     writer = RecordingArtifactWriter()
+    bundle_writer = RecordingContractBundleWriter()
 
     build_handler(source, publisher, make_uploader(), bundle_uploader=bundle_uploader,
-             artifact_writer=writer).handle(release_id="rel-empty")
+             artifact_writer=writer, contract_bundle_writer=bundle_writer).handle(release_id="rel-empty")
 
-    publisher.publish_ok.assert_called_once_with(release_id="rel-empty", artifact=writer.refs[0], code_bundle_uri="")
+    publisher.publish_ok.assert_called_once_with(
+        release_id="rel-empty", artifact=writer.refs[0], code_bundle_uri="", contract_bundle=bundle_writer.refs[0])
     assert bundle_uploader.uploads == []
 
 
@@ -833,68 +840,34 @@ def test_shared_code_depends_on_entries_namespaced_consistently_with_keys(tmp_pa
 
 
 # ---------------------------------------------------------------------------
-# kind dispatch: one release may carry a dbt manifest and a python contract
+# kind dispatch: one release may carry a dbt manifest and a python odcs bundle
 # ---------------------------------------------------------------------------
 
-def test_a_malformed_python_contract_fails_the_whole_release(tmp_path):
-    """The producing CI validates before upload, so a bad entry here means a
-    broken pipeline — and a silently dropped node would retire from production
-    on promote."""
-    publisher = MagicMock()
-    source = source_of(ManifestFile(
-        path=python_contract(tmp_path, python_entry(criticality="URGENT")),
-        declared_service="service-py", kind=ManifestKind.PYTHON,
-    ))
-
-    dispatch_handler(source, publisher).handle(release_id="rel-1")
-
-    publisher.publish_ok.assert_not_called()
-    assert publisher.publish_failed.call_args.kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
-
-
 @pytest.mark.parametrize("value", ["2h", 0, 10081])
-def test_a_malformed_python_timeout_fails_the_whole_release(tmp_path, value):
+def test_a_malformed_python_timeout_fails_the_release_naming_the_node(tmp_path, value):
     publisher = MagicMock()
-    source = source_of(ManifestFile(
-        path=python_contract(tmp_path, python_entry(timeout_minutes=value)),
-        declared_service="service-py", kind=ManifestKind.PYTHON,
-    ))
+    source = source_of(bundle_file(tmp_path, [python_node(timeout_minutes=value)]))
+
+    dispatch_handler(source, publisher).handle(release_id="rel-1")
+
+    publisher.publish_ok.assert_not_called()
+    kwargs = publisher.publish_failed.call_args.kwargs
+    assert kwargs["failure_kind"] == ParseFailureKind.INVALID_CONTRACT
+    assert [(n.node_id, n.kind) for n in kwargs["failed_nodes"]] == [
+        ("test_schema.py_metrics", ParseFailureKind.INVALID_CONTRACT)]
+    assert "timeoutMinutes" in kwargs["failed_nodes"][0].detail
+
+
+def test_a_python_odcs_bundle_for_another_service_fails_the_release(tmp_path):
+    publisher = MagicMock()
+    source = source_of(bundle_file(tmp_path, [python_node()], declared_service="service-py", service="someone-else"))
 
     dispatch_handler(source, publisher).handle(release_id="rel-1")
 
     publisher.publish_ok.assert_not_called()
     kwargs = publisher.publish_failed.call_args.kwargs
     assert kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
-    assert "test_schema.py_metrics" in kwargs["detail"]
-    assert "timeout_minutes" in kwargs["detail"]
-
-
-def test_an_empty_python_contract_fails_the_release(tmp_path):
-    """An artifact declaring no nodes would silently retire every node of that
-    service on promote — the same hazard as an empty dbt manifest, so the same
-    guard and the same failure_kind."""
-    publisher = MagicMock()
-    source = source_of(ManifestFile(
-        path=python_contract(tmp_path), declared_service="service-py", kind=ManifestKind.PYTHON,
-    ))
-
-    dispatch_handler(source, publisher).handle(release_id="rel-1")
-
-    kwargs = publisher.publish_failed.call_args.kwargs
-    assert kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
-    assert "contract declares no nodes" in kwargs["detail"]
-
-
-def test_a_python_contract_for_another_service_fails_the_release(tmp_path):
-    publisher = MagicMock()
-    source = source_of(ManifestFile(
-        path=python_contract(tmp_path, python_entry(), service="someone-else"),
-        declared_service="service-py", kind=ManifestKind.PYTHON,
-    ))
-
-    dispatch_handler(source, publisher).handle(release_id="rel-1")
-
-    assert publisher.publish_failed.call_args.kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
+    assert "the bundle is for service 'someone-else', not 'service-py'" in kwargs["detail"]
 
 
 def test_an_unknown_kind_fails_the_release_permanently():
@@ -910,6 +883,22 @@ def test_an_unknown_kind_fails_the_release_permanently():
     kwargs = publisher.publish_failed.call_args.kwargs
     assert kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
     assert "spark" in kwargs["detail"]
+
+
+def test_an_unknown_kind_is_invalid_artifact(tmp_path):
+    """Kind `python` is not one this build reads, so a request for it ends like any unknown kind:
+    permanently, as invalid_artifact, with no node parsed from the file it names."""
+    publisher = MagicMock()
+    bundle = write_bundle(tmp_path, bundle_doc(demo_nodes()))
+    source = source_of(dataclasses.replace(bundle, kind="python"))
+
+    dispatch_handler(source, publisher).handle(release_id="rel-1")
+
+    publisher.publish_ok.assert_not_called()
+    kwargs = publisher.publish_failed.call_args.kwargs
+    assert kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
+    assert kwargs["detail"] == "service-py: unknown manifest kind 'python'"
+    assert kwargs["failed_nodes"] == []
 
 
 def test_an_empty_kind_fails_the_release_rather_than_parsing_as_dbt():
@@ -929,13 +918,11 @@ def test_an_empty_kind_fails_the_release_rather_than_parsing_as_dbt():
     assert publisher.publish_failed.call_args.kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
 
 
-def test_a_python_kind_entry_is_published_as_a_python_node(tmp_path):
+def test_a_python_odcs_node_is_published_as_a_python_node(tmp_path):
     publisher = MagicMock()
     writer = RecordingArtifactWriter()
     spec_uploader = make_uploader("s3://continuo/candidate-sql/rel-1/candidate_test_schema.py_metrics.json")
-    source = source_of(ManifestFile(
-        path=python_contract(tmp_path, python_entry()), declared_service="service-py", kind=ManifestKind.PYTHON,
-    ))
+    source = source_of(bundle_file(tmp_path, [python_node()]))
 
     python_handler(source, publisher, spec_uploader=spec_uploader, artifact_writer=writer).handle(release_id="rel-1")
 
@@ -948,68 +935,101 @@ def test_a_python_kind_entry_is_published_as_a_python_node(tmp_path):
     assert spec_uploader.upload.call_args.kwargs["unique_id"] == "test_schema.py_metrics"
 
 
-def _published_python_topology(tmp_path, entry):
+def test_a_python_odcs_bundle_is_published_and_timed_as_the_python_parse(tmp_path):
+    publisher, writer, calls = MagicMock(), RecordingArtifactWriter(), []
+    source = source_of(bundle_file(tmp_path, demo_nodes()))
+
+    timings = python_handler(
+        source, publisher, artifact_writer=writer, progress=lambda: calls.append(1),
+    ).handle(release_id="rel-1")
+
+    publisher.publish_ok.assert_called_once()
+    assert [n["unique_id"] for n in writer.nodes if n["node_type"] != "unknown-external"] == [
+        "analytics.demo_orders_csv", "analytics.fx_eur_usd_rates", "analytics.py_daily_kpis"]
+    assert (timings.stages[Stage.PYTHON_PARSE].runs, timings.stages[Stage.PYTHON_PARSE].counts) == (
+        1, {"manifests": 1, "nodes": 3})
+    assert timings.stages[Stage.DBT_PARSE].runs == 0
+    assert timings.stages[Stage.CONTRACT_VALIDATION].counts == {"nodes": 3}
+    # one call after the manifest's parse, and one per node of the parse, the resolve and the build
+    # and one per contract stored
+    assert len(calls) == 1 + 3 + 3 + 3 + 3
+
+
+def test_an_unreadable_odcs_bundle_fails_the_release_as_invalid_artifact(tmp_path):
+    publisher = MagicMock()
+    source = source_of(write_bundle(tmp_path, {**bundle_doc(demo_nodes()), "bundle_version": 2}))
+
+    python_handler(source, publisher).handle(release_id="rel-1")
+
+    publisher.publish_failed.assert_called_once()
+    kwargs = publisher.publish_failed.call_args.kwargs
+    assert kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
+    assert "bundle_version 2 is newer than this install reads" in kwargs["detail"]
+    publisher.publish_ok.assert_not_called()
+
+
+def test_an_odcs_bundle_with_no_node_fails_the_release_as_empty(tmp_path):
+    publisher = MagicMock()
+    source = source_of(bundle_file(tmp_path, []))
+
+    python_handler(source, publisher).handle(release_id="rel-1")
+
+    publisher.publish_failed.assert_called_once()
+    kwargs = publisher.publish_failed.call_args.kwargs
+    assert (kwargs["failure_kind"], kwargs["detail"]) == (
+        ParseFailureKind.INVALID_ARTIFACT, "service-py: bundle declares no nodes")
+
+
+def _published_python_topology(tmp_path, node):
     writer = RecordingArtifactWriter()
-    source = source_of(ManifestFile(
-        path=python_contract(tmp_path, entry),
-        declared_service="service-py", kind=ManifestKind.PYTHON,
-    ))
-    python_handler(source, MagicMock(), artifact_writer=writer).handle(release_id="rel-1")
+    python_handler(
+        source_of(bundle_file(tmp_path, [node])), MagicMock(), artifact_writer=writer,
+    ).handle(release_id="rel-1")
     return writer.nodes
 
 
 def test_a_python_api_secret_ref_is_published_on_its_topology_entry(tmp_path):
-    entry = python_entry(kind="python-api", reads={}, secret_ref="continuo-api-fx")
-    (node,) = _published_python_topology(tmp_path, entry)
+    (node,) = _published_python_topology(tmp_path, python_node(kind="python-api", secret_ref="continuo-api-fx"))
     assert node["node_type"] == "python-api"
     assert node["secret_ref"] == "continuo-api-fx"
     assert node["upstream_unique_ids"] == []
 
 
 def test_a_node_without_a_secret_ref_publishes_no_secret_ref_key(tmp_path):
-    entry = python_entry(kind="python-api", reads={})
-    (node,) = _published_python_topology(tmp_path, entry)
+    (node,) = _published_python_topology(tmp_path, python_node(kind="python-api"))
     assert "secret_ref" not in node
 
 
 def test_a_declared_timeout_is_published_on_its_topology_entry(tmp_path):
-    entry = python_entry(kind="python-api", reads={}, timeout_minutes=480)
-    (node,) = _published_python_topology(tmp_path, entry)
+    (node,) = _published_python_topology(tmp_path, python_node(kind="python-api", timeout_minutes=480))
     assert node["timeout_seconds"] == 28800
 
 
 def test_a_node_without_a_timeout_publishes_no_timeout_seconds_key(tmp_path):
-    (node,) = _published_python_topology(tmp_path, python_entry(kind="python-api", reads={}))
+    (node,) = _published_python_topology(tmp_path, python_node(kind="python-api"))
     assert "timeout_seconds" not in node
 
 
-def test_a_release_mixing_old_and_new_python_contracts_publishes_python_node(tmp_path):
-    """Every release re-parses every service's stored production contract, so a
-    contract written by an older runtime (kind python-model) sits beside a new
-    one (kind python-node) in the same release. Both resolve to python-node."""
+def test_two_python_services_each_publish_their_nodes_in_one_release(tmp_path):
+    """The table both services' nodes read is built by no node of the release, so it is one
+    unknown-external node."""
     publisher = MagicMock()
     writer = RecordingArtifactWriter()
-    old = ManifestFile(
-        path=python_contract(
-            tmp_path, python_entry(table="py_old", kind="python-model"),
-            service="service-old", name="old.yaml"),
-        declared_service="service-old", kind=ManifestKind.PYTHON,
-    )
-    new = ManifestFile(
-        path=python_contract(
-            tmp_path, python_entry(table="py_new", kind="python-node"),
-            service="service-new", name="new.yaml"),
-        declared_service="service-new", kind=ManifestKind.PYTHON,
+    first, second = tmp_path / "first", tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    source = source_of(
+        bundle_file(first, [python_node("py_first")], declared_service="service-first", service="service-first"),
+        bundle_file(second, [python_node("py_second")], declared_service="service-second", service="service-second"),
     )
 
-    python_handler(source_of(old, new), publisher, artifact_writer=writer).handle(release_id="rel-1")
+    python_handler(source, publisher, artifact_writer=writer).handle(release_id="rel-1")
 
     publisher.publish_failed.assert_not_called()
-    topology = writer.nodes
-    assert sorted((n["unique_id"], n["node_type"]) for n in topology) == [
-        ("test_schema.orders", "unknown-external"),  # the table both scripts read, built by no node
-        ("test_schema.py_new", "python-node"),
-        ("test_schema.py_old", "python-node"),
+    assert sorted((n["unique_id"], n["node_type"], n["service_name"]) for n in writer.nodes) == [
+        ("test_schema.orders", "unknown-external", ""),
+        ("test_schema.py_first", "python-node", "service-first"),
+        ("test_schema.py_second", "python-node", "service-second"),
     ]
 
 
@@ -1090,7 +1110,7 @@ def test_a_release_mixes_dbt_and_python_and_resolves_edges_in_both_directions(tm
     spec_uploader.upload.return_value = "s3://continuo/candidate-sql/rel-1/candidate_test_schema.py_metrics.json"
     source = source_of(
         ManifestFile(path=str(FIXTURES / "manifest_service2.json"), declared_service="service-2"),
-        ManifestFile(path=python_contract(tmp_path, python_entry()), declared_service="service-py", kind=ManifestKind.PYTHON),
+        bundle_file(tmp_path, [python_node()]),
         ManifestFile(path=str(FIXTURES / "manifest_service4.json"), declared_service="service-4"),
     )
 
@@ -1098,7 +1118,7 @@ def test_a_release_mixes_dbt_and_python_and_resolves_edges_in_both_directions(tm
     writer = RecordingArtifactWriter()
     handler = CandidateManifestHandler(
         source=source, publisher=publisher, bundle_uploader=FakeBundleUploader(),
-        artifact_writer=writer,
+        artifact_writer=writer, contract_bundle_writer=RecordingContractBundleWriter(),
         artifact_builders={
             Runtime.DBT: DbtSqlArtifactBuilder(dbt_uploader),
             Runtime.PYTHON: PythonSpecArtifactBuilder(spec_uploader),
@@ -1142,12 +1162,10 @@ def test_a_python_node_rides_the_code_bundle_with_its_runtime_marker(tmp_path):
     `projection`."""
     publisher = MagicMock()
     bundle_uploader = FakeBundleUploader()
-    source = source_of(ManifestFile(
-        path=python_contract(tmp_path, python_entry()), declared_service="service-py", kind=ManifestKind.PYTHON,
-    ))
+    source = source_of(bundle_file(tmp_path, [python_node()]))
     handler = CandidateManifestHandler(
         source=source, publisher=publisher, bundle_uploader=bundle_uploader,
-        artifact_writer=RecordingArtifactWriter(),
+        artifact_writer=RecordingArtifactWriter(), contract_bundle_writer=RecordingContractBundleWriter(),
         artifact_builders={
             Runtime.DBT: DbtSqlArtifactBuilder(make_uploader()),
             Runtime.PYTHON: PythonSpecArtifactBuilder(make_uploader("s3://x.json")),
@@ -1241,7 +1259,8 @@ def test_handle_returns_the_timings_of_every_stage_that_ran():
     timings = build_handler(source, MagicMock(), make_uploader(), clock=FakeClock(step=1.0)).handle(release_id="rel-1")
     ran = {stage: record for stage, record in timings.stages.items() if record.runs}
     assert set(ran) == {Stage.DOWNLOAD, Stage.DBT_PARSE, Stage.REGISTRY, Stage.RESOLVE, Stage.REWRITE,
-                        Stage.CANDIDATE_UPLOAD, Stage.CODE_BUNDLE, Stage.TOPOLOGY_ARTIFACT, Stage.PUBLISH}
+                        Stage.CANDIDATE_UPLOAD, Stage.CODE_BUNDLE, Stage.CANONICAL_HASHING, Stage.CONTRACT_BUNDLE,
+                        Stage.TOPOLOGY_ARTIFACT, Stage.PUBLISH}
     assert ran[Stage.DOWNLOAD].counts == {"manifests": 2, "bytes": 0}
     assert ran[Stage.DBT_PARSE].runs == 2
     assert ran[Stage.RESOLVE].counts == {"nodes": 2}
@@ -1541,8 +1560,7 @@ def test_python_and_test_nodes_carry_no_seed_reload_field(tmp_path):
     writer = RecordingArtifactWriter()
     source = source_of(
         ManifestFile(path=str(FIXTURES / "manifest_with_test.json"), declared_service="service-1"),
-        ManifestFile(path=python_contract(tmp_path, python_entry()), declared_service="service-py",
-                     kind=ManifestKind.PYTHON),
+        bundle_file(tmp_path, [python_node()]),
     )
     python_handler(source, MagicMock(), artifact_writer=writer).handle(release_id="rel-1")
     carriers = [n for n in writer.nodes if n["node_type"] in ("python-node", "dbt-test")]

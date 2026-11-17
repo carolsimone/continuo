@@ -138,7 +138,7 @@ func (s *FailingNodeSource) seed(ctx context.Context, f remediation.Failure) (re
 }
 
 // duplicateTable reads only the claimant the release changed. A python claimant
-// declares its relation in its service's contract.yaml, and a dbt seed's
+// declares its relation in its contract file, and a dbt seed's
 // relation name comes from its csv filename or the project's config, never from
 // the csv's contents, so editing either file would not change which relation
 // the node claims: both are declined. The competing claimant's source is never
@@ -146,8 +146,8 @@ func (s *FailingNodeSource) seed(ctx context.Context, f remediation.Failure) (re
 func (s *FailingNodeSource) duplicateTable(ctx context.Context, f remediation.Failure) (remediation.SourceFiles, string, error) {
 	n := f.Target
 	if pkg_model.NodeType(n.NodeType).IsPython() {
-		return remediation.SourceFiles{}, "the claimant is a python node, whose relation is declared in its service's " +
-			"contract.yaml rather than in the file the trigger names; rename it in the contract by hand", nil
+		return remediation.SourceFiles{}, "the claimant is a python node, whose relation is declared in its contract file (the ODCS file under " +
+			"contracts/) rather than in the file the trigger names; rename it in the contract by hand", nil
 	}
 	if n.NodeType == string(pkg_model.NodeTypeDbtSeed) {
 		return remediation.SourceFiles{}, "the claimant is a dbt seed, whose relation name comes from the csv filename or " +

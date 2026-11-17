@@ -120,7 +120,7 @@ func verifyingRow(id string, attempt int, age time.Duration) proposal.View {
 		NodeOutcomes: map[string]proposal.NodeOutcome{
 			"analytics.orders": {Status: proposal.StatusVerifying},
 		},
-		Verifications:     []proposal.Verification{{Service: "svc", Kind: "python", RunID: run, Phase: proposal.PhaseQueued}},
+		Verifications:     []proposal.Verification{{Service: "svc", Kind: "python-odcs", RunID: run, Phase: proposal.PhaseQueued}},
 		VerificationRunID: run,
 		TriggerPayload:    requestedPayload(),
 		Confidence:        proposal.ConfidenceHigh,

@@ -93,6 +93,7 @@ type catalogFile struct {
 	CurrentVersions map[string]versionFile          `yaml:"current_versions"`
 	UpstreamChanges map[string][]upstreamChangeFile `yaml:"upstream_changes"`
 	Precedents      []precedentFile                 `yaml:"precedents"`
+	Contracts       map[string]string               `yaml:"contracts"`
 }
 
 type locationFile struct {
@@ -128,12 +129,13 @@ type precedentFile struct {
 }
 
 type releaseFile struct {
-	ImageTag     string            `yaml:"image_tag"`
-	FailingNodes map[string]string `yaml:"failing_nodes"`
+	ImageTag      string            `yaml:"image_tag"`
+	FailingNodes  map[string]string `yaml:"failing_nodes"`
+	ImagePackages map[string]string `yaml:"image_packages"`
 }
 
 type packagerFile struct {
-	Merged string `yaml:"merged"`
+	Packed string `yaml:"packed"`
 	Refuse string `yaml:"refuse"`
 }
 
@@ -286,10 +288,12 @@ func (l *loader) loadFixture(file string, root *yaml.Node) (conformance.Fixture,
 		Objects:          f.Objects,
 		Bundle:           bundleOf(f.Bundle),
 		Catalog:          f.Catalog.toConformance(),
-		Release:          conformance.Release{ImageTag: f.Release.ImageTag, FailingNodes: f.Release.FailingNodes},
-		Packager:         conformance.Packager{Merged: f.Packager.Merged, Refuse: f.Packager.Refuse},
-		Answers:          f.Answers.toConformance(),
-		GateErrors:       f.GateErrors,
+		Release: conformance.Release{
+			ImageTag: f.Release.ImageTag, FailingNodes: f.Release.FailingNodes, ImagePackages: f.Release.ImagePackages,
+		},
+		Packager:   conformance.Packager{Packed: f.Packager.Packed, Refuse: f.Packager.Refuse},
+		Answers:    f.Answers.toConformance(),
+		GateErrors: f.GateErrors,
 	}
 	if len(f.MemberAnswers) > 0 {
 		fixture.MemberAnswers = make(map[string]conformance.Answers, len(f.MemberAnswers))
@@ -538,6 +542,7 @@ func (c catalogFile) toConformance() conformance.Catalog {
 			PRURL:          p.PRURL,
 		})
 	}
+	out.Contracts = c.Contracts
 	return out
 }
 

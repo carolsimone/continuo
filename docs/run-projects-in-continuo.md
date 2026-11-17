@@ -35,9 +35,12 @@ continuo's own end-to-end suite.
 Four matter here. `core`, `finance`, and `marketing` are ordinary,
 self-contained dbt projects: each with its own `dbt_project.yml`,
 `profiles.yml`, models, seeds, and `Dockerfile`. `service-py` is different — it
-is a **python-node service**, declaring `contracts/*.yml` and `scripts/*.py`
-instead of dbt models. It onboards through the same `POST /api/v1/releases` call but a
-different artifact, which chapter 4 covers.
+is a **python-node service**, declaring `contracts/*.odcs.yaml` and `scripts/*.py`
+instead of dbt models. Each contract file describes one table: who owns it, when
+it runs, what it reads and which columns it has.
+[Python contracts](contracts.md) explains every line. The service onboards
+through the same `POST /api/v1/releases` call but a different artifact, which
+chapter 4 covers.
 
 You need all four. A dbt model in `core` reads a table `service-py` produces, so
 releasing only the dbt services leaves the graph with a node that cannot build.
@@ -185,33 +188,29 @@ dbt resolves project, folder and model `meta` into each node's `config.meta`, so
 a model inherits the project value and a model-level `timeout_minutes` replaces
 it; the other `meta` keys, such as `owner`, still come from the project.
 
-A python node declares it as `timeout_minutes` on its contract entry. It may do
-so only when both the CLI that builds the contract and the image base the
-service's nodes run in (`FROM ghcr.io/carolsimone/continuo-python-runtime-<engine>:v0.10.0`
-or later) are `continuo-python-runtime` 0.10.0 or later. With an older image base,
-every run of every node of that service fails when it loads its contracts.
+A python node declares it as the continuo property `timeoutMinutes` of its
+contract. This needs `continuo-python-runtime` 0.13.0 or later, the first
+release that reads `.odcs.yaml` files, in two places: the CLI that checks and
+packs the contracts, and the image base the service's nodes run in
+(`FROM ghcr.io/carolsimone/continuo-python-runtime-<engine>:v0.13.0` or later).
+With an older image base, every run of every node of that service fails when it
+loads its contracts.
 
 ```yaml
-# services/service-py/contracts/py_daily_kpis.yml (excerpt), with timeout_minutes added
-nodes:
-  - schema: analytics
-    table: py_daily_kpis
-    owner: "service-py"
-    schedule: daily
-    criticality: SECONDARY
-    script: scripts/py_daily_kpis.py
-    timeout_minutes: 30      # added: the demo declares none
-    reads:
-      daily: select created_at, amount_eur from analytics.daily_transactions
-    output_columns:
-      - {name: day, type: DATE, nullable: false}
-      # ...
+# services/service-py/contracts/py_daily_kpis.odcs.yaml (excerpt), with timeoutMinutes added
+customProperties:
+  - {vendor: continuo, property: schedule, value: daily}
+  - {vendor: continuo, property: criticality, value: SECONDARY}
+  - {vendor: continuo, property: script, value: scripts/py_daily_kpis.py}
+  - {vendor: continuo, property: timeoutMinutes, value: 30}   # added: the demo declares none
+  # ...
 ```
 
 The value is an integer from 1 to 10,080 minutes (seven days). continuo
 validates it at release time: anything else, a string such as `"2h"`, zero, a
-negative number or a larger one, rejects the release as `invalid_artifact`, and
-the rejection names the node and the key.
+negative number or a larger one, rejects the release, and the rejection names the
+node and the key. A dbt node is rejected as `invalid_artifact`, and a Python
+contract as `invalid_contract`.
 
 continuo records the timeout with each release, and a run keeps the timeouts of
 the release it runs on. The timeout is not part of a node's content hash, so a
@@ -596,8 +595,9 @@ cross-project edges from chapter 1, discovered from the SQL alone.
 yourself.** In production, your CD pipeline does this.
 
 A dbt service has a compile leg — the `compiling` stage above ran `dbt compile`
-and produced the manifest for you. A python service has none. So you build its
-contract and upload it to object storage before you post the release.
+and produced the manifest for you. A python service has none. So you pack its
+contracts into one bundle and upload it to object storage before you post the
+release.
 
 Here you do that by hand. It is the same sequence your own CD will run.
 
@@ -608,9 +608,9 @@ and writes it through as a table. Its contract points at that file by its
 object-store URL, in your install's own bucket:
 
 ```yaml
-# services/service-py/contracts/demo_orders_csv.yml
-    reads:
-      csv: s3://continuo/static-files/demo/orders.csv
+# services/service-py/contracts/demo_orders_csv.odcs.yaml
+customProperties:
+  - {vendor: continuo, property: csvSource, value: "s3://continuo/static-files/demo/orders.csv"}
 ```
 
 `continuo` is the bucket the bundled MinIO creates, so the URL is right as
@@ -640,17 +640,18 @@ aws --endpoint-url http://localhost:9000 \
   s3 cp /tmp/orders.csv s3://continuo/static-files/demo/orders.csv
 ```
 
-Now build the contract from the service's `contracts/` directory, using the
-runtime CLI the release gate uses. The image base and the CLI that builds the
-contract are the same runtime release: the harness checks the image against the
-released hash when a node starts, and a node whose image does not hash to it
-fails with `image_contract_mismatch` and is not retried.
+Now check and pack the contracts of the service's `contracts/` directory, using
+the runtime CLI the release gate uses. The image base and the CLI are the same
+runtime release: the harness checks the image against the released hash when a
+node starts, and a node whose image does not hash to it fails with
+`image_contract_mismatch` and is not retried.
 
 A node's `assets` lists the files its script reads besides its own code, such
-as a lookup table or a trained model, as paths from the repository root. Their
-bytes are part of the node's fingerprint, so editing one changes its
+as a lookup table or a trained model, as paths relative to the folder you give
+`pack` as `--repo-root`: the service's directory, `services/service-py` below.
+Their bytes are part of the node's fingerprint, so editing one changes its
 `content_hash`. Your Dockerfile must copy every listed file into the image, at
-the same path under the app directory as in the repository: the harness hashes
+the same path under the app directory as under that folder: the harness hashes
 what the image holds, and a file that is missing or different fails the node
 with `image_contract_mismatch`.
 
@@ -658,29 +659,36 @@ with `image_contract_mismatch`.
 or the [uv install guide](https://docs.astral.sh/uv/getting-started/installation/).
 
 ```bash
-uv tool install continuo-python-runtime==0.12.0
+uv tool install continuo-python-runtime==0.13.0
 
 continuo-runtime validate services/service-py/contracts --dialect postgres
 
-continuo-runtime merge services/service-py/contracts \
+continuo-runtime pack services/service-py/contracts \
   --service service-py \
   --repo-root services/service-py \
+  --image service-py:v1 \
   --dialect postgres \
-  --out /tmp/contract.yaml
+  --out /tmp/odcs-bundle.json
 ```
 
-Then upload it to the canonical key, `<service>/<release_id>/contract.yaml` —
+`pack` checks the contracts again and lints the scripts. It writes one bundle
+with the text of each contract and the list of packages the image holds.
+`--image service-py:v1` reads that list from the image you built in chapter 2,
+with `docker run`. The [Python contracts](contracts.md#the-ci-steps) page
+explains each step.
+
+Then upload it to the canonical key, `<service>/<release_id>/odcs-bundle.json` —
 the same `aws s3 cp` your CD runs, aimed at the MinIO you forwarded a moment
 ago:
 
 ```bash
 aws --endpoint-url http://localhost:9000 \
-  s3 cp /tmp/contract.yaml s3://continuo/service-py/rel-py-v1/contract.yaml
+  s3 cp /tmp/odcs-bundle.json s3://continuo/service-py/rel-py-v1/odcs-bundle.json
 ```
 
-Only now post the release, with one extra field — `"kind": "python"` — telling
-continuo to skip the compile leg and read the contract you just uploaded. Note
-the `image_tag`. For a dbt release you pass the bare tag (`v1`) and continuo
+Only now post the release, with one extra field — `"kind": "python-odcs"` —
+telling continuo to skip the compile leg and read the bundle you just uploaded.
+Note the `image_tag`. For a dbt release you pass the bare tag (`v1`) and continuo
 builds the full image reference itself. **For a python release, `image_tag` *is*
 the full image reference — continuo uses it exactly as written and adds
 nothing.** So pass `service-py:v1`, not `v1`, or the node cannot be dispatched at
@@ -695,7 +703,7 @@ curl -s -X POST $API/releases \
     "service": "service-py",
     "image_tag": "service-py:v1",
     "bootstrap": true,
-    "kind": "python",
+    "kind": "python-odcs",
     "repo": "<your-username>/continuo-demo-docs",
     "commit_sha": "'"$(git rev-parse HEAD)"'"
   }' | jq
@@ -704,29 +712,44 @@ curl -s -X POST $API/releases \
 If you post this before the upload, the release parks in `parsing` and stays
 there: the parse is retrying against a 404 for an object that does not exist.
 
+Read the release back with `GET $API/releases/rel-py-v1`. Its
+`continuo_contracts` field names the version of the contract library that read
+your files. If the release is rejected as `invalid_contract`,
+[Troubleshooting](#troubleshooting) says what to do.
+
 Open the platform UI and the new `service-py` node now appears in the topology.
+Its page has a Contract tab with the contract as continuo stores it, and
+`continuo node contract analytics.py_daily_kpis` prints it from the command
+line.
 
 ### python-api nodes
 
 A `python-api` node's script fetches its own data, usually over HTTP. It
-declares no `reads:`, so it has no upstream edges and runs first in its DAG.
+declares no `readQueries`, so it has no upstream edges and runs first in its DAG.
 
 ```yaml
-nodes:
-  - schema: analytics
-    table: fx_eur_usd_rates
-    kind: python-api
-    owner: data-team
-    schedule: daily
-    criticality: SECONDARY
-    script: scripts/fx_eur_usd_rates.py
-    secret_ref: continuo-api-fx      # optional
-    output_columns:
-      - {name: rate_date, type: DATE, nullable: false}
-      - {name: rate, type: DOUBLE PRECISION, nullable: false}
+# contracts/fx_eur_usd_rates.odcs.yaml
+apiVersion: v3.2.0
+kind: DataContract
+id: analytics.fx_eur_usd_rates
+version: "0"
+team:
+  name: data-team
+customProperties:
+  - {vendor: continuo, property: kind, value: python-api}
+  - {vendor: continuo, property: schedule, value: daily}
+  - {vendor: continuo, property: criticality, value: SECONDARY}
+  - {vendor: continuo, property: script, value: scripts/fx_eur_usd_rates.py}
+  - {vendor: continuo, property: secretRef, value: continuo-api-fx}   # optional
+schema:
+  - name: fx_eur_usd_rates
+    physicalType: table
+    properties:
+      - {name: rate_date, physicalType: DATE, required: true}
+      - {name: rate, physicalType: DOUBLE PRECISION, required: true}
 ```
 
-If the API needs a key, name a Secret with `secret_ref`. The name must start
+If the API needs a key, name a Secret with `secretRef`. The name must start
 with `continuo-api-`. Every key in that Secret reaches the script as an env var
 (`os.environ["FX_API_KEY"]`). The contract holds only the Secret's name, never
 a value. The Secret lives in the namespace execution-controller runs Jobs in
@@ -1041,7 +1064,7 @@ Then set the LLM key (and the PAT, if you made one), and upgrade:
 
 ```bash
 helm upgrade continuo oci://ghcr.io/carolsimone/charts/continuo \
-  --version 0.22.0 -n continuo --reuse-values \
+  --version 0.24.0 -n continuo --reuse-values \
   --set llm.apiKey='<your-api-key>' \
   --set github.token='<your-read-only-PAT>'   # drop this line without a PAT
 ```
@@ -1114,7 +1137,7 @@ file, not a flag value (a PEM has newlines that `--set` mangles), so pass it wit
 
 ```bash
 helm upgrade continuo oci://ghcr.io/carolsimone/charts/continuo \
-  --version 0.22.0 -n continuo --reuse-values \
+  --version 0.24.0 -n continuo --reuse-values \
   --set-string github.appId='<app-id>' \
   --set-string github.installationId='<installation-id>' \
   --set-file github.appPrivateKey=/path/to/downloaded-key.pem
@@ -1213,18 +1236,41 @@ and the run never finishes.** The python release was posted with a bare
 written as the full image reference (`service-py:v1`); with a bare tag execution-controller
 cannot build the pod spec and the node fails without ever creating a Job.
 Cancel the run, re-release the python service with the full reference (a new
-`release_id`, and re-upload its contract under that id), and run again.
+`release_id`, and re-upload its bundle under that id), and run again.
 
-**A python release sits in `parsing` and never moves.** Its `contract.yaml` is
+**A python release sits in `parsing` and never moves.** Its `odcs-bundle.json` is
 not where continuo expects it. Unlike a dbt service — whose manifest continuo
-compiles itself — a python service's contract is uploaded by the *caller*, and
+compiles itself — a python service's bundle is uploaded by the *caller*, and
 a missing object leaves the parse retrying against a 404. Confirm the object
 exists at the canonical key:
 
 ```bash
 aws --endpoint-url http://localhost:9000 s3 ls \
-  s3://continuo/<service>/<release_id>/contract.yaml
+  s3://continuo/<service>/<release_id>/odcs-bundle.json
 ```
+
+**A python release is rejected with `invalid_contract`.** At least one contract
+file is not valid. The release page names each failed node with its problems,
+as `<path>: <message>`. On your machine, `continuo-runtime validate` on the
+`contracts/` folder shows the problems one file at a time. It stops at the first
+file that fails, while the release names every failed contract. Fix each file
+and release again with a new `release_id`. The
+[Python contracts](contracts.md#what-continuo-refuses) page lists what continuo
+refuses and why.
+
+**A python release is rejected with `invalid_artifact` and a detail that starts
+`the bundle was written by continuo-contracts`.** The runtime that packed your
+contracts carries a newer contract library than the one your install runs.
+Pin an older `continuo-python-runtime` in CI, or upgrade continuo. See
+[the library version CI must pin](contracts.md#the-library-version-ci-must-pin).
+
+**A python release is refused with a `400` that says `kind "python" is no longer
+accepted`.** The post names the kind `python`, which stands for one
+`contract.yaml` per service. Post the release with `"kind": "python-odcs"` and
+the bundle that `continuo-runtime pack` writes from the service's
+`contracts/*.odcs.yaml` files. [Moving from
+`contract.yaml`](contracts.md#moving-from-contractyaml) maps each field of the
+old file to the new one.
 
 **A release sits in `compiling` and then rejects with `compile_failed`.** Your
 dbt project does not compile. The most common cause is a `{{ ref() }}` pointing
@@ -1252,3 +1298,6 @@ warehouse is your warehouse rather than the bundled Postgres, which is the
 [deploy/README.md](../deploy/README.md), and the full image contract your
 projects must satisfy is in
 [deploy/dbt-image-contract.md](../deploy/dbt-image-contract.md).
+
+To write the contracts of a Python service, and to read them from another tool,
+see [Python contracts](contracts.md).

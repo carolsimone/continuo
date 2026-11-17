@@ -180,6 +180,91 @@ func TestHandleParsedManifest_Bootstrap_StoresCodeBundleURI(t *testing.T) {
 	assert.Equal(t, "s3://continuo/code-bundles/rBoot/bundle.json", r.CodeBundleURI())
 }
 
+// The contract bundle reference and the continuo-contracts version of the parse
+// are stored on the run on every path that reads an ok result: the validating
+// path and the bootstrap path, which promotes at once.
+func TestHandleParsedManifest_StoresTheContractBundleAndTheLibraryVersion(t *testing.T) {
+	bundle := release.ContractBundleRef{
+		URI:    "s3://continuo/tenants/default/topologies/%s/contracts.json.gz",
+		SHA256: "9b0c4d1e7a52f3860be1d9c4a7f08e35b216d0a94c7e53f1a8b20d6e49c71f3a",
+	}
+	topo := release.Topology{{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{}}}
+
+	t.Run("validating", func(t *testing.T) {
+		deps, store := seedToParsing(t, "rC", map[string]string{"svc-a": "sha-a"})
+		ref := release.ContractBundleRef{URI: fmt.Sprintf(bundle.URI, "rC"), SHA256: bundle.SHA256}
+		require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+			ReleaseID: "rC", Status: "ok", TopologyRef: putTopology(t, deps, "rC", topo),
+			ContractBundle: ref, ContinuoContracts: "0.2.0",
+		}))
+
+		r, err := store.GetRelease("rC")
+		require.NoError(t, err)
+		assert.Equal(t, pipeline.StatusValidating, r.Status())
+		assert.Equal(t, ref, r.CandidateContractBundle())
+		assert.Equal(t, "0.2.0", r.ContinuoContracts())
+	})
+
+	t.Run("bootstrap", func(t *testing.T) {
+		deps, store := seedToParsingBootstrap(t, "rCB", map[string]string{"svc-a": "sha-a"})
+		ref := release.ContractBundleRef{URI: fmt.Sprintf(bundle.URI, "rCB"), SHA256: bundle.SHA256}
+		require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+			ReleaseID: "rCB", Status: "ok", TopologyRef: putTopology(t, deps, "rCB", topo),
+			ContractBundle: ref, ContinuoContracts: "0.2.0",
+		}))
+
+		r, err := store.GetRelease("rCB")
+		require.NoError(t, err)
+		assert.Equal(t, pipeline.StatusPromoted, r.Status())
+		assert.Equal(t, ref, r.CandidateContractBundle())
+		assert.Equal(t, "0.2.0", r.ContinuoContracts())
+	})
+
+	t.Run("a release parsed without a bundle holds none", func(t *testing.T) {
+		deps, store := seedToParsing(t, "rCN", map[string]string{"svc-a": "sha-a"})
+		require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+			ReleaseID: "rCN", Status: "ok", TopologyRef: putTopology(t, deps, "rCN", topo),
+		}))
+
+		r, err := store.GetRelease("rCN")
+		require.NoError(t, err)
+		assert.Equal(t, release.ContractBundleRef{}, r.CandidateContractBundle())
+		assert.Empty(t, r.ContinuoContracts())
+	})
+}
+
+// A parse that ends failed still says which library version read the contracts,
+// and holds no bundle reference: topology-controller writes no bundle for a
+// release it rejects.
+func TestHandleParsedManifest_ARejectedParseStoresTheLibraryVersion(t *testing.T) {
+	t.Run("a failed parse", func(t *testing.T) {
+		deps, store := seedToParsing(t, "rF", map[string]string{"svc-a": "sha-a"})
+		require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+			ReleaseID: "rF", Status: "failed", FailureKind: pkg_model.ParseFailureKindInvalidContract, Detail: "1 contract is invalid",
+			ContinuoContracts: "0.2.0",
+		}))
+
+		r, err := store.GetRelease("rF")
+		require.NoError(t, err)
+		assert.Equal(t, pipeline.StatusRejected, r.Status())
+		assert.Equal(t, "0.2.0", r.ContinuoContracts())
+		assert.Equal(t, release.ContractBundleRef{}, r.CandidateContractBundle())
+	})
+
+	t.Run("an ok result whose topology cannot be read", func(t *testing.T) {
+		deps, store := seedToParsing(t, "rU", map[string]string{"svc-a": "sha-a"})
+		require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+			ReleaseID: "rU", Status: "ok", ContinuoContracts: "0.2.0",
+		}))
+
+		r, err := store.GetRelease("rU")
+		require.NoError(t, err)
+		assert.Equal(t, pipeline.StatusRejected, r.Status())
+		assert.Equal(t, "internal_error", r.FailReason())
+		assert.Equal(t, "0.2.0", r.ContinuoContracts())
+	})
+}
+
 func TestHandleParsedManifest_Failed_RecordsTheParsingStageDuration(t *testing.T) {
 	deps, _ := seedToParsing(t, "rP", map[string]string{"svc": "img"})
 	spy := &stageSpy{}
@@ -256,6 +341,7 @@ func TestHandleParsedManifest_Failed_ReasonPerKind(t *testing.T) {
 	cases := map[pkg_model.ParseFailureKind]string{
 		pkg_model.ParseFailureKindInvalidSQL:           "invalid_sql",
 		pkg_model.ParseFailureKindUnqualifiedReference: "unqualified_reference",
+		pkg_model.ParseFailureKindInvalidContract:      "invalid_contract",
 		pkg_model.ParseFailureKindInvalidArtifact:      "invalid_artifact",
 		pkg_model.ParseFailureKindInternal:             "internal_error",
 	}
@@ -288,6 +374,7 @@ func TestHandleParsedManifest_Failed_HealableKindWithoutNodesWarns(t *testing.T)
 	for kind, wantWarn := range map[pkg_model.ParseFailureKind]bool{
 		pkg_model.ParseFailureKindInvalidSQL:           true,
 		pkg_model.ParseFailureKindUnqualifiedReference: true,
+		pkg_model.ParseFailureKindInvalidContract:      false,
 		pkg_model.ParseFailureKindInvalidArtifact:      false,
 		pkg_model.ParseFailureKindInternal:             false,
 	} {

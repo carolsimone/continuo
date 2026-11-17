@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os/exec"
-	"strings"
+	"path"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -19,7 +19,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -35,25 +34,28 @@ const (
 	pyMismatchTable    = "py_mismatch"
 	pyMismatchSchedule = "e2e-py-mismatch"
 	// pyMismatchScript is the script both contracts name, relative to the
-	// fixture repository's root.
-	pyMismatchScript = "scripts/py_probe.py"
+	// fixture repository's root, and pyMismatchContract the path the released
+	// contract is packed from, the name the runtime requires of its id.
+	pyMismatchScript   = "scripts/py_probe.py"
+	pyMismatchContract = "contracts/py_mismatch.odcs.yaml"
 )
 
-// pyMismatchReleasedContract is the authored contract the release carries. The
-// mismatch image bakes fixtures/py-probe/mismatch/py_mismatch.baked.yml
+// pyMismatchReleasedContract is the ODCS contract the release carries. The
+// mismatch image bakes fixtures/py-probe/mismatch/py_mismatch.baked.odcs.yaml
 // instead, which differs from it in one read.
 //
-//go:embed fixtures/py-probe/mismatch/py_mismatch.released.yml
+//go:embed fixtures/py-probe/mismatch/py_mismatch.released.odcs.yaml
 var pyMismatchReleasedContract []byte
 
 // TestE2E_PythonImageContractMismatch_FailsInvalid proves that a python node
 // whose image holds another contract than the one its release hashed never
 // runs:
 //
-//  1. the released contract is built from py_mismatch.released.yml by the
-//     runtime's own `continuo-runtime merge`, run in the fixture image, so its
-//     entry carries the keys and defaults the harness hashes;
-//  2. a bootstrap python release of svc-py-mismatch-e2e names the mismatch
+//  1. the release's bundle is packed from py_mismatch.released.odcs.yaml by
+//     the runtime's own `continuo-runtime pack`, run in the mismatch image, so
+//     it carries the hash parts the harness computes and the image's package
+//     list;
+//  2. a bootstrap python-odcs release of svc-py-mismatch-e2e names the mismatch
 //     image, whose baked contract reads another column, and promotes;
 //  3. StartRun(e2e-py-mismatch) runs the node: the harness recomputes the
 //     node's content_hash from the image, finds it differs from the CONTENT_HASH
@@ -76,15 +78,15 @@ func TestE2E_PythonImageContractMismatch_FailsInvalid(t *testing.T) {
 	verifyK8sAvailable(t, ctx)
 	requireReleaseControllerHealthy(t, clients)
 
-	// ── 1. the released contract, built by the runtime ───────────────────────
-	script, err := fs.ReadFile(pyFixtureScripts, "fixtures/py-probe/"+pyMismatchScript)
+	// ── 1. the release's bundle, packed by the runtime ───────────────────────
+	script, err := fs.ReadFile(pyFixtureRepo, path.Join(pyFixtureRoot, pyMismatchScript))
 	require.NoError(t, err, "read the fixture script %s", pyMismatchScript)
 	repo := fstest.MapFS{
-		"contracts/py_mismatch.yml": {Data: pyMismatchReleasedContract},
-		pyMismatchScript:            {Data: script},
+		pyMismatchContract: {Data: pyMismatchReleasedContract},
+		pyMismatchScript:   {Data: script},
 	}
-	contract := mergeContractWithRuntime(t, ctx, pyFixtureImage, pyMismatchService, repo, ".")
-	requireImageReproducesAnotherHash(t, ctx, contract)
+	bundle := packBundleWithRuntime(t, ctx, pyMismatchImage, pyMismatchService, repo, ".")
+	requireImageReproducesAnotherHash(t, ctx, repo)
 
 	releaseID := "e2e-pymm-" + uuid.NewString()[:8]
 	t.Logf("release_id=%s service=%s image=%s", releaseID, pyMismatchService, pyMismatchImage)
@@ -105,9 +107,9 @@ func TestE2E_PythonImageContractMismatch_FailsInvalid(t *testing.T) {
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProd(t, ctx, clients, allServices)
-	// A service_prod pointer left behind would put this service's contract into
-	// every later release's topology. Deferred, so it runs while the pools are
-	// open.
+	// A service_prod pointer left behind would put this service's contracts
+	// into every later release's topology. Deferred, so it runs while the
+	// pools are open.
 	defer func() {
 		if _, err := clients.releaseDB.ExecContext(context.Background(),
 			`DELETE FROM service_prod WHERE service_name = $1`, pyMismatchService); err != nil {
@@ -115,13 +117,12 @@ func TestE2E_PythonImageContractMismatch_FailsInvalid(t *testing.T) {
 		}
 	}()
 
-	contractKey := fmt.Sprintf("%s/%s/contract.yaml", pyMismatchService, releaseID)
-	putS3Object(t, ctx, clients, contractKey, contract)
+	bundleKey := putODCSBundle(t, ctx, clients, pyMismatchService, releaseID, bundle)
 	defer func() {
 		if _, err := clients.s3Client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
-			Bucket: aws.String(e2eS3Bucket), Key: aws.String(contractKey),
+			Bucket: aws.String(e2eS3Bucket), Key: aws.String(bundleKey),
 		}); err != nil {
-			t.Logf("delete s3://%s/%s: %v", e2eS3Bucket, contractKey, err)
+			t.Logf("delete s3://%s/%s: %v", e2eS3Bucket, bundleKey, err)
 		}
 	}()
 	postPythonRelease(t, clients, pyMismatchService, releaseID, pyMismatchImage, true)
@@ -156,39 +157,21 @@ func TestE2E_PythonImageContractMismatch_FailsInvalid(t *testing.T) {
 }
 
 // requireImageReproducesAnotherHash asserts the precondition the test rests
-// on: the content_hash the merged contract carries for the mismatch node is not
-// the one the mismatch image computes from its baked contract with
-// `continuo-runtime hash`. A failure means the two fixture contracts no longer
-// differ in meaning.
-func requireImageReproducesAnotherHash(t *testing.T, ctx context.Context, contract []byte) {
+// on: the content_hash `continuo-runtime hash` computes for the mismatch node
+// from the released contract in repo is not the one the mismatch image
+// computes from its baked contract. A failure means the two fixture contracts
+// no longer differ in meaning.
+func requireImageReproducesAnotherHash(t *testing.T, ctx context.Context, repo fstest.MapFS) {
 	t.Helper()
-	var doc struct {
-		Nodes []struct {
-			Schema      string `yaml:"schema"`
-			Table       string `yaml:"table"`
-			ContentHash string `yaml:"content_hash"`
-		} `yaml:"nodes"`
-	}
-	require.NoError(t, yaml.Unmarshal(contract, &doc), "parse the merged contract")
-	released := ""
-	for _, n := range doc.Nodes {
-		if n.Schema+"."+n.Table == pyMismatchUniqueID {
-			released = n.ContentHash
-		}
-	}
-	require.NotEmpty(t, released, "the merged contract carries a content_hash for %s", pyMismatchUniqueID)
+	released := hashContractsWithRuntime(t, ctx, pyMismatchImage, repo, ".")[pyMismatchUniqueID]
+	require.NotEmpty(t, released, "the released contract declares %s", pyMismatchUniqueID)
 
 	cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "--entrypoint", "continuo-runtime", //nolint:gosec // fixed arguments; the image is a test constant
 		pyMismatchImage, "hash", "/app/contracts", "--repo-root", "/app", "--dialect", "postgres")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	require.NoError(t, cmd.Run(), "continuo-runtime hash in %s (rebuild it with scripts/setup.sh): %s", pyMismatchImage, stderr.String())
-	baked := ""
-	for _, line := range strings.Split(stdout.String(), "\n") {
-		if fields := strings.Fields(line); len(fields) == 2 && fields[0] == pyMismatchUniqueID {
-			baked = fields[1]
-		}
-	}
+	baked := parseRuntimeHashes(stdout.String())[pyMismatchUniqueID]
 	require.NotEmpty(t, baked, "%s's baked contracts declare %s: %s", pyMismatchImage, pyMismatchUniqueID, stdout.String())
 	require.NotEqual(t, released, baked,
 		"the mismatch image must compute another content_hash for %s than its release carries", pyMismatchUniqueID)

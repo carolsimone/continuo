@@ -1,6 +1,6 @@
 # A python node whose declared read names its relation without a schema, which
 # the release's SQL parser rejects. The fix qualifies the relation in the
-# contract yaml. Built from the e2e fixture tests/e2e/fixtures/py-remediation-repo
+# node's ODCS contract. Built from the e2e fixture tests/e2e/fixtures/py-remediation-repo
 # (services/svc-py-e2e-parse) and the python parse lane's tests
 # (service/fixer/python_parse_test.go). A parse rejection has no code bundle.
 kind: fixture
@@ -22,19 +22,29 @@ trigger:
 service_repo_paths:
   svc-py-e2e-parse: services/svc-py-e2e-parse
 repo_files:
-  services/svc-py-e2e-parse/contracts/py_unqualified_read.yml: |
-    nodes:
-      - schema: e2e_schema
-        table: py_unqualified_read
-        owner: e2e
-        schedule: daily
-        criticality: SECONDARY
-        script: scripts/py_unqualified_read.py
-        description: "python node whose declared read is not schema-qualified"
-        reads:
+  services/svc-py-e2e-parse/contracts/py_unqualified_read.odcs.yaml: |
+    apiVersion: v3.2.0
+    kind: DataContract
+    id: e2e_schema.py_unqualified_read
+    name: py_unqualified_read
+    version: "0"
+    description:
+      purpose: "python node whose declared read is not schema-qualified"
+    team:
+      name: e2e
+    customProperties:
+      - {vendor: continuo, property: schedule, value: daily}
+      - {vendor: continuo, property: criticality, value: SECONDARY}
+      - {vendor: continuo, property: script, value: scripts/py_unqualified_read.py}
+      - vendor: continuo
+        property: readQueries
+        value:
           orders: select id from right_name
-        output_columns:
-          - {name: id, type: INTEGER, nullable: false}
+    schema:
+      - name: py_unqualified_read
+        physicalType: table
+        properties:
+          - {name: id, physicalType: INTEGER, required: true}
   services/svc-py-e2e-parse/scripts/py_unqualified_read.py: |
     import pyarrow as pa
 
@@ -42,54 +52,83 @@ repo_files:
     def run(ctx):
         ctx.read("orders")
         return pa.table({"id": pa.array([1], type=pa.int32())})
+catalog:
+  # The node's contract as continuo last promoted it.
+  contracts:
+    e2e_schema.py_unqualified_read: |
+      apiVersion: v3.2.0
+      kind: DataContract
+      id: e2e_schema.py_unqualified_read
+      name: py_unqualified_read
+      version: "1"
 release:
   image_tag: sha-python-parse
+  # The package list of the image, which the image_packages context step reads
+  # and contract_packages packs with. Without it the step declines the cluster.
+  image_packages: {pyarrow: "26.0.0"}
   failing_nodes:
     e2e_schema.py_unqualified_read: "read orders references right_name, which names no schema"
 packager:
-  merged: |
-    nodes:
-      - schema: e2e_schema
-        table: py_unqualified_read
-        reads:
-          orders: select id from public.right_name
+  # The odcs-bundle.json continuo-runtime pack writes for the patched contract
+  # directory, with the release's image packages.
+  packed: '{"bundle_version": 1, "service": "svc-py-e2e", "producer": {"continuo_python_runtime": "0.13.0", "continuo_contracts": "0.2.0"}, "image_packages": {"pyarrow": "26.0.0"}, "nodes": [{"path": "contracts/py_unqualified_read.odcs.yaml", "text": "id: e2e_schema.py_unqualified_read\n", "source_hash": "", "shared_code_hash": ""}]}'
 answers:
   pass:
     - files:
-        - path: services/svc-py-e2e-parse/contracts/py_unqualified_read.yml
+        - path: services/svc-py-e2e-parse/contracts/py_unqualified_read.odcs.yaml
           content: |
-            nodes:
-              - schema: e2e_schema
-                table: py_unqualified_read
-                owner: e2e
-                schedule: daily
-                criticality: SECONDARY
-                script: scripts/py_unqualified_read.py
-                description: "python node whose declared read is not schema-qualified"
-                reads:
+            apiVersion: v3.2.0
+            kind: DataContract
+            id: e2e_schema.py_unqualified_read
+            name: py_unqualified_read
+            version: "0"
+            description:
+              purpose: "python node whose declared read is not schema-qualified"
+            team:
+              name: e2e
+            customProperties:
+              - {vendor: continuo, property: schedule, value: daily}
+              - {vendor: continuo, property: criticality, value: SECONDARY}
+              - {vendor: continuo, property: script, value: scripts/py_unqualified_read.py}
+              - vendor: continuo
+                property: readQueries
+                value:
                   orders: select id from public.right_name
-                output_columns:
-                  - {name: id, type: INTEGER, nullable: false}
+            schema:
+              - name: py_unqualified_read
+                physicalType: table
+                properties:
+                  - {name: id, physicalType: INTEGER, required: true}
       rationale: qualified right_name with its schema
       confidence: high
       model: claude-test
   fail:
     # The node renamed: pre-flight refuses a fix that changes the node's identity.
     - files:
-        - path: services/svc-py-e2e-parse/contracts/py_unqualified_read.yml
+        - path: services/svc-py-e2e-parse/contracts/py_unqualified_read.odcs.yaml
           content: |
-            nodes:
-              - schema: e2e_schema
-                table: py_qualified_read
-                owner: e2e
-                schedule: daily
-                criticality: SECONDARY
-                script: scripts/py_unqualified_read.py
-                description: "python node whose declared read is not schema-qualified"
-                reads:
+            apiVersion: v3.2.0
+            kind: DataContract
+            id: e2e_schema.py_qualified_read
+            name: py_qualified_read
+            version: "0"
+            description:
+              purpose: "python node whose declared read is not schema-qualified"
+            team:
+              name: e2e
+            customProperties:
+              - {vendor: continuo, property: schedule, value: daily}
+              - {vendor: continuo, property: criticality, value: SECONDARY}
+              - {vendor: continuo, property: script, value: scripts/py_unqualified_read.py}
+              - vendor: continuo
+                property: readQueries
+                value:
                   orders: select id from public.right_name
-                output_columns:
-                  - {name: id, type: INTEGER, nullable: false}
+            schema:
+              - name: py_qualified_read
+                physicalType: table
+                properties:
+                  - {name: id, physicalType: INTEGER, required: true}
       rationale: renamed the node and qualified its read
       confidence: high
       model: claude-test

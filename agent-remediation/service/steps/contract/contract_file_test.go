@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
@@ -152,5 +153,26 @@ func TestContractFile_ReturnsAnyOtherLocateErrorAndRemovesTheCheckout(t *testing
 
 	require.ErrorIs(t, err, errBoom)
 	assert.EqualError(t, err, "locate contract for py.fx.rates: boom")
+	a.requireNoCheckoutLeft()
+}
+
+// TestContractFileStep_DeclinesANodeNoFileOfARealCheckoutDeclares runs the
+// step over a real checkout searched by the repofs locator: the failing node is
+// declared by no ODCS contract while another service of the checkout has one,
+// and the cluster is declined with the locator's reason.
+func TestContractFileStep_DeclinesANodeNoFileOfARealCheckoutDeclares(t *testing.T) {
+	a := &fakeArchive{t: t, files: map[string]string{
+		"services/other/contracts/kpis.odcs.yaml": "apiVersion: v3.2.0\nkind: DataContract\nid: analytics.kpis\n" +
+			"schema:\n  - name: kpis\n    physicalType: table\n",
+	}}
+	locator := repofs.NewLocator(discardLogger())
+
+	out, err := contract.NewContractFile(a, locator, discardLogger()).Gather(context.Background(),
+		step.ContextInput{Failure: failure(nil), Evidence: remediation.NewEvidence()})
+	require.NoError(t, err)
+
+	assert.True(t, out.Declined)
+	assert.Equal(t, `schema "fx" table "rates": `+ports.ErrNodeNotDeclared.Error(), out.Decline)
+	assert.Nil(t, out.Evidence)
 	a.requireNoCheckoutLeft()
 }

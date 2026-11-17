@@ -37,9 +37,13 @@ func parsedManifestInput(p pkgevents.ManifestLoadedCandidate, logger *slog.Logge
 		Status:        p.Status,
 		TopologyRef:   release.TopologyRef{URI: p.TopologyURI, SHA256: p.TopologySHA256, NodeCount: p.NodeCount},
 		CodeBundleURI: p.CodeBundleURI,
-		FailureKind:   kind,
-		Detail:        p.Detail,
-		FailedNodes:   failed,
+		ContractBundle: release.ContractBundleRef{
+			URI: p.ContractBundleURI, SHA256: p.ContractBundleSHA256,
+		},
+		ContinuoContracts: p.ContinuoContracts,
+		FailureKind:       kind,
+		Detail:            p.Detail,
+		FailedNodes:       failed,
 	}
 }
 

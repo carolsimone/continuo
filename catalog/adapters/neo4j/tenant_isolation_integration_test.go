@@ -21,6 +21,7 @@ import (
 	"github.com/carolsimone/continuo/catalog/domain"
 	"github.com/carolsimone/continuo/catalog/domain/casebase"
 	"github.com/carolsimone/continuo/catalog/domain/codeversion"
+	"github.com/carolsimone/continuo/catalog/domain/contractversion"
 	"github.com/carolsimone/continuo/catalog/domain/topology"
 	"github.com/carolsimone/continuo/catalog/serialization/exportfile"
 	"github.com/carolsimone/continuo/catalog/service/ports"
@@ -61,17 +62,21 @@ type isolationRow struct {
 }
 
 // isolationRepositories are the repositories of this package: the readers
-// the gRPC server serves from, the three that write through uow.Tx, the
-// export lease, the unit of work, and the export and import of a tenant's
-// graph. Each exported method of each has a row.
+// the gRPC server and the live contracts folder serve from, the four that
+// write through uow.Tx, the export lease, the live-folder lease and state,
+// the unit of work, and the export and import of a tenant's graph. Each
+// exported method of each has a row.
 var isolationRepositories = []any{
 	(*NodeQueryRepository)(nil),
 	(*CodeVersionQueryRepository)(nil),
 	(*PrecedentQueryRepository)(nil),
+	(*ContractQueryRepository)(nil),
 	(*releasePromotionRepository)(nil),
 	(*codeVersionRepository)(nil),
 	(*caseBaseRepository)(nil),
+	(*contractVersionRepository)(nil),
 	(*exportLease)(nil),
+	(*LiveFolderLease)(nil),
 	(*unitOfWork)(nil),
 	(*graphExporter)(nil),
 	(*graphImporter)(nil),
@@ -84,7 +89,9 @@ type isolationFixture struct {
 	nodes      *NodeQueryRepository
 	versions   *CodeVersionQueryRepository
 	precedents *PrecedentQueryRepository
+	contracts  *ContractQueryRepository
 	lease      ports.ExportLease
+	live       *LiveFolderLease
 	// sharedMessage is a message id B's topology group processed; A never did.
 	sharedMessage string
 	// wroteA reports whether the unit of work ran A's write.
@@ -179,11 +186,27 @@ func newIsolationFixture(t *testing.T) *isolationFixture {
 		nodes:         NewNodeQueryRepository(a.client, quietLogger()),
 		versions:      NewCodeVersionQueryRepository(a.client, quietLogger()),
 		precedents:    NewPrecedentQueryRepository(a.client, quietLogger()),
+		contracts:     NewContractQueryRepository(a.client),
 		lease:         NewExportLease(a.client, quietLogger()),
+		live:          NewLiveFolderLease(a.client, quietLogger()),
 		sharedMessage: "iso-shared-" + uuid.NewString(),
 	}
 	seedIsolationTenant(f.a, isoMarkA, 1, false)
 	seedIsolationTenant(f.b, isoMarkB, 2, true)
+
+	// B alone has a contract promotion 9.
+	f.b.writeContracts(contractPromotion("r9", 9), isoContract(isoOnlyB, 9, isoMarkB))
+
+	// B's live folder has a watermark and settings, and B holds its
+	// live-folder lease, so none of A's live-folder calls may read or take
+	// them.
+	liveMarker := uow.Marker{TenantID: f.b.tenant, Group: streams.CatalogReleaseContracts, MessageID: "iso-live-" + uuid.NewString()}
+	require.NoError(t, f.b.uow.Write(f.ctx, liveMarker, true, func(ctx context.Context, tx uow.Tx) error {
+		return tx.Contracts().RecordLiveFolder(ctx, f.b.tenant, 9, "rel-"+isoMarkB, "settings-"+isoMarkB)
+	}))
+	acquired, err := f.live.Acquire(f.ctx, f.b.tenant, "b-live-holder", 10*time.Minute)
+	require.NoError(t, err)
+	require.True(t, acquired)
 
 	// B has processed sharedMessage and holds its export lease, so neither may
 	// skip or pause a write of A.
@@ -194,8 +217,9 @@ func newIsolationFixture(t *testing.T) *isolationFixture {
 
 // seedIsolationTenant writes one tenant's graph: releases r1 and r2 carrying
 // table_up and table_down (down depends on up), two versions of each, a shared
-// unit with two versions, and a failure of table_down that a version and a
-// merged fix PR, which edited table_up, resolved. Each value a read returns
+// unit with two versions, two contracts of table_up, and a failure of
+// table_down that a version and a merged fix PR, which edited table_up,
+// resolved. Each value a read returns
 // carries mark; withOnlyB adds the node, unit and signature only B holds.
 func seedIsolationTenant(f *swapFixture, mark string, testCount int, withOnlyB bool) {
 	f.t.Helper()
@@ -224,6 +248,11 @@ func seedIsolationTenant(f *swapFixture, mark string, testCount int, withOnlyB b
 			units = append(units, codeversion.CodeUnitVersion{UnitID: isoOnlyBUnit, Checksum: unitSum, Source: "source-" + mark})
 		}
 		f.writeBatch(withUnits(in, units...))
+		contracts := []contractversion.Incoming{isoContract(isoUp, seq, mark)}
+		if withOnlyB {
+			contracts = append(contracts, isoContract(isoOnlyB, seq, mark))
+		}
+		f.writeContracts(contractPromotion(rel, seq), contracts...)
 	}
 
 	rej := rejectionOf("r-failed", isoDown, isoSig, promotedAtOf(1).Add(30*time.Minute))
@@ -240,6 +269,16 @@ func seedIsolationTenant(f *swapFixture, mark string, testCount int, withOnlyB b
 		ClosedAt: promotedAtOf(2), ResolvedNodeIDs: []string{isoDown},
 		Edits: []casebase.EditOutcome{{Path: "models/up-" + mark + ".sql", TargetNodeID: isoUp, Diff: "diff-" + mark}},
 	})
+}
+
+// isoContract is the contract uniqueID's promotion seq carries in the tenant
+// that mark names: its hash and its stored form carry the mark.
+func isoContract(uniqueID string, seq int64, mark string) contractversion.Incoming {
+	return contractversion.Incoming{
+		UniqueID: uniqueID, ContractHash: fmt.Sprintf("k%d-%s", seq, mark), ContentHash: "content-" + mark,
+		Family: "python", Service: "svc", SourcePath: "contracts/" + mark + ".odcs.yaml",
+		Document: map[string]any{"id": uniqueID, "team": map[string]any{"name": mark}},
+	}
 }
 
 func (f *isolationFixture) topologyMarker(tenant string) uow.Marker {
@@ -377,6 +416,42 @@ func (f *isolationFixture) rows() []isolationRow {
 			require.NoError(t, err)
 			assert.Empty(t, none)
 		}},
+		{"ContractQueryRepository.Current", func(t *testing.T) {
+			cur, err := f.contracts.Current(ctx, tenant(), isoUp)
+			require.NoError(t, err)
+			assert.Equal(t, int64(2), cur.Version)
+			onlyA(t, cur)
+			_, err = f.contracts.Current(ctx, tenant(), isoOnlyB)
+			assert.ErrorIs(t, err, contractversion.ErrNotFound)
+		}},
+		{"ContractQueryRepository.History", func(t *testing.T) {
+			history, err := f.contracts.History(ctx, tenant(), isoUp, 0)
+			require.NoError(t, err)
+			require.Len(t, history, 2)
+			onlyA(t, history)
+			history, err = f.contracts.History(ctx, tenant(), isoOnlyB, 0)
+			require.NoError(t, err)
+			assert.Empty(t, history)
+		}},
+		{"ContractQueryRepository.ByVersion", func(t *testing.T) {
+			first, err := f.contracts.ByVersion(ctx, tenant(), isoUp, 1)
+			require.NoError(t, err)
+			onlyA(t, first)
+			_, err = f.contracts.ByVersion(ctx, tenant(), isoOnlyB, 1)
+			assert.ErrorIs(t, err, contractversion.ErrNotFound)
+		}},
+		{"ContractQueryRepository.Live", func(t *testing.T) {
+			live, err := f.contracts.Live(ctx, tenant(), 2)
+			require.NoError(t, err)
+			require.Len(t, live, 1, "A's one live contract, not B's two")
+			assert.Equal(t, isoUp, live[0].UniqueID)
+			onlyA(t, live)
+		}},
+		{"ContractQueryRepository.LatestPromotionSeq", func(t *testing.T) {
+			latest, err := f.contracts.LatestPromotionSeq(ctx, tenant())
+			require.NoError(t, err)
+			assert.Equal(t, int64(2), latest, "A's newest contract promotion, not B's")
+		}},
 		{"releasePromotionRepository.PromoteRelease", func(t *testing.T) {
 			assert.Equal(t, topology.PromotionApplied, f.a.promoteAt("r3", 3, releaseOf(modelNode(isoUp)), promotedAtOf(3)))
 			assert.Equal(t, []string{isoUp}, f.a.activeIDs())
@@ -385,6 +460,49 @@ func (f *isolationFixture) rows() []isolationRow {
 			f.a.writeBatch(batchOf("r3", 3, versionOf(isoUp, "up3-"+isoMarkA), versionOf(isoOnlyB, "onlyb3-"+isoMarkA)))
 			assert.Equal(t, "up3-"+isoMarkA, f.a.current(isoUp))
 			assert.Equal(t, "onlyb3-"+isoMarkA, f.a.current(isoOnlyB), "A gets its own inactive node, not B's")
+		}},
+		{"contractVersionRepository.ReadStates", func(t *testing.T) {
+			states := f.a.contractStates(isoUp, isoOnlyB)
+			assert.Equal(t, "k2-"+isoMarkA, states[isoUp].CurrentHash)
+			assert.Equal(t, map[string]int64{"k1-" + isoMarkA: 1, "k2-" + isoMarkA: 2}, states[isoUp].FirstVersionByHash)
+			assert.Empty(t, states[isoOnlyB].CurrentHash, "A's inactive node has no contract, whatever B's has")
+		}},
+		{"contractVersionRepository.Write", func(t *testing.T) {
+			f.a.writeContracts(contractPromotion("r3", 3), isoContract(isoOnlyB, 3, isoMarkA))
+			hash, _ := f.a.contractPointer(isoOnlyB)
+			assert.Equal(t, "k3-"+isoMarkA, hash, "A's node takes A's contract")
+		}},
+		{"contractVersionRepository.RecordLiveFolder", func(t *testing.T) {
+			require.NoError(t, f.a.uow.Write(ctx, uow.Marker{TenantID: tenant(), Group: streams.CatalogReleaseContracts,
+				MessageID: "iso-live-a-" + uuid.NewString()}, true, func(ctx context.Context, tx uow.Tx) error {
+				return tx.Contracts().RecordLiveFolder(ctx, tenant(), 3, "rel-"+isoMarkA, "settings-"+isoMarkA)
+			}))
+		}},
+		{"LiveFolderLease.Read", func(t *testing.T) {
+			mark, err := f.live.Read(ctx, tenant())
+			require.NoError(t, err)
+			assert.Equal(t, ports.LiveFolderMark{PromotionSeq: 3, ReleaseID: "rel-" + isoMarkA, SettingsSHA256: "settings-" + isoMarkA},
+				mark, "A's mark, not B's")
+		}},
+		{"LiveFolderLease.RecordSettings", func(t *testing.T) {
+			require.NoError(t, f.live.RecordSettings(ctx, tenant(), "settings-2-"+isoMarkA), "B's export lease does not pause A's writes")
+			mark, err := f.live.Read(ctx, tenant())
+			require.NoError(t, err)
+			assert.Equal(t, "settings-2-"+isoMarkA, mark.SettingsSHA256)
+		}},
+		{"LiveFolderLease.Acquire", func(t *testing.T) {
+			acquired, err := f.live.Acquire(ctx, tenant(), isoHolder, time.Minute)
+			require.NoError(t, err)
+			assert.True(t, acquired, "B's live-folder lease does not hold A's")
+		}},
+		{"LiveFolderLease.Renew", func(t *testing.T) {
+			require.NoError(t, f.live.Renew(ctx, tenant(), isoHolder, time.Minute))
+			assert.ErrorIs(t, f.live.Renew(ctx, f.b.tenant, isoHolder, time.Minute), ports.ErrLeaseLost,
+				"A's holder does not hold B's live-folder lease")
+		}},
+		{"LiveFolderLease.Release", func(t *testing.T) {
+			require.NoError(t, f.live.Release(ctx, tenant(), isoHolder))
+			require.NoError(t, f.live.Release(ctx, f.b.tenant, isoHolder), "releasing another holder's lease is a no-op")
 		}},
 		{"caseBaseRepository.RecordRejection", func(t *testing.T) {
 			f.a.recordRejection(rejectionOf("r-failed-again", isoOnlyB, isoOnlyBSig, promotedAtOf(3)))

@@ -1,8 +1,8 @@
 # Reading releases from continuo
 
 External tools can read what continuo knows about a release: which release is in
-production, the code of each node, and the topology. This page declares what a
-reader may rely on, which version of each document that holds for, and what a
+production, the code of each node, the topology, and the data contracts. This
+page declares what a reader may rely on, which version of each document that holds for, and what a
 version bump means. It is the whole promise: anything not named here may change
 in any release.
 
@@ -21,9 +21,9 @@ The read set is `current_prod_release_id`, a string. `node_count` and
 path: a change that removes, renames or retypes `current_prod_release_id` is a
 new route, `/api/v2/current-prod`.
 
-## The two documents
+## The three documents
 
-Both live in the install's bucket (`s3.bucket`, `continuo` on the bundled
+All three live in the install's bucket (`s3.bucket`, `continuo` on the bundled
 MinIO). `<release>` is the id from the previous step, used verbatim. `<tenant>`
 is `default`: releases are submitted under the default tenant.
 
@@ -31,14 +31,21 @@ is `default`: releases are submitted under the default tenant.
 |---|---|---|---|
 | Code bundle | `code-bundles/<release>/bundle.json` | topology-controller | `contract_version` |
 | Topology artifact | `tenants/<tenant>/topologies/<release>/topology.json.gz` | topology-controller | `schema_version` |
+| Contract bundle | `tenants/<tenant>/topologies/<release>/contracts.json.gz` | topology-controller | `schema_version` |
 
-The bundle is JSON. The topology artifact is JSON compressed with gzip and
-stored as it is, with no `Content-Encoding`, so a client decompresses it itself.
-Both objects are immutable: a release's two documents never change after they
-are written, so reading both for one release id always gives a consistent pair.
+The code bundle is JSON. The topology artifact and the contract bundle are JSON
+compressed with gzip and stored as they are, with no `Content-Encoding`, so a
+client decompresses them itself. All three objects are immutable: a release's
+documents never change after they are written, so reading them for one release
+id always gives a consistent set.
 
-The two versions are integers, count independently of each other and of the
-chart's version, and are both `1`.
+Every release that passes writes a contract bundle. It is empty when the release
+has no `python-odcs` contract. The bundle is canonical JSON (RFC 8785).
+`manifest.loaded.candidate:v2` and `release.promoted:v2` carry the SHA-256 of
+its stored bytes, so a reader can check what it fetched.
+
+The three versions are integers, count independently of each other and of the
+chart's version, and are all `1`.
 
 ## Read set, version 1
 
@@ -61,6 +68,10 @@ are `kind` (string), `owner` (string) and `reads` (object: each read's name to
 the `SELECT` text it runs). A node of `kind` `python-csv` has one read, `csv`,
 which is a file location, not SQL. Every other key of the entry may change.
 
+A Python node's entry comes from its ODCS file (a service is released as
+`python-odcs`, one ODCS file per node): `owner` is the contract's `team.name`
+and `reads` holds its `readQueries`, or its `csvSource` as the read `csv`.
+
 **Topology artifact, `schema_version` 1**
 
 | Path | Type | Meaning |
@@ -71,6 +82,31 @@ which is a file location, not SQL. Every other key of the entry may change.
 | `nodes[].unique_id` | string | The key the bundle uses for the same node. |
 | `nodes[].resolved_relation_id` | string | The warehouse relation the node writes, `<schema>.<relation>`. For a dbt model with an alias it differs from `unique_id`. |
 | `nodes[].service_name` | string | The service that owns the node. |
+
+**Contract bundle, `schema_version` 1**
+
+| Path | Type | Meaning |
+|---|---|---|
+| `schema_version` | number | The version of this document. |
+| `tenant_id`, `release_id` | string | The tenant and release it belongs to. |
+| `continuo_contracts` | string | The version of the `continuo-contracts` library that read the release's contracts. |
+| `contracts` | object | One entry per node that has a contract, keyed by the node's unique id: `<schema>.<table>`, lowercase. |
+| `contracts.<id>.family` | string | `python`. A reader skips a family it does not know: a new family is an added value, not a new version. |
+| `contracts.<id>.service` | string | The service that owns the node. |
+| `contracts.<id>.contract_hash` | string | `sha256:` and 64 hex characters. A reader compares this value. How it is computed is below the table. |
+| `contracts.<id>.content_hash` | string | The node's code fingerprint, `sha256:` and 64 hex characters. |
+| `contracts.<id>.source.path` | string | The file the contract was read from, as a path in the service's repository. |
+| `contracts.<id>.source.sha256` | string | The SHA-256 of that file's text. |
+| `contracts.<id>.document` | object | The stored form of the contract, as a whole ODCS document with every root key. Its `status` is `active` and its `version` is `"0"`. The version number a node's contract has is in catalog and in the [live folder](contracts.md#the-live-folder). |
+
+`contract_hash` is the SHA-256 of the canonical JSON (RFC 8785) of `document`
+without its four root keys `apiVersion`, `kind`, `status` and `version`. A
+reader that recomputes it removes those keys first: the hash of the whole
+`document` is a different value.
+
+The keys `odcs_schema_sha256`, `ontology`, `provenance`, `summary`, `failures`
+and `timings` are in the document but not in the read set. They may change in any
+release.
 
 ## What changes a version
 
@@ -87,13 +123,15 @@ which is a file location, not SQL. Every other key of the entry may change.
 
 ## How long the objects stay
 
-- The bundle and the topology artifact of the release `current_prod_release_id`
-  names are never deleted while it is the production release. The same holds for
-  a release that is still a service's production release.
+- The bundle, the topology artifact and the contract bundle of the release
+  `current_prod_release_id` names are never deleted while it is the production
+  release. The same holds for a release that is still a service's production
+  release.
 - release-controller deletes the bundle of any other release when its retention
   prunes the release: 90 days after the release was submitted
-  (`RELEASE_RETENTION_DAYS`). It deletes the topology artifact of a release that
-  was not promoted then too, and keeps the topology artifact of a promoted one.
+  (`RELEASE_RETENTION_DAYS`). It deletes the topology artifact and the contract
+  bundle of a release that was not promoted then too, and keeps both of a
+  promoted one.
 - With your own bucket, set no lifecycle expiry on `code-bundles/` or `tenants/`.
   An age rule cannot tell the live release from an old one. The local
   docker-compose bucket sets none, and `scripts/check-read-retention.sh` fails
@@ -107,7 +145,8 @@ which is a file location, not SQL. Every other key of the entry may change.
 |---|---|
 | The bundle's read set and version | `topology-controller/tests/test_code_bundle_contract.py` writes a bundle and compares it with a fixture. `pkg/codebundle/read_contract_test.go` checks each path and type on a copy of that fixture, and `pkg/streams` keeps the two copies identical. |
 | The topology's read set and version | `pkg/topologyartifact/read_contract_test.go` checks each path and type on the golden fixture that both writers are pinned to. |
-| Readers ignore unknown keys and refuse a newer version | The same tests, in `Decode`. |
+| The contract bundle's read set and version | `topology-controller/tests/test_contract_bundle.py` writes a bundle and compares it with a fixture. `pkg/contractbundle/contractbundle_test.go` reads a copy of that fixture and checks each value, and `pkg/streams` keeps the two copies identical. |
+| Readers ignore unknown keys and refuse a newer version | The same tests, in `Decode` of each package. |
 | The pointer's key | `tests/e2e/public_api_test.go` reads `current_prod_release_id` through the public route. |
 | The live release's objects are kept | `TestPruneFinishedRuns_PassesCutoffAndKeepIDs` (the production release is never pruned) and `TestRunRepository_DeleteFinishedBefore_DeletesCandidateSQLPrefixes` (a kept release's prefixes are never deleted). |
 | No expiry rule on the two prefixes | `scripts/check-read-retention.sh`, run by `make guards`. |

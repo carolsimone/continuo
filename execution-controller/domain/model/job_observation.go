@@ -202,6 +202,7 @@ func podFacts(p PodObservation) AttemptFacts {
 			if !p.Main.Terminated {
 				exit := c.ExitCode
 				f.ExitCode, f.FinishedAt = &exit, c.FinishedAt
+				f.TerminationReason = c.TerminatedReason
 				f.Message = joinReason(c.TerminatedReason, c.TerminatedMessage)
 			}
 		}

@@ -8,8 +8,10 @@ match: { cluster: single, source: validation, node_types: [python-node, python-a
 context:
   - contract_file
   - failing_siblings
+  - image_packages
   - dbt_log
   - contract_entry
+  - current_contract
   - upstream_changes
   - failure_precedents
 agent: { prompt: python-contract, tools: [], rounds: 3 }

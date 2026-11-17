@@ -18,6 +18,8 @@ const (
 	ParseFailureKindInvalidSQL ParseFailureKind = "invalid_sql"
 	// ParseFailureKindUnqualifiedReference — a node references a relation without a schema qualifier.
 	ParseFailureKindUnqualifiedReference ParseFailureKind = "unqualified_reference"
+	// ParseFailureKindInvalidContract — a python node's contract does not satisfy the ODCS contract rules; every invalid contract of the release is named in one failure.
+	ParseFailureKindInvalidContract ParseFailureKind = "invalid_contract"
 	// ParseFailureKindInvalidArtifact — the uploaded manifest or contract is unreadable, empty, of unknown kind, names another service, or declares an invalid node setting.
 	ParseFailureKindInvalidArtifact ParseFailureKind = "invalid_artifact"
 	// ParseFailureKindInternal — continuo's own wiring or an S3 write failed; no change to the user's source will fix it.
@@ -29,6 +31,7 @@ func ParseFailureKinds() []ParseFailureKind {
 	return []ParseFailureKind{
 		ParseFailureKindInvalidSQL,
 		ParseFailureKindUnqualifiedReference,
+		ParseFailureKindInvalidContract,
 		ParseFailureKindInvalidArtifact,
 		ParseFailureKindInternal,
 	}
@@ -40,6 +43,8 @@ func (v ParseFailureKind) IsValid() bool {
 	case ParseFailureKindInvalidSQL:
 		return true
 	case ParseFailureKindUnqualifiedReference:
+		return true
+	case ParseFailureKindInvalidContract:
 		return true
 	case ParseFailureKindInvalidArtifact:
 		return true
@@ -77,6 +82,8 @@ const (
 	RejectReasonInvalidSQL RejectReason = "invalid_sql"
 	// RejectReasonUnqualifiedReference — a node references a relation without a schema qualifier.
 	RejectReasonUnqualifiedReference RejectReason = "unqualified_reference"
+	// RejectReasonInvalidContract — a python node's contract in the release does not satisfy the ODCS contract rules.
+	RejectReasonInvalidContract RejectReason = "invalid_contract"
 	// RejectReasonInvalidArtifact — a manifest or python contract in the release is unreadable, empty, of unknown kind, names another service, or declares an invalid node setting.
 	RejectReasonInvalidArtifact RejectReason = "invalid_artifact"
 	// RejectReasonInternalError — continuo's own wiring or an S3 access failed while resolving the release.
@@ -105,6 +112,7 @@ func RejectReasons() []RejectReason {
 		RejectReasonArtifactUploadFailed,
 		RejectReasonInvalidSQL,
 		RejectReasonUnqualifiedReference,
+		RejectReasonInvalidContract,
 		RejectReasonInvalidArtifact,
 		RejectReasonInternalError,
 		RejectReasonDuplicateTable,
@@ -129,6 +137,8 @@ func (v RejectReason) IsValid() bool {
 	case RejectReasonInvalidSQL:
 		return true
 	case RejectReasonUnqualifiedReference:
+		return true
+	case RejectReasonInvalidContract:
 		return true
 	case RejectReasonInvalidArtifact:
 		return true

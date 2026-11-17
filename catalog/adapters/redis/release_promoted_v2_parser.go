@@ -25,16 +25,18 @@ func ParseReleasePromotedV2(msg goredis.XMessage) (model.PromoteReleaseInput, er
 			events.ErrPermanent, msg.ID)
 	}
 	return model.PromoteReleaseInput{
-		TenantID:       env.TenantID,
-		ReleaseID:      p.ReleaseID,
-		PromotionSeq:   p.PromotionSeq,
-		TopologyURI:    p.TopologyURI,
-		TopologySHA256: p.TopologySHA256,
-		ChangedNodeIDs: p.ChangedNodeIDs,
-		Repo:           p.Repo,
-		CommitSHA:      p.CommitSHA,
-		PromotedAt:     p.PromotedAt,
-		CodeBundleURI:  p.CodeBundleURI,
-		Bootstrap:      p.Bootstrap,
+		TenantID:             env.TenantID,
+		ReleaseID:            p.ReleaseID,
+		PromotionSeq:         p.PromotionSeq,
+		TopologyURI:          p.TopologyURI,
+		TopologySHA256:       p.TopologySHA256,
+		ChangedNodeIDs:       p.ChangedNodeIDs,
+		Repo:                 p.Repo,
+		CommitSHA:            p.CommitSHA,
+		PromotedAt:           p.PromotedAt,
+		CodeBundleURI:        p.CodeBundleURI,
+		Bootstrap:            p.Bootstrap,
+		ContractBundleURI:    p.ContractBundleURI,
+		ContractBundleSHA256: p.ContractBundleSHA256,
 	}, nil
 }

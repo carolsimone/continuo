@@ -50,9 +50,10 @@ func AssembleManifestSet(existing []*release.ServiceProd, bucket, changedService
 //
 // The verification run therefore names the release it verifies, and that
 // release's own changed service is swapped to its candidate manifest key and
-// image tag. The original release is read once here; if it is gone, or never
-// got far enough to have a candidate manifest, the set is left as assembled
-// and the verification runs against production — a weaker check, but a
+// image tag. The original release is read once here; if it is gone, never
+// got far enough to have a candidate manifest, or holds the kind python, the
+// set is left as assembled (assembleFor) and the verification runs against
+// production — a weaker check, but a
 // running one.
 //
 // Only the rejected release's own delta is restored. Sibling edits the same
@@ -110,6 +111,14 @@ func assembleFor(
 	}
 	if original.CandidateTopologyRef().IsZero() {
 		logger.Warn("the verified release never parsed, so it has no candidate manifest; assembling from production instead",
+			"release_id", r.ID(), "verifies_release_id", original.ID())
+		return set
+	}
+	if original.ManifestKind() == release.ManifestKindPython {
+		// A release stored with the kind python holds a contract.yaml no
+		// parser reads, and its canonical key would name an artifact that does
+		// not exist, so its candidate is never assembled.
+		logger.Warn("the verified release has the kind python, which no parser reads; assembling from production instead",
 			"release_id", r.ID(), "verifies_release_id", original.ID())
 		return set
 	}

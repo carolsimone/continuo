@@ -67,7 +67,7 @@ type TriggerNode struct {
 	// python-node, python-csv, or python-api), set on validation,
 	// duplicate-relation and parse failures. It selects how the node is fixed:
 	// a python-node, whose source is not a single readable file, is fixed in
-	// the contract yaml declaring it.
+	// the ODCS contract file declaring it.
 	NodeType string
 	// OtherService and OtherFilePath locate the competing node that also
 	// produces the contested relation (RelationID), set on a duplicate-relation

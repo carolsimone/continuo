@@ -11,7 +11,9 @@ import (
 	"github.com/carolsimone/continuo/pkg/validationresult"
 )
 
-// nothingToDo is what dbt prints when its selector matched no node.
+// nothingToDo is what dbt prints when its selector matched no node. Only the
+// log of a node that is not Python is read for it: a Python task may print the
+// same words as ordinary output.
 const nothingToDo = "Nothing to do"
 
 // readLogs reads the log of d's pod and uploads it, with the structured result
@@ -22,7 +24,8 @@ const nothingToDo = "Nothing to do"
 // check mode, the reason it stopped the load. The
 // dbt container's result is read only from the pod's main log, never from the
 // preflight's. It runs outside any transaction, under LogIOTimeout, and
-// soft-fails: a log that cannot be read or uploaded leaves its facts empty.
+// soft-fails: a log that cannot be read or uploaded leaves its own facts
+// empty, and the preflight's log is read even when the pod's log cannot be.
 func (o *Observer) readLogs(ctx context.Context, d *model.Deployment) model.AttemptFacts {
 	ioCtx, cancel := context.WithTimeout(ctx, o.cfg.LogIOTimeout)
 	defer cancel()
@@ -30,7 +33,6 @@ func (o *Observer) readLogs(ctx context.Context, d *model.Deployment) model.Atte
 	fullLog, tail, err := o.deps.Logs.GetPodLogs(ioCtx, d.JobName(), o.cfg.LogTailLines)
 	if err != nil {
 		o.deps.Logger.Warn("Failed to read the pod log", "job_name", d.JobName(), "error", err)
-		return model.AttemptFacts{}
 	}
 	// The result block, printed by validation pods and python-family
 	// containers, is cut out of the text log. The full log and the tail are
@@ -51,7 +53,7 @@ func (o *Observer) readLogs(ctx context.Context, d *model.Deployment) model.Atte
 			blockReason = model.ReasonFromResultBlock(r.Reason)
 		}
 	}
-	f := model.AttemptFacts{NothingToDo: strings.Contains(tail, nothingToDo), LogMessage: o.truncate(blockMessage), Reason: blockReason}
+	f := model.AttemptFacts{NothingToDo: !d.NodeType().IsPython() && strings.Contains(tail, nothingToDo), LogMessage: o.truncate(blockMessage), Reason: blockReason}
 	if p := o.readSeedPreflight(ioCtx, d); p != nil {
 		f.SeedPreflight = p.findings
 		if p.reason != "" {

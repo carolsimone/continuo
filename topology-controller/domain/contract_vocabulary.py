@@ -12,6 +12,7 @@ class ParseFailureKind(StrEnum):
     """Why topology-controller could not resolve a candidate release. Declaration order is precedence."""
     INVALID_SQL = "invalid_sql"
     UNQUALIFIED_REFERENCE = "unqualified_reference"
+    INVALID_CONTRACT = "invalid_contract"
     INVALID_ARTIFACT = "invalid_artifact"
     INTERNAL = "internal"
 
@@ -27,6 +28,7 @@ class RejectReason(StrEnum):
     ARTIFACT_UPLOAD_FAILED = "artifact_upload_failed"
     INVALID_SQL = "invalid_sql"
     UNQUALIFIED_REFERENCE = "unqualified_reference"
+    INVALID_CONTRACT = "invalid_contract"
     INVALID_ARTIFACT = "invalid_artifact"
     INTERNAL_ERROR = "internal_error"
     DUPLICATE_TABLE = "duplicate_table"

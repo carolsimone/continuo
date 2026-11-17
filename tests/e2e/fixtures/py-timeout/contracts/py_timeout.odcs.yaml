@@ -1,0 +1,24 @@
+# Declares a task timeout: 90 minutes, which the topology carries as 5400 seconds.
+apiVersion: v3.2.0
+kind: DataContract
+id: e2e_schema.py_timeout
+name: py_timeout
+version: "0"
+description:
+  purpose: python node that declares a task timeout
+team:
+  name: e2e
+customProperties:
+  - {vendor: continuo, property: schedule, value: daily}
+  - {vendor: continuo, property: criticality, value: SECONDARY}
+  - {vendor: continuo, property: script, value: scripts/py_timeout.py}
+  - {vendor: continuo, property: timeoutMinutes, value: 90}
+  - vendor: continuo
+    property: readQueries
+    value:
+      tables: select schemaname from pg_catalog.pg_tables
+schema:
+  - name: py_timeout
+    physicalType: table
+    properties:
+      - {name: id, physicalType: INTEGER, required: true}

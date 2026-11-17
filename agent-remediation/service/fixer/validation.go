@@ -57,7 +57,7 @@ func (validationFixer) Propose(ctx context.Context, svc Services, in Input) (Res
 	// rather than the script the repository holds — so neither the diagnosis
 	// prompt nor a source fix can be built from what this path has. A python
 	// node's validation failure is dispatched to its own Fixer, which corrects
-	// the contract yaml declaring it, so this check is normally unreachable; it
+	// the ODCS contract file declaring it, so this check is normally unreachable; it
 	// stays because a trigger carrying no node_type at all resolves to this
 	// Fixer, and the node's kind must still be able to stop it here.
 	if pkg_model.NodeType(in.NodeType).IsPython() {

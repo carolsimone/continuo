@@ -8,8 +8,8 @@ package model
 // parity.
 func VocabularyValuesForTest() map[string][]string {
 	return map[string][]string{
-		"ParseFailureKind": {"invalid_sql", "unqualified_reference", "invalid_artifact", "internal"},
-		"RejectReason": {"compile_failed", "parse_rehearsal_failed", "artifact_upload_failed", "invalid_sql", "unqualified_reference", "invalid_artifact", "internal_error", "duplicate_table", "unbuildable_cross_service_upstream", "nothing_to_validate", "seed_build_failed", "validation_failed", "upgrade_interrupted", "upstream_clone_failed"},
+		"ParseFailureKind": {"invalid_sql", "unqualified_reference", "invalid_contract", "invalid_artifact", "internal"},
+		"RejectReason": {"compile_failed", "parse_rehearsal_failed", "artifact_upload_failed", "invalid_sql", "unqualified_reference", "invalid_contract", "invalid_artifact", "internal_error", "duplicate_table", "unbuildable_cross_service_upstream", "nothing_to_validate", "seed_build_failed", "validation_failed", "upgrade_interrupted", "upstream_clone_failed"},
 		"ValidationOp": {"build_from_sql", "build_from_columns", "check_binds", "clone_from_prod"},
 		"HandoverReason": {"tries_spent", "preflight_rounds_spent", "declined", "no_type", "classifier_infra", "classifier_unhealable_parse", "no_repository", "unverifiable_edits"},
 		"RemediationSource": {"validation", "compile", "seed_build", "duplicate_table", "parse"},

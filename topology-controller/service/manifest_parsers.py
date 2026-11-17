@@ -1,42 +1,56 @@
 """Which parser reads which kind of release artifact, and how each one fails.
 
-One release may carry a dbt manifest.json and a python contract.yaml at once.
-They are parsed by different code with different failure vocabularies, but they
-produce the same ParsedArtifact, so this is the only place downstream code has to
-know a kind exists. A dbt manifest is parsed together with the compile-extras.json
-downloaded beside it, when the release has one.
+One release may carry a dbt manifest.json and a python odcs-bundle.json per
+service. They are parsed by different code with different failure vocabularies,
+but they produce the same ParsedArtifact, so this is the only place downstream
+code has to know a kind exists. A dbt manifest is parsed together with the
+compile-extras.json downloaded beside it, when the release has one.
 """
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from domain.exceptions import InvalidCompileExtrasError, InvalidNodeSettingError, MalformedContractError
+from domain.exceptions import (
+    InvalidCompileExtrasError,
+    InvalidNodeSettingError,
+    InvalidOdcsBundleError,
+)
 from domain.model import ManifestFile, ManifestKind, ParsedArtifact, SkippedNode
 from service.compile_extras import load_compile_extras
+from service.odcs_bundle_parser import parse_odcs_bundle
 from service.parser import parse_manifest
-from service.python_contract_parser import parse_python_contract
+from service.release_timings import ReleaseTimings
 
 
 class ParseFn(Protocol):
     """A kind's parse function: the downloaded artifact to its nodes and shared
     code. A node the parse leaves out without failing is appended to `skipped`
-    when it is given."""
+    when it is given. `progress` is called as the parse works through its nodes
+    and `timings` is the release's timing record; a parse with nothing to report
+    to either ignores them."""
 
-    def __call__(self, mf: ManifestFile, *, skipped: list[SkippedNode] | None = None) -> ParsedArtifact:
+    def __call__(
+        self,
+        mf: ManifestFile,
+        *,
+        skipped: list[SkippedNode] | None = None,
+        progress: Callable[[], None],
+        timings: ReleaseTimings,
+    ) -> ParsedArtifact:
         ...
 
 
-def _parse_dbt(mf: ManifestFile, *, skipped: list[SkippedNode] | None = None) -> ParsedArtifact:
+def _parse_dbt(
+    mf: ManifestFile, *, skipped: list[SkippedNode] | None = None,
+    progress: Callable[[], None], timings: ReleaseTimings,
+) -> ParsedArtifact:
     """Parse a dbt manifest with the compile extras downloaded beside it, when
     there are any. The extras must name the manifest's declared service, and the
     declared service stands for the manifest's project when the manifest does
     not name it."""
     extras = load_compile_extras(mf.extras_path, mf.declared_service) if mf.extras_path else None
     return parse_manifest(mf.path, mf.image_tag, extras, skipped=skipped, declared_service=mf.declared_service)
-
-
-def _parse_python(mf: ManifestFile, *, skipped: list[SkippedNode] | None = None) -> ParsedArtifact:
-    return parse_python_contract(mf.path, mf.image_tag, skipped=skipped)
 
 
 @dataclass(frozen=True)
@@ -60,10 +74,10 @@ _PARSERS: dict[str, ManifestParser] = {
         ),
         empty_detail="manifest contains no model/seed nodes",
     ),
-    ManifestKind.PYTHON: ManifestParser(
-        parse=_parse_python,
-        permanent_errors=(MalformedContractError,),
-        empty_detail="contract declares no nodes",
+    ManifestKind.PYTHON_ODCS: ManifestParser(
+        parse=parse_odcs_bundle,
+        permanent_errors=(InvalidOdcsBundleError,),
+        empty_detail="bundle declares no nodes",
     ),
 }
 

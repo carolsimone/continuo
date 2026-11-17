@@ -51,8 +51,9 @@ catalog:
   current_versions: { model.sales.orders: { raw_code: "select 9", content_hash: h1, promoted_at: "2026-11-01T00:00:00Z" } }
   upstream_changes: { model.sales.orders: [{ node_id: model.sales.base, depth: 1, code_diff: "-a\n+b" }] }
   precedents: [{ node_id: model.sales.other, category: validation, reason: missing_column, resolved: true }]
-release: { image_tag: sha-abc, failing_nodes: { model.sales.orders: boom } }
-packager: { merged: "merged: contract" }
+  contracts: { model.sales.orders: "id: sales.orders\n" }
+release: { image_tag: sha-abc, failing_nodes: { model.sales.orders: boom }, image_packages: { pyarrow: "26.0.0" } }
+packager: { packed: "{\"bundle_version\": 1}" }
 answers:
   pass:
     - { proposed_sql: "select 1", rationale: diagnosis, confidence: high, model: m }
@@ -99,9 +100,12 @@ func TestLoadFixtures_ReadsEveryField(t *testing.T) {
 		CurrentVersions: map[string]ports.CurrentVersion{"model.sales.orders": {RawCode: "select 9", ContentHash: "h1", PromotedAt: "2026-11-01T00:00:00Z"}},
 		UpstreamChanges: map[string][]prompt.UpstreamChange{"model.sales.orders": {{NodeID: "model.sales.base", Depth: 1, CodeDiff: "-a\n+b"}}},
 		Precedents:      []prompt.Precedent{{NodeID: "model.sales.other", Category: "validation", Reason: "missing_column", Resolved: true}},
+		Contracts:       map[string]string{"model.sales.orders": "id: sales.orders\n"},
 	}, f.Catalog)
-	assert.Equal(t, conformance.Release{ImageTag: "sha-abc", FailingNodes: map[string]string{"model.sales.orders": "boom"}}, f.Release)
-	assert.Equal(t, conformance.Packager{Merged: "merged: contract"}, f.Packager)
+	assert.Equal(t, conformance.Release{
+		ImageTag: "sha-abc", FailingNodes: map[string]string{"model.sales.orders": "boom"}, ImagePackages: map[string]string{"pyarrow": "26.0.0"},
+	}, f.Release)
+	assert.Equal(t, conformance.Packager{Packed: `{"bundle_version": 1}`}, f.Packager)
 	assert.Equal(t, conformance.Answers{
 		Pass: []ports.ProposeResult{
 			{ProposedSQL: "select 1", Rationale: "diagnosis", Confidence: "high", Model: "m"},

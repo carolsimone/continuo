@@ -144,6 +144,8 @@ type Run struct {
 	failDetail        string
 	failingNodes      []string
 	codeBundleURI     string
+	contractBundle    release.ContractBundleRef
+	continuoContracts string
 	createdAt         time.Time
 	transitions       []Transition
 	notices           []release.Notice
@@ -357,6 +359,22 @@ func (r *Run) StageDuration(stage Status) time.Duration {
 // received with the parse result.
 func (r *Run) SetCodeBundleURI(uri string) { r.codeBundleURI = uri }
 
+// CandidateContractBundle returns the reference to the run's contract bundle:
+// empty until a parse that ended ok names one.
+func (r *Run) CandidateContractBundle() release.ContractBundleRef { return r.contractBundle }
+
+// SetCandidateContractBundle records the reference to the contract bundle the
+// parse result names.
+func (r *Run) SetCandidateContractBundle(ref release.ContractBundleRef) { r.contractBundle = ref }
+
+// ContinuoContracts returns the version of the continuo-contracts library that
+// read the run's contracts: empty until the parse ends, ok or failed.
+func (r *Run) ContinuoContracts() string { return r.continuoContracts }
+
+// SetContinuoContracts records the continuo-contracts version the parse result
+// names.
+func (r *Run) SetContinuoContracts(version string) { r.continuoContracts = version }
+
 // SetRejectionPayload records the exact release.rejected:v1 payload a
 // candidate emitted, so a later remediation round can replay it. A
 // verification emits no such payload; the call is a no-op for it.
@@ -561,9 +579,13 @@ type RehydrateInput struct {
 	FailDetail        string
 	FailingNodes      []string
 	CodeBundleURI     string
-	CreatedAt         time.Time
-	Transitions       []Transition
-	Notices           []release.Notice
+	// CandidateContractBundle and ContinuoContracts are the contract bundle
+	// reference and the continuo-contracts version the parse recorded.
+	CandidateContractBundle release.ContractBundleRef
+	ContinuoContracts       string
+	CreatedAt               time.Time
+	Transitions             []Transition
+	Notices                 []release.Notice
 	// Candidate-only.
 	Bootstrap        bool
 	Rebaseline       bool
@@ -593,6 +615,8 @@ func Rehydrate(in RehydrateInput) *Run {
 		failDetail:        in.FailDetail,
 		failingNodes:      in.FailingNodes,
 		codeBundleURI:     in.CodeBundleURI,
+		contractBundle:    in.CandidateContractBundle,
+		continuoContracts: in.ContinuoContracts,
 		createdAt:         in.CreatedAt,
 		transitions:       in.Transitions,
 		notices:           in.Notices,

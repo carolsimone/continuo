@@ -10,11 +10,18 @@ registry holds no process or Python runtime collectors for the same reason: they
 cannot carry the label. Each metric name is a literal at its definition, so a
 scan of this file's source finds every series the service exports.
 """
+from continuo_contracts.validate import REASONS
 from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, disable_created_metrics
 
 from domain.contract_vocabulary import ParseFailureKind
 from domain.model import SkipReason
-from service.release_timings import ReleaseOutcome, ReleaseTimings, Stage
+from service.release_timings import (
+    CONTRACT_FAILURE_STAGES,
+    VALIDATION_CACHE_RESULTS,
+    ReleaseOutcome,
+    ReleaseTimings,
+    Stage,
+)
 
 # Seconds a release's stage can take, from a manifest download to the whole
 # parse of a large estate.
@@ -75,6 +82,18 @@ class TopologyMetrics:
             ["service"],
             registry=self.registry,
         )
+        self._contract_failures = Counter(
+            "continuo_topology_contract_failures_total",
+            "Contract failures of the releases that ended, by stage (validate, normalise, hash) and reason.",
+            ["service", "stage", "reason"],
+            registry=self.registry,
+        )
+        self._validation_cache = Counter(
+            "continuo_topology_validation_cache_total",
+            "Contract validations of the releases that ended, by result (hit when the schema check was answered from the cache, miss when it ran).",
+            ["service", "result"],
+            registry=self.registry,
+        )
         self._release_peak_rss = Gauge(
             "continuo_topology_release_peak_rss_bytes",
             "Largest resident set read at a stage boundary during the last release that ended.",
@@ -102,10 +121,11 @@ class TopologyMetrics:
             registry=self.registry,
         )
 
-        # Every stage, every pair a release can end under and every skip reason
-        # is visible from boot, so a rate or an increase over a series that has
-        # not moved yet is 0, not absent (an increase does not count a series'
-        # first sample from an implied 0).
+        # Every stage, every pair a release can end under, every skip reason,
+        # every contract failure stage with every reason the contracts library
+        # names and both cache results are visible from boot, so a rate or an
+        # increase over a series that has not moved yet is 0, not absent (an
+        # increase does not count a series' first sample from an implied 0).
         for stage in Stage:
             self._stage_duration.labels(service, stage.value)
         self._releases.labels(service, ReleaseOutcome.OK.value, _NO_FAILURE_KIND)
@@ -114,6 +134,11 @@ class TopologyMetrics:
         for reason in SkipReason:
             self._release_skipped_nodes.labels(service, reason.value).set(0)
         self._release_dormant_nodes.labels(service).set(0)
+        for contract_stage in CONTRACT_FAILURE_STAGES:
+            for reason in REASONS:
+                self._contract_failures.labels(service, contract_stage, reason)
+        for result in VALIDATION_CACHE_RESULTS:
+            self._validation_cache.labels(service, result)
 
     def release_finished(self, timings: ReleaseTimings) -> None:
         """Count a release that ended and replace the gauges of the last one.
@@ -122,7 +147,8 @@ class TopologyMetrics:
         family and every skip reason the record names, so one the release lacked
         drops to 0 instead of keeping the previous release's value. The dormant
         gauge is set from the release's dormant total, so a release with none
-        sets it to 0.
+        sets it to 0. The contract counters add the release's failures and cache
+        results, so a release with none adds nothing.
         """
         for stage, record in timings.stages.items():
             if record.runs > 0:
@@ -137,6 +163,10 @@ class TopologyMetrics:
             self._release_skipped_nodes.labels(self._service, reason.value).set(timings.skipped.get(reason, 0))
         self._release_dormant_nodes.labels(self._service).set(sum(timings.dormant.values()))
         self._release_peak_rss.labels(self._service).set(timings.peak_rss_bytes)
+        for (contract_stage, reason), count in timings.contract_failures.items():
+            self._contract_failures.labels(self._service, contract_stage, reason).inc(count)
+        for result, count in timings.validation_cache.items():
+            self._validation_cache.labels(self._service, result).inc(count)
 
     def handled(self, stream: str, group: str, result: str, seconds: float) -> None:
         self._handled.labels(self._service, stream, group, result).observe(seconds)

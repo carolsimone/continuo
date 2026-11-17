@@ -1,3 +1,4 @@
+from continuo_contracts.validate import REASONS
 from prometheus_client import generate_latest
 
 from adapters.metrics.prometheus import TopologyMetrics
@@ -58,6 +59,64 @@ def test_the_installed_package_reason_is_exported_at_zero_from_boot_and_set_by_a
 def test_the_dormant_gauge_is_exported_at_zero_from_boot():
     metrics = TopologyMetrics("topology-controller")
     assert _value(metrics, "continuo_topology_release_dormant_nodes") == 0.0
+
+
+def test_contract_series_are_labelled_at_boot():
+    """Every contract stage with every reason the library names, and both cache
+    results, are exported at 0 before any release, so a rate over a failure
+    that has not happened yet is 0 and not absent."""
+    metrics = TopologyMetrics("topology-controller")
+    assert REASONS
+    for stage in ("validate", "normalise", "hash"):
+        for reason in REASONS:
+            assert _value(metrics, "continuo_topology_contract_failures_total", stage=stage, reason=reason) == 0.0
+    for result in ("hit", "miss"):
+        assert _value(metrics, "continuo_topology_validation_cache_total", result=result) == 0.0
+    samples = [
+        line for line in generate_latest(metrics.registry).decode().splitlines()
+        if line.startswith("continuo_topology_contract_failures_total{")
+    ]
+    assert len(samples) == 3 * len(REASONS)
+
+
+def test_a_release_feeds_the_contract_counters():
+    metrics = TopologyMetrics("topology-controller")
+    timings = _finished({"python": 3})
+    timings.add_contract_failure("validate", "column_type")
+    timings.add_contract_failure("validate", "column_type")
+    timings.add_contract_failure("validate", "strict_yaml")
+    timings.add_contract_failure("normalise", "value")
+    timings.add_contract_failure("hash", "value")
+    for hit in (True, False, False, False):
+        timings.add_validation_cache(hit)
+
+    metrics.release_finished(timings)
+
+    failures = "continuo_topology_contract_failures_total"
+    assert _value(metrics, failures, stage="validate", reason="column_type") == 2.0
+    assert _value(metrics, failures, stage="validate", reason="strict_yaml") == 1.0
+    assert _value(metrics, failures, stage="normalise", reason="value") == 1.0
+    assert _value(metrics, failures, stage="hash", reason="value") == 1.0
+    assert _value(metrics, failures, stage="hash", reason="column_type") == 0.0
+    assert _value(metrics, "continuo_topology_validation_cache_total", result="hit") == 1.0
+    assert _value(metrics, "continuo_topology_validation_cache_total", result="miss") == 3.0
+
+
+def test_the_contract_counters_add_up_over_releases_and_a_clean_release_adds_nothing():
+    metrics = TopologyMetrics("topology-controller")
+    first = _finished({"python": 1})
+    first.add_contract_failure("validate", "value")
+    first.add_validation_cache(False)
+    metrics.release_finished(first)
+    second = _finished({"python": 1})
+    second.add_contract_failure("validate", "value")
+    second.add_validation_cache(True)
+    metrics.release_finished(second)
+    metrics.release_finished(_finished({"dbt": 2}))
+
+    assert _value(metrics, "continuo_topology_contract_failures_total", stage="validate", reason="value") == 2.0
+    assert _value(metrics, "continuo_topology_validation_cache_total", result="hit") == 1.0
+    assert _value(metrics, "continuo_topology_validation_cache_total", result="miss") == 1.0
 
 
 def test_every_stage_is_exported_at_zero_from_boot():

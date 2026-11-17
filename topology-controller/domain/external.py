@@ -31,7 +31,7 @@ class SystemRelations:
 
 def unknown_external_nodes(
     nodes: Sequence[ManifestNode],
-    reads: Mapping[str, Sequence[TableRef]],
+    reads: Mapping[tuple[str, str], Sequence[TableRef]],
     *,
     system: SystemRelations,
 ) -> list[ManifestNode]:
@@ -39,7 +39,7 @@ def unknown_external_nodes(
     unique_id.
 
     reads holds the tables each reading node's SQL names, by the node's
-    unique_id; a node with no entry (a dbt test, or a node with no SQL) reads
+    node_key; a node with no entry (a dbt test, or a node with no SQL) reads
     nothing. A table counts as built when a node that is not a dbt test writes
     it, under its declared name or under the name its build actually writes
     (an aliased dbt model). A table in one of the system's relations is the
@@ -64,7 +64,7 @@ def unknown_external_nodes(
         if node.node_type == NodeType.DBT_TEST:
             continue
         edges: set[str] = set()
-        for ref in reads.get(node.unique_id, ()):
+        for ref in reads.get(node.node_key, ()):
             if ref.key in built or system.matches(ref) or ref.key in edges:
                 continue
             edges.add(ref.key)

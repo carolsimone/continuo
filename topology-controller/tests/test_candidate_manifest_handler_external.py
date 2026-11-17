@@ -4,7 +4,6 @@ import json
 from unittest.mock import MagicMock
 
 from config.config import _SYSTEM_RELATIONS
-from domain.model import ManifestFile, ManifestKind
 from service import candidate_manifest_handler
 from service.topology_artifact import canonical_topology_json
 from service.release_timings import Stage
@@ -15,12 +14,11 @@ from tests.fakes import (
     build_handler,
     dbt_node,
     make_uploader,
-    python_contract,
-    python_entry,
     python_handler,
     source_of,
     source_with_nodes,
 )
+from tests.odcs_fixtures import bundle_file, python_node
 
 QUOTED_SOURCE_READ = 'SELECT * FROM "continuo_dbt"."raw"."ingest_probe"'
 RAW_NAME_READ = "SELECT * FROM raw.ingest_probe"
@@ -318,14 +316,12 @@ def test_a_python_nodes_system_read_is_left_alone_in_its_uploaded_spec(tmp_path)
     """The python builder rewrites each declared read with the same rule: a read
     of the engine's system.runtime.nodes stays, one of the built
     warehouse.runtime.nodes is redirected."""
-    builder = python_entry(schema="runtime", table="nodes", reads={"one": "select 1 as id"})
-    reader = python_entry(table="reader", reads={
+    builder = python_node("nodes", schema="runtime", reads={"one": "select 1 as id"})
+    reader = python_node("reader", reads={
         "a_system": "SELECT * FROM system.runtime.nodes",
         "b_built": "SELECT * FROM warehouse.runtime.nodes",
     })
-    source = source_of(ManifestFile(
-        path=python_contract(tmp_path, builder, reader), declared_service="service-py", kind=ManifestKind.PYTHON,
-    ))
+    source = source_of(bundle_file(tmp_path, [builder, reader]))
     spec_uploader = make_uploader("s3://x.json")
     python_handler(
         source, MagicMock(), spec_uploader=spec_uploader, dialect="trino",
@@ -358,10 +354,7 @@ def test_a_dbt_test_reading_an_outside_table_makes_no_node_and_no_edge(tmp_path)
 
 
 def test_a_python_node_read_of_an_outside_table_makes_an_unknown_external_node(tmp_path):
-    entry = python_entry(reads={"ext": "select id from raw.ext"})
-    source = source_of(ManifestFile(
-        path=python_contract(tmp_path, entry), declared_service="service-py", kind=ManifestKind.PYTHON,
-    ))
+    source = source_of(bundle_file(tmp_path, [python_node(reads={"ext": "select id from raw.ext"})]))
     writer, spec_uploader = RecordingArtifactWriter(), make_uploader("s3://x.json")
     python_handler(source, MagicMock(), spec_uploader=spec_uploader, artifact_writer=writer).handle(release_id="rel-1")
     by_id = {n["unique_id"]: n for n in writer.nodes}
@@ -376,13 +369,11 @@ def test_one_python_node_naming_a_table_two_ways_gets_one_unknown_external_node_
     and in mixed case (an unquoted name, which Postgres folds to lower case) and
     one with no catalog and in lower case: the release holds one unknown-external node
     for it and the python node has one edge to it."""
-    entry = python_entry(reads={
+    node = python_node(reads={
         "with_catalog": "select id from continuo_dbt.RAW.Ingest_Probe",
         "without_catalog": "select id from raw.ingest_probe",
     })
-    source = source_of(ManifestFile(
-        path=python_contract(tmp_path, entry), declared_service="service-py", kind=ManifestKind.PYTHON,
-    ))
+    source = source_of(bundle_file(tmp_path, [node]))
     writer = RecordingArtifactWriter()
     python_handler(
         source, MagicMock(), spec_uploader=make_uploader("s3://x.json"), artifact_writer=writer,
@@ -394,13 +385,7 @@ def test_one_python_node_naming_a_table_two_ways_gets_one_unknown_external_node_
 
 
 def test_a_python_csv_node_makes_no_unknown_external_node(tmp_path):
-    entry = python_entry(
-        kind="python-csv", script="", reads={"csv": "s3://drops/orders.csv"},
-        source_hash="csvsrc000", shared_code_hash="", config_hash="csvcfg000",
-    )
-    source = source_of(ManifestFile(
-        path=python_contract(tmp_path, entry), declared_service="service-py", kind=ManifestKind.PYTHON,
-    ))
+    source = source_of(bundle_file(tmp_path, [python_node("py_metrics", kind="python-csv")]))
     writer = RecordingArtifactWriter()
     python_handler(source, MagicMock(), artifact_writer=writer).handle(release_id="rel-1")
     assert [n["node_type"] for n in writer.nodes] == ["python-csv"]

@@ -1,0 +1,23 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: analytics.fx_eur_usd_rates
+name: fx_eur_usd_rates
+version: "0"
+description:
+  purpose: Latest EUR to USD reference rate from Frankfurter.
+team:
+  name: service-py
+customProperties:
+  - {vendor: continuo, property: kind, value: python-api}
+  - {vendor: continuo, property: schedule, value: daily}
+  - {vendor: continuo, property: criticality, value: SECONDARY}
+  - {vendor: continuo, property: script, value: scripts/fx_eur_usd_rates.py}
+  - {vendor: continuo, property: secretRef, value: continuo-api-demo-fx}
+schema:
+  - name: fx_eur_usd_rates
+    physicalType: table
+    properties:
+      - {name: rate_date, physicalType: DATE, required: true}
+      - {name: base, physicalType: VARCHAR(3), required: true}
+      - {name: quote, physicalType: VARCHAR(3), required: true}
+      - {name: rate, physicalType: DOUBLE PRECISION, required: true}

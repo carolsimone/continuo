@@ -28,7 +28,7 @@ func nodeWithRelation(uniqueID, relationID, service, filePath string) Node {
 func TestDuplicateClaims_CarriesNodeType(t *testing.T) {
 	topo := Topology{
 		nodeOfType("analytics.orders", "finance", "models/orders.sql", "dbt-model"),
-		nodeOfType("analytics.orders", "marketing", "contract.yaml", "python-node"),
+		nodeOfType("analytics.orders", "marketing", "contracts/orders.odcs.yaml", "python-node"),
 	}
 
 	claims := DuplicateClaims(topo)

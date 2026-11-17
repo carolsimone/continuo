@@ -19,6 +19,7 @@ import sys
 import boto3
 import pytest
 
+from dbt_upload.paths import build_dir
 from dbt_upload.upload import filter_manifest, upload_manifest
 
 SERVICES_DIR = "/app/services"
@@ -50,7 +51,7 @@ def s3():
 # ---------------------------------------------------------------------------
 
 
-def test_filter_manifest_keeps_the_kinds_topology_controller_emits(tmp_path):
+def test_filter_manifest_keeps_the_kinds_topology_controller_emits(tmp_path, build_root):
     """filter_manifest keeps model/seed/snapshot/test/operation and drops
     local_stub and every other kind. Tests must survive: topology-controller
     emits a dbt-test node per test of a tracked model, so a test-less baseline
@@ -58,8 +59,9 @@ def test_filter_manifest_keeps_the_kinds_topology_controller_emits(tmp_path):
     Operations must survive: topology-controller hashes each project hook (an
     operation node) into the nodes that run with it.
     """
-    target = tmp_path / "target"
-    target.mkdir()
+    service_dir = tmp_path / "svc"
+    target = build_root / "svc"
+    target.mkdir(parents=True)
     manifest = {
         "nodes": {
             "model.svc.m": {"resource_type": "model", "name": "m", "tags": []},
@@ -76,7 +78,7 @@ def test_filter_manifest_keeps_the_kinds_topology_controller_emits(tmp_path):
     }
     (target / "manifest.json").write_text(json.dumps(manifest))
 
-    filter_manifest(str(tmp_path))
+    filter_manifest(str(service_dir))
 
     kept = set(json.loads((target / "manifest.json").read_text())["nodes"])
     assert kept == {
@@ -88,10 +90,11 @@ def test_filter_manifest_keeps_the_kinds_topology_controller_emits(tmp_path):
     }
 
 
-def test_filter_manifest_keeps_operation_nodes(tmp_path):
+def test_filter_manifest_keeps_operation_nodes(tmp_path, build_root):
     """An operation node (a project hook) survives the filter; a source does not."""
-    target = tmp_path / "target"
-    target.mkdir()
+    service_dir = tmp_path / "svc"
+    target = build_root / "svc"
+    target.mkdir(parents=True)
     manifest = {
         "nodes": {
             "operation.svc.svc-on-run-start-0": {
@@ -102,7 +105,7 @@ def test_filter_manifest_keeps_operation_nodes(tmp_path):
     }
     (target / "manifest.json").write_text(json.dumps(manifest))
 
-    filter_manifest(str(tmp_path))
+    filter_manifest(str(service_dir))
 
     kept = set(json.loads((target / "manifest.json").read_text())["nodes"])
     assert kept == {"operation.svc.svc-on-run-start-0"}
@@ -155,7 +158,7 @@ def test_dbt_interpreter_refuses_a_shebang_that_names_no_python(tmp_path, monkey
     assert shebang in str(refused.value), "the refusal names the shebang"
 
 
-def test_write_compile_extras_bounds_the_script_and_logs_its_stderr(tmp_path, monkeypatch, caplog):
+def test_write_compile_extras_bounds_the_script_and_logs_its_stderr(tmp_path, monkeypatch, caplog, build_root):
     """write_compile_extras gives the script a timeout and logs what it wrote to
     stderr at INFO when it succeeds."""
     import logging
@@ -163,7 +166,7 @@ def test_write_compile_extras_bounds_the_script_and_logs_its_stderr(tmp_path, mo
     from dbt_upload import upload
 
     service_dir = tmp_path / "service-1"
-    (service_dir / "target").mkdir(parents=True)
+    (build_root / service_dir.name).mkdir(parents=True)
     monkeypatch.setattr(upload, "dbt_interpreter", lambda: "python3")
 
     caplog.set_level(logging.INFO, logger="dbt_upload.upload")
@@ -175,7 +178,7 @@ def test_write_compile_extras_bounds_the_script_and_logs_its_stderr(tmp_path, mo
     assert any(r.levelno == logging.INFO and "hashed 3 seeds" in r.getMessage() for r in caplog.records)
 
 
-def test_upload_services_fails_a_service_whose_compile_extras_time_out(tmp_path, monkeypatch, caplog):
+def test_upload_services_fails_a_service_whose_compile_extras_time_out(tmp_path, monkeypatch, caplog, build_root):
     """A compile-extras script that runs past its timeout fails the service with an
     ERROR that says so."""
     import logging
@@ -183,8 +186,8 @@ def test_upload_services_fails_a_service_whose_compile_extras_time_out(tmp_path,
     from dbt_upload import upload
 
     service_dir = tmp_path / "service-1"
-    (service_dir / "target").mkdir(parents=True)
-    (service_dir / "target" / "manifest.json").write_text('{"nodes": {}}')
+    (build_root / service_dir.name).mkdir(parents=True)
+    (build_root / service_dir.name / "manifest.json").write_text('{"nodes": {}}')
 
     def time_out(service_dir, release_id):
         raise subprocess.TimeoutExpired(["compile_extras.py"], upload.COMPILE_EXTRAS_TIMEOUT_SECONDS)
@@ -201,27 +204,27 @@ def test_upload_services_fails_a_service_whose_compile_extras_time_out(tmp_path,
     assert any(r.levelno == logging.ERROR and "timed out" in r.getMessage() for r in caplog.records)
 
 
-def test_write_compile_extras_runs_the_script_with_the_dbt_interpreter(tmp_path, monkeypatch):
+def test_write_compile_extras_runs_the_script_with_the_dbt_interpreter(tmp_path, monkeypatch, build_root):
     """write_compile_extras runs /compile_extras.py with the interpreter that runs
     dbt, for the service's compiled manifest and project, and returns the
-    compile-extras.json it writes under target/."""
+    compile-extras.json it writes in the service's build directory."""
     from unittest.mock import patch
     from dbt_upload import upload
 
     service_dir = tmp_path / "service-1"
-    (service_dir / "target").mkdir(parents=True)
+    (build_root / service_dir.name).mkdir(parents=True)
     monkeypatch.setattr(upload, "dbt_interpreter", lambda: "/usr/local/bin/python3.12")
 
     with patch("dbt_upload.upload.subprocess.run") as run:
         run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
         out = upload.write_compile_extras(str(service_dir), "e2e-baseline")
 
-    expected_out = str(service_dir / "target" / "compile-extras.json")
+    expected_out = str(build_root / service_dir.name / "compile-extras.json")
     assert out == expected_out
     argv = run.call_args.args[0]
     assert argv == [
         "/usr/local/bin/python3.12", "/compile_extras.py",
-        "--manifest", str(service_dir / "target" / "manifest.json"),
+        "--manifest", str(build_root / service_dir.name / "manifest.json"),
         "--project-dir", str(service_dir),
         "--service", "service-1",
         "--release-id", "e2e-baseline",
@@ -229,15 +232,15 @@ def test_write_compile_extras_runs_the_script_with_the_dbt_interpreter(tmp_path,
     ]
 
 
-def test_upload_compile_extras_writes_beside_the_manifest(tmp_path):
-    """upload_compile_extras puts target/compile-extras.json at
+def test_upload_compile_extras_writes_beside_the_manifest(tmp_path, build_root):
+    """upload_compile_extras puts the service's compile-extras.json at
     <service>/<release_id>/compile-extras.json, beside the manifest."""
     from unittest.mock import MagicMock
     from dbt_upload.upload import upload_compile_extras
 
     service_dir = tmp_path / "service-2"
-    (service_dir / "target").mkdir(parents=True)
-    extras = service_dir / "target" / "compile-extras.json"
+    (build_root / service_dir.name).mkdir(parents=True)
+    extras = build_root / service_dir.name / "compile-extras.json"
     extras.write_text("{}")
     mock_s3 = MagicMock()
 
@@ -247,15 +250,15 @@ def test_upload_compile_extras_writes_beside_the_manifest(tmp_path):
     )
 
 
-def test_upload_services_fails_a_service_whose_compile_extras_cannot_be_written(tmp_path, monkeypatch):
+def test_upload_services_fails_a_service_whose_compile_extras_cannot_be_written(tmp_path, monkeypatch, build_root):
     """A service whose compile extras the script cannot write is failed, though
     its manifest uploaded."""
     from unittest.mock import MagicMock, patch
     from dbt_upload import upload
 
     service_dir = tmp_path / "service-1"
-    (service_dir / "target").mkdir(parents=True)
-    (service_dir / "target" / "manifest.json").write_text('{"nodes": {}}')
+    (build_root / service_dir.name).mkdir(parents=True)
+    (build_root / service_dir.name / "manifest.json").write_text('{"nodes": {}}')
 
     def fail(service_dir, release_id):
         raise subprocess.CalledProcessError(1, ["compile_extras.py"])
@@ -272,7 +275,7 @@ def test_upload_services_fails_a_service_whose_compile_extras_cannot_be_written(
     assert failed == [str(service_dir)]
 
 
-def test_upload_manifest_canonical_key(tmp_path):
+def test_upload_manifest_canonical_key(tmp_path, build_root):
     """Cross-language drift guard for the manifest S3 key.
 
     The authoritative owner of the manifest layout is the Go function
@@ -292,8 +295,8 @@ def test_upload_manifest_canonical_key(tmp_path):
     bucket = "continuo"
 
     service_dir = tmp_path / service
-    (service_dir / "target").mkdir(parents=True)
-    (service_dir / "target" / "manifest.json").write_text('{"nodes": {}}')
+    (build_root / service_dir.name).mkdir(parents=True)
+    (build_root / service_dir.name / "manifest.json").write_text('{"nodes": {}}')
 
     mock_s3 = MagicMock()
 
@@ -319,13 +322,13 @@ def test_upload_manifest_empty_release_id_raises():
         upload_manifest(mock_s3, "/some/service-dir", "local", "continuo", release_id="")
 
 
-def test_upload_manifest_release_mode_no_version_lookup(tmp_path):
+def test_upload_manifest_release_mode_no_version_lookup(tmp_path, build_root):
     """upload_manifest never calls get_paginator — there is no legacy version lookup."""
     from unittest.mock import MagicMock
 
     service_dir = tmp_path / "service-1"
-    (service_dir / "target").mkdir(parents=True)
-    (service_dir / "target" / "manifest.json").write_text('{"nodes": {}}')
+    (build_root / service_dir.name).mkdir(parents=True)
+    (build_root / service_dir.name / "manifest.json").write_text('{"nodes": {}}')
 
     mock_s3 = MagicMock()
 
@@ -334,13 +337,13 @@ def test_upload_manifest_release_mode_no_version_lookup(tmp_path):
     mock_s3.get_paginator.assert_not_called()
 
 
-def test_upload_manifest_no_sidecar(tmp_path):
+def test_upload_manifest_no_sidecar(tmp_path, build_root):
     """upload_manifest never uploads a service_metadata.json sidecar."""
     from unittest.mock import MagicMock
 
     service_dir = tmp_path / "service-1"
-    (service_dir / "target").mkdir(parents=True)
-    (service_dir / "target" / "manifest.json").write_text('{"nodes": {}}')
+    (build_root / service_dir.name).mkdir(parents=True)
+    (build_root / service_dir.name / "manifest.json").write_text('{"nodes": {}}')
 
     mock_s3 = MagicMock()
 
@@ -351,7 +354,7 @@ def test_upload_manifest_no_sidecar(tmp_path):
         f"service_metadata.json must NOT be uploaded; calls={upload_calls}"
 
 
-def test_upload_manifest_missing_manifest_returns_false(tmp_path):
+def test_upload_manifest_missing_manifest_returns_false(tmp_path, build_root):
     """upload_manifest returns False and does not call S3 when manifest.json is absent."""
     from unittest.mock import MagicMock
 
@@ -366,7 +369,7 @@ def test_upload_manifest_missing_manifest_returns_false(tmp_path):
     mock_s3.upload_file.assert_not_called()
 
 
-def test_upload_services_release_mode_no_image_tag_required(tmp_path, monkeypatch):
+def test_upload_services_release_mode_no_image_tag_required(tmp_path, monkeypatch, build_root):
     """With release_id set and IMAGE_TAG_PER_SERVICE empty, every service still
     uploads to <service>/<release_id>/manifest.json, with its compile-extras.json
     beside it and no other sidecar."""
@@ -375,7 +378,7 @@ def test_upload_services_release_mode_no_image_tag_required(tmp_path, monkeypatc
     from dbt_upload.upload import upload_services
 
     def write_extras(service_dir, release_id):
-        path = os.path.join(service_dir, "target", "compile-extras.json")
+        path = os.path.join(build_dir(service_dir), "compile-extras.json")
         with open(path, "w") as f:
             f.write("{}")
         return path
@@ -386,8 +389,8 @@ def test_upload_services_release_mode_no_image_tag_required(tmp_path, monkeypatc
     service_dirs = []
     for name in services:
         d = tmp_path / name
-        (d / "target").mkdir(parents=True)
-        (d / "target" / "manifest.json").write_text(
+        (build_root / name).mkdir(parents=True)
+        (build_root / name / "manifest.json").write_text(
             '{"nodes": {"model.x.y": {"resource_type": "model", "name": "y", "tags": []}}}'
         )
         service_dirs.append(str(d))
@@ -430,18 +433,21 @@ def test_upload_services_release_mode_no_image_tag_required(tmp_path, monkeypatc
 
 
 @pytest.mark.integration
-def test_dbt_compile_service1_succeeds():
-    """dbt compile runs without error for service-1."""
+def test_dbt_compile_runs_in_the_read_only_service_directory():
+    """A plain dbt command run in a service directory works though the directory
+    is mounted read-only: its output goes to the image's DBT_TARGET_PATH."""
     service_dir = os.path.join(SERVICES_DIR, "service-1")
+    manifest = os.path.join(os.environ["DBT_TARGET_PATH"], "manifest.json")
+    if os.path.exists(manifest):
+        os.remove(manifest)
     result = subprocess.run(
         ["dbt", "compile", "--profiles-dir", "."],
         cwd=service_dir,
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 0, f"dbt compile failed:\n{result.stderr}"
-    manifest = os.path.join(service_dir, "target", "manifest.json")
-    assert os.path.exists(manifest), "target/manifest.json not created"
+    assert result.returncode == 0, f"dbt compile failed:\n{result.stdout}\n{result.stderr}"
+    assert os.path.exists(manifest), f"{manifest} not created"
 
 
 @pytest.mark.integration
@@ -453,7 +459,7 @@ def test_compile_service_compiles_the_base_image_macros_into_the_root_project():
 
     service_dir = os.path.join(SERVICES_DIR, "service-1")
     assert compile_service(service_dir), "compile_service returned False"
-    with open(os.path.join(service_dir, "target", "manifest.json")) as f:
+    with open(os.path.join(build_dir(service_dir), "manifest.json")) as f:
         manifest = json.load(f)
     assert "macro.service_1.generate_schema_name" in manifest["macros"]
 
@@ -498,17 +504,18 @@ def test_all_valid_services_upload_canonical(s3):
 
 
 @pytest.mark.integration
-def test_compile_uploader_lands_manifest_at_canonical_key(s3):
+def test_compile_uploader_lands_manifest_at_canonical_key(s3, tmp_path):
     """The DEPLOYED uploader: real `dbt compile` + /compile_uploader.py -> manifest at the
     canonical S3 key, readable and parseable. Proves the actual adapter-sidecar main container."""
     service_dir = os.path.join(SERVICES_DIR, "service-1")
     # 1) real dbt compile (init-container step)
+    target_path = str(tmp_path / "target")
     compiled = subprocess.run(
-        ["dbt", "compile", "--profiles-dir", "."],
+        ["dbt", "compile", "--profiles-dir", ".", "--target-path", target_path],
         cwd=service_dir, capture_output=True, text=True,
     )
     assert compiled.returncode == 0, f"dbt compile failed:\n{compiled.stderr}"
-    manifest_path = os.path.join(service_dir, "target", "manifest.json")
+    manifest_path = os.path.join(target_path, "manifest.json")
     assert os.path.exists(manifest_path)
 
     # 2) run the DEPLOYED uploader exactly as the pod's main container does

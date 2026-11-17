@@ -1,0 +1,136 @@
+{
+  "input": {
+    "tenant_id": "default",
+    "release_id": "rel-4e5f6a7-212",
+    "library_version": "0.2.0",
+    "contracts": [
+      {
+        "unique_id": "analytics.py_daily_kpis",
+        "service": "service-py",
+        "contract_hash": "sha256:15268bb30f205e0e5cfb4791715391f3cf7ba527a671f319a6b77e1b087dda59",
+        "content_hash": "sha256:91d4c07be2a35f6891d4c07be2a35f6891d4c07be2a35f6891d4c07be2a35f68",
+        "source_path": "contracts/py_daily_kpis.odcs.yaml",
+        "source_sha256": "fc7e114655fd81d91090d7df9f2db85da908305a731e401b85b13b268e619b75",
+        "document": {
+          "apiVersion": "v3.2.0",
+          "kind": "DataContract",
+          "id": "analytics.py_daily_kpis",
+          "name": "py_daily_kpis",
+          "version": "0",
+          "description": {
+            "purpose": "Daily transaction count and total amount in EUR, rolled up from analytics.daily_transactions."
+          },
+          "team": {
+            "name": "service-py"
+          },
+          "customProperties": [
+            {
+              "vendor": "continuo",
+              "property": "criticality",
+              "value": "SECONDARY"
+            },
+            {
+              "vendor": "continuo",
+              "property": "kind",
+              "value": "python-node"
+            },
+            {
+              "vendor": "continuo",
+              "property": "readQueries",
+              "value": {
+                "daily": "select created_at, amount_eur from analytics.daily_transactions"
+              }
+            },
+            {
+              "vendor": "continuo",
+              "property": "schedule",
+              "value": "daily"
+            },
+            {
+              "vendor": "continuo",
+              "property": "script",
+              "value": "scripts/py_daily_kpis.py"
+            },
+            {
+              "vendor": "continuo",
+              "property": "service",
+              "value": "service-py"
+            }
+          ],
+          "schema": [
+            {
+              "name": "py_daily_kpis",
+              "physicalType": "table",
+              "properties": [
+                {
+                  "name": "day",
+                  "physicalType": "DATE",
+                  "required": true,
+                  "logicalType": "date"
+                },
+                {
+                  "name": "tx_count",
+                  "physicalType": "INTEGER",
+                  "required": true,
+                  "logicalType": "integer"
+                },
+                {
+                  "name": "total_amount",
+                  "physicalType": "NUMERIC(12,2)",
+                  "required": true,
+                  "logicalType": "number"
+                }
+              ],
+              "physicalName": "py_daily_kpis",
+              "customProperties": [
+                {
+                  "vendor": "continuo",
+                  "property": "reads",
+                  "value": [
+                    "analytics.daily_transactions"
+                  ]
+                }
+              ]
+            }
+          ],
+          "status": "active"
+        }
+      }
+    ],
+    "provenance": {
+      "service-py": {
+        "continuo_python_runtime": "0.13.0",
+        "image_packages": {
+          "pyarrow": "26.0.0"
+        }
+      }
+    },
+    "timings": {
+      "stages_ms": {
+        "download": 310,
+        "dbt_parse": 41,
+        "python_parse": 6,
+        "registry": 2,
+        "resolve": 120,
+        "rewrite": 180,
+        "candidate_upload": 905,
+        "code_bundle": 14,
+        "contract_validation": 11,
+        "canonical_hashing": 2
+      },
+      "nodes": {
+        "dbt": 55,
+        "python": 1
+      },
+      "columns": {
+        "dbt": 412,
+        "python": 3
+      },
+      "validation_cache": {
+        "hit": 0,
+        "miss": 1
+      }
+    }
+  },
+  "canonical": "{\"continuo_contracts\":\"0.2.0\",\"contracts\":{\"analytics.py_daily_kpis\":{\"content_hash\":\"sha256:91d4c07be2a35f6891d4c07be2a35f6891d4c07be2a35f6891d4c07be2a35f68\",\"contract_hash\":\"sha256:15268bb30f205e0e5cfb4791715391f3cf7ba527a671f319a6b77e1b087dda59\",\"document\":{\"apiVersion\":\"v3.2.0\",\"customProperties\":[{\"property\":\"criticality\",\"value\":\"SECONDARY\",\"vendor\":\"continuo\"},{\"property\":\"kind\",\"value\":\"python-node\",\"vendor\":\"continuo\"},{\"property\":\"readQueries\",\"value\":{\"daily\":\"select created_at, amount_eur from analytics.daily_transactions\"},\"vendor\":\"continuo\"},{\"property\":\"schedule\",\"value\":\"daily\",\"vendor\":\"continuo\"},{\"property\":\"script\",\"value\":\"scripts/py_daily_kpis.py\",\"vendor\":\"continuo\"},{\"property\":\"service\",\"value\":\"service-py\",\"vendor\":\"continuo\"}],\"description\":{\"purpose\":\"Daily transaction count and total amount in EUR, rolled up from analytics.daily_transactions.\"},\"id\":\"analytics.py_daily_kpis\",\"kind\":\"DataContract\",\"name\":\"py_daily_kpis\",\"schema\":[{\"customProperties\":[{\"property\":\"reads\",\"value\":[\"analytics.daily_transactions\"],\"vendor\":\"continuo\"}],\"name\":\"py_daily_kpis\",\"physicalName\":\"py_daily_kpis\",\"physicalType\":\"table\",\"properties\":[{\"logicalType\":\"date\",\"name\":\"day\",\"physicalType\":\"DATE\",\"required\":true},{\"logicalType\":\"integer\",\"name\":\"tx_count\",\"physicalType\":\"INTEGER\",\"required\":true},{\"logicalType\":\"number\",\"name\":\"total_amount\",\"physicalType\":\"NUMERIC(12,2)\",\"required\":true}]}],\"status\":\"active\",\"team\":{\"name\":\"service-py\"},\"version\":\"0\"},\"family\":\"python\",\"service\":\"service-py\",\"source\":{\"path\":\"contracts/py_daily_kpis.odcs.yaml\",\"sha256\":\"fc7e114655fd81d91090d7df9f2db85da908305a731e401b85b13b268e619b75\"}}},\"failures\":[],\"odcs_schema_sha256\":\"edb41f33ec46e84780e99872ab2bd67f074959d2bf3e9c9fc54e61f8982b0d93\",\"ontology\":null,\"provenance\":{\"service-py\":{\"continuo_python_runtime\":\"0.13.0\",\"image_packages\":{\"pyarrow\":\"26.0.0\"}}},\"release_id\":\"rel-4e5f6a7-212\",\"schema_version\":1,\"summary\":{\"by_family\":{\"python\":1},\"contracts\":1,\"invalid\":0,\"skipped\":0},\"tenant_id\":\"default\",\"timings\":{\"columns\":{\"dbt\":412,\"python\":3},\"nodes\":{\"dbt\":55,\"python\":1},\"stages_ms\":{\"candidate_upload\":905,\"canonical_hashing\":2,\"code_bundle\":14,\"contract_validation\":11,\"dbt_parse\":41,\"download\":310,\"python_parse\":6,\"registry\":2,\"resolve\":120,\"rewrite\":180},\"validation_cache\":{\"hit\":0,\"miss\":1}}}"
+}

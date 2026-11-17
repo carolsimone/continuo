@@ -23,8 +23,8 @@ type AttemptFacts struct {
 	// FailedContainer names the first init or main container that exited
 	// non-zero.
 	FailedContainer string
-	// TerminationReason is the main container's termination reason, for
-	// example OOMKilled.
+	// TerminationReason is the main container's termination reason, or that
+	// of the first failed init when main never terminated, for example OOMKilled.
 	TerminationReason string
 	// PodReason is the pod's status reason, for example Evicted.
 	PodReason string

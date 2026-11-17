@@ -4,39 +4,98 @@ package packaging
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 )
 
-// TestMerge_ProducesHashFoldedWireContract runs the real continuo-runtime CLI
-// (present in the built image, not on a bare host) against a minimal
-// contract dir shaped like tests/e2e/fixtures/py-probe/contracts/*.yml, and
-// asserts the merged output is a parseable wire contract whose every node
-// entry carries CI's hash parts and their fold, of which topology-controller
-// keeps the source and shared parts. A wrong subprocess argument order, a
-// wrong --out path, or a CLI that never ran at all would each surface here
-// as a missing field or a parse failure —
-// the same rejection topology-controller would give the merged contract.
-func TestMerge_ProducesHashFoldedWireContract(t *testing.T) {
+// minRuntime is the lowest continuo-runtime that has the pack command.
+var minRuntime = [3]int{0, 13, 0}
+
+// requirePackCLI skips the test unless the continuo-runtime on PATH is
+// minRuntime or later: the binary ships inside the agent-remediation image,
+// and a bare host may hold none or an older one without pack.
+func requirePackCLI(t *testing.T) {
+	t.Helper()
 	if _, err := exec.LookPath("continuo-runtime"); err != nil {
 		t.Skipf("continuo-runtime not on PATH (%v): this binary ships only inside the agent-remediation image, not on a bare host or CI runner. It is exercised in CI by the dedicated in-container step that runs this package's integration test inside the running agent-remediation container.", err)
 	}
-
-	repoRoot := t.TempDir()
-	contractDir := filepath.Join(repoRoot, "contracts")
-	scriptsDir := filepath.Join(repoRoot, "scripts")
-	if err := os.MkdirAll(contractDir, 0o755); err != nil {
-		t.Fatalf("mkdir contracts: %v", err)
+	out, err := exec.Command("continuo-runtime", "--version").Output()
+	if err != nil || !atLeast(strings.TrimSpace(string(out)), minRuntime) {
+		t.Skipf("continuo-runtime on PATH is not 0.13.0 or later (%q, %v): this binary ships only inside the agent-remediation image, not on a bare host or CI runner. It is exercised in CI by the dedicated in-container step that runs this package's integration test inside the running agent-remediation container.", out, err)
 	}
-	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
-		t.Fatalf("mkdir scripts: %v", err)
-	}
+}
 
-	script := `import pyarrow as pa
+// atLeast reports whether "continuo-runtime X.Y.Z" names min or a later version.
+func atLeast(version string, min [3]int) bool {
+	fields := strings.Fields(version)
+	if len(fields) != 2 || fields[0] != "continuo-runtime" {
+		return false
+	}
+	parts := strings.Split(fields[1], ".")
+	if len(parts) != 3 {
+		return false
+	}
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			return false
+		}
+		if n != min[i] {
+			return n > min[i]
+		}
+	}
+	return true
+}
+
+// writeTree writes files under root, creating their directories.
+func writeTree(t *testing.T, root string, files map[string]string) {
+	t.Helper()
+	for path, body := range files {
+		full := filepath.Join(root, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+}
+
+const probeContract = `apiVersion: v3.2.0
+kind: DataContract
+id: e2e_schema.py_probe
+name: py_probe
+version: "0"
+status: active
+description:
+  purpose: "probe node"
+team:
+  name: e2e
+customProperties:
+  - {vendor: continuo, property: schedule, value: daily}
+  - {vendor: continuo, property: criticality, value: SECONDARY}
+  - {vendor: continuo, property: script, value: scripts/probe.py}
+  - vendor: continuo
+    property: readQueries
+    value:
+      tables: select schemaname from pg_catalog.pg_tables
+schema:
+  - name: py_probe
+    physicalType: table
+    properties:
+      - {name: id, physicalType: INTEGER, required: true}
+      - {name: label, physicalType: VARCHAR(16)}
+`
+
+const probeScript = `import pyarrow as pa
 
 
 def run(ctx):
@@ -48,208 +107,93 @@ def run(ctx):
         }
     )
 `
-	if err := os.WriteFile(filepath.Join(scriptsDir, "probe.py"), []byte(script), 0o644); err != nil {
-		t.Fatalf("write probe.py: %v", err)
-	}
 
-	contract := `nodes:
-  - schema: e2e_schema
-    table: py_probe
-    owner: e2e
-    schedule: daily
-    criticality: SECONDARY
-    script: scripts/probe.py
-    reads:
-      tables: select schemaname from pg_catalog.pg_tables
-    output_columns:
-      - {name: id, type: INTEGER, nullable: false}
-      - {name: label, type: VARCHAR(16)}
-`
-	if err := os.WriteFile(filepath.Join(contractDir, "probe.yml"), []byte(contract), 0o644); err != nil {
-		t.Fatalf("write probe.yml: %v", err)
-	}
-
+// TestCLIPackager_RunsPackWithTheImagePackages runs the image's real
+// continuo-runtime pack over one ODCS contract and its script, and checks the
+// odcs-bundle.json it returns: the service, the package list it was given, the
+// producer versions and the contract with its source hash. A wrong argument
+// order, a wrong --out path or a CLI that never ran fails here as a missing
+// field or a parse failure, which is how topology-controller would refuse it.
+func TestCLIPackager_RunsPackWithTheImagePackages(t *testing.T) {
+	requirePackCLI(t)
+	repoRoot := t.TempDir()
+	writeTree(t, repoRoot, map[string]string{
+		"contracts/py_probe.odcs.yaml": probeContract,
+		"scripts/probe.py":             probeScript,
+	})
 	p, err := NewCLIPackager()
 	if err != nil {
 		t.Fatalf("NewCLIPackager: %v", err)
 	}
-	out, err := p.Merge(context.Background(), contractDir, repoRoot, "py-probe-test", "postgres")
+	packages := map[string]string{"pyarrow": "26.0.0", "duckdb": "1.4.0"}
+
+	out, err := p.Pack(context.Background(), filepath.Join(repoRoot, "contracts"), repoRoot, "py-probe-test", "postgres", packages)
 	if err != nil {
-		t.Fatalf("Merge: %v", err)
+		t.Fatalf("Pack: %v", err)
 	}
 
-	var doc struct {
-		ContractVersion int    `yaml:"contract_version"`
-		Service         string `yaml:"service"`
-		Nodes           []struct {
-			Schema         string `yaml:"schema"`
-			Table          string `yaml:"table"`
-			SourceHash     string `yaml:"source_hash"`
-			SharedCodeHash string `yaml:"shared_code_hash"`
-			ConfigHash     string `yaml:"config_hash"`
-			ContentHash    string `yaml:"content_hash"`
-		} `yaml:"nodes"`
+	var bundle struct {
+		BundleVersion int               `json:"bundle_version"`
+		Service       string            `json:"service"`
+		ImagePackages map[string]string `json:"image_packages"`
+		Producer      struct {
+			ContinuoPythonRuntime string `json:"continuo_python_runtime"`
+			ContinuoContracts     string `json:"continuo_contracts"`
+		} `json:"producer"`
+		Nodes []struct {
+			Path       string `json:"path"`
+			Text       string `json:"text"`
+			SourceHash string `json:"source_hash"`
+		} `json:"nodes"`
 	}
-	if err := yaml.Unmarshal(out, &doc); err != nil {
-		t.Fatalf("merged output does not parse as yaml: %v\n---\n%s", err, out)
+	if err := json.Unmarshal(out, &bundle); err != nil {
+		t.Fatalf("the bundle is not JSON: %v\n---\n%s", err, out)
 	}
-
-	if doc.ContractVersion != 1 {
-		t.Errorf("contract_version = %d, want 1", doc.ContractVersion)
+	if bundle.BundleVersion != 1 {
+		t.Errorf("bundle_version = %d, want 1", bundle.BundleVersion)
 	}
-	if doc.Service != "py-probe-test" {
-		t.Errorf("service = %q, want %q", doc.Service, "py-probe-test")
+	if bundle.Service != "py-probe-test" {
+		t.Errorf("service = %q, want py-probe-test", bundle.Service)
 	}
-	if len(doc.Nodes) != 1 {
-		t.Fatalf("nodes = %d entries, want 1", len(doc.Nodes))
+	if len(bundle.ImagePackages) != 2 || bundle.ImagePackages["pyarrow"] != "26.0.0" || bundle.ImagePackages["duckdb"] != "1.4.0" {
+		t.Errorf("image_packages = %v, want the list Pack was given, %v", bundle.ImagePackages, packages)
 	}
-
-	n := doc.Nodes[0]
-	if n.Schema != "e2e_schema" || n.Table != "py_probe" {
-		t.Errorf("node relation = %s.%s, want e2e_schema.py_probe", n.Schema, n.Table)
+	if bundle.Producer.ContinuoPythonRuntime == "" || bundle.Producer.ContinuoContracts == "" {
+		t.Errorf("producer = %+v, want both versions", bundle.Producer)
+	}
+	if len(bundle.Nodes) != 1 {
+		t.Fatalf("nodes = %d entries, want 1", len(bundle.Nodes))
+	}
+	n := bundle.Nodes[0]
+	if n.Path != "contracts/py_probe.odcs.yaml" {
+		t.Errorf("path = %q, want contracts/py_probe.odcs.yaml", n.Path)
+	}
+	if n.Text != probeContract {
+		t.Errorf("text is not the contract file verbatim:\n%s", n.Text)
 	}
 	if n.SourceHash == "" {
-		t.Error("source_hash is empty, want a sha256 hex digest")
+		t.Error("source_hash is empty, want the script's sha256")
 	}
-	if n.ConfigHash == "" {
-		t.Error("config_hash is empty, want a sha256 hex digest")
-	}
-	if n.ContentHash == "" {
-		t.Error("content_hash is empty, want a sha256: fold")
-	}
-	// shared_code_hash is legitimately "" when the script has no in-repo
-	// import closure (probe.py imports only the third-party pyarrow), so it
-	// is deliberately not asserted non-empty here.
-	_ = n.SharedCodeHash
 }
 
-// TestMerge_AcceptsAPythonCsvContract runs the real continuo-runtime CLI
-// against a script-less python-csv contract shaped like
-// tests/e2e/fixtures/py-probe/contracts/py_csv.yml. A csv fix proposes no
-// script at all — only a "kind: python-csv" entry and a "reads: {csv: ...}"
-// uri — so this pins that the image's pinned CLI actually understands "kind"
-// and accepts an empty script for it. continuo-python-runtime==0.2.0 (the
-// pin this test caught stale) predates "kind" entirely and rejects this exact
-// shape with "unknown key(s) ['kind']"; regressing the image's pin back below
-// the csv-capable release would fail this test the same way, instead of only
-// failing silently once a real csv fix reaches this packager in production.
-func TestMerge_AcceptsAPythonCsvContract(t *testing.T) {
-	if _, err := exec.LookPath("continuo-runtime"); err != nil {
-		t.Skipf("continuo-runtime not on PATH (%v): this binary ships only inside the agent-remediation image, not on a bare host or CI runner. It is exercised in CI by the dedicated in-container step that runs this package's integration test inside the running agent-remediation container.", err)
-	}
-
+// TestCLIPackager_PackRefusesABrokenContract runs pack over a contract that
+// names a script the repository does not hold: the tool reads it and refuses
+// it, which the packager reports as ErrContractRejected with the tool's words.
+func TestCLIPackager_PackRefusesABrokenContract(t *testing.T) {
+	requirePackCLI(t)
 	repoRoot := t.TempDir()
-	contractDir := filepath.Join(repoRoot, "contracts")
-	if err := os.MkdirAll(contractDir, 0o755); err != nil {
-		t.Fatalf("mkdir contracts: %v", err)
-	}
-
-	contract := `nodes:
-  - schema: e2e_schema
-    table: py_csv
-    owner: e2e
-    schedule: daily
-    criticality: SECONDARY
-    kind: python-csv
-    description: "csv-sourced python node for the e2e run path"
-    reads:
-      csv: s3://continuo/fixtures/orders.csv
-    output_columns:
-      - {name: order_id, type: INTEGER, nullable: false}
-      - {name: amount, type: DOUBLE PRECISION}
-`
-	if err := os.WriteFile(filepath.Join(contractDir, "py_csv.yml"), []byte(contract), 0o644); err != nil {
-		t.Fatalf("write py_csv.yml: %v", err)
-	}
-
+	writeTree(t, repoRoot, map[string]string{"contracts/py_probe.odcs.yaml": probeContract})
 	p, err := NewCLIPackager()
 	if err != nil {
 		t.Fatalf("NewCLIPackager: %v", err)
 	}
-	out, err := p.Merge(context.Background(), contractDir, repoRoot, "py-csv-test", "postgres")
-	if err != nil {
-		t.Fatalf("Merge rejected a python-csv contract (the CLI on PATH predates \"kind\" support): %v", err)
-	}
 
-	var doc struct {
-		Nodes []struct {
-			Schema string            `yaml:"schema"`
-			Table  string            `yaml:"table"`
-			Kind   string            `yaml:"kind"`
-			Script string            `yaml:"script"`
-			Reads  map[string]string `yaml:"reads"`
-		} `yaml:"nodes"`
+	_, err = p.Pack(context.Background(), filepath.Join(repoRoot, "contracts"), repoRoot, "py-probe-test", "postgres",
+		map[string]string{"pyarrow": "26.0.0"})
+	if !errors.Is(err, ports.ErrContractRejected) {
+		t.Fatalf("Pack error = %v, want it to wrap ErrContractRejected", err)
 	}
-	if err := yaml.Unmarshal(out, &doc); err != nil {
-		t.Fatalf("merged output does not parse as yaml: %v\n---\n%s", err, out)
-	}
-	if len(doc.Nodes) != 1 {
-		t.Fatalf("nodes = %d entries, want 1", len(doc.Nodes))
-	}
-
-	n := doc.Nodes[0]
-	if n.Schema != "e2e_schema" || n.Table != "py_csv" {
-		t.Errorf("node relation = %s.%s, want e2e_schema.py_csv", n.Schema, n.Table)
-	}
-	if n.Kind != "python-csv" {
-		t.Errorf("kind = %q, want %q", n.Kind, "python-csv")
-	}
-	if n.Script != "" {
-		t.Errorf("script = %q, want empty: a python-csv node has no script", n.Script)
-	}
-	if n.Reads["csv"] != "s3://continuo/fixtures/orders.csv" {
-		t.Errorf("reads[csv] = %q, want the declared uri preserved", n.Reads["csv"])
-	}
-}
-
-// TestMerge_PackagesAContractThatDeclaresAssets runs the image's continuo-runtime
-// CLI on a python-node contract that declares a file its script reads. Runtime
-// 0.12.0 writes the list on the wire entry and folds the file into
-// shared_code_hash; an image pinned below it refuses the key.
-func TestMerge_PackagesAContractThatDeclaresAssets(t *testing.T) {
-	if _, err := exec.LookPath("continuo-runtime"); err != nil {
-		t.Skipf("continuo-runtime not on PATH (%v): this binary ships only inside the agent-remediation image, not on a bare host or CI runner. It is exercised in CI by the dedicated in-container step that runs this package's integration test inside the running agent-remediation container.", err)
-	}
-	repoRoot := t.TempDir()
-	for path, body := range map[string]string{
-		"scripts/kpis.py": "import pyarrow as pa\n\n\ndef run(ctx):\n    ctx.read(\"src\")\n    return pa.table({\"id\": pa.array([1], type=pa.int64())})\n",
-		"lib/ref.json":    "{\"rate\": 1}\n",
-		"contracts/kpis.yml": "nodes:\n  - schema: analytics\n    table: kpis\n    owner: e2e\n    schedule: daily\n" +
-			"    criticality: SECONDARY\n    script: scripts/kpis.py\n    assets: [lib/ref.json]\n" +
-			"    reads:\n      src: select id from analytics.src\n    output_columns:\n      - {name: id, type: BIGINT, nullable: false}\n",
-	} {
-		full := filepath.Join(repoRoot, path)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			t.Fatalf("mkdir %s: %v", path, err)
-		}
-		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
-			t.Fatalf("write %s: %v", path, err)
-		}
-	}
-	p, err := NewCLIPackager()
-	if err != nil {
-		t.Fatalf("NewCLIPackager: %v", err)
-	}
-	out, err := p.Merge(context.Background(), filepath.Join(repoRoot, "contracts"), repoRoot, "kpis-test", "postgres")
-	if err != nil {
-		t.Fatalf("Merge refused a contract that declares assets (the CLI on PATH predates continuo-python-runtime 0.12.0): %v", err)
-	}
-	var doc struct {
-		Nodes []struct {
-			Assets         []string `yaml:"assets"`
-			SharedCodeHash string   `yaml:"shared_code_hash"`
-		} `yaml:"nodes"`
-	}
-	if err := yaml.Unmarshal(out, &doc); err != nil {
-		t.Fatalf("merged output does not parse as yaml: %v\n---\n%s", err, out)
-	}
-	if len(doc.Nodes) != 1 {
-		t.Fatalf("nodes = %d entries, want 1", len(doc.Nodes))
-	}
-	if got := doc.Nodes[0].Assets; len(got) != 1 || got[0] != "lib/ref.json" {
-		t.Errorf("assets = %v, want [lib/ref.json]", got)
-	}
-	if doc.Nodes[0].SharedCodeHash == "" {
-		t.Error("shared_code_hash is empty, want the fold of lib/ref.json")
+	if !strings.Contains(err.Error(), "probe.py") {
+		t.Errorf("error = %v, want the tool's complaint naming the missing script", err)
 	}
 }

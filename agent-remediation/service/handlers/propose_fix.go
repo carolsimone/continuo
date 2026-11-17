@@ -65,18 +65,24 @@ type Deps struct {
 	CandidateSource  ports.CandidateSourceReader
 	// RepoArchive fetches a full repo checkout at a commit, for a fixer that
 	// needs to search across many files (e.g. locating a python node's
-	// declaring contract yaml) rather than read one file at a time.
+	// declaring ODCS contract file) rather than read one file at a time.
 	RepoArchive ports.RepoArchive
-	// ContractLocator finds which contract yaml in that checkout declares a
+	// ContractLocator finds which ODCS contract file in that checkout declares a
 	// given python node.
 	ContractLocator ports.ContractLocator
-	// ContractInspector reads the node declarations out of a contract yaml
+	// ContractInspector reads the node declarations out of an ODCS contract file
 	// document, so a proposed edit can be checked against the declarations the
 	// repository already held.
 	ContractInspector ports.ContractInspector
-	// Packager merges a directory of python-node contract yaml files into the
-	// wire contract a release is submitted with.
+	// Packager packs a service's directory of ODCS contracts into the
+	// odcs-bundle.json a release is submitted with.
 	Packager ports.ContractPackager
+	// ImagePackages reads the package list of the rejected release's image of
+	// a service, which a python fix is packed with.
+	ImagePackages ports.ImagePackagesSource
+	// CurrentContracts reads a node's current contract from the catalog, which
+	// a python fix's prompt shows.
+	CurrentContracts ports.CurrentContractReader
 	// Pipeline submits fix-verification runs and reads their status.
 	Pipeline ports.VerificationPipeline
 	// Releases reads a candidate release's image tag for the service a
@@ -393,7 +399,7 @@ func isUpstreamKind(k typology.Kind) bool {
 // the attempt's single proposal row is assembled from.
 type clusterOutcome struct {
 	edits []proposal.FileEdit
-	// contract is the packaged contract yaml a python fix must be verified
+	// contract is the packed odcs-bundle.json a python fix must be verified
 	// with, uploaded under the verification run of whichever service this
 	// cluster's edits belong to; nil for a dbt fix, whose edits are verified by
 	// re-running the project itself.
@@ -618,7 +624,8 @@ func fixerServices(deps Deps) fixer.Services {
 		Precedents: deps.Precedents, CandidateSource: deps.CandidateSource,
 		Archive: deps.RepoArchive, ContractLocator: deps.ContractLocator,
 		ContractInspector: deps.ContractInspector,
-		Packager:          deps.Packager, Releases: deps.Releases,
+		Packager:          deps.Packager, ImagePackages: deps.ImagePackages,
+		CurrentContracts: deps.CurrentContracts, Releases: deps.Releases,
 		PriorAttempts: deps.PriorAttempts, SQLDialect: deps.SQLDialect,
 	}
 }

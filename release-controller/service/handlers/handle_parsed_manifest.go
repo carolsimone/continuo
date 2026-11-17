@@ -47,9 +47,14 @@ type HandleParsedManifestInput struct {
 	Status        string // "ok" or "failed"
 	TopologyRef   release.TopologyRef
 	CodeBundleURI string
-	FailureKind   pkg_model.ParseFailureKind
-	Detail        string
-	FailedNodes   []ParsedFailedNode
+	// ContractBundle is the contract bundle an ok parse wrote. ContinuoContracts
+	// is the version of the continuo-contracts library that read the release's
+	// contracts, named by both outcomes.
+	ContractBundle    release.ContractBundleRef
+	ContinuoContracts string
+	FailureKind       pkg_model.ParseFailureKind
+	Detail            string
+	FailedNodes       []ParsedFailedNode
 }
 
 // HandleParsedManifest handles the manifest parse result from topology-controller.
@@ -59,6 +64,9 @@ type HandleParsedManifestInput struct {
 // and emits release.rejected:v1 with stage `parse`.
 // On success: reads the candidate topology artifact, computes the validation closure,
 // transitions to Validating, and emits validation.requested:v1.
+// A stored run of the kind python is rejected invalid_artifact whatever the
+// result (rejectStoredPythonRun), so neither a bootstrap nor a
+// nothing-to-validate promotion reaches it.
 func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestInput) error {
 	u := d.NewUoW()
 	if err := u.Begin(ctx); err != nil {
@@ -96,6 +104,13 @@ func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestI
 	}
 
 	now := d.Clock.Now()
+	if isStoredPythonRun(r) {
+		return rejectStoredPythonRun(ctx, d, u, r, now)
+	}
+
+	// Both outcomes name the continuo-contracts version that read the release's
+	// contracts; the run keeps it whether the parse ended ok or failed.
+	r.SetContinuoContracts(in.ContinuoContracts)
 
 	if in.Status == "failed" {
 		return handleParseFailed(ctx, d, u, r, in, now)
@@ -110,6 +125,7 @@ func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestI
 var parseReasons = map[pkg_model.ParseFailureKind]pkg_model.RejectReason{
 	pkg_model.ParseFailureKindInvalidSQL:           pkg_model.RejectReasonInvalidSQL,
 	pkg_model.ParseFailureKindUnqualifiedReference: pkg_model.RejectReasonUnqualifiedReference,
+	pkg_model.ParseFailureKindInvalidContract:      pkg_model.RejectReasonInvalidContract,
 	pkg_model.ParseFailureKindInvalidArtifact:      pkg_model.RejectReasonInvalidArtifact,
 	pkg_model.ParseFailureKindInternal:             pkg_model.RejectReasonInternalError,
 }
@@ -224,6 +240,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 		return fmt.Errorf("load candidate topology %s: %w", in.TopologyRef.URI, err)
 	}
 	r.SetCodeBundleURI(in.CodeBundleURI)
+	r.SetCandidateContractBundle(in.ContractBundle)
 
 	// A relation must be produced by exactly one node, and a unique_id must
 	// identify exactly one node — two independent checks. Two nodes claiming
@@ -802,7 +819,7 @@ func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.U
 // dbt-snapshot, python-node, python-csv, or python-api) so remediation can tell, without a topology
 // lookup of its own, whether the target's source is a single file this
 // system can read. A python node's relation is declared in the service's
-// contract.yaml, whose repository path this system does not carry — only
+// ODCS contract file, whose repository path this system does not carry — only
 // file_path for the contract's script entry — so the fixer must skip a
 // python target rather than editing a file that cannot produce the fix.
 //

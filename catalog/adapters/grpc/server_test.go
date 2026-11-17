@@ -14,6 +14,8 @@ import (
 	"github.com/carolsimone/continuo/catalog/domain"
 	"github.com/carolsimone/continuo/catalog/domain/casebase"
 	"github.com/carolsimone/continuo/catalog/domain/codeversion"
+	"github.com/carolsimone/continuo/catalog/domain/contractversion"
+	"github.com/carolsimone/continuo/catalog/service/queries"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -73,7 +75,7 @@ func startTestServer(t *testing.T) (catalogv1.CatalogQueryClient, *tenantLog) {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	log := &tenantLog{}
-	handler := grpcadapter.NewQueryHandler(stubNodeReader{log}, stubCodeVersionHistoryReader{log}, stubPrecedentHistoryReader{log}, logger)
+	handler := grpcadapter.NewQueryHandler(stubNodeReader{log}, stubCodeVersionHistoryReader{log}, stubPrecedentHistoryReader{log}, stubContractHistoryReader{log}, logger)
 	server, err := grpcadapter.NewServer(0, handler, logger) // 0 = ephemeral port
 	require.NoError(t, err)
 	go func() { _ = server.Start() }()
@@ -124,6 +126,18 @@ func everyRPC(client catalogv1.CatalogQueryClient) []struct {
 		}},
 		{"GetPrecedents", func() error {
 			_, err := client.GetPrecedents(ctx, &catalogv1.GetPrecedentsRequest{Signature: "x"})
+			return err
+		}},
+		{"GetNodeContract", func() error {
+			_, err := client.GetNodeContract(ctx, &catalogv1.GetNodeContractRequest{UniqueId: "x"})
+			return err
+		}},
+		{"ListNodeContractVersions", func() error {
+			_, err := client.ListNodeContractVersions(ctx, &catalogv1.ListNodeContractVersionsRequest{UniqueId: "x"})
+			return err
+		}},
+		{"GetNodeContractDiff", func() error {
+			_, err := client.GetNodeContractDiff(ctx, &catalogv1.GetNodeContractDiffRequest{UniqueId: "x", FromVersion: 1, ToVersion: 2})
 			return err
 		}},
 	}
@@ -187,6 +201,22 @@ func (s stubCodeVersionHistoryReader) GetCodeUnitVersions(_ context.Context, ten
 type stubPrecedentHistoryReader struct{ log *tenantLog }
 
 func (s stubPrecedentHistoryReader) GetPrecedents(_ context.Context, tenantID, _, _, _ string, _ int32, _ bool) ([]casebase.Precedent, error) {
+	s.log.add(tenantID)
+	return nil, nil
+}
+
+// stubContractHistoryReader satisfies grpcadapter.ContractHistoryReader.
+type stubContractHistoryReader struct{ log *tenantLog }
+
+func (s stubContractHistoryReader) GetNodeContract(_ context.Context, tenantID, _ string, _ bool) (queries.NodeContract, error) {
+	s.log.add(tenantID)
+	return queries.NodeContract{}, nil
+}
+func (s stubContractHistoryReader) ListNodeContractVersions(_ context.Context, tenantID, _ string, _ int) ([]contractversion.VersionView, error) {
+	s.log.add(tenantID)
+	return nil, nil
+}
+func (s stubContractHistoryReader) GetNodeContractDiff(_ context.Context, tenantID, _ string, _, _ int64) ([]contractversion.FieldChange, error) {
 	s.log.add(tenantID)
 	return nil, nil
 }

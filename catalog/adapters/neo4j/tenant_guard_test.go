@@ -16,9 +16,10 @@ import (
 
 // tenantGuardExempt names the files of this package whose Cypher acts on every
 // tenant at once, so their statements are not held to the tenant rule: the
-// schema DDL, the startup migration, the marker sweeper and the export loop's
-// list of tenants. Every other non-test file is.
-var tenantGuardExempt = []string{"schema.go", "migrate.go", "marker_sweeper.go", "tenants.go"}
+// schema DDL, the startup migration, the marker sweeper, the export loop's
+// list of tenants and the contract history sweeper's. Every other non-test
+// file is.
+var tenantGuardExempt = []string{"schema.go", "migrate.go", "marker_sweeper.go", "tenants.go", "contract_history_tenants.go"}
 
 // TestCypherCarriesTheTenant fails any Cypher statement of this package in
 // which a label-qualified node pattern, such as (n:Node {…}) or

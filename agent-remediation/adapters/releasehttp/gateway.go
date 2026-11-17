@@ -262,14 +262,16 @@ type releaseNodeResult struct {
 	RunResultsURI string `json:"run_results_uri"`
 }
 
-// releaseResponse mirrors GET /releases/{id}, narrowed to what ImageTag and
-// FailingNodes read.
+// releaseResponse mirrors GET /releases/{id}, narrowed to what ImageTag,
+// FailingNodes and ContractBundle read.
 type releaseResponse struct {
-	ImageTags    map[string]string   `json:"image_tags"`
-	RejectReason string              `json:"reject_reason"`
-	RejectDetail string              `json:"reject_detail"`
-	FailingNodes []string            `json:"failing_nodes"`
-	PerNode      []releaseNodeResult `json:"per_node_results"`
+	ImageTags            map[string]string   `json:"image_tags"`
+	ContractBundleURI    string              `json:"contract_bundle_uri"`
+	ContractBundleSHA256 string              `json:"contract_bundle_sha256"`
+	RejectReason         string              `json:"reject_reason"`
+	RejectDetail         string              `json:"reject_detail"`
+	FailingNodes         []string            `json:"failing_nodes"`
+	PerNode              []releaseNodeResult `json:"per_node_results"`
 }
 
 // ImageTag returns image_tags[service] of the candidate release releaseID.
@@ -283,6 +285,17 @@ func (g *Gateway) ImageTag(ctx context.Context, releaseID, service string) (stri
 		return "", fmt.Errorf("release %s has no image tag for service %q", releaseID, service)
 	}
 	return tag, nil
+}
+
+// ContractBundle returns contract_bundle_uri and contract_bundle_sha256 of the
+// candidate release releaseID, both empty while no parse of the release ended
+// ok.
+func (g *Gateway) ContractBundle(ctx context.Context, releaseID string) (string, string, error) {
+	rel, err := g.getRelease(ctx, releaseID)
+	if err != nil {
+		return "", "", err
+	}
+	return rel.ContractBundleURI, rel.ContractBundleSHA256, nil
 }
 
 // getRelease fetches and decodes GET /releases/{releaseID}.

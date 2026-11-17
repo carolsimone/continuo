@@ -425,9 +425,9 @@ func (o *Observer) finish(ctx context.Context, dep *model.Deployment, obs model.
 // settleEnded settles an attempt a live read shows ended: it reads the log if
 // none is kept yet, probes the views a late-binding seed load may have left
 // stale, and, in one transaction, records what the cache and the live read
-// show, then unexplained when nothing recorded of the attempt shows an exit
-// code or the Job's success, classifies the attempt and writes its result. The
-// row is locked by then, so what every replica recorded counts.
+// show. It adds unexplained only when the recorded facts cannot explain the
+// outcome, then classifies the attempt and writes its result. The row is locked
+// by then, so what every replica recorded counts.
 func (o *Observer) settleEnded(ctx context.Context, dep *model.Deployment, obs, live model.JobObservation,
 	unexplained model.AttemptFacts, now time.Time) error {
 	var logs model.AttemptFacts
@@ -460,7 +460,7 @@ func endedFacts(observe func(model.AttemptFacts), current func() model.AttemptFa
 	observe(obs.Facts(now))
 	observe(live.Facts(now))
 	observe(logs)
-	if f := current(); f.ExitCode == nil && !f.JobSucceeded {
+	if v := model.Classify(current()); !v.Succeeded && !v.Stopped && v.Reason == pkgmodel.FailureReasonNodeLost {
 		observe(unexplained)
 	}
 }

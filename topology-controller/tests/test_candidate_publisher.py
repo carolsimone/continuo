@@ -10,7 +10,7 @@ from adapters.json_log import JsonFormatter
 from adapters.redis.candidate_publisher import CandidateManifestPublisher, manifest_loaded_candidate_event_id
 from adapters.redis.keys import MissingStreamError, key
 from domain.contract_vocabulary import ParseFailureKind
-from domain.model import DEFAULT_TENANT_ID, FailedNode, NodeType, TopologyArtifactRef
+from domain.model import DEFAULT_TENANT_ID, ContractBundleRef, FailedNode, NodeType, TopologyArtifactRef
 from streams_contract import MANIFEST_LOADED_CANDIDATE_V2
 
 _FIXTURES = Path(__file__).parent / "fixtures"
@@ -21,12 +21,17 @@ _ARTIFACT = TopologyArtifactRef(
     sha256="ab" * 32,
     node_count=3,
 )
+_CONTRACT_BUNDLE = ContractBundleRef(
+    uri="s3://continuo/tenants/default/topologies/rel-1/contracts.json.gz",
+    sha256="cd" * 32,
+)
 
 
-def _make(producer="topology-controller", at=_AT):
+def _make(producer="topology-controller", at=_AT, continuo_contracts="0.2.0"):
     redis_mock = MagicMock()
     pub = CandidateManifestPublisher(
-        redis_mock, MANIFEST_LOADED_CANDIDATE_V2, producer=producer, clock=lambda: at,
+        redis_mock, MANIFEST_LOADED_CANDIDATE_V2, producer=producer, continuo_contracts=continuo_contracts,
+        clock=lambda: at,
     )
     return pub, redis_mock
 
@@ -57,7 +62,7 @@ def _assert_matches(got: dict, want: dict) -> None:
     assert json.loads(got["payload"]) == want["payload"]
 
 
-def test_publish_ok_matches_the_golden_fixture():
+def test_publish_ok_matches_the_shared_ok_fixture():
     """release-controller decodes this entry with pkg/events; the Go test reads
     the same fixture, so both sides agree on every field, the event id included."""
     given, at, want = _fixture("manifest_loaded_candidate_v2_ok.json")
@@ -70,12 +75,15 @@ def test_publish_ok_matches_the_golden_fixture():
             uri=payload["topology_uri"], sha256=payload["topology_sha256"], node_count=payload["node_count"],
         ),
         code_bundle_uri=payload["code_bundle_uri"],
+        contract_bundle=ContractBundleRef(
+            uri=payload["contract_bundle_uri"], sha256=payload["contract_bundle_sha256"],
+        ),
     )
 
     _assert_matches(_fields(redis_mock), want)
 
 
-def test_publish_failed_matches_the_golden_fixture():
+def test_publish_failed_matches_the_shared_failed_fixture():
     given, at, want = _fixture("manifest_loaded_candidate_v2_failed.json")
     payload = given["payload"]
     pub, redis_mock = _make(producer=given["producer"], at=at)
@@ -99,7 +107,10 @@ def test_publish_failed_matches_the_golden_fixture():
 def test_publish_ok_carries_the_artifact_reference_and_no_nodes():
     pub, redis_mock = _make()
 
-    pub.publish_ok(release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="s3://continuo/code-bundles/rel-1/bundle.json")
+    pub.publish_ok(
+        release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="s3://continuo/code-bundles/rel-1/bundle.json",
+        contract_bundle=_CONTRACT_BUNDLE,
+    )
 
     fields = _fields(redis_mock)
     assert json.loads(fields["payload"]) == {
@@ -109,6 +120,9 @@ def test_publish_ok_carries_the_artifact_reference_and_no_nodes():
         "topology_sha256": "ab" * 32,
         "node_count": 3,
         "code_bundle_uri": "s3://continuo/code-bundles/rel-1/bundle.json",
+        "contract_bundle_uri": "s3://continuo/tenants/default/topologies/rel-1/contracts.json.gz",
+        "contract_bundle_sha256": "cd" * 32,
+        "continuo_contracts": "0.2.0",
     }
     assert fields["event_id"] == manifest_loaded_candidate_event_id("default", "rel-1")
     assert fields["tenant_id"] == "default"
@@ -147,6 +161,7 @@ def test_publish_failed_serialises_kind_and_failed_nodes():
         "release_id": "rel-2",
         "status": "failed",
         "failure_kind": "invalid_sql",
+        "continuo_contracts": "0.2.0",
         "detail": "1 node failed to parse: analytics.fx",
         "failed_nodes": [
             {
@@ -159,6 +174,18 @@ def test_publish_failed_serialises_kind_and_failed_nodes():
             }
         ],
     }
+
+
+def test_both_outcomes_announce_the_library_version_the_publisher_was_built_with():
+    """A release-controller that reads the entry knows which continuo-contracts
+    wrote the release's contracts, whether the release passed or failed."""
+    pub, redis_mock = _make(continuo_contracts="9.8.7")
+    pub.publish_ok(release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="", contract_bundle=_CONTRACT_BUNDLE)
+    assert _payload(redis_mock)["continuo_contracts"] == "9.8.7"
+
+    pub, redis_mock = _make(continuo_contracts="9.8.7")
+    pub.publish_failed(release_id="rel-2", failure_kind=ParseFailureKind.INVALID_CONTRACT, detail="x")
+    assert _payload(redis_mock)["continuo_contracts"] == "9.8.7"
 
 
 def test_publish_failed_defaults_to_no_failed_nodes():
@@ -196,8 +223,10 @@ def test_publish_does_not_cap_the_stream():
     # The dead-letter-controller's trim loop bounds every stream, so neither
     # publish path passes a MAXLEN/MINID cap to XADD.
     redis_mock = MagicMock()
-    pub = CandidateManifestPublisher(redis_mock, MANIFEST_LOADED_CANDIDATE_V2, producer="topology-controller")
-    pub.publish_ok(release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="")
+    pub = CandidateManifestPublisher(
+        redis_mock, MANIFEST_LOADED_CANDIDATE_V2, producer="topology-controller", continuo_contracts="0.2.0",
+    )
+    pub.publish_ok(release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="", contract_bundle=_CONTRACT_BUNDLE)
     pub.publish_failed(release_id="rel-2", failure_kind=ParseFailureKind.INVALID_SQL, detail="boom")
 
     assert redis_mock.xadd.call_count == 2
@@ -211,7 +240,7 @@ def test_publisher_writes_the_prefixed_key_without_creating_it():
     """XADD names the prefixed key and carries NOMKSTREAM, so an append never
     creates a stream the streams-init step has not."""
     pub, redis_mock = _make()
-    pub.publish_ok(release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="")
+    pub.publish_ok(release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="", contract_bundle=_CONTRACT_BUNDLE)
     pub.publish_failed(release_id="rel-2", failure_kind=ParseFailureKind.INVALID_SQL, detail="boom")
 
     assert redis_mock.xadd.call_count == 2
@@ -228,7 +257,7 @@ def test_publisher_raises_when_the_stream_is_missing():
     redis_mock.xadd.return_value = None
 
     with pytest.raises(MissingStreamError) as err:
-        pub.publish_ok(release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="")
+        pub.publish_ok(release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="", contract_bundle=_CONTRACT_BUNDLE)
     assert str(err.value) == f"stream continuo:{MANIFEST_LOADED_CANDIDATE_V2} does not exist; the streams-init step creates it"
 
     with pytest.raises(MissingStreamError):
@@ -246,9 +275,10 @@ def test_the_parse_failed_line_prints_its_release_kind_detail_and_failed_node_co
         "rel-9", "invalid_sql", "1 node failed to parse: a.b", 1)
 
 
-def test_the_ok_line_prints_its_release_node_count_and_topology_uri(caplog):
+def test_the_ok_line_prints_its_release_node_count_topology_uri_and_contract_bundle_uri(caplog):
     pub, _ = _make()
     with caplog.at_level(logging.INFO, logger="adapters.redis.candidate_publisher"):
-        pub.publish_ok(release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="")
+        pub.publish_ok(release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="", contract_bundle=_CONTRACT_BUNDLE)
     line = json.loads(JsonFormatter().format(caplog.records[-1]))
-    assert (line["release_id"], line["node_count"], line["topology_uri"]) == ("rel-1", 3, _ARTIFACT.uri)
+    assert (line["release_id"], line["node_count"], line["topology_uri"], line["contract_bundle_uri"]) == (
+        "rel-1", 3, _ARTIFACT.uri, _CONTRACT_BUNDLE.uri)

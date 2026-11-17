@@ -5,7 +5,6 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"net/http"
 	"path"
 	"strings"
@@ -16,19 +15,18 @@ import (
 	"github.com/google/uuid"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 )
 
 // The remediation fixture repository: the working tree stub-github serves from
-// GET /repos/{owner}/{repo}/tarball/{ref}, and the source of the contract each
-// of these tests posts a release for. Both readers take the same files, so the
-// contract a release is rejected on and the contract the fixer finds in the
-// checkout cannot describe different nodes.
+// GET /repos/{owner}/{repo}/tarball/{ref}, and the source of the ODCS contract
+// each of these tests posts a release for. Both readers take the same files,
+// so the contract a release is rejected on and the contract the fixer finds in
+// the checkout cannot describe different nodes.
 //
-// Its two services exist so the two scenarios below never share a contract
-// directory. The packaging step merges a whole directory into one release
-// artifact, so a second, still-broken node beside the node under repair would
-// sink the verification run that is verifying the repair.
+// Each scenario has a service of its own, so no two share a contract
+// directory. The packaging step packs a whole directory into one bundle, so a
+// second, still-broken node beside the node under repair would sink the
+// verification run that is verifying the repair.
 //
 //go:embed fixtures/py-remediation-repo
 var pyRemediationRepo embed.FS
@@ -43,25 +41,22 @@ const (
 	// that declares it. One fix attempt repairs it.
 	pyBadReadService  = "svc-py-e2e"
 	pyBadReadUniqueID = "e2e_schema.py_bad_read"
-	pyBadReadContract = "services/svc-py-e2e/contracts/py_bad_read.yml"
-	pyBadReadScript   = "services/svc-py-e2e/scripts/py_bad_read.py"
+	pyBadReadContract = "services/svc-py-e2e/contracts/py_bad_read.odcs.yaml"
 
 	// The second service, whose first repair is also wrong: it takes two
 	// attempts, and the second only succeeds because it is shown the first
 	// one's verification-run error.
 	pyLoopService  = "svc-py-e2e-loop"
 	pyLoopUniqueID = "e2e_schema.py_loop_read"
-	pyLoopContract = "services/svc-py-e2e-loop/contracts/py_loop_read.yml"
-	pyLoopScript   = "services/svc-py-e2e-loop/scripts/py_loop_read.py"
+	pyLoopContract = "services/svc-py-e2e-loop/contracts/py_loop_read.odcs.yaml"
 
 	// The third service, whose declared read names its relation without a
 	// schema, so the release's SQL parser rejects the node before any Job
-	// runs. Its repair is made in the same contract yaml and proven by a
+	// runs. Its repair is made in the same contract file and proven by a
 	// verification run whose own parse leg is the judge.
 	pyParseService  = "svc-py-e2e-parse"
 	pyParseUniqueID = "e2e_schema.py_unqualified_read"
-	pyParseContract = "services/svc-py-e2e-parse/contracts/py_unqualified_read.yml"
-	pyParseScript   = "services/svc-py-e2e-parse/scripts/py_unqualified_read.py"
+	pyParseContract = "services/svc-py-e2e-parse/contracts/py_unqualified_read.odcs.yaml"
 
 	// pyBindingRelation is the relation a repaired contract must read from. It
 	// exists in the warehouse only because these tests create it, which is
@@ -120,13 +115,14 @@ const (
 // TestE2E_PythonValidationFailure_VerifiedFix drives the whole python
 // remediation lane on a single-attempt repair:
 //
-//	POST /releases (kind=python, one node whose declared read cannot bind)
+//	POST /releases (kind=python-odcs, one node whose declared read cannot bind)
 //	→ the validation Job's bind check fails → release rejected
 //	→ classifier emits remediation.requested:v3 (one node, node_type=python-node)
 //	→ agent-remediation routes it to the python contract fixer: fetches the
-//	  repository tarball at the failing commit from stub-github, finds the yaml
-//	  declaring the node, has the model correct it, packages the directory with
-//	  continuo-runtime, uploads it and POSTs it back as a verification run
+//	  repository tarball at the failing commit from stub-github, finds the
+//	  .odcs.yaml file declaring the node, has the model correct it, packs the
+//	  directory with continuo-runtime, uploads the bundle and POSTs it back as
+//	  a verification run
 //	→ the proposal parks in 'verifying' naming that verification run
 //	→ the run runs the real parse + candidate-schema + validation pipeline and
 //	  stops at 'passed' — it never promotes and is never readable as a release
@@ -174,8 +170,7 @@ func TestE2E_PythonValidationFailure_VerifiedFix(t *testing.T) {
 	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationProposedV1)
 	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV3)
 
-	clearProd := rejectPythonFixtureRelease(t, ctx, clients,
-		pyBadReadService, pyBadReadContract, pyBadReadScript, releaseID)
+	clearProd := rejectPythonFixtureRelease(t, ctx, clients, pyBadReadService, releaseID)
 	defer clearProd()
 
 	// 1. The fixer produced an attempt and parked it awaiting its
@@ -228,7 +223,7 @@ func TestE2E_PythonValidationFailure_VerifiedFix(t *testing.T) {
 		"the proposed contract must declare a read against a relation that exists")
 	require.NotContains(t, content, "select id from "+pyBrokenRelation,
 		"the proposed contract must no longer declare the read that failed to bind")
-	require.Contains(t, content, "table: py_bad_read",
+	require.Contains(t, content, "id: "+pyBadReadUniqueID,
 		"the fix must keep declaring the same node, not replace it with a different one")
 
 	// 5. The fix is announced for human review.
@@ -304,8 +299,7 @@ func TestE2E_PythonValidationFailure_VerificationErrorFeedsNextAttempt(t *testin
 	// consumed entries, so the checks below read what the taps recorded.
 	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV3)
 
-	clearProd := rejectPythonFixtureRelease(t, ctx, clients,
-		pyLoopService, pyLoopContract, pyLoopScript, releaseID)
+	clearProd := rejectPythonFixtureRelease(t, ctx, clients, pyLoopService, releaseID)
 	defer clearProd()
 
 	// 1. Attempt 1's verification run fails the fix, and its error is
@@ -350,7 +344,7 @@ func TestE2E_PythonValidationFailure_VerificationErrorFeedsNextAttempt(t *testin
 		"the second attempt must declare a read against a relation that exists")
 	require.NotContains(t, content, "select id from "+pyStillBrokenRelation,
 		"the second attempt must not repeat the read the first attempt failed for")
-	require.Contains(t, content, "table: py_loop_read",
+	require.Contains(t, content, "id: "+pyLoopUniqueID,
 		"the fix must keep declaring the same node, not replace it with a different one")
 
 	// 3. The failed verification run reached no classifier: no decision row
@@ -371,8 +365,8 @@ func TestE2E_PythonValidationFailure_VerificationErrorFeedsNextAttempt(t *testin
 }
 
 // rejectPythonFixtureRelease posts one of the remediation fixture repository's
-// services as a python release and waits for validation to reject it. The
-// contract it uploads is built from the same file the served repository
+// services as a python-odcs release and waits for it to be rejected. The
+// bundle it uploads is built from the same files the served repository
 // checkout holds, so the node the release fails on is the node the fixer will
 // later find in the checkout.
 //
@@ -384,7 +378,7 @@ func TestE2E_PythonValidationFailure_VerificationErrorFeedsNextAttempt(t *testin
 // deferred call, including the one that closes every pool.
 func rejectPythonFixtureRelease(
 	t *testing.T, ctx context.Context, clients *testClients,
-	service, contractPath, scriptPath, releaseID string,
+	service, releaseID string,
 ) func() {
 	t.Helper()
 
@@ -408,57 +402,28 @@ func rejectPythonFixtureRelease(
 	clearPythonServiceProd(t, ctx, clients)
 	cleanup := func() { clearPythonServiceProd(t, context.Background(), clients) }
 
-	contractKey := fmt.Sprintf("%s/%s/contract.yaml", service, releaseID)
-	putS3Object(t, ctx, clients, contractKey,
-		[]byte(pyRemediationContractYAML(t, service, contractPath, scriptPath)))
+	putODCSBundle(t, ctx, clients, service, releaseID, pyRemediationBundle(t, ctx, service))
 	postPythonRelease(t, clients, service, releaseID, pyFixtureImage, false)
 
 	waitForReleaseRejected(t, ctx, clients, releaseID, pyReleaseVerdictBudget)
 	return cleanup
 }
 
-// pyRemediationContractYAML renders the merged contract_version-1 wire artifact
-// a python service's CI uploads before POST /releases, from the fixture
-// repository's own authored contract file and script.
+// pyRemediationBundle builds the odcs-bundle.json a python service's CI
+// uploads before POST /releases, from the contracts and scripts of the service's
+// directory in the fixture repository, the repository root its contracts name
+// their scripts from, and the package list of the fixture image the release
+// names.
 //
-// It applies the same per-node hash recipe as the python release test's
-// pythonContractYAML: source_hash is the real sha256 of the script, so editing
-// the script genuinely re-fingerprints the node; shared_code_hash is empty (the
-// script imports nothing in-repo); and topology-controller recomputes only the
-// three-part fold, so any deterministic config_hash is accepted as long as the
-// fold matches.
-func pyRemediationContractYAML(t *testing.T, service, contractPath, scriptPath string) string {
+// The bundle is built by buildODCSBundle rather than by `continuo-runtime
+// pack`, because the parse scenario's contract declares a read the runtime
+// refuses (a table without its schema): that read must reach the release for
+// the release to reject it.
+func pyRemediationBundle(t *testing.T, ctx context.Context, service string) []byte {
 	t.Helper()
-
-	contract, err := fs.ReadFile(pyRemediationRepo, path.Join(pyRemediationRepoRoot, contractPath))
-	require.NoError(t, err, "read fixture contract %s", contractPath)
-	script, err := fs.ReadFile(pyRemediationRepo, path.Join(pyRemediationRepoRoot, scriptPath))
-	require.NoError(t, err, "read fixture script %s", scriptPath)
-
-	var doc struct {
-		Nodes []map[string]any `yaml:"nodes"`
-	}
-	require.NoError(t, yaml.Unmarshal(contract, &doc), "parse fixture contract %s", contractPath)
-	require.NotEmpty(t, doc.Nodes, "fixture contract %s declares no nodes", contractPath)
-
-	for _, node := range doc.Nodes {
-		entryJSON, err := json.Marshal(node)
-		require.NoError(t, err)
-		sourceHash := sha256Hex(string(script))
-		configHash := sha256Hex(string(entryJSON))
-		node["source_hash"] = sourceHash
-		node["shared_code_hash"] = ""
-		node["config_hash"] = configHash
-		node["content_hash"] = "sha256:" + sha256Hex(sourceHash+"|"+""+"|"+configHash)
-	}
-
-	merged, err := yaml.Marshal(map[string]any{
-		"contract_version": 1,
-		"service":          service,
-		"nodes":            doc.Nodes,
-	})
-	require.NoError(t, err, "marshal merged contract")
-	return string(merged)
+	root := path.Join(pyRemediationRepoRoot, "services", service)
+	return buildODCSBundle(t, pyRemediationRepo, root, service, imagePackages(t, ctx, pyFixtureImage),
+		odcsContracts(t, pyRemediationRepo, root))
 }
 
 // ensureBindingRelation creates the relation a repaired contract reads from
@@ -742,7 +707,7 @@ func assertNoNodeVersionsFor(t *testing.T, ctx context.Context, clients *testCli
 // TestE2E_PythonParseFailure_VerifiedFix drives the python remediation lane
 // from the parse stage, the leg that runs before any Job:
 //
-//	POST /releases (kind=python, one node whose declared read is not schema-qualified)
+//	POST /releases (kind=python-odcs, one node whose declared read is not schema-qualified)
 //	→ topology-controller's SQL parser rejects the node (unqualified_reference)
 //	→ release-controller: Fail(unqualified_reference), RecordStageResults("parse")
 //	→ release.rejected:v1 {stage: parse, per_node: [{kind, detail, file_path,
@@ -750,9 +715,11 @@ func assertNoNodeVersionsFor(t *testing.T, ctx context.Context, clients *testCli
 //	  there is no dbt log because nothing ran
 //	→ classifier emits remediation.requested:v3 (source=parse, node_type=python-node)
 //	→ agent-remediation routes it to the python parse fixer: the trigger's
-//	  file_path names the script, which the parser never reads, so the fixer
-//	  finds the contract yaml from the node id alone, has the model qualify the
-//	  read's relation, packages the directory and POSTs it as a verification run
+//	  file_path names the node's contract file by its path in the service's
+//	  bundle, not in the repository, so the fixer finds the .odcs.yaml file
+//	  from the node id alone, has the model qualify
+//	  the read's relation, packs the directory and POSTs it as a verification
+//	  run
 //	→ the run's own parse leg accepts the repaired SQL, its validation leg binds
 //	  the now-qualified read, and it stops at 'passed'
 //	→ the reconciler finalizes the proposal to 'proposed'
@@ -788,8 +755,7 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 	rejectedTap := startStreamTap(t, ctx, clients.redisClient, streams.ReleaseRejectedV1)
 	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationProposedV1)
 
-	clearProd := rejectPythonFixtureRelease(t, ctx, clients,
-		pyParseService, pyParseContract, pyParseScript, releaseID)
+	clearProd := rejectPythonFixtureRelease(t, ctx, clients, pyParseService, releaseID)
 	defer clearProd()
 
 	// 1. The rejection is a parse-stage rejection naming the python node, with
@@ -806,7 +772,7 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 	t.Logf("proposal attempt 1 is verifying under verification run %s", runID)
 
 	// 3. The run's own parse leg is the judge of a parse fix: it re-parses the
-	//    packaged contract, then validates, and stops at passed.
+	//    packed contract, then validates, and stops at passed.
 	assertNotListedAsRelease(t, ctx, clients, runID)
 	waitForVerificationStatus(t, ctx, clients, runID, "passed", pyVerifyVerdictBudget)
 
@@ -821,14 +787,14 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 	edits := decodeFileEdits(t, proposed.FileEdits)
 	require.Len(t, edits, 1, "the fix changes exactly the one file that declares the node")
 	require.Equal(t, pyParseContract, edits[0].Path,
-		"the edit must land in the declaring contract file, not in the script the trigger's file_path names")
+		"the edit must land in the declaring contract file, the one the node's id is declared in")
 
 	content := string(getS3ObjectByKey(t, ctx, clients, stripS3Prefix(edits[0].ContentURI)))
 	require.Contains(t, content, "select id from "+pyBindingRelation,
 		"the proposed contract must declare the read with its relation schema-qualified")
 	require.NotContains(t, content, "select id from right_name\n",
 		"the unqualified read must no longer be declared")
-	require.Contains(t, content, "table: py_unqualified_read",
+	require.Contains(t, content, "id: "+pyParseUniqueID,
 		"the fix must keep declaring the same node, not replace it with a different one")
 
 	// 5. The fix is announced for human review, and nothing reached production.
@@ -844,7 +810,8 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 // assertRejectedPythonParseStage reads the release's rejection off
 // release.rejected:v1 and pins the shape the python parse lane depends on:
 // stage parse, reason unqualified_reference, one per-node entry carrying the
-// parser's detail inline, the script as file_path, the service, and
+// parser's detail inline, the contract file as file_path (its path in the
+// service's bundle, where the rejected SQL is declared), the service, and
 // node_type=python-node.
 func assertRejectedPythonParseStage(t *testing.T, ctx context.Context, rejectedTap *streamTap, releaseID string) {
 	t.Helper()
@@ -881,8 +848,8 @@ func assertRejectedPythonParseStage(t *testing.T, ctx context.Context, rejectedT
 			require.Equal(t, pyParseUniqueID, p.PerNode[0].NodeID)
 			require.Equal(t, "unqualified_reference", p.PerNode[0].Kind)
 			require.Contains(t, p.PerNode[0].Detail, "right_name")
-			require.Equal(t, "scripts/py_unqualified_read.py", p.PerNode[0].FilePath,
-				"a python node's parse failure is reported against its script, which is why the fixer must not edit the named file")
+			require.Equal(t, path.Join("contracts", path.Base(pyParseContract)), p.PerNode[0].FilePath,
+				"a python-odcs node's parse failure names its contract file, by its path in the service's bundle")
 			require.Equal(t, pyParseService, p.PerNode[0].Service)
 			require.Equal(t, "python-node", p.PerNode[0].NodeType)
 			return true, nil

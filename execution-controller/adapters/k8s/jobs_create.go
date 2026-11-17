@@ -1059,7 +1059,7 @@ func buildPythonPodSpec(p JobParams) (corev1.PodSpec, error) {
 		// lowercase-normalized unique_id used elsewhere in this file), and
 		// must stay that way: continuo-python-runtime's select_node matches
 		// these trailing segments case-sensitively against the schema/table
-		// declared in the image's baked contract.yaml. Switching this to
+		// declared in the contract files baked into the image. Switching this to
 		// p.NodeID would silently fail to select the node for any contract
 		// that declares mixed- or upper-case names, breaking every
 		// production python Job for that node.

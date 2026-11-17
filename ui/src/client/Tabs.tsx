@@ -1,4 +1,4 @@
-import { useSearchParams } from 'react-router';
+import { useLocation, useSearchParams } from 'react-router';
 
 export type TabSpec = {
   slug: string;
@@ -22,6 +22,7 @@ export function useActiveTab(param: string, defaultSlug: string, knownSlugs: str
 
 export default function Tabs({ tabs, param, defaultSlug, variant = 'page' }: Props) {
   const [searchParams, setSearchParams] = useSearchParams();
+  const { state } = useLocation();
   const knownSlugs = tabs.map(t => t.slug);
   const active = useActiveTab(param, defaultSlug, knownSlugs);
 
@@ -29,7 +30,9 @@ export default function Tabs({ tabs, param, defaultSlug, variant = 'page' }: Pro
     const next = new URLSearchParams(searchParams);
     if (slug === defaultSlug) next.delete(param);
     else next.set(param, slug);
-    setSearchParams(next, { replace: false });
+    // The page stays the same page, so what it was opened with (the schedule a
+    // node page was opened from, say) stays with it.
+    setSearchParams(next, { replace: false, state });
   };
 
   const navClass = ['tabs', variant === 'panel' ? 'tabs--panel' : ''].filter(Boolean).join(' ');

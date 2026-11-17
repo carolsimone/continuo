@@ -35,8 +35,18 @@ COPY --from=sidecar /parse_cache_fetcher.py /parse_cache_fetcher.py
 # Python that runs dbt to write each service's compile-extras.json.
 COPY --from=sidecar /compile_extras.py /compile_extras.py
 
-# pytest and dbt both write under /app (target/, logs/, .pytest_cache); hand
-# the tree to the unprivileged dbt user and run as it.
+# docker-compose.yml mounts dbt/services read-only at /app/services, so a dbt
+# command run in a service directory (setup.sh's seed, a test's plain compile)
+# writes its target/ and logs/ here instead. Anonymous usage stats stay off:
+# dbt would otherwise write its .user.yml into the profiles directory, which is
+# the service directory. A compile through dbt_upload passes its own
+# --target-path under /app/build (dbt_upload/paths.py).
+ENV DBT_TARGET_PATH=/app/dbt-output/target \
+    DBT_LOG_PATH=/app/dbt-output/logs \
+    DBT_SEND_ANONYMOUS_USAGE_STATS=false
+
+# pytest, dbt and dbt_upload write under /app (build/, dbt-output/,
+# .pytest_cache); hand the tree to the unprivileged dbt user and run as it.
 RUN chown -R dbt:dbt /app
 USER dbt
 

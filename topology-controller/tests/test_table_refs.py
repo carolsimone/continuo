@@ -114,3 +114,163 @@ def test_a_schema_qualified_function_call_names_no_table():
 def test_invalid_sql_raises_invalid_compiled_sql():
     with pytest.raises(InvalidCompiledSqlError):
         referenced_tables(_node("SELECT FROM WHERE ("), dialect="postgres")
+
+
+# A name with no schema is a CTE reference only where a CTE of that name is in
+# scope, the rule continuo-python-runtime's validate applies to the same reads.
+ENGINE_DIALECTS = ["postgres", "trino"]
+
+
+def _unqualified_table(sql: str, dialect: str) -> str:
+    with pytest.raises(UnqualifiedTableReferenceError) as exc_info:
+        referenced_tables(_node(sql), dialect=dialect)
+    return exc_info.value.table_name
+
+
+@pytest.mark.parametrize("dialect", ENGINE_DIALECTS)
+def test_a_cte_does_not_hide_a_table_inside_its_own_body(dialect):
+    sql = "WITH orders AS (SELECT * FROM orders) SELECT * FROM orders"
+    assert _unqualified_table(sql, dialect) == "orders"
+
+
+@pytest.mark.parametrize("dialect", ENGINE_DIALECTS)
+def test_a_cte_is_not_visible_before_it_is_defined(dialect):
+    sql = "WITH a AS (SELECT * FROM b), b AS (SELECT 1 AS x) SELECT * FROM a"
+    assert _unqualified_table(sql, dialect) == "b"
+
+
+@pytest.mark.parametrize("dialect", ENGINE_DIALECTS)
+def test_a_cte_defined_in_a_subquery_is_not_visible_outside_it(dialect):
+    sql = "SELECT * FROM (WITH users AS (SELECT 1 AS id) SELECT * FROM users) s JOIN users ON 1 = 1"
+    assert _unqualified_table(sql, dialect) == "users"
+
+
+_A_CTE_READS_ITSELF = "WITH RECURSIVE t AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM t WHERE n < 3) SELECT * FROM t"
+
+
+@pytest.mark.parametrize(
+    ("sql", "dialect"),
+    [
+        pytest.param(_A_CTE_READS_ITSELF, "postgres", id="a-cte-reads-itself-postgres"),
+        pytest.param(_A_CTE_READS_ITSELF, "trino", id="a-cte-reads-itself-trino"),
+        pytest.param(
+            "WITH RECURSIVE a AS (SELECT * FROM b), b AS (SELECT 1 AS x) SELECT * FROM a",
+            "postgres",
+            id="a-cte-reads-one-defined-after-it-postgres",
+        ),
+    ],
+)
+def test_a_recursive_with_sees_all_its_ctes(sql, dialect):
+    assert referenced_tables(_node(sql), dialect=dialect) == []
+
+
+@pytest.mark.parametrize("dialect", ENGINE_DIALECTS)
+def test_a_recursive_with_still_refuses_an_unqualified_real_table(dialect):
+    sql = "WITH RECURSIVE t AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM t JOIN orders ON 1 = 1) SELECT * FROM t"
+    assert _unqualified_table(sql, dialect) == "orders"
+
+
+@pytest.mark.parametrize("dialect", ENGINE_DIALECTS)
+@pytest.mark.parametrize(
+    "sql",
+    [
+        pytest.param("WITH a AS (SELECT 1 AS x), b AS (SELECT * FROM a) SELECT * FROM b", id="an-earlier-cte"),
+        pytest.param(
+            "WITH users AS (SELECT 1 AS id) SELECT * FROM users WHERE id IN (SELECT id FROM users)",
+            id="a-correlated-subquery",
+        ),
+    ],
+)
+def test_earlier_ctes_and_correlated_subqueries_see_the_cte(sql, dialect):
+    assert referenced_tables(_node(sql), dialect=dialect) == []
+
+
+@pytest.mark.parametrize("dialect", ENGINE_DIALECTS)
+def test_ctes_still_lists_every_cte_name(dialect):
+    """The ephemeral resolver reads every CTE name, in scope or not, the CTE that
+    shadows a table of its own name included."""
+    names: set[str] = set()
+    referenced_tables(
+        _node(
+            "WITH Orders AS (SELECT * FROM raw.orders) SELECT * FROM orders",
+            "SELECT * FROM (WITH inner_cte AS (SELECT 1 AS id) SELECT * FROM inner_cte) s JOIN raw.b ON 1 = 1",
+        ),
+        dialect=dialect,
+        ctes=names,
+    )
+    assert names == {"orders", "inner_cte"}
+    shadowing: set[str] = set()
+    with pytest.raises(UnqualifiedTableReferenceError):
+        referenced_tables(
+            _node("WITH orders AS (SELECT * FROM orders) SELECT * FROM orders"), dialect=dialect, ctes=shadowing,
+        )
+    assert shadowing == {"orders"}
+
+
+# Shapes where sqlglot decides which node carries a WITH clause: a set
+# operation in a CTE body, a WITH nested in a CTE body, a subquery in a CTE
+# body and a CTE local to one subquery. Each pins what the scope rule sees there.
+SCOPE_SHAPES_THAT_READ_ONLY_CTES = [
+    pytest.param(
+        "WITH a AS (SELECT 1 AS x), b AS (SELECT * FROM a UNION ALL SELECT * FROM a) SELECT * FROM b",
+        [],
+        id="a-union-in-a-cte-body-sees-an-earlier-cte",
+    ),
+    pytest.param(
+        "WITH a AS (WITH inner_cte AS (SELECT 1 AS x) SELECT * FROM inner_cte) SELECT * FROM a",
+        [],
+        id="a-with-nested-in-a-cte-body-is-seen-inside-that-body",
+    ),
+    pytest.param(
+        "WITH a AS (SELECT 1 AS x), b AS (SELECT (SELECT max(x) FROM a) AS m) SELECT * FROM b",
+        [],
+        id="a-scalar-subquery-in-a-cte-body-sees-an-earlier-cte",
+    ),
+    pytest.param(
+        "WITH a AS (SELECT 1 AS x), b AS (SELECT 1 AS y WHERE EXISTS (SELECT 1 FROM a)) SELECT * FROM b",
+        [],
+        id="an-exists-subquery-in-a-cte-body-sees-an-earlier-cte",
+    ),
+    pytest.param(
+        "WITH a AS (SELECT 1 AS x), b AS (SELECT * FROM raw.t CROSS JOIN LATERAL (SELECT * FROM a) l) SELECT * FROM b",
+        ["raw.t"],
+        id="a-lateral-subquery-in-a-cte-body-sees-an-earlier-cte",
+    ),
+]
+
+
+@pytest.mark.parametrize("dialect", ENGINE_DIALECTS)
+@pytest.mark.parametrize(("sql", "keys"), SCOPE_SHAPES_THAT_READ_ONLY_CTES)
+def test_a_cte_in_scope_is_seen_whatever_node_carries_the_with(sql, keys, dialect):
+    assert [r.key for r in referenced_tables(_node(sql), dialect=dialect)] == keys
+
+
+SCOPE_SHAPES_THAT_READ_A_TABLE = [
+    pytest.param(
+        "WITH b AS (SELECT 1 AS x UNION ALL SELECT * FROM b) SELECT * FROM b",
+        "b",
+        id="a-union-in-a-cte-body-does-not-see-its-own-cte",
+    ),
+    pytest.param(
+        "WITH a AS (SELECT 1 AS x UNION ALL SELECT * FROM c), c AS (SELECT 1 AS x) SELECT * FROM a",
+        "c",
+        id="a-union-in-a-cte-body-does-not-see-a-later-cte",
+    ),
+    pytest.param(
+        "WITH a AS (WITH inner_cte AS (SELECT 1 AS x) SELECT * FROM inner_cte), "
+        "b AS (SELECT * FROM inner_cte) SELECT * FROM b",
+        "inner_cte",
+        id="a-with-nested-in-a-cte-body-is-not-seen-by-a-later-sibling-cte",
+    ),
+    pytest.param(
+        "SELECT * FROM (WITH u AS (SELECT 1 AS id) SELECT * FROM u) s1 JOIN (SELECT * FROM u) s2 ON 1 = 1",
+        "u",
+        id="a-subquery-local-cte-is-not-seen-by-a-sibling-subquery",
+    ),
+]
+
+
+@pytest.mark.parametrize("dialect", ENGINE_DIALECTS)
+@pytest.mark.parametrize(("sql", "table_name"), SCOPE_SHAPES_THAT_READ_A_TABLE)
+def test_a_cte_out_of_scope_is_not_seen_whatever_node_carries_the_with(sql, table_name, dialect):
+    assert _unqualified_table(sql, dialect) == table_name

@@ -171,6 +171,11 @@ func (t *transaction) CaseBase() repository.CaseBaseRepository {
 	return &caseBaseRepository{run: t.run}
 }
 
+// Contracts returns the contract-history writes on this transaction.
+func (t *transaction) Contracts() repository.ContractRepository {
+	return &contractVersionRepository{run: t.run}
+}
+
 // inWriteTx runs body in one explicit write transaction whose statements are
 // bound to tenantID. It commits when body returns true and no error, and rolls
 // back otherwise. It does not retry: the consumer redelivers a message whose

@@ -56,6 +56,21 @@ func TestParseReleasePromotedV2_MapsThePayload(t *testing.T) {
 	assert.Equal(t, "deadbeef", in.CommitSHA)
 	assert.True(t, in.PromotedAt.Equal(promotedAt))
 	assert.True(t, in.Bootstrap)
+	assert.Empty(t, in.ContractBundleURI, "an entry without a contract bundle leaves its fields empty")
+	assert.Empty(t, in.ContractBundleSHA256)
+}
+
+func TestReleasePromotedV2Parser_ReadsTheContractBundle(t *testing.T) {
+	in, err := ParseReleasePromotedV2(releasePromotedV2Message(t, events.ReleasePromoted{
+		ReleaseID: "rel-7", PromotionSeq: 7,
+		TopologyURI: "s3://continuo/tenants/default/topologies/rel-7/topology.json.gz", TopologySHA256: "ab12",
+		ContractBundleURI:    "s3://continuo/tenants/default/topologies/rel-7/contracts.json.gz",
+		ContractBundleSHA256: "9b0c4d1e7a52f3860be1d9c4a7f08e35b216d0a94c7e53f1a8b20d6e49c71f3a",
+	}))
+	require.NoError(t, err)
+	assert.Equal(t, "s3://continuo/tenants/default/topologies/rel-7/contracts.json.gz", in.ContractBundleURI)
+	assert.Equal(t, "9b0c4d1e7a52f3860be1d9c4a7f08e35b216d0a94c7e53f1a8b20d6e49c71f3a", in.ContractBundleSHA256)
+	assert.Equal(t, "ab12", in.TopologySHA256, "the topology's checksum stays its own")
 }
 
 func TestParseReleasePromotedV2_MissingPayloadIsPermanent(t *testing.T) {

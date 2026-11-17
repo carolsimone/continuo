@@ -86,6 +86,7 @@ func TestParseFailureKind_ContractOrderAndHealable(t *testing.T) {
 	want := []model.ParseFailureKind{
 		model.ParseFailureKindInvalidSQL,
 		model.ParseFailureKindUnqualifiedReference,
+		model.ParseFailureKindInvalidContract,
 		model.ParseFailureKindInvalidArtifact,
 		model.ParseFailureKindInternal,
 	}
@@ -103,11 +104,60 @@ func TestParseFailureKind_ContractOrderAndHealable(t *testing.T) {
 	if !model.ParseFailureKindInvalidSQL.Healable() || !model.ParseFailureKindUnqualifiedReference.Healable() {
 		t.Error("both SQL kinds must be healable")
 	}
-	if model.ParseFailureKindInvalidArtifact.Healable() || model.ParseFailureKindInternal.Healable() {
-		t.Error("artifact and internal kinds must not be healable")
+	if model.ParseFailureKindInvalidContract.Healable() || model.ParseFailureKindInvalidArtifact.Healable() || model.ParseFailureKindInternal.Healable() {
+		t.Error("contract, artifact and internal kinds must not be healable")
 	}
 	if model.ParseFailureKind("nonsense").IsValid() {
 		t.Error("an undeclared value must not be valid")
+	}
+}
+
+// TestParseFailureKind_InvalidContractComesAfterTheHealableKinds pins the
+// precedence of invalid_contract: it follows the two SQL kinds a source change
+// can fix and precedes the artifact and internal kinds, and no source change to
+// the SQL fixes it.
+func TestParseFailureKind_InvalidContractComesAfterTheHealableKinds(t *testing.T) {
+	want := []model.ParseFailureKind{"invalid_sql", "unqualified_reference", "invalid_contract", "invalid_artifact", "internal"}
+	got := model.ParseFailureKinds()
+	if len(got) != len(want) {
+		t.Fatalf("ParseFailureKinds() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("index %d: %q, want %q", i, got[i], want[i])
+		}
+	}
+	if string(model.ParseFailureKindInvalidContract) != "invalid_contract" {
+		t.Errorf("ParseFailureKindInvalidContract = %q", model.ParseFailureKindInvalidContract)
+	}
+	if !model.ParseFailureKindInvalidContract.IsValid() {
+		t.Error("invalid_contract must be a valid parse failure kind")
+	}
+	if model.ParseFailureKindInvalidContract.Healable() {
+		t.Error("invalid_contract must not be healable")
+	}
+}
+
+// TestRejectReason_InvalidContractIsNotHealable pins invalid_contract as a
+// declared reject reason that the remediation classifier drops.
+func TestRejectReason_InvalidContractIsNotHealable(t *testing.T) {
+	if string(model.RejectReasonInvalidContract) != "invalid_contract" {
+		t.Errorf("RejectReasonInvalidContract = %q", model.RejectReasonInvalidContract)
+	}
+	if !model.RejectReasonInvalidContract.IsValid() {
+		t.Error("invalid_contract must be a valid reject reason")
+	}
+	if model.RejectReasonInvalidContract.Healable() {
+		t.Error("invalid_contract must not be healable")
+	}
+	found := false
+	for _, r := range model.RejectReasons() {
+		if r == model.RejectReasonInvalidContract {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("RejectReasons() must list invalid_contract")
 	}
 }
 

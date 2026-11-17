@@ -6,6 +6,7 @@ import (
 
 	"github.com/carolsimone/continuo/catalog/domain/casebase"
 	"github.com/carolsimone/continuo/catalog/domain/codeversion"
+	"github.com/carolsimone/continuo/catalog/domain/contractversion"
 	"github.com/carolsimone/continuo/catalog/domain/topology"
 )
 
@@ -87,4 +88,35 @@ type CaseBaseRepository interface {
 	// absent). A rejected outcome only stamps the terminal state. Idempotent
 	// under redelivery.
 	RecordPullRequestOutcome(ctx context.Context, tenantID string, o casebase.PullRequestOutcome) error
+}
+
+// ContractRepository writes a tenant's contract history behind the :Node
+// topology: one immutable stored contract per (node, contract hash), one
+// promotion edge for each promotion that changed a node's contract, and a
+// pointer from each node to its current contract.
+type ContractRepository interface {
+	// ReadStates returns what the graph holds about the contract history of
+	// each node of uniqueIDs, keyed by unique id: its contract watermark, its
+	// current contract and counter, its newest counter and the earliest
+	// counter of each contract it has held. A node the graph holds with no
+	// contract has a zero state; a node the graph does not hold has no entry.
+	ReadStates(ctx context.Context, tenantID string, uniqueIDs []string) (map[string]contractversion.NodeState, error)
+	// Write applies a promotion's plan to tenantID's graph. A node of
+	// plan.Versions the graph does not hold yet is created inactive, which the
+	// topology swap makes live when it applies a release that carries it.
+	// Every node of plan.Versions advances its watermark,
+	// contract_promotion_seq, to the larger of its value and p.PromotionSeq;
+	// each stored contract is created only when missing and never changed;
+	// each edge of plan.Edges is recorded, and the node's pointer moved to it,
+	// only while the node's watermark equals p.PromotionSeq, so an older
+	// promotion never takes a node's pointer from a newer one.
+	Write(ctx context.Context, tenantID string, p contractversion.Promotion, plan contractversion.WritePlan) (contractversion.WriteResult, error)
+	// RecordLiveFolder records that the promotion promotionSeq of release
+	// releaseID is done with tenantID's live contracts folder: the folder's
+	// watermark moves to the larger of its value and promotionSeq, taking
+	// releaseID with it when it moves. settingsSHA256 is the fingerprint of
+	// the publishing settings the folder's files now carry, which is stored;
+	// an empty settingsSHA256 means the promotion wrote no file and leaves the
+	// stored fingerprint as it is.
+	RecordLiveFolder(ctx context.Context, tenantID string, promotionSeq int64, releaseID, settingsSHA256 string) error
 }

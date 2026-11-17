@@ -152,6 +152,9 @@ streams:
       - service: catalog
         group: catalog-release-versions
         const: CatalogReleaseVersions
+      - service: catalog
+        group: catalog-release-contracts
+        const: CatalogReleaseContracts
       - service: execution-controller
         group: execution-controller-release-promoted
         const: ExecutionControllerReleasePromoted
@@ -311,6 +314,10 @@ vocabularies:
         const: UnqualifiedReference
         healable: true
         description: a node references a relation without a schema qualifier.
+      - value: invalid_contract
+        const: InvalidContract
+        healable: false
+        description: a python node's contract does not satisfy the ODCS contract rules; every invalid contract of the release is named in one failure.
       - value: invalid_artifact
         const: InvalidArtifact
         healable: false
@@ -349,6 +356,10 @@ vocabularies:
         const: UnqualifiedReference
         healable: true
         description: a node references a relation without a schema qualifier.
+      - value: invalid_contract
+        const: InvalidContract
+        healable: false
+        description: a python node's contract in the release does not satisfy the ODCS contract rules.
       - value: invalid_artifact
         const: InvalidArtifact
         healable: false

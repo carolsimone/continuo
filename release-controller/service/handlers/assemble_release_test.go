@@ -52,12 +52,12 @@ func TestAssembleManifestSet_NoExistingServices(t *testing.T) {
 func TestAssembleManifestSet_ThreadsKinds(t *testing.T) {
 	existing := []*release.ServiceProd{
 		release.NewServiceProd("svc-dbt", "rOld", "s3://b/svc-dbt/rOld/manifest.json", "t1", release.ManifestKindDbt, time.Unix(0, 0)),
-		release.NewServiceProd("svc-py-old", "rOld2", "s3://b/svc-py-old/rOld2/contract.yaml", "t2", release.ManifestKindPython, time.Unix(0, 0)),
+		release.NewServiceProd("svc-py-old", "rOld2", "s3://b/svc-py-old/rOld2/odcs-bundle.json", "t2", release.ManifestKindPythonODCS, time.Unix(0, 0)),
 	}
-	set := handlers.AssembleManifestSet(existing, "b", "svc-py", "rNew", "t3", release.ManifestKindPython)
+	set := handlers.AssembleManifestSet(existing, "b", "svc-py", "rNew", "t3", release.ManifestKindPythonODCS)
 
 	require.Len(t, set.ManifestKeys, 3)
-	assert.Equal(t, release.ManifestKey{Service: "svc-py", S3URI: "s3://b/svc-py/rNew/contract.yaml", Kind: release.ManifestKindPython}, set.ManifestKeys[0])
+	assert.Equal(t, release.ManifestKey{Service: "svc-py", S3URI: "s3://b/svc-py/rNew/odcs-bundle.json", Kind: release.ManifestKindPythonODCS}, set.ManifestKeys[0])
 	assert.Contains(t, set.ManifestKeys, release.ManifestKey{Service: "svc-dbt", S3URI: "s3://b/svc-dbt/rOld/manifest.json", Kind: release.ManifestKindDbt})
-	assert.Contains(t, set.ManifestKeys, release.ManifestKey{Service: "svc-py-old", S3URI: "s3://b/svc-py-old/rOld2/contract.yaml", Kind: release.ManifestKindPython})
+	assert.Contains(t, set.ManifestKeys, release.ManifestKey{Service: "svc-py-old", S3URI: "s3://b/svc-py-old/rOld2/odcs-bundle.json", Kind: release.ManifestKindPythonODCS})
 }

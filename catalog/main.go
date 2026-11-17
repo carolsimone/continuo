@@ -15,10 +15,12 @@ import (
 	neo4jinfra "github.com/carolsimone/continuo/catalog/adapters/neo4j"
 	"github.com/carolsimone/continuo/catalog/adapters/redis"
 	s3infra "github.com/carolsimone/continuo/catalog/adapters/s3"
+	serializationinfra "github.com/carolsimone/continuo/catalog/adapters/serialization"
 	"github.com/carolsimone/continuo/catalog/config"
 	"github.com/carolsimone/continuo/catalog/service/backup"
 	"github.com/carolsimone/continuo/catalog/service/handlers"
 	"github.com/carolsimone/continuo/catalog/service/queries"
+	"github.com/carolsimone/continuo/catalog/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/lifecycle"
@@ -29,6 +31,10 @@ import (
 	pkgretention "github.com/carolsimone/continuo/pkg/retention"
 	"github.com/carolsimone/continuo/pkg/streams"
 )
+
+// liveFolderRetry is how long a failed start-up rewrite of the live contracts
+// folder waits before it tries again.
+const liveFolderRetry = time.Minute
 
 // topologyHandlerTimeout bounds the consumers whose one message covers a whole
 // DAG or release, which they write to Neo4j in one handler.
@@ -212,6 +218,31 @@ func main() {
 	)
 	lifecycleManager.Go(func() { retentionSweeper.Run(ctx) })
 
+	// Contract history sweeper — runs only when CONTRACT_HISTORY_RETENTION_DAYS
+	// is above 0; at 0, every contract version is kept. It deletes the
+	// promotion edges older than that many days, never a node's two newest, and
+	// the versions no edge or pointer then reaches. Like the marker sweep, it
+	// skips a tenant whose export lease is held and runs every
+	// RETENTION_SWEEP_INTERVAL_MINUTES as a tracked goroutine.
+	if cfg.ContractHistoryRetentionDays > 0 {
+		contractHistorySweeper := neo4jinfra.NewContractHistorySweeper(neo4jClient, logger)
+		contractHistoryRetention := pkgretention.NewSweeper(
+			[]pkgretention.Target{
+				{
+					Name:       "contract_history",
+					Prune:      contractHistorySweeper.Prune,
+					AfterSweep: contractHistorySweeper.AfterSweep,
+				},
+			},
+			pkgretention.Config{
+				Retention: time.Duration(cfg.ContractHistoryRetentionDays) * 24 * time.Hour,
+				Interval:  time.Duration(cfg.RetentionSweepIntervalMin) * time.Minute,
+			},
+			logger,
+		)
+		lifecycleManager.Go(func() { contractHistoryRetention.Run(ctx) })
+	}
+
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
 		return healthServer.Shutdown(ctx)
 	})
@@ -221,9 +252,10 @@ func main() {
 	// ========================================================================
 
 	// One object-storage client, passed to each adapter as the roles it uses:
-	// the topology artifact reader of both promotion groups and the
-	// code-bundle reader of the versions and rejections groups read objects,
-	// and the backup store streams, lists and deletes each tenant's exports.
+	// the topology artifact reader of the topology and versions groups, the
+	// code-bundle reader of the versions and rejections groups and the
+	// contract-bundle reader of the contracts group read objects, and the
+	// backup store streams, lists and deletes each tenant's exports.
 	objectStore, err := objectstore.New(ctx, objectstore.ConfigFromS3(cfg.S3))
 	if err != nil {
 		logger.Error("Failed to build the object-storage client", "error", err)
@@ -252,6 +284,47 @@ func main() {
 	releasePromotedVersionsHandler := handlers.NewReleasePromotedVersionsHandler(
 		graphUnitOfWork, codeBundleReader, topologyArtifactReader, logger)
 
+	// release.promoted:v2 (contracts) — a third independent consumer group. It
+	// reads the release's contract bundle from object storage, verifies it
+	// against the promotion's SHA-256, records each node's contract versions,
+	// promotion edges and current-contract pointer through the Neo4j unit of
+	// work, then rewrites the tenant's live contracts folder
+	// (tenants/<tenant>/contracts/live/) under the tenant's live-folder lease,
+	// which is not the export lease, renewing the message's in-flight mark
+	// while the rewrite runs. The published files carry the install's warehouse
+	// servers entry (cfg.ContractsServer, nil when no host is set). Isolated
+	// from the swap and the code versions so neither waits on the contracts.
+	// Its series are registered here whatever the install enables, every label
+	// pair at 0.
+	contractMetrics := metricsinfra.NewContractMetrics(metricsReg)
+	liveFolderLease := neo4jinfra.NewLiveFolderLease(neo4jClient, logger)
+	contractReader := neo4jinfra.NewContractQueryRepository(neo4jClient)
+	liveFolder := handlers.NewLiveFolder(
+		contractReader,
+		s3infra.NewLiveContractsStore(objectStore),
+		serializationinfra.ODCSYAML{},
+		liveFolderLease,
+		liveFolderLease,
+		contractMetrics,
+		cfg.ContractsServer,
+		time.Now,
+		logger,
+	)
+	releasePromotedContractsHandler := handlers.NewReleasePromotedContractsHandler(
+		graphUnitOfWork, s3infra.NewContractBundleReader(objectStore), liveFolder, contractMetrics,
+		uow.InFlightTTL/4, logger)
+
+	// A tenant whose live folder was written with other publishing settings
+	// has every file rewritten, in a tracked goroutine that neither holds
+	// readiness back nor outlives shutdown. A pass that fails is logged, its
+	// failed writes counted, and tried again every liveFolderRetry.
+	liveFolderTenants := neo4jinfra.NewGraphTenants(neo4jClient)
+	lifecycleManager.Go(func() {
+		if err := liveFolder.RefreshAtStart(ctx, liveFolderTenants, liveFolderRetry); err != nil {
+			logger.Info("Live contracts folder start-up rewrite stopped", "error", err)
+		}
+	})
+
 	// remediation.requested:v3 (rejections) + remediation.pr_opened:v1
 	// (proposals) + remediation.pr_closed:v1 (provenance) — the
 	// failure-precedent case base, written under the tenant each message names
@@ -278,6 +351,7 @@ func main() {
 	}{
 		{"release_promoted", streams.ReleasePromotedV2, streams.CatalogReleaseTopology, redis.NewReleasePromotedBinding(releasePromotedHandler, logger), topologyHandlerTimeout},
 		{"release_promoted_versions", streams.ReleasePromotedV2, streams.CatalogReleaseVersions, redis.NewReleasePromotedVersionsBinding(releasePromotedVersionsHandler, logger), topologyHandlerTimeout},
+		{"release_promoted_contracts", streams.ReleasePromotedV2, streams.CatalogReleaseContracts, redis.NewReleasePromotedContractsBinding(releasePromotedContractsHandler, logger), topologyHandlerTimeout},
 		{"remediation_requested_rejections", streams.RemediationRequestedV3, streams.CatalogRemediationRequestedRejections, redis.NewRemediationRequestedBinding(rejectionsHandler, logger), 0},
 		{"remediation_pr_opened_proposals", streams.RemediationPrOpenedV1, streams.CatalogRemediationPrOpenedProposals, redis.NewPrOpenedBinding(proposalsHandler, logger), 0},
 		{"remediation_pr_closed_provenance", streams.RemediationPrClosedV1, streams.CatalogRemediationPrClosedProvenance, redis.NewPrClosedBinding(provenanceHandler, logger), 0},
@@ -332,7 +406,8 @@ func main() {
 	codeVersionQueries := queries.NewCodeVersionQueryService(codeVersionQueryRepo)
 	precedentQueryRepo := neo4jinfra.NewPrecedentQueryRepository(neo4jClient, logger)
 	precedentQueries := queries.NewPrecedentQueryService(precedentQueryRepo)
-	queryHandler := grpcinfra.NewQueryHandler(queryRepo, codeVersionQueries, precedentQueries, logger)
+	contractQueries := queries.NewContractQueryService(contractReader, serializationinfra.ODCSYAML{}, serializationinfra.CanonicalJSON)
+	queryHandler := grpcinfra.NewQueryHandler(queryRepo, codeVersionQueries, precedentQueries, contractQueries, logger)
 
 	grpcServer, err := grpcinfra.NewServer(cfg.GRPCPort, queryHandler, logger)
 	if err != nil {

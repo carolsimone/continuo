@@ -45,6 +45,7 @@ func PkgConstantsForTest() map[string]string {
 		"ReleaseControllerCompileCompleted": ReleaseControllerCompileCompleted,
 		"CatalogReleaseTopology": CatalogReleaseTopology,
 		"CatalogReleaseVersions": CatalogReleaseVersions,
+		"CatalogReleaseContracts": CatalogReleaseContracts,
 		"ExecutionControllerReleasePromoted": ExecutionControllerReleasePromoted,
 		"RunControllerReleasePromoted": RunControllerReleasePromoted,
 		"RemediationReleaseRejected": RemediationReleaseRejected,

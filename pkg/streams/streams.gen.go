@@ -88,6 +88,8 @@ const (
 	CatalogReleaseTopology = "catalog-release-topology"
 	// CatalogReleaseVersions — catalog consumer group on release.promoted:v2.
 	CatalogReleaseVersions = "catalog-release-versions"
+	// CatalogReleaseContracts — catalog consumer group on release.promoted:v2.
+	CatalogReleaseContracts = "catalog-release-contracts"
 	// ExecutionControllerReleasePromoted — execution-controller consumer group on release.promoted:v2.
 	ExecutionControllerReleasePromoted = "execution-controller-release-promoted"
 	// RunControllerReleasePromoted — run-controller consumer group on release.promoted:v2.
@@ -154,7 +156,7 @@ var Groups = map[string][]string{
 	SeedBuildCompletedV1:        {ReleaseControllerSeedBuildCompleted},
 	CompileRequestedV1:          {ExecutionControllerCompileRequested},
 	CompileCompletedV1:          {ReleaseControllerCompileCompleted},
-	ReleasePromotedV2:           {CatalogReleaseTopology, CatalogReleaseVersions, ExecutionControllerReleasePromoted, RunControllerReleasePromoted},
+	ReleasePromotedV2:           {CatalogReleaseTopology, CatalogReleaseVersions, CatalogReleaseContracts, ExecutionControllerReleasePromoted, RunControllerReleasePromoted},
 	ReleaseRejectedV1:           {RemediationReleaseRejected, ExecutionControllerReleaseRejected},
 	PipelineRunFinishedV1:       {ExecutionControllerPipelineRunFinished},
 	RemediationRetryRequestedV2: {RemediationRetryRequested},

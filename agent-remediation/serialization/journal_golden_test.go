@@ -238,7 +238,9 @@ func evidenceSamples() map[remediation.EvidenceKey]any {
 			Schema: "analytics", Table: "fx", RepoRoot: "svc", ContractDir: "svc/contracts",
 			YAMLPath: "svc/contracts/fx.yaml", YAMLText: "nodes: []",
 		},
-		remediation.KeyContractEntry: remediation.Text("schema: analytics\ntable: fx"),
+		remediation.KeyContractEntry:   remediation.Text("schema: analytics\ntable: fx"),
+		remediation.KeyCurrentContract: remediation.Text("id: analytics.fx\nversion: \"3\"\n"),
+		remediation.KeyImagePackages:   remediation.ImagePackages{"duckdb": "1.4.0", "pyarrow": "26.0.0"},
 		remediation.KeyPreviousTries: []remediation.TryRecord{{
 			Round: 1, Try: 2, Attempt: 2,
 			Clusters: []remediation.ClusterRecord{{

@@ -209,8 +209,9 @@ func main() {
 	metricsReg.WatchRedis(rc)
 
 	// One object-storage client for agent-remediation's adapters, each given
-	// the role it uses: the evidence reader and the candidate-source reader
-	// read through it, the artifact writer writes through it. Static S3 keys
+	// the role it uses: the evidence reader, the candidate-source reader and
+	// the image-packages source read through it, the artifact writer writes
+	// through it. Static S3 keys
 	// when both are set; otherwise the SDK's default credential chain (IAM
 	// role, workload identity).
 	objectStore, err := objectstore.New(ctx, objectstore.ConfigFromS3(cfg.S3))
@@ -265,13 +266,17 @@ func main() {
 	// adapter.
 	gh := ragithub.NewSourceReader(cfg.GitHubBaseURL, cfg.GitHubToken, &http.Client{Timeout: 30 * time.Second})
 
-	// Fix verification: a proposed fix's edits are packaged (a merged contract
+	// Fix verification: a proposed fix's edits are packaged (an odcs-bundle.json
 	// for a python service, a source overlay for a dbt one) and submitted to
 	// release-controller as a verification run that carries the full
 	// parse -> candidate-schema -> validation pipeline through to a terminal
 	// passed/failed verdict without ever promoting.
 	releaseGateway := releasehttp.NewGateway(cfg.ReleaseControllerURL, evidenceReader,
 		&http.Client{Timeout: 30 * time.Second})
+	// A python fix is packed with the package list of the rejected release's
+	// image of its service, read from the release's contract bundle or from
+	// the odcs-bundle.json the service's CI uploaded to the bucket.
+	imagePackages := s3.NewImagePackagesSource(objectStore, releaseGateway, cfg.S3.Bucket)
 
 	// The packager is resolved here rather than at first use: an image built
 	// without the CLI cannot package any python fix, and failing at boot names
@@ -310,6 +315,8 @@ func main() {
 		// and reading the declarations a file holds are one yaml shape.
 		ContractInspector: contracts,
 		Packager:          packager,
+		ImagePackages:     imagePackages,
+		CurrentContracts:  graphClient,
 		Pipeline:          releaseGateway,
 		Releases:          releaseGateway,
 		PriorAttempts:     proposalRepo,
@@ -333,6 +340,7 @@ func main() {
 		bundle:    bundleReader,
 		contracts: contracts,
 		packager:  packager,
+		images:    imagePackages,
 		release:   releaseGateway,
 		proposals: proposalRepo,
 		tries:     remediationRepo,
@@ -642,6 +650,7 @@ type runnerAdapters struct {
 		ports.UpstreamChangeReader
 		ports.VersionReader
 		ports.PrecedentReader
+		ports.CurrentContractReader
 	}
 	bundle    ports.CandidateSourceReader
 	contracts interface {
@@ -649,6 +658,7 @@ type runnerAdapters struct {
 		ports.ContractInspector
 	}
 	packager ports.ContractPackager
+	images   ports.ImagePackagesSource
 	release  interface {
 		ports.ReleaseReader
 		ports.VerificationPipeline
@@ -679,6 +689,8 @@ func runnerCollaborators(cfg config.Config, a runnerAdapters, logger *slog.Logge
 		ContractLocator:     a.contracts,
 		ContractInspector:   a.contracts,
 		Packager:            a.packager,
+		ImagePackages:       a.images,
+		CurrentContracts:    a.graph,
 		Releases:            a.release,
 		PriorAttempts:       a.proposals,
 		Tries:               a.tries,

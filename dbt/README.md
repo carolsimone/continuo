@@ -44,6 +44,7 @@ dbt/
     __main__.py              # Entry point: python -m dbt_upload
     cli.py                   # Argparse: compile, upload, load subcommands
     config.py                # Target profile loading, service dir resolution
+    paths.py                 # Each service's build directory under /app/build
     compile.py               # dbt compile wrapper
     upload.py                # Manifest filtering, compile extras + S3 upload
   targets.yaml              # Named S3 target profiles (minio, hetzner)
@@ -55,11 +56,14 @@ dbt/
     service-2/              # models: table_g, table_h
     service-3/              # models: table_d, table_e, table_f, table_i, table_j
   tests/
+    conftest.py              # build_root fixture: a build root under tmp_path
     test_config.py           # Unit tests for config module
+    test_paths.py            # Unit tests for paths module
     test_compile.py          # Unit tests for compile module
     test_cli.py              # Unit tests for CLI
     test_upload.py           # Manifest filter + S3 key unit tests, plus
                              #   minio integration tests (@pytest.mark.integration)
+    test_services_mount.py   # Integration test: /app/services is mounted read-only
 ```
 
 ## dbt_upload CLI
@@ -70,13 +74,22 @@ The `dbt_upload` package provides three subcommands for compiling dbt services a
 
 | Command   | What it does |
 |-----------|-------------|
-| `compile` | Run `dbt compile` for each service as its image compiles it: in `target/staged-project`, a copy of the dbt base image's `/project` (its shared macros) with the service's files over it, writing the manifest to the service's `target/` |
+| `compile` | Run `dbt compile` for each service as its image compiles it: in `/app/build/<service>/staged-project`, a copy of the dbt base image's `/project` (its shared macros) with the service's files over it, writing the manifest to `/app/build/<service>/` |
 | `upload`  | Filter manifests (keep models, seeds, snapshots, tests and operations, strip `local_stub`), write each service's `compile-extras.json` with `/compile_extras.py` and the Python that runs dbt, and upload both to `<service>/<release_id>/` in S3 |
 | `load`    | Compile + upload in one step (primary workflow) |
 
 ### Usage
 
-The container starts idle (`tail -f /dev/null`). Use `docker exec` to run any subcommand:
+The container starts idle (`tail -f /dev/null`). Use `docker exec` to run any subcommand.
+
+`docker-compose.yml` mounts `dbt/services` at `/app/services` read-only, so
+nothing the container runs writes into your checkout, whichever user owns it.
+Each service's compile output (the staged project, `manifest.json`,
+`compile-extras.json`) lives in the container under `/app/build/<service>/`.
+Any other dbt command run in a service directory writes its `target/` and
+`logs/` to the image's `DBT_TARGET_PATH` (`/app/dbt-output/target`) and
+`DBT_LOG_PATH` (`/app/dbt-output/logs`). Read a compiled manifest with
+`docker exec dbt-compile-and-load cat /app/build/service-1/manifest.json`.
 
 ```bash
 # Compile + upload (full load)

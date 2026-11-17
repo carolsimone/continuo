@@ -122,11 +122,14 @@ func (f *fakeObserved) ListObservedJobNames(context.Context) ([]string, error)  
 func (f *fakeObserved) StateAge(context.Context, uuid.UUID) (time.Duration, error) { return 0, f.err }
 
 // fakeLogs returns a fixed pod log, and a fixed log per named container, and
-// counts the pod-log reads.
+// counts the pod-log reads. err fails every read; podErr fails only the pod-log
+// read, as a failed pod listing does while a named container's log can still
+// be read.
 type fakeLogs struct {
 	full, tail string
 	containers map[string]string
 	err        error
+	podErr     error
 	reads      int
 }
 
@@ -141,6 +144,9 @@ func (l *fakeLogs) GetPodLogs(_ context.Context, _ string, _ int64) (string, str
 	l.reads++
 	if l.err != nil {
 		return "", "", l.err
+	}
+	if l.podErr != nil {
+		return "", "", l.podErr
 	}
 	tail := l.tail
 	if tail == "" {

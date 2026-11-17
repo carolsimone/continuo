@@ -50,7 +50,7 @@ func TestDescribe_ListsEveryRunnableCommand(t *testing.T) {
 	for _, c := range p.Commands {
 		paths[c.Path] = true
 	}
-	for _, want := range []string{"schedule list", "schedule trigger", "schedule cancel", "schedule graph", "schedule status", "schedule runs", "schedule set-cron", "schedule remove-cron", "schedule pause", "schedule resume", "run show", "run graph", "run attempts", "run cancel", "run rerun", "run rebase-preview", "run rebase", "dlq list", "dlq show", "dlq redrive", "release notices", "describe", "precedents"} {
+	for _, want := range []string{"schedule list", "schedule trigger", "schedule cancel", "schedule graph", "schedule status", "schedule runs", "schedule set-cron", "schedule remove-cron", "schedule pause", "schedule resume", "run show", "run graph", "run attempts", "run cancel", "run rerun", "run rebase-preview", "run rebase", "dlq list", "dlq show", "dlq redrive", "release notices", "node contract", "node contract-history", "node contract-diff", "describe", "precedents"} {
 		assert.True(t, paths[want], "describe missing command %q", want)
 	}
 }
@@ -251,6 +251,41 @@ func TestDescribe_CronCommandsDocumentTheirPositionalArgsAndExitCodes(t *testing
 	var setCronCodes []int
 	require.NoError(t, json.Unmarshal(setCron.ExitCodes, &setCronCodes))
 	assert.Contains(t, setCronCodes, 4, "set-cron must document the conflict of a schedule that changed twice while it ran")
+}
+
+// The contract commands are reads the chat runs without approval, and the chat
+// sets no flag on them: every value it passes is a positional.
+func TestDescribe_ContractCommandsDocumentTheirPositionalArgsAndExitCodes(t *testing.T) {
+	p := runDescribe(t)
+
+	for path, want := range map[string]struct {
+		args  []string
+		exits []int
+	}{
+		"node contract": {[]string{"<unique_id>"}, []int{0, 2, 3, 5, 6}},
+		// The catalog answers a node with no history with an empty list, never not_found.
+		"node contract-history": {[]string{"<unique_id>", "[limit]"}, []int{0, 2, 5, 6}},
+		"node contract-diff":    {[]string{"<unique_id>", "<from>", "<to>"}, []int{0, 2, 3, 5, 6}},
+	} {
+		c := findCmd(t, p, path)
+		assert.Equal(t, want.args, c.Args, path)
+		assert.False(t, c.Mutating, "%s only reads", path)
+		assert.NotEmpty(t, c.Short, path)
+		require.NotEmpty(t, c.Examples, path)
+		assert.Contains(t, c.Examples[0], "continuo "+path+" ", path)
+
+		var exitCodes []int
+		require.NoError(t, json.Unmarshal(c.ExitCodes, &exitCodes))
+		assert.Equal(t, want.exits, exitCodes, path)
+
+		var schema map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(c.OutputSchema, &schema), path)
+		assert.NotEmpty(t, schema, path)
+
+		for _, f := range c.Flags {
+			assert.False(t, f.Chat, "%s: the chat sets no flag, but --%s is marked chat", path, f.Name)
+		}
+	}
 }
 
 func TestDescribe_RunReadCommandsDocumentTheirArgsAndExitCodes(t *testing.T) {

@@ -23,7 +23,11 @@ from service.ports import ClockPort, MemoryProbePort
 
 class Stage(StrEnum):
     """The stages of a release's parse, in pipeline order; a value is the key
-    `ReleaseTimings.stages_ms` reports the stage under."""
+    `ReleaseTimings.stages_ms` reports the stage under.
+
+    `contract_validation` runs inside `python_parse`: a python-odcs bundle's
+    contracts are checked while it is parsed, so `python_parse` time includes
+    the `contract_validation` time of the same bundle."""
     DOWNLOAD = "download"
     DBT_PARSE = "dbt_parse"
     PYTHON_PARSE = "python_parse"
@@ -32,8 +36,19 @@ class Stage(StrEnum):
     REWRITE = "rewrite"
     CANDIDATE_UPLOAD = "candidate_upload"
     CODE_BUNDLE = "code_bundle"
+    CONTRACT_VALIDATION = "contract_validation"
+    CANONICAL_HASHING = "canonical_hashing"
+    CONTRACT_BUNDLE = "contract_bundle"
     TOPOLOGY_ARTIFACT = "topology_artifact"
     PUBLISH = "publish"
+
+
+# The stages a contract failure is counted under: the checks of the parse
+# (`validate`), the stored form of a contract (`normalise`) and its hash (`hash`).
+CONTRACT_FAILURE_STAGES = ("validate", "normalise", "hash")
+
+# How a contract validation was answered: from the cache or by running the check.
+VALIDATION_CACHE_RESULTS = ("hit", "miss")
 
 
 class ReleaseOutcome(StrEnum):
@@ -106,7 +121,9 @@ class ReleaseTimings:
     `nodes`, `columns` and `skipped` name every runtime or reason from
     construction. `dormant` holds, per service, the dormant nodes the release
     holds (the nodes a release builds that belong to no schedule); a service
-    with none has no entry.
+    with none has no entry. `contract_failures` counts the contract failures
+    the release met by (stage, reason), and `validation_cache` counts the
+    contract validations answered from the cache (`hit`) and run (`miss`).
     `outcome` and `failure_kind` stay unset until the release ends.
     """
 
@@ -122,6 +139,8 @@ class ReleaseTimings:
         self.columns: dict[str, int] = {runtime.value: 0 for runtime in Runtime}
         self.skipped: dict[SkipReason, int] = {reason: 0 for reason in SkipReason}
         self.dormant: dict[str, int] = {}
+        self.contract_failures: dict[tuple[str, str], int] = {}
+        self.validation_cache: dict[str, int] = {result: 0 for result in VALIDATION_CACHE_RESULTS}
 
     def stage(self, name: Stage, *, sample_memory: bool = True, **counts: int) -> AbstractContextManager[StageRecord]:
         """Time one run of a stage. On exit, also when the body raised, the
@@ -153,6 +172,36 @@ class ReleaseTimings:
         """Count the nodes a parse left out, under each skip's reason."""
         for skip in skips:
             self.skipped[skip.reason] += 1
+
+    def add_contract_failure(self, stage: str, reason: str) -> None:
+        """Count one contract failure under its stage (one of
+        CONTRACT_FAILURE_STAGES) and reason. Raises ValueError for another
+        stage, so every counted failure lands on a series exported from boot."""
+        if stage not in CONTRACT_FAILURE_STAGES:
+            raise ValueError(f"{stage!r} is not a contract failure stage, expected one of {CONTRACT_FAILURE_STAGES}")
+        key = (stage, reason)
+        self.contract_failures[key] = self.contract_failures.get(key, 0) + 1
+
+    def add_validation_cache(self, hit: bool) -> None:
+        """Count one contract validation as answered from the cache or run."""
+        self.validation_cache["hit" if hit else "miss"] += 1
+
+    def bundle_timings(self) -> dict[str, object]:
+        """The `timings` of the contract bundle: the milliseconds of each stage
+        that has run so far, the nodes and columns of every runtime, and the
+        validation cache's counts, as copies the record's later changes do not
+        reach. A stage with no run has no entry, so a stage that comes after
+        the bundle is built (its own write, the topology artifact, the publish)
+        and one the release never reaches (the dbt parse of a release with no
+        dbt manifest) are not in `stages_ms`."""
+        return {
+            "stages_ms": {
+                stage.value: round(record.seconds * 1000) for stage, record in self.stages.items() if record.runs
+            },
+            "nodes": dict(self.nodes),
+            "columns": dict(self.columns),
+            "validation_cache": dict(self.validation_cache),
+        }
 
     def log_fields(self) -> dict[str, object]:
         """The fields of the release's log line. `failure_kind` is present only

@@ -60,7 +60,7 @@ func TestAdvanceQueue_MaintenanceActivatesOnlyVerificationRuns(t *testing.T) {
 	deps.Maintenance = true
 	store.SeedServiceProd(release.NewServiceProd("svc-a", "rProd", "s3://b/svc-a/rProd/manifest.json", "tag-a-prod", release.ManifestKindDbt, time.Unix(0, 0)))
 	store.SeedRelease(pipeline.NewCandidate("rCand", "svc-a", "tag-c", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC()))
-	store.SeedRelease(pipeline.NewVerification("rVerify", "svc-b", "img:1", "rGone", 1, "", release.ManifestKindPython, deps.Clock.Now()))
+	store.SeedRelease(pipeline.NewVerification("rVerify", "svc-b", "img:1", "rGone", 1, "", release.ManifestKindPythonODCS, deps.Clock.Now()))
 
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 

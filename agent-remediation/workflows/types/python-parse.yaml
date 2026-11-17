@@ -7,8 +7,10 @@ match: { cluster: single, source: parse, node_types: [python-node] }
 context:
   - contract_file
   - failing_siblings
+  - image_packages
   - dbt_log
   - contract_entry
+  - current_contract
   - upstream_changes
   - failure_precedents
 agent: { prompt: python-parse, tools: [], rounds: 3 }

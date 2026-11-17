@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -152,14 +153,17 @@ func (f *fakeLLM) Propose(_ context.Context, req ports.ProposeRequest) (ports.Pr
 // through the evidence reader to build the verification run's source overlay,
 // so tests key their evidence fixtures on exactly these URIs.
 type fakeArtifacts struct {
-	written map[string]string
+	written      map[string]string
+	contentTypes map[string]string
 }
 
-func (f *fakeArtifacts) Write(_ context.Context, key, body, _ string) (string, error) {
+func (f *fakeArtifacts) Write(_ context.Context, key, body, contentType string) (string, error) {
 	if f.written == nil {
 		f.written = map[string]string{}
+		f.contentTypes = map[string]string{}
 	}
 	f.written[key] = body
+	f.contentTypes[key] = contentType
 	return "s3://art/" + key, nil
 }
 
@@ -193,6 +197,10 @@ func (g *fakeGateway) ImageTag(context.Context, string, string) (string, error) 
 
 func (g *fakeGateway) FailingNodes(context.Context, string) (map[string]string, error) {
 	return nil, nil
+}
+
+func (g *fakeGateway) ContractBundle(context.Context, string) (string, string, error) {
+	return "", "", errors.New("the driver reads image packages through ImagePackagesSource, never the release's bundle")
 }
 
 // tarNames lists the member paths of a gzip tarball, in archive order.
@@ -1482,13 +1490,6 @@ func (f fakeRepoArchive) Fetch(_ context.Context, _, _ string) (string, func(), 
 	return f.root, func() {}, nil
 }
 
-// fakeContractPackager returns a fixed merged contract for every Merge call.
-type fakeContractPackager struct{ merged []byte }
-
-func (f fakeContractPackager) Merge(_ context.Context, _, _, _, _ string) ([]byte, error) {
-	return f.merged, nil
-}
-
 // fakeAttemptLister answers every prior-attempt query with no attempts.
 type fakeAttemptLister struct{}
 
@@ -1497,33 +1498,51 @@ func (fakeAttemptLister) List(_ context.Context, _ repository.ProposalFilter) ([
 }
 
 const (
-	pythonDeclaringYAML = `nodes:
-  - schema: analytics
-    table: pynode
-    script: scripts/pynode.py
-    reads:
+	pythonDeclaringYAML = `apiVersion: v3.2.0
+kind: DataContract
+id: analytics.pynode
+customProperties:
+  - {vendor: continuo, property: script, value: scripts/pynode.py}
+  - vendor: continuo
+    property: readQueries
+    value:
       orders: select id from analytics.orders
-    output_columns:
-      - name: revenue
+schema:
+  - name: pynode
+    physicalType: table
+    properties:
+      - {name: revenue, physicalType: INTEGER}
 `
-	pythonCorrectedYAML = `nodes:
-  - schema: analytics
-    table: pynode
-    script: scripts/pynode.py
-    reads:
+	pythonCorrectedYAML = `apiVersion: v3.2.0
+kind: DataContract
+id: analytics.pynode
+customProperties:
+  - {vendor: continuo, property: script, value: scripts/pynode.py}
+  - vendor: continuo
+    property: readQueries
+    value:
       orders: select id from analytics.orders
-    output_columns:
-      - name: revenue_total
+schema:
+  - name: pynode
+    physicalType: table
+    properties:
+      - {name: revenue_total, physicalType: INTEGER}
 `
 	// pythonSiblingYAML declares a second node in the same contract
 	// directory. The model's answer below returns it unchanged — its only
 	// purpose is to give pythonValidationFixer a second file to edit, so the
 	// cluster produces two FileEdits instead of one.
-	pythonSiblingYAML = `nodes:
-  - schema: analytics
-    table: sibling
-    reads:
+	pythonSiblingYAML = `apiVersion: v3.2.0
+kind: DataContract
+id: analytics.sibling
+customProperties:
+  - vendor: continuo
+    property: readQueries
+    value:
       customers: select id from analytics.customers
+schema:
+  - name: sibling
+    physicalType: table
 `
 )
 
@@ -1538,8 +1557,8 @@ func pythonContractRepoTree(t *testing.T) string {
 		require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o750))
 		require.NoError(t, os.WriteFile(full, []byte(content), 0o600))
 	}
-	write("services/svc/contracts/pynode.yml", pythonDeclaringYAML)
-	write("services/svc/contracts/other.yml", pythonSiblingYAML)
+	write("services/svc/contracts/pynode.odcs.yaml", pythonDeclaringYAML)
+	write("services/svc/contracts/other.odcs.yaml", pythonSiblingYAML)
 	write("services/svc/scripts/pynode.py", "print('hi')\n")
 	return root
 }
@@ -1565,9 +1584,9 @@ func TestProposeFix_EditsFromOnePythonClusterAreIndependentlyCopied(t *testing.T
 	ev := fakeEvidence{vals: map[string]string{"s3://b/log": "runner log body"}}
 	llm := newFakeLLM(ports.ProposeResult{
 		Files: []ports.ProposedFile{
-			{Path: "services/svc/contracts/pynode.yml", Content: pythonCorrectedYAML},
+			{Path: "services/svc/contracts/pynode.odcs.yaml", Content: pythonCorrectedYAML},
 			// Unchanged; present only to force a second edit out of one cluster.
-			{Path: "services/svc/contracts/other.yml", Content: pythonSiblingYAML},
+			{Path: "services/svc/contracts/other.odcs.yaml", Content: pythonSiblingYAML},
 		},
 		Rationale: "declared the column the script produces", Confidence: "high", Model: "m",
 	}, nil)
@@ -1577,7 +1596,9 @@ func TestProposeFix_EditsFromOnePythonClusterAreIndependentlyCopied(t *testing.T
 	loc := repofs.NewLocator(slog.Default())
 	d.ContractLocator = loc
 	d.ContractInspector = loc
-	d.Packager = fakeContractPackager{merged: []byte("merged: contract\n")}
+	d.Packager = handlerPackager{}
+	d.ImagePackages = handlerImages{packages: map[string]string{"pyarrow": "26.0.0"}}
+	d.CurrentContracts = noContracts{}
 	d.PriorAttempts = fakeAttemptLister{}
 	d.SQLDialect = "postgres"
 
@@ -1729,20 +1750,20 @@ func TestSubmitVerifications_PythonLaneIgnoresTheTriggersServiceField(t *testing
 	tr.Nodes = []TriggerNode{{NodeID: "analytics.py_daily_kpis", ErrorSignature: "sig",
 		NodeType: "python-node", Service: ""}}
 	edits := []proposal.FileEdit{{
-		Path: "services/svc/contracts/kpis.yml", ContentURI: "s3://art/edit", TargetNodeID: "analytics.py_daily_kpis",
+		Path: "services/svc/contracts/kpis.odcs.yaml", ContentURI: "s3://art/edit", TargetNodeID: "analytics.py_daily_kpis",
 	}}
 
 	got, err := submitVerifications(context.Background(), d, tr, 1, edits,
-		map[string][]byte{"svc": []byte("merged: contract\n")})
+		map[string][]byte{"svc": []byte(packedBundle)})
 	require.NoError(t, err)
 
 	require.Equal(t, []proposal.Verification{{
-		Service: "svc", Kind: ports.VerificationKindPython, RunID: "verify-r1-svc-a1", Phase: proposal.PhaseQueued,
+		Service: "svc", Kind: ports.VerificationKindPythonODCS, RunID: "verify-r1-svc-a1", Phase: proposal.PhaseQueued,
 	}}, got)
-	require.Equal(t, "merged: contract\n", art.written["svc/verify-r1-svc-a1/contract.yaml"])
+	require.Equal(t, packedBundle, art.written["svc/verify-r1-svc-a1/odcs-bundle.json"])
 	require.NotContains(t, art.written, "svc/verify-r1-svc-a1/source-overlay.tar.gz")
 	require.Len(t, gw.submitted, 1)
-	require.Equal(t, ports.VerificationKindPython, gw.submitted[0].Kind)
+	require.Equal(t, ports.VerificationKindPythonODCS, gw.submitted[0].Kind)
 	require.Empty(t, gw.submitted[0].SourceOverlayURI)
 }
 

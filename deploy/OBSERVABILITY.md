@@ -100,6 +100,9 @@ Every series also carries a `service` label.
 | `continuo_catalog_export_bytes` | gauge | none beyond `service` | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |
 | `continuo_catalog_export_records` | gauge | `kind` (`node`, `relationship`) | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |
 | `continuo_catalog_export_last_success_timestamp_seconds` | gauge | none beyond `service` | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |
+| `continuo_catalog_contract_versions_written_total` | counter | none beyond `service` | `catalog` |
+| `continuo_catalog_live_contract_writes_total` | counter | `op` (`put`, `delete`, `index`), `outcome` (`ok`, `failed`) | `catalog` |
+| `continuo_catalog_contracts_duration_seconds` | histogram | `step` (`ingest`, `live_rewrite`) | `catalog` |
 | `continuo_topology_stage_duration_seconds` | histogram | `stage` | `topology-controller` |
 | `continuo_topology_releases_total` | counter | `outcome`, `failure_kind` | `topology-controller` |
 | `continuo_topology_release_nodes` | gauge | `family` | `topology-controller` |
@@ -107,12 +110,18 @@ Every series also carries a `service` label.
 | `continuo_topology_release_skipped_nodes` | gauge | `reason` (`no_owner`, `local_stub`, `installed_package`) | `topology-controller` |
 | `continuo_topology_release_dormant_nodes` | gauge | none beyond `service` | `topology-controller` |
 | `continuo_topology_release_peak_rss_bytes` | gauge | none beyond `service` | `topology-controller` |
+| `continuo_topology_contract_failures_total` | counter | `stage` (`validate`, `normalise`, `hash`), `reason` (a `continuo-contracts` validation reason) | `topology-controller` |
+| `continuo_topology_validation_cache_total` | counter | `result` (`hit`, `miss`) | `topology-controller` |
 | `continuo_releases_total` | counter | `outcome` (`promoted`, `rejected`), `reject_reason` (`none` or a reject reason) | `release-controller` |
 | `continuo_release_stage_duration_seconds` | histogram | `stage` (`compiling`, `parsing`, `seed_building`, `validating`), `outcome` (`ok`, `failed`) | `release-controller` |
 | `go_sql_*` (open, in-use, idle connections, wait count and duration, closed-by-limit counters) | gauge / counter | `db_name` | every service that keeps a Postgres database (not `catalog` or `egress-proxy`) |
 | `go_*`, `process_*` | Go runtime and process collectors | none beyond `service` | every Go service |
 
+`continuo_topology_stage_duration_seconds` times each stage of a release's parse, `stage` being one of `download`, `dbt_parse`, `python_parse`, `registry`, `resolve`, `rewrite`, `candidate_upload`, `code_bundle`, `contract_validation`, `canonical_hashing`, `contract_bundle`, `topology_artifact` and `publish`. `contract_validation` runs inside `python_parse`, because a `python-odcs` bundle's contracts are checked while it is parsed. So `python_parse` time includes the `contract_validation` time of the same bundle: do not add the two up. `canonical_hashing` stores and hashes every contract, and `contract_bundle` writes the release's contract bundle. `continuo_topology_contract_failures_total` counts each issue of an invalid contract (`validate`) and each contract the library refused after its checks (`normalise`, `hash`). `continuo_topology_validation_cache_total` counts the schema-check cache's lookups.
+
 `continuo_seed_reloads_total` counts the seed loads that drop the seed's table, when they end, and the seed loads the planner refused before they started. A seed load that drops nothing is not counted.
+
+`continuo_catalog_contract_versions_written_total` counts the contract versions a promotion creates in the graph, once the transaction that stored them has committed. A promotion that changes no node's contract adds nothing, and a redelivered one adds nothing the first delivery already stored. `continuo_catalog_live_contract_writes_total` counts the writes of the live contracts folder (`tenants/<tenant>/contracts/live/`): `put` is a node's file, `delete` the file of a node that is no longer live, `index` the folder's `_index.json`. A rewrite that puts or deletes files writes the index twice. The interim index comes first and lists every file about to be put or deleted at version 0. The final index comes last, once every put and delete has succeeded. Each write moves `ok` when the store accepted it and `failed` when it did not. A promotion whose rewrite failed is retried, so a failing store keeps `failed` rising. `continuo_catalog_contracts_duration_seconds` times the two steps of a promotion on the contracts group: `ingest` reads the contract bundle and records its versions, and `live_rewrite` rewrites the live folder. A step that fails is not observed. All three are served from boot with every label pair at 0.
 
 ## Job labels
 
@@ -243,10 +252,16 @@ groups:
           severity: warning
         annotations:
           summary: "The last stored catalog export is older than 26 hours"
+      - alert: CatalogLiveContractWriteFailed
+        expr: increase(continuo_catalog_live_contract_writes_total{outcome="failed"}[15m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "catalog failed to write {{ $value }} files of the live contracts folder ({{ $labels.op }}) in the last 15 minutes"
       - alert: TopologyStageNearLivenessBudget
         expr: |
-          sum by (stage) (increase(continuo_topology_stage_duration_seconds_bucket{le="+Inf", stage!~"resolve|rewrite|candidate_upload"}[30m]))
-            - sum by (stage) (increase(continuo_topology_stage_duration_seconds_bucket{le="30.0", stage!~"resolve|rewrite|candidate_upload"}[30m]))
+          sum by (stage) (increase(continuo_topology_stage_duration_seconds_bucket{le="+Inf", stage!~"resolve|rewrite|candidate_upload|contract_validation|canonical_hashing"}[30m]))
+            - sum by (stage) (increase(continuo_topology_stage_duration_seconds_bucket{le="30.0", stage!~"resolve|rewrite|candidate_upload|contract_validation|canonical_hashing"}[30m]))
             > 0
         labels:
           severity: warning
@@ -254,7 +269,7 @@ groups:
           summary: "topology-controller's {{ $labels.stage }} stage took over 30 s; liveness restarts the pod about 80 s after its last heartbeat"
 ```
 
-The `or` in `ContinuoJobFailed` keeps the alert firing with the Job's name if the labels aren't exported. `CatalogExportStale` applies only with `catalog.backup.enabled`. `TopologyStageNearLivenessBudget` leaves out `resolve`, `rewrite` and `candidate_upload`: the per-node stages refresh the heartbeat after every node, so their summed time says nothing about it. `dbt_parse` and `python_parse` refresh the heartbeat once per manifest, so the rule is a coarse near-budget heuristic over a stage's total time in one release. Python bucket labels are written `30.0`, not `30`.
+The `or` in `ContinuoJobFailed` keeps the alert firing with the Job's name if the labels aren't exported. `CatalogExportStale` applies only with `catalog.backup.enabled`. `CatalogLiveContractWriteFailed` fires when the object store refuses a write of the live contracts folder. That usually means catalog's role lacks one of the grants in the chart README's "S3 access" table. catalog retries the promotion until the folder is written. A rewrite that cannot read `_index.json` (not JSON, or another `schema_version`) writes nothing and logs an error naming the key: delete that `_index.json`, and the next rewrite puts every file again. `TopologyStageNearLivenessBudget` leaves out `resolve`, `rewrite`, `candidate_upload`, `contract_validation` and `canonical_hashing`: these per-node stages refresh the heartbeat after every node or contract, so their summed time says nothing about it. `dbt_parse` refreshes the heartbeat once per manifest. `python_parse` of a `python-odcs` service refreshes it after every contract. So the rule is a coarse near-budget heuristic over a stage's total time in one release. Python bucket labels are written `30.0`, not `30`.
 
 ## Datadog
 

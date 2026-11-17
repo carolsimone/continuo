@@ -7,6 +7,8 @@ import subprocess
 
 import boto3
 
+from dbt_upload.paths import build_dir
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,9 +27,10 @@ def filter_manifest(service_dir: str) -> None:
     fine-grained tracking (a test only counts when its model is tracked, a node
     needs an owner, and a model or snapshot with no schedule tag becomes a
     dormant node) still happens downstream in the parser; this is only the
-    coarse resource-type gate.
+    coarse resource-type gate. The manifest is the one in the service's build
+    directory.
     """
-    manifest_path = os.path.join(service_dir, "target", "manifest.json")
+    manifest_path = os.path.join(build_dir(service_dir), "manifest.json")
     with open(manifest_path) as f:
         manifest = json.load(f)
 
@@ -49,7 +52,8 @@ def upload_manifest(
     bucket: str,
     release_id: str = "",
 ) -> bool:
-    """Upload target/manifest.json to S3 at the canonical key. Returns True on success.
+    """Upload the manifest in the service's build directory to S3 at the
+    canonical key. Returns True on success.
 
     Writes to <service_name>/<release_id>/manifest.json — the same path that
     release-controller's Go CanonicalManifestKey function constructs. The
@@ -61,7 +65,7 @@ def upload_manifest(
         raise ValueError("release_id is required")
 
     service_name = os.path.basename(service_dir)
-    manifest_path = os.path.join(service_dir, "target", "manifest.json")
+    manifest_path = os.path.join(build_dir(service_dir), "manifest.json")
 
     if not os.path.exists(manifest_path):
         logger.error("manifest.json not found at %s", manifest_path)
@@ -122,16 +126,17 @@ def dbt_interpreter() -> str:
 
 
 def write_compile_extras(service_dir: str, release_id: str) -> str:
-    """Write target/compile-extras.json for a compiled service and return its path.
+    """Write compile-extras.json into a compiled service's build directory and
+    return its path.
 
     Runs compile_extras.py with the interpreter that runs dbt, over the
-    service's target/manifest.json and its dbt project directory, for at most
+    manifest in the service's build directory and its dbt project directory, for at most
     COMPILE_EXTRAS_TIMEOUT_SECONDS, and logs what it wrote to stderr at INFO.
     Raises subprocess.CalledProcessError when the script fails and
     subprocess.TimeoutExpired when it runs past its timeout.
     """
     service_name = os.path.basename(service_dir)
-    target_dir = os.path.join(service_dir, "target")
+    target_dir = build_dir(service_dir)
     out = os.path.join(target_dir, "compile-extras.json")
     result = subprocess.run(
         [
@@ -153,10 +158,11 @@ def write_compile_extras(service_dir: str, release_id: str) -> str:
 
 
 def upload_compile_extras(s3_client, service_dir: str, bucket: str, release_id: str) -> bool:
-    """Upload target/compile-extras.json to <service_name>/<release_id>/compile-extras.json,
-    beside the manifest, where topology-controller reads it. Returns True on success."""
+    """Upload the compile-extras.json in the service's build directory to
+    <service_name>/<release_id>/compile-extras.json, beside the manifest, where
+    topology-controller reads it. Returns True on success."""
     service_name = os.path.basename(service_dir)
-    extras_path = os.path.join(service_dir, "target", "compile-extras.json")
+    extras_path = os.path.join(build_dir(service_dir), "compile-extras.json")
     key = f"{service_name}/{release_id}/compile-extras.json"
     try:
         s3_client.upload_file(extras_path, bucket, key)

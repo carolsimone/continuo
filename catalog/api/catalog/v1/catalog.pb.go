@@ -1619,6 +1619,486 @@ func (x *GetPrecedentsResponse) GetPrecedents() []*Precedent {
 	return nil
 }
 
+type ContractVersionView struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	UniqueId          string                 `protobuf:"bytes,1,opt,name=unique_id,json=uniqueId,proto3" json:"unique_id,omitempty"`
+	Version           int64                  `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"` // the counter of the promotion that made this content current
+	ContractHash      string                 `protobuf:"bytes,3,opt,name=contract_hash,json=contractHash,proto3" json:"contract_hash,omitempty"`
+	DocumentYaml      string                 `protobuf:"bytes,4,opt,name=document_yaml,json=documentYaml,proto3" json:"document_yaml,omitempty"` // the published form without servers, when include_document is set
+	ReleaseId         string                 `protobuf:"bytes,5,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"`
+	PromotedAt        string                 `protobuf:"bytes,6,opt,name=promoted_at,json=promotedAt,proto3" json:"promoted_at,omitempty"` // RFC3339
+	ContentHash       string                 `protobuf:"bytes,7,opt,name=content_hash,json=contentHash,proto3" json:"content_hash,omitempty"`
+	IsCurrent         bool                   `protobuf:"varint,8,opt,name=is_current,json=isCurrent,proto3" json:"is_current,omitempty"`
+	SameAsVersion     int64                  `protobuf:"varint,9,opt,name=same_as_version,json=sameAsVersion,proto3" json:"same_as_version,omitempty"` // set on a revert: the earlier version with the same contract_hash
+	ContinuoContracts string                 `protobuf:"bytes,10,opt,name=continuo_contracts,json=continuoContracts,proto3" json:"continuo_contracts,omitempty"`
+	OntologyVersion   string                 `protobuf:"bytes,11,opt,name=ontology_version,json=ontologyVersion,proto3" json:"ontology_version,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *ContractVersionView) Reset() {
+	*x = ContractVersionView{}
+	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ContractVersionView) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ContractVersionView) ProtoMessage() {}
+
+func (x *ContractVersionView) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ContractVersionView.ProtoReflect.Descriptor instead.
+func (*ContractVersionView) Descriptor() ([]byte, []int) {
+	return file_proto_catalog_v1_catalog_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *ContractVersionView) GetUniqueId() string {
+	if x != nil {
+		return x.UniqueId
+	}
+	return ""
+}
+
+func (x *ContractVersionView) GetVersion() int64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *ContractVersionView) GetContractHash() string {
+	if x != nil {
+		return x.ContractHash
+	}
+	return ""
+}
+
+func (x *ContractVersionView) GetDocumentYaml() string {
+	if x != nil {
+		return x.DocumentYaml
+	}
+	return ""
+}
+
+func (x *ContractVersionView) GetReleaseId() string {
+	if x != nil {
+		return x.ReleaseId
+	}
+	return ""
+}
+
+func (x *ContractVersionView) GetPromotedAt() string {
+	if x != nil {
+		return x.PromotedAt
+	}
+	return ""
+}
+
+func (x *ContractVersionView) GetContentHash() string {
+	if x != nil {
+		return x.ContentHash
+	}
+	return ""
+}
+
+func (x *ContractVersionView) GetIsCurrent() bool {
+	if x != nil {
+		return x.IsCurrent
+	}
+	return false
+}
+
+func (x *ContractVersionView) GetSameAsVersion() int64 {
+	if x != nil {
+		return x.SameAsVersion
+	}
+	return 0
+}
+
+func (x *ContractVersionView) GetContinuoContracts() string {
+	if x != nil {
+		return x.ContinuoContracts
+	}
+	return ""
+}
+
+func (x *ContractVersionView) GetOntologyVersion() string {
+	if x != nil {
+		return x.OntologyVersion
+	}
+	return ""
+}
+
+type GetNodeContractRequest struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	UniqueId        string                 `protobuf:"bytes,1,opt,name=unique_id,json=uniqueId,proto3" json:"unique_id,omitempty"`
+	IncludeDocument bool                   `protobuf:"varint,2,opt,name=include_document,json=includeDocument,proto3" json:"include_document,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *GetNodeContractRequest) Reset() {
+	*x = GetNodeContractRequest{}
+	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetNodeContractRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetNodeContractRequest) ProtoMessage() {}
+
+func (x *GetNodeContractRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetNodeContractRequest.ProtoReflect.Descriptor instead.
+func (*GetNodeContractRequest) Descriptor() ([]byte, []int) {
+	return file_proto_catalog_v1_catalog_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *GetNodeContractRequest) GetUniqueId() string {
+	if x != nil {
+		return x.UniqueId
+	}
+	return ""
+}
+
+func (x *GetNodeContractRequest) GetIncludeDocument() bool {
+	if x != nil {
+		return x.IncludeDocument
+	}
+	return false
+}
+
+type GetNodeContractResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Contract      *ContractVersionView   `protobuf:"bytes,1,opt,name=contract,proto3" json:"contract,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetNodeContractResponse) Reset() {
+	*x = GetNodeContractResponse{}
+	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetNodeContractResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetNodeContractResponse) ProtoMessage() {}
+
+func (x *GetNodeContractResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetNodeContractResponse.ProtoReflect.Descriptor instead.
+func (*GetNodeContractResponse) Descriptor() ([]byte, []int) {
+	return file_proto_catalog_v1_catalog_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *GetNodeContractResponse) GetContract() *ContractVersionView {
+	if x != nil {
+		return x.Contract
+	}
+	return nil
+}
+
+type ListNodeContractVersionsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UniqueId      string                 `protobuf:"bytes,1,opt,name=unique_id,json=uniqueId,proto3" json:"unique_id,omitempty"`
+	Limit         int32                  `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListNodeContractVersionsRequest) Reset() {
+	*x = ListNodeContractVersionsRequest{}
+	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListNodeContractVersionsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListNodeContractVersionsRequest) ProtoMessage() {}
+
+func (x *ListNodeContractVersionsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListNodeContractVersionsRequest.ProtoReflect.Descriptor instead.
+func (*ListNodeContractVersionsRequest) Descriptor() ([]byte, []int) {
+	return file_proto_catalog_v1_catalog_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *ListNodeContractVersionsRequest) GetUniqueId() string {
+	if x != nil {
+		return x.UniqueId
+	}
+	return ""
+}
+
+func (x *ListNodeContractVersionsRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+type ListNodeContractVersionsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Versions      []*ContractVersionView `protobuf:"bytes,1,rep,name=versions,proto3" json:"versions,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListNodeContractVersionsResponse) Reset() {
+	*x = ListNodeContractVersionsResponse{}
+	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListNodeContractVersionsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListNodeContractVersionsResponse) ProtoMessage() {}
+
+func (x *ListNodeContractVersionsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListNodeContractVersionsResponse.ProtoReflect.Descriptor instead.
+func (*ListNodeContractVersionsResponse) Descriptor() ([]byte, []int) {
+	return file_proto_catalog_v1_catalog_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *ListNodeContractVersionsResponse) GetVersions() []*ContractVersionView {
+	if x != nil {
+		return x.Versions
+	}
+	return nil
+}
+
+type ContractFieldChange struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	BeforeJson    string                 `protobuf:"bytes,2,opt,name=before_json,json=beforeJson,proto3" json:"before_json,omitempty"`
+	AfterJson     string                 `protobuf:"bytes,3,opt,name=after_json,json=afterJson,proto3" json:"after_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ContractFieldChange) Reset() {
+	*x = ContractFieldChange{}
+	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ContractFieldChange) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ContractFieldChange) ProtoMessage() {}
+
+func (x *ContractFieldChange) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ContractFieldChange.ProtoReflect.Descriptor instead.
+func (*ContractFieldChange) Descriptor() ([]byte, []int) {
+	return file_proto_catalog_v1_catalog_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *ContractFieldChange) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *ContractFieldChange) GetBeforeJson() string {
+	if x != nil {
+		return x.BeforeJson
+	}
+	return ""
+}
+
+func (x *ContractFieldChange) GetAfterJson() string {
+	if x != nil {
+		return x.AfterJson
+	}
+	return ""
+}
+
+type GetNodeContractDiffRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UniqueId      string                 `protobuf:"bytes,1,opt,name=unique_id,json=uniqueId,proto3" json:"unique_id,omitempty"`
+	FromVersion   int64                  `protobuf:"varint,2,opt,name=from_version,json=fromVersion,proto3" json:"from_version,omitempty"`
+	ToVersion     int64                  `protobuf:"varint,3,opt,name=to_version,json=toVersion,proto3" json:"to_version,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetNodeContractDiffRequest) Reset() {
+	*x = GetNodeContractDiffRequest{}
+	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetNodeContractDiffRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetNodeContractDiffRequest) ProtoMessage() {}
+
+func (x *GetNodeContractDiffRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetNodeContractDiffRequest.ProtoReflect.Descriptor instead.
+func (*GetNodeContractDiffRequest) Descriptor() ([]byte, []int) {
+	return file_proto_catalog_v1_catalog_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *GetNodeContractDiffRequest) GetUniqueId() string {
+	if x != nil {
+		return x.UniqueId
+	}
+	return ""
+}
+
+func (x *GetNodeContractDiffRequest) GetFromVersion() int64 {
+	if x != nil {
+		return x.FromVersion
+	}
+	return 0
+}
+
+func (x *GetNodeContractDiffRequest) GetToVersion() int64 {
+	if x != nil {
+		return x.ToVersion
+	}
+	return 0
+}
+
+type GetNodeContractDiffResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Changes       []*ContractFieldChange `protobuf:"bytes,1,rep,name=changes,proto3" json:"changes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetNodeContractDiffResponse) Reset() {
+	*x = GetNodeContractDiffResponse{}
+	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetNodeContractDiffResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetNodeContractDiffResponse) ProtoMessage() {}
+
+func (x *GetNodeContractDiffResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_catalog_v1_catalog_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetNodeContractDiffResponse.ProtoReflect.Descriptor instead.
+func (*GetNodeContractDiffResponse) Descriptor() ([]byte, []int) {
+	return file_proto_catalog_v1_catalog_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *GetNodeContractDiffResponse) GetChanges() []*ContractFieldChange {
+	if x != nil {
+		return x.Changes
+	}
+	return nil
+}
+
 var File_proto_catalog_v1_catalog_proto protoreflect.FileDescriptor
 
 const file_proto_catalog_v1_catalog_proto_rawDesc = "" +
@@ -1765,7 +2245,46 @@ const file_proto_catalog_v1_catalog_proto_rawDesc = "" +
 	"\x15GetPrecedentsResponse\x125\n" +
 	"\n" +
 	"precedents\x18\x01 \x03(\v2\x15.catalog.v1.PrecedentR\n" +
-	"precedents2\x92\x05\n" +
+	"precedents\"\x9a\x03\n" +
+	"\x13ContractVersionView\x12\x1b\n" +
+	"\tunique_id\x18\x01 \x01(\tR\buniqueId\x12\x18\n" +
+	"\aversion\x18\x02 \x01(\x03R\aversion\x12#\n" +
+	"\rcontract_hash\x18\x03 \x01(\tR\fcontractHash\x12#\n" +
+	"\rdocument_yaml\x18\x04 \x01(\tR\fdocumentYaml\x12\x1d\n" +
+	"\n" +
+	"release_id\x18\x05 \x01(\tR\treleaseId\x12\x1f\n" +
+	"\vpromoted_at\x18\x06 \x01(\tR\n" +
+	"promotedAt\x12!\n" +
+	"\fcontent_hash\x18\a \x01(\tR\vcontentHash\x12\x1d\n" +
+	"\n" +
+	"is_current\x18\b \x01(\bR\tisCurrent\x12&\n" +
+	"\x0fsame_as_version\x18\t \x01(\x03R\rsameAsVersion\x12-\n" +
+	"\x12continuo_contracts\x18\n" +
+	" \x01(\tR\x11continuoContracts\x12)\n" +
+	"\x10ontology_version\x18\v \x01(\tR\x0fontologyVersion\"`\n" +
+	"\x16GetNodeContractRequest\x12\x1b\n" +
+	"\tunique_id\x18\x01 \x01(\tR\buniqueId\x12)\n" +
+	"\x10include_document\x18\x02 \x01(\bR\x0fincludeDocument\"V\n" +
+	"\x17GetNodeContractResponse\x12;\n" +
+	"\bcontract\x18\x01 \x01(\v2\x1f.catalog.v1.ContractVersionViewR\bcontract\"T\n" +
+	"\x1fListNodeContractVersionsRequest\x12\x1b\n" +
+	"\tunique_id\x18\x01 \x01(\tR\buniqueId\x12\x14\n" +
+	"\x05limit\x18\x02 \x01(\x05R\x05limit\"_\n" +
+	" ListNodeContractVersionsResponse\x12;\n" +
+	"\bversions\x18\x01 \x03(\v2\x1f.catalog.v1.ContractVersionViewR\bversions\"i\n" +
+	"\x13ContractFieldChange\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12\x1f\n" +
+	"\vbefore_json\x18\x02 \x01(\tR\n" +
+	"beforeJson\x12\x1d\n" +
+	"\n" +
+	"after_json\x18\x03 \x01(\tR\tafterJson\"{\n" +
+	"\x1aGetNodeContractDiffRequest\x12\x1b\n" +
+	"\tunique_id\x18\x01 \x01(\tR\buniqueId\x12!\n" +
+	"\ffrom_version\x18\x02 \x01(\x03R\vfromVersion\x12\x1d\n" +
+	"\n" +
+	"to_version\x18\x03 \x01(\x03R\ttoVersion\"X\n" +
+	"\x1bGetNodeContractDiffResponse\x129\n" +
+	"\achanges\x18\x01 \x03(\v2\x1f.catalog.v1.ContractFieldChangeR\achanges2\xcd\a\n" +
 	"\fCatalogQuery\x12B\n" +
 	"\aGetNode\x12\x1a.catalog.v1.GetNodeRequest\x1a\x1b.catalog.v1.GetNodeResponse\x12Z\n" +
 	"\x0fGetNodeLocation\x12\".catalog.v1.GetNodeLocationRequest\x1a#.catalog.v1.GetNodeLocationResponse\x12Z\n" +
@@ -1773,7 +2292,10 @@ const file_proto_catalog_v1_catalog_proto_rawDesc = "" +
 	"\x12GetNodeVersionDiff\x12%.catalog.v1.GetNodeVersionDiffRequest\x1a&.catalog.v1.GetNodeVersionDiffResponse\x12c\n" +
 	"\x12GetUpstreamChanges\x12%.catalog.v1.GetUpstreamChangesRequest\x1a&.catalog.v1.GetUpstreamChangesResponse\x12f\n" +
 	"\x13GetCodeUnitVersions\x12&.catalog.v1.GetCodeUnitVersionsRequest\x1a'.catalog.v1.GetCodeUnitVersionsResponse\x12T\n" +
-	"\rGetPrecedents\x12 .catalog.v1.GetPrecedentsRequest\x1a!.catalog.v1.GetPrecedentsResponseBBZ@github.com/carolsimone/continuo/catalog/api/catalog/v1;catalogv1b\x06proto3"
+	"\rGetPrecedents\x12 .catalog.v1.GetPrecedentsRequest\x1a!.catalog.v1.GetPrecedentsResponse\x12Z\n" +
+	"\x0fGetNodeContract\x12\".catalog.v1.GetNodeContractRequest\x1a#.catalog.v1.GetNodeContractResponse\x12u\n" +
+	"\x18ListNodeContractVersions\x12+.catalog.v1.ListNodeContractVersionsRequest\x1a,.catalog.v1.ListNodeContractVersionsResponse\x12f\n" +
+	"\x13GetNodeContractDiff\x12&.catalog.v1.GetNodeContractDiffRequest\x1a'.catalog.v1.GetNodeContractDiffResponseBBZ@github.com/carolsimone/continuo/catalog/api/catalog/v1;catalogv1b\x06proto3"
 
 var (
 	file_proto_catalog_v1_catalog_proto_rawDescOnce sync.Once
@@ -1787,29 +2309,37 @@ func file_proto_catalog_v1_catalog_proto_rawDescGZIP() []byte {
 	return file_proto_catalog_v1_catalog_proto_rawDescData
 }
 
-var file_proto_catalog_v1_catalog_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_proto_catalog_v1_catalog_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
 var file_proto_catalog_v1_catalog_proto_goTypes = []any{
-	(*GetNodeRequest)(nil),              // 0: catalog.v1.GetNodeRequest
-	(*GetNodeResponse)(nil),             // 1: catalog.v1.GetNodeResponse
-	(*GetNodeLocationRequest)(nil),      // 2: catalog.v1.GetNodeLocationRequest
-	(*GetNodeLocationResponse)(nil),     // 3: catalog.v1.GetNodeLocationResponse
-	(*VersionView)(nil),                 // 4: catalog.v1.VersionView
-	(*VersionDiff)(nil),                 // 5: catalog.v1.VersionDiff
-	(*UpstreamChange)(nil),              // 6: catalog.v1.UpstreamChange
-	(*UnitVersionView)(nil),             // 7: catalog.v1.UnitVersionView
-	(*GetNodeVersionsRequest)(nil),      // 8: catalog.v1.GetNodeVersionsRequest
-	(*GetNodeVersionsResponse)(nil),     // 9: catalog.v1.GetNodeVersionsResponse
-	(*GetNodeVersionDiffRequest)(nil),   // 10: catalog.v1.GetNodeVersionDiffRequest
-	(*GetNodeVersionDiffResponse)(nil),  // 11: catalog.v1.GetNodeVersionDiffResponse
-	(*GetUpstreamChangesRequest)(nil),   // 12: catalog.v1.GetUpstreamChangesRequest
-	(*GetUpstreamChangesResponse)(nil),  // 13: catalog.v1.GetUpstreamChangesResponse
-	(*GetCodeUnitVersionsRequest)(nil),  // 14: catalog.v1.GetCodeUnitVersionsRequest
-	(*GetCodeUnitVersionsResponse)(nil), // 15: catalog.v1.GetCodeUnitVersionsResponse
-	(*GetPrecedentsRequest)(nil),        // 16: catalog.v1.GetPrecedentsRequest
-	(*PrecedentProposal)(nil),           // 17: catalog.v1.PrecedentProposal
-	(*PrecedentEdit)(nil),               // 18: catalog.v1.PrecedentEdit
-	(*Precedent)(nil),                   // 19: catalog.v1.Precedent
-	(*GetPrecedentsResponse)(nil),       // 20: catalog.v1.GetPrecedentsResponse
+	(*GetNodeRequest)(nil),                   // 0: catalog.v1.GetNodeRequest
+	(*GetNodeResponse)(nil),                  // 1: catalog.v1.GetNodeResponse
+	(*GetNodeLocationRequest)(nil),           // 2: catalog.v1.GetNodeLocationRequest
+	(*GetNodeLocationResponse)(nil),          // 3: catalog.v1.GetNodeLocationResponse
+	(*VersionView)(nil),                      // 4: catalog.v1.VersionView
+	(*VersionDiff)(nil),                      // 5: catalog.v1.VersionDiff
+	(*UpstreamChange)(nil),                   // 6: catalog.v1.UpstreamChange
+	(*UnitVersionView)(nil),                  // 7: catalog.v1.UnitVersionView
+	(*GetNodeVersionsRequest)(nil),           // 8: catalog.v1.GetNodeVersionsRequest
+	(*GetNodeVersionsResponse)(nil),          // 9: catalog.v1.GetNodeVersionsResponse
+	(*GetNodeVersionDiffRequest)(nil),        // 10: catalog.v1.GetNodeVersionDiffRequest
+	(*GetNodeVersionDiffResponse)(nil),       // 11: catalog.v1.GetNodeVersionDiffResponse
+	(*GetUpstreamChangesRequest)(nil),        // 12: catalog.v1.GetUpstreamChangesRequest
+	(*GetUpstreamChangesResponse)(nil),       // 13: catalog.v1.GetUpstreamChangesResponse
+	(*GetCodeUnitVersionsRequest)(nil),       // 14: catalog.v1.GetCodeUnitVersionsRequest
+	(*GetCodeUnitVersionsResponse)(nil),      // 15: catalog.v1.GetCodeUnitVersionsResponse
+	(*GetPrecedentsRequest)(nil),             // 16: catalog.v1.GetPrecedentsRequest
+	(*PrecedentProposal)(nil),                // 17: catalog.v1.PrecedentProposal
+	(*PrecedentEdit)(nil),                    // 18: catalog.v1.PrecedentEdit
+	(*Precedent)(nil),                        // 19: catalog.v1.Precedent
+	(*GetPrecedentsResponse)(nil),            // 20: catalog.v1.GetPrecedentsResponse
+	(*ContractVersionView)(nil),              // 21: catalog.v1.ContractVersionView
+	(*GetNodeContractRequest)(nil),           // 22: catalog.v1.GetNodeContractRequest
+	(*GetNodeContractResponse)(nil),          // 23: catalog.v1.GetNodeContractResponse
+	(*ListNodeContractVersionsRequest)(nil),  // 24: catalog.v1.ListNodeContractVersionsRequest
+	(*ListNodeContractVersionsResponse)(nil), // 25: catalog.v1.ListNodeContractVersionsResponse
+	(*ContractFieldChange)(nil),              // 26: catalog.v1.ContractFieldChange
+	(*GetNodeContractDiffRequest)(nil),       // 27: catalog.v1.GetNodeContractDiffRequest
+	(*GetNodeContractDiffResponse)(nil),      // 28: catalog.v1.GetNodeContractDiffResponse
 }
 var file_proto_catalog_v1_catalog_proto_depIdxs = []int32{
 	4,  // 0: catalog.v1.VersionDiff.from:type_name -> catalog.v1.VersionView
@@ -1823,25 +2353,34 @@ var file_proto_catalog_v1_catalog_proto_depIdxs = []int32{
 	17, // 8: catalog.v1.Precedent.proposals:type_name -> catalog.v1.PrecedentProposal
 	18, // 9: catalog.v1.Precedent.edited:type_name -> catalog.v1.PrecedentEdit
 	19, // 10: catalog.v1.GetPrecedentsResponse.precedents:type_name -> catalog.v1.Precedent
-	0,  // 11: catalog.v1.CatalogQuery.GetNode:input_type -> catalog.v1.GetNodeRequest
-	2,  // 12: catalog.v1.CatalogQuery.GetNodeLocation:input_type -> catalog.v1.GetNodeLocationRequest
-	8,  // 13: catalog.v1.CatalogQuery.GetNodeVersions:input_type -> catalog.v1.GetNodeVersionsRequest
-	10, // 14: catalog.v1.CatalogQuery.GetNodeVersionDiff:input_type -> catalog.v1.GetNodeVersionDiffRequest
-	12, // 15: catalog.v1.CatalogQuery.GetUpstreamChanges:input_type -> catalog.v1.GetUpstreamChangesRequest
-	14, // 16: catalog.v1.CatalogQuery.GetCodeUnitVersions:input_type -> catalog.v1.GetCodeUnitVersionsRequest
-	16, // 17: catalog.v1.CatalogQuery.GetPrecedents:input_type -> catalog.v1.GetPrecedentsRequest
-	1,  // 18: catalog.v1.CatalogQuery.GetNode:output_type -> catalog.v1.GetNodeResponse
-	3,  // 19: catalog.v1.CatalogQuery.GetNodeLocation:output_type -> catalog.v1.GetNodeLocationResponse
-	9,  // 20: catalog.v1.CatalogQuery.GetNodeVersions:output_type -> catalog.v1.GetNodeVersionsResponse
-	11, // 21: catalog.v1.CatalogQuery.GetNodeVersionDiff:output_type -> catalog.v1.GetNodeVersionDiffResponse
-	13, // 22: catalog.v1.CatalogQuery.GetUpstreamChanges:output_type -> catalog.v1.GetUpstreamChangesResponse
-	15, // 23: catalog.v1.CatalogQuery.GetCodeUnitVersions:output_type -> catalog.v1.GetCodeUnitVersionsResponse
-	20, // 24: catalog.v1.CatalogQuery.GetPrecedents:output_type -> catalog.v1.GetPrecedentsResponse
-	18, // [18:25] is the sub-list for method output_type
-	11, // [11:18] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	21, // 11: catalog.v1.GetNodeContractResponse.contract:type_name -> catalog.v1.ContractVersionView
+	21, // 12: catalog.v1.ListNodeContractVersionsResponse.versions:type_name -> catalog.v1.ContractVersionView
+	26, // 13: catalog.v1.GetNodeContractDiffResponse.changes:type_name -> catalog.v1.ContractFieldChange
+	0,  // 14: catalog.v1.CatalogQuery.GetNode:input_type -> catalog.v1.GetNodeRequest
+	2,  // 15: catalog.v1.CatalogQuery.GetNodeLocation:input_type -> catalog.v1.GetNodeLocationRequest
+	8,  // 16: catalog.v1.CatalogQuery.GetNodeVersions:input_type -> catalog.v1.GetNodeVersionsRequest
+	10, // 17: catalog.v1.CatalogQuery.GetNodeVersionDiff:input_type -> catalog.v1.GetNodeVersionDiffRequest
+	12, // 18: catalog.v1.CatalogQuery.GetUpstreamChanges:input_type -> catalog.v1.GetUpstreamChangesRequest
+	14, // 19: catalog.v1.CatalogQuery.GetCodeUnitVersions:input_type -> catalog.v1.GetCodeUnitVersionsRequest
+	16, // 20: catalog.v1.CatalogQuery.GetPrecedents:input_type -> catalog.v1.GetPrecedentsRequest
+	22, // 21: catalog.v1.CatalogQuery.GetNodeContract:input_type -> catalog.v1.GetNodeContractRequest
+	24, // 22: catalog.v1.CatalogQuery.ListNodeContractVersions:input_type -> catalog.v1.ListNodeContractVersionsRequest
+	27, // 23: catalog.v1.CatalogQuery.GetNodeContractDiff:input_type -> catalog.v1.GetNodeContractDiffRequest
+	1,  // 24: catalog.v1.CatalogQuery.GetNode:output_type -> catalog.v1.GetNodeResponse
+	3,  // 25: catalog.v1.CatalogQuery.GetNodeLocation:output_type -> catalog.v1.GetNodeLocationResponse
+	9,  // 26: catalog.v1.CatalogQuery.GetNodeVersions:output_type -> catalog.v1.GetNodeVersionsResponse
+	11, // 27: catalog.v1.CatalogQuery.GetNodeVersionDiff:output_type -> catalog.v1.GetNodeVersionDiffResponse
+	13, // 28: catalog.v1.CatalogQuery.GetUpstreamChanges:output_type -> catalog.v1.GetUpstreamChangesResponse
+	15, // 29: catalog.v1.CatalogQuery.GetCodeUnitVersions:output_type -> catalog.v1.GetCodeUnitVersionsResponse
+	20, // 30: catalog.v1.CatalogQuery.GetPrecedents:output_type -> catalog.v1.GetPrecedentsResponse
+	23, // 31: catalog.v1.CatalogQuery.GetNodeContract:output_type -> catalog.v1.GetNodeContractResponse
+	25, // 32: catalog.v1.CatalogQuery.ListNodeContractVersions:output_type -> catalog.v1.ListNodeContractVersionsResponse
+	28, // 33: catalog.v1.CatalogQuery.GetNodeContractDiff:output_type -> catalog.v1.GetNodeContractDiffResponse
+	24, // [24:34] is the sub-list for method output_type
+	14, // [14:24] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_proto_catalog_v1_catalog_proto_init() }
@@ -1855,7 +2394,7 @@ func file_proto_catalog_v1_catalog_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_catalog_v1_catalog_proto_rawDesc), len(file_proto_catalog_v1_catalog_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   21,
+			NumMessages:   29,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -5,6 +5,7 @@ package gate
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -26,7 +27,13 @@ const nameVerificationRun workflow.StepName = "verification_run"
 var (
 	errNoEdits      = errors.New("the try has no edit to verify")
 	errNoSubmitTime = errors.New("the gate input names no time its runs were submitted at")
+	// errNotABundle marks a service whose packaged contract is not an ODCS
+	// producer bundle, the only contract format a verification run reads.
+	errNotABundle = errors.New("the packaged contract is not an ODCS producer bundle")
 )
+
+// codeNotABundle is the finding code of errNotABundle.
+const codeNotABundle = "packaged_contract_not_a_bundle"
 
 // VerificationRun is the long check `verification_run`. It runs the real
 // release pipeline over the try's edits: a verification run carries the full
@@ -74,14 +81,39 @@ func (*VerificationRun) Meta() step.Meta {
 }
 
 // plannedRun is one run that judges part of a try, with the manifest kind it
-// is verified as and the id it is submitted under.
+// is verified as and the id it is submitted under. A python service's run
+// uploads the packaged contract in its edits; a dbt run has none.
 type plannedRun struct {
 	edits shared.ServiceEdits
 	kind  string
 	runID string
 }
 
+// isODCSBundle reports whether contract is an ODCS producer bundle: a JSON
+// object with a bundle_version key.
+func isODCSBundle(contract []byte) bool {
+	var doc map[string]json.RawMessage
+	if json.Unmarshal(contract, &doc) != nil {
+		return false
+	}
+	_, ok := doc["bundle_version"]
+	return ok
+}
+
+// refusalFinding reports the finding for an error plan returned that no run
+// could judge: a refusal of the edit groups, or a packaged contract that is not
+// an ODCS producer bundle. It reports false for any other error.
+func refusalFinding(err error) (remediation.Finding, bool) {
+	if errors.Is(err, errNotABundle) {
+		return remediation.Finding{Code: codeNotABundle, Message: err.Error()}, true
+	}
+	return shared.RefusalFinding(err)
+}
+
 // plan groups the try's edits into the runs that judge them, sorted by service.
+// A service with a packaged contract is verified as kind python-odcs, and the
+// try is refused with errNotABundle when that contract is not an ODCS producer
+// bundle.
 func (g *VerificationRun) plan(in step.GateInput) ([]plannedRun, error) {
 	if len(shared.EditsOf(in.Drafts)) == 0 {
 		return nil, errNoEdits
@@ -92,21 +124,24 @@ func (g *VerificationRun) plan(in step.GateInput) ([]plannedRun, error) {
 	}
 	runs := make([]plannedRun, len(groups))
 	for i, grp := range groups {
-		kind := ports.VerificationKindDbt
+		run := plannedRun{edits: grp, kind: ports.VerificationKindDbt, runID: RunID(in.Trigger.ReleaseID, grp.Service, in.Try.Attempt)}
 		if grp.Contract != nil {
-			kind = ports.VerificationKindPython
+			if !isODCSBundle(grp.Contract) {
+				return nil, fmt.Errorf("%w: service %s", errNotABundle, grp.Service)
+			}
+			run.kind = ports.VerificationKindPythonODCS
 		}
-		runs[i] = plannedRun{edits: grp, kind: kind, runID: RunID(in.Trigger.ReleaseID, grp.Service, in.Try.Attempt)}
+		runs[i] = run
 	}
 	return runs, nil
 }
 
 // Submit posts one verification run per service the try edits. A python service
-// is verified by the contract yaml its fix packaged, uploaded under the run's
-// own id. A dbt service is verified by re-running its project with the proposed
-// content laid over it, so each edit's content is read back from the artifact
-// the draft stored and packed into one source overlay, keyed by the edit's path
-// within that service's project.
+// is verified by the odcs-bundle.json its fix packed, uploaded under the run's
+// own id as kind python-odcs. A dbt service is verified by re-running its
+// project with the proposed content laid over it, so each edit's content is
+// read back from the artifact the draft stored and packed into one source
+// overlay, keyed by the edit's path within that service's project.
 //
 // Both the artifact writes and the submission are idempotent on the try's keys,
 // since the run id is a pure function of (release, service, attempt), so a
@@ -114,7 +149,7 @@ func (g *VerificationRun) plan(in step.GateInput) ([]plannedRun, error) {
 // reports the runs' services, kinds and phases.
 func (g *VerificationRun) Submit(ctx context.Context, in step.GateInput) (step.GateVerdict, error) {
 	runs, err := g.plan(in)
-	if f, refused := shared.RefusalFinding(err); refused {
+	if f, refused := refusalFinding(err); refused {
 		g.logger.Warn("the attempt's edits cannot be verified by any release; the try fails and the next try is shown why",
 			"release", in.Trigger.ReleaseID, "attempt", in.Try.Attempt, "error", err)
 		return step.GateVerdict{
@@ -130,12 +165,12 @@ func (g *VerificationRun) Submit(ctx context.Context, in step.GateInput) (step.G
 	for _, r := range runs {
 		service := r.edits.Service
 		overlayURI := ""
-		if r.kind == ports.VerificationKindPython {
-			// A python service's artifact IS the packaged contract: there is no
-			// project to overlay, so the run reads the contract written under its
-			// own id.
+		if r.edits.Contract != nil {
+			// A python service's artifact IS the packed bundle: there is no
+			// project to overlay, so the run reads the bundle written under
+			// its own id.
 			if _, err := g.artifacts.Write(ctx,
-				service+"/"+r.runID+"/contract.yaml", string(r.edits.Contract), "application/yaml"); err != nil {
+				service+"/"+r.runID+"/"+ports.ODCSBundleName, string(r.edits.Contract), "application/json"); err != nil {
 				return step.GateVerdict{}, fmt.Errorf("write verification contract for %s: %w", service, err)
 			}
 		} else {

@@ -56,6 +56,25 @@ service CatalogQuery {
   // a signature is a search key, and "no precedent" is a valid answer.
   // Neither signature nor a full (category, reason) pair → INVALID_ARGUMENT.
   rpc GetPrecedents(GetPrecedentsRequest) returns (GetPrecedentsResponse);
+
+  // GetNodeContract returns the contract a live node currently has, with the
+  // version number of the promotion that made it current. A node with no
+  // contract, a retired node and an unknown unique_id are NOT_FOUND. With
+  // include_document the response carries the contract as its published ODCS
+  // YAML, without the `servers` list; without it document_yaml is "".
+  rpc GetNodeContract(GetNodeContractRequest) returns (GetNodeContractResponse);
+  // ListNodeContractVersions lists a node's contract history, one row per
+  // promotion that changed its contract, newest first; is_current marks the
+  // version the node has now. A retired node keeps its history, none of it
+  // current. limit 0 returns every version; a negative limit is
+  // INVALID_ARGUMENT. A node with no history returns an empty list, never
+  // NOT_FOUND. Rows carry no document_yaml.
+  rpc ListNodeContractVersions(ListNodeContractVersionsRequest) returns (ListNodeContractVersionsResponse);
+  // GetNodeContractDiff returns the fields that differ between two stored
+  // versions of one node's contract, one row per changed path, in a fixed
+  // order. A version below 1 is INVALID_ARGUMENT; a version the node has no
+  // promotion for is NOT_FOUND. Two equal versions return an empty list.
+  rpc GetNodeContractDiff(GetNodeContractDiffRequest) returns (GetNodeContractDiffResponse);
 }
 
 // GetNode returns per-node topology metadata for a single node, addressed by
@@ -290,3 +309,24 @@ message Precedent {
 message GetPrecedentsResponse {
   repeated Precedent precedents = 1;
 }
+
+message ContractVersionView {
+  string unique_id = 1;
+  int64 version = 2;              // the counter of the promotion that made this content current
+  string contract_hash = 3;
+  string document_yaml = 4;       // the published form without servers, when include_document is set
+  string release_id = 5;
+  string promoted_at = 6;         // RFC3339
+  string content_hash = 7;
+  bool is_current = 8;
+  int64 same_as_version = 9;      // set on a revert: the earlier version with the same contract_hash
+  string continuo_contracts = 10;
+  string ontology_version = 11;
+}
+message GetNodeContractRequest { string unique_id = 1; bool include_document = 2; }
+message GetNodeContractResponse { ContractVersionView contract = 1; }   // NOT_FOUND when the node has none
+message ListNodeContractVersionsRequest { string unique_id = 1; int32 limit = 2; }   // newest first
+message ListNodeContractVersionsResponse { repeated ContractVersionView versions = 1; }
+message ContractFieldChange { string path = 1; string before_json = 2; string after_json = 3; }
+message GetNodeContractDiffRequest { string unique_id = 1; int64 from_version = 2; int64 to_version = 3; }
+message GetNodeContractDiffResponse { repeated ContractFieldChange changes = 1; }

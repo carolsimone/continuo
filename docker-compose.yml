@@ -182,7 +182,7 @@ services:
       # side-loads it into the kind node cache, so validation pods must use the
       # cached image. Production omits this and defaults to Always.
       - VALIDATION_IMAGE_PULL_POLICY=IfNotPresent
-      - VALIDATION_IMAGE=ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.12.0
+      - VALIDATION_IMAGE=ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.13.0
       # Warehouse credentials for validation pods come from this Secret (envFrom).
       - VALIDATION_WAREHOUSE_SECRET=continuo-warehouse-validation
       # Job pods read the S3 key pair from this Secret in the kind cluster
@@ -256,6 +256,16 @@ services:
       - CATALOG_BACKUP_ENABLED=true
       - CATALOG_BACKUP_SCHEDULE=0 2 * * *
       - CATALOG_BACKUP_KEEP=7
+      # Contracts — the chart's contracts.publish.server.* and
+      # catalog.contractHistory.* values (deploy/continuo/values.yaml). An empty
+      # host publishes no servers entry. The server's type comes from
+      # WAREHOUSE_ENGINE, the chart's validation.engine: the local stack's
+      # warehouse is Postgres.
+      - WAREHOUSE_ENGINE=postgres
+      - CONTRACTS_SERVER_HOST=
+      - CONTRACTS_SERVER_PORT=0
+      - CONTRACTS_SERVER_DATABASE=continuo_dbt
+      - CONTRACT_HISTORY_RETENTION_DAYS=0
       # Application
       - GRPC_PORT=50052
       - HTTP_PORT=8087
@@ -897,8 +907,13 @@ services:
       # the real per-service tags before `docker compose up`; the placeholder default
       # only keeps a bare `docker compose up` from tripping the validator.
       - IMAGE_TAG_PER_SERVICE=${IMAGE_TAG_PER_SERVICE:-service-1=e2e-local,service-2=e2e-local,service-3=e2e-local}
+    # Read-only, so nothing this container runs writes into the checkout,
+    # whichever user owns it: a compile writes under /app/build, any other dbt
+    # command under the image's DBT_TARGET_PATH and DBT_LOG_PATH
+    # (dbt/Dockerfile.upload). dbt/tests/test_services_mount.py fails when
+    # this mount is writable.
     volumes:
-      - ./dbt/services:/app/services
+      - ./dbt/services:/app/services:ro
 
 volumes:
   neo4j_data:
