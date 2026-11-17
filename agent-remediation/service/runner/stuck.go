@@ -26,8 +26,8 @@ import (
 // stuckEnder ends a remediation that can go no further. The runner uses it
 // before every step it starts, the worker on the remediation of a drive that
 // failed, and the sweeper on the remediations nobody drives. Whoever ends a
-// remediation counts it as a system failure, once its transaction committed,
-// on metrics; a nil metrics counts nothing.
+// remediation counts it as a system failure on metrics, once its transaction
+// committed.
 type stuckEnder struct {
 	newUoW  func() uow.UnitOfWork
 	clock   ports.Clock
@@ -89,9 +89,7 @@ func (e stuckEnder) endIfStuck(ctx context.Context, id uuid.UUID, owner string) 
 	if err := u.Commit(); err != nil {
 		return false, fmt.Errorf("commit: %w", err)
 	}
-	if e.metrics != nil {
-		e.metrics.SystemFailure(rem.Flow, string(why.kind))
-	}
+	e.metrics.SystemFailure(rem.Flow, string(why.kind))
 	e.logger.Error("remediation ended as a system failure; its trigger is dead-lettered, and a redrive resumes it",
 		"remediation", id, "tenant", rem.TenantID, "release", rem.ReleaseID, "round", rem.Round,
 		"trigger_message_id", rem.TriggerMessageID, "reason", why.reason)

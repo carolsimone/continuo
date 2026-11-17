@@ -147,8 +147,8 @@ func (r *Runner) openTry(ctx context.Context, run tryRun) error {
 // failures counted on the remediation's own row are cleared: the try opened.
 //
 // Each node settled for good (settledNodes) comes first, as a single cluster of
-// its own already handed over with the outcome it was settled with; it runs no
-// step. Only the other nodes are grouped into clusters to work. The in-flight
+// its own already handed over with the outcome and the type it was settled with;
+// it runs no step. Only the other nodes are grouped into clusters to work. The in-flight
 // row names every cluster handed over at once with its outcome, and every
 // other node as being worked on.
 func (r *Runner) startTry(ctx context.Context, u uow.UnitOfWork, run tryRun, attempt int) error {
@@ -205,19 +205,27 @@ func (r *Runner) startTry(ctx context.Context, u uow.UnitOfWork, run tryRun, att
 	return nil
 }
 
+// settledNode is a node settled for good: the outcome it was settled with and
+// the type of the cluster that settled it, empty for a node the classifier
+// marked unfixable, which no cluster ever worked.
+type settledNode struct {
+	outcome  proposal.NodeOutcome
+	typeName string
+}
+
 // settledNodes is every node of the remediation settled for good, with the
 // outcome it was settled with: each trigger node the classifier marked
 // unfixable, with the classifier's outcome, and, when the try being replaced
 // failed, each member of one of its clusters whose outcome carries a settled
-// code (settledCode). The clusters a try carries are themselves handed over
-// with their code, so a node once settled stays settled in every later try. A
-// node handed over because its pre-flight rounds are spent is not settled, and
-// is grouped again.
-func settledNodes(run tryRun) map[string]proposal.NodeOutcome {
-	out := map[string]proposal.NodeOutcome{}
+// code (settledCode), with the type of that cluster. The clusters a try carries
+// are themselves handed over with their code and type, so a node once settled
+// stays settled in every later try. A node handed over because its pre-flight
+// rounds are spent is not settled, and is grouped again.
+func settledNodes(run tryRun) map[string]settledNode {
+	out := map[string]settledNode{}
 	for _, n := range run.trigger.Nodes {
 		if n.Unfixable != nil {
-			out[n.NodeID] = unfixableOutcome(*n.Unfixable)
+			out[n.NodeID] = settledNode{outcome: unfixableOutcome(*n.Unfixable)}
 		}
 	}
 	if run.snap.Try == nil || run.snap.Try.Status != remediation.TryFailed {
@@ -229,7 +237,7 @@ func settledNodes(run tryRun) map[string]proposal.NodeOutcome {
 		}
 		for _, m := range c.Members {
 			if _, ok := out[m]; !ok {
-				out[m] = *c.Outcome
+				out[m] = settledNode{outcome: *c.Outcome, typeName: c.TypeName}
 			}
 		}
 	}
@@ -269,10 +277,10 @@ func attemptOutcomes(t remediation.Trigger, o proposal.NodeOutcome) map[string]p
 	return out
 }
 
-// settledCluster is cluster n of a try for the node settled for good with
-// outcome o: a single cluster targeting the node, already handed over, with no
-// type.
-func (r *Runner) settledCluster(rem remediation.Remediation, try remediation.Try, n int, nodeID string, o proposal.NodeOutcome) remediation.Cluster {
+// settledCluster is cluster n of a try for the node settled for good: a single
+// cluster targeting the node, already handed over with the settled outcome and
+// the type of the cluster that settled it.
+func (r *Runner) settledCluster(rem remediation.Remediation, try remediation.Try, n int, nodeID string, s settledNode) remediation.Cluster {
 	return remediation.Cluster{
 		RemediationID: rem.ID,
 		Try:           try.Try,
@@ -280,9 +288,10 @@ func (r *Runner) settledCluster(rem remediation.Remediation, try remediation.Try
 		Kind:          workflow.ClusterSingle,
 		TargetNodeID:  nodeID,
 		Members:       []string{nodeID},
+		TypeName:      s.typeName,
 		Status:        remediation.ClusterHandedOver,
 		Round:         1,
-		Outcome:       &o,
+		Outcome:       &s.outcome,
 		UpdatedAt:     r.clock.Now(),
 	}
 }

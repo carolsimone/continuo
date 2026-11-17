@@ -75,12 +75,15 @@ func (run tryRun) countRound(typ, result string) {
 
 // countTries collects how each cluster the try worked ended, as the try ends.
 // checked is the result of the clusters that went on to be verified, empty for
-// a try that had none. A cluster no type matched, one that was handed over
-// when the try opened and one that fell back to its members count nothing: the
-// members count their own result.
+// a try that had none. A cluster no type matched and a cluster handed over when
+// the try opened, which ran no step, count nothing. A shared-upstream cluster
+// that fell back counts nothing itself: its members count their own result.
 func (run tryRun) countTries(checked string) {
 	flow := run.snap.Remediation.Flow
 	for _, c := range run.snap.Clusters {
+		if !run.journal.worked(c.Cluster) {
+			continue
+		}
 		result, ok := clusterResult(c, checked)
 		if !ok {
 			continue
@@ -92,7 +95,9 @@ func (run tryRun) countTries(checked string) {
 
 // clusterResult is how a cluster of the type it was matched to ended in its
 // try. A cluster with no type was never worked, whatever it was handed over
-// with.
+// with. A cluster that fell back ends with the code that made it fall back, when
+// it carries one: a cross-service cluster, whose members get no cluster of their
+// own. A shared-upstream cluster that fell back carries none.
 func clusterResult(c remediation.Cluster, checked string) (string, bool) {
 	if c.TypeName == "" {
 		return "", false
@@ -100,7 +105,7 @@ func clusterResult(c remediation.Cluster, checked string) (string, bool) {
 	switch c.Status {
 	case remediation.ClusterChecked:
 		return checked, checked != ""
-	case remediation.ClusterHandedOver:
+	case remediation.ClusterHandedOver, remediation.ClusterFellBack:
 		if c.Outcome == nil {
 			return "", false
 		}

@@ -188,6 +188,37 @@ func TestRunner_CountsTheResultOfEachTry(t *testing.T) {
 		assert.Equal(t, []string{sample("dbt-compile", "declined")}, m.gotTries())
 	})
 
+	t.Run("a cross-service cluster fell back because a step declined", func(t *testing.T) {
+		m := &recordedMetrics{}
+		h := newHarness(t, withMetrics(m), withTries(1))
+		id := h.accept(trigger("compile", crossServiceNode()))
+		require.NoError(t, h.runner.Drive(ctx, id))
+
+		require.Equal(t, remediation.ClusterFellBack, h.cluster(id, 1, 1).Status)
+		assert.Equal(t, []string{sample("cross-service-upstream", "declined")}, m.gotTries(),
+			"its members get no cluster of their own, so it counts its own failure")
+		assert.Equal(t, []string{sample("cross-service-upstream", "handed_over", "declined")}, m.gotOutcomes())
+	})
+
+	t.Run("a cross-service cluster fell back because its pre-flight rounds were spent", func(t *testing.T) {
+		m := &recordedMetrics{}
+		h := newHarness(t, withMetrics(m), withTries(1))
+		h.bundle.nodes = map[string]ports.CandidateSource{"model.core.base": {RawCode: "select 1", Runtime: "dbt"}}
+		h.llm.answer = func(req prompt.ProposeRequest) ports.ProposeResult {
+			r := fixAnswer(req)
+			r.ProposedSQL, r.Confidence = "select 3", "low"
+			return r
+		}
+		trig := trigger("compile", crossServiceNode())
+		trig.CodeBundleURI = "s3://bundles/rel-1.tar.gz"
+		id := h.accept(trig)
+		require.NoError(t, h.runner.Drive(ctx, id))
+
+		require.Equal(t, remediation.ClusterFellBack, h.cluster(id, 1, 1).Status)
+		assert.Equal(t, []string{sample("cross-service-upstream", "preflight_spent")}, m.gotTries())
+		assert.Equal(t, []string{sample("cross-service-upstream", "handed_over", "preflight_rounds_spent")}, m.gotOutcomes())
+	})
+
 	t.Run("a draft made no edit", func(t *testing.T) {
 		m := &recordedMetrics{}
 		h := newHarness(t, withMetrics(m), withTries(1), withPreflight("dbt-compile", "confidence_not_low"))
@@ -246,6 +277,7 @@ func TestRunner_CountsNothingForAClusterNoTypeMatchedOrCarriedOver(t *testing.T)
 		require.NoError(t, h.runner.Drive(ctx, id))
 		h.failGate(id, "svc-b")
 		require.NoError(t, h.drive(id))
+		assert.Empty(t, m.gotOutcomes(), "the first try is not the end")
 		h.pipeline.answer(proposal.PhasePassed, nil)
 		require.NoError(t, h.poll(id))
 
@@ -254,6 +286,25 @@ func TestRunner_CountsNothingForAClusterNoTypeMatchedOrCarriedOver(t *testing.T)
 			sample("dbt-compile", "gate_failed"), // svc-b, in the first try
 			sample("dbt-compile", "passed"),      // svc-b, in the second try
 		}, m.gotTries(), "the second try counts svc-b alone")
+		assert.ElementsMatch(t, []string{
+			sample("dbt-compile", "handed_over", "declined"),
+			sample("dbt-compile", "fixed", ""),
+		}, m.gotOutcomes(), "the node declined in the first try is counted, at the end of the second, under the type that declined it")
+	})
+
+	t.Run("a node the classifier marked unfixable is carried over", func(t *testing.T) {
+		m := &recordedMetrics{}
+		h := newHarness(t, withMetrics(m))
+		id := h.accept(trigger("compile", unfixable(compileNode("svc-a"), "classifier_infra", "the warehouse dropped"), compileNode("svc-b")))
+		require.NoError(t, h.runner.Drive(ctx, id))
+		h.pipeline.answer(proposal.PhasePassed, nil)
+		require.NoError(t, h.poll(id))
+
+		assert.Equal(t, []string{sample("dbt-compile", "passed")}, m.gotTries(), "the unfixable node's cluster ran no step")
+		assert.ElementsMatch(t, []string{
+			sample("none", "handed_over", "classifier_infra"),
+			sample("dbt-compile", "fixed", ""),
+		}, m.gotOutcomes(), "no type ever worked an unfixable node")
 	})
 }
 
@@ -383,8 +434,83 @@ func TestRunner_CountsEachNodeWhenItsRemediationEnds(t *testing.T) {
 	})
 }
 
+// A remediation whose attempt row someone else moved while its try was
+// verifying still ends, and counts each node from the row as it then stands:
+// fixed for a node the row holds proposed, handed over for a node whose outcome
+// carries a code, and nothing for the others.
+func TestRunner_CountsTheNodesOfARemediationWhoseAttemptRowMoved(t *testing.T) {
+	test := compileNode("test.sales.not_null")
+	test.NodeType = "dbt-test"
+	for name, tc := range map[string]struct {
+		move  func(h *harness, proposalID string) error
+		phase proposal.Phase
+		want  []string
+	}{
+		"the gate passed, the row was proposed by hand": {
+			move: func(h *harness, id string) error {
+				_, err := h.store.ProposalRepository().MarkVerified(ctx, id, nil)
+				return err
+			},
+			phase: proposal.PhasePassed,
+			want:  []string{sample("dbt-compile", "fixed", ""), sample("none", "handed_over", "no_type")},
+		},
+		"the gate failed, the row was proposed by hand": {
+			move: func(h *harness, id string) error {
+				_, err := h.store.ProposalRepository().MarkVerified(ctx, id, nil)
+				return err
+			},
+			phase: proposal.PhaseFailed,
+			want:  []string{sample("dbt-compile", "fixed", ""), sample("none", "handed_over", "no_type")},
+		},
+		"the gate passed, the row was failed by hand": {
+			move: func(h *harness, id string) error {
+				_, err := h.store.ProposalRepository().MarkVerifyFailed(ctx, id, "failed by hand", nil)
+				return err
+			},
+			phase: proposal.PhasePassed,
+			want:  []string{sample("none", "handed_over", "no_type")},
+		},
+		"the gate failed, the row was failed by hand": {
+			move: func(h *harness, id string) error {
+				_, err := h.store.ProposalRepository().MarkVerifyFailed(ctx, id, "failed by hand", nil)
+				return err
+			},
+			phase: proposal.PhaseFailed,
+			want:  []string{sample("none", "handed_over", "no_type")},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := &recordedMetrics{}
+			h := newHarness(t, withMetrics(m))
+			id := h.accept(trigger("compile", compileNode("svc-a"), test))
+			require.NoError(t, h.runner.Drive(ctx, id))
+			require.NoError(t, tc.move(h, h.attempt(1).ID))
+			h.pipeline.answer(tc.phase, map[string]string{"svc-a": "broken"})
+
+			require.NoError(t, h.poll(id))
+
+			require.Equal(t, remediation.StatusDone, h.remediation(id).Status)
+			assert.ElementsMatch(t, tc.want, m.gotOutcomes())
+		})
+	}
+}
+
+// The flow's own context steps run once per cluster, and count under the
+// cluster's type like its type's context steps: only the cross-cluster checks,
+// the gate and the outputs have no type.
+func TestRunner_CountsTheFlowsContextStepsUnderTheClusterType(t *testing.T) {
+	m := &recordedMetrics{}
+	h := newHarness(t, withMetrics(m), withPreviousTries())
+	id := h.accept(trigger("compile", compileNode("svc-a")))
+	require.NoError(t, h.runner.Drive(ctx, id))
+
+	assert.Equal(t, 4, countOf(m.gotStages(), sample("dbt-compile", "context")),
+		"previous_tries, then the type's three context steps")
+	assert.Zero(t, countOf(m.gotStages(), sample("", "context")))
+}
+
 // Stage times each committed step, a cluster's steps under its type and the
-// flow's own steps with no type.
+// steps of no cluster with no type.
 func TestRunner_CountsEachCommittedStepWithItsDuration(t *testing.T) {
 	m := &recordedMetrics{}
 	h := newHarness(t, withMetrics(m))

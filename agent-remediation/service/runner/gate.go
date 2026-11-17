@@ -350,7 +350,11 @@ func (r *Runner) passGate(ctx context.Context, run tryRun, row remediation.StepR
 		}
 		if current.Status != proposal.StatusVerifying {
 			moved = true
-			return r.endTry(ctx, u, run, remediation.TryFailed)
+			if err := r.endTry(ctx, u, run, remediation.TryFailed); err != nil {
+				return err
+			}
+			run.countOutcomes(current.NodeOutcomes)
+			return nil
 		}
 		in := step.OutputInput{Remediation: run.snap.Remediation, Try: *run.snap.Try, Trigger: run.trigger, Snapshot: run.snap}
 		outRow := r.newRow(run, flowCluster, string(outName), kindOutput, flowRound, run.flow.Revision)
@@ -430,7 +434,15 @@ func (r *Runner) failGate(ctx context.Context, run tryRun, row remediation.StepR
 		}
 		failed = hit
 		if !hit {
-			return r.endTry(ctx, u, run, remediation.TryFailed)
+			current, err := u.ProposalRepo().Get(ctx, attempt.ID)
+			if err != nil {
+				return fmt.Errorf("read proposal %s: %w", attempt.ID, err)
+			}
+			if err := r.endTry(ctx, u, run, remediation.TryFailed); err != nil {
+				return err
+			}
+			run.countOutcomes(current.NodeOutcomes)
+			return nil
 		}
 		if err := r.saveTry(ctx, u, *run.snap.Try, remediation.TryFailed, time.Time{}); err != nil {
 			return err

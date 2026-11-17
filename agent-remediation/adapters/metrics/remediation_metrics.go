@@ -37,7 +37,7 @@ func NewRemediationMetrics(reg *pkgmetrics.Registry) *RemediationMetrics {
 	m := &RemediationMetrics{
 		tries: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "continuo_remediation_tries_total",
-			Help: "Clusters a remediation try worked, counted when the try ends, by flow, type and result: passed (the verification runs passed), gate_failed (a run did not pass the fix or never answered), checks_failed (a cross-cluster check or the gate refused the try's drafts), preflight_spent (every pre-flight round refused the draft) or declined (a step declined, or the draft made no edit). A cluster no type matches, one handed over when the try opened and one that fell back to its members count nothing.",
+			Help: "Clusters a remediation try worked, counted when the try ends, by flow, type and result: passed (the verification runs passed), gate_failed (a run did not pass the fix or never answered), checks_failed (a cross-cluster check or the gate refused the try's drafts), preflight_spent (every pre-flight round refused the draft) or declined (a step declined, or the draft made no edit). A cluster no type matches and one handed over when the try opened count nothing, and so does a shared-upstream cluster that fell back to its members, which count their own result. A cross-service cluster that fell back counts declined or preflight_spent, the result of its own failure.",
 		}, []string{"flow", "type", "result"}),
 		rounds: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "continuo_remediation_rounds_total",
@@ -53,7 +53,7 @@ func NewRemediationMetrics(reg *pkgmetrics.Registry) *RemediationMetrics {
 		}, []string{"flow", "reason"}),
 		stageSeconds: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "continuo_remediation_stage_seconds",
-			Help:    "Seconds each committed step of a remediation took, by flow, type (empty for a step of the flow itself) and stage: context, propose, preflight, cross_cluster, gate or output. A gate stage lasts from the submit of the try's drafts to the verdict.",
+			Help:    "Seconds each committed step of a remediation took, by flow, type and stage: context, propose, preflight, cross_cluster, gate or output. The steps of a cluster, the flow's own context steps among them, count under the cluster's type, and the cross_cluster, gate and output stages have an empty type. A gate stage lasts from the submit of the try's drafts to the verdict.",
 			Buckets: []float64{0.1, 0.5, 1, 5, 15, 60, 300, 900, 3600},
 		}, []string{"flow", "type", "stage"}),
 		tokens: prometheus.NewCounterVec(prometheus.CounterOpts{

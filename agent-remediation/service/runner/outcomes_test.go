@@ -345,7 +345,7 @@ func TestRunner_ADraftWithNoEditIsDeclinedAndNotTriedAgain(t *testing.T) {
 
 	assert.Equal(t, noEditDeclined, h.attempt(1).Proposal.NodeOutcomes["svc-a"], "the failed gate leaves the declined node as it was")
 	carried := h.clusterFor(id, 2, "svc-a")
-	assert.Equal(t, "", carried.TypeName)
+	assert.Equal(t, "dbt-compile", carried.TypeName, "the carried cluster keeps the type of the cluster that settled the node")
 	assert.Equal(t, remediation.ClusterHandedOver, carried.Status)
 	assert.Equal(t, &noEditDeclined, carried.Outcome)
 	for _, c := range h.store.Clusters(id) {
@@ -463,19 +463,22 @@ func TestRunner_ADeclinedNodeIsNotTriedAgain(t *testing.T) {
 	noFile := compileNode("svc-a")
 	noFile.FilePath = ""
 	cases := []struct {
-		name    string
-		node    remediation.TriggerNode
-		outcome proposal.NodeOutcome
+		name     string
+		node     remediation.TriggerNode
+		outcome  proposal.NodeOutcome
+		typeName string
 	}{
 		{
-			name:    "a context step declined",
-			node:    noFile,
-			outcome: proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: noFileReason, Code: model.HandoverReasonDeclined},
+			name:     "a context step declined",
+			node:     noFile,
+			outcome:  proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: noFileReason, Code: model.HandoverReasonDeclined},
+			typeName: "dbt-compile",
 		},
 		{
-			name:    "its cross-service cluster fell back",
-			node:    crossServiceNode(),
-			outcome: crossServiceDeclined(),
+			name:     "its cross-service cluster fell back",
+			node:     crossServiceNode(),
+			outcome:  crossServiceDeclined(),
+			typeName: "cross-service-upstream",
 		},
 	}
 	for _, tc := range cases {
@@ -496,7 +499,7 @@ func TestRunner_ADeclinedNodeIsNotTriedAgain(t *testing.T) {
 			carried := h.clusterFor(id, 2, "svc-a")
 			assert.Equal(t, workflow.ClusterSingle, carried.Kind)
 			assert.Equal(t, []string{"svc-a"}, carried.Members)
-			assert.Equal(t, "", carried.TypeName)
+			assert.Equal(t, tc.typeName, carried.TypeName, "the carried cluster keeps the type of the cluster that settled the node")
 			assert.Equal(t, remediation.ClusterHandedOver, carried.Status)
 			assert.Equal(t, &tc.outcome, carried.Outcome)
 			for _, c := range h.store.Clusters(id) {
@@ -592,7 +595,7 @@ func TestRunner_ACrossServiceFallbackKeepsTheCodeOfItsCause(t *testing.T) {
 
 		carried := clusterOf(h, id, 2, "svc-a")
 		assert.Equal(t, remediation.ClusterHandedOver, carried.Status, "the members are settled, so the next try carries them handed over")
-		assert.Equal(t, "", carried.TypeName)
+		assert.Equal(t, "cross-service-upstream", carried.TypeName, "the carried cluster keeps the type of the cluster that settled the node")
 		assert.Equal(t, fellBack.Outcome, carried.Outcome)
 		assert.Equal(t, proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: fellBack.Outcome.Reason, Code: model.HandoverReasonDeclined},
 			h.attempt(2).Proposal.NodeOutcomes["svc-a"])

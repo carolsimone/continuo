@@ -77,6 +77,17 @@ func (j journal) done(cluster int, step string, round int) (remediation.StepRun,
 	return s, ok && s.Status == remediation.StepDone
 }
 
+// worked reports whether any step of the cluster has a row: a cluster handed
+// over when its try opened ran none.
+func (j journal) worked(cluster int) bool {
+	for k := range j {
+		if k.cluster == cluster {
+			return true
+		}
+	}
+	return false
+}
+
 // promptRow returns the done row of the prompt step of one cluster in one
 // round, whatever the step's name: a round has one prompt row, written by the
 // type's prompt as the runner had it loaded when the round ran.

@@ -63,8 +63,10 @@ const TypeNone = "none"
 
 // RemediationMetrics counts what the remediation runner does, by the flow it
 // follows and the type of the cluster it works. flow and typ are the names of
-// loaded files, so their values are as many as the install has files; typ is
-// empty for a step of the flow itself and TypeNone for a node no type matched.
+// loaded files, so their values are as many as the install has files. The steps
+// of a cluster, the flow's own context steps among them, count under the
+// cluster's type; typ is empty for the cross-cluster, gate and output stages,
+// which belong to no cluster, and TypeNone for a node no type matched.
 type RemediationMetrics interface {
 	// Try counts one cluster ended by a try, with the Try* result.
 	Try(flow, typ, result string)
