@@ -410,8 +410,8 @@ export interface ReleaseDetail {
   repo?: string;
   commit_sha?: string;
   commit_url?: string;
-  // How the release's artifact is parsed: 'dbt' or 'python'. Decides the
-  // pipeline path — a python release has no compile leg.
+  // How the release's artifact is parsed: 'dbt', 'python' or 'python-odcs'.
+  // Decides the pipeline path — a python release has no compile leg.
   manifest_kind?: string;
   // The seed reloads the release's seed changes cause. Absent on a release
   // recorded before notices existed.

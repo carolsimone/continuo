@@ -303,17 +303,21 @@ export interface UpcomingStage {
 }
 
 // What decides a run's path through the pipeline: how its artifact is parsed
-// ('dbt' or 'python'), and whether it is a bootstrap release.
+// ('dbt', 'python' or 'python-odcs'), and whether it is a bootstrap release.
 export interface PipelineRun {
   manifestKind?: string;
   bootstrap?: boolean;
 }
 
+// The manifest kinds of a Python service's release. Both skip the compile leg
+// and the seed build, as release-controller's ManifestKind.IsPython does.
+const PYTHON_MANIFEST_KINDS = ['python', 'python-odcs'];
+
 // pipelinePath lists the stages a run of this kind passes through, in order,
 // naming the condition on each stage that does not run on every path:
-// - compiling: dbt only — a python service's own CI compiles and uploads the
-//   contract before the release is posted, so activation goes straight to
-//   parsing;
+// - compiling: dbt only — a python service's own CI builds and uploads its
+//   contract bundle before the release is posted, so activation goes straight
+//   to parsing;
 // - parsing: every run;
 // - seed_building: dbt only, and only when the validation set holds a new or
 //   changed seed;
@@ -322,7 +326,7 @@ export interface PipelineRun {
 //   release, which promotes right after parsing.
 // An unknown kind takes the dbt path, the common one.
 function pipelinePath(run: PipelineRun): UpcomingStage[] {
-  const python = run.manifestKind === 'python';
+  const python = PYTHON_MANIFEST_KINDS.includes(run.manifestKind ?? '');
   const path: UpcomingStage[] = [{ stage: 'received' }];
   if (!python) path.push({ stage: 'compiling' });
   path.push({ stage: 'parsing' });
