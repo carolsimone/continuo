@@ -261,6 +261,61 @@ func TestRedactor_ALiteralOfNineDigitsReservesItsNumber(t *testing.T) {
 	assert.Empty(t, unknown)
 }
 
+// A number that a literal holds is never issued, whatever its size: a literal of
+// ten digits sits where the count would arrive after a literal of nine.
+func TestRedactor_NoIssuedNumberEqualsALiteralNumber(t *testing.T) {
+	r := sanitize.NewRedactor()
+	in := "[redacted:email:999999999] [redacted:email:1000000000] a@x.org"
+
+	cleaned := r.Clean(in)
+
+	assert.Equal(t, "[redacted:email:999999999] [redacted:email:1000000000] [redacted:email:1000000001]", cleaned)
+	restored, unknown := r.Restore(cleaned)
+	assert.Equal(t, in, restored)
+	assert.Empty(t, unknown)
+}
+
+// A secret that a redacted part of a value takes whole is cleaned and restored
+// in one piece: the Redactor numbers the whole value, never the part.
+func TestRedactor_AValueThatTakesInARedactedPartIsNumberedWhole(t *testing.T) {
+	for name, tc := range map[string]struct{ in, want string }{
+		"a key id and a tail":  {"password=AKIAIOSFODNN7EXAMPLEfoo", "password=[redacted:secret:1]"},
+		"a bearer and a tail":  {"token:Bearer 00000000!", "token:[redacted:secret:1]"},
+		"a marker and a tail":  {"password=[redacted:secret]hunter2", "password=[redacted:secret:1]"},
+		"a URL under a secret": {"password=postgres://app:s3cr3t@db/x", "password=[redacted:secret:1]"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := sanitize.NewRedactor()
+
+			cleaned := r.Clean(tc.in)
+
+			assert.Equal(t, tc.want, cleaned)
+			assert.Equal(t, cleaned, r.Clean(cleaned), "cleaned again")
+			restored, unknown := r.Restore(cleaned)
+			assert.Equal(t, tc.in, restored)
+			assert.Empty(t, unknown)
+		})
+	}
+}
+
+// Text, then a Redactor over the stored text, is as clean as a Redactor over the
+// text itself: the value is whole in both.
+func TestRedactor_CleaningTheOutputOfTextLeavesNoTailOfAValue(t *testing.T) {
+	for _, in := range []string{
+		"password=AKIAIOSFODNN7EXAMPLEfoo",
+		"token:Bearer 00000000!",
+		"token=" + githubPAT + ".tail",
+		"password=[redacted:secret]hunter2",
+		"postgres://app:s3[redacted:secret]cr@db/x",
+	} {
+		cleaned := sanitize.NewRedactor().Clean(sanitize.Text(in))
+
+		for _, tail := range []string{"foo", "!", ".tail", "hunter2", "s3", "cr@"} {
+			assert.NotContains(t, strings.ReplaceAll(cleaned, "[redacted:secret:1]", ""), tail, in)
+		}
+	}
+}
+
 // The literals of one text reserve their numbers for the texts after it.
 func TestRedactor_ALiteralReservesItsNumberForTheNextTexts(t *testing.T) {
 	r := sanitize.NewRedactor()
@@ -362,7 +417,107 @@ func FuzzCleanAndRestore(f *testing.F) {
 				t.Fatalf("Restore(Clean(%q)) reports %q, which is not a fixed marker of the text", in, placeholder)
 			}
 		}
+
+		// A secret in front of the text is redacted whatever the text holds.
+		for _, probe := range glueProbes {
+			if strings.Contains(in, probe.secret) {
+				continue
+			}
+			text := probe.text + " " + in
+			for name, out := range map[string]string{
+				"Text":             sanitize.Text(text),
+				"Clean":            sanitize.NewRedactor().Clean(text),
+				"Clean after Text": sanitize.NewRedactor().Clean(sanitize.Text(text)),
+			} {
+				if strings.Contains(out, probe.secret) {
+					t.Fatalf("%s leaves %q of %q in %q", name, probe.secret, text, out)
+				}
+			}
+		}
 	})
+}
+
+// glueProbes are secrets a redacted part of a value sits against: a marker, a
+// key id, a bearer token. The text after the probe cannot change what the
+// rules make of it.
+var glueProbes = []struct{ text, secret string }{
+	{"password=[redacted:secret]Zq7canaryA", "Zq7canaryA"},
+	{"password=[redacted:secret:1]Zq7canaryB", "Zq7canaryB"},
+	{"postgres://app:Zq[redacted:secret]7canaryC@db/x", "7canaryC"},
+	{"postgres://app:Zq7canaryD[redacted:secret:2]@db/x", "Zq7canaryD"},
+	{"password=" + awsKeyID + "Zq7canaryE", "Zq7canaryE"},
+	{"password=Zq7canaryF" + awsKeyID, "Zq7canaryF"},
+	{"token=" + githubPAT + ".Zq7canaryG", "Zq7canaryG"},
+	{"secret: " + jwt + "-Zq7canaryH", "Zq7canaryH"},
+	{"token:Bearer 00000000Zq7canaryI!", "Zq7canaryI"},
+	{"token:Bearer abcdefgh1234 Zq7canaryJ", "abcdefgh1234"},
+	{"api_key: [redacted:email]Zq7canaryK", "Zq7canaryK"},
+}
+
+// leakyPieces are texts that hold a secret, and the secret. The composition
+// test checks that none of them is left in what it makes of a text.
+var leakyPieces = []struct{ text, secret string }{
+	{"password=hunter2", "hunter2"},
+	{"PGPASSWORD=s3cr3t psql", "s3cr3t"},
+	{"postgres://app:pw9xQ@db/x", "pw9xQ"},
+	{"token: Bearer abcdefgh1234", "abcdefgh1234"},
+	{"id " + awsKeyID, awsKeyID},
+	{"clone " + githubPAT, githubPAT},
+	{"session " + jwt, jwt},
+	{"owner ops@acme.com", "ops@acme.com"},
+	{"password=" + awsKeyID + "FooTailQ", "FooTailQ"},
+	{"token=" + githubPAT + ".BarTailQ", "BarTailQ"},
+	{"password=[redacted:secret]hunter2tail", "hunter2tail"},
+	{"postgres://app:Zs3[redacted:secret:4]Qcr@db/x", "Zs3"},
+	{"token:Bearer 00000000BazTailQ!", "BazTailQ"},
+	{`{"password": "hunter2quoted"}`, "hunter2quoted"},
+	{`password: str = "hunter2annotated"`, "hunter2annotated"},
+	{"api_key=xK9(mP2q", "xK9(mP2q"},
+	{pemKey, "MIIEowIBAAKCAQEAxJ5g1c0Zk3lQ"},
+}
+
+// neutralPieces are texts that hold no secret.
+var neutralPieces = []string{
+	"select", "from", "analytics.orders", "where", "a = b", "-- a comment", "x", "42",
+	"password_hint", "token::text", "os.getenv(\"T\")", "[redacted:secret]", "[redacted:email:2]",
+}
+
+// Texts made of secrets and of text that holds none, in any order, set apart by
+// separators: no secret is left in what Text, a Redactor, or a Redactor over
+// the output of Text makes of them, and the Redactor restores the original.
+func TestRedactor_LeavesNoSecretInATextMadeOfPieces(t *testing.T) {
+	rng := rand.New(rand.NewPCG(3, 5)) //nolint:gosec // G404: a fixed seed makes the texts the same on every run.
+	for range 5000 {
+		var in strings.Builder
+		var secrets []string
+		for i := range 2 + rng.IntN(8) {
+			if i > 0 {
+				in.WriteString(separatorsOfText[rng.IntN(len(separatorsOfText))])
+			}
+			if rng.IntN(2) == 0 {
+				leaky := leakyPieces[rng.IntN(len(leakyPieces))]
+				in.WriteString(leaky.text)
+				secrets = append(secrets, leaky.secret)
+			} else {
+				in.WriteString(neutralPieces[rng.IntN(len(neutralPieces))])
+			}
+		}
+		text := in.String()
+
+		r := sanitize.NewRedactor()
+		outputs := map[string]string{
+			"Text":             sanitize.Text(text),
+			"Clean":            r.Clean(text),
+			"Clean after Text": sanitize.NewRedactor().Clean(sanitize.Text(text)),
+		}
+		for name, out := range outputs {
+			for _, secret := range secrets {
+				require.NotContains(t, out, secret, "%s of %q", name, text)
+			}
+		}
+		restored, _ := r.Restore(outputs["Clean"])
+		require.Equal(t, text, restored)
+	}
 }
 
 // piecesOfText are the fragments the composition test strings together: the

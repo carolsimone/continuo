@@ -401,8 +401,9 @@ func TestText_KeepsWhatIsNotAnEmailAddress(t *testing.T) {
 	}
 }
 
-// Where two rules want the same text, the earlier rule decides, and the text
-// of the loser that lies outside the winner stays.
+// Where two rules want the same text, the earlier match stands and the later
+// one is dropped, except that the value of a secret key takes in the earlier
+// matches inside it, so a value is redacted whole.
 func TestText_TheEarlierRuleDecidesAnOverlap(t *testing.T) {
 	for name, tc := range map[string]struct{ in, want string }{
 		"a secret key valued with an email address (rule 4 over rule 5)": {
@@ -429,17 +430,17 @@ func TestText_TheEarlierRuleDecidesAnOverlap(t *testing.T) {
 			"token: Bearer abc123.def456-ghi789",
 			"token: [redacted:secret]",
 		},
-		"a URL under a secret key (rule 2 over rule 4)": {
+		"a URL under a secret key (rule 4 takes in rule 2)": {
 			"password=postgres://app:s3cr3t@db/x",
-			"password=postgres://app:[redacted:secret]@db/x",
+			"password=[redacted:secret]",
 		},
 		"an AWS key id as the user of an email-looking host (rule 3 over rule 5)": {
 			awsKeyID + "@bucket.example.com",
 			"[redacted:secret]@bucket.example.com",
 		},
-		"a private key under a secret key (rule 1 over rule 4)": {
+		"a private key under a secret key (rule 4 takes in rule 1)": {
 			`{"private_key": "-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----\n", "id": 1}`,
-			`{"private_key": "[redacted:key]\n", "id": 1}`,
+			`{"private_key": "[redacted:key]", "id": 1}`,
 		},
 		"an email inside a private key block (rule 1 over rule 5)": {
 			"-----BEGIN PRIVATE KEY-----\nops@acme.com\n-----END PRIVATE KEY-----",
@@ -505,18 +506,35 @@ func TestText_CleaningTwiceChangesNothingMore(t *testing.T) {
 	}
 }
 
-// A value that an earlier rule cut short keeps its tail, and so does the text
-// cleaned a second time: the marker that stands where the token was holds its
-// own text, and the tail is not read as a value of its own.
-func TestText_ATokenInsideAValueLeavesTheRestOfTheValueAsItIs(t *testing.T) {
+// A value is redacted whole: a known token, a marker or a URL password inside
+// it, with text glued to it, takes the rest of the value with it, on the first
+// cleaning and on any text that was cleaned already.
+func TestText_ARedactedPartOfAValueTakesTheWholeValueWithIt(t *testing.T) {
 	for name, tc := range map[string]struct{ in, want string }{
-		"a bearer token and a tail": {"token:Bearer 00000000!", "token:[redacted:secret]!"},
-		"a key id and a tail":       {"password=AKIAIOSFODNN7EXAMPLEfoo", "password=[redacted:secret]foo"},
-		"a key id and a head":       {"password=x1AKIAIOSFODNN7EXAMPLE", "password=x1[redacted:secret]"},
+		"a bearer token and a tail":         {"token:Bearer 00000000!", "token:[redacted:secret]"},
+		"a key id and a tail":               {"password=AKIAIOSFODNN7EXAMPLEfoo", "password=[redacted:secret]"},
+		"a key id and a head":               {"password=x1AKIAIOSFODNN7EXAMPLE", "password=[redacted:secret]"},
+		"a GitHub token and a tail":         {"token=" + githubPAT + ".tail", "token=[redacted:secret]"},
+		"a GitHub token and a dashed tail":  {"secret: " + githubPAT + "-tail", "secret: [redacted:secret]"},
+		"a marker and a tail":               {"password=[redacted:secret]hunter2", "password=[redacted:secret]"},
+		"a numbered marker and a tail":      {"password=[redacted:secret:1]hunter2", "password=[redacted:secret]"},
+		"a marker in the middle of a value": {"token=ab[redacted:secret]cd", "token=[redacted:secret]"},
+		"a marker in the middle of a URL password": {
+			"postgres://app:s3[redacted:secret]cr@db/x",
+			"postgres://app:[redacted:secret]@db/x",
+		},
+		"a marker as the user of a URL password": {
+			"https://[redacted:secret]:pw@h.example.com/x",
+			"https://[redacted:secret]:[redacted:secret]@h.example.com/x",
+		},
+		"a value that is a marker": {"password=[redacted:secret]", "password=[redacted:secret]"},
+		"a value with a marker, then an equals sign": {
+			"password: [redacted:secret]x = 1", "password: [redacted:secret] = 1",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			assert.Equal(t, tc.want, sanitize.Text(tc.in))
-			assert.Equal(t, tc.want, sanitize.Text(tc.want))
+			assert.Equal(t, tc.want, sanitize.Text(tc.want), "cleaned again")
 		})
 	}
 }

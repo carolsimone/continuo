@@ -25,19 +25,20 @@
 //     ${TOKEN}), not a null or a boolean, not a block scalar and not a type;
 //  5. an email address (email).
 //
-// Every rule reads the original text, never the output of an earlier rule. When
-// two rules match overlapping text the earlier rule wins and the later match
-// is dropped, so password=ops@acme.com is one secret and not a secret holding
-// an email address. A marker is never matched by a rule, so cleaning a cleaned
-// text changes nothing, provided each value is set apart from the next by
-// whitespace or punctuation: a secret glued to a longer run of text, or to the
-// name of another secret, can leave a part of that text for a second cleaning
-// to find.
+// Every rule reads the text as it will be read the next time it is cleaned: the
+// rules run over the text, each stretch they redact is replaced by its marker,
+// and the result is searched again until nothing is found. When two rules match
+// overlapping text the earlier match stands and the later one is dropped, so
+// password=ops@acme.com is one secret and not a secret holding an email
+// address. Two kinds of match take in what they reach. The value of a secret
+// key takes in the earlier matches inside it, so password=postgres://u:pw@h is
+// one secret and no part of a value is left beside the marker of another part.
+// A match that reaches into a marker takes it in whole. A marker is never
+// matched by a rule, so cleaning a cleaned text changes nothing.
 package sanitize
 
 import (
 	"regexp"
-	"sort"
 	"strings"
 )
 
@@ -122,6 +123,8 @@ var (
 	// A dotted name with no digit: self.password, settings.DB_PASSWORD. Tokens
 	// and passwords that hold dots hold digits too.
 	dottedName = regexp.MustCompile(`^[A-Za-z_]+(?:\.[A-Za-z_]+)+$`)
+	// A name, possibly dotted, as a type is written: Custom, typing.Any.
+	typeName = regexp.MustCompile(`^[A-Za-z_][\w.]*$`)
 	// The opening of a template or a shell expansion: {{ env_var(...) }}, ${TOKEN}.
 	expansion = regexp.MustCompile(`^(?:\{\{|\{%|\$\{|\$\()`)
 )
@@ -219,7 +222,7 @@ func keepSecretValue(s string, loc []int) bool {
 			return false
 		}
 		// A name followed by an equals sign is an annotation of what follows.
-		if strings.HasPrefix(strings.TrimLeft(s[loc[11]:], " \t"), "=") {
+		if typeName.MatchString(value) && strings.HasPrefix(strings.TrimLeft(s[loc[11]:], " \t"), "=") {
 			return false
 		}
 	}
@@ -240,37 +243,36 @@ type pattern struct {
 	keep   func(s string, loc []int) bool
 }
 
-// rule is one redaction rule.
+// rule is one redaction rule. A rule that takes in absorbs the earlier matches
+// that lie inside one of its matches, which is how a value is redacted whole.
 type rule struct {
 	kind     kind
 	patterns []pattern
+	takesIn  bool
 }
 
-// rulesBeforeMarkers is how many of the first rules read the text before the
-// markers it holds take their own text: the private key rule.
-const rulesBeforeMarkers = 1
-
-// rules are the redaction rules in the order they decide an overlap.
+// rules are the redaction rules, in the order that decides which match stands
+// when two overlap.
 var rules = []rule{
 	{kindKey, []pattern{
 		{regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|\z)`), nil, nil, nil},
-	}},
+	}, false},
 	{kindSecret, []pattern{
-		{regexp.MustCompile(`://[^` + userinfoChars + `:]*:([^` + userinfoChars + `]+)@[^` + urlChars + `]`), []int{1}, nil, nil},
-	}},
+		{regexp.MustCompile(`://(?:` + markerPattern + `|[^` + userinfoChars + `:])*:([^` + userinfoChars + `]+)@[^` + urlChars + `]`), []int{1}, nil, nil},
+	}, false},
 	{kindSecret, []pattern{
 		{regexp.MustCompile(`AKIA[0-9A-Z]{16}`), nil, nil, nil},
 		{regexp.MustCompile(`gh[pousr]_[A-Za-z0-9]{36,}`), nil, nil, nil},
 		{regexp.MustCompile(`eyJ[\w-]+\.eyJ[\w-]+\.[\w-]+`), nil, nil, nil},
 		{regexp.MustCompile(`\b[Bb]earer[ \t]+[A-Za-z0-9._~+/=-]{8,}`), nil, []string{"earer"}, nil},
-	}},
+	}, false},
 	{kindSecret, []pattern{
 		{regexp.MustCompile(secretValue), []int{2, 3, 4, 5}, secretKeyHints, keepSecretValue},
 		{regexp.MustCompile(secretAnnotated), []int{1, 2}, secretKeyHints, nil},
-	}},
+	}, true},
 	{kindEmail, []pattern{
 		{regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}`), nil, []string{"@"}, nil},
-	}},
+	}, false},
 }
 
 // span is a stretch of the text a rule redacts.
@@ -307,47 +309,6 @@ func (p pattern) candidates(k kind, text, lower string) []span {
 	return found
 }
 
-// findSpans returns the spans to replace, by position and without overlap.
-// The patterns run in order, and a match is kept unless it overlaps text an
-// earlier match holds. After the rules before markers, every marker the text
-// already holds holds its own text, so a later rule never reads, or reaches
-// into, a marker: the numbered marker [redacted:secret:1] would read like the
-// key secret holding 1, and a value cut short by an earlier match would
-// otherwise be redacted again, whole, the second time the text is cleaned. A
-// private key block is taken whole even when it holds text that looks like a
-// marker.
-func findSpans(s string) []span {
-	lower := strings.ToLower(s)
-	var held []bool
-	hold := func(start, end int) {
-		if held == nil {
-			held = make([]bool, len(s))
-		}
-		for i := start; i < end; i++ {
-			held[i] = true
-		}
-	}
-	var spans []span
-	for i, r := range rules {
-		if i == rulesBeforeMarkers {
-			for _, m := range markerAny.FindAllStringIndex(s, -1) {
-				hold(m[0], m[1])
-			}
-		}
-		for _, p := range r.patterns {
-			for _, c := range p.candidates(r.kind, s, lower) {
-				if anyHeld(held, c.start, c.end) {
-					continue
-				}
-				hold(c.start, c.end)
-				spans = append(spans, c)
-			}
-		}
-	}
-	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
-	return spans
-}
-
 func containsAny(s string, words []string) bool {
 	for _, w := range words {
 		if strings.Contains(s, w) {
@@ -357,42 +318,9 @@ func containsAny(s string, words []string) bool {
 	return false
 }
 
-func anyHeld(held []bool, start, end int) bool {
-	if held == nil {
-		return false
-	}
-	for _, h := range held[start:end] {
-		if h {
-			return true
-		}
-	}
-	return false
-}
-
-// redact rewrites s, replacing each span with what replace returns for the
-// span's kind and text. replace is called in the order of the spans.
-func redact(s string, replace func(k kind, value string) string) string {
-	spans := findSpans(s)
-	if len(spans) == 0 {
-		return s
-	}
-	var out strings.Builder
-	out.Grow(len(s))
-	last := 0
-	for _, sp := range spans {
-		out.WriteString(s[last:sp.start])
-		out.WriteString(replace(sp.kind, s[sp.start:sp.end]))
-		last = sp.end
-	}
-	out.WriteString(s[last:])
-	return out.String()
-}
-
 // Text returns s with every private key, credential and email address replaced
 // by its marker: [redacted:key], [redacted:secret] or [redacted:email]. It is a
 // function of s alone.
 func Text(s string) string {
-	return redact(s, func(k kind, _ string) string {
-		return "[redacted:" + string(k) + "]"
-	})
+	return render(redactPieces(s), fixedMarker)
 }

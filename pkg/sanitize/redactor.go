@@ -52,17 +52,26 @@ func NewRedactor() *Redactor {
 // placeholder. Cleaning a text that is already clean returns it unchanged.
 func (r *Redactor) Clean(s string) string {
 	r.reserveLiterals(s)
-	return redact(s, func(k kind, value string) string {
-		id := issued{k, value}
-		if placeholder, ok := r.placeholders[id]; ok {
-			return placeholder
-		}
+	return render(redactPieces(s), r.placeholder)
+}
+
+// placeholder returns the placeholder of a value, issuing the next number of its
+// kind that no literal placeholder holds when the value has none.
+func (r *Redactor) placeholder(k kind, value string) string {
+	id := issued{k, value}
+	if placeholder, ok := r.placeholders[id]; ok {
+		return placeholder
+	}
+	for {
 		r.counts[k]++
 		placeholder := "[redacted:" + string(k) + ":" + strconv.Itoa(r.counts[k]) + "]"
+		if _, taken := r.values[placeholder]; taken {
+			continue
+		}
 		r.placeholders[id] = placeholder
 		r.values[placeholder] = value
 		return placeholder
-	})
+	}
 }
 
 // Restore returns s with each placeholder this Redactor issued replaced by its
