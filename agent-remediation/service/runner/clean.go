@@ -106,8 +106,13 @@ var (
 //     into a file: its placeholder stays in the content and is a finding.
 //     Placeholders r never issued stay too, for markerFindings to judge once
 //     the edit's original is known.
-//   - An edit's path and the rationale are restored whole, and each numbered
-//     placeholder r never issued in them is a finding.
+//   - In the rationale, which a pull request shows, a placeholder is replaced
+//     only when its value is in one of code or in an edit's original. Any
+//     other placeholder stays as it is, with no finding: a marker in a pull
+//     request's text is harmless, a value from a log is not.
+//   - An edit's path is restored whole.
+//   - In the path and the rationale, each numbered placeholder r never issued
+//     is a finding.
 //
 // Every other text of the draft is restored whole.
 func restoreDraft(d remediation.Draft, r *sanitize.Redactor, code []string) (remediation.Draft, []remediation.Finding) {
@@ -124,30 +129,46 @@ func restoreDraft(d remediation.Draft, r *sanitize.Redactor, code []string) (rem
 			}
 		}
 	}
+	originals := make([]string, 0, len(restored.Edits))
 	for i, e := range d.Edits {
 		unknownIn(e.Path, "")
-		content, refused := restoreContent(e.Content, restored.Edits[i].Original, r, code)
+		original := restored.Edits[i].Original
+		originals = append(originals, original)
+		content, refused := restoreShown(e.Content, r, inAny([]string{original}, code))
 		restored.Edits[i].Content = content
 		for _, p := range refused {
 			findings = append(findings, unknownFinding(placeholderFromALog, p, restored.Edits[i].Path))
 		}
 	}
 	unknownIn(d.Rationale, "")
+	restored.Rationale, _ = restoreShown(d.Rationale, r, inAny(code, originals))
 	return restored, findings
 }
 
-// restoreContent returns content with each placeholder r issued replaced by its
-// value when that value is in original or in one of code, in one pass, and
-// the issued placeholders it left because their value is in neither, each
-// once, in the order they appear.
-func restoreContent(content, original string, r *sanitize.Redactor, code []string) (string, []string) {
+// inAny reports whether a value occurs in any text of the lists.
+func inAny(lists ...[]string) func(value string) bool {
+	return func(value string) bool {
+		for _, texts := range lists {
+			if slices.ContainsFunc(texts, func(t string) bool { return strings.Contains(t, value) }) {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// restoreShown returns text with each placeholder r issued replaced by its
+// value when shown reports the value, in one pass, and the issued placeholders
+// it left because shown does not, each once, in the order they appear.
+// Placeholders r never issued stay as they are.
+func restoreShown(text string, r *sanitize.Redactor, shown func(value string) bool) (string, []string) {
 	var refused []string
-	out := placeholderToken.ReplaceAllStringFunc(content, func(p string) string {
+	out := placeholderToken.ReplaceAllStringFunc(text, func(p string) string {
 		value, unknown := r.Restore(p)
 		if len(unknown) > 0 {
 			return p
 		}
-		if strings.Contains(original, value) || slices.ContainsFunc(code, func(t string) bool { return strings.Contains(t, value) }) {
+		if shown(value) {
 			return value
 		}
 		if !slices.Contains(refused, p) {

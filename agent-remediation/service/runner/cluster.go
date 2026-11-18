@@ -280,14 +280,15 @@ func promptRecord(out step.PromptOutput, m *model) serialization.PromptRecord {
 // pre-flight check of the cluster's type on the restored draft, in file order,
 // in one pass over a fresh scratch checkout, and collects every finding. The
 // runner's own rule comes first in the pass, so no file can drop it: an edit
-// gets a value back only when the edit's original or the code the cluster was
-// shown holds it (restoreDraft), and a placeholder whose value came from a
-// log or a check, a redaction marker an edit adds to its file once the
-// edit's original is known (markerFindings), and a placeholder never shown in
-// a path or the rationale are each the finding unknown_placeholder. The pass's
-// row stores the restored draft, with every refused placeholder left in it. Each
-// check's row, the pass's own row and the cluster's end commit together, so a
-// pass interrupted before its commit runs again whole.
+// and the rationale get a value back only when the code the cluster was shown
+// or an edit's original holds it (restoreDraft). A placeholder in an edit
+// whose value came from a log or a check, a redaction marker an edit adds to
+// its file once the edit's original is known (markerFindings), and a
+// placeholder never shown in a path or the rationale are each the finding
+// unknown_placeholder. The pass's row stores the restored draft, with every
+// placeholder it did not restore left in it. Each check's row, the pass's own
+// row and the cluster's end commit together, so a pass interrupted before its
+// commit runs again whole.
 //
 // When every check passed, each edit with no original gets the one the pass's
 // checkout read, the edits' content and diff are stored, and the cluster is

@@ -324,3 +324,45 @@ func TestRunner_AValueSeenOnlyInALogIsNotWrittenIntoAFile(t *testing.T) {
 	assert.Equal(t, remediation.ClusterHandedOver, h.cluster(id, 1, 1).Status)
 	assert.Empty(t, h.pipeline.runs())
 }
+
+// TestRunner_AValueSeenOnlyInALogStaysAMarkerInTheRationale checks that the
+// rationale, which the pull request shows, gets back only values of the code:
+// a log's password keeps its placeholder and reaches no stored row, artifact,
+// verification run or pull request.
+func TestRunner_AValueSeenOnlyInALogStaysAMarkerInTheRationale(t *testing.T) {
+	h := newHarness(t)
+	withOwnedSource(h)
+	h.evidence.objects["s3://logs/svc-a"] = "connect failed: password=hunter2"
+	node := compileNode("svc-a")
+	node.DBTLogURI = "s3://logs/svc-a"
+	h.llm.answer = answerWith("select '[redacted:email:1]' as owner, 2", "kept [redacted:email:1]; the log said [redacted:secret:1]")
+	id := h.accept(trigger("compile", node))
+
+	require.NoError(t, h.runner.Drive(ctx, id))
+	h.pipeline.answer(proposal.PhasePassed, nil)
+	require.NoError(t, h.poll(id))
+
+	assert.Equal(t, "kept ops@acme.com; the log said [redacted:secret:1]", h.preflightDraft(id, 1).Rationale,
+		"no finding: a marker in the rationale is harmless")
+	assert.Empty(t, h.roundRows(id, 1, "preflight")[1].Findings)
+	p := h.attempt(1).Proposal
+	require.Equal(t, proposal.StatusProposed, p.Status)
+	assert.Contains(t, fmt.Sprint(p), "the log said [redacted:secret:1]", "the pull request shows the marker")
+	require.Len(t, h.proposedEvents(), 1)
+
+	for _, s := range h.store.Steps(id) {
+		if s.Kind == "context" {
+			continue // the journal keeps the evidence raw
+		}
+		assert.NotContains(t, string(s.Output), "hunter2", "step %s", s.Step)
+		assert.NotContains(t, fmt.Sprint(s.Findings), "hunter2", "step %s", s.Step)
+	}
+	h.artifacts.mu.Lock()
+	assert.NotContains(t, fmt.Sprint(h.artifacts.objects), "hunter2", "no stored artifact")
+	h.artifacts.mu.Unlock()
+	assert.NotContains(t, fmt.Sprint(h.pipeline.runs()), "hunter2", "no verification run")
+	assert.NotContains(t, fmt.Sprint(h.proposals()), "hunter2", "no proposal row")
+	for _, e := range h.store.OutboxEntries() {
+		assert.NotContains(t, string(e.Payload), "hunter2", "no outbox entry on %s", e.StreamName)
+	}
+}

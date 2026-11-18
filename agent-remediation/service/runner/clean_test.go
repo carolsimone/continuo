@@ -110,7 +110,8 @@ func TestRestoreDraft_PutsBackTheValuesOfTheCodeAndRefusesTheRest(t *testing.T) 
 	assert.Equal(t, "select 'ops@acme.com'", d.Edits[0].Original)
 	assert.Equal(t, "select 'ops@acme.com', '[redacted:secret:1]', '[redacted:email:7]'", d.Edits[0].Content,
 		"a value seen only in a log stays a placeholder, and one never issued is left for markerFindings")
-	assert.Equal(t, "keep ops@acme.com, drop [redacted:email:7] and [REDACTED:email:3], the log said hunter2", d.Rationale)
+	assert.Equal(t, "keep ops@acme.com, drop [redacted:email:7] and [REDACTED:email:3], the log said [redacted:secret:1]", d.Rationale,
+		"the rationale gets back only values of the code, and a log's value keeps its placeholder with no finding")
 	assert.Equal(t, []remediation.Finding{
 		{Code: findingUnknownPlaceholder, Message: "the answer holds a placeholder (redacted secret 1) for a value from a log or a check, not from the code; leave that value out of the file", File: "models/a.sql"},
 		{Code: findingUnknownPlaceholder, Message: "the answer holds a placeholder (redacted email 7) that was never in what you were shown; keep the text you were shown"},
@@ -181,4 +182,20 @@ func TestCodeTexts_ReadsOnlyTheCodeClass(t *testing.T) {
 
 	assert.Contains(t, got, "select 1")
 	assert.NotContains(t, got, "the log")
+}
+
+func TestRestoreDraft_AShortValueThatAlsoOccursInTheCodeIsRestored(t *testing.T) {
+	r := sanitize.NewRedactor()
+	logged := r.Clean("password=1")
+	require.Equal(t, "password=[redacted:secret:1]", logged)
+
+	d, findings := restoreDraft(remediation.Draft{
+		Rationale: "the log said [redacted:secret:1]",
+		Edits:     []remediation.Edit{{Path: "a.sql", Content: "select [redacted:secret:1]"}},
+	}, r, []string{"select 1"})
+
+	assert.Equal(t, "select 1", d.Edits[0].Content,
+		"a value is matched by substring, so a value seen in a log that also occurs anywhere in the code is restored")
+	assert.Equal(t, "the log said 1", d.Rationale)
+	assert.Empty(t, findings)
 }
