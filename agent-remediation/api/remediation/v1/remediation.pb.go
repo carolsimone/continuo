@@ -96,7 +96,7 @@ type Proposal struct {
 	// approvers is who must approve what this attempt did with each node a
 	// remediation settled at its end, the fixed nodes and the handed-over ones,
 	// one entry per node sorted by node_id. Empty on an attempt of the legacy
-	// engine and on one recorded before approvers were kept.
+	// engine and on one with no approvers recorded.
 	Approvers     []*Approver `protobuf:"bytes,36,rep,name=approvers,proto3" json:"approvers,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

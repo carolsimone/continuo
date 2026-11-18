@@ -58,7 +58,7 @@ type View struct {
 	// Approvers is who must approve what the attempt did with each node a
 	// remediation settled at its end, fixed or handed over, one entry per node
 	// sorted by node id. It is empty for an attempt of the proposal driver and
-	// for one recorded before approvers were kept.
+	// for one with no approvers recorded.
 	Approvers []Approver
 	// Verifications is one fix-verification run per edited service;
 	// VerificationRunID is the view of the first.

@@ -25,7 +25,8 @@ type RemediationHandedOver struct {
 
 // HandedOverNode is one node left to a human. Reason is a value of the
 // handover_reason vocabulary and Message is the detail the runner recorded
-// with that code (for a classifier hand-over, the failure's key error line).
+// with that code, cleaned of credentials and email addresses (for a classifier
+// hand-over, the failure's key error line).
 // Owner is who owns the node, the person or team to hand it to, as its code
 // bundle or its contract file names them: free text, empty and then left out of
 // the payload when no owner was found.

@@ -16,6 +16,8 @@ shipped in those.
 
 - Breaking: the remediation streams move to `remediation.requested:v3` and `remediation.retry_requested:v2`, and the old versions are retired.
 - New: under `agentRemediation.engine=runner`, the release page says why each node was handed to a human, and a remediation that ends as a system failure is dead-lettered and can be redriven.
+- New: `agent-remediation` and `remediation` export `continuo_remediation_*` metrics, the release page shows each node's owner, and "Create PR" asks the owners to review the pull request.
+- Changed: credentials, private keys and email addresses are redacted from the code and error lines catalog stores, from the text the remediation runner sends the model and from the hand-over messages.
 - You must act (steps below): upgrade with no remediation in flight and the remediation outboxes drained. With your own Redis, apply the new Redis rules with the upgrade, not before.
 - No values change is needed. On 0.23.0 or earlier, upgrade to 0.24.0 first.
 
@@ -38,7 +40,7 @@ This release changes no values key, and it ships as a `MINOR`.
   - Both streams carry the envelope of the other versioned streams: `event_id`, `tenant_id`, `occurred_at`, `producer` and `schema_version` beside the `payload`. A script that reads them must read the new shape.
   - `remediation.requested:v3` is one trigger per rejected release and round, and it carries every failing node. A node the classifier judged no fix can reach is marked `unfixable`, with the reason `classifier_infra` or `classifier_unhealable_parse`. agent-remediation proposes no fix for it, and catalog keeps it out of its case base.
   - `remediation.retry_requested:v2` carries the release's stored `release.rejected:v1` payload unchanged, as `rejection`, with the round beside it.
-  - agent-remediation can write the new stream `remediation.handed_over:v1`. Under `agentRemediation.engine=runner`, it writes one event when a remediation ends with nodes a human must fix, each with its reason code. No service reads it.
+  - agent-remediation can write the new stream `remediation.handed_over:v1`. Under `agentRemediation.engine=runner`, it writes one event when a remediation ends with nodes a human must fix, each with its reason code, its message and its owner when it has one. No service reads it.
   - Consumer group names do not change.
   - A row stored before the upgrade for `remediation.requested:v2`, `remediation.retry_requested:v1` or `remediation.proposed:v1` is never delivered after it. So upgrade when `remediation_outbox`, `release_controller_outbox` and `agent_remediation_outbox` hold no row with status `pending` or `scheduled`. "Try again" cannot start a remediation whose trigger was lost.
   - dead-letter-controller deletes the two retired streams with their consumer groups, and a dead letter of either cannot be redriven. With `streamReaper.enabled=false`, delete the drained groups yourself after the upgrade:
@@ -55,9 +57,21 @@ This release changes no values key, and it ships as a `MINOR`.
   - The codes are `tries_spent`, `unverifiable_edits`, `preflight_rounds_spent`, `declined`, `no_type`, `no_repository`, `classifier_infra` and `classifier_unhealable_parse`. Each node outcome that agent-remediation's `remediation.v1.RemediationProposals` returns carries its code as `code`.
   - A node the classifier judged unfixable is on the release page too. An infrastructure error says to run the release again.
   - A node that a step declined, that no type matches or that the classifier judged unfixable is not tried again in a later try of the same round.
+- **Remediation metrics.** TL;DR: Prometheus now shows what the remediation runner does and what the classifier decides, and two alerts in `deploy/OBSERVABILITY.md` use them.
+  - `agent-remediation` exports `continuo_remediation_tries_total`, `continuo_remediation_rounds_total`, `continuo_remediation_outcomes_total`, `continuo_remediation_system_failures_total`, `continuo_remediation_stage_seconds` and `continuo_remediation_model_tokens_total`, labelled by the flow and the type its remediation files name. `remediation` exports `continuo_remediation_classified_total`. `deploy/OBSERVABILITY.md` lists every label and what each series counts.
+  - The new alerts are `RemediationHasNoType` (a failing node was handed over with `no_type`, which also happens for every dbt test) and `RemediationSystemFailure` (a remediation stopped and waits for a redrive).
+- **Each node's owner reviews its fix.** TL;DR: under `agentRemediation.engine=runner`, agent-remediation works out each node's owner, the release page shows it, and "Create PR" asks the owners of the nodes a pull request fixes to review it.
+  - The owner is the node's `meta.owner`, or the ODCS `team.name` of a `python-odcs` node. A pull request body lists each owner and says whether the review was requested, refused or only listed.
+  - An owner written `org/team` is asked as a team and a GitHub login as a user. Any other owner, such as an email address, is listed in the body and not asked. When GitHub refuses the combined request, each owner is asked on its own and the body marks the refused ones. The pull request is opened whatever GitHub answers.
+  - The GitHub App needs no new permission: **Pull requests: Read and write** already covers requesting reviewers and updating the body. A review requested from a team needs the team to have access to the repository, or GitHub refuses it.
+  - The `continuo_agent_remediation` database gains a `proposal.approvers` column. The `db-init-migrate` Job adds it with the upgrade, and it stays empty on a proposal an older version wrote.
 
 ### Changed
 
+- **Credentials and email addresses are redacted before they are stored or sent to the model.** TL;DR: a password, token, private key or email address in a project's code or in a failure's error line no longer reaches the model, catalog's graph or a hand-over message as written.
+  - catalog stores every code version and every rejection's error excerpt and code with the matched text replaced by `[redacted:secret]`, `[redacted:key]` or `[redacted:email]`. A version or excerpt stored before the upgrade is not rewritten.
+  - Under `agentRemediation.engine=runner`, the runner replaces each matched value in the text it sends the model with a numbered placeholder (`[redacted:email:1]`) and puts the value back into the file the model edits only when the code the model was shown held it. A fix that needs a value seen only in a log is handed to a human.
+  - The message of every hand-over, and the detail of a node the classifier judged unfixable, is cleaned the same way, so the release page and `remediation.handed_over:v1` show `[redacted:secret]` where an error line held a credential. A node's owner is not cleaned: it is the person or team to ask for a review.
 - **Redis rule changes for the remediation streams.** TL;DR: the remediation flow moves to `remediation.requested:v3` and `remediation.retry_requested:v2`, and agent-remediation can write the new `remediation.handed_over:v1`. With your own Redis, apply the new rules from `deploy/redis-acl-rules.acl` with the upgrade, not before: they leave out the retired streams, so the pods still running the old version lose access to them. The bundled Redis needs nothing and restarts once, because its rules change.
   - `continuo_remediation` reads `remediation.retry_requested:v2` and writes `remediation.requested:v3`.
   - `continuo_release_controller` writes `remediation.retry_requested:v2`.

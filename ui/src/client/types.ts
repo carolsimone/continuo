@@ -606,7 +606,7 @@ export interface ProposalDTO {
   // approvers is who must approve what this attempt did with each node a
   // remediation settled at its end, the fixed and the handed-over nodes, one
   // entry per node sorted by node_id. Absent or empty on an attempt of the
-  // legacy engine, one recorded before approvers were kept, or one served by an
+  // legacy engine, one with no approvers recorded, or one served by an
   // agent-remediation that predates the field.
   approvers?: ApproverDTO[];
 }
