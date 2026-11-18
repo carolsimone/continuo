@@ -1,0 +1,167 @@
+{
+  "code_bundle": {
+    "contract_version": 1,
+    "nodes": {
+      "public.my_seed": {
+        "code_unit_ids": [],
+        "compiled_code": "",
+        "compiled_hash": "",
+        "config": {
+          "meta": {
+            "owner": "data-platform"
+          }
+        },
+        "config_hash": "1607b2062448e1cc60b36ca10ca7d25d19fadae600bc1697dfca6878ac24e629",
+        "content_hash": "sha256:ca6b926f83f91f92fb4beeaa675abe8ffff9dbace5d49bc989ae1fc82f181b07",
+        "hashed_config": {
+          "relation": {
+            "alias": "my_seed",
+            "schema": "public"
+          }
+        },
+        "raw_code": "",
+        "runtime": "dbt",
+        "shared_code_hash": "",
+        "source_hash": ""
+      },
+      "public.my_snapshot": {
+        "code_unit_ids": [],
+        "compiled_code": "",
+        "compiled_hash": "",
+        "config": {
+          "meta": {
+            "owner": "data-platform"
+          }
+        },
+        "config_hash": "7df6d3f5e97194a466672417ad1f957858ffdb96fd1d62bb517dcb2a3a13923f",
+        "content_hash": "sha256:24461f9eb1cf17ba530308e455ba3845e9a328d466d1705956870014705bec88",
+        "hashed_config": {
+          "relation": {
+            "alias": "my_snapshot",
+            "schema": "public"
+          }
+        },
+        "raw_code": "",
+        "runtime": "dbt",
+        "shared_code_hash": "",
+        "source_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "public.orders": {
+        "code_unit_ids": [],
+        "compiled_code": "SELECT id FROM public.users",
+        "compiled_hash": "b0c8a4d065117e6ec541f0f6795c86ee56006cef4180b7ba36367435bb05605a",
+        "config": {
+          "meta": {
+            "criticality": "CORE",
+            "owner": "data-platform"
+          }
+        },
+        "config_hash": "fc78d1511c531a8b5278ee3679128a027a495be39c1782e52773b413a261b207",
+        "content_hash": "sha256:6f9f9e1d83e94de61c11c68d18115a4506d47f02a145d88a9e6c6b4825a24647",
+        "hashed_config": {
+          "relation": {
+            "alias": "orders",
+            "schema": "public"
+          }
+        },
+        "raw_code": "",
+        "runtime": "dbt",
+        "shared_code_hash": "",
+        "source_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "public.users": {
+        "code_unit_ids": [],
+        "compiled_code": "SELECT 1 AS id",
+        "compiled_hash": "611f76bb5b4ae387967515bd6b0b59857bf03416a03866cc7b9549829994370e",
+        "config": {
+          "meta": {
+            "owner": "data-platform"
+          }
+        },
+        "config_hash": "34fbe2d6eb26c0fcebd252d35ab27ce78aa1cb9e895c2d03c58282900b20b939",
+        "content_hash": "sha256:b7afe8ee69876512e0b6b41092990eeed44e6eafcdf80ffbefd63fb7a9194e25",
+        "hashed_config": {
+          "relation": {
+            "alias": "users",
+            "schema": "public"
+          }
+        },
+        "raw_code": "",
+        "runtime": "dbt",
+        "shared_code_hash": "",
+        "source_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    "provenance": {
+      "service-1": {
+        "dbt_version": "",
+        "image_tag": "registry.example/service-1:1",
+        "packages": {},
+        "path_checksum_seeds": []
+      }
+    },
+    "release_id": "rel-1",
+    "shared_code": {},
+    "tests": {}
+  },
+  "topology_nodes": [
+    {
+      "content_hash": "sha256:ca6b926f83f91f92fb4beeaa675abe8ffff9dbace5d49bc989ae1fc82f181b07",
+      "image_tag": "registry.example/service-1:1",
+      "node_type": "dbt-seed",
+      "original_file_path": "",
+      "resolved_relation_id": "public.my_seed",
+      "schedule": "daily",
+      "schema_name": "public",
+      "service_name": "service-1",
+      "table_name": "my_seed",
+      "test_count": 0,
+      "unique_id": "public.my_seed",
+      "upstream_unique_ids": []
+    },
+    {
+      "content_hash": "sha256:24461f9eb1cf17ba530308e455ba3845e9a328d466d1705956870014705bec88",
+      "image_tag": "registry.example/service-1:1",
+      "node_type": "dbt-snapshot",
+      "original_file_path": "",
+      "resolved_relation_id": "public.my_snapshot",
+      "schedule": "daily",
+      "schema_name": "public",
+      "service_name": "service-1",
+      "table_name": "my_snapshot",
+      "test_count": 0,
+      "unique_id": "public.my_snapshot",
+      "upstream_unique_ids": []
+    },
+    {
+      "content_hash": "sha256:6f9f9e1d83e94de61c11c68d18115a4506d47f02a145d88a9e6c6b4825a24647",
+      "image_tag": "registry.example/service-1:1",
+      "node_type": "dbt-model",
+      "original_file_path": "",
+      "resolved_relation_id": "public.orders",
+      "schedule": "daily",
+      "schema_name": "public",
+      "service_name": "service-1",
+      "table_name": "orders",
+      "test_count": 0,
+      "unique_id": "public.orders",
+      "upstream_unique_ids": [
+        "public.users"
+      ]
+    },
+    {
+      "content_hash": "sha256:b7afe8ee69876512e0b6b41092990eeed44e6eafcdf80ffbefd63fb7a9194e25",
+      "image_tag": "registry.example/service-1:1",
+      "node_type": "dbt-model",
+      "original_file_path": "",
+      "resolved_relation_id": "public.users",
+      "schedule": "daily",
+      "schema_name": "public",
+      "service_name": "service-1",
+      "table_name": "users",
+      "test_count": 0,
+      "unique_id": "public.users",
+      "upstream_unique_ids": []
+    }
+  ]
+}

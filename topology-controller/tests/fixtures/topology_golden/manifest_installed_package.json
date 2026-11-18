@@ -1,0 +1,146 @@
+{
+  "code_bundle": {
+    "contract_version": 1,
+    "nodes": {
+      "analytics.countries": {
+        "code_unit_ids": [],
+        "compiled_code": "",
+        "compiled_hash": "",
+        "config": {
+          "meta": {
+            "owner": "finance"
+          }
+        },
+        "config_hash": "4709e157dcd5627915fb2b6c6ecc84ae087429843962f07d473ddc05a070b5a2",
+        "content_hash": "sha256:c331c26df2f517cd0b7ba01213ef23b895f72956f62e257fdf60673477d95d88",
+        "hashed_config": {
+          "relation": {
+            "alias": "countries",
+            "schema": "analytics"
+          }
+        },
+        "raw_code": "",
+        "runtime": "dbt",
+        "shared_code_hash": "",
+        "source_hash": "hash-countries"
+      },
+      "analytics.monthly_report": {
+        "code_unit_ids": [],
+        "compiled_code": "SELECT id FROM analytics.orders",
+        "compiled_hash": "ebb4294b32807e4306e8879d922c9b5a20f912cd8409b7178091506660dcb31d",
+        "config": {
+          "meta": {
+            "owner": "finance"
+          }
+        },
+        "config_hash": "021aab0f1b79540b53dbccc9a564faf5708d05aeffab3c6459c3ef8bf3cacdce",
+        "content_hash": "sha256:b70e2fdc9d59226021ed3068d1f95bf3dc170ddf53869cffb1821bbd0e9dc061",
+        "hashed_config": {
+          "relation": {
+            "alias": "monthly_report",
+            "schema": "analytics"
+          }
+        },
+        "raw_code": "",
+        "runtime": "dbt",
+        "shared_code_hash": "",
+        "source_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "analytics.orders": {
+        "code_unit_ids": [],
+        "compiled_code": "SELECT id FROM analytics.pkg_model",
+        "compiled_hash": "b82cc8be50f00346fc61428b50e7cdd25c9ffb97e18fbc8b67a3fde3803c089b",
+        "config": {
+          "meta": {
+            "owner": "finance"
+          }
+        },
+        "config_hash": "ac5fe30ea5894eb0897c41d18dad2ea3eded2d1d0c96908bdafbb2fcc7b29245",
+        "content_hash": "sha256:0094b49073366044a06fd13d538d7869ddd7b9841bd673bcbb6e167d6e3738d1",
+        "hashed_config": {
+          "relation": {
+            "alias": "orders",
+            "schema": "analytics"
+          }
+        },
+        "raw_code": "",
+        "runtime": "dbt",
+        "shared_code_hash": "",
+        "source_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    "provenance": {
+      "shop-core": {
+        "dbt_version": "1.12.0b1",
+        "image_tag": "registry.example/shop-core:1",
+        "packages": {},
+        "path_checksum_seeds": []
+      }
+    },
+    "release_id": "rel-1",
+    "shared_code": {},
+    "tests": {}
+  },
+  "topology_nodes": [
+    {
+      "content_hash": "sha256:c331c26df2f517cd0b7ba01213ef23b895f72956f62e257fdf60673477d95d88",
+      "image_tag": "registry.example/shop-core:1",
+      "node_type": "dbt-seed",
+      "original_file_path": "",
+      "resolved_relation_id": "analytics.countries",
+      "schedule": "seed",
+      "schema_name": "analytics",
+      "service_name": "shop-core",
+      "table_name": "countries",
+      "test_count": 0,
+      "unique_id": "analytics.countries",
+      "upstream_unique_ids": []
+    },
+    {
+      "content_hash": "sha256:b70e2fdc9d59226021ed3068d1f95bf3dc170ddf53869cffb1821bbd0e9dc061",
+      "image_tag": "registry.example/shop-core:1",
+      "node_type": "dbt-model",
+      "original_file_path": "",
+      "resolved_relation_id": "analytics.monthly_report",
+      "schedule": "",
+      "schema_name": "analytics",
+      "service_name": "shop-core",
+      "table_name": "monthly_report",
+      "test_count": 0,
+      "unique_id": "analytics.monthly_report",
+      "upstream_unique_ids": [
+        "analytics.orders"
+      ]
+    },
+    {
+      "content_hash": "sha256:0094b49073366044a06fd13d538d7869ddd7b9841bd673bcbb6e167d6e3738d1",
+      "image_tag": "registry.example/shop-core:1",
+      "node_type": "dbt-model",
+      "original_file_path": "",
+      "resolved_relation_id": "analytics.orders",
+      "schedule": "daily",
+      "schema_name": "analytics",
+      "service_name": "shop-core",
+      "table_name": "orders",
+      "test_count": 0,
+      "unique_id": "analytics.orders",
+      "upstream_unique_ids": [
+        "analytics.pkg_model"
+      ]
+    },
+    {
+      "content_hash": "",
+      "image_tag": "",
+      "node_type": "unknown-external",
+      "original_file_path": "",
+      "resolved_relation_id": "analytics.pkg_model",
+      "schedule": "",
+      "schema_name": "analytics",
+      "service_name": "",
+      "table_name": "pkg_model",
+      "test_count": 0,
+      "unique_id": "analytics.pkg_model",
+      "upstream_unique_ids": []
+    }
+  ]
+}

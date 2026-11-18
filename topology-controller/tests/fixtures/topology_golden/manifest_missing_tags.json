@@ -1,0 +1,56 @@
+{
+  "code_bundle": {
+    "contract_version": 1,
+    "nodes": {
+      "public.orders": {
+        "code_unit_ids": [],
+        "compiled_code": "SELECT 1",
+        "compiled_hash": "e004ebd5b5532a4b85984a62f8ad48a81aa3460c1ca07701f386135d72cdecf5",
+        "config": {
+          "meta": {
+            "owner": "data-platform"
+          }
+        },
+        "config_hash": "fc78d1511c531a8b5278ee3679128a027a495be39c1782e52773b413a261b207",
+        "content_hash": "sha256:5490a1b1bb39565b5796f3d59bbd0bd4824c802186b0c50fef8db43763ed6e88",
+        "hashed_config": {
+          "relation": {
+            "alias": "orders",
+            "schema": "public"
+          }
+        },
+        "raw_code": "",
+        "runtime": "dbt",
+        "shared_code_hash": "",
+        "source_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    "provenance": {
+      "service-1": {
+        "dbt_version": "",
+        "image_tag": "registry.example/service-1:1",
+        "packages": {},
+        "path_checksum_seeds": []
+      }
+    },
+    "release_id": "rel-1",
+    "shared_code": {},
+    "tests": {}
+  },
+  "topology_nodes": [
+    {
+      "content_hash": "sha256:5490a1b1bb39565b5796f3d59bbd0bd4824c802186b0c50fef8db43763ed6e88",
+      "image_tag": "registry.example/service-1:1",
+      "node_type": "dbt-model",
+      "original_file_path": "",
+      "resolved_relation_id": "public.orders",
+      "schedule": "",
+      "schema_name": "public",
+      "service_name": "service-1",
+      "table_name": "orders",
+      "test_count": 0,
+      "unique_id": "public.orders",
+      "upstream_unique_ids": []
+    }
+  ]
+}

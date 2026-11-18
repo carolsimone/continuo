@@ -1,0 +1,82 @@
+{
+  "code_bundle": {
+    "contract_version": 1,
+    "nodes": {
+      "test_schema.users": {
+        "code_unit_ids": [],
+        "compiled_code": "SELECT 1 AS id",
+        "compiled_hash": "611f76bb5b4ae387967515bd6b0b59857bf03416a03866cc7b9549829994370e",
+        "config": {
+          "meta": {
+            "criticality": "CORE",
+            "owner": "team-a"
+          }
+        },
+        "config_hash": "641c1f6fcbdd613683ae6347c972d9c9d742fd4a552b3d30e979daa03d47e688",
+        "content_hash": "sha256:488f883c9901ba2d3adb975cb8ac4286f2dc244d90505325fa4f1a236077b764",
+        "hashed_config": {
+          "relation": {
+            "alias": "users",
+            "schema": "test_schema"
+          }
+        },
+        "raw_code": "",
+        "runtime": "dbt",
+        "shared_code_hash": "",
+        "source_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    "provenance": {
+      "service-1": {
+        "dbt_version": "",
+        "image_tag": "registry.example/service-1:1",
+        "packages": {},
+        "path_checksum_seeds": []
+      }
+    },
+    "release_id": "rel-1",
+    "shared_code": {},
+    "tests": {
+      "test.service-1.not_null_users_id.9f3a1b2c": {
+        "compiled_code": "select id from test_schema.users where id is null",
+        "compiled_hash": "",
+        "config_hash": "45b730f1f080d6325b0b75529e01fbf051a516b45c509f78ad71d4d2d2992855",
+        "content_hash": "sha256:e8e0ec88518b419c0e717b92926ece0a27c224c3bd713c62de9e655ba9a8d18b",
+        "shared_code_hash": "",
+        "source_hash": "f5408ec1b2d253dbff4f8fc90cedab013d87e8627ad74a9bf5a2634bcfea8a42"
+      }
+    }
+  },
+  "topology_nodes": [
+    {
+      "content_hash": "sha256:e8e0ec88518b419c0e717b92926ece0a27c224c3bd713c62de9e655ba9a8d18b",
+      "image_tag": "registry.example/service-1:1",
+      "node_type": "dbt-test",
+      "original_file_path": "models/schema.yml",
+      "resolved_relation_id": "",
+      "schedule": "",
+      "schema_name": "test_schema_dbt_test__audit",
+      "service_name": "service-1",
+      "table_name": "not_null_users_id",
+      "test_count": 0,
+      "unique_id": "test.service-1.not_null_users_id.9f3a1b2c",
+      "upstream_unique_ids": [
+        "test_schema.users"
+      ]
+    },
+    {
+      "content_hash": "sha256:488f883c9901ba2d3adb975cb8ac4286f2dc244d90505325fa4f1a236077b764",
+      "image_tag": "registry.example/service-1:1",
+      "node_type": "dbt-model",
+      "original_file_path": "",
+      "resolved_relation_id": "test_schema.users",
+      "schedule": "daily",
+      "schema_name": "test_schema",
+      "service_name": "service-1",
+      "table_name": "users",
+      "test_count": 1,
+      "unique_id": "test_schema.users",
+      "upstream_unique_ids": []
+    }
+  ]
+}

@@ -1,0 +1,73 @@
+{
+  "code_bundle": {
+    "contract_version": 1,
+    "nodes": {
+      "test_schema.orders": {
+        "code_unit_ids": [],
+        "compiled_code": "SELECT * FROM test_schema.users",
+        "compiled_hash": "a96fdd57f2dc5e9afb6bea466d7a245023b8fb417d97ceb9e736fdccacc8a44a",
+        "config": {
+          "meta": {
+            "criticality": "SECONDARY",
+            "owner": "team-b"
+          }
+        },
+        "config_hash": "dab9dbcd2effc2da9a6898fbd952a9b818981011be3e9dd677bbdd604e4c362c",
+        "content_hash": "sha256:bda620a0715892c4cbe860d989192941d6d435e00bb70d3626416447c48bed14",
+        "hashed_config": {
+          "relation": {
+            "alias": "orders",
+            "schema": "test_schema"
+          }
+        },
+        "raw_code": "",
+        "runtime": "dbt",
+        "shared_code_hash": "",
+        "source_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    "provenance": {
+      "service-2": {
+        "dbt_version": "",
+        "image_tag": "registry.example/service-2:1",
+        "packages": {},
+        "path_checksum_seeds": []
+      }
+    },
+    "release_id": "rel-1",
+    "shared_code": {},
+    "tests": {}
+  },
+  "topology_nodes": [
+    {
+      "content_hash": "sha256:bda620a0715892c4cbe860d989192941d6d435e00bb70d3626416447c48bed14",
+      "image_tag": "registry.example/service-2:1",
+      "node_type": "dbt-model",
+      "original_file_path": "",
+      "resolved_relation_id": "test_schema.orders",
+      "schedule": "daily",
+      "schema_name": "test_schema",
+      "service_name": "service-2",
+      "table_name": "orders",
+      "test_count": 0,
+      "unique_id": "test_schema.orders",
+      "upstream_unique_ids": [
+        "test_schema.users"
+      ]
+    },
+    {
+      "content_hash": "",
+      "image_tag": "",
+      "node_type": "unknown-external",
+      "original_file_path": "",
+      "resolved_relation_id": "test_schema.users",
+      "schedule": "",
+      "schema_name": "test_schema",
+      "service_name": "",
+      "table_name": "users",
+      "test_count": 0,
+      "unique_id": "test_schema.users",
+      "upstream_unique_ids": []
+    }
+  ]
+}
