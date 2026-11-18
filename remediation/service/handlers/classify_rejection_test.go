@@ -780,6 +780,34 @@ func TestClassifyRejection_UnfixableDetailIsTheCappedErrorLine(t *testing.T) {
 	assert.NotContains(t, n.Unfixable.Detail, "next line")
 }
 
+// TestClassifyRejection_UnfixableDetailIsCleaned holds that the detail a
+// dropped node's trigger entry carries has its credentials and email addresses
+// replaced by fixed markers, whichever evidence the classification came from,
+// while the excerpt kept for the case base is the raw line.
+func TestClassifyRejection_UnfixableDetailIsCleaned(t *testing.T) {
+	const line = "could not connect to database: connection refused postgres://u:hunter2@db/x, ask ops@acme.com"
+	const want = "could not connect to database: connection refused postgres://u:[redacted:secret]@db/x, ask [redacted:email]"
+	for name, ev := range map[string]failure.FailureEvidence{
+		"a dbt log": {Source: pkg_model.RemediationSourceValidation, ReleaseID: "r1", NodeID: "s.n", DBTLogURI: "s3://b/k"},
+		"a parse failure": {
+			Source: pkg_model.RemediationSourceParse, ReleaseID: "r1", NodeID: "s.n",
+			ParseKind: pkg_model.ParseFailureKindInternal, Detail: line,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
+
+			require.NoError(t, ClassifyRejection(context.Background(), depsWith(u, line, nil), testTenant, []failure.FailureEvidence{ev}))
+
+			require.Len(t, u.ob.entries, 1)
+			n := triggerOf(t, u.ob.entries[0]).Nodes[0]
+			require.NotNil(t, n.Unfixable)
+			assert.Equal(t, want, n.Unfixable.Detail)
+			assert.Equal(t, line, n.ErrorExcerpt, "the excerpt is the raw line")
+		})
+	}
+}
+
 // TestClassifyRejection_StoresTheTriggerUnderTheMessagesTenant holds that the
 // trigger's outbox row carries the tenant of the message the rejection came
 // from, and that a message with no tenant is refused before any row is written.

@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/sanitize"
 )
 
 // Classification is the result of triaging one failed node.
@@ -26,13 +27,17 @@ type Classification struct {
 }
 
 // UnfixableDetail is the message a dropped failure is handed over with: what
-// actually failed, the key error line in Excerpt. The matched rule (Reason) is
-// the message only when there is no line to show, so it is never empty.
+// actually failed, the key error line in Excerpt, with every credential and
+// email address in it replaced by its fixed marker, since the message reaches
+// the release page and the hand-over event. It stays within the excerpt's cap
+// (a marker can be longer than the value it replaces). The matched rule
+// (Reason) is the message only when there is no line to show, so it is never
+// empty.
 func (c Classification) UnfixableDetail() string {
 	if strings.TrimSpace(c.Excerpt) == "" {
 		return c.Reason
 	}
-	return c.Excerpt
+	return excerptOf(sanitize.Text(c.Excerpt))
 }
 
 // maxExcerptBytes bounds the excerpt carried on the trigger event: it is one

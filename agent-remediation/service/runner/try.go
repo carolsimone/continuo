@@ -441,9 +441,11 @@ func (r *Runner) handOver(ctx context.Context, u uow.UnitOfWork, run tryRun, out
 // recordAttempt stamps the trigger's identity and the remediation onto the
 // attempt's proposal row, derives its representative views, and upserts it in
 // u's transaction. A row that narrows no nodes addresses the trigger's whole
-// failing set.
+// failing set. The row stores the message of every coded outcome cleaned
+// (proposal.CleanedOutcomes); the caller's outcomes are left as they are.
 func (r *Runner) recordAttempt(ctx context.Context, u uow.UnitOfWork, run tryRun, attempt int, p proposal.Proposal) error {
 	t := run.trigger
+	p.NodeOutcomes = proposal.CleanedOutcomes(p.NodeOutcomes)
 	p.Source = t.Source
 	p.ReleaseID = t.ReleaseID
 	p.RemediationID = run.snap.Remediation.ID.String()
@@ -667,8 +669,8 @@ func (r *Runner) endTry(ctx context.Context, u uow.UnitOfWork, run tryRun, to re
 
 // generatingProposal is the in-flight row of an attempt, naming the trigger's
 // whole failing set: the members of each of the try's clusters handed over as
-// it opened with the cluster's outcome, and every other node as being worked
-// on.
+// it opened with the cluster's outcome, its message cleaned, and every other
+// node as being worked on.
 func generatingProposal(id uuid.UUID, t remediation.Trigger, attempt int, now time.Time, clusters []remediation.Cluster) proposal.Proposal {
 	nodeIDs := t.NodeIDs()
 	outcomes := outcomesFor(nodeIDs, proposal.NodeOutcome{Status: proposal.StatusGenerating})
@@ -686,7 +688,7 @@ func generatingProposal(id uuid.UUID, t remediation.Trigger, attempt int, now ti
 		RemediationID:    id.String(),
 		RemediationRound: t.Round,
 		ResolvedNodeIDs:  nodeIDs,
-		NodeOutcomes:     outcomes,
+		NodeOutcomes:     proposal.CleanedOutcomes(outcomes),
 		Attempt:          attempt,
 		Status:           proposal.StatusGenerating,
 		Services:         t.Services(),
