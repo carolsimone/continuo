@@ -2051,10 +2051,10 @@ func TestBeginPR_ReturnsTheClaimNodesApprovers(t *testing.T) {
 	repo := NewProposalRepository(db, perServiceRepoPaths)
 
 	approvers := []proposal.Approver{
-		{NodeID: "na", Owner: "core-team", Source: proposal.ApproverSourceBundle},
-		{NodeID: "nb", Owner: "finance-team", Source: proposal.ApproverSourceContractFile},
-		{NodeID: "nc", Owner: "growth-team", Source: proposal.ApproverSourceBundle},
-		{NodeID: "nd", Source: proposal.ApproverSourceNone},
+		{NodeID: "na", Owner: "core-team", Source: model.ApproverSourceBundle},
+		{NodeID: "nb", Owner: "finance-team", Source: model.ApproverSourceContractFile},
+		{NodeID: "nc", Owner: "growth-team", Source: model.ApproverSourceBundle},
+		{NodeID: "nd", Source: model.ApproverSourceNone},
 	}
 	id := seedProposal(t, repo, db, proposal.Proposal{
 		Source:          "validation",

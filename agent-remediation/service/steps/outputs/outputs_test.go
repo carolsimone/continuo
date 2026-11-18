@@ -199,8 +199,8 @@ func TestPullRequest_StoresTheApproversOfTheFixedNodesWithTheVerifiedRow(t *test
 	rem := newRemediation(t, store)
 	id := seed(t, store, verifying(rem))
 	approvers := []proposal.Approver{
-		{NodeID: "model.a", Owner: "finance", Source: proposal.ApproverSourceBundle},
-		{NodeID: "model.b", Source: proposal.ApproverSourceNone},
+		{NodeID: "model.a", Owner: "finance", Source: model.ApproverSourceBundle},
+		{NodeID: "model.b", Source: model.ApproverSourceNone},
 	}
 	pr := outputs.NewPullRequest(fixedClock{})
 
@@ -216,7 +216,7 @@ func TestPullRequest_StoresTheApproversOfTheFixedNodesWithTheVerifiedRow(t *test
 
 	// A pass on a row that is already final changes nothing, the approvers
 	// included.
-	other := []proposal.Approver{{NodeID: "model.c", Owner: "ops", Source: proposal.ApproverSourceBundle}}
+	other := []proposal.Approver{{NodeID: "model.c", Owner: "ops", Source: model.ApproverSourceBundle}}
 	u = memory.NewUnitOfWork(store)
 	require.NoError(t, u.Begin(ctx))
 	require.NoError(t, pr.Pass(ctx, u, step.OutputInput{Remediation: rem, Trigger: trigger(), Approvers: other}, verified(t, id)))
@@ -357,8 +357,8 @@ func TestHandOver_NamesEachNodesOwner(t *testing.T) {
 	store := memory.NewStore()
 	rem := endedRemediation(t, store)
 	approvers := []proposal.Approver{
-		{NodeID: "model.a", Owner: "finance", Source: proposal.ApproverSourceBundle},
-		{NodeID: "model.b", Source: proposal.ApproverSourceNone},
+		{NodeID: "model.a", Owner: "finance", Source: model.ApproverSourceBundle},
+		{NodeID: "model.b", Source: model.ApproverSourceNone},
 	}
 
 	require.NoError(t, giveUp(t, store, step.OutputInput{Remediation: rem, Trigger: trigger(), HandedOver: handedOver(), Approvers: approvers}))
@@ -385,8 +385,8 @@ func TestHandOver_AnApproverOfAnotherNodeIsNotNamed(t *testing.T) {
 	store := memory.NewStore()
 	rem := endedRemediation(t, store)
 	approvers := []proposal.Approver{
-		{NodeID: "model.a", Owner: "finance", Source: proposal.ApproverSourceBundle},
-		{NodeID: "model.fixed", Owner: "growth", Source: proposal.ApproverSourceBundle},
+		{NodeID: "model.a", Owner: "finance", Source: model.ApproverSourceBundle},
+		{NodeID: "model.fixed", Owner: "growth", Source: model.ApproverSourceBundle},
 	}
 
 	require.NoError(t, giveUp(t, store, step.OutputInput{Remediation: rem, Trigger: trigger(), HandedOver: handedOver()[:1], Approvers: approvers}))

@@ -442,9 +442,9 @@ func unmarshalVerifications(raw []byte) []proposal.Verification {
 // column. The json tags live here so the domain proposal.Approver carries no
 // serialization annotations.
 type approverRow struct {
-	NodeID string `json:"node_id"`
-	Owner  string `json:"owner"`
-	Source string `json:"source"`
+	NodeID string               `json:"node_id"`
+	Owner  string               `json:"owner"`
+	Source model.ApproverSource `json:"source"`
 }
 
 // marshalApprovers encodes the domain approvers as the approvers column value.

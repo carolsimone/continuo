@@ -256,7 +256,7 @@ func approversToProto(approvers []proposal.Approver) []*remediationv1.Approver {
 	}
 	out := make([]*remediationv1.Approver, 0, len(approvers))
 	for _, a := range approvers {
-		out = append(out, &remediationv1.Approver{NodeId: a.NodeID, Owner: a.Owner, Source: a.Source})
+		out = append(out, &remediationv1.Approver{NodeId: a.NodeID, Owner: a.Owner, Source: string(a.Source)})
 	}
 	return out
 }

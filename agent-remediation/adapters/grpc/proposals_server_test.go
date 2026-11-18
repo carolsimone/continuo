@@ -277,8 +277,8 @@ func TestProposalsServer_MapsTheApprovers(t *testing.T) {
 		ID:        "p-approvers",
 		ReleaseID: "rel-approvers",
 		Approvers: []proposal.Approver{
-			{NodeID: "s.a", Owner: "finance", Source: proposal.ApproverSourceBundle},
-			{NodeID: "s.b", Source: proposal.ApproverSourceNone},
+			{NodeID: "s.a", Owner: "finance", Source: model.ApproverSourceBundle},
+			{NodeID: "s.b", Source: model.ApproverSourceNone},
 		},
 	}
 	svc := &fakeSvc{getView: view, listViews: []proposal.View{view, {ID: "p-legacy"}}}
@@ -439,8 +439,8 @@ func TestBeginPR_ReturnsTheClaimNodesApprovers(t *testing.T) {
 		ID:              "p-claim",
 		ResolvedNodeIDs: []string{"s.a", "s.b"},
 		Approvers: []proposal.Approver{
-			{NodeID: "s.a", Owner: "finance", Source: proposal.ApproverSourceBundle},
-			{NodeID: "s.b", Owner: "growth", Source: proposal.ApproverSourceContractFile},
+			{NodeID: "s.a", Owner: "finance", Source: model.ApproverSourceBundle},
+			{NodeID: "s.b", Owner: "growth", Source: model.ApproverSourceContractFile},
 		},
 	}
 	s := grpcadapter.NewProposalsServer(&fakeSvc{beginClaim: claim})

@@ -4,6 +4,7 @@ import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router';
 import ReleaseDetailPage from './ReleaseDetailPage';
 import { NodeValidationResult, ReleaseDetail, ProposalDTO } from './types';
+import type { ApproverSource } from '../server/generated/vocabulary.gen';
 import { reasonLabel } from './release-helpers';
 
 vi.mock('./remediation-api', () => ({ fetchProposals: vi.fn() }));
@@ -355,7 +356,7 @@ describe('ReleaseDetailPage — hand-over reasons in the FIX cell', () => {
 });
 
 describe('ReleaseDetailPage — the owner of a fixed or handed-over node', () => {
-  const approver = (node_id: string, owner: string, source: 'bundle' | 'contract_file' | 'none' = owner ? 'bundle' : 'none') =>
+  const approver = (node_id: string, owner: string, source: ApproverSource = owner ? 'bundle' : 'none') =>
     ({ node_id, owner, source });
   const batched = (
     outcomes: Record<string, { status: string; reason: string; code?: string }>,

@@ -79,10 +79,10 @@ func TestRunner_HandsTheOutputsTheApproversOfTheirNodes(t *testing.T) {
 
 	require.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 	assert.Equal(t, [][]proposal.Approver{{
-		{NodeID: "svc-a", Owner: "finance", Source: proposal.ApproverSourceBundle},
+		{NodeID: "svc-a", Owner: "finance", Source: model.ApproverSourceBundle},
 	}}, calls.pass, "the pass output is handed the fixed node's approver")
 	assert.Equal(t, [][]proposal.Approver{{
-		{NodeID: "svc-b", Owner: "", Source: proposal.ApproverSourceNone},
+		{NodeID: "svc-b", Owner: "", Source: model.ApproverSourceNone},
 	}}, calls.giveUp, "the give-up output is handed the handed-over node's approver")
 	assert.Equal(t, 2, h.bundle.ownerReadCount(), "one bundle read for the fixed nodes and one for the handed-over ones")
 }
@@ -101,8 +101,8 @@ func TestRunner_ThePassReadsTheBundleOnceForItsNodes(t *testing.T) {
 
 	require.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 	assert.Equal(t, [][]proposal.Approver{{
-		{NodeID: "svc-a", Owner: "finance", Source: proposal.ApproverSourceBundle},
-		{NodeID: "svc-b", Owner: "e2e", Source: proposal.ApproverSourceBundle},
+		{NodeID: "svc-a", Owner: "finance", Source: model.ApproverSourceBundle},
+		{NodeID: "svc-b", Owner: "e2e", Source: model.ApproverSourceBundle},
 	}}, calls.pass)
 	assert.Empty(t, calls.giveUp)
 	assert.Equal(t, 1, h.bundle.ownerReadCount(), "one bundle read for both nodes")
@@ -124,8 +124,8 @@ func TestRunner_AHandOverWithNoTryHandsOverTheApproversOfItsNodes(t *testing.T) 
 	require.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 	assert.Empty(t, calls.pass)
 	assert.Equal(t, [][]proposal.Approver{{
-		{NodeID: "svc-a", Owner: "finance", Source: proposal.ApproverSourceBundle},
-		{NodeID: "svc-b", Owner: "e2e", Source: proposal.ApproverSourceBundle},
+		{NodeID: "svc-a", Owner: "finance", Source: model.ApproverSourceBundle},
+		{NodeID: "svc-b", Owner: "e2e", Source: model.ApproverSourceBundle},
 	}}, calls.giveUp)
 }
 
@@ -161,7 +161,7 @@ func TestRunner_ABundleReadErrorFallsBackAndThePassCommits(t *testing.T) {
 	assert.Len(t, h.proposedEvents(), 1)
 	assert.Equal(t, proposal.StatusProposed, h.attempt(1).Proposal.Status)
 	assert.Equal(t, [][]proposal.Approver{{
-		{NodeID: "svc-a", Owner: "", Source: proposal.ApproverSourceNone},
+		{NodeID: "svc-a", Owner: "", Source: model.ApproverSourceNone},
 	}}, calls.pass, "a node with no contract file falls back to none")
 	assert.Contains(t, logs.String(), "level=WARN")
 	assert.Contains(t, logs.String(), "s3 answered HTTP 503")
@@ -199,11 +199,11 @@ func TestRunner_APythonNodeWithNoBundleOwnerTakesItsContractOwner(t *testing.T) 
 	}{
 		"fixed": {
 			refuse:   0,
-			wantPass: [][]proposal.Approver{{{NodeID: contractNodeID, Owner: "sales-team", Source: proposal.ApproverSourceContractFile}}},
+			wantPass: [][]proposal.Approver{{{NodeID: contractNodeID, Owner: "sales-team", Source: model.ApproverSourceContractFile}}},
 		},
 		"handed over": {
 			refuse:     100,
-			wantGiveUp: [][]proposal.Approver{{{NodeID: contractNodeID, Owner: "sales-team", Source: proposal.ApproverSourceContractFile}}},
+			wantGiveUp: [][]proposal.Approver{{{NodeID: contractNodeID, Owner: "sales-team", Source: model.ApproverSourceContractFile}}},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -245,8 +245,8 @@ func TestRunner_ThePassedRowStoresTheApproversOfItsFixedAndHandedOverNodes(t *te
 	row := h.attempt(1).Proposal
 	assert.Equal(t, proposal.StatusProposed, row.Status)
 	assert.Equal(t, []proposal.Approver{
-		{NodeID: "svc-a", Owner: "finance", Source: proposal.ApproverSourceBundle},
-		{NodeID: "svc-b", Owner: "growth", Source: proposal.ApproverSourceBundle},
+		{NodeID: "svc-a", Owner: "finance", Source: model.ApproverSourceBundle},
+		{NodeID: "svc-b", Owner: "growth", Source: model.ApproverSourceBundle},
 	}, row.Approvers)
 	assert.Equal(t, []events.HandedOverNode{
 		{NodeID: "svc-b", Reason: string(model.HandoverReasonDeclined), Message: noFileReason, Owner: "growth"},
@@ -305,8 +305,8 @@ func TestRunner_AHandedOverAttemptRowStoresItsNodesApprovers(t *testing.T) {
 			row := h.attempt(tc.attempt).Proposal
 			assert.Equal(t, tc.status, row.Status)
 			assert.Equal(t, []proposal.Approver{
-				{NodeID: "svc-a", Owner: "finance", Source: proposal.ApproverSourceBundle},
-				{NodeID: "svc-b", Owner: "growth", Source: proposal.ApproverSourceBundle},
+				{NodeID: "svc-a", Owner: "finance", Source: model.ApproverSourceBundle},
+				{NodeID: "svc-b", Owner: "growth", Source: model.ApproverSourceBundle},
 			}, row.Approvers)
 			nodes := h.handedOverEvent().Nodes
 			require.Len(t, nodes, 2)
@@ -329,7 +329,7 @@ func TestRunner_ANodeWithNoOwnerIsRecordedWithNone(t *testing.T) {
 
 	require.NoError(t, h.drive(id))
 
-	assert.Equal(t, []proposal.Approver{{NodeID: "svc-a", Source: proposal.ApproverSourceNone}}, h.attempt(1).Proposal.Approvers)
+	assert.Equal(t, []proposal.Approver{{NodeID: "svc-a", Source: model.ApproverSourceNone}}, h.attempt(1).Proposal.Approvers)
 	assert.Equal(t, []events.HandedOverNode{{
 		NodeID: "svc-a", Reason: string(model.HandoverReasonNoRepository), Message: "the trigger carried no repository for rel-1",
 	}}, h.handedOverEvent().Nodes)

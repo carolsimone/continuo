@@ -1,5 +1,5 @@
 import type { WireOperation } from '../server/shared/operation';
-import type { AttemptStatus, HandoverReason, RunStatus, TaskStatus } from '../server/generated/vocabulary.gen';
+import type { ApproverSource, AttemptStatus, HandoverReason, RunStatus, TaskStatus } from '../server/generated/vocabulary.gen';
 
 // ScheduleSummary is one schedule name: its cron when it has one, how many
 // models of the live release carry its tag, and its last run.
@@ -520,7 +520,7 @@ export interface VerificationDTO {
 export interface ApproverDTO {
   node_id: string;
   owner: string;
-  source: 'bundle' | 'contract_file' | 'none';
+  source: ApproverSource;
 }
 
 export interface ProposalDTO {

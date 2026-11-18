@@ -19,6 +19,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/approver"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 const (
@@ -103,8 +104,8 @@ func TestNodeOwner_ReadsTheBundleOwner(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, []proposal.Approver{
-		{NodeID: "analytics.kpis", Owner: "e2e", Source: proposal.ApproverSourceBundle},
-		{NodeID: "analytics.orders", Owner: "finance", Source: proposal.ApproverSourceBundle},
+		{NodeID: "analytics.kpis", Owner: "e2e", Source: model.ApproverSourceBundle},
+		{NodeID: "analytics.orders", Owner: "finance", Source: model.ApproverSourceBundle},
 	}, got, "sorted by node id")
 	assert.Equal(t, []string{bundleURI + "|" + releaseID + "|analytics.kpis,analytics.orders"}, b.reads)
 }
@@ -137,7 +138,7 @@ func TestNodeOwner_FallsBackToTheContractFile(t *testing.T) {
 			})
 			require.NoError(t, err)
 			assert.Equal(t, []proposal.Approver{
-				{NodeID: "analytics.kpis", Owner: "analytics-team", Source: proposal.ApproverSourceContractFile},
+				{NodeID: "analytics.kpis", Owner: "analytics-team", Source: model.ApproverSourceContractFile},
 			}, got)
 		})
 	}
@@ -162,7 +163,7 @@ func TestNodeOwner_ANodeWithNoOwnerHasNone(t *testing.T) {
 			})
 			require.NoError(t, err)
 			assert.Equal(t, []proposal.Approver{
-				{NodeID: "analytics.kpis", Owner: "", Source: proposal.ApproverSourceNone},
+				{NodeID: "analytics.kpis", Owner: "", Source: model.ApproverSourceNone},
 			}, got)
 		})
 	}
@@ -184,8 +185,8 @@ func TestNodeOwner_ABundleReadErrorFallsBackAndWarns(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, []proposal.Approver{
-		{NodeID: "analytics.kpis", Owner: "analytics-team", Source: proposal.ApproverSourceContractFile},
-		{NodeID: "analytics.other", Owner: "", Source: proposal.ApproverSourceNone},
+		{NodeID: "analytics.kpis", Owner: "analytics-team", Source: model.ApproverSourceContractFile},
+		{NodeID: "analytics.other", Owner: "", Source: model.ApproverSourceNone},
 	}, got)
 	assert.Contains(t, logs.String(), "level=WARN")
 	assert.Contains(t, logs.String(), "s3 answered HTTP 503")
@@ -200,8 +201,8 @@ func TestNodeOwner_NamesEachNodeOnce(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, []proposal.Approver{
-		{NodeID: "a.x", Owner: "o", Source: proposal.ApproverSourceBundle},
-		{NodeID: "b.y", Owner: "", Source: proposal.ApproverSourceNone},
+		{NodeID: "a.x", Owner: "o", Source: model.ApproverSourceBundle},
+		{NodeID: "b.y", Owner: "", Source: model.ApproverSourceNone},
 	}, got)
 }
 

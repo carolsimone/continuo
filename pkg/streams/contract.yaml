@@ -449,6 +449,20 @@ vocabularies:
         const: UnverifiableEdits
         description: the tries are spent and the last try's edits could not be checked by a release, because a cross-cluster check refused them or the gate refused them before starting a run.
 
+  - name: approver_source
+    const: ApproverSource
+    description: Where agent-remediation read the owner of a node of a rejected release, the person or team who must approve what a remediation did with that node. It names the owner on each approver of a proposal, which the gRPC reads carry to the release page.
+    values:
+      - value: bundle
+        const: Bundle
+        description: the owner the release's code bundle records for the node (a dbt node's config meta.owner, a python node's contract team.name).
+      - value: contract_file
+        const: ContractFile
+        description: the team.name of the node's ODCS contract file in the repository, for a node the code bundle names no owner for.
+      - value: none
+        const: None
+        description: no owner was found for the node, so the approver's owner is empty.
+
   - name: remediation_source
     const: RemediationSource
     description: The pipeline stage that produced the failure of a node a remediation works on.

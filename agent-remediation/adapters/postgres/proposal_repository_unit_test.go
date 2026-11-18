@@ -70,8 +70,8 @@ func TestResolvedNodeIDsDefaultsToNodeIDForLegacyRows(t *testing.T) {
 // list encodes as an empty array, and an empty or malformed blob decodes as nil.
 func TestApproversCodecRoundTrips(t *testing.T) {
 	approvers := []proposal.Approver{
-		{NodeID: "s.a", Owner: "finance", Source: proposal.ApproverSourceBundle},
-		{NodeID: "s.b", Source: proposal.ApproverSourceNone},
+		{NodeID: "s.a", Owner: "finance", Source: model.ApproverSourceBundle},
+		{NodeID: "s.b", Source: model.ApproverSourceNone},
 	}
 	raw, err := marshalApprovers(approvers)
 	require.NoError(t, err)
@@ -92,9 +92,9 @@ func TestApproversCodecRoundTrips(t *testing.T) {
 // approvers of the nodes it resolves from the row's approvers, in the row's order.
 func TestClaimRowNarrowsApproversToTheClaimNodes(t *testing.T) {
 	approvers := []proposal.Approver{
-		{NodeID: "s.a", Owner: "sales", Source: proposal.ApproverSourceBundle},
-		{NodeID: "s.b", Owner: "finance", Source: proposal.ApproverSourceBundle},
-		{NodeID: "s.c", Owner: "growth", Source: proposal.ApproverSourceBundle},
+		{NodeID: "s.a", Owner: "sales", Source: model.ApproverSourceBundle},
+		{NodeID: "s.b", Owner: "finance", Source: model.ApproverSourceBundle},
+		{NodeID: "s.c", Owner: "growth", Source: model.ApproverSourceBundle},
 	}
 	raw, err := marshalApprovers(approvers)
 	require.NoError(t, err)

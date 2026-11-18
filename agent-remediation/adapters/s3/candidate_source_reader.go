@@ -8,6 +8,7 @@ import (
 
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/pkg/codebundle"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/objectstore"
 )
 
@@ -110,7 +111,7 @@ func (r *CandidateSourceReader) readBundle(ctx context.Context, bundleURI, relea
 // any other node's config. A value that is absent or not a string, and a
 // raw_code that is not a JSON object, give no owner.
 func ownerOf(node codebundle.Node) string {
-	if node.Runtime == ports.RuntimePython {
+	if node.Runtime == string(model.NodeRuntimePython) {
 		var entry struct {
 			Owner any `json:"owner"`
 		}

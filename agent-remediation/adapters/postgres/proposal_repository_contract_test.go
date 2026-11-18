@@ -136,8 +136,8 @@ func TestProposalRepository_KeepsApprovers(t *testing.T) {
 			}
 		}
 		fixed := []proposal.Approver{
-			{NodeID: "model.a", Owner: "finance", Source: proposal.ApproverSourceBundle},
-			{NodeID: "model.b", Source: proposal.ApproverSourceNone},
+			{NodeID: "model.a", Owner: "finance", Source: model.ApproverSourceBundle},
+			{NodeID: "model.b", Source: model.ApproverSourceNone},
 		}
 
 		require.NoError(t, env.proposals.Upsert(ctx, row(1, nil)))
@@ -155,7 +155,7 @@ func TestProposalRepository_KeepsApprovers(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, fixed, view.Approvers)
 
-		handedOver := []proposal.Approver{{NodeID: "model.c", Owner: "growth", Source: proposal.ApproverSourceContractFile}}
+		handedOver := []proposal.Approver{{NodeID: "model.c", Owner: "growth", Source: model.ApproverSourceContractFile}}
 		require.NoError(t, env.proposals.RecordApprovers(ctx, "rel-approvers", 1, append(append([]proposal.Approver(nil), handedOver...), fixed...)))
 		require.Equal(t, []proposal.Approver{fixed[0], fixed[1], handedOver[0]}, get(1).Approvers,
 			"the approvers are stored sorted by node id")
@@ -164,7 +164,7 @@ func TestProposalRepository_KeepsApprovers(t *testing.T) {
 		require.Equal(t, []proposal.Approver{fixed[0], fixed[1], handedOver[0]}, get(2).Approvers,
 			"the fixed and the handed-over nodes of one attempt add up on its row")
 
-		renamed := []proposal.Approver{{NodeID: "model.b", Owner: "ops", Source: proposal.ApproverSourceBundle}}
+		renamed := []proposal.Approver{{NodeID: "model.b", Owner: "ops", Source: model.ApproverSourceBundle}}
 		require.NoError(t, env.proposals.RecordApprovers(ctx, "rel-approvers", 2, renamed))
 		require.Equal(t, []proposal.Approver{fixed[0], renamed[0], handedOver[0]}, get(2).Approvers,
 			"an approver for a node the row holds replaces its entry")

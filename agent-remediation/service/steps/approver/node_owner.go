@@ -15,6 +15,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 const nameNodeOwner workflow.StepName = "node_owner"
@@ -72,7 +73,7 @@ func (s *NodeOwner) Approvers(ctx context.Context, in step.ApproverInput) ([]pro
 	out := make([]proposal.Approver, 0, len(nodes))
 	for _, id := range nodes {
 		if owner := owners[id]; owner != "" {
-			out = append(out, proposal.Approver{NodeID: id, Owner: owner, Source: proposal.ApproverSourceBundle})
+			out = append(out, proposal.Approver{NodeID: id, Owner: owner, Source: model.ApproverSourceBundle})
 			continue
 		}
 		out = append(out, s.fallback(in.Clusters, id))
@@ -84,9 +85,9 @@ func (s *NodeOwner) Approvers(ctx context.Context, in step.ApproverInput) ([]pro
 // owner its contract file declares, else none.
 func (s *NodeOwner) fallback(clusters []step.ClusterDraft, nodeID string) proposal.Approver {
 	if owner := s.contractOwner(clusters, nodeID); owner != "" {
-		return proposal.Approver{NodeID: nodeID, Owner: owner, Source: proposal.ApproverSourceContractFile}
+		return proposal.Approver{NodeID: nodeID, Owner: owner, Source: model.ApproverSourceContractFile}
 	}
-	return proposal.Approver{NodeID: nodeID, Source: proposal.ApproverSourceNone}
+	return proposal.Approver{NodeID: nodeID, Source: model.ApproverSourceNone}
 }
 
 // contractOwner is the team.name of the first contract file, among the
