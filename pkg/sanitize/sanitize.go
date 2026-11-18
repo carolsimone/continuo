@@ -22,9 +22,13 @@
 //     a bearer token (secret);
 //  4. the value of a key that names a secret, such as password=..., "token":
 //     "..." or api_key: ..., and the quoted literal of an annotated assignment,
-//     password: str = "..." (secret). An unquoted value is a literal only, not
-//     code that reads a value (os.environ["TOKEN"], settings.PASSWORD,
-//     ${TOKEN}), not a null or a boolean, not a block scalar and not a type;
+//     password: str = "..." (secret). A quoted value is the whole literal: a
+//     quote written twice, as SQL escapes one, or after a backslash stays
+//     inside it, a triple quoted literal runs over lines to its closing
+//     quotes, and a literal cut by the end of the text runs to that end. An
+//     unquoted value is a literal only, not code that reads a value
+//     (os.environ["TOKEN"], settings.PASSWORD, ${TOKEN}), not a null or a
+//     boolean, not a block scalar and not a type;
 //  5. an email address (email).
 //
 // Every rule reads the text as Text writes it: the rules run over the text,
@@ -95,27 +99,60 @@ var secretKey = `(?:` + strings.Join([]string{
 // secretKey to match in it.
 var secretKeyHints = []string{"password", "passwd", "secret", "token", "api", "access", "private"}
 
+// tripleQuoted is a literal between triple quotes q, as Python writes one: it
+// runs over lines to the first three quotes q in a row, or to the end of the
+// text when they are missing, and a backslash escapes the character after it.
+// Its body is one capture group.
+func tripleQuoted(q string) string {
+	return q + q + q + `((?:` + q + `{0,2}(?:[^` + q + `\\]|\\(?s:.)))*` + q + `{0,2})(?:` + q + q + q + `|\z)`
+}
+
+// quoted is a literal between quotes q on one line, in which a quote is written
+// twice, as SQL escapes one, or after a backslash. It runs to its closing
+// quote, or to the end of the text when that is missing. Its body, which is
+// not empty, is one capture group.
+func quoted(q string) string {
+	return q + `((?:[^` + q + `\\\r\n]|\\.|` + q + q + `)+)(?:` + q + `|\z)`
+}
+
+// stringPrefix is the prefix a Python string literal may carry: b"...",
+// r'...', rb"""...""".
+const stringPrefix = `[rRbBuUfF]{0,2}`
+
 // secretValue is a secret key and its value. The separator is capture group 1.
-// The value is one of: nothing (an empty quoted string), a double quoted
-// string, a double quoted string a log escaped, a single quoted string, or an
-// unquoted run that ends at a space or a separator. Each non-empty form is a
-// capture group, groups 2 to 5 in this order, and holds the value without its
-// quotes. An unquoted value never starts with a colon (a cast, token::text) or
-// an angle bracket (a hash rocket).
-var secretValue = secretKey + `\\?["']?[ \t]*(=>|[=:]=?)[ \t]*(?:""|''` +
-	`|"((?:[^"\\\r\n]|\\.)+)"` +
+// The value is one of, tried in this order: a triple quoted literal, nothing
+// (an empty quoted string), a double or a single quoted literal, a double
+// quoted literal a log escaped, or an unquoted run that ends at a space or a
+// separator. A quoted value is matched as the whole literal, its escaped
+// quotes included, after the string prefix it may carry. Each non-empty form
+// holds the value without its quotes and prefix in a capture group of its own:
+// a triple quoted literal in group 2 (double quotes) or 3 (single quotes), a
+// quoted literal in group 4 or 5, a literal a log escaped in group 6 and an
+// unquoted value in group 7, named bare. An unquoted value never starts with a
+// colon (a cast, token::text) or an angle bracket (a hash rocket).
+var secretValue = secretKey + `\\?["']?[ \t]*(=>|[=:]=?)[ \t]*(?:` +
+	stringPrefix + `(?:` + tripleQuoted(`"`) + `|` + tripleQuoted(`'`) + `)` +
+	`|""|''` +
+	`|` + stringPrefix + `(?:` + quoted(`"`) + `|` + quoted(`'`) + `)` +
 	`|\\"((?:[^"\\\r\n]|\\[^"])+)\\"` +
-	`|'((?:[^'\\\r\n]|\\.)+)'` +
-	`|((?:` + markerPattern + `|[^\s,;)\]}&:>])(?:` + markerPattern + `|[^\s,;)\]}&"'])*))`
+	`|(?P<bare>(?:` + markerPattern + `|[^\s,;)\]}&:>])(?:` + markerPattern + `|[^\s,;)\]}&"'])*))`
+
+var (
+	secretValueRE = regexp.MustCompile(secretValue)
+	// bareGroup is the capture group of secretValue that holds an unquoted value.
+	bareGroup = secretValueRE.SubexpIndex("bare")
+)
 
 // annotation is a type annotation: a name, optionally subscripted, or several
 // of them joined by a bar.
 const annotation = `[A-Za-z_][\w.]*(?:\[(?:[^\[\]\r\n=]|\[[^\[\]\r\n=]*\])*\])?`
 
 // secretAnnotated is a secret key, an annotation and a quoted literal, as in
-// password: str = "hunter2". The literal is capture group 1 or 2.
+// password: str = "hunter2". The literal is matched whole, as in secretValue,
+// and its body is capture group 1, 2, 3 or 4.
 var secretAnnotated = secretKey + `[ \t]*:[ \t]*` + annotation + `(?:[ \t]*\|[ \t]*` + annotation + `)*` +
-	`[ \t]*=[ \t]*[rRbBuUfF]{0,2}(?:"((?:[^"\\\r\n]|\\.)+)"|'((?:[^'\\\r\n]|\\.)+)')`
+	`[ \t]*=[ \t]*` + stringPrefix +
+	`(?:` + tripleQuoted(`"`) + `|` + tripleQuoted(`'`) + `|` + quoted(`"`) + `|` + quoted(`'`) + `)`
 
 var (
 	// A block scalar indicator opens a YAML value that is on the next lines.
@@ -209,14 +246,15 @@ func closesAtTheEndOfAWord(s string, open int) bool {
 // not code that reads a value, not an absent value, not a block scalar, and,
 // after a colon, not a type.
 func keepSecretValue(s string, loc []int) bool {
-	if loc[10] < 0 {
+	start, end := loc[2*bareGroup], loc[2*bareGroup+1]
+	if start < 0 {
 		return true
 	}
-	value := s[loc[10]:loc[11]]
+	value := s[start:end]
 	if _, absent := notAValue[strings.ToLower(value)]; absent {
 		return false
 	}
-	if blockScalar.MatchString(value) || readsAValue(s, loc[10]) || dottedName.MatchString(value) ||
+	if blockScalar.MatchString(value) || readsAValue(s, start) || dottedName.MatchString(value) ||
 		expansion.MatchString(value) {
 		return false
 	}
@@ -225,7 +263,7 @@ func keepSecretValue(s string, loc []int) bool {
 			return false
 		}
 		// A name followed by an equals sign is an annotation of what follows.
-		if typeName.MatchString(value) && strings.HasPrefix(strings.TrimLeft(s[loc[11]:], " \t"), "=") {
+		if typeName.MatchString(value) && strings.HasPrefix(strings.TrimLeft(s[end:], " \t"), "=") {
 			return false
 		}
 	}
@@ -270,8 +308,8 @@ var rules = []rule{
 		{regexp.MustCompile(`\b[Bb]earer[ \t]+[A-Za-z0-9._~+/=-]{8,}`), nil, []string{"earer"}, nil},
 	}, false},
 	{kindSecret, []pattern{
-		{regexp.MustCompile(secretValue), []int{2, 3, 4, 5}, secretKeyHints, keepSecretValue},
-		{regexp.MustCompile(secretAnnotated), []int{1, 2}, secretKeyHints, nil},
+		{secretValueRE, []int{2, 3, 4, 5, 6, bareGroup}, secretKeyHints, keepSecretValue},
+		{regexp.MustCompile(secretAnnotated), []int{1, 2, 3, 4}, secretKeyHints, nil},
 	}, true},
 	{kindEmail, []pattern{
 		{regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}`), nil, []string{"@"}, nil},

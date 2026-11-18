@@ -187,7 +187,7 @@ func TestText_RedactsTheValueOfASecretKey(t *testing.T) {
 		"a list of settings":    {"user=bob, password=hunter2, host=db", "user=bob, password=[redacted:secret], host=db"},
 		"a value cut by the end of the text": {
 			`password="hunter2`,
-			`password=[redacted:secret]`,
+			`password="[redacted:secret]`,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -210,6 +210,8 @@ func TestText_KeepsWhatIsNotASecretValue(t *testing.T) {
 		"a key whose value is on another line":     "password:\nuser: bob",
 		"an empty quoted value":                    `password: ""`,
 		"an empty single quoted value":             "password = ''",
+		"an empty triple quoted value":             `password = """"""`,
+		"an empty value and a quoted one after it": `password = "" or "x"`,
 		"a marker already standing in the value":   "password=[redacted:secret]",
 		"a numbered marker already in the value":   `{"token": "[redacted:secret:3]"}`,
 		"a marker already standing behind a colon": "token: [redacted:secret]",
@@ -255,6 +257,69 @@ func TestText_RedactsTheLiteralOfAnAnnotatedAssignment(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			assert.Equal(t, tc.want, sanitize.Text(tc.in))
+		})
+	}
+}
+
+// A quoted value is redacted as the whole literal: a quote written doubled or
+// after a backslash stays inside it, a triple-quoted literal runs over lines
+// to its closing quotes, a string prefix stays outside it, and a literal cut by
+// the end of the text runs to that end.
+func TestText_RedactsAWholeQuotedLiteral(t *testing.T) {
+	for name, tc := range map[string]struct{ in, want string }{
+		"a SQL literal with a doubled quote": {
+			"password = 'first''second'", "password = '[redacted:secret]'",
+		},
+		"a doubled double quote": {
+			`password = "first""second"`, `password = "[redacted:secret]"`,
+		},
+		"a literal that starts with a doubled quote": {
+			"password = '''quoted'' tail'", "password = '''[redacted:secret]",
+		},
+		"a backslash escaped quote": {
+			`token = 'it\'s-x9'`, `token = '[redacted:secret]'`,
+		},
+		"a Python triple double quoted literal": {
+			`password = """hunter2"""`, `password = """[redacted:secret]"""`,
+		},
+		"a Python triple single quoted literal": {
+			"password = '''hunter2'''", "password = '''[redacted:secret]'''",
+		},
+		"a triple quoted literal over lines": {
+			"password = \"\"\"line-one\nline-two\"\"\"\nuser = 'bob'",
+			"password = \"\"\"[redacted:secret]\"\"\"\nuser = 'bob'",
+		},
+		"a triple quoted literal that holds quotes": {
+			`token = """ab"c""d"""`, `token = """[redacted:secret]"""`,
+		},
+		"a triple quoted literal that ends in a quote": {
+			`token = """abc""""`, `token = """[redacted:secret]"""`,
+		},
+		"a triple quoted literal cut by the end of the text": {
+			"password = \"\"\"hunter2\nmore", "password = \"\"\"[redacted:secret]",
+		},
+		"a doubled quote in a literal cut by the end of the text": {
+			"password='first''second", "password='[redacted:secret]",
+		},
+		"a bytes literal": {
+			`password = b"hunter2"`, `password = b"[redacted:secret]"`,
+		},
+		"a raw triple quoted literal": {
+			`token = r"""a\b"""`, `token = r"""[redacted:secret]"""`,
+		},
+		"an annotated triple quoted literal": {
+			`password: str = """hunter2"""`, `password: str = """[redacted:secret]"""`,
+		},
+		"an annotated literal with a doubled quote": {
+			"token: str = 'first''second'", "token: str = '[redacted:secret]'",
+		},
+		"an empty literal and then a value": {
+			`{"password": "", "token": "abc123"}`, `{"password": "", "token": "[redacted:secret]"}`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.want, sanitize.Text(tc.in))
+			assert.Equal(t, tc.want, sanitize.Text(tc.want), "cleaned again")
 		})
 	}
 }
