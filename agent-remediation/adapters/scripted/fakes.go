@@ -147,6 +147,12 @@ func (b bundle) NodeSource(_ context.Context, _, uniqueID, _ string) (ports.Cand
 	return src, nil
 }
 
+// NodeOwners returns no owner: the fixture's bundle records the source of its
+// nodes and no owner.
+func (b bundle) NodeOwners(context.Context, string, string, []string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+
 // catalog answers the catalog's reads from the fixture.
 type catalog struct{ c conformance.Catalog }
 

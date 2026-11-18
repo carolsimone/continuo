@@ -91,6 +91,11 @@ func (f fakeCandidateSource) NodeSource(_ context.Context, _, _, _ string) (port
 	return f.src, f.err
 }
 
+// NodeOwners records no owner of any node.
+func (f fakeCandidateSource) NodeOwners(context.Context, string, string, []string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+
 // fakeUpstream returns fixed upstream changes, or an error, for
 // UpstreamChangeReader.UpstreamChanges.
 type fakeUpstream struct {

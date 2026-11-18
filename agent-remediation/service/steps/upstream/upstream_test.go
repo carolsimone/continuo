@@ -43,6 +43,11 @@ func (f *fakeBundle) NodeSource(_ context.Context, uri, node, release string) (p
 	return s, nil
 }
 
+// NodeOwners records no owner of any node.
+func (f *fakeBundle) NodeOwners(context.Context, string, string, []string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+
 var _ ports.CandidateSourceReader = (*fakeBundle)(nil)
 
 // fakeVersions serves the version each node runs now.

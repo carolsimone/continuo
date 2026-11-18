@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,23 +25,30 @@ const (
 	releaseID = "rel-1"
 )
 
-// fakeBundle answers each node from nodes, a node with an error from errs, and
-// every other node with ports.ErrNotFound. It records the reads it was asked.
+// fakeBundle is a code bundle that records owners, by node id. Every read
+// answers err while it is set. It records each owners read it was asked.
 type fakeBundle struct {
-	nodes map[string]ports.CandidateSource
-	errs  map[string]error
-	reads []string
+	owners map[string]string
+	err    error
+	reads  []string
 }
 
-func (b *fakeBundle) NodeSource(_ context.Context, uri, nodeID, release string) (ports.CandidateSource, error) {
-	b.reads = append(b.reads, uri+"|"+nodeID+"|"+release)
-	if err, ok := b.errs[nodeID]; ok {
-		return ports.CandidateSource{}, err
+func (b *fakeBundle) NodeSource(context.Context, string, string, string) (ports.CandidateSource, error) {
+	return ports.CandidateSource{}, errors.New("node_owner reads owners, never a node's source")
+}
+
+func (b *fakeBundle) NodeOwners(_ context.Context, uri, release string, nodeIDs []string) (map[string]string, error) {
+	b.reads = append(b.reads, uri+"|"+release+"|"+strings.Join(nodeIDs, ","))
+	if b.err != nil {
+		return nil, b.err
 	}
-	if src, ok := b.nodes[nodeID]; ok {
-		return src, nil
+	out := map[string]string{}
+	for _, id := range nodeIDs {
+		if o, ok := b.owners[id]; ok {
+			out[id] = o
+		}
 	}
-	return ports.CandidateSource{}, ports.ErrNotFound
+	return out, nil
 }
 
 func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -86,10 +94,7 @@ func TestNodeOwner_Meta(t *testing.T) {
 // The owner the code bundle records for a node is its approver, for a dbt node
 // and for a python node alike, read from the trigger's bundle and release.
 func TestNodeOwner_ReadsTheBundleOwner(t *testing.T) {
-	b := &fakeBundle{nodes: map[string]ports.CandidateSource{
-		"analytics.orders": {Runtime: ports.RuntimeDbt, Owner: "finance"},
-		"analytics.kpis":   {Runtime: ports.RuntimePython, Owner: "e2e"},
-	}}
+	b := &fakeBundle{owners: map[string]string{"analytics.orders": "finance", "analytics.kpis": "e2e"}}
 	got, err := newNodeOwner(b).Approvers(context.Background(), step.ApproverInput{
 		Trigger:  trigger(),
 		Clusters: []step.ClusterDraft{contractCluster("analytics", "kpis", odcs("not-this-one"), "analytics.kpis")},
@@ -100,18 +105,28 @@ func TestNodeOwner_ReadsTheBundleOwner(t *testing.T) {
 		{NodeID: "analytics.kpis", Owner: "e2e", Source: proposal.ApproverSourceBundle},
 		{NodeID: "analytics.orders", Owner: "finance", Source: proposal.ApproverSourceBundle},
 	}, got, "sorted by node id")
-	assert.ElementsMatch(t, []string{
-		bundleURI + "|analytics.orders|" + releaseID,
-		bundleURI + "|analytics.kpis|" + releaseID,
-	}, b.reads)
+	assert.Equal(t, []string{bundleURI + "|" + releaseID + "|analytics.kpis,analytics.orders"}, b.reads)
 }
 
-// A node the bundle does not hold, or holds with no owner, takes the team.name
-// of the ODCS contract file its cluster's evidence carries.
+// The approvers of several nodes come from one read of the bundle, asked for
+// every node once.
+func TestNodeOwner_ReadsTheBundleOnceForEveryNode(t *testing.T) {
+	b := &fakeBundle{owners: map[string]string{"a.x": "o1", "c.z": "o3"}}
+	_, err := newNodeOwner(b).Approvers(context.Background(), step.ApproverInput{
+		Trigger: trigger(),
+		Nodes:   []string{"c.z", "a.x", "b.y", "a.x"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{bundleURI + "|" + releaseID + "|a.x,b.y,c.z"}, b.reads)
+}
+
+// A node the bundle records no owner for, or whose bundle cannot be read for
+// good, takes the team.name of the ODCS contract file its cluster's evidence
+// carries.
 func TestNodeOwner_FallsBackToTheContractFile(t *testing.T) {
 	for name, b := range map[string]*fakeBundle{
-		"no bundle entry":          {},
-		"a bundle entry, no owner": {nodes: map[string]ports.CandidateSource{"analytics.kpis": {Runtime: ports.RuntimePython}}},
+		"no owner in the bundle":     {},
+		"a bundle that is not there": {err: ports.ErrNotFound},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := newNodeOwner(b).Approvers(context.Background(), step.ApproverInput{
@@ -156,7 +171,7 @@ func TestNodeOwner_ANodeWithNoOwnerHasNone(t *testing.T) {
 // returned, so the commit that runs the approver fails and runs again.
 func TestNodeOwner_ABundleReadErrorIsReturned(t *testing.T) {
 	transient := errors.New("s3 answered HTTP 503")
-	b := &fakeBundle{errs: map[string]error{"analytics.kpis": transient}}
+	b := &fakeBundle{err: transient}
 	_, err := newNodeOwner(b).Approvers(context.Background(), step.ApproverInput{
 		Trigger:  trigger(),
 		Clusters: []step.ClusterDraft{contractCluster("analytics", "kpis", odcs("analytics-team"), "analytics.kpis")},
@@ -168,7 +183,7 @@ func TestNodeOwner_ABundleReadErrorIsReturned(t *testing.T) {
 
 // Each node is named once, whatever order and repeats it is given in.
 func TestNodeOwner_NamesEachNodeOnce(t *testing.T) {
-	b := &fakeBundle{nodes: map[string]ports.CandidateSource{"a.x": {Owner: "o"}}}
+	b := &fakeBundle{owners: map[string]string{"a.x": "o"}}
 	got, err := newNodeOwner(b).Approvers(context.Background(), step.ApproverInput{
 		Trigger: trigger(),
 		Nodes:   []string{"b.y", "a.x", "b.y"},
@@ -178,5 +193,13 @@ func TestNodeOwner_NamesEachNodeOnce(t *testing.T) {
 		{NodeID: "a.x", Owner: "o", Source: proposal.ApproverSourceBundle},
 		{NodeID: "b.y", Owner: "", Source: proposal.ApproverSourceNone},
 	}, got)
-	assert.Len(t, b.reads, 2)
+}
+
+// With no node, the bundle is not read.
+func TestNodeOwner_NoNodeReadsNothing(t *testing.T) {
+	b := &fakeBundle{}
+	got, err := newNodeOwner(b).Approvers(context.Background(), step.ApproverInput{Trigger: trigger()})
+	require.NoError(t, err)
+	assert.Empty(t, got)
+	assert.Empty(t, b.reads)
 }

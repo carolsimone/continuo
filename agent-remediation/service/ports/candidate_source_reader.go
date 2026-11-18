@@ -17,13 +17,9 @@ const RuntimePython = "python"
 // CandidateSource is one node's source as the release's code bundle records
 // it. For a dbt node (Runtime == RuntimeDbt) RawCode is the model file text;
 // for a python node it is the normalized contract entry as canonical JSON.
-// Owner is the node's owner as the bundle records it: a dbt node's config
-// `meta.owner`, a python node's contract entry `owner` (its ODCS team.name).
-// It is empty when the bundle records none as a string.
 type CandidateSource struct {
 	RawCode string
 	Runtime string
-	Owner   string
 }
 
 // CandidateSourceReader fetches one node's source from a release's code
@@ -37,4 +33,12 @@ type CandidateSourceReader interface {
 	// ErrNotFound (the caller falls back to the repo read); a transient fetch
 	// error is returned with its cause so the trigger redelivers.
 	NodeSource(ctx context.Context, bundleURI, uniqueID, releaseID string) (CandidateSource, error)
+	// NodeOwners returns, from one read of the bundle at bundleURI, the owner
+	// the bundle records for each of nodeIDs: a dbt node's config `meta.owner`,
+	// a python node's contract entry `owner` (its ODCS team.name). A node the
+	// bundle does not hold, or holds with no owner as a string, is absent from
+	// the map. The bundle itself is read as NodeSource reads it: a bundle that
+	// cannot be read for good, or belongs to another release, yields
+	// ErrNotFound, and a transient fetch error is returned with its cause.
+	NodeOwners(ctx context.Context, bundleURI, releaseID string, nodeIDs []string) (map[string]string, error)
 }

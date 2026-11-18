@@ -31,7 +31,7 @@ type NodeOwner struct {
 
 var _ step.Approver = (*NodeOwner)(nil)
 
-// NewNodeOwner builds the node_owner step. bundle reads a node's owner from
+// NewNodeOwner builds the node_owner step. bundle reads the nodes' owners from
 // the release's code bundle, and inspector reads the team.name of an ODCS
 // contract file.
 func NewNodeOwner(bundle ports.CandidateSourceReader, inspector ports.ContractInspector, logger *slog.Logger) *NodeOwner {
@@ -51,37 +51,38 @@ func (*NodeOwner) Meta() step.Meta {
 	}
 }
 
-// Approvers names one approver per node of in.Nodes, sorted by node id. A
-// bundle read that fails for another reason than a permanent miss
-// (ports.ErrNotFound) is returned.
+// Approvers names one approver per node of in.Nodes, sorted by node id, from
+// one read of the code bundle. A bundle that cannot be read for good
+// (ports.ErrNotFound) records no owner; any other read error is returned.
 func (s *NodeOwner) Approvers(ctx context.Context, in step.ApproverInput) ([]proposal.Approver, error) {
 	nodes := slices.Clone(in.Nodes)
 	slices.Sort(nodes)
 	nodes = slices.Compact(nodes)
+	if len(nodes) == 0 {
+		return []proposal.Approver{}, nil
+	}
+	owners, err := s.bundle.NodeOwners(ctx, in.Trigger.CodeBundleURI, in.Trigger.ReleaseID, nodes)
+	if err != nil && !errors.Is(err, ports.ErrNotFound) {
+		return nil, fmt.Errorf("read the owners of %s from the code bundle: %w", strings.Join(nodes, ", "), err)
+	}
 	out := make([]proposal.Approver, 0, len(nodes))
 	for _, id := range nodes {
-		a, err := s.approver(ctx, in, id)
-		if err != nil {
-			return nil, err
+		if owner := owners[id]; owner != "" {
+			out = append(out, proposal.Approver{NodeID: id, Owner: owner, Source: proposal.ApproverSourceBundle})
+			continue
 		}
-		out = append(out, a)
+		out = append(out, s.fallback(in.Clusters, id))
 	}
 	return out, nil
 }
 
-// approver is the approver of one node.
-func (s *NodeOwner) approver(ctx context.Context, in step.ApproverInput, nodeID string) (proposal.Approver, error) {
-	src, err := s.bundle.NodeSource(ctx, in.Trigger.CodeBundleURI, nodeID, in.Trigger.ReleaseID)
-	switch {
-	case err == nil && src.Owner != "":
-		return proposal.Approver{NodeID: nodeID, Owner: src.Owner, Source: proposal.ApproverSourceBundle}, nil
-	case err != nil && !errors.Is(err, ports.ErrNotFound):
-		return proposal.Approver{}, fmt.Errorf("read the owner of %s from the code bundle: %w", nodeID, err)
+// fallback is the approver of a node the code bundle names no owner for: the
+// owner its contract file declares, else none.
+func (s *NodeOwner) fallback(clusters []step.ClusterDraft, nodeID string) proposal.Approver {
+	if owner := s.contractOwner(clusters, nodeID); owner != "" {
+		return proposal.Approver{NodeID: nodeID, Owner: owner, Source: proposal.ApproverSourceContractFile}
 	}
-	if owner := s.contractOwner(in.Clusters, nodeID); owner != "" {
-		return proposal.Approver{NodeID: nodeID, Owner: owner, Source: proposal.ApproverSourceContractFile}, nil
-	}
-	return proposal.Approver{NodeID: nodeID, Source: proposal.ApproverSourceNone}, nil
+	return proposal.Approver{NodeID: nodeID, Source: proposal.ApproverSourceNone}
 }
 
 // contractOwner is the team.name of the first contract file, among the

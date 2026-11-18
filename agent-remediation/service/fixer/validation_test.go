@@ -176,6 +176,11 @@ func (f *fakeCandidateSource) NodeSource(_ context.Context, _, uniqueID, _ strin
 	return f.src, f.err
 }
 
+// NodeOwners records no owner of any node.
+func (f *fakeCandidateSource) NodeOwners(context.Context, string, string, []string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+
 // fakeArtifacts records writes in memory and returns deterministic URIs.
 type fakeArtifacts struct {
 	written map[string]string

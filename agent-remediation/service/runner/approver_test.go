@@ -11,7 +11,6 @@ import (
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
-	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/outputs"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
@@ -58,22 +57,13 @@ func (h *harness) recordOutputs() *outputCalls {
 	return calls
 }
 
-// ownedBundle is a code bundle that records owner as the owner of each node.
-func ownedBundle(owners map[string]string) map[string]ports.CandidateSource {
-	nodes := make(map[string]ports.CandidateSource, len(owners))
-	for id, owner := range owners {
-		nodes[id] = ports.CandidateSource{RawCode: "select 1", Runtime: ports.RuntimeDbt, Owner: owner}
-	}
-	return nodes
-}
-
 // The pass output is handed the approvers of the nodes the verified fix
 // covers, and the give-up output those of the nodes the remediation leaves to
 // a human; a node with no owner is named with none.
 func TestRunner_HandsTheOutputsTheApproversOfTheirNodes(t *testing.T) {
 	h := newHarness(t)
 	calls := h.recordOutputs()
-	h.bundle.nodes = ownedBundle(map[string]string{"svc-a": "finance"})
+	h.bundle.owners = map[string]string{"svc-a": "finance"}
 	noFile := compileNode("svc-b")
 	noFile.FilePath = ""
 	id := h.accept(trigger("compile", compileNode("svc-a"), noFile))
@@ -89,6 +79,28 @@ func TestRunner_HandsTheOutputsTheApproversOfTheirNodes(t *testing.T) {
 	assert.Equal(t, [][]proposal.Approver{{
 		{NodeID: "svc-b", Owner: "", Source: proposal.ApproverSourceNone},
 	}}, calls.giveUp, "the give-up output is handed the handed-over node's approver")
+	assert.Equal(t, 2, h.bundle.ownerReadCount(), "one bundle read for the fixed nodes and one for the handed-over ones")
+}
+
+// The approvers of every node a verified fix covers come from one read of the
+// bundle.
+func TestRunner_ThePassReadsTheBundleOnceForItsNodes(t *testing.T) {
+	h := newHarness(t)
+	calls := h.recordOutputs()
+	h.bundle.owners = map[string]string{"svc-a": "finance", "svc-b": "e2e"}
+	id := h.accept(trigger("compile", compileNode("svc-a"), compileNode("svc-b")))
+	require.NoError(t, h.runner.Drive(ctx, id))
+	h.pipeline.answer(proposal.PhasePassed, nil)
+
+	require.NoError(t, h.poll(id))
+
+	require.Equal(t, remediation.StatusDone, h.remediation(id).Status)
+	assert.Equal(t, [][]proposal.Approver{{
+		{NodeID: "svc-a", Owner: "finance", Source: proposal.ApproverSourceBundle},
+		{NodeID: "svc-b", Owner: "e2e", Source: proposal.ApproverSourceBundle},
+	}}, calls.pass)
+	assert.Empty(t, calls.giveUp)
+	assert.Equal(t, 1, h.bundle.ownerReadCount(), "one bundle read for both nodes")
 }
 
 // A remediation that ends with no try, here one whose trigger names no
@@ -97,7 +109,7 @@ func TestRunner_HandsTheOutputsTheApproversOfTheirNodes(t *testing.T) {
 func TestRunner_AHandOverWithNoTryHandsOverTheApproversOfItsNodes(t *testing.T) {
 	h := newHarness(t)
 	calls := h.recordOutputs()
-	h.bundle.nodes = ownedBundle(map[string]string{"svc-a": "finance", "svc-b": "e2e"})
+	h.bundle.owners = map[string]string{"svc-a": "finance", "svc-b": "e2e"}
 	trig := trigger("compile", compileNode("svc-b"), compileNode("svc-a"))
 	trig.Repo = ""
 	id := h.accept(trig)
@@ -118,7 +130,7 @@ func TestRunner_AHandOverWithNoTryHandsOverTheApproversOfItsNodes(t *testing.T) 
 func TestRunner_ABundleReadErrorFailsTheEndAndTheNextPollRetries(t *testing.T) {
 	h := newHarness(t)
 	calls := h.recordOutputs()
-	h.bundle.nodes = ownedBundle(map[string]string{"svc-a": "finance"})
+	h.bundle.owners = map[string]string{"svc-a": "finance"}
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))
 	h.pipeline.answer(proposal.PhasePassed, nil)

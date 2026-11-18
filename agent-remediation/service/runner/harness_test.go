@@ -140,14 +140,40 @@ func (noPrecedents) Precedents(context.Context, ports.PrecedentQuery) ([]prompt.
 	return nil, nil
 }
 
-// noBundle is a code bundle that holds only the nodes in nodes. onRead runs
-// on every read, and every read answers err while it is set.
+// noBundle is a code bundle that holds only the nodes in nodes and records
+// the owners in owners. onRead runs on every source read, ownerReads counts the
+// owners reads, and every read answers err while it is set.
 type noBundle struct {
-	mu     sync.Mutex
-	reads  int
-	nodes  map[string]ports.CandidateSource
-	onRead func(n int)
-	err    error
+	mu         sync.Mutex
+	reads      int
+	ownerReads int
+	nodes      map[string]ports.CandidateSource
+	owners     map[string]string
+	onRead     func(n int)
+	err        error
+}
+
+func (b *noBundle) NodeOwners(_ context.Context, _, _ string, nodeIDs []string) (map[string]string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.ownerReads++
+	if b.err != nil {
+		return nil, b.err
+	}
+	out := map[string]string{}
+	for _, id := range nodeIDs {
+		if o, ok := b.owners[id]; ok {
+			out[id] = o
+		}
+	}
+	return out, nil
+}
+
+// ownerReadCount is how many owners reads the bundle answered.
+func (b *noBundle) ownerReadCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.ownerReads
 }
 
 func (b *noBundle) NodeSource(_ context.Context, _, nodeID, _ string) (ports.CandidateSource, error) {
