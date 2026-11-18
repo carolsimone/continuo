@@ -498,6 +498,7 @@ var glueProbes = []struct{ text, secret string }{
 	{"token:Bearer 00000000Zq7canaryI!", "Zq7canaryI"},
 	{"token:Bearer abcdefgh1234 Zq7canaryJ", "abcdefgh1234"},
 	{"api_key: [redacted:email]Zq7canaryK", "Zq7canaryK"},
+	{"PASSWORD=zqx.canaryP", "zqx.canaryP"},
 	{"password = 'Zq7''canaryL'", "canaryL"},
 	{`token = """Zq7canaryM"""`, "Zq7canaryM"},
 	{"secret = '''Zq7canaryN'''", "Zq7canaryN"},
@@ -522,6 +523,8 @@ var leakyPieces = []struct{ text, secret string }{
 	{`{"password": "hunter2quoted"}`, "hunter2quoted"},
 	{`password: str = "hunter2annotated"`, "hunter2annotated"},
 	{"api_key=xK9(mP2q", "xK9(mP2q"},
+	{"password: correct.horse", "correct.horse"},
+	{"DB_PASSWORD=staple.battery", "staple.battery"},
 	{"password = 'first''Zq7sqlTail'", "Zq7sqlTail"},
 	{`token = "x""Zq7dqTail"`, "Zq7dqTail"},
 	{`password = """Zq7tripleD"""`, "Zq7tripleD"},
@@ -535,6 +538,7 @@ var leakyPieces = []struct{ text, secret string }{
 var neutralPieces = []string{
 	"select", "from", "analytics.orders", "where", "a = b", "-- a comment", "x", "42",
 	"password_hint", "token::text", "os.getenv(\"T\")", "[redacted:secret]", "[redacted:email:2]",
+	"where a.token = b.token", "token = self.token",
 }
 
 // Texts made of secrets and of text that holds none, in any order, set apart by

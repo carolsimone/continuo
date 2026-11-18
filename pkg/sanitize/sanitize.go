@@ -27,8 +27,9 @@
 //     inside it, a triple quoted literal runs over lines to its closing
 //     quotes, and a literal cut by the end of the text runs to that end. An
 //     unquoted value is a literal only, not code that reads a value
-//     (os.environ["TOKEN"], settings.PASSWORD, ${TOKEN}), not a null or a
-//     boolean, not a block scalar and not a type;
+//     (os.environ["TOKEN"], ${TOKEN}, or settings.PASSWORD written after an
+//     operator with a space on each side), not a null or a boolean, not a
+//     block scalar and not a type;
 //  5. an email address (email).
 //
 // Every rule reads the text as Text writes it: the rules run over the text,
@@ -160,9 +161,9 @@ var (
 	// The start of a call or a subscript: its name, possibly dotted, and its
 	// opening bracket. os.getenv(, os.environ[.
 	callStart = regexp.MustCompile(`^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)[(\[]`)
-	// A dotted name with no digit: self.password, settings.DB_PASSWORD. Tokens
-	// and passwords that hold dots hold digits too.
-	dottedName = regexp.MustCompile(`^[A-Za-z_]+(?:\.[A-Za-z_]+)+$`)
+	// A dotted name with no digit: self.password, settings.DB_PASSWORD. A
+	// statement that ends with one may close on a colon (if x == cfg.token:).
+	dottedName = regexp.MustCompile(`^[A-Za-z_]+(?:\.[A-Za-z_]+)+:?$`)
 	// A name, possibly dotted, as a type is written: Custom, typing.Any.
 	typeName = regexp.MustCompile(`^[A-Za-z_][\w.]*$`)
 	// The opening of a template or a shell expansion: {{ env_var(...) }}, ${TOKEN}.
@@ -241,10 +242,30 @@ func closesAtTheEndOfAWord(s string, open int) bool {
 	return false
 }
 
+// operatorOfCode reports whether the separator s[start:end] of a match of
+// secretValue is written as code writes an assignment or a comparison: an
+// equals sign, a double equals sign, a walrus or a hash rocket, with a space
+// or a tab on each side (a.token = b.token, token = self.token,
+// x == cfg.token). A colon is how YAML and a JSON or JavaScript object write a
+// value, and an equals sign with no space around it how a .env file, a shell,
+// a connection string or a keyword argument does: both write a literal.
+func operatorOfCode(s string, start, end int) bool {
+	if s[start:end] == ":" {
+		return false
+	}
+	return start > 0 && isBlank(s[start-1]) && end < len(s) && isBlank(s[end])
+}
+
+func isBlank(c byte) bool { return c == ' ' || c == '\t' }
+
 // keepSecretValue decides whether a match of secretValue holds a value. A
 // quoted value always does. An unquoted one does when it is a literal: it is
 // not code that reads a value, not an absent value, not a block scalar, and,
-// after a colon, not a type.
+// after a colon, not a type. A dotted name reads a value only after an
+// operator of code (operatorOfCode). After any other separator it is a
+// literal, since a password may be dotted words (correct.horse), and a dotted
+// reference written there, as a JavaScript object or a keyword argument
+// writes one, is redacted with it.
 func keepSecretValue(s string, loc []int) bool {
 	start, end := loc[2*bareGroup], loc[2*bareGroup+1]
 	if start < 0 {
@@ -254,8 +275,8 @@ func keepSecretValue(s string, loc []int) bool {
 	if _, absent := notAValue[strings.ToLower(value)]; absent {
 		return false
 	}
-	if blockScalar.MatchString(value) || readsAValue(s, start) || dottedName.MatchString(value) ||
-		expansion.MatchString(value) {
+	if blockScalar.MatchString(value) || readsAValue(s, start) || expansion.MatchString(value) ||
+		(dottedName.MatchString(value) && operatorOfCode(s, loc[2], loc[3])) {
 		return false
 	}
 	if s[loc[2]:loc[3]] == ":" {

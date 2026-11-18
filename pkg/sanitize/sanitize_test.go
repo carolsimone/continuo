@@ -334,6 +334,12 @@ func TestText_KeepsAnUnquotedValueThatIsNotALiteral(t *testing.T) {
 		"a method call":                            `self.token = self.token_from(x)`,
 		"an attribute":                             `a.token = b.token`,
 		"a dotted name":                            `password = settings.DB_PASSWORD`,
+		"an attribute in a SQL condition":          `where a.token = b.token`,
+		"an attribute of self":                     `token = self.token`,
+		"a comparison of attributes":               `if x.token == y.token:`,
+		"a Go short declaration":                   `token := cfg.Token`,
+		"a hash rocket to an attribute":            `token => opts.token`,
+		"an attribute after a tab":                 "password\t=\tsettings.PASSWORD",
 		"a type in a parameter list":               `def connect(token: str, host: str):`,
 		"a type that closes the parameters":        `def connect(host: str, password: SecretStr):`,
 		"a field with a type only":                 "password: str\n",
@@ -408,6 +414,28 @@ func TestText_RedactsABareWordThatIsNotAReference(t *testing.T) {
 		"a dotted value with digits":   {"client_secret=abc123.def456", "client_secret=[redacted:secret]"},
 		"a three part dotted value":    {"token: a1b2c3d4e5f6.g7h8i9.j0k1l2m3n4", "token: [redacted:secret]"},
 		"a YAML value":                 {"password: hunter2", "password: [redacted:secret]"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.want, sanitize.Text(tc.in))
+		})
+	}
+}
+
+// A dotted value is a literal wherever configuration writes it: after a colon
+// (YAML, a JSON or JS object) or after an equals sign with no space around it
+// (a .env file, a shell, a connection string, a keyword argument). Only code
+// written with a space on each side of its operator reads it as a reference.
+func TestText_RedactsADottedValueThatConfigurationWrites(t *testing.T) {
+	for name, tc := range map[string]struct{ in, want string }{
+		"a YAML password":             {"password: correct.horse", "password: [redacted:secret]"},
+		"a .env password":             {"PASSWORD=correct.horse", "PASSWORD=[redacted:secret]"},
+		"a three part YAML secret":    {"secret: a.b.c", "secret: [redacted:secret]"},
+		"a shell export":              {"export DB_PASSWORD=correct.horse", "export DB_PASSWORD=[redacted:secret]"},
+		"a connection string":         {"host=db password=correct.horse user=bob", "host=db password=[redacted:secret] user=bob"},
+		"a keyword argument":          {"connect(password=correct.horse)", "connect(password=[redacted:secret])"},
+		"a JS object member":          {"{ token: this.token }", "{ token: [redacted:secret] }"},
+		"a space before the operator": {"password =correct.horse", "password =[redacted:secret]"},
+		"a space after the operator":  {"password= correct.horse", "password= [redacted:secret]"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			assert.Equal(t, tc.want, sanitize.Text(tc.in))
