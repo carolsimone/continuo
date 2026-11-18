@@ -122,21 +122,29 @@ const stringPrefix = `[rRbBuUfF]{0,2}`
 
 // secretValue is a secret key and its value. The separator is capture group 1.
 // The value is one of, tried in this order: a triple quoted literal, nothing
-// (an empty quoted string), a double or a single quoted literal, a double
-// quoted literal a log escaped, or an unquoted run that ends at a space or a
-// separator. A quoted value is matched as the whole literal, its escaped
-// quotes included, after the string prefix it may carry. Each non-empty form
-// holds the value without its quotes and prefix in a capture group of its own:
-// a triple quoted literal in group 2 (double quotes) or 3 (single quotes), a
-// quoted literal in group 4 or 5, a literal a log escaped in group 6 and an
-// unquoted value in group 7, named bare. An unquoted value never starts with a
-// colon (a cast, token::text) or an angle bracket (a hash rocket).
+// (an empty quoted string), a double or a single quoted literal, a triple or a
+// one-line double quoted literal a log escaped (\"\"\"...\"\"\", \"...\"),
+// or an unquoted run that ends at a space or a separator. A quoted value is
+// matched as the whole literal, its escaped quotes included, after the string
+// prefix it may carry; inside a literal a log escaped, a quote the literal
+// itself escaped reads \\\". Each non-empty form holds the value without its
+// quotes and prefix in a capture group of its own: a triple quoted literal in
+// group 2 (double quotes) or 3 (single quotes), a quoted literal in group 4 or
+// 5, a literal a log escaped in group 6 (triple) or 7 and an unquoted value in
+// group 8, named bare. An unquoted value never starts with a colon (a cast,
+// token::text) or an angle bracket (a hash rocket).
 var secretValue = secretKey + `\\?["']?[ \t]*(=>|[=:]=?)[ \t]*(?:` +
 	stringPrefix + `(?:` + tripleQuoted(`"`) + `|` + tripleQuoted(`'`) + `)` +
 	`|""|''` +
 	`|` + stringPrefix + `(?:` + quoted(`"`) + `|` + quoted(`'`) + `)` +
-	`|\\"((?:[^"\\\r\n]|\\[^"])+)\\"` +
+	`|` + escapedTripleQuoted +
+	`|\\"((?:[^"\\\r\n]|\\\\\\"|\\[^"])+)\\"` +
 	`|(?P<bare>(?:` + markerPattern + `|[^\s,;)\]}&:>])(?:` + markerPattern + `|[^\s,;)\]}&"'])*))`
+
+// escapedTripleQuoted is a triple double quoted literal as a log escapes it,
+// \"\"\"...\"\"\": it runs on its line to the first three escaped quotes in a row,
+// or to the end of the text. Its body is one capture group.
+const escapedTripleQuoted = `\\"\\"\\"((?:(?:\\"){0,2}(?:[^"\\\r\n]|\\[^"]))*(?:\\"){0,2})(?:\\"\\"\\"|\z)`
 
 var (
 	secretValueRE = regexp.MustCompile(secretValue)
@@ -177,7 +185,7 @@ var notAValue = map[string]struct{}{"null": {}, "none": {}, "true": {}, "false":
 var typeWords = map[string]struct{}{
 	"str": {}, "int": {}, "float": {}, "bool": {}, "bytes": {}, "bytearray": {}, "complex": {}, "object": {},
 	"list": {}, "dict": {}, "set": {}, "tuple": {}, "frozenset": {}, "Any": {}, "Final": {}, "ClassVar": {},
-	"SecretStr": {}, "SecretBytes": {}, "string": {}, "number": {}, "boolean": {},
+	"SecretStr": {}, "SecretBytes": {}, "Optional": {}, "string": {}, "number": {}, "boolean": {},
 	"String": {}, "Integer": {}, "Boolean": {},
 }
 
@@ -261,7 +269,8 @@ func isBlank(c byte) bool { return c == ' ' || c == '\t' }
 // keepSecretValue decides whether a match of secretValue holds a value. A
 // quoted value always does. An unquoted one does when it is a literal: it is
 // not code that reads a value, not an absent value, not a block scalar, and,
-// after a colon, not a type. A dotted name reads a value only after an
+// after a colon, not a type (a type word, alone or as the last part of a
+// dotted name). A dotted name reads a value only after an
 // operator of code (operatorOfCode). After any other separator it is a
 // literal, since a password may be dotted words (correct.horse), and a dotted
 // reference written there, as a JavaScript object or a keyword argument
@@ -282,6 +291,13 @@ func keepSecretValue(s string, loc []int) bool {
 	if s[loc[2]:loc[3]] == ":" {
 		if _, isType := typeWords[value]; isType {
 			return false
+		}
+		// A dotted name whose last part is a type word is a type a module
+		// names: typing.Any, pydantic.SecretStr.
+		if dot := strings.LastIndexByte(value, '.'); dot >= 0 && dottedName.MatchString(value) {
+			if _, isType := typeWords[value[dot+1:]]; isType {
+				return false
+			}
 		}
 		// A name followed by an equals sign is an annotation of what follows.
 		if typeName.MatchString(value) && strings.HasPrefix(strings.TrimLeft(s[end:], " \t"), "=") {
@@ -329,7 +345,7 @@ var rules = []rule{
 		{regexp.MustCompile(`\b[Bb]earer[ \t]+[A-Za-z0-9._~+/=-]{8,}`), nil, []string{"earer"}, nil},
 	}, false},
 	{kindSecret, []pattern{
-		{secretValueRE, []int{2, 3, 4, 5, 6, bareGroup}, secretKeyHints, keepSecretValue},
+		{secretValueRE, []int{2, 3, 4, 5, 6, 7, bareGroup}, secretKeyHints, keepSecretValue},
 		{regexp.MustCompile(secretAnnotated), []int{1, 2, 3, 4}, secretKeyHints, nil},
 	}, true},
 	{kindEmail, []pattern{

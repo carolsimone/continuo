@@ -436,6 +436,8 @@ func FuzzCleanAndRestore(f *testing.F) {
 		"password = 'first''second'", `password = """hunter2"""`, "password = '''hunter2'''", `token = "a""b"`,
 		"password = \"\"\"line\nline\"\"\" tail", `password = """cut`, "password='cut''tail", `password = b"x9"`,
 		`password: str = """hunter2"""`, `password = """"""`, `token = """a"""" b`,
+		`{"msg":"password=\"p\\\"wsecretpart\""}`, `{"msg":"password = \"\"\"tri\"\"\" x"}`, `password = \"\"\"cut`,
+		`def f(token: typing.Any):`, `connect(api_key=settings.X)`,
 	} {
 		f.Add(seed)
 	}
@@ -499,6 +501,8 @@ var glueProbes = []struct{ text, secret string }{
 	{"token:Bearer abcdefgh1234 Zq7canaryJ", "abcdefgh1234"},
 	{"api_key: [redacted:email]Zq7canaryK", "Zq7canaryK"},
 	{"PASSWORD=zqx.canaryP", "zqx.canaryP"},
+	{`password=\"p\\\"Zq7canaryQ\"`, "Zq7canaryQ"},
+	{`token = \"\"\"Zq7canaryR\"\"\"`, "Zq7canaryR"},
 	{"password = 'Zq7''canaryL'", "canaryL"},
 	{`token = """Zq7canaryM"""`, "Zq7canaryM"},
 	{"secret = '''Zq7canaryN'''", "Zq7canaryN"},
@@ -525,6 +529,8 @@ var leakyPieces = []struct{ text, secret string }{
 	{"api_key=xK9(mP2q", "xK9(mP2q"},
 	{"password: correct.horse", "correct.horse"},
 	{"DB_PASSWORD=staple.battery", "staple.battery"},
+	{`{"msg":"password=\"p\\\"Zq7escQuote\""}`, "Zq7escQuote"},
+	{`{"msg":"password = \"\"\"Zq7escTriple\"\"\" x"}`, "Zq7escTriple"},
 	{"password = 'first''Zq7sqlTail'", "Zq7sqlTail"},
 	{`token = "x""Zq7dqTail"`, "Zq7dqTail"},
 	{`password = """Zq7tripleD"""`, "Zq7tripleD"},
@@ -538,7 +544,7 @@ var leakyPieces = []struct{ text, secret string }{
 var neutralPieces = []string{
 	"select", "from", "analytics.orders", "where", "a = b", "-- a comment", "x", "42",
 	"password_hint", "token::text", "os.getenv(\"T\")", "[redacted:secret]", "[redacted:email:2]",
-	"where a.token = b.token", "token = self.token",
+	"where a.token = b.token", "token = self.token", "def f(token: typing.Any):",
 }
 
 // Texts made of secrets and of text that holds none, in any order, set apart by
@@ -599,7 +605,7 @@ func TestRedactor_LeavesNoSecretInATextMadeOfPieces(t *testing.T) {
 // words, separators and secrets the rules read, and the markers they leave.
 var piecesOfText = []string{
 	"password", "PGPASSWORD", "token", "secret_key", "api-key", "=", ":", "=>", " ", "  ", "\t", "\n", ",", ";", "&", "?", "#", "/",
-	"(", ")", "[", "]", "{", "}", "{{", "$(", "\"", "'", "''", `"""`, "'''", `b"`, "\\\"", ".", "|", ">", "-", "x", "hunter2", "Tr0ub4dor", "abc.def", "os.getenv", "str",
+	"(", ")", "[", "]", "{", "}", "{{", "$(", "\"", "'", "''", `"""`, "'''", `b"`, `\"\"\"`, `\\\"`, "\\\"", ".", "|", ">", "-", "x", "hunter2", "Tr0ub4dor", "abc.def", "os.getenv", "str",
 	"None", "null", "Bearer ", "Bearer 00000000", awsKeyID, githubPAT, jwt, "ops@acme.com", "a@b.co", "@", "://", "https://u:pw@h.example.com/x",
 	"-----BEGIN PRIVATE KEY-----", "-----END PRIVATE KEY-----", "body",
 	"[redacted:secret]", "[redacted:secret:1]", "[redacted:email:2]", "[redacted:key:1]", "[redacted:email:9223372036854775806]",

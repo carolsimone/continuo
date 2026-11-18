@@ -313,6 +313,18 @@ func TestText_RedactsAWholeQuotedLiteral(t *testing.T) {
 		"an annotated literal with a doubled quote": {
 			"token: str = 'first''second'", "token: str = '[redacted:secret]'",
 		},
+		"a log escaped literal holding an escaped quote": {
+			`{"msg":"password=\"p\\\"wsecretpart\""}`, `{"msg":"password=\"[redacted:secret]\""}`,
+		},
+		"a log escaped triple quoted literal": {
+			`{"msg":"password = \"\"\"tri\"\"\" x"}`, `{"msg":"password = \"\"\"[redacted:secret]\"\"\" x"}`,
+		},
+		"a log escaped triple quoted literal holding a quote": {
+			`{"msg":"token = \"\"\"a\"b\"\"\""}`, `{"msg":"token = \"\"\"[redacted:secret]\"\"\""}`,
+		},
+		"a log escaped triple quoted literal cut by the end of the text": {
+			`password = \"\"\"tri`, `password = \"\"\"[redacted:secret]`,
+		},
 		"an empty literal and then a value": {
 			`{"password": "", "token": "abc123"}`, `{"password": "", "token": "[redacted:secret]"}`,
 		},
@@ -340,6 +352,9 @@ func TestText_KeepsAnUnquotedValueThatIsNotALiteral(t *testing.T) {
 		"a Go short declaration":                   `token := cfg.Token`,
 		"a hash rocket to an attribute":            `token => opts.token`,
 		"an attribute after a tab":                 "password\t=\tsettings.PASSWORD",
+		"a dotted type in a parameter list":        `def f(token: typing.Any):`,
+		"a dotted secret type and another param":   `def f(password: pydantic.SecretStr, b: int):`,
+		"a dotted optional type":                   `def f(token: t.Optional):`,
 		"a type in a parameter list":               `def connect(token: str, host: str):`,
 		"a type that closes the parameters":        `def connect(host: str, password: SecretStr):`,
 		"a field with a type only":                 "password: str\n",
@@ -427,15 +442,17 @@ func TestText_RedactsABareWordThatIsNotAReference(t *testing.T) {
 // written with a space on each side of its operator reads it as a reference.
 func TestText_RedactsADottedValueThatConfigurationWrites(t *testing.T) {
 	for name, tc := range map[string]struct{ in, want string }{
-		"a YAML password":             {"password: correct.horse", "password: [redacted:secret]"},
-		"a .env password":             {"PASSWORD=correct.horse", "PASSWORD=[redacted:secret]"},
-		"a three part YAML secret":    {"secret: a.b.c", "secret: [redacted:secret]"},
-		"a shell export":              {"export DB_PASSWORD=correct.horse", "export DB_PASSWORD=[redacted:secret]"},
-		"a connection string":         {"host=db password=correct.horse user=bob", "host=db password=[redacted:secret] user=bob"},
-		"a keyword argument":          {"connect(password=correct.horse)", "connect(password=[redacted:secret])"},
-		"a JS object member":          {"{ token: this.token }", "{ token: [redacted:secret] }"},
-		"a space before the operator": {"password =correct.horse", "password =[redacted:secret]"},
-		"a space after the operator":  {"password= correct.horse", "password= [redacted:secret]"},
+		"a YAML password":                             {"password: correct.horse", "password: [redacted:secret]"},
+		"a .env password":                             {"PASSWORD=correct.horse", "PASSWORD=[redacted:secret]"},
+		"a three part YAML secret":                    {"secret: a.b.c", "secret: [redacted:secret]"},
+		"a shell export":                              {"export DB_PASSWORD=correct.horse", "export DB_PASSWORD=[redacted:secret]"},
+		"a connection string":                         {"host=db password=correct.horse user=bob", "host=db password=[redacted:secret] user=bob"},
+		"a keyword argument":                          {"connect(password=correct.horse)", "connect(password=[redacted:secret])"},
+		"a keyword argument read from settings":       {"connect(api_key=settings.X)", "connect(api_key=[redacted:secret])"},
+		"a dotted name after a colon that is no type": {"password: typing.Horse", "password: [redacted:secret]"},
+		"a JS object member":                          {"{ token: this.token }", "{ token: [redacted:secret] }"},
+		"a space before the operator":                 {"password =correct.horse", "password =[redacted:secret]"},
+		"a space after the operator":                  {"password= correct.horse", "password= [redacted:secret]"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			assert.Equal(t, tc.want, sanitize.Text(tc.in))
