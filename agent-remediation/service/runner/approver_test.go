@@ -4,15 +4,19 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
+	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/approver"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/outputs"
@@ -333,4 +337,73 @@ func TestRunner_ANodeWithNoOwnerIsRecordedWithNone(t *testing.T) {
 	assert.Equal(t, []events.HandedOverNode{{
 		NodeID: "svc-a", Reason: string(model.HandoverReasonNoRepository), Message: "the trigger carried no repository for rel-1",
 	}}, h.handedOverEvent().Nodes)
+}
+
+// A python node declined after its contract_file step ran is carried into
+// every later try as a cluster already handed over, which runs no step. Its
+// owner is still the team.name of the contract file its settling cluster
+// gathered, however many tries later the remediation ends: when the next try
+// passes, and when the tries are spent. Carrying it writes no row and counts
+// no try for it again.
+func TestRunner_AContractOwnerOutlivesTheTryThatReadIt(t *testing.T) {
+	contractOwner := proposal.Approver{NodeID: contractNodeID, Owner: "sales-team", Source: model.ApproverSourceContractFile}
+	for name, tc := range map[string]struct {
+		failedTries int
+		attempt     int
+	}{
+		"the next try passes": {failedTries: 1, attempt: 2},
+		"the tries are spent": {failedTries: 3, attempt: 4},
+	} {
+		t.Run(name, func(t *testing.T) {
+			metrics := &recordedMetrics{}
+			h := newHarness(t, withContractType(1, &refusingPackager{}), withMetrics(metrics))
+			h.archive.(*checkoutOf).files[contractYAML] = brokenContract + "team:\n  name: sales-team\n"
+			h.images.err = fmt.Errorf("release rel-1, service svc-a: %w", ports.ErrNoImagePackages)
+			calls := h.recordOutputs()
+			h.llm.answer = func(req prompt.ProposeRequest) ports.ProposeResult {
+				if prompt.IsSourceFix(req) {
+					return sourceFixAnswer(revisedSourceText, "high")(req)
+				}
+				return diagnosisAnswer(req)
+			}
+			id := h.accept(trigger("validation", contractNode(), validationNode(h)))
+
+			for try := 1; try <= tc.failedTries; try++ {
+				h.pipeline.answer(proposal.PhaseFailed, map[string]string{"svc-a": "still broken"})
+				require.NoError(t, h.drive(id))
+				require.Equal(t, remediation.TryVerifying, h.try(id, try).Status, "try %d", try)
+				require.NoError(t, h.poll(id))
+			}
+			if tc.failedTries < 3 {
+				h.pipeline.answer(proposal.PhasePassed, nil)
+				require.NoError(t, h.drive(id))
+				require.NoError(t, h.poll(id))
+			} else {
+				require.NoError(t, h.drive(id))
+			}
+
+			require.Equal(t, remediation.StatusDone, h.remediation(id).Status)
+			require.Len(t, calls.giveUp, 1)
+			assert.Contains(t, calls.giveUp[0], contractOwner, "the hand-over names the contract's owner")
+			assert.Contains(t, h.attempt(tc.attempt).Proposal.Approvers, contractOwner, "the attempt row stores it")
+			for _, n := range h.handedOverEvent().Nodes {
+				if n.NodeID == contractNodeID {
+					assert.Equal(t, "sales-team", n.Owner)
+				}
+			}
+			for _, s := range h.store.Steps(id) {
+				if s.Try > 1 && s.Cluster != remediation.FlowCluster {
+					c := h.clusterFor(id, s.Try, contractNodeID)
+					assert.NotEqual(t, c.Cluster, s.Cluster, "try %d wrote a row for the carried cluster: %s", s.Try, s.Step)
+				}
+			}
+			declined := 0
+			for _, s := range metrics.gotTries() {
+				if strings.HasSuffix(s, "/python-validation/declined") {
+					declined++
+				}
+			}
+			assert.Equal(t, 1, declined, "the declined try is counted once, in the try that worked it")
+		})
+	}
 }

@@ -455,6 +455,70 @@ func (r *RemediationRepository) snapshot(ctx context.Context, id uuid.UUID) (rem
 	return snap, nil
 }
 
+// earlierContextStepsStatement reads the step rows ListContextOfEarlierTries
+// returns: the done context rows of the earlier tries' clusters that have a
+// member among the nodes.
+const earlierContextStepsStatement = `SELECT ` + stepColumns + `
+	FROM remediation_step s
+	WHERE s.remediation_id = $1 AND s.try < $2 AND s.kind = $4 AND s.status = $5
+	  AND EXISTS (SELECT 1 FROM remediation_cluster c
+	               WHERE c.remediation_id = s.remediation_id AND c.try = s.try AND c.cluster = s.cluster
+	                 AND c.members && $3::text[])
+	ORDER BY s.id`
+
+// ListContextOfEarlierTries returns one snapshot per try of the remediation
+// before try before, newest first, each with its clusters that have a member
+// among nodes (ordered by cluster) and their done context rows (ordered by
+// id). It reads the tries, those clusters and those steps in one statement
+// each, on the unit of work's transaction.
+func (r *RemediationRepository) ListContextOfEarlierTries(ctx context.Context, id uuid.UUID, before int, nodes []string) ([]remediation.Snapshot, error) {
+	if len(nodes) == 0 || before <= 1 {
+		return nil, nil
+	}
+	var tries []tryRow
+	if err := r.q.SelectContext(ctx, &tries, `SELECT `+tryColumns+`
+		FROM remediation_try WHERE remediation_id = $1 AND try < $2 ORDER BY try DESC`, id, before); err != nil {
+		return nil, fmt.Errorf("list the tries of remediation %s before try %d: %w", id, before, err)
+	}
+	var clusters []clusterRow
+	if err := r.q.SelectContext(ctx, &clusters, `SELECT `+clusterColumns+`
+		FROM remediation_cluster WHERE remediation_id = $1 AND try < $2 AND members && $3::text[]
+		ORDER BY try, cluster`, id, before, pq.Array(nodes)); err != nil {
+		return nil, fmt.Errorf("list the clusters of remediation %s before try %d: %w", id, before, err)
+	}
+	var steps []stepRow
+	if err := r.q.SelectContext(ctx, &steps, earlierContextStepsStatement, id, before, pq.Array(nodes),
+		remediation.KindContext, string(remediation.StepDone)); err != nil {
+		return nil, fmt.Errorf("list the context rows of remediation %s before try %d: %w", id, before, err)
+	}
+
+	clustersOf := map[int][]remediation.Cluster{}
+	for _, row := range clusters {
+		c, err := row.toDomain()
+		if err != nil {
+			return nil, err
+		}
+		clustersOf[c.Try] = append(clustersOf[c.Try], c)
+	}
+	stepsOf := map[int][]remediation.StepRun{}
+	for _, row := range steps {
+		st, err := row.toDomain()
+		if err != nil {
+			return nil, err
+		}
+		stepsOf[st.Try] = append(stepsOf[st.Try], st)
+	}
+	out := make([]remediation.Snapshot, 0, len(tries))
+	for _, row := range tries {
+		t, err := row.toDomain()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, remediation.Snapshot{Try: &t, Clusters: clustersOf[t.Try], Steps: stepsOf[t.Try]})
+	}
+	return out, nil
+}
+
 // triesStepsStatement reads the step rows ListTriesOfRelease returns: the rows
 // StepRun.ShownToLaterTries names, which are a done flow-level check row or a
 // done pre-flight row of a cluster.

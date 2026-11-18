@@ -405,7 +405,8 @@ func (r *Runner) endWithAttempt(ctx context.Context, u uow.UnitOfWork, run tryRu
 // handOver runs the flow's approver and then its give-up output, in u's
 // transaction, for every node of an ending remediation whose final outcome
 // carries a code (remediation.HandOvers): each node's approver, worked out from
-// the clusters of the current try (workedClusters), is recorded on the row of
+// the clusters of the current try and the earlier clusters that settled the
+// nodes it carried (workedClusters), is recorded on the row of
 // the remediation's attempt, which the caller has already recorded, and handed
 // to the output. A remediation that made a try records the output on that try's
 // journal. With no node to hand over, nothing runs and nothing is written.
@@ -419,7 +420,7 @@ func (r *Runner) handOver(ctx context.Context, u uow.UnitOfWork, run tryRun, att
 	if err != nil {
 		return err
 	}
-	clusters, err := r.workedClusters(run)
+	clusters, err := r.workedClusters(ctx, u.RemediationRepo(), run)
 	if err != nil {
 		return err
 	}

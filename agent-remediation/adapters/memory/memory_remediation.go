@@ -210,6 +210,46 @@ func (r *remediationRepository) ListTriesOfRelease(_ context.Context, tenantID, 
 	return out, err
 }
 
+// ListContextOfEarlierTries returns one snapshot per try of the remediation
+// before try before, newest first, each holding that try, its clusters with a
+// member among nodes and their done context rows, in id order.
+func (r *remediationRepository) ListContextOfEarlierTries(_ context.Context, id uuid.UUID, before int, nodes []string) ([]remediation.Snapshot, error) {
+	if len(nodes) == 0 || before <= 1 {
+		return nil, nil
+	}
+	var out []remediation.Snapshot
+	err := r.gate(func(d *data) error {
+		var tries []*remediation.Try
+		for key, t := range d.tries {
+			if key.remediationID == id && t.Try < before {
+				tries = append(tries, t)
+			}
+		}
+		sort.Slice(tries, func(i, j int) bool { return tries[i].Try > tries[j].Try })
+		for _, t := range tries {
+			try := cloneTry(*t)
+			snap := remediation.Snapshot{Try: &try}
+			kept := map[int]bool{}
+			for key, c := range d.clusters {
+				if key.remediationID == id && key.try == t.Try && slices.ContainsFunc(c.Members, func(m string) bool { return slices.Contains(nodes, m) }) {
+					snap.Clusters = append(snap.Clusters, cloneCluster(*c))
+					kept[c.Cluster] = true
+				}
+			}
+			sort.Slice(snap.Clusters, func(i, j int) bool { return snap.Clusters[i].Cluster < snap.Clusters[j].Cluster })
+			for _, s := range d.steps {
+				if s.RemediationID == id && s.Try == t.Try && kept[s.Cluster] &&
+					s.Kind == remediation.KindContext && s.Status == remediation.StepDone {
+					snap.Steps = append(snap.Steps, cloneStep(*s))
+				}
+			}
+			out = append(out, snap)
+		}
+		return nil
+	})
+	return out, err
+}
+
 // Get reads the remediation's snapshot under the store's lock, from the data
 // the repository's gate holds: the committed data outside a unit of work.
 func (r *remediationRepository) Get(_ context.Context, id uuid.UUID) (remediation.Snapshot, error) {

@@ -261,8 +261,14 @@ func (r *Runner) withEvidence(ev remediation.Evidence, row remediation.StepRun, 
 // first round recorded, in the order the rows were written. The rows are the
 // context steps that ran, whatever the loaded files list now.
 func (r *Runner) gatheredEvidence(run tryRun, c remediation.Cluster, f remediation.Failure) (remediation.Evidence, error) {
+	return r.gatheredIn(run.journal, c, f)
+}
+
+// gatheredIn is the evidence cluster c gathered, as gatheredEvidence reads it,
+// from j, the journal of c's try.
+func (r *Runner) gatheredIn(j journal, c remediation.Cluster, f remediation.Failure) (remediation.Evidence, error) {
 	ev := remediation.NewEvidence().With(remediation.KeyFailure, f)
-	for _, row := range run.journal.doneRows(c.Cluster, string(step.KindContext), contextRound) {
+	for _, row := range j.doneRows(c.Cluster, string(step.KindContext), contextRound) {
 		rec, err := serialization.DecodeRecord[serialization.ContextRecord](row.Output)
 		if err != nil {
 			return ev, fmt.Errorf("decode the output of step %s: %w", row.Step, err)
