@@ -1,7 +1,9 @@
 package sanitize_test
 
 import (
+	"fmt"
 	"math/rand/v2"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -145,19 +147,33 @@ func TestRedactor_APlaceholderBelongsToTheRedactorThatIssuedIt(t *testing.T) {
 	assert.Equal(t, []string{"[redacted:email:1]"}, unknown)
 }
 
-// What Restore puts back is not read again: a value that holds text that looks
-// like a placeholder of the Redactor comes back as it was. Only a private key
-// block is taken whole when it holds such text.
+// What Restore puts back is not read again. The secret 1] glued after
+// "[redacted:secret:" makes a key block whose real text holds
+// [redacted:secret:1]: Restore writes that text as it is, and does not read it
+// as the placeholder of the secret 1].
 func TestRedactor_RestoreDoesNotReadTheValuesItPutsBack(t *testing.T) {
 	r := sanitize.NewRedactor()
-	r.Clean("owner a@x.org")
-	key := "-----BEGIN PRIVATE KEY-----\n[redacted:email:1]\n-----END PRIVATE KEY-----"
-	cleaned := r.Clean("key " + key)
+	require.Equal(t, `password="[redacted:secret:1]"`, r.Clean(`password="1]"`))
+	cleaned := r.Clean("key -----BEGIN PRIVATE KEY-----\n[redacted:secret:[redacted:secret:1]\n-----END PRIVATE KEY-----")
 	require.Equal(t, "key [redacted:key:1]", cleaned)
 
 	restored, unknown := r.Restore(cleaned)
 
-	assert.Equal(t, "key "+key, restored)
+	assert.Equal(t, "key -----BEGIN PRIVATE KEY-----\n[redacted:secret:1]\n-----END PRIVATE KEY-----", restored)
+	assert.Empty(t, unknown)
+}
+
+// A private key block that holds a placeholder the Redactor issued is taken
+// whole, and restored with the text that placeholder stands for.
+func TestRedactor_AKeyBlockThatHoldsAnIssuedPlaceholderRestoresItsText(t *testing.T) {
+	r := sanitize.NewRedactor()
+	require.Equal(t, "owner [redacted:email:1]", r.Clean("owner a@x.org"))
+	cleaned := r.Clean("key -----BEGIN PRIVATE KEY-----\n[redacted:email:1]\n-----END PRIVATE KEY-----")
+	require.Equal(t, "key [redacted:key:1]", cleaned)
+
+	restored, unknown := r.Restore(cleaned)
+
+	assert.Equal(t, "key -----BEGIN PRIVATE KEY-----\na@x.org\n-----END PRIVATE KEY-----", restored)
 	assert.Empty(t, unknown)
 }
 
@@ -298,6 +314,40 @@ func TestRedactor_AValueThatTakesInARedactedPartIsNumberedWhole(t *testing.T) {
 	}
 }
 
+// A value that takes in a placeholder the Redactor issued stands for the text
+// that placeholder stands for, glued to the rest of the value: Restore writes
+// the real text, never the placeholder.
+func TestRedactor_AValueThatTakesInAnIssuedPlaceholderRestoresItsText(t *testing.T) {
+	r := sanitize.NewRedactor()
+	require.Equal(t, "password=[redacted:secret:1]", r.Clean("password=hunter2"))
+
+	cleaned := r.Clean("password=[redacted:secret:1]x\nurl=postgres://app:[redacted:secret:1]9@db/x")
+
+	assert.Equal(t, "password=[redacted:secret:2]\nurl=postgres://app:[redacted:secret:3]@db/x", cleaned)
+	restored, unknown := r.Restore(cleaned)
+	assert.Equal(t, "password=hunter2x\nurl=postgres://app:hunter29@db/x", restored)
+	assert.Empty(t, unknown)
+}
+
+// A value that takes in an issued placeholder whose own value took one in is
+// restored to the text of both, and a literal placeholder in the same value
+// keeps its own text.
+func TestRedactor_AValueRestoresTheTextOfEveryIssuedPlaceholderItHolds(t *testing.T) {
+	r := sanitize.NewRedactor()
+	require.Equal(t, "password=[redacted:secret:1]", r.Clean("password=hunter2"))
+	require.Equal(t, "password=[redacted:secret:2]", r.Clean("password=[redacted:secret:1]x"))
+
+	cleaned := r.Clean("token=[redacted:secret:2]y[redacted:secret:7]z")
+
+	assert.Equal(t, "token=[redacted:secret:8]", cleaned)
+	restored, unknown := r.Restore(cleaned)
+	assert.Equal(t, "token=hunter2xy[redacted:secret:7]z", restored)
+	assert.Empty(t, unknown)
+
+	// The same real text keeps its placeholder, however it was written.
+	assert.Equal(t, "password=[redacted:secret:2]", r.Clean("password=hunter2x"))
+}
+
 // Text, then a Redactor over the stored text, is as clean as a Redactor over the
 // text itself: the value is whole in both.
 func TestRedactor_CleaningTheOutputOfTextLeavesNoTailOfAValue(t *testing.T) {
@@ -394,6 +444,7 @@ func FuzzCleanAndRestore(f *testing.F) {
 		"password: |\n  x", "https://example.com:443?email=a@b.com",
 		"password: xK9(mP2q", "password=xK9(mP2)q", "PGPASSWORD=Ab[cd]9 psql", `token = os.getenv(KEY, "d")`,
 		"[redacted:email:9223372036854775806] a@x.org b@x.org", "[redacted:email:999999999] a@x.org",
+		"password=hunter2", "password=hunter2 [redacted:secret:1]x url=postgres://app:[redacted:secret:1]9@db/x",
 	} {
 		f.Add(seed)
 	}
@@ -415,6 +466,16 @@ func FuzzCleanAndRestore(f *testing.F) {
 		for _, placeholder := range unknown {
 			if strings.Count(placeholder, ":") != 1 || !strings.Contains(in, placeholder) {
 				t.Fatalf("Restore(Clean(%q)) reports %q, which is not a fixed marker of the text", in, placeholder)
+			}
+		}
+
+		// A later text that glues the placeholders issued so far to more value
+		// text restores to that text with each issued placeholder put back.
+		if issued := issuedPlaceholders(r, cleaned); len(issued) > 0 {
+			for _, later := range []string{gluedToIssued(issued) + "\n" + in, "password=" + issued[0] + in} {
+				if msg := restoresALaterText(r, later); msg != "" {
+					t.Fatal(msg)
+				}
 			}
 		}
 
@@ -560,5 +621,66 @@ func TestRedactor_HoldsItsPropertiesOnTextsMadeOfPieces(t *testing.T) {
 			require.Equal(t, 1, strings.Count(placeholder, ":"), "%q reports %q", text, placeholder)
 			require.Contains(t, text, placeholder)
 		}
+
+		// A later text on the same Redactor, made of the issued placeholders
+		// glued to more value text and of more pieces, restores to itself with
+		// each issued placeholder put back.
+		if issued := issuedPlaceholders(r, cleaned); len(issued) > 0 {
+			var later strings.Builder
+			later.WriteString(gluedToIssued(issued))
+			for range rng.IntN(8) {
+				later.WriteString(separatorsOfText[rng.IntN(len(separatorsOfText))])
+				if rng.IntN(3) == 0 {
+					later.WriteString(issued[rng.IntN(len(issued))])
+				}
+				later.WriteString(piecesOfText[rng.IntN(len(piecesOfText))])
+			}
+			if msg := restoresALaterText(r, later.String()); msg != "" {
+				require.Fail(t, msg, "after %q", text)
+			}
+		}
 	}
+}
+
+var issuedMarker = regexp.MustCompile(`\[redacted:[a-z]+:[0-9]+\]`)
+
+// issuedPlaceholders returns the placeholders of cleaned that r issued: the
+// ones Restore replaces, in the order they appear.
+func issuedPlaceholders(r *sanitize.Redactor, cleaned string) []string {
+	var issued []string
+	for _, placeholder := range issuedMarker.FindAllString(cleaned, -1) {
+		if restored, _ := r.Restore(placeholder); restored != placeholder {
+			issued = append(issued, placeholder)
+		}
+	}
+	return issued
+}
+
+// gluedToIssued writes each placeholder glued to more value text, in the
+// places the rules read a value: the value of a secret key, the password of a
+// URL, a bearer token, an email address, and a placeholder glued to another.
+func gluedToIssued(issued []string) string {
+	var b strings.Builder
+	for i, p := range issued {
+		next := issued[(i+1)%len(issued)]
+		b.WriteString("password=" + p + "x\nurl=postgres://app:" + p + "9@db/x\n" +
+			"token: Bearer 00000000" + p + "\nsecret=" + p + next + "\nmail " + p + "ops@acme.com " + p + "\n")
+	}
+	return b.String()
+}
+
+// restoresALaterText cleans a text that may hold placeholders r issued, checks
+// that cleaning it again changes nothing, and that Restore gives back the text
+// with each issued placeholder replaced by its text: what Restore makes of the
+// text before it is cleaned. It returns what failed, or "".
+func restoresALaterText(r *sanitize.Redactor, later string) string {
+	want, _ := r.Restore(later)
+	cleaned := r.Clean(later)
+	if again := r.Clean(cleaned); again != cleaned {
+		return fmt.Sprintf("Clean is not idempotent on the later text %q: %q then %q", later, cleaned, again)
+	}
+	if got, _ := r.Restore(cleaned); got != want {
+		return fmt.Sprintf("Restore(Clean(%q)) = %q, want %q", later, got, want)
+	}
+	return ""
 }

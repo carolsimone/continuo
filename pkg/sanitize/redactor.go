@@ -30,7 +30,10 @@ type issued struct {
 // text's own, as in a document that quotes one: Clean keeps it, never issues
 // its number to a value, and Restore returns it unchanged. A placeholder this
 // Redactor issued, found again in a later text, cannot be told from the text's
-// own, so Clean takes that text for one it cleaned already.
+// own, so Clean takes that text for one it cleaned already: a placeholder that
+// stands alone stays, and a value that takes one in gets a placeholder of its
+// own that stands for the whole real text, the issued placeholder's text
+// included.
 //
 // A Redactor belongs to one caller at a time.
 type Redactor struct {
@@ -56,8 +59,11 @@ func (r *Redactor) Clean(s string) string {
 }
 
 // placeholder returns the placeholder of a value, issuing the next number of its
-// kind that no literal placeholder holds when the value has none.
+// kind that no literal placeholder holds when the value has none. The value is
+// first written as the text it stands for (see expand), so a value is named by
+// its real text, however a text wrote it.
 func (r *Redactor) placeholder(k kind, value string) string {
+	value = r.expand(value)
 	id := issued{k, value}
 	if placeholder, ok := r.placeholders[id]; ok {
 		return placeholder
@@ -92,6 +98,25 @@ func (r *Redactor) Restore(s string) (restored string, unknown []string) {
 		return placeholder
 	})
 	return restored, unknown
+}
+
+// expand returns value with each placeholder this Redactor issued replaced by
+// the text it stands for. A value that takes in an issued placeholder (a
+// password that was redacted, glued to more of the password) then stands for
+// the real text, and Restore writes it, never the placeholder. Every stored
+// value is the real text already, so one pass that does not read what it puts
+// back gives the real text at any depth. A literal placeholder maps to itself
+// and keeps its text, and a fixed marker is never issued and stays.
+func (r *Redactor) expand(value string) string {
+	if !strings.Contains(value, "[redacted:") {
+		return value
+	}
+	return numberedMarker.ReplaceAllStringFunc(value, func(placeholder string) string {
+		if text, ok := r.values[placeholder]; ok {
+			return text
+		}
+		return placeholder
+	})
 }
 
 // reserveLiterals sets aside every numbered placeholder s holds that this
