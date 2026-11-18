@@ -429,6 +429,7 @@ func testFiles(tries int) workflow.Set {
 		Tries:          tries,
 		OnPass:         workflow.Output{Action: workflow.OutputPullRequest, Emits: baseName(streams.RemediationProposedV1)},
 		OnGiveUp:       workflow.Output{Action: workflow.OutputHandOver, Emits: baseName(streams.RemediationHandedOverV1)},
+		ModelMaySee:    []workflow.DataClass{workflow.ClassCode, workflow.ClassLogs},
 		Revision:       flowRevision,
 		File:           flowFile,
 	}

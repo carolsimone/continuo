@@ -332,6 +332,7 @@ types: [nope]
 across_clusters: [no_such_check]
 gate: [no_such_gate]
 tries: 1
+model_may_see: [code, logs]
 output:
   on_pass: { action: pull_request, emits: remediation.proposed }
   on_give_up: { action: hand_over }

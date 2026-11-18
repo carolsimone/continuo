@@ -195,6 +195,21 @@ func (l *loader) loadFlow(file, revision string, root *yaml.Node) {
 			flow.Types = append(flow.Types, n.Value)
 		}
 	}
+	flow.ModelMaySeePos = pos
+	switch {
+	case f.ModelMaySee.Kind == 0 || f.ModelMaySee.Tag == "!!null":
+	case f.ModelMaySee.Kind != yaml.SequenceNode:
+		l.fail(file, f.ModelMaySee.Line, "model_may_see must be a list of data classes")
+	default:
+		flow.ModelMaySeePos = at(keyLine(root, "model_may_see", pos.Line))
+		for _, n := range f.ModelMaySee.Content {
+			if n.Kind != yaml.ScalarNode {
+				l.fail(file, n.Line, "a model_may_see entry must be the name of a data class")
+				continue
+			}
+			flow.ModelMaySee = append(flow.ModelMaySee, workflow.DataClass(n.Value))
+		}
+	}
 	if len(l.errs) > before {
 		return
 	}

@@ -30,6 +30,61 @@ func TestRegistry_EveryStepDescribesItself(t *testing.T) {
 	}
 }
 
+// Every key the registry knows has exactly one data class, the one a flow's
+// model_may_see is checked against.
+func TestRegistry_EveryProvidedKeyHasAClass(t *testing.T) {
+	r := NewRegistry(Collaborators{})
+	keys := map[remediation.EvidenceKey]bool{remediation.KeyFailure: true, remediation.KeyDraft: true}
+	for _, m := range r.All() {
+		for _, k := range m.Provides {
+			keys[k] = true
+		}
+	}
+	for k := range r.evidence {
+		keys[k] = true
+	}
+	for k := range keys {
+		class, ok := r.EvidenceClass(k)
+		assert.True(t, ok, "%s has no data class", k)
+		assert.True(t, class.IsValid(), "%s has the unknown class %q", k, class)
+		_, hasType := r.EvidenceType(k)
+		assert.True(t, hasType, "%s has a class and no type", k)
+	}
+}
+
+func TestRegistry_EvidenceClassesAreTheDeclaredOnes(t *testing.T) {
+	want := map[remediation.EvidenceKey]workflow.DataClass{
+		remediation.KeySourceFiles:          workflow.ClassCode,
+		remediation.KeyCandidateSQL:         workflow.ClassCode,
+		remediation.KeyCodeBundleSource:     workflow.ClassCode,
+		remediation.KeyOwnChangeDiff:        workflow.ClassCode,
+		remediation.KeyChangedAncestorDiffs: workflow.ClassCode,
+		remediation.KeyUpstreamChanges:      workflow.ClassCode,
+		remediation.KeyContractFile:         workflow.ClassCode,
+		remediation.KeyContractEntry:        workflow.ClassCode,
+		remediation.KeyCurrentContract:      workflow.ClassCode,
+		remediation.KeyImagePackages:        workflow.ClassCode,
+		remediation.KeyUpstreamTarget:       workflow.ClassCode,
+		remediation.KeyPackagedContract:     workflow.ClassCode,
+		remediation.KeyDraft:                workflow.ClassCode,
+		remediation.KeyFailure:              workflow.ClassLogs,
+		remediation.KeyDBTLog:               workflow.ClassLogs,
+		remediation.KeyFailurePrecedents:    workflow.ClassLogs,
+		remediation.KeyPreviousTries:        workflow.ClassLogs,
+	}
+	r := NewRegistry(Collaborators{})
+	got := map[remediation.EvidenceKey]workflow.DataClass{}
+	for k := range r.evidence {
+		got[k], _ = r.EvidenceClass(k)
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestRegistry_AKeyNoStepProvidesHasNoClass(t *testing.T) {
+	_, ok := NewRegistry(Collaborators{}).EvidenceClass("no_such_key")
+	assert.False(t, ok)
+}
+
 type fakeStep struct{ meta step.Meta }
 
 func (f fakeStep) Meta() step.Meta { return f.meta }

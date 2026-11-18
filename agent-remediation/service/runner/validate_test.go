@@ -72,7 +72,7 @@ func (stubPass) Pass(context.Context, uow.UnitOfWork, step.OutputInput, remediat
 func stubRegistry() *Registry {
 	r := &Registry{
 		steps:    map[workflow.StepName]entry{},
-		evidence: map[remediation.EvidenceKey]func() any{},
+		evidence: builtinEvidence(),
 	}
 	for _, m := range []step.Meta{
 		{Name: "dbt_log", Kind: step.KindContext, Provides: []remediation.EvidenceKey{remediation.KeyDBTLog}},
@@ -113,6 +113,8 @@ func validFlow() workflow.Flow {
 		Tries:          3,
 		OnPass:         workflow.Output{Action: workflow.OutputPullRequest, Emits: "remediation.proposed", Pos: pos(flowFile, 11)},
 		OnGiveUp:       workflow.Output{Action: workflow.OutputHandOver, Pos: pos(flowFile, 12)},
+		ModelMaySee:    []workflow.DataClass{workflow.ClassCode, workflow.ClassLogs},
+		ModelMaySeePos: pos(flowFile, 13),
 		File:           flowFile,
 		Pos:            pos(flowFile, 1),
 	}
@@ -392,4 +394,83 @@ func TestValidate_WarnsAboutATypeNoFlowLists(t *testing.T) {
 	require.Len(t, warnings, 1)
 	assert.Contains(t, warnings[0], `types/orphan.yaml:1`)
 	assert.Contains(t, warnings[0], `orphan`)
+}
+
+// A flow says which classes of content the model may see, and a type whose
+// context gathers evidence of another class is refused at the step that
+// gathers it, so the model is never shown what the install did not allow.
+func TestValidate_RefusesATypeNeedingAForbiddenClass(t *testing.T) {
+	refuses(t, func(f *workflow.Flow, _ *workflow.Type) {
+		f.ModelMaySee = []workflow.DataClass{workflow.ClassCode}
+	}, `types/t.yaml:5: type "t" uses step "dbt_log", which provides "dbt_log" (class logs), and flow "f" does not let the model see logs (model_may_see: code)`)
+}
+
+func TestValidate_RefusesAFlowContextNeedingAForbiddenClass(t *testing.T) {
+	refuses(t, func(f *workflow.Flow, ty *workflow.Type) {
+		f.ModelMaySee = []workflow.DataClass{workflow.ClassLogs}
+		ty.Context = nil
+	}, `flows/f.yaml:6: flow "f" uses step "failing_node_source", which provides "source_files" (class code), and flow "f" does not let the model see code (model_may_see: logs)`)
+}
+
+func TestValidate_AcceptsEveryTypeWhoseClassesTheFlowAllows(t *testing.T) {
+	for _, allowed := range [][]workflow.DataClass{
+		{workflow.ClassCode, workflow.ClassLogs},
+		{workflow.ClassLogs, workflow.ClassCode},
+		{workflow.ClassCode, workflow.ClassLogs, workflow.ClassRows},
+	} {
+		f, ty := validFlow(), validType()
+		f.ModelMaySee = allowed
+		_, err := Validate(setOf(f, ty), stubRegistry())
+		assert.NoError(t, err, "%v", allowed)
+	}
+}
+
+// One type can be listed by two flows, and each holds it to its own classes.
+func TestValidate_HoldsAListedTypeToEachFlowsClasses(t *testing.T) {
+	strict := validFlow()
+	strict.Name, strict.File, strict.Pos = "strict", "flows/strict.yaml", pos("flows/strict.yaml", 1)
+	strict.ModelMaySee = []workflow.DataClass{workflow.ClassCode}
+	strict.ModelMaySeePos = pos("flows/strict.yaml", 13)
+	strict.Context = nil
+	set := setOf(validFlow(), validType())
+	set.Flows[strict.Name] = strict
+
+	_, err := Validate(set, stubRegistry())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `types/t.yaml:5: type "t" uses step "dbt_log"`)
+	assert.Contains(t, err.Error(), `flow "strict" does not let the model see logs`)
+	assert.NotContains(t, err.Error(), `flow "f" does not let`)
+}
+
+func TestValidate_RefusesAFlowWithoutModelMaySee(t *testing.T) {
+	for name, classes := range map[string][]workflow.DataClass{"absent": nil, "empty": {}} {
+		t.Run(name, func(t *testing.T) {
+			refuses(t, func(f *workflow.Flow, _ *workflow.Type) { f.ModelMaySee = classes },
+				`flows/f.yaml:13: flow "f" has no model_may_see, and a flow lists the classes of content the model may see (code, logs, rows)`)
+		})
+	}
+}
+
+func TestValidate_RefusesAnUnknownDataClass(t *testing.T) {
+	refuses(t, func(f *workflow.Flow, _ *workflow.Type) {
+		f.ModelMaySee = []workflow.DataClass{workflow.ClassCode, "secrets"}
+	}, `flows/f.yaml:13: flow "f" has model_may_see class "secrets", which is none of code, logs, rows`)
+}
+
+// A step whose evidence key has no data class cannot be held to a flow's
+// classes, so it is refused rather than let through.
+func TestValidate_RefusesAKeyWithNoDataClass(t *testing.T) {
+	reg := stubRegistry()
+	reg.register(stubFor(step.Meta{
+		Name: "mystery", Kind: step.KindContext, Description: "mystery",
+		Provides: []remediation.EvidenceKey{"mystery_key"},
+	}))
+	ty := validType()
+	ty.Context = append(ty.Context, ref(typeFile, 9, "mystery"))
+
+	_, err := Validate(setOf(validFlow(), ty), reg)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `types/t.yaml:9: step "mystery" provides "mystery_key", which has no data class`)
 }

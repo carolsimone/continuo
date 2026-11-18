@@ -23,6 +23,7 @@ tries: 3
 output:
   on_pass:    { action: pull_request, emits: remediation.proposed }
   on_give_up: { action: hand_over }
+model_may_see: [code, logs]
 `
 
 const typeYAML = `kind: type
@@ -61,6 +62,8 @@ func TestLoad_ReadsAFlowAndATypeFromOneFolder(t *testing.T) {
 	assert.Equal(t, 11, flow.OnPass.Pos.Line)
 	assert.Equal(t, workflow.OutputHandOver, flow.OnGiveUp.Action)
 	assert.Empty(t, flow.OnGiveUp.Emits)
+	assert.Equal(t, []workflow.DataClass{workflow.ClassCode, workflow.ClassLogs}, flow.ModelMaySee)
+	assert.Equal(t, workflow.Pos{File: "flows/rejected-release.yaml", Line: 13}, flow.ModelMaySeePos)
 
 	typ, ok := set.Types["dbt-compile"]
 	require.True(t, ok)
@@ -110,7 +113,7 @@ func TestLoad_ReadsSeveralDocumentsOfOneFileAndSkipsFixtures(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, set.Flows, 1)
 	require.Len(t, set.Types, 1)
-	assert.Equal(t, 14, set.Types["dbt-compile"].Pos.Line)
+	assert.Equal(t, 15, set.Types["dbt-compile"].Pos.Line)
 	assert.Equal(t, set.Flows["rejected-release"].Revision, set.Types["dbt-compile"].Revision)
 }
 
@@ -249,6 +252,38 @@ func TestLoad_RefusesAnUnknownKeyInANestedMapping(t *testing.T) {
 			_, err := Load(fstest.MapFS{file: {Data: []byte(c.body)}})
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), c.at)
+		})
+	}
+}
+
+// A flow with no model_may_see loads, and the runner's checks refuse it, so the
+// refusal reaches the operator with the rest of the flow's problems. The
+// position of the missing list is the flow's own.
+func TestLoad_AnAbsentModelMaySeeLoadsEmptyAtTheFlowsLine(t *testing.T) {
+	set, err := Load(fstest.MapFS{"f.yaml": {Data: []byte("kind: flow\nname: f\n")}})
+	require.NoError(t, err)
+	assert.Empty(t, set.Flows["f"].ModelMaySee)
+	assert.Equal(t, workflow.Pos{File: "f.yaml", Line: 1}, set.Flows["f"].ModelMaySeePos)
+}
+
+func TestLoad_KeepsEveryClassOfModelMaySeeInBlockStyle(t *testing.T) {
+	set, err := Load(fstest.MapFS{"f.yaml": {Data: []byte("kind: flow\nname: f\nmodel_may_see:\n  - rows\n  - code\n")}})
+	require.NoError(t, err)
+	assert.Equal(t, []workflow.DataClass{workflow.ClassRows, workflow.ClassCode}, set.Flows["f"].ModelMaySee)
+	assert.Equal(t, 3, set.Flows["f"].ModelMaySeePos.Line)
+}
+
+func TestLoad_RefusesModelMaySeeThatIsNotAListOfNames(t *testing.T) {
+	for name, tc := range map[string]struct{ body, at string }{
+		"scalar":      {"kind: flow\nname: f\nmodel_may_see: code\n", "f.yaml:3"},
+		"mapping":     {"kind: flow\nname: f\nmodel_may_see: {code: true}\n", "f.yaml:3"},
+		"nested list": {"kind: flow\nname: f\nmodel_may_see:\n  - code\n  - [logs]\n", "f.yaml:5"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Load(fstest.MapFS{"f.yaml": {Data: []byte(tc.body)}})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.at)
+			assert.Contains(t, err.Error(), "model_may_see")
 		})
 	}
 }

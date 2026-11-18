@@ -5,6 +5,8 @@
 // the install's files.
 package workflow
 
+import "slices"
+
 // SupportedVersion is the only file version the definitions understand.
 const SupportedVersion = 1
 
@@ -42,6 +44,32 @@ const (
 	// StageOutput hands a result to its destination.
 	StageOutput Stage = "output"
 )
+
+// DataClass is a kind of content that evidence put in front of the model
+// can be. A flow lists the classes its model may see, and a step whose
+// evidence is of another class cannot stand in that flow.
+type DataClass string
+
+const (
+	// ClassCode is source code, SQL and contracts, and the differences between
+	// versions of them.
+	ClassCode DataClass = "code"
+	// ClassLogs is the text that failures, tools and earlier tries report:
+	// error output, logs, precedents and findings.
+	ClassLogs DataClass = "logs"
+	// ClassRows is rows of data held in a warehouse.
+	ClassRows DataClass = "rows"
+)
+
+// DataClasses returns every class, in the order a message lists them.
+func DataClasses() []DataClass {
+	return []DataClass{ClassCode, ClassLogs, ClassRows}
+}
+
+// IsValid reports whether c is one of the classes.
+func (c DataClass) IsValid() bool {
+	return slices.Contains(DataClasses(), c)
+}
 
 // ClusterKind is the shape of a cluster of failing nodes.
 type ClusterKind string
@@ -116,6 +144,12 @@ type Flow struct {
 	Tries    int
 	OnPass   Output
 	OnGiveUp Output
+	// ModelMaySee lists the classes of content the model may be shown under
+	// this flow. A flow lists at least one.
+	ModelMaySee []DataClass
+	// ModelMaySeePos is where the list was written, or the flow's own position
+	// when the file has none.
+	ModelMaySeePos Pos
 	// Revision identifies the file's content when it was loaded.
 	Revision string
 	File     string

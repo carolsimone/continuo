@@ -61,6 +61,17 @@ func TestBuiltinFilesValidate(t *testing.T) {
 	require.Empty(t, warnings)
 }
 
+// TestBuiltinFlowLetsTheModelSeeCodeAndLogs: the built-in flow shows the model
+// source code and the text failures and tools report, and no rows of data.
+func TestBuiltinFlowLetsTheModelSeeCodeAndLogs(t *testing.T) {
+	set, err := workflowfile.Load(workflows.Builtin)
+	require.NoError(t, err)
+
+	flow, ok := set.Flows["rejected-release"]
+	require.True(t, ok)
+	require.Equal(t, []workflow.DataClass{workflow.ClassCode, workflow.ClassLogs}, flow.ModelMaySee)
+}
+
 // TestBuiltinTypesCheckSiblingsBeforeImagePackages: a python or csv cluster
 // whose sibling also failed and whose release records no image packages
 // qualifies for two declines. The legacy lanes check the sibling first, so
