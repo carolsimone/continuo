@@ -29,7 +29,10 @@
 // two rules match overlapping text the earlier rule wins and the later match
 // is dropped, so password=ops@acme.com is one secret and not a secret holding
 // an email address. A marker is never matched by a rule, so cleaning a cleaned
-// text changes nothing.
+// text changes nothing, provided each value is set apart from the next by
+// whitespace or punctuation: a secret glued to a longer run of text, or to the
+// name of another secret, can leave a part of that text for a second cleaning
+// to find.
 package sanitize
 
 import (
@@ -51,10 +54,7 @@ const (
 // ([redacted:secret:3]).
 const markerPattern = `\[redacted:[a-z]+(?::[0-9]+)?\]`
 
-var (
-	markerAny   = regexp.MustCompile(markerPattern)
-	markerExact = regexp.MustCompile(`^` + markerPattern + `$`)
-)
+var markerAny = regexp.MustCompile(markerPattern)
 
 // urlChars is what a URL's user and password cannot hold: whitespace, a slash
 // that ends the authority, a quote or bracket that ends the URL in running
@@ -116,8 +116,9 @@ var secretAnnotated = secretKey + `[ \t]*:[ \t]*` + annotation + `(?:[ \t]*\|[ \
 var (
 	// A block scalar indicator opens a YAML value that is on the next lines.
 	blockScalar = regexp.MustCompile(`^[|>](?:[0-9][+-]?|[+-][0-9]?)?$`)
-	// A call or a subscript, possibly of a dotted name: os.getenv(, os.environ[.
-	callOrSubscript = regexp.MustCompile(`^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*[(\[]`)
+	// The start of a call or a subscript: its name, possibly dotted, and its
+	// opening bracket. os.getenv(, os.environ[.
+	callStart = regexp.MustCompile(`^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)[(\[]`)
 	// A dotted name with no digit: self.password, settings.DB_PASSWORD. Tokens
 	// and passwords that hold dots hold digits too.
 	dottedName = regexp.MustCompile(`^[A-Za-z_]+(?:\.[A-Za-z_]+)+$`)
@@ -136,6 +137,67 @@ var typeWords = map[string]struct{}{
 	"String": {}, "Integer": {}, "Boolean": {},
 }
 
+// maxCallLength bounds how far past its opening bracket a call is followed to
+// its closing one.
+const maxCallLength = 256
+
+// readsAValue reports whether the unquoted value that starts at start is a call
+// or a subscript that reads a value from somewhere else, such as
+// os.environ["TOKEN"] or self.token_from(x), and not a secret that holds a
+// bracket. It is a read when the name before the bracket is followed by a
+// bracket and either a quote comes next, or the name holds no digit and the
+// bracket closes on the same line, at the end of a word.
+func readsAValue(s string, start int) bool {
+	m := callStart.FindStringSubmatchIndex(s[start:])
+	if m == nil {
+		return false
+	}
+	open := start + m[1] - 1
+	if next := open + 1; next < len(s) && (s[next] == '"' || s[next] == '\'') {
+		return true
+	}
+	if strings.ContainsAny(s[start:start+m[3]], "0123456789") {
+		return false
+	}
+	return closesAtTheEndOfAWord(s, open)
+}
+
+// closesAtTheEndOfAWord reports whether the bracket at open is closed on its
+// line by the bracket that matches it, and what follows that closing bracket is
+// the end of the text, a space or one of , ; ) ] } & . Quoted text inside the
+// brackets is skipped.
+func closesAtTheEndOfAWord(s string, open int) bool {
+	var closers []byte
+	limit := min(len(s), open+maxCallLength)
+	for i := open; i < limit; i++ {
+		switch c := s[i]; c {
+		case '(':
+			closers = append(closers, ')')
+		case '[':
+			closers = append(closers, ']')
+		case '{':
+			closers = append(closers, '}')
+		case ')', ']', '}':
+			if len(closers) == 0 || closers[len(closers)-1] != c {
+				return false
+			}
+			closers = closers[:len(closers)-1]
+			if len(closers) == 0 {
+				return i+1 == len(s) || strings.IndexByte(" \t\r\n,;)]}&.", s[i+1]) >= 0
+			}
+		case '"', '\'':
+			end := strings.IndexByte(s[i+1:limit], c)
+			if end < 0 {
+				return false
+			}
+			i += end + 1
+		case '\n', '\r':
+			return false
+		}
+	}
+	return false
+}
+
 // keepSecretValue decides whether a match of secretValue holds a value. A
 // quoted value always does. An unquoted one does when it is a literal: it is
 // not code that reads a value, not an absent value, not a block scalar, and,
@@ -148,7 +210,7 @@ func keepSecretValue(s string, loc []int) bool {
 	if _, absent := notAValue[strings.ToLower(value)]; absent {
 		return false
 	}
-	if blockScalar.MatchString(value) || callOrSubscript.MatchString(value) || dottedName.MatchString(value) ||
+	if blockScalar.MatchString(value) || readsAValue(s, loc[10]) || dottedName.MatchString(value) ||
 		expansion.MatchString(value) {
 		return false
 	}
@@ -184,6 +246,10 @@ type rule struct {
 	patterns []pattern
 }
 
+// rulesBeforeMarkers is how many of the first rules read the text before the
+// markers it holds take their own text: the private key rule.
+const rulesBeforeMarkers = 1
+
 // rules are the redaction rules in the order they decide an overlap.
 var rules = []rule{
 	{kindKey, []pattern{
@@ -213,77 +279,73 @@ type span struct {
 	kind       kind
 }
 
-// candidates are the spans a rule finds in s, by position. lower is s in lower
-// case.
-func (r rule) candidates(s, lower string) []span {
+// candidates are the spans the pattern finds in text, by position, as spans of
+// kind k. lower is the lower case of the text.
+func (p pattern) candidates(k kind, text, lower string) []span {
+	if len(p.needs) > 0 && !containsAny(lower, p.needs) {
+		return nil
+	}
 	var found []span
-	for _, p := range r.patterns {
-		if len(p.needs) > 0 && !containsAny(lower, p.needs) {
+	for _, loc := range p.re.FindAllStringSubmatchIndex(text, -1) {
+		if p.keep != nil && !p.keep(text, loc) {
 			continue
 		}
-		for _, loc := range p.re.FindAllStringSubmatchIndex(s, -1) {
-			if p.keep != nil && !p.keep(s, loc) {
-				continue
-			}
-			start, end := loc[0], loc[1]
-			if len(p.groups) > 0 {
-				start, end = -1, -1
-				for _, g := range p.groups {
-					if loc[2*g] >= 0 {
-						start, end = loc[2*g], loc[2*g+1]
-						break
-					}
+		start, end := loc[0], loc[1]
+		if len(p.groups) > 0 {
+			start, end = -1, -1
+			for _, g := range p.groups {
+				if loc[2*g] >= 0 {
+					start, end = loc[2*g], loc[2*g+1]
+					break
 				}
 			}
-			if end > start {
-				found = append(found, span{start, end, r.kind})
-			}
+		}
+		if end > start {
+			found = append(found, span{start, end, k})
 		}
 	}
-	sort.SliceStable(found, func(i, j int) bool { return found[i].start < found[j].start })
 	return found
 }
 
 // findSpans returns the spans to replace, by position and without overlap.
-// A rule's match is kept unless it overlaps text an earlier match holds. A
-// match that is itself a marker holds its text and replaces nothing, so a
-// cleaned text is left as it is and the rules that would have read it stay out.
-// A match that lies inside a marker is dropped: the numbered marker
-// [redacted:secret:1] reads like the key secret with the value 1.
+// The patterns run in order, and a match is kept unless it overlaps text an
+// earlier match holds. After the rules before markers, every marker the text
+// already holds holds its own text, so a later rule never reads, or reaches
+// into, a marker: the numbered marker [redacted:secret:1] would read like the
+// key secret holding 1, and a value cut short by an earlier match would
+// otherwise be redacted again, whole, the second time the text is cleaned. A
+// private key block is taken whole even when it holds text that looks like a
+// marker.
 func findSpans(s string) []span {
-	markers := markerAny.FindAllStringIndex(s, -1)
 	lower := strings.ToLower(s)
 	var held []bool
+	hold := func(start, end int) {
+		if held == nil {
+			held = make([]bool, len(s))
+		}
+		for i := start; i < end; i++ {
+			held[i] = true
+		}
+	}
 	var spans []span
-	for _, r := range rules {
-		for _, c := range r.candidates(s, lower) {
-			marker := isMarker(s[c.start:c.end])
-			if !marker && insideAny(markers, c) {
-				continue
+	for i, r := range rules {
+		if i == rulesBeforeMarkers {
+			for _, m := range markerAny.FindAllStringIndex(s, -1) {
+				hold(m[0], m[1])
 			}
-			if held == nil {
-				held = make([]bool, len(s))
-			}
-			if anyHeld(held[c.start:c.end]) {
-				continue
-			}
-			for i := c.start; i < c.end; i++ {
-				held[i] = true
-			}
-			if !marker {
+		}
+		for _, p := range r.patterns {
+			for _, c := range p.candidates(r.kind, s, lower) {
+				if anyHeld(held, c.start, c.end) {
+					continue
+				}
+				hold(c.start, c.end)
 				spans = append(spans, c)
 			}
 		}
 	}
 	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
 	return spans
-}
-
-// insideAny reports whether the span lies within one of the marker locations,
-// which are in order and do not overlap.
-func insideAny(markers [][]int, c span) bool {
-	i := sort.Search(len(markers), func(i int) bool { return markers[i][1] > c.start })
-	return i < len(markers) && markers[i][0] <= c.start && c.end <= markers[i][1]
 }
 
 func containsAny(s string, words []string) bool {
@@ -295,17 +357,16 @@ func containsAny(s string, words []string) bool {
 	return false
 }
 
-func anyHeld(held []bool) bool {
-	for _, h := range held {
+func anyHeld(held []bool, start, end int) bool {
+	if held == nil {
+		return false
+	}
+	for _, h := range held[start:end] {
 		if h {
 			return true
 		}
 	}
 	return false
-}
-
-func isMarker(s string) bool {
-	return strings.HasPrefix(s, "[redacted:") && markerExact.MatchString(s)
 }
 
 // redact rewrites s, replacing each span with what replace returns for the

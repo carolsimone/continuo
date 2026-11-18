@@ -6,6 +6,11 @@ import (
 	"strings"
 )
 
+// maxReservedDigits is the most digits a literal placeholder's number may have
+// for its count to be reserved. A longer number is kept as it is and moves no
+// count, so the numbers the Redactor issues stay far from an overflow.
+const maxReservedDigits = 9
+
 // numberedMarker matches a numbered placeholder: its kind, then its number.
 var numberedMarker = regexp.MustCompile(`\[redacted:([a-z]+):([0-9]+)\]`)
 
@@ -83,8 +88,8 @@ func (r *Redactor) Restore(s string) (restored string, unknown []string) {
 // reserveLiterals sets aside every numbered placeholder s holds that this
 // Redactor did not issue: Restore maps it to itself, and the count of its kind
 // is raised to its number, so no value is issued it. A number the Redactor
-// would not write (a leading zero) or cannot count (too large) is reserved
-// without moving the count.
+// would not write (a leading zero) or one of more than maxReservedDigits digits
+// is reserved without moving the count.
 func (r *Redactor) reserveLiterals(s string) {
 	if !strings.Contains(s, "[redacted:") {
 		return
@@ -95,7 +100,7 @@ func (r *Redactor) reserveLiterals(s string) {
 			continue
 		}
 		r.values[placeholder] = placeholder
-		if n, err := strconv.Atoi(digits); err == nil && strconv.Itoa(n) == digits && n > r.counts[k] {
+		if n, err := strconv.Atoi(digits); err == nil && len(digits) <= maxReservedDigits && strconv.Itoa(n) == digits && n > r.counts[k] {
 			r.counts[k] = n
 		}
 	}

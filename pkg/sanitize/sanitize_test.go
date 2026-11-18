@@ -290,6 +290,50 @@ func TestText_KeepsAnUnquotedValueThatIsNotALiteral(t *testing.T) {
 	}
 }
 
+// A password may hold a bracket. The value is a reference only when the bracket
+// opens a call or a subscript: a quote follows it, or it closes on the same
+// line at the end of a word, and the name before it holds no digit.
+func TestText_RedactsAPasswordThatHoldsABracket(t *testing.T) {
+	for name, tc := range map[string]struct{ in, want string }{
+		"an open parenthesis":                {"password: xK9(mP2q", "password: [redacted:secret]"},
+		"a parenthesis closed before more":   {"password=xK9(mP2)q", "password=[redacted:secret])q"},
+		"a bracket closed before more":       {"PGPASSWORD=Ab[cd]9 psql", "PGPASSWORD=[redacted:secret]]9 psql"},
+		"an open bracket after a digit name": {"password: Tr0ub4dor[3", "password: [redacted:secret]"},
+		"a closed call whose name has a digit": {
+			"password=xK9(mP2) psql", "password=[redacted:secret]) psql",
+		},
+		"an open parenthesis and a quote after the word": {"password: ab(cd'ef", "password: [redacted:secret]'ef"},
+		"a bracket that never closes on the line":        {"token=Abc(def\nnext)", "token=[redacted:secret]\nnext)"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.want, sanitize.Text(tc.in))
+		})
+	}
+}
+
+// Code that reads a value keeps its call or subscript: a quote follows the
+// bracket, or the bracket closes on the same line at the end of the word.
+func TestText_KeepsACallOrSubscriptThatReadsAValue(t *testing.T) {
+	for name, in := range map[string]string{
+		"a subscript with a quoted key":   `token = os.environ["TOKEN"]`,
+		"a call with a quoted argument":   `api_key=os.getenv("API_KEY")`,
+		"a template call":                 `{% set token = var('x') %}`,
+		"a call with a name argument":     `self.token = self.token_from(x)`,
+		"a call with no argument":         `token = get_secret()`,
+		"a call with two arguments":       `token = os.getenv(KEY, "default")`,
+		"a subscript with a name":         `token = config[key]`,
+		"a chained call":                  `password = os.environ.get("P").strip()`,
+		"a call followed by an attribute": `token = vault.read(path).value`,
+		"a call in a list":                `[token=lookup(a), x]`,
+		"a call cut after its quote":      `token = os.getenv("API_KEY`,
+		"a call with a bracket inside":    `secret = fetch(names[0])`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, in, sanitize.Text(in))
+		})
+	}
+}
+
 // A bare word that the syntax does not mark as a reference is still a value.
 func TestText_RedactsABareWordThatIsNotAReference(t *testing.T) {
 	for name, tc := range map[string]struct{ in, want string }{
@@ -446,11 +490,33 @@ func TestText_CleaningTwiceChangesNothingMore(t *testing.T) {
 			"https://ops:p@ss@host.example.com/x",
 			`{"private_key": "` + strings.ReplaceAll(pemKey, "\n", `\n`) + `"}`,
 		}, "\n"),
+		"values a known token cut short": strings.Join([]string{
+			"token:Bearer 00000000!",
+			"password=AKIAIOSFODNN7EXAMPLEfoo",
+			"token=x1AKIAIOSFODNN7EXAMPLE",
+			"secret: " + githubPAT + "-tail",
+		}, "\n"),
 		"nothing to redact": "select 1 from t where a = 'b'",
 	} {
 		t.Run(name, func(t *testing.T) {
 			once := sanitize.Text(in)
 			assert.Equal(t, once, sanitize.Text(once))
+		})
+	}
+}
+
+// A value that an earlier rule cut short keeps its tail, and so does the text
+// cleaned a second time: the marker that stands where the token was holds its
+// own text, and the tail is not read as a value of its own.
+func TestText_ATokenInsideAValueLeavesTheRestOfTheValueAsItIs(t *testing.T) {
+	for name, tc := range map[string]struct{ in, want string }{
+		"a bearer token and a tail": {"token:Bearer 00000000!", "token:[redacted:secret]!"},
+		"a key id and a tail":       {"password=AKIAIOSFODNN7EXAMPLEfoo", "password=[redacted:secret]foo"},
+		"a key id and a head":       {"password=x1AKIAIOSFODNN7EXAMPLE", "password=x1[redacted:secret]"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.want, sanitize.Text(tc.in))
+			assert.Equal(t, tc.want, sanitize.Text(tc.want))
 		})
 	}
 }

@@ -1,6 +1,7 @@
 package sanitize_test
 
 import (
+	"math/rand/v2"
 	"strings"
 	"testing"
 
@@ -144,17 +145,19 @@ func TestRedactor_APlaceholderBelongsToTheRedactorThatIssuedIt(t *testing.T) {
 	assert.Equal(t, []string{"[redacted:email:1]"}, unknown)
 }
 
-// What Restore puts back is not read again: a value that looks like a
-// placeholder comes back as it was.
+// What Restore puts back is not read again: a value that holds text that looks
+// like a placeholder of the Redactor comes back as it was. Only a private key
+// block is taken whole when it holds such text.
 func TestRedactor_RestoreDoesNotReadTheValuesItPutsBack(t *testing.T) {
 	r := sanitize.NewRedactor()
 	r.Clean("owner a@x.org")
-	cleaned := r.Clean("password=[redacted:email:1]x")
-	require.Equal(t, "password=[redacted:secret:1]", cleaned)
+	key := "-----BEGIN PRIVATE KEY-----\n[redacted:email:1]\n-----END PRIVATE KEY-----"
+	cleaned := r.Clean("key " + key)
+	require.Equal(t, "key [redacted:key:1]", cleaned)
 
 	restored, unknown := r.Restore(cleaned)
 
-	assert.Equal(t, "password=[redacted:email:1]x", restored)
+	assert.Equal(t, "key "+key, restored)
 	assert.Empty(t, unknown)
 }
 
@@ -223,6 +226,36 @@ func TestRedactor_ALiteralWithAnOddNumberIsKeptAndDoesNotMoveTheNumbering(t *tes
 	cleaned := r.Clean(in)
 
 	assert.Equal(t, "[redacted:email:01] [redacted:email:99999999999999999999999] [redacted:email:1]", cleaned)
+	restored, unknown := r.Restore(cleaned)
+	assert.Equal(t, in, restored)
+	assert.Empty(t, unknown)
+}
+
+// A literal whose number is large is kept as it is and moves no count, so the
+// numbers issued after it never reach an overflow, and Restore stays exact.
+func TestRedactor_ALiteralWithAHugeNumberMovesNoCount(t *testing.T) {
+	for _, number := range []string{"1234567890", "9223372036854775806", "9223372036854775807", "18446744073709551615"} {
+		r := sanitize.NewRedactor()
+		in := "[redacted:email:" + number + "] a@x.org b@x.org"
+
+		cleaned := r.Clean(in)
+
+		assert.Equal(t, "[redacted:email:"+number+"] [redacted:email:1] [redacted:email:2]", cleaned, number)
+		restored, unknown := r.Restore(cleaned)
+		assert.Equal(t, in, restored, number)
+		assert.Empty(t, unknown, number)
+	}
+}
+
+// The largest number a literal reserves is nine digits; the number issued after
+// it has ten and still restores.
+func TestRedactor_ALiteralOfNineDigitsReservesItsNumber(t *testing.T) {
+	r := sanitize.NewRedactor()
+	in := "[redacted:email:999999999] a@x.org"
+
+	cleaned := r.Clean(in)
+
+	assert.Equal(t, "[redacted:email:999999999] [redacted:email:1000000000]", cleaned)
 	restored, unknown := r.Restore(cleaned)
 	assert.Equal(t, in, restored)
 	assert.Empty(t, unknown)
@@ -304,6 +337,8 @@ func FuzzCleanAndRestore(f *testing.F) {
 		"[redacted:email:01] [redacted:email:99999999999999999999999] a@b.co",
 		`password: str = "hunter2"`, `api_key: Optional[str] = "sk-live"`, `token = os.environ["TOKEN"]`,
 		"password: |\n  x", "https://example.com:443?email=a@b.com",
+		"password: xK9(mP2q", "password=xK9(mP2)q", "PGPASSWORD=Ab[cd]9 psql", `token = os.getenv(KEY, "d")`,
+		"[redacted:email:9223372036854775806] a@x.org b@x.org", "[redacted:email:999999999] a@x.org",
 	} {
 		f.Add(seed)
 	}
@@ -328,4 +363,47 @@ func FuzzCleanAndRestore(f *testing.F) {
 			}
 		}
 	})
+}
+
+// piecesOfText are the fragments the composition test strings together: the
+// words, separators and secrets the rules read, and the markers they leave.
+var piecesOfText = []string{
+	"password", "PGPASSWORD", "token", "secret_key", "api-key", "=", ":", "=>", " ", "  ", "\t", "\n", ",", ";", "&", "?", "#", "/",
+	"(", ")", "[", "]", "{", "}", "{{", "$(", "\"", "'", "\\\"", ".", "|", ">", "-", "x", "hunter2", "Tr0ub4dor", "abc.def", "os.getenv", "str",
+	"None", "null", "Bearer ", "Bearer 00000000", awsKeyID, githubPAT, jwt, "ops@acme.com", "a@b.co", "@", "://", "https://u:pw@h.example.com/x",
+	"-----BEGIN PRIVATE KEY-----", "-----END PRIVATE KEY-----", "body",
+	"[redacted:secret]", "[redacted:secret:1]", "[redacted:email:2]", "[redacted:key:1]", "[redacted:email:9223372036854775806]",
+}
+
+// separatorsOfText join the pieces: the whitespace and punctuation that set one
+// value of a log or a file apart from the next.
+var separatorsOfText = []string{" ", "\n", ", ", " ; ", " & ", "\t"}
+
+// A text made of pieces in any order, set apart by separators: cleaning it twice
+// changes nothing more, and a Redactor restores what it cleaned.
+func TestRedactor_HoldsItsPropertiesOnTextsMadeOfPieces(t *testing.T) {
+	rng := rand.New(rand.NewPCG(7, 11)) //nolint:gosec // G404: a fixed seed makes the texts the same on every run.
+	for range 20000 {
+		var in strings.Builder
+		for i := range 1 + rng.IntN(14) {
+			if i > 0 {
+				in.WriteString(separatorsOfText[rng.IntN(len(separatorsOfText))])
+			}
+			in.WriteString(piecesOfText[rng.IntN(len(piecesOfText))])
+		}
+		text := in.String()
+
+		once := sanitize.Text(text)
+		require.Equal(t, once, sanitize.Text(once), "Text is not idempotent on %q", text)
+
+		r := sanitize.NewRedactor()
+		cleaned := r.Clean(text)
+		require.Equal(t, cleaned, r.Clean(cleaned), "Clean is not idempotent on %q", text)
+		restored, unknown := r.Restore(cleaned)
+		require.Equal(t, text, restored, "Restore(Clean(%q))", text)
+		for _, placeholder := range unknown {
+			require.Equal(t, 1, strings.Count(placeholder, ":"), "%q reports %q", text, placeholder)
+			require.Contains(t, text, placeholder)
+		}
+	}
 }
