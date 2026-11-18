@@ -167,6 +167,10 @@ type Proposal struct {
 	// cluster whose fixer skipped or failed leaves its members
 	// skipped/failed while other members verify.
 	NodeOutcomes map[string]NodeOutcome
+	// Approvers is who must approve what the attempt did with each node a
+	// remediation settled at its end, fixed or handed over, one entry per node
+	// sorted by node id. It is empty for an attempt of the proposal driver.
+	Approvers []Approver
 	// Verifications is one fix-verification run per edited service;
 	// VerificationRunID is the view of the first.
 	Verifications []Verification

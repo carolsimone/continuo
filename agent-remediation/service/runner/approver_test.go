@@ -14,6 +14,8 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/outputs"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
+	"github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/events"
 )
 
 // outputCalls records the approvers each output of a remediation was handed.
@@ -212,4 +214,113 @@ func TestRunner_APythonNodeWithNoBundleOwnerTakesItsContractOwner(t *testing.T) 
 			assert.Equal(t, tc.wantGiveUp, calls.giveUp)
 		})
 	}
+}
+
+// The row of the attempt a remediation passed keeps the approvers of the nodes
+// it settled: the fixed node, in the transaction that marks the row verified,
+// and the node handed over beside it, which the hand-over event names with its
+// owner.
+func TestRunner_ThePassedRowStoresTheApproversOfItsFixedAndHandedOverNodes(t *testing.T) {
+	h := newHarness(t)
+	h.bundle.owners = map[string]string{"svc-a": "finance", "svc-b": "growth"}
+	noFile := compileNode("svc-b")
+	noFile.FilePath = ""
+	id := h.accept(trigger("compile", compileNode("svc-a"), noFile))
+	require.NoError(t, h.runner.Drive(ctx, id))
+	h.pipeline.answer(proposal.PhasePassed, nil)
+	require.Empty(t, h.attempt(1).Proposal.Approvers, "a row in flight has none yet")
+
+	require.NoError(t, h.poll(id))
+
+	row := h.attempt(1).Proposal
+	assert.Equal(t, proposal.StatusProposed, row.Status)
+	assert.Equal(t, []proposal.Approver{
+		{NodeID: "svc-a", Owner: "finance", Source: proposal.ApproverSourceBundle},
+		{NodeID: "svc-b", Owner: "growth", Source: proposal.ApproverSourceBundle},
+	}, row.Approvers)
+	assert.Equal(t, []events.HandedOverNode{
+		{NodeID: "svc-b", Reason: string(model.HandoverReasonDeclined), Message: noFileReason, Owner: "growth"},
+	}, h.handedOverEvent().Nodes)
+}
+
+// The attempt row a remediation records at its end stores the approvers of the
+// nodes it hands over, whichever way it ends, and the hand-over event names
+// each node's owner.
+func TestRunner_AHandedOverAttemptRowStoresItsNodesApprovers(t *testing.T) {
+	noFile := func(node string) remediation.TriggerNode {
+		n := compileNode(node)
+		n.FilePath = ""
+		return n
+	}
+	for name, tc := range map[string]struct {
+		setup   func(h *harness)
+		trigger func() remediation.Trigger
+		attempt int
+		status  proposal.Status
+		code    model.HandoverReason
+	}{
+		"no repository": {
+			trigger: func() remediation.Trigger {
+				trig := trigger("compile", compileNode("svc-b"), compileNode("svc-a"))
+				trig.Repo = ""
+				return trig
+			},
+			attempt: 1, status: proposal.StatusFailed, code: model.HandoverReasonNoRepository,
+		},
+		"the tries are spent": {
+			setup: func(h *harness) {
+				for attempt := 1; attempt <= 3; attempt++ {
+					h.legacyAttempt(attempt, proposal.StatusFailed)
+				}
+			},
+			trigger: func() remediation.Trigger { return trigger("compile", compileNode("svc-b"), compileNode("svc-a")) },
+			attempt: 4, status: proposal.StatusEscalated, code: model.HandoverReasonTriesSpent,
+		},
+		"a try with nothing to verify": {
+			trigger: func() remediation.Trigger { return trigger("compile", noFile("svc-b"), noFile("svc-a")) },
+			attempt: 1, status: proposal.StatusSkipped, code: model.HandoverReasonDeclined,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			if tc.setup != nil {
+				tc.setup(h)
+			}
+			h.bundle.owners = map[string]string{"svc-a": "finance", "svc-b": "growth"}
+			id := h.accept(tc.trigger())
+
+			require.NoError(t, h.drive(id))
+
+			require.Equal(t, remediation.StatusDone, h.remediation(id).Status)
+			row := h.attempt(tc.attempt).Proposal
+			assert.Equal(t, tc.status, row.Status)
+			assert.Equal(t, []proposal.Approver{
+				{NodeID: "svc-a", Owner: "finance", Source: proposal.ApproverSourceBundle},
+				{NodeID: "svc-b", Owner: "growth", Source: proposal.ApproverSourceBundle},
+			}, row.Approvers)
+			nodes := h.handedOverEvent().Nodes
+			require.Len(t, nodes, 2)
+			assert.Equal(t, "finance", nodes[0].Owner)
+			assert.Equal(t, "growth", nodes[1].Owner)
+			for _, n := range nodes {
+				assert.Equal(t, string(tc.code), n.Reason)
+			}
+		})
+	}
+}
+
+// A node with no owner is recorded with none, so a reader can tell that nobody
+// owns it from a node that was never looked at.
+func TestRunner_ANodeWithNoOwnerIsRecordedWithNone(t *testing.T) {
+	h := newHarness(t)
+	trig := trigger("compile", compileNode("svc-a"))
+	trig.Repo = ""
+	id := h.accept(trig)
+
+	require.NoError(t, h.drive(id))
+
+	assert.Equal(t, []proposal.Approver{{NodeID: "svc-a", Source: proposal.ApproverSourceNone}}, h.attempt(1).Proposal.Approvers)
+	assert.Equal(t, []events.HandedOverNode{{
+		NodeID: "svc-a", Reason: string(model.HandoverReasonNoRepository), Message: "the trigger carried no repository for rel-1",
+	}}, h.handedOverEvent().Nodes)
 }

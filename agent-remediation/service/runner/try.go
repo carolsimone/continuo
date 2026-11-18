@@ -392,7 +392,7 @@ func (r *Runner) endWithAttempt(ctx context.Context, u uow.UnitOfWork, run tryRu
 	if err := r.recordAttempt(ctx, u, run, attempt, p); err != nil {
 		return err
 	}
-	if err := r.handOver(ctx, u, run, p.NodeOutcomes); err != nil {
+	if err := r.handOver(ctx, u, run, attempt, p.NodeOutcomes); err != nil {
 		return err
 	}
 	if err := r.endRemediation(ctx, u, run.snap.Remediation); err != nil {
@@ -404,11 +404,12 @@ func (r *Runner) endWithAttempt(ctx context.Context, u uow.UnitOfWork, run tryRu
 
 // handOver runs the flow's approver and then its give-up output, in u's
 // transaction, for every node of an ending remediation whose final outcome
-// carries a code (remediation.HandOvers): the output is handed each node's
-// approver, worked out from the clusters of the current try (workedClusters).
-// A remediation that made a try records the output on that try's journal. With
-// no node to hand over, nothing runs and nothing is written.
-func (r *Runner) handOver(ctx context.Context, u uow.UnitOfWork, run tryRun, outcomes map[string]proposal.NodeOutcome) error {
+// carries a code (remediation.HandOvers): each node's approver, worked out from
+// the clusters of the current try (workedClusters), is recorded on the row of
+// the remediation's attempt, which the caller has already recorded, and handed
+// to the output. A remediation that made a try records the output on that try's
+// journal. With no node to hand over, nothing runs and nothing is written.
+func (r *Runner) handOver(ctx context.Context, u uow.UnitOfWork, run tryRun, attempt int, outcomes map[string]proposal.NodeOutcome) error {
 	handed := remediation.HandOvers(outcomes)
 	if len(handed) == 0 {
 		return nil
@@ -429,6 +430,11 @@ func (r *Runner) handOver(ctx context.Context, u uow.UnitOfWork, run tryRun, out
 	approvers, err := r.approversFor(ctx, run, clusters, nodes)
 	if err != nil {
 		return err
+	}
+	if len(approvers) > 0 {
+		if err := u.ProposalRepo().RecordApprovers(ctx, run.trigger.ReleaseID, attempt, approvers); err != nil {
+			return fmt.Errorf("record the approvers of attempt %d: %w", attempt, err)
+		}
 	}
 	in := step.OutputInput{Remediation: run.snap.Remediation, Trigger: run.trigger, Snapshot: run.snap, HandedOver: handed, Approvers: approvers}
 	var row remediation.StepRun
@@ -533,7 +539,7 @@ func (r *Runner) settleTry(ctx context.Context, run tryRun) error {
 		if err := r.recordAttempt(ctx, u, run, run.snap.Try.Attempt, p); err != nil {
 			return err
 		}
-		if err := r.handOver(ctx, u, run, outcomes); err != nil {
+		if err := r.handOver(ctx, u, run, run.snap.Try.Attempt, outcomes); err != nil {
 			return err
 		}
 		if err := r.endTry(ctx, u, run, remediation.TryFailed); err != nil {

@@ -280,6 +280,14 @@ type ProposalRepository interface {
 	// written.
 	ReopenTryAttempt(ctx context.Context, remediationID uuid.UUID, attempt int, status proposal.Status, outcomes map[string]proposal.NodeOutcome) (reopened bool, err error)
 
+	// RecordApprovers records approvers on the row of one attempt of a release:
+	// the row keeps one entry per node, an approver given for a node taking the
+	// place of the entry the row holds for it, and its approvers stay sorted by
+	// node id. Approvers the row holds for other nodes are kept, so the fixed
+	// nodes and the handed-over nodes of one attempt add up. It returns
+	// ErrNotFound, writing nothing, when the release has no row for the attempt.
+	RecordApprovers(ctx context.Context, releaseID string, attempt int, approvers []proposal.Approver) error
+
 	// UpdateVerificationPhase records the phase (and, once known, the
 	// activation time) of one of the proposal's verification runs, leaving
 	// the others untouched. Called by the reconciler only when the phase it

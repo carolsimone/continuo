@@ -236,6 +236,10 @@ func (r *fakeProposalRepo) MarkFixVerified(_ context.Context, _ remediation.Veri
 	return false, nil
 }
 
+func (r *fakeProposalRepo) RecordApprovers(_ context.Context, _ string, _ int, _ []proposal.Approver) error {
+	return nil
+}
+
 // UpdateVerificationPhase records the call and, when the row still exists,
 // writes the phase (and activation) onto the matching verification in place —
 // the same effect the real UPDATE statement has — so a later pass in the same

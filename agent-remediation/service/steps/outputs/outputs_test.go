@@ -194,6 +194,52 @@ func TestPullRequest_ASecondPassOnAFinalizedRowWritesNothing(t *testing.T) {
 	assert.Equal(t, proposal.StatusProposed, store.Proposals()[0].Proposal.Status)
 }
 
+func TestPullRequest_StoresTheApproversOfTheFixedNodesWithTheVerifiedRow(t *testing.T) {
+	store := memory.NewStore()
+	rem := newRemediation(t, store)
+	id := seed(t, store, verifying(rem))
+	approvers := []proposal.Approver{
+		{NodeID: "model.a", Owner: "finance", Source: proposal.ApproverSourceBundle},
+		{NodeID: "model.b", Source: proposal.ApproverSourceNone},
+	}
+	pr := outputs.NewPullRequest(fixedClock{})
+
+	u := memory.NewUnitOfWork(store)
+	require.NoError(t, u.Begin(ctx))
+	require.NoError(t, pr.Pass(ctx, u, step.OutputInput{Remediation: rem, Trigger: trigger(), Approvers: approvers}, verified(t, id)))
+	require.NoError(t, u.Commit())
+
+	row := store.Proposals()[0].Proposal
+	assert.Equal(t, proposal.StatusProposed, row.Status)
+	assert.Equal(t, approvers, row.Approvers, "the row that is marked verified carries its fixed nodes' approvers")
+	assert.Len(t, store.OutboxEntries(), 1)
+
+	// A pass on a row that is already final changes nothing, the approvers
+	// included.
+	other := []proposal.Approver{{NodeID: "model.c", Owner: "ops", Source: proposal.ApproverSourceBundle}}
+	u = memory.NewUnitOfWork(store)
+	require.NoError(t, u.Begin(ctx))
+	require.NoError(t, pr.Pass(ctx, u, step.OutputInput{Remediation: rem, Trigger: trigger(), Approvers: other}, verified(t, id)))
+	require.NoError(t, u.Commit())
+	assert.Equal(t, approvers, store.Proposals()[0].Proposal.Approvers)
+}
+
+func TestPullRequest_ARefusedPassStoresNoApprovers(t *testing.T) {
+	store := memory.NewStore()
+	rem := newRemediation(t, store)
+	seed(t, store, verifying(rem))
+
+	u := memory.NewUnitOfWork(store)
+	require.NoError(t, u.Begin(ctx))
+	err := outputs.NewPullRequest(fixedClock{}).Pass(ctx, u,
+		step.OutputInput{Remediation: rem, Trigger: trigger(), Approvers: []proposal.Approver{{NodeID: "model.a", Owner: "finance"}}},
+		remediation.Verified{})
+	require.Error(t, err)
+	require.NoError(t, u.Commit())
+
+	assert.Empty(t, store.Proposals()[0].Proposal.Approvers)
+}
+
 // handedOverEntryID is the id of the outbox entry that carries the
 // remediation.handed_over:v1 event of remediation id.
 func handedOverEntryID(id uuid.UUID) uuid.UUID {
@@ -305,4 +351,52 @@ func TestHandOver_NoNodeToHandOverWritesNothing(t *testing.T) {
 
 	assert.Empty(t, store.OutboxEntries())
 	assert.Empty(t, store.Proposals())
+}
+
+func TestHandOver_NamesEachNodesOwner(t *testing.T) {
+	store := memory.NewStore()
+	rem := endedRemediation(t, store)
+	approvers := []proposal.Approver{
+		{NodeID: "model.a", Owner: "finance", Source: proposal.ApproverSourceBundle},
+		{NodeID: "model.b", Source: proposal.ApproverSourceNone},
+	}
+
+	require.NoError(t, giveUp(t, store, step.OutputInput{Remediation: rem, Trigger: trigger(), HandedOver: handedOver(), Approvers: approvers}))
+
+	entries := store.OutboxEntries()
+	require.Len(t, entries, 1)
+	_, body, err := outbox.UnwrapTenant(entries[0].Payload)
+	require.NoError(t, err)
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(body, &got))
+	nodes := got["nodes"].([]any)
+	require.Len(t, nodes, 2)
+	assert.Equal(t, map[string]any{
+		"node_id": "model.a", "reason": string(model.HandoverReasonTriesSpent),
+		"message": "tried 3 times; the last try failed: model.a: still broken", "owner": "finance",
+	}, nodes[0], "a node with an owner names it")
+	assert.Equal(t, map[string]any{
+		"node_id": "model.b", "reason": string(model.HandoverReasonDeclined),
+		"message": "the compile error names no source file, so there is no file to fix",
+	}, nodes[1], "a node with no owner carries no owner key")
+}
+
+func TestHandOver_AnApproverOfAnotherNodeIsNotNamed(t *testing.T) {
+	store := memory.NewStore()
+	rem := endedRemediation(t, store)
+	approvers := []proposal.Approver{
+		{NodeID: "model.a", Owner: "finance", Source: proposal.ApproverSourceBundle},
+		{NodeID: "model.fixed", Owner: "growth", Source: proposal.ApproverSourceBundle},
+	}
+
+	require.NoError(t, giveUp(t, store, step.OutputInput{Remediation: rem, Trigger: trigger(), HandedOver: handedOver()[:1], Approvers: approvers}))
+
+	_, body, err := outbox.UnwrapTenant(store.OutboxEntries()[0].Payload)
+	require.NoError(t, err)
+	var p events.RemediationHandedOver
+	require.NoError(t, json.Unmarshal(body, &p))
+	assert.Equal(t, []events.HandedOverNode{{
+		NodeID: "model.a", Reason: string(model.HandoverReasonTriesSpent),
+		Message: "tried 3 times; the last try failed: model.a: still broken", Owner: "finance",
+	}}, p.Nodes)
 }

@@ -377,6 +377,10 @@ func (r *fakeProposalRepo) MarkFixVerified(_ context.Context, _ remediation.Veri
 	return false, nil
 }
 
+func (r *fakeProposalRepo) RecordApprovers(_ context.Context, _ string, _ int, _ []proposal.Approver) error {
+	return nil
+}
+
 func (r *fakeProposalRepo) ReopenTryAttempt(_ context.Context, _ uuid.UUID, _ int, _ proposal.Status, _ map[string]proposal.NodeOutcome) (bool, error) {
 	return false, nil
 }

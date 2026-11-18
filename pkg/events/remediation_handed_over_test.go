@@ -87,6 +87,22 @@ func TestRemediationHandedOverFields_AlwaysCarryANodesArray(t *testing.T) {
 	assert.JSONEq(t, `[]`, string(mustRawField(t, fields["payload"], "nodes")))
 }
 
+func TestRemediationHandedOverFields_ANodeNamesItsOwnerOnlyWhenItHasOne(t *testing.T) {
+	p := validRemediationHandedOver()
+	p.Nodes = append(p.Nodes, events.HandedOverNode{
+		NodeID: "analytics.payments_current", Reason: string(model.HandoverReasonNoType), Message: "m", Owner: "finance-data",
+	})
+
+	fields := remediationHandedOverFields(t, p)
+
+	assert.JSONEq(t, `[
+		{"node_id": "analytics.orders_enriched", "reason": "tries_spent", "message": "m"},
+		{"node_id": "analytics.payments_current", "reason": "no_type", "message": "m", "owner": "finance-data"}
+	]`, string(mustRawField(t, fields["payload"], "nodes")))
+	_, got := readHandedOver(t, fields)
+	assert.Equal(t, p, got)
+}
+
 func TestRemediationHandedOverFields_AcceptEveryHandoverReasonAndNoTries(t *testing.T) {
 	for _, reason := range model.HandoverReasons() {
 		t.Run(string(reason), func(t *testing.T) {

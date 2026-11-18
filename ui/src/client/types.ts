@@ -512,6 +512,17 @@ export interface VerificationDTO {
   error: string;
 }
 
+// Who must approve what an attempt did with one node: the node's owner, as
+// source says where it was read from. source is 'bundle' (the owner the
+// release's code bundle records), 'contract_file' (the team of the node's
+// contract file in the repository) or 'none' (no owner was found, and owner is
+// then '').
+export interface ApproverDTO {
+  node_id: string;
+  owner: string;
+  source: 'bundle' | 'contract_file' | 'none';
+}
+
 export interface ProposalDTO {
   id: string;
   source: string;
@@ -592,6 +603,12 @@ export interface ProposalDTO {
   // served by an agent-remediation that predates the field. See
   // proposalServices.
   services?: string[];
+  // approvers is who must approve what this attempt did with each node a
+  // remediation settled at its end, the fixed and the handed-over nodes, one
+  // entry per node sorted by node_id. Absent or empty on an attempt of the
+  // legacy engine, one recorded before approvers were kept, or one served by an
+  // agent-remediation that predates the field.
+  approvers?: ApproverDTO[];
 }
 
 // A verification run judges one candidate against the full validation

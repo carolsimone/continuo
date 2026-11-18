@@ -42,15 +42,17 @@ func (*PullRequest) Meta() step.Meta {
 	return step.Meta{
 		Name: namePullRequest,
 		Kind: step.KindOutput,
-		Description: "Marks the verified proposal proposed and enqueues remediation.proposed:v1 for human review, " +
-			"in the same transaction. A proposal that is already final is left alone and announces nothing.",
+		Description: "Marks the verified proposal proposed, stores the approvers of the nodes it fixes on its row and " +
+			"enqueues remediation.proposed:v1 for human review, in the same transaction. A proposal that is already " +
+			"final is left alone and announces nothing.",
 	}
 }
 
-// Pass finalizes the proposal v names with the verifications v carries, and
-// enqueues its remediation.proposed:v1 event in the same transaction, stored
-// under the remediation's tenant, so the row and the announcement cannot
-// disagree. The status change is a
+// Pass finalizes the proposal v names with the verifications v carries, stores
+// on its row the approvers in.Approvers names (the owners of the nodes the fix
+// covers), and enqueues its remediation.proposed:v1 event in the same
+// transaction, stored under the remediation's tenant, so the row and the
+// announcement cannot disagree. The status change is a
 // compare-and-set: when the row is no longer verifying, nothing is written and
 // nothing is announced.
 func (p *PullRequest) Pass(ctx context.Context, u uow.UnitOfWork, in step.OutputInput, v remediation.Verified) error {
@@ -65,6 +67,11 @@ func (p *PullRequest) Pass(ctx context.Context, u uow.UnitOfWork, in step.Output
 	row, err := repo.Get(ctx, v.ProposalID())
 	if err != nil {
 		return fmt.Errorf("read verified proposal %s: %w", v.ProposalID(), err)
+	}
+	if len(in.Approvers) > 0 {
+		if err := repo.RecordApprovers(ctx, row.ReleaseID, row.Attempt, in.Approvers); err != nil {
+			return fmt.Errorf("record the approvers of verified proposal %s: %w", v.ProposalID(), err)
+		}
 	}
 	return p.enqueue(ctx, u, in.Remediation.TenantID, proposedEvent(row), row.SourceResolved)
 }

@@ -2040,6 +2040,93 @@ func TestBeginPR_ClaimsPerService(t *testing.T) {
 	require.Equal(t, "opening", states["finance"])
 }
 
+// TestBeginPR_ReturnsTheClaimNodesApprovers verifies that a claim carries the
+// approvers of the nodes it fixes and no others: the whole-proposal claim names
+// the fixed nodes' approvers (a handed-over node's approver stays on the row), a
+// per-service claim only its own members', and a node the row records no
+// approver for has no entry.
+func TestBeginPR_ReturnsTheClaimNodesApprovers(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db, perServiceRepoPaths)
+
+	approvers := []proposal.Approver{
+		{NodeID: "na", Owner: "core-team", Source: proposal.ApproverSourceBundle},
+		{NodeID: "nb", Owner: "finance-team", Source: proposal.ApproverSourceContractFile},
+		{NodeID: "nc", Owner: "growth-team", Source: proposal.ApproverSourceBundle},
+		{NodeID: "nd", Source: proposal.ApproverSourceNone},
+	}
+	id := seedProposal(t, repo, db, proposal.Proposal{
+		Source:          "validation",
+		ReleaseID:       "r-claim-approvers",
+		NodeID:          "na",
+		ResolvedNodeIDs: []string{"na", "nb", "nc", "nd", "ne"},
+		ErrorSignature:  "sig",
+		Attempt:         1,
+		Status:          proposal.StatusProposed,
+		NodeOutcomes: map[string]proposal.NodeOutcome{
+			"na": {Status: proposal.StatusProposed},
+			"nb": {Status: proposal.StatusProposed},
+			"nc": {Status: proposal.StatusSkipped, Reason: "no remediation type matches", Code: model.HandoverReasonNoType},
+			"nd": {Status: proposal.StatusProposed},
+			"ne": {Status: proposal.StatusProposed},
+		},
+		Approvers:      approvers,
+		SourceResolved: true,
+		Repo:           "owner/continuo-demo",
+		CommitSHA:      "sha",
+		Model:          "m",
+		CreatedAt:      time.Now().UTC(),
+		Edits: []proposal.FileEdit{
+			{Path: "services/core/models/a.sql", ContentURI: "s3://b/core.content", DiffURI: "s3://b/core.diff", TargetNodeID: "na", MemberNodeIDs: []string{"na", "nd", "ne"}},
+			{Path: "services/finance/models/b.sql", ContentURI: "s3://b/fin.content", DiffURI: "s3://b/fin.diff", TargetNodeID: "nb", MemberNodeIDs: []string{"nb"}},
+		},
+	})
+
+	coreClaim, err := repo.BeginPR(ctx, id, "core", "remediation/r-claim-approvers/core", time.Now().UTC())
+	require.NoError(t, err)
+	require.Equal(t, []string{"na", "nd", "ne"}, coreClaim.ResolvedNodeIDs)
+	require.Equal(t, []proposal.Approver{approvers[0], approvers[3]}, coreClaim.Approvers,
+		"the core claim names its own members' approvers; ne has none recorded")
+
+	finClaim, err := repo.BeginPR(ctx, id, "finance", "remediation/r-claim-approvers/finance", time.Now().UTC())
+	require.NoError(t, err)
+	require.Equal(t, []proposal.Approver{approvers[1]}, finClaim.Approvers)
+
+	wholeID := seedProposal(t, repo, db, proposal.Proposal{
+		Source:          "validation",
+		ReleaseID:       "r-claim-approvers",
+		NodeID:          "na",
+		ResolvedNodeIDs: []string{"na", "nc"},
+		ErrorSignature:  "sig",
+		Attempt:         2,
+		Status:          proposal.StatusProposed,
+		NodeOutcomes: map[string]proposal.NodeOutcome{
+			"na": {Status: proposal.StatusProposed},
+			"nc": {Status: proposal.StatusSkipped, Reason: "no remediation type matches", Code: model.HandoverReasonNoType},
+		},
+		Approvers:      approvers[:3],
+		SourceResolved: true,
+		Repo:           "owner/continuo-demo",
+		CommitSHA:      "sha",
+		CreatedAt:      time.Now().UTC(),
+		Edits:          []proposal.FileEdit{{Path: "services/core/models/a.sql", ContentURI: "s3://b/c", DiffURI: "s3://b/d", TargetNodeID: "na", MemberNodeIDs: []string{"na"}}},
+	})
+	wholeClaim, err := repo.BeginPR(ctx, wholeID, "", "remediation/r-claim-approvers/attempt2", time.Now().UTC())
+	require.NoError(t, err)
+	require.Equal(t, []string{"na"}, wholeClaim.ResolvedNodeIDs)
+	require.Equal(t, []proposal.Approver{approvers[0]}, wholeClaim.Approvers,
+		"the whole-proposal claim names the fixed node's approver, not the handed-over node's")
+
+	legacyID := seedProposal(t, repo, db, proposal.Proposal{
+		Source: "validation", ReleaseID: "r-claim-approvers", NodeID: "nl", ErrorSignature: "sig", Attempt: 3,
+		Status: proposal.StatusProposed, SourceResolved: true, Repo: "owner/continuo-demo", CommitSHA: "sha", CreatedAt: time.Now().UTC(),
+	})
+	legacyClaim, err := repo.BeginPR(ctx, legacyID, "", "remediation/r-claim-approvers/attempt3", time.Now().UTC())
+	require.NoError(t, err)
+	require.Empty(t, legacyClaim.Approvers, "a row recorded without approvers claims with none")
+}
+
 // TestBeginPR_LegacyServiceReclaimsWholeProposal verifies that the "" service
 // re-claims a legacy child row (the shape the V17 backfill writes) left in
 // 'failed' by an earlier whole-proposal attempt, and that its claim carries

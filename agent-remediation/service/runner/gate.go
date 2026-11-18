@@ -376,7 +376,7 @@ func (r *Runner) passGate(ctx context.Context, run tryRun, row remediation.StepR
 		if err != nil {
 			return fmt.Errorf("read proposal %s: %w", attempt.ID, err)
 		}
-		if err := r.handOver(ctx, u, run, final.NodeOutcomes); err != nil {
+		if err := r.handOver(ctx, u, run, final.Attempt, final.NodeOutcomes); err != nil {
 			return err
 		}
 		if err := r.endTry(ctx, u, run, remediation.TryPassed); err != nil {

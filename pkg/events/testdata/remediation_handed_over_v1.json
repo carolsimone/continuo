@@ -14,7 +14,8 @@
         {
           "node_id": "analytics.orders_enriched",
           "reason": "tries_spent",
-          "message": "the last try failed at the verification runs: column \"customer_segment\" does not exist"
+          "message": "the last try failed at the verification runs: column \"customer_segment\" does not exist",
+          "owner": "analytics-engineering"
         },
         {
           "node_id": "analytics.payments_current",
@@ -24,7 +25,8 @@
         {
           "node_id": "analytics.daily_revenue",
           "reason": "no_type",
-          "message": "no type of the flow matches a division by zero in a window function"
+          "message": "no type of the flow matches a division by zero in a window function",
+          "owner": "finance-data"
         }
       ]
     }
@@ -45,7 +47,8 @@
         {
           "node_id": "analytics.orders_enriched",
           "reason": "tries_spent",
-          "message": "the last try failed at the verification runs: column \"customer_segment\" does not exist"
+          "message": "the last try failed at the verification runs: column \"customer_segment\" does not exist",
+          "owner": "analytics-engineering"
         },
         {
           "node_id": "analytics.payments_current",
@@ -55,7 +58,8 @@
         {
           "node_id": "analytics.daily_revenue",
           "reason": "no_type",
-          "message": "no type of the flow matches a division by zero in a window function"
+          "message": "no type of the flow matches a division by zero in a window function",
+          "owner": "finance-data"
         }
       ]
     }

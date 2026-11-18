@@ -268,6 +268,39 @@ func TestProposalsServer_MapsTheNodeOutcomeCode(t *testing.T) {
 	assert.Equal(t, string(model.HandoverReasonNoType), list.Proposals[0].NodeOutcomes["s.handed"].Code)
 }
 
+// TestProposalsServer_MapsTheApprovers verifies that GetProposal and
+// ListProposals put each approver of a proposal on the wire with its node, owner
+// and source, in the row's order, and that a proposal with none leaves the list
+// empty.
+func TestProposalsServer_MapsTheApprovers(t *testing.T) {
+	view := proposal.View{
+		ID:        "p-approvers",
+		ReleaseID: "rel-approvers",
+		Approvers: []proposal.Approver{
+			{NodeID: "s.a", Owner: "finance", Source: proposal.ApproverSourceBundle},
+			{NodeID: "s.b", Source: proposal.ApproverSourceNone},
+		},
+	}
+	svc := &fakeSvc{getView: view, listViews: []proposal.View{view, {ID: "p-legacy"}}}
+	s := grpcadapter.NewProposalsServer(svc)
+
+	got, err := s.GetProposal(context.Background(), &remediationv1.GetProposalRequest{Id: "p-approvers"})
+	require.NoError(t, err)
+	require.Len(t, got.Approvers, 2)
+	assert.Equal(t, "s.a", got.Approvers[0].NodeId)
+	assert.Equal(t, "finance", got.Approvers[0].Owner)
+	assert.Equal(t, "bundle", got.Approvers[0].Source)
+	assert.Equal(t, "s.b", got.Approvers[1].NodeId)
+	assert.Empty(t, got.Approvers[1].Owner, "a node with no owner carries an empty owner")
+	assert.Equal(t, "none", got.Approvers[1].Source)
+
+	list, err := s.ListProposals(context.Background(), &remediationv1.ListProposalsRequest{})
+	require.NoError(t, err)
+	require.Len(t, list.Proposals, 2)
+	require.Len(t, list.Proposals[0].Approvers, 2)
+	assert.Empty(t, list.Proposals[1].Approvers)
+}
+
 // TestProposalsServer_GetProposal_PullRequestsAndPrServices verifies that
 // GetProposal maps View.PullRequests onto the wire's pull_requests field and
 // asks the service for pr_services, so a UI reading a split proposal sees
@@ -396,6 +429,36 @@ func TestProposalsServer_BeginPullRequest_HappyPath(t *testing.T) {
 	assert.Equal(t, "models/baz.sql", resp.Edits[1].Path)
 	assert.Equal(t, "s3://bucket/baz.sql", resp.Edits[1].ContentUri)
 	assert.Equal(t, "s3://bucket/baz.diff", resp.Edits[1].DiffUri)
+}
+
+// TestBeginPR_ReturnsTheClaimNodesApprovers verifies that BeginPullRequest puts
+// the approvers of the claim's nodes on the wire, so the opener of the pull
+// request can name who must approve it.
+func TestBeginPR_ReturnsTheClaimNodesApprovers(t *testing.T) {
+	claim := proposal.PRClaim{
+		ID:              "p-claim",
+		ResolvedNodeIDs: []string{"s.a", "s.b"},
+		Approvers: []proposal.Approver{
+			{NodeID: "s.a", Owner: "finance", Source: proposal.ApproverSourceBundle},
+			{NodeID: "s.b", Owner: "growth", Source: proposal.ApproverSourceContractFile},
+		},
+	}
+	s := grpcadapter.NewProposalsServer(&fakeSvc{beginClaim: claim})
+
+	resp, err := s.BeginPullRequest(context.Background(), &remediationv1.BeginPullRequestRequest{Id: "p-claim"})
+	require.NoError(t, err)
+	require.Len(t, resp.Approvers, 2)
+	assert.Equal(t, "s.a", resp.Approvers[0].NodeId)
+	assert.Equal(t, "finance", resp.Approvers[0].Owner)
+	assert.Equal(t, "bundle", resp.Approvers[0].Source)
+	assert.Equal(t, "s.b", resp.Approvers[1].NodeId)
+	assert.Equal(t, "growth", resp.Approvers[1].Owner)
+	assert.Equal(t, "contract_file", resp.Approvers[1].Source)
+
+	none, err := grpcadapter.NewProposalsServer(&fakeSvc{beginClaim: proposal.PRClaim{ID: "p-legacy"}}).
+		BeginPullRequest(context.Background(), &remediationv1.BeginPullRequestRequest{Id: "p-legacy"})
+	require.NoError(t, err)
+	assert.Empty(t, none.Approvers)
 }
 
 // TestProposalsServer_BeginPullRequest_ThreadsServiceThrough verifies that
