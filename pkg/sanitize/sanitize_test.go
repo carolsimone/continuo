@@ -220,6 +220,115 @@ func TestText_KeepsWhatIsNotASecretValue(t *testing.T) {
 	}
 }
 
+// A hardcoded credential in an annotated assignment sits after the annotation:
+// the quoted literal goes and the annotation stays.
+func TestText_RedactsTheLiteralOfAnAnnotatedAssignment(t *testing.T) {
+	for name, tc := range map[string]struct{ in, want string }{
+		"a plain annotation": {
+			`password: str = "hunter2"`,
+			`password: str = "[redacted:secret]"`,
+		},
+		"a subscripted annotation": {
+			`api_key: Optional[str] = "sk-live-abc123"`,
+			`api_key: Optional[str] = "[redacted:secret]"`,
+		},
+		"a Final constant": {
+			`PASSWORD: Final = "hunter2"`,
+			`PASSWORD: Final = "[redacted:secret]"`,
+		},
+		"a single quoted literal": {
+			`token: str = 'abc123'`,
+			`token: str = '[redacted:secret]'`,
+		},
+		"a union annotation on an attribute": {
+			`self.secret: str | None = "abc123"`,
+			`self.secret: str | None = "[redacted:secret]"`,
+		},
+		"a nested annotation": {
+			`token: Dict[str, List[int]] = "abc123"`,
+			`token: Dict[str, List[int]] = "[redacted:secret]"`,
+		},
+		"a typed TypeScript constant": {
+			`const password: string = "hunter2";`,
+			`const password: string = "[redacted:secret]";`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.want, sanitize.Text(tc.in))
+		})
+	}
+}
+
+// An unquoted value is a literal only. Code that reads a secret from somewhere
+// else holds none, and cutting it mid-token protects nothing.
+func TestText_KeepsAnUnquotedValueThatIsNotALiteral(t *testing.T) {
+	for name, in := range map[string]string{
+		"a subscript of an environment":            `token = os.environ["TOKEN"]`,
+		"a call":                                   `api_key=os.getenv("API_KEY")`,
+		"a call in a template tag":                 `{% set token = var('x') %}`,
+		"a method call":                            `self.token = self.token_from(x)`,
+		"an attribute":                             `a.token = b.token`,
+		"a dotted name":                            `password = settings.DB_PASSWORD`,
+		"a type in a parameter list":               `def connect(token: str, host: str):`,
+		"a type that closes the parameters":        `def connect(host: str, password: SecretStr):`,
+		"a field with a type only":                 "password: str\n",
+		"a field with a typed default":             `password: Optional[str] = None`,
+		"a custom type with a call as its default": `token: Custom = os.getenv("T")`,
+		"a template expression":                    `password: {{ env_var('DBT_PASSWORD') }}`,
+		"a shell expansion":                        `token: ${TOKEN}`,
+		"a command substitution":                   `password=$(cat /run/secrets/pw)`,
+		"a JSON null":                              `{"password": null, "user": "bob"}`,
+		"a Python None":                            `password = None`,
+		"a boolean":                                `token: false`,
+		"a YAML literal block":                     "password: |\n  line\n",
+		"a YAML folded block":                      "token: >-\n  line\n",
+		"a YAML literal block with a chomp":        "token: |-\n  line\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, in, sanitize.Text(in))
+		})
+	}
+}
+
+// A bare word that the syntax does not mark as a reference is still a value.
+func TestText_RedactsABareWordThatIsNotAReference(t *testing.T) {
+	for name, tc := range map[string]struct{ in, want string }{
+		"a password":                   {"password=hunter2", "password=[redacted:secret]"},
+		"a Postgres variable in a log": {"PGPASSWORD=s3cr3t psql -h db", "PGPASSWORD=[redacted:secret] psql -h db"},
+		"a value ending a sentence":    {"the password=hunter2.", "the password=[redacted:secret]"},
+		"a dotted value with digits":   {"client_secret=abc123.def456", "client_secret=[redacted:secret]"},
+		"a three part dotted value":    {"token: a1b2c3d4e5f6.g7h8i9.j0k1l2m3n4", "token: [redacted:secret]"},
+		"a YAML value":                 {"password: hunter2", "password: [redacted:secret]"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.want, sanitize.Text(tc.in))
+		})
+	}
+}
+
+// The userinfo of a URL ends before the first slash, question mark or number
+// sign, so a later at sign of the query is not a password's.
+func TestText_AURLsUserinfoEndsBeforeAQueryOrFragment(t *testing.T) {
+	for name, tc := range map[string]struct{ in, want string }{
+		"a port and an email in the query": {
+			"https://example.com:443?email=a@b.com",
+			"https://example.com:443?email=[redacted:email]",
+		},
+		"an email in a nested URL": {
+			"https://example.com?next=mailto:bob@acme.com",
+			"https://example.com?next=mailto:[redacted:email]",
+		},
+		"an email in the fragment": {
+			"https://example.com:443#ops@acme.com",
+			"https://example.com:443#[redacted:email]",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.want, sanitize.Text(tc.in))
+		})
+	}
+}
+
 // Rule 5: an email address goes whole.
 func TestText_RedactsAnEmailAddress(t *testing.T) {
 	for name, tc := range map[string]struct{ in, want string }{

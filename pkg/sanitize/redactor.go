@@ -1,6 +1,13 @@
 package sanitize
 
-import "strconv"
+import (
+	"regexp"
+	"strconv"
+	"strings"
+)
+
+// numberedMarker matches a numbered placeholder: its kind, then its number.
+var numberedMarker = regexp.MustCompile(`\[redacted:([a-z]+):([0-9]+)\]`)
 
 // issued names a value by what it was and its text.
 type issued struct {
@@ -14,8 +21,13 @@ type issued struct {
 // first sees each value, across every text it cleans. A value keeps its
 // placeholder for the life of the Redactor.
 //
-// A Redactor belongs to one caller at a time. Text that already holds a
-// numbered placeholder is taken to have been cleaned by this Redactor.
+// A numbered placeholder a text holds that this Redactor has not issued is the
+// text's own, as in a document that quotes one: Clean keeps it, never issues
+// its number to a value, and Restore returns it unchanged. A placeholder this
+// Redactor issued, found again in a later text, cannot be told from the text's
+// own, so Clean takes that text for one it cleaned already.
+//
+// A Redactor belongs to one caller at a time.
 type Redactor struct {
 	placeholders map[issued]string
 	values       map[string]string
@@ -34,6 +46,7 @@ func NewRedactor() *Redactor {
 // Clean returns s with each secret, key and email address replaced by its
 // placeholder. Cleaning a text that is already clean returns it unchanged.
 func (r *Redactor) Clean(s string) string {
+	r.reserveLiterals(s)
 	return redact(s, func(k kind, value string) string {
 		id := issued{k, value}
 		if placeholder, ok := r.placeholders[id]; ok {
@@ -48,9 +61,10 @@ func (r *Redactor) Clean(s string) string {
 }
 
 // Restore returns s with each placeholder this Redactor issued replaced by its
-// value. Every other placeholder in s, numbered or not (a fixed marker from
-// Text is never restorable), stays in the text and is listed in unknown, in the
-// order it first appears and once.
+// value. A numbered placeholder a cleaned text held as its own stays as it is.
+// Every other placeholder in s, numbered or not (a fixed marker from Text is
+// never restorable), stays in the text and is listed in unknown, in the order
+// it first appears and once.
 func (r *Redactor) Restore(s string) (restored string, unknown []string) {
 	seen := map[string]struct{}{}
 	restored = markerAny.ReplaceAllStringFunc(s, func(placeholder string) string {
@@ -64,4 +78,25 @@ func (r *Redactor) Restore(s string) (restored string, unknown []string) {
 		return placeholder
 	})
 	return restored, unknown
+}
+
+// reserveLiterals sets aside every numbered placeholder s holds that this
+// Redactor did not issue: Restore maps it to itself, and the count of its kind
+// is raised to its number, so no value is issued it. A number the Redactor
+// would not write (a leading zero) or cannot count (too large) is reserved
+// without moving the count.
+func (r *Redactor) reserveLiterals(s string) {
+	if !strings.Contains(s, "[redacted:") {
+		return
+	}
+	for _, m := range numberedMarker.FindAllStringSubmatch(s, -1) {
+		placeholder, k, digits := m[0], kind(m[1]), m[2]
+		if _, known := r.values[placeholder]; known {
+			continue
+		}
+		r.values[placeholder] = placeholder
+		if n, err := strconv.Atoi(digits); err == nil && strconv.Itoa(n) == digits && n > r.counts[k] {
+			r.counts[k] = n
+		}
+	}
 }

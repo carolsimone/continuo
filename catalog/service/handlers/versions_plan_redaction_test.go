@@ -75,3 +75,30 @@ func TestVersionsPlan_StoresCodeWithNoSecretUntouched(t *testing.T) {
 	assert.Equal(t, "select 1", in.Nodes[0].RawCode)
 	assert.Equal(t, "select 1 compiled", in.Nodes[0].CompiledCode)
 }
+
+// A python service's code is stored redacted where it holds a credential, and
+// as it is where it only reads one from somewhere else.
+func TestVersionsPlan_RedactsAHardcodedCredentialOfPythonCodeAndKeepsAReadOfOne(t *testing.T) {
+	b := bundleFixture()
+	b.Nodes["analytics.revenue"] = codebundle.Node{
+		Runtime: "python",
+		RawCode: "class Settings:\n" +
+			"    password: str = \"" + redactionPassword + "\"\n" +
+			"    api_key: Optional[str] = \"sk-live-abc123\"\n" +
+			"    token = os.environ[\"TOKEN\"]\n" +
+			"    dsn_password = settings.DB_PASSWORD\n" +
+			"    secret = os.getenv(\"SECRET\")\n",
+		ContentHash: "sha256:abc",
+	}
+
+	in := planVersionWrite(inputFixture(true, false), b, nodesFixture(), versionsTestLogger())
+
+	require.Len(t, in.Nodes, 1)
+	assert.Equal(t, "class Settings:\n"+
+		"    password: str = \"[redacted:secret]\"\n"+
+		"    api_key: Optional[str] = \"[redacted:secret]\"\n"+
+		"    token = os.environ[\"TOKEN\"]\n"+
+		"    dsn_password = settings.DB_PASSWORD\n"+
+		"    secret = os.getenv(\"SECRET\")\n",
+		in.Nodes[0].RawCode)
+}

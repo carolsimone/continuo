@@ -148,12 +148,13 @@ func TestRedactor_APlaceholderBelongsToTheRedactorThatIssuedIt(t *testing.T) {
 // placeholder comes back as it was.
 func TestRedactor_RestoreDoesNotReadTheValuesItPutsBack(t *testing.T) {
 	r := sanitize.NewRedactor()
-	cleaned := r.Clean("password=[redacted:secret:7]x")
+	r.Clean("owner a@x.org")
+	cleaned := r.Clean("password=[redacted:email:1]x")
 	require.Equal(t, "password=[redacted:secret:1]", cleaned)
 
 	restored, unknown := r.Restore(cleaned)
 
-	assert.Equal(t, "password=[redacted:secret:7]x", restored)
+	assert.Equal(t, "password=[redacted:email:1]x", restored)
 	assert.Empty(t, unknown)
 }
 
@@ -182,6 +183,61 @@ func TestRedactor_NoRuleMatchesAPlaceholder(t *testing.T) {
 		assert.Equal(t, in, sanitize.NewRedactor().Clean(in))
 		assert.Equal(t, in, sanitize.Text(in))
 	}
+}
+
+// A text that holds a numbered placeholder of its own, a document that quotes
+// one, keeps it: no later value is issued that number, so Restore never turns
+// the literal into a value or a value into the literal.
+func TestRedactor_ALiteralPlaceholderIsNeverTakenForAnIssuedOne(t *testing.T) {
+	r := sanitize.NewRedactor()
+	in := "doc literal [redacted:email:1] and owner a@x.org"
+
+	cleaned := r.Clean(in)
+
+	assert.Equal(t, "doc literal [redacted:email:1] and owner [redacted:email:2]", cleaned)
+	restored, unknown := r.Restore(cleaned)
+	assert.Equal(t, in, restored)
+	assert.Empty(t, unknown)
+}
+
+func TestRedactor_ALiteralLaterInTheTextStillReservesItsNumber(t *testing.T) {
+	r := sanitize.NewRedactor()
+	in := "owner a@x.org, then the doc says [redacted:email:1] and [redacted:secret:3] and password=hunter2"
+
+	cleaned := r.Clean(in)
+
+	assert.Equal(t,
+		"owner [redacted:email:2], then the doc says [redacted:email:1] and [redacted:secret:3] and password=[redacted:secret:4]",
+		cleaned)
+	restored, unknown := r.Restore(cleaned)
+	assert.Equal(t, in, restored)
+	assert.Empty(t, unknown)
+}
+
+// A number the Redactor would never write (a leading zero, too large to count)
+// is a literal too, and costs the numbering nothing.
+func TestRedactor_ALiteralWithAnOddNumberIsKeptAndDoesNotMoveTheNumbering(t *testing.T) {
+	r := sanitize.NewRedactor()
+	in := "[redacted:email:01] [redacted:email:99999999999999999999999] a@x.org"
+
+	cleaned := r.Clean(in)
+
+	assert.Equal(t, "[redacted:email:01] [redacted:email:99999999999999999999999] [redacted:email:1]", cleaned)
+	restored, unknown := r.Restore(cleaned)
+	assert.Equal(t, in, restored)
+	assert.Empty(t, unknown)
+}
+
+// The literals of one text reserve their numbers for the texts after it.
+func TestRedactor_ALiteralReservesItsNumberForTheNextTexts(t *testing.T) {
+	r := sanitize.NewRedactor()
+	require.Equal(t, "see [redacted:email:1]", r.Clean("see [redacted:email:1]"))
+
+	cleaned := r.Clean("owner a@x.org")
+
+	assert.Equal(t, "owner [redacted:email:2]", cleaned)
+	restored, _ := r.Restore("see [redacted:email:1] / " + cleaned)
+	assert.Equal(t, "see [redacted:email:1] / owner a@x.org", restored)
 }
 
 // A fixed marker from Text is left as it is and is not restorable.
@@ -233,7 +289,9 @@ func TestRedactor_CleanLeavesATextWithNoMatchUntouched(t *testing.T) {
 }
 
 // Whatever the text, cleaning it twice changes nothing more than cleaning it
-// once, and a Redactor restores a text that holds no placeholder of its own.
+// once, and a Redactor restores the text it cleaned, one that holds
+// placeholders of its own included. The only placeholders Restore may report
+// are fixed markers (from Text), which the text held already.
 func FuzzCleanAndRestore(f *testing.F) {
 	for _, seed := range []string{
 		"", "select 1", pemKey, awsKeyID, githubPAT, jwt,
@@ -241,6 +299,11 @@ func FuzzCleanAndRestore(f *testing.F) {
 		"https://u:p@ss@h.example.com/x", "Bearer abcdefgh1234", "token: Bearer abcdefgh1234",
 		`{"msg":"{\"password\":\"hunter2\"}"}`, "password=\"unterminated", "-----BEGIN PRIVATE KEY-----\nabc",
 		"password=[redacted:secret]x", "a@b.co a@b.co", "secret_key==\"x\"", "token::text", "api-key:\t'k'",
+		"doc literal [redacted:email:1] and owner a@x.org",
+		"[redacted:secret:1] password=hunter2 [redacted:secret] a@b.co [redacted:email:2] [redacted:key:1]",
+		"[redacted:email:01] [redacted:email:99999999999999999999999] a@b.co",
+		`password: str = "hunter2"`, `api_key: Optional[str] = "sk-live"`, `token = os.environ["TOKEN"]`,
+		"password: |\n  x", "https://example.com:443?email=a@b.com",
 	} {
 		f.Add(seed)
 	}
@@ -255,12 +318,14 @@ func FuzzCleanAndRestore(f *testing.F) {
 		if again := r.Clean(cleaned); again != cleaned {
 			t.Fatalf("Clean is not idempotent on %q: %q then %q", in, cleaned, again)
 		}
-		if strings.Contains(in, "[redacted:") {
-			return
-		}
 		restored, unknown := r.Restore(cleaned)
-		if restored != in || len(unknown) != 0 {
-			t.Fatalf("Restore(Clean(%q)) = %q, unknown %q", in, restored, unknown)
+		if restored != in {
+			t.Fatalf("Restore(Clean(%q)) = %q", in, restored)
+		}
+		for _, placeholder := range unknown {
+			if strings.Count(placeholder, ":") != 1 || !strings.Contains(in, placeholder) {
+				t.Fatalf("Restore(Clean(%q)) reports %q, which is not a fixed marker of the text", in, placeholder)
+			}
 		}
 	})
 }
