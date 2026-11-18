@@ -29,6 +29,7 @@ func TestEveryRegisteredStepIsUsedByABuiltinFile(t *testing.T) {
 		mark(f.Context...)
 		mark(f.AcrossClusters...)
 		mark(f.Gate...)
+		mark(f.Approver)
 		// An output step is named by the action of the flow's output.
 		used[workflow.StepName(f.OnPass.Action)] = true
 		used[workflow.StepName(f.OnGiveUp.Action)] = true

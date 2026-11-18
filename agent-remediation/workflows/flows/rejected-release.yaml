@@ -28,3 +28,6 @@ model_may_see: [code, logs]
 output:
   on_pass: { action: pull_request, emits: remediation.proposed }
   on_give_up: { action: hand_over, emits: remediation.handed_over }
+# Each node's owner must approve what the remediation did with it: the owner
+# the release's code bundle records, else the team.name of its ODCS contract.
+approver: node_owner

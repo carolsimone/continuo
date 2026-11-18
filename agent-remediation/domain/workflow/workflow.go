@@ -39,7 +39,7 @@ const (
 	StageCrossCluster Stage = "cross_cluster"
 	// StageGate decides whether a try's drafts are verified.
 	StageGate Stage = "gate"
-	// StageApprover picks who reviews a proposal.
+	// StageApprover works out who must approve what a remediation did.
 	StageApprover Stage = "approver"
 	// StageOutput hands a result to its destination.
 	StageOutput Stage = "output"
@@ -144,6 +144,9 @@ type Flow struct {
 	Tries    int
 	OnPass   Output
 	OnGiveUp Output
+	// Approver is the step that works out who must approve what a remediation
+	// did with each node, run before the outputs.
+	Approver StepRef
 	// ModelMaySee lists the classes of content the model may be shown under
 	// this flow. A flow lists at least one.
 	ModelMaySee []DataClass

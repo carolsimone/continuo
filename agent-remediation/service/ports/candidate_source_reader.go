@@ -17,9 +17,13 @@ const RuntimePython = "python"
 // CandidateSource is one node's source as the release's code bundle records
 // it. For a dbt node (Runtime == RuntimeDbt) RawCode is the model file text;
 // for a python node it is the normalized contract entry as canonical JSON.
+// Owner is the node's owner as the bundle records it: a dbt node's config
+// `meta.owner`, a python node's contract entry `owner` (its ODCS team.name).
+// It is empty when the bundle records none as a string.
 type CandidateSource struct {
 	RawCode string
 	Runtime string
+	Owner   string
 }
 
 // CandidateSourceReader fetches one node's source from a release's code

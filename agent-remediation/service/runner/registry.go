@@ -9,6 +9,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+	"github.com/carolsimone/continuo/agent-remediation/service/steps/approver"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/contract"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/cross"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/gate"
@@ -120,6 +121,7 @@ func NewRegistry(c Collaborators) *Registry {
 	r.register(cross.NewNoPathEditedTwice(c.ServiceRepoPaths, c.Logger))
 	r.register(cross.NewOneManifestKind(c.ServiceRepoPaths, c.Logger))
 	r.register(gate.NewVerificationRun(c.Evidence, c.Artifacts, c.Releases, c.Pipeline, c.ServiceRepoPaths, c.Clock, c.VerificationTimeout, c.Logger))
+	r.register(approver.NewNodeOwner(c.CandidateSource, c.ContractInspector, c.Logger))
 	r.register(outputs.NewPullRequest(c.Clock))
 	r.register(outputs.NewHandOver())
 	return r
@@ -143,7 +145,7 @@ func (r *Registry) register(s described) {
 }
 
 // implementsKind reports whether s has the methods the runner calls on a step
-// of kind k. An approver step has no interface the runner checks.
+// of kind k.
 func implementsKind(s described, k step.Kind) bool {
 	switch k {
 	case step.KindContext:
@@ -162,7 +164,8 @@ func implementsKind(s described, k step.Kind) bool {
 		_, isGiveUp := s.(step.GiveUpOutput)
 		return isPass || isGiveUp
 	case step.KindApprover:
-		return true
+		_, ok := s.(step.Approver)
+		return ok
 	default:
 		return false
 	}

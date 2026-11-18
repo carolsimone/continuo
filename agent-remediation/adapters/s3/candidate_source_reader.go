@@ -2,6 +2,7 @@ package s3
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -65,5 +66,25 @@ func (r *CandidateSourceReader) NodeSource(ctx context.Context, bundleURI, uniqu
 	if !ok {
 		return ports.CandidateSource{}, ports.ErrNotFound
 	}
-	return ports.CandidateSource{RawCode: node.RawCode, Runtime: node.Runtime}, nil
+	return ports.CandidateSource{RawCode: node.RawCode, Runtime: node.Runtime, Owner: ownerOf(node)}, nil
+}
+
+// ownerOf is the owner the bundle records for node: the `owner` key of a
+// python node's raw_code, its contract entry as JSON, and the `meta.owner` of
+// any other node's config. A value that is absent or not a string, and a
+// raw_code that is not a JSON object, give no owner.
+func ownerOf(node codebundle.Node) string {
+	if node.Runtime == ports.RuntimePython {
+		var entry struct {
+			Owner any `json:"owner"`
+		}
+		if err := json.Unmarshal([]byte(node.RawCode), &entry); err != nil {
+			return ""
+		}
+		owner, _ := entry.Owner.(string)
+		return owner
+	}
+	meta, _ := node.Config["meta"].(map[string]any)
+	owner, _ := meta["owner"].(string)
+	return owner
 }

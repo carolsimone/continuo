@@ -318,9 +318,10 @@ func (r *Runner) concluded(row remediation.StepRun, res remediation.CheckResult)
 	return row, nil
 }
 
-// passGate runs the flow's pass output on the verified drafts, hands over the
-// nodes the attempt's final row leaves to a human (handOver), passes the try
-// and ends the remediation, in one transaction with the gate's row. When the
+// passGate runs the flow's approver for the nodes the verified drafts cover and
+// its pass output on those drafts, handed the approvers, hands over the nodes
+// the attempt's final row leaves to a human (handOver), passes the try and
+// ends the remediation, in one transaction with the gate's row. When the
 // attempt's proposal row is no longer verifying, no output runs: the try fails
 // and the remediation ends.
 func (r *Runner) passGate(ctx context.Context, run tryRun, row remediation.StepRun, attempt proposal.View, checked []checkedCluster, verdict step.GateVerdict) error {
@@ -356,7 +357,12 @@ func (r *Runner) passGate(ctx context.Context, run tryRun, row remediation.StepR
 			run.countOutcomes(current.NodeOutcomes)
 			return nil
 		}
-		in := step.OutputInput{Remediation: run.snap.Remediation, Try: *run.snap.Try, Trigger: run.trigger, Snapshot: run.snap}
+		fixed := draftsOf(checked)
+		approvers, err := r.approversFor(ctx, run, fixed, coveredNodes(fixed))
+		if err != nil {
+			return err
+		}
+		in := step.OutputInput{Remediation: run.snap.Remediation, Try: *run.snap.Try, Trigger: run.trigger, Snapshot: run.snap, Approvers: approvers}
 		outRow := r.newRow(run, flowCluster, string(outName), kindOutput, flowRound, run.flow.Revision)
 		if err := out.Pass(ctx, u, in, v); err != nil {
 			return fmt.Errorf("step %s: %w", outName, err)

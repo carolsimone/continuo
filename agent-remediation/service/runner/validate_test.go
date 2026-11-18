@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
@@ -37,6 +38,8 @@ func stubFor(m step.Meta) described {
 		return stubCheck{base}
 	case step.KindOutput:
 		return stubPass{base}
+	case step.KindApprover:
+		return stubApprover{base}
 	default:
 		return base
 	}
@@ -58,6 +61,12 @@ type stubCheck struct{ stubStep }
 
 func (stubCheck) Check(context.Context, step.CheckInput) (step.CheckOutput, error) {
 	return step.CheckOutput{}, nil
+}
+
+type stubApprover struct{ stubStep }
+
+func (stubApprover) Approvers(context.Context, step.ApproverInput) ([]proposal.Approver, error) {
+	return nil, nil
 }
 
 type stubPass struct{ stubStep }
@@ -87,6 +96,7 @@ func stubRegistry() *Registry {
 		{Name: "verification_run", Kind: step.KindCheck, Stages: []workflow.Stage{workflow.StageGate}, MayStandAsGateRun: true},
 		{Name: "a_gate_without_a_run", Kind: step.KindCheck, Stages: []workflow.Stage{workflow.StageGate}},
 		{Name: "open_pr", Kind: step.KindOutput, Stages: []workflow.Stage{workflow.StageOutput}},
+		{Name: "node_owner", Kind: step.KindApprover, Stages: []workflow.Stage{workflow.StageApprover}},
 	} {
 		m.Description = string(m.Name)
 		r.register(stubFor(m))
@@ -115,6 +125,7 @@ func validFlow() workflow.Flow {
 		OnGiveUp:       workflow.Output{Action: workflow.OutputHandOver, Pos: pos(flowFile, 12)},
 		ModelMaySee:    []workflow.DataClass{workflow.ClassCode, workflow.ClassLogs},
 		ModelMaySeePos: pos(flowFile, 13),
+		Approver:       ref(flowFile, 14, "node_owner"),
 		File:           flowFile,
 		Pos:            pos(flowFile, 1),
 	}
@@ -213,6 +224,24 @@ func TestValidate_RefusesAMissingStage(t *testing.T) {
 		refuses(t, func(f *workflow.Flow, _ *workflow.Type) {
 			f.OnGiveUp = workflow.Output{Pos: pos(flowFile, 12)}
 		}, `flows/f.yaml:12`, `on_give_up`)
+	})
+}
+
+// A flow names the step that works out who approves its fixes, and that step
+// is an approver: a flow with none, an unknown one, or a step of another kind is
+// refused with its file and line.
+func TestValidate_RefusesAFlowWithoutAnApprover(t *testing.T) {
+	t.Run("no approver", func(t *testing.T) {
+		refuses(t, func(f *workflow.Flow, _ *workflow.Type) { f.Approver = workflow.StepRef{} },
+			`flows/f.yaml:1: flow "f" has no approver`)
+	})
+	t.Run("an unknown step", func(t *testing.T) {
+		refuses(t, func(f *workflow.Flow, _ *workflow.Type) { f.Approver = ref(flowFile, 14, "no_such_step") },
+			`flows/f.yaml:14: unknown step "no_such_step" in approver`)
+	})
+	t.Run("a step that is no approver", func(t *testing.T) {
+		refuses(t, func(f *workflow.Flow, _ *workflow.Type) { f.Approver = ref(flowFile, 14, "dbt_log") },
+			`flows/f.yaml:14: step "dbt_log" is a context step and cannot be used in approver`)
 	})
 }
 

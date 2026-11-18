@@ -2,6 +2,7 @@ package s3
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -133,4 +134,46 @@ func TestNodeSource_TransientFetchError_NotFlattened(t *testing.T) {
 	var status interface{ HTTPStatusCode() int }
 	require.True(t, errors.As(err, &status))
 	assert.Equal(t, http.StatusServiceUnavailable, status.HTTPStatusCode())
+}
+
+// A dbt node's owner is the `meta.owner` its config carries in the bundle. An
+// owner that is not a string, or a config with no meta, gives no owner.
+func TestCandidateSourceReader_ReadsTheDbtOwner(t *testing.T) {
+	for _, tc := range []struct{ name, config, want string }{
+		{"meta.owner", `{"materialized":"table","meta":{"owner":"finance"}}`, "finance"},
+		{"no meta", `{"materialized":"table"}`, ""},
+		{"an owner that is not a string", `{"meta":{"owner":["a","b"]}}`, ""},
+		{"a meta that is not a mapping", `{"meta":"finance"}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"contract_version":1,"release_id":"rel-1","nodes":{"analytics.orders":{"runtime":"dbt",
+			  "raw_code":"select 1 as x","content_hash":"h1","config":` + tc.config + `}},"shared_code":{}}`
+			src, err := NewCandidateSourceReader(newBundleStore(t, body)).NodeSource(context.Background(), testBundleURI, "analytics.orders", "rel-1")
+			require.NoError(t, err)
+			assert.Equal(t, ports.CandidateSource{RawCode: "select 1 as x", Runtime: ports.RuntimeDbt, Owner: tc.want}, src)
+		})
+	}
+}
+
+// A python node's owner is the `owner` key of its raw_code, the contract entry
+// topology-controller writes from the node's ODCS team.name. A raw_code that is
+// not a JSON object, or has no string owner, gives no owner, and the entry is
+// still returned.
+func TestCandidateSourceReader_ReadsThePythonOwner(t *testing.T) {
+	for _, tc := range []struct{ name, rawCode, want string }{
+		{"owner", `{"kind": "python-node", "owner": "e2e", "table": "kpis"}`, "e2e"},
+		{"no owner", `{"kind": "python-node"}`, ""},
+		{"an owner that is not a string", `{"owner": 7}`, ""},
+		{"not JSON", `not json`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := json.Marshal(tc.rawCode)
+			require.NoError(t, err)
+			body := `{"contract_version":1,"release_id":"rel-1","nodes":{"analytics.kpis":{"runtime":"python",
+			  "raw_code":` + string(raw) + `,"content_hash":"h1","config":{"meta":{"owner":"not-this-one"}}}},"shared_code":{}}`
+			src, err := NewCandidateSourceReader(newBundleStore(t, body)).NodeSource(context.Background(), testBundleURI, "analytics.kpis", "rel-1")
+			require.NoError(t, err)
+			assert.Equal(t, ports.CandidateSource{RawCode: tc.rawCode, Runtime: ports.RuntimePython, Owner: tc.want}, src)
+		})
+	}
 }

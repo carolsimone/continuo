@@ -210,6 +210,13 @@ func (l *loader) loadFlow(file, revision string, root *yaml.Node) {
 			flow.ModelMaySee = append(flow.ModelMaySee, workflow.DataClass(n.Value))
 		}
 	}
+	switch {
+	case f.Approver.Kind == 0 || f.Approver.Tag == "!!null":
+	case f.Approver.Kind != yaml.ScalarNode:
+		l.fail(file, f.Approver.Line, "approver must name one step")
+	default:
+		flow.Approver = workflow.StepRef{Name: workflow.StepName(f.Approver.Value), Pos: at(f.Approver.Line)}
+	}
 	if len(l.errs) > before {
 		return
 	}

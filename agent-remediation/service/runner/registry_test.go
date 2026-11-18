@@ -158,11 +158,12 @@ func TestRegistry_EvidenceTypeKnowsTheRunnerProvidedKeys(t *testing.T) {
 
 func TestRegistry_RegisterRefusesAKindTheStepDoesNotImplement(t *testing.T) {
 	cases := map[step.Kind]described{
-		step.KindContext: fakePass{fakeStep{step.Meta{Name: "x", Kind: step.KindContext}}},
-		step.KindPrompt:  fakeContext{fakeStep{step.Meta{Name: "x", Kind: step.KindPrompt}}},
-		step.KindCheck:   fakeContext{fakeStep{step.Meta{Name: "x", Kind: step.KindCheck}}},
-		step.KindOutput:  fakeContext{fakeStep{step.Meta{Name: "x", Kind: step.KindOutput}}},
-		"unknown":        fakeStep{step.Meta{Name: "x", Kind: "unknown"}},
+		step.KindContext:  fakePass{fakeStep{step.Meta{Name: "x", Kind: step.KindContext}}},
+		step.KindPrompt:   fakeContext{fakeStep{step.Meta{Name: "x", Kind: step.KindPrompt}}},
+		step.KindCheck:    fakeContext{fakeStep{step.Meta{Name: "x", Kind: step.KindCheck}}},
+		step.KindOutput:   fakeContext{fakeStep{step.Meta{Name: "x", Kind: step.KindOutput}}},
+		step.KindApprover: fakeStep{step.Meta{Name: "x", Kind: step.KindApprover}},
+		"unknown":         fakeStep{step.Meta{Name: "x", Kind: "unknown"}},
 	}
 	for kind, s := range cases {
 		t.Run(string(kind), func(t *testing.T) {
@@ -172,9 +173,19 @@ func TestRegistry_RegisterRefusesAKindTheStepDoesNotImplement(t *testing.T) {
 	}
 }
 
-func TestRegistry_RegisterAcceptsAnApproverOfAnyShape(t *testing.T) {
+func TestRegistry_RegisterAcceptsAnApprover(t *testing.T) {
 	r := NewRegistry(Collaborators{})
-	assert.NotPanics(t, func() { r.register(fakeStep{step.Meta{Name: "x", Kind: step.KindApprover}}) })
+	assert.NotPanics(t, func() { r.register(stubApprover{stubStep{step.Meta{Name: "x", Kind: step.KindApprover}}}) })
+}
+
+// node_owner is the approver the built-in flow names.
+func TestRegistry_HoldsTheNodeOwnerApprover(t *testing.T) {
+	s, m, ok := NewRegistry(Collaborators{}).Lookup("node_owner")
+	assert.True(t, ok)
+	assert.Equal(t, step.KindApprover, m.Kind)
+	assert.Equal(t, []workflow.Stage{workflow.StageApprover}, m.Stages)
+	_, isApprover := s.(step.Approver)
+	assert.True(t, isApprover)
 }
 
 func TestRegistry_HoldsTheSharedSteps(t *testing.T) {

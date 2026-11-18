@@ -24,6 +24,7 @@ output:
   on_pass:    { action: pull_request, emits: remediation.proposed }
   on_give_up: { action: hand_over }
 model_may_see: [code, logs]
+approver: node_owner
 `
 
 const typeYAML = `kind: type
@@ -64,6 +65,7 @@ func TestLoad_ReadsAFlowAndATypeFromOneFolder(t *testing.T) {
 	assert.Empty(t, flow.OnGiveUp.Emits)
 	assert.Equal(t, []workflow.DataClass{workflow.ClassCode, workflow.ClassLogs}, flow.ModelMaySee)
 	assert.Equal(t, workflow.Pos{File: "flows/rejected-release.yaml", Line: 13}, flow.ModelMaySeePos)
+	assert.Equal(t, workflow.StepRef{Name: "node_owner", Pos: workflow.Pos{File: "flows/rejected-release.yaml", Line: 14}}, flow.Approver)
 
 	typ, ok := set.Types["dbt-compile"]
 	require.True(t, ok)
@@ -113,7 +115,7 @@ func TestLoad_ReadsSeveralDocumentsOfOneFileAndSkipsFixtures(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, set.Flows, 1)
 	require.Len(t, set.Types, 1)
-	assert.Equal(t, 15, set.Types["dbt-compile"].Pos.Line)
+	assert.Equal(t, 16, set.Types["dbt-compile"].Pos.Line)
 	assert.Equal(t, set.Flows["rejected-release"].Revision, set.Types["dbt-compile"].Revision)
 }
 
@@ -284,6 +286,26 @@ func TestLoad_RefusesModelMaySeeThatIsNotAListOfNames(t *testing.T) {
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.at)
 			assert.Contains(t, err.Error(), "model_may_see")
+		})
+	}
+}
+
+// A flow with no approver loads with none, which Validate refuses; an approver
+// that is not one step name is refused with its line.
+func TestLoad_ReadsTheApproverAsOneStepName(t *testing.T) {
+	set, err := Load(fstest.MapFS{"f.yaml": {Data: []byte("kind: flow\nname: f\n")}})
+	require.NoError(t, err)
+	assert.Equal(t, workflow.StepRef{}, set.Flows["f"].Approver)
+
+	for name, tc := range map[string]struct{ body, want string }{
+		"list":    {"kind: flow\nname: f\napprover: [node_owner]\n", "f.yaml:3"},
+		"mapping": {"kind: flow\nname: f\napprover:\n  step: node_owner\n", "f.yaml:4"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Load(fstest.MapFS{"f.yaml": {Data: []byte(tc.body)}})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+			assert.Contains(t, err.Error(), "approver")
 		})
 	}
 }

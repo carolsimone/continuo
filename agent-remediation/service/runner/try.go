@@ -402,11 +402,12 @@ func (r *Runner) endWithAttempt(ctx context.Context, u uow.UnitOfWork, run tryRu
 	return nil
 }
 
-// handOver runs the flow's give-up output, in u's transaction, for every node
-// of an ending remediation whose final outcome carries a code
-// (remediation.HandOvers). A remediation that made a try records the output on
-// that try's journal. With no node to hand over, nothing runs and nothing is
-// written.
+// handOver runs the flow's approver and then its give-up output, in u's
+// transaction, for every node of an ending remediation whose final outcome
+// carries a code (remediation.HandOvers): the output is handed each node's
+// approver, worked out from the clusters of the current try (workedClusters).
+// A remediation that made a try records the output on that try's journal. With
+// no node to hand over, nothing runs and nothing is written.
 func (r *Runner) handOver(ctx context.Context, u uow.UnitOfWork, run tryRun, outcomes map[string]proposal.NodeOutcome) error {
 	handed := remediation.HandOvers(outcomes)
 	if len(handed) == 0 {
@@ -417,7 +418,19 @@ func (r *Runner) handOver(ctx context.Context, u uow.UnitOfWork, run tryRun, out
 	if err != nil {
 		return err
 	}
-	in := step.OutputInput{Remediation: run.snap.Remediation, Trigger: run.trigger, Snapshot: run.snap, HandedOver: handed}
+	clusters, err := r.workedClusters(run)
+	if err != nil {
+		return err
+	}
+	nodes := make([]string, len(handed))
+	for i, h := range handed {
+		nodes[i] = h.NodeID
+	}
+	approvers, err := r.approversFor(ctx, run, clusters, nodes)
+	if err != nil {
+		return err
+	}
+	in := step.OutputInput{Remediation: run.snap.Remediation, Trigger: run.trigger, Snapshot: run.snap, HandedOver: handed, Approvers: approvers}
 	var row remediation.StepRun
 	if run.snap.Try != nil {
 		in.Try = *run.snap.Try

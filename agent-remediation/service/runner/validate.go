@@ -19,6 +19,7 @@ const (
 	fieldPreflight      = "preflight"
 	fieldAcrossClusters = "across_clusters"
 	fieldGate           = "gate"
+	fieldApprover       = "approver"
 )
 
 // Validate checks every flow and type of set against the steps reg holds and
@@ -33,7 +34,8 @@ const (
 // evidence with no class), `rounds` below 1 (a type runs at
 // least one pre-flight round), `tries` below 1, an output that is not
 // a pull request or a hand-over or that publishes an event outside the stream
-// contract, an unsupported version or trigger, and two listed types that can
+// contract, a flow with no approver or one that names a step that is not an
+// approver, an unsupported version or trigger, and two listed types that can
 // select the same failure. A type no flow lists is only a warning.
 func Validate(set workflow.Set, reg *Registry) (warnings []string, err error) {
 	v := &validator{set: set, reg: reg, seen: map[string]bool{}}
@@ -116,6 +118,11 @@ func (v *validator) flow(f workflow.Flow) {
 
 	v.output(f.OnPass, "on_pass", workflow.OutputPullRequest)
 	v.output(f.OnGiveUp, "on_give_up", workflow.OutputHandOver)
+	if f.Approver.Name == "" {
+		v.refuse(f.Pos, "flow %q has no approver, and a flow names the step that works out who approves its fixes (approver: node_owner)", f.Name)
+	} else {
+		v.stage([]workflow.StepRef{f.Approver}, workflow.StageApprover, fieldApprover)
+	}
 
 	v.classes(f, fmt.Sprintf("flow %q", f.Name), f.Context)
 	for _, t := range listed {
@@ -277,6 +284,8 @@ func kindOf(stage workflow.Stage) step.Kind {
 		return step.KindContext
 	case workflow.StagePrompt:
 		return step.KindPrompt
+	case workflow.StageApprover:
+		return step.KindApprover
 	default:
 		return step.KindCheck
 	}

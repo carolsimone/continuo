@@ -141,12 +141,13 @@ func (noPrecedents) Precedents(context.Context, ports.PrecedentQuery) ([]prompt.
 }
 
 // noBundle is a code bundle that holds only the nodes in nodes. onRead runs
-// on every read.
+// on every read, and every read answers err while it is set.
 type noBundle struct {
 	mu     sync.Mutex
 	reads  int
 	nodes  map[string]ports.CandidateSource
 	onRead func(n int)
+	err    error
 }
 
 func (b *noBundle) NodeSource(_ context.Context, _, nodeID, _ string) (ports.CandidateSource, error) {
@@ -155,6 +156,9 @@ func (b *noBundle) NodeSource(_ context.Context, _, nodeID, _ string) (ports.Can
 	b.reads++
 	if b.onRead != nil {
 		b.onRead(b.reads)
+	}
+	if b.err != nil {
+		return ports.CandidateSource{}, b.err
 	}
 	if src, ok := b.nodes[nodeID]; ok {
 		return src, nil
@@ -426,6 +430,7 @@ func testFiles(tries int) workflow.Set {
 		OnPass:         workflow.Output{Action: workflow.OutputPullRequest, Emits: baseName(streams.RemediationProposedV1)},
 		OnGiveUp:       workflow.Output{Action: workflow.OutputHandOver, Emits: baseName(streams.RemediationHandedOverV1)},
 		ModelMaySee:    []workflow.DataClass{workflow.ClassCode, workflow.ClassLogs},
+		Approver:       workflow.StepRef{Name: "node_owner"},
 		Revision:       flowRevision,
 		File:           flowFile,
 	}
