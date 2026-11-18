@@ -123,10 +123,6 @@ func (e fakeEvidence) Fetch(_ context.Context, uri string) (string, error) {
 	return "", ports.ErrNotFound
 }
 
-type nopSanitizer struct{}
-
-func (nopSanitizer) Sanitize(s string) string { return s }
-
 // noUpstream is a graph that knows no change upstream of any node.
 type noUpstream struct{}
 
@@ -646,7 +642,6 @@ func newHarness(t *testing.T, opts ...option) *harness {
 	h.collab = runner.Collaborators{
 		Source:    h.source,
 		Evidence:  h.evidence,
-		Sanitizer: nopSanitizer{},
 		Artifacts: h.artifacts,
 		Logger:    discard,
 		ServiceRepoPaths: map[string]string{

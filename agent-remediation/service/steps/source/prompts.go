@@ -14,7 +14,7 @@ import (
 // builder turns the evidence of one cluster into the model's request. Each
 // source-file prompt differs only in the request it builds, in whether it reads
 // the dbt log, and in how it picks the file the model's answer replaces.
-type builder func(sanitizer ports.LogSanitizer, f remediation.Failure, files remediation.SourceFiles, dbtLog string, precedents []prompt.Precedent) prompt.ProposeRequest
+type builder func(f remediation.Failure, files remediation.SourceFiles, dbtLog string, precedents []prompt.Precedent) prompt.ProposeRequest
 
 // picker chooses the file an answer replaces from the shown files.
 type picker func(res ports.ProposeResult, files remediation.SourceFiles) (target string, shown bool)
@@ -30,23 +30,21 @@ type sourcePrompt struct {
 	suspectsRoot bool
 	build        builder
 	pick         picker
-	sanitizer    ports.LogSanitizer
 }
 
 var _ step.Prompt = (*sourcePrompt)(nil)
 
 // NewDBTCompile builds the dbt-compile prompt: a dbt compile failure, where the
 // model picks which shown file to change.
-func NewDBTCompile(sanitizer ports.LogSanitizer) step.Prompt {
+func NewDBTCompile() step.Prompt {
 	return &sourcePrompt{
 		name:         "dbt-compile",
 		description:  "Shows the model the files around a failed dbt compile with the dbt log, and reads back the corrected content of the one file it chooses. The first-round request carries the earlier tries at the failure, when there are any.",
 		readsLog:     true,
 		suspectsRoot: true,
-		sanitizer:    sanitizer,
 		pick:         pickNamed,
-		build: func(san ports.LogSanitizer, f remediation.Failure, files remediation.SourceFiles, dbtLog string, precedents []prompt.Precedent) prompt.ProposeRequest {
-			return prompt.AssembleCompileFix(sanitizedFiles(san, files), dbtLog, f.Target.NodeID, precedents)
+		build: func(f remediation.Failure, files remediation.SourceFiles, dbtLog string, precedents []prompt.Precedent) prompt.ProposeRequest {
+			return prompt.AssembleCompileFix(shownFiles(files), dbtLog, f.Target.NodeID, precedents)
 		},
 	}
 }
@@ -54,49 +52,46 @@ func NewDBTCompile(sanitizer ports.LogSanitizer) step.Prompt {
 // NewDBTParse builds the dbt-parse prompt: a node whose compiled SQL the parser
 // rejected, where the model picks which shown file to change and is shown the
 // parser's error text in place of a dbt log.
-func NewDBTParse(sanitizer ports.LogSanitizer) step.Prompt {
+func NewDBTParse() step.Prompt {
 	return &sourcePrompt{
 		name:         "dbt-parse",
 		description:  "Shows the model the files around a node whose SQL the parser rejected with the parser's error, and reads back the corrected content of the one file it chooses. The first-round request carries the earlier tries at the failure, when there are any.",
 		suspectsRoot: true,
-		sanitizer:    sanitizer,
 		pick:         pickNamed,
-		build: func(san ports.LogSanitizer, f remediation.Failure, files remediation.SourceFiles, _ string, precedents []prompt.Precedent) prompt.ProposeRequest {
-			return prompt.AssembleParseFix(sanitizedFiles(san, files), san.Sanitize(f.Target.ErrorExcerpt), f.Target.Service, f.Target.NodeID, precedents)
+		build: func(f remediation.Failure, files remediation.SourceFiles, _ string, precedents []prompt.Precedent) prompt.ProposeRequest {
+			return prompt.AssembleParseFix(shownFiles(files), f.Target.ErrorExcerpt, f.Target.Service, f.Target.NodeID, precedents)
 		},
 	}
 }
 
 // NewSeed builds the seed prompt: a dbt seed whose csv failed to load. The file
 // to change is always the seed's own csv.
-func NewSeed(sanitizer ports.LogSanitizer) step.Prompt {
+func NewSeed() step.Prompt {
 	return &sourcePrompt{
 		name:        "seed",
 		description: "Shows the model a seed's csv with the dbt log, and reads back the corrected csv. The first-round request carries the earlier tries at the failure, when there are any.",
 		readsLog:    true,
-		sanitizer:   sanitizer,
 		pick: func(_ ports.ProposeResult, files remediation.SourceFiles) (string, bool) {
 			return files.Primary, true
 		},
-		build: func(san ports.LogSanitizer, f remediation.Failure, files remediation.SourceFiles, dbtLog string, precedents []prompt.Precedent) prompt.ProposeRequest {
-			return prompt.AssembleSeedFix(files.Primary, san.Sanitize(files.Files[files.Primary]), dbtLog, f.Target.NodeID, precedents)
+		build: func(f remediation.Failure, files remediation.SourceFiles, dbtLog string, precedents []prompt.Precedent) prompt.ProposeRequest {
+			return prompt.AssembleSeedFix(files.Primary, files.Files[files.Primary], dbtLog, f.Target.NodeID, precedents)
 		},
 	}
 }
 
 // NewDuplicateTable builds the duplicate-table prompt: two models that produce
 // the same warehouse relation, where the model renames the changed claimant.
-func NewDuplicateTable(sanitizer ports.LogSanitizer) step.Prompt {
+func NewDuplicateTable() step.Prompt {
 	return &sourcePrompt{
 		name:         "duplicate-table",
 		description:  "Shows the model the changed claimant of a relation two models produce, names the other producer, and reads back the corrected content of the claimant's file. The first-round request carries the earlier tries at the failure, when there are any.",
 		suspectsRoot: true,
-		sanitizer:    sanitizer,
 		pick:         pickNamed,
-		build: func(san ports.LogSanitizer, f remediation.Failure, files remediation.SourceFiles, _ string, precedents []prompt.Precedent) prompt.ProposeRequest {
+		build: func(f remediation.Failure, files remediation.SourceFiles, _ string, precedents []prompt.Precedent) prompt.ProposeRequest {
 			n := f.Target
 			return prompt.AssembleDuplicateTableFix(
-				prompt.NamedFile{Path: files.Primary, Content: san.Sanitize(files.Files[files.Primary])},
+				prompt.NamedFile{Path: files.Primary, Content: files.Files[files.Primary]},
 				n.RelationID, n.OtherService, n.OtherFilePath, precedents)
 		},
 	}
@@ -153,12 +148,11 @@ func (p *sourcePrompt) request(in step.PromptInput, files remediation.SourceFile
 		dbtLog = string(log)
 	}
 	precedents, _ := remediation.Get[[]prompt.Precedent](in.Evidence, remediation.KeyFailurePrecedents)
-	return step.WithPreviousTries(p.build(p.sanitizer, in.Failure, files, dbtLog, precedents), in.Evidence)
+	return step.WithPreviousTries(p.build(in.Failure, files, dbtLog, precedents), in.Evidence)
 }
 
 // draft reads the model's answer into a draft. The edit's original is the file
-// as the repository holds it, not the sanitized copy the model saw, because the
-// fix is applied to the real file.
+// as the evidence holds it.
 func (p *sourcePrompt) draft(f remediation.Failure, files remediation.SourceFiles, res ports.ProposeResult) remediation.Draft {
 	target, shown := p.pick(res, files)
 	d := remediation.Draft{
@@ -192,13 +186,11 @@ func pickNamed(res ports.ProposeResult, files remediation.SourceFiles) (string, 
 	return resolveTarget(res.TargetFile, files)
 }
 
-// sanitizedFiles lists the shown files in order with each one sanitized, since
-// they leave for an external model. The raw content stays in files for the diff
-// and the no-op check.
-func sanitizedFiles(san ports.LogSanitizer, files remediation.SourceFiles) []prompt.NamedFile {
+// shownFiles lists the shown files in order.
+func shownFiles(files remediation.SourceFiles) []prompt.NamedFile {
 	out := make([]prompt.NamedFile, 0, len(files.Order))
 	for _, p := range files.Order {
-		out = append(out, prompt.NamedFile{Path: p, Content: san.Sanitize(files.Files[p])})
+		out = append(out, prompt.NamedFile{Path: p, Content: files.Files[p]})
 	}
 	return out
 }

@@ -2,7 +2,6 @@ package upstream_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,7 +15,7 @@ import (
 )
 
 func newTarget(b *fakeBundle, v *fakeVersions, l *fakeLocator) *upstream.Target {
-	return upstream.NewTarget(b, l, v, markSanitizer{}, repoPaths, discardLogger())
+	return upstream.NewTarget(b, l, v, repoPaths, discardLogger())
 }
 
 func okBundle() *fakeBundle {
@@ -32,7 +31,7 @@ func gatheredTarget(t *testing.T, out step.ContextOutput) remediation.UpstreamTa
 }
 
 func TestTarget_MetaNamesWhatItNeedsAndProvides(t *testing.T) {
-	m := upstream.NewTarget(nil, nil, nil, nil, nil, nil).Meta()
+	m := upstream.NewTarget(nil, nil, nil, nil, nil).Meta()
 	assert.Equal(t, "upstream_target", string(m.Name))
 	assert.Equal(t, step.KindContext, m.Kind)
 	assert.NotEmpty(t, m.Description)
@@ -52,7 +51,7 @@ func TestTarget_ReadsTheAncestorFromTheBundleAtTheTriggersLocation(t *testing.T)
 		Source:        targetSource,
 		FilePath:      targetFile,
 		Service:       targetSvc,
-		OwnChangeDiff: "<" + proposal.ComputeUnifiedDiff("select older from raw", targetSource, targetID) + ">",
+		OwnChangeDiff: proposal.ComputeUnifiedDiff("select older from raw", targetSource, targetID),
 	}, gatheredTarget(t, out))
 	assert.Equal(t, []bundleCall{{"s3://bundle/rel-1", targetID, "rel-1"}}, bundle.calls)
 	assert.Equal(t, []string{targetID}, versions.calls)
@@ -248,12 +247,15 @@ func TestTarget_TheOwnChangeDiffIsEmptyWhenThereIsNothingToDiff(t *testing.T) {
 	}
 }
 
-func TestTarget_TheSourceIsKeptRawAndTheDiffIsSanitized(t *testing.T) {
-	versions := &fakeVersions{versions: map[string]ports.CurrentVersion{targetID: {RawCode: "select 1"}}}
+func TestTarget_TheSourceIsKeptRawAndTheDiffComparesTwoCleanedTexts(t *testing.T) {
+	stored := "select '[redacted:email]' as owner"
+	bundle := &fakeBundle{nodes: map[string]ports.CandidateSource{targetID: dbtEntry("select 'ops@acme.com' as owner, 1")}}
+	versions := &fakeVersions{versions: map[string]ports.CurrentVersion{targetID: {RawCode: stored}}}
 
-	out := gather(t, newTarget(okBundle(), versions, &fakeLocator{}), failure(nil), remediation.NewEvidence())
+	out := gather(t, newTarget(bundle, versions, &fakeLocator{}), failure(nil), remediation.NewEvidence())
 
 	got := gatheredTarget(t, out)
-	assert.Equal(t, targetSource, got.Source, "the edit's original is the real file")
-	assert.True(t, strings.HasPrefix(got.OwnChangeDiff, "<") && strings.HasSuffix(got.OwnChangeDiff, ">"))
+	assert.Equal(t, "select 'ops@acme.com' as owner, 1", got.Source, "the edit's original is the real file")
+	assert.Equal(t, proposal.ComputeUnifiedDiff(stored, "select '[redacted:email]' as owner, 1", targetID), got.OwnChangeDiff,
+		"catalog's redaction of the stored version never shows as a change")
 }

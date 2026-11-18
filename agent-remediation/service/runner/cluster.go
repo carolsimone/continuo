@@ -174,10 +174,13 @@ func (r *Runner) runContext(ctx context.Context, run tryRun, c remediation.Clust
 }
 
 // runPrompt runs the cluster's prompt step through a model handle keyed by the
-// remediation, try, cluster and round. In a round after the first the step is
-// given the round before it, read from the journal (previousRound). A decline
-// ends the cluster with its members declined; a draft moves it on to
-// pre-flight.
+// remediation, try, cluster and round. The step is given the failure, the
+// evidence and, in a round after the first, the findings of the round before,
+// each cleaned by the Redactor of the cluster's round (redactionFor), and the
+// round before itself as the journal holds it (previousRound). The prompt row
+// stores the request as sent and the draft as the model's answer gave it, both
+// holding placeholders. A decline ends the cluster with its members declined; a
+// draft moves it on to pre-flight.
 func (r *Runner) runPrompt(ctx context.Context, run tryRun, c remediation.Cluster, plan clusterPlan, f remediation.Failure, ev remediation.Evidence) error {
 	ps := plan.prompt
 	row := r.newRow(run, c.Cluster, string(ps.name), string(step.KindPrompt), c.Round, ps.revision)
@@ -188,12 +191,17 @@ func (r *Runner) runPrompt(ctx context.Context, run tryRun, c remediation.Cluste
 	if row.InputDigest, err = serialization.InputDigest(ev, c.Round); err != nil {
 		return r.recordFailure(ctx, row, err)
 	}
+	red, err := r.redactionFor(run, c, ev)
+	if err != nil {
+		return r.recordFailure(ctx, row, fmt.Errorf("step %s: %w", ps.name, err))
+	}
 	in := step.PromptInput{Failure: f, Evidence: ev, Round: c.Round - 1}
 	if c.Round > 1 {
 		if in, err = r.previousRound(run, c, in); err != nil {
 			return r.recordFailure(ctx, row, fmt.Errorf("step %s: %w", ps.name, err))
 		}
 	}
+	in = red.prompt(in)
 	m := newModel(r.d.LLM, run.snap.Remediation.ID, run.snap.Try.Try, c.Cluster, c.Round, promptlog.Failure{
 		Source:    run.trigger.Source,
 		ReleaseID: run.trigger.ReleaseID,
@@ -231,11 +239,10 @@ func (r *Runner) runPrompt(ctx context.Context, run tryRun, c remediation.Cluste
 }
 
 // previousRound returns in with the round before the cluster's, as the journal
-// holds it: the draft, the last request and the last answer of that round's
-// prompt row, and every finding of that round's pre-flight pass, check by
-// check in the order the pass ran them, from the pass's row. Both rows are
-// read whatever the loaded files list now. A prompt row that stores no model
-// call cannot be revised, and is an error.
+// holds that round's prompt row, whatever the loaded files list now: its draft,
+// its last request and its last answer, all holding the placeholders of the
+// cluster's Redactor. The findings of that round come from redactionFor. A
+// prompt row that stores no model call cannot be revised, and is an error.
 func (r *Runner) previousRound(run tryRun, c remediation.Cluster, in step.PromptInput) (step.PromptInput, error) {
 	prev := c.Round - 1
 	row, done := run.journal.promptRow(c.Cluster, prev)
@@ -249,13 +256,8 @@ func (r *Runner) previousRound(run tryRun, c remediation.Cluster, in step.Prompt
 	if rec.LastRequest == nil || rec.LastAnswer == nil {
 		return in, fmt.Errorf("round %d's prompt row stores no model call to revise", prev)
 	}
-	pass, done := run.journal.done(c.Cluster, stepPreflight, prev)
-	if !done {
-		return in, fmt.Errorf("round %d's pre-flight pass has no done row", prev)
-	}
 	req, answer := rec.LastRequest.Request(), rec.LastAnswer.Answer()
 	in.Previous, in.PreviousRequest, in.PreviousAnswer = &rec.Draft, &req, &answer
-	in.Findings = append(in.Findings, pass.Findings...)
 	return in, nil
 }
 
@@ -272,10 +274,16 @@ func promptRecord(out step.PromptOutput, m *model) serialization.PromptRecord {
 	return rec
 }
 
-// runPreflight runs every pre-flight check of the cluster's type on the draft,
-// in file order, in one pass over a fresh scratch checkout, and collects every
-// finding. Each check's row, the pass's own row and the cluster's end commit
-// together, so a pass interrupted before its commit runs again whole.
+// runPreflight restores the draft the prompt step read from the model's answer
+// with the Redactor of the cluster's round (redactionFor), then runs every
+// pre-flight check of the cluster's type on the restored draft, in file order,
+// in one pass over a fresh scratch checkout, and collects every finding. The
+// runner's own rule comes first in the pass: each placeholder the restored
+// draft still holds in an edit or its rationale is the finding
+// unknown_placeholder, so no file can drop the rule and no redaction marker
+// reaches a pull request. The pass's row stores the restored draft. Each
+// check's row, the pass's own row and the cluster's end commit together, so a
+// pass interrupted before its commit runs again whole.
 //
 // When every check passed, each edit with no original gets the one the pass's
 // checkout read, the edits' content and diff are stored, and the cluster is
@@ -288,8 +296,12 @@ func promptRecord(out step.PromptOutput, m *model) serialization.PromptRecord {
 // the code preflight_rounds_spent.
 func (r *Runner) runPreflight(ctx context.Context, run tryRun, c remediation.Cluster, plan clusterPlan, f remediation.Failure, ev remediation.Evidence, draft remediation.Draft) error {
 	pass := r.newRow(run, c.Cluster, stepPreflight, kindRunner, c.Round, plan.typ.Revision)
+	red, err := r.redactionFor(run, c, ev)
+	if err != nil {
+		return r.recordFailure(ctx, pass, err)
+	}
+	draft, unknown := restoreDraft(draft, red.redactor)
 	ev = ev.With(remediation.KeyDraft, draft)
-	var err error
 	if pass.InputDigest, err = serialization.InputDigest(ev, c.Round); err != nil {
 		return r.recordFailure(ctx, pass, err)
 	}
@@ -297,8 +309,9 @@ func (r *Runner) runPreflight(ctx context.Context, run tryRun, c remediation.Clu
 	defer scratch.Close()
 
 	rows := make([]remediation.StepRun, 0, len(plan.preflight)+1)
-	results := make([]remediation.CheckResult, 0, len(plan.preflight))
-	var findings []remediation.Finding
+	results := make([]remediation.CheckResult, 0, len(plan.preflight)+1)
+	results = append(results, remediation.CheckResult{Check: findingUnknownPlaceholder, Findings: unknown})
+	findings := append([]remediation.Finding(nil), unknown...)
 	for _, ps := range plan.preflight {
 		row, result, gathered, err := r.runCheck(ctx, run, c, f, ev, draft, scratch, ps)
 		if err != nil {

@@ -21,6 +21,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/adapters/memory"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/redis"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
+	"github.com/carolsimone/continuo/agent-remediation/adapters/sanitizer"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/scripted"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/workflowfile"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
@@ -217,7 +218,7 @@ func runLegacy(t *testing.T, flow workflow.Flow, f conformance.Fixture, script c
 		LLM:               llm,
 		Evidence:          collab.Evidence,
 		Source:            collab.Source,
-		Sanitizer:         collab.Sanitizer,
+		Sanitizer:         sanitizer.Passthrough{},
 		Artifacts:         arts,
 		Clock:             w.Clock(),
 		Logger:            logger,

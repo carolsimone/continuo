@@ -28,7 +28,7 @@ func precedentFailure() remediation.Failure {
 
 func gatherPrecedents(t *testing.T, r *fakePrecedents, f remediation.Failure) []prompt.Precedent {
 	t.Helper()
-	out, err := shared.NewPrecedents(r, markSanitizer{}, discardLogger()).
+	out, err := shared.NewPrecedents(r, discardLogger()).
 		Gather(context.Background(), step.ContextInput{Failure: f})
 	require.NoError(t, err)
 	got, ok := out.Evidence[remediation.KeyFailurePrecedents].([]prompt.Precedent)
@@ -37,7 +37,7 @@ func gatherPrecedents(t *testing.T, r *fakePrecedents, f remediation.Failure) []
 }
 
 func TestPrecedents_MetaNamesWhatItNeedsAndProvides(t *testing.T) {
-	m := shared.NewPrecedents(nil, nil, nil).Meta()
+	m := shared.NewPrecedents(nil, nil).Meta()
 	assert.Equal(t, "failure_precedents", string(m.Name))
 	assert.Equal(t, step.KindContext, m.Kind)
 	assert.NotEmpty(t, m.Description)
@@ -45,7 +45,7 @@ func TestPrecedents_MetaNamesWhatItNeedsAndProvides(t *testing.T) {
 	assert.Equal(t, []remediation.EvidenceKey{remediation.KeyFailurePrecedents}, m.Provides)
 }
 
-func TestPrecedents_ExactSignatureMatchIsSanitizedAndSkipsTheFallback(t *testing.T) {
+func TestPrecedents_ExactSignatureMatchSkipsTheFallback(t *testing.T) {
 	r := &fakePrecedents{bySignature: map[string][]prompt.Precedent{"sig-a": {{
 		ReleaseID: "rel-0", NodeID: "model.z", ResolutionDiff: "diff", ErrorExcerpt: "err",
 		Edited: []prompt.EditedPrecedent{{NodeID: "model.z", Diff: "ed"}},
@@ -53,10 +53,9 @@ func TestPrecedents_ExactSignatureMatchIsSanitizedAndSkipsTheFallback(t *testing
 	got := gatherPrecedents(t, r, precedentFailure())
 	assert.Equal(t, []ports.PrecedentQuery{{Signature: "sig-a", Limit: 10}}, r.queries)
 	assert.Equal(t, []prompt.Precedent{{
-		ReleaseID: "rel-0", NodeID: "model.z", ResolutionDiff: "<diff>", ErrorExcerpt: "<err>",
-		Edited: []prompt.EditedPrecedent{{NodeID: "model.z", Diff: "<ed>"}},
+		ReleaseID: "rel-0", NodeID: "model.z", ResolutionDiff: "diff", ErrorExcerpt: "err",
+		Edited: []prompt.EditedPrecedent{{NodeID: "model.z", Diff: "ed"}},
 	}}, got)
-	assert.Equal(t, "ed", r.bySignature["sig-a"][0].Edited[0].Diff, "the reader's slice stays untouched")
 }
 
 func TestPrecedents_DropsThisFailuresOwnRejectionBeforeTheFallback(t *testing.T) {
@@ -71,7 +70,7 @@ func TestPrecedents_DropsThisFailuresOwnRejectionBeforeTheFallback(t *testing.T)
 		{Signature: "sig-a", Limit: 10},
 		{Category: "compile", Reason: "syntax", Limit: 10},
 	}, r.queries, "an exact match that is only the failure itself falls through to the class")
-	assert.Equal(t, []prompt.Precedent{{ReleaseID: "rel-0", NodeID: "model.b", ErrorExcerpt: "<e>", ResolutionDiff: "<>"}}, got)
+	assert.Equal(t, []prompt.Precedent{{ReleaseID: "rel-0", NodeID: "model.b", ErrorExcerpt: "e"}}, got)
 }
 
 func TestPrecedents_NoSignatureGoesStraightToTheClass(t *testing.T) {
@@ -114,5 +113,5 @@ func TestPrecedents_AnUpstreamClusterLooksUpItsFirstMember(t *testing.T) {
 	}}
 	got := gatherPrecedents(t, r, f)
 	assert.Equal(t, []ports.PrecedentQuery{{Signature: "sig-m1", Limit: 10}}, r.queries)
-	assert.Equal(t, []prompt.Precedent{{ReleaseID: "rel-0", NodeID: "model.m1", ResolutionDiff: "<>", ErrorExcerpt: "<>"}}, got)
+	assert.Equal(t, []prompt.Precedent{{ReleaseID: "rel-0", NodeID: "model.m1"}}, got)
 }

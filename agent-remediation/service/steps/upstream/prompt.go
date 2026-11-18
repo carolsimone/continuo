@@ -8,14 +8,12 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
-	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 )
 
 // Prompt is the prompt step `upstream`: it asks the model for the corrected
 // source of the changed ancestor of an upstream cluster.
 type Prompt struct {
-	sanitizer        ports.LogSanitizer
 	serviceRepoPaths map[string]string
 }
 
@@ -23,8 +21,8 @@ var _ step.Prompt = (*Prompt)(nil)
 
 // NewPrompt builds the upstream step. serviceRepoPaths maps a service name to
 // its path inside the repository. It calls no port until Propose.
-func NewPrompt(sanitizer ports.LogSanitizer, serviceRepoPaths map[string]string) *Prompt {
-	return &Prompt{sanitizer: sanitizer, serviceRepoPaths: serviceRepoPaths}
+func NewPrompt(serviceRepoPaths map[string]string) *Prompt {
+	return &Prompt{serviceRepoPaths: serviceRepoPaths}
 }
 
 // Meta describes the step.
@@ -45,9 +43,7 @@ func (*Prompt) Meta() step.Meta {
 
 // Propose builds the request from the cluster's evidence, calls the model once
 // and reads its answer into a draft of one edit of the ancestor's file. The
-// source and the members' error excerpts are sanitized because they leave for an
-// external model; the edit's original is the file as the bundle holds it,
-// because the fix is applied to the real file. The edit's content may be empty
+// edit's original is the ancestor's source as the evidence holds it. The edit's content may be empty
 // or equal to the original, for the checks to refuse. A cross-service cluster
 // asks the model to keep what the members read. In a round after the first the
 // request is the revision of the last round's request with its answer and the
@@ -99,11 +95,11 @@ func (p *Prompt) request(in step.PromptInput, target remediation.UpstreamTarget)
 	f := in.Failure
 	members := make([]prompt.MemberFailure, 0, len(f.Members))
 	for _, n := range f.Members {
-		members = append(members, prompt.MemberFailure{NodeID: n.NodeID, Service: n.Service, ErrorExcerpt: p.sanitizer.Sanitize(n.ErrorExcerpt)})
+		members = append(members, prompt.MemberFailure{NodeID: n.NodeID, Service: n.Service, ErrorExcerpt: n.ErrorExcerpt})
 	}
 	return step.WithPreviousTries(prompt.AssembleUpstreamFix(prompt.UpstreamEvidence{
 		TargetNodeID:  target.NodeID,
-		TargetSource:  p.sanitizer.Sanitize(target.Source),
+		TargetSource:  target.Source,
 		OwnChangeDiff: target.OwnChangeDiff,
 		Members:       members,
 		Precedents:    precedents,

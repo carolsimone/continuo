@@ -1,8 +1,8 @@
 package ports
 
-// LogSanitizer redacts a dbt log before it reaches the LLM. A pass-through
-// implementation is wired at start-up; the seam allows real PII/token redaction
-// to be dropped in without touching the handler.
+// LogSanitizer is the seam through which the legacy lanes pass a text before it
+// reaches the LLM. Their implementation returns the text unchanged. The runner
+// does not use it: it cleans every model input with its own Redactor.
 type LogSanitizer interface {
 	Sanitize(log string) string
 }

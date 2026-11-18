@@ -22,14 +22,6 @@ var repoPaths = map[string]string{"up-svc": "services/up-svc", "down-svc": "serv
 
 func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-// markSanitizer wraps what it is given, so a test can tell sanitized text from
-// raw text.
-type markSanitizer struct{}
-
-func (markSanitizer) Sanitize(s string) string { return "<" + s + ">" }
-
-var _ ports.LogSanitizer = markSanitizer{}
-
 // fakeBundle serves code bundle entries by node id and records every read.
 type fakeBundle struct {
 	nodes map[string]ports.CandidateSource

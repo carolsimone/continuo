@@ -672,14 +672,13 @@ type runnerAdapters struct {
 }
 
 // runnerCollaborators is the ports the steps are built from: the adapters main
-// built, the sanitizer, the patcher that writes a draft over a checkout, the
+// built, the patcher that writes a draft over a checkout, the
 // system clock, and what the install configures (the repository paths of the
 // services, the warehouse's SQL dialect and how long a verification may run).
 func runnerCollaborators(cfg config.Config, a runnerAdapters, logger *slog.Logger) runner.Collaborators {
 	return runner.Collaborators{
 		Source:              a.github,
 		Evidence:            a.evidence,
-		Sanitizer:           sanitizer.Passthrough{},
 		Artifacts:           a.artifacts,
 		Logger:              logger,
 		ServiceRepoPaths:    cfg.ServiceRepoPaths,

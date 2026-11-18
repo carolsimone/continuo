@@ -27,7 +27,7 @@ func withSource(src string) remediation.Evidence {
 }
 
 func TestOwnChangeDiff_MetaNamesWhatItNeedsAndProvides(t *testing.T) {
-	m := validation.NewOwnChangeDiff(nil, nil, nil).Meta()
+	m := validation.NewOwnChangeDiff(nil, nil).Meta()
 	assert.Equal(t, "own_change_diff", string(m.Name))
 	assert.Equal(t, step.KindContext, m.Kind)
 	assert.NotEmpty(t, m.Description)
@@ -35,12 +35,12 @@ func TestOwnChangeDiff_MetaNamesWhatItNeedsAndProvides(t *testing.T) {
 	assert.Equal(t, []remediation.EvidenceKey{remediation.KeyOwnChangeDiff}, m.Provides)
 }
 
-func TestOwnChangeDiff_IsTheSanitizedDiffFromThePromotedVersion(t *testing.T) {
+func TestOwnChangeDiff_IsTheDiffFromThePromotedVersion(t *testing.T) {
 	versions := &fakeVersions{versions: map[string]ports.CurrentVersion{"model.svc.a": {RawCode: "select 1"}}}
 
-	out := gather(t, validation.NewOwnChangeDiff(versions, markSanitizer{}, discardLogger()), failure(nil), withSource("select 2"))
+	out := gather(t, validation.NewOwnChangeDiff(versions, discardLogger()), failure(nil), withSource("select 2"))
 
-	want := "<" + proposal.ComputeUnifiedDiff("select 1", "select 2", "model.svc.a") + ">"
+	want := proposal.ComputeUnifiedDiff("select 1", "select 2", "model.svc.a")
 	assert.Equal(t, remediation.Text(want), ownDiff(t, out))
 	assert.Equal(t, []string{"model.svc.a"}, versions.calls)
 }
@@ -58,7 +58,7 @@ func TestOwnChangeDiff_IsEmptyWhenThereIsNothingToDiff(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			out := gather(t, validation.NewOwnChangeDiff(c.versions, markSanitizer{}, discardLogger()), failure(nil), withSource(c.source))
+			out := gather(t, validation.NewOwnChangeDiff(c.versions, discardLogger()), failure(nil), withSource(c.source))
 
 			assert.Empty(t, ownDiff(t, out))
 			assert.Equal(t, c.wantRead, len(c.versions.calls) > 0)
@@ -69,14 +69,27 @@ func TestOwnChangeDiff_IsEmptyWhenThereIsNothingToDiff(t *testing.T) {
 func TestOwnChangeDiff_ASmallDiffIsNotMarked(t *testing.T) {
 	versions := &fakeVersions{versions: map[string]ports.CurrentVersion{"model.svc.a": {RawCode: "select 1"}}}
 
-	out := gather(t, validation.NewOwnChangeDiff(versions, markSanitizer{}, discardLogger()), failure(nil), withSource("select 2"))
+	out := gather(t, validation.NewOwnChangeDiff(versions, discardLogger()), failure(nil), withSource("select 2"))
 
 	assert.NotContains(t, string(ownDiff(t, out)), "diff truncated")
 }
 
 func TestOwnChangeDiff_RefusesEvidenceWithNoCodeBundleSource(t *testing.T) {
-	_, err := validation.NewOwnChangeDiff(&fakeVersions{}, markSanitizer{}, discardLogger()).
+	_, err := validation.NewOwnChangeDiff(&fakeVersions{}, discardLogger()).
 		Gather(context.Background(), step.ContextInput{Failure: failure(nil), Evidence: remediation.NewEvidence()})
 
 	require.Error(t, err)
+}
+
+func TestOwnChangeDiff_ComparesTwoCleanedTexts(t *testing.T) {
+	stored := "select '[redacted:email]' as owner\nselect 1"
+	versions := &fakeVersions{versions: map[string]ports.CurrentVersion{"model.svc.a": {RawCode: stored}}}
+
+	out := gather(t, validation.NewOwnChangeDiff(versions, discardLogger()), failure(nil), withSource("select 'ops@acme.com' as owner\nselect 2"))
+
+	want := proposal.ComputeUnifiedDiff(stored, "select '[redacted:email]' as owner\nselect 2", "model.svc.a")
+	assert.Equal(t, remediation.Text(want), ownDiff(t, out), "catalog's redaction of the stored version never shows as a change")
+
+	unchanged := gather(t, validation.NewOwnChangeDiff(versions, discardLogger()), failure(nil), withSource("select 'ops@acme.com' as owner\nselect 1"))
+	assert.Empty(t, ownDiff(t, unchanged), "a source that differs only where catalog redacted has no change")
 }

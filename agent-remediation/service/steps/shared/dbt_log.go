@@ -15,18 +15,17 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 )
 
-// DBTLog is the context source `dbt_log`: the failing node's dbt log, sanitized.
+// DBTLog is the context source `dbt_log`: the failing node's dbt log.
 type DBTLog struct {
-	evidence  ports.EvidenceReader
-	sanitizer ports.LogSanitizer
-	logger    *slog.Logger
+	evidence ports.EvidenceReader
+	logger   *slog.Logger
 }
 
 var _ step.ContextSource = (*DBTLog)(nil)
 
 // NewDBTLog builds the dbt_log step. It calls no port until Gather.
-func NewDBTLog(evidence ports.EvidenceReader, sanitizer ports.LogSanitizer, logger *slog.Logger) *DBTLog {
-	return &DBTLog{evidence: evidence, sanitizer: sanitizer, logger: LoggerOrDefault(logger)}
+func NewDBTLog(evidence ports.EvidenceReader, logger *slog.Logger) *DBTLog {
+	return &DBTLog{evidence: evidence, logger: LoggerOrDefault(logger)}
 }
 
 // Meta describes the step.
@@ -34,13 +33,13 @@ func (*DBTLog) Meta() step.Meta {
 	return step.Meta{
 		Name:        "dbt_log",
 		Kind:        step.KindContext,
-		Description: "Reads the sanitized dbt log of the failing node, or an empty text when the failure has no log.",
+		Description: "Reads the dbt log of the failing node, or an empty text when the failure has no log.",
 		Needs:       []remediation.EvidenceKey{remediation.KeyFailure},
 		Provides:    []remediation.EvidenceKey{remediation.KeyDBTLog},
 	}
 }
 
-// Gather fetches and sanitizes the log the failure's target names. An empty URI
+// Gather fetches the log the failure's target names. An empty URI
 // means the failure happened before any dbt Job ran and has no log, and a log
 // that is gone for good is likewise not fatal, since a fix can still be
 // proposed from the other evidence: both provide an empty text. Any other fetch
@@ -57,7 +56,7 @@ func (s *DBTLog) Gather(ctx context.Context, in step.ContextInput) (step.Context
 	if err != nil {
 		return step.ContextOutput{}, fmt.Errorf("fetch dbt log: %w", err)
 	}
-	return logOutput(s.sanitizer.Sanitize(raw)), nil
+	return logOutput(raw), nil
 }
 
 func logOutput(text string) step.ContextOutput {

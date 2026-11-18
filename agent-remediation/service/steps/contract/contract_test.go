@@ -23,14 +23,6 @@ var errBoom = errors.New("boom")
 
 func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-// markSanitizer wraps what it is given, so a test can tell sanitized text from
-// raw text.
-type markSanitizer struct{}
-
-func (markSanitizer) Sanitize(s string) string { return "<" + s + ">" }
-
-var _ ports.LogSanitizer = markSanitizer{}
-
 // fakeArchive hands out a real temporary directory per fetch and removes it
 // when the step calls cleanup, so a test can see whether a checkout survives.
 type fakeArchive struct {

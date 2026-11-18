@@ -21,8 +21,8 @@ var _ step.ContextSource = (*OwnChangeDiff)(nil)
 
 // NewOwnChangeDiff builds the own_change_diff step. It calls no port until
 // Gather.
-func NewOwnChangeDiff(versions ports.VersionReader, sanitizer ports.LogSanitizer, logger *slog.Logger) *OwnChangeDiff {
-	return &OwnChangeDiff{changes: shared.ChangeDiffer{Versions: versions, Sanitizer: sanitizer, Logger: shared.LoggerOrDefault(logger)}}
+func NewOwnChangeDiff(versions ports.VersionReader, logger *slog.Logger) *OwnChangeDiff {
+	return &OwnChangeDiff{changes: shared.ChangeDiffer{Versions: versions, Logger: shared.LoggerOrDefault(logger)}}
 }
 
 // Meta describes the step.
@@ -30,7 +30,7 @@ func (*OwnChangeDiff) Meta() step.Meta {
 	return step.Meta{
 		Name: "own_change_diff",
 		Kind: step.KindContext,
-		Description: "Diffs the failing node's source in the release's code bundle against the version that runs now, sanitized and capped. " +
+		Description: "Diffs the failing node's source in the release's code bundle against the version that runs now, capped. " +
 			"Empty for a new node or one whose source could not be read.",
 		Needs:    []remediation.EvidenceKey{remediation.KeyFailure, remediation.KeyCodeBundleSource},
 		Provides: []remediation.EvidenceKey{remediation.KeyOwnChangeDiff},

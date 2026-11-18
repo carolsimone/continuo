@@ -19,7 +19,6 @@ import (
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/memory"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
-	"github.com/carolsimone/continuo/agent-remediation/adapters/sanitizer"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/conformance"
@@ -87,7 +86,6 @@ func NewWorld(store *memory.Store, f conformance.Fixture, s conformance.Script) 
 	w.collab = runner.Collaborators{
 		Source:           repo,
 		Evidence:         objects,
-		Sanitizer:        sanitizer.Passthrough{},
 		Artifacts:        objects,
 		Logger:           logger,
 		ServiceRepoPaths: f.ServiceRepoPaths,

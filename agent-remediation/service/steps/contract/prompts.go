@@ -7,7 +7,6 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
-	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 )
@@ -23,38 +22,35 @@ type contractPrompt struct {
 	name        workflow.StepName
 	description string
 	assemble    assembler
-	sanitizer   ports.LogSanitizer
 }
 
 var _ step.Prompt = (*contractPrompt)(nil)
 
 // NewPythonContract builds the python-contract prompt: a python node whose
 // output failed validation against its contract.
-func NewPythonContract(sanitizer ports.LogSanitizer) step.Prompt {
+func NewPythonContract() step.Prompt {
 	return &contractPrompt{
 		name: "python-contract",
 		description: "Shows the model a python node's ODCS contract with the validation error, runner log, the contract entry the release recorded, the node's current contract, " +
 			"upstream changes, precedent and, when there are any, the earlier tries at the failure in its first-round request, and reads back the complete new content of every contract file it changes.",
-		assemble:  prompt.AssemblePythonContractFix,
-		sanitizer: sanitizer,
+		assemble: prompt.AssemblePythonContractFix,
 	}
 }
 
 // NewPythonParse builds the python-parse prompt: a python node one of whose
 // reads has SQL the release's parser rejected.
-func NewPythonParse(sanitizer ports.LogSanitizer) step.Prompt {
+func NewPythonParse() step.Prompt {
 	return &contractPrompt{
 		name: "python-parse",
 		description: "Shows the model a python node's ODCS contract with the SQL parser's error, the node's current contract, upstream changes, precedent and, when there are any, the earlier tries at the failure in its first-round request, " +
 			"and reads back the complete new content of every contract file it changes.",
-		assemble:  prompt.AssemblePythonParseFix,
-		sanitizer: sanitizer,
+		assemble: prompt.AssemblePythonParseFix,
 	}
 }
 
 // NewCSVContract builds the csv-contract prompt: a python-csv node whose
 // declared columns the csv file's header does not carry.
-func NewCSVContract(sanitizer ports.LogSanitizer) step.Prompt {
+func NewCSVContract() step.Prompt {
 	return &contractPrompt{
 		name: "csv-contract",
 		description: "Shows the model a python-csv node's ODCS contract with the validation error, the header check's runner log, the contract entry the release recorded, the node's current contract, " +
@@ -62,7 +58,6 @@ func NewCSVContract(sanitizer ports.LogSanitizer) step.Prompt {
 		assemble: func(ev prompt.PythonEvidence) prompt.ProposeRequest {
 			return prompt.AssembleCsvContractFix(prompt.CsvEvidence(ev))
 		},
-		sanitizer: sanitizer,
 	}
 }
 
@@ -91,9 +86,7 @@ func (p *contractPrompt) Meta() step.Meta {
 // contract, upstream changes, precedent and the earlier tries each degrade to
 // their own absence, because a
 // missing evidence section costs the model context while a blocked heal costs
-// the operator the fix entirely. The error excerpt and the
-// yaml text are sanitized here, since they leave for an external model, and the
-// other sections arrive sanitized from the steps that gathered them. In a round
+// the operator the fix entirely. In a round
 // after the first the request is the revision of the last round's request with
 // its answer and the findings (step.RevisionRequest), and the answer is read the
 // same way.
@@ -155,11 +148,11 @@ func (p *contractPrompt) request(in step.PromptInput) (prompt.ProposeRequest, er
 	return step.WithPreviousTries(p.assemble(prompt.PythonEvidence{
 		NodeID:          f.Target.NodeID,
 		NoReads:         f.Target.NodeType == string(pkgmodel.NodeTypePythonApi),
-		ErrorExcerpt:    p.sanitizer.Sanitize(f.Target.ErrorExcerpt),
+		ErrorExcerpt:    f.Target.ErrorExcerpt,
 		RunnerLog:       string(dbtLog),
 		ContractEntry:   string(entry),
 		YAMLPath:        file.YAMLPath,
-		YAMLText:        p.sanitizer.Sanitize(file.YAMLText),
+		YAMLText:        file.YAMLText,
 		CurrentContract: string(current),
 		UpstreamChanges: upstream,
 		Precedents:      precedents,

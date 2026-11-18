@@ -19,14 +19,6 @@ var errBoom = errors.New("boom")
 
 func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-// markSanitizer wraps what it is given, so a test can tell sanitized text from
-// raw text.
-type markSanitizer struct{}
-
-func (markSanitizer) Sanitize(s string) string { return "<" + s + ">" }
-
-var _ ports.LogSanitizer = markSanitizer{}
-
 // fakeEvidence serves bodies by URI and records every fetch.
 type fakeEvidence struct {
 	bodies map[string]string
