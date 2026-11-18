@@ -91,26 +91,94 @@ func TestCleanEvidence_LeavesBytesThatAreNotTextAsTheyAre(t *testing.T) {
 	assert.Equal(t, binary, b)
 }
 
-func TestRestoreDraft_PutsBackEveryValueAndFindsWhatItNeverIssued(t *testing.T) {
+func TestRestoreDraft_PutsBackTheValuesOfTheCodeAndRefusesTheRest(t *testing.T) {
 	r := sanitize.NewRedactor()
 	shown := r.Clean("select 'ops@acme.com'")
 	require.Equal(t, "select '[redacted:email:1]'", shown)
+	logged := r.Clean("login failed: password=hunter2")
+	require.Equal(t, "login failed: password=[redacted:secret:1]", logged)
 
 	d, findings := restoreDraft(remediation.Draft{
-		Rationale: "keep [redacted:email:1] and drop [redacted:email:7]",
+		Rationale: "keep [redacted:email:1], drop [redacted:email:7] and [REDACTED:email:3], the log said [redacted:secret:1]",
 		Edits: []remediation.Edit{{
 			Path:     "models/a.sql",
 			Original: shown,
-			Content:  "select '[redacted:email:1]', '[REDACTED:email:1]', '[redacted:email:1",
+			Content:  "select '[redacted:email:1]', '[redacted:secret:1]', '[redacted:email:7]'",
 		}},
-	}, r)
+	}, r, []string{"select 'ops@acme.com'"})
 
 	assert.Equal(t, "select 'ops@acme.com'", d.Edits[0].Original)
-	assert.Equal(t, "select 'ops@acme.com', '[REDACTED:email:1]', '[redacted:email:1", d.Edits[0].Content)
-	assert.Equal(t, "keep ops@acme.com and drop [redacted:email:7]", d.Rationale)
+	assert.Equal(t, "select 'ops@acme.com', '[redacted:secret:1]', '[redacted:email:7]'", d.Edits[0].Content,
+		"a value seen only in a log stays a placeholder, and one never issued is left for markerFindings")
+	assert.Equal(t, "keep ops@acme.com, drop [redacted:email:7] and [REDACTED:email:3], the log said hunter2", d.Rationale)
 	assert.Equal(t, []remediation.Finding{
-		{Code: findingUnknownPlaceholder, Message: "the answer holds [REDACTED:email:1], which was never in what you were shown; keep the text you were shown", File: "models/a.sql"},
-		{Code: findingUnknownPlaceholder, Message: "the answer holds [redacted:email:1, which was never in what you were shown; keep the text you were shown", File: "models/a.sql"},
-		{Code: findingUnknownPlaceholder, Message: "the answer holds [redacted:email:7], which was never in what you were shown; keep the text you were shown"},
-	}, findings)
+		{Code: findingUnknownPlaceholder, Message: "the answer holds a placeholder (redacted secret 1) for a value from a log or a check, not from the code; leave that value out of the file", File: "models/a.sql"},
+		{Code: findingUnknownPlaceholder, Message: "the answer holds a placeholder (redacted email 7) that was never in what you were shown; keep the text you were shown"},
+	}, findings, "in the rationale only a numbered placeholder never issued is a finding")
+}
+
+func TestRestoreDraft_AValueInTheEditsOriginalIsRestored(t *testing.T) {
+	r := sanitize.NewRedactor()
+	original := r.Clean("select 'ops@acme.com'")
+
+	d, findings := restoreDraft(remediation.Draft{Edits: []remediation.Edit{{Path: "a.sql", Original: original, Content: original + ", 2"}}}, r, nil)
+
+	assert.Equal(t, "select 'ops@acme.com', 2", d.Edits[0].Content)
+	assert.Empty(t, findings)
+}
+
+func TestMarkerFindings_FindsOnlyTheMarkersAnEditAdds(t *testing.T) {
+	r := sanitize.NewRedactor()
+	r.Clean("password=hunter2")
+	cases := []struct {
+		name, original, content string
+		want                    []string
+	}{
+		{"a literal marker the file holds", "select '[REDACTED]'", "select '[REDACTED]', 2", nil},
+		{"a fixed marker the file holds", "pw: '[redacted:secret]'", "pw: '[redacted:secret]'\nx: 1", nil},
+		{"one more literal marker", "select '[REDACTED]'", "select '[REDACTED]', '[REDACTED]'", []string{"REDACTED"}},
+		{"one more fixed marker", "pw: '[redacted:secret]'", "pw: '[redacted:secret]'\nx: '[redacted:secret]'", []string{"redacted secret"}},
+		{"a number never issued", "select 1", "select '[redacted:email:9]'", []string{"redacted email 9"}},
+		{"a marker in a new file", "", "x: '[redacted:email]'", []string{"redacted email"}},
+		{"a marker without its bracket", "select 1", "select '[redacted:email:1 as x", []string{"redacted email 1"}},
+		{"an issued placeholder left by restoreDraft", "select 1", "select '[redacted:secret:1]'", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := markerFindings(remediation.Draft{Edits: []remediation.Edit{{Path: "a.sql", Original: tc.original, Content: tc.content}}}, r)
+
+			var names []string
+			for _, f := range got {
+				assert.Equal(t, findingUnknownPlaceholder, f.Code)
+				assert.Equal(t, "a.sql", f.File)
+				names = append(names, f.Message)
+			}
+			var want []string
+			for _, n := range tc.want {
+				want = append(want, "the answer adds a redaction marker ("+n+") the file did not hold; keep the text you were shown")
+			}
+			assert.Equal(t, want, names)
+		})
+	}
+}
+
+func TestUnknownFinding_IsNeverChangedWhenCleanedForTheNextRound(t *testing.T) {
+	for _, token := range []string{"[redacted:secret:1]", "[redacted:email:9]", "[redacted:key:2]", "[redacted:secret]", "[REDACTED]", "[REDACTED:email:1]", "[redacted:email:1"} {
+		for _, message := range []string{placeholderAdded, placeholderFromALog, placeholderNeverShown} {
+			f := unknownFinding(message, token, "a.sql")
+			assert.Equal(t, f.Message, sanitize.NewRedactor().Clean(f.Message), "%s in %q", token, message)
+			assert.Equal(t, f.Message, sanitize.Text(f.Message))
+		}
+	}
+}
+
+func TestCodeTexts_ReadsOnlyTheCodeClass(t *testing.T) {
+	ev := remediation.NewEvidence().
+		With(remediation.KeySourceFiles, remediation.SourceFiles{Files: map[string]string{"a.sql": "select 1"}, Order: []string{"a.sql"}}).
+		With(remediation.KeyDBTLog, remediation.Text("the log"))
+
+	got := codeTexts(ev, NewRegistry(Collaborators{}).EvidenceClass)
+
+	assert.Contains(t, got, "select 1")
+	assert.NotContains(t, got, "the log")
 }

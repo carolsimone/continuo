@@ -2,6 +2,7 @@ package runner_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -83,13 +84,18 @@ func TestRunner_RestoresRedactedValuesInTheDraft(t *testing.T) {
 }
 
 func TestRunner_AnUnknownPlaceholderIsAFinding(t *testing.T) {
+	const (
+		added = "the answer adds a redaction marker (%s) the file did not hold; keep the text you were shown"
+		never = "the answer holds a placeholder (%s) that was never in what you were shown; keep the text you were shown"
+	)
 	cases := []struct {
-		name, content, rationale, placeholder string
+		name, content, rationale, message string
 	}{
-		{"a number never issued", "select '[redacted:email:9]' as owner", "fixed it", "[redacted:email:9]"},
-		{"a fixed marker", "select '[redacted:secret]' as owner", "fixed it", "[redacted:secret]"},
-		{"a placeholder in other case", "select 1", "kept [REDACTED:email:1]", "[REDACTED:email:1]"},
-		{"a placeholder with no closing bracket", "select '[redacted:email:1 as owner", "fixed it", "[redacted:email:1"},
+		{"a number never issued", "select '[redacted:email:9]' as owner", "fixed it", fmt.Sprintf(added, "redacted email 9")},
+		{"a fixed marker", "select '[redacted:secret]' as owner", "fixed it", fmt.Sprintf(added, "redacted secret")},
+		{"a placeholder in other case", "select '[REDACTED:email:1]' as owner", "fixed it", fmt.Sprintf(added, "REDACTED email 1")},
+		{"a placeholder with no closing bracket", "select '[redacted:email:1 as owner", "fixed it", fmt.Sprintf(added, "redacted email 1")},
+		{"a number never issued in the rationale", "select 'ops@acme.com' as owner, 2", "kept [redacted:email:9]", fmt.Sprintf(never, "redacted email 9")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -100,7 +106,7 @@ func TestRunner_AnUnknownPlaceholderIsAFinding(t *testing.T) {
 
 			require.NoError(t, h.runner.Drive(ctx, id))
 
-			message := "the answer holds " + tc.placeholder + ", which was never in what you were shown; keep the text you were shown"
+			message := tc.message
 			findings := h.roundRows(id, 1, "preflight")[1].Findings
 			require.NotEmpty(t, findings)
 			assert.Equal(t, "unknown_placeholder", findings[0].Code)
@@ -124,7 +130,8 @@ func TestRunner_AnUnknownPlaceholderGoesBackToTheModel(t *testing.T) {
 
 	reqs := h.llm.all()
 	require.Len(t, reqs, 2)
-	assert.Contains(t, reqs[1].User, "unknown_placeholder: the answer holds ")
+	assert.Contains(t, reqs[1].User, "- unknown_placeholder: the answer adds a redaction marker (redacted email 9) the file did not hold; "+
+		"keep the text you were shown (services/svc-a/models/orders.sql)\n", "the finding reaches the model as it was found")
 	assert.Equal(t, remediation.ClusterChecked, h.cluster(id, 1, 1).Status)
 	assert.Equal(t, "select 'ops@acme.com' as owner, 2", h.preflightDraft(id, 2).Edits[0].Content)
 }
@@ -234,4 +241,86 @@ func (c roundCheck) Check(context.Context, step.CheckInput) (step.CheckOutput, e
 		res.Findings = []remediation.Finding{{Code: "low_confidence", Message: "set token=s3cr3tvalue"}}
 	}
 	return step.CheckOutput{Result: res}, nil
+}
+
+// TestRunner_AFileThatHoldsAMarkerCanBeFixed checks that a redaction marker the
+// file already holds may stay in the fix, and that one more is refused.
+func TestRunner_AFileThatHoldsAMarkerCanBeFixed(t *testing.T) {
+	cases := []struct {
+		name, source, kept, added, marker string
+	}{
+		{"a literal marker", "select '[REDACTED]' as owner", "select '[REDACTED]' as owner, 2", "select '[REDACTED]' as owner, '[REDACTED]'", "REDACTED"},
+		{"a fixed marker", "select '[redacted:secret]' as pw", "select '[redacted:secret]' as pw, 2", "select '[redacted:secret]' as pw, '[redacted:secret]'", "redacted secret"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name+" kept", func(t *testing.T) {
+			h := newHarness(t)
+			h.source.files["services/svc-a/models/orders.sql"] = tc.source
+			h.llm.answer = answerWith(tc.kept, "fixed it")
+			id := h.accept(trigger("compile", compileNode("svc-a")))
+
+			require.NoError(t, h.runner.Drive(ctx, id))
+
+			assert.Empty(t, h.roundRows(id, 1, "preflight")[1].Findings)
+			assert.Equal(t, remediation.ClusterChecked, h.cluster(id, 1, 1).Status)
+			assert.Equal(t, tc.kept, h.preflightDraft(id, 1).Edits[0].Content)
+		})
+		t.Run(tc.name+" added", func(t *testing.T) {
+			h := newHarness(t)
+			h.source.files["services/svc-a/models/orders.sql"] = tc.source
+			h.llm.answer = answerWith(tc.added, "fixed it")
+			id := h.accept(trigger("compile", compileNode("svc-a")))
+
+			require.NoError(t, h.runner.Drive(ctx, id))
+
+			findings := h.roundRows(id, 1, "preflight")[1].Findings
+			require.NotEmpty(t, findings)
+			assert.Equal(t, remediation.Finding{
+				Code:    "unknown_placeholder",
+				Message: "the answer adds a redaction marker (" + tc.marker + ") the file did not hold; keep the text you were shown",
+				File:    "services/svc-a/models/orders.sql",
+			}, findings[0])
+			assert.Equal(t, remediation.ClusterHandedOver, h.cluster(id, 1, 1).Status)
+		})
+	}
+}
+
+// TestRunner_AValueSeenOnlyInALogIsNotWrittenIntoAFile checks that a value the
+// model saw only in the dbt log keeps its placeholder in the edit, is refused,
+// and never reaches the journal or a stored artifact, while a value of the
+// shown source is restored.
+func TestRunner_AValueSeenOnlyInALogIsNotWrittenIntoAFile(t *testing.T) {
+	h := newHarness(t)
+	withOwnedSource(h)
+	h.evidence.objects["s3://logs/svc-a"] = "connect failed: password=hunter2"
+	node := compileNode("svc-a")
+	node.DBTLogURI = "s3://logs/svc-a"
+	h.llm.answer = answerWith("select '[redacted:email:1]' as owner, '[redacted:secret:1]' as pw", "fixed it")
+	id := h.accept(trigger("compile", node))
+
+	require.NoError(t, h.runner.Drive(ctx, id))
+
+	req := h.llm.all()[0].User
+	assert.Contains(t, req, "password=[redacted:secret:1]", "the model is shown the log cleaned")
+	assert.NotContains(t, req, "hunter2")
+
+	draft := h.preflightDraft(id, 1)
+	assert.Equal(t, "select 'ops@acme.com' as owner, '[redacted:secret:1]' as pw", draft.Edits[0].Content,
+		"the email of the shown source is restored and the log's password is not")
+	findings := h.roundRows(id, 1, "preflight")[1].Findings
+	require.NotEmpty(t, findings)
+	assert.Equal(t, remediation.Finding{
+		Code:    "unknown_placeholder",
+		Message: "the answer holds a placeholder (redacted secret 1) for a value from a log or a check, not from the code; leave that value out of the file",
+		File:    "services/svc-a/models/orders.sql",
+	}, findings[0])
+	for _, s := range h.store.Steps(id) {
+		if s.Kind == "context" {
+			continue // the journal keeps the evidence raw
+		}
+		assert.NotContains(t, string(s.Output), "hunter2", "step %s stores no value from the log", s.Step)
+		assert.NotContains(t, fmt.Sprint(s.Findings), "hunter2", "step %s finds no value from the log", s.Step)
+	}
+	assert.Equal(t, remediation.ClusterHandedOver, h.cluster(id, 1, 1).Status)
+	assert.Empty(t, h.pipeline.runs())
 }

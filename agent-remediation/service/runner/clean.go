@@ -6,9 +6,11 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
+	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/pkg/sanitize"
 )
@@ -87,48 +89,143 @@ func cleanEvidence(e remediation.Evidence, r *sanitize.Redactor) remediation.Evi
 	return out
 }
 
-// restoreDraft returns d with every placeholder r issued replaced by its value,
-// in every text of the draft, and a finding for each placeholder left in the
-// text that leaves the runner: an edit's path and content, which a pull
-// request writes, and the rationale, which it shows. A placeholder r never
-// issued and the remains of one in another case or without its bracket are
-// all left, each found once per text, in the order they appear.
-func restoreDraft(d remediation.Draft, r *sanitize.Redactor) (remediation.Draft, []remediation.Finding) {
+// placeholderToken matches a placeholder as a Redactor writes it, numbered
+// ([redacted:email:1]) or fixed ([redacted:email]), and numberedPlaceholder
+// a numbered one only.
+var (
+	placeholderToken    = regexp.MustCompile(`\[redacted:[a-z]+(?::[0-9]+)?\]`)
+	numberedPlaceholder = regexp.MustCompile(`^\[redacted:[a-z]+:[0-9]+\]$`)
+)
+
+// restoreDraft returns d with the placeholders r issued replaced by their
+// values, and a finding for each placeholder the draft may not keep:
+//
+//   - In an edit's content a placeholder is replaced only when its value is in
+//     the edit's original or in a text of code the cluster was shown (code).
+//     A value the model saw only in a log, a precedent or a finding never goes
+//     into a file: its placeholder stays in the content and is a finding.
+//     Placeholders r never issued stay too, for markerFindings to judge once
+//     the edit's original is known.
+//   - An edit's path and the rationale are restored whole, and each numbered
+//     placeholder r never issued in them is a finding.
+//
+// Every other text of the draft is restored whole.
+func restoreDraft(d remediation.Draft, r *sanitize.Redactor, code []string) (remediation.Draft, []remediation.Finding) {
 	restored := cleanValue(d, func(s string) string {
 		out, _ := r.Restore(s)
 		return out
 	})
 	var findings []remediation.Finding
-	find := func(text, file string) {
-		out, unknown := r.Restore(text)
-		for _, p := range leftovers(out, unknown) {
-			findings = append(findings, remediation.Finding{
-				Code:    findingUnknownPlaceholder,
-				Message: fmt.Sprintf("the answer holds %s, which was never in what you were shown; keep the text you were shown", p),
-				File:    file,
-			})
+	unknownIn := func(text, file string) {
+		_, unknown := r.Restore(text)
+		for _, p := range unknown {
+			if numberedPlaceholder.MatchString(p) {
+				findings = append(findings, unknownFinding(placeholderNeverShown, p, file))
+			}
 		}
 	}
-	for _, e := range d.Edits {
-		find(e.Path, "")
-	}
 	for i, e := range d.Edits {
-		find(e.Content, restored.Edits[i].Path)
+		unknownIn(e.Path, "")
+		content, refused := restoreContent(e.Content, restored.Edits[i].Original, r, code)
+		restored.Edits[i].Content = content
+		for _, p := range refused {
+			findings = append(findings, unknownFinding(placeholderFromALog, p, restored.Edits[i].Path))
+		}
 	}
-	find(d.Rationale, "")
+	unknownIn(d.Rationale, "")
 	return restored, findings
 }
 
-// leftovers is every placeholder Restore left in restored, unknown first and
-// then the remains of placeholders it could not read, each once.
-func leftovers(restored string, unknown []string) []string {
-	out := slices.Clone(unknown)
-	for _, p := range leftoverPlaceholder.FindAllString(restored, -1) {
-		if !slices.Contains(out, p) {
-			out = append(out, p)
+// restoreContent returns content with each placeholder r issued replaced by its
+// value when that value is in original or in one of code, in one pass, and
+// the issued placeholders it left because their value is in neither, each
+// once, in the order they appear.
+func restoreContent(content, original string, r *sanitize.Redactor, code []string) (string, []string) {
+	var refused []string
+	out := placeholderToken.ReplaceAllStringFunc(content, func(p string) string {
+		value, unknown := r.Restore(p)
+		if len(unknown) > 0 {
+			return p
+		}
+		if strings.Contains(original, value) || slices.ContainsFunc(code, func(t string) bool { return strings.Contains(t, value) }) {
+			return value
+		}
+		if !slices.Contains(refused, p) {
+			refused = append(refused, p)
+		}
+		return p
+	})
+	return out, refused
+}
+
+// markerFindings is a finding for each redaction marker an edit of d adds to
+// its file: a placeholder r never issued, or the remains of one in another
+// case or without its bracket, that the edit's content holds more times than
+// its original does (a new file's original is empty). So a file that already
+// holds such a marker can be fixed with the marker kept. The issued
+// placeholders restoreDraft left in the content are its own findings.
+func markerFindings(d remediation.Draft, r *sanitize.Redactor) []remediation.Finding {
+	var findings []remediation.Finding
+	for _, e := range d.Edits {
+		var seen []string
+		for _, m := range leftoverPlaceholder.FindAllString(e.Content, -1) {
+			if slices.Contains(seen, m) {
+				continue
+			}
+			seen = append(seen, m)
+			if issued(r, m) {
+				continue
+			}
+			if strings.Count(e.Content, m) > strings.Count(e.Original, m) {
+				findings = append(findings, unknownFinding(placeholderAdded, m, e.Path))
+			}
 		}
 	}
-	return out
+	return findings
+}
+
+// issued reports whether token is a numbered placeholder r issued.
+func issued(r *sanitize.Redactor, token string) bool {
+	if !numberedPlaceholder.MatchString(token) {
+		return false
+	}
+	_, unknown := r.Restore(token)
+	return len(unknown) == 0
+}
+
+// The messages of the finding unknown_placeholder, each naming the token.
+const (
+	placeholderAdded      = "the answer adds a redaction marker (%s) the file did not hold; keep the text you were shown"
+	placeholderFromALog   = "the answer holds a placeholder (%s) for a value from a log or a check, not from the code; leave that value out of the file"
+	placeholderNeverShown = "the answer holds a placeholder (%s) that was never in what you were shown; keep the text you were shown"
+)
+
+// unknownFinding is the finding unknown_placeholder with message naming token,
+// for file. The token is written without its brackets and colons, so that
+// cleaning the finding for the next round never takes it for a placeholder or
+// a secret and the model reads it as it was found.
+func unknownFinding(message, token, file string) remediation.Finding {
+	name := strings.ReplaceAll(strings.TrimSuffix(strings.TrimPrefix(token, "["), "]"), ":", " ")
+	return remediation.Finding{Code: findingUnknownPlaceholder, Message: fmt.Sprintf(message, name), File: file}
+}
+
+// codeTexts is every text of the evidence ev holds under a key of the data
+// class code, as classOf tells the class of each key.
+func codeTexts(ev remediation.Evidence, classOf func(remediation.EvidenceKey) (workflow.DataClass, bool)) []string {
+	var texts []string
+	for _, k := range ev.Keys() {
+		if class, ok := classOf(k); !ok || class != workflow.ClassCode {
+			continue
+		}
+		v, _ := remediation.Get[any](ev, k)
+		cleanValue(v, func(s string) string {
+			if s != "" {
+				texts = append(texts, s)
+			}
+			return s
+		})
+	}
+	return texts
 }
 
 // cleanValue returns a copy of v with fn applied to every text it holds, as

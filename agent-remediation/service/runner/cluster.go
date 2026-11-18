@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
@@ -278,10 +279,13 @@ func promptRecord(out step.PromptOutput, m *model) serialization.PromptRecord {
 // with the Redactor of the cluster's round (redactionFor), then runs every
 // pre-flight check of the cluster's type on the restored draft, in file order,
 // in one pass over a fresh scratch checkout, and collects every finding. The
-// runner's own rule comes first in the pass: each placeholder the restored
-// draft still holds in an edit or its rationale is the finding
-// unknown_placeholder, so no file can drop the rule and no redaction marker
-// reaches a pull request. The pass's row stores the restored draft. Each
+// runner's own rule comes first in the pass, so no file can drop it: an edit
+// gets a value back only when the edit's original or the code the cluster was
+// shown holds it (restoreDraft), and a placeholder whose value came from a
+// log or a check, a redaction marker an edit adds to its file once the
+// edit's original is known (markerFindings), and a placeholder never shown in
+// a path or the rationale are each the finding unknown_placeholder. The pass's
+// row stores the restored draft, with every refused placeholder left in it. Each
 // check's row, the pass's own row and the cluster's end commit together, so a
 // pass interrupted before its commit runs again whole.
 //
@@ -300,7 +304,7 @@ func (r *Runner) runPreflight(ctx context.Context, run tryRun, c remediation.Clu
 	if err != nil {
 		return r.recordFailure(ctx, pass, err)
 	}
-	draft, unknown := restoreDraft(draft, red.redactor)
+	draft, placeholders := restoreDraft(draft, red.redactor, codeTexts(ev, r.d.Registry.EvidenceClass))
 	ev = ev.With(remediation.KeyDraft, draft)
 	if pass.InputDigest, err = serialization.InputDigest(ev, c.Round); err != nil {
 		return r.recordFailure(ctx, pass, err)
@@ -310,8 +314,7 @@ func (r *Runner) runPreflight(ctx context.Context, run tryRun, c remediation.Clu
 
 	rows := make([]remediation.StepRun, 0, len(plan.preflight)+1)
 	results := make([]remediation.CheckResult, 0, len(plan.preflight)+1)
-	results = append(results, remediation.CheckResult{Check: findingUnknownPlaceholder, Findings: unknown})
-	findings := append([]remediation.Finding(nil), unknown...)
+	var findings []remediation.Finding
 	for _, ps := range plan.preflight {
 		row, result, gathered, err := r.runCheck(ctx, run, c, f, ev, draft, scratch, ps)
 		if err != nil {
@@ -326,6 +329,9 @@ func (r *Runner) runPreflight(ctx context.Context, run tryRun, c remediation.Clu
 	}
 	scratch.Close()
 	draft = withOriginals(draft, scratch.Originals())
+	placeholders = append(placeholders, markerFindings(draft, red.redactor)...)
+	results = append([]remediation.CheckResult{{Check: findingUnknownPlaceholder, Findings: placeholders}}, results...)
+	findings = append(slices.Clone(placeholders), findings...)
 
 	next := c
 	var added []remediation.Cluster
