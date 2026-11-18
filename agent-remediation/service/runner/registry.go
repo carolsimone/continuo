@@ -57,9 +57,12 @@ func builtinEvidence() map[remediation.EvidenceKey]evidenceSpec {
 		remediation.KeyContractEntry:        {func() any { return remediation.Text("") }, workflow.ClassCode},
 		remediation.KeyCurrentContract:      {func() any { return remediation.Text("") }, workflow.ClassCode},
 		remediation.KeyImagePackages:        {func() any { return remediation.ImagePackages{} }, workflow.ClassCode},
-		remediation.KeyPreviousTries:        {func() any { return []remediation.TryRecord{} }, workflow.ClassLogs},
 		remediation.KeyPackagedContract:     {func() any { return remediation.Bytes{} }, workflow.ClassCode},
 		remediation.KeyUpstreamTarget:       {func() any { return remediation.UpstreamTarget{} }, workflow.ClassCode},
+		// The earlier tries at the failure, including the diffs of the model's
+		// own drafts. It records what happened in those tries, so it is classed
+		// logs, whatever the diffs hold.
+		remediation.KeyPreviousTries: {func() any { return []remediation.TryRecord{} }, workflow.ClassLogs},
 	}
 }
 

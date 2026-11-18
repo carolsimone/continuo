@@ -29,7 +29,8 @@ const (
 // no earlier step of its chain provides, a flow with no `model_may_see` or one
 // that names an unknown class, a context step of a flow or of a type the flow
 // lists that provides evidence of a data class the flow's `model_may_see`
-// leaves out (or of a key with no class), `rounds` below 1 (a type runs at
+// leaves out, a prompt step of a listed type that reads such evidence (or any
+// evidence with no class), `rounds` below 1 (a type runs at
 // least one pre-flight round), `tries` below 1, an output that is not
 // a pull request or a hand-over or that publishes an event outside the stream
 // contract, an unsupported version or trigger, and two listed types that can
@@ -118,7 +119,9 @@ func (v *validator) flow(f workflow.Flow) {
 
 	v.classes(f, fmt.Sprintf("flow %q", f.Name), f.Context)
 	for _, t := range listed {
-		v.classes(f, fmt.Sprintf("type %q", t.Name), t.Context)
+		owner := fmt.Sprintf("type %q", t.Name)
+		v.classes(f, owner, t.Context)
+		v.promptClasses(f, owner, t.Agent.Prompt)
 		v.chain(f, t)
 	}
 }
@@ -137,30 +140,58 @@ func (v *validator) modelMaySee(f workflow.Flow) {
 	}
 }
 
+// holdsClasses reports whether the flow's model_may_see can be held steps
+// against: it lists at least one class and every class it lists exists. A flow
+// that fails this is refused once, by modelMaySee, and not again for each step.
+func holdsClasses(f workflow.Flow) bool {
+	return len(f.ModelMaySee) > 0 && !slices.ContainsFunc(f.ModelMaySee, func(c workflow.DataClass) bool { return !c.IsValid() })
+}
+
 // classes refuses every context step of owner (a flow or a type) that provides
 // evidence the flow does not let the model see: a key of a data class the
-// flow's model_may_see leaves out, or a key with no class at all. A flow that
-// lists no class is refused once, by modelMaySee, and not again for each step.
+// flow's model_may_see leaves out, or a key with no class at all.
 func (v *validator) classes(f workflow.Flow, owner string, refs []workflow.StepRef) {
-	if len(f.ModelMaySee) == 0 {
+	if !holdsClasses(f) {
 		return
 	}
-	allowed := joinClasses(f.ModelMaySee)
 	for _, r := range refs {
 		_, m, ok := v.reg.Lookup(r.Name)
 		if !ok || m.Kind != step.KindContext {
 			continue
 		}
 		for _, key := range m.Provides {
-			class, known := v.reg.EvidenceClass(key)
-			switch {
-			case !known:
-				v.refuse(r.Pos, "step %q provides %q, which has no data class", r.Name, key)
-			case !slices.Contains(f.ModelMaySee, class):
-				v.refuse(r.Pos, "%s uses step %q, which provides %q (class %s), and flow %q does not let the model see %s (model_may_see: %s)",
-					owner, r.Name, key, class, f.Name, class, allowed)
-			}
+			v.holdToClasses(f, owner, r, "provides", key)
 		}
+	}
+}
+
+// promptClasses refuses the prompt step of a type, at its line, for every
+// evidence key it reads that the flow does not let the model see. The prompt
+// builds the model's request from its keys, so the failure itself is among them.
+func (v *validator) promptClasses(f workflow.Flow, owner string, prompt workflow.StepRef) {
+	if !holdsClasses(f) || prompt.Name == "" {
+		return
+	}
+	_, m, ok := v.reg.Lookup(prompt.Name)
+	if !ok || m.Kind != step.KindPrompt {
+		return
+	}
+	for _, key := range m.Needs {
+		v.holdToClasses(f, owner, prompt, "reads", key)
+	}
+}
+
+// holdToClasses refuses, at the line of r, a step of owner whose evidence key
+// has no data class or one that the flow's model_may_see leaves out. verb says
+// whether the step provides the key or reads it.
+func (v *validator) holdToClasses(f workflow.Flow, owner string, r workflow.StepRef, verb string, key remediation.EvidenceKey) {
+	class, known := v.reg.EvidenceClass(key)
+	switch {
+	case !known:
+		v.refuse(r.Pos, "step %q %s %q, which has no data class", r.Name, verb, key)
+	case !slices.Contains(f.ModelMaySee, class):
+		v.refuse(r.Pos, "%s uses step %q, which %s %q (class %s), and flow %q does not let the model see %s (model_may_see: %s)",
+			owner, r.Name, verb, key, class, f.Name, class, joinClasses(f.ModelMaySee))
 	}
 }
 

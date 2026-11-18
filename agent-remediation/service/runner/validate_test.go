@@ -79,7 +79,7 @@ func stubRegistry() *Registry {
 		{Name: "failing_node_source", Kind: step.KindContext, Provides: []remediation.EvidenceKey{remediation.KeySourceFiles}},
 		{Name: "reads_dbt_log", Kind: step.KindContext, Needs: []remediation.EvidenceKey{remediation.KeyDBTLog}},
 		{Name: "reads_the_draft", Kind: step.KindContext, Needs: []remediation.EvidenceKey{remediation.KeyDraft}},
-		{Name: "dbt-compile", Kind: step.KindPrompt, Needs: []remediation.EvidenceKey{remediation.KeySourceFiles}},
+		{Name: "dbt-compile", Kind: step.KindPrompt, Needs: []remediation.EvidenceKey{remediation.KeyFailure, remediation.KeySourceFiles}},
 		{Name: "dbt-parse", Kind: step.KindPrompt},
 		{Name: "target_file_was_shown", Kind: step.KindCheck, Stages: []workflow.Stage{workflow.StagePreflight}, Needs: []remediation.EvidenceKey{remediation.KeyDraft}},
 		{Name: "needs_a_precedent", Kind: step.KindCheck, Stages: []workflow.Stage{workflow.StagePreflight}, Needs: []remediation.EvidenceKey{remediation.KeyFailurePrecedents}},
@@ -452,10 +452,54 @@ func TestValidate_RefusesAFlowWithoutModelMaySee(t *testing.T) {
 	}
 }
 
-func TestValidate_RefusesAnUnknownDataClass(t *testing.T) {
-	refuses(t, func(f *workflow.Flow, _ *workflow.Type) {
-		f.ModelMaySee = []workflow.DataClass{workflow.ClassCode, "secrets"}
-	}, `flows/f.yaml:13: flow "f" has model_may_see class "secrets", which is none of code, logs, rows`)
+// An unknown class is refused once, at the flow's list, and not again for every
+// step the flow's classes would be held against.
+func TestValidate_RefusesAnUnknownDataClassOnce(t *testing.T) {
+	for name, classes := range map[string][]workflow.DataClass{
+		"among known ones": {workflow.ClassCode, "secrets"},
+		"alone":            {"secrets"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, ty := validFlow(), validType()
+			f.ModelMaySee = classes
+			_, err := Validate(setOf(f, ty), stubRegistry())
+			require.Error(t, err)
+			assert.Equal(t,
+				`flows/f.yaml:13: flow "f" has model_may_see class "secrets", which is none of code, logs, rows`,
+				err.Error(), "one refusal, and no step is refused for the classes the flow lists")
+		})
+	}
+}
+
+// The prompt builds the model's request from the keys it reads, the failure
+// itself among them, so a flow that does not let the model see logs refuses a
+// type whose prompt reads the failure, at the prompt's line.
+func TestValidate_RefusesAPromptReadingAForbiddenClass(t *testing.T) {
+	f, ty := validFlow(), validType()
+	f.ModelMaySee = []workflow.DataClass{workflow.ClassCode}
+	ty.Context = nil
+
+	_, err := Validate(setOf(f, ty), stubRegistry())
+
+	require.Error(t, err)
+	assert.Equal(t,
+		`types/t.yaml:6: type "t" uses step "dbt-compile", which reads "failure" (class logs), and flow "f" does not let the model see logs (model_may_see: code)`,
+		err.Error(), "the prompt's other key, source_files, is code and is let through")
+}
+
+func TestValidate_RefusesAPromptReadingAKeyWithNoDataClass(t *testing.T) {
+	reg := stubRegistry()
+	reg.register(stubFor(step.Meta{
+		Name: "mystery-prompt", Kind: step.KindPrompt, Description: "mystery",
+		Needs: []remediation.EvidenceKey{"mystery_key"},
+	}))
+	ty := validType()
+	ty.Agent.Prompt = ref(typeFile, 6, "mystery-prompt")
+
+	_, err := Validate(setOf(validFlow(), ty), reg)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `types/t.yaml:6: step "mystery-prompt" reads "mystery_key", which has no data class`)
 }
 
 // A step whose evidence key has no data class cannot be held to a flow's
