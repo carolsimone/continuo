@@ -48,6 +48,10 @@ describe('splitOwners', () => {
     expect(splitOwners(other)).toEqual({ users: [], teams: [], other });
   });
 
+  it('reads a bare word with the shape of a login as a user, since only GitHub knows who exists', () => {
+    expect(splitOwners(['finance'])).toEqual({ users: ['finance'], teams: [], other: [] });
+  });
+
   it('keeps an @login as a user', () => {
     expect(splitOwners(['@alice']).users).toEqual(['alice']);
   });

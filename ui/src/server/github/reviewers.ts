@@ -11,8 +11,10 @@ export type OwnerKind = 'user' | 'team' | 'other';
 // classifyOwner reads how an owner, as a node's code writes it, can be asked to
 // review: a team by its slug (the part after the slash of `org/team` or
 // `@org/team`), a user by its login (with or without a leading @), and
-// anything else (`finance`, `team@acme.com`, a name with spaces) as other,
-// which GitHub cannot be asked for. A blank owner is undefined.
+// anything else (`team@acme.com`, a name with spaces) as other, which GitHub
+// cannot be asked for. A word with the shape of a login (`finance`) is a user:
+// whether that user exists and may review is for GitHub to answer. A blank
+// owner is undefined.
 export function classifyOwner(owner: string): { kind: OwnerKind; name: string } | undefined {
   const text = owner.trim();
   if (text === '') return undefined;

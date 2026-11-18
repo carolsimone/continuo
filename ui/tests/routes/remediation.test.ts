@@ -1085,7 +1085,10 @@ describe('remediation router', () => {
         create: vi.fn().mockResolvedValue({
           url: 'https://github.com/owner/repo/pull/42',
           number: 42,
-          reviewerWarning: 'GitHub refused the reviewer request (status 422): not a collaborator',
+          warnings: [
+            'GitHub refused the review request for alice (status 422): not a collaborator',
+            'The pull request body could not be updated (status 403): forbidden',
+          ],
         }),
       });
       const app = appWith({ remediation, prCreator, getObject: makeGetObject() });
@@ -1098,18 +1101,97 @@ describe('remediation router', () => {
       ]);
       expect(res.body.errors).toEqual([]);
       expect(res.body.warnings).toEqual([
-        { service: '', warning: 'GitHub refused the reviewer request (status 422): not a collaborator' },
+        { service: '', warning: 'GitHub refused the review request for alice (status 422): not a collaborator' },
+        { service: '', warning: 'The pull request body could not be updated (status 403): forbidden' },
       ]);
       expect(remediation.recordPullRequest).toHaveBeenCalledWith(
         expect.objectContaining({ id: 'p1', pr_url: 'https://github.com/owner/repo/pull/42', pr_number: 42 }),
       );
+      expect(consoleWarn).toHaveBeenCalledTimes(2);
       expect(consoleWarn).toHaveBeenCalledWith(
         expect.stringContaining('reviewer request'),
         'p1',
         '',
-        'GitHub refused the reviewer request (status 422): not a collaborator',
+        'GitHub refused the review request for alice (status 422): not a collaborator',
       );
       consoleWarn.mockRestore();
+    });
+
+    it('gives the creator the body for the owners GitHub refused: each refused owner reads review request refused', async () => {
+      const remediation = makeRemediation({ beginPullRequest: vi.fn().mockResolvedValue(claimWith(mixedOwners)) });
+      const prCreator = makePrCreator();
+      const app = appWith({ remediation, prCreator, getObject: makeGetObject() });
+
+      await request(app).post('/api/remediation/proposals/p1/pull-request');
+
+      const input = (prCreator.create as any).mock.calls[0][0];
+      // Nobody refused: the body is the one the pull request opened with.
+      expect(input.bodyWithRefused({ users: [], teams: [] })).toBe(input.body);
+
+      const userRefused: string = input.bodyWithRefused({ users: ['Alice'], teams: [] });
+      expect(userRefused).toContain(
+        '### Owners\n- `s.a`: acme/finance (review requested)\n- `s.b`: alice (review request refused)\n- `s.c`: finance team (listed only)',
+      );
+
+      const teamRefused: string = input.bodyWithRefused({ users: [], teams: ['Finance'] });
+      expect(teamRefused).toContain(
+        '### Owners\n- `s.a`: acme/finance (review request refused)\n- `s.b`: alice (review requested)\n- `s.c`: finance team (listed only)',
+      );
+
+      // Only the owners lines differ.
+      expect(userRefused.replace('(review request refused)', '(review requested)')).toBe(input.body);
+    });
+
+    it('asks each service only the owners its own claim names', async () => {
+      const claimFor = (service: string, approvers: Array<{ node_id: string; owner: string; source: string }>, nodes: string[]) => ({
+        ...claimWith(approvers, nodes),
+        service,
+        repo: `org/${service}-repo`,
+      });
+      const claims: Record<string, any> = {
+        core: claimFor('core', [{ node_id: 'core.a', owner: 'alice', source: 'bundle' }], ['core.a']),
+        finance: claimFor(
+          'finance',
+          [
+            { node_id: 'fin.a', owner: 'acme/finance', source: 'bundle' },
+            { node_id: 'fin.b', owner: 'bob', source: 'contract_file' },
+          ],
+          ['fin.a', 'fin.b'],
+        ),
+      };
+      const remediation = makeRemediation({
+        getProposal: vi.fn().mockResolvedValue({ pr_services: ['core', 'finance'] }),
+        beginPullRequest: vi.fn().mockImplementation(async ({ service }: { service: string }) => claims[service]),
+      });
+      const prCreator = makePrCreator({
+        create: vi.fn().mockImplementation(async (input: { repo: string }) => ({
+          url: `https://github.com/${input.repo}/pull/1`,
+          number: 1,
+        })),
+      });
+      const app = appWith({ remediation, prCreator, getObject: makeGetObject() });
+
+      const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
+      expect(res.status).toBe(200);
+
+      const byRepo = new Map<string, any>(
+        (prCreator.create as any).mock.calls.map((c: any[]) => [c[0].repo, c[0]]),
+      );
+      const core = byRepo.get('org/core-repo');
+      expect(core.reviewers).toEqual(['alice']);
+      expect(core.teamReviewers).toEqual([]);
+      expect(core.body).toContain('### Owners\n- `core.a`: alice (review requested)');
+      expect(core.body).not.toContain('fin.');
+      expect(core.body).not.toContain('bob');
+
+      const finance = byRepo.get('org/finance-repo');
+      expect(finance.reviewers).toEqual(['bob']);
+      expect(finance.teamReviewers).toEqual(['finance']);
+      expect(finance.body).toContain(
+        '### Owners\n- `fin.a`: acme/finance (review requested)\n- `fin.b`: bob (review requested)',
+      );
+      expect(finance.body).not.toContain('core.a');
+      expect(finance.body).not.toContain('alice');
     });
 
     it('answers with no warning when the reviews were requested', async () => {
@@ -1129,7 +1211,7 @@ describe('remediation router', () => {
       const prCreator = makePrCreator({
         create: vi.fn().mockImplementation(async (input: { repo: string }) =>
           input.repo === 'org/finance-repo'
-            ? { url: 'https://github.com/org/finance-repo/pull/11', number: 11, reviewerWarning: 'refused' }
+            ? { url: 'https://github.com/org/finance-repo/pull/11', number: 11, warnings: ['refused'] }
             : { url: 'https://github.com/org/core-repo/pull/10', number: 10 }),
       });
       vi.spyOn(console, 'warn').mockImplementation(() => {});

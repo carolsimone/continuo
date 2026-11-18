@@ -2,13 +2,23 @@
 // diff comes before the rationale: the diff is the change a reviewer judges,
 // the rationale is the facts around it plus the model's one-line note.
 
-// One node's owner and whether GitHub was asked to have that owner review the
-// pull request. An empty owner is a node with no owner.
+// What became of the review of one owner: GitHub took the request, GitHub
+// refused it, or the owner is not a GitHub user or team and is only named.
+export type OwnerReview = 'requested' | 'refused' | 'listed';
+
+// One node's owner and what became of its review. An empty owner is a node
+// with no owner.
 export interface PullRequestOwner {
   nodeId: string;
   owner: string;
-  reviewRequested: boolean;
+  review: OwnerReview;
 }
+
+const OWNER_REVIEW_TEXT: Record<OwnerReview, string> = {
+  requested: 'review requested',
+  refused: 'review request refused',
+  listed: 'listed only',
+};
 
 export interface PullRequestBodyInput {
   nodeIds: string[];
@@ -28,13 +38,13 @@ export interface PullRequestBodyInput {
   uiUrl?: string;
 }
 
-// ownerLine states what became of one node's owner: asked to review, only
-// named (an owner GitHub cannot be asked for), or absent. An owner is text a
-// repository wrote, so it is held to one line.
-function ownerLine({ nodeId, owner, reviewRequested }: PullRequestOwner): string {
+// ownerLine states what became of one node's owner: asked to review, refused
+// by GitHub, only named (an owner GitHub cannot be asked for), or absent. An
+// owner is text a repository wrote, so it is held to one line.
+function ownerLine({ nodeId, owner, review }: PullRequestOwner): string {
   const name = owner.replace(/\s+/g, ' ').trim();
   if (name === '') return `- \`${nodeId}\`: no owner`;
-  return `- \`${nodeId}\`: ${name} (${reviewRequested ? 'review requested' : 'listed only'})`;
+  return `- \`${nodeId}\`: ${name} (${OWNER_REVIEW_TEXT[review]})`;
 }
 
 export function buildPullRequestBody(input: PullRequestBodyInput): string {

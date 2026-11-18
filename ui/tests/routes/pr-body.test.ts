@@ -49,22 +49,24 @@ describe('buildPullRequestBody', () => {
       const body = buildPullRequestBody({
         ...base,
         owners: [
-          { nodeId: 'a.x', owner: 'acme/finance', reviewRequested: true },
-          { nodeId: 'a.y', owner: 'finance', reviewRequested: false },
+          { nodeId: 'a.x', owner: 'acme/finance', review: 'requested' },
+          { nodeId: 'a.y', owner: 'finance team', review: 'listed' },
+          { nodeId: 'a.z', owner: 'bob', review: 'refused' },
         ],
       });
       expect(body).toContain(
-        '### Owners\n- `a.x`: acme/finance (review requested)\n- `a.y`: finance (listed only)',
+        '### Owners\n- `a.x`: acme/finance (review requested)\n- `a.y`: finance team (listed only)\n- `a.z`: bob (review request refused)',
       );
     });
 
     it('says a node has no owner when it has none', () => {
       const body = buildPullRequestBody({
         ...base,
-        owners: [{ nodeId: 'a.x', owner: '', reviewRequested: false }],
+        owners: [{ nodeId: 'a.x', owner: '', review: 'listed' }],
       });
       expect(body).toContain('### Owners\n- `a.x`: no owner');
       expect(body).not.toContain('review requested');
+      expect(body).not.toContain('review request refused');
       expect(body).not.toContain('listed only');
     });
 
@@ -73,7 +75,7 @@ describe('buildPullRequestBody', () => {
         ...base,
         diff: '-a\n+b',
         rationale: 'why',
-        owners: [{ nodeId: 'a.x', owner: 'alice', reviewRequested: true }],
+        owners: [{ nodeId: 'a.x', owner: 'alice', review: 'requested' }],
       });
       const files = body.indexOf('### Files changed');
       const owners = body.indexOf('### Owners');
@@ -86,7 +88,7 @@ describe('buildPullRequestBody', () => {
     it('keeps each owner to one line', () => {
       const body = buildPullRequestBody({
         ...base,
-        owners: [{ nodeId: 'a.x', owner: 'finance\n### Injected\t team', reviewRequested: false }],
+        owners: [{ nodeId: 'a.x', owner: 'finance\n### Injected\t team', review: 'listed' }],
       });
       expect(body).toContain('- `a.x`: finance ### Injected team (listed only)');
       expect(body).not.toContain('\n### Injected');
