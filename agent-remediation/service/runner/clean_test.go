@@ -184,18 +184,81 @@ func TestCodeTexts_ReadsOnlyTheCodeClass(t *testing.T) {
 	assert.NotContains(t, got, "the log")
 }
 
-func TestRestoreDraft_AShortValueThatAlsoOccursInTheCodeIsRestored(t *testing.T) {
+func TestRestoreDraft_AValueIsShownOnlyAsAWholeToken(t *testing.T) {
+	cases := []struct {
+		name, code, want string
+		refused          bool
+	}{
+		{"a code text that only contains the value", "select administrator from users", "select '[redacted:secret:1]'", true},
+		{"a code text that holds the value as a token", "where user = 'admin'", "select 'admin'", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := sanitize.NewRedactor()
+			require.Equal(t, "login failed: password=[redacted:secret:1]", r.Clean("login failed: password=admin"))
+
+			d, findings := restoreDraft(remediation.Draft{
+				Edits: []remediation.Edit{{Path: "a.sql", Content: "select '[redacted:secret:1]'"}},
+			}, r, []string{tc.code})
+
+			assert.Equal(t, tc.want, d.Edits[0].Content)
+			assert.Equal(t, tc.refused, len(findings) == 1)
+		})
+	}
+}
+
+// A value that occurs as a whole token in the code is restored even when the
+// model saw it in a log: a short value such as 1 occurs in most code.
+func TestRestoreDraft_AValueSeenInALogThatIsAlsoATokenOfTheCodeIsRestored(t *testing.T) {
 	r := sanitize.NewRedactor()
-	logged := r.Clean("password=1")
-	require.Equal(t, "password=[redacted:secret:1]", logged)
+	require.Equal(t, "password=[redacted:secret:1]", r.Clean("password=1"))
 
 	d, findings := restoreDraft(remediation.Draft{
 		Rationale: "the log said [redacted:secret:1]",
 		Edits:     []remediation.Edit{{Path: "a.sql", Content: "select [redacted:secret:1]"}},
 	}, r, []string{"select 1"})
 
-	assert.Equal(t, "select 1", d.Edits[0].Content,
-		"a value is matched by substring, so a value seen in a log that also occurs anywhere in the code is restored")
+	assert.Equal(t, "select 1", d.Edits[0].Content)
 	assert.Equal(t, "the log said 1", d.Rationale)
 	assert.Empty(t, findings)
+}
+
+func TestRestoreDraft_APathGetsBackOnlyValuesOfTheCode(t *testing.T) {
+	r := sanitize.NewRedactor()
+	r.Clean("login failed: password=hunter2")
+	shown := r.Clean("owner: ops@acme.com")
+
+	d, findings := restoreDraft(remediation.Draft{Edits: []remediation.Edit{
+		{Path: "contracts/[redacted:secret:1].odcs.yaml", Content: "x: 1"},
+		{Path: "contracts/[redacted:email:1].odcs.yaml", Content: "y: 2"},
+	}}, r, []string{"owner: ops@acme.com"})
+	require.Equal(t, "owner: [redacted:email:1]", shown)
+
+	assert.Equal(t, "contracts/[redacted:secret:1].odcs.yaml", d.Edits[0].Path, "a log's value never names a file")
+	assert.Equal(t, "contracts/ops@acme.com.odcs.yaml", d.Edits[1].Path)
+	assert.Equal(t, []remediation.Finding{{
+		Code:    findingUnknownPlaceholder,
+		Message: "the answer names a file with a placeholder (redacted secret 1) for a value from a log or a check, not from the code; leave that value out of the path",
+	}}, findings)
+}
+
+func TestShownIn_MatchesAWholeToken(t *testing.T) {
+	cases := []struct {
+		text, value string
+		want        bool
+	}{
+		{"user = 'admin'", "admin", true},
+		{"administrator", "admin", false},
+		{"sysadmin", "admin", false},
+		{"admin_user", "admin", false},
+		{"admin", "admin", true},
+		{"administrator, then admin", "admin", true},
+		{"owner ops@acme.com.", "ops@acme.com", true},
+		{"xops@acme.com", "ops@acme.com", false},
+		{"a[redacted:secret:1]b", "[redacted:secret:1]", true},
+		{"anything", "", false},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, shownIn(tc.text, tc.value), "%q in %q", tc.value, tc.text)
+	}
 }

@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
@@ -106,13 +107,17 @@ var (
 //     into a file: its placeholder stays in the content and is a finding.
 //     Placeholders r never issued stay too, for markerFindings to judge once
 //     the edit's original is known.
+//   - In an edit's path, which a pull request writes, a placeholder is
+//     replaced only when its value is in one of code or in an edit's
+//     original. Any other issued placeholder stays and is a finding.
 //   - In the rationale, which a pull request shows, a placeholder is replaced
-//     only when its value is in one of code or in an edit's original. Any
-//     other placeholder stays as it is, with no finding: a marker in a pull
-//     request's text is harmless, a value from a log is not.
-//   - An edit's path is restored whole.
+//     by the same rule as in a path. Any other placeholder stays as it is,
+//     with no finding: a marker in a pull request's text is harmless, a value
+//     from a log is not.
 //   - In the path and the rationale, each numbered placeholder r never issued
 //     is a finding.
+//
+// A value is in a text when it occurs there as a whole token (shownIn).
 //
 // Every other text of the draft is restored whole.
 func restoreDraft(d remediation.Draft, r *sanitize.Redactor, code []string) (remediation.Draft, []remediation.Finding) {
@@ -130,14 +135,20 @@ func restoreDraft(d remediation.Draft, r *sanitize.Redactor, code []string) (rem
 		}
 	}
 	originals := make([]string, 0, len(restored.Edits))
+	for _, e := range restored.Edits {
+		originals = append(originals, e.Original)
+	}
 	for i, e := range d.Edits {
 		unknownIn(e.Path, "")
-		original := restored.Edits[i].Original
-		originals = append(originals, original)
-		content, refused := restoreShown(e.Content, r, inAny([]string{original}, code))
+		path, refused := restoreShown(e.Path, r, inAny(code, originals))
+		restored.Edits[i].Path = path
+		for _, p := range refused {
+			findings = append(findings, unknownFinding(placeholderFromALogInPath, p, ""))
+		}
+		content, refused := restoreShown(e.Content, r, inAny([]string{originals[i]}, code))
 		restored.Edits[i].Content = content
 		for _, p := range refused {
-			findings = append(findings, unknownFinding(placeholderFromALog, p, restored.Edits[i].Path))
+			findings = append(findings, unknownFinding(placeholderFromALog, p, path))
 		}
 	}
 	unknownIn(d.Rationale, "")
@@ -145,16 +156,50 @@ func restoreDraft(d remediation.Draft, r *sanitize.Redactor, code []string) (rem
 	return restored, findings
 }
 
-// inAny reports whether a value occurs in any text of the lists.
+// inAny reports whether a value is in any text of the lists, as shownIn
+// tells.
 func inAny(lists ...[]string) func(value string) bool {
 	return func(value string) bool {
 		for _, texts := range lists {
-			if slices.ContainsFunc(texts, func(t string) bool { return strings.Contains(t, value) }) {
+			if slices.ContainsFunc(texts, func(t string) bool { return shownIn(t, value) }) {
 				return true
 			}
 		}
 		return false
 	}
+}
+
+// shownIn reports whether value occurs in text as a whole token: where the
+// value begins with a word character (a letter, a digit or an underscore), the
+// character before it is not one, and where it ends with one, the character
+// after it is not one. So admin is in user = 'admin' but not in administrator.
+func shownIn(text, value string) bool {
+	if value == "" {
+		return false
+	}
+	first, _ := utf8.DecodeRuneInString(value)
+	last, _ := utf8.DecodeLastRuneInString(value)
+	for from := 0; from <= len(text)-len(value); {
+		i := strings.Index(text[from:], value)
+		if i < 0 {
+			return false
+		}
+		start, end := from+i, from+i+len(value)
+		before, _ := utf8.DecodeLastRuneInString(text[:start])
+		after, _ := utf8.DecodeRuneInString(text[end:])
+		if (!isWord(first) || start == 0 || !isWord(before)) && (!isWord(last) || end == len(text) || !isWord(after)) {
+			return true
+		}
+		_, size := utf8.DecodeRuneInString(text[start:])
+		from = start + size
+	}
+	return false
+}
+
+// isWord reports whether c is a word character: a letter, a digit or an
+// underscore.
+func isWord(c rune) bool {
+	return c == '_' || unicode.IsLetter(c) || unicode.IsDigit(c)
 }
 
 // restoreShown returns text with each placeholder r issued replaced by its
@@ -216,9 +261,10 @@ func issued(r *sanitize.Redactor, token string) bool {
 
 // The messages of the finding unknown_placeholder, each naming the token.
 const (
-	placeholderAdded      = "the answer adds a redaction marker (%s) the file did not hold; keep the text you were shown"
-	placeholderFromALog   = "the answer holds a placeholder (%s) for a value from a log or a check, not from the code; leave that value out of the file"
-	placeholderNeverShown = "the answer holds a placeholder (%s) that was never in what you were shown; keep the text you were shown"
+	placeholderAdded          = "the answer adds a redaction marker (%s) the file did not hold; keep the text you were shown"
+	placeholderFromALog       = "the answer holds a placeholder (%s) for a value from a log or a check, not from the code; leave that value out of the file"
+	placeholderFromALogInPath = "the answer names a file with a placeholder (%s) for a value from a log or a check, not from the code; leave that value out of the path"
+	placeholderNeverShown     = "the answer holds a placeholder (%s) that was never in what you were shown; keep the text you were shown"
 )
 
 // unknownFinding is the finding unknown_placeholder with message naming token,

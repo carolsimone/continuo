@@ -366,3 +366,46 @@ func TestRunner_AValueSeenOnlyInALogStaysAMarkerInTheRationale(t *testing.T) {
 		assert.NotContains(t, string(e.Payload), "hunter2", "no outbox entry on %s", e.StreamName)
 	}
 }
+
+// TestRunner_AValueSeenOnlyInALogNeverNamesAFile checks that a contract fix
+// whose path holds the placeholder of a log's password is refused, and that the
+// password reaches no stored row, verification run, pull request or outbox
+// entry.
+func TestRunner_AValueSeenOnlyInALogNeverNamesAFile(t *testing.T) {
+	h := newHarness(t, withContractType(1, &refusingPackager{}))
+	h.evidence.objects["s3://logs/loader"] = "connect failed: password=hunter2"
+	node := contractNode()
+	node.DBTLogURI = "s3://logs/loader"
+	const leakedPath = "services/svc-a/contracts/[redacted:secret:1].odcs.yaml"
+	h.llm.answer = func(req prompt.ProposeRequest) ports.ProposeResult {
+		r := contractAnswer(req)
+		r.Files = []ports.ProposedFile{{Path: leakedPath, Content: fixedContract}}
+		return r
+	}
+	id := h.accept(trigger("validation", node))
+
+	require.NoError(t, h.runner.Drive(ctx, id))
+
+	require.Contains(t, h.llm.all()[0].User, "password=[redacted:secret:1]", "the model is shown the log cleaned")
+	findings := h.roundRows(id, 1, "preflight")[1].Findings
+	require.NotEmpty(t, findings)
+	assert.Equal(t, remediation.Finding{
+		Code:    "unknown_placeholder",
+		Message: "the answer names a file with a placeholder (redacted secret 1) for a value from a log or a check, not from the code; leave that value out of the path",
+	}, findings[0])
+	assert.Equal(t, leakedPath, h.preflightDraft(id, 1).Edits[0].Path, "the stored draft keeps the placeholder")
+	assert.Equal(t, remediation.ClusterHandedOver, h.cluster(id, 1, 1).Status)
+
+	for _, s := range h.store.Steps(id) {
+		if s.Kind == "context" {
+			continue // the journal keeps the evidence raw
+		}
+		assert.NotContains(t, string(s.Output), "hunter2", "step %s", s.Step)
+		assert.NotContains(t, fmt.Sprint(s.Findings), "hunter2", "step %s", s.Step)
+	}
+	assert.NotContains(t, fmt.Sprint(h.pipeline.runs()), "hunter2", "no verification run")
+	assert.NotContains(t, fmt.Sprint(h.proposals()), "hunter2", "no proposal row")
+	for _, e := range h.store.OutboxEntries() {
+		assert.NotContains(t, string(e.Payload), "hunter2", "no outbox entry on %s", e.StreamName)
+	}
+}
