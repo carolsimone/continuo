@@ -17,11 +17,11 @@ type piece struct {
 	kind kind
 }
 
-func fixedMarker(k kind, _ string) string { return "[redacted:" + string(k) + "]" }
+func fixedMarker(k kind) string { return "[redacted:" + string(k) + "]" }
 
 // render writes the pieces in order, plain text as it is and each marker as the
-// label the caller gives its kind and the text it replaced.
-func render(pieces []piece, label func(k kind, value string) string) string {
+// fixed marker of its kind.
+func render(pieces []piece) string {
 	if len(pieces) == 1 && pieces[0].kind == "" {
 		return pieces[0].text
 	}
@@ -30,7 +30,7 @@ func render(pieces []piece, label func(k kind, value string) string) string {
 		if p.kind == "" {
 			b.WriteString(p.text)
 		} else {
-			b.WriteString(label(p.kind, p.text))
+			b.WriteString(fixedMarker(p.kind))
 		}
 	}
 	return b.String()
@@ -38,13 +38,13 @@ func render(pieces []piece, label func(k kind, value string) string) string {
 
 // redactPieces searches s for what the rules redact and replaces it with
 // markers, then searches the result again, until a search finds nothing. The
-// text is read as it will be the next time it is cleaned, markers and all, so
-// cleaning a cleaned text finds nothing, and no part of a value is left
-// beside a marker that stands where the rest of it was.
+// text is read as Text writes it, markers and all, so redacting the output of
+// Text finds nothing, and no part of a value is left beside a marker that
+// stands where the rest of it was.
 func redactPieces(s string) []piece {
 	pieces := []piece{{text: s}}
 	for range maxPasses {
-		rendered := render(pieces, fixedMarker)
+		rendered := render(pieces)
 		spans := findSpans(rendered)
 		if len(spans) == 0 {
 			break
@@ -75,7 +75,7 @@ func replaceSpans(pieces []piece, total int, spans []span) []piece {
 			p := pieces[i]
 			if p.kind != "" {
 				taken = append(taken, p)
-				pos += len(fixedMarker(p.kind, ""))
+				pos += len(fixedMarker(p.kind))
 				i++
 				off = 0
 				continue

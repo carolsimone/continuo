@@ -5,9 +5,11 @@
 // model's draft with the same Redactor.
 //
 // Text replaces every credential, private key and email address it finds with
-// a fixed marker. A Redactor applies the same rules but gives each distinct
-// value its own numbered placeholder and can put the values back, so a model
-// can be shown a text without its secrets and its answer can be restored.
+// a fixed marker. A Redactor applies the same rules to raw text but gives each
+// distinct value its own numbered placeholder and can put the values back, so a
+// model can be shown a text without its secrets and its answer can be
+// restored. A numbered placeholder a raw text holds is that text's own, and a
+// Redactor numbers it as a value of its own.
 //
 // The rules, in order, with the marker each one writes:
 //
@@ -25,16 +27,17 @@
 //     ${TOKEN}), not a null or a boolean, not a block scalar and not a type;
 //  5. an email address (email).
 //
-// Every rule reads the text as it will be read the next time it is cleaned: the
-// rules run over the text, each stretch they redact is replaced by its marker,
-// and the result is searched again until nothing is found. When two rules match
-// overlapping text the earlier match stands and the later one is dropped, so
+// Every rule reads the text as Text writes it: the rules run over the text,
+// each stretch they redact is replaced by its marker, and the result is
+// searched again until nothing is found. When two rules match overlapping text
+// the earlier match stands and the later one is dropped, so
 // password=ops@acme.com is one secret and not a secret holding an email
 // address. Two kinds of match take in what they reach. The value of a secret
 // key takes in the earlier matches inside it, so password=postgres://u:pw@h is
 // one secret and no part of a value is left beside the marker of another part.
-// A match that reaches into a marker takes it in whole. A marker is never
-// matched by a rule, so cleaning a cleaned text changes nothing.
+// A match that reaches into a marker takes it in whole. A marker, fixed or
+// numbered, is never matched by a rule, so Text of a text Text wrote changes
+// nothing.
 package sanitize
 
 import (
@@ -322,5 +325,5 @@ func containsAny(s string, words []string) bool {
 // by its marker: [redacted:key], [redacted:secret] or [redacted:email]. It is a
 // function of s alone.
 func Text(s string) string {
-	return render(redactPieces(s), fixedMarker)
+	return render(redactPieces(s))
 }
