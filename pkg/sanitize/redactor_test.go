@@ -1,0 +1,266 @@
+package sanitize_test
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/carolsimone/continuo/pkg/sanitize"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// Each distinct value gets one placeholder, numbered per kind in the order the
+// Redactor first sees it, and the same value keeps its placeholder across
+// texts.
+func TestRedactor_NumbersEachDistinctValueOnce(t *testing.T) {
+	r := sanitize.NewRedactor()
+
+	assert.Equal(t,
+		"[redacted:email:1] [redacted:email:2] [redacted:email:1]",
+		r.Clean("a@x.org b@x.org a@x.org"))
+
+	// A later text continues the numbering, and a value already seen keeps its
+	// number.
+	assert.Equal(t,
+		"[redacted:email:3] [redacted:email:1]",
+		r.Clean("c@x.org a@x.org"))
+
+	// Each kind counts on its own.
+	assert.Equal(t,
+		"password=[redacted:secret:1] mail [redacted:email:2]\n[redacted:key:1]",
+		r.Clean("password=hunter2 mail b@x.org\n"+pemKey))
+	assert.Equal(t,
+		"password=[redacted:secret:2] token: [redacted:secret:1]",
+		r.Clean("password=other token: hunter2"))
+}
+
+// The number follows the position in the text, not the position of the rule
+// that found the value.
+func TestRedactor_NumbersByPositionInTheText(t *testing.T) {
+	r := sanitize.NewRedactor()
+
+	assert.Equal(t,
+		"[redacted:secret:1] then password=[redacted:secret:2] then [redacted:secret:3]",
+		r.Clean(awsKeyID+" then password=hunter2 then "+githubPAT))
+}
+
+func TestRedactor_TheRulesAreTheRulesOfText(t *testing.T) {
+	in := "dsn postgres://app:s3cr3t@db/x password=ops@acme.com mail bob@acme.com\n" + pemKey + "\n" + awsKeyID
+	got := sanitize.NewRedactor().Clean(in)
+
+	assert.Equal(t,
+		"dsn postgres://app:[redacted:secret:1]@db/x password=[redacted:secret:2] mail [redacted:email:1]\n"+
+			"[redacted:key:1]\n[redacted:secret:3]",
+		got)
+}
+
+func TestRedactor_RestoreReturnsTheOriginal(t *testing.T) {
+	for name, in := range map[string]string{
+		"every kind": "dsn postgres://app:s3cr3t@db/x password=hunter2 mail bob@acme.com\n" +
+			pemKey + "\n" + awsKeyID + " " + jwt + " " + githubPAT,
+		"a value used twice":       "a@x.org and again a@x.org",
+		"a quoted value":           `{"api_key": "abc 123", "owner": "ops@acme.com"}`,
+		"an escaped JSON value":    `{"msg":"{\"password\":\"hunter2\"}"}`,
+		"a value with a dollar":    "password=$1abc&token=${x}",
+		"a value with a backslash": `password=ab\1cd`,
+		"nothing to clean":         "select 1 from t",
+		"empty":                    "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := sanitize.NewRedactor()
+			cleaned := r.Clean(in)
+
+			restored, unknown := r.Restore(cleaned)
+			assert.Equal(t, in, restored)
+			assert.Empty(t, unknown)
+		})
+	}
+}
+
+// A placeholder stands for the same value in every text that carries it, so a
+// draft that moves, repeats or drops placeholders restores each to its value.
+func TestRedactor_RestorePutsEachPlaceholderBackWhereTheTextHasIt(t *testing.T) {
+	r := sanitize.NewRedactor()
+	r.Clean("owner a@x.org, admin b@x.org")
+
+	restored, unknown := r.Restore("-- [redacted:email:2] first, [redacted:email:1] twice [redacted:email:1]")
+
+	assert.Equal(t, "-- b@x.org first, a@x.org twice a@x.org", restored)
+	assert.Empty(t, unknown)
+}
+
+// A placeholder the Redactor never issued is reported, in order of first
+// appearance and once, and stays in the text. A fixed marker from Text is
+// never restorable.
+func TestRedactor_RestoreReportsAnUnknownPlaceholder(t *testing.T) {
+	r := sanitize.NewRedactor()
+	r.Clean("owner a@x.org")
+
+	restored, unknown := r.Restore(
+		"[redacted:email:9] [redacted:email:1] [redacted:secret] [redacted:email:9] [redacted:secret:1] [redacted:thing:4] [redacted:email]")
+
+	assert.Equal(t,
+		"[redacted:email:9] a@x.org [redacted:secret] [redacted:email:9] [redacted:secret:1] [redacted:thing:4] [redacted:email]",
+		restored)
+	assert.Equal(t,
+		[]string{"[redacted:email:9]", "[redacted:secret]", "[redacted:secret:1]", "[redacted:thing:4]", "[redacted:email]"},
+		unknown)
+}
+
+func TestRedactor_RestoreIgnoresTextThatOnlyLooksLikeAPlaceholder(t *testing.T) {
+	r := sanitize.NewRedactor()
+	r.Clean("owner a@x.org")
+
+	for _, in := range []string{
+		"[redacted]", "[redacted:email:]", "[redacted:email:x]", "[redacted:EMAIL:1]", "redacted:email:1", "[redacted:email:1",
+	} {
+		restored, unknown := r.Restore(in)
+		assert.Equal(t, in, restored)
+		assert.Empty(t, unknown, in)
+	}
+}
+
+// A number is not the issued number unless it is the same digits.
+func TestRedactor_RestoreDoesNotReadANumberLoosely(t *testing.T) {
+	r := sanitize.NewRedactor()
+	r.Clean("owner a@x.org")
+
+	restored, unknown := r.Restore("[redacted:email:01] [redacted:email:1]")
+
+	assert.Equal(t, "[redacted:email:01] a@x.org", restored)
+	assert.Equal(t, []string{"[redacted:email:01]"}, unknown)
+}
+
+// A placeholder of one Redactor means nothing to another: each try and cluster
+// owns its own.
+func TestRedactor_APlaceholderBelongsToTheRedactorThatIssuedIt(t *testing.T) {
+	first := sanitize.NewRedactor()
+	cleaned := first.Clean("owner a@x.org")
+	require.Equal(t, "owner [redacted:email:1]", cleaned)
+
+	restored, unknown := sanitize.NewRedactor().Restore(cleaned)
+
+	assert.Equal(t, cleaned, restored)
+	assert.Equal(t, []string{"[redacted:email:1]"}, unknown)
+}
+
+// What Restore puts back is not read again: a value that looks like a
+// placeholder comes back as it was.
+func TestRedactor_RestoreDoesNotReadTheValuesItPutsBack(t *testing.T) {
+	r := sanitize.NewRedactor()
+	cleaned := r.Clean("password=[redacted:secret:7]x")
+	require.Equal(t, "password=[redacted:secret:1]", cleaned)
+
+	restored, unknown := r.Restore(cleaned)
+
+	assert.Equal(t, "password=[redacted:secret:7]x", restored)
+	assert.Empty(t, unknown)
+}
+
+// A text that was cleaned already is its own clean: its placeholders stay, so
+// cleaning twice changes nothing and Restore still inverts it.
+func TestRedactor_CleaningACleanedTextChangesNothing(t *testing.T) {
+	in := "dsn postgres://app:s3cr3t@db/x password=ops@acme.com mail bob@acme.com\n" + pemKey
+	r := sanitize.NewRedactor()
+
+	once := r.Clean(in)
+	assert.Equal(t, once, r.Clean(once))
+
+	restored, unknown := r.Restore(r.Clean(once))
+	assert.Equal(t, in, restored)
+	assert.Empty(t, unknown)
+}
+
+// A numbered placeholder is no secret key with a value: [redacted:secret:1]
+// reads like the key secret holding 1, and no rule may take it so.
+func TestRedactor_NoRuleMatchesAPlaceholder(t *testing.T) {
+	for _, in := range []string{
+		"[redacted:secret:1]", "[redacted:key:12]", "[redacted:email:3]",
+		"x [redacted:secret:1], [redacted:secret:2]; y",
+		`{"v": "[redacted:secret:1]"}`,
+	} {
+		assert.Equal(t, in, sanitize.NewRedactor().Clean(in))
+		assert.Equal(t, in, sanitize.Text(in))
+	}
+}
+
+// A fixed marker from Text is left as it is and is not restorable.
+func TestRedactor_LeavesAFixedMarkerFromTextAlone(t *testing.T) {
+	r := sanitize.NewRedactor()
+	cleaned := r.Clean(sanitize.Text("password=hunter2 mail a@x.org") + " and b@x.org")
+	require.Equal(t, "password=[redacted:secret] mail [redacted:email] and [redacted:email:1]", cleaned)
+
+	restored, unknown := r.Restore(cleaned)
+
+	assert.Equal(t, "password=[redacted:secret] mail [redacted:email] and b@x.org", restored)
+	assert.Equal(t, []string{"[redacted:secret]", "[redacted:email]"}, unknown)
+}
+
+// Two Redactors that clean the same texts in the same order issue the same
+// placeholders.
+func TestRedactor_IsDeterministic(t *testing.T) {
+	texts := []string{
+		"password=hunter2 mail a@x.org",
+		"mail b@x.org password=hunter2",
+		pemKey,
+	}
+	run := func() []string {
+		r := sanitize.NewRedactor()
+		out := make([]string, 0, len(texts))
+		for _, text := range texts {
+			out = append(out, r.Clean(text))
+		}
+		return out
+	}
+
+	want := []string{
+		"password=[redacted:secret:1] mail [redacted:email:1]",
+		"mail [redacted:email:2] password=[redacted:secret:1]",
+		"[redacted:key:1]",
+	}
+	assert.Equal(t, want, run())
+	assert.Equal(t, want, run())
+}
+
+func TestRedactor_CleanLeavesATextWithNoMatchUntouched(t *testing.T) {
+	in := "select 1 as x -- a comment\nfrom \"analytics\".orders\n"
+	r := sanitize.NewRedactor()
+
+	assert.Equal(t, in, r.Clean(in))
+	restored, unknown := r.Restore(in)
+	assert.Equal(t, in, restored)
+	assert.Empty(t, unknown)
+}
+
+// Whatever the text, cleaning it twice changes nothing more than cleaning it
+// once, and a Redactor restores a text that holds no placeholder of its own.
+func FuzzCleanAndRestore(f *testing.F) {
+	for _, seed := range []string{
+		"", "select 1", pemKey, awsKeyID, githubPAT, jwt,
+		"password=ops@acme.com", `{"token": "abc", "owner": "a@b.co"}`,
+		"https://u:p@ss@h.example.com/x", "Bearer abcdefgh1234", "token: Bearer abcdefgh1234",
+		`{"msg":"{\"password\":\"hunter2\"}"}`, "password=\"unterminated", "-----BEGIN PRIVATE KEY-----\nabc",
+		"password=[redacted:secret]x", "a@b.co a@b.co", "secret_key==\"x\"", "token::text", "api-key:\t'k'",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, in string) {
+		once := sanitize.Text(in)
+		if twice := sanitize.Text(once); twice != once {
+			t.Fatalf("Text is not idempotent on %q: %q then %q", in, once, twice)
+		}
+
+		r := sanitize.NewRedactor()
+		cleaned := r.Clean(in)
+		if again := r.Clean(cleaned); again != cleaned {
+			t.Fatalf("Clean is not idempotent on %q: %q then %q", in, cleaned, again)
+		}
+		if strings.Contains(in, "[redacted:") {
+			return
+		}
+		restored, unknown := r.Restore(cleaned)
+		if restored != in || len(unknown) != 0 {
+			t.Fatalf("Restore(Clean(%q)) = %q, unknown %q", in, restored, unknown)
+		}
+	})
+}
