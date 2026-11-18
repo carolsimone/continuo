@@ -10,6 +10,7 @@ function buildFakeOctokit(opts: {
   createRefStatus?: number;
   existingPR?: { html_url: string; number: number };
   existingPRs?: Array<{ html_url: string; number: number }>;
+  requestReviewersError?: { status?: number; message?: string };
 }) {
   const {
     defaultBranchSha = 'sha-base',
@@ -17,6 +18,7 @@ function buildFakeOctokit(opts: {
     createRefStatus = undefined,
     existingPR = { html_url: 'https://github.com/o/r/pull/7', number: 7 },
     existingPRs = [existingPR],
+    requestReviewersError,
   } = opts;
 
   const getRef = vi.fn().mockResolvedValue({
@@ -49,6 +51,11 @@ function buildFakeOctokit(opts: {
     data: existingPRs,
   });
 
+  const requestReviewers = vi.fn().mockImplementation(async () => {
+    if (requestReviewersError) throw requestReviewersError;
+    return {};
+  });
+
   const getCommit = vi.fn().mockResolvedValue({ data: { tree: { sha: 'base-tree-sha' } } });
   const createBlob = vi.fn().mockImplementation(async () => ({ data: { sha: `blob-${++blobCounter}` } }));
   const createTree = vi.fn().mockResolvedValue({ data: { sha: 'new-tree-sha' } });
@@ -58,7 +65,7 @@ function buildFakeOctokit(opts: {
   return {
     git: { getRef, createRef, getCommit, createBlob, createTree, createCommit, updateRef },
     repos: { createOrUpdateFileContents },
-    pulls: { create: prCreate, list: prList },
+    pulls: { create: prCreate, list: prList, requestReviewers },
   };
 }
 
@@ -258,6 +265,77 @@ describe('makePullRequestCreator', () => {
       expect(octokit.git.createCommit).toHaveBeenCalledWith(
         expect.objectContaining({ parents: ['head-of-main'] })
       );
+    });
+  });
+
+  describe('reviewers', () => {
+    it('requests reviews after creating the pull request', async () => {
+      const octokit = buildFakeOctokit({ existingPR: { html_url: 'https://github.com/o/r/pull/9', number: 9 } });
+      const creator = makePullRequestCreator(octokit);
+      const res = await creator.create({ ...baseInput, reviewers: ['alice', 'bob'], teamReviewers: ['finance'] });
+
+      expect(octokit.pulls.requestReviewers).toHaveBeenCalledTimes(1);
+      expect(octokit.pulls.requestReviewers).toHaveBeenCalledWith({
+        owner: 'o',
+        repo: 'continuo-demo',
+        pull_number: 9,
+        reviewers: ['alice', 'bob'],
+        team_reviewers: ['finance'],
+      });
+      expect(octokit.pulls.create.mock.invocationCallOrder[0]).toBeLessThan(
+        octokit.pulls.requestReviewers.mock.invocationCallOrder[0],
+      );
+      expect(res).toEqual({ url: 'https://github.com/o/r/pull/9', number: 9 });
+    });
+
+    it('requests the reviews of teams alone, and of users alone', async () => {
+      const teamsOnly = buildFakeOctokit({});
+      await makePullRequestCreator(teamsOnly).create({ ...baseInput, teamReviewers: ['finance'] });
+      expect(teamsOnly.pulls.requestReviewers).toHaveBeenCalledWith(
+        expect.objectContaining({ reviewers: [], team_reviewers: ['finance'] }),
+      );
+
+      const usersOnly = buildFakeOctokit({});
+      await makePullRequestCreator(usersOnly).create({ ...baseInput, reviewers: ['alice'] });
+      expect(usersOnly.pulls.requestReviewers).toHaveBeenCalledWith(
+        expect.objectContaining({ reviewers: ['alice'], team_reviewers: [] }),
+      );
+    });
+
+    it('asks for no review when there is nobody to ask', async () => {
+      const octokit = buildFakeOctokit({});
+      const creator = makePullRequestCreator(octokit);
+      await creator.create(baseInput);
+      await creator.create({ ...baseInput, reviewers: [], teamReviewers: [] });
+      expect(octokit.pulls.requestReviewers).not.toHaveBeenCalled();
+    });
+
+    it('opens the pull request when a reviewer request is refused', async () => {
+      const octokit = buildFakeOctokit({
+        existingPR: { html_url: 'https://github.com/o/r/pull/9', number: 9 },
+        requestReviewersError: { status: 422, message: 'Reviews may only be requested from collaborators' },
+      });
+      const creator = makePullRequestCreator(octokit);
+      const res = await creator.create({ ...baseInput, reviewers: ['alice'] });
+
+      expect(res.url).toBe('https://github.com/o/r/pull/9');
+      expect(res.number).toBe(9);
+      expect(res.reviewerWarning).toMatch(/422/);
+      expect(res.reviewerWarning).toMatch(/Reviews may only be requested from collaborators/);
+    });
+
+    it('opens the pull request when a reviewer request fails without a status', async () => {
+      const octokit = buildFakeOctokit({ requestReviewersError: { message: 'socket hang up' } });
+      const res = await makePullRequestCreator(octokit).create({ ...baseInput, teamReviewers: ['finance'] });
+      expect(res.number).toBe(7);
+      expect(res.reviewerWarning).toMatch(/socket hang up/);
+    });
+
+    it('does not ask again for a pull request that was already open', async () => {
+      const octokit = buildFakeOctokit({ prCreate422: true });
+      const res = await makePullRequestCreator(octokit).create({ ...baseInput, reviewers: ['alice'] });
+      expect(res).toEqual({ url: 'https://github.com/o/r/pull/7', number: 7 });
+      expect(octokit.pulls.requestReviewers).not.toHaveBeenCalled();
     });
   });
 

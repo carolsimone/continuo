@@ -1145,6 +1145,15 @@ type stubPullRequest struct {
 	Title  string `json:"title"`
 	Body   string `json:"body"`
 	State  string `json:"state"`
+	// RequestedReviewers are the users a review was requested from, as GitHub
+	// lists them on a pull request.
+	RequestedReviewers []struct {
+		Login string `json:"login"`
+	} `json:"requested_reviewers"`
+	// RequestedTeams are the teams a review was requested from.
+	RequestedTeams []struct {
+		Slug string `json:"slug"`
+	} `json:"requested_teams"`
 }
 
 // fetchStubPullRequest reads one pull request back from stub-github. The title

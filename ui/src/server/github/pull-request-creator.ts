@@ -28,10 +28,26 @@ export interface CreatePRInput {
   title: string;
   /** PR body / description */
   body: string;
+  /** GitHub logins of the users asked to review the new pull request. */
+  reviewers?: string[];
+  /** Slugs of the teams of the repository's organization asked to review it. */
+  teamReviewers?: string[];
+}
+
+export interface CreatedPullRequest {
+  url: string;
+  number: number;
+  /**
+   * Set when GitHub refused the review request: the pull request is open
+   * without reviewers, and this says why. Absent when the reviews were
+   * requested, when nobody was to be asked, and for a pull request that was
+   * already open.
+   */
+  reviewerWarning?: string;
 }
 
 export interface PullRequestCreator {
-  create(input: CreatePRInput): Promise<{ url: string; number: number }>;
+  create(input: CreatePRInput): Promise<CreatedPullRequest>;
 }
 
 /**
@@ -89,7 +105,23 @@ export interface OctokitLike {
       head: string;
       state: 'open' | 'closed' | 'all';
     }): Promise<{ data: Array<{ html_url: string; number: number }> }>;
+    requestReviewers(params: {
+      owner: string;
+      repo: string;
+      pull_number: number;
+      reviewers: string[];
+      team_reviewers: string[];
+    }): Promise<unknown>;
   };
+}
+
+// reviewerRefusal says why GitHub did not take a review request: its status and
+// the message of its answer, which is all an Octokit error is read for here (the
+// error object itself can carry the outgoing request and its credentials).
+function reviewerRefusal(err: { status?: number; message?: string }): string {
+  const status = err.status ? ` (status ${err.status})` : '';
+  const message = (err.message ?? 'no message').replace(/\s+/g, ' ').trim().slice(0, 300);
+  return `GitHub refused the review request${status}: ${message}`;
 }
 
 /**
@@ -103,10 +135,14 @@ export interface OctokitLike {
  *      the base commit's tree, and commit that tree with the base commit as parent.
  *   4. Point the head branch at the new commit via git.updateRef.
  *   5. Open the PR via pulls.create — on 422 (PR already exists) resolve the existing PR via pulls.list.
+ *   6. For a PR just opened, ask the reviewers and teams of the input to review it
+ *      via pulls.requestReviewers. A refusal does not fail the call: the PR is open,
+ *      and the refusal comes back as reviewerWarning. A PR that already existed was
+ *      asked when it was opened, so it is returned as it is.
  */
 export function makePullRequestCreator(octokit: OctokitLike): PullRequestCreator {
   return {
-    async create(input: CreatePRInput): Promise<{ url: string; number: number }> {
+    async create(input: CreatePRInput): Promise<CreatedPullRequest> {
       // A commit over no files produces a tree identical to its parent, which
       // GitHub then refuses to open a pull request for — surfacing several
       // steps later as an unexplained 422 with no PR to fall back to. Say what
@@ -216,7 +252,26 @@ export function makePullRequestCreator(octokit: OctokitLike): PullRequestCreator
           title: input.title,
           body: input.body,
         });
-        return { url: prData.data.html_url, number: prData.data.number };
+        const opened = { url: prData.data.html_url, number: prData.data.number };
+
+        // Step 6: ask the owners to review. The pull request is open whatever
+        // GitHub answers here, so a refusal is reported, not thrown.
+        const reviewers = input.reviewers ?? [];
+        const teamReviewers = input.teamReviewers ?? [];
+        if (reviewers.length === 0 && teamReviewers.length === 0) return opened;
+        try {
+          await octokit.pulls.requestReviewers({
+            owner,
+            repo: repoName,
+            pull_number: opened.number,
+            reviewers,
+            team_reviewers: teamReviewers,
+          });
+        } catch (reviewErr: unknown) {
+          const e = reviewErr as { status?: number; message?: string };
+          return { ...opened, reviewerWarning: reviewerRefusal(e) };
+        }
+        return opened;
       } catch (err: unknown) {
         const e = err as { status?: number };
         if (e.status !== 422) throw err;

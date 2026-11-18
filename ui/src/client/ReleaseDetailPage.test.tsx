@@ -354,6 +354,128 @@ describe('ReleaseDetailPage — hand-over reasons in the FIX cell', () => {
   });
 });
 
+describe('ReleaseDetailPage — the owner of a fixed or handed-over node', () => {
+  const approver = (node_id: string, owner: string, source: 'bundle' | 'contract_file' | 'none' = owner ? 'bundle' : 'none') =>
+    ({ node_id, owner, source });
+  const batched = (
+    outcomes: Record<string, { status: string; reason: string; code?: string }>,
+    approvers: ReturnType<typeof approver>[] | undefined,
+    attempt = 1,
+  ) =>
+    proposal({
+      source: 'validation', node_id: 's.a', status: 'failed', attempt,
+      resolved_node_ids: Object.keys(outcomes), node_outcomes: outcomes as ProposalDTO['node_outcomes'],
+      approvers,
+    });
+  const releaseOf = (...ids: string[]) =>
+    makeRelease(ids.map(id => node({ stage: 'validation', node_id: id })), 'validation_failed');
+
+  it('shows the owner of a node whose fix is ready to review', async () => {
+    mockFetchProposals.mockResolvedValue([batched(
+      { 's.a': { status: 'proposed', reason: '' } },
+      [approver('s.a', 'acme/finance')],
+    )]);
+    renderPage(releaseOf('s.a'));
+    expect(await screen.findByText('Owner: acme/finance')).toBeInTheDocument();
+    expect(screen.getByText(/Proposed fix available/)).toBeInTheDocument();
+  });
+
+  it('shows the owner of a node handed over to a human, beneath the hand-over text', async () => {
+    mockFetchProposals.mockResolvedValue([batched(
+      { 's.a': { status: 'failed', reason: 'duplicate column amount', code: 'tries_spent' } },
+      [approver('s.a', 'alice', 'contract_file')],
+    )]);
+    renderPage(releaseOf('s.a'));
+    expect(await screen.findByText('Owner: alice')).toBeInTheDocument();
+    expect(screen.getByText('Every try failed the checks. Fix it in the repository.')).toBeInTheDocument();
+  });
+
+  it('says no reviewer is asked for a node with no owner', async () => {
+    mockFetchProposals.mockResolvedValue([batched(
+      { 's.a': { status: 'failed', reason: '', code: 'no_type' } },
+      [approver('s.a', '')],
+    )]);
+    renderPage(releaseOf('s.a'));
+    expect(await screen.findByText('No owner, so no reviewer is asked.')).toBeInTheDocument();
+    expect(screen.queryByText(/^Owner:/)).toBeNull();
+  });
+
+  it('shows each node its own owner in one batched attempt', async () => {
+    mockFetchProposals.mockResolvedValue([batched(
+      {
+        's.a': { status: 'proposed', reason: '' },
+        's.b': { status: 'failed', reason: '', code: 'declined' },
+        's.c': { status: 'skipped', reason: '', code: 'classifier_infra' },
+      },
+      [approver('s.a', 'acme/finance'), approver('s.b', 'bob'), approver('s.c', '')],
+    )]);
+    renderPage(releaseOf('s.a', 's.b', 's.c'));
+    expect(await screen.findByText('Owner: acme/finance')).toBeInTheDocument();
+    expect(screen.getByText('Owner: bob')).toBeInTheDocument();
+    expect(screen.getAllByText('No owner, so no reviewer is asked.')).toHaveLength(1);
+  });
+
+  it('shows no owner note for a legacy attempt, which records no approvers', async () => {
+    mockFetchProposals.mockResolvedValue([
+      batched({ 's.a': { status: 'proposed', reason: '' } }, undefined),
+      batched({ 's.b': { status: 'failed', reason: '', code: 'declined' } }, []),
+    ]);
+    renderPage(releaseOf('s.a', 's.b'));
+    expect(await screen.findByText(/Proposed fix available/)).toBeInTheDocument();
+    expect(screen.getByText('The agent could not start a fix. Fix it in the repository.')).toBeInTheDocument();
+    expect(screen.queryByText(/Owner:/)).toBeNull();
+    expect(screen.queryByText(/No owner/)).toBeNull();
+  });
+
+  it('shows no owner note for a node the attempt recorded no approver for', async () => {
+    // A node with no entry was not recorded, which is not the same as a node with no owner.
+    mockFetchProposals.mockResolvedValue([batched(
+      {
+        's.a': { status: 'failed', reason: '', code: 'classifier_infra' },
+        's.b': { status: 'failed', reason: '', code: 'declined' },
+      },
+      [approver('s.a', 'alice')],
+    )]);
+    renderPage(releaseOf('s.a', 's.b'));
+    expect(await screen.findByText('Owner: alice')).toBeInTheDocument();
+    expect(screen.getByText('The agent could not start a fix. Fix it in the repository.')).toBeInTheDocument();
+    expect(screen.queryByText(/No owner/)).toBeNull();
+    expect(screen.getAllByText(/Owner:/)).toHaveLength(1);
+  });
+
+  it('shows no owner note while a fix is being written or verified', async () => {
+    mockFetchProposals.mockResolvedValue([
+      batched({ 's.a': { status: 'generating', reason: '' } }, [approver('s.a', 'alice')]),
+      batched({ 's.b': { status: 'verifying', reason: '' } }, [approver('s.b', 'bob')]),
+    ]);
+    renderPage(releaseOf('s.a', 's.b'));
+    expect(await screen.findByText(/Generating fix/)).toBeInTheDocument();
+    expect(screen.getByText(/Verifying fix/)).toBeInTheDocument();
+    expect(screen.queryByText(/Owner:/)).toBeNull();
+  });
+
+  it("shows the owner the node's latest settled attempt names", async () => {
+    mockFetchProposals.mockResolvedValue([
+      batched({ 's.a': { status: 'failed', reason: '', code: 'tries_spent' } }, [approver('s.a', 'old-owner')], 1),
+      batched({ 's.a': { status: 'proposed', reason: '' } }, [approver('s.a', 'new-owner')], 2),
+    ]);
+    renderPage(releaseOf('s.a'));
+    expect(await screen.findByText('Owner: new-owner')).toBeInTheDocument();
+    expect(screen.queryByText(/old-owner/)).toBeNull();
+  });
+
+  it('renders the owner as plain text, never as HTML', async () => {
+    mockFetchProposals.mockResolvedValue([batched(
+      { 's.a': { status: 'failed', reason: '', code: 'declined' } },
+      [approver('s.a', '<b>bold</b> <img src=x onerror=alert(1)>')],
+    )]);
+    const { container } = renderPage(releaseOf('s.a'));
+    expect(await screen.findByText('Owner: <b>bold</b> <img src=x onerror=alert(1)>')).toBeInTheDocument();
+    expect(container.querySelector('.nodes-owner b')).toBeNull();
+    expect(container.querySelector('.nodes-owner img')).toBeNull();
+  });
+});
+
 describe('ReleaseDetailPage — live polling while non-terminal', () => {
   it('polls while validating and stops once the release reaches a terminal status', async () => {
     vi.useFakeTimers();

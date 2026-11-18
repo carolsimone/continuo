@@ -14,11 +14,20 @@ export interface CreatePullRequestErrorEntry {
   error: string;
 }
 
+// One owning-service group whose pull request opened but whose owners GitHub
+// would not take as reviewers; warning says why.
+export interface CreatePullRequestWarningEntry {
+  service: string;
+  warning: string;
+}
+
 // CreatePullRequestResponse is the body of a 200 (every service succeeded)
-// or 207 (some, but not all, succeeded) response.
+// or 207 (some, but not all, succeeded) response. warnings lists the opened
+// pull requests whose reviewer request was refused.
 export interface CreatePullRequestResponse {
   pull_requests: CreatePullRequestResultEntry[];
   errors: CreatePullRequestErrorEntry[];
+  warnings?: CreatePullRequestWarningEntry[];
 }
 
 export interface CreatePullRequestError {

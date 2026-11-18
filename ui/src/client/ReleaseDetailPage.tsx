@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router';
 import PageHeader from './PageHeader';
-import { ReleaseDetail, NodeValidationResult, ProposalDTO, VerificationRunSummary } from './types';
+import { ApproverDTO, ReleaseDetail, NodeValidationResult, ProposalDTO, VerificationRunSummary } from './types';
 import {
   releasePillClass, proposalKey, reasonLabel,
-  proposalNodeIds, proposalStatusForNode, proposalReasonForNode, proposalCodeForNode,
+  proposalNodeIds, proposalStatusForNode, proposalReasonForNode, proposalCodeForNode, proposalApproverForNode,
   proposalPullRequests, proposalPrServices, proposalPrStateForService,
   verificationPhase, verificationRunPhase, effectiveRound, shortSha,
 } from './release-helpers';
@@ -136,23 +136,40 @@ interface FixNote {
   message?: string;
 }
 
+// OwnerNote says who owns a node a fix was proposed for or that was handed to a
+// human, and so whom the pull request asks to review. An empty owner is a node
+// with no owner, for which nobody is asked.
+function OwnerNote({ approver }: { approver: ApproverDTO }) {
+  const owner = approver.owner.trim();
+  return (
+    <div className="nodes-reason nodes-owner">
+      {owner ? `Owner: ${owner}` : 'No owner, so no reviewer is asked.'}
+    </div>
+  );
+}
+
 // FixCell renders one node's remediation state: a link to the proposal once a
 // fix is ready to review, a non-actionable chip while one is still being
 // produced or verified, and — when no attempt is in flight — a note
 // explaining why the latest attempt stopped (skipped/failed/escalated), so a
 // node whose fix dead-ended says why instead of showing an empty cell. For a
 // fix being verified, verifyPhase splits the chip into queued vs running (see
-// verifyLabel).
-function FixCell({ state, verifyPhase, note }: {
+// verifyLabel). A fix ready to review and a node handed to a human also show
+// the node's owner when the attempt recorded one.
+function FixCell({ state, verifyPhase, note, owner }: {
   state?: FixState;
   verifyPhase?: 'queued' | 'running';
   note?: FixNote;
+  owner?: ApproverDTO;
 }) {
   if (state === 'proposed') {
     return (
-      <Link to="/?tab=remediation" className="btn btn--secondary">
-        Proposed fix available →
-      </Link>
+      <>
+        <Link to="/?tab=remediation" className="btn btn--secondary">
+          Proposed fix available →
+        </Link>
+        {owner && <OwnerNote approver={owner} />}
+      </>
     );
   }
   if (state) {
@@ -167,6 +184,7 @@ function FixCell({ state, verifyPhase, note }: {
       <>
         <span className="nodes-reason">{note.text}</span>
         {note.message && <ErrorCell message={note.message} />}
+        {owner && <OwnerNote approver={owner} />}
       </>
     );
   }
@@ -190,6 +208,11 @@ export default function ReleaseDetailPage() {
   // a terminal-but-blank status, so the FIX cell says why instead of leaving
   // that cell empty. Only ever read where fixState has no entry for the key.
   const [fixNote, setFixNote] = useState<Map<string, FixNote>>(new Map());
+  // Per (stage, node_id) owner of a node whose fix is ready to review or that
+  // was handed to a human, as the attempt that decides the cell recorded it.
+  // A node has no entry when that attempt recorded no approver for it (the
+  // legacy engine records none), so the cell then says nothing about owners.
+  const [fixOwner, setFixOwner] = useState<Map<string, ApproverDTO>>(new Map());
   // The last polled proposal list for this release, kept alongside fixState so
   // the dead-end check below can recompute in-flight/PR state per remediation
   // round (fixState itself is a rendering-only summary across every round).
@@ -358,6 +381,9 @@ export default function ReleaseDetailPage() {
           // than why an earlier attempt, or a different node in the same
           // batched attempt, did.
           const latestByKey = new Map<string, { proposal: ProposalDTO; nodeId: string }>();
+          // Latest attempt that proposed a fix for each node, whose approver
+          // is the owner the cell shows beside the link to that fix.
+          const proposedByKey = new Map<string, { proposal: ProposalDTO; nodeId: string }>();
           for (const p of releaseProposals) {
             for (const nid of proposalNodeIds(p)) {
               const k = proposalKey(p.source, nid);
@@ -365,6 +391,10 @@ export default function ReleaseDetailPage() {
               if (isFixState(status)) {
                 const current = byKey.get(k);
                 if (!current || FIX_STATE_RANK[status] > FIX_STATE_RANK[current]) byKey.set(k, status);
+              }
+              if (status === 'proposed') {
+                const proposed = proposedByKey.get(k);
+                if (!proposed || p.attempt > proposed.proposal.attempt) proposedByKey.set(k, { proposal: p, nodeId: nid });
               }
               const latest = latestByKey.get(k);
               if (!latest || p.attempt > latest.proposal.attempt) latestByKey.set(k, { proposal: p, nodeId: nid });
@@ -389,6 +419,11 @@ export default function ReleaseDetailPage() {
           }
           setVerifyPhaseByKey(phaseByKey);
           const noteByKey = new Map<string, FixNote>();
+          const ownerByKey = new Map<string, ApproverDTO>();
+          for (const [k, { proposal, nodeId }] of proposedByKey) {
+            const approver = proposalApproverForNode(proposal, nodeId);
+            if (approver) ownerByKey.set(k, approver);
+          }
           for (const [k, { proposal: p, nodeId: nid }] of latestByKey) {
             // A node outcome with a handover code says why the node went to a
             // human: the code's text, and the node's own message beneath it.
@@ -399,6 +434,10 @@ export default function ReleaseDetailPage() {
             if (code) {
               const message = p.node_outcomes?.[nid]?.reason?.trim();
               noteByKey.set(k, { text: HANDOVER_TEXT[code], message: message || undefined });
+              // A node still being written or verified by another attempt
+              // shows that chip instead, with no owner beside it.
+              const approver = proposalApproverForNode(p, nid);
+              if (approver && !byKey.has(k)) ownerByKey.set(k, approver);
               continue;
             }
             const status = proposalStatusForNode(p, nid);
@@ -408,6 +447,7 @@ export default function ReleaseDetailPage() {
             else if (status === 'skipped') noteByKey.set(k, { text: `${reason || 'No source to fix at this commit.'} Fix it in the repository.` });
           }
           setFixNote(noteByKey);
+          setFixOwner(ownerByKey);
           verifying = failed.some(k => byKey.get(k) === 'verifying');
           // Stop once every failed node has settled *for the release's current
           // remediation round*: its latest current-round attempt landed on
@@ -590,7 +630,14 @@ export default function ReleaseDetailPage() {
           fixCell={(stage, n) => {
             const key = proposalKey(stage, n.node_id);
             const st = fixState.get(key);
-            return <FixCell state={st} verifyPhase={st === 'verifying' ? verifyPhaseByKey.get(key) : undefined} note={fixNote.get(key)} />;
+            return (
+              <FixCell
+                state={st}
+                verifyPhase={st === 'verifying' ? verifyPhaseByKey.get(key) : undefined}
+                note={fixNote.get(key)}
+                owner={fixOwner.get(key)}
+              />
+            );
           }}
         />
         {verificationRuns.length > 0 && (

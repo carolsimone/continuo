@@ -179,6 +179,113 @@ func TestPullLifecycle_ClosePath(t *testing.T) {
 	}
 }
 
+// requestReviewers posts a reviewer request for pull request n and returns the
+// response recorder.
+func requestReviewers(n int, body string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodPost,
+		fmt.Sprintf("/repos/o/r/pulls/%d/requested_reviewers", n), strings.NewReader(body)))
+	return rec
+}
+
+// readPull reads pull request n back the way the e2e tests do.
+func readPull(t *testing.T, n int) (pr struct {
+	RequestedReviewers []struct {
+		Login string `json:"login"`
+	} `json:"requested_reviewers"`
+	RequestedTeams []struct {
+		Slug string `json:"slug"`
+	} `json:"requested_teams"`
+}) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/repos/o/r/pulls/%d", n), nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("read PR %d: got %d", n, rec.Code)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &pr); err != nil {
+		t.Fatal(err)
+	}
+	return pr
+}
+
+// TestRequestedReviewers_RecordsUsersAndTeams verifies POST
+// pulls/{n}/requested_reviewers answers 201 and that the pull request reads
+// back the users and teams that were asked, in GitHub's shape.
+func TestRequestedReviewers_RecordsUsersAndTeams(t *testing.T) {
+	resetPRs()
+	handleRepos(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/repos/o/r/pulls", nil))
+
+	rec := requestReviewers(1, `{"reviewers":["alice","bob"],"team_reviewers":["finance"]}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("request reviewers: got %d, body %q", rec.Code, rec.Body.String())
+	}
+
+	pr := readPull(t, 1)
+	if len(pr.RequestedReviewers) != 2 || pr.RequestedReviewers[0].Login != "alice" || pr.RequestedReviewers[1].Login != "bob" {
+		t.Errorf("want users alice and bob, got %+v", pr.RequestedReviewers)
+	}
+	if len(pr.RequestedTeams) != 1 || pr.RequestedTeams[0].Slug != "finance" {
+		t.Errorf("want team finance, got %+v", pr.RequestedTeams)
+	}
+}
+
+// TestRequestedReviewers_AddsToWhatWasAskedAndSkipsRepeats verifies a second
+// request adds to the first and a reviewer asked twice is listed once, as
+// GitHub does.
+func TestRequestedReviewers_AddsToWhatWasAskedAndSkipsRepeats(t *testing.T) {
+	resetPRs()
+	handleRepos(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/repos/o/r/pulls", nil))
+
+	requestReviewers(1, `{"reviewers":["alice"],"team_reviewers":["finance"]}`)
+	requestReviewers(1, `{"reviewers":["alice","bob"],"team_reviewers":["finance","data"]}`)
+
+	pr := readPull(t, 1)
+	if len(pr.RequestedReviewers) != 2 || pr.RequestedReviewers[1].Login != "bob" {
+		t.Errorf("want users alice and bob once each, got %+v", pr.RequestedReviewers)
+	}
+	if len(pr.RequestedTeams) != 2 || pr.RequestedTeams[1].Slug != "data" {
+		t.Errorf("want teams finance and data once each, got %+v", pr.RequestedTeams)
+	}
+}
+
+// TestRequestedReviewers_UnaskedPullHasNoReviewers verifies a pull request
+// nobody was asked about reads back empty lists, not null.
+func TestRequestedReviewers_UnaskedPullHasNoReviewers(t *testing.T) {
+	resetPRs()
+	handleRepos(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/repos/o/r/pulls", nil))
+
+	rec := httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodGet, "/repos/o/r/pulls/1", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, `"requested_reviewers":[]`) || !strings.Contains(body, `"requested_teams":[]`) {
+		t.Errorf("want empty reviewer lists, got %q", body)
+	}
+}
+
+// TestRequestedReviewers_UnknownPullIs404 verifies a reviewer request for a
+// pull request that was never opened is a 404.
+func TestRequestedReviewers_UnknownPullIs404(t *testing.T) {
+	resetPRs()
+	if rec := requestReviewers(99, `{"reviewers":["alice"]}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d", rec.Code)
+	}
+}
+
+// TestRequestedReviewers_RefusesAMalformedBody verifies a body that is not
+// JSON is a 422 and records nothing.
+func TestRequestedReviewers_RefusesAMalformedBody(t *testing.T) {
+	resetPRs()
+	handleRepos(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/repos/o/r/pulls", nil))
+
+	if rec := requestReviewers(1, `not json`); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("want 422, got %d", rec.Code)
+	}
+	if pr := readPull(t, 1); len(pr.RequestedReviewers) != 0 || len(pr.RequestedTeams) != 0 {
+		t.Errorf("want nothing recorded, got %+v", pr)
+	}
+}
+
 // TestListPulls_FindsPRByHeadBranch verifies GET pulls?head=owner:branch
 // finds a PR a prior POST created for that branch — the read path the
 // agent-remediation opening sweep's FindByBranch depends on to recover a
