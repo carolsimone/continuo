@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
@@ -43,8 +44,9 @@ func FlowScenarios() []Scenario {
 }
 
 // RunFlowScenarios runs the named flow through every flow scenario, each in a
-// world of its own built from the flow fixture that plays it, and returns one
-// result per scenario, in scenario order, with the flow as the result's type.
+// world of its own built from the flow fixture that plays it (as Mutate changed
+// it, when the suite has one), and returns one result per scenario, in
+// scenario order, with the flow as the result's type.
 // A scenario with no fixture, or with several, fails. A fixture for a scenario
 // that is not a flow scenario fails too, with one result of its own. Every
 // cluster takes its fixture's passing answers, and every verification run
@@ -60,6 +62,7 @@ func (s Suite) RunFlowScenarios(ctx context.Context, flow string) []Result {
 	var out []Result
 	for _, sc := range FlowScenarios() {
 		fixtures := byScenario[sc]
+		var requests []prompt.ProposeRequest
 		var err error
 		switch {
 		case !loaded:
@@ -69,9 +72,9 @@ func (s Suite) RunFlowScenarios(ctx context.Context, flow string) []Result {
 		case len(fixtures) > 1:
 			err = fmt.Errorf("flow %s has %d fixtures for scenario %s (%s), and a scenario has one", flow, len(fixtures), sc, fixtureFiles(fixtures))
 		default:
-			err = s.runFlow(ctx, fixtures[0], sc)
+			requests, err = s.runFlow(ctx, s.mutated(fixtures[0]), sc)
 		}
-		out = append(out, Result{Type: flow, Scenario: sc, Err: err})
+		out = append(out, Result{Type: flow, Scenario: sc, Err: err, Requests: requests})
 	}
 	var unknown []Scenario
 	for sc := range byScenario {
@@ -87,12 +90,12 @@ func (s Suite) RunFlowScenarios(ctx context.Context, flow string) []Result {
 	return out
 }
 
-// runFlow runs flow scenario sc from its fixture f and checks what the run
-// wrote.
-func (s Suite) runFlow(ctx context.Context, f Fixture, sc Scenario) error {
+// runFlow runs flow scenario sc from its fixture f, checks what the run wrote,
+// and returns the model requests the run made.
+func (s Suite) runFlow(ctx context.Context, f Fixture, sc Scenario) ([]prompt.ProposeRequest, error) {
 	members, err := memberPasses(f)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	script := Script{Answers: f.Answers.Pass, MemberAnswers: members}
 	if sc == FlowCrossClusterFails {
@@ -100,15 +103,15 @@ func (s Suite) runFlow(ctx context.Context, f Fixture, sc Scenario) error {
 	}
 	sr, err := s.start(f, script, sc == FlowMaintenance)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := sr.accept(ctx, f.Trigger); err != nil {
-		return err
+		return sr.requests(), err
 	}
 	if err := sr.finish(ctx); err != nil {
-		return err
+		return sr.requests(), err
 	}
-	return sr.expectFlow(s.Files, f, sc)
+	return sr.requests(), sr.expectFlow(s.Files, f, sc)
 }
 
 // expectFlow checks what flow scenario sc wrote.

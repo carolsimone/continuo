@@ -2,9 +2,11 @@ package conformance_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -16,11 +18,14 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/scripted"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/workflowfile"
+	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/conformance"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 	"github.com/carolsimone/continuo/agent-remediation/workflows"
+	"github.com/carolsimone/continuo/pkg/sanitize"
 )
 
 const flowName = "rejected-release"
@@ -342,4 +347,230 @@ func TestSuite_EveryScenarioHoldsForTypesOfOneAndOfTwoRounds(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The values the cleaner test plants: an email address and a password, in a
+// line of text that every file and log of every fixture carries.
+const (
+	plantedEmail    = "alice@example.com"
+	plantedPassword = "hunter2"
+	plantedText     = "owner " + plantedEmail + " password=" + plantedPassword
+)
+
+// commentLine is text as one comment line of a file of the kind path's
+// extension names, newline-terminated.
+func commentLine(path, text string) string {
+	switch filepath.Ext(path) {
+	case ".sql":
+		return "-- " + text + "\n"
+	case ".yml", ".yaml", ".py":
+		return "# " + text + "\n"
+	}
+	return text + "\n"
+}
+
+// plantValues is a Suite.Mutate that puts plantedText in every log a fixture
+// holds, in every file of its repository and in the source of every dbt node of
+// its code bundle, as a comment line where the file takes one, and puts the line a model writes when it copies the planted line
+// from the cleaned file it was shown (the placeholders the Redactor issues for
+// the two values) at the end of every answer. A fixture's answers are scripted,
+// so the answer is where the planted values come back as placeholders for the
+// runner to restore, and an answer that left a file as it was still does.
+func plantValues(f *conformance.Fixture) {
+	for uri, text := range f.Objects {
+		if strings.HasSuffix(uri, ".log") {
+			f.Objects[uri] = text + plantedText + "\n"
+		}
+	}
+	for path, text := range f.RepoFiles {
+		f.RepoFiles[path] = text + commentLine(path, plantedText)
+	}
+	for node, src := range f.Bundle {
+		if src.Runtime == "dbt" {
+			src.RawCode += commentLine("x.sql", plantedText)
+			f.Bundle[node] = src
+		}
+	}
+	cleaned := sanitize.NewRedactor().Clean(plantedText)
+	plant := func(answers []ports.ProposeResult) {
+		for i := range answers {
+			a := &answers[i]
+			if a.ProposedSQL != "" {
+				a.ProposedSQL += commentLine("x.sql", cleaned)
+			}
+			if a.ProposedContent != "" {
+				a.ProposedContent += commentLine(a.TargetFile, cleaned)
+			}
+			for j := range a.Files {
+				a.Files[j].Content += commentLine(a.Files[j].Path, cleaned)
+			}
+		}
+	}
+	plantInAnswers := func(a *conformance.Answers) {
+		for _, list := range [][]ports.ProposeResult{a.Pass, a.Fail, a.Decline, a.Revision.Pass, a.Revision.Fail, a.Revision.Decline} {
+			plant(list)
+		}
+	}
+	plantInAnswers(&f.Answers)
+	for node, a := range f.MemberAnswers {
+		plantInAnswers(&a)
+		f.MemberAnswers[node] = a
+	}
+}
+
+// recordedWorld is a world a scenario ran in, with the type of the fixture it
+// was built from.
+type recordedWorld struct {
+	typ string
+	conformance.World
+}
+
+// recordWorlds makes every world of the suite one the returned list holds, in
+// the order the worlds are built.
+func recordWorlds(s *conformance.Suite) *[]recordedWorld {
+	var worlds []recordedWorld
+	base := s.NewWorld
+	s.NewWorld = func(f conformance.Fixture, sc conformance.Script) (conformance.World, error) {
+		w, err := base(f, sc)
+		if err == nil {
+			worlds = append(worlds, recordedWorld{typ: f.Type, World: w})
+		}
+		return w, err
+	}
+	return &worlds
+}
+
+// checkedDrafts is the drafts the first remediation of the world checked and
+// passed: the draft each cluster's passing pre-flight pass stored.
+func checkedDrafts(t *testing.T, w conformance.World) []remediation.Draft {
+	t.Helper()
+	rems := w.Remediations()
+	require.Len(t, rems, 1)
+	var drafts []remediation.Draft
+	for _, row := range w.Steps(rems[0].ID) {
+		if row.Step != remediation.StepPreflight || row.Status != remediation.StepDone || len(row.Findings) > 0 {
+			continue
+		}
+		rec, err := serialization.DecodeRecord[serialization.PreflightRecord](row.Output)
+		require.NoError(t, err)
+		drafts = append(drafts, rec.Draft)
+	}
+	return drafts
+}
+
+// Whatever the model is shown is cleaned by the runner: a fixture whose logs,
+// files and answers all hold an email address and a password reaches the model
+// with a placeholder for each, in every request of every scenario, while the
+// draft that pre-flight and the gate check holds the values again, where the
+// file the draft edits had them.
+func TestSuite_EveryModelRequestIsCleaned(t *testing.T) {
+	s := builtinSuite(t)
+	s.Mutate = plantValues
+	worlds := recordWorlds(&s)
+
+	results := s.Run(ctx)
+	results = append(results, s.RunFlowScenarios(ctx, flowName)...)
+
+	cleaned := sanitize.NewRedactor().Clean(plantedText)
+	shown := map[string]bool{}
+	for _, r := range results {
+		assert.NoError(t, r.Err, "type %s, scenario %s", r.Type, r.Scenario)
+		for i, req := range r.Requests {
+			wire, err := json.Marshal(req)
+			require.NoError(t, err)
+			assert.NotContains(t, string(wire), plantedEmail, "type %s, scenario %s, request %d", r.Type, r.Scenario, i+1)
+			assert.NotContains(t, string(wire), plantedPassword, "type %s, scenario %s, request %d", r.Type, r.Scenario, i+1)
+			if strings.Contains(req.User, cleaned) {
+				shown[r.Type] = true
+			}
+		}
+	}
+
+	// The first scenario of a type, first_draft_passes, builds the first world
+	// of the type's fixture.
+	seen := map[string]bool{}
+	for _, rw := range *worlds {
+		if rw.typ == "" || seen[rw.typ] {
+			continue
+		}
+		seen[rw.typ] = true
+		t.Run(rw.typ, func(t *testing.T) {
+			assert.True(t, shown[rw.typ], "a request of type %s shows the planted line as %q, so the test cleans something", rw.typ, cleaned)
+			drafts := checkedDrafts(t, rw.World)
+			require.NotEmpty(t, drafts)
+			for _, d := range drafts {
+				require.NotEmpty(t, d.Edits)
+				for _, e := range d.Edits {
+					assert.Contains(t, e.Original, plantedEmail, "the file %s as read holds the planted line", e.Path)
+					assert.Contains(t, e.Content, plantedEmail, "the checked edit of %s holds the email address again", e.Path)
+					assert.Contains(t, e.Content, plantedPassword, "the checked edit of %s holds the password again", e.Path)
+					assert.NotContains(t, e.Content, "[redacted", "the checked edit of %s holds no placeholder", e.Path)
+				}
+			}
+		})
+	}
+	assert.NotEmpty(t, seen)
+}
+
+// A Mutate changes a copy of each fixture: the suite's loaded fixtures hold
+// what they held after the scenarios ran on the changed ones, however often
+// the suite is run.
+func TestSuite_MutateChangesACopyOfEveryFixture(t *testing.T) {
+	s := builtinSuite(t)
+	s.Mutate = plantValues
+
+	s.Run(ctx)
+	s.RunFlowScenarios(ctx, flowName)
+
+	for _, f := range s.Fixtures {
+		for path, text := range f.RepoFiles {
+			assert.NotContains(t, text, plantedEmail, "%s: %s", f.File, path)
+		}
+		for uri, text := range f.Objects {
+			assert.NotContains(t, text, plantedEmail, "%s: %s", f.File, uri)
+		}
+		for node, src := range f.Bundle {
+			assert.NotContains(t, src.RawCode, plantedEmail, "%s: %s", f.File, node)
+		}
+		for _, answers := range [][]ports.ProposeResult{f.Answers.Pass, f.Answers.Fail, f.Answers.Decline} {
+			for _, a := range answers {
+				assert.NotContains(t, a.ProposedSQL+a.ProposedContent, "[redacted", f.File)
+			}
+		}
+	}
+}
+
+// A result carries the requests its scenario made, in call order: the one
+// request of a first draft that passes, a request for each model call of a
+// scenario that revises, and none of a scenario that declines before the model
+// is called.
+func TestSuite_AResultCarriesTheModelRequestsOfItsScenario(t *testing.T) {
+	s := onlyTypes(builtinSuite(t), "dbt-compile")
+	worlds := recordWorlds(&s)
+
+	results := s.Run(ctx)
+
+	byScenario := map[conformance.Scenario]conformance.Result{}
+	for _, r := range results {
+		if r.Type != "dbt-compile" {
+			continue
+		}
+		require.NoError(t, r.Err, "scenario %s", r.Scenario)
+		byScenario[r.Scenario] = r
+	}
+	first := byScenario[conformance.FirstDraftPasses]
+	require.Len(t, first.Requests, 1)
+	assert.Contains(t, first.Requests[0].User, "unexpected ')'")
+	assert.Empty(t, byScenario[conformance.DeclinesBeforeModel].Requests)
+
+	revised := byScenario[conformance.PreflightRevisionPasses].Requests
+	require.Len(t, revised, 2)
+	assert.NotEqual(t, revised[0], revised[1], "the revision is a request of its own")
+	assert.Contains(t, revised[1].User, revised[0].User, "the revision is built on the round's first request")
+
+	// The requests are the ones the model received: the first world is the one
+	// first_draft_passes ran in.
+	calls := (*worlds)[0].ModelCalls()
+	require.Len(t, calls, 1)
+	assert.Equal(t, calls[0].Request, first.Requests[0])
 }
