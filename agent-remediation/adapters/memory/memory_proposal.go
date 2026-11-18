@@ -164,6 +164,9 @@ func (r *proposalRepository) Upsert(_ context.Context, p proposal.Proposal) erro
 		if next.RemediationID == "" {
 			next.RemediationID = old.RemediationID
 		}
+		if len(next.Approvers) == 0 {
+			next.Approvers = old.Approvers
+		}
 		row.p = next
 		return nil
 	})

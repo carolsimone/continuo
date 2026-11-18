@@ -172,7 +172,9 @@ func (r *ProposalRepository) FailGenerating(ctx context.Context, releaseID, reas
 // otherwise the row is plain-inserted (instant paths — e.g. attempt-cap
 // escalation — that never marked generating). A proposal that names its
 // remediation records it; one that does not leaves an existing row's
-// remediation as it was.
+// remediation as it was. Likewise a proposal that carries approvers replaces
+// the row's, and one that carries none leaves an existing row's approvers as
+// they were.
 func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) error {
 	const stmt = `
 		INSERT INTO proposal
@@ -206,7 +208,8 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 			verifications          = EXCLUDED.verifications,
 			services               = EXCLUDED.services,
 			remediation_id         = COALESCE(EXCLUDED.remediation_id, proposal.remediation_id),
-			approvers              = EXCLUDED.approvers`
+			approvers              = CASE WHEN jsonb_array_length(EXCLUDED.approvers) = 0
+			                              THEN proposal.approvers ELSE EXCLUDED.approvers END`
 	edits, err := marshalFileEdits(p.Edits)
 	if err != nil {
 		return fmt.Errorf("marshal proposal file edits: %w", err)
@@ -1234,10 +1237,10 @@ func (r *ProposalRepository) UpdateVerificationPhase(ctx context.Context, id, ru
 }
 
 // RecordApprovers adds approvers to the approvers of the row of one attempt of
-// a release, in the row's own transaction: the row is locked, merged with
-// proposal.MergeApprovers and written back, so two writers of one row's
-// approvers never lose each other's. It returns ErrNotFound when the release
-// has no row for the attempt.
+// a release, in the caller's transaction: the row is locked (FOR UPDATE until
+// that transaction ends), merged with proposal.MergeApprovers and written
+// back, so two writers of one row's approvers never lose each other's. It
+// returns ErrNotFound when the release has no row for the attempt.
 func (r *ProposalRepository) RecordApprovers(ctx context.Context, releaseID string, attempt int, approvers []proposal.Approver) error {
 	var raw []byte
 	if err := r.q.GetContext(ctx, &raw,

@@ -995,7 +995,7 @@ describe('remediation router', () => {
         proposed_sql_uri: 's3://continuo/proposals/p1/fix.sql',
         diff_uri: 's3://continuo/proposals/p1/fix.diff',
         branch: 'remediation/p1',
-        repo: 'owner/repo',
+        repo: 'acme/repo',
         commit_sha: 'abc123',
         claimed_at: '2026-06-24T00:00:00Z',
         service: '',
@@ -1027,6 +1027,26 @@ describe('remediation router', () => {
       expect(input.teamReviewers).toEqual(['finance']);
       expect(input.body).toContain(
         '### Owners\n- `s.a`: acme/finance (review requested)\n- `s.b`: alice (review requested)\n- `s.c`: finance team (listed only)',
+      );
+    });
+
+    it('lists the team of another org than the repository owner, and asks it nothing', async () => {
+      const remediation = makeRemediation({
+        beginPullRequest: vi.fn().mockResolvedValue(claimWith([
+          { node_id: 's.a', owner: 'otherorg/finance', source: 'bundle' },
+          { node_id: 's.b', owner: 'ACME/data-eng', source: 'bundle' },
+        ], ['s.a', 's.b'])),
+      });
+      const prCreator = makePrCreator();
+      const app = appWith({ remediation, prCreator, getObject: makeGetObject() });
+
+      await request(app).post('/api/remediation/proposals/p1/pull-request');
+
+      const input = (prCreator.create as any).mock.calls[0][0];
+      expect(input.teamReviewers).toEqual(['data-eng']);
+      expect(input.reviewers).toEqual([]);
+      expect(input.body).toContain(
+        '### Owners\n- `s.a`: otherorg/finance (listed only)\n- `s.b`: ACME/data-eng (review requested)',
       );
     });
 
@@ -1146,7 +1166,7 @@ describe('remediation router', () => {
       const claimFor = (service: string, approvers: Array<{ node_id: string; owner: string; source: string }>, nodes: string[]) => ({
         ...claimWith(approvers, nodes),
         service,
-        repo: `org/${service}-repo`,
+        repo: `acme/${service}-repo`,
       });
       const claims: Record<string, any> = {
         core: claimFor('core', [{ node_id: 'core.a', owner: 'alice', source: 'bundle' }], ['core.a']),
@@ -1177,14 +1197,14 @@ describe('remediation router', () => {
       const byRepo = new Map<string, any>(
         (prCreator.create as any).mock.calls.map((c: any[]) => [c[0].repo, c[0]]),
       );
-      const core = byRepo.get('org/core-repo');
+      const core = byRepo.get('acme/core-repo');
       expect(core.reviewers).toEqual(['alice']);
       expect(core.teamReviewers).toEqual([]);
       expect(core.body).toContain('### Owners\n- `core.a`: alice (review requested)');
       expect(core.body).not.toContain('fin.');
       expect(core.body).not.toContain('bob');
 
-      const finance = byRepo.get('org/finance-repo');
+      const finance = byRepo.get('acme/finance-repo');
       expect(finance.reviewers).toEqual(['bob']);
       expect(finance.teamReviewers).toEqual(['finance']);
       expect(finance.body).toContain(

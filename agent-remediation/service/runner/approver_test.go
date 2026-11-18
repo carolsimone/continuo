@@ -1,8 +1,10 @@
 package runner_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"testing"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+	"github.com/carolsimone/continuo/agent-remediation/service/steps/approver"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/outputs"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 	"github.com/carolsimone/continuo/pkg/domain/model"
@@ -126,56 +129,63 @@ func TestRunner_AHandOverWithNoTryHandsOverTheApproversOfItsNodes(t *testing.T) 
 	}}, calls.giveUp)
 }
 
-// A bundle read that fails for another reason than a permanent miss fails the
-// commit that ends the remediation: nothing is proposed and the gate keeps
-// waiting, and the next poll, with the bundle back, ends it with the approvers.
-func TestRunner_ABundleReadErrorFailsTheEndAndTheNextPollRetries(t *testing.T) {
+// warningLog puts a node_owner step whose warnings are kept in place of the
+// registered one, and returns the buffer that keeps them.
+func (h *harness) warningLog() *bytes.Buffer {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	h.replaceStep(approver.NewNodeOwner(h.bundle, contractFiles, logger))
+	return &logs
+}
+
+// A bundle read that fails for another reason than a permanent miss never
+// fails the commit that ends the remediation: the read is logged as a
+// warning, the fix is proposed in that commit with each node's approver taken
+// from its contract file, else none, and no failure is counted.
+func TestRunner_ABundleReadErrorFallsBackAndThePassCommits(t *testing.T) {
 	h := newHarness(t)
 	calls := h.recordOutputs()
+	logs := h.warningLog()
 	h.bundle.owners = map[string]string{"svc-a": "finance"}
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	require.NoError(t, h.runner.Drive(ctx, id))
 	h.pipeline.answer(proposal.PhasePassed, nil)
 	h.bundle.err = errors.New("s3 answered HTTP 503")
 
-	err := h.poll(id)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "s3 answered HTTP 503")
-	assert.Empty(t, h.proposedEvents())
-	assert.Equal(t, proposal.StatusVerifying, h.attempt(1).Proposal.Status)
-	assert.Equal(t, remediation.StatusRunning, h.remediation(id).Status)
-	gate := h.flowRows(id, 1)["verification_run"][0]
-	assert.Equal(t, remediation.StepWaiting, gate.Status, "the gate still waits on its runs")
-	assert.Equal(t, 1, gate.Failures)
-
-	h.bundle.err = nil
 	require.NoError(t, h.poll(id))
 
-	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
+	rem := h.remediation(id)
+	assert.Equal(t, remediation.StatusDone, rem.Status)
+	assert.Zero(t, rem.Failures)
+	assert.Zero(t, h.flowRows(id, 1)["verification_run"][0].Failures, "the gate counted no failure")
 	assert.Len(t, h.proposedEvents(), 1)
+	assert.Equal(t, proposal.StatusProposed, h.attempt(1).Proposal.Status)
 	assert.Equal(t, [][]proposal.Approver{{
-		{NodeID: "svc-a", Owner: "finance", Source: proposal.ApproverSourceBundle},
-	}}, calls.pass, "the failed commit stopped before the output ran")
+		{NodeID: "svc-a", Owner: "", Source: proposal.ApproverSourceNone},
+	}}, calls.pass, "a node with no contract file falls back to none")
+	assert.Contains(t, logs.String(), "level=WARN")
+	assert.Contains(t, logs.String(), "s3 answered HTTP 503")
 }
 
-// A bundle read error at an end with no try fails the commit too, and the
-// next drive hands the nodes over.
-func TestRunner_ABundleReadErrorFailsAHandOverAndTheNextDriveRetries(t *testing.T) {
+// A bundle read error at an end with no try never fails the hand-over either:
+// the drive hands the node over with no owner and logs a warning.
+func TestRunner_ABundleReadErrorFallsBackAndTheHandOverCommits(t *testing.T) {
 	h := newHarness(t)
+	logs := h.warningLog()
 	h.bundle.err = errors.New("s3 answered HTTP 503")
 	trig := trigger("compile", compileNode("svc-a"))
 	trig.Repo = ""
 	id := h.accept(trig)
 
-	require.Error(t, h.drive(id))
-	assert.Equal(t, remediation.StatusRunning, h.remediation(id).Status)
-	assert.Empty(t, h.handedOverEvents())
-
-	h.bundle.err = nil
 	require.NoError(t, h.drive(id))
 
-	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
-	assert.Len(t, h.handedOverEvents(), 1)
+	rem := h.remediation(id)
+	assert.Equal(t, remediation.StatusDone, rem.Status)
+	assert.Zero(t, rem.Failures)
+	require.Len(t, h.handedOverEvents(), 1)
+	require.Len(t, h.handedOverEvent().Nodes, 1)
+	assert.Empty(t, h.handedOverEvent().Nodes[0].Owner)
+	assert.Contains(t, logs.String(), "s3 answered HTTP 503")
 }
 
 // A python node the code bundle names no owner for takes the team.name of the

@@ -452,7 +452,7 @@ func TestValidation_OwnChangeDiff_InPrompt(t *testing.T) {
 // secret in a changed line is redacted rather than sent to the external LLM.
 func TestValidation_OwnChangeDiff_Sanitized(t *testing.T) {
 	svc := validationSvc()
-	svc.CandidateSource = &fakeCandidateSource{src: ports.CandidateSource{RawCode: "select 1 -- password = SEKRET", Runtime: "dbt"}}
+	svc.CandidateSource = &fakeCandidateSource{src: ports.CandidateSource{RawCode: "select 1 -- SEKRET", Runtime: "dbt"}}
 	svc.Versions = &fakeVersions{v: ports.CurrentVersion{RawCode: "select 1"}, ok: true}
 	svc.Sanitizer = redactingSanitizer{secret: "SEKRET", marker: "[redacted]"}
 	llm := twoStepLLM()

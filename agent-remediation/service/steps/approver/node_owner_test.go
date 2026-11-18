@@ -1,6 +1,7 @@
 package approver_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -167,18 +168,27 @@ func TestNodeOwner_ANodeWithNoOwnerHasNone(t *testing.T) {
 	}
 }
 
-// A bundle read that fails for another reason than a permanent miss is
-// returned, so the commit that runs the approver fails and runs again.
-func TestNodeOwner_ABundleReadErrorIsReturned(t *testing.T) {
-	transient := errors.New("s3 answered HTTP 503")
-	b := &fakeBundle{err: transient}
-	_, err := newNodeOwner(b).Approvers(context.Background(), step.ApproverInput{
+// A bundle read that fails for another reason than a permanent miss is logged
+// as a warning and never fails the end: each node falls back to its contract
+// file's owner, else none.
+func TestNodeOwner_ABundleReadErrorFallsBackAndWarns(t *testing.T) {
+	var logs bytes.Buffer
+	b := &fakeBundle{err: errors.New("s3 answered HTTP 503")}
+	s := approver.NewNodeOwner(b, repofs.NewLocator(discard()), slog.New(slog.NewTextHandler(&logs, nil)))
+
+	got, err := s.Approvers(context.Background(), step.ApproverInput{
 		Trigger:  trigger(),
 		Clusters: []step.ClusterDraft{contractCluster("analytics", "kpis", odcs("analytics-team"), "analytics.kpis")},
-		Nodes:    []string{"analytics.kpis"},
+		Nodes:    []string{"analytics.kpis", "analytics.other"},
 	})
-	require.ErrorIs(t, err, transient)
-	assert.Contains(t, err.Error(), "analytics.kpis")
+
+	require.NoError(t, err)
+	assert.Equal(t, []proposal.Approver{
+		{NodeID: "analytics.kpis", Owner: "analytics-team", Source: proposal.ApproverSourceContractFile},
+		{NodeID: "analytics.other", Owner: "", Source: proposal.ApproverSourceNone},
+	}, got)
+	assert.Contains(t, logs.String(), "level=WARN")
+	assert.Contains(t, logs.String(), "s3 answered HTTP 503")
 }
 
 // Each node is named once, whatever order and repeats it is given in.

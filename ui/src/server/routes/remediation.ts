@@ -94,15 +94,16 @@ interface Approver {
   owner: string;
 }
 
-// ownersOf lists each approver's owner against its node for the pull request
-// body, with what became of its review: requested when the owner is a GitHub
-// user or team (refused when it is one of those GitHub refused, by case-blind
-// login or slug), and only listed otherwise.
-function ownersOf(approvers: Approver[], refused: RefusedReviewers): PullRequestOwner[] {
+// ownersOf lists each approver's owner against its node for the body of a pull
+// request in a repository that repoOwner owns, with what became of its review:
+// requested when the owner is a GitHub user or a team of repoOwner (refused
+// when it is one of those GitHub refused, by case-blind login or slug), and
+// only listed otherwise.
+function ownersOf(approvers: Approver[], repoOwner: string, refused: RefusedReviewers): PullRequestOwner[] {
   const refusedUsers = new Set(refused.users.map((u) => u.toLowerCase()));
   const refusedTeams = new Set(refused.teams.map((t) => t.toLowerCase()));
   return approvers.map((a) => {
-    const c = classifyOwner(a.owner);
+    const c = classifyOwner(a.owner, repoOwner);
     let review: OwnerReview = 'listed';
     if (c?.kind === 'user') review = refusedUsers.has(c.name.toLowerCase()) ? 'refused' : 'requested';
     if (c?.kind === 'team') review = refusedTeams.has(c.name.toLowerCase()) ? 'refused' : 'requested';
@@ -309,8 +310,11 @@ export function createRemediationRouter(
     // The owners of the fixed nodes are asked to review the pull request. A
     // claim of a proposal that records no owners (the legacy engine's) has no
     // approvers, so it asks nobody and its body names no owners.
+    // A team is asked only when its org owns the repository (claim.repo is
+    // "owner/name"); another org's team is listed.
     const approvers: Approver[] = claim.approvers ?? [];
-    const { users: reviewers, teams: teamReviewers } = splitOwners(approvers.map((a) => a.owner));
+    const repoOwner = (claim.repo ?? '').split('/')[0] ?? '';
+    const { users: reviewers, teams: teamReviewers } = splitOwners(approvers.map((a) => a.owner), repoOwner);
 
     // The body names each owner as asked, so it is built again, with the
     // owners GitHub refused marked, if GitHub turns any of them down.
@@ -324,7 +328,7 @@ export function createRemediationRouter(
         files,
         rationale: claim.rationale,
         diff,
-        owners: ownersOf(approvers, refused),
+        owners: ownersOf(approvers, repoOwner, refused),
         uiUrl,
       });
     const body = bodyFor({ users: [], teams: [] });

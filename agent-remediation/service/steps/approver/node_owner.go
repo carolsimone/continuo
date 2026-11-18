@@ -5,7 +5,6 @@ package approver
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -52,8 +51,11 @@ func (*NodeOwner) Meta() step.Meta {
 }
 
 // Approvers names one approver per node of in.Nodes, sorted by node id, from
-// one read of the code bundle. A bundle that cannot be read for good
-// (ports.ErrNotFound) records no owner; any other read error is returned.
+// one read of the code bundle. It runs in the transaction that ends the
+// remediation, and a bundle read never fails that end: a bundle that cannot be
+// read for good (ports.ErrNotFound) records no owner, and any other read error
+// is logged as a warning and read the same way, so each node falls back to the
+// owner its contract file declares, else none.
 func (s *NodeOwner) Approvers(ctx context.Context, in step.ApproverInput) ([]proposal.Approver, error) {
 	nodes := slices.Clone(in.Nodes)
 	slices.Sort(nodes)
@@ -63,7 +65,9 @@ func (s *NodeOwner) Approvers(ctx context.Context, in step.ApproverInput) ([]pro
 	}
 	owners, err := s.bundle.NodeOwners(ctx, in.Trigger.CodeBundleURI, in.Trigger.ReleaseID, nodes)
 	if err != nil && !errors.Is(err, ports.ErrNotFound) {
-		return nil, fmt.Errorf("read the owners of %s from the code bundle: %w", strings.Join(nodes, ", "), err)
+		s.logger.Warn("the code bundle could not be read; each node's owner falls back to its contract file, else none",
+			"release", in.Trigger.ReleaseID, "nodes", strings.Join(nodes, ", "), "error", err)
+		owners = nil
 	}
 	out := make([]proposal.Approver, 0, len(nodes))
 	for _, id := range nodes {

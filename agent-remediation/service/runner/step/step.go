@@ -192,7 +192,8 @@ type GateVerdict struct {
 // Approver works out who must approve what a remediation did with each of its
 // nodes. The runner runs it inside the transaction that ends the remediation,
 // before the outputs, which it hands the approvers to. An error fails that
-// transaction, so the end runs again.
+// transaction, so the end runs again; node_owner returns none, so an owner it
+// cannot read never stops an end.
 type Approver interface {
 	Meta() Meta
 	Approvers(ctx context.Context, in ApproverInput) ([]proposal.Approver, error)

@@ -114,7 +114,8 @@ func TestProposalRepository_ReopenTryAttemptMovesOnlyItsFailedRowBack(t *testing
 // replacing it, the whole sorted by node id, so the fixed nodes and the
 // handed-over nodes of one attempt end up on the same row. An attempt of the
 // release that has no row is ErrNotFound with nothing written, and a row
-// recorded without approvers reads back with none.
+// recorded without approvers reads back with none. An upsert of a row that
+// carries approvers replaces the row's, and one that carries none keeps them.
 func TestProposalRepository_KeepsApprovers(t *testing.T) {
 	forEachImpl(t, func(t *testing.T, env contractEnv) {
 		ctx := context.Background()
@@ -173,6 +174,12 @@ func TestProposalRepository_KeepsApprovers(t *testing.T) {
 		require.ErrorIs(t, env.proposals.RecordApprovers(ctx, "rel-approvers", 9, handedOver), repository.ErrNotFound)
 		require.ErrorIs(t, env.proposals.RecordApprovers(ctx, "rel-other", 1, handedOver), repository.ErrNotFound)
 		require.Equal(t, []proposal.Approver{fixed[0], fixed[1], handedOver[0]}, get(1).Approvers, "a refused call writes nothing")
+
+		require.NoError(t, env.proposals.Upsert(ctx, row(2, nil)))
+		require.Equal(t, []proposal.Approver{fixed[0], renamed[0], handedOver[0]}, get(2).Approvers,
+			"an upsert that carries no approvers keeps the row's")
+		require.NoError(t, env.proposals.Upsert(ctx, row(2, handedOver)))
+		require.Equal(t, handedOver, get(2).Approvers, "an upsert that carries approvers replaces the row's")
 	})
 }
 

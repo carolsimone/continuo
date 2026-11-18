@@ -147,9 +147,10 @@ func (v *validator) modelMaySee(f workflow.Flow) {
 	}
 }
 
-// holdsClasses reports whether the flow's model_may_see can be held steps
-// against: it lists at least one class and every class it lists exists. A flow
-// that fails this is refused once, by modelMaySee, and not again for each step.
+// holdsClasses reports whether the flow's model_may_see is usable for checking
+// the data classes of its steps: it lists at least one class and every class
+// it lists exists. A flow whose list is not usable is refused once, by
+// modelMaySee, and its steps are not checked against the list.
 func holdsClasses(f workflow.Flow) bool {
 	return len(f.ModelMaySee) > 0 && !slices.ContainsFunc(f.ModelMaySee, func(c workflow.DataClass) bool { return !c.IsValid() })
 }

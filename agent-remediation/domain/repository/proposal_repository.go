@@ -152,7 +152,9 @@ type ProposalRepository interface {
 	// Upsert records the terminal outcome of an attempt on the natural key
 	// (release_id, attempt): it finalizes the in-flight generating row when one
 	// exists (ON CONFLICT … DO UPDATE), or plain-inserts for instant paths that
-	// never marked generating (e.g. the attempt-cap escalation).
+	// never marked generating (e.g. the attempt-cap escalation). A proposal
+	// that carries approvers replaces the row's, and one that carries none
+	// keeps the approvers an existing row holds.
 	Upsert(ctx context.Context, p proposal.Proposal) error
 
 	// Get returns the full View for the given proposal id.
