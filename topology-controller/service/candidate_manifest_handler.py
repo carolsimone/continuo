@@ -391,7 +391,8 @@ class CandidateManifestHandler:
             # failures of the valid nodes.
             contract_failures.extend(parsed.failed)
             if parsed.unchecked_seeds:
-                unchecked_seeds[mf.declared_service or mf.path] = len(parsed.unchecked_seeds)
+                service = mf.declared_service or mf.path
+                unchecked_seeds[service] = unchecked_seeds.get(service, 0) + len(parsed.unchecked_seeds)
 
             # Reported before the declared-service checks below: a manifest
             # whose every node was skipped fails as empty, and its skips are

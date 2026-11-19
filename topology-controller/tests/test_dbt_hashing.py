@@ -642,14 +642,24 @@ def test_a_bare_call_an_imported_package_also_defines_still_reaches_the_built_in
     assert macro_closure(node, ctx) == {"macro.fpshop.postgres__dateadd", "macro.dbt_utils.dateadd"}
 
 
-def test_a_seed_columns_hash_canonical_json_refuses_rejects_the_artifact(tmp_path):
+@pytest.mark.parametrize("declared, header, column_types", [
+    ((), ("id\ud800",), {}),
+    (("id",), ("id", "x\ud800"), {}),
+    (("id",), ("id",), {"id": "int\ud800"}),
+], ids=["header-column", "header-column-beside-a-declared-one", "column-type"])
+def test_a_seed_columns_hash_canonical_json_refuses_rejects_the_artifact(tmp_path, declared, header, column_types):
+    """Text in a seed's extras that canonical JSON cannot write (a lone surrogate, which UTF-8 cannot
+    encode) is refused as an InvalidNodeSettingError naming the node, before the header is compared
+    with the declared columns: a rejection that repeated the text could not be published."""
     manifest = {"metadata": {}, "nodes": {"seed.svc.users": {
         "resource_type": "seed", "name": "users", "schema": "analytics", "fqn": ["svc", "users"], "tags": ["daily"],
         "original_file_path": "seeds/users.csv", "raw_code": "", "config": {"meta": {"owner": "o"}, "materialized": "seed"},
-        "columns": {"id": {"name": "id"}},
+        "columns": {name: {"name": name} for name in declared},
         "checksum": {"name": "sha256", "checksum": "ab" * 32}}}}
     (tmp_path / "manifest.json").write_text(json.dumps(manifest))
-    seed = SeedExtras(sha256="cd" * 32, header=("id",), column_types={"id": "int\ud800"})
+    seed = SeedExtras(sha256="cd" * 32, header=header, column_types=column_types)
     extras = CompileExtras(service="svc", release_id="r", seeds={"seed.svc.users": seed}, project_flags={}, packages={})
-    with pytest.raises(InvalidNodeSettingError, match="analytics.users"):
+    with pytest.raises(InvalidNodeSettingError, match="analytics.users") as raised:
         parse_manifest(str(tmp_path / "manifest.json"), extras=extras)
+    assert "lone surrogate" in str(raised.value)
+    str(raised.value).encode("utf-8")

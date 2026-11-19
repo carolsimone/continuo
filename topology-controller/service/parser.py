@@ -44,6 +44,7 @@ from domain.model import (
     NodeContract,
     NodeType,
     ParsedArtifact,
+    SeedExtras,
     ServiceProvenance,
     SkippedNode,
     SkipReason,
@@ -184,7 +185,7 @@ def _failed_node(name: str, node: dict, resource_type: str, detail: str) -> Fail
     and file path are read tolerantly, as the node may hold either in a shape
     the library refused."""
     file_path = node.get("original_file_path")
-    return FailedNode(
+    failed = FailedNode(
         node_id=name,
         kind=ParseFailureKind.INVALID_CONTRACT,
         service=_tolerant_service(node),
@@ -192,6 +193,25 @@ def _failed_node(name: str, node: dict, resource_type: str, detail: str) -> Fail
         node_type=_RESOURCE_TYPE_TO_NODE_TYPE[resource_type],
         detail=detail,
     )
+    _require_publishable(failed)
+    return failed
+
+
+def _require_publishable(failed: FailedNode) -> None:
+    """Refuse a failed node whose node id, service, file path or detail holds text
+    UTF-8 cannot encode (a lone surrogate that the manifest's JSON writes as an
+    escape): the event that reports the rejection is encoded as UTF-8, so such a
+    rejection could not be published and the release would get no parse result.
+    The artifact is at fault, so it is an InvalidNodeSettingError, whose message
+    writes the node id with the text escaped."""
+    for field, text in (("node id", failed.node_id), ("service", failed.service),
+                        ("file path", failed.file_path), ("detail", failed.detail)):
+        try:
+            text.encode("utf-8")
+        except UnicodeEncodeError:
+            raise InvalidNodeSettingError(
+                f"{ascii(failed.node_id)}: the {field} holds text UTF-8 cannot encode"
+            ) from None
 
 
 def _shape_failure(
@@ -255,20 +275,23 @@ def _contract(
     tests: list[Mapping[str, Any]],
     manifest: Mapping[str, Any],
     *,
-    header: Sequence[str] | None,
+    seed: SeedExtras | None,
     validator: ContractValidator,
     timings: ReleaseTimings | None,
-) -> tuple[dbt.Generated, dbt.RunFacts] | FailedNode:
-    """The checked contract of a kept node and the run facts it gives, or the
-    FailedNode that says why the node has none.
+) -> tuple[dbt.Generated, dbt.RunFacts, str | None] | FailedNode:
+    """The checked contract of a kept node, the run facts it gives and, for a seed
+    the compile extras name (`seed`, None for any other node), the fingerprint of
+    its columns; or the FailedNode that says why the node has none.
 
     A field the library cannot read, a contract with issues and a seed whose
-    declared columns differ from its CSV `header` (None when the header is not
-    known, which is never an issue) are the team's to fix, so each is a
-    FailedNode. A seed with both gets one FailedNode that names every problem.
-    Any other error from the library is a defect, raised as a
-    ContractGenerationError: `generate` never returns a contract canonical JSON
-    cannot write, so the check failing on one is a defect too."""
+    declared columns differ from the CSV header its extras give are the team's to
+    fix, so each is a FailedNode. A seed with both gets one FailedNode that names
+    every problem. The seed's extras are fingerprinted as soon as the contract is
+    generated, which refuses text canonical JSON cannot write (an
+    InvalidNodeSettingError naming the node) before any header text is compared
+    or put in a failed node. Any other error from the library is a defect, raised
+    as a ContractGenerationError: `generate` never returns a contract canonical
+    JSON cannot write, so the check failing on one is a defect too."""
     try:
         with _stage(timings, Stage.CONTRACT_GENERATION):
             generated = dbt.generate(node, tests, manifest=manifest)
@@ -276,13 +299,17 @@ def _contract(
         return _shape_failure(node_id, node, resource_type, error, timings)
     except Exception as error:
         raise _library_defect(node_id, error) from error
+    columns_hash = None
+    if seed is not None:
+        with _rejecting_hash_input(generated.document["id"]):
+            columns_hash = seed_columns_hash(seed)
     on_cache = timings.add_validation_cache if timings is not None else _ignore_cache
     try:
         with _stage(timings, Stage.CONTRACT_VALIDATION):
             issues = validator.check_dbt(generated.document, on_cache=on_cache)
     except Exception as error:
         raise _library_defect(node_id, error) from error
-    header_issues = _header_issues(node_id, generated.document, header)
+    header_issues = _header_issues(node_id, generated.document, seed.header if seed is not None else None)
     if issues or header_issues:
         return _issues_failure(
             generated.document["id"], node_id, node, resource_type, issues, header_issues, timings,
@@ -291,7 +318,7 @@ def _contract(
         facts = dbt.run_facts(generated.document)
     except Exception as error:
         raise _library_defect(node_id, error) from error
-    return generated, facts
+    return generated, facts, columns_hash
 
 
 def parse_manifest(
@@ -354,8 +381,11 @@ def parse_manifest(
     is not a string, a test whose node links are not strings) raises
     InvalidNodeSettingError with the library's message, which starts with
     `manifest` or the test's id, and so does a kept node or a test with no `fqn`
-    entry and a test with an `fqn` that is not a list of strings. Any other error
-    from the library raises ContractGenerationError.
+    entry and a test with an `fqn` that is not a list of strings. So does text
+    UTF-8 cannot encode in the extras of a seed (checked when its contract is
+    generated, before its header is compared) or in the node id, service or file
+    path of a FailedNode, as no event could report such a rejection. Any other
+    error from the library raises ContractGenerationError.
     """
     with open(manifest_path) as f:
         manifest = json.load(f)
@@ -397,13 +427,13 @@ def parse_manifest(
         seed = extras.seeds.get(node_id) if resource_type == "seed" and extras is not None else None
         built = _contract(
             node_id, node, resource_type, tests_of.get(node_id, []), manifest,
-            header=seed.header if seed is not None else None, validator=validator, timings=timings,
+            seed=seed, validator=validator, timings=timings,
         )
         if isinstance(built, FailedNode):
             failed.append(built)
             progress()
             continue
-        generated, facts = built
+        generated, facts, columns_hash = built
 
         parts = _hash(facts.unique_id, node, ctx)
         used_units.update(parts.units)
@@ -445,8 +475,7 @@ def parse_manifest(
             manifest_node.test_count += len(ctx.unit_tests_by_node.get(node_id, ()))
         if resource_type == "seed":
             if seed is not None:
-                with _rejecting_hash_input(facts.unique_id):
-                    manifest_node.seed_columns_hash = seed_columns_hash(seed)
+                manifest_node.seed_columns_hash = columns_hash
                 manifest_node.seed_header = seed.header
                 manifest_node.seed_column_types = dict(seed.column_types)
             else:

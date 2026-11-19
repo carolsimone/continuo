@@ -11,6 +11,7 @@ import pytest
 from continuo_contracts import dbt
 from continuo_contracts.errors import CanonicalJsonError
 
+from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from domain.contract_vocabulary import NodeType, ParseFailureKind
 from domain.dormant import is_dormant
 from domain.exceptions import ContractGenerationError, InvalidNodeSettingError
@@ -23,6 +24,7 @@ from service.release_timings import (
     ReleaseTimings,
     Stage,
 )
+from streams_contract import MANIFEST_LOADED_CANDIDATE_V2
 from tests.fakes import (
     FakeClock,
     RecordingArtifactWriter,
@@ -686,7 +688,7 @@ def test_a_release_whose_seeds_have_no_known_header_publishes_and_logs_their_cou
                   _handler_seed("service-1", "seed_named", ["x"]), dbt_node("fine"),
                   headers={"seed.service-1.seed_named": ["x"]}),
         _dbt_file(tmp_path, "service-2.json", "service-2",
-                  _handler_seed("service-2", "seed_c", ["x"]) | {"unique_id": "seed.service-2.seed_c"}),
+                  _handler_seed("service-2", "seed_c", ["x"])),
     )
 
     with caplog.at_level(logging.WARNING, logger="service.candidate_manifest_handler"):
@@ -708,3 +710,83 @@ def test_a_release_whose_seeds_all_have_a_known_header_logs_no_unchecked_seeds(t
         build_handler(source, MagicMock(), make_uploader()).handle(release_id="rel-1")
 
     assert [r for r in caplog.records if r.getMessage() == _UNCHECKED_SEEDS_LINE] == []
+
+
+# --- text UTF-8 cannot encode never reaches a published rejection --------------------
+
+def _publishing(redis):
+    """The real publisher over a recording redis client."""
+    return CandidateManifestPublisher(
+        redis, MANIFEST_LOADED_CANDIDATE_V2, producer="topology-controller", continuo_contracts="0.3.0")
+
+
+def _published_rejection(redis) -> dict:
+    """The one entry the release published, as redis-py sends it: every field encoded as UTF-8, which
+    raises for text that holds a lone surrogate. Returns its payload."""
+    redis.xadd.assert_called_once()
+    _, fields = redis.xadd.call_args.args
+    for value in fields.values():
+        value.encode("utf-8")
+    return json.loads(fields["payload"])
+
+
+@pytest.mark.parametrize("declares, header, column_types", [
+    ([], ["code\ud800"], {}),
+    (["code"], ["code", "x\ud800"], {}),
+    (["code"], ["code"], {"code": "varchar\ud800"}),
+], ids=["header-column", "header-column-beside-a-declared-one", "column-type"])
+def test_a_seed_whose_extras_hold_text_utf8_cannot_encode_is_rejected_as_an_invalid_artifact(
+        tmp_path, declares, header, column_types):
+    """The header's text is refused before it is compared with the declared columns, so no rejection
+    repeats it: the release publishes `failed` and the event can be encoded."""
+    redis = MagicMock()
+    seed = _handler_seed("service-1", "seed_countries", declares)
+    source = source_of(_dbt_file(tmp_path, "service-1.json", "service-1", seed, dbt_node("fine"),
+                                 headers={"seed.service-1.seed_countries": header}))
+    extras = Path(tmp_path) / "service-1.json.extras.json"
+    document = json.loads(extras.read_text())
+    document["seeds"]["seed.service-1.seed_countries"]["column_types"] = column_types
+    extras.write_text(json.dumps(document))
+
+    build_handler(source, _publishing(redis), make_uploader()).handle(release_id="rel-1")
+
+    payload = _published_rejection(redis)
+    assert (payload["status"], payload["failure_kind"]) == ("failed", "invalid_artifact")
+    assert "test_schema.seed_countries" in payload["detail"]
+    assert "lone surrogate" in payload["detail"]
+    assert payload["failed_nodes"] == []
+
+
+@pytest.mark.parametrize("field, over", [
+    ("name", {"name": "seed_countries\ud800"}),
+    ("schema", {"schema": "test\ud800"}),
+    ("fqn", {"fqn": ["service-1\ud800", "seed_countries"]}),
+    ("original_file_path", {"original_file_path": "seeds/seed_countries\ud800.csv"}),
+])
+def test_a_node_whose_manifest_text_utf8_cannot_encode_is_rejected_as_an_invalid_artifact(tmp_path, field, over):
+    """A failed node names its node id, service and file as the manifest writes them, and a rejection
+    that held text UTF-8 cannot encode could not be published."""
+    redis = MagicMock()
+    seed = _handler_seed("service-1", "seed_countries", ["code"]) | over
+    source = source_of(_dbt_file(tmp_path, "service-1.json", "service-1", seed, dbt_node("fine"),
+                                 headers={"seed.service-1.seed_countries": ["code", "extra"]}))
+
+    build_handler(source, _publishing(redis), make_uploader()).handle(release_id="rel-1")
+
+    payload = _published_rejection(redis)
+    assert (payload["status"], payload["failure_kind"]) == ("failed", "invalid_artifact")
+    assert "UTF-8 cannot encode" in payload["detail"]
+    assert payload["failed_nodes"] == []
+
+
+def test_the_unchecked_seeds_of_two_manifests_of_one_service_are_added(tmp_path, caplog):
+    source = source_of(
+        _dbt_file(tmp_path, "a.json", "service-1", _handler_seed("service-1", "seed_a", ["x"]), dbt_node("fine")),
+        _dbt_file(tmp_path, "b.json", "service-1", _handler_seed("service-1", "seed_b", ["x"]), dbt_node("also_fine")),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="service.candidate_manifest_handler"):
+        build_handler(source, MagicMock(), make_uploader()).handle(release_id="rel-1")
+
+    (record,) = [r for r in caplog.records if r.getMessage() == _UNCHECKED_SEEDS_LINE]
+    assert (record.seeds, record.services) == (2, {"service-1": 2})
