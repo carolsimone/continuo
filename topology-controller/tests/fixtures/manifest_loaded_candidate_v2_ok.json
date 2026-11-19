@@ -12,7 +12,13 @@
       "code_bundle_uri": "s3://continuo/code-bundles/rel-2026-10-08-0001/bundle.json",
       "contract_bundle_uri": "s3://continuo/tenants/default/topologies/rel-2026-10-08-0001/contracts.json.gz",
       "contract_bundle_sha256": "9b0c4d1e7a52f3860be1d9c4a7f08e35b216d0a94c7e53f1a8b20d6e49c71f3a",
-      "continuo_contracts": "0.2.0"
+      "continuo_contracts": "0.2.0",
+      "parse_ms": 4180,
+      "contracts_ms": 1260,
+      "contracts_by_family": {
+        "dbt": 3,
+        "python": 2
+      }
     }
   },
   "fields": {
@@ -30,7 +36,13 @@
       "code_bundle_uri": "s3://continuo/code-bundles/rel-2026-10-08-0001/bundle.json",
       "contract_bundle_uri": "s3://continuo/tenants/default/topologies/rel-2026-10-08-0001/contracts.json.gz",
       "contract_bundle_sha256": "9b0c4d1e7a52f3860be1d9c4a7f08e35b216d0a94c7e53f1a8b20d6e49c71f3a",
-      "continuo_contracts": "0.2.0"
+      "continuo_contracts": "0.2.0",
+      "parse_ms": 4180,
+      "contracts_ms": 1260,
+      "contracts_by_family": {
+        "dbt": 3,
+        "python": 2
+      }
     }
   }
 }

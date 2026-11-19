@@ -9,8 +9,9 @@ import (
 // Every error wraps ErrMalformedEnvelope: an unreadable envelope, another
 // schema_version, a payload that is not JSON, no release_id, a status other
 // than ok or failed, or an ok entry that names no topology artifact. The
-// contract bundle fields and continuo_contracts are optional: an entry from a
-// producer that does not write them decodes with empty values.
+// contract bundle fields, continuo_contracts, the two durations and the count
+// by family are optional: an entry from a producer that does not write them
+// decodes with empty values.
 func DecodeManifestLoadedCandidate(fields map[string]string) (Envelope, ManifestLoadedCandidate, error) {
 	env, payload, err := ParseEnvelope(fields)
 	if err != nil {

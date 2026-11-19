@@ -25,6 +25,10 @@ _CONTRACT_BUNDLE = ContractBundleRef(
     uri="s3://continuo/tenants/default/topologies/rel-1/contracts.json.gz",
     sha256="cd" * 32,
 )
+# What the handler hands the publisher about the parse: how long it took and what
+# it wrote. A failed parse carries the two durations, an ok parse the counts too.
+_DURATIONS = {"parse_ms": 4180, "contracts_ms": 1260}
+_OK_TIMINGS = {**_DURATIONS, "contracts_by_family": {"dbt": 3, "python": 2}}
 
 
 def _make(producer="topology-controller", at=_AT, continuo_contracts="0.2.0"):
@@ -78,6 +82,9 @@ def test_publish_ok_matches_the_shared_ok_fixture():
         contract_bundle=ContractBundleRef(
             uri=payload["contract_bundle_uri"], sha256=payload["contract_bundle_sha256"],
         ),
+        parse_ms=payload["parse_ms"],
+        contracts_ms=payload["contracts_ms"],
+        contracts_by_family=payload["contracts_by_family"],
     )
 
     _assert_matches(_fields(redis_mock), want)
@@ -99,6 +106,8 @@ def test_publish_failed_matches_the_shared_failed_fixture():
             )
             for n in payload["failed_nodes"]
         ],
+        parse_ms=payload["parse_ms"],
+        contracts_ms=payload["contracts_ms"],
     )
 
     _assert_matches(_fields(redis_mock), want)
@@ -109,7 +118,7 @@ def test_publish_ok_carries_the_artifact_reference_and_no_nodes():
 
     pub.publish_ok(
         release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="s3://continuo/code-bundles/rel-1/bundle.json",
-        contract_bundle=_CONTRACT_BUNDLE,
+        contract_bundle=_CONTRACT_BUNDLE, **_OK_TIMINGS,
     )
 
     fields = _fields(redis_mock)
@@ -123,6 +132,9 @@ def test_publish_ok_carries_the_artifact_reference_and_no_nodes():
         "contract_bundle_uri": "s3://continuo/tenants/default/topologies/rel-1/contracts.json.gz",
         "contract_bundle_sha256": "cd" * 32,
         "continuo_contracts": "0.2.0",
+        "parse_ms": 4180,
+        "contracts_ms": 1260,
+        "contracts_by_family": {"dbt": 3, "python": 2},
     }
     assert fields["event_id"] == manifest_loaded_candidate_event_id("default", "rel-1")
     assert fields["tenant_id"] == "default"
@@ -155,6 +167,7 @@ def test_publish_failed_serialises_kind_and_failed_nodes():
                 detail="Expecting ). Line 3, Col: 12.",
             )
         ],
+        **_DURATIONS,
     )
 
     assert _payload(redis_mock) == {
@@ -162,6 +175,8 @@ def test_publish_failed_serialises_kind_and_failed_nodes():
         "status": "failed",
         "failure_kind": "invalid_sql",
         "continuo_contracts": "0.2.0",
+        "parse_ms": 4180,
+        "contracts_ms": 1260,
         "detail": "1 node failed to parse: analytics.fx",
         "failed_nodes": [
             {
@@ -176,21 +191,64 @@ def test_publish_failed_serialises_kind_and_failed_nodes():
     }
 
 
+def test_publish_ok_carries_the_durations_and_the_counts():
+    pub, redis_mock = _make()
+
+    pub.publish_ok(
+        release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="", contract_bundle=_CONTRACT_BUNDLE,
+        parse_ms=4180, contracts_ms=1260, contracts_by_family={"dbt": 3},
+    )
+
+    payload = _payload(redis_mock)
+    assert (payload["parse_ms"], payload["contracts_ms"]) == (4180, 1260)
+    assert payload["contracts_by_family"] == {"dbt": 3}, "a family with no contract has no key"
+    assert all(type(payload[name]) is int for name in ("parse_ms", "contracts_ms"))
+
+
+def test_publish_ok_with_no_contracts_carries_an_empty_count():
+    """An ok release that wrote no contract (an empty release) reports zero
+    contracts, which a producer that does not write the count never does."""
+    pub, redis_mock = _make()
+
+    pub.publish_ok(
+        release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="", contract_bundle=_CONTRACT_BUNDLE,
+        parse_ms=12, contracts_ms=0, contracts_by_family={},
+    )
+
+    assert _payload(redis_mock)["contracts_by_family"] == {}
+
+
+def test_publish_failed_carries_the_durations():
+    pub, redis_mock = _make()
+
+    pub.publish_failed(
+        release_id="rel-2", failure_kind=ParseFailureKind.INVALID_SQL, detail="x", parse_ms=310, contracts_ms=45,
+    )
+
+    payload = _payload(redis_mock)
+    assert (payload["parse_ms"], payload["contracts_ms"]) == (310, 45)
+    assert all(type(payload[name]) is int for name in ("parse_ms", "contracts_ms"))
+    assert "contracts_by_family" not in payload, "a failed release wrote no bundle to count"
+
+
 def test_both_outcomes_announce_the_library_version_the_publisher_was_built_with():
     """A release-controller that reads the entry knows which continuo-contracts
     wrote the release's contracts, whether the release passed or failed."""
     pub, redis_mock = _make(continuo_contracts="9.8.7")
-    pub.publish_ok(release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="", contract_bundle=_CONTRACT_BUNDLE)
+    pub.publish_ok(
+        release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="", contract_bundle=_CONTRACT_BUNDLE,
+        **_OK_TIMINGS,
+    )
     assert _payload(redis_mock)["continuo_contracts"] == "9.8.7"
 
     pub, redis_mock = _make(continuo_contracts="9.8.7")
-    pub.publish_failed(release_id="rel-2", failure_kind=ParseFailureKind.INVALID_CONTRACT, detail="x")
+    pub.publish_failed(release_id="rel-2", failure_kind=ParseFailureKind.INVALID_CONTRACT, detail="x", **_DURATIONS)
     assert _payload(redis_mock)["continuo_contracts"] == "9.8.7"
 
 
 def test_publish_failed_defaults_to_no_failed_nodes():
     pub, redis_mock = _make()
-    pub.publish_failed(release_id="rel-3", failure_kind=ParseFailureKind.INTERNAL, detail="s3 down")
+    pub.publish_failed(release_id="rel-3", failure_kind=ParseFailureKind.INTERNAL, detail="s3 down", **_DURATIONS)
 
     body = _payload(redis_mock)
     assert body["failure_kind"] == "internal"
@@ -210,6 +268,7 @@ def test_publish_failed_strips_ansi_escapes_from_every_detail():
                 file_path="models/b.sql", node_type=NodeType.DBT_MODEL, detail=sqlglot_text,
             )
         ],
+        **_DURATIONS,
     )
 
     raw = _fields(redis_mock)["payload"]
@@ -226,8 +285,11 @@ def test_publish_does_not_cap_the_stream():
     pub = CandidateManifestPublisher(
         redis_mock, MANIFEST_LOADED_CANDIDATE_V2, producer="topology-controller", continuo_contracts="0.2.0",
     )
-    pub.publish_ok(release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="", contract_bundle=_CONTRACT_BUNDLE)
-    pub.publish_failed(release_id="rel-2", failure_kind=ParseFailureKind.INVALID_SQL, detail="boom")
+    pub.publish_ok(
+        release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="", contract_bundle=_CONTRACT_BUNDLE,
+        **_OK_TIMINGS,
+    )
+    pub.publish_failed(release_id="rel-2", failure_kind=ParseFailureKind.INVALID_SQL, detail="boom", **_DURATIONS)
 
     assert redis_mock.xadd.call_count == 2
     for call in redis_mock.xadd.call_args_list:
@@ -240,8 +302,11 @@ def test_publisher_writes_the_prefixed_key_without_creating_it():
     """XADD names the prefixed key and carries NOMKSTREAM, so an append never
     creates a stream the streams-init step has not."""
     pub, redis_mock = _make()
-    pub.publish_ok(release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="", contract_bundle=_CONTRACT_BUNDLE)
-    pub.publish_failed(release_id="rel-2", failure_kind=ParseFailureKind.INVALID_SQL, detail="boom")
+    pub.publish_ok(
+        release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="", contract_bundle=_CONTRACT_BUNDLE,
+        **_OK_TIMINGS,
+    )
+    pub.publish_failed(release_id="rel-2", failure_kind=ParseFailureKind.INVALID_SQL, detail="boom", **_DURATIONS)
 
     assert redis_mock.xadd.call_count == 2
     for call in redis_mock.xadd.call_args_list:
@@ -257,18 +322,21 @@ def test_publisher_raises_when_the_stream_is_missing():
     redis_mock.xadd.return_value = None
 
     with pytest.raises(MissingStreamError) as err:
-        pub.publish_ok(release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="", contract_bundle=_CONTRACT_BUNDLE)
+        pub.publish_ok(
+            release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="", contract_bundle=_CONTRACT_BUNDLE,
+            **_OK_TIMINGS,
+        )
     assert str(err.value) == f"stream continuo:{MANIFEST_LOADED_CANDIDATE_V2} does not exist; the streams-init step creates it"
 
     with pytest.raises(MissingStreamError):
-        pub.publish_failed(release_id="rel-2", failure_kind=ParseFailureKind.INTERNAL, detail="x")
+        pub.publish_failed(release_id="rel-2", failure_kind=ParseFailureKind.INTERNAL, detail="x", **_DURATIONS)
 
 
 def test_the_parse_failed_line_prints_its_release_kind_detail_and_failed_node_count(caplog):
     pub, _ = _make()
     node = FailedNode("a.b", ParseFailureKind.INVALID_SQL, "svc", "models/b.sql", NodeType.DBT_MODEL, "bad")
     with caplog.at_level(logging.ERROR, logger="adapters.redis.candidate_publisher"):
-        pub.publish_failed("rel-9", ParseFailureKind.INVALID_SQL, "1 node failed to parse: a.b", [node])
+        pub.publish_failed("rel-9", ParseFailureKind.INVALID_SQL, "1 node failed to parse: a.b", [node], **_DURATIONS)
     line = json.loads(JsonFormatter().format(caplog.records[-1]))
     assert (line["level"], line["msg"]) == ("ERROR", "Published manifest.loaded.candidate failed")
     assert (line["release_id"], line["failure_kind"], line["detail"], line["failed_nodes"]) == (
@@ -278,7 +346,10 @@ def test_the_parse_failed_line_prints_its_release_kind_detail_and_failed_node_co
 def test_the_ok_line_prints_its_release_node_count_topology_uri_and_contract_bundle_uri(caplog):
     pub, _ = _make()
     with caplog.at_level(logging.INFO, logger="adapters.redis.candidate_publisher"):
-        pub.publish_ok(release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="", contract_bundle=_CONTRACT_BUNDLE)
+        pub.publish_ok(
+            release_id="rel-1", artifact=_ARTIFACT, code_bundle_uri="", contract_bundle=_CONTRACT_BUNDLE,
+            **_OK_TIMINGS,
+        )
     line = json.loads(JsonFormatter().format(caplog.records[-1]))
     assert (line["release_id"], line["node_count"], line["topology_uri"], line["contract_bundle_uri"]) == (
         "rel-1", 3, _ARTIFACT.uri, _CONTRACT_BUNDLE.uri)

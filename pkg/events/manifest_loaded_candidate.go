@@ -33,9 +33,15 @@ type ManifestFailedNode struct {
 // its code bundle and its contract bundle (URI and SHA-256 of the stored
 // object); a failed entry carries the parse failure kind, a detail and the
 // nodes that caused it. Both outcomes carry ContinuoContracts, the version of
-// the continuo-contracts library that read the release's contracts. The
-// topology itself is never on the stream. The contract fields are empty on an
-// entry from a producer that does not write them.
+// the continuo-contracts library that read the release's contracts, and the two
+// durations of the parse: ParseMs, the milliseconds from the start of the parse
+// to the publish without the contract stages, and ContractsMs, the milliseconds
+// of the contract stages (generating, checking, hashing and bundling the
+// contracts). An ok entry also carries ContractsByFamily, the number of
+// contracts its bundle holds by family (`dbt`, `python`); a family with none has
+// no key. The topology itself is never on the stream. The contract fields and
+// the durations are zero or empty on an entry from a producer that does not
+// write them.
 type ManifestLoadedCandidate struct {
 	ReleaseID            string               `json:"release_id"`
 	Status               string               `json:"status"`
@@ -46,6 +52,9 @@ type ManifestLoadedCandidate struct {
 	ContractBundleURI    string               `json:"contract_bundle_uri,omitempty"`
 	ContractBundleSHA256 string               `json:"contract_bundle_sha256,omitempty"`
 	ContinuoContracts    string               `json:"continuo_contracts,omitempty"`
+	ParseMs              int64                `json:"parse_ms,omitempty"`
+	ContractsMs          int64                `json:"contracts_ms,omitempty"`
+	ContractsByFamily    map[string]int       `json:"contracts_by_family,omitempty"`
 	FailureKind          string               `json:"failure_kind,omitempty"`
 	Detail               string               `json:"detail,omitempty"`
 	FailedNodes          []ManifestFailedNode `json:"failed_nodes,omitempty"`
@@ -62,7 +71,9 @@ func ManifestLoadedCandidateEventID(tenantID, releaseID string) string {
 // ManifestLoadedCandidateFields renders p as the Redis fields of one
 // manifest.loaded.candidate:v2 entry. An ok payload carries only the success
 // fields and a failed payload only the failure fields, with failed_nodes always
-// a list: the shape topology-controller publishes. Both carry continuo_contracts.
+// a list: the shape topology-controller publishes. Both carry continuo_contracts,
+// parse_ms and contracts_ms; an ok payload also carries contracts_by_family,
+// always an object.
 func ManifestLoadedCandidateFields(tenantID, producer string, occurredAt time.Time, p ManifestLoadedCandidate) (map[string]any, error) {
 	env := Envelope{
 		EventID:       ManifestLoadedCandidateEventID(tenantID, p.ReleaseID),
@@ -72,6 +83,10 @@ func ManifestLoadedCandidateFields(tenantID, producer string, occurredAt time.Ti
 		SchemaVersion: ManifestLoadedCandidateSchemaVersion,
 	}
 	if p.Status == ManifestStatusOK {
+		byFamily := p.ContractsByFamily
+		if byFamily == nil {
+			byFamily = map[string]int{}
+		}
 		return env.Fields(map[string]any{
 			"release_id":             p.ReleaseID,
 			"status":                 p.Status,
@@ -82,6 +97,9 @@ func ManifestLoadedCandidateFields(tenantID, producer string, occurredAt time.Ti
 			"contract_bundle_uri":    p.ContractBundleURI,
 			"contract_bundle_sha256": p.ContractBundleSHA256,
 			"continuo_contracts":     p.ContinuoContracts,
+			"parse_ms":               p.ParseMs,
+			"contracts_ms":           p.ContractsMs,
+			"contracts_by_family":    byFamily,
 		})
 	}
 	failed := p.FailedNodes
@@ -93,6 +111,8 @@ func ManifestLoadedCandidateFields(tenantID, producer string, occurredAt time.Ti
 		"status":             p.Status,
 		"failure_kind":       p.FailureKind,
 		"continuo_contracts": p.ContinuoContracts,
+		"parse_ms":           p.ParseMs,
+		"contracts_ms":       p.ContractsMs,
 		"detail":             p.Detail,
 		"failed_nodes":       failed,
 	})

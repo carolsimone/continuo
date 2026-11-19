@@ -14,7 +14,7 @@ from service import candidate_artifacts, candidate_manifest_handler
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
 from service.compile_extras import seed_columns_hash
-from service.ports import ManifestSourcePort
+from service.ports import CandidatePublisherPort, ManifestSourcePort
 from service.release_timings import ReleaseOutcome, Stage
 from domain.contract_vocabulary import ParseFailureKind
 from tests.fakes import (
@@ -112,7 +112,8 @@ def test_handle_publishes_ok_with_empty_topology_when_no_manifests():
 
     assert writer.writes == [{"tenant_id": "default", "release_id": "rel-empty", "nodes": []}]
     publisher.publish_ok.assert_called_once_with(
-        release_id="rel-empty", artifact=writer.refs[0], code_bundle_uri="", contract_bundle=bundle_writer.refs[0])
+        release_id="rel-empty", artifact=writer.refs[0], code_bundle_uri="", contract_bundle=bundle_writer.refs[0],
+        parse_ms=0, contracts_ms=0, contracts_by_family={})
     publisher.publish_failed.assert_not_called()
 
 
@@ -752,7 +753,8 @@ def test_empty_manifests_publish_empty_bundle_uri():
              artifact_writer=writer, contract_bundle_writer=bundle_writer).handle(release_id="rel-empty")
 
     publisher.publish_ok.assert_called_once_with(
-        release_id="rel-empty", artifact=writer.refs[0], code_bundle_uri="", contract_bundle=bundle_writer.refs[0])
+        release_id="rel-empty", artifact=writer.refs[0], code_bundle_uri="", contract_bundle=bundle_writer.refs[0],
+        parse_ms=0, contracts_ms=0, contracts_by_family={})
     assert bundle_uploader.uploads == []
 
 
@@ -1320,6 +1322,105 @@ def test_a_failed_release_times_its_publish(tmp_path):
     timings = dispatch_handler(source_of(ManifestFile(path=str(bad))), publisher).handle(release_id="rel-1")
     publisher.publish_failed.assert_called_once()
     assert timings.stages[Stage.PUBLISH].runs == 1
+
+
+def _autospec_publisher():
+    """A publisher that holds the handler to CandidatePublisherPort's signatures."""
+    return create_autospec(CandidatePublisherPort, instance=True)
+
+
+def test_the_published_durations_are_the_records():
+    """The release's parse ends at the instant the event is handed to the
+    publisher, so the numbers on the event are the record's own."""
+    publisher = _autospec_publisher()
+    timings = build_handler(
+        _make_source("manifest_service1.json", "manifest_service2.json"), publisher, make_uploader(),
+        clock=FakeClock(step=1.0),
+    ).handle(release_id="rel-1")
+
+    kwargs = publisher.publish_ok.call_args.kwargs
+    assert kwargs["parse_ms"] == timings.parse_ms()
+    assert kwargs["contracts_ms"] == timings.contracts_ms()
+    assert type(kwargs["parse_ms"]) is int and type(kwargs["contracts_ms"]) is int
+    assert kwargs["contracts_ms"] > 0, "the generation and the checks of the two dbt contracts ran"
+    assert kwargs["parse_ms"] > 0
+    publisher.publish_failed.assert_not_called()
+
+
+def test_the_published_durations_of_a_failed_release_are_the_records(monkeypatch, tmp_path):
+    def _raise(node, *, dialect, **kwargs):
+        raise InvalidCompiledSqlError(node_table_name=node.table_name, detail="broken")
+
+    monkeypatch.setattr("service.candidate_manifest_handler.referenced_tables", _raise)
+    publisher = _autospec_publisher()
+    timings = build_handler(
+        source_with_nodes(tmp_path, dbt_node("node_a")), publisher, make_uploader(), clock=FakeClock(step=1.0),
+    ).handle(release_id="rel-fail")
+
+    kwargs = _failed_kwargs(publisher)
+    assert kwargs["failure_kind"] == ParseFailureKind.INVALID_SQL
+    assert kwargs["parse_ms"] == timings.parse_ms()
+    assert kwargs["contracts_ms"] == timings.contracts_ms()
+    assert kwargs["contracts_ms"] > 0, "the node's contract was generated and checked before its SQL failed"
+    assert kwargs["parse_ms"] > 0
+    publisher.publish_ok.assert_not_called()
+
+
+def test_a_release_refused_before_any_contract_stage_publishes_valid_durations():
+    """Every publish happens inside a release's record, so a release that fails
+    before it reads a manifest still carries the time it took and no time
+    spent on contracts."""
+    publisher = _autospec_publisher()
+    handler = CandidateManifestHandler(
+        source=_make_source("manifest_service1.json"), publisher=publisher, bundle_uploader=FakeBundleUploader(),
+        artifact_writer=RecordingArtifactWriter(), contract_bundle_writer=RecordingContractBundleWriter(),
+        artifact_builders={Runtime.DBT: DbtSqlArtifactBuilder(make_uploader())},
+        dialect="postgres", system_relations=_SYSTEM_RELATIONS["postgres"], image_tags=None,
+        is_infrastructure_error=is_infrastructure, clock=FakeClock(step=1.0), memory=ScriptedMemoryProbe(0),
+    )
+
+    timings = handler.handle(release_id="rel-1")
+
+    kwargs = _failed_kwargs(publisher)
+    assert kwargs["failure_kind"] == ParseFailureKind.INTERNAL
+    assert kwargs["contracts_ms"] == 0
+    assert kwargs["parse_ms"] == timings.parse_ms() > 0
+    assert type(kwargs["parse_ms"]) is int
+
+
+def test_a_release_with_an_unknown_manifest_kind_publishes_valid_durations(tmp_path):
+    path = tmp_path / "manifest.json"
+    path.write_text("{}")
+    publisher = _autospec_publisher()
+
+    timings = dispatch_handler(
+        source_of(ManifestFile(path=str(path), kind="spark", declared_service="service-b")), publisher,
+        clock=FakeClock(step=1.0),
+    ).handle(release_id="rel-1")
+
+    kwargs = _failed_kwargs(publisher)
+    assert kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
+    assert kwargs["contracts_ms"] == 0
+    assert kwargs["parse_ms"] == timings.parse_ms() > 0
+
+
+def test_the_count_by_family_is_the_bundles_and_leaves_out_a_family_with_no_contract(tmp_path):
+    dbt = ManifestFile(path=str(FIXTURES / "manifest_service1.json"), image_tag="")
+    python = bundle_file(tmp_path, demo_nodes())
+    cases = {
+        "dbt only": ([dbt], {"dbt": 1}),
+        "python only": ([python], {"python": 3}),
+        "both": ([dbt, python], {"dbt": 1, "python": 3}),
+        "none": ([], {}),
+    }
+    for name, (files, want) in cases.items():
+        publisher = _autospec_publisher()
+        bundle_writer = RecordingContractBundleWriter()
+
+        python_handler(source_of(*files), publisher, contract_bundle_writer=bundle_writer).handle(release_id="rel-1")
+
+        got = publisher.publish_ok.call_args.kwargs["contracts_by_family"]
+        assert got == want == bundle_writer.document["summary"]["by_family"], name
 
 
 def _release_lines(caplog):

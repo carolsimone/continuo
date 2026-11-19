@@ -232,7 +232,10 @@ class CandidateManifestHandler:
     failed, or empty. A release that ended, published or failed, logs one
     "release parsed" line carrying the record's fields and hands the same
     record to observer; a handler that raised published nothing, logs no such
-    line and tells the observer nothing.
+    line and tells the observer nothing. The record's parse ends just before the
+    outcome is handed to the publisher, and the published event carries the
+    record's `parse_ms` and `contracts_ms` (and, for an ok release, the contract
+    bundle's count of contracts by family).
 
     progress is called by a manifest's parse after each contract it reads (a
     python contract) or generates (a dbt node's), and by the handler once after
@@ -603,22 +606,22 @@ class CandidateManifestHandler:
         python_provenance: Mapping[str, Mapping[str, Any]],
     ) -> None:
         """Write the release's contract bundle, then its topology artifact, then
-        publish the references to both. The bundle's timings are those of the
-        stages that ran before its own write. Each write follows the same outage
-        rule as every other write."""
+        publish the references to both with the durations of the parse and the
+        bundle's count of contracts by family. The bundle's timings are those of
+        the stages that ran before its own write. Each write follows the same
+        outage rule as every other write."""
         try:
             with self._timings.stage(Stage.CONTRACT_BUNDLE, contracts=len(contracts)):
-                contract_bundle = self._contract_bundle_writer.write(
+                bundle_document = build_contract_bundle(
                     tenant_id=DEFAULT_TENANT_ID,
                     release_id=release_id,
-                    document=build_contract_bundle(
-                        tenant_id=DEFAULT_TENANT_ID,
-                        release_id=release_id,
-                        library_version=LIBRARY_VERSION,
-                        contracts=contracts,
-                        provenance=python_provenance,
-                        timings=self._timings.bundle_timings(),
-                    ),
+                    library_version=LIBRARY_VERSION,
+                    contracts=contracts,
+                    provenance=python_provenance,
+                    timings=self._timings.bundle_timings(),
+                )
+                contract_bundle = self._contract_bundle_writer.write(
+                    tenant_id=DEFAULT_TENANT_ID, release_id=release_id, document=bundle_document,
                 )
             with self._timings.stage(Stage.TOPOLOGY_ARTIFACT, nodes=len(topology)):
                 artifact = self._artifact_writer.write(
@@ -628,12 +631,23 @@ class CandidateManifestHandler:
             self._reject_internal_unless_infra(release_id, exc)
             return
 
+        durations = self._close_the_parse()
         with self._timings.stage(Stage.PUBLISH):
             self._publisher.publish_ok(
                 release_id=release_id, artifact=artifact, code_bundle_uri=code_bundle_uri,
-                contract_bundle=contract_bundle,
+                contract_bundle=contract_bundle, contracts_by_family=bundle_document["summary"]["by_family"],
+                **durations,
             )
         self._timings.outcome = ReleaseOutcome.OK
+
+    def _close_the_parse(self) -> dict[str, int]:
+        """End the release's parse now, just before the outcome is handed to the
+        publisher, and return the two durations the event carries: the record's
+        own `parse_ms` and `contracts_ms`. Every publish, an early refusal
+        included, runs inside the record of the release, so a release that met no
+        contract stage reports 0 for `contracts_ms`."""
+        self._timings.mark_published()
+        return {"parse_ms": self._timings.parse_ms(), "contracts_ms": self._timings.contracts_ms()}
 
     def _service_provenance(self, release_id: str, service: str, parsed: ServiceProvenance) -> dict:
         """Log each of a dbt service's seeds that keeps dbt's path checksum and
@@ -683,12 +697,14 @@ class CandidateManifestHandler:
         failed_nodes: Sequence[FailedNode] = (),
     ) -> None:
         """Publish the release as failed, timed as the publish stage."""
+        durations = self._close_the_parse()
         with self._timings.stage(Stage.PUBLISH):
             self._publisher.publish_failed(
                 release_id=release_id,
                 failure_kind=kind,
                 detail=detail,
                 failed_nodes=sorted(failed_nodes, key=_failed_node_order),
+                **durations,
             )
         self._timings.outcome = ReleaseOutcome.FAILED
         self._timings.failure_kind = kind

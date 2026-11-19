@@ -61,7 +61,11 @@ class CandidatePublisherPort(Protocol):
     topology artifact and contract bundle, publish_failed a typed failure kind,
     a summary detail, and one FailedNode per node the parse could not resolve
     (empty for artifact and internal failures). Both outcomes also name the
-    version of the contracts library the process runs on."""
+    version of the contracts library the process runs on and the two durations
+    of the parse in milliseconds: `parse_ms` (the parse up to the publish, the
+    contract stages left out) and `contracts_ms` (the contract stages). publish_ok
+    also carries `contracts_by_family`, the number of contracts the bundle holds
+    by family, a family with none left out."""
 
     def publish_ok(
         self,
@@ -70,6 +74,9 @@ class CandidatePublisherPort(Protocol):
         artifact: TopologyArtifactRef,
         code_bundle_uri: str,
         contract_bundle: ContractBundleRef,
+        parse_ms: int,
+        contracts_ms: int,
+        contracts_by_family: Mapping[str, int],
     ) -> None:
         ...
 
@@ -79,6 +86,9 @@ class CandidatePublisherPort(Protocol):
         failure_kind: ParseFailureKind,
         detail: str,
         failed_nodes: Sequence[FailedNode] = (),
+        *,
+        parse_ms: int,
+        contracts_ms: int,
     ) -> None:
         ...
 

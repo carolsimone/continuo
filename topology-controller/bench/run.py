@@ -17,7 +17,7 @@ import resource
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from importlib import metadata
 from pathlib import Path
 
@@ -67,6 +67,9 @@ class RecordingPublisher:
         artifact: TopologyArtifactRef,
         code_bundle_uri: str,
         contract_bundle: ContractBundleRef,
+        parse_ms: int,
+        contracts_ms: int,
+        contracts_by_family: Mapping[str, int],
     ) -> None:
         self.ok = True
         self.node_count = artifact.node_count
@@ -77,6 +80,9 @@ class RecordingPublisher:
         failure_kind: ParseFailureKind,
         detail: str,
         failed_nodes: Sequence[FailedNode] = (),
+        *,
+        parse_ms: int,
+        contracts_ms: int,
     ) -> None:
         self.ok = False
         self.failure = f"{failure_kind}: {detail}"
