@@ -914,6 +914,33 @@ func TestRunRepository_TheParseTimingsKeepTheirPresenceThroughStorage(t *testing
 	}
 }
 
+// A stored row that holds one duration without the other is read back with
+// neither, so a loaded run keeps the rule that the two are set together; the
+// count beside them is kept.
+func TestRunRepository_ARowWithOnlyOneDurationLoadsWithNeither(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewRunRepository(db, nil)
+	ctx := context.Background()
+
+	for i, column := range []string{"parse_ms", "contracts_ms"} {
+		id := fmt.Sprintf("rPO%d", i)
+		t.Run(column+" NULL", func(t *testing.T) {
+			r := pipeline.NewCandidate(id, "svc", "img:1", false, false, "acme/demo", "cafebabe",
+				release.ManifestKindDbt, time.Unix(100, 0).UTC())
+			r.SetParseTimings(release.NewParseTimings(310, 45, map[string]int{"dbt": 2}))
+			created, err := repo.Create(ctx, r)
+			require.NoError(t, err)
+			require.True(t, created)
+			_, err = db.Exec(`UPDATE release_pipeline_runs SET `+column+` = NULL WHERE run_id = $1`, id)
+			require.NoError(t, err)
+
+			got, err := repo.Get(ctx, id)
+			require.NoError(t, err)
+			assert.Equal(t, release.ParseTimings{ContractsByFamily: map[string]int{"dbt": 2}}, got.ParseTimings())
+		})
+	}
+}
+
 // The manifest_kind CHECK of both tables that hold a kind admits python-odcs
 // and still refuses an unknown value, and each table keeps exactly one CHECK on
 // the column.

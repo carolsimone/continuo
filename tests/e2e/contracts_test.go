@@ -318,6 +318,7 @@ func TestE2E_DbtContracts_AnInvalidContractIsRejected(t *testing.T) {
 	assert.Equal(t, []any{dbtInvalidContractNodeID}, detail["failing_nodes"],
 		"the one invalid contract's model is the failing node")
 	assert.Contains(t, detail["reject_detail"], dbtInvalidContractNodeID, "the release's reject detail names the model")
+	assert.Empty(t, detail["validation_node_ids"], "a release rejected at the parse never reaches validation")
 
 	results, _ := detail["per_node_results"].([]any)
 	var named bool

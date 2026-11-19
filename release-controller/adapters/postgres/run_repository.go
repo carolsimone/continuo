@@ -325,10 +325,10 @@ func rowToRun(row runRow) (*pipeline.Run, error) {
 		notices = serialization.NoticesToDomain(noticesDTO)
 	}
 	timings := release.ParseTimings{}
-	if row.ParseMs.Valid {
+	// The two durations are set together or not at all, as ParseTimings holds
+	// them: a row with only one of them reports neither.
+	if row.ParseMs.Valid && row.ContractsMs.Valid {
 		timings.ParseMs = &row.ParseMs.Int64
-	}
-	if row.ContractsMs.Valid {
 		timings.ContractsMs = &row.ContractsMs.Int64
 	}
 	if row.ContractsByFamily != nil {

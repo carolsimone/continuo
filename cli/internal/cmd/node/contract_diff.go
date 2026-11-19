@@ -46,7 +46,8 @@ path an empty after_json. Two equal versions give an empty list.
 
 Arguments:
   <unique_id>  The node's unique_id, "<schema>.<table>" (for example
-               analytics.py_daily_kpis).
+               analytics.orders, a dbt model, or analytics.py_daily_kpis,
+               a Python node).
   <from>       The version to diff from: a whole number of 1 or more.
   <to>         The version to diff to: a whole number of 1 or more.
 
@@ -58,7 +59,7 @@ Errors:
   not_found  (exit 3)  the node has no promotion for one of the two versions, or its unique_id is not recorded
   unavailable(exit 5)  the catalog service is unreachable
   internal   (exit 6)  unexpected server error`,
-		Example: "  continuo node contract-diff analytics.py_daily_kpis 1 3",
+		Example: "  continuo node contract-diff analytics.orders 1 3\n  continuo node contract-diff analytics.py_daily_kpis 1 3",
 		Annotations: map[string]string{
 			"output_schema": `{"changes":[{"path":"string","before_json":"string","after_json":"string"}]}`,
 			"exit_codes":    `[0,2,3,5,6]`,

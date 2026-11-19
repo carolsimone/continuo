@@ -36,7 +36,8 @@ empty list: this command never answers not_found.
 
 Arguments:
   <unique_id>  The node's unique_id, "<schema>.<table>" (for example
-               analytics.py_daily_kpis).
+               analytics.orders, a dbt model, or analytics.py_daily_kpis,
+               a Python node).
   [limit]      Optional. The most versions returned, newest first: a whole
                number from 0 up. Default 0, which lists every version.
 
@@ -53,7 +54,7 @@ Errors:
   usage      (exit 2)  wrong number of arguments, or a limit that is not a whole number from 0 up
   unavailable(exit 5)  the catalog service is unreachable
   internal   (exit 6)  unexpected server error`,
-		Example: "  continuo node contract-history analytics.py_daily_kpis\n  continuo node contract-history analytics.py_daily_kpis 5",
+		Example: "  continuo node contract-history analytics.orders\n  continuo node contract-history analytics.py_daily_kpis 5",
 		Annotations: map[string]string{
 			"output_schema": `{"versions":[{"unique_id":"string","version":"number","contract_hash":"string","release_id":"string","promoted_at":"string","content_hash":"string","is_current":"boolean","same_as_version":"number","continuo_contracts":"string"}]}`,
 			"exit_codes":    `[0,2,5,6]`,

@@ -11,7 +11,8 @@ import "maps"
 type ParseTimings struct {
 	// ParseMs and ContractsMs are the milliseconds of the parse without its
 	// contract stages and of the contract stages. They are set together or not at
-	// all.
+	// all: NewParseTimings sets both or neither, and so does the repository when it
+	// reads a run back.
 	ParseMs     *int64
 	ContractsMs *int64
 	// ContractsByFamily is nil when the parse reported no count, and empty when it
@@ -20,11 +21,13 @@ type ParseTimings struct {
 }
 
 // NewParseTimings builds the timings a parse result carries from its decoded
-// fields, which read as zero or nil when the entry does not name them. Two zero
-// durations mean the producer does not report them, so both stay unset; any
-// other pair is kept as decoded, a zero beside a non-zero included. A nil count
-// stays unset, and an empty one is kept as the count of a release with no
-// contracts.
+// fields. pkg/events decodes a duration the entry does not name as 0 and a count
+// it does not name as nil, so a missing duration and a reported 0 look alike.
+// That decoding sets the compatibility rule applied here: two zero durations
+// mean the producer does not report them, so both stay unset, and a parse that
+// reports 0 for both reads as not reported too. Any other pair is kept as
+// decoded, a zero beside a non-zero included. A nil count stays unset, and an
+// empty one is kept as the count of a release with no contracts.
 func NewParseTimings(parseMs, contractsMs int64, contractsByFamily map[string]int) ParseTimings {
 	t := ParseTimings{ContractsByFamily: maps.Clone(contractsByFamily)}
 	if parseMs != 0 || contractsMs != 0 {

@@ -213,9 +213,28 @@ func TestDecodeManifestLoadedCandidate_AnEntryWithoutTheNewFieldsDecodes(t *test
 			assert.Empty(t, p.ContinuoContracts)
 			assert.Zero(t, p.ParseMs)
 			assert.Zero(t, p.ContractsMs)
-			assert.Empty(t, p.ContractsByFamily)
+			// A nil map is how an absent key decodes: the event of an older producer.
+			assert.Nil(t, p.ContractsByFamily)
 		})
 	}
+}
+
+// TestDecodeManifestLoadedCandidate_AnEmptyCountByFamilyIsNotNil pins the other
+// half of that rule: a producer that reports the count writes {} for a release
+// with no contract, which decodes as an empty map that is not nil.
+func TestDecodeManifestLoadedCandidate_AnEmptyCountByFamilyIsNotNil(t *testing.T) {
+	_, p, err := events.DecodeManifestLoadedCandidate(map[string]string{
+		"event_id":       "e",
+		"tenant_id":      "default",
+		"occurred_at":    "2026-10-08T09:30:00.000000Z",
+		"producer":       "topology-controller",
+		"schema_version": "1",
+		"payload": `{"release_id":"rel-1","status":"ok","topology_uri":"s3://b/k","topology_sha256":"abc",` +
+			`"node_count":0,"code_bundle_uri":"","parse_ms":12,"contracts_ms":0,"contracts_by_family":{}}`,
+	})
+	require.NoError(t, err)
+	assert.NotNil(t, p.ContractsByFamily)
+	assert.Empty(t, p.ContractsByFamily)
 }
 
 func TestDecodeManifestLoadedCandidate_RejectsMalformedEntries(t *testing.T) {
