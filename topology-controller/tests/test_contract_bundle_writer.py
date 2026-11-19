@@ -297,9 +297,12 @@ def test_the_summary_of_a_bundle_larger_than_the_end_kept_is_found_at_its_end(mo
 @pytest.mark.parametrize("text", [
     # A key after `timings`, which a newer bundle could add, holding a key named `summary`.
     canonical_json({**_python_only(), "zz_extra": {"summary": {"by_family": {"dbt": 9}}}}),
+    # A key after `timings` whose own name ends in `"summary"` (an escaped quote, then `summary`): the
+    # last `"summary":` in the bytes is inside that name, after a backslash, not after a `{` or a `,`.
+    canonical_json({**_python_only(), 'zz"summary': {"by_family": {"dbt": 9}}}),
     # A bundle written with spaces, as no canonical writer does.
     json.dumps(_python_only(), indent=1).encode(),
-], ids=["key-after-timings", "not-canonical"])
+], ids=["key-after-timings", "key-ending-in-summary", "not-canonical"])
 def test_a_bundle_of_another_layout_is_read_whole(text):
     s3 = FakeS3()
     s3.objects[("b", KEY)] = gzip.compress(text, mtime=0)

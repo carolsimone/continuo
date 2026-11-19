@@ -725,15 +725,11 @@ def test_only_a_relationships_test_loses_a_target_the_manifest_does_not_hold(tmp
     assert parsed.relationship_tests_without_target == 0
 
 
-def test_the_manifest_keeps_the_target_it_names_and_each_test_is_counted_once(tmp_path, monkeypatch):
+def test_the_manifest_keeps_the_target_it_names(tmp_path, monkeypatch):
     """The test is given to `generate` as a copy: the manifest, which the hashes and the parse's own
-    test pass read, still names the missing target. A test given to two nodes is counted once."""
+    test pass read, still names the missing target."""
     test = _relationships_test("model.shop.orders", _STUB_ID)
-    unattached = {**_relationships_test("model.shop.orders", _STUB_ID), "unique_id": "test.shop.unattached",
-                  "attached_node": None}
-    unattached["depends_on"] = {**unattached["depends_on"],
-                                "nodes": [_STUB_ID, "model.shop.orders", "model.shop.customers"]}
-    path = _manifest(tmp_path, _orders(), _node("customers"), test, unattached)
+    path = _manifest(tmp_path, _orders(), _node("customers"), test)
     original = json.loads(Path(path).read_text())
     seen = []
     real = dbt.generate
@@ -750,9 +746,92 @@ def test_the_manifest_keeps_the_target_it_names_and_each_test_is_counted_once(tm
     (manifest, _), *_ = seen
     assert manifest == original
     given = [t for _, tests in seen for t in tests]
-    assert all(t["depends_on"]["nodes"] == [n for n in t["depends_on"]["nodes"] if n != _STUB_ID] for t in given)
-    assert manifest["nodes"]["test.shop.unattached"]["depends_on"]["nodes"][0] == _STUB_ID
-    assert parsed.relationship_tests_without_target == 2
+    assert all(_STUB_ID not in t["depends_on"]["nodes"] for t in given)
+    assert manifest["nodes"][test["unique_id"]]["depends_on"]["nodes"][0] == _STUB_ID
+    assert parsed.relationship_tests_without_target == 1
+
+
+def test_a_test_given_twice_is_one_copy_and_counts_once():
+    test = _relationships_test("model.shop.orders", _STUB_ID)
+    held = parser._HeldTargets({"nodes": {"model.shop.orders": _orders()}})
+
+    (first,) = held.of([test])
+    (second,) = held.of([test])
+
+    assert first is second and first is not test
+    assert first["depends_on"]["nodes"] == ["model.shop.orders"]
+    assert held.count == 1
+
+
+def _in_the_projects_own_macro(test):
+    """The test as dbt writes it when the project defines a macro `test_relationships` of its own: the
+    first macro dbt resolved is the project's, not dbt's."""
+    return {**test, "depends_on": {**test["depends_on"],
+                                   "macros": ["macro.shop.test_relationships", "macro.dbt.get_where_subquery"]}}
+
+
+def _with_no_attached_node(test):
+    """The test as an older dbt or a hand-written manifest has it: it names no tested node."""
+    return {**test, "attached_node": None}
+
+
+def _in_another_namespace(test):
+    return {**test, "test_metadata": {**test["test_metadata"], "namespace": "shop_utils"}}
+
+
+def _with_no_resolved_macro(test):
+    return {**test, "depends_on": {**test["depends_on"], "macros": []}}
+
+
+_ALREADY_CUSTOM = [_in_the_projects_own_macro, _with_no_attached_node, _in_another_namespace,
+                   _with_no_resolved_macro]
+_ALREADY_CUSTOM_IDS = ["projects-own-macro", "no-attached-node", "another-namespace", "no-resolved-macro"]
+
+
+@pytest.mark.parametrize("variant", _ALREADY_CUSTOM, ids=_ALREADY_CUSTOM_IDS)
+def test_a_test_the_library_already_writes_as_custom_is_given_as_the_manifest_holds_it(variant):
+    test = variant(_relationships_test("model.shop.orders", _STUB_ID))
+    held = parser._HeldTargets({"nodes": {"model.shop.orders": _orders()}})
+
+    (given,) = held.of([test])
+
+    assert given is test
+    assert held.count == 0
+
+
+@pytest.mark.parametrize("variant", [_in_the_projects_own_macro, _with_no_attached_node],
+                         ids=["projects-own-macro", "no-attached-node"])
+def test_a_custom_relationships_test_keeps_the_hash_of_the_manifest_and_is_not_counted(tmp_path, variant):
+    """The two cases the library writes as `custom` whatever the target is: the node's `source_sha256`
+    covers the test's `depends_on.nodes` as the manifest holds it (the stub included), and the test is
+    not counted as one given without a target."""
+    test = variant(_relationships_test("model.shop.orders", _STUB_ID))
+    path = _manifest(tmp_path, _orders(), test)
+    manifest = json.loads(Path(path).read_text())
+    node = manifest["nodes"]["model.shop.orders"]
+
+    parsed = parse_manifest(path)
+
+    assert parsed.failed == ()
+    (orders,) = [n for n in parsed.nodes if n.unique_id == "analytics.orders"]
+    held = dbt.generate(node, [manifest["nodes"][test["unique_id"]]], manifest=manifest)
+    assert orders.contract.source_sha256 == held.source_sha256
+    without = {**test, "depends_on": {**test["depends_on"], "nodes": ["model.shop.orders"]}}
+    assert held.source_sha256 != dbt.generate(node, [without], manifest=manifest).source_sha256
+    assert parsed.relationship_tests_without_target == 0
+
+
+def test_a_relationships_test_in_the_dbt_namespace_is_given_without_its_target_whatever_its_macros(tmp_path):
+    """In the namespace `dbt` the library reads the test as dbt's own and resolves its target, so a
+    target the manifest does not hold is left out of it, and the test is counted."""
+    test = _in_the_projects_own_macro(_relationships_test("model.shop.orders", _STUB_ID, namespace="dbt"))
+
+    parsed = parse_manifest(_manifest(tmp_path, _orders(), test))
+
+    assert parsed.failed == ()
+    (orders,) = [n for n in parsed.nodes if n.unique_id == "analytics.orders"]
+    assert "relationships" not in _id_property(orders)
+    assert parsed.relationship_tests_without_target == 1
 
 
 # --- through the handler ---------------------------------------------------------

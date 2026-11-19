@@ -74,9 +74,11 @@ _VALIDATE = "validate"
 _SEED_HEADER = "seed_header"
 
 # The generic test whose target `dbt.generate` resolves from `depends_on.nodes`,
-# and the namespaces under which the library takes it for dbt's own.
+# dbt's namespace for its own generic tests, and the macro dbt resolves a bare
+# `relationships` to.
 _RELATIONSHIPS = "relationships"
-_DBT_NAMESPACES = (None, "", "dbt")
+_DBT_NAMESPACE = "dbt"
+_DBT_RELATIONSHIPS_MACRO = "macro.dbt.test_relationships"
 
 
 def _no_progress() -> None:
@@ -190,22 +192,51 @@ def _manifest_call[T](call: Callable[[], T], timings: ReleaseTimings | None) -> 
         raise ContractGenerationError(f"manifest: the contracts library failed: {error!r}") from error
 
 
+def _resolves_its_target(test: Mapping[str, Any]) -> bool:
+    """Whether `dbt.generate` resolves the target of `test` from `depends_on.nodes`: it is
+    dbt's own `relationships` test, and it has a tested node (an `attached_node`).
+
+    This is the library's own reading of a test. A generic test named `relationships` is
+    dbt's when its namespace is `dbt`, or when it has none and the first entry of its
+    `depends_on.macros` is dbt's macro for it (`macro.dbt.test_relationships`): a macro of
+    that name that a project or a package writes is not dbt's, and neither is another
+    namespace. Without an `attached_node` the library names no target and writes a `custom`
+    rule whatever `depends_on.nodes` holds, as it does for a test that is not dbt's. A field
+    of another shape is the library's to refuse, with its own message."""
+    metadata = test.get("test_metadata")
+    depends_on = test.get("depends_on")
+    if not isinstance(metadata, Mapping) or not isinstance(depends_on, Mapping):
+        return False
+    if metadata.get("name") != _RELATIONSHIPS or not test.get("attached_node"):
+        return False
+    namespace = metadata.get("namespace")
+    if namespace:
+        return namespace == _DBT_NAMESPACE
+    macros = depends_on.get("macros")
+    return isinstance(macros, list) and bool(macros) and macros[0] == _DBT_RELATIONSHIPS_MACRO
+
+
 class _HeldTargets:
     """The tests of a manifest as `dbt.generate` is given them: a relationships test
     whose `depends_on.nodes` names an id that is neither a node nor a source of the
     manifest is given without those ids.
 
-    `generate` resolves the target of a strict relationships test from the entry of
-    `depends_on.nodes` beside its `attached_node`, and refuses an entry the manifest
-    does not hold. A manifest whose producer left the target out (the baseline
-    uploader drops every `local_stub` model) can name one. Without it the test names
-    no target, which the library writes as a `custom` rule that keeps the test's `to`
-    and `field`. A target the manifest holds stays, so such a test stays strict. Only
-    a relationships test is changed: `generate` resolves the target of no other test.
+    `generate` resolves the target of a dbt `relationships` test that has an
+    `attached_node` from the entry of `depends_on.nodes` beside it, and refuses an entry
+    the manifest does not hold. A manifest whose producer left the target out (the
+    baseline uploader drops every `local_stub` model) can name one. Without it the test
+    names no target, which the library writes as a `custom` rule that keeps the test's
+    `to` and `field`. A target the manifest holds stays, so such a test stays strict.
+    Only a test `_resolves_its_target` accepts is changed: `generate` resolves the target
+    of no other test, and one it already writes as `custom` is given as the very object
+    the manifest holds, so the contract's `source_sha256`, which covers every test's
+    `depends_on.nodes`, reads what the manifest says. Whether the test is also strict, and
+    on a declared column, is the library's to decide: when it is not, the library writes
+    the same `custom` rule from the copy.
 
-    A changed test is a shallow copy, made once however many nodes it is given to;
-    the manifest itself never changes, since its hashes and the parse's own test pass
-    read it as it is. `count` is how many tests were given without a target."""
+    A changed test is a shallow copy, made once however often it is given; the manifest
+    itself never changes, since its hashes and the parse's own test pass read it as it is.
+    `count` is how many tests were given without a target."""
 
     def __init__(self, manifest: Mapping[str, Any]) -> None:
         self._held = {
@@ -224,12 +255,10 @@ class _HeldTargets:
     def _test(self, test: Mapping[str, Any]) -> Mapping[str, Any]:
         if id(test) in self._copies:
             return self._copies[id(test)]
-        metadata = test.get("test_metadata")
-        if not isinstance(metadata, Mapping) or metadata.get("name") != _RELATIONSHIPS \
-                or metadata.get("namespace") not in _DBT_NAMESPACES:
+        if not _resolves_its_target(test):
             return test
-        depends_on = test.get("depends_on")
-        listed = depends_on.get("nodes") if isinstance(depends_on, Mapping) else None
+        depends_on = test["depends_on"]
+        listed = depends_on.get("nodes")
         # A field of another shape is the library's to refuse, with its own message.
         if not isinstance(listed, list) or not all(isinstance(entry, str) for entry in listed):
             return test
@@ -467,11 +496,12 @@ def parse_manifest(
     Its schema is the manifest's, in the spelling the project declares, while
     its unique_id is the contract's id, in lower case. Everything else (its SQL,
     code, config, hashes, declared columns, seed settings and test count) comes
-    from the manifest. Only such a node counts the tests attached to it. A
-    relationships test whose target the manifest holds neither as a node nor as a
-    source (a `local_stub` model an uploader left out) is given to `generate`
-    without that target, so the contract carries it as a `custom` rule; the
-    result's `relationship_tests_without_target` counts such tests.
+    from the manifest. Only such a node counts the tests attached to it. A dbt
+    relationships test with an `attached_node` whose target the manifest holds
+    neither as a node nor as a source (a `local_stub` model an uploader left out)
+    is given to `generate` without that target, so the contract carries it as a
+    `custom` rule; the result's `relationship_tests_without_target` counts such
+    tests. Any other test is given as the manifest holds it.
 
     A contract with issues, a contract whose id is not the unique_id the node gets
     (the library lowers `<schema>.<table>` as one string, the unique_id each part on

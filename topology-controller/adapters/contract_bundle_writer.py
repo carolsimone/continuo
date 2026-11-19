@@ -145,7 +145,11 @@ def gzipped_canonical_json(document: Mapping[str, Any]) -> bytes:
 
     zlib at gzip.compress's settings (level 9, a gzip wrapper) writes the same deflate
     stream whatever pieces its input comes in, and its header is patched as
-    gzip.compress patches it: no timestamp, and the OS byte 255."""
+    gzip.compress patches it: no timestamp, and the OS byte 255.
+
+    On an error path, a value the library refuses, the nesting limit and the
+    circular-reference check count from each piece, not from the bundle's root. The
+    bytes of a bundle that is written are identical."""
     compressor = zlib.compressobj(9, zlib.DEFLATED, 31)
     deflated = [compressor.compress(piece) for piece in _canonical_pieces(document)]
     deflated.append(compressor.flush())

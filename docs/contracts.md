@@ -434,11 +434,11 @@ customProperties:
             "version": 3, "contract_hash": "sha256:3f1c..."}]}
 ```
 
-An entry whose `servers` entry names another schema than the id's, such as
-`Analytics` for `analytics.orders`, also holds that schema as `"physical_schema":
-"Analytics"`. The entry of every other file has no such key. catalog puts a file
-again when the schema of its `servers` entry changes, even when only the case
-changes and the contract does not.
+An index entry whose file's `servers` entry names another schema than the id's,
+such as `Analytics` for `analytics.orders`, also holds that schema as
+`"physical_schema": "Analytics"`. The entry of every other file has no such key.
+catalog puts a file again when the schema of its `servers` entry changes, even
+when only the case changes and the contract does not.
 
 While catalog is part way through a rewrite, the index lists each file it is
 about to put or delete with `"version": 0` and an empty `contract_hash`. A file
@@ -482,8 +482,12 @@ servers:
   capitals, such as `Analytics`, keeps them here, while the contract's `id` stays
   in lower case (`analytics.orders`). A node the topology has not reached yet has
   no declared schema, and its entry takes the part of the id before the table
-  name. Where the two spellings are the same, as they are for every node
-  declared in a lower-case schema, the entry reads as it would from the id.
+  name. When catalog rewrites the folder before the topology swap of the same
+  promotion, the file of a new node names the id's schema, and the file of a node
+  whose schema only changes in case keeps the old spelling, until the next
+  promotion rewrites it. Where the two spellings are the same, as they are for
+  every node declared in a lower-case schema, the entry reads as it would from
+  the id.
 - On Trino, `database` fills the field `catalog` of the entry. Set it
   explicitly. When it is empty, continuo uses `validation.warehouseDatabase`,
   and that is the name of a Postgres database.
@@ -677,8 +681,9 @@ holds that target neither among its nodes nor among its sources, the test is a
 `custom` rule that keeps its `to` and `field`, and the node is still valid. That
 happens to a test that points at a `local_stub` model in a manifest stored
 without its stubs, as the baseline uploader `dbt/dbt_upload` stores it. continuo
-logs one warning per release with the number of such tests. A target the manifest holds gives a relationship, even
-when continuo leaves that target out, as it does a `local_stub` model.
+logs one warning per release with the number of such tests. A target the
+manifest holds gives a relationship, even when continuo leaves that target out,
+as it does a `local_stub` model.
 
 ### Which nodes continuo keeps
 
