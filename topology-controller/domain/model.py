@@ -431,10 +431,15 @@ class ParsedArtifact:
 
     `unchecked_seeds` holds the unique id of each seed node of a dbt manifest
     whose CSV header the parse did not know (the compile extras do not name it),
-    so its declared columns were not compared with the header, sorted."""
+    so its declared columns were not compared with the header, sorted.
+
+    `relationship_tests_without_target` counts the relationships tests of a dbt
+    manifest whose target the manifest holds neither as a node nor as a source,
+    which the contracts they test carry as `custom` rules."""
     nodes: list[ManifestNode]
     shared_code: dict[str, dict]
     provenance: ServiceProvenance | None = None
     failed: tuple[FailedNode, ...] = ()
     python_provenance: dict[str, Any] | None = None
     unchecked_seeds: tuple[str, ...] = ()
+    relationship_tests_without_target: int = 0

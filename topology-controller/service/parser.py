@@ -74,6 +74,11 @@ _MANIFEST_SHAPE = "manifest_shape"
 _VALIDATE = "validate"
 _SEED_HEADER = "seed_header"
 
+# The generic test whose target `dbt.generate` resolves from `depends_on.nodes`,
+# and the namespaces under which the library takes it for dbt's own.
+_RELATIONSHIPS = "relationships"
+_DBT_NAMESPACES = (None, "", "dbt")
+
 
 def _no_progress() -> None:
     """The progress callback of a caller nobody watches."""
@@ -184,6 +189,57 @@ def _manifest_call[T](call: Callable[[], T], timings: ReleaseTimings | None) -> 
         raise InvalidNodeSettingError(str(error)) from error
     except Exception as error:
         raise ContractGenerationError(f"manifest: the contracts library failed: {error!r}") from error
+
+
+class _HeldTargets:
+    """The tests of a manifest as `dbt.generate` is given them: a relationships test
+    whose `depends_on.nodes` names an id that is neither a node nor a source of the
+    manifest is given without those ids.
+
+    `generate` resolves the target of a strict relationships test from the entry of
+    `depends_on.nodes` beside its `attached_node`, and refuses an entry the manifest
+    does not hold. A manifest whose producer left the target out (the baseline
+    uploader drops every `local_stub` model) can name one. Without it the test names
+    no target, which the library writes as a `custom` rule that keeps the test's `to`
+    and `field`. A target the manifest holds stays, so such a test stays strict. Only
+    a relationships test is changed: `generate` resolves the target of no other test.
+
+    A changed test is a shallow copy, made once however many nodes it is given to;
+    the manifest itself never changes, since its hashes and the parse's own test pass
+    read it as it is. `count` is how many tests were given without a target."""
+
+    def __init__(self, manifest: Mapping[str, Any]) -> None:
+        self._held = {
+            key for kind in ("nodes", "sources")
+            if isinstance(entries := manifest.get(kind), Mapping) for key in entries
+        }
+        self._copies: dict[int, Mapping[str, Any]] = {}
+
+    @property
+    def count(self) -> int:
+        return len(self._copies)
+
+    def of(self, tests: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+        return [self._test(test) for test in tests]
+
+    def _test(self, test: Mapping[str, Any]) -> Mapping[str, Any]:
+        if id(test) in self._copies:
+            return self._copies[id(test)]
+        metadata = test.get("test_metadata")
+        if not isinstance(metadata, Mapping) or metadata.get("name") != _RELATIONSHIPS \
+                or metadata.get("namespace") not in _DBT_NAMESPACES:
+            return test
+        depends_on = test.get("depends_on")
+        listed = depends_on.get("nodes") if isinstance(depends_on, Mapping) else None
+        # A field of another shape is the library's to refuse, with its own message.
+        if not isinstance(listed, list) or not all(isinstance(entry, str) for entry in listed):
+            return test
+        held = [entry for entry in listed if entry in self._held]
+        if len(held) == len(listed):
+            return test
+        without = {**test, "depends_on": {**depends_on, "nodes": held}}
+        self._copies[id(test)] = without
+        return without
 
 
 def _failed_node(name: str, node: dict, resource_type: str, detail: str) -> FailedNode:
@@ -412,7 +468,11 @@ def parse_manifest(
     Its schema is the manifest's, in the spelling the project declares, while
     its unique_id is the contract's id, in lower case. Everything else (its SQL,
     code, config, hashes, declared columns, seed settings and test count) comes
-    from the manifest. Only such a node counts the tests attached to it.
+    from the manifest. Only such a node counts the tests attached to it. A
+    relationships test whose target the manifest holds neither as a node nor as a
+    source (a `local_stub` model an uploader left out) is given to `generate`
+    without that target, so the contract carries it as a `custom` rule; the
+    result's `relationship_tests_without_target` counts such tests.
 
     A contract with issues, a contract whose id is not the unique_id the node gets
     (the library lowers `<schema>.<table>` as one string, the unique_id each part on
@@ -443,6 +503,7 @@ def parse_manifest(
         ctx = ManifestContext.from_manifest(manifest, extras)
     project = _manifest_call(lambda: dbt.project_service(manifest, declared_service), timings)
     tests_of = _manifest_call(lambda: dbt.tests_by_node(manifest), timings)
+    held_targets = _HeldTargets(manifest)
     nodes = []
     failed: list[FailedNode] = []
     node_by_id: dict[str, ManifestNode] = {}
@@ -475,7 +536,7 @@ def parse_manifest(
         _require_fqn(node_id, node)
         seed = extras.seeds.get(node_id) if resource_type == "seed" and extras is not None else None
         built = _contract(
-            node_id, node, resource_type, tests_of.get(node_id, []), manifest,
+            node_id, node, resource_type, held_targets.of(tests_of.get(node_id, [])), manifest,
             seed=seed, validator=validator, timings=timings,
         )
         if isinstance(built, FailedNode):
@@ -609,4 +670,5 @@ def parse_manifest(
     return ParsedArtifact(
         nodes=nodes, shared_code=shared_code, provenance=provenance, failed=tuple(failed),
         unchecked_seeds=tuple(sorted(unchecked_seeds)),
+        relationship_tests_without_target=held_targets.count,
     )

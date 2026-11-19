@@ -228,7 +228,10 @@ class CandidateManifestHandler:
     parse, which rejects a difference as an invalid contract. A seed the compile
     extras do not name has no known header and is not compared: one line at
     WARNING, after the last manifest's parse, counts such seeds in the release
-    and per service.
+    and per service. A relationships test whose target its manifest does not
+    hold (a `local_stub` model the baseline uploader left out) is a `custom` rule
+    of the contract it tests: one more line at WARNING counts such tests in the
+    release and per service.
 
     A node whose build writes a relation named other than its table_name (an
     alias, or a versioned model's "<name>_v<version>") carries that relation on
@@ -347,6 +350,7 @@ class CandidateManifestHandler:
         provenance: dict[str, dict] = {}
         python_provenance: dict[str, dict] = {}
         unchecked_seeds: dict[str, int] = {}
+        relationships_without_target: dict[str, int] = {}
         for mf in manifests:
             parser = parser_for(mf.kind)
             if parser is None:
@@ -396,6 +400,10 @@ class CandidateManifestHandler:
             if parsed.unchecked_seeds:
                 service = mf.declared_service or mf.path
                 unchecked_seeds[service] = unchecked_seeds.get(service, 0) + len(parsed.unchecked_seeds)
+            if parsed.relationship_tests_without_target:
+                service = mf.declared_service or mf.path
+                relationships_without_target[service] = (
+                    relationships_without_target.get(service, 0) + parsed.relationship_tests_without_target)
 
             # Reported before the declared-service checks below: a manifest
             # whose every node was skipped fails as empty, and its skips are
@@ -472,6 +480,16 @@ class CandidateManifestHandler:
                     "release_id": release_id,
                     "seeds": sum(unchecked_seeds.values()),
                     "services": unchecked_seeds,
+                },
+            )
+
+        if relationships_without_target:
+            logger.warning(
+                "candidate: relationships tests whose target the manifest does not hold are custom rules",
+                extra={
+                    "release_id": release_id,
+                    "tests": sum(relationships_without_target.values()),
+                    "services": relationships_without_target,
                 },
             )
 

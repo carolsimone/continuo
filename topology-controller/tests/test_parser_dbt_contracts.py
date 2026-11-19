@@ -602,6 +602,159 @@ def test_each_contract_is_timed_and_its_check_counted_on_the_cache(tmp_path):
     assert timings.validation_cache == {"hit": 2, "miss": 2}
 
 
+# --- a relationships test whose target the manifest does not hold ---------------------
+
+_STUB_ID = "model.shop.stub_customers"
+
+
+def _relationships_test(attached, target, *, generic="relationships", namespace=None):
+    """A strict relationships test on the column `id` of `attached`, pointing at `target`, in the
+    shape dbt 1.12 writes it. `generic` and `namespace` name another generic test of that shape."""
+    return {
+        "unique_id": f"test.shop.{generic}_orders_id__id__{target.rsplit('.', 1)[-1]}",
+        "resource_type": "test",
+        "name": f"{generic}_orders_id__id",
+        "schema": "analytics_dbt_test__audit",
+        "fqn": ["shop", f"{generic}_orders_id__id"],
+        "original_file_path": "models/schema.yml",
+        "attached_node": attached,
+        "column_name": "id",
+        "refs": [{"name": "stub_customers", "package": None, "version": None},
+                 {"name": "orders", "package": None, "version": None}],
+        "test_metadata": {"name": generic, "namespace": namespace, "kwargs": {
+            "column_name": "id", "field": "id", "to": "ref('stub_customers')",
+            "model": "{{ get_where_subquery(ref('orders')) }}"}},
+        "depends_on": {"macros": [f"macro.dbt.test_{generic}", "macro.dbt.get_where_subquery"],
+                       "nodes": [target, attached]},
+        "config": {"severity": "ERROR"},
+        "compiled_code": "select 1",
+    }
+
+
+def _orders():
+    return _node("orders", columns={"id": {"name": "id", "data_type": "integer"}})
+
+
+def _without_local_stubs(*nodes):
+    """The nodes the baseline uploader keeps (`dbt_upload.upload.filter_manifest`): every node but a
+    `local_stub` one, while a test that points at one keeps naming it."""
+    return [node for node in nodes if "local_stub" not in node.get("tags", [])]
+
+
+def _id_property(node):
+    (column,) = [c for c in node.contract.document["schema"][0]["properties"] if c["name"] == "id"]
+    return column
+
+
+def test_a_relationships_test_on_a_local_stub_the_manifest_holds_stays_a_relationship(tmp_path):
+    stub = _node("stub_customers", tags=("local_stub",))
+    parsed = parse_manifest(_manifest(tmp_path, _orders(), stub, _relationships_test("model.shop.orders", _STUB_ID)))
+
+    assert parsed.failed == ()
+    (orders,) = [node for node in parsed.nodes if node.unique_id == "analytics.orders"]
+    assert _id_property(orders)["relationships"] == [{"to": "analytics.stub_customers.id"}]
+    assert parsed.relationship_tests_without_target == 0
+
+
+def test_a_relationships_test_whose_target_the_uploader_left_out_is_a_custom_rule(tmp_path):
+    """The library's own rule for a target the manifest does not hold: the reader is valid, and its
+    contract carries the test as a custom rule that keeps `to` and `field`."""
+    stub = _node("stub_customers", tags=("local_stub",))
+    test = _relationships_test("model.shop.orders", _STUB_ID)
+    path = _manifest(tmp_path, *_without_local_stubs(_orders(), stub, test))
+
+    parsed = parse_manifest(path)
+
+    assert parsed.failed == ()
+    (orders,) = [node for node in parsed.nodes if node.unique_id == "analytics.orders"]
+    column = _id_property(orders)
+    assert "relationships" not in column
+    (rule,) = column["quality"]
+    assert (rule["type"], rule["implementation"]) == (
+        "custom", {"test": "relationships", "arguments": {"field": "id", "to": "ref('stub_customers')"}})
+    no_target = {**test, "depends_on": {**test["depends_on"], "nodes": ["model.shop.orders"]}}
+    manifest = json.loads(Path(path).read_text())
+    assert orders.contract.document == dbt.generate(
+        manifest["nodes"]["model.shop.orders"], [no_target], manifest=manifest).document
+    assert parsed.relationship_tests_without_target == 1
+
+
+@pytest.mark.parametrize("sources", [{}, {"source.shop.raw.other": {"schema": "raw", "name": "other"}}],
+                         ids=["no-sources", "other-sources"])
+def test_a_relationships_target_that_is_neither_a_node_nor_a_source_is_left_out(tmp_path, sources):
+    test = _relationships_test("model.shop.orders", "source.shop.raw.events")
+    path = _manifest(tmp_path, _orders(), test)
+    manifest = json.loads(Path(path).read_text())
+    Path(path).write_text(json.dumps({**manifest, "sources": sources}))
+
+    parsed = parse_manifest(path)
+
+    assert parsed.failed == ()
+    (orders,) = [node for node in parsed.nodes if node.unique_id == "analytics.orders"]
+    assert "relationships" not in _id_property(orders)
+    assert parsed.relationship_tests_without_target == 1
+
+
+def test_a_relationships_target_that_is_a_source_stays_a_relationship(tmp_path):
+    test = _relationships_test("model.shop.orders", "source.shop.raw.events")
+    path = _manifest(tmp_path, _orders(), test)
+    manifest = json.loads(Path(path).read_text())
+    Path(path).write_text(json.dumps(
+        {**manifest, "sources": {"source.shop.raw.events": {"schema": "raw", "name": "events"}}}))
+
+    parsed = parse_manifest(path)
+
+    (orders,) = [node for node in parsed.nodes if node.unique_id == "analytics.orders"]
+    assert _id_property(orders)["relationships"] == [{"to": "raw.events.id"}]
+    assert parsed.relationship_tests_without_target == 0
+
+
+def test_only_a_relationships_test_loses_a_target_the_manifest_does_not_hold(tmp_path, monkeypatch):
+    """`generate` resolves the target of no other test, so another generic test that names the
+    same missing node reaches it unchanged."""
+    other = _relationships_test("model.shop.orders", _STUB_ID, generic="equal_rowcount", namespace="dbt_utils")
+    given = []
+    real = dbt.generate
+    monkeypatch.setattr(dbt, "generate", lambda node, tests, *, manifest: given.extend(tests) or real(
+        node, tests, manifest=manifest))
+
+    parsed = parse_manifest(_manifest(tmp_path, _orders(), other))
+
+    assert parsed.failed == ()
+    assert given[0]["depends_on"]["nodes"] == [_STUB_ID, "model.shop.orders"]
+    assert parsed.relationship_tests_without_target == 0
+
+
+def test_the_manifest_keeps_the_target_it_names_and_each_test_is_counted_once(tmp_path, monkeypatch):
+    """The test is given to `generate` as a copy: the manifest, which the hashes and the parse's own
+    test pass read, still names the missing target. A test given to two nodes is counted once."""
+    test = _relationships_test("model.shop.orders", _STUB_ID)
+    unattached = {**_relationships_test("model.shop.orders", _STUB_ID), "unique_id": "test.shop.unattached",
+                  "attached_node": None}
+    unattached["depends_on"] = {**unattached["depends_on"],
+                                "nodes": [_STUB_ID, "model.shop.orders", "model.shop.customers"]}
+    path = _manifest(tmp_path, _orders(), _node("customers"), test, unattached)
+    original = json.loads(Path(path).read_text())
+    seen = []
+    real = dbt.generate
+
+    def recording(node, tests, *, manifest):
+        seen.append((manifest, list(tests)))
+        return real(node, tests, manifest=manifest)
+
+    monkeypatch.setattr(dbt, "generate", recording)
+
+    parsed = parse_manifest(path)
+
+    assert parsed.failed == ()
+    (manifest, _), *_ = seen
+    assert manifest == original
+    given = [t for _, tests in seen for t in tests]
+    assert all(t["depends_on"]["nodes"] == [n for n in t["depends_on"]["nodes"] if n != _STUB_ID] for t in given)
+    assert manifest["nodes"]["test.shop.unattached"]["depends_on"]["nodes"][0] == _STUB_ID
+    assert parsed.relationship_tests_without_target == 2
+
+
 # --- through the handler ---------------------------------------------------------
 
 def _dbt_file(tmp_path, name, service, *nodes, headers=None):
@@ -708,6 +861,40 @@ def test_a_schema_with_capitals_keeps_its_spelling_in_the_topology_under_a_lower
     (reads,) = [prop["value"] for prop in contracts["reporting.daily_orders"]["document"]["schema"][0]["customProperties"]
                 if prop["property"] == "reads"]
     assert reads == ["analytics.orders"]
+
+
+_RELATIONSHIPS_LINE = "candidate: relationships tests whose target the manifest does not hold are custom rules"
+
+
+def test_a_release_whose_relationships_test_names_a_left_out_stub_publishes_and_logs_it_once(tmp_path, caplog):
+    """A baseline manifest the uploader filtered still names the stub its reader's relationships test
+    points at: the release publishes, and one line per release counts such tests by service."""
+    publisher, bundle_writer = MagicMock(), RecordingContractBundleWriter()
+    orders = dbt_node("orders") | {"columns": {"id": {"name": "id", "data_type": "integer"}}}
+    test = _relationships_test("model.service-1.orders", "model.service-1.stub_customers") | {
+        "fqn": ["service-1", "relationships_orders_id__id"]}
+    source = source_of(_dbt_file(tmp_path, "service-1.json", "service-1", orders, test))
+
+    with caplog.at_level(logging.WARNING, logger="service.candidate_manifest_handler"):
+        build_handler(source, publisher, make_uploader(), contract_bundle_writer=bundle_writer).handle(
+            release_id="rel-1")
+
+    publisher.publish_failed.assert_not_called()
+    publisher.publish_ok.assert_called_once()
+    (column,) = bundle_writer.document["contracts"]["test_schema.orders"]["document"]["schema"][0]["properties"]
+    assert "relationships" not in column and column["quality"][0]["type"] == "custom"
+    (record,) = [r for r in caplog.records if r.getMessage() == _RELATIONSHIPS_LINE]
+    assert (record.levelno, record.release_id, record.tests, record.services) == (
+        logging.WARNING, "rel-1", 1, {"service-1": 1})
+
+
+def test_a_release_whose_relationships_targets_are_all_held_logs_no_such_line(tmp_path, caplog):
+    source = source_of(_dbt_file(tmp_path, "service-1.json", "service-1", dbt_node("fine")))
+
+    with caplog.at_level(logging.WARNING, logger="service.candidate_manifest_handler"):
+        build_handler(source, MagicMock(), make_uploader()).handle(release_id="rel-1")
+
+    assert [r for r in caplog.records if r.getMessage() == _RELATIONSHIPS_LINE] == []
 
 
 def test_a_release_with_a_contract_whose_id_is_not_the_node_key_is_rejected_and_stores_nothing(tmp_path):
