@@ -22,10 +22,9 @@ says what the contract says. Its schema keeps the spelling the project
 declares, which the contract's id holds in lower case. A node whose contract
 fails its checks, whose contract's id is not the node's unique_id, or that the
 library cannot read, is not a node of the result but one FailedNode of it, so a
-release names every invalid contract at once. A
-seed the compile extras name is also checked against its CSV header: a column
-that the header and the seed's contract do not both have makes the contract
-invalid.
+release names every invalid contract at once. A seed the compile extras name is
+also checked against its CSV header: a column that the header and the seed's
+contract do not both have makes the contract invalid.
 """
 import json
 import logging

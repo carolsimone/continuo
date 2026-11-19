@@ -663,9 +663,9 @@ or `{}`) is no timeout, and an empty `meta.criticality` is `SECONDARY`.
 A `relationships` test points at another node or a source. When the manifest
 holds that target neither among its nodes nor among its sources, the test is a
 `custom` rule that keeps its `to` and `field`, and the node is still valid. That
-happens to a test that points at a `local_stub` model in a manifest whose
-uploader left the stub out. continuo logs one warning per release with the
-number of such tests. A target the manifest holds gives a relationship, even
+happens to a test that points at a `local_stub` model in a manifest stored
+without its stubs, as the baseline uploader `dbt/dbt_upload` stores it. continuo
+logs one warning per release with the number of such tests. A target the manifest holds gives a relationship, even
 when continuo leaves that target out, as it does a `local_stub` model.
 
 ### Which nodes continuo keeps
