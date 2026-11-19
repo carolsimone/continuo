@@ -72,6 +72,34 @@ func TestLiveContractsStore_ReadsBackTheIndexItWrote(t *testing.T) {
 	assert.Equal(t, liveIndex(), got)
 }
 
+// A file whose servers entry names the node's declared schema carries it in
+// the index as physical_schema; a file that carries none leaves the key out, so
+// an index that lists none is the index of an install that quotes no schema.
+// An entry with no physical_schema reads back with none.
+func TestLiveContractsStore_KeepsThePhysicalSchemaOfAFile(t *testing.T) {
+	ctx := context.Background()
+	mem := objectstoretest.NewMemory(defaultBucket)
+	store := NewLiveContractsStore(mem)
+	idx := liveIndex()
+	idx.Files = append(idx.Files, ports.LiveIndexFile{UniqueID: "analytics.quoted", Version: 1, ContractHash: "sha256:a1", PhysicalSchema: "Analytics"})
+
+	require.NoError(t, store.PutIndex(ctx, "default", idx))
+
+	puts := mem.Puts()
+	require.Len(t, puts, 1)
+	assert.JSONEq(t, `{"schema_version": 1, "tenant_id": "default", "promotion_seq": 52, "release_id": "rel-77aa0bc-230",
+ "written_at": "2026-11-27T16:40:14Z", "settings_sha256": "1c9e",
+ "files": [{"unique_id": "analytics.py_daily_kpis", "key": "analytics.py_daily_kpis.odcs.yaml",
+            "version": 3, "contract_hash": "sha256:3f1c"},
+           {"unique_id": "analytics.quoted", "key": "analytics.quoted.odcs.yaml",
+            "version": 1, "contract_hash": "sha256:a1", "physical_schema": "Analytics"}]}`, string(puts[0].Body))
+	got, found, err := store.ReadIndex(ctx, "default")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, idx, got)
+	assert.Empty(t, got.Files[0].PhysicalSchema)
+}
+
 // An index this build cannot read is an error, never an empty folder: a
 // rewrite that took it for one would leave every listed file in place.
 func TestLiveContractsStore_RefusesAnUnreadableIndex(t *testing.T) {

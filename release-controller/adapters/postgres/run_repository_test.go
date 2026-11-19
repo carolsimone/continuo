@@ -4,7 +4,9 @@ package postgres_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"github.com/carolsimone/continuo/pkg/testdeps"
 	"os"
 	"sort"
@@ -801,6 +803,142 @@ func TestRunRepository_StoresTheContractBundleAndTheLibraryVersion(t *testing.T)
 	require.NoError(t, err)
 	require.Len(t, listed, 1)
 	assert.Equal(t, bundle, listed[0].CandidateContractBundle(), "List reads the same columns as Get")
+}
+
+// The parse timings a run records survive a save and a load, through the upsert
+// that updates a stored run (the parse result arrives after the run is created)
+// and through List, which reads the same columns as Get.
+func TestRunRepository_SavesAndLoadsTheParseTimings(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewRunRepository(db, nil)
+	ctx := context.Background()
+
+	r := pipeline.NewCandidate("rPT", "svc", "img:1", false, false, "acme/demo", "cafebabe",
+		release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	require.NoError(t, repo.Save(ctx, r))
+
+	got, err := repo.Get(ctx, "rPT")
+	require.NoError(t, err)
+	assert.Equal(t, release.ParseTimings{}, got.ParseTimings(), "no timings until the parse result arrives")
+
+	want := release.NewParseTimings(4180, 1260, map[string]int{"dbt": 3, "python": 2})
+	got.SetParseTimings(want)
+	require.NoError(t, repo.Save(ctx, got))
+
+	reloaded, err := repo.Get(ctx, "rPT")
+	require.NoError(t, err)
+	assert.Equal(t, want, reloaded.ParseTimings())
+
+	listed, _, err := repo.List(ctx, repository.ListFilter{})
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	assert.Equal(t, want, listed[0].ParseTimings(), "List reads the same columns as Get")
+
+	var stored struct {
+		ParseMs           int64  `db:"parse_ms"`
+		ContractsMs       int64  `db:"contracts_ms"`
+		ContractsByFamily string `db:"contracts_by_family"`
+	}
+	require.NoError(t, db.Get(&stored, `SELECT parse_ms, contracts_ms, contracts_by_family::text AS contracts_by_family
+		FROM release_pipeline_runs WHERE run_id = 'rPT'`))
+	assert.EqualValues(t, 4180, stored.ParseMs)
+	assert.EqualValues(t, 1260, stored.ContractsMs)
+	assert.JSONEq(t, `{"dbt": 3, "python": 2}`, stored.ContractsByFamily)
+}
+
+// An absent timing is NULL in its column and absent again after the load, and an
+// empty count (a release with no contracts) is stored as an empty object, not
+// NULL: the presence of each field survives the round trip.
+func TestRunRepository_TheParseTimingsKeepTheirPresenceThroughStorage(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewRunRepository(db, nil)
+	ctx := context.Background()
+
+	cases := map[string]struct {
+		timings                              release.ParseTimings
+		wantParseMsNull, wantContractsMsNull bool
+		wantByFamily                         sql.NullString
+	}{
+		"none recorded": {
+			timings:             release.ParseTimings{},
+			wantParseMsNull:     true,
+			wantContractsMsNull: true,
+		},
+		"two zero durations": {
+			timings:             release.NewParseTimings(0, 0, nil),
+			wantParseMsNull:     true,
+			wantContractsMsNull: true,
+		},
+		"durations without a count": {
+			timings: release.NewParseTimings(310, 45, nil),
+		},
+		"an empty count": {
+			timings:      release.NewParseTimings(310, 45, map[string]int{}),
+			wantByFamily: sql.NullString{String: `{}`, Valid: true},
+		},
+		"one zero duration": {
+			timings:      release.NewParseTimings(0, 45, map[string]int{"python": 1}),
+			wantByFamily: sql.NullString{String: `{"python": 1}`, Valid: true},
+		},
+	}
+	i := 0
+	for name, tc := range cases {
+		i++
+		id := fmt.Sprintf("rPR%d", i)
+		t.Run(name, func(t *testing.T) {
+			r := pipeline.NewCandidate(id, "svc", "img:1", false, false, "acme/demo", "cafebabe",
+				release.ManifestKindDbt, time.Unix(100, 0).UTC())
+			r.SetParseTimings(tc.timings)
+			created, err := repo.Create(ctx, r)
+			require.NoError(t, err)
+			require.True(t, created)
+
+			var stored struct {
+				ParseMs           sql.NullInt64  `db:"parse_ms"`
+				ContractsMs       sql.NullInt64  `db:"contracts_ms"`
+				ContractsByFamily sql.NullString `db:"contracts_by_family"`
+			}
+			require.NoError(t, db.Get(&stored, `SELECT parse_ms, contracts_ms, contracts_by_family::text AS contracts_by_family
+				FROM release_pipeline_runs WHERE run_id = $1`, id))
+			assert.Equal(t, tc.wantParseMsNull, !stored.ParseMs.Valid, "parse_ms is NULL")
+			assert.Equal(t, tc.wantContractsMsNull, !stored.ContractsMs.Valid, "contracts_ms is NULL")
+			assert.Equal(t, tc.wantByFamily.Valid, stored.ContractsByFamily.Valid, "contracts_by_family is NULL")
+			if tc.wantByFamily.Valid {
+				assert.JSONEq(t, tc.wantByFamily.String, stored.ContractsByFamily.String)
+			}
+
+			got, err := repo.Get(ctx, id)
+			require.NoError(t, err)
+			assert.Equal(t, tc.timings, got.ParseTimings())
+		})
+	}
+}
+
+// A stored row that holds one duration without the other is read back with
+// neither, so a loaded run keeps the rule that the two are set together; the
+// count beside them is kept.
+func TestRunRepository_ARowWithOnlyOneDurationLoadsWithNeither(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewRunRepository(db, nil)
+	ctx := context.Background()
+
+	for i, column := range []string{"parse_ms", "contracts_ms"} {
+		id := fmt.Sprintf("rPO%d", i)
+		t.Run(column+" NULL", func(t *testing.T) {
+			r := pipeline.NewCandidate(id, "svc", "img:1", false, false, "acme/demo", "cafebabe",
+				release.ManifestKindDbt, time.Unix(100, 0).UTC())
+			r.SetParseTimings(release.NewParseTimings(310, 45, map[string]int{"dbt": 2}))
+			created, err := repo.Create(ctx, r)
+			require.NoError(t, err)
+			require.True(t, created)
+			_, err = db.Exec(`UPDATE release_pipeline_runs SET `+column+` = NULL WHERE run_id = $1`, id)
+			require.NoError(t, err)
+
+			got, err := repo.Get(ctx, id)
+			require.NoError(t, err)
+			assert.Equal(t, release.ParseTimings{ContractsByFamily: map[string]int{"dbt": 2}}, got.ParseTimings())
+		})
+	}
 }
 
 // The manifest_kind CHECK of both tables that hold a kind admits python-odcs

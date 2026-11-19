@@ -5,6 +5,18 @@ seeds:
     config:
       column_types:
         id: integer
+    columns:
+      - name: id
+      - name: name
+      - name: amount
   - name: seed_semi
     config:
       delimiter: ";"
+    columns:
+      - name: id
+      - name: label
+  - name: seed_big
+    columns:
+      - name: id
+      - name: label
+      - name: value

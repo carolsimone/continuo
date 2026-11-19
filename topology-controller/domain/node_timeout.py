@@ -1,8 +1,8 @@
 """A node's task timeout, declared by its domain team in minutes.
 
-dbt resolves `meta.timeout_minutes` from the project, folder and model into
-each node's `config.meta`. The topology carries the value in seconds, so the
-conversion and the bounds live here, in one place.
+A node's contract declares it as `timeoutMinutes`: a Python node's in its ODCS
+file, a dbt node's from its `meta.timeout_minutes`. The topology carries the
+value in seconds, so the one conversion and its bounds live here, for both.
 """
 
 MAX_TIMEOUT_MINUTES = 10_080  # one week

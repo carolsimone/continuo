@@ -54,6 +54,28 @@ func TestParsedManifestInput_CarriesTheContractBundleAndTheLibraryVersion(t *tes
 	assert.Equal(t, release.ContractBundleRef{}, failed.ContractBundle)
 }
 
+func TestParsedManifestInput_CarriesTheParseTimings(t *testing.T) {
+	ok := parsedManifestInput(pkgevents.ManifestLoadedCandidate{
+		ReleaseID: "r1", Status: pkgevents.ManifestStatusOK,
+		TopologyURI: "s3://continuo/tenants/default/topologies/r1/topology.json.gz", TopologySHA256: "ab", NodeCount: 3,
+		ParseMs: 4180, ContractsMs: 1260, ContractsByFamily: map[string]int{"dbt": 3, "python": 2},
+	}, slog.Default())
+	assert.Equal(t, release.NewParseTimings(4180, 1260, map[string]int{"dbt": 3, "python": 2}), ok.ParseTimings)
+
+	failed := parsedManifestInput(pkgevents.ManifestLoadedCandidate{
+		ReleaseID: "r1", Status: pkgevents.ManifestStatusFailed, FailureKind: "invalid_sql", Detail: "x",
+		ParseMs: 310, ContractsMs: 45,
+	}, slog.Default())
+	assert.Equal(t, release.NewParseTimings(310, 45, nil), failed.ParseTimings)
+	assert.Nil(t, failed.ParseTimings.ContractsByFamily, "a failed parse counts no contracts")
+
+	old := parsedManifestInput(pkgevents.ManifestLoadedCandidate{
+		ReleaseID: "r1", Status: pkgevents.ManifestStatusOK,
+		TopologyURI: "s3://continuo/tenants/default/topologies/r1/topology.json.gz", TopologySHA256: "ab", NodeCount: 3,
+	}, slog.Default())
+	assert.Equal(t, release.ParseTimings{}, old.ParseTimings, "an entry from a producer that predates the fields reports none")
+}
+
 func TestParsedManifestInput_Failed(t *testing.T) {
 	in := parsedManifestInput(pkgevents.ManifestLoadedCandidate{
 		ReleaseID: "r1", Status: pkgevents.ManifestStatusFailed, FailureKind: "invalid_sql", Detail: "1 node failed to parse: a.b",

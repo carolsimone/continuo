@@ -1,6 +1,8 @@
 """The handler's contract bundle: every release that publishes ok writes one, after the
 code bundle and before the topology artifact, holding the stored form of each python-odcs
 contract of the release."""
+import gzip
+import hashlib
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, create_autospec
@@ -11,6 +13,7 @@ import pytest
 from continuo_contracts.errors import CanonicalJsonError
 
 import service.contract_bundle as contract_bundle_module
+from adapters.contract_bundle_writer import ContractBundleWriter
 from adapters.redis.error_class import is_infrastructure
 from domain.contract_vocabulary import ParseFailureKind
 from domain.model import FailedNode, ManifestFile
@@ -19,6 +22,7 @@ from service.release_timings import ReleaseOutcome, Stage
 from tests.fakes import (
     FakeBundleUploader,
     FakeClock,
+    FakeS3,
     RecordingArtifactWriter,
     RecordingContractBundleWriter,
     build_handler,
@@ -72,8 +76,10 @@ def test_every_ok_release_writes_one_bundle_before_the_topology_artifact():
     assert log == ["code_bundle", "contract_bundle", "topology_artifact"]
     [write] = bundle_writer.writes
     assert (write["tenant_id"], write["release_id"]) == ("default", "rel-1")
-    assert write["document"]["contracts"] == {}, "a dbt-only release has no contract"
-    assert write["document"]["summary"] == {"contracts": 0, "by_family": {}, "invalid": 0, "skipped": 0}
+    [(unique_id, contract)] = write["document"]["contracts"].items()
+    assert (unique_id, contract["family"], contract["service"], contract["source"]["path"]) == (
+        "test_schema.users", "dbt", "service-1", "models/users.sql")
+    assert write["document"]["summary"] == {"contracts": 1, "by_family": {"dbt": 1}, "invalid": 0, "skipped": 0}
     publisher.publish_ok.assert_called_once()
     kwargs = publisher.publish_ok.call_args.kwargs
     assert kwargs["contract_bundle"] == bundle_writer.refs[0]
@@ -257,14 +263,15 @@ def test_canonical_hashing_is_timed(tmp_path):
     assert timings.stages[Stage.CONTRACT_BUNDLE].runs == 1
 
 
-def test_canonical_hashing_of_a_release_with_no_contract_is_timed_with_none():
+def test_canonical_hashing_of_a_dbt_release_counts_its_dbt_contracts():
     log: list[str] = []
-    handler, _publisher, _bundle_writer, _topology_writer = _dbt_handler(log)
+    handler, _publisher, _bundle_writer, _topology_writer = _dbt_handler(
+        log, names=("manifest_service1.json", "manifest_service2.json"))
 
     timings = handler.handle(release_id="rel-1")
 
     record = timings.stages[Stage.CANONICAL_HASHING]
-    assert (record.runs, record.counts) == (1, {"contracts": 0})
+    assert (record.runs, record.counts) == (1, {"contracts": 2})
 
 
 # --- a failed release writes no contract bundle ----------------------------------
@@ -482,3 +489,58 @@ def test_the_bundle_write_is_timed_as_its_own_stage_even_when_it_fails():
 
     assert timings.stages[Stage.CONTRACT_BUNDLE].runs == 1
     assert timings.stages[Stage.TOPOLOGY_ARTIFACT].runs == 0
+
+
+# --- the counts the event carries are the stored bundle's ------------------------------
+
+def _service_1_manifest(tmp_path) -> ManifestFile:
+    path = Path(tmp_path) / "service-1.json"
+    path.write_text(json.dumps({"nodes": {n["unique_id"]: n for n in (dbt_node("users"), dbt_node("orders"))}}))
+    return ManifestFile(path=str(path), image_tag="", declared_service="service-1")
+
+
+def _handle_with(s3: FakeS3, *files: ManifestFile, clock: FakeClock) -> MagicMock:
+    publisher = MagicMock()
+    python_handler(source_of(*files), publisher, contract_bundle_writer=ContractBundleWriter(s3, "b"),
+                   clock=clock).handle(release_id="rel-1")
+    publisher.publish_failed.assert_not_called()
+    return publisher
+
+
+def _stored_summary(s3: FakeS3) -> dict:
+    return json.loads(gzip.decompress(s3.get("b", contract_bundle_module.contract_bundle_key("default", "rel-1"))))[
+        "summary"]
+
+
+def test_a_release_whose_bundle_another_parse_stored_publishes_the_stored_bundles_counts(tmp_path):
+    """An older topology-controller stored the bundle of the release with its Python contracts only,
+    and stopped before it published. The parse of the redelivered request builds dbt contracts too,
+    but the store keeps the first bundle, which catalog reads: the event counts what it holds."""
+    s3 = FakeS3()
+    python_file = bundle_file(tmp_path, demo_nodes())
+    first = _handle_with(s3, python_file, clock=FakeClock())
+
+    second = _handle_with(s3, python_file, _service_1_manifest(tmp_path), clock=FakeClock(step=0.001))
+
+    stored = s3.get("b", contract_bundle_module.contract_bundle_key("default", "rel-1"))
+    kwargs = second.publish_ok.call_args.kwargs
+    assert _stored_summary(s3)["by_family"] == {"python": 3}
+    assert dict(kwargs["contracts_by_family"]) == {"python": 3}
+    assert kwargs["contract_bundle"].sha256 == hashlib.sha256(stored).hexdigest()
+    assert kwargs["contract_bundle"] == first.publish_ok.call_args.kwargs["contract_bundle"]
+    assert len(s3.puts) == 1
+
+
+def test_a_stored_bundle_that_cannot_be_read_fails_the_release_as_internal(tmp_path):
+    s3 = FakeS3()
+    s3.objects[("b", contract_bundle_module.contract_bundle_key("default", "rel-1"))] = gzip.compress(b"[]", mtime=0)
+    publisher = MagicMock()
+    topology_writer = RecordingArtifactWriter()
+
+    python_handler(source_of(_service_1_manifest(tmp_path)), publisher, artifact_writer=topology_writer,
+                   contract_bundle_writer=ContractBundleWriter(s3, "b")).handle(release_id="rel-1")
+
+    kwargs = _failed_kwargs(publisher)
+    assert kwargs["failure_kind"] == ParseFailureKind.INTERNAL
+    assert "is stored and holds no summary.by_family of counts" in kwargs["detail"]
+    assert topology_writer.writes == []

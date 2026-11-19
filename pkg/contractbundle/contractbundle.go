@@ -70,10 +70,12 @@ type Summary struct {
 	Skipped   int            `json:"skipped"`
 }
 
-// Contract is one node's contract. Document is its stored form, the ODCS
-// document the hashes are taken from, kept as the JSON the writer produced.
-// ContractHash is the hash of that document and ContentHash the node's code
-// fingerprint.
+// Contract is one node's contract. Family names the producer that wrote it,
+// "dbt" for a dbt model, seed or snapshot and "python" for a Python node, and
+// the reader keeps it as the writer wrote it. Document is its stored form, the
+// ODCS document the hashes are taken from, kept as the JSON the writer
+// produced. ContractHash is the hash of that document and ContentHash the
+// node's code fingerprint.
 type Contract struct {
 	Family       string          `json:"family"`
 	Service      string          `json:"service"`
@@ -83,8 +85,9 @@ type Contract struct {
 	Document     json.RawMessage `json:"document"`
 }
 
-// Source is the file a contract was read from: its path in the service's
-// repository and the SHA-256 of its text.
+// Source is the file a contract stands for: its path in the service's
+// repository and the SHA-256 of what it was written from (a Python contract
+// file's text, or the manifest fields the dbt generator read).
 type Source struct {
 	Path   string `json:"path"`
 	SHA256 string `json:"sha256"`

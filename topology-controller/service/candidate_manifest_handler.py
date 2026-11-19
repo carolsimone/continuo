@@ -1,7 +1,11 @@
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
-from domain.exceptions import InvalidCompiledSqlError, InvalidOdcsBundleError, UnqualifiedTableReferenceError
+from domain.exceptions import (
+    InvalidCompiledSqlError,
+    InvalidOdcsBundleError,
+    UnqualifiedTableReferenceError,
+)
 from domain.external import SystemRelations, unknown_external_nodes
 from domain.model import (
     DEFAULT_TENANT_ID,
@@ -25,6 +29,7 @@ from service.contract_bundle import (
     store_contracts,
 )
 from service.contracts_library import LIBRARY_VERSION
+from service.errors import ContractGenerationError
 from service.manifest_parsers import parser_for
 from service.ports import (
     CandidatePublisherPort,
@@ -125,9 +130,10 @@ def _artifact_entry(node: ManifestNode) -> dict:
 
 
 class CandidateManifestHandler:
-    """Parses a per-release set of dbt manifests and python contracts, writes
-    the resolved candidate topology to S3 as the release's topology artifact,
-    and publishes a reference to it back to release-controller.
+    """Parses a per-release set of dbt manifests and python-odcs bundles, with
+    the contract of each dbt and python node, writes the resolved candidate
+    topology to S3 as the release's topology artifact, and publishes a
+    reference to it back to release-controller.
 
     Every node carries its service's image tag from the release request
     (image_tags), the map release-controller assembled when it activated the
@@ -146,39 +152,44 @@ class CandidateManifestHandler:
     node plus the shared-code units they depend on, the tracked dbt tests, and
     each dbt service's provenance with the image tag the request names for it)
     is uploaded via bundle_uploader, then the release's contract bundle via
-    contract_bundle_writer (the stored form and hash of each python-odcs
-    contract, built from the tables each contract's read queries name, and the
-    provenance of each python-odcs service), then the topology artifact via
-    artifact_writer, and only then is the outcome published, so a published
-    reference never dangles. A release that publishes ok writes a contract
-    bundle even with no python-odcs contract. An empty release (no manifests)
-    writes an empty contract bundle and an artifact with no nodes and publishes
-    an empty code_bundle_uri.
+    contract_bundle_writer (the stored form and hash of each dbt and
+    python-odcs contract, with the tables its node's SQL or read queries name
+    and, for a dbt contract, the reads it declares, and the provenance of each
+    python-odcs service), then the topology artifact via artifact_writer, and
+    only then is the outcome published, so a published reference never
+    dangles. Every release that publishes ok writes a contract bundle, one with
+    no contract included. An empty release (no manifests) writes an empty
+    contract bundle and an artifact with no nodes and publishes an empty
+    code_bundle_uri.
 
     A write that fails with an S3 outage (is_infrastructure_error: S3
     unreachable, a 5xx) propagates to the consumer, which pauses and redelivers
     the same message; nothing is published, so the release waits in parsing.
     Any other write failure publishes status=failed with kind internal. So does
-    a python contract the library refuses to store for any other reason: it
-    passed every check, so that is a defect, counted and reported as internal.
+    a contract, dbt or python, the library refuses to store for any other
+    reason: it passed every check, so that is a defect, counted and reported
+    as internal. A parse that raises ContractGenerationError (the contracts
+    library failed on a dbt manifest in a way the manifest does not explain)
+    is a defect too, reported as internal, never as invalid_artifact.
 
     Failures publish status=failed with a typed failure_kind and return
     normally so the consumer ACKs. A node whose SQL sqlglot cannot parse, or
     that references a relation without a schema, is collected rather than
-    fatal on first sight, and so is a python contract the parse of its bundle
-    finds invalid (the parse reports it as a failed node, with its own
-    failure kind) and a python contract whose read queries name a table it
-    cannot list as <schema>.<table> (invalid_contract, found by the resolve
+    fatal on first sight, and so is a contract, a dbt node's or a python
+    node's, that the parse of its manifest or bundle finds invalid (the parse
+    reports it as a failed node, with its own failure kind) and a contract
+    that cannot list as <schema>.<table> a table its node's SQL names, or that
+    a dbt contract declares it reads (invalid_contract, found by the resolve
     step, which has the tables each node reads): every valid node is resolved,
-    then one publish_failed
-    carries the whole failed set (failure_kind by contract precedence) so the
-    operator sees every broken node at once, in node id order whatever the
-    order of the manifests. An unreadable, empty, or wrong-service artifact
-    (and a manifest of an unknown kind) is invalid_artifact; a missing builder,
-    missing image tags or a refused S3 write is internal. Neither carries
-    failed nodes. Such an artifact-level error fails the release at once, so
-    its publish carries no failed nodes even when earlier manifests reported
-    invalid contracts.
+    then one publish_failed carries the whole failed set of every manifest
+    (failure_kind by contract precedence) so the operator sees every broken
+    node at once, in node id order whatever the order of the manifests. An
+    unreadable, empty, or wrong-service artifact (and a manifest of an
+    unknown kind) is invalid_artifact; a missing builder, missing image tags,
+    a refused S3 write or a defect of the contracts library is internal.
+    Neither carries failed nodes. Such an artifact-level error fails the
+    release at once, so its publish carries no failed nodes even when earlier
+    manifests reported invalid contracts.
 
     dialect is the sqlglot dialect of the warehouse the install targets,
     supplied by the composition root from the configured engine. It governs
@@ -212,6 +223,15 @@ class CandidateManifestHandler:
     give it a column fingerprint carries it on its topology entry as
     seed_columns_hash; any other node's entry has no such key.
 
+    A seed's declared columns are compared with its CSV header by the manifest's
+    parse, which rejects a difference as an invalid contract. A seed the compile
+    extras do not name has no known header and is not compared: one line at
+    WARNING, after the last manifest's parse, counts such seeds in the release
+    and per service. A relationships test whose target its manifest does not
+    hold (a `local_stub` model the baseline uploader left out) is a `custom` rule
+    of the contract it tests: one more line at WARNING counts such tests in the
+    release and per service.
+
     A node whose build writes a relation named other than its table_name (an
     alias, or a versioned model's "<name>_v<version>") carries that relation on
     its topology entry as relation_name; any other node's entry has no such key.
@@ -223,19 +243,26 @@ class CandidateManifestHandler:
     failed, or empty. A release that ended, published or failed, logs one
     "release parsed" line carrying the record's fields and hands the same
     record to observer; a handler that raised published nothing, logs no such
-    line and tells the observer nothing.
+    line and tells the observer nothing. The record's parse ends just before the
+    outcome is handed to the publisher, and the published event carries the
+    record's `parse_ms` and `contracts_ms` (and, for an ok release, the stored
+    contract bundle's count of contracts by family).
 
-    progress is called once after each manifest's parse, once after each node's
-    resolve and once after each node's build, a failed one included, so the
-    caller can tell a release that is working through its nodes from one that
-    has stopped. Between two calls the handler does one manifest's parse (after
-    the in-memory bookkeeping of the manifest before it: skip logging,
-    shared-code namespacing, service checks), one node's resolve or one node's
-    build, except in these stretches, each of which must end within the
-    caller's staleness budget:
-    - from the start through the first manifest's parse: the image-tag check,
-      the listing of every manifest (every manifest's download included) and
-      that parse;
+    progress is called by a manifest's parse after each contract it reads (a
+    python contract) or generates (a dbt node's), and by the handler once after
+    each manifest's parse, once after each node's resolve and once after each
+    node's build, a failed one included, so the caller can tell a release that
+    is working through its nodes from one that has stopped. Between two calls
+    the handler does one contract's share of a parse (a python contract's checks
+    and node, a dbt node's contract, checks, hashes and node), one manifest's
+    work around its contracts (before the first: the manifest's reading and the
+    join of its tests, after the bookkeeping of the manifest before it: skip
+    logging, shared-code namespacing, service checks; after the last: the hashes
+    of its tests), one node's resolve or one node's build, except in these
+    stretches, each of which must end within the caller's staleness budget:
+    - from the start through the first contract of the first manifest's parse:
+      the image-tag check, the listing of every manifest (every manifest's
+      download included), that manifest's reading and that contract;
     - from the last manifest's parse through the first node's resolve: that
       manifest's own bookkeeping (skip logging, shared-code namespacing,
       service checks), the node registry and its lookup and the rewrite context
@@ -321,6 +348,8 @@ class CandidateManifestHandler:
         shared_code: dict[str, dict] = {}
         provenance: dict[str, dict] = {}
         python_provenance: dict[str, dict] = {}
+        unchecked_seeds: dict[str, int] = {}
+        relationships_without_target: dict[str, int] = {}
         for mf in manifests:
             parser = parser_for(mf.kind)
             if parser is None:
@@ -342,6 +371,17 @@ class CandidateManifestHandler:
                         mf, skipped=manifest_skips, progress=self._progress, timings=self._timings,
                     )
                     record.add(nodes=len(parsed.nodes))
+            except ContractGenerationError as exc:
+                # A defect of the contracts library, not of the team's
+                # manifest: the release fails as internal and is never blamed
+                # on the artifact.
+                logger.error(
+                    "candidate: the contracts library failed on a manifest",
+                    exc_info=exc,
+                    extra={"release_id": release_id, "service": mf.declared_service, "path": mf.path},
+                )
+                self._fail(release_id, ParseFailureKind.INTERNAL, f"{mf.declared_service or mf.path}: {exc}")
+                return
             except parser.permanent_errors as exc:
                 # Invalid JSON or yaml, a missing required key, or a malformed
                 # node are all permanent — re-delivery cannot fix them, so
@@ -356,6 +396,13 @@ class CandidateManifestHandler:
             # they wait for the resolve below, which reports them with the
             # failures of the valid nodes.
             contract_failures.extend(parsed.failed)
+            if parsed.unchecked_seeds:
+                service = mf.declared_service or mf.path
+                unchecked_seeds[service] = unchecked_seeds.get(service, 0) + len(parsed.unchecked_seeds)
+            if parsed.relationship_tests_without_target:
+                service = mf.declared_service or mf.path
+                relationships_without_target[service] = (
+                    relationships_without_target.get(service, 0) + parsed.relationship_tests_without_target)
 
             # Reported before the declared-service checks below: a manifest
             # whose every node was skipped fails as empty, and its skips are
@@ -424,6 +471,26 @@ class CandidateManifestHandler:
                     return
 
             all_nodes.extend(nodes)
+
+        if unchecked_seeds:
+            logger.warning(
+                "candidate: seeds with no known CSV header are not checked against their declared columns",
+                extra={
+                    "release_id": release_id,
+                    "seeds": sum(unchecked_seeds.values()),
+                    "services": unchecked_seeds,
+                },
+            )
+
+        if relationships_without_target:
+            logger.warning(
+                "candidate: relationships tests whose target the manifest does not hold are custom rules",
+                extra={
+                    "release_id": release_id,
+                    "tests": sum(relationships_without_target.values()),
+                    "services": relationships_without_target,
+                },
+            )
 
         with self._timings.stage(Stage.REGISTRY) as record:
             registry = NodeRegistry.of_nodes(all_nodes)
@@ -579,22 +646,24 @@ class CandidateManifestHandler:
         python_provenance: Mapping[str, Mapping[str, Any]],
     ) -> None:
         """Write the release's contract bundle, then its topology artifact, then
-        publish the references to both. The bundle's timings are those of the
-        stages that ran before its own write. Each write follows the same outage
-        rule as every other write."""
+        publish the references to both with the durations of the parse and the
+        stored bundle's count of contracts by family, which the writer returns:
+        a bundle another parse of the release stored first is the one catalog
+        reads, so its counts are the ones published. The bundle's timings are
+        those of the stages that ran before its own write. Each write follows
+        the same outage rule as every other write."""
         try:
             with self._timings.stage(Stage.CONTRACT_BUNDLE, contracts=len(contracts)):
-                contract_bundle = self._contract_bundle_writer.write(
+                bundle_document = build_contract_bundle(
                     tenant_id=DEFAULT_TENANT_ID,
                     release_id=release_id,
-                    document=build_contract_bundle(
-                        tenant_id=DEFAULT_TENANT_ID,
-                        release_id=release_id,
-                        library_version=LIBRARY_VERSION,
-                        contracts=contracts,
-                        provenance=python_provenance,
-                        timings=self._timings.bundle_timings(),
-                    ),
+                    library_version=LIBRARY_VERSION,
+                    contracts=contracts,
+                    provenance=python_provenance,
+                    timings=self._timings.bundle_timings(),
+                )
+                contract_bundle = self._contract_bundle_writer.write(
+                    tenant_id=DEFAULT_TENANT_ID, release_id=release_id, document=bundle_document,
                 )
             with self._timings.stage(Stage.TOPOLOGY_ARTIFACT, nodes=len(topology)):
                 artifact = self._artifact_writer.write(
@@ -604,12 +673,23 @@ class CandidateManifestHandler:
             self._reject_internal_unless_infra(release_id, exc)
             return
 
+        durations = self._close_the_parse()
         with self._timings.stage(Stage.PUBLISH):
             self._publisher.publish_ok(
                 release_id=release_id, artifact=artifact, code_bundle_uri=code_bundle_uri,
-                contract_bundle=contract_bundle,
+                contract_bundle=contract_bundle, contracts_by_family=contract_bundle.by_family,
+                **durations,
             )
         self._timings.outcome = ReleaseOutcome.OK
+
+    def _close_the_parse(self) -> dict[str, int]:
+        """End the release's parse now, just before the outcome is handed to the
+        publisher, and return the two durations the event carries: the record's
+        own `parse_ms` and `contracts_ms`. Every publish, an early refusal
+        included, runs inside the record of the release, so a release that met no
+        contract stage reports 0 for `contracts_ms`."""
+        self._timings.mark_published()
+        return {"parse_ms": self._timings.parse_ms(), "contracts_ms": self._timings.contracts_ms()}
 
     def _service_provenance(self, release_id: str, service: str, parsed: ServiceProvenance) -> dict:
         """Log each of a dbt service's seeds that keeps dbt's path checksum and
@@ -659,12 +739,14 @@ class CandidateManifestHandler:
         failed_nodes: Sequence[FailedNode] = (),
     ) -> None:
         """Publish the release as failed, timed as the publish stage."""
+        durations = self._close_the_parse()
         with self._timings.stage(Stage.PUBLISH):
             self._publisher.publish_failed(
                 release_id=release_id,
                 failure_kind=kind,
                 detail=detail,
                 failed_nodes=sorted(failed_nodes, key=_failed_node_order),
+                **durations,
             )
         self._timings.outcome = ReleaseOutcome.FAILED
         self._timings.failure_kind = kind

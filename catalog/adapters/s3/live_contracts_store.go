@@ -63,10 +63,11 @@ type liveIndexDTO struct {
 // liveIndexFileDTO is one file of the index; key is the file's name within
 // the folder.
 type liveIndexFileDTO struct {
-	UniqueID     string `json:"unique_id"`
-	Key          string `json:"key"`
-	Version      int64  `json:"version"`
-	ContractHash string `json:"contract_hash"`
+	UniqueID       string `json:"unique_id"`
+	Key            string `json:"key"`
+	Version        int64  `json:"version"`
+	ContractHash   string `json:"contract_hash"`
+	PhysicalSchema string `json:"physical_schema,omitempty"`
 }
 
 // Put writes body as uniqueID's published contract file.
@@ -133,7 +134,7 @@ func (s *LiveContractsStore) ReadIndex(ctx context.Context, tenantID string) (po
 		Files:          make([]ports.LiveIndexFile, 0, len(dto.Files)),
 	}
 	for _, f := range dto.Files {
-		idx.Files = append(idx.Files, ports.LiveIndexFile{UniqueID: f.UniqueID, Version: f.Version, ContractHash: f.ContractHash})
+		idx.Files = append(idx.Files, ports.LiveIndexFile{UniqueID: f.UniqueID, Version: f.Version, ContractHash: f.ContractHash, PhysicalSchema: f.PhysicalSchema})
 	}
 	return idx, true, nil
 }
@@ -155,7 +156,7 @@ func (s *LiveContractsStore) PutIndex(ctx context.Context, tenantID string, idx 
 	}
 	for _, f := range idx.Files {
 		dto.Files = append(dto.Files, liveIndexFileDTO{
-			UniqueID: f.UniqueID, Key: f.UniqueID + liveFileSuffix, Version: f.Version, ContractHash: f.ContractHash,
+			UniqueID: f.UniqueID, Key: f.UniqueID + liveFileSuffix, Version: f.Version, ContractHash: f.ContractHash, PhysicalSchema: f.PhysicalSchema,
 		})
 	}
 	body, err := json.Marshal(dto)

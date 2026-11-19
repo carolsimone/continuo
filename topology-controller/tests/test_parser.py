@@ -3,11 +3,12 @@ import json
 import logging
 from pathlib import Path
 import pytest
+from continuo_contracts import dbt
 from continuo_contracts.hashing import shared_fold
-from domain.contract_vocabulary import NodeType
+from domain.contract_vocabulary import NodeType, ParseFailureKind
 from domain.dormant import is_dormant
 from domain.exceptions import InvalidNodeSettingError
-from domain.model import SkippedNode, SkipReason
+from domain.model import FailedNode, SkippedNode, SkipReason
 from service.parser import parse_manifest
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -137,7 +138,8 @@ def test_parse_sets_source_hash_from_the_normalised_raw_code_not_the_dbt_checksu
                 "name": "users",
                 "schema": "public",
                 "fqn": ["svc_a"],
-                "config": {"meta": {"owner": "team-a"}},
+                "original_file_path": "models/users.sql",
+                "config": {"materialized": "table", "meta": {"owner": "team-a"}},
                 "tags": ["nightly"],
                 "checksum": {"name": "sha256", "checksum": "deadbeefcafef00d"},
                 "raw_code": "select 1\r\n",
@@ -160,7 +162,8 @@ def _manifest_with(raw_code: str | None) -> dict:
         "name": "users",
         "schema": "public",
         "fqn": ["svc_a"],
-        "config": {"meta": {"owner": "team-a"}},
+        "original_file_path": "models/users.sql",
+        "config": {"materialized": "table", "meta": {"owner": "team-a"}},
         "tags": ["nightly"],
     }
     if raw_code is not None:
@@ -208,7 +211,8 @@ def _manifest_with_macros(model_macros: dict[str, str]) -> dict:
         "name": "orders",
         "schema": "public",
         "fqn": ["svc_a"],
-        "config": {"meta": {"owner": "team-a"}},
+        "original_file_path": "models/orders.sql",
+        "config": {"materialized": "table", "meta": {"owner": "team-a"}},
         "tags": ["nightly"],
         "checksum": {"name": "sha256", "checksum": "modelsource0001"},
         "raw_code": "select 1 as orders",
@@ -265,7 +269,8 @@ def test_transitive_macro_change_flips_model_hash(tmp_path):
             "nodes": {
                 "model.svc.orders": {
                     "resource_type": "model", "name": "orders", "schema": "public",
-                    "fqn": ["svc_a"], "config": {"meta": {"owner": "team-a"}},
+                    "fqn": ["svc_a"], "original_file_path": "models/orders.sql",
+                    "config": {"materialized": "table", "meta": {"owner": "team-a"}},
                     "tags": ["nightly"], "checksum": {"name": "sha256", "checksum": "modelsource0001"},
                     "depends_on": {"macros": ["macro.svc.a"]},
                 }
@@ -304,7 +309,8 @@ def test_parse_manifest_stamps_image_tag_on_every_node(tmp_path):
                 "name": "users",
                 "schema": "public",
                 "fqn": ["svc_a"],
-                "config": {"meta": {"owner": "team-a"}},
+                "original_file_path": "models/users.sql",
+                "config": {"materialized": "table", "meta": {"owner": "team-a"}},
                 "tags": ["nightly"],
             }
         }
@@ -327,7 +333,7 @@ def test_parse_manifest_captures_original_file_path(tmp_path):
                 "schema": "analytics",
                 "fqn": ["svc", "staging", "stg_orders"],
                 "original_file_path": "models/staging/stg_orders.sql",
-                "config": {"meta": {"owner": "team-a"}},
+                "config": {"materialized": "table", "meta": {"owner": "team-a"}},
                 "tags": ["daily"],
             }
         }
@@ -347,7 +353,8 @@ def _minimal_node(name: str, schema: str, fqn: list, owner: str, tags: list) -> 
         "name": name,
         "schema": schema,
         "fqn": fqn,
-        "config": {"meta": {"owner": owner}},
+        "original_file_path": f"models/{name}.sql",
+        "config": {"materialized": "table", "meta": {"owner": owner}},
         "tags": tags,
     }
 
@@ -563,13 +570,33 @@ def test_parse_leaves_an_undeclared_timeout_unset(tmp_path):
     assert node.timeout_seconds is None
 
 
-@pytest.mark.parametrize("value", [0, 10081, -5, "2h", "120", 1.5, True, []])
-def test_parse_rejects_a_bad_timeout(tmp_path, value):
+@pytest.mark.parametrize("value", [0, 10081, -5, "2h", "120", 1.5, True])
+def test_a_bad_timeout_is_an_invalid_contract_naming_the_node(tmp_path, value):
+    """The timeout's range is a contract rule: a value outside it fails the node's
+    contract, and the node is one failed node of the parse, not a node."""
     path = _manifest_path(tmp_path, {"model.svc.revenue": _timeout_node(timeout_minutes=value)})
-    with pytest.raises(InvalidNodeSettingError) as excinfo:
-        parse_manifest(path, "v1")
-    assert "analytics.revenue" in str(excinfo.value)
-    assert "meta.timeout_minutes" in str(excinfo.value)
+    parsed = parse_manifest(path, "v1")
+    assert parsed.nodes == []
+    assert parsed.failed == (FailedNode(
+        node_id="analytics.revenue",
+        kind=ParseFailureKind.INVALID_CONTRACT,
+        service="service-a",
+        file_path="models/revenue.sql",
+        node_type=NodeType.DBT_MODEL,
+        detail=f"customProperties[4].value: `timeoutMinutes` is {value!r}, it must be an integer number"
+               " of minutes from 1 to 10080",
+    ),)
+
+
+@pytest.mark.parametrize("value", [[], {}, ""])
+def test_an_empty_timeout_is_no_timeout(tmp_path, value):
+    """The contract leaves out a field with no value, so an empty timeout is read as
+    none declared."""
+    path = _manifest_path(tmp_path, {"model.svc.revenue": _timeout_node(timeout_minutes=value)})
+    parsed = parse_manifest(path, "v1")
+    assert parsed.failed == ()
+    (node,) = parsed.nodes
+    assert node.timeout_seconds is None
 
 
 def test_parse_ignores_a_bad_timeout_on_a_node_it_drops(tmp_path):
@@ -610,14 +637,22 @@ def _write_nodes(tmp_path, **nodes) -> str:
     return str(path)
 
 
+# What dbt writes for every node of each resource type: its materialization and the
+# file it is declared in.
+_MATERIALIZED = {"model": "table", "seed": "seed", "snapshot": "snapshot"}
+_FILE_PATH = {"model": "models/{}.sql", "seed": "seeds/{}.csv", "snapshot": "snapshots/{}.sql"}
+
+
 def _svc_a_model(name, *, owner="team-a", tags=("daily",), **over):
+    resource_type = over.get("resource_type", "model")
     node = {
         "resource_type": "model",
         "name": name,
         "schema": "analytics",
         "fqn": ["svc_a", name],
         "tags": list(tags),
-        "config": {"meta": {"owner": owner} if owner else {}},
+        "original_file_path": _FILE_PATH[resource_type].format(name),
+        "config": {"materialized": _MATERIALIZED[resource_type], "meta": {"owner": owner} if owner else {}},
         "checksum": {"checksum": name},
     }
     node.update(over)
@@ -816,3 +851,139 @@ def test_full_refresh_is_a_seeds_boolean_setting(tmp_path, resource_type, value,
     path = _manifest_path(tmp_path, {f"{resource_type}.svc.revenue": _node(resource_type=resource_type, config=config)})
     (parsed,) = parse_manifest(path, "v1").nodes
     assert parsed.full_refresh is expected
+
+
+def _project_model(name="orders", **over):
+    """A node of the project `shop_core`, whose fqn starts with the project's name."""
+    return _svc_a_model(name, **{"fqn": ["shop_core", name], **over})
+
+
+def _without(node, *keys):
+    return {key: value for key, value in node.items() if key not in keys}
+
+
+VARIANTS = {
+    "tagged project model": _project_model(),
+    "untagged project model": _project_model(tags=[]),
+    "untagged project seed": _project_model("countries", tags=[], resource_type="seed"),
+    "untagged project snapshot": _project_model("history", tags=[], resource_type="snapshot"),
+    "versioned project model": _project_model(version=2),
+    "model with no tags key": _without(_project_model(), "tags"),
+    "no owner": _project_model(owner=None),
+    "empty owner": _project_model(config={"meta": {"owner": ""}}),
+    "no config": _without(_project_model(), "config"),
+    "null config": _project_model(config=None),
+    "list config": _project_model(config=[]),
+    "null meta": _project_model(config={"meta": None}),
+    "string meta": _project_model(config={"meta": "team-a"}),
+    "local stub": _project_model(tags=["local_stub"]),
+    "local stub among tags": _project_model(tags=["daily", "local_stub"]),
+    "local stub with no owner": _project_model(owner=None, tags=["local_stub"]),
+    "untagged package model": _package_node("pkg_model"),
+    "untagged package seed": _package_node("pkg_seed", resource_type="seed"),
+    "tagged package model": _package_node("pkg_daily", tags=["daily"]),
+    "package local stub": _package_node("pkg_stub", tags=["local_stub"]),
+    "untagged package model with no owner": _package_node("pkg_bare", owner=None),
+    "untagged model with no fqn": _without(_project_model(tags=[]), "fqn"),
+    "untagged model with an empty fqn": _project_model(tags=[], fqn=[]),
+}
+
+
+def _library_gate(node):
+    return dbt.skip_reason(json.loads(json.dumps(node)), project="shop-core")
+
+
+def test_the_variants_reach_every_gate_and_the_kept_case():
+    assert {_library_gate(node) for node in VARIANTS.values()} == {None, *dbt.SKIP_REASONS}
+
+
+@pytest.mark.parametrize("node", VARIANTS.values(), ids=VARIANTS.keys())
+def test_the_parser_skips_exactly_what_the_library_skips(tmp_path, node):
+    node_id = f"{node['resource_type']}.shop_core.variant"
+    path = _write_manifest(tmp_path, {node_id: node}, metadata={"project_name": "shop_core"})
+    reason = _library_gate(node)
+    skipped: list[SkippedNode] = []
+
+    kept = parse_manifest(path, skipped=skipped).nodes
+
+    if reason is None:
+        assert skipped == []
+        (parsed,) = kept
+        library_node = json.loads(json.dumps(node))
+        assert (parsed.service_name, parsed.schedule_name, parsed.table_name) == (
+            dbt.node_service(library_node), dbt.schedule(library_node), dbt.table_name(library_node))
+    else:
+        assert kept == []
+        assert [(s.node_id, s.reason.value) for s in skipped] == [(node_id, reason)]
+
+
+@pytest.mark.parametrize("version, table", [
+    (2, "orders.v2"), ("2", "orders.v2"), ("", "orders"), (None, "orders"),
+])
+def test_a_versioned_model_is_a_node_named_with_its_version(tmp_path, version, table):
+    path = _write_nodes(tmp_path, **{"model.svc_a.orders": _svc_a_model("orders", version=version)})
+    (parsed,) = parse_manifest(path).nodes
+    assert parsed.table_name == table
+
+
+@pytest.mark.parametrize("changes, name, service, message", [
+    ({"tags": "daily"}, "analytics.bad", "svc-a", "model.svc_a.bad: tags must be a list of strings, got str"),
+    ({"tags": ["daily", 3]}, "analytics.bad", "svc-a", "model.svc_a.bad: tags[1] must be a string, got int"),
+    ({"fqn": "svc_a"}, "analytics.bad", "", "model.svc_a.bad: fqn must be a list, got str"),
+    ({"fqn": [5]}, "analytics.bad", "", "model.svc_a.bad: fqn[0] must be a string, got int"),
+    ({"name": ""}, "model.svc_a.bad", "svc-a",
+     "model.svc_a.bad: name must be a non-empty string, got an empty string"),
+    ({"version": True}, "model.svc_a.bad", "svc-a",
+     "model.svc_a.bad: version must be a string or a number, got bool"),
+])
+def test_a_node_field_the_library_cannot_read_is_an_invalid_contract(tmp_path, changes, name, service, message):
+    """A node the no-owner gate lets through, whose `tags`, `fqn`, `name` or `version` is
+    not the shape dbt writes, has no contract: it is one failed node of the parse, named by
+    its unique_id when that can be read (else by its manifest id), with the library's
+    message, which names the node as the manifest does, as its detail."""
+    node = _svc_a_model("bad")
+    node.update(changes)
+    parsed = parse_manifest(_write_nodes(tmp_path, **{"model.svc_a.bad": node}))
+    assert parsed.nodes == []
+    assert parsed.failed == (FailedNode(
+        node_id=name, kind=ParseFailureKind.INVALID_CONTRACT, service=service,
+        file_path="models/bad.sql", node_type=NodeType.DBT_MODEL, detail=message,
+    ),)
+
+
+@pytest.mark.parametrize("fqn", [None, []])
+def test_a_kept_node_with_no_fqn_entry_is_an_invalid_artifact(tmp_path, fqn):
+    """dbt writes an fqn for every node. A node the gates keep with none does not say
+    which service it belongs to, so the parse refuses the artifact."""
+    node = _without(_svc_a_model("bad"), "fqn")
+    if fqn is not None:
+        node["fqn"] = fqn
+    with pytest.raises(InvalidNodeSettingError) as raised:
+        parse_manifest(_write_nodes(tmp_path, **{"model.svc_a.bad": node}))
+    assert str(raised.value) == "model.svc_a.bad: fqn must be a non-empty list of strings"
+
+
+def test_a_test_node_with_no_fqn_entry_is_an_invalid_artifact(tmp_path):
+    test_node = {
+        "resource_type": "test", "name": "not_null_kept_id", "schema": "analytics", "fqn": [],
+        "attached_node": "model.svc_a.kept", "compiled_code": "select id from analytics.kept where id is null",
+    }
+    path = _write_nodes(tmp_path, **{"model.svc_a.kept": _svc_a_model("kept"), "test.svc_a.not_null": test_node})
+    with pytest.raises(InvalidNodeSettingError) as raised:
+        parse_manifest(path)
+    assert str(raised.value) == "test.svc_a.not_null: fqn must be a non-empty list of strings"
+
+
+def test_a_project_name_that_is_not_a_string_is_an_invalid_artifact(tmp_path):
+    path = _write_manifest(tmp_path, {"model.svc_a.m": _svc_a_model("m")}, metadata={"project_name": 7})
+    with pytest.raises(InvalidNodeSettingError) as raised:
+        parse_manifest(path)
+    assert str(raised.value) == "manifest: metadata.project_name must be a string, got int"
+
+
+@pytest.mark.parametrize("fqn", ["svc_a", [], [5], None])
+def test_the_report_of_a_skipped_node_never_raises_on_its_fqn(tmp_path, fqn):
+    bare = _svc_a_model("bare", owner=None, fqn=fqn)
+    skipped: list[SkippedNode] = []
+    parse_manifest(_write_nodes(tmp_path, **{"model.svc_a.bare": bare}), skipped=skipped)
+    assert skipped == [SkippedNode("model.svc_a.bare", "", SkipReason.NO_OWNER)]

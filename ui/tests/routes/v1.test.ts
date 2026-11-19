@@ -324,6 +324,18 @@ describe('GET /api/v1/releases/:id', () => {
     expect(res.body.continuo_contracts).toBe('0.2.0');
   });
 
+  it('does not return the parse timings release-controller keeps for its own readers', async () => {
+    const parsed = {
+      ...rel, status: 'validating', continuo_contracts: '0.2.0',
+      parse_ms: 4180, contracts_ms: 1260, contracts_by_family: { dbt: 3, python: 2 },
+    };
+    const client = fakeClient({ getRelease: vi.fn(async () => parsed) });
+    const res = await request(appAs(ci(), client)).get('/api/v1/releases/r.1');
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body).filter((k) => ['parse_ms', 'contracts_ms', 'contracts_by_family'].includes(k))).toEqual([]);
+    expect(JSON.stringify(res.body)).not.toContain('4180');
+  });
+
   it('projects the seed reload notices of a release, field by field', async () => {
     const notice = {
       kind: 'seed_reload', node_id: 'analytics.seed_users', service: 'analytics', engine_family: 'schema_bound',

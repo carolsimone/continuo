@@ -39,8 +39,10 @@ client decompresses them itself. All three objects are immutable: a release's
 documents never change after they are written, so reading them for one release
 id always gives a consistent set.
 
-Every release that passes writes a contract bundle. It is empty when the release
-has no `python-odcs` contract. The bundle is canonical JSON (RFC 8785).
+Every release that passes writes a contract bundle. It holds the contract of
+every dbt model, seed and snapshot the release keeps and of every `python-odcs`
+node, and `summary.by_family` counts them by family. It is empty when the
+release has none. The bundle is canonical JSON (RFC 8785).
 `manifest.loaded.candidate:v2` and `release.promoted:v2` carry the SHA-256 of
 its stored bytes, so a reader can check what it fetched.
 
@@ -91,12 +93,12 @@ and `reads` holds its `readQueries`, or its `csvSource` as the read `csv`.
 | `tenant_id`, `release_id` | string | The tenant and release it belongs to. |
 | `continuo_contracts` | string | The version of the `continuo-contracts` library that read the release's contracts. |
 | `contracts` | object | One entry per node that has a contract, keyed by the node's unique id: `<schema>.<table>`, lowercase. |
-| `contracts.<id>.family` | string | `python`. A reader skips a family it does not know: a new family is an added value, not a new version. |
+| `contracts.<id>.family` | string | `dbt` or `python`. A reader skips a family it does not know: a new family is an added value, not a new version. |
 | `contracts.<id>.service` | string | The service that owns the node. |
 | `contracts.<id>.contract_hash` | string | `sha256:` and 64 hex characters. A reader compares this value. How it is computed is below the table. |
 | `contracts.<id>.content_hash` | string | The node's code fingerprint, `sha256:` and 64 hex characters. |
-| `contracts.<id>.source.path` | string | The file the contract was read from, as a path in the service's repository. |
-| `contracts.<id>.source.sha256` | string | The SHA-256 of that file's text. |
+| `contracts.<id>.source.path` | string | The file the contract stands for, as a path in the service's repository: a `python` contract's file, or the file of the `dbt` node. |
+| `contracts.<id>.source.sha256` | string | A `python` contract: the SHA-256 of its file's text. A `dbt` contract: the SHA-256 of the manifest fields it was generated from. |
 | `contracts.<id>.document` | object | The stored form of the contract, as a whole ODCS document with every root key. Its `status` is `active` and its `version` is `"0"`. The version number a node's contract has is in catalog and in the [live folder](contracts.md#the-live-folder). |
 
 `contract_hash` is the SHA-256 of the canonical JSON (RFC 8785) of `document`

@@ -185,5 +185,6 @@ VARIANTS: dict[str, Variant] = {
         ("seeds/seed_users.csv",
          "id,name,amount\n1,alice,10\n2,bob,20\n",
          "id,name,amount,source\n1,alice,10,web\n2,bob,20,shop\n"),
+        ("seeds/schema.yml", "      - name: amount\n", "      - name: amount\n      - name: source\n"),
     )),
 }

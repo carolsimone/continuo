@@ -56,7 +56,8 @@ S3:
 - the `cold` pass is the first parse of a new process, so nothing in it is warm;
 - the `warm` pass parses the same manifests again in the same process. The
   contract validator's cache already holds every contract, so the warm pass runs
-  no ODCS schema check. Each pass has a release id of its own (`rel-bench-cold`,
+  no ODCS schema check. It generates each dbt contract again, since the
+  cache holds only the checks. Each pass has a release id of its own (`rel-bench-cold`,
   `rel-bench-warm`). The contract bundle is written once per release, so the
   warm pass writes its own instead of reading back the cold pass's.
 
@@ -74,10 +75,15 @@ bytes and every baseline parses the same estate.
 - 10 dbt services, `svc-0` to `svc-9`, with the models split evenly, and one
   python service, `svc-py`, of one node per ten models. `svc-py` is written as
   its `odcs-bundle.json` (kind `python-odcs`), one ODCS contract per node with
-  its read queries, valid under continuo-contracts 0.2.0.
+  its read queries, valid under continuo-contracts 0.3.1.
 - Each model has `--columns` columns, a compiled SQL of a CTE over one upstream,
   a window sum and a left join to a second, and two generic not-null tests.
 - Each dbt service has one seed, and a `compile-extras.json` beside its manifest.
+  The seed declares every column of its CSV header, so the release's header
+  check passes.
+- Every dbt model and seed gets a generated contract, so the `contract_generation`
+  and `contract_validation` stages run for the dbt services as well as for
+  `svc-py`.
 - Each manifest carries the macros of `fixtures/macros.json.gz`, which
   `dbt parse` of the finance service of continuo-demo (commit `3ab3a7e`) wrote
   with dbt-core 1.12.0b1 and dbt-postgres 1.10.0, the versions continuo's dbt

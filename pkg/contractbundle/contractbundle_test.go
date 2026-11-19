@@ -26,6 +26,7 @@ type bundleFixture struct {
 		LibraryVersion string `json:"library_version"`
 		Contracts      []struct {
 			UniqueID     string          `json:"unique_id"`
+			Family       string          `json:"family"`
 			Service      string          `json:"service"`
 			ContractHash string          `json:"contract_hash"`
 			ContentHash  string          `json:"content_hash"`
@@ -85,20 +86,20 @@ func TestDecode_ReadsTheFixture(t *testing.T) {
 	assert.Equal(t, "0.13.0", doc.Provenance["service-py"].ContinuoPythonRuntime)
 	assert.Equal(t, map[string]string{"pyarrow": "26.0.0"}, doc.Provenance["service-py"].ImagePackages)
 
-	assert.Equal(t, contractbundle.Summary{Contracts: 1, ByFamily: map[string]int{"python": 1}}, doc.Summary)
+	assert.Equal(t, contractbundle.Summary{Contracts: 2, ByFamily: map[string]int{"dbt": 1, "python": 1}}, doc.Summary)
 
-	require.Len(t, fx.Input.Contracts, 1)
-	want := fx.Input.Contracts[0]
-	require.Len(t, doc.Contracts, 1)
-	got, ok := doc.Contracts["analytics.py_daily_kpis"]
-	require.True(t, ok, "the contracts are keyed by unique id")
-	assert.Equal(t, "analytics.py_daily_kpis", want.UniqueID)
-	assert.Equal(t, "python", got.Family)
-	assert.Equal(t, want.Service, got.Service)
-	assert.Equal(t, want.ContractHash, got.ContractHash)
-	assert.Equal(t, want.ContentHash, got.ContentHash)
-	assert.Equal(t, contractbundle.Source{Path: "contracts/py_daily_kpis.odcs.yaml", SHA256: want.SourceSHA256}, got.Source)
-	assert.JSONEq(t, string(want.Document), string(got.Document))
+	require.Len(t, fx.Input.Contracts, 2)
+	require.Len(t, doc.Contracts, 2)
+	for _, want := range fx.Input.Contracts {
+		got, ok := doc.Contracts[want.UniqueID]
+		require.True(t, ok, "the contracts are keyed by unique id: %s", want.UniqueID)
+		assert.Equal(t, want.Family, got.Family, want.UniqueID)
+		assert.Equal(t, want.Service, got.Service, want.UniqueID)
+		assert.Equal(t, want.ContractHash, got.ContractHash, want.UniqueID)
+		assert.Equal(t, want.ContentHash, got.ContentHash, want.UniqueID)
+		assert.Equal(t, contractbundle.Source{Path: want.SourcePath, SHA256: want.SourceSHA256}, got.Source, want.UniqueID)
+		assert.JSONEq(t, string(want.Document), string(got.Document), want.UniqueID)
+	}
 }
 
 func TestDecode_AcceptsAnUppercaseChecksum(t *testing.T) {

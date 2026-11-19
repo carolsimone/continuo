@@ -413,6 +413,13 @@ export interface ReleaseDetail {
   // How the release's artifact is parsed: 'dbt', 'python' or 'python-odcs'.
   // Decides the pipeline path — a python release has no compile leg.
   manifest_kind?: string;
+  // What the parse reported: milliseconds the parse took without its contract
+  // stages, milliseconds those stages took, and how many contracts it wrote by
+  // family (`dbt`, `python`; a family with none has no key). Absent until the
+  // parse reports them, and absent on a release whose parse never did.
+  parse_ms?: number;
+  contracts_ms?: number;
+  contracts_by_family?: Record<string, number>;
   // The seed reloads the release's seed changes cause. Absent on a release
   // recorded before notices existed.
   notices?: ReleaseNotice[];

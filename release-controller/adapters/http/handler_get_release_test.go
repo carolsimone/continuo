@@ -248,3 +248,77 @@ func TestGetRelease_ReturnsContinuoContracts(t *testing.T) {
 		})
 	}
 }
+
+// GET /releases/{id} returns the parse timings a run recorded: how long the
+// parse took, how long its contracts took, and how many contracts the contract
+// bundle holds by family. A rejected release has the durations and no count.
+func TestGetRelease_ReturnsTheParseTimings(t *testing.T) {
+	parseMs, contractsMs := int64(4180), int64(1260)
+	rejectedParseMs, rejectedContractsMs := int64(310), int64(45)
+	cases := map[string]struct {
+		timings release.ParseTimings
+		want    map[string]any
+	}{
+		"a parsed release": {
+			timings: release.ParseTimings{ParseMs: &parseMs, ContractsMs: &contractsMs, ContractsByFamily: map[string]int{"dbt": 3, "python": 2}},
+			want:    map[string]any{"parse_ms": 4180.0, "contracts_ms": 1260.0, "contracts_by_family": map[string]any{"dbt": 3.0, "python": 2.0}},
+		},
+		"a rejected release": {
+			timings: release.ParseTimings{ParseMs: &rejectedParseMs, ContractsMs: &rejectedContractsMs},
+			want:    map[string]any{"parse_ms": 310.0, "contracts_ms": 45.0},
+		},
+		"a release with no contracts": {
+			timings: release.ParseTimings{ParseMs: &parseMs, ContractsMs: &contractsMs, ContractsByFamily: map[string]int{}},
+			want:    map[string]any{"parse_ms": 4180.0, "contracts_ms": 1260.0, "contracts_by_family": map[string]any{}},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			deps, releases := newRetryRemediationDeps(time.Unix(1, 0).UTC())
+			releases.releases["rel-1"] = pipeline.Rehydrate(pipeline.RehydrateInput{
+				ID: "rel-1", Kind: pipeline.KindCandidate, Status: pipeline.StatusValidating, ParseTimings: tc.timings,
+			})
+
+			rec := httptest.NewRecorder()
+			newTestServer(deps).Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/releases/rel-1", nil))
+			require.Equal(t, http.StatusOK, rec.Code)
+			var decoded map[string]any
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &decoded))
+
+			for _, key := range []string{"parse_ms", "contracts_ms", "contracts_by_family"} {
+				if want, ok := tc.want[key]; ok {
+					assert.Equal(t, want, decoded[key], key)
+				} else {
+					assert.NotContains(t, decoded, key)
+				}
+			}
+		})
+	}
+}
+
+// A run the parse has not reached, and one parsed by a topology-controller that
+// reports no timings, leave all three keys out rather than answering zero.
+func TestGetRelease_OmitsTimingsARunNeverRecorded(t *testing.T) {
+	for name, status := range map[string]pipeline.Status{
+		"before the parse":                     pipeline.StatusParsing,
+		"parsed by a producer without timings": pipeline.StatusPromoted,
+	} {
+		t.Run(name, func(t *testing.T) {
+			deps, releases := newRetryRemediationDeps(time.Unix(1, 0).UTC())
+			releases.releases["rel-1"] = pipeline.Rehydrate(pipeline.RehydrateInput{
+				ID: "rel-1", Kind: pipeline.KindCandidate, Status: status,
+				ParseTimings: release.NewParseTimings(0, 0, nil),
+			})
+
+			rec := httptest.NewRecorder()
+			newTestServer(deps).Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/releases/rel-1", nil))
+			require.Equal(t, http.StatusOK, rec.Code)
+			var decoded map[string]any
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &decoded))
+
+			assert.NotContains(t, decoded, "parse_ms")
+			assert.NotContains(t, decoded, "contracts_ms")
+			assert.NotContains(t, decoded, "contracts_by_family")
+		})
+	}
+}

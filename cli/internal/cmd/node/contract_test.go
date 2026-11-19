@@ -163,6 +163,55 @@ func TestContract_OutputMatchesItsSchema(t *testing.T) {
 	assertEmitsItsSchema(t, NewContractCommand(nil, &config.Config{}, io.Discard, io.Discard), stdout)
 }
 
+// dbtContractYAML is the published document of a dbt model, as catalog renders
+// it without a servers list.
+const dbtContractYAML = `apiVersion: v3.2.0
+kind: DataContract
+id: analytics.orders
+name: orders
+version: "2"
+status: active
+team: {name: team-a}
+tags:
+  - daily
+customProperties:
+  - {vendor: continuo, property: kind, value: dbt-model}
+  - {vendor: continuo, property: materialization, value: {materialized: table}}
+schema:
+  - name: orders
+    physicalName: orders
+    physicalType: table
+    properties:
+      - {name: id, logicalType: integer, physicalType: integer}
+`
+
+// A dbt model's contract is printed as a Python node's is: the document goes
+// through as the YAML catalog rendered, whole, and the command's help tells
+// which nodes have a contract, so a reader of "describe" asks for a dbt node's.
+func TestNodeContract_PrintsADbtContract(t *testing.T) {
+	view := fullContractView()
+	view.UniqueId, view.Version, view.DocumentYaml = "analytics.orders", 2, dbtContractYAML
+	fake := &fakeNodeCatalog{contractResp: &catalogv1.GetNodeContractResponse{Contract: view}}
+
+	stdout, stderr, exit := runContractCommand(t, NewContractCommand, fake, []string{"analytics.orders"}, false)
+
+	require.Equal(t, 0, exit)
+	assert.Empty(t, stderr)
+	assert.Equal(t, "analytics.orders", fake.gotContractUniqueID)
+	var payload struct {
+		Contract map[string]any `json:"contract"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
+	assert.Equal(t, "analytics.orders", payload.Contract["unique_id"])
+	assert.Equal(t, float64(2), payload.Contract["version"])
+	assert.Equal(t, dbtContractYAML, payload.Contract["document_yaml"], "the document is passed through whole")
+	cmd := NewContractCommand(nil, &config.Config{}, io.Discard, io.Discard)
+	assertEmitsItsSchema(t, cmd, stdout)
+	assert.Contains(t, cmd.Long, "Every dbt model, seed and snapshot has a contract, and so has every Python node.")
+	assert.Contains(t, cmd.Long, "A dbt test and an unknown-external table have none")
+	assert.Contains(t, cmd.Example, "analytics.orders", "the example is a dbt node")
+}
+
 func TestContract_NotFoundExits3(t *testing.T) {
 	fake := &fakeNodeCatalog{contractErr: status.Error(codes.NotFound, `node "analytics.orders" has no contract`)}
 

@@ -68,8 +68,8 @@ def test_stages_ms_names_every_stage_in_pipeline_order_and_zero_for_one_that_did
         clock.t += 0.6604
     ms = timings.stages_ms()
     assert list(ms) == ["download", "dbt_parse", "python_parse", "registry", "resolve", "rewrite",
-                        "candidate_upload", "code_bundle", "contract_validation", "canonical_hashing",
-                        "contract_bundle", "topology_artifact", "publish"]
+                        "candidate_upload", "code_bundle", "contract_generation", "contract_validation",
+                        "canonical_hashing", "contract_bundle", "topology_artifact", "publish"]
     assert (ms["resolve"], ms["python_parse"]) == (660, 0)
 
 
@@ -140,10 +140,17 @@ def test_add_nodes_counts_a_dormant_node_under_its_service_and_nothing_else_as_d
 
 
 def test_the_contract_stages_exist():
-    assert (Stage.CONTRACT_VALIDATION.value, Stage.CANONICAL_HASHING.value, Stage.CONTRACT_BUNDLE.value) == (
-        "contract_validation", "canonical_hashing", "contract_bundle")
-    assert [stage.value for stage in Stage][-5:] == [
-        "contract_validation", "canonical_hashing", "contract_bundle", "topology_artifact", "publish"]
+    assert (Stage.CONTRACT_GENERATION.value, Stage.CONTRACT_VALIDATION.value, Stage.CANONICAL_HASHING.value,
+            Stage.CONTRACT_BUNDLE.value) == (
+        "contract_generation", "contract_validation", "canonical_hashing", "contract_bundle")
+    assert [stage.value for stage in Stage][-6:] == [
+        "contract_generation", "contract_validation", "canonical_hashing", "contract_bundle",
+        "topology_artifact", "publish"]
+
+
+def test_contract_generation_comes_before_contract_validation():
+    stages = list(Stage)
+    assert stages.index(Stage.CONTRACT_GENERATION) < stages.index(Stage.CONTRACT_VALIDATION)
 
 
 def test_a_release_that_checked_no_contract_has_no_failures_and_an_empty_cache():
@@ -208,3 +215,79 @@ def test_bundle_timings_are_a_copy_the_record_does_not_share():
     timings.add_validation_cache(True)
     assert snapshot["nodes"]["python"] == 0
     assert snapshot["validation_cache"] == {"hit": 0, "miss": 0}
+
+
+def test_contracts_ms_sums_the_four_contract_stages():
+    """A contract's generation, its check, its hashing and the bundle that holds
+    it are the time a release spends on contracts. A stage that holds them (the
+    dbt parse) and every other stage are not part of it."""
+    clock = FakeClock()
+    timings = _timings(clock)
+    with timings.stage(Stage.DBT_PARSE):
+        clock.t += 4.0
+        with timings.stage(Stage.CONTRACT_GENERATION):
+            clock.t += 0.25
+    with timings.stage(Stage.CONTRACT_VALIDATION):
+        clock.t += 0.5
+    with timings.stage(Stage.CANONICAL_HASHING):
+        clock.t += 0.125
+    with timings.stage(Stage.CONTRACT_BUNDLE):
+        clock.t += 0.375
+    with timings.stage(Stage.RESOLVE):
+        clock.t += 8.0
+    assert timings.contracts_ms() == 250 + 500 + 125 + 375
+
+
+def test_a_release_that_ran_no_contract_stage_spent_no_time_on_contracts():
+    assert _timings().contracts_ms() == 0
+
+
+def test_parse_ms_is_the_time_to_publish_without_the_contract_stages():
+    clock = FakeClock()
+    timings = _timings(clock)
+    with timings.stage(Stage.DBT_PARSE):
+        clock.t += 1.0
+        with timings.stage(Stage.CONTRACT_GENERATION):
+            clock.t += 0.5
+    with timings.stage(Stage.CONTRACT_VALIDATION):
+        clock.t += 0.25
+    clock.t += 2.0
+    timings.mark_published()
+    assert timings.contracts_ms() == 750
+    assert timings.parse_ms() == 3000
+
+
+def test_parse_ms_counts_from_the_clock_reading_at_construction():
+    clock = FakeClock()
+    clock.t = 100.0
+    timings = _timings(clock)
+    clock.t = 102.5
+    timings.mark_published()
+    assert timings.parse_ms() == 2500
+
+
+def test_parse_and_contract_milliseconds_add_up_to_the_time_to_publish():
+    clock = FakeClock()
+    timings = _timings(clock)
+    with timings.stage(Stage.CONTRACT_GENERATION):
+        clock.t += 0.0004
+    with timings.stage(Stage.CONTRACT_VALIDATION):
+        clock.t += 0.0004
+    clock.t += 0.0014
+    timings.mark_published()
+    assert timings.contracts_ms() + timings.parse_ms() == round(clock.t * 1000)
+
+
+def test_parse_ms_is_never_negative():
+    clock = FakeClock()
+    timings = _timings(clock)
+    timings.stages[Stage.CONTRACT_GENERATION].seconds = 5.0
+    clock.t += 1.0
+    timings.mark_published()
+    assert timings.contracts_ms() == 5000
+    assert timings.parse_ms() == 0
+
+
+def test_parse_ms_needs_the_publish_to_be_marked():
+    with pytest.raises(RuntimeError, match="mark_published"):
+        _timings().parse_ms()

@@ -17,8 +17,8 @@ import (
 // node count; the object at the deterministic key in MinIO hashes to the recorded
 // checksum and decodes to the release's own document; and nodeID carries
 // imageTag, the tag the release was submitted with, which topology-controller
-// joins onto every node from release.requested.
-func assertCandidateTopologyArtifact(t *testing.T, ctx context.Context, clients *testClients, releaseID, nodeID, imageTag string) {
+// joins onto every node from release.requested. It returns nodeID's entry.
+func assertCandidateTopologyArtifact(t *testing.T, ctx context.Context, clients *testClients, releaseID, nodeID, imageTag string) topologyartifact.Node {
 	t.Helper()
 	var uri, sha string
 	var count int
@@ -41,15 +41,18 @@ func assertCandidateTopologyArtifact(t *testing.T, ctx context.Context, clients 
 	require.Len(t, doc.Nodes, count, "candidate_node_count must count the artifact's nodes")
 
 	found := false
+	var node topologyartifact.Node
 	for _, n := range doc.Nodes {
 		if n.UniqueID != nodeID {
 			continue
 		}
 		found = true
+		node = n
 		require.Equal(t, imageTag, n.ImageTag, "topology-controller must join the release's image tag onto %s", nodeID)
 	}
 	require.True(t, found, "the artifact of %s lacks node %s", releaseID, nodeID)
 	t.Logf("✅ topology artifact s3://%s/%s (%d nodes, sha256 %s)", e2eS3Bucket, key, count, sha)
+	return node
 }
 
 // assertCurrentProdByReference checks what a promotion left on current_prod:

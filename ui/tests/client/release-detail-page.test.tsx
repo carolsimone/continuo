@@ -429,6 +429,34 @@ describe('ReleaseDetailPage — provenance line', () => {
   });
 });
 
+describe('ReleaseDetailPage — parse and contract generation', () => {
+  const parsed = {
+    ...DETAIL_OK,
+    manifest_kind: 'dbt',
+    transitions: [
+      { to: 'received', at: '2026-06-01T10:00:00Z' },
+      { to: 'parsing', at: '2026-06-01T10:00:02Z' },
+      { to: 'promoted', at: '2026-06-01T10:00:08Z' },
+    ],
+  };
+
+  it('shows the parse and contract generation a release recorded under its parsing step', async () => {
+    const detail = { ...parsed, parse_ms: 2140, contracts_ms: 610, contracts_by_family: { dbt: 45, python: 3 } };
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve(detail) })));
+    const { container } = renderDetail();
+    await waitFor(() => expect(screen.getByText('rel_abc')).toBeInTheDocument());
+    const lines = Array.from(container.querySelectorAll('.release-timeline__line')).map(l => l.textContent);
+    expect(lines).toEqual(['parsing 2.1 s', 'generating contracts 0.6 s · 48 contracts (dbt 45, python 3)']);
+  });
+
+  it('shows no such lines for a release that recorded none', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve(parsed) })));
+    const { container } = renderDetail();
+    await waitFor(() => expect(screen.getByText('rel_abc')).toBeInTheDocument());
+    expect(container.querySelector('.release-timeline__line')).toBeNull();
+  });
+});
+
 describe('ReleaseDetailPage — timeline preview follows the release kind', () => {
   it('shows no compile leg ahead of a python release', async () => {
     const detail = { ...DETAIL, status: 'received', transitions: [{ to: 'received', at: '2026-06-01T10:00:00Z' }], manifest_kind: 'python' };

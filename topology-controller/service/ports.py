@@ -47,10 +47,12 @@ class TopologyArtifactWriterPort(Protocol):
 @runtime_checkable
 class ContractBundleWriterPort(Protocol):
     def write(self, *, tenant_id: str, release_id: str, document: Mapping[str, Any]) -> ContractBundleRef:
-        """Store a release's contract bundle and return where it lives and the
-        SHA-256 of its stored bytes. A release's bundle is written once: a
-        second write of the same release returns the reference of the bytes
-        already stored."""
+        """Store a release's contract bundle and return where it lives, the
+        SHA-256 of its stored bytes and the stored bundle's `summary.by_family`.
+        A release's bundle is written once: a second write of the same release
+        returns the reference and the counts of the bundle already stored, which
+        another parse of the release wrote, and raises
+        UnreadableContractBundleError when that bundle cannot be read."""
         ...
 
 
@@ -61,7 +63,11 @@ class CandidatePublisherPort(Protocol):
     topology artifact and contract bundle, publish_failed a typed failure kind,
     a summary detail, and one FailedNode per node the parse could not resolve
     (empty for artifact and internal failures). Both outcomes also name the
-    version of the contracts library the process runs on."""
+    version of the contracts library the process runs on and the two durations
+    of the parse in milliseconds: `parse_ms` (the parse up to the publish, the
+    contract stages left out) and `contracts_ms` (the contract stages). publish_ok
+    also carries `contracts_by_family`, the number of contracts the stored bundle
+    holds by family, a family with none left out."""
 
     def publish_ok(
         self,
@@ -70,6 +76,9 @@ class CandidatePublisherPort(Protocol):
         artifact: TopologyArtifactRef,
         code_bundle_uri: str,
         contract_bundle: ContractBundleRef,
+        parse_ms: int,
+        contracts_ms: int,
+        contracts_by_family: Mapping[str, int],
     ) -> None:
         ...
 
@@ -79,6 +88,9 @@ class CandidatePublisherPort(Protocol):
         failure_kind: ParseFailureKind,
         detail: str,
         failed_nodes: Sequence[FailedNode] = (),
+        *,
+        parse_ms: int,
+        contracts_ms: int,
     ) -> None:
         ...
 

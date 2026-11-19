@@ -8,6 +8,10 @@ version: 2
 # positive test_count is runnable. The per-node
 # test_count seeded into the topology (tests/e2e/seed_topology_test.go) mirrors
 # these counts (seed_table_1=2, seed_table_3=1, seed_table_2=0).
+#
+# Every seed declares each column of its CSV header, because a release rejects a
+# seed whose declared columns and header differ. seed_table_2 declares its column
+# with no tests.
 seeds:
   - name: seed_table_1
     columns:
@@ -20,3 +24,6 @@ seeds:
       - name: id
         data_tests:
           - not_null
+  - name: seed_table_2
+    columns:
+      - name: id

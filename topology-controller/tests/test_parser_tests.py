@@ -11,7 +11,8 @@ def _write(tmp_path, manifest):
 
 def _model(name):
     return {"resource_type": "model", "name": name, "schema": "analytics", "fqn": ["svc_a", name],
-            "tags": ["daily"], "config": {"meta": {"owner": "team@x.com"}},
+            "tags": ["daily"], "original_file_path": f"models/{name}.sql",
+            "config": {"materialized": "table", "meta": {"owner": "team@x.com"}},
             "checksum": {"checksum": "abc"}, "compiled_code": f"select 1 as id from raw.{name}"}
 
 

@@ -1,12 +1,13 @@
-"""The stored form of each python contract and the release's contract bundle."""
+"""The stored form of each contract, Python and dbt, and the release's contract bundle."""
+import copy
 import json
 from pathlib import Path
 
 import continuo_contracts
 import pytest
-from continuo_contracts import yaml_strict
+from continuo_contracts import dbt, validate, yaml_strict
 from continuo_contracts.canonical import canonical_json
-from continuo_contracts.contract import normalise_python
+from continuo_contracts.contract import normalise_dbt, normalise_python
 from continuo_contracts.errors import CanonicalJsonError, HashInputError
 from continuo_contracts.hashing import sha256_hex
 from continuo_contracts.schema import SCHEMA_SHA256
@@ -14,11 +15,12 @@ from continuo_contracts.schema import SCHEMA_SHA256
 import service.contract_bundle as contract_bundle_module
 from config.config import _SYSTEM_RELATIONS
 from domain.contract_vocabulary import ParseFailureKind
-from domain.model import AuthoredContract, FailedNode, ManifestNode, NodeType, Runtime, TableRef
+from domain.model import ContractFamily, FailedNode, ManifestNode, NodeContract, NodeType, Runtime, TableRef
 from service.contract_bundle import (
     StoredContract,
     build_contract_bundle,
     contract_bundle_key,
+    contracts_by_family,
     invalid_contract_reads,
     shared_unique_ids,
     store_contracts,
@@ -27,7 +29,11 @@ from tests.odcs_fixtures import demo_text, release_timings
 
 FIXTURES = Path(__file__).parent / "fixtures"
 POSTGRES_SYSTEM = _SYSTEM_RELATIONS["postgres"]
-_VECTORS = json.loads((Path(continuo_contracts.__file__).parent / "vectors" / "contracts.json").read_text())
+_VECTOR_DIR = Path(continuo_contracts.__file__).parent / "vectors"
+_VECTORS = json.loads((_VECTOR_DIR / "contracts.json").read_text())
+_DBT_VECTORS = {case["name"]: case for case in json.loads((_VECTOR_DIR / "dbt_contracts.json").read_text())}
+# The dbt vectors whose node has a valid contract (the others name the issues of an invalid one).
+_DBT_VALID_VECTORS = [name for name, case in _DBT_VECTORS.items() if "generated" in case]
 
 
 def _vector(name: str) -> dict:
@@ -48,7 +54,8 @@ def _node(name: str, text: str, *, path: str | None = None, service: str = "serv
         node_type=NodeType.PYTHON_NODE,
         runtime=Runtime.PYTHON,
         content_hash="sha256:" + sha256_hex(name.encode("utf-8")),
-        contract=AuthoredContract(
+        contract=NodeContract(
+            family=ContractFamily.PYTHON,
             document=document,
             path=path or f"contracts/{name}.odcs.yaml",
             source_sha256=sha256_hex(text.encode("utf-8")),
@@ -58,6 +65,45 @@ def _node(name: str, text: str, *, path: str | None = None, service: str = "serv
 
 def _kpis_node() -> ManifestNode:
     return _node("py_daily_kpis", demo_text("py_daily_kpis"))
+
+
+def _dbt_node(name: str, *, edit=None) -> ManifestNode:
+    """The node a dbt parse builds for the library's dbt vector `name`: its contract is what
+    `dbt.generate` writes for the vector's manifest node (after `edit`, a change to a copy of
+    that node), and its run facts are read back from that contract."""
+    case = _DBT_VECTORS[name]
+    manifest_node = copy.deepcopy(case["node"])
+    if edit is not None:
+        edit(manifest_node)
+    generated = dbt.generate(manifest_node, case["tests"], manifest=case["manifest"])
+    facts = dbt.run_facts(generated.document)
+    return ManifestNode(
+        table_name=facts.table,
+        schema_name=facts.schema,
+        service_name=facts.service,
+        owner=facts.owner,
+        schedule_name=facts.schedule,
+        criticality=facts.criticality,
+        node_type=NodeType(facts.kind),
+        runtime=Runtime.DBT,
+        content_hash="sha256:" + sha256_hex(name.encode("utf-8")),
+        original_file_path=facts.file_path,
+        contract=NodeContract(
+            family=ContractFamily.DBT,
+            document=generated.document,
+            path=facts.file_path,
+            source_sha256=generated.source_sha256,
+        ),
+    )
+
+
+def _with_declared_reads(*entries: str) -> ManifestNode:
+    """The library's governed model with `entries` as the tables its meta declares it reads."""
+    return _dbt_node("governed", edit=lambda node: node["config"]["meta"]["continuo"].__setitem__("reads", list(entries)))
+
+
+def _table_refs(tables: list[str]) -> list[TableRef]:
+    return [TableRef(*table.split("."), "") for table in tables]
 
 
 def _reads(document: dict) -> list:
@@ -87,20 +133,31 @@ def test_the_bundle_matches_the_shared_fixture():
     assert canonical_json(doc).decode() == fx["canonical"]
 
 
-def test_the_fixture_document_is_the_stored_form_the_library_computes():
-    """The fixture's one contract is the demo contract's stored form: this builder
-    and the library agree on the document and its hash."""
+def test_the_fixture_documents_are_the_stored_forms_the_library_computes():
+    """The fixture's contracts are the demo Python contract's and the library's governed dbt
+    model's stored forms: this builder and the library agree on each document and its hash."""
     fx = json.loads((FIXTURES / "contracts_v1.json").read_text())
-    [contract] = fx["input"]["contracts"]
+    by_id = {c["unique_id"]: c for c in fx["input"]["contracts"]}
+    assert sorted(by_id) == ["analytics.governed", "analytics.py_daily_kpis"]
+    governed = _dbt_node("governed")
 
-    [stored] = store_contracts(
-        [_kpis_node()], {("service-py", "analytics.py_daily_kpis"): [TableRef("analytics", "daily_transactions", "")]},
-        POSTGRES_SYSTEM)
+    stored = {
+        c.unique_id: c
+        for c in store_contracts(
+            [_kpis_node(), governed],
+            {
+                ("service-py", "analytics.py_daily_kpis"): [TableRef("analytics", "daily_transactions", "")],
+                governed.node_key: _table_refs(_DBT_VECTORS["sql_reads"]["reads"]),
+            },
+            POSTGRES_SYSTEM)
+    }
 
-    assert stored.document == contract["document"]
-    assert stored.contract_hash == contract["contract_hash"]
-    assert stored.source_sha256 == contract["source_sha256"]
-    assert stored.source_path == contract["source_path"]
+    for unique_id, contract in by_id.items():
+        assert stored[unique_id].family == contract["family"], unique_id
+        assert stored[unique_id].document == contract["document"], unique_id
+        assert stored[unique_id].contract_hash == contract["contract_hash"], unique_id
+        assert stored[unique_id].source_sha256 == contract["source_sha256"], unique_id
+        assert stored[unique_id].source_path == contract["source_path"], unique_id
 
 
 # --- the stored form ------------------------------------------------------------
@@ -173,11 +230,33 @@ def test_a_node_with_no_contract_stores_nothing():
 
 def test_the_authored_document_is_not_changed():
     node = _kpis_node()
-    before = json.dumps(node.contract.document, sort_keys=True)
+    document = node.contract.document
+    before = json.dumps(document, sort_keys=True)
 
     store_contracts([node], {("service-py", "analytics.py_daily_kpis"): [TableRef("analytics", "daily_transactions", "")]}, POSTGRES_SYSTEM)
 
-    assert json.dumps(node.contract.document, sort_keys=True) == before
+    assert json.dumps(document, sort_keys=True) == before
+
+
+def test_a_stored_contract_keeps_no_producer_document_on_its_node():
+    """The stored form is all the bundle needs, so a large release does not hold every
+    generated and authored document beside it through the rest of its parse."""
+    nodes = [_kpis_node(), _dbt_node("governed")]
+    kept = [(n.contract.family, n.contract.path, n.contract.source_sha256) for n in nodes]
+
+    stored = store_contracts(nodes, {}, POSTGRES_SYSTEM)
+
+    assert [s.unique_id for s in stored] == [n.unique_id for n in nodes]
+    assert [n.contract.document for n in nodes] == [None, None]
+    assert [(n.contract.family, n.contract.path, n.contract.source_sha256) for n in nodes] == kept
+
+
+def test_a_contract_stored_twice_is_refused():
+    node = _kpis_node()
+    store_contracts([node], {}, POSTGRES_SYSTEM)
+
+    with pytest.raises(ValueError, match="analytics.py_daily_kpis: the contract is stored already"):
+        store_contracts([node], {}, POSTGRES_SYSTEM)
 
 
 @pytest.mark.parametrize(
@@ -238,24 +317,33 @@ def test_progress_is_reported_after_each_contract():
 _KPIS_ID = "analytics.py_daily_kpis"
 
 
+# Each (schema, table) pair a contract may be asked to list: some the library lists, some it refuses.
+_TABLE_CASES = [
+    ("analytics", "orders"), ("Analytics", "Orders"), ("é", "t"), ("a-b", "c_d"), ("a1", "2b"),
+    ("a.b", "c"), ("a", "b.c"), ("a", "b.c.d"), ("", "t"), ("s", ""),
+    ("my schema", "t"), ("s", "my table"), (" s", "t"), ("s", "t "), ("s", "t\tu"), ("s", "t\nu"),
+    ("s", "t\u00a0u"), ("s", "t\u2003u"), ("s", "t\u0085u"), ("s", "t\x1fu"), ("s", "t\x00u"),
+    ("s", "t\x7fu"), ("s", "t\x9fu"), ("s", "t\u200bu"),
+]
+
+
+def _library_lists(call, tables: list[str]) -> bool:
+    """Whether the library's normalisation accepts `tables` as the tables a node reads."""
+    try:
+        call(tables)
+    except HashInputError:
+        return False
+    return True
+
+
 def test_every_table_the_library_lists_passes_the_check_and_every_one_it_refuses_fails_it():
     """The check is the library's rule for a listed table: it agrees with normalise_python on
     each of these, so a table the check passes never reaches a HashInputError."""
     document = yaml_strict.load(demo_text("py_daily_kpis"))
-    cases = [
-        ("analytics", "orders"), ("Analytics", "Orders"), ("é", "t"), ("a-b", "c_d"), ("a1", "2b"),
-        ("a.b", "c"), ("a", "b.c"), ("a", "b.c.d"), ("", "t"), ("s", ""),
-        ("my schema", "t"), ("s", "my table"), (" s", "t"), ("s", "t "), ("s", "t\tu"), ("s", "t\nu"),
-        ("s", "t\u00a0u"), ("s", "t\u2003u"), ("s", "t\u0085u"), ("s", "t\x1fu"), ("s", "t\x00u"),
-        ("s", "t\x7fu"), ("s", "t\x9fu"), ("s", "t\u200bu"),
-    ]
     node = _kpis_node()
-    for schema, table in cases:
-        try:
-            normalise_python(document, service="service-py", reads=[f"{schema}.{table}"])
-            library_accepts = True
-        except HashInputError:
-            library_accepts = False
+    for schema, table in _TABLE_CASES:
+        library_accepts = _library_lists(
+            lambda tables: normalise_python(document, service="service-py", reads=tables), [f"{schema}.{table}"])
         failure = invalid_contract_reads(node, [TableRef(schema, table, "")], POSTGRES_SYSTEM)
         assert (failure is None) == library_accepts, (schema, table)
 
@@ -319,25 +407,232 @@ def test_the_details_of_one_node_come_in_table_order_whatever_the_order_of_the_q
     assert one == other and one.detail.index('"a b"') < one.detail.index('"b c"')
 
 
+# --- dbt contracts ---------------------------------------------------------------
+
+def test_a_dbt_contract_lists_the_tables_its_sql_names():
+    """The stored form of the governed model joins the tables its compiled SQL names with the one its
+    meta declares: system relations left out, names in lower case, each table once."""
+    node = _dbt_node("governed")
+    vector = _DBT_VECTORS["sql_reads"]
+    refs = [
+        TableRef("Analytics", "Orders", "wh"), TableRef("analytics", "orders", ""), TableRef("raw", "events", ""),
+        TableRef("pg_catalog", "pg_class", "")]
+
+    [stored] = store_contracts([node], {node.node_key: refs}, POSTGRES_SYSTEM)
+
+    assert _reads(stored.document) == [["analytics.orders", "analytics.raw_events", "raw.events"]]
+    assert stored.document == vector["stored"]
+    assert stored.contract_hash == vector["contract_hash"]
+    assert (stored.family, stored.unique_id, stored.service, stored.content_hash) == (
+        "dbt", "analytics.governed", "cases", node.content_hash)
+    assert (stored.source_path, stored.source_sha256) == ("models/tagged/governed.sql", vector["source_sha256"])
+
+
+def test_a_dbt_node_that_reads_nothing_it_declares_has_no_reads_property():
+    [stored] = store_contracts([_dbt_node("dormant_model")], {}, POSTGRES_SYSTEM)
+
+    assert _reads(stored.document) == []
+    assert stored.document == _DBT_VECTORS["dormant_model"]["stored"]
+
+
+@pytest.mark.parametrize("name", _DBT_VALID_VECTORS)
+def test_the_library_vector_through_topology_controller(name):
+    """Every valid case of the library's dbt vector stores to the stored form and hash the vector
+    gives, from the contract `dbt.generate` writes and the tables the vector's SQL names, and
+    none of them names a table the check refuses."""
+    vector = _DBT_VECTORS[name]
+    node = _dbt_node(name)
+    refs = _table_refs(vector["reads"])
+
+    assert invalid_contract_reads(node, refs, POSTGRES_SYSTEM) is None
+    [stored] = store_contracts([node], {node.node_key: refs}, POSTGRES_SYSTEM)
+
+    assert stored.document == vector["stored"]
+    assert stored.contract_hash == vector["contract_hash"]
+    assert stored.source_sha256 == vector["source_sha256"]
+    assert stored.unique_id == vector["generated"]["id"]
+
+
+def test_the_generated_dbt_document_is_not_changed():
+    node = _dbt_node("governed")
+    document = node.contract.document
+    before = json.dumps(document, sort_keys=True)
+
+    store_contracts([node], {node.node_key: [TableRef("analytics", "orders", "")]}, POSTGRES_SYSTEM)
+
+    assert json.dumps(document, sort_keys=True) == before
+
+
+def test_a_normalise_the_library_refuses_for_a_dbt_contract_is_counted_and_raised(monkeypatch):
+    def refuse(*_args, **_kwargs):
+        raise HashInputError("reads entry 'x': a table is written <schema>.<table>")
+
+    monkeypatch.setattr(contract_bundle_module, "normalise_dbt", refuse)
+    timings = release_timings()
+
+    with pytest.raises(HashInputError):
+        store_contracts([_dbt_node("governed")], {}, POSTGRES_SYSTEM, timings=timings)
+
+    assert timings.contract_failures == {("normalise", "value"): 1}
+
+
+def test_a_dbt_contract_is_not_normalised_as_a_python_one(monkeypatch):
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("a dbt contract must not reach normalise_python")
+
+    monkeypatch.setattr(contract_bundle_module, "normalise_python", refuse)
+
+    store_contracts([_dbt_node("governed")], {}, POSTGRES_SYSTEM)
+
+
+def test_a_dbt_table_that_cannot_be_listed_is_an_invalid_contract():
+    timings = release_timings()
+
+    failure = invalid_contract_reads(
+        _dbt_node("governed"), [TableRef("analytics", "orders", ""), TableRef("analytics", "a b", "")],
+        POSTGRES_SYSTEM, timings=timings)
+
+    assert failure == FailedNode(
+        node_id="analytics.governed", kind=ParseFailureKind.INVALID_CONTRACT, service="cases",
+        file_path="models/tagged/governed.sql", node_type=NodeType.DBT_MODEL,
+        detail='compiled SQL: table analytics."a b" cannot be listed as <schema>.<table>: a name holds whitespace')
+    assert timings.contract_failures == {("normalise", "value"): 1}
+
+
+@pytest.mark.parametrize(
+    ("ref", "shown", "reason"),
+    [
+        (TableRef("analytics", "a.b", ""), 'analytics."a.b"', "a name holds a dot"),
+        (TableRef("", "t", ""), '"".t', "a name is empty"),
+        (TableRef("analytics", "t\x00u", ""), 'analytics."t\\u0000u"', "a name holds a control character"),
+    ],
+    ids=["table-dot", "empty", "control"])
+def test_the_detail_of_a_dbt_table_shows_the_name_and_says_why(ref, shown, reason):
+    failure = invalid_contract_reads(_dbt_node("governed"), [ref], POSTGRES_SYSTEM)
+
+    assert failure.detail == f"compiled SQL: table {shown} cannot be listed as <schema>.<table>: {reason}"
+
+
+def test_every_sql_table_the_library_lists_passes_the_dbt_check_and_every_one_it_refuses_fails_it():
+    """The check agrees with normalise_dbt on the tables the SQL names, as it does with
+    normalise_python for a Python node."""
+    node = _dbt_node("dormant_model")
+    for schema, table in _TABLE_CASES:
+        library_accepts = _library_lists(
+            lambda tables: normalise_dbt(node.contract.document, reads=tables), [f"{schema}.{table}"])
+        failure = invalid_contract_reads(node, [TableRef(schema, table, "")], POSTGRES_SYSTEM)
+        assert (failure is None) == library_accepts, (schema, table)
+
+
+def test_a_system_relation_a_dbt_node_names_is_not_checked():
+    timings = release_timings()
+
+    assert invalid_contract_reads(
+        _dbt_node("governed"), [TableRef("pg_catalog", "a b", "")], POSTGRES_SYSTEM, timings=timings) is None
+    assert timings.contract_failures == {}
+
+
+def test_a_declared_read_that_cannot_be_listed_is_an_invalid_contract():
+    """The library's validation accepts a contract whose meta declares a read it cannot list and its
+    normalisation refuses it: that is the team's mistake, named with the entry, not a defect."""
+    node = _with_declared_reads("analytics.fine", "orders", "analytics.a table", "a.b.c", "orders")
+    assert validate.validate_dbt_contract(node.contract.document) == []
+    with pytest.raises(HashInputError):
+        normalise_dbt(node.contract.document, reads=[])
+    timings = release_timings()
+
+    failure = invalid_contract_reads(node, [], POSTGRES_SYSTEM, timings=timings)
+
+    assert failure == FailedNode(
+        node_id="analytics.governed", kind=ParseFailureKind.INVALID_CONTRACT, service="cases",
+        file_path="models/tagged/governed.sql", node_type=NodeType.DBT_MODEL,
+        detail=(
+            'reads: "a.b.c" cannot be listed as <schema>.<table>: a name holds a dot; '
+            'reads: "analytics.a table" cannot be listed as <schema>.<table>: a name holds whitespace; '
+            'reads: "orders" cannot be listed as <schema>.<table>: the entry has no dot'))
+    assert timings.contract_failures == {("normalise", "value"): 3}
+
+
+def test_a_declared_read_is_checked_even_when_it_names_a_system_relation():
+    """normalise_dbt lists every declared read, system relation or not, so the check does too."""
+    failure = invalid_contract_reads(_with_declared_reads("pg_catalog.a b"), [], POSTGRES_SYSTEM)
+
+    assert failure.detail == 'reads: "pg_catalog.a b" cannot be listed as <schema>.<table>: a name holds whitespace'
+
+
+def test_the_unlistable_sql_tables_of_a_dbt_node_come_before_its_unlistable_declared_reads():
+    timings = release_timings()
+
+    failure = invalid_contract_reads(
+        _with_declared_reads("a b.c"), [TableRef("analytics", "d e", "")], POSTGRES_SYSTEM, timings=timings)
+
+    assert failure.detail == (
+        'compiled SQL: table analytics."d e" cannot be listed as <schema>.<table>: a name holds whitespace; '
+        'reads: "a b.c" cannot be listed as <schema>.<table>: a name holds whitespace')
+    assert timings.contract_failures == {("normalise", "value"): 2}
+
+
+def test_a_node_with_listable_declared_reads_and_tables_has_no_failure():
+    assert invalid_contract_reads(
+        _with_declared_reads("analytics.orders", "Raw.Events"), [TableRef("analytics", "orders", "")],
+        POSTGRES_SYSTEM) is None
+
+
+@pytest.mark.parametrize(
+    "entry",
+    list(dict.fromkeys(
+        [f"{schema}.{table}" for schema, table in _TABLE_CASES]
+        + ["orders", "", ".", "..", "a..b", ".t", "s.", "a.b.c.d", "Analytics.Orders", "a b", "a.b\u2028", "x\x85.y"])),
+    ids=repr)
+def test_a_declared_read_passes_the_check_exactly_when_the_library_lists_it(entry):
+    """The check is the library's rule for a listed table, applied to the entry as written: it
+    refuses an entry exactly when normalise_dbt does, so an entry it passes never reaches a
+    HashInputError and an entry it refuses is one the library refuses."""
+    node = _with_declared_reads(entry)
+
+    library_accepts = _library_lists(lambda tables: normalise_dbt(node.contract.document, reads=tables), [])
+    failure = invalid_contract_reads(node, [], POSTGRES_SYSTEM)
+
+    assert (failure is None) == library_accepts
+    if failure is not None:
+        assert failure.detail.startswith("reads: ")
+
+
 # --- the bundle -----------------------------------------------------------------
 
-def _stored(unique_id: str, *, service: str = "service-py") -> StoredContract:
+def _stored(unique_id: str, *, service: str = "service-py", family: str = "python") -> StoredContract:
     return StoredContract(
-        unique_id=unique_id, service=service, contract_hash="sha256:" + "a" * 64, content_hash="sha256:" + "b" * 64,
+        unique_id=unique_id, family=family, service=service, contract_hash="sha256:" + "a" * 64, content_hash="sha256:" + "b" * 64,
         source_path=f"contracts/{unique_id.split('.')[1]}.odcs.yaml", source_sha256="c" * 64,
         document={"id": unique_id})
 
 
 def _bundle(contracts, **overrides):
     args = {
-        "tenant_id": "default", "release_id": "rel-1", "library_version": "0.2.0", "contracts": contracts,
+        "tenant_id": "default", "release_id": "rel-1", "library_version": "0.3.1", "contracts": contracts,
         "provenance": {}, "timings": {"stages_ms": {}, "nodes": {}, "columns": {}, "validation_cache": {}},
     }
     args.update(overrides)
     return build_contract_bundle(**args)
 
 
-def test_a_release_with_no_python_contract_has_an_empty_bundle():
+@pytest.mark.parametrize("families, want", [
+    ([], {}),
+    (["python", "python"], {"python": 2}),
+    (["python", "dbt", "dbt"], {"dbt": 2, "python": 1}),
+    (["dbt", "python", "dbt"], {"dbt": 2, "python": 1}),
+], ids=["none", "one-family", "both", "both-other-order"])
+def test_contracts_by_family_counts_each_family_and_leaves_out_one_with_none(families, want):
+    contracts = [_stored(f"analytics.t{i}", family=family) for i, family in enumerate(families)]
+
+    got = contracts_by_family(contracts)
+
+    assert got == want
+    assert list(got) == sorted(got)
+    assert _bundle(contracts)["summary"]["by_family"] == got
+
+
+def test_a_release_with_no_contract_has_an_empty_bundle():
     doc = _bundle([])
 
     assert doc["contracts"] == {}
@@ -358,9 +653,9 @@ def test_the_bundle_keys_its_contracts_by_unique_id_and_counts_them():
 
 
 def test_the_bundle_names_the_library_and_the_schema_it_was_checked_against():
-    doc = _bundle([], library_version="0.2.0")
+    doc = _bundle([], library_version="0.3.1")
 
-    assert doc["continuo_contracts"] == "0.2.0"
+    assert doc["continuo_contracts"] == "0.3.1"
     assert doc["odcs_schema_sha256"] == SCHEMA_SHA256
     assert (doc["tenant_id"], doc["release_id"]) == ("default", "rel-1")
 
@@ -377,6 +672,57 @@ def test_two_contracts_of_one_unique_id_reaching_the_builder_are_a_bug_not_an_ov
     contracts of one id never reach the builder; if they did, it refuses them."""
     with pytest.raises(ValueError, match="analytics.a"):
         _bundle([_stored("analytics.a", service="s1"), _stored("analytics.a", service="s2")])
+
+
+def test_the_bundle_counts_both_families():
+    governed = _dbt_node("governed")
+    kpis = _kpis_node()
+    contracts = store_contracts([kpis, governed], {}, POSTGRES_SYSTEM)
+
+    doc = _bundle(contracts)
+
+    assert doc["summary"] == {"contracts": 2, "by_family": {"dbt": 1, "python": 1}, "invalid": 0, "skipped": 0}
+    [dbt_contract] = [c for c in contracts if c.family == "dbt"]
+    assert doc["contracts"]["analytics.governed"] == {
+        "family": "dbt", "service": "cases", "contract_hash": dbt_contract.contract_hash,
+        "content_hash": governed.content_hash,
+        "source": {"path": "models/tagged/governed.sql", "sha256": governed.contract.source_sha256},
+        "document": dbt_contract.document}
+    assert doc["contracts"]["analytics.py_daily_kpis"]["family"] == "python"
+    assert doc["contracts"]["analytics.py_daily_kpis"]["source"]["path"] == "contracts/py_daily_kpis.odcs.yaml"
+
+
+def test_a_bundle_of_one_family_counts_only_that_family():
+    dbt_only = _bundle(store_contracts([_dbt_node("governed"), _dbt_node("dormant_model")], {}, POSTGRES_SYSTEM))
+    python_only = _bundle(store_contracts([_kpis_node()], {}, POSTGRES_SYSTEM))
+
+    assert dbt_only["summary"]["by_family"] == {"dbt": 2}
+    assert python_only["summary"]["by_family"] == {"python": 1}
+
+
+def test_a_contract_of_an_unknown_family_does_not_reach_the_bundle():
+    with pytest.raises(ValueError, match="plsql"):
+        _bundle([_stored("analytics.a", family="plsql")])
+
+
+@pytest.mark.parametrize("other_service", ["cases", "billing"], ids=["one-service", "two-services"])
+def test_two_dbt_nodes_with_one_contract_id_leave_the_bundle(other_service):
+    """An id two dbt nodes declare, in one service or two, is release-controller's duplicate_table to
+    reject: shared_unique_ids names it, the caller leaves both contracts out and the bundle holds only
+    the other nodes'. A builder given both contracts refuses them."""
+    first = _dbt_node("governed")
+    second = _dbt_node("governed", edit=lambda node: node.__setitem__("fqn", [other_service, "tagged", "governed"]))
+    unrelated = _dbt_node("dormant_model")
+    nodes = [first, second, unrelated]
+
+    shared = shared_unique_ids(nodes)
+
+    assert shared == {"analytics.governed": sorted(["cases", other_service])}
+    bundle = _bundle(store_contracts([node for node in nodes if node.unique_id not in shared], {}, POSTGRES_SYSTEM))
+    assert sorted(bundle["contracts"]) == ["analytics.dormant"]
+    assert bundle["summary"] == {"contracts": 1, "by_family": {"dbt": 1}, "invalid": 0, "skipped": 0}
+    with pytest.raises(ValueError, match="analytics.governed"):
+        _bundle(store_contracts([first, second], {}, POSTGRES_SYSTEM))
 
 
 def test_shared_unique_ids_names_each_id_two_services_declare_with_its_services_in_order():

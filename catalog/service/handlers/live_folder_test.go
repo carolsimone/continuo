@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -139,6 +141,24 @@ func (fakeRenderer) Render(doc map[string]any) ([]byte, error) {
 
 var _ ports.PublishedRenderer = fakeRenderer{}
 
+// schemaRenderer renders a published contract as one line naming its id and
+// the schema of its servers entry, "-" when it has no entry or its entry names
+// no schema.
+type schemaRenderer struct{}
+
+func (schemaRenderer) Render(doc map[string]any) ([]byte, error) {
+	schema := "-"
+	if servers, _ := doc["servers"].([]any); len(servers) > 0 {
+		entry, _ := servers[0].(map[string]any)
+		if s, ok := entry["schema"].(string); ok {
+			schema = s
+		}
+	}
+	return fmt.Appendf(nil, "%v schema=%s", doc["id"], schema), nil
+}
+
+var _ ports.PublishedRenderer = schemaRenderer{}
+
 // ── fakes: ports.LiveFolderLease and ports.LiveFolderState ───────────────────
 
 // fakeLiveLease holds one tenant's live-folder lease and state. heldElsewhere
@@ -233,6 +253,48 @@ func liveContract(uniqueID string, version int64, hash string) contractversion.L
 	}
 }
 
+// dbtContract is uniqueID's current contract, a dbt node of kind (dbt-model,
+// dbt-seed or dbt-snapshot) built as materialized, in the form dbt.generate
+// stores: one schema object whose physicalType is "view" or "ephemeral" for
+// those two materializations and "table" for every other, the node's kind and
+// materialization as continuo custom properties, and the model's file as its
+// source.
+func dbtContract(uniqueID string, version int64, hash, kind, materialized string) contractversion.LiveContract {
+	table := uniqueID[strings.Index(uniqueID, ".")+1:]
+	physicalType := "table"
+	if materialized == "view" || materialized == "ephemeral" {
+		physicalType = materialized
+	}
+	path := "models/" + table + ".sql"
+	return contractversion.LiveContract{
+		UniqueID:     uniqueID,
+		Version:      version,
+		ContractHash: hash,
+		Document: map[string]any{
+			"apiVersion": "v3.2.0", "kind": "DataContract", "id": uniqueID, "name": table,
+			"version": "0", "status": "active",
+			"team": map[string]any{"name": "team-a"},
+			"tags": []any{"daily"},
+			"customProperties": []any{
+				map[string]any{"vendor": "continuo", "property": "kind", "value": kind},
+				map[string]any{"vendor": "continuo", "property": "filePath", "value": path},
+				map[string]any{"vendor": "continuo", "property": "materialization", "value": map[string]any{"materialized": materialized}},
+			},
+			"schema": []any{map[string]any{
+				"name": table, "physicalName": table, "physicalType": physicalType,
+				"properties": []any{map[string]any{"name": "id", "logicalType": "integer", "physicalType": "integer"}},
+			}},
+		},
+		Provenance: contractversion.Provenance{ContractHash: hash, ReleaseID: "rel-1", PromotionSeq: 3, SourcePath: path},
+	}
+}
+
+// declaredIn is c as the contract of a node whose declared schema is schema.
+func declaredIn(c contractversion.LiveContract, schema string) contractversion.LiveContract {
+	c.PhysicalSchema = schema
+	return c
+}
+
 // ephemeralContract is uniqueID's contract for an ephemeral model.
 func ephemeralContract(uniqueID string) contractversion.LiveContract {
 	c := liveContract(uniqueID, 1, "sha256:eph")
@@ -273,6 +335,14 @@ func (f *liveFolderFixture) rewrite(seq int64) error {
 	settings, err := f.folder.Rewrite(context.Background(), livePromotion(seq))
 	f.reported = append(f.reported, settings)
 	return err
+}
+
+// folderWith replaces the fixture's folder with one over the same fakes that
+// renders with renderer and publishes with server.
+func (f *liveFolderFixture) folderWith(renderer ports.PublishedRenderer, server *contractversion.Server) {
+	f.settings = fingerprintOf(server)
+	f.folder = handlers.NewLiveFolder(f.reader, f.store, renderer, f.lease, f.lease, f.metrics,
+		server, func() time.Time { return liveClock }, newTestLogger())
 }
 
 func newLiveFolderFixture(live ...contractversion.LiveContract) *liveFolderFixture {
@@ -379,6 +449,177 @@ func TestLiveRewrite_SkipsAnEphemeralContract(t *testing.T) {
 	assert.Equal(t, []string{"index", "put analytics.table", "delete analytics.was_table", "index"}, f.store.writes(),
 		"an interim index lists the new file before it is put")
 	assert.Equal(t, []ports.LiveIndexFile{{UniqueID: "analytics.table", Version: 1, ContractHash: "sha256:t1"}}, f.store.index.Files)
+}
+
+// A promotion's dbt contracts are published like any other: a table model, a
+// view, a seed and a snapshot each get their file and their index entry, and an
+// ephemeral model, which creates no table, gets neither.
+func TestLiveRewrite_WritesADbtContractButNotAnEphemeralOne(t *testing.T) {
+	f := newLiveFolderFixture(
+		dbtContract("analytics.orders", 2, "sha256:o2", "dbt-model", "table"),
+		dbtContract("analytics.orders_view", 1, "sha256:v1", "dbt-model", "view"),
+		dbtContract("analytics.countries", 1, "sha256:c1", "dbt-seed", "seed"),
+		dbtContract("analytics.orders_snapshot", 1, "sha256:s1", "dbt-snapshot", "snapshot"),
+		dbtContract("analytics.stg_orders", 1, "sha256:e1", "dbt-model", "ephemeral"),
+	)
+
+	require.NoError(t, f.rewrite(3))
+
+	assert.Equal(t, []string{"analytics.countries", "analytics.orders", "analytics.orders_snapshot", "analytics.orders_view"},
+		slices.Sorted(maps.Keys(f.store.files)), "every dbt contract but the ephemeral model's has its file")
+	assert.Equal(t, "analytics.orders v2 servers=true", string(f.store.files["analytics.orders"]),
+		"a dbt contract is published with the counter and the install's server, as any contract is")
+	assert.Equal(t, []ports.LiveIndexFile{
+		{UniqueID: "analytics.countries", Version: 1, ContractHash: "sha256:c1"},
+		{UniqueID: "analytics.orders", Version: 2, ContractHash: "sha256:o2"},
+		{UniqueID: "analytics.orders_snapshot", Version: 1, ContractHash: "sha256:s1"},
+		{UniqueID: "analytics.orders_view", Version: 1, ContractHash: "sha256:v1"},
+	}, f.store.index.Files, "the index lists the files, sorted, and not the ephemeral model")
+	assert.NotContains(t, f.store.writes(), "put analytics.stg_orders")
+}
+
+// A file's servers entry names the schema the node is declared in, the one
+// continuo and dbt build in, and not the schema part of the contract id, which
+// is lower case. The index keeps the spelling only where it differs from the
+// id's schema, so a node declared in a lower-case schema, or in none the graph
+// knows yet, has the entry it always had.
+func TestLiveRewrite_AServersEntryNamesTheNodesDeclaredSchema(t *testing.T) {
+	f := newLiveFolderFixture(
+		declaredIn(liveContract("analytics.quoted", 1, "sha256:q1"), "Analytics"),
+		declaredIn(liveContract("analytics.lower", 1, "sha256:l1"), "analytics"),
+		liveContract("analytics.unknown", 1, "sha256:u1"),
+	)
+	f.folderWith(schemaRenderer{}, liveServer)
+
+	require.NoError(t, f.rewrite(3))
+
+	assert.Equal(t, "analytics.quoted schema=Analytics", string(f.store.files["analytics.quoted"]),
+		"the entry names the declared spelling and the id keeps its own")
+	assert.Equal(t, "analytics.lower schema=analytics", string(f.store.files["analytics.lower"]))
+	assert.Equal(t, "analytics.unknown schema=analytics", string(f.store.files["analytics.unknown"]),
+		"a node with no declared schema names the id's schema")
+	assert.Equal(t, []ports.LiveIndexFile{
+		{UniqueID: "analytics.lower", Version: 1, ContractHash: "sha256:l1"},
+		{UniqueID: "analytics.quoted", Version: 1, ContractHash: "sha256:q1", PhysicalSchema: "Analytics"},
+		{UniqueID: "analytics.unknown", Version: 1, ContractHash: "sha256:u1"},
+	}, f.store.index.Files)
+}
+
+// A change of the declared schema's case alone leaves the contract's version
+// and hash as they are and changes the file, so the file is put again; an
+// unchanged declared schema puts nothing.
+func TestLiveRewrite_ACaseOnlyChangeOfTheDeclaredSchemaPutsTheFileAgain(t *testing.T) {
+	const id = "analytics.orders"
+	f := newLiveFolderFixture(declaredIn(liveContract(id, 1, "sha256:o1"), "analytics"))
+	f.folderWith(schemaRenderer{}, liveServer)
+	require.NoError(t, f.rewrite(3))
+	require.Equal(t, id+" schema=analytics", string(f.store.files[id]))
+
+	f.reader.live = []contractversion.LiveContract{declaredIn(liveContract(id, 1, "sha256:o1"), "Analytics")}
+	before := len(f.store.writes())
+	require.NoError(t, f.rewrite(4))
+
+	assert.Equal(t, []string{"index", "put " + id, "index"}, f.store.writes()[before:],
+		"the file is put between an interim and the final index")
+	assert.Equal(t, id+" schema=Analytics", string(f.store.files[id]))
+	assert.Equal(t, []ports.LiveIndexFile{{UniqueID: id, Version: 1, ContractHash: "sha256:o1", PhysicalSchema: "Analytics"}}, f.store.index.Files)
+
+	before = len(f.store.writes())
+	require.NoError(t, f.rewrite(5))
+	assert.Equal(t, []string{"index"}, f.store.writes()[before:], "the same declared schema puts no file")
+
+	f.reader.live = []contractversion.LiveContract{declaredIn(liveContract(id, 1, "sha256:o1"), "analytics")}
+	before = len(f.store.writes())
+	require.NoError(t, f.rewrite(6))
+	assert.Equal(t, []string{"index", "put " + id, "index"}, f.store.writes()[before:], "the case changing back puts it again")
+	assert.Equal(t, id+" schema=analytics", string(f.store.files[id]))
+	assert.Equal(t, []ports.LiveIndexFile{{UniqueID: id, Version: 1, ContractHash: "sha256:o1"}}, f.store.index.Files)
+}
+
+// A node the contracts group created before the topology swap has no declared
+// schema, and the swap that gives it one never rewrites the folder: the next
+// promotion's rewrite puts the file whose entry now names a different schema.
+func TestLiveRewrite_ADeclaredSchemaThatArrivesAfterTheFirstRewriteIsPublishedByTheNext(t *testing.T) {
+	const id = "analytics.orders"
+	f := newLiveFolderFixture(liveContract(id, 1, "sha256:o1"))
+	f.folderWith(schemaRenderer{}, liveServer)
+	require.NoError(t, f.rewrite(3))
+	require.Equal(t, id+" schema=analytics", string(f.store.files[id]))
+
+	f.reader.live = []contractversion.LiveContract{declaredIn(liveContract(id, 1, "sha256:o1"), "Analytics")}
+	require.NoError(t, f.rewrite(4))
+
+	assert.Equal(t, id+" schema=Analytics", string(f.store.files[id]))
+}
+
+// An index whose entries carry no physical schema was written for files whose
+// servers entry names the id's schema. Such an entry is current for a node
+// whose declared schema agrees with its id's or is not known, so the first
+// rewrite after an upgrade puts none of those files, and stale for a node
+// declared in a schema that differs, so that rewrite puts its file.
+func TestLiveRewrite_AnIndexEntryWithNoPhysicalSchemaIsCurrentForALowerCaseSchema(t *testing.T) {
+	f := newLiveFolderFixture(
+		declaredIn(liveContract("analytics.lower", 1, "sha256:l1"), "analytics"),
+		liveContract("analytics.unknown", 1, "sha256:u1"),
+		declaredIn(liveContract("analytics.quoted", 1, "sha256:q1"), "Analytics"),
+	)
+	f.folderWith(schemaRenderer{}, liveServer)
+	f.listed(2,
+		ports.LiveIndexFile{UniqueID: "analytics.lower", Version: 1, ContractHash: "sha256:l1"},
+		ports.LiveIndexFile{UniqueID: "analytics.quoted", Version: 1, ContractHash: "sha256:q1"},
+		ports.LiveIndexFile{UniqueID: "analytics.unknown", Version: 1, ContractHash: "sha256:u1"},
+	)
+
+	require.NoError(t, f.rewrite(3))
+
+	assert.Equal(t, []string{"index", "put analytics.quoted", "index"}, f.store.writes(),
+		"only the file that named the wrong schema is put")
+	assert.Equal(t, "analytics.quoted schema=Analytics", string(f.store.files["analytics.quoted"]))
+	assert.Equal(t, "old", string(f.store.files["analytics.lower"]))
+	assert.Equal(t, "old", string(f.store.files["analytics.unknown"]))
+
+	f.store.ops = nil
+	require.NoError(t, f.rewrite(4))
+	assert.Equal(t, []string{"index"}, f.store.writes(), "the next rewrite finds every file current")
+}
+
+// Without a servers entry the declared schema shows in no file, so changing it
+// puts nothing and the index keeps no spelling.
+func TestLiveRewrite_TheDeclaredSchemaOfAFileWithNoServersEntryIsNotKept(t *testing.T) {
+	const id = "analytics.orders"
+	f := newLiveFolderFixture(declaredIn(liveContract(id, 1, "sha256:o1"), "analytics"))
+	f.folderWith(schemaRenderer{}, nil)
+	require.NoError(t, f.rewrite(3))
+	require.Equal(t, id+" schema=-", string(f.store.files[id]))
+
+	f.reader.live = []contractversion.LiveContract{declaredIn(liveContract(id, 1, "sha256:o1"), "Analytics")}
+	before := len(f.store.writes())
+	require.NoError(t, f.rewrite(4))
+
+	assert.Equal(t, []string{"index"}, f.store.writes()[before:])
+	assert.Equal(t, []ports.LiveIndexFile{{UniqueID: id, Version: 1, ContractHash: "sha256:o1"}}, f.store.index.Files)
+}
+
+// A rewrite of every file, for changed settings, names each file's declared
+// schema, the index keeping the spelling of the files that differ.
+func TestLiveRewrite_ChangedSettingsPutEveryFileWithItsDeclaredSchema(t *testing.T) {
+	f := newLiveFolderFixture(
+		declaredIn(liveContract("analytics.quoted", 1, "sha256:q1"), "Analytics"),
+		liveContract("analytics.plain", 1, "sha256:p1"),
+	)
+	f.folderWith(schemaRenderer{}, liveServer)
+	f.listed(2,
+		ports.LiveIndexFile{UniqueID: "analytics.plain", Version: 1, ContractHash: "sha256:p1"},
+		ports.LiveIndexFile{UniqueID: "analytics.quoted", Version: 1, ContractHash: "sha256:q1", PhysicalSchema: "Analytics"},
+	)
+	f.store.index.SettingsSHA256 = "settings-of-another-install"
+
+	require.NoError(t, f.rewrite(3))
+
+	assert.Equal(t, "analytics.quoted schema=Analytics", string(f.store.files["analytics.quoted"]))
+	assert.Equal(t, "analytics.plain schema=analytics", string(f.store.files["analytics.plain"]))
+	assert.Equal(t, "Analytics", f.store.index.Files[1].PhysicalSchema)
+	assert.Empty(t, f.store.index.Files[0].PhysicalSchema)
 }
 
 // A promotion at or below the folder's watermark rewrites nothing and takes

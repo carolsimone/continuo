@@ -50,13 +50,18 @@ const (
 // not an ephemeral model's, and the folder's index, whose final form is
 // written last. The nodes of
 // a promotion are those whose contract watermark is its seq: every bundle
-// names every python-odcs node of the release, so the set never waits for the
+// names every node of the release that has a contract (each dbt model, seed
+// and snapshot and each python-odcs node), so the set never waits for the
 // topology swap, takes a node the release added at once and drops a node the
 // release removed at once. A file's bytes depend only on the node's current
-// contract version and the publishing settings, so a rewrite puts only the
-// files whose version or contract hash differs from the index, or every file
-// when the index was written with other settings, and deletes the files of
-// the nodes the index lists that are no longer published.
+// contract version, the schema the node is declared in and the publishing
+// settings, so a rewrite puts only the files whose version, contract hash or
+// schema differs from the index, or every file when the index was written with
+// other settings, and deletes the files of the nodes the index lists that are
+// no longer published. The schema reaches the file as its servers entry's
+// schema, which is the node's declared spelling, not the lower-case schema of
+// its contract id; the index keeps it only for a file whose entry names a
+// schema other than the id's (see indexedSchema).
 //
 // Every rewrite of a tenant holds the tenant's live-folder lease, so two
 // rewrites never interleave their writes, and reads the live contracts only
@@ -382,7 +387,9 @@ func (l *LiveFolder) write(
 		if contractversion.IsEphemeral(c.Document) {
 			continue
 		}
-		file := ports.LiveIndexFile{UniqueID: c.UniqueID, Version: c.Version, ContractHash: c.ContractHash}
+		file := ports.LiveIndexFile{
+			UniqueID: c.UniqueID, Version: c.Version, ContractHash: c.ContractHash, PhysicalSchema: l.indexedSchema(c),
+		}
 		files = append(files, file)
 		published[c.UniqueID] = true
 		if old, ok := listed[c.UniqueID]; every || !ok || old != file {
@@ -404,7 +411,7 @@ func (l *LiveFolder) write(
 	}
 	if err := l.each(ctx, len(puts), ports.LiveWritePut, func(ctx context.Context, i int) error {
 		c := puts[i]
-		body, err := l.renderer.Render(contractversion.Published(c.Document, c.Version, l.server, c.Provenance))
+		body, err := l.renderer.Render(contractversion.Published(c.Document, c.Version, l.server, c.PhysicalSchema, c.Provenance))
 		if err != nil {
 			return fmt.Errorf("render the live contract of %s: %w", c.UniqueID, err)
 		}
@@ -435,6 +442,27 @@ func (l *LiveFolder) write(
 		"tenant_id", tenantID, "promotion_seq", promotionSeq, "release_id", releaseID,
 		"files", len(files), "puts", len(puts), "deletes", len(deletes))
 	return nil
+}
+
+// indexedSchema is the PhysicalSchema the index records for c's file: the
+// schema its servers entry names when that is not the schema part of its
+// contract id, and "" when it is, or when the file has no servers entry,
+// whatever the node's declared schema, as the settings fingerprint ignores the
+// settings a file does not show. An index entry that records no schema stands
+// for a file whose entry names the id's schema, so it is current for a node
+// whose declared schema agrees with its id's or is not known yet, and stale for
+// a node declared in another spelling. A file is put again when the schema its
+// entry names changes, a change of case alone included, and for no other
+// reason.
+func (l *LiveFolder) indexedSchema(c contractversion.LiveContract) string {
+	if l.server == nil || l.server.Host == "" {
+		return ""
+	}
+	schema := contractversion.ServerSchema(c.Document, c.PhysicalSchema)
+	if schema == contractversion.ServerSchema(c.Document, "") {
+		return ""
+	}
+	return schema
 }
 
 // putInterimIndex puts the interim index write describes when puts or

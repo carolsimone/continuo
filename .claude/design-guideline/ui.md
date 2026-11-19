@@ -1738,8 +1738,11 @@ one step per recorded transition, in order, joined by connectors.
                               flex-shrink: 0; }
 .release-timeline__step:first-child .release-timeline__connector { display: none; }
 .release-timeline__body     { display: flex; flex-direction: column; gap: 4px; }
-.release-timeline__at       { font-size: 11.5px; color: #64748b; white-space: nowrap;
+.release-timeline__at,
+.release-timeline__line     { font-size: 11.5px; color: #64748b;
                               font-variant-numeric: tabular-nums; }
+.release-timeline__at       { white-space: nowrap; }
+.release-timeline__line     { max-width: 32ch; }
 .release-timeline__step--upcoming .pill-sm { background: transparent; color: #94a3b8;
                               border: 1px dashed #cbd5e1; }
 .release-timeline__step--upcoming .release-timeline__connector { height: 0; background: transparent;
@@ -1762,6 +1765,18 @@ Rules:
   will silently skip. A ghost's pill carries a visually hidden
   " (upcoming)" (`.sr-only`) so a screen reader does not hear it as a
   completed step. A finished run has no ghosts.
+- A step may carry facts of its own under its timestamp, one
+  `.release-timeline__line` each (muted, and wrapping inside `32ch` so a long
+  line does not push the later steps out of view). The `parsing` step of a
+  release whose parse reported its timings carries two, from `parseLines`:
+  `parsing 2.1 s` and `generating contracts 0.6 s · 48 contracts (dbt 45,
+  python 3)`. Seconds have one decimal, rounded half up, and a long parse
+  stays in seconds (`125.4 s`). The count follows the parse: a family with no
+  contracts is left out of the parentheses, a release with none says
+  `0 contracts` with no parentheses, one contract is `1 contract`, and a parse
+  that reported its durations but no count leaves the count out. A release
+  whose parse reported nothing has no such line, and a ghost step never has
+  one.
 - The list scrolls horizontally inside its own container on narrow
   viewports; it never wraps and never scrolls the page sideways.
 

@@ -5,9 +5,11 @@
       "name": "users",
       "schema": "test_schema",
       "fqn": ["service-1", "users"],
+      "original_file_path": "models/users.sql",
       "tags": ["daily"],
       "resource_type": "model",
       "config": {
+        "materialized": "table",
         "meta": { "owner": "team-a", "criticality": "CORE" }
       },
       "compiled_code": "SELECT 1 AS id",

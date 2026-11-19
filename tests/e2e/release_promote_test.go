@@ -75,9 +75,10 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	}
 
 	// additive polls: assertValidationRequestedNodes(8m) + waitForReleasePromoted(10m)
-	// + waitForTopologySwap(2m) + waitForNodeVersion(2m)
-	// + 2x(verifySchedulerSucceeded 2m + waitForParseCache 3m) = 32m.
-	ctx, cancel := context.WithTimeout(context.Background(), 32*time.Minute)
+	// + waitForTopologySwap(2m) + waitForNodeVersion(2m) + waitForLiveIndexOf(2m)
+	// + 2x(verifySchedulerSucceeded 2m + waitForParseCache 3m) = 34m, and 2m
+	// for building the CLI.
+	ctx, cancel := context.WithTimeout(context.Background(), 36*time.Minute)
 	defer cancel()
 
 	clients := setupClients(t, ctx)
@@ -143,7 +144,7 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	// 6b. topology-controller wrote the release's topology once, as an artifact;
 	//     the run references it by URI and checksum, and the artifact carries the
 	//     image tag the release was submitted with.
-	assertCandidateTopologyArtifact(t, ctx, clients, releaseID, probeUniqueID, changedImageTag)
+	probeNode := assertCandidateTopologyArtifact(t, ctx, clients, releaseID, probeUniqueID, changedImageTag)
 
 	// 7. Catalog must have swapped the Neo4j topology to this release.
 	//    The swap is asynchronous relative to promotion, so poll.
@@ -210,6 +211,11 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 		"GetNodeVersions(%s) must include a version whose content_hash (%s) matches :Node.content_hash",
 		probeUniqueID, tableHash)
 	t.Logf("✅ GetNodeVersions surfaces the promoted version (content_hash=%s)", tableHash)
+
+	// 7d. rel_probe is a dbt node the release keeps, so the release's contract
+	//     bundle holds its dbt contract, whose schedule is its topology node's.
+	//     Catalog publishes it, and `continuo node contract` prints it.
+	assertDbtNodeContract(t, ctx, clients, releaseID, probeNode)
 
 	// 8. The promoted release must surface in the history list and carry per-node
 	//    validation results (with a dbt log URI) retrievable through the UI BFF.

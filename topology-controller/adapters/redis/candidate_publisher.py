@@ -3,10 +3,12 @@
 Each entry carries the envelope (see adapters/redis/envelope.py) and a payload:
 publish_ok the references to the release's topology artifact (its URI, the
 SHA-256 of its stored bytes and its node count) and contract bundle (its URI and
-the SHA-256 of its stored bytes), never the nodes or contracts themselves;
-publish_failed the failure kind, a summary detail and the per-node failures.
-Both carry `continuo_contracts`, the version of the continuo-contracts library
-this process checks and hashes contracts with. release-controller decodes both
+the SHA-256 of its stored bytes), never the nodes or contracts themselves, and
+the number of contracts the bundle holds by family; publish_failed the failure
+kind, a summary detail and the per-node failures. Both carry
+`continuo_contracts`, the version of the continuo-contracts library this process
+checks and hashes contracts with, and the parse's two durations in milliseconds:
+`parse_ms` and `contracts_ms`. release-controller decodes both
 with pkg/events.DecodeManifestLoadedCandidate, and
 tests/fixtures/manifest_loaded_candidate_v2_{ok,failed}.json pin the two sides
 to the same entries.
@@ -14,7 +16,7 @@ to the same entries.
 import logging
 import re
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 
 from adapters.redis.keys import xadd_existing
@@ -65,6 +67,9 @@ class CandidateManifestPublisher:
         artifact: TopologyArtifactRef,
         code_bundle_uri: str,
         contract_bundle: ContractBundleRef,
+        parse_ms: int,
+        contracts_ms: int,
+        contracts_by_family: Mapping[str, int],
     ) -> None:
         self._xadd(release_id, {
             "release_id": release_id,
@@ -76,6 +81,9 @@ class CandidateManifestPublisher:
             "contract_bundle_uri": contract_bundle.uri,
             "contract_bundle_sha256": contract_bundle.sha256,
             "continuo_contracts": self._continuo_contracts,
+            "parse_ms": parse_ms,
+            "contracts_ms": contracts_ms,
+            "contracts_by_family": dict(contracts_by_family),
         })
         logger.info(
             "Published manifest.loaded.candidate ok",
@@ -93,12 +101,17 @@ class CandidateManifestPublisher:
         failure_kind: ParseFailureKind,
         detail: str,
         failed_nodes: Sequence[FailedNode] = (),
+        *,
+        parse_ms: int,
+        contracts_ms: int,
     ) -> None:
         body = {
             "release_id": release_id,
             "status": "failed",
             "failure_kind": failure_kind.value,
             "continuo_contracts": self._continuo_contracts,
+            "parse_ms": parse_ms,
+            "contracts_ms": contracts_ms,
             "detail": _plain(detail),
             "failed_nodes": [
                 {

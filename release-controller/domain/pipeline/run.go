@@ -146,6 +146,7 @@ type Run struct {
 	codeBundleURI     string
 	contractBundle    release.ContractBundleRef
 	continuoContracts string
+	parseTimings      release.ParseTimings
 	createdAt         time.Time
 	transitions       []Transition
 	notices           []release.Notice
@@ -375,6 +376,15 @@ func (r *Run) ContinuoContracts() string { return r.continuoContracts }
 // names.
 func (r *Run) SetContinuoContracts(version string) { r.continuoContracts = version }
 
+// ParseTimings returns what the parse result reported about how long the parse
+// took and how many contracts it wrote: the zero value until the parse ends, and
+// after it when its producer reports none.
+func (r *Run) ParseTimings() release.ParseTimings { return r.parseTimings }
+
+// SetParseTimings records the timings the parse result carries, whether the
+// parse ended ok or failed.
+func (r *Run) SetParseTimings(t release.ParseTimings) { r.parseTimings = t }
+
 // SetRejectionPayload records the exact release.rejected:v1 payload a
 // candidate emitted, so a later remediation round can replay it. A
 // verification emits no such payload; the call is a no-op for it.
@@ -579,10 +589,12 @@ type RehydrateInput struct {
 	FailDetail        string
 	FailingNodes      []string
 	CodeBundleURI     string
-	// CandidateContractBundle and ContinuoContracts are the contract bundle
-	// reference and the continuo-contracts version the parse recorded.
+	// CandidateContractBundle, ContinuoContracts and ParseTimings are the contract
+	// bundle reference, the continuo-contracts version and the timings the parse
+	// recorded.
 	CandidateContractBundle release.ContractBundleRef
 	ContinuoContracts       string
+	ParseTimings            release.ParseTimings
 	CreatedAt               time.Time
 	Transitions             []Transition
 	Notices                 []release.Notice
@@ -617,6 +629,7 @@ func Rehydrate(in RehydrateInput) *Run {
 		codeBundleURI:     in.CodeBundleURI,
 		contractBundle:    in.CandidateContractBundle,
 		continuoContracts: in.ContinuoContracts,
+		parseTimings:      in.ParseTimings,
 		createdAt:         in.CreatedAt,
 		transitions:       in.Transitions,
 		notices:           in.Notices,

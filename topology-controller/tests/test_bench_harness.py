@@ -111,8 +111,11 @@ def test_the_handler_writes_one_contract_bundle_and_keeps_it_on_the_next_pass():
         assert publisher.ok, publisher.failure
     document = json.loads(gzip.decompress(store.get_object(Bucket="bench", Key=key)["Body"].read()))
     assert document["release_id"] == estate.release_id
-    assert sorted(document["contracts"]) == [f"py.py_{position:05d}" for position in range(estate.python_nodes)]
-    assert document["summary"]["contracts"] == estate.python_nodes
+    python = sorted(uid for uid, contract in document["contracts"].items() if contract["family"] == "python")
+    assert python == [f"py.py_{position:05d}" for position in range(estate.python_nodes)]
+    dbt_contracts = estate.models + estate.seeds
+    assert document["summary"]["contracts"] == estate.python_nodes + dbt_contracts
+    assert document["summary"]["by_family"] == {"dbt": dbt_contracts, "python": estate.python_nodes}
     assert document["provenance"] == {
         "svc-py": {"continuo_python_runtime": "0.13.0", "image_packages": {"pyarrow": "26.0.0"}},
     }

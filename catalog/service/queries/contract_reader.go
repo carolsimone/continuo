@@ -10,9 +10,8 @@ import (
 // method reads one tenant's graph only. A node's history is its promotion
 // edges, one per change of its contract, each numbered by the node's counter.
 // A retired node, and a node the newest promotion the live folder recorded did
-// not carry (its service no longer releases ODCS contracts), keeps its history
-// and its pointer, but none of its versions is current and it has no current
-// contract.
+// not carry (the release dropped it), keeps its history and its pointer, but
+// none of its versions is current and it has no current contract.
 type ContractReader interface {
 	// Current returns the version the live node's pointer names, with its
 	// stored document. A node with no current contract returns
@@ -29,9 +28,10 @@ type ContractReader interface {
 	// Live returns the current contract of every node whose contract
 	// watermark is promotionSeq, sorted by unique id: the nodes that
 	// promotion's bundle named and no newer promotion reached, whatever their
-	// active flag. Every bundle names every python-odcs node of the release's
-	// topology, so a node the promotion added is in the set, and a node it
-	// dropped, whose watermark lags, is not.
+	// active flag. Every bundle names every node of the release's topology
+	// that has a contract (each dbt model, seed and snapshot and each
+	// python-odcs node), so a node the promotion added is in the set, and a
+	// node it dropped, whose watermark lags, is not.
 	Live(ctx context.Context, tenantID string, promotionSeq int64) ([]contractversion.LiveContract, error)
 	// LatestPromotionSeq returns the largest contract watermark of the
 	// tenant's nodes: the newest promotion whose contracts are recorded. It

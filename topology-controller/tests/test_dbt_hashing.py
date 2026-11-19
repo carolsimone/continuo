@@ -3,8 +3,9 @@ import json
 
 import pytest
 from continuo_contracts.canonical import canonical_json
-from continuo_contracts.fingerprints import hashed_config_denylist
+from continuo_contracts.fingerprints import classify, hashed_config_denylist
 from continuo_contracts.hashing import fold4, shared_fold
+from continuo_contracts.vocabulary import continuo_values
 
 from domain.exceptions import InvalidNodeSettingError
 from domain.model import CompileExtras, SeedExtras
@@ -25,6 +26,7 @@ from service.dbt_hashing import (
     static_macro_calls,
 )
 from service.parser import parse_manifest
+from tests.fingerprint_fixtures import enforced_dbt_node, stored_dbt_contracts
 
 RUN = RunMask(invocation_id="9ef3e1e9-a285-49db-8ad9-7eef23da70ef", run_started_at="2026-06-16T04:48:59.438570+00:00")
 
@@ -145,8 +147,8 @@ def test_compiled_part_is_the_masked_compiled_code_of_models_and_snapshots_only(
 def _manifest(tmp_path, config: dict, raw_code: str = "select 1") -> str:
     manifest = {"metadata": {}, "nodes": {"model.svc.deep": {
         "resource_type": "model", "name": "deep", "schema": "analytics", "fqn": ["svc", "deep"], "tags": ["daily"],
-        "raw_code": raw_code, "compiled_code": "select 1",
-        "config": {"meta": {"owner": "o"}, **config}}}}
+        "original_file_path": "models/deep.sql", "raw_code": raw_code, "compiled_code": "select 1",
+        "config": {"meta": {"owner": "o"}, "materialized": "table", **config}}}}
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(manifest))
     return str(path)
@@ -350,17 +352,66 @@ def test_hash_dbt_node_folds_the_units_and_names_its_inputs():
     assert set(parts.units) == {"macro.fpshop.m", "operation.fpshop.fpshop-on-run-start-0"}
 
 
-@pytest.mark.parametrize("resource_type", ["seed", "snapshot", "test"])
-def test_an_enforced_contract_is_hashed_on_models_only(resource_type):
-    contract = {"config": {"contract": {"enforced": True}},
-                "columns": {"id": {"name": "id", "data_type": "integer"}},
-                "constraints": [{"type": "primary_key", "columns": ["id"]}]}
-    other = hash_dbt_node(_node(resource_type, **contract), _ctx())
-    assert not {"contract.columns", "constraints"} & other.inputs
-    assert not {"columns", "constraints"} & other.hashed_config.keys()
-    model = hash_dbt_node(_node("model", **contract), _ctx())
-    assert {"contract.columns", "constraints"} <= model.inputs
-    assert {"columns", "constraints"} <= model.hashed_config.keys()
+_ENFORCED = {"config": {"contract": {"enforced": True}},
+             "columns": {"id": {"name": "id", "data_type": "integer"}},
+             "constraints": [{"type": "primary_key", "columns": ["id"]}]}
+
+
+def _folds_the_declared_columns_and_constraints(resource_type: str) -> bool:
+    """Whether an enforced node of this type has its declared columns and constraints in its
+    hashed config, which is also whether it names them as hash inputs. The flag itself is in
+    the hashed config either way."""
+    parts = hash_dbt_node(_node(resource_type, **_ENFORCED), _ctx())
+    assert parts.hashed_config["contract"] == {"enforced": True}
+    folded = {"columns", "constraints"} & parts.hashed_config.keys()
+    named = {"contract.columns", "constraints"} & parts.inputs
+    assert (folded, named) in (({"columns", "constraints"}, {"contract.columns", "constraints"}), (set(), set()))
+    return bool(folded)
+
+
+def test_an_enforced_model_contract_is_folded_into_hashed_config():
+    assert _folds_the_declared_columns_and_constraints("model")
+    for name in ("contract.columns", "constraints"):
+        entry = classify("dbt-model", name)
+        assert entry is not None and entry.when is not None and entry.when.condition == "enforced", name
+        assert entry.moves("config"), name
+
+
+def test_an_enforced_seed_contract_is_not_folded_into_hashed_config():
+    """dbt-core 1.12.0b1 with the postgres adapter ignores a seed's `contract.enforced`: the seed
+    materialization reads no contract, the manifest gives a seed no `contract`, and a seed that
+    sets the flag and declares columns its CSV lacks, with constraints, builds a table whose
+    column types and nullability come from the CSV alone. The flag stays in the hashed config as
+    a plain config key, and the declared columns and constraints stay out of it."""
+    assert not _folds_the_declared_columns_and_constraints("seed")
+    assert classify("dbt-seed", "contract.columns") is None
+    assert classify("dbt-seed", "constraints") is None
+
+
+def test_an_enforced_snapshot_contract_is_not_folded_into_hashed_config():
+    """The hashed config of a snapshot holds the flag but not its declared columns and
+    constraints. This agrees with the dbt-snapshot entries of fingerprints.yaml, which have no
+    `when: enforced` and classify neither input, so the hashing and the declaration move
+    together."""
+    assert not _folds_the_declared_columns_and_constraints("snapshot")
+    assert classify("dbt-snapshot", "contract.columns") is None
+    assert classify("dbt-snapshot", "constraints") is None
+    declared = classify("dbt-snapshot", "odcs.schema.properties.name")
+    assert declared is not None and declared.when is None
+
+
+def test_an_enforced_flag_on_a_test_is_not_folded_into_hashed_config():
+    assert not _folds_the_declared_columns_and_constraints("test")
+
+
+@pytest.mark.parametrize("resource_type", ["model", "seed", "snapshot"])
+def test_the_stored_dbt_contract_of_an_enforced_node_holds_contract_enforced(tmp_path, resource_type):
+    parsed, (stored,) = stored_dbt_contracts(str(tmp_path), enforced_dbt_node(resource_type))
+
+    assert continuo_values(stored.document["customProperties"])["contractEnforced"] is True
+    (parsed_node,) = parsed.nodes
+    assert parsed_node.hashed_config["contract"]["enforced"] is True
+    assert ("columns" in parsed_node.hashed_config) == (resource_type == "model")
 
 
 def test_a_contract_foreign_key_to_the_node_database_is_masked():
@@ -591,12 +642,24 @@ def test_a_bare_call_an_imported_package_also_defines_still_reaches_the_built_in
     assert macro_closure(node, ctx) == {"macro.fpshop.postgres__dateadd", "macro.dbt_utils.dateadd"}
 
 
-def test_a_seed_columns_hash_canonical_json_refuses_rejects_the_artifact(tmp_path):
+@pytest.mark.parametrize("declared, header, column_types", [
+    ((), ("id\ud800",), {}),
+    (("id",), ("id", "x\ud800"), {}),
+    (("id",), ("id",), {"id": "int\ud800"}),
+], ids=["header-column", "header-column-beside-a-declared-one", "column-type"])
+def test_a_seed_columns_hash_canonical_json_refuses_rejects_the_artifact(tmp_path, declared, header, column_types):
+    """Text in a seed's extras that canonical JSON cannot write (a lone surrogate, which UTF-8 cannot
+    encode) is refused as an InvalidNodeSettingError naming the node, before the header is compared
+    with the declared columns: a rejection that repeated the text could not be published."""
     manifest = {"metadata": {}, "nodes": {"seed.svc.users": {
         "resource_type": "seed", "name": "users", "schema": "analytics", "fqn": ["svc", "users"], "tags": ["daily"],
-        "raw_code": "", "config": {"meta": {"owner": "o"}}, "checksum": {"name": "sha256", "checksum": "ab" * 32}}}}
+        "original_file_path": "seeds/users.csv", "raw_code": "", "config": {"meta": {"owner": "o"}, "materialized": "seed"},
+        "columns": {name: {"name": name} for name in declared},
+        "checksum": {"name": "sha256", "checksum": "ab" * 32}}}}
     (tmp_path / "manifest.json").write_text(json.dumps(manifest))
-    seed = SeedExtras(sha256="cd" * 32, header=("id\ud800",), column_types={})
+    seed = SeedExtras(sha256="cd" * 32, header=header, column_types=column_types)
     extras = CompileExtras(service="svc", release_id="r", seeds={"seed.svc.users": seed}, project_flags={}, packages={})
-    with pytest.raises(InvalidNodeSettingError, match="analytics.users"):
+    with pytest.raises(InvalidNodeSettingError, match="analytics.users") as raised:
         parse_manifest(str(tmp_path / "manifest.json"), extras=extras)
+    assert "lone surrogate" in str(raised.value)
+    str(raised.value).encode("utf-8")

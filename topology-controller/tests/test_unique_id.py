@@ -1,4 +1,4 @@
-from domain.model import ManifestNode, NodeType
+from domain.model import ManifestNode, NodeType, UpstreamDep, relation_key
 
 
 def _node(schema: str, table: str) -> ManifestNode:
@@ -44,3 +44,13 @@ def test_model_identity_is_schema_dot_table_when_no_identity_given():
     n = ManifestNode(table_name="Orders", schema_name="Analytics", service_name="s", owner="o",
                      schedule_name="daily", criticality="SECONDARY")
     assert n.unique_id == "analytics.orders"
+
+
+def test_every_relation_key_lowers_the_schema_and_the_table_each_on_its_own():
+    """A node's unique_id, the upstream it is named by and the relation it writes come
+    from one rule, relation_key, which lowers each part apart: a capital Σ at the end
+    of the schema keeps its final form, as lowering the joined string would not."""
+    node = _node("DATAΣ", "Orders")
+    upstream = UpstreamDep(table_name="Orders", schema_name="DATAΣ", service_name="finance")
+    assert relation_key("DATAΣ", "Orders") == "data\u03c2.orders" != "DATAΣ.Orders".lower()
+    assert node.unique_id == upstream.unique_id == node.resolved_relation_id == "data\u03c2.orders"
