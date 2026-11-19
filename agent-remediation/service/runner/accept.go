@@ -27,6 +27,20 @@ func TriggerFlow(set workflow.Set) (workflow.Flow, error) {
 	return f, nil
 }
 
+// FlowsNoTriggerRuns notes each flow of set other than the one TriggerFlow
+// returns, in name order, as "flow <name>: no heal trigger runs it". Such a
+// flow is loaded and validated like any other, and remediation-check plays it,
+// but no remediation ever follows it.
+func FlowsNoTriggerRuns(set workflow.Set) []string {
+	var notes []string
+	for _, name := range sortedKeys(set.Flows) {
+		if name != flowRejectedRelease {
+			notes = append(notes, fmt.Sprintf("flow %s: no heal trigger runs it", name))
+		}
+	}
+	return notes
+}
+
 // Accepted is one heal trigger as the stream delivered it: the decoded trigger,
 // the payload bytes it was decoded from, the message's id and stream fields,
 // and the id of the producer's outbox entry when the message carries one.

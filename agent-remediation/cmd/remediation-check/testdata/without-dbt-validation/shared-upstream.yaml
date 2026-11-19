@@ -1,0 +1,84 @@
+# An install's fixture of the type shared-upstream, for a rejected-release
+# flow that lists no dbt-validation. The built-in fixture's members fall back
+# to dbt-validation; here the release fails at parse, so they fall back to
+# dbt-parse. Two sales models fail to parse the same way below base_orders,
+# which the release changed. The fix edits base_orders once. When it cannot,
+# each member falls back to a dbt-parse fix of its own.
+kind: fixture
+version: 1
+type: shared-upstream
+trigger:
+  source: parse
+  release_id: rel-lint-shared
+  repo: o/repo
+  commit_sha: sha-lint-shared
+  code_bundle_uri: s3://continuo/code-bundles/rel-lint-shared/bundle.json
+  nodes:
+    - node_id: model.sales.daily_orders
+      category: parse
+      error_signature: sig-base-orders-amount
+      reason: parse_error
+      error_excerpt: 'base_orders.amount is not declared'
+      file_path: models/daily_orders.sql
+      service: sales
+      node_type: dbt-model
+      changed_ancestors:
+        - { node_id: model.sales.base_orders, file_path: models/base_orders.sql, service: sales, depth: 1 }
+    - node_id: model.sales.weekly_orders
+      category: parse
+      error_signature: sig-base-orders-amount
+      reason: parse_error
+      error_excerpt: 'base_orders.amount is not declared'
+      file_path: models/weekly_orders.sql
+      service: sales
+      node_type: dbt-model
+      changed_ancestors:
+        - { node_id: model.sales.base_orders, file_path: models/base_orders.sql, service: sales, depth: 1 }
+service_repo_paths:
+  sales: services/sales
+repo_files:
+  services/sales/models/base_orders.sql: "select id from analytics.raw_orders\n"
+  services/sales/models/daily_orders.sql: "select id, amount from base_orders\n"
+  services/sales/models/weekly_orders.sql: "select id, sum(amount) as amount from base_orders group by id\n"
+  services/sales/dbt_project.yml: "name: sales\n"
+bundle:
+  model.sales.base_orders: { runtime: dbt, raw_code: "select id from analytics.raw_orders\n" }
+release:
+  image_tag: sha-lint-shared
+answers:
+  pass:
+    - proposed_sql: "select id, amount from analytics.raw_orders\n"
+      rationale: restored the amount column both members read
+      confidence: high
+      model: claude-test
+  fail:
+    - proposed_sql: "select id from analytics.raw_orders\n"
+      rationale: base_orders looks right
+      confidence: high
+      model: claude-test
+  decline:
+    - proposed_sql: "select id, amount from analytics.raw_orders\n"
+      rationale: the members may be the ones to change
+      confidence: low
+      model: claude-test
+member_answers:
+  model.sales.daily_orders:
+    pass:
+      - target_file: services/sales/models/daily_orders.sql
+        proposed_content: "select id, 0 as amount from base_orders\n"
+        rationale: stop reading the dropped column
+        confidence: high
+        model: claude-test
+  model.sales.weekly_orders:
+    pass:
+      - target_file: services/sales/models/weekly_orders.sql
+        proposed_content: "select id, 0 as amount from base_orders group by id\n"
+        rationale: stop reading the dropped column
+        confidence: high
+        model: claude-test
+decline_before_model:
+  node:
+    changed_ancestors:
+      - { node_id: model.sales.base_orders, service: sales, depth: 1 }
+gate_errors:
+  model.sales.daily_orders: 'base_orders.amount is not declared'

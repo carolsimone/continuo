@@ -14,8 +14,11 @@
 // runner registers, checks that they define the flow every heal trigger runs,
 // and runs the conformance suite over them: every type a flow lists through
 // every type scenario, and every flow through every flow scenario, in worlds of
-// scripted fakes over the memory store. When the files do not load or do not
-// validate it reports the errors and skips the suite.
+// scripted fakes over the memory store. A built-in type fixture of a type that
+// no loaded flow lists is left out of the suite, with a warning, while an
+// install's fixture that nothing plays (one of a type no flow lists, or of a
+// flow no file defines) fails. When the files do not load or do not validate
+// it reports the errors, each message once, and skips the suite.
 //
 // files prints one JSON object to stdout and nothing else:
 //
@@ -25,8 +28,10 @@
 // "files" counts the distinct files that hold a flow, a type or a fixture of
 // the merged set, the built-in files included. "warnings" holds the notes of
 // the load (an install file that replaces a built-in, a based_on whose built-in
-// has changed or does not exist) and then the validator's warnings. A flow
-// scenario names its flow in "type". Human text goes to stderr.
+// has changed or does not exist), the validator's warnings, a note for each
+// flow no heal trigger runs, and then a note for each built-in fixture left
+// out of the suite. A flow scenario names its flow in "type". Human text goes
+// to stderr.
 //
 // steps prints one JSON array to stdout and nothing else, one object per step
 // the runner registers, sorted by name:
@@ -60,6 +65,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/memory"
@@ -89,8 +95,11 @@ Purpose
   added. It validates the result against the steps the runner registers, checks
   that it defines the flow every heal trigger runs (rejected-release), and plays
   every type a flow lists and every flow through the conformance scenarios, in
-  worlds of scripted fakes over the memory store. When the files do not load or
-  do not validate it reports the errors and skips the scenarios.
+  worlds of scripted fakes over the memory store. A built-in type fixture of a
+  type that no loaded flow lists is not played, and a warning says so. An
+  install fixture that nothing plays fails: one of a type no flow lists, or of
+  a flow no file defines. When the files do not load or do not validate it
+  reports the errors and skips the scenarios.
 
 Arguments
   <dir>  The folder of the install's files: *.yaml and *.yml files of kind flow,
@@ -103,10 +112,14 @@ Stdout
     {"files": int, "errors": [string], "warnings": [string],
      "scenarios": [{"type": string, "scenario": string, "ok": bool, "error": string}]}
   files is the number of distinct files that hold a flow, a type or a fixture of
-  the merged set, built-in files included. warnings holds the notes of the load
-  (an install file that replaces a built-in, a based_on whose built-in has
-  changed or does not exist), then the validator's warnings. A flow scenario
-  names its flow in "type". Human text goes to stderr.
+  the merged set, built-in files included. errors holds each message once.
+  warnings holds the notes of the load (an install file that replaces a
+  built-in, a based_on whose built-in has changed or does not exist), the
+  validator's warnings, a note for each flow no heal trigger runs, then a note
+  for each built-in fixture that was not played. A flow scenario names its flow
+  in "type". A message names a file by its path under <dir>, and a path under
+  flows/, types/ or fixtures/ that <dir> does not hold is a built-in file.
+  Human text goes to stderr.
 
 Exit codes
   0  no error, and every scenario passed
@@ -137,8 +150,10 @@ Stdout
   may_stand_as_gate_run is true for a check that may be a flow's gate.
   data_class holds the data classes (code, logs, rows) of the evidence the step
   puts in front of the model, in that order: the classes of the keys it provides
-  and, for a prompt, of the keys it reads too. A flow's model_may_see has to
-  list them. Every array is [] when empty.
+  and, for a prompt, of the keys it reads too. A flow's model_may_see must list
+  the class of each key that a context step of the flow, or of a type it
+  lists, provides, and of each key that such a type's prompt reads. No other
+  class shown here is held against it. Every array is [] when empty.
 
 Exit codes
   0  the catalog was printed
@@ -298,30 +313,33 @@ func checkFiles(ctx context.Context, dir string) report {
 	rep := report{Errors: []string{}, Warnings: []string{}, Scenarios: []scenarioResult{}}
 	fsys := os.DirFS(dir)
 
-	set, notes, loadErr := workflowfile.LoadInstall(workflows.Builtin, fsys)
-	fixtures, fixtureErr := workflowfile.LoadInstallFixtures(workflows.Builtin, fsys)
-	rep.Files = countFiles(set, fixtures)
-	rep.Errors = append(rep.Errors, messages(loadErr)...)
-	rep.Errors = append(rep.Errors, messages(fixtureErr)...)
+	set, loaded, loadErr := workflowfile.LoadInstall(workflows.Builtin, fsys)
+	builtinFixtures, installFixtures, fixtureErr := workflowfile.LoadInstallFixtures(workflows.Builtin, fsys)
+	rep.Files = countFiles(set, builtinFixtures, installFixtures)
+	rep.addErrors(messages(loadErr)...)
+	rep.addErrors(messages(fixtureErr)...)
 	if len(rep.Errors) > 0 {
 		return rep
 	}
 
-	rep.Warnings = append(rep.Warnings, notes...)
+	rep.Warnings = append(rep.Warnings, loaded.Notes...)
 	warnings, err := runner.Validate(set, runner.NewRegistry(runner.Collaborators{}))
 	rep.Warnings = append(rep.Warnings, warnings...)
-	rep.Errors = append(rep.Errors, messages(err)...)
+	rep.Warnings = append(rep.Warnings, runner.FlowsNoTriggerRuns(set)...)
+	rep.addErrors(messages(err)...)
 	if _, err := runner.TriggerFlow(set); err != nil {
-		rep.Errors = append(rep.Errors, err.Error())
+		rep.addErrors(err.Error())
 	}
 	if len(rep.Errors) > 0 {
 		return rep
 	}
 
+	fixtures, skipped := builtinFixturesToPlay(set, builtinFixtures)
+	rep.Warnings = append(rep.Warnings, skipped...)
 	locator := repofs.NewLocator(slog.New(slog.DiscardHandler))
 	suite := conformance.Suite{
 		Files:     set,
-		Fixtures:  fixtures,
+		Fixtures:  append(fixtures, installFixtures...),
 		Locator:   locator,
 		Inspector: locator,
 		NewWorld:  scripted.Worlds(memory.NewStore),
@@ -345,9 +363,43 @@ func checkFiles(ctx context.Context, dir string) report {
 	return rep
 }
 
+// addErrors appends each message the report does not hold yet, in order: the
+// flow and type loader and the fixture loader each read every install file, so
+// a file neither can parse is reported by both with the same message.
+func (r *report) addErrors(msgs ...string) {
+	for _, m := range msgs {
+		if !slices.Contains(r.Errors, m) {
+			r.Errors = append(r.Errors, m)
+		}
+	}
+}
+
+// builtinFixturesToPlay is the built-in fixtures the suite plays over set, and
+// a warning for each one it leaves out. A built-in type fixture of a type that
+// no loaded flow lists is left out: an install whose flow drops a built-in
+// type cannot remove that type's built-in fixture, and nothing would play it.
+// Every other built-in fixture is played. An install's own fixture is never
+// left out, so the suite fails one that tests a type no flow lists.
+func builtinFixturesToPlay(set workflow.Set, builtin []conformance.Fixture) (play []conformance.Fixture, warnings []string) {
+	listed := map[string]bool{}
+	for _, f := range set.Flows {
+		for _, t := range f.Types {
+			listed[t] = true
+		}
+	}
+	for _, f := range builtin {
+		if f.Type != "" && !listed[f.Type] {
+			warnings = append(warnings, fmt.Sprintf("%s: skipped, no loaded flow lists type %s", f.File, f.Type))
+			continue
+		}
+		play = append(play, f)
+	}
+	return play, warnings
+}
+
 // countFiles is the number of distinct files that hold a loaded flow, type or
 // fixture.
-func countFiles(set workflow.Set, fixtures []conformance.Fixture) int {
+func countFiles(set workflow.Set, fixtures ...[]conformance.Fixture) int {
 	seen := map[string]bool{}
 	for _, f := range set.Flows {
 		seen[f.Pos.File] = true
@@ -355,8 +407,10 @@ func countFiles(set workflow.Set, fixtures []conformance.Fixture) int {
 	for _, t := range set.Types {
 		seen[t.Pos.File] = true
 	}
-	for _, f := range fixtures {
-		seen[f.File] = true
+	for _, list := range fixtures {
+		for _, f := range list {
+			seen[f.File] = true
+		}
 	}
 	return len(seen)
 }

@@ -143,6 +143,40 @@ func TestSuite_AFixtureForATypeNoFlowListsFails(t *testing.T) {
 	}
 }
 
+// A flow fixture is played only by the flow it names, so one that names a flow
+// no file defines (a mistyped name) is played by nothing and fails with one
+// result that names its file. Every fixture of a loaded flow is left to
+// RunFlowScenarios.
+func TestSuite_AFixtureForAFlowNoFileDefinesFails(t *testing.T) {
+	s := onlyTypes(builtinSuite(t), "dbt-compile")
+	var mistyped conformance.Fixture
+	for _, f := range s.Fixtures {
+		if f.Flow == flowName && f.Scenario == conformance.FlowMaintenance {
+			mistyped = f
+		}
+	}
+	require.NotEmpty(t, mistyped.File, "the built-in maintenance fixture")
+	mistyped.Flow = "rejected-relase"
+	mistyped.File = "my-maintenance.yaml"
+	s.Fixtures = append(slices.Clone(s.Fixtures), mistyped)
+
+	results := s.Run(ctx)
+
+	var unplayed []conformance.Result
+	for _, r := range results {
+		if r.Type == "rejected-relase" {
+			unplayed = append(unplayed, r)
+		}
+		if r.Type == flowName {
+			assert.Fail(t, "Run reported a fixture of the loaded flow", "%s: %v", r.Scenario, r.Err)
+		}
+	}
+	require.Len(t, unplayed, 1)
+	assert.Equal(t, conformance.FlowMaintenance, unplayed[0].Scenario)
+	require.Error(t, unplayed[0].Err)
+	assert.Equal(t, "my-maintenance.yaml tests flow rejected-relase, which no file defines", unplayed[0].Err.Error())
+}
+
 func TestSuite_AFlowScenarioWithoutAFixtureFails(t *testing.T) {
 	s := builtinSuite(t)
 	s.Fixtures = slices.DeleteFunc(slices.Clone(s.Fixtures), func(f conformance.Fixture) bool {

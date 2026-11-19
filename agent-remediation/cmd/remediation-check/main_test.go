@@ -527,6 +527,188 @@ func TestFiles_AnInstallFixtureReplacesTheBuiltInFixtureOfItsType(t *testing.T) 
 	assert.Positive(t, failedOfCompile, "the install's fixture is the one dbt-compile is played against")
 }
 
+// withoutDBTValidation is the folder of the install fixtures a rejected-release
+// flow that lists no dbt-validation needs: a shared-upstream type fixture and
+// the flow fixtures whose built-in failures dbt-validation fixes.
+const withoutDBTValidation = "testdata/without-dbt-validation"
+
+// flowWithoutDBTValidation is the built-in flow rejected-release with
+// dbt-validation dropped from the types it lists.
+func flowWithoutDBTValidation(t *testing.T) string {
+	t.Helper()
+	const listed = "  - dbt-validation\n"
+	flow := builtinText(t, "flows/rejected-release.yaml")
+	require.Contains(t, flow, listed)
+	return strings.Replace(flow, listed, "", 1)
+}
+
+// failedScenarios is the "<type> <scenario>" of each scenario that failed.
+func failedScenarios(r wireReport) []string {
+	var failed []string
+	for _, s := range r.Scenarios {
+		if !s.OK {
+			failed = append(failed, s.Type+" "+s.Scenario)
+		}
+	}
+	return failed
+}
+
+// An install whose rejected-release drops a built-in type cannot remove that
+// type's built-in fixture. Nothing plays it, so it is left out of the
+// scenarios with a warning. The built-in type and flow fixtures of what the
+// flow still lists are played, and the ones whose failures the dropped type
+// fixed fail until the install ships its own fixture of the same type, or of
+// the same flow and scenario, which replaces the built-in one.
+func TestFiles_AnInstallFlowThatDropsABuiltInTypeSkipsItsBuiltInFixture(t *testing.T) {
+	const skipped = "fixtures/types/dbt-validation.yaml: skipped, no loaded flow lists type dbt-validation"
+	flowFixtures := []string{"two-types-one-service.yaml", "two-services.yaml", "shared-upstream-declines.yaml"}
+
+	for name, tc := range map[string]struct {
+		fixtures []string
+		failed   []string
+	}{
+		"with the install's fixtures it passes": {
+			fixtures: append([]string{"shared-upstream.yaml"}, flowFixtures...),
+		},
+		"without the install's flow fixtures the built-in flow fixtures fail": {
+			fixtures: []string{"shared-upstream.yaml"},
+			failed: []string{
+				"rejected-release two_types_one_service",
+				"rejected-release two_services",
+				"rejected-release shared_upstream_declines",
+			},
+		},
+		"without the install's shared-upstream fixture the built-in one fails": {
+			fixtures: flowFixtures,
+			failed: []string{
+				"shared-upstream preflight_rounds_spent",
+				"shared-upstream declines_before_model",
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeInstallFile(t, dir, "rejected-release.yaml", flowWithoutDBTValidation(t))
+			for _, f := range tc.fixtures {
+				body, err := os.ReadFile(filepath.Join(withoutDBTValidation, f)) //nolint:gosec // G304: a file of this test's testdata folder.
+				require.NoError(t, err)
+				writeInstallFile(t, dir, f, string(body))
+			}
+
+			code, stdout, stderr := runFiles(t, "files", dir)
+
+			r := decode(t, stdout)
+			assert.Empty(t, r.Errors)
+			assert.Contains(t, r.Warnings, "flow rejected-release: replaced by rejected-release.yaml")
+			assert.Contains(t, r.Warnings, skipped)
+			assert.Equal(t, skipped, r.Warnings[len(r.Warnings)-1], "the skipped fixtures come last")
+			for _, s := range r.Scenarios {
+				assert.NotEqual(t, "dbt-validation", s.Type, "the dropped type's built-in fixture is not played")
+			}
+			assert.Equal(t, tc.failed, failedScenarios(r))
+			if tc.failed == nil {
+				assert.Equal(t, 0, code, "stderr: %s\nstdout: %s", stderr, stdout)
+			} else {
+				assert.Equal(t, 1, code, stderr)
+			}
+		})
+	}
+}
+
+// Only a built-in fixture is left out when nothing plays it. A fixture the
+// install ships for a type no flow lists is the install's mistake, and fails,
+// even when it sits at the path of the built-in fixture it replaces.
+func TestFiles_AnInstallFixtureOfATypeNoFlowListsFails(t *testing.T) {
+	compile := builtinText(t, "fixtures/types/dbt-compile.yaml")
+	require.Contains(t, compile, "type: dbt-compile\n")
+
+	t.Run("a type no file defines", func(t *testing.T) {
+		dir := t.TempDir()
+		writeInstallFile(t, dir, "not-listed.yaml", strings.Replace(compile, "type: dbt-compile\n", "type: not-listed\n", 1))
+
+		code, stdout, stderr := runFiles(t, "files", dir)
+
+		assert.Equal(t, 1, code, stderr)
+		r := decode(t, stdout)
+		assert.Empty(t, r.Errors)
+		assert.Empty(t, r.Warnings, "an install's fixture is never skipped")
+		assert.Contains(t, r.Scenarios, wireScenario{Type: "not-listed", Error: "not-listed.yaml tests type not-listed, which no flow lists"})
+		assert.Equal(t, []string{"not-listed "}, failedScenarios(r))
+	})
+
+	t.Run("a built-in type the install's flow drops, at the built-in fixture's path", func(t *testing.T) {
+		const path = "fixtures/types/dbt-validation.yaml"
+		dir := copyBuiltin(t, func(string) string { return flowWithoutDBTValidation(t) })
+		writeInstallFile(t, dir, path, builtinText(t, path)+"# the install's copy\n")
+
+		code, stdout, stderr := runFiles(t, "files", dir)
+
+		assert.Equal(t, 1, code, stderr)
+		r := decode(t, stdout)
+		assert.Empty(t, r.Errors)
+		for _, w := range r.Warnings {
+			assert.NotContains(t, w, "skipped", "the install's fixture replaced the built-in one, so none is skipped")
+		}
+		assert.Contains(t, r.Scenarios, wireScenario{Type: "dbt-validation", Error: path + " tests type dbt-validation, which no flow lists"})
+	})
+}
+
+// Every heal trigger runs rejected-release, so a flow of another name is noted:
+// it is loaded, validated and played, but no remediation follows it.
+func TestFiles_AFlowNoHealTriggerRunsIsNoted(t *testing.T) {
+	dir := t.TempDir()
+	writeInstallFile(t, dir, "my-flow.yaml", strings.Replace(builtinText(t, "flows/rejected-release.yaml"),
+		"name: rejected-release\n", "name: my-flow\n", 1))
+
+	code, stdout, stderr := runFiles(t, "files", dir)
+
+	assert.Equal(t, 1, code, "the flow has no fixture of its own: %s", stderr)
+	r := decode(t, stdout)
+	assert.Empty(t, r.Errors)
+	assert.Equal(t, []string{"flow my-flow: no heal trigger runs it"}, r.Warnings)
+	var played int
+	for _, s := range r.Scenarios {
+		if s.Type == "my-flow" {
+			played++
+			assert.Equal(t, "flow my-flow has no fixture for scenario "+s.Scenario, s.Error)
+		}
+	}
+	assert.Equal(t, len(conformance.FlowScenarios()), played, "the flow is still played")
+}
+
+// A flow fixture whose flow no file defines (a mistyped name) is played by no
+// flow, so it fails with a result that names its file.
+func TestFiles_AFlowFixtureOfAFlowNoFileDefinesFails(t *testing.T) {
+	const fixture = "fixtures/flows/rejected-release/maintenance.yaml"
+	body := builtinText(t, fixture)
+	require.Contains(t, body, "flow: rejected-release\n")
+	dir := t.TempDir()
+	writeInstallFile(t, dir, "maintenance.yaml", strings.Replace(body, "flow: rejected-release\n", "flow: rejected-relase\n", 1))
+
+	code, stdout, stderr := runFiles(t, "files", dir)
+
+	assert.Equal(t, 1, code, stderr)
+	r := decode(t, stdout)
+	assert.Empty(t, r.Errors)
+	assert.Equal(t, []string{"rejected-relase maintenance"}, failedScenarios(r))
+	assert.Contains(t, r.Scenarios, wireScenario{Type: "rejected-relase", Scenario: "maintenance",
+		Error: "maintenance.yaml tests flow rejected-relase, which no file defines"})
+}
+
+// Both loaders read every install file, so a file neither can parse is one
+// error in the report, not one per loader.
+func TestFiles_AFileNeitherLoaderCanParseIsReportedOnce(t *testing.T) {
+	dir := t.TempDir()
+	writeInstallFile(t, dir, "broken.yaml", "kind: type\nname: [unclosed\n")
+
+	code, stdout, stderr := runFiles(t, "files", dir)
+
+	assert.Equal(t, 1, code, stderr)
+	r := decode(t, stdout)
+	require.Len(t, r.Errors, 1, "%v", r.Errors)
+	assert.Contains(t, r.Errors[0], "broken.yaml")
+}
+
 // What the load notes of an install's files (a replacement, a based_on that no
 // longer matches) go to the report's warnings, before the validator's own.
 func TestFiles_AWarningFromTheLoadReachesTheReport(t *testing.T) {

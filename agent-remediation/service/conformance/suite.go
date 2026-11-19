@@ -107,8 +107,9 @@ type Suite struct {
 // world of its own built from the type's fixture (as Mutate changed it, when
 // the suite has one), and returns one result per type and scenario, in flow
 // and scenario order. A listed type with no fixture, or with several, fails
-// every scenario. A fixture for a type no flow lists fails too, with one
-// result of its own.
+// every scenario. A fixture that nothing plays fails too, with one result of
+// its own: a type fixture for a type no flow lists, and a flow fixture for a
+// flow no file defines.
 func (s Suite) Run(ctx context.Context) []Result {
 	listed := s.listedTypes()
 	byType := map[string][]Fixture{}
@@ -138,8 +139,13 @@ func (s Suite) Run(ctx context.Context) []Result {
 		}
 	}
 	for _, f := range s.Fixtures {
-		if f.Type != "" && !slices.ContainsFunc(listed, func(lt listedType) bool { return lt.name == f.Type }) {
+		switch {
+		case f.Type != "" && !slices.ContainsFunc(listed, func(lt listedType) bool { return lt.name == f.Type }):
 			out = append(out, Result{Type: f.Type, Err: fmt.Errorf("%s tests type %s, which no flow lists", f.File, f.Type)})
+		case f.Flow != "":
+			if _, ok := s.Files.Flows[f.Flow]; !ok {
+				out = append(out, Result{Type: f.Flow, Scenario: f.Scenario, Err: fmt.Errorf("%s tests flow %s, which no file defines", f.File, f.Flow)})
+			}
 		}
 	}
 	return out

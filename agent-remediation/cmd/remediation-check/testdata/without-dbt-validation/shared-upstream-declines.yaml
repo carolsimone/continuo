@@ -1,0 +1,64 @@
+# An install's fixture of the flow scenario shared_upstream_declines, for a
+# rejected-release flow that lists no dbt-validation. The shared-upstream
+# cluster at base_orders declines, since the release's code bundle does not
+# hold base_orders, and its members fall back to dbt-parse fixes of their own,
+# which pass.
+kind: fixture
+version: 1
+flow: rejected-release
+scenario: shared_upstream_declines
+trigger:
+  source: parse
+  release_id: rel-lint-shared-declines
+  repo: o/repo
+  commit_sha: sha-lint-shared-declines
+  code_bundle_uri: s3://continuo/code-bundles/rel-lint-shared-declines/bundle.json
+  nodes:
+    - node_id: model.sales.daily_orders
+      category: parse
+      error_signature: sig-base-orders-amount
+      reason: parse_error
+      error_excerpt: 'base_orders.amount is not declared'
+      file_path: models/daily_orders.sql
+      service: sales
+      node_type: dbt-model
+      changed_ancestors:
+        - { node_id: model.sales.base_orders, file_path: models/base_orders.sql, service: sales, depth: 1 }
+    - node_id: model.sales.weekly_orders
+      category: parse
+      error_signature: sig-base-orders-amount
+      reason: parse_error
+      error_excerpt: 'base_orders.amount is not declared'
+      file_path: models/weekly_orders.sql
+      service: sales
+      node_type: dbt-model
+      changed_ancestors:
+        - { node_id: model.sales.base_orders, file_path: models/base_orders.sql, service: sales, depth: 1 }
+service_repo_paths:
+  sales: services/sales
+repo_files:
+  services/sales/models/daily_orders.sql: "select id, amount from base_orders\n"
+  services/sales/models/weekly_orders.sql: "select id, sum(amount) as amount from base_orders group by id\n"
+  services/sales/dbt_project.yml: "name: sales\n"
+release:
+  image_tag: sha-lint-shared-declines
+answers:
+  pass:
+    - proposed_sql: "select id, amount from analytics.raw_orders\n"
+      rationale: unused, the upstream cluster declines first
+      confidence: high
+member_answers:
+  model.sales.daily_orders:
+    pass:
+      - target_file: services/sales/models/daily_orders.sql
+        proposed_content: "select id, 0 as amount from base_orders\n"
+        rationale: stop reading the dropped column
+        confidence: high
+        model: claude-test
+  model.sales.weekly_orders:
+    pass:
+      - target_file: services/sales/models/weekly_orders.sql
+        proposed_content: "select id, 0 as amount from base_orders group by id\n"
+        rationale: stop reading the dropped column
+        confidence: high
+        model: claude-test

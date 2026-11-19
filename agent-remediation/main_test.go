@@ -243,7 +243,7 @@ func TestMain_LeaseOwnerNamesHostAndProcess(t *testing.T) {
 // TestMain_BuiltinFilesLoadAndValidate: the files built into the binary load
 // and every flow and type of them runs against the registry.
 func TestMain_BuiltinFilesLoadAndValidate(t *testing.T) {
-	set, err := loadRunnerFiles(workflows.Builtin, nil, runner.Collaborators{}, discardLogger())
+	set, _, err := loadRunnerFiles(workflows.Builtin, nil, runner.Collaborators{}, discardLogger())
 	require.NoError(t, err)
 	assert.Contains(t, set.Flows, "rejected-release")
 }
@@ -280,7 +280,7 @@ func TestMain_FilesWithoutTheTriggerFlowStopStartup(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 
-	_, err := loadRunnerFiles(builtinRenamed(t, "another-flow"), nil, runner.Collaborators{}, logger)
+	_, _, err := loadRunnerFiles(builtinRenamed(t, "another-flow"), nil, runner.Collaborators{}, logger)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `"rejected-release"`)
@@ -293,7 +293,7 @@ func TestMain_FilesWithoutTheTriggerFlowStopStartup(t *testing.T) {
 // warned about at startup. The legacy engine reads the variable, and an equal
 // value changes nothing, so neither warns.
 func TestMain_WarnsWhenTheRunnerIgnoresMaxAttempts(t *testing.T) {
-	files, err := loadRunnerFiles(workflows.Builtin, nil, runner.Collaborators{}, discardLogger())
+	files, _, err := loadRunnerFiles(workflows.Builtin, nil, runner.Collaborators{}, discardLogger())
 	require.NoError(t, err)
 	tries := files.Flows["rejected-release"].Tries
 
@@ -324,6 +324,98 @@ func TestMain_WarnsWhenTheRunnerIgnoresMaxAttempts(t *testing.T) {
 	}
 }
 
+// TestMain_WarnsWhenTheLegacyEngineDoesNotRunTheInstallsFiles: only the runner
+// works a heal trigger through the remediation files, so under the legacy
+// engine an install whose files add or change a flow or type is warned that
+// they run only for a remediation the runner started. An install that changes
+// nothing, or the runner engine, does not warn.
+func TestMain_WarnsWhenTheLegacyEngineDoesNotRunTheInstallsFiles(t *testing.T) {
+	changed := []string{"flow rejected-release", "type my-validation"}
+	for _, tc := range []struct {
+		name    string
+		engine  string
+		changed []string
+		warns   bool
+	}{
+		{"legacy with changed files", config.EngineLegacy, changed, true},
+		{"legacy with no changed file", config.EngineLegacy, nil, false},
+		{"runner with changed files", config.EngineRunner, changed, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+			warnInstallFilesUnusedByLegacy(config.Config{Engine: tc.engine}, tc.changed, logger)
+
+			if !tc.warns {
+				assert.Empty(t, buf.String())
+				return
+			}
+			lines := logLines(t, &buf)
+			require.Len(t, lines, 1)
+			assert.Equal(t, "WARN", lines[0]["level"])
+			assert.Contains(t, lines[0]["msg"], "AGENT_REMEDIATION_ENGINE=runner")
+			assert.Equal(t, config.EngineLegacy, lines[0]["engine"])
+			assert.Equal(t, []any{"flow rejected-release", "type my-validation"}, lines[0]["changed"])
+		})
+	}
+}
+
+// TestMain_LoadRunnerFilesNamesWhatTheInstallChanges: loadRunnerFiles returns
+// the flows and types the install's files add or change, which the legacy
+// warning reads. A byte for byte copy of a built-in changes nothing.
+func TestMain_LoadRunnerFilesNamesWhatTheInstallChanges(t *testing.T) {
+	compile := builtinFile(t, "types/dbt-compile.yaml")
+	for name, tc := range map[string]struct {
+		install fs.FS
+		want    []string
+	}{
+		"no install":                 {nil, nil},
+		"a copy of a built-in":       {fstest.MapFS{"dbt-compile.yaml": {Data: []byte(compile)}}, nil},
+		"a changed built-in":         {fstest.MapFS{"dbt-compile.yaml": {Data: []byte(compile + "# tuned\n")}}, []string{"type dbt-compile"}},
+		"a type the install adds":    {fstest.MapFS{"x.yaml": {Data: []byte(strings.Replace(compile, "name: dbt-compile", "name: my-compile", 1))}}, []string{"type my-compile"}},
+		"a flow of another name too": {builtinRenamedInstall(t, "my-flow"), []string{"flow my-flow"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, changed, err := loadRunnerFiles(workflows.Builtin, tc.install, runner.Collaborators{}, discardLogger())
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, changed)
+		})
+	}
+}
+
+// builtinRenamedInstall is an install folder holding the built-in flow
+// rejected-release renamed to name.
+func builtinRenamedInstall(t *testing.T, name string) fstest.MapFS {
+	t.Helper()
+	flow := builtinFile(t, "flows/rejected-release.yaml")
+	renamed := strings.Replace(flow, "\nname: rejected-release\n", "\nname: "+name+"\n", 1)
+	require.NotEqual(t, flow, renamed)
+	return fstest.MapFS{name + ".yaml": {Data: []byte(renamed)}}
+}
+
+// TestMain_AFlowNoHealTriggerRunsIsLoggedAtWarn: every heal trigger runs
+// rejected-release, so startup warns about a flow of another name, which loads
+// and validates but never runs.
+func TestMain_AFlowNoHealTriggerRunsIsLoggedAtWarn(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	set, _, err := loadRunnerFiles(workflows.Builtin, builtinRenamedInstall(t, "my-flow"), runner.Collaborators{}, logger)
+
+	require.NoError(t, err)
+	assert.Contains(t, set.Flows, "my-flow")
+	var noted bool
+	for _, e := range logLines(t, &buf) {
+		if e["warning"] == "flow my-flow: no heal trigger runs it" {
+			noted = true
+			assert.Equal(t, "WARN", e["level"])
+		}
+	}
+	assert.True(t, noted, "the flow is noted at Warn:\n%s", buf.String())
+}
+
 // TestMain_RefusedFilesStopStartupAndEveryRefusalIsLogged.
 func TestMain_RefusedFilesStopStartupAndEveryRefusalIsLogged(t *testing.T) {
 	fsys := fstest.MapFS{
@@ -345,7 +437,7 @@ approver: node_owner
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 
-	_, err := loadRunnerFiles(fsys, nil, runner.Collaborators{}, logger)
+	_, _, err := loadRunnerFiles(fsys, nil, runner.Collaborators{}, logger)
 
 	require.Error(t, err)
 	refusals := 0
@@ -554,7 +646,7 @@ func TestMain_InstallFilesCanBeAKubernetesConfigMapMount(t *testing.T) {
 	install, err := installFiles(dir)
 	require.NoError(t, err)
 
-	set, err := loadRunnerFiles(workflows.Builtin, install, runner.Collaborators{}, discardLogger())
+	set, _, err := loadRunnerFiles(workflows.Builtin, install, runner.Collaborators{}, discardLogger())
 
 	require.NoError(t, err)
 	assert.Equal(t, "dbt-compile.yaml", set.Types["dbt-compile"].File)
@@ -564,7 +656,7 @@ func TestMain_InstallFilesCanBeAKubernetesConfigMapMount(t *testing.T) {
 // heal trigger runs with a copy that lists one more type, and adds that type.
 // Both load, and the flow lists the install's type after the built-in ones.
 func TestMain_InstallTypeListedByAReplacedFlow(t *testing.T) {
-	builtin, err := loadRunnerFiles(workflows.Builtin, nil, runner.Collaborators{}, discardLogger())
+	builtin, _, err := loadRunnerFiles(workflows.Builtin, nil, runner.Collaborators{}, discardLogger())
 	require.NoError(t, err)
 	builtinTypes := builtin.Flows["rejected-release"].Types
 	lastBuiltin := builtinTypes[len(builtinTypes)-1]
@@ -582,7 +674,7 @@ func TestMain_InstallTypeListedByAReplacedFlow(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 
-	set, err := loadRunnerFiles(workflows.Builtin, install, runner.Collaborators{}, logger)
+	set, _, err := loadRunnerFiles(workflows.Builtin, install, runner.Collaborators{}, logger)
 
 	require.NoError(t, err)
 	assert.Contains(t, set.Types, "dbt-test-validation")
@@ -610,7 +702,7 @@ func TestMain_AnInstallsReplacementIsLoggedBeforeTheFilesAreChecked(t *testing.T
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 
-	_, err := loadRunnerFiles(workflows.Builtin, install, runner.Collaborators{}, logger)
+	_, _, err := loadRunnerFiles(workflows.Builtin, install, runner.Collaborators{}, logger)
 
 	require.Error(t, err)
 	noteAt, refusalAt := -1, -1
@@ -634,7 +726,7 @@ func TestMain_ARefusedInstallFileStopsStartup(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 
-	set, err := loadRunnerFiles(workflows.Builtin, install, runner.Collaborators{}, logger)
+	set, _, err := loadRunnerFiles(workflows.Builtin, install, runner.Collaborators{}, logger)
 
 	require.Error(t, err)
 	assert.Empty(t, set.Flows)
@@ -651,12 +743,12 @@ func TestMain_ARefusedInstallFileStopsStartup(t *testing.T) {
 // TestMain_NoInstallFilesLoadsTheBuiltIns: with no install, and with an install
 // folder holding nothing, the built-in files load alone and nothing is logged.
 func TestMain_NoInstallFilesLoadsTheBuiltIns(t *testing.T) {
-	want, err := loadRunnerFiles(workflows.Builtin, nil, runner.Collaborators{}, discardLogger())
+	want, _, err := loadRunnerFiles(workflows.Builtin, nil, runner.Collaborators{}, discardLogger())
 	require.NoError(t, err)
 
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
-	got, err := loadRunnerFiles(workflows.Builtin, fstest.MapFS{}, runner.Collaborators{}, logger)
+	got, _, err := loadRunnerFiles(workflows.Builtin, fstest.MapFS{}, runner.Collaborators{}, logger)
 
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
