@@ -7,13 +7,18 @@ adds up in the same record. The record also keeps the largest resident set seen
 at a stage boundary, how many nodes and declared columns each runtime
 contributed, how many nodes the parse skipped and why, how many dormant nodes
 each service holds, and how the release ended. `log_fields` renders all of it as
-the fields of the release's log line.
+the fields of the release's log line. `parse_ms` and `contracts_ms` split the
+time from the record's start to the publish into the contract stages and the
+rest.
 """
 from collections.abc import Callable, Iterable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import TracebackType
+from typing import Final
+
+from continuo_contracts.validate import REASONS
 
 from domain.contract_vocabulary import ParseFailureKind
 from domain.dormant import is_dormant
@@ -25,9 +30,12 @@ class Stage(StrEnum):
     """The stages of a release's parse, in pipeline order; a value is the key
     `ReleaseTimings.stages_ms` reports the stage under.
 
-    `contract_validation` runs inside `python_parse`: a python-odcs bundle's
-    contracts are checked while it is parsed, so `python_parse` time includes
-    the `contract_validation` time of the same bundle."""
+    `contract_generation` runs inside `dbt_parse`: a dbt node's contract is
+    generated from its manifest entry while the manifest is parsed.
+    `contract_validation` runs inside `python_parse` and `dbt_parse`: a
+    contract is checked while its bundle or manifest is parsed. So the time of
+    a parse includes the `contract_generation` and `contract_validation` time of
+    the same parse."""
     DOWNLOAD = "download"
     DBT_PARSE = "dbt_parse"
     PYTHON_PARSE = "python_parse"
@@ -36,6 +44,7 @@ class Stage(StrEnum):
     REWRITE = "rewrite"
     CANDIDATE_UPLOAD = "candidate_upload"
     CODE_BUNDLE = "code_bundle"
+    CONTRACT_GENERATION = "contract_generation"
     CONTRACT_VALIDATION = "contract_validation"
     CANONICAL_HASHING = "canonical_hashing"
     CONTRACT_BUNDLE = "contract_bundle"
@@ -43,9 +52,24 @@ class Stage(StrEnum):
     PUBLISH = "publish"
 
 
-# The stages a contract failure is counted under: the checks of the parse
-# (`validate`), the stored form of a contract (`normalise`) and its hash (`hash`).
-CONTRACT_FAILURE_STAGES = ("validate", "normalise", "hash")
+# The stages that make up the time a release spends on contracts. None of them
+# runs inside another, so their times add up.
+_CONTRACT_STAGES = (
+    Stage.CONTRACT_GENERATION,
+    Stage.CONTRACT_VALIDATION,
+    Stage.CANONICAL_HASHING,
+    Stage.CONTRACT_BUNDLE,
+)
+
+# The stages a contract failure is counted under: the generation of a dbt node's
+# contract from the manifest (`generate`), the checks of the parse (`validate`),
+# the stored form of a contract (`normalise`) and its hash (`hash`).
+CONTRACT_FAILURE_STAGES = ("generate", "validate", "normalise", "hash")
+
+# The reasons a contract failure is counted under: every reason the contracts
+# library's validation names, and `manifest_shape` for a manifest entry the
+# generation cannot read.
+CONTRACT_FAILURE_REASONS: Final = (*REASONS, "manifest_shape")
 
 # How a contract validation was answered: from the cache or by running the check.
 VALIDATION_CACHE_RESULTS = ("hit", "miss")
@@ -124,13 +148,18 @@ class ReleaseTimings:
     with none has no entry. `contract_failures` counts the contract failures
     the release met by (stage, reason), and `validation_cache` counts the
     contract validations answered from the cache (`hit`) and run (`miss`).
-    `outcome` and `failure_kind` stay unset until the release ends.
+    `outcome` and `failure_kind` stay unset until the release ends. The record
+    keeps its start time, read from the clock at construction, and
+    `mark_published` fixes its end: `parse_ms` is the time between them
+    without the contract stages, `contracts_ms` the time of those stages.
     """
 
     def __init__(self, release_id: str, clock: ClockPort, memory: MemoryProbePort) -> None:
         self.release_id = release_id
         self._clock = clock
         self._memory = memory
+        self._started_at = clock.now()
+        self._published_at: float | None = None
         self.stages: dict[Stage, StageRecord] = {stage: StageRecord() for stage in Stage}
         self.peak_rss_bytes = 0
         self.outcome: ReleaseOutcome | None = None
@@ -153,6 +182,25 @@ class ReleaseTimings:
     def sample_memory(self) -> None:
         """Read the resident set now and keep it if it is the largest so far."""
         self.peak_rss_bytes = max(self.peak_rss_bytes, self._memory.resident_bytes())
+
+    def mark_published(self) -> None:
+        """Fix the end of the release's parse at the clock's reading now."""
+        self._published_at = self._clock.now()
+
+    def contracts_ms(self) -> int:
+        """The milliseconds of the four contract stages (contract_generation,
+        contract_validation, canonical_hashing and contract_bundle), each
+        rounded as `stages_ms` rounds it."""
+        return sum(round(self.stages[stage].seconds * 1000) for stage in _CONTRACT_STAGES)
+
+    def parse_ms(self) -> int:
+        """The milliseconds from the record's start to the publish, minus
+        `contracts_ms`, and never below 0. Raises RuntimeError before
+        `mark_published`, because the publish has no time yet."""
+        if self._published_at is None:
+            raise RuntimeError("parse_ms() needs the end of the parse: call mark_published() first")
+        elapsed_ms = round((self._published_at - self._started_at) * 1000)
+        return max(0, elapsed_ms - self.contracts_ms())
 
     def stages_ms(self) -> dict[str, int]:
         """Every stage's milliseconds by stage name, in pipeline order."""

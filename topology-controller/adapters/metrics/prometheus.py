@@ -10,12 +10,12 @@ registry holds no process or Python runtime collectors for the same reason: they
 cannot carry the label. Each metric name is a literal at its definition, so a
 scan of this file's source finds every series the service exports.
 """
-from continuo_contracts.validate import REASONS
 from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, disable_created_metrics
 
 from domain.contract_vocabulary import ParseFailureKind
 from domain.model import SkipReason
 from service.release_timings import (
+    CONTRACT_FAILURE_REASONS,
     CONTRACT_FAILURE_STAGES,
     VALIDATION_CACHE_RESULTS,
     ReleaseOutcome,
@@ -84,7 +84,7 @@ class TopologyMetrics:
         )
         self._contract_failures = Counter(
             "continuo_topology_contract_failures_total",
-            "Contract failures of the releases that ended, by stage (validate, normalise, hash) and reason.",
+            "Contract failures of the releases that ended, by stage (generate, validate, normalise, hash) and reason.",
             ["service", "stage", "reason"],
             registry=self.registry,
         )
@@ -122,8 +122,8 @@ class TopologyMetrics:
         )
 
         # Every stage, every pair a release can end under, every skip reason,
-        # every contract failure stage with every reason the contracts library
-        # names and both cache results are visible from boot, so a rate or an
+        # every contract failure stage with every contract failure reason and
+        # both cache results are visible from boot, so a rate or an
         # increase over a series that has not moved yet is 0, not absent (an
         # increase does not count a series' first sample from an implied 0).
         for stage in Stage:
@@ -135,7 +135,7 @@ class TopologyMetrics:
             self._release_skipped_nodes.labels(service, reason.value).set(0)
         self._release_dormant_nodes.labels(service).set(0)
         for contract_stage in CONTRACT_FAILURE_STAGES:
-            for reason in REASONS:
+            for reason in CONTRACT_FAILURE_REASONS:
                 self._contract_failures.labels(service, contract_stage, reason)
         for result in VALIDATION_CACHE_RESULTS:
             self._validation_cache.labels(service, result)

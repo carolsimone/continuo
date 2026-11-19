@@ -6,7 +6,13 @@ from adapters.redis.consumer import ConsumerObserver
 from domain.contract_vocabulary import ParseFailureKind
 from domain.model import SkipReason
 from service.ports import ReleaseObserverPort
-from service.release_timings import ReleaseOutcome, ReleaseTimings, Stage
+from service.release_timings import (
+    CONTRACT_FAILURE_REASONS,
+    CONTRACT_FAILURE_STAGES,
+    ReleaseOutcome,
+    ReleaseTimings,
+    Stage,
+)
 from streams_contract import RELEASE_REQUESTED_V1, TOPOLOGY_CONTROLLER_RELEASE_REQUESTED
 from tests.fakes import FakeClock, ScriptedMemoryProbe
 
@@ -61,22 +67,29 @@ def test_the_dormant_gauge_is_exported_at_zero_from_boot():
     assert _value(metrics, "continuo_topology_release_dormant_nodes") == 0.0
 
 
-def test_contract_series_are_labelled_at_boot():
-    """Every contract stage with every reason the library names, and both cache
-    results, are exported at 0 before any release, so a rate over a failure
-    that has not happened yet is 0 and not absent."""
+def test_every_stage_and_reason_pair_is_exported_at_boot():
+    """Every contract failure stage with every reason the library names and the
+    one reason of a manifest the generator cannot read are exported at 0 before
+    any release, so a rate over a failure that has not happened yet is 0 and not
+    absent."""
     metrics = TopologyMetrics("topology-controller")
     assert REASONS
-    for stage in ("validate", "normalise", "hash"):
-        for reason in REASONS:
+    assert CONTRACT_FAILURE_STAGES == ("generate", "validate", "normalise", "hash")
+    assert CONTRACT_FAILURE_REASONS == (*REASONS, "manifest_shape")
+    for stage in CONTRACT_FAILURE_STAGES:
+        for reason in CONTRACT_FAILURE_REASONS:
             assert _value(metrics, "continuo_topology_contract_failures_total", stage=stage, reason=reason) == 0.0
-    for result in ("hit", "miss"):
-        assert _value(metrics, "continuo_topology_validation_cache_total", result=result) == 0.0
     samples = [
         line for line in generate_latest(metrics.registry).decode().splitlines()
         if line.startswith("continuo_topology_contract_failures_total{")
     ]
-    assert len(samples) == 3 * len(REASONS)
+    assert len(samples) == len(CONTRACT_FAILURE_STAGES) * len(CONTRACT_FAILURE_REASONS)
+
+
+def test_both_validation_cache_results_are_exported_at_boot():
+    metrics = TopologyMetrics("topology-controller")
+    for result in ("hit", "miss"):
+        assert _value(metrics, "continuo_topology_validation_cache_total", result=result) == 0.0
 
 
 def test_a_release_feeds_the_contract_counters():
@@ -87,6 +100,7 @@ def test_a_release_feeds_the_contract_counters():
     timings.add_contract_failure("validate", "strict_yaml")
     timings.add_contract_failure("normalise", "value")
     timings.add_contract_failure("hash", "value")
+    timings.add_contract_failure("generate", "manifest_shape")
     for hit in (True, False, False, False):
         timings.add_validation_cache(hit)
 
@@ -98,6 +112,7 @@ def test_a_release_feeds_the_contract_counters():
     assert _value(metrics, failures, stage="normalise", reason="value") == 1.0
     assert _value(metrics, failures, stage="hash", reason="value") == 1.0
     assert _value(metrics, failures, stage="hash", reason="column_type") == 0.0
+    assert _value(metrics, failures, stage="generate", reason="manifest_shape") == 1.0
     assert _value(metrics, "continuo_topology_validation_cache_total", result="hit") == 1.0
     assert _value(metrics, "continuo_topology_validation_cache_total", result="miss") == 3.0
 
