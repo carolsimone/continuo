@@ -3,13 +3,22 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/carolsimone/continuo/agent-remediation/adapters/workflowfile"
+	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
+	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/service/runner"
+	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+	"github.com/carolsimone/continuo/agent-remediation/workflows"
 )
 
 // wireReport is the JSON object `files` prints, as a reader decodes it.
@@ -28,6 +37,14 @@ type wireScenario struct {
 }
 
 const builtinDir = "../../workflows"
+
+// What the built-in files hold and play: 29 files (1 flow, 10 types, 10 type
+// fixtures and 8 flow fixtures) and 88 scenarios (10 types x 8 type scenarios,
+// then 1 flow x 8 flow scenarios).
+const (
+	builtinFileCount     = 29
+	builtinScenarioCount = 88
+)
 
 func runFiles(t *testing.T, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
@@ -122,7 +139,7 @@ approver: node_owner
 	assert.NotNil(t, r.Warnings)
 	assert.NotNil(t, r.Scenarios)
 	assert.Empty(t, r.Scenarios, "the suite is skipped when the files do not validate")
-	assert.Equal(t, 1, r.Files)
+	assert.Equal(t, builtinFileCount+1, r.Files, "the install's one file and every built-in file")
 }
 
 func TestFiles_AFileThatDoesNotLoadExitsOneWithEmptyArrays(t *testing.T) {
@@ -137,13 +154,20 @@ func TestFiles_AFileThatDoesNotLoadExitsOneWithEmptyArrays(t *testing.T) {
 	assert.NotEmpty(t, decode(t, stdout).Errors)
 }
 
-func TestFiles_AnEmptyDirExitsOne(t *testing.T) {
-	code, stdout, _ := runFiles(t, "files", t.TempDir())
+// The built-in files are always loaded, so an install folder with no file
+// checks the built-ins alone.
+func TestFiles_AnEmptyDirChecksTheBuiltInsAlone(t *testing.T) {
+	code, stdout, stderr := runFiles(t, "files", t.TempDir())
 
-	assert.Equal(t, 1, code)
 	r := decode(t, stdout)
-	assert.NotEmpty(t, r.Errors, "a directory with no flow is not a passing gate")
-	assert.Zero(t, r.Files)
+	require.Equal(t, 0, code, "stderr: %s\nstdout: %s", stderr, stdout)
+	assert.Empty(t, r.Errors)
+	assert.Empty(t, r.Warnings)
+	assert.Equal(t, builtinFileCount, r.Files)
+	require.Len(t, r.Scenarios, builtinScenarioCount)
+	for _, s := range r.Scenarios {
+		assert.True(t, s.OK, "%s %s: %s", s.Type, s.Scenario, s.Error)
+	}
 }
 
 func TestFiles_NoArgumentsExitsTwo(t *testing.T) {
@@ -244,20 +268,34 @@ func TestFiles_AGateOfTwoStepsExitsOne(t *testing.T) {
 	}
 }
 
-// Every heal trigger runs the flow rejected-release, so files that do not
-// define it are refused, as the service refuses them at startup.
-func TestFiles_FilesWithoutTheTriggerFlowExitOne(t *testing.T) {
-	dir := copyBuiltin(t, func(flow string) string {
-		return strings.Replace(flow, "\nname: rejected-release\n", "\nname: another-flow\n", 1)
-	})
+// Every heal trigger runs the flow rejected-release. An install file that
+// replaces it with a flow that cannot run is refused, as the service refuses it
+// at startup, and the built-in flow does not stand in for it.
+func TestFiles_AReplacementOfTheTriggerFlowThatCannotRunExitsOne(t *testing.T) {
+	for name, tc := range map[string]struct{ from, to, want string }{
+		"an unsupported trigger": {
+			from: "trigger: remediation.requested", to: "trigger: release.rejected",
+			want: `flow "rejected-release" has trigger "release.rejected"`,
+		},
+		"no gate": {
+			from: "gate: [verification_run]", to: "gate: []",
+			want: `flow "rejected-release" has no gate`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := copyBuiltin(t, func(flow string) string {
+				return strings.Replace(flow, tc.from, tc.to, 1)
+			})
 
-	code, stdout, stderr := runFiles(t, "files", dir)
+			code, stdout, stderr := runFiles(t, "files", dir)
 
-	assert.Equal(t, 1, code, stderr)
-	r := decode(t, stdout)
-	require.Len(t, r.Errors, 1, "%v", r.Errors)
-	assert.Contains(t, r.Errors[0], `"rejected-release"`)
-	assert.Empty(t, r.Scenarios)
+			assert.Equal(t, 1, code, stderr)
+			r := decode(t, stdout)
+			require.Len(t, r.Errors, 1, "%v", r.Errors)
+			assert.Contains(t, r.Errors[0], tc.want)
+			assert.Empty(t, r.Scenarios, "the suite is skipped when the files do not validate")
+		})
+	}
 }
 
 // A type runs at least one pre-flight round, so a type that asks for none is
@@ -297,4 +335,426 @@ func TestFiles_ATypeOfOneRoundPasses(t *testing.T) {
 		assert.True(t, s.OK, "%s %s: %s", s.Type, s.Scenario, s.Error)
 	}
 	assert.Equal(t, 0, code, "stderr: %s", stderr)
+}
+
+// builtinText is the text of one built-in file, by its path under the built-in
+// directory.
+func builtinText(t *testing.T, name string) string {
+	t.Helper()
+	data, err := fs.ReadFile(workflows.Builtin, name)
+	require.NoError(t, err)
+	return string(data)
+}
+
+// writeInstallFile writes an install file named name, which may hold
+// directories, under dir.
+func writeInstallFile(t *testing.T, dir, name, body string) {
+	t.Helper()
+	root, err := os.OpenRoot(dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = root.Close() })
+	if parent := filepath.Dir(name); parent != "." {
+		require.NoError(t, root.MkdirAll(parent, 0o750))
+	}
+	require.NoError(t, root.WriteFile(name, []byte(body), 0o600))
+}
+
+// installedType is a type an install adds: it handles the validation failures
+// of dbt tests, which no built-in type handles.
+const installedType = `kind: type
+version: 1
+name: my-validation
+match: { cluster: single, source: validation, node_types: [dbt-test] }
+context: [failing_node_source, dbt_log, failure_precedents]
+agent: { prompt: dbt-compile, tools: [], rounds: 2 }
+preflight: [content_changed, confidence_not_low]
+`
+
+// flowListingTheInstalledType is the built-in flow rejected-release with
+// installedType added to the types it lists.
+func flowListingTheInstalledType(t *testing.T) string {
+	t.Helper()
+	const last = "  - cross-service-upstream\n"
+	flow := builtinText(t, "flows/rejected-release.yaml")
+	require.Contains(t, flow, last)
+	return strings.Replace(flow, last, last+"  - my-validation\n", 1)
+}
+
+// A type that is new to the install has no built-in fixture to fall back on, so
+// every scenario of it fails and says which fixture is missing, while the
+// built-in types and flows still run.
+func TestFiles_AnInstallTypeWithoutAFixtureFails(t *testing.T) {
+	dir := t.TempDir()
+	writeInstallFile(t, dir, "my-validation.yaml", installedType)
+	writeInstallFile(t, dir, "rejected-release.yaml", flowListingTheInstalledType(t))
+
+	code, stdout, stderr := runFiles(t, "files", dir)
+
+	assert.Equal(t, 1, code, stderr)
+	r := decode(t, stdout)
+	assert.Empty(t, r.Errors, "the files load and validate, the type only lacks a fixture")
+	var own, others []wireScenario
+	for _, s := range r.Scenarios {
+		if s.Type == "my-validation" {
+			own = append(own, s)
+		} else {
+			others = append(others, s)
+		}
+	}
+	require.Len(t, own, 8, "a type is played through eight scenarios")
+	for _, s := range own {
+		assert.False(t, s.OK, s.Scenario)
+		assert.Contains(t, s.Error, "type my-validation has no fixture", s.Scenario)
+	}
+	require.Len(t, others, builtinScenarioCount, "every built-in scenario is still in the report")
+	for _, s := range others {
+		assert.True(t, s.OK, "%s %s: %s", s.Type, s.Scenario, s.Error)
+	}
+}
+
+// An install type with the name of a built-in replaces it, and the replacement
+// goes through the same validation and scenarios as any file.
+func TestFiles_AnInstallReplacementIsChecked(t *testing.T) {
+	const typeFile = "types/dbt-compile.yaml"
+
+	t.Run("a replacement naming an unknown step exits one with its file and line", func(t *testing.T) {
+		dir := t.TempDir()
+		writeInstallFile(t, dir, typeFile, strings.Replace(builtinText(t, typeFile),
+			"preflight: [target_file_was_shown, content_changed, confidence_not_low]",
+			"preflight: [target_file_was_shown, content_changed, no_such_step]", 1))
+
+		code, stdout, stderr := runFiles(t, "files", dir)
+
+		assert.Equal(t, 1, code, stderr)
+		r := decode(t, stdout)
+		require.Len(t, r.Errors, 1, "%v", r.Errors)
+		assert.Regexp(t, `^types/dbt-compile\.yaml:[0-9]+: unknown step "no_such_step"`, r.Errors[0])
+		assert.Empty(t, r.Scenarios, "the suite is skipped when the files do not validate")
+	})
+
+	t.Run("a valid replacement passes and is noted in the warnings", func(t *testing.T) {
+		dir := t.TempDir()
+		writeInstallFile(t, dir, typeFile, strings.Replace(builtinText(t, typeFile), "rounds: 3", "rounds: 2", 1))
+
+		code, stdout, stderr := runFiles(t, "files", dir)
+
+		r := decode(t, stdout)
+		require.Equal(t, 0, code, "stderr: %s\nstdout: %s", stderr, stdout)
+		assert.Empty(t, r.Errors)
+		assert.Equal(t, []string{"type dbt-compile: replaced by " + typeFile}, r.Warnings)
+		var replaced int
+		for _, s := range r.Scenarios {
+			assert.True(t, s.OK, "%s %s: %s", s.Type, s.Scenario, s.Error)
+			if s.Type == "dbt-compile" {
+				replaced++
+			}
+		}
+		assert.Equal(t, 8, replaced, "the replacement is played through every scenario, with the built-in fixture")
+	})
+}
+
+// A fixture an install ships replaces the built-in fixture of its type, so the
+// type is played against the install's fixture and the report names what that
+// fixture makes fail.
+func TestFiles_AnInstallFixtureReplacesTheBuiltInFixtureOfItsType(t *testing.T) {
+	const fixtureFile = "fixtures/types/dbt-compile.yaml"
+	const shown = "  pass:\n    - target_file: services/svc/models/x.sql\n"
+	fixture := builtinText(t, fixtureFile)
+	require.Contains(t, fixture, shown)
+	dir := t.TempDir()
+	// The passing answer now edits a file the model was not shown, which
+	// pre-flight refuses.
+	writeInstallFile(t, dir, "my-compile-fixture.yaml",
+		strings.Replace(fixture, shown, "  pass:\n    - target_file: services/svc/models/other.sql\n", 1))
+
+	code, stdout, stderr := runFiles(t, "files", dir)
+
+	assert.Equal(t, 1, code, stderr)
+	r := decode(t, stdout)
+	assert.Empty(t, r.Errors)
+	require.Len(t, r.Scenarios, builtinScenarioCount)
+	var failedOfCompile int
+	for _, s := range r.Scenarios {
+		switch {
+		case s.Type != "dbt-compile":
+			assert.True(t, s.OK, "%s %s: %s", s.Type, s.Scenario, s.Error)
+		case !s.OK:
+			failedOfCompile++
+		}
+	}
+	assert.Positive(t, failedOfCompile, "the install's fixture is the one dbt-compile is played against")
+}
+
+// What the load notes of an install's files (a replacement, a based_on that no
+// longer matches) go to the report's warnings, before the validator's own.
+func TestFiles_AWarningFromTheLoadReachesTheReport(t *testing.T) {
+	builtin, err := workflowfile.Load(workflows.Builtin)
+	require.NoError(t, err)
+	current := builtin.Types["dbt-compile"].Revision
+	dir := t.TempDir()
+	writeInstallFile(t, dir, "copy.yaml", "based_on: dbt-compile@000000000000\n"+
+		strings.Replace(builtinText(t, "types/dbt-compile.yaml"), "rounds: 3", "rounds: 2", 1))
+	writeInstallFile(t, dir, "unlisted.yaml", strings.Replace(installedType, "name: my-validation", "name: unlisted", 1))
+
+	code, stdout, stderr := runFiles(t, "files", dir)
+
+	r := decode(t, stdout)
+	require.Equal(t, 0, code, "stderr: %s\nstdout: %s", stderr, stdout)
+	assert.Empty(t, r.Errors)
+	require.Len(t, r.Warnings, 3, "%v", r.Warnings)
+	assert.Equal(t, "type dbt-compile: replaced by copy.yaml", r.Warnings[0])
+	assert.Equal(t, "copy.yaml: based on dbt-compile@000000000000, which is now @"+current, r.Warnings[1])
+	assert.Regexp(t, `^unlisted\.yaml:[0-9]+: type "unlisted" is listed by no flow$`, r.Warnings[2])
+}
+
+// wireStep is one entry of the array `steps` prints, as a reader decodes it.
+type wireStep struct {
+	Name              string   `json:"name"`
+	Kind              string   `json:"kind"`
+	Description       string   `json:"description"`
+	Needs             []string `json:"needs"`
+	Provides          []string `json:"provides"`
+	Stages            []string `json:"stages"`
+	MayStandAsGateRun bool     `json:"may_stand_as_gate_run"`
+	DataClass         []string `json:"data_class"`
+}
+
+func decodeSteps(t *testing.T, stdout string) []wireStep {
+	t.Helper()
+	dec := json.NewDecoder(strings.NewReader(stdout))
+	dec.DisallowUnknownFields()
+	var steps []wireStep
+	require.NoError(t, dec.Decode(&steps), stdout)
+	require.False(t, dec.More(), "stdout holds more than one JSON value")
+	return steps
+}
+
+// printedSteps runs `steps` and returns what it printed, after checking that it
+// succeeded.
+func printedSteps(t *testing.T) []wireStep {
+	t.Helper()
+	code, stdout, stderr := runFiles(t, "steps")
+	require.Equal(t, 0, code, stderr)
+	return decodeSteps(t, stdout)
+}
+
+func TestSteps_ListsEveryRegisteredStep(t *testing.T) {
+	var want []string
+	for _, m := range runner.NewRegistry(runner.Collaborators{}).All() {
+		want = append(want, string(m.Name))
+	}
+	require.NotEmpty(t, want)
+
+	var got []string
+	for _, s := range printedSteps(t) {
+		got = append(got, s.Name)
+	}
+
+	assert.Equal(t, want, got, "every registered step, sorted by name")
+	assert.True(t, slices.IsSorted(got))
+}
+
+func TestSteps_EveryEntryDescribesItself(t *testing.T) {
+	kinds := []string{string(step.KindContext), string(step.KindPrompt), string(step.KindCheck), string(step.KindApprover), string(step.KindOutput)}
+	stages := []string{
+		string(workflow.StageContext), string(workflow.StagePrompt), string(workflow.StagePreflight),
+		string(workflow.StageCrossCluster), string(workflow.StageGate), string(workflow.StageApprover), string(workflow.StageOutput),
+	}
+	seen := map[string]bool{}
+	for _, s := range printedSteps(t) {
+		seen[s.Kind] = true
+		assert.NotEmpty(t, s.Name)
+		assert.NotEmpty(t, strings.TrimSpace(s.Description), s.Name)
+		assert.Contains(t, kinds, s.Kind, s.Name)
+		if s.Kind == string(step.KindCheck) {
+			assert.NotEmpty(t, s.Stages, "%s: a check says where it may stand", s.Name)
+		}
+		for _, stage := range s.Stages {
+			assert.Contains(t, stages, stage, s.Name)
+		}
+	}
+	for _, kind := range kinds {
+		assert.True(t, seen[kind], "the catalog holds a step of kind %s", kind)
+	}
+}
+
+// data_class is read from the registry's evidence classes: the classes of the
+// keys a step provides and, for a prompt, also of the keys it reads.
+func TestSteps_DataClassFollowsTheEvidenceClasses(t *testing.T) {
+	reg := runner.NewRegistry(runner.Collaborators{})
+	classesOf := func(keys ...[]remediation.EvidenceKey) []string {
+		held := map[workflow.DataClass]bool{}
+		for _, ks := range keys {
+			for _, k := range ks {
+				if c, ok := reg.EvidenceClass(k); ok {
+					held[c] = true
+				}
+			}
+		}
+		out := []string{}
+		for _, c := range workflow.DataClasses() {
+			if held[c] {
+				out = append(out, string(c))
+			}
+		}
+		return out
+	}
+
+	steps := printedSteps(t)
+	byName := map[string]wireStep{}
+	for _, s := range steps {
+		byName[s.Name] = s
+	}
+	var readsMoreThanItProvides int
+	for _, m := range reg.All() {
+		got := byName[string(m.Name)]
+		want := classesOf(m.Provides)
+		if m.Kind == step.KindPrompt {
+			want = classesOf(m.Provides, m.Needs)
+		} else if len(classesOf(m.Needs)) > len(want) {
+			readsMoreThanItProvides++
+		}
+		assert.Equal(t, want, got.DataClass, m.Name)
+	}
+	assert.Positive(t, readsMoreThanItProvides, "a step that is no prompt reads a class it does not provide, and that class stays out of its data_class")
+
+	// A context step that provides logs, one that provides code, and a prompt
+	// whose reads add a class its own evidence lacks.
+	assert.Equal(t, []string{"logs"}, byName["dbt_log"].DataClass)
+	assert.Equal(t, []string{"code"}, byName["candidate_sql"].DataClass)
+	assert.Empty(t, byName["dbt-compile"].Provides)
+	assert.Equal(t, []string{"code", "logs"}, byName["dbt-compile"].DataClass)
+	assert.Empty(t, byName["content_changed"].DataClass, "a check provides no evidence")
+}
+
+func TestSteps_NeverNull(t *testing.T) {
+	_, stdout, _ := runFiles(t, "steps")
+
+	var raw []map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal([]byte(stdout), &raw), stdout)
+	require.NotEmpty(t, raw)
+	empty := map[string]bool{}
+	for _, entry := range raw {
+		for _, field := range []string{"needs", "provides", "stages", "data_class"} {
+			value := string(entry[field])
+			assert.NotEqual(t, "null", value, "%s of %s", field, entry["name"])
+			if value == "[]" {
+				empty[field] = true
+			}
+		}
+	}
+	for _, field := range []string{"needs", "provides", "stages", "data_class"} {
+		assert.True(t, empty[field], "some step has no %s, and prints []", field)
+	}
+}
+
+func TestSteps_FieldsFollowTheDocumentedOrder(t *testing.T) {
+	_, stdout, _ := runFiles(t, "steps")
+
+	dec := json.NewDecoder(strings.NewReader(stdout))
+	tok, err := dec.Token()
+	require.NoError(t, err)
+	require.Equal(t, json.Delim('['), tok, "stdout is one JSON array")
+	tok, err = dec.Token()
+	require.NoError(t, err)
+	require.Equal(t, json.Delim('{'), tok)
+	var keys []string
+	for dec.More() {
+		key, err := dec.Token()
+		require.NoError(t, err)
+		keys = append(keys, key.(string))
+		var skipped json.RawMessage
+		require.NoError(t, dec.Decode(&skipped))
+	}
+	assert.Equal(t, []string{"name", "kind", "description", "needs", "provides", "stages", "may_stand_as_gate_run", "data_class"}, keys)
+}
+
+func TestSteps_OutputIsDeterministic(t *testing.T) {
+	code, first, _ := runFiles(t, "steps")
+	require.Equal(t, 0, code)
+	_, second, _ := runFiles(t, "steps")
+
+	assert.Equal(t, first, second)
+}
+
+func TestSteps_TakesNoArguments(t *testing.T) {
+	code, stdout, stderr := runFiles(t, "steps", "extra")
+
+	assert.Equal(t, 2, code)
+	assert.Empty(t, stdout)
+	assert.Contains(t, stderr, "usage: remediation-check")
+	assert.Contains(t, stderr, "remediation-check steps")
+}
+
+// Each subcommand says what it is for, what it takes, what it prints and how
+// it exits, whether it is asked through `help`, `-h` or `--help`, and the
+// overview holds each of those blocks.
+func TestHelp_EachSubcommandStatesItsPurposeArgumentsOutputAndExitCodes(t *testing.T) {
+	askedFor := func(args ...string) string {
+		t.Helper()
+		code, stdout, stderr := runFiles(t, args...)
+		require.Equal(t, 0, code, "%v: %s", args, stderr)
+		assert.Empty(t, stderr, "%v: help goes to stdout alone", args)
+		require.NotEmpty(t, stdout, "%v", args)
+		return stdout
+	}
+	sections := []string{"Purpose", "Arguments", "Stdout", "Exit codes"}
+
+	blocks := map[string]string{}
+	for sub, ways := range map[string][][]string{
+		"files": {{"help", "files"}, {"files", "-h"}, {"files", "--help"}},
+		"steps": {{"help", "steps"}, {"steps", "-h"}, {"steps", "--help"}},
+	} {
+		block := askedFor(ways[0]...)
+		blocks[sub] = block
+		for _, way := range ways[1:] {
+			assert.Equal(t, block, askedFor(way...), "%v prints what %v prints", way, ways[0])
+		}
+		for _, section := range sections {
+			assert.Contains(t, block, "\n"+section+"\n", "%s help has a %s section", sub, section)
+		}
+		assert.True(t, strings.HasPrefix(block, "remediation-check "+sub), block)
+	}
+
+	files, steps := blocks["files"], blocks["steps"]
+	assert.Contains(t, files, "<dir>")
+	assert.Contains(t, files, `"scenarios"`)
+	assert.Contains(t, files, "distinct files")
+	assert.Contains(t, files, "built-in files included")
+	for _, code := range []string{"0  ", "1  ", "2  "} {
+		assert.Contains(t, files, "\n  "+code, "files help lists exit code %s", strings.TrimSpace(code))
+	}
+	assert.Contains(t, steps, "None.")
+	assert.Contains(t, steps, `"may_stand_as_gate_run"`)
+	assert.Contains(t, steps, `"data_class"`)
+	assert.Contains(t, steps, "sorted by name")
+	for _, code := range []string{"0  ", "2  "} {
+		assert.Contains(t, steps, "\n  "+code, "steps help lists exit code %s", strings.TrimSpace(code))
+	}
+	assert.NotContains(t, files, "remediation-check steps")
+	assert.NotContains(t, steps, "remediation-check files")
+
+	for _, way := range [][]string{{"help"}, {"-h"}, {"--help"}} {
+		overview := askedFor(way...)
+		assert.Contains(t, overview, files, "%v: the overview holds the files block", way)
+		assert.Contains(t, overview, steps, "%v: the overview holds the steps block", way)
+	}
+}
+
+func TestHelp_AMisusedHelpIsAUsageError(t *testing.T) {
+	for name, args := range map[string][]string{
+		"an unknown subcommand": {"help", "verify"},
+		"two subcommands":       {"help", "files", "steps"},
+		"an option and a name":  {"--help", "files"},
+		"help of steps, extra":  {"steps", "--help", "more"},
+		"help of files, extra":  {"files", "-h", "more"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			code, stdout, stderr := runFiles(t, args...)
+
+			assert.Equal(t, 2, code, stderr)
+			assert.Empty(t, stdout)
+			assert.Contains(t, stderr, "usage: remediation-check files <dir>")
+		})
+	}
 }
