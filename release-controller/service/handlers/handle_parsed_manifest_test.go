@@ -265,6 +265,80 @@ func TestHandleParsedManifest_ARejectedParseStoresTheLibraryVersion(t *testing.T
 	})
 }
 
+// The parse timings the result reports are stored on the run beside the
+// contract bundle and the library version, on every path that reads a result:
+// an ok parse that goes on to validation, a bootstrap that promotes at once, a
+// failed parse and an ok result whose topology cannot be read.
+func TestHandleParsedManifest_RecordsTheParseTimings(t *testing.T) {
+	topo := release.Topology{{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{}}}
+	timings := release.NewParseTimings(4180, 1260, map[string]int{"dbt": 3, "python": 2})
+	wantMs := func(ms int64) *int64 { return &ms }
+
+	t.Run("validating", func(t *testing.T) {
+		deps, store := seedToParsing(t, "rT", map[string]string{"svc-a": "sha-a"})
+		require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+			ReleaseID: "rT", Status: "ok", TopologyRef: putTopology(t, deps, "rT", topo), ParseTimings: timings,
+		}))
+
+		r, err := store.GetRelease("rT")
+		require.NoError(t, err)
+		assert.Equal(t, pipeline.StatusValidating, r.Status())
+		assert.Equal(t, wantMs(4180), r.ParseTimings().ParseMs)
+		assert.Equal(t, wantMs(1260), r.ParseTimings().ContractsMs)
+		assert.Equal(t, map[string]int{"dbt": 3, "python": 2}, r.ParseTimings().ContractsByFamily)
+	})
+
+	t.Run("bootstrap", func(t *testing.T) {
+		deps, store := seedToParsingBootstrap(t, "rTB", map[string]string{"svc-a": "sha-a"})
+		require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+			ReleaseID: "rTB", Status: "ok", TopologyRef: putTopology(t, deps, "rTB", topo), ParseTimings: timings,
+		}))
+
+		r, err := store.GetRelease("rTB")
+		require.NoError(t, err)
+		assert.Equal(t, pipeline.StatusPromoted, r.Status())
+		assert.Equal(t, timings, r.ParseTimings())
+	})
+
+	t.Run("a failed parse keeps the durations and has no count", func(t *testing.T) {
+		deps, store := seedToParsing(t, "rTF", map[string]string{"svc-a": "sha-a"})
+		require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+			ReleaseID: "rTF", Status: "failed", FailureKind: pkg_model.ParseFailureKindInvalidSQL, Detail: "1 node failed to parse: a.b",
+			ParseTimings: release.NewParseTimings(310, 45, nil),
+		}))
+
+		r, err := store.GetRelease("rTF")
+		require.NoError(t, err)
+		assert.Equal(t, pipeline.StatusRejected, r.Status())
+		assert.Equal(t, wantMs(310), r.ParseTimings().ParseMs)
+		assert.Equal(t, wantMs(45), r.ParseTimings().ContractsMs)
+		assert.Nil(t, r.ParseTimings().ContractsByFamily)
+	})
+
+	t.Run("an ok result whose topology cannot be read", func(t *testing.T) {
+		deps, store := seedToParsing(t, "rTU", map[string]string{"svc-a": "sha-a"})
+		require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+			ReleaseID: "rTU", Status: "ok", ParseTimings: timings,
+		}))
+
+		r, err := store.GetRelease("rTU")
+		require.NoError(t, err)
+		assert.Equal(t, "internal_error", r.FailReason())
+		assert.Equal(t, timings, r.ParseTimings())
+	})
+
+	t.Run("a result that reports none leaves the run with none", func(t *testing.T) {
+		deps, store := seedToParsing(t, "rTN", map[string]string{"svc-a": "sha-a"})
+		require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+			ReleaseID: "rTN", Status: "ok", TopologyRef: putTopology(t, deps, "rTN", topo),
+		}))
+
+		r, err := store.GetRelease("rTN")
+		require.NoError(t, err)
+		assert.Equal(t, release.ParseTimings{}, r.ParseTimings())
+	})
+}
+
 func TestHandleParsedManifest_Failed_RecordsTheParsingStageDuration(t *testing.T) {
 	deps, _ := seedToParsing(t, "rP", map[string]string{"svc": "img"})
 	spy := &stageSpy{}

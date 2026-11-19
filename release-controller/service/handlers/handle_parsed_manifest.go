@@ -49,9 +49,11 @@ type HandleParsedManifestInput struct {
 	CodeBundleURI string
 	// ContractBundle is the contract bundle an ok parse wrote. ContinuoContracts
 	// is the version of the continuo-contracts library that read the release's
-	// contracts, named by both outcomes.
+	// contracts, and ParseTimings how long the parse took, both named by both
+	// outcomes.
 	ContractBundle    release.ContractBundleRef
 	ContinuoContracts string
+	ParseTimings      release.ParseTimings
 	FailureKind       pkg_model.ParseFailureKind
 	Detail            string
 	FailedNodes       []ParsedFailedNode
@@ -109,8 +111,10 @@ func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestI
 	}
 
 	// Both outcomes name the continuo-contracts version that read the release's
-	// contracts; the run keeps it whether the parse ended ok or failed.
+	// contracts and how long the parse took; the run keeps them whether the parse
+	// ended ok or failed.
 	r.SetContinuoContracts(in.ContinuoContracts)
+	r.SetParseTimings(in.ParseTimings)
 
 	if in.Status == "failed" {
 		return handleParseFailed(ctx, d, u, r, in, now)

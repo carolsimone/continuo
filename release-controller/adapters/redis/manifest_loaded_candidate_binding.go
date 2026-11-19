@@ -41,6 +41,7 @@ func parsedManifestInput(p pkgevents.ManifestLoadedCandidate, logger *slog.Logge
 			URI: p.ContractBundleURI, SHA256: p.ContractBundleSHA256,
 		},
 		ContinuoContracts: p.ContinuoContracts,
+		ParseTimings:      release.NewParseTimings(p.ParseMs, p.ContractsMs, p.ContractsByFamily),
 		FailureKind:       kind,
 		Detail:            p.Detail,
 		FailedNodes:       failed,

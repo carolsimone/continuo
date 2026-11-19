@@ -10,7 +10,7 @@ import (
 
 // getReleaseResponse builds the JSON object returned by GET /releases/{id}.
 func getReleaseResponse(rel *pipeline.Run) map[string]any {
-	return map[string]any{
+	body := map[string]any{
 		"release_id":          rel.ID(),
 		"status":              string(rel.Status()),
 		"changed_service":     rel.ChangedService(),
@@ -35,6 +35,20 @@ func getReleaseResponse(rel *pipeline.Run) map[string]any {
 		"contract_bundle_uri":    rel.CandidateContractBundle().URI,
 		"contract_bundle_sha256": rel.CandidateContractBundle().SHA256,
 	}
+	// The parse timings are named only once the parse reported them: how long the
+	// parse and its contract stages took, and, for an ok parse, how many contracts
+	// the bundle holds by family.
+	t := rel.ParseTimings()
+	if t.ParseMs != nil {
+		body["parse_ms"] = *t.ParseMs
+	}
+	if t.ContractsMs != nil {
+		body["contracts_ms"] = *t.ContractsMs
+	}
+	if t.ContractsByFamily != nil {
+		body["contracts_by_family"] = t.ContractsByFamily
+	}
+	return body
 }
 
 func (s *Server) handleGetRelease(w http.ResponseWriter, r *http.Request) {
