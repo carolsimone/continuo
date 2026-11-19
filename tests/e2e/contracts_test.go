@@ -11,8 +11,11 @@ import (
 	"time"
 
 	catalogv1 "github.com/carolsimone/continuo/catalog/api/catalog/v1"
+	"github.com/carolsimone/continuo/pkg/contractbundle"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/pkg/topologyartifact"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,6 +37,39 @@ const (
 	// contractsBudget covers catalog reading a promoted release's contract
 	// bundle, recording its versions and rewriting the live folder.
 	contractsBudget = 2 * time.Minute
+
+	// topologyContractsVersion is the continuo-contracts version
+	// topology-controller pins (topology-controller/pyproject.toml). That
+	// library reads and checks every contract of a release, and the release's
+	// parse result and contract bundle name it.
+	topologyContractsVersion = "0.3.0"
+
+	// dbtContractFamily is the family the contract bundle gives the contract of
+	// a dbt model, seed or snapshot.
+	dbtContractFamily = "dbt"
+
+	// dbtProbeTeam and dbtProbeSchedule are what service-1's dbt project
+	// (dbt/services/service-1/dbt_project.yml) gives the rel_probe model: its
+	// +meta owner, which its contract carries as team.name, and its schedule
+	// tag, which its contract carries as the schedule property.
+	dbtProbeTeam     = "test"
+	dbtProbeSchedule = "rel-probe"
+
+	// dbtContractsReleaseService is the service the invalid-contract test
+	// releases. Its compile Job uploads the freshly compiled manifest to
+	// <service>/<release_id>/manifest.json, which would overwrite a manifest
+	// doctored under that key, so the invalid contract is staged in
+	// dbtContractsPinnedService's production-pinned manifest, which nothing in
+	// the release rewrites (see parseFixReleaseService).
+	dbtContractsReleaseService = parseFixReleaseService
+	dbtContractsPinnedService  = parseFixBrokenService
+
+	// dbtInvalidContractNodeID is the model of dbtContractsPinnedService whose
+	// criticality the invalid-contract test sets to dbtInvalidCriticality, a
+	// value outside REGULATORY, CORE and SECONDARY. The model reads no table
+	// and no model reads it, so the edit makes no failure but its own contract.
+	dbtInvalidContractNodeID = unfixableInfraUniqueID
+	dbtInvalidCriticality    = "high"
 )
 
 // TestE2E_PythonODCSRelease_IsPromotedAndPublished proves a Python contract's
@@ -67,11 +103,7 @@ func TestE2E_PythonODCSRelease_IsPromotedAndPublished(t *testing.T) {
 	verifyK8sAvailable(t, ctx)
 	requireReleaseControllerHealthy(t, clients)
 
-	bin := buildCLI(t, ctx)
-	env := []string{
-		"CONTINUO_CATALOG_ADDR=" + getEnv("CATALOG_HOST", "catalog") + ":50052",
-		"CONTINUO_ACTOR=e2e-cli",
-	}
+	bin, env := contractsCLI(t, ctx)
 	before := highestContractVersion(t, ctx, clients, pyProbeUniqueID)
 
 	// ── 1. the py-probe service is promoted as python-odcs ──────────────────
@@ -92,9 +124,7 @@ func TestE2E_PythonODCSRelease_IsPromotedAndPublished(t *testing.T) {
 		assert.Equal(t, firstID, first.ReleaseID, "a new version records the release that made it current")
 	}
 	assert.True(t, first.IsCurrent, "node contract prints the current version")
-	// 0.2.0 is the continuo-contracts version topology-controller runs (the
-	// install's library), which reads and stores the contract.
-	assert.Equal(t, "0.2.0", first.ContinuoContracts, "the version records the library that read it")
+	assert.Equal(t, topologyContractsVersion, first.ContinuoContracts, "the version records the library that read it")
 	assert.Equal(t, pyProbeTeam, documentTeam(t, first.DocumentYAML), "the document carries the contract's team.name")
 	assert.Equal(t, strconv.FormatInt(first.Version, 10), documentVersion(t, first.DocumentYAML),
 		"the published document's version is the counted version, as a string")
@@ -191,11 +221,136 @@ func TestE2E_PythonODCSRelease_AnInvalidContractIsRejected(t *testing.T) {
 	assert.Equal(t, true, public["terminal"])
 	assert.Equal(t, "invalid_contract", public["reject_reason"])
 	assert.Contains(t, public["reject_detail"], pyProbeUniqueID, "the public detail names the failed node")
-	// 0.2.0 is the continuo-contracts version topology-controller runs (the
-	// install's library), which refused the contract.
-	assert.Equal(t, "0.2.0", public["continuo_contracts"],
+	assert.Equal(t, topologyContractsVersion, public["continuo_contracts"],
 		"the public status names the continuo-contracts version that refused the contract")
 	t.Logf("✅ release %s rejected invalid_contract on %s by continuo-contracts %v", releaseID, pyProbeUniqueID, public["continuo_contracts"])
+}
+
+// TestE2E_DbtContracts_AnInvalidContractIsRejected proves a dbt node whose
+// definitions make an invalid contract rejects the release before validation:
+// service-2's production-pinned manifest is a copy of its baseline with the
+// criticality of one model set to a value outside REGULATORY, CORE and
+// SECONDARY, and a release of service-1 assembles that manifest.
+// topology-controller rejects the release invalid_contract, naming the model
+// and its file, and the model's parse result names the criticality field. No
+// other node fails, and the release never reaches validation.
+func TestE2E_DbtContracts_AnInvalidContractIsRejected(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
+	// the rejection (service-1's compile Job and the parse leg, 10m) plus the
+	// baseline reads and the seeding before it.
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
+	defer cancel()
+
+	clients := setupClients(t, ctx)
+
+	verifyServicesHealthy(t)
+	verifyK8sAvailable(t, ctx)
+	requireReleaseControllerHealthy(t, clients)
+
+	releaseID := "e2e-dbtinv-" + uuid.NewString()[:8]
+	t.Logf("release_id=%s released_service=%s invalid_node=%s (service %s)",
+		releaseID, dbtContractsReleaseService, dbtInvalidContractNodeID, dbtContractsPinnedService)
+
+	allServices := baselineServices(t, ctx, clients)
+	require.NotEmpty(t, allServices, "no baseline manifests in S3 — setup.sh must run before the e2e suite")
+	released, ok := allServices[dbtContractsReleaseService]
+	require.True(t, ok, "%s has no baseline manifest", dbtContractsReleaseService)
+	require.NotEmpty(t, released.imageTag)
+	pinned, ok := allServices[dbtContractsPinnedService]
+	require.True(t, ok, "%s has no baseline manifest", dbtContractsPinnedService)
+
+	// Production holds every baseline node, so the release changes nothing
+	// the parse does not reject.
+	var prodNodes []map[string]string
+	for svc, si := range allServices {
+		for _, n := range si.nodes {
+			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "service": svc, "content_hash": n.contentHash})
+		}
+	}
+	resetReleaseControllerQueue(t, ctx, clients)
+	seedCurrentProd(t, ctx, clients, prodNodes)
+	seedServiceProd(t, ctx, clients, allServices)
+
+	// Set the criticality of one model in a copy of service-2's baseline
+	// manifest, copy the baseline's compile extras beside it, and pin
+	// service-2's production pointer at it, so the assembled set the parse leg
+	// reads carries the invalid contract.
+	pinnedReleaseID := releaseID + "-src"
+	baselineKey := fmt.Sprintf("%s/%s/manifest.json", dbtContractsPinnedService, e2eBaselineReleaseID)
+	doc, err := decodeJSONDoc(getS3Object(t, ctx, clients, baselineKey))
+	require.NoError(t, err)
+	filePath := setModelCriticality(t, doc, dbtInvalidContractNodeID, dbtInvalidCriticality)
+	body, err := json.Marshal(doc)
+	require.NoError(t, err)
+	putS3Object(t, ctx, clients,
+		fmt.Sprintf("%s/%s/manifest.json", dbtContractsPinnedService, pinnedReleaseID), body)
+	copyBaselineExtras(t, ctx, clients, dbtContractsPinnedService, pinnedReleaseID)
+	pinServiceProd(t, ctx, clients, dbtContractsPinnedService, pinnedReleaseID, pinned.imageTag)
+	// Put the pointer back so no later test parses the doctored manifest.
+	// Deferred, so it runs when the test function returns, while the pool is
+	// open.
+	defer pinServiceProd(t, context.Background(), clients,
+		dbtContractsPinnedService, e2eBaselineReleaseID, pinned.imageTag)
+
+	postRelease(t, clients, dbtContractsReleaseService, releaseID, released.imageTag, false)
+	waitForReleaseRejected(t, ctx, clients, releaseID, 10*time.Minute)
+
+	detail := getReleaseJSON(t, clients, releaseID)
+	assert.Equal(t, string(model.RejectReasonInvalidContract), detail["reject_reason"])
+	assert.Equal(t, []any{dbtInvalidContractNodeID}, detail["failing_nodes"],
+		"the one invalid contract's model is the failing node")
+	assert.Contains(t, detail["reject_detail"], dbtInvalidContractNodeID, "the release's reject detail names the model")
+
+	results, _ := detail["per_node_results"].([]any)
+	var named bool
+	for _, raw := range results {
+		r, _ := raw.(map[string]any)
+		if r["node_id"] != dbtInvalidContractNodeID {
+			continue
+		}
+		named = true
+		assert.Equal(t, "parse", r["stage"], "an invalid contract is a parse result")
+		assert.Equal(t, "failed", r["status"])
+		assert.Equal(t, filePath, r["file_path"], "the failed model names its file")
+		assert.Contains(t, r["detail"], "criticality", "the failed model's detail names the field")
+	}
+	assert.True(t, named, "per_node_results names %s: %v", dbtInvalidContractNodeID, results)
+	t.Logf("✅ release %s rejected invalid_contract on %s (%s)", releaseID, dbtInvalidContractNodeID, filePath)
+}
+
+// setModelCriticality sets config.meta.criticality of the model uniqueID
+// (<schema>.<table>) in the dbt manifest doc to criticality, and the copy dbt
+// writes in the node's own meta when there is one, and returns the model's
+// original_file_path. Every other field of doc stays as it was.
+func setModelCriticality(t *testing.T, doc map[string]interface{}, uniqueID, criticality string) string {
+	t.Helper()
+	var filePath string
+	var edited int
+	for _, nv := range asObjectMap(doc["nodes"]) {
+		n, ok := nv.(map[string]interface{})
+		if !ok || n["resource_type"] != "model" {
+			continue
+		}
+		schema, _ := n["schema"].(string)
+		name, _ := n["name"].(string)
+		if schema+"."+name != uniqueID {
+			continue
+		}
+		meta, ok := asObjectMap(n["config"])["meta"].(map[string]interface{})
+		require.True(t, ok, "%s must declare config.meta in the manifest (its project's +meta owner and criticality)", uniqueID)
+		require.NotEqual(t, criticality, meta["criticality"], "%s already has criticality %q", uniqueID, criticality)
+		meta["criticality"] = criticality
+		if nodeMeta, ok := n["meta"].(map[string]interface{}); ok {
+			nodeMeta["criticality"] = criticality
+		}
+		filePath, _ = n["original_file_path"].(string)
+		edited++
+	}
+	require.Equal(t, 1, edited, "exactly one model of the manifest is %s", uniqueID)
+	require.NotEmpty(t, filePath, "%s must carry an original_file_path", uniqueID)
+	return filePath
 }
 
 // cliContract is the contract `continuo node contract` prints.
@@ -221,6 +376,102 @@ func showNodeContract(t *testing.T, ctx context.Context, bin string, env []strin
 	require.Equal(t, uniqueID, shown.Contract.UniqueID)
 	require.NotEmpty(t, shown.Contract.DocumentYAML, "node contract prints the contract's document")
 	return shown.Contract
+}
+
+// contractsCLI builds the continuo binary and returns it with the environment
+// that points it at catalog.
+func contractsCLI(t *testing.T, ctx context.Context) (string, []string) {
+	t.Helper()
+	env := []string{
+		"CONTINUO_CATALOG_ADDR=" + getEnv("CATALOG_HOST", "catalog") + ":50052",
+		"CONTINUO_ACTOR=e2e-cli",
+	}
+	return buildCLI(t, ctx), env
+}
+
+// assertDbtNodeContract checks the contract of a dbt node a promoted release
+// keeps, node being its entry in the release's topology artifact:
+//
+//   - the release's contract bundle holds a contract of the dbt family for it,
+//     of its service, with its content_hash, whose team.name is the node's
+//     owner and whose schedule property is the schedule of the topology node;
+//   - catalog publishes it: once the live folder names the release,
+//     `continuo node contract` prints the bundle's contract (the same
+//     contract_hash) with its team.name.
+func assertDbtNodeContract(t *testing.T, ctx context.Context, clients *testClients, releaseID string, node topologyartifact.Node) {
+	t.Helper()
+	bundle := candidateContractBundle(t, ctx, clients, releaseID)
+	assert.Positive(t, bundle.Summary.ByFamily[dbtContractFamily], "the bundle counts the release's dbt contracts")
+
+	stored, ok := bundle.Contracts[node.UniqueID]
+	require.True(t, ok, "the contract bundle of %s holds a contract for %s", releaseID, node.UniqueID)
+	assert.Equal(t, dbtContractFamily, stored.Family)
+	assert.Equal(t, node.ServiceName, stored.Service)
+	assert.Equal(t, node.ContentHash, stored.ContentHash, "the contract carries its node's code fingerprint")
+	assert.NotEmpty(t, stored.ContractHash)
+
+	var root odcsRoot
+	require.NoError(t, json.Unmarshal(stored.Document, &root), "parse the bundle's contract of %s", node.UniqueID)
+	assert.Equal(t, dbtProbeTeam, root.Team.Name, "the contract carries the node's owner as team.name")
+	schedule, ok := root.continuoProperty("schedule")
+	require.True(t, ok, "the contract of %s has a schedule property: %s", node.UniqueID, stored.Document)
+	assert.Equal(t, dbtProbeSchedule, schedule)
+	assert.Equal(t, schedule, node.Schedule, "the topology node's schedule is the contract's schedule property")
+
+	waitForLiveIndexOf(t, ctx, clients, releaseID, contractsBudget)
+	bin, env := contractsCLI(t, ctx)
+	shown := showNodeContract(t, ctx, bin, env, node.UniqueID)
+	assert.True(t, shown.IsCurrent, "node contract prints the current version")
+	assert.Equal(t, stored.ContractHash, shown.ContractHash, "node contract prints the contract the release's bundle holds")
+	assert.Equal(t, dbtProbeTeam, documentTeam(t, shown.DocumentYAML), "the printed document carries the contract's team.name")
+	t.Logf("✅ %s: dbt contract in the bundle of %s, version %d printed by `continuo node contract` (schedule %s, team %s)",
+		node.UniqueID, releaseID, shown.Version, schedule, root.Team.Name)
+}
+
+// candidateContractBundle reads the contract bundle of releaseID from MinIO,
+// by the URI and SHA-256 release-controller records on the release and
+// returns on GET /releases/{id}, and decodes it, which checks the stored bytes
+// against that SHA-256.
+func candidateContractBundle(t *testing.T, ctx context.Context, clients *testClients, releaseID string) contractbundle.Document {
+	t.Helper()
+	detail := getReleaseJSON(t, clients, releaseID)
+	uri, _ := detail["contract_bundle_uri"].(string)
+	sha, _ := detail["contract_bundle_sha256"].(string)
+	key := contractbundle.Key(events.DefaultTenantID, releaseID)
+	require.Equal(t, "s3://"+e2eS3Bucket+"/"+key, uri, "the release must reference its contract bundle at its deterministic key")
+	require.NotEmpty(t, sha, "the release must record the SHA-256 of its contract bundle")
+
+	doc, err := contractbundle.Decode(getS3Object(t, ctx, clients, key), sha)
+	require.NoError(t, err, "the contract bundle of %s must decode", releaseID)
+	require.Equal(t, releaseID, doc.ReleaseID)
+	require.Equal(t, events.DefaultTenantID, doc.TenantID)
+	require.Equal(t, topologyContractsVersion, doc.ContinuoContracts, "the bundle records the library that stored its contracts")
+	return doc
+}
+
+// odcsRoot is the part of a stored contract document's root the dbt checks
+// read: its team and its custom properties.
+type odcsRoot struct {
+	Team struct {
+		Name string `json:"name"`
+	} `json:"team"`
+	CustomProperties []struct {
+		Vendor   string `json:"vendor"`
+		Property string `json:"property"`
+		Value    any    `json:"value"`
+	} `json:"customProperties"`
+}
+
+// continuoProperty returns the string value of the root's custom property name
+// of the vendor continuo, and whether the root has one.
+func (r odcsRoot) continuoProperty(name string) (string, bool) {
+	for _, p := range r.CustomProperties {
+		if p.Vendor == "continuo" && p.Property == name {
+			value, ok := p.Value.(string)
+			return value, ok
+		}
+	}
+	return "", false
 }
 
 // highestContractVersion returns the highest contract version catalog holds
