@@ -22,9 +22,24 @@ therefore returns the checksum of the one object the store holds. Conflicts that
 never settle, and every other failure of the put, reach the caller unchanged: the
 consumer waits out an unsettled 409 like an outage (adapters/redis/error_class.py),
 so the redelivered message's read finds the other writer's object.
+
+The reference also carries how many contracts the stored bundle holds by family:
+the document's own `summary.by_family` when the store holds this writer's bytes,
+and otherwise the `summary.by_family` of the bytes already stored, which another
+parse of the release wrote (it may be another version of topology-controller, with
+other contracts). Those bytes are already in memory from the read; they are
+inflated a piece at a time and only their end is kept, since keys sort in canonical
+JSON and `summary` comes after the large `contracts` (only `tenant_id` and `timings`
+follow it). The last `"summary":` key there is decoded, and accepted only when what
+follows it closes the document. Any other layout is read as a whole. A stored bundle
+that is not gzip, whose JSON cannot be decoded, or that holds no `summary.by_family`
+of counts raises UnreadableContractBundleError.
 """
 import gzip
+import io
+import json
 import time
+import zlib
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -34,6 +49,7 @@ from continuo_contracts.hashing import sha256_hex
 
 from domain.model import ContractBundleRef
 from service.contract_bundle import contract_bundle_key
+from service.errors import UnreadableContractBundleError
 
 _ABSENT_CODES = {"404", "NoSuchKey", "NotFound"}
 
@@ -49,6 +65,14 @@ _TAKEN_STATUSES = {409, 412}
 _MAX_PUTS = 5
 _FIRST_WAIT_SECONDS = 0.2
 
+# How much of a stored bundle's JSON is inflated at a time, and how much of its
+# end is kept to find its summary in: far more than the summary, `tenant_id` and
+# `timings` that end the document.
+_PIECE_BYTES = 1 << 20
+_END_BYTES = 1 << 20
+_SUMMARY_KEY = b'"summary":'
+_DECODER = json.JSONDecoder()
+
 
 class ContractBundleWriter:
     def __init__(self, s3_client, bucket: str, *, sleep: Callable[[float], None] = time.sleep) -> None:
@@ -58,10 +82,15 @@ class ContractBundleWriter:
 
     def write(self, *, tenant_id: str, release_id: str, document: Mapping[str, Any]) -> ContractBundleRef:
         key = contract_bundle_key(tenant_id, release_id)
-        body = self._stored(key)
-        if body is None:
-            body = self._create(key, gzip.compress(canonical_json(document), mtime=0))
-        return ContractBundleRef(uri=f"s3://{self._bucket}/{key}", sha256=sha256_hex(body))
+        uri = f"s3://{self._bucket}/{key}"
+        stored = self._stored(key)
+        if stored is None:
+            body = gzip.compress(canonical_json(document), mtime=0)
+            stored = self._create(key, body)
+            if stored == body:
+                by_family = dict(document["summary"]["by_family"])
+                return ContractBundleRef(uri=uri, sha256=sha256_hex(body), by_family=by_family)
+        return ContractBundleRef(uri=uri, sha256=sha256_hex(stored), by_family=_stored_by_family(uri, stored))
 
     def _create(self, key: str, body: bytes) -> bytes:
         """Create the object at key with body unless another writer has, and
@@ -95,6 +124,58 @@ class ContractBundleWriter:
             if str(exc.response.get("Error", {}).get("Code", "")) in _ABSENT_CODES:
                 return None
             raise
+
+
+def _stored_by_family(uri: str, stored: bytes) -> dict[str, int]:
+    """The `summary.by_family` of the bundle whose gzip bytes are `stored`."""
+    try:
+        summary = _summary_at_the_end(_inflated_end(stored))
+        if summary is None:
+            document = json.loads(gzip.decompress(stored))
+            summary = document.get("summary") if isinstance(document, dict) else None
+    except (OSError, EOFError, zlib.error, ValueError, RecursionError) as exc:
+        raise UnreadableContractBundleError(f"the contract bundle {uri} is stored and cannot be read: {exc}") from exc
+    by_family = summary.get("by_family") if isinstance(summary, dict) else None
+    if not isinstance(by_family, dict) or not all(
+            isinstance(family, str) and type(count) is int and count >= 0 for family, count in by_family.items()):
+        raise UnreadableContractBundleError(
+            f"the contract bundle {uri} is stored and holds no summary.by_family of counts")
+    return dict(by_family)
+
+
+def _inflated_end(stored: bytes) -> bytes:
+    """The last _END_BYTES of what the gzip bytes `stored` inflate to, inflated a
+    piece at a time so the whole JSON is never held."""
+    end = b""
+    with gzip.GzipFile(fileobj=io.BytesIO(stored)) as inflated:
+        while piece := inflated.read(_PIECE_BYTES):
+            end = (end + piece)[-_END_BYTES:]
+    return end
+
+
+def _summary_at_the_end(end: bytes) -> object | None:
+    """The value of the top-level `summary` key of a canonical bundle whose last
+    bytes are `end`, or None when they do not end the document that way.
+
+    In canonical JSON a key is written `"<key>":` with no space, and a quote inside
+    a string is escaped, so `"summary":` after a `{` or a `,` is a key named
+    `summary`. The last one is the top-level key when the members after it (the
+    document's `tenant_id` and `timings`) close the document: a key nested in a
+    value is followed by the bracket that closes its own container first."""
+    at = end.rfind(_SUMMARY_KEY)
+    if at < 1 or end[at - 1:at] not in (b"{", b","):
+        return None
+    try:
+        text = end[at + len(_SUMMARY_KEY):].decode("utf-8")
+        summary, position = _DECODER.raw_decode(text)
+        while text[position:position + 1] == ",":
+            key, position = _DECODER.raw_decode(text, position + 1)
+            if not isinstance(key, str) or text[position:position + 1] != ":":
+                return None
+            _, position = _DECODER.raw_decode(text, position + 1)
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        return None
+    return summary if text[position:] == "}" else None
 
 
 def _taken(exc: ClientError) -> bool:

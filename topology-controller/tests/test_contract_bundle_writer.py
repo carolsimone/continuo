@@ -1,71 +1,51 @@
-"""The contract bundle writer: one gzipped canonical document per release, written once."""
+"""The contract bundle writer: one gzipped canonical document per release, written once,
+and the reference of the bundle the store holds, with that bundle's counts by family."""
 import gzip
 import hashlib
-import io
+import json
 
 import botocore.exceptions
 import pytest
 from continuo_contracts.canonical import canonical_json
 
+import adapters.contract_bundle_writer as writer_module
 from adapters.contract_bundle_writer import ContractBundleWriter
-from domain.model import ContractBundleRef
-from service.contract_bundle import contract_bundle_key
+from domain.model import ContractBundleRef, ContractFamily
+from service.contract_bundle import StoredContract, build_contract_bundle, contract_bundle_key
+from service.errors import UnreadableContractBundleError
+from tests.fakes import FakeS3, client_error
 
 KEY = contract_bundle_key("default", "r1")
+URI = f"s3://b/{KEY}"
 
 
-def _client_error(code: str, status: int, operation: str) -> botocore.exceptions.ClientError:
-    return botocore.exceptions.ClientError(
-        {"Error": {"Code": code, "Message": code}, "ResponseMetadata": {"HTTPStatusCode": status}}, operation)
+def _contract(unique_id: str, family: ContractFamily, document: dict | None = None) -> StoredContract:
+    return StoredContract(
+        unique_id=unique_id, family=family, service="svc", contract_hash="sha256:" + "a" * 64,
+        content_hash="sha256:" + "b" * 64, source_path=f"{unique_id}.sql", source_sha256="c" * 64,
+        document=document if document is not None else {"id": unique_id, "name": "é"},
+    )
 
 
-class FakeS3:
-    """The two calls the writer makes, over a dict. A key that is not there answers
-    the way S3 does: a ClientError whose code is NoSuchKey. A put with
-    IfNoneMatch="*" on a key that is there answers 412 PreconditionFailed and
-    stores nothing. before_put runs before each put is applied, so a test can
-    store another writer's bytes between the writer's read and its put; put_errors
-    are raised by the puts in order, one each, before anything is stored."""
+def _bundle(*contracts: StoredContract, timings: dict | None = None) -> dict:
+    """A bundle document as the handler builds it, holding `contracts`."""
+    return build_contract_bundle(
+        tenant_id="default", release_id="r1", library_version="0.3.1", contracts=contracts, provenance={},
+        timings=timings if timings is not None else {"stages_ms": {"dbt_parse": 12}},
+    )
 
-    def __init__(
-        self,
-        *,
-        get_error: Exception | None = None,
-        put_error: Exception | None = None,
-        put_errors: list[Exception] | None = None,
-        before_put=None,
-    ) -> None:
-        self.objects: dict[tuple[str, str], bytes] = {}
-        self.puts: list[dict] = []
-        self.gets: list[dict] = []
-        self._get_error = get_error
-        self._put_error = put_error
-        self._put_errors = list(put_errors or [])
-        self._before_put = before_put
 
-    def get(self, bucket: str, key: str) -> bytes:
-        return self.objects[(bucket, key)]
+def _python_only() -> dict:
+    return _bundle(*(_contract(f"analytics.py_{n}", ContractFamily.PYTHON) for n in range(3)))
 
-    def get_object(self, *, Bucket: str, Key: str) -> dict:
-        self.gets.append({"Bucket": Bucket, "Key": Key})
-        if self._get_error is not None:
-            raise self._get_error
-        if (Bucket, Key) not in self.objects:
-            raise _client_error("NoSuchKey", 404, "GetObject")
-        return {"Body": io.BytesIO(self.objects[(Bucket, Key)])}
 
-    def put_object(self, *, Bucket: str, Key: str, Body: bytes, **kwargs) -> dict:
-        self.puts.append({"Bucket": Bucket, "Key": Key, "Body": Body, **kwargs})
-        if self._before_put is not None:
-            self._before_put(self)
-        if self._put_error is not None:
-            raise self._put_error
-        if self._put_errors:
-            raise self._put_errors.pop(0)
-        if kwargs.get("IfNoneMatch") == "*" and (Bucket, Key) in self.objects:
-            raise _client_error("PreconditionFailed", 412, "PutObject")
-        self.objects[(Bucket, Key)] = Body
-        return {}
+def _dbt_and_python() -> dict:
+    return _bundle(_contract("analytics.orders", ContractFamily.DBT), _contract("analytics.users", ContractFamily.DBT),
+                   *(_contract(f"analytics.py_{n}", ContractFamily.PYTHON) for n in range(3)))
+
+
+def _gzipped(document: object, *, mtime: int = 0) -> bytes:
+    return gzip.compress(canonical_json(document), mtime=mtime)
 
 
 def _another_writer_stores(body: bytes):
@@ -83,10 +63,14 @@ def fake_s3() -> FakeS3:
     return FakeS3()
 
 
-def test_the_writer_stores_the_gzipped_canonical_document_and_returns_its_reference(fake_s3):
-    document = {"b": [1, 2], "a": {"z": None, "y": "é"}}
+def _write(s3: FakeS3, document: dict, **kwargs) -> ContractBundleRef:
+    return ContractBundleWriter(s3, "b", **kwargs).write(tenant_id="default", release_id="r1", document=document)
 
-    ref = ContractBundleWriter(fake_s3, "b").write(tenant_id="default", release_id="r1", document=document)
+
+def test_the_writer_stores_the_gzipped_canonical_document_and_returns_its_reference(fake_s3):
+    document = _dbt_and_python()
+
+    ref = _write(fake_s3, document)
 
     [put] = fake_s3.puts
     assert (put["Bucket"], put["Key"], put["ContentType"]) == ("b", KEY, "application/gzip")
@@ -95,11 +79,12 @@ def test_the_writer_stores_the_gzipped_canonical_document_and_returns_its_refere
     assert put["Body"] == gzip.compress(canonical_json(document), mtime=0)
     assert gzip.decompress(put["Body"]) == canonical_json(document)
     assert ref == ContractBundleRef(
-        uri=f"s3://b/{KEY}", sha256=hashlib.sha256(put["Body"]).hexdigest())
+        uri=URI, sha256=hashlib.sha256(put["Body"]).hexdigest(), by_family={"dbt": 2, "python": 3})
+    assert len(fake_s3.gets) == 1
 
 
 def test_the_gzip_header_carries_no_timestamp_and_no_file_name(fake_s3):
-    ContractBundleWriter(fake_s3, "b").write(tenant_id="default", release_id="r1", document={})
+    _write(fake_s3, _bundle())
 
     body = fake_s3.puts[0]["Body"]
     assert body[:2] == b"\x1f\x8b"
@@ -107,40 +92,45 @@ def test_the_gzip_header_carries_no_timestamp_and_no_file_name(fake_s3):
     assert body[3] & 0x08 == 0, "FNAME must not be set"
 
 
-def test_a_second_write_of_the_same_release_keeps_the_first_bytes(fake_s3):
-    w = ContractBundleWriter(fake_s3, "b")
-    first = w.write(tenant_id="default", release_id="r1", document={"a": 1})
-    second = w.write(tenant_id="default", release_id="r1", document={"a": 2})
-    assert second == first and gzip.decompress(fake_s3.get("b", contract_bundle_key("default", "r1"))) == b'{"a":1}'
+def test_a_second_write_of_the_same_release_keeps_the_first_bytes_and_their_counts(fake_s3):
+    first = _write(fake_s3, _python_only())
+    second = _write(fake_s3, _dbt_and_python())
+
+    assert second == first and first.by_family == {"python": 3}
+    assert gzip.decompress(fake_s3.get("b", KEY)) == canonical_json(_python_only())
     assert len(fake_s3.puts) == 1
 
 
-def test_the_reference_of_an_existing_object_carries_the_checksum_of_the_stored_bytes(fake_s3):
-    stored = gzip.compress(b'{"written":"by another pod"}', mtime=5)
+def test_an_existing_bundle_gives_its_own_checksum_and_counts_from_the_one_read(fake_s3):
+    """Another parse of the release (another version of topology-controller, say) stored a bundle
+    without the dbt contracts: the reference names that bundle and what it holds, read from the bytes
+    the writer's first read fetched, with no second read."""
+    stored = _gzipped(_python_only(), mtime=5)
     fake_s3.objects[("b", KEY)] = stored
 
-    ref = ContractBundleWriter(fake_s3, "b").write(tenant_id="default", release_id="r1", document={"a": 1})
+    ref = _write(fake_s3, _dbt_and_python())
 
-    assert ref == ContractBundleRef(uri=f"s3://b/{KEY}", sha256=hashlib.sha256(stored).hexdigest())
+    assert ref == ContractBundleRef(uri=URI, sha256=hashlib.sha256(stored).hexdigest(), by_family={"python": 3})
     assert fake_s3.puts == []
+    assert len(fake_s3.gets) == 1
 
 
 def test_another_release_is_written_even_when_one_exists(fake_s3):
-    w = ContractBundleWriter(fake_s3, "b")
-    w.write(tenant_id="default", release_id="r1", document={"a": 1})
+    _write(fake_s3, _python_only())
 
-    other = w.write(tenant_id="default", release_id="r2", document={"a": 2})
+    other = ContractBundleWriter(fake_s3, "b").write(tenant_id="default", release_id="r2", document=_bundle())
 
     assert other.uri == f"s3://b/{contract_bundle_key('default', 'r2')}"
+    assert other.by_family == {}
     assert len(fake_s3.puts) == 2
 
 
 @pytest.mark.parametrize(
     ("code", "status"), [("NoSuchKey", 404), ("404", 404), ("NotFound", 404)], ids=["no-such-key", "404", "not-found"])
 def test_every_answer_for_a_missing_object_means_write_it(code, status):
-    s3 = FakeS3(get_error=_client_error(code, status, "GetObject"))
+    s3 = FakeS3(get_error=client_error(code, status, "GetObject"))
 
-    ContractBundleWriter(s3, "b").write(tenant_id="default", release_id="r1", document={})
+    _write(s3, _bundle())
 
     assert len(s3.puts) == 1
 
@@ -149,8 +139,8 @@ def test_every_answer_for_a_missing_object_means_write_it(code, status):
     "error",
     [
         botocore.exceptions.EndpointConnectionError(endpoint_url="http://minio:9000"),
-        _client_error("SlowDown", 503, "GetObject"),
-        _client_error("AccessDenied", 403, "GetObject"),
+        client_error("SlowDown", 503, "GetObject"),
+        client_error("AccessDenied", 403, "GetObject"),
     ],
     ids=["unreachable", "503", "403"],
 )
@@ -158,60 +148,72 @@ def test_a_read_failure_other_than_a_missing_object_reaches_the_caller_and_write
     s3 = FakeS3(get_error=error)
 
     with pytest.raises(type(error)) as raised:
-        ContractBundleWriter(s3, "b").write(tenant_id="default", release_id="r1", document={})
+        _write(s3, _bundle())
 
     assert raised.value is error
     assert s3.puts == []
 
 
-def test_a_writer_that_loses_the_race_returns_the_reference_of_the_winners_bytes():
-    winner = gzip.compress(b'{"written":"by the other replica"}', mtime=0)
+def test_a_writer_that_loses_the_race_returns_the_reference_and_counts_of_the_winners_bytes():
+    winner = _gzipped(_python_only())
     s3 = FakeS3(before_put=_another_writer_stores(winner))
 
-    ref = ContractBundleWriter(s3, "b").write(tenant_id="default", release_id="r1", document={"a": 1})
+    ref = _write(s3, _dbt_and_python())
 
-    assert ref == ContractBundleRef(uri=f"s3://b/{KEY}", sha256=hashlib.sha256(winner).hexdigest())
+    assert ref == ContractBundleRef(uri=URI, sha256=hashlib.sha256(winner).hexdigest(), by_family={"python": 3})
     assert s3.get("b", KEY) == winner, "the losing writer must not replace the stored bytes"
     assert len(s3.puts) == 1
 
 
+def test_a_writer_whose_own_bytes_the_winner_stored_reads_no_summary(monkeypatch):
+    """Two parses that build the same bytes: the counts are the document's, and the stored bytes are
+    read only as far as the checksum needs, as before."""
+    document = _dbt_and_python()
+    s3 = FakeS3(before_put=_another_writer_stores(_gzipped(document)))
+    monkeypatch.setattr(writer_module, "_stored_by_family", lambda *_: pytest.fail("the summary was read"))
+
+    ref = _write(s3, document)
+
+    assert ref.by_family == {"dbt": 2, "python": 3}
+    assert ref.sha256 == hashlib.sha256(_gzipped(document)).hexdigest()
+    assert (len(s3.gets), len(s3.puts)) == (2, 1)
+
+
 def test_a_conflicting_conditional_write_reads_the_object_the_other_writer_stored():
-    winner = gzip.compress(b'{"written":"by the other replica"}', mtime=0)
+    winner = _gzipped(_python_only())
 
     def conflict_then_land(s3: FakeS3) -> None:
         s3.objects.setdefault(("b", KEY), winner)
 
     s3 = FakeS3(
-        put_errors=[_client_error("ConditionalRequestConflict", 409, "PutObject")],
+        put_errors=[client_error("ConditionalRequestConflict", 409, "PutObject")],
         before_put=conflict_then_land,
     )
 
-    ref = ContractBundleWriter(s3, "b", sleep=lambda _: None).write(
-        tenant_id="default", release_id="r1", document={"a": 1})
+    ref = _write(s3, _dbt_and_python(), sleep=lambda _: None)
 
-    assert ref == ContractBundleRef(uri=f"s3://b/{KEY}", sha256=hashlib.sha256(winner).hexdigest())
+    assert ref == ContractBundleRef(uri=URI, sha256=hashlib.sha256(winner).hexdigest(), by_family={"python": 3})
     assert len(s3.puts) == 1
 
 
 def test_a_conflict_whose_object_is_not_there_yet_is_tried_again():
-    s3 = FakeS3(put_errors=[_client_error("ConditionalRequestConflict", 409, "PutObject")])
+    s3 = FakeS3(put_errors=[client_error("ConditionalRequestConflict", 409, "PutObject")])
     waits: list[float] = []
 
-    ref = ContractBundleWriter(s3, "b", sleep=waits.append).write(
-        tenant_id="default", release_id="r1", document={"a": 1})
+    ref = _write(s3, _dbt_and_python(), sleep=waits.append)
 
     assert len(s3.puts) == 2 and all(p["IfNoneMatch"] == "*" for p in s3.puts)
     assert ref.sha256 == hashlib.sha256(s3.get("b", KEY)).hexdigest()
+    assert ref.by_family == {"dbt": 2, "python": 3}
     assert len(waits) == 1 and waits[0] > 0
 
 
 def test_conflicts_that_never_settle_reach_the_caller():
-    conflict = _client_error("ConditionalRequestConflict", 409, "PutObject")
+    conflict = client_error("ConditionalRequestConflict", 409, "PutObject")
     s3 = FakeS3(put_error=conflict)
 
     with pytest.raises(botocore.exceptions.ClientError) as raised:
-        ContractBundleWriter(s3, "b", sleep=lambda _: None).write(
-            tenant_id="default", release_id="r1", document={})
+        _write(s3, _bundle(), sleep=lambda _: None)
 
     assert raised.value is conflict
     assert 1 < len(s3.puts) <= 10
@@ -221,8 +223,8 @@ def test_conflicts_that_never_settle_reach_the_caller():
     "error",
     [
         botocore.exceptions.EndpointConnectionError(endpoint_url="http://minio:9000"),
-        _client_error("SlowDown", 503, "PutObject"),
-        _client_error("AccessDenied", 403, "PutObject"),
+        client_error("SlowDown", 503, "PutObject"),
+        client_error("AccessDenied", 403, "PutObject"),
     ],
     ids=["unreachable", "503", "403"],
 )
@@ -230,7 +232,7 @@ def test_a_put_failure_other_than_a_lost_race_reaches_the_caller_unchanged(error
     s3 = FakeS3(put_error=error)
 
     with pytest.raises(type(error)) as raised:
-        ContractBundleWriter(s3, "b").write(tenant_id="default", release_id="r1", document={})
+        _write(s3, _bundle())
 
     assert raised.value is error
     assert len(s3.puts) == 1
@@ -240,4 +242,87 @@ def test_a_put_failure_reaches_the_caller():
     s3 = FakeS3(put_error=RuntimeError("bucket gone"))
 
     with pytest.raises(RuntimeError, match="bucket gone"):
-        ContractBundleWriter(s3, "b").write(tenant_id="default", release_id="r1", document={})
+        _write(s3, _bundle())
+
+
+# --- the counts of a bundle another parse stored ----------------------------------------
+
+def _decoy(by_family: dict) -> dict:
+    """A contract document whose free-form property values hold keys named `summary`, as
+    a team's meta can: none of them is the bundle's summary."""
+    return {
+        "id": "analytics.decoy",
+        "customProperties": [
+            {"property": "meta", "value": {"summary": {"by_family": by_family, "contracts": 7}}},
+            {"property": 'a"summary', "value": 'a string that says "summary":{"by_family":{}}'},
+            {"property": "notes", "value": [{"summary": {"by_family": by_family}}]},
+        ],
+    }
+
+
+def _stored_with(document: dict) -> FakeS3:
+    s3 = FakeS3()
+    s3.objects[("b", KEY)] = _gzipped(document, mtime=9)
+    return s3
+
+
+def _no_whole_read(monkeypatch) -> None:
+    """Fail the test if the stored bundle is decompressed or decoded as a whole."""
+    monkeypatch.setattr(gzip, "decompress", lambda *_: pytest.fail("the stored bundle was decompressed whole"))
+    monkeypatch.setattr(json, "loads", lambda *_: pytest.fail("the stored bundle was decoded whole"))
+
+
+def test_keys_named_summary_inside_the_contracts_do_not_hide_the_bundles_summary(monkeypatch):
+    stored = _bundle(_contract("analytics.decoy", ContractFamily.DBT, _decoy({"dbt": 99, "python": 99})),
+                     _contract("analytics.py_kpis", ContractFamily.PYTHON))
+    s3 = _stored_with(stored)
+    _no_whole_read(monkeypatch)
+
+    ref = _write(s3, _bundle())
+
+    assert ref.by_family == {"dbt": 1, "python": 1}
+
+
+def test_the_summary_of_a_bundle_larger_than_the_end_kept_is_found_at_its_end(monkeypatch):
+    big = {"id": "analytics.big", "blob": "x" * (3 * writer_module._END_BYTES)}
+    s3 = _stored_with(_bundle(_contract("analytics.big", ContractFamily.DBT, big)))
+    _no_whole_read(monkeypatch)
+
+    assert _write(s3, _bundle()).by_family == {"dbt": 1}
+
+
+@pytest.mark.parametrize("text", [
+    # A key after `timings`, which a newer bundle could add, holding a key named `summary`.
+    canonical_json({**_python_only(), "zz_extra": {"summary": {"by_family": {"dbt": 9}}}}),
+    # A bundle written with spaces, as no canonical writer does.
+    json.dumps(_python_only(), indent=1).encode(),
+], ids=["key-after-timings", "not-canonical"])
+def test_a_bundle_of_another_layout_is_read_whole(text):
+    s3 = FakeS3()
+    s3.objects[("b", KEY)] = gzip.compress(text, mtime=0)
+
+    assert _write(s3, _bundle()).by_family == {"python": 3}
+
+
+@pytest.mark.parametrize("stored", [
+    b"not gzip at all",
+    gzip.compress(b'{"summary": {"by_family": {"dbt"', mtime=0),
+    gzip.compress(canonical_json(_python_only()), mtime=0)[:-12],
+    gzip.compress(b'{"written":"by another pod"}', mtime=0),
+    gzip.compress(b'[1, 2]', mtime=0),
+    _gzipped({**_python_only(), "summary": {"contracts": 3}}),
+    _gzipped({**_python_only(), "summary": {"by_family": {"python": -1}}}),
+    _gzipped({**_python_only(), "summary": {"by_family": {"python": True}}}),
+    _gzipped({**_python_only(), "summary": {"by_family": {"python": 1.5}}}),
+    _gzipped({**_python_only(), "summary": {"by_family": ["python"]}}),
+    _gzipped({**_python_only(), "summary": "3 contracts"}),
+], ids=["not-gzip", "not-json", "cut-short", "no-summary", "not-an-object", "no-by-family", "negative-count",
+        "bool-count", "float-count", "by-family-not-a-mapping", "summary-not-a-mapping"])
+def test_a_stored_bundle_that_cannot_be_read_raises_and_writes_nothing(stored):
+    s3 = FakeS3()
+    s3.objects[("b", KEY)] = stored
+
+    with pytest.raises(UnreadableContractBundleError, match=f"the contract bundle {URI} is stored and"):
+        _write(s3, _dbt_and_python())
+
+    assert s3.puts == []

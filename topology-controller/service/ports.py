@@ -47,10 +47,12 @@ class TopologyArtifactWriterPort(Protocol):
 @runtime_checkable
 class ContractBundleWriterPort(Protocol):
     def write(self, *, tenant_id: str, release_id: str, document: Mapping[str, Any]) -> ContractBundleRef:
-        """Store a release's contract bundle and return where it lives and the
-        SHA-256 of its stored bytes. A release's bundle is written once: a
-        second write of the same release returns the reference of the bytes
-        already stored."""
+        """Store a release's contract bundle and return where it lives, the
+        SHA-256 of its stored bytes and the stored bundle's `summary.by_family`.
+        A release's bundle is written once: a second write of the same release
+        returns the reference and the counts of the bundle already stored, which
+        another parse of the release wrote, and raises
+        UnreadableContractBundleError when that bundle cannot be read."""
         ...
 
 
@@ -64,8 +66,8 @@ class CandidatePublisherPort(Protocol):
     version of the contracts library the process runs on and the two durations
     of the parse in milliseconds: `parse_ms` (the parse up to the publish, the
     contract stages left out) and `contracts_ms` (the contract stages). publish_ok
-    also carries `contracts_by_family`, the number of contracts the bundle holds
-    by family, a family with none left out."""
+    also carries `contracts_by_family`, the number of contracts the stored bundle
+    holds by family, a family with none left out."""
 
     def publish_ok(
         self,

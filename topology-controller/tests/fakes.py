@@ -1,6 +1,9 @@
 """Test doubles and handler builders shared by the candidate-handler test modules."""
+import io
 import json
 from unittest.mock import MagicMock, create_autospec
+
+import botocore.exceptions
 
 from adapters.redis.error_class import is_infrastructure
 from config.config import _SYSTEM_RELATIONS
@@ -64,6 +67,7 @@ class RecordingContractBundleWriter:
         ref = ContractBundleRef(
             uri=f"s3://continuo/tenants/{tenant_id}/topologies/{release_id}/contracts.json.gz",
             sha256=f"{len(self.writes):064x}",
+            by_family=dict(document["summary"]["by_family"]),
         )
         self.refs.append(ref)
         return ref
@@ -250,3 +254,57 @@ class ScriptedMemoryProbe:
         reading = self._readings[min(self.calls, len(self._readings) - 1)]
         self.calls += 1
         return reading
+
+
+def client_error(code: str, status: int, operation: str) -> botocore.exceptions.ClientError:
+    return botocore.exceptions.ClientError(
+        {"Error": {"Code": code, "Message": code}, "ResponseMetadata": {"HTTPStatusCode": status}}, operation)
+
+
+class FakeS3:
+    """The two calls the contract bundle writer makes, over a dict. A key that is not there answers
+    the way S3 does: a ClientError whose code is NoSuchKey. A put with
+    IfNoneMatch="*" on a key that is there answers 412 PreconditionFailed and
+    stores nothing. before_put runs before each put is applied, so a test can
+    store another writer's bytes between the writer's read and its put; put_errors
+    are raised by the puts in order, one each, before anything is stored."""
+
+    def __init__(
+        self,
+        *,
+        get_error: Exception | None = None,
+        put_error: Exception | None = None,
+        put_errors: list[Exception] | None = None,
+        before_put=None,
+    ) -> None:
+        self.objects: dict[tuple[str, str], bytes] = {}
+        self.puts: list[dict] = []
+        self.gets: list[dict] = []
+        self._get_error = get_error
+        self._put_error = put_error
+        self._put_errors = list(put_errors or [])
+        self._before_put = before_put
+
+    def get(self, bucket: str, key: str) -> bytes:
+        return self.objects[(bucket, key)]
+
+    def get_object(self, *, Bucket: str, Key: str) -> dict:
+        self.gets.append({"Bucket": Bucket, "Key": Key})
+        if self._get_error is not None:
+            raise self._get_error
+        if (Bucket, Key) not in self.objects:
+            raise client_error("NoSuchKey", 404, "GetObject")
+        return {"Body": io.BytesIO(self.objects[(Bucket, Key)])}
+
+    def put_object(self, *, Bucket: str, Key: str, Body: bytes, **kwargs) -> dict:
+        self.puts.append({"Bucket": Bucket, "Key": Key, "Body": Body, **kwargs})
+        if self._before_put is not None:
+            self._before_put(self)
+        if self._put_error is not None:
+            raise self._put_error
+        if self._put_errors:
+            raise self._put_errors.pop(0)
+        if kwargs.get("IfNoneMatch") == "*" and (Bucket, Key) in self.objects:
+            raise client_error("PreconditionFailed", 412, "PutObject")
+        self.objects[(Bucket, Key)] = Body
+        return {}

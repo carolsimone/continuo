@@ -24,6 +24,7 @@ _ARTIFACT = TopologyArtifactRef(
 _CONTRACT_BUNDLE = ContractBundleRef(
     uri="s3://continuo/tenants/default/topologies/rel-1/contracts.json.gz",
     sha256="cd" * 32,
+    by_family={"dbt": 3, "python": 2},
 )
 # What the handler hands the publisher about the parse: how long it took and what
 # it wrote. A failed parse carries the two durations, an ok parse the counts too.
@@ -81,6 +82,7 @@ def test_publish_ok_matches_the_shared_ok_fixture():
         code_bundle_uri=payload["code_bundle_uri"],
         contract_bundle=ContractBundleRef(
             uri=payload["contract_bundle_uri"], sha256=payload["contract_bundle_sha256"],
+            by_family=payload["contracts_by_family"],
         ),
         parse_ms=payload["parse_ms"],
         contracts_ms=payload["contracts_ms"],

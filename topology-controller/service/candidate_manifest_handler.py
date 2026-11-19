@@ -24,7 +24,6 @@ from service.code_bundle import build_code_bundle
 from service.contract_bundle import (
     StoredContract,
     build_contract_bundle,
-    contracts_by_family,
     invalid_contract_reads,
     shared_unique_ids,
     store_contracts,
@@ -246,8 +245,8 @@ class CandidateManifestHandler:
     record to observer; a handler that raised published nothing, logs no such
     line and tells the observer nothing. The record's parse ends just before the
     outcome is handed to the publisher, and the published event carries the
-    record's `parse_ms` and `contracts_ms` (and, for an ok release, the contract
-    bundle's count of contracts by family).
+    record's `parse_ms` and `contracts_ms` (and, for an ok release, the stored
+    contract bundle's count of contracts by family).
 
     progress is called by a manifest's parse after each contract it reads (a
     python contract) or generates (a dbt node's), and by the handler once after
@@ -648,9 +647,11 @@ class CandidateManifestHandler:
     ) -> None:
         """Write the release's contract bundle, then its topology artifact, then
         publish the references to both with the durations of the parse and the
-        bundle's count of contracts by family. The bundle's timings are those of
-        the stages that ran before its own write. Each write follows the same
-        outage rule as every other write."""
+        stored bundle's count of contracts by family, which the writer returns:
+        a bundle another parse of the release stored first is the one catalog
+        reads, so its counts are the ones published. The bundle's timings are
+        those of the stages that ran before its own write. Each write follows
+        the same outage rule as every other write."""
         try:
             with self._timings.stage(Stage.CONTRACT_BUNDLE, contracts=len(contracts)):
                 bundle_document = build_contract_bundle(
@@ -676,7 +677,7 @@ class CandidateManifestHandler:
         with self._timings.stage(Stage.PUBLISH):
             self._publisher.publish_ok(
                 release_id=release_id, artifact=artifact, code_bundle_uri=code_bundle_uri,
-                contract_bundle=contract_bundle, contracts_by_family=contracts_by_family(contracts),
+                contract_bundle=contract_bundle, contracts_by_family=contract_bundle.by_family,
                 **durations,
             )
         self._timings.outcome = ReleaseOutcome.OK

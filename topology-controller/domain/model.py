@@ -114,10 +114,13 @@ class TopologyArtifactRef:
 
 @dataclass(frozen=True)
 class ContractBundleRef:
-    """Where a release's contract bundle lives and the SHA-256 of its stored
-    bytes: the reference the parse result carries instead of the contracts."""
+    """Where a release's contract bundle lives, the SHA-256 of its stored
+    bytes, and how many contracts the stored bundle holds by family (its
+    `summary.by_family`, a family with none left out): the reference the parse
+    result carries instead of the contracts."""
     uri: str
     sha256: str
+    by_family: dict[str, int]
 
 
 @dataclass(frozen=True)
