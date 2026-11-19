@@ -410,9 +410,14 @@ class ParsedArtifact:
     `python_provenance` (the producer's `continuo_python_runtime` and the
     `image_packages` of the image the service runs), which a dbt manifest
     leaves empty. Each node but a dbt test carries its contract
-    (ManifestNode.contract)."""
+    (ManifestNode.contract).
+
+    `unchecked_seeds` holds the unique id of each seed node of a dbt manifest
+    whose CSV header the parse did not know (the compile extras do not name it),
+    so its declared columns were not compared with the header, sorted."""
     nodes: list[ManifestNode]
     shared_code: dict[str, dict]
     provenance: ServiceProvenance | None = None
     failed: tuple[FailedNode, ...] = ()
     python_provenance: dict[str, Any] | None = None
+    unchecked_seeds: tuple[str, ...] = ()

@@ -14,10 +14,15 @@ from continuo_contracts.errors import CanonicalJsonError
 from domain.contract_vocabulary import NodeType, ParseFailureKind
 from domain.dormant import is_dormant
 from domain.exceptions import ContractGenerationError, InvalidNodeSettingError
-from domain.model import ContractFamily, FailedNode, ManifestFile
+from domain.model import CompileExtras, ContractFamily, FailedNode, ManifestFile, SeedExtras
 from service.contract_validation import ContractValidator
 from service.parser import parse_manifest
-from service.release_timings import ReleaseTimings, Stage
+from service.release_timings import (
+    CONTRACT_FAILURE_REASONS,
+    CONTRACT_FAILURE_STAGES,
+    ReleaseTimings,
+    Stage,
+)
 from tests.fakes import (
     FakeClock,
     RecordingArtifactWriter,
@@ -264,6 +269,171 @@ def test_tests_attach_only_to_nodes_that_became_manifest_nodes(tmp_path):
     assert by_id["analytics.customers"].test_count == 1
 
 
+# --- a seed's declared columns and its CSV header ---------------------------------
+
+def _seed(table, declares, **over):
+    """A seed of the project `shop` that declares the columns `declares`, in that order."""
+    return _node(table, resource_type="seed", columns={name: {"name": name} for name in declares}, **over)
+
+
+def _extras(**headers):
+    """The compile extras of `shop`, naming each seed `<table>=<header columns>`."""
+    seeds = {f"seed.shop.{table}": SeedExtras(sha256="ab" * 32, header=tuple(header), column_types={})
+             for table, header in headers.items()}
+    return CompileExtras(service="shop", release_id="r", seeds=seeds, project_flags={}, packages={})
+
+
+def test_a_header_column_the_seed_does_not_declare_is_an_invalid_contract(tmp_path):
+    timings = _timings()
+    parsed = parse_manifest(_manifest(tmp_path, _seed("countries", ["id"])),
+                            extras=_extras(countries=["id", "name"]), timings=timings)
+
+    assert parsed.nodes == []
+    assert parsed.failed == (FailedNode(
+        node_id="analytics.countries",
+        kind=ParseFailureKind.INVALID_CONTRACT,
+        service="shop",
+        file_path="seeds/countries.csv",
+        node_type=NodeType.DBT_SEED,
+        detail="seed.shop.countries: name is in the CSV header but not declared",
+    ),)
+    assert timings.contract_failures == {("validate", "seed_header"): 1}
+    # The pair lands on a series the metrics export from boot.
+    assert all(stage in CONTRACT_FAILURE_STAGES and reason in CONTRACT_FAILURE_REASONS
+               for stage, reason in timings.contract_failures)
+
+
+def test_a_declared_column_the_header_lacks_is_an_invalid_contract(tmp_path):
+    parsed = parse_manifest(_manifest(tmp_path, _seed("countries", ["id", "legacy"])),
+                            extras=_extras(countries=["id"]))
+
+    assert parsed.nodes == []
+    (failed,) = parsed.failed
+    assert failed.kind == ParseFailureKind.INVALID_CONTRACT
+    assert failed.detail == "seed.shop.countries: legacy is declared but not in the CSV header"
+
+
+def test_every_column_the_two_lists_disagree_on_is_named_in_the_librarys_order(tmp_path):
+    """The header's undeclared columns come first, in the header's order, then the declared columns
+    the header lacks, in the declared order. Names are compared exactly, and each failure is counted."""
+    timings = _timings()
+    parsed = parse_manifest(
+        _manifest(tmp_path, _seed("countries", ["c", "x", "a", "ID", "w"])),
+        extras=_extras(countries=["a", "id", "z", "b", "c"]), timings=timings)
+
+    (failed,) = parsed.failed
+    assert failed.detail == (
+        "seed.shop.countries: id is in the CSV header but not declared; "
+        "z is in the CSV header but not declared; "
+        "b is in the CSV header but not declared; "
+        "x is declared but not in the CSV header; "
+        "ID is declared but not in the CSV header; "
+        "w is declared but not in the CSV header")
+    assert timings.contract_failures == {("validate", "seed_header"): 6}
+
+
+def test_a_seed_whose_header_and_declared_columns_agree_in_any_order_is_valid(tmp_path):
+    parsed = parse_manifest(_manifest(tmp_path, _seed("countries", ["name", "id"])),
+                            extras=_extras(countries=["id", "name"]))
+
+    assert parsed.failed == ()
+    (node,) = parsed.nodes
+    assert (node.unique_id, node.seed_header) == ("analytics.countries", ("id", "name"))
+
+
+@pytest.mark.parametrize("extras", [None, _extras(other=["id"])], ids=["no-extras", "extras-name-another-seed"])
+def test_a_seed_the_extras_do_not_name_is_not_checked(tmp_path, extras):
+    """With no header known there is nothing to compare: the seed is kept, and the parse reports it
+    as unchecked."""
+    timings = _timings()
+    parsed = parse_manifest(_manifest(tmp_path, _seed("countries", ["id"]), _seed("other", ["id"])),
+                            extras=extras, timings=timings)
+
+    assert parsed.failed == ()
+    assert [node.unique_id for node in parsed.nodes] == ["analytics.countries", "analytics.other"]
+    assert parsed.unchecked_seeds == (("analytics.countries", "analytics.other") if extras is None
+                                      else ("analytics.countries",))
+    assert timings.contract_failures == {}
+
+
+def test_a_seed_the_extras_name_is_not_reported_as_unchecked(tmp_path):
+    parsed = parse_manifest(_manifest(tmp_path, _seed("countries", ["id"]), _node("orders")),
+                            extras=_extras(countries=["id"]))
+    assert parsed.unchecked_seeds == ()
+
+
+def test_every_mismatched_seed_is_named_once_among_the_invalid_contracts(tmp_path):
+    parsed = parse_manifest(
+        _manifest(
+            tmp_path,
+            _seed("countries", ["id"]),
+            _node("orders", meta={"criticality": "high"}),
+            _seed("currencies", ["code", "name"]),
+            _seed("regions", ["id"]),
+            _node("customers"),
+        ),
+        extras=_extras(countries=["id", "iso"], currencies=["code"], regions=["id"]),
+    )
+
+    assert [node.unique_id for node in parsed.nodes] == ["analytics.regions", "analytics.customers"]
+    assert [(failed.node_id, failed.node_type) for failed in parsed.failed] == [
+        ("analytics.countries", NodeType.DBT_SEED),
+        ("analytics.orders", NodeType.DBT_MODEL),
+        ("analytics.currencies", NodeType.DBT_SEED),
+    ]
+
+
+def test_a_seed_with_an_invalid_contract_and_a_differing_header_is_one_failed_node(tmp_path):
+    """The lite check reports a seed's contract issues and then its header lines, so the release names
+    both of them at once, in one failed node: the contract's issues first, then the header's."""
+    timings = _timings()
+    parsed = parse_manifest(
+        _manifest(tmp_path, _seed("countries", ["id"], meta={"criticality": "high"})),
+        extras=_extras(countries=["id", "name"]), timings=timings)
+
+    (failed,) = parsed.failed
+    assert failed.detail == (
+        "seed.shop.countries: customProperties[3].value: `criticality` is 'high', it must be one of "
+        "REGULATORY, CORE, SECONDARY; name is in the CSV header but not declared")
+    assert timings.contract_failures == {("validate", "value"): 1, ("validate", "seed_header"): 1}
+
+
+def test_the_tests_of_a_rejected_seed_are_not_attached_to_a_node(tmp_path):
+    parsed = parse_manifest(
+        _manifest(tmp_path, _seed("countries", ["id"]), _not_null_test("countries", "seed.shop.countries")),
+        extras=_extras(countries=["id", "name"]))
+
+    assert [node.unique_id for node in parsed.nodes] == []
+    assert [failed.node_id for failed in parsed.failed] == ["analytics.countries"]
+
+
+def test_progress_is_called_after_a_rejected_seed(tmp_path):
+    events: list[str] = []
+
+    parse_manifest(_manifest(tmp_path, _seed("countries", ["id"]), _seed("regions", ["id"])),
+                   extras=_extras(countries=["id", "name"], regions=["id"]),
+                   progress=lambda: events.append("progress"))
+
+    assert events == ["progress", "progress"]
+
+
+def test_the_header_check_is_the_librarys(tmp_path, monkeypatch):
+    """The words of a mismatch are `dbt.seed_header_issues`', so a producer's CI and the release say
+    the same thing."""
+    calls = []
+
+    def library(declared, header):
+        calls.append((list(declared), list(header)))
+        return ["the library says so"]
+
+    monkeypatch.setattr(dbt, "seed_header_issues", library)
+    (failed,) = parse_manifest(_manifest(tmp_path, _seed("countries", ["id", "name"])),
+                               extras=_extras(countries=["name", "id"])).failed
+
+    assert calls == [(["id", "name"], ["name", "id"])]
+    assert failed.detail == "seed.shop.countries: the library says so"
+
+
 # --- a defect of the library ---------------------------------------------------
 
 def _raise(error):
@@ -346,10 +516,31 @@ def test_each_contract_is_timed_and_its_check_counted_on_the_cache(tmp_path):
 
 # --- through the handler ---------------------------------------------------------
 
-def _dbt_file(tmp_path, name, service, *nodes):
+def _dbt_file(tmp_path, name, service, *nodes, headers=None):
+    """The manifest file `name` of `service`. `headers` maps a seed's unique id to its CSV header,
+    and writes the compile extras that name those seeds beside the manifest."""
     path = Path(tmp_path) / name
     path.write_text(json.dumps({"nodes": {n["unique_id"]: n for n in nodes}}))
-    return ManifestFile(path=str(path), image_tag="", declared_service=service)
+    extras_path = ""
+    if headers is not None:
+        extras = Path(tmp_path) / f"{name}.extras.json"
+        extras.write_text(json.dumps({
+            "version": 1, "service": service, "release_id": "rel-1", "project_flags": {}, "packages": {},
+            "seeds": {seed_id: {"sha256": "ab" * 32, "header": list(header), "column_types": {}}
+                      for seed_id, header in headers.items()},
+        }))
+        extras_path = str(extras)
+    return ManifestFile(path=str(path), image_tag="", declared_service=service, extras_path=extras_path)
+
+
+def _handler_seed(service, name, declares):
+    """A seed of `service` as the handler tests release it, declaring the columns `declares`."""
+    return dbt_node(name) | {
+        "unique_id": f"seed.{service}.{name}", "resource_type": "seed", "compiled_code": "",
+        "fqn": [service, name], "original_file_path": f"seeds/{name}.csv",
+        "config": {"materialized": "seed", "meta": {"owner": "team-a"}},
+        "columns": {column: {"name": column} for column in declares},
+    }
 
 
 def _service_2_node(name, **over):
@@ -455,3 +646,65 @@ def test_two_dbt_nodes_with_one_contract_id_publish_with_neither_contract_in_the
     assert sorted(bundle_writer.document["contracts"]) == ["test_schema.fine"]
     (warning,) = [r for r in caplog.records if r.getMessage().startswith("candidate: a unique id more than one node")]
     assert warning.unique_id == "test_schema.orders"
+
+
+# --- a seed's declared columns and its CSV header, through the handler -------------
+
+_UNCHECKED_SEEDS_LINE = "candidate: seeds with no known CSV header are not checked against their declared columns"
+
+
+def test_a_release_with_a_seed_whose_header_differs_from_its_declared_columns_is_rejected(tmp_path):
+    publisher = MagicMock()
+    source = source_of(_dbt_file(
+        tmp_path, "service-1.json", "service-1",
+        _handler_seed("service-1", "seed_countries", ["code"]),
+        _handler_seed("service-1", "seed_regions", ["id"]),
+        dbt_node("orders"),
+        headers={"seed.service-1.seed_countries": ["code", "name"], "seed.service-1.seed_regions": ["id"]}))
+
+    timings = build_handler(source, publisher, make_uploader()).handle(release_id="rel-1")
+
+    kwargs = _failed_kwargs(publisher)
+    assert kwargs["failure_kind"] == ParseFailureKind.INVALID_CONTRACT
+    assert kwargs["detail"] == "1 node failed to parse: test_schema.seed_countries"
+    (failed,) = kwargs["failed_nodes"]
+    assert (failed.node_id, failed.kind, failed.service, failed.file_path, failed.node_type) == (
+        "test_schema.seed_countries", ParseFailureKind.INVALID_CONTRACT, "service-1",
+        "seeds/seed_countries.csv", NodeType.DBT_SEED)
+    assert failed.detail == "seed.service-1.seed_countries: name is in the CSV header but not declared"
+    assert timings.failure_kind == ParseFailureKind.INVALID_CONTRACT
+    assert timings.contract_failures == {("validate", "seed_header"): 1}
+
+
+def test_a_release_whose_seeds_have_no_known_header_publishes_and_logs_their_count_once(tmp_path, caplog):
+    """No compile extras, or extras that do not name a seed, leave no header to compare: the release
+    publishes, and one line per release counts the seeds that were not checked, across its services."""
+    publisher = MagicMock()
+    source = source_of(
+        _dbt_file(tmp_path, "service-1.json", "service-1",
+                  _handler_seed("service-1", "seed_a", ["x"]), _handler_seed("service-1", "seed_b", ["x"]),
+                  _handler_seed("service-1", "seed_named", ["x"]), dbt_node("fine"),
+                  headers={"seed.service-1.seed_named": ["x"]}),
+        _dbt_file(tmp_path, "service-2.json", "service-2",
+                  _handler_seed("service-2", "seed_c", ["x"]) | {"unique_id": "seed.service-2.seed_c"}),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="service.candidate_manifest_handler"):
+        build_handler(source, publisher, make_uploader()).handle(release_id="rel-1")
+
+    publisher.publish_failed.assert_not_called()
+    publisher.publish_ok.assert_called_once()
+    (record,) = [r for r in caplog.records if r.getMessage() == _UNCHECKED_SEEDS_LINE]
+    assert (record.levelno, record.release_id, record.seeds, record.services) == (
+        logging.WARNING, "rel-1", 3, {"service-1": 2, "service-2": 1})
+
+
+def test_a_release_whose_seeds_all_have_a_known_header_logs_no_unchecked_seeds(tmp_path, caplog):
+    source = source_of(_dbt_file(
+        tmp_path, "service-1.json", "service-1", _handler_seed("service-1", "seed_a", ["x"]), dbt_node("fine"),
+        headers={"seed.service-1.seed_a": ["x"]}))
+
+    with caplog.at_level(logging.WARNING, logger="service.candidate_manifest_handler"):
+        build_handler(source, MagicMock(), make_uploader()).handle(release_id="rel-1")
+
+    assert [r for r in caplog.records if r.getMessage() == _UNCHECKED_SEEDS_LINE] == []

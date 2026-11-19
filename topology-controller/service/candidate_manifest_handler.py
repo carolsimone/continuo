@@ -221,6 +221,12 @@ class CandidateManifestHandler:
     give it a column fingerprint carries it on its topology entry as
     seed_columns_hash; any other node's entry has no such key.
 
+    A seed's declared columns are compared with its CSV header by the manifest's
+    parse, which rejects a difference as an invalid contract. A seed the compile
+    extras do not name has no known header and is not compared: one line at
+    WARNING, after the last manifest's parse, counts such seeds in the release
+    and per service.
+
     A node whose build writes a relation named other than its table_name (an
     alias, or a versioned model's "<name>_v<version>") carries that relation on
     its topology entry as relation_name; any other node's entry has no such key.
@@ -337,6 +343,7 @@ class CandidateManifestHandler:
         shared_code: dict[str, dict] = {}
         provenance: dict[str, dict] = {}
         python_provenance: dict[str, dict] = {}
+        unchecked_seeds: dict[str, int] = {}
         for mf in manifests:
             parser = parser_for(mf.kind)
             if parser is None:
@@ -383,6 +390,8 @@ class CandidateManifestHandler:
             # they wait for the resolve below, which reports them with the
             # failures of the valid nodes.
             contract_failures.extend(parsed.failed)
+            if parsed.unchecked_seeds:
+                unchecked_seeds[mf.declared_service or mf.path] = len(parsed.unchecked_seeds)
 
             # Reported before the declared-service checks below: a manifest
             # whose every node was skipped fails as empty, and its skips are
@@ -451,6 +460,16 @@ class CandidateManifestHandler:
                     return
 
             all_nodes.extend(nodes)
+
+        if unchecked_seeds:
+            logger.warning(
+                "candidate: seeds with no known CSV header are not checked against their declared columns",
+                extra={
+                    "release_id": release_id,
+                    "seeds": sum(unchecked_seeds.values()),
+                    "services": unchecked_seeds,
+                },
+            )
 
         with self._timings.stage(Stage.REGISTRY) as record:
             registry = NodeRegistry.of_nodes(all_nodes)

@@ -67,9 +67,10 @@ _CONTRACT_STAGES = (
 CONTRACT_FAILURE_STAGES = ("generate", "validate", "normalise", "hash")
 
 # The reasons a contract failure is counted under: every reason the contracts
-# library's validation names, and `manifest_shape` for a manifest entry the
-# generation cannot read.
-CONTRACT_FAILURE_REASONS: Final = (*REASONS, "manifest_shape")
+# library's validation names, `manifest_shape` for a manifest entry the
+# generation cannot read, and `seed_header` for a column that a seed's CSV header
+# and its contract do not both have.
+CONTRACT_FAILURE_REASONS: Final = (*REASONS, "manifest_shape", "seed_header")
 
 # How a contract validation was answered: from the cache or by running the check.
 VALIDATION_CACHE_RESULTS = ("hit", "miss")

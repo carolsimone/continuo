@@ -20,11 +20,13 @@ table, relation, service, kind, schedule, criticality, owner, file path,
 materialization and timeout) are read back from that contract, so the topology
 says what the contract says. A node whose contract fails its checks, or that the
 library cannot read, is not a node of the result but one FailedNode of it, so a
-release names every invalid contract at once.
+release names every invalid contract at once. A seed the compile extras name is
+also checked against its CSV header: a column that the header and the seed's
+contract do not both have makes the contract invalid.
 """
 import json
 import logging
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from typing import Any
 
@@ -58,6 +60,12 @@ logger = logging.getLogger(__name__)
 # library could not read the manifest entry it generates the contract from.
 _GENERATE = "generate"
 _MANIFEST_SHAPE = "manifest_shape"
+
+# The stage a failure of a contract's checks is counted under, and the reason of
+# a column that a seed's CSV header and its contract do not both have: one
+# failure for each such column.
+_VALIDATE = "validate"
+_SEED_HEADER = "seed_header"
 
 
 def _no_progress() -> None:
@@ -202,17 +210,42 @@ def _shape_failure(
 
 
 def _issues_failure(
-    name: str, node: dict, resource_type: str, issues: list[Issue], timings: ReleaseTimings | None
+    name: str, node_id: str, node: dict, resource_type: str, issues: list[Issue], header_issues: list[str],
+    timings: ReleaseTimings | None,
 ) -> FailedNode:
-    """The invalid contract of a node whose generated contract fails its checks:
-    every issue, each counted by its reason."""
+    """The invalid contract of a node whose generated contract fails its checks,
+    or of a seed whose declared columns differ from its CSV header: every issue,
+    each counted by its reason.
+
+    The detail lists the contract's issues, each `<path>: <message>`, and then the
+    header's messages as the library words them, all joined with `; `, as the lite
+    check reports a seed's contract issues before its header lines. A detail with
+    header messages starts with the seed's manifest id, which they do not carry,
+    as the detail of a node the library cannot read starts with its id."""
     for issue in issues:
-        _count_failure(timings, "validate", issue.reason)
-    return _failed_node(name, node, resource_type, "; ".join(str(issue) for issue in issues))
+        _count_failure(timings, _VALIDATE, issue.reason)
+    for _ in header_issues:
+        _count_failure(timings, _VALIDATE, _SEED_HEADER)
+    detail = "; ".join([*(str(issue) for issue in issues), *header_issues])
+    if header_issues:
+        detail = f"{node_id}: {detail}"
+    return _failed_node(name, node, resource_type, detail)
 
 
 def _library_defect(node_id: str, error: Exception) -> ContractGenerationError:
     return ContractGenerationError(f"{node_id}: the contracts library failed: {error!r}")
+
+
+def _header_issues(node_id: str, document: Mapping[str, Any], header: Sequence[str] | None) -> list[str]:
+    """What a seed's CSV `header` and the columns its generated `document` declares
+    disagree on, in the library's words; none for a seed with no known header."""
+    if header is None:
+        return []
+    try:
+        declared = [column["name"] for column in document["schema"][0].get("properties", [])]
+        return dbt.seed_header_issues(declared, header)
+    except Exception as error:
+        raise _library_defect(node_id, error) from error
 
 
 def _contract(
@@ -222,16 +255,20 @@ def _contract(
     tests: list[Mapping[str, Any]],
     manifest: Mapping[str, Any],
     *,
+    header: Sequence[str] | None,
     validator: ContractValidator,
     timings: ReleaseTimings | None,
 ) -> tuple[dbt.Generated, dbt.RunFacts] | FailedNode:
     """The checked contract of a kept node and the run facts it gives, or the
     FailedNode that says why the node has none.
 
-    A field the library cannot read and a contract with issues are the team's to
-    fix, so each is a FailedNode. Any other error from the library is a defect,
-    raised as a ContractGenerationError: `generate` never returns a contract
-    canonical JSON cannot write, so the check failing on one is a defect too."""
+    A field the library cannot read, a contract with issues and a seed whose
+    declared columns differ from its CSV `header` (None when the header is not
+    known, which is never an issue) are the team's to fix, so each is a
+    FailedNode. A seed with both gets one FailedNode that names every problem.
+    Any other error from the library is a defect, raised as a
+    ContractGenerationError: `generate` never returns a contract canonical JSON
+    cannot write, so the check failing on one is a defect too."""
     try:
         with _stage(timings, Stage.CONTRACT_GENERATION):
             generated = dbt.generate(node, tests, manifest=manifest)
@@ -245,8 +282,11 @@ def _contract(
             issues = validator.check_dbt(generated.document, on_cache=on_cache)
     except Exception as error:
         raise _library_defect(node_id, error) from error
-    if issues:
-        return _issues_failure(generated.document["id"], node, resource_type, issues, timings)
+    header_issues = _header_issues(node_id, generated.document, header)
+    if issues or header_issues:
+        return _issues_failure(
+            generated.document["id"], node_id, node, resource_type, issues, header_issues, timings,
+        )
     try:
         facts = dbt.run_facts(generated.document)
     except Exception as error:
@@ -272,7 +312,11 @@ def parse_manifest(
     one. A seed's source part is the SHA-256 of its file bytes the extras record,
     or dbt's own checksum when the extras are absent or do not name the seed; a
     seed the extras name also carries seed_columns_hash, seed_header and
-    seed_column_types from its entry, which stay empty otherwise.
+    seed_column_types from its entry, which stay empty otherwise. The header the
+    extras give a seed is compared with the columns its contract declares, in both
+    directions and by exact name, and a difference is an invalid contract; a seed
+    the extras do not name has no known header, is not compared, and is listed in
+    the result's `unchecked_seeds`.
 
     A model, seed or snapshot that a gate leaves out is never an error: when
     `skipped` is given, the node is appended to it with its reason, and nothing
@@ -297,10 +341,12 @@ def parse_manifest(
     code, config, hashes, declared columns, seed settings and test count) comes
     from the manifest. Only such a node counts the tests attached to it.
 
-    A contract with issues, and a node field the library cannot read, is a
-    FailedNode of the result (invalid_contract) naming the node, its service,
-    its file and every issue, each issue counted on `timings` by its reason (a
-    field the library cannot read as `generate`/`manifest_shape`). `progress` is
+    A contract with issues, a seed whose declared columns differ from its CSV
+    header, and a node field the library cannot read, is a FailedNode of the
+    result (invalid_contract) naming the node, its service, its file and every
+    issue, each issue counted on `timings` by its reason (a column of a seed the
+    header and the contract disagree on as `validate`/`seed_header`, a field the
+    library cannot read as `generate`/`manifest_shape`). `progress` is
     called once for each model, seed and snapshot a gate does not leave out,
     after its node or its FailedNode is made.
 
@@ -323,6 +369,7 @@ def parse_manifest(
     node_by_id: dict[str, ManifestNode] = {}
     used_units: dict[str, CodeUnit] = {}
     path_checksum_seeds: list[str] = []
+    unchecked_seeds: list[str] = []
     for node_id, node in manifest["nodes"].items():
         resource_type = node["resource_type"]
         if resource_type not in dbt.RESOURCE_TYPES:
@@ -347,9 +394,10 @@ def parse_manifest(
             continue
 
         _require_fqn(node_id, node)
+        seed = extras.seeds.get(node_id) if resource_type == "seed" and extras is not None else None
         built = _contract(
             node_id, node, resource_type, tests_of.get(node_id, []), manifest,
-            validator=validator, timings=timings,
+            header=seed.header if seed is not None else None, validator=validator, timings=timings,
         )
         if isinstance(built, FailedNode):
             failed.append(built)
@@ -396,12 +444,13 @@ def parse_manifest(
         if resource_type == "model":
             manifest_node.test_count += len(ctx.unit_tests_by_node.get(node_id, ()))
         if resource_type == "seed":
-            seed = extras.seeds.get(node_id) if extras is not None else None
             if seed is not None:
                 with _rejecting_hash_input(facts.unique_id):
                     manifest_node.seed_columns_hash = seed_columns_hash(seed)
                 manifest_node.seed_header = seed.header
                 manifest_node.seed_column_types = dict(seed.column_types)
+            else:
+                unchecked_seeds.append(manifest_node.unique_id)
             if parts.path_checksum:
                 path_checksum_seeds.append(manifest_node.unique_id)
         nodes.append(manifest_node)
@@ -474,4 +523,7 @@ def parse_manifest(
         packages=dict(extras.packages) if extras is not None else {},
         path_checksum_seeds=tuple(sorted(path_checksum_seeds)),
     )
-    return ParsedArtifact(nodes=nodes, shared_code=shared_code, provenance=provenance, failed=tuple(failed))
+    return ParsedArtifact(
+        nodes=nodes, shared_code=shared_code, provenance=provenance, failed=tuple(failed),
+        unchecked_seeds=tuple(sorted(unchecked_seeds)),
+    )

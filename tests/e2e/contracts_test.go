@@ -70,6 +70,22 @@ const (
 	// and no model reads it, so the edit makes no failure but its own contract.
 	dbtInvalidContractNodeID = unfixableInfraUniqueID
 	dbtInvalidCriticality    = "high"
+
+	// dbtSeedHeaderReleaseService is the service the seed-header test
+	// releases, and dbtSeedHeaderPinnedService the service whose
+	// production-pinned manifest carries the doctored seed: service-1 is the
+	// only service with seeds, and the compile Job of a released service
+	// overwrites the manifest under its own key (see dbtContractsReleaseService).
+	dbtSeedHeaderReleaseService = "service-2"
+	dbtSeedHeaderPinnedService  = "service-1"
+
+	// dbtSeedHeaderNodeID is the seed of dbtSeedHeaderPinnedService
+	// (dbt/services/service-1/seeds) whose id column the seed-header test drops
+	// from the declared columns, dbtSeedHeaderColumn, while the CSV header
+	// that the compile extras record keeps it. The seed declares no test, so
+	// the edit makes no failure but its own contract.
+	dbtSeedHeaderNodeID = seedSchemaName + ".seed_table_2"
+	dbtSeedHeaderColumn = "id"
 )
 
 // TestE2E_PythonODCSRelease_IsPromotedAndPublished proves a Python contract's
@@ -318,6 +334,150 @@ func TestE2E_DbtContracts_AnInvalidContractIsRejected(t *testing.T) {
 	}
 	assert.True(t, named, "per_node_results names %s: %v", dbtInvalidContractNodeID, results)
 	t.Logf("✅ release %s rejected invalid_contract on %s (%s)", releaseID, dbtInvalidContractNodeID, filePath)
+}
+
+// TestE2E_DbtContracts_ASeedWithAnUndeclaredHeaderColumnIsRejected proves a
+// seed whose CSV header has a column its contract does not declare rejects the
+// release before validation: service-1's production-pinned manifest is a copy
+// of its baseline with the id column removed from the declared columns of
+// seed_table_2, its compile extras (the CSV header the compile recorded) beside
+// it unchanged, and a release of service-2 assembles that manifest.
+// topology-controller rejects the release invalid_contract, naming the seed,
+// its file and the column. No other node fails.
+func TestE2E_DbtContracts_ASeedWithAnUndeclaredHeaderColumnIsRejected(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
+	// the rejection (service-2's compile Job and the parse leg, 10m) plus the
+	// baseline reads and the seeding before it.
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
+	defer cancel()
+
+	clients := setupClients(t, ctx)
+
+	verifyServicesHealthy(t)
+	verifyK8sAvailable(t, ctx)
+	requireReleaseControllerHealthy(t, clients)
+
+	releaseID := "e2e-seedhdr-" + uuid.NewString()[:8]
+	t.Logf("release_id=%s released_service=%s invalid_seed=%s (service %s)",
+		releaseID, dbtSeedHeaderReleaseService, dbtSeedHeaderNodeID, dbtSeedHeaderPinnedService)
+
+	allServices := baselineServices(t, ctx, clients)
+	require.NotEmpty(t, allServices, "no baseline manifests in S3 — setup.sh must run before the e2e suite")
+	released, ok := allServices[dbtSeedHeaderReleaseService]
+	require.True(t, ok, "%s has no baseline manifest", dbtSeedHeaderReleaseService)
+	require.NotEmpty(t, released.imageTag)
+	pinned, ok := allServices[dbtSeedHeaderPinnedService]
+	require.True(t, ok, "%s has no baseline manifest", dbtSeedHeaderPinnedService)
+
+	// Production holds every baseline node, so the release changes nothing
+	// the parse does not reject.
+	var prodNodes []map[string]string
+	for svc, si := range allServices {
+		for _, n := range si.nodes {
+			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "service": svc, "content_hash": n.contentHash})
+		}
+	}
+	resetReleaseControllerQueue(t, ctx, clients)
+	seedCurrentProd(t, ctx, clients, prodNodes)
+	seedServiceProd(t, ctx, clients, allServices)
+
+	// Drop the declared id column of seed_table_2 in a copy of service-1's
+	// baseline manifest, copy the baseline's compile extras beside it, and pin
+	// service-1's production pointer at it, so the assembled set the parse leg
+	// reads holds a seed whose header and declared columns differ.
+	pinnedReleaseID := releaseID + "-src"
+	baselineKey := fmt.Sprintf("%s/%s/manifest.json", dbtSeedHeaderPinnedService, e2eBaselineReleaseID)
+	doc, err := decodeJSONDoc(getS3Object(t, ctx, clients, baselineKey))
+	require.NoError(t, err)
+	seedManifestID, filePath := dropDeclaredColumn(t, doc, dbtSeedHeaderNodeID, dbtSeedHeaderColumn)
+	requireSeedHeaderHolds(t,
+		getS3ObjectIfPresent(t, ctx, clients, baselineExtrasKey(dbtSeedHeaderPinnedService)), seedManifestID, dbtSeedHeaderColumn)
+	body, err := json.Marshal(doc)
+	require.NoError(t, err)
+	putS3Object(t, ctx, clients,
+		fmt.Sprintf("%s/%s/manifest.json", dbtSeedHeaderPinnedService, pinnedReleaseID), body)
+	copyBaselineExtras(t, ctx, clients, dbtSeedHeaderPinnedService, pinnedReleaseID)
+	pinServiceProd(t, ctx, clients, dbtSeedHeaderPinnedService, pinnedReleaseID, pinned.imageTag)
+	// Put the pointer back so no later test parses the doctored manifest.
+	// Deferred, so it runs when the test function returns, while the pool is
+	// open.
+	defer pinServiceProd(t, context.Background(), clients,
+		dbtSeedHeaderPinnedService, e2eBaselineReleaseID, pinned.imageTag)
+
+	postRelease(t, clients, dbtSeedHeaderReleaseService, releaseID, released.imageTag, false)
+	waitForReleaseRejected(t, ctx, clients, releaseID, 10*time.Minute)
+
+	detail := getReleaseJSON(t, clients, releaseID)
+	assert.Equal(t, string(model.RejectReasonInvalidContract), detail["reject_reason"])
+	assert.Equal(t, []any{dbtSeedHeaderNodeID}, detail["failing_nodes"],
+		"the one seed whose header differs from its declared columns is the failing node")
+	assert.Contains(t, detail["reject_detail"], dbtSeedHeaderNodeID, "the release's reject detail names the seed")
+
+	results, _ := detail["per_node_results"].([]any)
+	var named bool
+	for _, raw := range results {
+		r, _ := raw.(map[string]any)
+		if r["node_id"] != dbtSeedHeaderNodeID {
+			continue
+		}
+		named = true
+		assert.Equal(t, "parse", r["stage"], "a seed whose header differs from its declared columns is a parse result")
+		assert.Equal(t, "failed", r["status"])
+		assert.Equal(t, filePath, r["file_path"], "the failed seed names its file")
+		assert.Contains(t, r["detail"], dbtSeedHeaderColumn+" is in the CSV header but not declared",
+			"the failed seed's detail names the column")
+	}
+	assert.True(t, named, "per_node_results names %s: %v", dbtSeedHeaderNodeID, results)
+	t.Logf("✅ release %s rejected invalid_contract on %s (%s): %s is in the CSV header but not declared",
+		releaseID, dbtSeedHeaderNodeID, filePath, dbtSeedHeaderColumn)
+}
+
+// dropDeclaredColumn removes column from the declared columns of the seed
+// uniqueID (<schema>.<table>) in the dbt manifest doc, and returns the seed's
+// manifest id and original_file_path. Every other field of doc stays as it was.
+func dropDeclaredColumn(t *testing.T, doc map[string]interface{}, uniqueID, column string) (manifestID, filePath string) {
+	t.Helper()
+	var edited int
+	for id, nv := range asObjectMap(doc["nodes"]) {
+		n, ok := nv.(map[string]interface{})
+		if !ok || n["resource_type"] != "seed" {
+			continue
+		}
+		schema, _ := n["schema"].(string)
+		name, _ := n["name"].(string)
+		if schema+"."+name != uniqueID {
+			continue
+		}
+		columns := asObjectMap(n["columns"])
+		require.Contains(t, columns, column, "%s must declare the column %s in the manifest", uniqueID, column)
+		delete(columns, column)
+		manifestID = id
+		filePath, _ = n["original_file_path"].(string)
+		edited++
+	}
+	require.Equal(t, 1, edited, "exactly one seed of the manifest is %s", uniqueID)
+	require.NotEmpty(t, filePath, "%s must carry an original_file_path", uniqueID)
+	return manifestID, filePath
+}
+
+// requireSeedHeaderHolds fails unless the compile extras (a baseline
+// compile-extras.json, nil when the compile wrote none) record column in the
+// CSV header of the seed manifestID: the parse compares a seed's declared
+// columns with the header only when the extras name the seed.
+func requireSeedHeaderHolds(t *testing.T, extras []byte, manifestID, column string) {
+	t.Helper()
+	require.NotNil(t, extras, "the baseline compile wrote no compile-extras.json, so no seed header is known")
+	var doc struct {
+		Seeds map[string]struct {
+			Header []string `json:"header"`
+		} `json:"seeds"`
+	}
+	require.NoError(t, json.Unmarshal(extras, &doc))
+	seed, ok := doc.Seeds[manifestID]
+	require.True(t, ok, "the compile extras name the seed %s", manifestID)
+	require.Contains(t, seed.Header, column, "the CSV header of %s holds the column %s", manifestID, column)
 }
 
 // setModelCriticality sets config.meta.criticality of the model uniqueID

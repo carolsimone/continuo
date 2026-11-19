@@ -69,13 +69,14 @@ def test_the_dormant_gauge_is_exported_at_zero_from_boot():
 
 def test_every_stage_and_reason_pair_is_exported_at_boot():
     """Every contract failure stage with every reason the library names and the
-    one reason of a manifest the generator cannot read are exported at 0 before
-    any release, so a rate over a failure that has not happened yet is 0 and not
-    absent."""
+    two reasons of the parse's own (a manifest entry the generator cannot read, a
+    seed whose declared columns differ from its CSV header) are exported at 0
+    before any release, so a rate over a failure that has not happened yet is 0
+    and not absent."""
     metrics = TopologyMetrics("topology-controller")
     assert REASONS
     assert CONTRACT_FAILURE_STAGES == ("generate", "validate", "normalise", "hash")
-    assert CONTRACT_FAILURE_REASONS == (*REASONS, "manifest_shape")
+    assert CONTRACT_FAILURE_REASONS == (*REASONS, "manifest_shape", "seed_header")
     for stage in CONTRACT_FAILURE_STAGES:
         for reason in CONTRACT_FAILURE_REASONS:
             assert _value(metrics, "continuo_topology_contract_failures_total", stage=stage, reason=reason) == 0.0
@@ -101,6 +102,8 @@ def test_a_release_feeds_the_contract_counters():
     timings.add_contract_failure("normalise", "value")
     timings.add_contract_failure("hash", "value")
     timings.add_contract_failure("generate", "manifest_shape")
+    timings.add_contract_failure("validate", "seed_header")
+    timings.add_contract_failure("validate", "seed_header")
     for hit in (True, False, False, False):
         timings.add_validation_cache(hit)
 
@@ -113,6 +116,7 @@ def test_a_release_feeds_the_contract_counters():
     assert _value(metrics, failures, stage="hash", reason="value") == 1.0
     assert _value(metrics, failures, stage="hash", reason="column_type") == 0.0
     assert _value(metrics, failures, stage="generate", reason="manifest_shape") == 1.0
+    assert _value(metrics, failures, stage="validate", reason="seed_header") == 2.0
     assert _value(metrics, "continuo_topology_validation_cache_total", result="hit") == 1.0
     assert _value(metrics, "continuo_topology_validation_cache_total", result="miss") == 3.0
 
