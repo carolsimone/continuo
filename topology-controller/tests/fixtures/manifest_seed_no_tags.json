@@ -5,8 +5,9 @@
       "name": "my_seed",
       "schema": "public",
       "fqn": ["service_1", "my_seed"],
+      "original_file_path": "seeds/my_seed.csv",
       "tags": [],
-      "config": {"meta": {"owner": "data-platform"}},
+      "config": {"materialized": "seed", "meta": {"owner": "data-platform"}},
       "compiled_code": ""
     }
   }

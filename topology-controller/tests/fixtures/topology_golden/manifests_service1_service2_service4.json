@@ -7,14 +7,16 @@
         "compiled_code": "SELECT * FROM test_schema.users",
         "compiled_hash": "a96fdd57f2dc5e9afb6bea466d7a245023b8fb417d97ceb9e736fdccacc8a44a",
         "config": {
+          "materialized": "table",
           "meta": {
             "criticality": "SECONDARY",
             "owner": "team-b"
           }
         },
-        "config_hash": "dab9dbcd2effc2da9a6898fbd952a9b818981011be3e9dd677bbdd604e4c362c",
-        "content_hash": "sha256:bda620a0715892c4cbe860d989192941d6d435e00bb70d3626416447c48bed14",
+        "config_hash": "21cc4ac1c818c9c8ad2a14f8a2755ec2954a88691691e59a2831ee416f2025d5",
+        "content_hash": "sha256:55ceac9b4f7f8902cc27398292e20b85400e66aba6545038bad673a208661cd0",
         "hashed_config": {
+          "materialized": "table",
           "relation": {
             "alias": "orders",
             "schema": "test_schema"
@@ -30,14 +32,16 @@
         "compiled_code": "SELECT * FROM test_schema.py_metrics",
         "compiled_hash": "fc4574ea199a219359eba69d84fda9b71c4cf571e7d72049aab70327cb2ca582",
         "config": {
+          "materialized": "table",
           "meta": {
             "criticality": "SECONDARY",
             "owner": "team-d"
           }
         },
-        "config_hash": "5f279522cd126c9cfe3c834a856a5aaa70dec6e3047040e62db39724c911b0a6",
-        "content_hash": "sha256:9835d0d8165f8c28e016f82e6fcb44386673dfa672b1c250ce7406c1087aa59b",
+        "config_hash": "44148a6286fd42d61741e9077515ddf803c6c75ce07abf6410605b1400be1622",
+        "content_hash": "sha256:97b793d0c0c775c068880821b2f315ded67581d05a65ba9fe15e23eaf69482d1",
         "hashed_config": {
+          "materialized": "table",
           "relation": {
             "alias": "summary",
             "schema": "test_schema"
@@ -53,14 +57,16 @@
         "compiled_code": "SELECT 1 AS id",
         "compiled_hash": "611f76bb5b4ae387967515bd6b0b59857bf03416a03866cc7b9549829994370e",
         "config": {
+          "materialized": "table",
           "meta": {
             "criticality": "CORE",
             "owner": "team-a"
           }
         },
-        "config_hash": "641c1f6fcbdd613683ae6347c972d9c9d742fd4a552b3d30e979daa03d47e688",
-        "content_hash": "sha256:488f883c9901ba2d3adb975cb8ac4286f2dc244d90505325fa4f1a236077b764",
+        "config_hash": "d67d50fb336522ad1757f236b4e4df709a43147bc52c3285224135a88aa0109d",
+        "content_hash": "sha256:eda8ff20befc94514f4d10984ae77119cbb8411e9a46f23db32a45460ccaa6bc",
         "hashed_config": {
+          "materialized": "table",
           "relation": {
             "alias": "users",
             "schema": "test_schema"
@@ -98,10 +104,11 @@
   },
   "topology_nodes": [
     {
-      "content_hash": "sha256:bda620a0715892c4cbe860d989192941d6d435e00bb70d3626416447c48bed14",
+      "content_hash": "sha256:55ceac9b4f7f8902cc27398292e20b85400e66aba6545038bad673a208661cd0",
       "image_tag": "registry.example/service-2:1",
+      "materialized": "table",
       "node_type": "dbt-model",
-      "original_file_path": "",
+      "original_file_path": "models/orders.sql",
       "resolved_relation_id": "test_schema.orders",
       "schedule": "daily",
       "schema_name": "test_schema",
@@ -128,10 +135,11 @@
       "upstream_unique_ids": []
     },
     {
-      "content_hash": "sha256:9835d0d8165f8c28e016f82e6fcb44386673dfa672b1c250ce7406c1087aa59b",
+      "content_hash": "sha256:97b793d0c0c775c068880821b2f315ded67581d05a65ba9fe15e23eaf69482d1",
       "image_tag": "registry.example/service-4:1",
+      "materialized": "table",
       "node_type": "dbt-model",
-      "original_file_path": "",
+      "original_file_path": "models/summary.sql",
       "resolved_relation_id": "test_schema.summary",
       "schedule": "daily",
       "schema_name": "test_schema",
@@ -144,10 +152,11 @@
       ]
     },
     {
-      "content_hash": "sha256:488f883c9901ba2d3adb975cb8ac4286f2dc244d90505325fa4f1a236077b764",
+      "content_hash": "sha256:eda8ff20befc94514f4d10984ae77119cbb8411e9a46f23db32a45460ccaa6bc",
       "image_tag": "registry.example/service-1:1",
+      "materialized": "table",
       "node_type": "dbt-model",
-      "original_file_path": "",
+      "original_file_path": "models/users.sql",
       "resolved_relation_id": "test_schema.users",
       "schedule": "daily",
       "schema_name": "test_schema",

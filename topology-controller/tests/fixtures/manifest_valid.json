@@ -5,8 +5,10 @@
       "name": "orders",
       "schema": "public",
       "fqn": ["service_1", "orders"],
+      "original_file_path": "models/orders.sql",
       "tags": ["daily"],
       "config": {
+        "materialized": "table",
         "meta": {
           "owner": "data-platform",
           "criticality": "CORE"
@@ -19,8 +21,10 @@
       "name": "users",
       "schema": "public",
       "fqn": ["service_1", "users"],
+      "original_file_path": "models/users.sql",
       "tags": ["daily"],
       "config": {
+        "materialized": "table",
         "meta": {
           "owner": "data-platform"
         }
@@ -32,8 +36,10 @@
       "name": "my_seed",
       "schema": "public",
       "fqn": ["service_1", "my_seed"],
+      "original_file_path": "seeds/my_seed.csv",
       "tags": ["daily"],
       "config": {
+        "materialized": "seed",
         "meta": {
           "owner": "data-platform"
         }
@@ -45,8 +51,10 @@
       "name": "my_snapshot",
       "schema": "public",
       "fqn": ["service_1", "my_snapshot"],
+      "original_file_path": "snapshots/my_snapshot.sql",
       "tags": ["daily"],
       "config": {
+        "materialized": "snapshot",
         "meta": {
           "owner": "data-platform"
         }

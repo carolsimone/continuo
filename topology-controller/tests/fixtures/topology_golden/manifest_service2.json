@@ -7,14 +7,16 @@
         "compiled_code": "SELECT * FROM test_schema.users",
         "compiled_hash": "a96fdd57f2dc5e9afb6bea466d7a245023b8fb417d97ceb9e736fdccacc8a44a",
         "config": {
+          "materialized": "table",
           "meta": {
             "criticality": "SECONDARY",
             "owner": "team-b"
           }
         },
-        "config_hash": "dab9dbcd2effc2da9a6898fbd952a9b818981011be3e9dd677bbdd604e4c362c",
-        "content_hash": "sha256:bda620a0715892c4cbe860d989192941d6d435e00bb70d3626416447c48bed14",
+        "config_hash": "21cc4ac1c818c9c8ad2a14f8a2755ec2954a88691691e59a2831ee416f2025d5",
+        "content_hash": "sha256:55ceac9b4f7f8902cc27398292e20b85400e66aba6545038bad673a208661cd0",
         "hashed_config": {
+          "materialized": "table",
           "relation": {
             "alias": "orders",
             "schema": "test_schema"
@@ -40,10 +42,11 @@
   },
   "topology_nodes": [
     {
-      "content_hash": "sha256:bda620a0715892c4cbe860d989192941d6d435e00bb70d3626416447c48bed14",
+      "content_hash": "sha256:55ceac9b4f7f8902cc27398292e20b85400e66aba6545038bad673a208661cd0",
       "image_tag": "registry.example/service-2:1",
+      "materialized": "table",
       "node_type": "dbt-model",
-      "original_file_path": "",
+      "original_file_path": "models/orders.sql",
       "resolved_relation_id": "test_schema.orders",
       "schedule": "daily",
       "schema_name": "test_schema",

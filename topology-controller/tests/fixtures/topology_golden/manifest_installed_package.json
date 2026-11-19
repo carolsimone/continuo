@@ -7,13 +7,15 @@
         "compiled_code": "",
         "compiled_hash": "",
         "config": {
+          "materialized": "seed",
           "meta": {
             "owner": "finance"
           }
         },
-        "config_hash": "4709e157dcd5627915fb2b6c6ecc84ae087429843962f07d473ddc05a070b5a2",
-        "content_hash": "sha256:c331c26df2f517cd0b7ba01213ef23b895f72956f62e257fdf60673477d95d88",
+        "config_hash": "32128272e0f13bf296e622c4b01d87c288c5ab8402dd17c383fa6eb53da34243",
+        "content_hash": "sha256:7b11d810831d0f20c89ec9422b66127c392b8f3699e7b5cdd0f2685503396f78",
         "hashed_config": {
+          "materialized": "seed",
           "relation": {
             "alias": "countries",
             "schema": "analytics"
@@ -29,13 +31,15 @@
         "compiled_code": "SELECT id FROM analytics.orders",
         "compiled_hash": "ebb4294b32807e4306e8879d922c9b5a20f912cd8409b7178091506660dcb31d",
         "config": {
+          "materialized": "table",
           "meta": {
             "owner": "finance"
           }
         },
-        "config_hash": "021aab0f1b79540b53dbccc9a564faf5708d05aeffab3c6459c3ef8bf3cacdce",
-        "content_hash": "sha256:b70e2fdc9d59226021ed3068d1f95bf3dc170ddf53869cffb1821bbd0e9dc061",
+        "config_hash": "68ebfd5cace988efd6320e0e7bca20c41282a16156707603b71294e0e93a9331",
+        "content_hash": "sha256:fcc83bcfb310f24517b05f44c9a20c07feb5844437644e997a564e76c14bd6c6",
         "hashed_config": {
+          "materialized": "table",
           "relation": {
             "alias": "monthly_report",
             "schema": "analytics"
@@ -51,13 +55,15 @@
         "compiled_code": "SELECT id FROM analytics.pkg_model",
         "compiled_hash": "b82cc8be50f00346fc61428b50e7cdd25c9ffb97e18fbc8b67a3fde3803c089b",
         "config": {
+          "materialized": "table",
           "meta": {
             "owner": "finance"
           }
         },
-        "config_hash": "ac5fe30ea5894eb0897c41d18dad2ea3eded2d1d0c96908bdafbb2fcc7b29245",
-        "content_hash": "sha256:0094b49073366044a06fd13d538d7869ddd7b9841bd673bcbb6e167d6e3738d1",
+        "config_hash": "7c22465a28e3d5da067bd623019494f83cb33c9e081cbba3ba732b58c5ea7ea0",
+        "content_hash": "sha256:397851ba66c477b5cec45512180799542697e8560a7595da8a8d5442e7ba860c",
         "hashed_config": {
+          "materialized": "table",
           "relation": {
             "alias": "orders",
             "schema": "analytics"
@@ -83,10 +89,11 @@
   },
   "topology_nodes": [
     {
-      "content_hash": "sha256:c331c26df2f517cd0b7ba01213ef23b895f72956f62e257fdf60673477d95d88",
+      "content_hash": "sha256:7b11d810831d0f20c89ec9422b66127c392b8f3699e7b5cdd0f2685503396f78",
       "image_tag": "registry.example/shop-core:1",
+      "materialized": "seed",
       "node_type": "dbt-seed",
-      "original_file_path": "",
+      "original_file_path": "seeds/countries.csv",
       "resolved_relation_id": "analytics.countries",
       "schedule": "seed",
       "schema_name": "analytics",
@@ -97,10 +104,11 @@
       "upstream_unique_ids": []
     },
     {
-      "content_hash": "sha256:b70e2fdc9d59226021ed3068d1f95bf3dc170ddf53869cffb1821bbd0e9dc061",
+      "content_hash": "sha256:fcc83bcfb310f24517b05f44c9a20c07feb5844437644e997a564e76c14bd6c6",
       "image_tag": "registry.example/shop-core:1",
+      "materialized": "table",
       "node_type": "dbt-model",
-      "original_file_path": "",
+      "original_file_path": "models/monthly_report.sql",
       "resolved_relation_id": "analytics.monthly_report",
       "schedule": "",
       "schema_name": "analytics",
@@ -113,10 +121,11 @@
       ]
     },
     {
-      "content_hash": "sha256:0094b49073366044a06fd13d538d7869ddd7b9841bd673bcbb6e167d6e3738d1",
+      "content_hash": "sha256:397851ba66c477b5cec45512180799542697e8560a7595da8a8d5442e7ba860c",
       "image_tag": "registry.example/shop-core:1",
+      "materialized": "table",
       "node_type": "dbt-model",
-      "original_file_path": "",
+      "original_file_path": "models/orders.sql",
       "resolved_relation_id": "analytics.orders",
       "schedule": "daily",
       "schema_name": "analytics",

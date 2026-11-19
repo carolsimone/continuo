@@ -7,14 +7,16 @@
         "compiled_code": "SELECT 1 AS id",
         "compiled_hash": "611f76bb5b4ae387967515bd6b0b59857bf03416a03866cc7b9549829994370e",
         "config": {
+          "materialized": "table",
           "meta": {
             "criticality": "CORE",
             "owner": "team-a"
           }
         },
-        "config_hash": "641c1f6fcbdd613683ae6347c972d9c9d742fd4a552b3d30e979daa03d47e688",
-        "content_hash": "sha256:488f883c9901ba2d3adb975cb8ac4286f2dc244d90505325fa4f1a236077b764",
+        "config_hash": "d67d50fb336522ad1757f236b4e4df709a43147bc52c3285224135a88aa0109d",
+        "content_hash": "sha256:eda8ff20befc94514f4d10984ae77119cbb8411e9a46f23db32a45460ccaa6bc",
         "hashed_config": {
+          "materialized": "table",
           "relation": {
             "alias": "users",
             "schema": "test_schema"
@@ -40,10 +42,11 @@
   },
   "topology_nodes": [
     {
-      "content_hash": "sha256:488f883c9901ba2d3adb975cb8ac4286f2dc244d90505325fa4f1a236077b764",
+      "content_hash": "sha256:eda8ff20befc94514f4d10984ae77119cbb8411e9a46f23db32a45460ccaa6bc",
       "image_tag": "registry.example/service-1:1",
+      "materialized": "table",
       "node_type": "dbt-model",
-      "original_file_path": "",
+      "original_file_path": "models/users.sql",
       "resolved_relation_id": "test_schema.users",
       "schedule": "daily",
       "schema_name": "test_schema",

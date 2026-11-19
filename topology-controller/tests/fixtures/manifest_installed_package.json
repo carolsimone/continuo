@@ -10,9 +10,10 @@
       "name": "orders",
       "schema": "analytics",
       "fqn": ["shop_core", "orders"],
+      "original_file_path": "models/orders.sql",
       "tags": ["daily"],
       "resource_type": "model",
-      "config": {"meta": {"owner": "finance"}},
+      "config": {"materialized": "table", "meta": {"owner": "finance"}},
       "compiled_code": "SELECT id FROM analytics.pkg_model",
       "checksum": {"name": "sha256", "checksum": "hash-orders"}
     },
@@ -22,9 +23,10 @@
       "name": "monthly_report",
       "schema": "analytics",
       "fqn": ["shop_core", "monthly_report"],
+      "original_file_path": "models/monthly_report.sql",
       "tags": [],
       "resource_type": "model",
-      "config": {"meta": {"owner": "finance"}},
+      "config": {"materialized": "table", "meta": {"owner": "finance"}},
       "compiled_code": "SELECT id FROM analytics.orders",
       "checksum": {"name": "sha256", "checksum": "hash-monthly-report"}
     },
@@ -34,9 +36,10 @@
       "name": "countries",
       "schema": "analytics",
       "fqn": ["shop_core", "countries"],
+      "original_file_path": "seeds/countries.csv",
       "tags": [],
       "resource_type": "seed",
-      "config": {"meta": {"owner": "finance"}},
+      "config": {"materialized": "seed", "meta": {"owner": "finance"}},
       "checksum": {"name": "sha256", "checksum": "hash-countries"}
     },
     "model.evalpkg.pkg_model": {
@@ -45,9 +48,10 @@
       "name": "pkg_model",
       "schema": "analytics",
       "fqn": ["evalpkg", "pkg_model"],
+      "original_file_path": "models/pkg_model.sql",
       "tags": [],
       "resource_type": "model",
-      "config": {"meta": {"owner": "finance"}},
+      "config": {"materialized": "table", "meta": {"owner": "finance"}},
       "compiled_code": "SELECT 1 AS id",
       "checksum": {"name": "sha256", "checksum": "hash-pkg-model"}
     },
@@ -57,9 +61,10 @@
       "name": "pkg_seed",
       "schema": "analytics",
       "fqn": ["evalpkg", "pkg_seed"],
+      "original_file_path": "seeds/pkg_seed.csv",
       "tags": [],
       "resource_type": "seed",
-      "config": {"meta": {"owner": "finance"}},
+      "config": {"materialized": "seed", "meta": {"owner": "finance"}},
       "checksum": {"name": "sha256", "checksum": "hash-pkg-seed"}
     },
     "model.evalpkg.pkg_no_owner": {
@@ -68,9 +73,10 @@
       "name": "pkg_no_owner",
       "schema": "analytics",
       "fqn": ["evalpkg", "pkg_no_owner"],
+      "original_file_path": "models/pkg_no_owner.sql",
       "tags": [],
       "resource_type": "model",
-      "config": {"meta": {}},
+      "config": {"materialized": "table", "meta": {}},
       "compiled_code": "SELECT 1 AS id",
       "checksum": {"name": "sha256", "checksum": "hash-pkg-no-owner"}
     }

@@ -7,13 +7,15 @@
         "compiled_code": "",
         "compiled_hash": "",
         "config": {
+          "materialized": "seed",
           "meta": {
             "owner": "data-platform"
           }
         },
-        "config_hash": "1607b2062448e1cc60b36ca10ca7d25d19fadae600bc1697dfca6878ac24e629",
-        "content_hash": "sha256:ca6b926f83f91f92fb4beeaa675abe8ffff9dbace5d49bc989ae1fc82f181b07",
+        "config_hash": "11dbb760fe2f6c1e67df38238b53676628db21dbd16b7fedceb0b900024cb99f",
+        "content_hash": "sha256:3c6b49cef1126f973a430e45a5314cd50dc90db9b58b9bfe516849323d29abc7",
         "hashed_config": {
+          "materialized": "seed",
           "relation": {
             "alias": "my_seed",
             "schema": "public"
@@ -39,10 +41,11 @@
   },
   "topology_nodes": [
     {
-      "content_hash": "sha256:ca6b926f83f91f92fb4beeaa675abe8ffff9dbace5d49bc989ae1fc82f181b07",
+      "content_hash": "sha256:3c6b49cef1126f973a430e45a5314cd50dc90db9b58b9bfe516849323d29abc7",
       "image_tag": "registry.example/service-1:1",
+      "materialized": "seed",
       "node_type": "dbt-seed",
-      "original_file_path": "",
+      "original_file_path": "seeds/my_seed.csv",
       "resolved_relation_id": "public.my_seed",
       "schedule": "seed",
       "schema_name": "public",

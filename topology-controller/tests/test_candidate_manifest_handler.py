@@ -1116,11 +1116,12 @@ def test_the_dbt_artifact_entry_shape_is_frozen(handler_with_mocks):
         "service_name": "service-2",
         "node_type": "dbt-model",
         "test_count": 0,
-        "content_hash": "sha256:bda620a0715892c4cbe860d989192941d6d435e00bb70d3626416447c48bed14",
+        "content_hash": "sha256:55ceac9b4f7f8902cc27398292e20b85400e66aba6545038bad673a208661cd0",
         "image_tag": "",
-        "original_file_path": "",
+        "original_file_path": "models/orders.sql",
         "upstream_unique_ids": ["test_schema.users"],
         "schedule": "daily",
+        "materialized": "table",
     }, sort_keys=True)
 
 
