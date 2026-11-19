@@ -1,0 +1,5 @@
+# A synthetic remediation file for lint.sh of a kind agent-remediation does not
+# know.
+kind: workflow
+version: 1
+name: lint-probe

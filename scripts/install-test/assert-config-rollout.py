@@ -17,7 +17,10 @@ after, and compares the pod template of every Deployment and StatefulSet:
     it has to.
 The same cases then run against a render whose service volumes name
 operator-owned ConfigMaps (configMap.name set): no workload consumes the
-chart's copies there, so a change to them must roll nothing.
+chart's copies there, so a change to them must roll nothing. They run once more
+against a render where only agent-remediation's service-repos volume names an
+operator-owned ConfigMap: its other volume, the remediation workflows, keeps
+its digest, so each volume of a service decides its own.
 
 It also checks that:
   - two identical renders give identical pod templates, so an upgrade that
@@ -74,6 +77,10 @@ CASES = [
      "args": ["--set", "egress.allowedDomains={config-rollout-probe.example.com}"]},
     {"name": "ciAuth.bindings value", "configmap": "ci-auth",
      "args": ["--set-string", "ciAuth.bindings.core[0].repositoryId=812345678"]},
+    # The chart refuses a remediation file without a supported version, so the
+    # probe file carries one; --set-json is what puts a newline in the value.
+    {"name": "agentRemediation.workflows value", "configmap": "agent-remediation-workflows",
+     "args": ["--set-json", 'agentRemediation.workflows.files.probe\\.yaml="kind: type\\nversion: 1\\n"']},
     {"name": "files/cancel-config.json", "configmap": "cancel-config",
      "file": "files/cancel-config.json", "edit": add_cancellation_reason,
      "reread_by": {"ui"}},
@@ -136,14 +143,15 @@ def consumers(docs: list) -> dict:
     return out
 
 
-def operator_owned_values(chart: pathlib.Path, workdir: pathlib.Path) -> pathlib.Path:
-    """A values file whose service volumes all name operator-owned ConfigMaps."""
+def operator_owned_values(chart: pathlib.Path, workdir: pathlib.Path, only: "set[str] | None" = None) -> pathlib.Path:
+    """A values file whose service volumes name operator-owned ConfigMaps: every
+    configMap volume, or only the volumes named in `only`."""
     values = yaml.safe_load((chart / "values.yaml").read_text())
     for svc in values["services"]:
         for volume in svc.get("volumes") or []:
-            if "configMap" in volume:
+            if "configMap" in volume and (only is None or volume["name"] in only):
                 volume["configMap"]["name"] = f"operator-{volume['name']}"
-    path = workdir / "values-operator-configmaps.yaml"
+    path = workdir / f"values-operator-configmaps-{'-'.join(sorted(only)) if only else 'all'}.yaml"
     path.write_text(yaml.safe_dump({"services": values["services"]}))
     return path
 
@@ -204,6 +212,18 @@ def check(source_chart: pathlib.Path, kube_version: str, failures: list) -> None
             if "file" in case and f"{RELEASE}-{case['configmap']}" in operator_users:
                 failures.append(f"operator-owned render still mounts {RELEASE}-{case['configmap']}; "
                                 f"the values override did not take effect")
+
+        # agent-remediation mounts two chart ConfigMaps. With only its
+        # service-repos volume operator-owned, a workflows change still rolls
+        # it and a service-repos change rolls nothing: each volume decides its
+        # own digest.
+        mixed_args = ["-f", str(operator_owned_values(source_chart, workdir, only={"service-repos"}))]
+        mixed_users = check_topology("operator-owned service-repos only", renderer, mixed_args, failures)
+        if f"{RELEASE}-service-repos" in mixed_users:
+            failures.append(f"the render with an operator-owned service-repos volume still mounts {RELEASE}-service-repos")
+        if "agent-remediation" not in mixed_users.get(f"{RELEASE}-agent-remediation-workflows", {}):
+            failures.append(f"the render with an operator-owned service-repos volume no longer mounts "
+                            f"{RELEASE}-agent-remediation-workflows into agent-remediation")
 
 
 def main() -> int:

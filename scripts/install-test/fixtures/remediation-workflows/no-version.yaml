@@ -1,0 +1,3 @@
+# A synthetic remediation file for lint.sh with no version.
+kind: type
+name: lint-probe

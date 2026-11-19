@@ -203,6 +203,76 @@ app.kubernetes.io/name: {{ .service }}
 {{- printf "%s-ci-auth" (include "continuo.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{- define "continuo.agentRemediationWorkflowsConfigMapName" -}}
+{{- printf "%s-agent-remediation-workflows" (include "continuo.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{/* agentRemediation.workflows.files, the install's remediation files as
+     {<file name>: <content>}: an empty map when none is set, also for a
+     release without a workflows block (helm upgrade --reuse-values from an
+     older chart) or with `files: null`. JSON object. */}}
+{{- define "continuo.agentRemediation.workflowFiles" -}}
+{{- $workflows := dig "workflows" dict (.Values.agentRemediation | default dict) | default dict -}}
+{{- toJson (get $workflows "files" | default dict) -}}
+{{- end -}}
+
+{{/* Fails the render on a remediation file agent-remediation would refuse at
+     startup, naming the file. Each file is split into its YAML documents at
+     every line that starts with the marker `---` followed by a blank, a
+     carriage return or the end of the line, the separators the YAML loader
+     reads; the marker and that one character are dropped, so a comment or a
+     document written on the marker's line stays at the start of the next
+     document. Every document that holds more than comments must parse as a
+     YAML mapping whose kind is flow, type or fixture and whose version is a
+     number in $supportedVersions, the versions agent-remediation loads
+     (pkg/deploycheck pins them to its workflow.SupportedVersion). fromYaml
+     reads a number as float64 and a quoted "1" as a string, so the version is
+     compared as a number only when it is one. The rest of each file is
+     checked by agent-remediation at startup and by `remediation-check files`.
+     Call: include "continuo.agentRemediation.assertWorkflowFiles" $ */}}
+{{- define "continuo.agentRemediation.assertWorkflowFiles" -}}
+{{- $supportedVersions := list 1 -}}
+{{- $supported := join ", " $supportedVersions -}}
+{{- range $name, $content := (include "continuo.agentRemediation.workflowFiles" . | fromJson) -}}
+{{- $docs := list -}}
+{{- range $text := regexSplit "(?m)^---(?:[ \t\r]|$)" (toString $content) -1 -}}
+{{- if trim (regexReplaceAll "(?m)^[ \t]*#.*$" $text "") -}}
+{{- $docs = append $docs $text -}}
+{{- end -}}
+{{- end -}}
+{{- range $i, $text := $docs -}}
+{{- $where := printf "agentRemediation.workflows.files[%s]" $name -}}
+{{- if gt (len $docs) 1 -}}
+{{- $where = printf "%s document %d" $where (add1 $i) -}}
+{{- end -}}
+{{- $doc := fromYaml $text -}}
+{{- if and (hasKey $doc "Error") (eq (len $doc) 1) -}}
+{{- fail (printf "%s: does not parse as a YAML mapping: %s" $where $doc.Error) -}}
+{{- end -}}
+{{- if not (hasKey $doc "kind") -}}
+{{- fail (printf "%s: has no kind (flow, type or fixture)" $where) -}}
+{{- end -}}
+{{- if not (has (toString $doc.kind) (list "flow" "type" "fixture")) -}}
+{{- fail (printf "%s: kind %s is not flow, type or fixture" $where (toJson $doc.kind)) -}}
+{{- end -}}
+{{- if not (hasKey $doc "version") -}}
+{{- fail (printf "%s: has no version (supported: %s)" $where $supported) -}}
+{{- end -}}
+{{- $version := $doc.version -}}
+{{- if not (or (kindIs "float64" $version) (kindIs "int" $version) (kindIs "int64" $version)) -}}
+{{- fail (printf "%s: version %s is not a number (supported: %s)" $where (toJson $version) $supported) -}}
+{{- end -}}
+{{- $known := false -}}
+{{- range $supportedVersions -}}
+{{- if eq (toString .) (toString $version) -}}{{- $known = true -}}{{- end -}}
+{{- end -}}
+{{- if not $known -}}
+{{- fail (printf "%s: version %s is not supported (supported: %s)" $where (toString $version) $supported) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- /* The CI-auth file the ui reads; also hashed into the ui pod template.
        ciAuth and each of its keys are optional in the schema, so a release
        upgraded with `helm upgrade --reuse-values` from a chart without ciAuth

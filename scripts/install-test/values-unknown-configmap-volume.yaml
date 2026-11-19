@@ -1,0 +1,16 @@
+# An operator-supplied `services` list whose agent-remediation entry mounts a
+# volume that names no ConfigMap, under a name none of the chart's
+# agent-remediation ConfigMaps is mounted through (service-repos,
+# remediation-workflows). Such a volume mounts the service's first chart
+# ConfigMap, service-repos; lint.sh asserts the render mounts it and carries
+# its digest.
+services:
+  - name: agent-remediation
+    enabled: true
+    httpPort: 8092
+    grpcPort: 50054
+    volumeMounts:
+      - {name: extra-config, mountPath: /etc/continuo, readOnly: true}
+    volumes:
+      - name: extra-config
+        configMap: {name: ""}

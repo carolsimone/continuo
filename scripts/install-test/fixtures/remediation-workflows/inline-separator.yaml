@@ -1,0 +1,6 @@
+# A synthetic remediation file for lint.sh whose second document starts on the
+# separator line itself, and is of a version agent-remediation does not load.
+kind: type
+version: 1
+name: lint-probe
+--- {kind: flow, version: 2, name: lint-probe-flow}

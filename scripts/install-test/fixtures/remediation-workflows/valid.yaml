@@ -1,0 +1,10 @@
+# A synthetic remediation file for lint.sh: the chart checks only the kind and
+# the version of each document, so the rest of a real type is left out.
+kind: type
+version: 1
+name: lint-probe
+---
+# A second document of the same file, checked the same way.
+kind: fixture
+version: 1
+type: lint-probe

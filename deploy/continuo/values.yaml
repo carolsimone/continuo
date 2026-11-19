@@ -652,11 +652,12 @@ contracts:
 maintenance:
   enabled: false
 
-# agent-remediation's fix proposer. Read by agent-remediation at startup (the
-# shared ConfigMap's AGENT_REMEDIATION_ENGINE), so changing it restarts every
-# continuo service, and agent-remediation refuses to start on any value other
-# than the two below.
+# agent-remediation's fix proposer and the remediation files it runs.
 agentRemediation:
+  # The fix proposer. Read by agent-remediation at startup (the shared
+  # ConfigMap's AGENT_REMEDIATION_ENGINE), so changing it restarts every
+  # continuo service, and agent-remediation refuses to start on any value other
+  # than the two below.
   # legacy: each heal trigger of a rejected release is handled by the proposer
   #   that has run so far, one attempt after another in one handler.
   # runner: each heal trigger becomes a remediation that agent-remediation works
@@ -666,6 +667,21 @@ agentRemediation:
   # sweeper, so a remediation started by the runner always finishes after the
   # value is set back to legacy.
   engine: legacy
+  workflows:
+    # The install's own remediation flow, type and fixture files, as
+    # {<file name>: <file content>}. Keep them in your own git repository and
+    # pass each one with
+    #   --set-file agentRemediation.workflows.files.<name>\.yaml=<path>
+    # They become the ConfigMap <release>-agent-remediation-workflows, which
+    # agent-remediation mounts at /etc/continuo-workflows and loads over its
+    # built-in files at startup: a file of a built-in's kind and name replaces
+    # it whole, any other is added. A name is letters, digits, '.', '_' and '-',
+    # ends in .yaml or .yml and does not start with a dot. A document whose kind
+    # is not flow, type or fixture, or whose version agent-remediation does not
+    # load, fails the render, naming the file. A change rolls agent-remediation
+    # only. Empty (the default) runs the built-in files alone. See "Remediation
+    # files" in the chart's README.
+    files: {}
 
 databaseInit:
   # Idempotently creates the 7 service databases, and with the bundled Postgres
@@ -866,7 +882,11 @@ defaultResources:
 #   volumes: []                    any Kubernetes volume (csi, secret, ...),
 #                                  mounted through volumeMounts. A configMap
 #                                  volume with an empty name mounts the chart's
-#                                  ConfigMap for the services that have one.
+#                                  ConfigMap for the services that have one;
+#                                  on agent-remediation, which has two, the one
+#                                  of the volume's name (service-repos or
+#                                  remediation-workflows), and service-repos
+#                                  for a volume of any other name.
 # These keys are install-time only: they shape the Deployments and
 # ServiceAccounts, and no service reads them.
 services:
@@ -1145,16 +1165,25 @@ services:
       # pipeline's queue and starts running, so a backlog never spends it.
       VERIFICATION_TIMEOUT: "20m"
       VERIFICATION_POLL_INTERVAL: "15s"
+      # The folder of the install's remediation files
+      # (agentRemediation.workflows.files), mounted below.
+      AGENT_REMEDIATION_WORKFLOWS_DIR: /etc/continuo-workflows
     volumeMounts:
       - {name: service-repos, mountPath: /etc/continuo, readOnly: true}
-    # agent-remediation reads service_repos.yaml only at startup. An empty
-    # configMap.name mounts the chart's service-repos ConfigMap (serviceRepos, or
-    # files/service_repos.yaml when that is empty), whose digest is on the pod
-    # template, so `helm upgrade` rolls agent-remediation when it changes. Helm
-    # cannot hash a ConfigMap of your own named here: after editing it, run
+      - {name: remediation-workflows, mountPath: /etc/continuo-workflows, readOnly: true}
+    # agent-remediation reads service_repos.yaml and its remediation files only
+    # at startup. An empty configMap.name mounts the chart's ConfigMap of the
+    # volume's name: service-repos (serviceRepos, or files/service_repos.yaml
+    # when that is empty) or agent-remediation-workflows
+    # (agentRemediation.workflows.files); a volume of any other name mounts
+    # service-repos. The digest of each is on the pod template, so
+    # `helm upgrade` rolls agent-remediation when one changes. Helm cannot hash
+    # a ConfigMap of your own named here: after editing it, run
     # `kubectl rollout restart deployment/agent-remediation`.
     volumes:
       - name: service-repos
+        configMap: {name: ""}
+      - name: remediation-workflows
         configMap: {name: ""}
 
   # dead-letter-controller stores every dead letter (stream consumer, outbox

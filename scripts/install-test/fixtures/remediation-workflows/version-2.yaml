@@ -1,0 +1,5 @@
+# A synthetic remediation file for lint.sh, of a version agent-remediation does
+# not load.
+kind: type
+version: 2
+name: lint-probe

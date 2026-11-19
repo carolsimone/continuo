@@ -582,6 +582,17 @@
         "engine": {
           "enum": ["legacy", "runner"],
           "description": "The fix proposer agent-remediation runs: legacy handles each heal trigger in one handler, runner works it as a remediation of committed steps. Both run the worker, the verification poller and the sweeper."
+        },
+        "workflows": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "files": {
+              "type": "object",
+              "propertyNames": {"pattern": "^[-_a-zA-Z0-9][-._a-zA-Z0-9]*\\.ya?ml$"},
+              "additionalProperties": {"type": "string"}
+            }
+          }
         }
       }
     },
@@ -799,7 +810,7 @@
           },
           "volumes": {
             "type": "array",
-            "description": "Pod volumes of any Kubernetes volume type, mounted through volumeMounts. A configMap volume with an empty name mounts the chart's own ConfigMap for the services that have one.",
+            "description": "Pod volumes of any Kubernetes volume type, mounted through volumeMounts. A configMap volume with an empty name mounts the chart's own ConfigMap for the services that have one; on agent-remediation, which has two, the one of the volume's name (service-repos or remediation-workflows), and service-repos for a volume of any other name.",
             "items": {
               "type": "object",
               "additionalProperties": {"type": "object"},

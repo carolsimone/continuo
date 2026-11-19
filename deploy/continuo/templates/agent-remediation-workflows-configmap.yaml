@@ -1,0 +1,24 @@
+{{- /*
+  An install's own remediation flow, type and fixture files, one key per entry
+  of agentRemediation.workflows.files, each holding the file as given.
+  agent-remediation mounts this ConfigMap at the folder in
+  AGENT_REMEDIATION_WORKFLOWS_DIR and loads the files over its built-in ones at
+  startup. With no files the ConfigMap holds no key, and agent-remediation runs
+  its built-in files alone. A file agent-remediation would refuse for its kind
+  or version fails the render here, before any pod changes.
+*/ -}}
+{{- include "continuo.agentRemediation.assertWorkflowFiles" . -}}
+{{- $files := include "continuo.agentRemediation.workflowFiles" . | fromJson -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "continuo.agentRemediationWorkflowsConfigMapName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "continuo.labels" . | nindent 4 }}
+{{- if $files }}
+data:
+  {{- toYaml $files | nindent 2 }}
+{{- else }}
+data: {}
+{{- end }}

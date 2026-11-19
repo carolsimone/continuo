@@ -487,6 +487,84 @@ if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
 fi
 grep -qF 'services[run-controller].volumes[extra-config]: configMap.name is empty' "${tmp}/emptyvolume.err" \
   || { echo "FAIL: unexpected error:"; cat "${tmp}/emptyvolume.err"; exit 1; }
+# agent-remediation mounts two chart ConfigMaps, each through the volume of its
+# own name. An empty configMap.name on a volume of another name mounts the first
+# of them, service-repos, with its digest on the pod template, so a services
+# list written for a single agent-remediation ConfigMap keeps working.
+echo "--- an empty configMap.name on an agent-remediation volume of another name mounts service-repos"
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  -f scripts/install-test/values-unknown-configmap-volume.yaml > "${tmp}/unknownvolume.yaml" \
+  || { echo "FAIL: an agent-remediation volume of an unknown name with an empty configMap.name failed the render"; exit 1; }
+python3 - "${tmp}/unknownvolume.yaml" <<'PY' || { echo "FAIL: the agent-remediation volume extra-config does not mount continuo-service-repos with checksum/service-repos"; exit 1; }
+import sys, yaml
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+pod = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "agent-remediation")["spec"]["template"]
+volumes = {v["name"]: v for v in pod["spec"]["volumes"]}
+annotations = pod["metadata"]["annotations"]
+sys.exit(0 if volumes["extra-config"].get("configMap") == {"name": "continuo-service-repos"}
+         and "checksum/service-repos" in annotations
+         and "checksum/agent-remediation-workflows" not in annotations else 1)
+PY
+
+# An install's remediation files (agentRemediation.workflows.files) are the keys
+# of the ConfigMap <release>-agent-remediation-workflows, which agent-remediation
+# mounts; the defaults render it with no key. The chart checks the kind and the
+# version of every document of every file, and a file agent-remediation would
+# refuse at startup fails the render, naming the file. A name starting with a
+# dot, which the loader skips, fails the schema.
+echo "--- agentRemediation.workflows.files: each file is a key of the mounted ConfigMap, a bad one fails the render"
+wf=scripts/install-test/fixtures/remediation-workflows
+grep -qE '^  name: continuo-agent-remediation-workflows$' "${tmp}/defaults.yaml" \
+  || { echo "FAIL: the defaults render has no agent-remediation-workflows ConfigMap"; exit 1; }
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set-file "agentRemediation.workflows.files.valid\.yaml=${wf}/valid.yaml" > "${tmp}/workflows.yaml" \
+  || { echo "FAIL: a valid remediation file failed the render"; exit 1; }
+python3 - "${tmp}/workflows.yaml" "${wf}/valid.yaml" <<'PY' || { echo "FAIL: the remediation file did not reach the ConfigMap as written"; exit 1; }
+import sys, yaml
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+cm = next(d for d in docs if d["kind"] == "ConfigMap" and d["metadata"]["name"] == "continuo-agent-remediation-workflows")
+sys.exit(0 if cm["data"] == {"valid.yaml": open(sys.argv[2]).read()} else 1)
+PY
+# A document separator is `---` alone, `---` and a comment, or `---` and the
+# start of the document; with CRLF line endings it is `---` and a carriage
+# return. The CRLF file is written here, so no editor can turn it into LF.
+printf 'kind: type\r\nversion: 1\r\nname: lint-probe\r\n---\r\nkind: flow\r\nversion: 2\r\nname: lint-probe-flow\r\n' \
+  > "${tmp}/crlf-separator.yaml"
+for bad in \
+  'version-2.yaml|: version 2 is not supported (supported: 1)' \
+  'version-string.yaml|: version "1" is not a number (supported: 1)' \
+  'no-version.yaml|: has no version (supported: 1)' \
+  'second-document.yaml| document 2: version 2 is not supported (supported: 1)' \
+  'commented-separator.yaml| document 2: version 2 is not supported (supported: 1)' \
+  'inline-separator.yaml| document 2: version 2 is not supported (supported: 1)' \
+  'crlf-separator.yaml| document 2: version 2 is not supported (supported: 1)' \
+  'wrong-kind.yaml|: kind "workflow" is not flow, type or fixture' \
+  'not-yaml.yaml|: does not parse as a YAML mapping' \
+  'not-a-mapping.yaml|: does not parse as a YAML mapping'; do
+  file="${bad%%|*}"
+  want="agentRemediation.workflows.files[${file}]${bad#*|}"
+  path="${wf}/${file}"
+  [ -f "$path" ] || path="${tmp}/${file}"
+  if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+       --set-file "agentRemediation.workflows.files.${file//./\\.}=${path}" > /dev/null 2> "${tmp}/workflows.err"; then
+    echo "FAIL: the remediation file ${file} rendered; agent-remediation would refuse it at startup"; exit 1
+  fi
+  grep -qF "$want" "${tmp}/workflows.err" || { echo "FAIL: want '${want}', got:"; cat "${tmp}/workflows.err"; exit 1; }
+done
+if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+     --set-file 'agentRemediation.workflows.files.\.hidden\.yaml='"${wf}/valid.yaml" > /dev/null 2> "${tmp}/workflows.err"; then
+  echo "FAIL: a remediation file named .hidden.yaml rendered; agent-remediation skips it"; exit 1
+fi
+grep -qF '.hidden.yaml' "${tmp}/workflows.err" || { echo "FAIL: unexpected error:"; cat "${tmp}/workflows.err"; exit 1; }
+# The company-files topology brings its own services list, whose
+# agent-remediation entry mounts no workflows volume: files set there would
+# reach no pod.
+if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f scripts/install-test/values-company-files.yaml \
+     --set-file "agentRemediation.workflows.files.valid\.yaml=${wf}/valid.yaml" > /dev/null 2> "${tmp}/workflows.err"; then
+  echo "FAIL: remediation files rendered with no agent-remediation volume to mount them"; exit 1
+fi
+grep -qF 'agentRemediation.workflows.files is set, but services[agent-remediation] has no volume remediation-workflows, so' "${tmp}/workflows.err" \
+  || { echo "FAIL: unexpected error:"; cat "${tmp}/workflows.err"; exit 1; }
 
 # NOTES.txt tells an upgrading operator that schedules are no longer read from
 # the chart, and an installing one nothing about it. `helm template` prints no

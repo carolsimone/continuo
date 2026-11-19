@@ -17,9 +17,10 @@ shipped in those.
 - Breaking: the remediation streams move to `remediation.requested:v3` and `remediation.retry_requested:v2`, and the old versions are retired.
 - New: under `agentRemediation.engine=runner`, the release page says why each node was handed to a human, and a remediation that ends as a system failure is dead-lettered and can be redriven.
 - New: `agent-remediation` and `remediation` export `continuo_remediation_*` metrics, the release page shows each node's owner, and "Create PR" asks the owners to review the pull request.
+- New: `agentRemediation.workflows.files` passes an install's own remediation flow, type and fixture files to agent-remediation, which loads them over its built-in files.
 - Changed: credentials, private keys and email addresses are redacted from the code and error lines catalog stores, from the hand-over messages and, under `agentRemediation.engine=runner`, from the text sent to the model. The default `legacy` engine does not clean what it sends the model.
 - You must act (steps below): upgrade with no remediation in flight and the remediation outboxes drained. With your own Redis, apply the new Redis rules with the upgrade, not before.
-- No values change is needed. On 0.23.0 or earlier, upgrade to 0.24.0 first.
+- No values change is needed: the one new key, `agentRemediation.workflows.files`, is optional. On 0.23.0 or earlier, upgrade to 0.24.0 first.
 
 ### Upgrade steps
 
@@ -32,7 +33,7 @@ shipped in those.
 3. **With your own Redis, apply the new rules from `deploy/redis-acl-rules.acl` with the upgrade, not before** (see Changed).
 4. **With `streamReaper.enabled=false`, delete the consumer groups of the retired remediation streams** after the upgrade. The commands are in Breaking. With the stream reaper on, dead-letter-controller deletes those streams with their groups.
 
-This release changes no values key, and it ships as a `MINOR`.
+This release adds one values key, `agentRemediation.workflows.files`, with a safe default (`{}`), and it ships as a `MINOR`: an unmodified values file keeps working.
 
 ### Breaking
 
@@ -65,6 +66,13 @@ This release changes no values key, and it ships as a `MINOR`.
   - An owner written `org/team` is asked as a team when `org` owns the pull request's repository, and a GitHub login as a user. Any other owner, the team of another organization among them, such as an email address, is listed in the body and not asked. When GitHub refuses the combined request, each owner is asked on its own and the body marks the refused ones. The pull request is opened whatever GitHub answers.
   - The GitHub App needs no new permission: **Pull requests: Read and write** already covers requesting reviewers and updating the body. A review requested from a team needs the team to have access to the repository, or GitHub refuses it.
   - The `continuo_agent_remediation` database gains a `proposal.approvers` column. The `db-init-migrate` Job adds it with the upgrade, and it stays empty on a proposal an older version wrote.
+- **An install's own remediation files.** TL;DR: the new optional value `agentRemediation.workflows.files` (default `{}`) passes your own flow, type and fixture files to agent-remediation, which loads them over its built-in files at startup. No values change is needed: with no files, agent-remediation runs its built-in files.
+  - Each entry is one file, `<name>: <content>`. Pass each with `--set-file agentRemediation.workflows.files.<name>\.yaml=<path>`. The files become the ConfigMap `<release>-agent-remediation-workflows`, which agent-remediation mounts read-only at `/etc/continuo-workflows` (`AGENT_REMEDIATION_WORKFLOWS_DIR`). The default install renders the ConfigMap with no key.
+  - agent-remediation's pod template carries the ConfigMap's digest (`checksum/agent-remediation-workflows`), so a `helm upgrade` that changes a file rolls agent-remediation and nothing else. The upgrade to this version rolls agent-remediation once.
+  - `helm install` and `helm upgrade` fail, naming the file, on a document that does not parse as a YAML mapping, whose `kind` is not `flow`, `type` or `fixture`, or whose `version` agent-remediation does not support (it supports `1`). The schema refuses a file name that is not letters, digits, `.`, `_` and `-` ending in `.yaml` or `.yml`, or that starts with a dot.
+  - agent-remediation's `services` entry gains the volume `remediation-workflows`, its mount and `AGENT_REMEDIATION_WORKFLOWS_DIR`. If you keep your own `services` list, an entry without them keeps running the built-in files, and setting a file fails the render until you add them as the chart's `values.yaml` has them.
+  - On agent-remediation, a volume with an empty `configMap.name` mounts the chart ConfigMap of the volume's name, `service-repos` or `remediation-workflows`. A volume of any other name mounts the service-repos ConfigMap, as before.
+  - The chart README's "Remediation files" says how to keep the files, replace a built-in and check the files in CI with `remediation-check files`.
 
 ### Changed
 
