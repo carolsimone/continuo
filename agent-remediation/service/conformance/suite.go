@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
@@ -79,6 +80,9 @@ type Result struct {
 	Type     string
 	Scenario Scenario
 	Err      error
+	// Requests are the model requests the scenario made, in call order, as
+	// the model received them.
+	Requests []prompt.ProposeRequest
 }
 
 // Suite runs the conformance scenarios of a set of loaded files.
@@ -93,13 +97,18 @@ type Suite struct {
 	Inspector ports.ContractInspector
 	// NewWorld builds the world each scenario runs in.
 	NewWorld NewWorld
+	// Mutate, when set, changes a copy of every fixture before its scenarios
+	// run, so a scenario plays the changed fixture and the loaded one stays as
+	// it was.
+	Mutate func(*Fixture)
 }
 
 // Run runs every type a flow lists through every type scenario, each in a
-// world of its own built from the type's fixture, and returns one result per
-// type and scenario, in flow and scenario order. A listed type with no
-// fixture, or with several, fails every scenario. A fixture for a type no flow
-// lists fails too, with one result of its own.
+// world of its own built from the type's fixture (as Mutate changed it, when
+// the suite has one), and returns one result per type and scenario, in flow
+// and scenario order. A listed type with no fixture, or with several, fails
+// every scenario. A fixture for a type no flow lists fails too, with one
+// result of its own.
 func (s Suite) Run(ctx context.Context) []Result {
 	listed := s.listedTypes()
 	byType := map[string][]Fixture{}
@@ -111,17 +120,21 @@ func (s Suite) Run(ctx context.Context) []Result {
 	var out []Result
 	for _, lt := range listed {
 		fixtures := byType[lt.name]
+		if len(fixtures) == 1 {
+			fixtures = []Fixture{s.mutated(fixtures[0])}
+		}
 		for _, sc := range TypeScenarios() {
+			var requests []prompt.ProposeRequest
 			var err error
 			switch len(fixtures) {
 			case 0:
 				err = fmt.Errorf("type %s has no fixture", lt.name)
 			case 1:
-				err = s.runType(ctx, lt, fixtures[0], sc)
+				requests, err = s.runType(ctx, lt, fixtures[0], sc)
 			default:
 				err = fmt.Errorf("type %s has %d fixtures (%s), and a type has one", lt.name, len(fixtures), fixtureFiles(fixtures))
 			}
-			out = append(out, Result{Type: lt.name, Scenario: sc, Err: err})
+			out = append(out, Result{Type: lt.name, Scenario: sc, Err: err, Requests: requests})
 		}
 	}
 	for _, f := range s.Fixtures {
@@ -159,39 +172,61 @@ func (s Suite) listedTypes() []listedType {
 	return out
 }
 
-// runType runs the listed type lt through scenario sc from its fixture f and
-// checks what the run wrote.
-func (s Suite) runType(ctx context.Context, lt listedType, f Fixture, sc Scenario) error {
+// mutated is f after the suite's Mutate has changed a copy of it, or f itself
+// when the suite has none.
+func (s Suite) mutated(f Fixture) Fixture {
+	if s.Mutate == nil {
+		return f
+	}
+	c := f.clone()
+	s.Mutate(&c)
+	return c
+}
+
+// requests is the model requests the scenario made, in call order, as the
+// model received them.
+func (sr *scenarioRun) requests() []prompt.ProposeRequest {
+	calls := sr.w.ModelCalls()
+	out := make([]prompt.ProposeRequest, 0, len(calls))
+	for _, c := range calls {
+		out = append(out, c.Request)
+	}
+	return out
+}
+
+// runType runs the listed type lt through scenario sc from its fixture f,
+// checks what the run wrote, and returns the model requests the run made.
+func (s Suite) runType(ctx context.Context, lt listedType, f Fixture, sc Scenario) ([]prompt.ProposeRequest, error) {
 	typ, ok := s.Files.Types[lt.name]
 	if !ok {
-		return fmt.Errorf("type %s is listed but not loaded", lt.name)
+		return nil, fmt.Errorf("type %s is listed but not loaded", lt.name)
 	}
 	plan, err := typeScript(f, typ, lt.tries, sc)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	oneRunCalls := 0
 	if sc == Redelivery {
 		if oneRunCalls, err = s.modelCallsOfOneRun(ctx, f, plan); err != nil {
-			return fmt.Errorf("count the model calls of a run with no restart: %w", err)
+			return nil, fmt.Errorf("count the model calls of a run with no restart: %w", err)
 		}
 	}
 	sr, err := s.start(f, plan.script, false)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := sr.accept(ctx, plan.trigger); err != nil {
-		return err
+		return sr.requests(), err
 	}
 	if sc == Redelivery {
 		if err := sr.redeliverAndRestart(ctx, plan, typ); err != nil {
-			return err
+			return sr.requests(), err
 		}
 	}
 	if err := sr.finish(ctx); err != nil {
-		return err
+		return sr.requests(), err
 	}
-	return sr.expectType(s.Files, f, typ, plan, sc, oneRunCalls)
+	return sr.requests(), sr.expectType(s.Files, f, typ, plan, sc, oneRunCalls)
 }
 
 // modelCallsOfOneRun is how often the model is called when the plan's trigger

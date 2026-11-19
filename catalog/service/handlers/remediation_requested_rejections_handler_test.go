@@ -149,6 +149,38 @@ func TestRejectionsHandler_RecordsRejectionWithBundleCode(t *testing.T) {
 	assert.True(t, u.isRecorded(rejectionsMarker("1-0", nil)))
 }
 
+// A rejection is stored redacted: the error excerpt of the failure and the
+// node's code carry no credential, key or email address into the case base. The
+// reason, the signature and the content hash, which the classifier and the
+// producer computed, are kept.
+func TestRejectionsHandler_RedactsSecretsInTheStoredExcerptAndCode(t *testing.T) {
+	repo := &fakeCaseBaseRepository{}
+	u := newCaseBaseUnitOfWork(repo)
+	reader := &fakeBundleReader{bundle: codebundle.Bundle{
+		ContractVersion: 1,
+		ReleaseID:       "rel-1",
+		Nodes: map[string]codebundle.Node{
+			"analytics.revenue": {
+				RawCode:     "select 1 -- password=hunter2 owner ops@acme.com",
+				ContentHash: "h1",
+			},
+		},
+	}}
+
+	in := rejectionInput()
+	in.Nodes[0].ErrorExcerpt = "connection to postgres://app:s3cr3t@db.internal:5432/x refused; token: abc123"
+
+	require.NoError(t, newRejectionsHandler(u, reader).Handle(context.Background(), caseBaseTenant, "1-0", nil, in))
+
+	require.Len(t, repo.recordRejectionCalls, 1)
+	rej := repo.recordRejectionCalls[0]
+	assert.Equal(t, "connection to postgres://app:[redacted:secret]@db.internal:5432/x refused; token: [redacted:secret]", rej.ErrorExcerpt)
+	assert.Equal(t, "select 1 -- password=[redacted:secret] owner [redacted:email]", rej.RawCode)
+	assert.Equal(t, `column "foo" does not exist`, rej.Reason)
+	assert.Equal(t, "sig-1", rej.Signature)
+	assert.Equal(t, "h1", rej.ContentHash)
+}
+
 // The batched trigger carries every fixable node from one rejected release
 // in a single message; the case base gets one :Rejection per node, in the one
 // Write, and the bundle backing all of them is fetched exactly once.

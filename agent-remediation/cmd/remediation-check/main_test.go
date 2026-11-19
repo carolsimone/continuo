@@ -105,9 +105,11 @@ context: []
 across_clusters: []
 gate: [no_such_step]
 tries: 1
+model_may_see: [code, logs]
 output:
   on_pass: { action: pull_request, emits: remediation.proposed }
   on_give_up: { action: hand_over }
+approver: node_owner
 `
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "flow.yaml"), []byte(flow), 0o600))
 

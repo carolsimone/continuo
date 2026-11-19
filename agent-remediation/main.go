@@ -21,6 +21,7 @@ import (
 	ragithub "github.com/carolsimone/continuo/agent-remediation/adapters/github"
 	grpcadapter "github.com/carolsimone/continuo/agent-remediation/adapters/grpc"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/llm"
+	rametrics "github.com/carolsimone/continuo/agent-remediation/adapters/metrics"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/packaging"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/postgres"
 	rredis "github.com/carolsimone/continuo/agent-remediation/adapters/redis"
@@ -352,12 +353,13 @@ func main() {
 	}
 	warnIgnoredMaxAttempts(cfg, files, logger)
 	accept := startRunner(ctx, cfg, collab, files, runnerWiring{
-		llm:    cachedLLM,
-		newUoW: newUoW,
-		repo:   func() repository.RemediationRepository { return remediationRepo },
-		owner:  leaseOwner(hostName(), os.Getpid()),
-		live:   liveReg,
-		logger: logger,
+		llm:     cachedLLM,
+		newUoW:  newUoW,
+		repo:    func() repository.RemediationRepository { return remediationRepo },
+		owner:   leaseOwner(hostName(), os.Getpid()),
+		live:    liveReg,
+		logger:  logger,
+		metrics: rametrics.NewRemediationMetrics(metricsReg),
 	}, lifecycleManager.Go)
 
 	// The outbox relay wakes on the notification a committed insert into its
@@ -530,6 +532,8 @@ type runnerWiring struct {
 	owner  string
 	live   *liveness.Registry
 	logger *slog.Logger
+	// metrics counts what the runner does. Nil counts nothing.
+	metrics ports.RemediationMetrics
 }
 
 // loopLivenessSlack is added to the longest a loop can go between two beats
@@ -568,10 +572,10 @@ func startRunner(ctx context.Context, cfg config.Config, collab runner.Collabora
 // stops beating, fails the pod's probes. The sweeper takes its own lease name,
 // so a worker and the sweeper of one process never share a lease.
 func buildRunner(cfg config.Config, collab runner.Collaborators, files workflow.Set, w runnerWiring) (runnerLoops, func(context.Context, runner.Accepted) error) {
-	r := runner.New(newRunnerDeps(cfg, collab, files, w.newUoW, w.llm, w.owner, w.logger))
+	r := runner.New(newRunnerDeps(cfg, collab, files, w))
 	worker := runner.NewWorker(r, w.repo, w.owner, ports.SystemClock{}, w.logger)
 	poller := runner.NewGatePoller(r, w.repo, w.owner, cfg.VerificationPollInterval, worker.Wake, ports.SystemClock{}, w.logger)
-	sweeper := runner.NewSweeper(w.newUoW, w.repo, w.owner+"/sweeper", ports.SystemClock{}, w.logger)
+	sweeper := runner.NewSweeper(w.newUoW, w.repo, w.owner+"/sweeper", ports.SystemClock{}, w.logger, w.metrics)
 	workerBudget, pollerBudget := loopBudgets(cfg)
 	worker.SetHeartbeat(registerLoop(w.live, "remediation_worker", workerBudget))
 	poller.SetHeartbeat(registerLoop(w.live, "remediation_gate_poller", pollerBudget))
@@ -668,14 +672,13 @@ type runnerAdapters struct {
 }
 
 // runnerCollaborators is the ports the steps are built from: the adapters main
-// built, the sanitizer, the patcher that writes a draft over a checkout, the
+// built, the patcher that writes a draft over a checkout, the
 // system clock, and what the install configures (the repository paths of the
 // services, the warehouse's SQL dialect and how long a verification may run).
 func runnerCollaborators(cfg config.Config, a runnerAdapters, logger *slog.Logger) runner.Collaborators {
 	return runner.Collaborators{
 		Source:              a.github,
 		Evidence:            a.evidence,
-		Sanitizer:           sanitizer.Passthrough{},
 		Artifacts:           a.artifacts,
 		Logger:              logger,
 		ServiceRepoPaths:    cfg.ServiceRepoPaths,
@@ -704,18 +707,19 @@ func runnerCollaborators(cfg config.Config, a runnerAdapters, logger *slog.Logge
 // newRunnerDeps is what the runner works with. The registry is built from
 // collab, so the gate's budget is the one collab carries, and the verifying
 // try's deadline is built on the same VERIFICATION_TIMEOUT.
-func newRunnerDeps(cfg config.Config, collab runner.Collaborators, files workflow.Set, newUoW func() uow.UnitOfWork, llm ports.LLMProvider, owner string, logger *slog.Logger) runner.Deps {
+func newRunnerDeps(cfg config.Config, collab runner.Collaborators, files workflow.Set, w runnerWiring) runner.Deps {
 	return runner.Deps{
-		NewUoW:              newUoW,
+		NewUoW:              w.newUoW,
 		Registry:            runner.NewRegistry(collab),
 		Files:               files,
-		LLM:                 llm,
+		LLM:                 w.llm,
 		Collab:              collab,
 		Clock:               ports.SystemClock{},
-		Logger:              logger,
+		Logger:              w.logger,
 		Maintenance:         cfg.Maintenance,
-		Owner:               owner,
+		Owner:               w.owner,
 		VerificationTimeout: cfg.VerificationTimeout,
+		Metrics:             w.metrics,
 	}
 }
 

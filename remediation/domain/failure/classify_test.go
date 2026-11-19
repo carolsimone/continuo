@@ -274,6 +274,46 @@ func TestClassification_UnfixableDetail(t *testing.T) {
 	}
 }
 
+// TestUnfixableDetail_IsCleaned holds that the message a dropped failure is
+// handed over with carries no credential and no email address: each is replaced
+// by its fixed marker, whether the key error line comes from a text log, a
+// structured result or a parse failure.
+func TestUnfixableDetail_IsCleaned(t *testing.T) {
+	const line = "could not connect to database: connection refused postgres://u:hunter2@db/x, ask ops@acme.com"
+	cases := []struct {
+		name string
+		got  Classification
+	}{
+		{"infra in the text log", Classify(line)},
+		{"infra in the structured result", ClassifyWithStructured(&StructuredResult{Status: "error", Message: line}, "")},
+		{"a parse kind that is not healable", ClassifyParse(FailureEvidence{NodeID: "a.b", ParseKind: model.ParseFailureKindInternal, Detail: line})},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.got.UnfixableDetail()
+
+			assert.Equal(t, "could not connect to database: connection refused postgres://u:[redacted:secret]@db/x, ask [redacted:email]", got)
+			assert.NotContains(t, got, "hunter2")
+			assert.NotContains(t, got, "ops@acme.com")
+			assert.Contains(t, tc.got.Excerpt, "hunter2", "the excerpt kept for the case base is the raw line")
+		})
+	}
+}
+
+// TestUnfixableDetail_StaysWithinTheExcerptCap holds that cleaning a line cut
+// at the excerpt cap never leaves a detail longer than the cap, even when each
+// value it replaces is shorter than its marker.
+func TestUnfixableDetail_StaysWithinTheExcerptCap(t *testing.T) {
+	log := "connection refused " + strings.Repeat("password=a ", 2000)
+
+	got := Classify(log).UnfixableDetail()
+
+	assert.LessOrEqual(t, len(got), maxExcerptBytes)
+	assert.True(t, utf8.ValidString(got))
+	assert.NotContains(t, got, "password=a ")
+	assert.Contains(t, got, "[redacted:secret]")
+}
+
 func contains(s, sub string) bool {
 	return sub == "" || (len(sub) <= len(s) && (indexOf(s, sub) >= 0))
 }
@@ -284,4 +324,38 @@ func indexOf(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+// ruleFamilies are the prefixes, before the first colon, of every reason a
+// classifier records: the closed set a metric may label a decision with.
+var ruleFamilies = map[string]bool{"infra": true, "test": true, "logic": true, "unknown": true, "parse": true}
+
+// TestClassifier_EveryReasonIsAFamilyAndADetail holds that every reason the
+// classifier can record reads family:detail with a family from a closed set, so
+// the text before the first colon is a bounded label.
+func TestClassifier_EveryReasonIsAFamilyAndADetail(t *testing.T) {
+	var reasons []string
+	for _, rules := range [][]rule{infraRules, testRules, logicRules} {
+		for _, r := range rules {
+			reasons = append(reasons, r.reason)
+		}
+	}
+	reasons = append(reasons,
+		Classify("").Reason,
+		Classify("some entirely novel failure mode").Reason,
+		ClassifyWithStructured(&StructuredResult{Status: "fail", Message: "x"}, "").Reason,
+		ClassifyWithStructured(&StructuredResult{Status: "error", Message: "x"}, "").Reason,
+		ClassifyDuplicateTable(FailureEvidence{NodeID: "a.b"}).Reason,
+		ClassifyParse(FailureEvidence{ParseKind: model.ParseFailureKind("not a kind")}).Reason,
+		ClassifyParse(FailureEvidence{ParseKind: model.ParseFailureKindInternal}).Reason,
+	)
+	for _, k := range model.ParseFailureKinds() {
+		reasons = append(reasons, ClassifyParse(FailureEvidence{ParseKind: k}).Reason)
+	}
+	for _, reason := range reasons {
+		family, detail, ok := strings.Cut(reason, ":")
+		assert.True(t, ok, "reason %q has no colon", reason)
+		assert.True(t, ruleFamilies[family], "reason %q has family %q outside the closed set", reason, family)
+		assert.NotEmpty(t, detail, "reason %q has no detail", reason)
+	}
 }

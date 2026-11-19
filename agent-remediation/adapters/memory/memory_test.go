@@ -13,6 +13,8 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/adapters/memory"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
+	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/pkg/outbox"
 )
@@ -195,4 +197,31 @@ func TestMemoryRemediationRepository_TriesNeedTheirRemediation(t *testing.T) {
 	repo := store.RemediationRepository()
 	err := repo.SaveTry(ctx, remediation.Try{RemediationID: uuid.New(), Try: 1, Status: remediation.TryDrafting, DeadlineAt: time.Now()})
 	require.Error(t, err)
+}
+
+func TestMemoryProposalRepository_RecordApproversAddsToTheRowsApprovers(t *testing.T) {
+	store := memory.NewStore()
+	repo := store.ProposalRepository()
+	require.NoError(t, repo.Upsert(ctx, proposal.Proposal{
+		Source: "validation", ReleaseID: "rel", NodeID: "model.a", Attempt: 1, Status: proposal.StatusVerifying,
+		Approvers: []proposal.Approver{{NodeID: "model.b", Owner: "finance", Source: model.ApproverSourceBundle}},
+	}))
+
+	require.NoError(t, repo.RecordApprovers(ctx, "rel", 1, []proposal.Approver{
+		{NodeID: "model.c", Source: model.ApproverSourceNone},
+		{NodeID: "model.a", Owner: "sales", Source: model.ApproverSourceBundle},
+		{NodeID: "model.b", Owner: "ops", Source: model.ApproverSourceContractFile},
+	}))
+
+	require.Equal(t, []proposal.Approver{
+		{NodeID: "model.a", Owner: "sales", Source: model.ApproverSourceBundle},
+		{NodeID: "model.b", Owner: "ops", Source: model.ApproverSourceContractFile},
+		{NodeID: "model.c", Source: model.ApproverSourceNone},
+	}, store.Proposals()[0].Proposal.Approvers)
+
+	view, err := repo.Get(ctx, store.Proposals()[0].ID)
+	require.NoError(t, err)
+	require.Equal(t, store.Proposals()[0].Proposal.Approvers, view.Approvers)
+
+	require.ErrorIs(t, repo.RecordApprovers(ctx, "rel", 2, []proposal.Approver{{NodeID: "model.a"}}), repository.ErrNotFound)
 }

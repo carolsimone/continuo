@@ -6,13 +6,17 @@ import (
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/pkg/sanitize"
 )
 
 // ownChangeDiff is what this release changed in nodeID: the unified diff from
-// the node's promoted version to candidateSource, sanitised and capped at
-// maxUpstreamDiffBytes. Empty when the node has no promoted version (it is new)
-// or the version read fails, which is logged and omits the section rather than
-// blocking the fix.
+// the node's promoted version to candidateSource, passed through the lane's
+// Sanitizer and capped at maxUpstreamDiffBytes. The catalog stores a version's
+// code cleaned by sanitize.Text, so the diff compares that text with the
+// candidate cleaned the same way, and the catalog's redaction never shows as a
+// change. Empty when the node has no promoted version (it is new) or the version
+// read fails, which is logged and omits the section rather than blocking the
+// fix.
 func ownChangeDiff(ctx context.Context, svc Services, nodeID, candidateSource string) string {
 	cur, ok, err := svc.Versions.CurrentVersion(ctx, nodeID)
 	if err != nil {
@@ -22,7 +26,7 @@ func ownChangeDiff(ctx context.Context, svc Services, nodeID, candidateSource st
 	if !ok {
 		return ""
 	}
-	return truncateDiff(svc.Sanitizer.Sanitize(proposal.ComputeUnifiedDiff(cur.RawCode, candidateSource, nodeID)), maxUpstreamDiffBytes)
+	return truncateDiff(svc.Sanitizer.Sanitize(proposal.ComputeUnifiedDiff(sanitize.Text(cur.RawCode), sanitize.Text(candidateSource), nodeID)), maxUpstreamDiffBytes)
 }
 
 // maxReleaseUpstreamAncestors caps how many changed ancestors the single-node

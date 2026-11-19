@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
@@ -37,6 +38,8 @@ func stubFor(m step.Meta) described {
 		return stubCheck{base}
 	case step.KindOutput:
 		return stubPass{base}
+	case step.KindApprover:
+		return stubApprover{base}
 	default:
 		return base
 	}
@@ -60,6 +63,12 @@ func (stubCheck) Check(context.Context, step.CheckInput) (step.CheckOutput, erro
 	return step.CheckOutput{}, nil
 }
 
+type stubApprover struct{ stubStep }
+
+func (stubApprover) Approvers(context.Context, step.ApproverInput) ([]proposal.Approver, error) {
+	return nil, nil
+}
+
 type stubPass struct{ stubStep }
 
 func (stubPass) Pass(context.Context, uow.UnitOfWork, step.OutputInput, remediation.Verified) error {
@@ -72,14 +81,14 @@ func (stubPass) Pass(context.Context, uow.UnitOfWork, step.OutputInput, remediat
 func stubRegistry() *Registry {
 	r := &Registry{
 		steps:    map[workflow.StepName]entry{},
-		evidence: map[remediation.EvidenceKey]func() any{},
+		evidence: builtinEvidence(),
 	}
 	for _, m := range []step.Meta{
 		{Name: "dbt_log", Kind: step.KindContext, Provides: []remediation.EvidenceKey{remediation.KeyDBTLog}},
 		{Name: "failing_node_source", Kind: step.KindContext, Provides: []remediation.EvidenceKey{remediation.KeySourceFiles}},
 		{Name: "reads_dbt_log", Kind: step.KindContext, Needs: []remediation.EvidenceKey{remediation.KeyDBTLog}},
 		{Name: "reads_the_draft", Kind: step.KindContext, Needs: []remediation.EvidenceKey{remediation.KeyDraft}},
-		{Name: "dbt-compile", Kind: step.KindPrompt, Needs: []remediation.EvidenceKey{remediation.KeySourceFiles}},
+		{Name: "dbt-compile", Kind: step.KindPrompt, Needs: []remediation.EvidenceKey{remediation.KeyFailure, remediation.KeySourceFiles}},
 		{Name: "dbt-parse", Kind: step.KindPrompt},
 		{Name: "target_file_was_shown", Kind: step.KindCheck, Stages: []workflow.Stage{workflow.StagePreflight}, Needs: []remediation.EvidenceKey{remediation.KeyDraft}},
 		{Name: "needs_a_precedent", Kind: step.KindCheck, Stages: []workflow.Stage{workflow.StagePreflight}, Needs: []remediation.EvidenceKey{remediation.KeyFailurePrecedents}},
@@ -87,6 +96,7 @@ func stubRegistry() *Registry {
 		{Name: "verification_run", Kind: step.KindCheck, Stages: []workflow.Stage{workflow.StageGate}, MayStandAsGateRun: true},
 		{Name: "a_gate_without_a_run", Kind: step.KindCheck, Stages: []workflow.Stage{workflow.StageGate}},
 		{Name: "open_pr", Kind: step.KindOutput, Stages: []workflow.Stage{workflow.StageOutput}},
+		{Name: "node_owner", Kind: step.KindApprover, Stages: []workflow.Stage{workflow.StageApprover}},
 	} {
 		m.Description = string(m.Name)
 		r.register(stubFor(m))
@@ -113,6 +123,9 @@ func validFlow() workflow.Flow {
 		Tries:          3,
 		OnPass:         workflow.Output{Action: workflow.OutputPullRequest, Emits: "remediation.proposed", Pos: pos(flowFile, 11)},
 		OnGiveUp:       workflow.Output{Action: workflow.OutputHandOver, Pos: pos(flowFile, 12)},
+		ModelMaySee:    []workflow.DataClass{workflow.ClassCode, workflow.ClassLogs},
+		ModelMaySeePos: pos(flowFile, 13),
+		Approver:       ref(flowFile, 14, "node_owner"),
 		File:           flowFile,
 		Pos:            pos(flowFile, 1),
 	}
@@ -211,6 +224,24 @@ func TestValidate_RefusesAMissingStage(t *testing.T) {
 		refuses(t, func(f *workflow.Flow, _ *workflow.Type) {
 			f.OnGiveUp = workflow.Output{Pos: pos(flowFile, 12)}
 		}, `flows/f.yaml:12`, `on_give_up`)
+	})
+}
+
+// A flow names the step that works out who approves its fixes, and that step
+// is an approver: a flow with none, an unknown one, or a step of another kind is
+// refused with its file and line.
+func TestValidate_RefusesAFlowWithoutAnApprover(t *testing.T) {
+	t.Run("no approver", func(t *testing.T) {
+		refuses(t, func(f *workflow.Flow, _ *workflow.Type) { f.Approver = workflow.StepRef{} },
+			`flows/f.yaml:1: flow "f" has no approver`)
+	})
+	t.Run("an unknown step", func(t *testing.T) {
+		refuses(t, func(f *workflow.Flow, _ *workflow.Type) { f.Approver = ref(flowFile, 14, "no_such_step") },
+			`flows/f.yaml:14: unknown step "no_such_step" in approver`)
+	})
+	t.Run("a step that is no approver", func(t *testing.T) {
+		refuses(t, func(f *workflow.Flow, _ *workflow.Type) { f.Approver = ref(flowFile, 14, "dbt_log") },
+			`flows/f.yaml:14: step "dbt_log" is a context step and cannot be used in approver`)
 	})
 }
 
@@ -392,4 +423,127 @@ func TestValidate_WarnsAboutATypeNoFlowLists(t *testing.T) {
 	require.Len(t, warnings, 1)
 	assert.Contains(t, warnings[0], `types/orphan.yaml:1`)
 	assert.Contains(t, warnings[0], `orphan`)
+}
+
+// A flow says which classes of content the model may see, and a type whose
+// context gathers evidence of another class is refused at the step that
+// gathers it, so the model is never shown what the install did not allow.
+func TestValidate_RefusesATypeNeedingAForbiddenClass(t *testing.T) {
+	refuses(t, func(f *workflow.Flow, _ *workflow.Type) {
+		f.ModelMaySee = []workflow.DataClass{workflow.ClassCode}
+	}, `types/t.yaml:5: type "t" uses step "dbt_log", which provides "dbt_log" (class logs), and flow "f" does not let the model see logs (model_may_see: code)`)
+}
+
+func TestValidate_RefusesAFlowContextNeedingAForbiddenClass(t *testing.T) {
+	refuses(t, func(f *workflow.Flow, ty *workflow.Type) {
+		f.ModelMaySee = []workflow.DataClass{workflow.ClassLogs}
+		ty.Context = nil
+	}, `flows/f.yaml:6: flow "f" uses step "failing_node_source", which provides "source_files" (class code), and flow "f" does not let the model see code (model_may_see: logs)`)
+}
+
+func TestValidate_AcceptsEveryTypeWhoseClassesTheFlowAllows(t *testing.T) {
+	for _, allowed := range [][]workflow.DataClass{
+		{workflow.ClassCode, workflow.ClassLogs},
+		{workflow.ClassLogs, workflow.ClassCode},
+		{workflow.ClassCode, workflow.ClassLogs, workflow.ClassRows},
+	} {
+		f, ty := validFlow(), validType()
+		f.ModelMaySee = allowed
+		_, err := Validate(setOf(f, ty), stubRegistry())
+		assert.NoError(t, err, "%v", allowed)
+	}
+}
+
+// One type can be listed by two flows, and each holds it to its own classes.
+func TestValidate_HoldsAListedTypeToEachFlowsClasses(t *testing.T) {
+	strict := validFlow()
+	strict.Name, strict.File, strict.Pos = "strict", "flows/strict.yaml", pos("flows/strict.yaml", 1)
+	strict.ModelMaySee = []workflow.DataClass{workflow.ClassCode}
+	strict.ModelMaySeePos = pos("flows/strict.yaml", 13)
+	strict.Context = nil
+	set := setOf(validFlow(), validType())
+	set.Flows[strict.Name] = strict
+
+	_, err := Validate(set, stubRegistry())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `types/t.yaml:5: type "t" uses step "dbt_log"`)
+	assert.Contains(t, err.Error(), `flow "strict" does not let the model see logs`)
+	assert.NotContains(t, err.Error(), `flow "f" does not let`)
+}
+
+func TestValidate_RefusesAFlowWithoutModelMaySee(t *testing.T) {
+	for name, classes := range map[string][]workflow.DataClass{"absent": nil, "empty": {}} {
+		t.Run(name, func(t *testing.T) {
+			refuses(t, func(f *workflow.Flow, _ *workflow.Type) { f.ModelMaySee = classes },
+				`flows/f.yaml:13: flow "f" has no model_may_see, and a flow lists the classes of content the model may see (code, logs, rows)`)
+		})
+	}
+}
+
+// An unknown class is refused once, at the flow's list, and not again for every
+// step the flow's classes would be held against.
+func TestValidate_RefusesAnUnknownDataClassOnce(t *testing.T) {
+	for name, classes := range map[string][]workflow.DataClass{
+		"among known ones": {workflow.ClassCode, "secrets"},
+		"alone":            {"secrets"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, ty := validFlow(), validType()
+			f.ModelMaySee = classes
+			_, err := Validate(setOf(f, ty), stubRegistry())
+			require.Error(t, err)
+			assert.Equal(t,
+				`flows/f.yaml:13: flow "f" has model_may_see class "secrets", which is none of code, logs, rows`,
+				err.Error(), "one refusal, and no step is refused for the classes the flow lists")
+		})
+	}
+}
+
+// The prompt builds the model's request from the keys it reads, the failure
+// itself among them, so a flow that does not let the model see logs refuses a
+// type whose prompt reads the failure, at the prompt's line.
+func TestValidate_RefusesAPromptReadingAForbiddenClass(t *testing.T) {
+	f, ty := validFlow(), validType()
+	f.ModelMaySee = []workflow.DataClass{workflow.ClassCode}
+	ty.Context = nil
+
+	_, err := Validate(setOf(f, ty), stubRegistry())
+
+	require.Error(t, err)
+	assert.Equal(t,
+		`types/t.yaml:6: type "t" uses step "dbt-compile", which reads "failure" (class logs), and flow "f" does not let the model see logs (model_may_see: code)`,
+		err.Error(), "the prompt's other key, source_files, is code and is let through")
+}
+
+func TestValidate_RefusesAPromptReadingAKeyWithNoDataClass(t *testing.T) {
+	reg := stubRegistry()
+	reg.register(stubFor(step.Meta{
+		Name: "mystery-prompt", Kind: step.KindPrompt, Description: "mystery",
+		Needs: []remediation.EvidenceKey{"mystery_key"},
+	}))
+	ty := validType()
+	ty.Agent.Prompt = ref(typeFile, 6, "mystery-prompt")
+
+	_, err := Validate(setOf(validFlow(), ty), reg)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `types/t.yaml:6: step "mystery-prompt" reads "mystery_key", which has no data class`)
+}
+
+// A step whose evidence key has no data class cannot be held to a flow's
+// classes, so it is refused rather than let through.
+func TestValidate_RefusesAKeyWithNoDataClass(t *testing.T) {
+	reg := stubRegistry()
+	reg.register(stubFor(step.Meta{
+		Name: "mystery", Kind: step.KindContext, Description: "mystery",
+		Provides: []remediation.EvidenceKey{"mystery_key"},
+	}))
+	ty := validType()
+	ty.Context = append(ty.Context, ref(typeFile, 9, "mystery"))
+
+	_, err := Validate(setOf(validFlow(), ty), reg)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `types/t.yaml:9: step "mystery" provides "mystery_key", which has no data class`)
 }

@@ -23,14 +23,6 @@ var errBoom = errors.New("boom")
 
 func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-// markSanitizer wraps what it is given, so a test can tell sanitized text from
-// raw text.
-type markSanitizer struct{}
-
-func (markSanitizer) Sanitize(s string) string { return "<" + s + ">" }
-
-var _ ports.LogSanitizer = markSanitizer{}
-
 // fakeArchive hands out a real temporary directory per fetch and removes it
 // when the step calls cleanup, so a test can see whether a checkout survives.
 type fakeArchive struct {
@@ -142,6 +134,11 @@ func (f *fakeBundle) NodeSource(_ context.Context, uri, node, release string) (p
 		return ports.CandidateSource{}, ports.ErrNotFound
 	}
 	return s, nil
+}
+
+// NodeOwners records no owner of any node.
+func (f *fakeBundle) NodeOwners(context.Context, string, string, []string) (map[string]string, error) {
+	return map[string]string{}, nil
 }
 
 var _ ports.CandidateSourceReader = (*fakeBundle)(nil)

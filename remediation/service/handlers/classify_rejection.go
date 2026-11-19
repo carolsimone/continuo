@@ -26,7 +26,9 @@ import (
 // nodes yields one trigger, one proposal and one pull request downstream. The
 // trigger's outbox row is stored under tenantID, the tenant of the message the
 // rejection came from. Idempotency is the decision repository's natural key: a
-// redelivered rejection re-records nothing new and therefore re-emits nothing.
+// redelivered rejection re-records nothing new and therefore re-emits and
+// counts nothing. Each newly recorded decision is counted on deps.Metrics once
+// the transaction has committed.
 func ClassifyRejection(ctx context.Context, deps Deps, tenantID string, evs []failure.FailureEvidence) error {
 	if len(evs) == 0 {
 		return nil
@@ -134,6 +136,14 @@ func ClassifyRejection(ctx context.Context, deps Deps, tenantID string, evs []fa
 
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
+	}
+	// Each decision is counted once its transaction has committed, so a
+	// rollback counts nothing and the redelivery that records it counts it
+	// once. A node recorded before is not in recorded, so a redelivery counts
+	// nothing it already counted.
+	metrics := deps.classifierMetrics()
+	for _, it := range recorded {
+		metrics.Classified(string(it.c.Decision), it.c.Reason)
 	}
 	deps.Logger.Info("rejection classified", "release", evs[0].ReleaseID, "round", round,
 		"nodes", len(items), "recorded_nodes", len(recorded))

@@ -29,12 +29,12 @@ func (f *fakeContracts) CurrentContract(_ context.Context, uniqueID string) (str
 
 func gatherCurrent(t *testing.T, c *fakeContracts) (step.ContextOutput, error) {
 	t.Helper()
-	return contract.NewCurrentContract(c, markSanitizer{}, nil).Gather(context.Background(),
+	return contract.NewCurrentContract(c, nil).Gather(context.Background(),
 		step.ContextInput{Failure: failure(nil), Evidence: remediation.NewEvidence()})
 }
 
 func TestCurrentContractStep_MetaNamesTheStepAndWhatItProvides(t *testing.T) {
-	m := contract.NewCurrentContract(nil, nil, nil).Meta()
+	m := contract.NewCurrentContract(nil, nil).Meta()
 	assert.Equal(t, "current_contract", string(m.Name))
 	assert.Equal(t, step.KindContext, m.Kind)
 	assert.NotEmpty(t, m.Description)
@@ -50,8 +50,8 @@ func TestCurrentContractStep_ProvidesTheContract(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, out.Declined)
 	assert.Equal(t, map[remediation.EvidenceKey]any{
-		remediation.KeyCurrentContract: remediation.Text("<id: fx.rates\nversion: \"3\"\n>"),
-	}, out.Evidence, "the contract leaves for an external model, so it is sanitized")
+		remediation.KeyCurrentContract: remediation.Text("id: fx.rates\nversion: \"3\"\n"),
+	}, out.Evidence)
 	assert.Equal(t, []string{nodeID}, c.asked)
 }
 
@@ -73,7 +73,7 @@ func TestCurrentContractStep_AFailedReadIsAWarningAndAnEmptyText(t *testing.T) {
 	var logs bytes.Buffer
 	c := &fakeContracts{err: errBoom}
 
-	out, err := contract.NewCurrentContract(c, markSanitizer{}, slog.New(slog.NewTextHandler(&logs, nil))).Gather(
+	out, err := contract.NewCurrentContract(c, slog.New(slog.NewTextHandler(&logs, nil))).Gather(
 		context.Background(), step.ContextInput{Failure: failure(nil), Evidence: remediation.NewEvidence()})
 
 	require.NoError(t, err)

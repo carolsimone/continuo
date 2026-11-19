@@ -18,7 +18,6 @@ const maxPrecedentsFetch = 10
 // look like this failure, and the change that fixed them when one did.
 type Precedents struct {
 	precedents ports.PrecedentReader
-	sanitizer  ports.LogSanitizer
 	logger     *slog.Logger
 }
 
@@ -26,8 +25,8 @@ var _ step.ContextSource = (*Precedents)(nil)
 
 // NewPrecedents builds the failure_precedents step. It calls no port until
 // Gather.
-func NewPrecedents(precedents ports.PrecedentReader, sanitizer ports.LogSanitizer, logger *slog.Logger) *Precedents {
-	return &Precedents{precedents: precedents, sanitizer: sanitizer, logger: LoggerOrDefault(logger)}
+func NewPrecedents(precedents ports.PrecedentReader, logger *slog.Logger) *Precedents {
+	return &Precedents{precedents: precedents, logger: LoggerOrDefault(logger)}
 }
 
 // Meta describes the step.
@@ -60,7 +59,7 @@ func (s *Precedents) Gather(ctx context.Context, in step.ContextInput) (step.Con
 				"node", subject.NodeID, "error", err)
 			return nil
 		}
-		return withoutSelf(ps, releaseID, subject.NodeID, s.sanitizer)
+		return withoutSelf(ps, releaseID, subject.NodeID)
 	}
 	var ps []prompt.Precedent
 	if subject.ErrorSignature != "" {
@@ -75,26 +74,14 @@ func (s *Precedents) Gather(ctx context.Context, in step.ContextInput) (step.Con
 }
 
 // withoutSelf drops this failure's own recorded rejection from a precedent
-// result set (it is this failure, not precedent for it) and sanitizes the
-// free-text fields of each remaining precedent, its edited diffs included: a
-// merged fix PR's diff can carry the same secrets a proposal's diff can. It
-// builds a fresh slice, since ps is backed by whatever the reader returned and
-// reusing its array would corrupt that value across calls.
-func withoutSelf(ps []prompt.Precedent, releaseID, nodeID string, sanitizer ports.LogSanitizer) []prompt.Precedent {
+// result set (it is this failure, not precedent for it). It builds a fresh
+// slice, since ps is backed by whatever the reader returned and reusing its
+// array would corrupt that value across calls.
+func withoutSelf(ps []prompt.Precedent, releaseID, nodeID string) []prompt.Precedent {
 	out := make([]prompt.Precedent, 0, len(ps))
 	for _, p := range ps {
 		if p.ReleaseID == releaseID && p.NodeID == nodeID {
 			continue
-		}
-		p.ResolutionDiff = sanitizer.Sanitize(p.ResolutionDiff)
-		p.ErrorExcerpt = sanitizer.Sanitize(p.ErrorExcerpt)
-		if len(p.Edited) > 0 {
-			edited := make([]prompt.EditedPrecedent, len(p.Edited))
-			for i, e := range p.Edited {
-				e.Diff = sanitizer.Sanitize(e.Diff)
-				edited[i] = e
-			}
-			p.Edited = edited
 		}
 		out = append(out, p)
 	}

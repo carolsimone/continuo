@@ -152,7 +152,9 @@ type ProposalRepository interface {
 	// Upsert records the terminal outcome of an attempt on the natural key
 	// (release_id, attempt): it finalizes the in-flight generating row when one
 	// exists (ON CONFLICT … DO UPDATE), or plain-inserts for instant paths that
-	// never marked generating (e.g. the attempt-cap escalation).
+	// never marked generating (e.g. the attempt-cap escalation). A proposal
+	// that carries approvers replaces the row's, and one that carries none
+	// keeps the approvers an existing row holds.
 	Upsert(ctx context.Context, p proposal.Proposal) error
 
 	// Get returns the full View for the given proposal id.
@@ -279,6 +281,14 @@ type ProposalRepository interface {
 	// outcomes given for a row reopened generating, is an error, with nothing
 	// written.
 	ReopenTryAttempt(ctx context.Context, remediationID uuid.UUID, attempt int, status proposal.Status, outcomes map[string]proposal.NodeOutcome) (reopened bool, err error)
+
+	// RecordApprovers records approvers on the row of one attempt of a release:
+	// the row keeps one entry per node, an approver given for a node taking the
+	// place of the entry the row holds for it, and its approvers stay sorted by
+	// node id. Approvers the row holds for other nodes are kept, so the fixed
+	// nodes and the handed-over nodes of one attempt add up. It returns
+	// ErrNotFound, writing nothing, when the release has no row for the attempt.
+	RecordApprovers(ctx context.Context, releaseID string, attempt int, approvers []proposal.Approver) error
 
 	// UpdateVerificationPhase records the phase (and, once known, the
 	// activation time) of one of the proposal's verification runs, leaving

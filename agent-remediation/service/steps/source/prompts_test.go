@@ -32,7 +32,7 @@ var precedents = []prompt.Precedent{{ReleaseID: "old", NodeID: "n0", ErrorExcerp
 func evidenceFor(files remediation.SourceFiles) remediation.Evidence {
 	return remediation.NewEvidence().
 		With(remediation.KeySourceFiles, files).
-		With(remediation.KeyDBTLog, remediation.Text("sanitized log")).
+		With(remediation.KeyDBTLog, remediation.Text("the dbt log")).
 		With(remediation.KeyFailurePrecedents, precedents)
 }
 
@@ -56,10 +56,12 @@ func answer(target, content string) ports.ProposeResult {
 	}
 }
 
-func sanitizedAll(files remediation.SourceFiles) []prompt.NamedFile {
+// shownAll is the files as the request shows them: each in order, as the
+// evidence holds it.
+func shownAll(files remediation.SourceFiles) []prompt.NamedFile {
 	var out []prompt.NamedFile
 	for _, p := range files.Order {
-		out = append(out, prompt.NamedFile{Path: p, Content: markSanitizer{}.Sanitize(files.Files[p])})
+		out = append(out, prompt.NamedFile{Path: p, Content: files.Files[p]})
 	}
 	return out
 }
@@ -70,10 +72,10 @@ func TestPrompts_MetaNamesTheStepAndWhatItReads(t *testing.T) {
 		name  string
 		needs []remediation.EvidenceKey
 	}{
-		{source.NewDBTCompile(markSanitizer{}), "dbt-compile", []remediation.EvidenceKey{remediation.KeyFailure, remediation.KeySourceFiles, remediation.KeyDBTLog, remediation.KeyFailurePrecedents}},
-		{source.NewDBTParse(markSanitizer{}), "dbt-parse", []remediation.EvidenceKey{remediation.KeyFailure, remediation.KeySourceFiles, remediation.KeyFailurePrecedents}},
-		{source.NewSeed(markSanitizer{}), "seed", []remediation.EvidenceKey{remediation.KeyFailure, remediation.KeySourceFiles, remediation.KeyDBTLog, remediation.KeyFailurePrecedents}},
-		{source.NewDuplicateTable(markSanitizer{}), "duplicate-table", []remediation.EvidenceKey{remediation.KeyFailure, remediation.KeySourceFiles, remediation.KeyFailurePrecedents}},
+		{source.NewDBTCompile(), "dbt-compile", []remediation.EvidenceKey{remediation.KeyFailure, remediation.KeySourceFiles, remediation.KeyDBTLog, remediation.KeyFailurePrecedents}},
+		{source.NewDBTParse(), "dbt-parse", []remediation.EvidenceKey{remediation.KeyFailure, remediation.KeySourceFiles, remediation.KeyFailurePrecedents}},
+		{source.NewSeed(), "seed", []remediation.EvidenceKey{remediation.KeyFailure, remediation.KeySourceFiles, remediation.KeyDBTLog, remediation.KeyFailurePrecedents}},
+		{source.NewDuplicateTable(), "duplicate-table", []remediation.EvidenceKey{remediation.KeyFailure, remediation.KeySourceFiles, remediation.KeyFailurePrecedents}},
 	}
 	for _, c := range cases {
 		m := c.p.Meta()
@@ -89,9 +91,9 @@ func TestDBTCompile_BuildsTheLanesRequestAndOneEditDraft(t *testing.T) {
 	f := failure("compile", remediation.TriggerNode{NodeID: "svc", FilePath: "models/x.sql"})
 	m := &fakeModel{results: []ports.ProposeResult{answer("models/x.sql", "select 2")}}
 
-	out := propose(t, source.NewDBTCompile(markSanitizer{}), f, evidenceFor(shownFiles), m)
+	out := propose(t, source.NewDBTCompile(), f, evidenceFor(shownFiles), m)
 
-	want := prompt.AssembleCompileFix(sanitizedAll(shownFiles), "sanitized log", "svc", precedents)
+	want := prompt.AssembleCompileFix(shownAll(shownFiles), "the dbt log", "svc", precedents)
 	assert.Equal(t, want, m.reqs[0])
 	assert.Equal(t, remediation.Draft{
 		Edits: []remediation.Edit{{
@@ -116,7 +118,7 @@ func TestDBTCompile_ADraftThatNamesAFileItWasNotShownHasNoEdit(t *testing.T) {
 	f := failure("compile", remediation.TriggerNode{NodeID: "svc", FilePath: "models/x.sql"})
 	m := &fakeModel{results: []ports.ProposeResult{answer("models/other.sql", "select 2")}}
 
-	out := propose(t, source.NewDBTCompile(markSanitizer{}), f, evidenceFor(shownFiles), m)
+	out := propose(t, source.NewDBTCompile(), f, evidenceFor(shownFiles), m)
 
 	assert.False(t, out.Draft.TargetShown)
 	assert.Equal(t, "models/other.sql", out.Draft.NamedTarget)
@@ -128,12 +130,12 @@ func TestDBTCompile_ADraftThatNamesAFileItWasNotShownHasNoEdit(t *testing.T) {
 func TestDBTCompile_AnEmptyTargetNeedsASoleShownFile(t *testing.T) {
 	f := failure("compile", remediation.TriggerNode{NodeID: "svc", FilePath: "models/x.sql"})
 
-	several := propose(t, source.NewDBTCompile(markSanitizer{}), f, evidenceFor(shownFiles),
+	several := propose(t, source.NewDBTCompile(), f, evidenceFor(shownFiles),
 		&fakeModel{results: []ports.ProposeResult{answer("", "select 2")}})
 	assert.False(t, several.Draft.TargetShown)
 
 	one := remediation.SourceFiles{Files: map[string]string{sqlPath: "select 1"}, Order: []string{sqlPath}, Primary: sqlPath}
-	sole := propose(t, source.NewDBTCompile(markSanitizer{}), f, evidenceFor(one),
+	sole := propose(t, source.NewDBTCompile(), f, evidenceFor(one),
 		&fakeModel{results: []ports.ProposeResult{answer("", "select 2")}})
 	assert.True(t, sole.Draft.TargetShown)
 	require.Len(t, sole.Draft.Edits, 1)
@@ -144,7 +146,7 @@ func TestDBTCompile_AnUnchangedAnswerStillBecomesAnEditForTheChecksToRefuse(t *t
 	f := failure("compile", remediation.TriggerNode{NodeID: "svc", FilePath: "models/x.sql"})
 	m := &fakeModel{results: []ports.ProposeResult{answer("models/x.sql", "select 1")}}
 
-	out := propose(t, source.NewDBTCompile(markSanitizer{}), f, evidenceFor(shownFiles), m)
+	out := propose(t, source.NewDBTCompile(), f, evidenceFor(shownFiles), m)
 
 	require.Len(t, out.Draft.Edits, 1)
 	assert.Equal(t, out.Draft.Edits[0].Original, out.Draft.Edits[0].Content)
@@ -154,9 +156,9 @@ func TestDBTParse_BuildsTheLanesRequest(t *testing.T) {
 	f := failure("parse", remediation.TriggerNode{NodeID: "model.svc.x", Service: "svc", FilePath: "models/x.sql", ErrorExcerpt: "parse error near from"})
 	m := &fakeModel{results: []ports.ProposeResult{answer("models/x.sql", "select 2")}}
 
-	out := propose(t, source.NewDBTParse(markSanitizer{}), f, evidenceFor(shownFiles), m)
+	out := propose(t, source.NewDBTParse(), f, evidenceFor(shownFiles), m)
 
-	want := prompt.AssembleParseFix(sanitizedAll(shownFiles), "<parse error near from>", "svc", "model.svc.x", precedents)
+	want := prompt.AssembleParseFix(shownAll(shownFiles), "parse error near from", "svc", "model.svc.x", precedents)
 	assert.Equal(t, want, m.reqs[0])
 	require.Len(t, out.Draft.Edits, 1)
 	assert.Equal(t, "proposed-fix/rel-1/model.svc.x/attempt-2.source.sql", out.Draft.Edits[0].ContentKey)
@@ -171,9 +173,9 @@ func TestSeed_BuildsTheLanesRequestAndAlwaysTargetsTheCSV(t *testing.T) {
 	for _, target := range []string{"", "seeds/a.csv", "elsewhere.csv"} {
 		m := &fakeModel{results: []ports.ProposeResult{answer(target, "a,b\n1,2")}}
 
-		out := propose(t, source.NewSeed(markSanitizer{}), f, evidenceFor(csv), m)
+		out := propose(t, source.NewSeed(), f, evidenceFor(csv), m)
 
-		want := prompt.AssembleSeedFix("services/svc/seeds/a.csv", "<a,b\n1>", "sanitized log", "seed.svc.a", precedents)
+		want := prompt.AssembleSeedFix("services/svc/seeds/a.csv", "a,b\n1", "the dbt log", "seed.svc.a", precedents)
 		assert.Equal(t, want, m.reqs[0])
 		assert.True(t, out.Draft.TargetShown, target)
 		require.Len(t, out.Draft.Edits, 1, target)
@@ -195,9 +197,9 @@ func TestDuplicateTable_BuildsTheLanesRequest(t *testing.T) {
 	})
 	m := &fakeModel{results: []ports.ProposeResult{answer("", "select 1 as renamed")}}
 
-	out := propose(t, source.NewDuplicateTable(markSanitizer{}), f, evidenceFor(one), m)
+	out := propose(t, source.NewDuplicateTable(), f, evidenceFor(one), m)
 
-	want := prompt.AssembleDuplicateTableFix(prompt.NamedFile{Path: sqlPath, Content: "<select 1>"},
+	want := prompt.AssembleDuplicateTableFix(prompt.NamedFile{Path: sqlPath, Content: "select 1"},
 		"analytics.orders", "billing", "models/orders.sql", precedents)
 	assert.Equal(t, want, m.reqs[0])
 	assert.True(t, out.Draft.TargetShown)
@@ -211,14 +213,14 @@ func TestPrompts_ReadMissingLogAndPrecedentsAsNone(t *testing.T) {
 	f := failure("compile", remediation.TriggerNode{NodeID: "svc", FilePath: "models/x.sql"})
 	m := &fakeModel{results: []ports.ProposeResult{answer("models/x.sql", "select 2")}}
 
-	propose(t, source.NewDBTCompile(markSanitizer{}), f, ev, m)
+	propose(t, source.NewDBTCompile(), f, ev, m)
 
-	assert.Equal(t, prompt.AssembleCompileFix(sanitizedAll(shownFiles), "", "svc", nil), m.reqs[0])
+	assert.Equal(t, prompt.AssembleCompileFix(shownAll(shownFiles), "", "svc", nil), m.reqs[0])
 }
 
 func TestPrompts_ModelErrorIsReturned(t *testing.T) {
 	f := failure("compile", remediation.TriggerNode{NodeID: "svc", FilePath: "models/x.sql"})
-	_, err := source.NewDBTCompile(markSanitizer{}).Propose(context.Background(),
+	_, err := source.NewDBTCompile().Propose(context.Background(),
 		step.PromptInput{Failure: f, Evidence: evidenceFor(shownFiles)}, &fakeModel{err: errBoom})
 	assert.ErrorIs(t, err, errBoom)
 	assert.ErrorContains(t, err, "llm propose")
@@ -226,7 +228,7 @@ func TestPrompts_ModelErrorIsReturned(t *testing.T) {
 
 func TestPrompts_WithoutSourceFilesAreAnErrorAndCallNoModel(t *testing.T) {
 	m := &fakeModel{}
-	_, err := source.NewDBTCompile(markSanitizer{}).Propose(context.Background(),
+	_, err := source.NewDBTCompile().Propose(context.Background(),
 		step.PromptInput{Evidence: remediation.NewEvidence()}, m)
 	assert.ErrorContains(t, err, "dbt-compile")
 	assert.Empty(t, m.reqs)
@@ -262,14 +264,14 @@ func revisesTheLastCall(t *testing.T, p step.Prompt, f remediation.Failure, ev r
 func TestDBTCompile_RevisesTheLastCallWithTheFindings(t *testing.T) {
 	f := failure("compile", remediation.TriggerNode{NodeID: "svc", FilePath: "models/x.sql"})
 
-	revisesTheLastCall(t, source.NewDBTCompile(markSanitizer{}), f, evidenceFor(shownFiles),
+	revisesTheLastCall(t, source.NewDBTCompile(), f, evidenceFor(shownFiles),
 		answer("models/x.sql", "select 1"), answer("models/x.sql", "select 3"))
 }
 
 func TestDBTParse_RevisesTheLastCallWithTheFindings(t *testing.T) {
 	f := failure("parse", remediation.TriggerNode{NodeID: "model.svc.x", Service: "svc", FilePath: "models/x.sql", ErrorExcerpt: "parse error near from"})
 
-	revisesTheLastCall(t, source.NewDBTParse(markSanitizer{}), f, evidenceFor(shownFiles),
+	revisesTheLastCall(t, source.NewDBTParse(), f, evidenceFor(shownFiles),
 		answer("models/x.sql", "select from"), answer("models/x.sql", "select 3"))
 }
 
@@ -277,7 +279,7 @@ func TestSeed_RevisesTheLastCallWithTheFindings(t *testing.T) {
 	csv := remediation.SourceFiles{Files: map[string]string{"services/svc/seeds/a.csv": "a,b\n1"}, Order: []string{"services/svc/seeds/a.csv"}, Primary: "services/svc/seeds/a.csv", Service: "svc"}
 	f := failure("seed_build", remediation.TriggerNode{NodeID: "seed.svc.a", Service: "svc", FilePath: "seeds/a.csv"})
 
-	revisesTheLastCall(t, source.NewSeed(markSanitizer{}), f, evidenceFor(csv),
+	revisesTheLastCall(t, source.NewSeed(), f, evidenceFor(csv),
 		answer("", "a,b\n1"), answer("", "a,b\n1,2"))
 }
 
@@ -288,7 +290,7 @@ func TestDuplicateTable_RevisesTheLastCallWithTheFindings(t *testing.T) {
 		OtherService: "billing", OtherFilePath: "models/orders.sql",
 	})
 
-	revisesTheLastCall(t, source.NewDuplicateTable(markSanitizer{}), f, evidenceFor(one),
+	revisesTheLastCall(t, source.NewDuplicateTable(), f, evidenceFor(one),
 		answer("", "select 1"), answer("", "select 1 as renamed"))
 }
 
@@ -301,10 +303,10 @@ func TestPrompts_ALaterRoundWithoutThePreviousCallIsAnErrorAndCallsNoModel(t *te
 		"no previous answer":  {Round: 1, PreviousRequest: &req},
 	}
 	steps := map[string]step.Prompt{
-		"dbt-compile":     source.NewDBTCompile(markSanitizer{}),
-		"dbt-parse":       source.NewDBTParse(markSanitizer{}),
-		"seed":            source.NewSeed(markSanitizer{}),
-		"duplicate-table": source.NewDuplicateTable(markSanitizer{}),
+		"dbt-compile":     source.NewDBTCompile(),
+		"dbt-parse":       source.NewDBTParse(),
+		"seed":            source.NewSeed(),
+		"duplicate-table": source.NewDuplicateTable(),
 	}
 	for stepName, p := range steps {
 		for name, in := range cases {
@@ -332,9 +334,9 @@ func TestPrompts_TheFirstRoundIsShownTheEarlierTries(t *testing.T) {
 	f := failure("compile", remediation.TriggerNode{NodeID: "svc", FilePath: "models/x.sql"})
 	m := &fakeModel{results: []ports.ProposeResult{answer("models/x.sql", "select 2")}}
 
-	propose(t, source.NewDBTCompile(markSanitizer{}), f, ev, m)
+	propose(t, source.NewDBTCompile(), f, ev, m)
 
-	want := prompt.AssembleCompileFix(sanitizedAll(shownFiles), "sanitized log", "svc", precedents)
+	want := prompt.AssembleCompileFix(shownAll(shownFiles), "the dbt log", "svc", precedents)
 	assert.Equal(t, step.WithPreviousTries(want, ev), m.reqs[0])
 	assert.Contains(t, m.reqs[0].User, "### Try 1 (round 1)")
 }

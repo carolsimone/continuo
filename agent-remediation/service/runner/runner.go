@@ -54,6 +54,9 @@ type Deps struct {
 	VerificationTimeout time.Duration
 	// StepTimeout bounds each step of a drive. Zero is ten minutes.
 	StepTimeout time.Duration
+	// Metrics counts the tries, rounds, outcomes, stages and model tokens of
+	// the remediations the runner drives. Nil counts nothing.
+	Metrics ports.RemediationMetrics
 }
 
 // Runner runs each remediation as a sequence of committed steps. Every step's
@@ -61,32 +64,37 @@ type Deps struct {
 // worker's lease, so a restart continues from the last committed step and two
 // workers never write to one remediation.
 type Runner struct {
-	d      Deps
-	clock  ports.Clock
-	logger *slog.Logger
+	d       Deps
+	clock   ports.Clock
+	logger  *slog.Logger
+	metrics ports.RemediationMetrics
 }
 
-// New builds a Runner. A nil Clock is the system clock and a nil Logger the
-// default logger.
+// New builds a Runner. A nil Clock is the system clock, a nil Logger the
+// default logger and a nil Metrics one that counts nothing.
 func New(d Deps) *Runner {
-	r := &Runner{d: d, clock: d.Clock, logger: d.Logger}
+	r := &Runner{d: d, clock: d.Clock, logger: d.Logger, metrics: d.Metrics}
 	if r.clock == nil {
 		r.clock = ports.SystemClock{}
 	}
 	if r.logger == nil {
 		r.logger = slog.Default()
 	}
+	if r.metrics == nil {
+		r.metrics = ports.NopRemediationMetrics{}
+	}
 	return r
 }
 
 // tryRun is what one step of a drive works from: the remediation as last
-// committed, the flow it follows, the trigger it was created from, and the
-// journal of its current try.
+// committed, the flow it follows, the trigger it was created from, the journal
+// of its current try, and the metric samples the step earns once it commits.
 type tryRun struct {
 	snap    remediation.Snapshot
 	flow    workflow.Flow
 	trigger remediation.Trigger
 	journal journal
+	after   *afterCommit
 }
 
 // Drive runs the remediation's steps, one committed step at a time, until it
@@ -220,7 +228,7 @@ func (r *Runner) readRun(ctx context.Context, id uuid.UUID) (run tryRun, running
 	}
 	t.TenantID = rem.TenantID
 	t.Round = rem.Round
-	return tryRun{snap: snap, flow: flow, trigger: t, journal: newJournal(snap.Steps)}, true, nil
+	return tryRun{snap: snap, flow: flow, trigger: t, journal: newJournal(snap.Steps), after: &afterCommit{}}, true, nil
 }
 
 // nextOpenCluster returns the first cluster, in cluster order, that has not

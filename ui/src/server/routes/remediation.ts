@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import * as grpc from '@grpc/grpc-js';
 import type { RemediationClient } from '../clients/remediation-client';
-import type { PullRequestCreator } from '../github/pull-request-creator';
-import { buildPullRequestBody } from './pr-body';
+import type { CreatedPullRequest, PullRequestCreator, RefusedReviewers } from '../github/pull-request-creator';
+import { classifyOwner, splitOwners } from '../github/reviewers';
+import { buildPullRequestBody, type OwnerReview, type PullRequestOwner } from './pr-body';
 
 // normalizeKey strips a leading s3://<bucket>/ so getObject receives a plain key.
 function normalizeKey(raw: string): string {
@@ -79,6 +80,37 @@ interface PullRequestError {
   error: string;
 }
 
+// One owning-service group whose pull request is open but whose owners could
+// not be asked to review it.
+interface PullRequestWarning {
+  service: string;
+  warning: string;
+}
+
+// An approver as BeginPullRequest sends it: the owner of one fixed node, empty
+// when the node has none.
+interface Approver {
+  node_id: string;
+  owner: string;
+}
+
+// ownersOf lists each approver's owner against its node for the body of a pull
+// request in a repository that repoOwner owns, with what became of its review:
+// requested when the owner is a GitHub user or a team of repoOwner (refused
+// when it is one of those GitHub refused, by case-blind login or slug), and
+// only listed otherwise.
+function ownersOf(approvers: Approver[], repoOwner: string, refused: RefusedReviewers): PullRequestOwner[] {
+  const refusedUsers = new Set(refused.users.map((u) => u.toLowerCase()));
+  const refusedTeams = new Set(refused.teams.map((t) => t.toLowerCase()));
+  return approvers.map((a) => {
+    const c = classifyOwner(a.owner, repoOwner);
+    let review: OwnerReview = 'listed';
+    if (c?.kind === 'user') review = refusedUsers.has(c.name.toLowerCase()) ? 'refused' : 'requested';
+    if (c?.kind === 'team') review = refusedTeams.has(c.name.toLowerCase()) ? 'refused' : 'requested';
+    return { nodeId: a.node_id, owner: a.owner, review };
+  });
+}
+
 export function createRemediationRouter(
   remediation: RemediationClient,
   prCreator: PullRequestCreator | undefined,
@@ -139,7 +171,9 @@ export function createRemediationRouter(
     service: string,
     openedBy: string,
     creator: PullRequestCreator,
-  ): Promise<{ ok: true; value: PullRequestResult } | { ok: false; error: PullRequestError }> {
+  ): Promise<
+    { ok: true; value: PullRequestResult; warnings: PullRequestWarning[] } | { ok: false; error: PullRequestError }
+  > {
     // Claim this service's group — guard against concurrent or duplicate PR creation.
     let claim: any;
     try {
@@ -160,7 +194,7 @@ export function createRemediationRouter(
         const message: string = err.details ?? err.message ?? '';
         const pr_url = extractPrUrl(message);
         if (pr_url) {
-          return { ok: true, value: { service, pr_url, pr_number: extractPrNumber(pr_url) } };
+          return { ok: true, value: { service, pr_url, pr_number: extractPrNumber(pr_url) }, warnings: [] };
         }
         console.error(
           '[remediation] beginPullRequest refused for proposal %s service %s: %s',
@@ -273,22 +307,36 @@ export function createRemediationRouter(
       }
     }
 
-    const body = buildPullRequestBody({
-      nodeIds,
-      releaseId,
-      errorSignature: claim.error_signature,
-      model: claim.model,
-      confidence: claim.confidence,
-      files,
-      rationale: claim.rationale,
-      diff,
-      uiUrl,
-    });
+    // The owners of the fixed nodes are asked to review the pull request. A
+    // claim of a proposal that records no owners (the legacy engine's) has no
+    // approvers, so it asks nobody and its body names no owners.
+    // A team is asked only when its org owns the repository (claim.repo is
+    // "owner/name"); another org's team is listed.
+    const approvers: Approver[] = claim.approvers ?? [];
+    const repoOwner = (claim.repo ?? '').split('/')[0] ?? '';
+    const { users: reviewers, teams: teamReviewers } = splitOwners(approvers.map((a) => a.owner), repoOwner);
+
+    // The body names each owner as asked, so it is built again, with the
+    // owners GitHub refused marked, if GitHub turns any of them down.
+    const bodyFor = (refused: RefusedReviewers) =>
+      buildPullRequestBody({
+        nodeIds,
+        releaseId,
+        errorSignature: claim.error_signature,
+        model: claim.model,
+        confidence: claim.confidence,
+        files,
+        rationale: claim.rationale,
+        diff,
+        owners: ownersOf(approvers, repoOwner, refused),
+        uiUrl,
+      });
+    const body = bodyFor({ users: [], teams: [] });
 
     const commitMessage = title;
 
     // Open the pull request via the GitHub App.
-    let pr: { url: string; number: number };
+    let pr: CreatedPullRequest;
     try {
       pr = await creator.create({
         repo: claim.repo,
@@ -302,6 +350,9 @@ export function createRemediationRouter(
         commitMessage,
         title,
         body,
+        reviewers,
+        teamReviewers,
+        bodyWithRefused: bodyFor,
       });
     } catch (err) {
       // Log the proposal id plus the error's status/message (Octokit errors
@@ -346,7 +397,14 @@ export function createRemediationRouter(
       );
     }
 
-    return { ok: true, value: { service, pr_url: pr.url, pr_number: pr.number } };
+    // The pull request is open and recorded even when GitHub refused to ask
+    // some owners; each refusal is logged and reported beside the pull request.
+    const warnings: PullRequestWarning[] = [];
+    for (const warning of pr.warnings ?? []) {
+      console.warn('[remediation] reviewer request refused for proposal %s service %s: %s', id, service, warning);
+      warnings.push({ service, warning });
+    }
+    return { ok: true, value: { service, pr_url: pr.url, pr_number: pr.number }, warnings };
   }
 
   // POST /api/remediation/proposals/:id/pull-request
@@ -358,7 +416,9 @@ export function createRemediationRouter(
   // attempted; a group that already has a pull request is skipped and listed
   // as-is, and a group that fails is reported in `errors` without losing the
   // groups that already succeeded. The response is 200 when every group
-  // succeeded, 207 when some but not all did, and 502 only when none did.
+  // succeeded, 207 when some but not all did, and 502 only when none did. A
+  // group whose pull request opened but whose owners GitHub would not take as
+  // reviewers is a success, listed in `warnings` with the reason.
   router.post('/proposals/:id/pull-request', async (req, res) => {
     const id = req.params.id;
 
@@ -394,22 +454,24 @@ export function createRemediationRouter(
 
     const pull_requests: PullRequestResult[] = [];
     const errors: PullRequestError[] = [];
+    const warnings: PullRequestWarning[] = [];
     for (const service of services) {
       const result = await openPullRequestForService(id, service, openedBy, creator);
       if (result.ok) {
         pull_requests.push(result.value);
+        warnings.push(...result.warnings);
       } else {
         errors.push(result.error);
       }
     }
 
     if (pull_requests.length === 0) {
-      return res.status(502).json({ pull_requests, errors });
+      return res.status(502).json({ pull_requests, errors, warnings });
     }
     if (errors.length > 0) {
-      return res.status(207).json({ pull_requests, errors });
+      return res.status(207).json({ pull_requests, errors, warnings });
     }
-    return res.status(200).json({ pull_requests, errors });
+    return res.status(200).json({ pull_requests, errors, warnings });
   });
 
   return router;

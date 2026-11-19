@@ -121,7 +121,8 @@ func tryOpenTime(status remediation.TryStatus) time.Duration {
 // takes back the per-node outcomes the failure rewrote, which the proposal
 // repository undoes, and a row reopened verifying the outcomes the try's
 // clusters give (nodeOutcomes), which the clusters still give, since nothing
-// changes them once the try is verifying. A row that is not failed already
+// changes them once the try is verifying, the message of each coded outcome
+// cleaned as every row the runner writes has it. A row that is not failed already
 // says how its attempt ended and is left as it is: the drive or the poll that
 // follows acts on it as it finds it.
 func (r *Runner) reopenAttempt(ctx context.Context, u uow.UnitOfWork, snap remediation.Snapshot, to proposal.Status) error {
@@ -129,7 +130,7 @@ func (r *Runner) reopenAttempt(ctx context.Context, u uow.UnitOfWork, snap remed
 	attempt := snap.Try.Attempt
 	var outcomes map[string]proposal.NodeOutcome
 	if to == proposal.StatusVerifying {
-		outcomes = nodeOutcomes(snap.Clusters)
+		outcomes = proposal.CleanedOutcomes(nodeOutcomes(snap.Clusters))
 	}
 	reopened, err := u.ProposalRepo().ReopenTryAttempt(ctx, rem.ID, attempt, to, outcomes)
 	if err != nil {

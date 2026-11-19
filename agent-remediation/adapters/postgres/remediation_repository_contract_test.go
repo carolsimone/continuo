@@ -1343,3 +1343,79 @@ func TestRemediationRepository_HasLaterRound(t *testing.T) {
 		}
 	})
 }
+
+// ListContextOfEarlierTries reads, newest try first, each try before the one
+// named with its clusters that hold one of the nodes and only their done
+// context rows, never another remediation's.
+func TestRemediationRepository_ListContextOfEarlierTriesReadsTheContextRowsOfTheNodesClusters(t *testing.T) {
+	forEachImpl(t, func(t *testing.T, env contractEnv) {
+		ctx := context.Background()
+		r := mustCreate(t, env, newRemediation("rel-earlier", 1, contractBase))
+		other := mustCreate(t, env, newRemediation("rel-earlier", 2, contractBase.Add(time.Minute)))
+		for _, rem := range []remediation.Remediation{r, other} {
+			for n := 1; n <= 3; n++ {
+				try := newTry(rem.ID, n, remediation.TryFailed, contractBase.Add(time.Hour))
+				try.Attempt = n
+				require.NoError(t, env.remediations.SaveTry(ctx, try))
+			}
+		}
+		cluster := func(rem remediation.Remediation, try, n int, members ...string) {
+			require.NoError(t, env.remediations.SaveCluster(ctx, remediation.Cluster{
+				RemediationID: rem.ID, Try: try, Cluster: n, Kind: workflow.ClusterSingle, TargetNodeID: members[0],
+				Members: members, TypeName: "python-validation", Status: remediation.ClusterHandedOver, Round: 1,
+			}))
+		}
+		row := func(rem remediation.Remediation, try, cluster int, step, kind string, status remediation.StepStatus) {
+			require.NoError(t, env.remediations.SaveStep(ctx, remediation.StepRun{
+				RemediationID: rem.ID, Try: try, Cluster: cluster, Step: step, Kind: kind, Round: 1,
+				Status: status, Output: []byte(`{"evidence":{}}`), StartedAt: contractBase,
+			}))
+		}
+		cluster(r, 1, 1, "model.a")
+		row(r, 1, 1, "contract_file", "context", remediation.StepDone)
+		row(r, 1, 1, "image_packages", "context", remediation.StepDone)
+		row(r, 1, 1, "dbt_log", "context", remediation.StepFailed)
+		row(r, 1, 1, "python-contract", "prompt", remediation.StepDone)
+		cluster(r, 1, 2, "model.b")
+		row(r, 1, 2, "contract_file", "context", remediation.StepDone)
+		row(r, 1, 0, "verification_run", "check", remediation.StepDone)
+		cluster(r, 2, 1, "model.a")
+		cluster(r, 2, 2, "model.b", "model.c")
+		row(r, 2, 2, "contract_file", "context", remediation.StepDone)
+		cluster(r, 3, 1, "model.a")
+		row(r, 3, 1, "contract_file", "context", remediation.StepDone)
+		cluster(other, 1, 1, "model.a")
+		row(other, 1, 1, "contract_file", "context", remediation.StepDone)
+
+		snaps, err := env.remediations.ListContextOfEarlierTries(ctx, r.ID, 3, []string{"model.a", "model.c"})
+		require.NoError(t, err)
+
+		var got []string
+		for _, s := range snaps {
+			require.NotNil(t, s.Try)
+			line := fmt.Sprintf("try %d (attempt %d):", s.Try.Try, s.Try.Attempt)
+			for _, c := range s.Clusters {
+				require.Equal(t, r.ID, c.RemediationID)
+				line += fmt.Sprintf(" cluster %d %v", c.Cluster, c.Members)
+			}
+			for _, st := range s.Steps {
+				require.Equal(t, r.ID, st.RemediationID)
+				require.Equal(t, s.Try.Try, st.Try)
+				line += fmt.Sprintf(" row %d/%s", st.Cluster, st.Step)
+			}
+			got = append(got, line)
+		}
+		require.Equal(t, []string{
+			"try 2 (attempt 2): cluster 1 [model.a] cluster 2 [model.b model.c] row 2/contract_file",
+			"try 1 (attempt 1): cluster 1 [model.a] row 1/contract_file row 1/image_packages",
+		}, got, "the tries before try 3, newest first, with the clusters holding a node and their done context rows in id order")
+		require.JSONEq(t, `{"evidence":{}}`, string(snaps[1].Steps[0].Output))
+
+		none, err := env.remediations.ListContextOfEarlierTries(ctx, r.ID, 1, []string{"model.a"})
+		require.NoError(t, err)
+		require.Empty(t, none, "try 1 has no earlier try")
+		none, err = env.remediations.ListContextOfEarlierTries(ctx, r.ID, 3, nil)
+		require.NoError(t, err)
+		require.Empty(t, none, "no node, no read")
+	})
+}

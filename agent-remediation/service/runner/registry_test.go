@@ -30,6 +30,61 @@ func TestRegistry_EveryStepDescribesItself(t *testing.T) {
 	}
 }
 
+// Every key the registry knows has exactly one data class, the one a flow's
+// model_may_see is checked against.
+func TestRegistry_EveryProvidedKeyHasAClass(t *testing.T) {
+	r := NewRegistry(Collaborators{})
+	keys := map[remediation.EvidenceKey]bool{remediation.KeyFailure: true, remediation.KeyDraft: true}
+	for _, m := range r.All() {
+		for _, k := range m.Provides {
+			keys[k] = true
+		}
+	}
+	for k := range r.evidence {
+		keys[k] = true
+	}
+	for k := range keys {
+		class, ok := r.EvidenceClass(k)
+		assert.True(t, ok, "%s has no data class", k)
+		assert.True(t, class.IsValid(), "%s has the unknown class %q", k, class)
+		_, hasType := r.EvidenceType(k)
+		assert.True(t, hasType, "%s has a class and no type", k)
+	}
+}
+
+func TestRegistry_EvidenceClassesAreTheDeclaredOnes(t *testing.T) {
+	want := map[remediation.EvidenceKey]workflow.DataClass{
+		remediation.KeySourceFiles:          workflow.ClassCode,
+		remediation.KeyCandidateSQL:         workflow.ClassCode,
+		remediation.KeyCodeBundleSource:     workflow.ClassCode,
+		remediation.KeyOwnChangeDiff:        workflow.ClassCode,
+		remediation.KeyChangedAncestorDiffs: workflow.ClassCode,
+		remediation.KeyUpstreamChanges:      workflow.ClassCode,
+		remediation.KeyContractFile:         workflow.ClassCode,
+		remediation.KeyContractEntry:        workflow.ClassCode,
+		remediation.KeyCurrentContract:      workflow.ClassCode,
+		remediation.KeyImagePackages:        workflow.ClassCode,
+		remediation.KeyUpstreamTarget:       workflow.ClassCode,
+		remediation.KeyPackagedContract:     workflow.ClassCode,
+		remediation.KeyDraft:                workflow.ClassCode,
+		remediation.KeyFailure:              workflow.ClassLogs,
+		remediation.KeyDBTLog:               workflow.ClassLogs,
+		remediation.KeyFailurePrecedents:    workflow.ClassLogs,
+		remediation.KeyPreviousTries:        workflow.ClassLogs,
+	}
+	r := NewRegistry(Collaborators{})
+	got := map[remediation.EvidenceKey]workflow.DataClass{}
+	for k := range r.evidence {
+		got[k], _ = r.EvidenceClass(k)
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestRegistry_AKeyNoStepProvidesHasNoClass(t *testing.T) {
+	_, ok := NewRegistry(Collaborators{}).EvidenceClass("no_such_key")
+	assert.False(t, ok)
+}
+
 type fakeStep struct{ meta step.Meta }
 
 func (f fakeStep) Meta() step.Meta { return f.meta }
@@ -103,11 +158,12 @@ func TestRegistry_EvidenceTypeKnowsTheRunnerProvidedKeys(t *testing.T) {
 
 func TestRegistry_RegisterRefusesAKindTheStepDoesNotImplement(t *testing.T) {
 	cases := map[step.Kind]described{
-		step.KindContext: fakePass{fakeStep{step.Meta{Name: "x", Kind: step.KindContext}}},
-		step.KindPrompt:  fakeContext{fakeStep{step.Meta{Name: "x", Kind: step.KindPrompt}}},
-		step.KindCheck:   fakeContext{fakeStep{step.Meta{Name: "x", Kind: step.KindCheck}}},
-		step.KindOutput:  fakeContext{fakeStep{step.Meta{Name: "x", Kind: step.KindOutput}}},
-		"unknown":        fakeStep{step.Meta{Name: "x", Kind: "unknown"}},
+		step.KindContext:  fakePass{fakeStep{step.Meta{Name: "x", Kind: step.KindContext}}},
+		step.KindPrompt:   fakeContext{fakeStep{step.Meta{Name: "x", Kind: step.KindPrompt}}},
+		step.KindCheck:    fakeContext{fakeStep{step.Meta{Name: "x", Kind: step.KindCheck}}},
+		step.KindOutput:   fakeContext{fakeStep{step.Meta{Name: "x", Kind: step.KindOutput}}},
+		step.KindApprover: fakeStep{step.Meta{Name: "x", Kind: step.KindApprover}},
+		"unknown":         fakeStep{step.Meta{Name: "x", Kind: "unknown"}},
 	}
 	for kind, s := range cases {
 		t.Run(string(kind), func(t *testing.T) {
@@ -117,9 +173,19 @@ func TestRegistry_RegisterRefusesAKindTheStepDoesNotImplement(t *testing.T) {
 	}
 }
 
-func TestRegistry_RegisterAcceptsAnApproverOfAnyShape(t *testing.T) {
+func TestRegistry_RegisterAcceptsAnApprover(t *testing.T) {
 	r := NewRegistry(Collaborators{})
-	assert.NotPanics(t, func() { r.register(fakeStep{step.Meta{Name: "x", Kind: step.KindApprover}}) })
+	assert.NotPanics(t, func() { r.register(stubApprover{stubStep{step.Meta{Name: "x", Kind: step.KindApprover}}}) })
+}
+
+// node_owner is the approver the built-in flow names.
+func TestRegistry_HoldsTheNodeOwnerApprover(t *testing.T) {
+	s, m, ok := NewRegistry(Collaborators{}).Lookup("node_owner")
+	assert.True(t, ok)
+	assert.Equal(t, step.KindApprover, m.Kind)
+	assert.Equal(t, []workflow.Stage{workflow.StageApprover}, m.Stages)
+	_, isApprover := s.(step.Approver)
+	assert.True(t, isApprover)
 }
 
 func TestRegistry_HoldsTheSharedSteps(t *testing.T) {

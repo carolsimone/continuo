@@ -64,6 +64,13 @@ class HandoverReason(StrEnum):
     UNVERIFIABLE_EDITS = "unverifiable_edits"
 
 
+class ApproverSource(StrEnum):
+    """Where agent-remediation read the owner of a node of a rejected release, the person or team who must approve what a remediation did with that node. It names the owner on each approver of a proposal, which the gRPC reads carry to the release page."""
+    BUNDLE = "bundle"
+    CONTRACT_FILE = "contract_file"
+    NONE = "none"
+
+
 class RemediationSource(StrEnum):
     """The pipeline stage that produced the failure of a node a remediation works on."""
     VALIDATION = "validation"

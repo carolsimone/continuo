@@ -37,7 +37,7 @@ func (p *scriptedProvider) Propose(context.Context, prompt.ProposeRequest) (port
 }
 
 func newTestModel(p *scriptedProvider) *model {
-	return newModel(p, uuid.New(), 1, 1, 1, promptlog.Failure{})
+	return newModel(p, uuid.New(), 1, 1, 1, promptlog.Failure{}, nil)
 }
 
 func TestModel_RecordsTheLastRequestAndAnswer(t *testing.T) {
@@ -53,6 +53,28 @@ func TestModel_RecordsTheLastRequestAndAnswer(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, second, m.lastRequest)
 	assert.Equal(t, ports.ProposeResult{Rationale: "two", Cached: true}, m.lastAnswer, "a replayed answer is recorded like any other")
+}
+
+// The tokens of a call count when it returns, and a call that fails or that the
+// response cache answers counts none.
+func TestModel_CountsTheTokensOfEachCallTheModelAnswered(t *testing.T) {
+	type tokens struct{ in, out int }
+	var counted []tokens
+	p := &scriptedProvider{
+		answers: []ports.ProposeResult{
+			{Usage: ports.TokenUsage{Input: 100, Output: 20}},
+			{Usage: ports.TokenUsage{Input: 100, Output: 20}, Cached: true},
+			{Usage: ports.TokenUsage{Input: 7, Output: 3}},
+		},
+		errs: []error{nil, nil, errors.New("boom"), nil},
+	}
+	m := newModel(p, uuid.New(), 1, 1, 1, promptlog.Failure{}, func(in, out int) { counted = append(counted, tokens{in, out}) })
+
+	for range 4 {
+		_, _ = m.Propose(context.Background(), prompt.ProposeRequest{User: "u"})
+	}
+
+	assert.Equal(t, []tokens{{100, 20}, {7, 3}}, counted, "the replayed answer and the failed call count none")
 }
 
 func TestModel_AFailedCallLeavesTheLastCallAsItWas(t *testing.T) {

@@ -41,4 +41,62 @@ describe('buildPullRequestBody', () => {
     const body = buildPullRequestBody({ nodeIds: ['a'], releaseId: 'r', files: [{ path: 'p' }] });
     expect(body).not.toContain('View in continuo UI');
   });
+
+  describe('owners', () => {
+    const base = { nodeIds: ['a.x'], releaseId: 'r', files: [{ path: 'p' }] };
+
+    it('lists the owners in the body', () => {
+      const body = buildPullRequestBody({
+        ...base,
+        owners: [
+          { nodeId: 'a.x', owner: 'acme/finance', review: 'requested' },
+          { nodeId: 'a.y', owner: 'finance team', review: 'listed' },
+          { nodeId: 'a.z', owner: 'bob', review: 'refused' },
+        ],
+      });
+      expect(body).toContain(
+        '### Owners\n- `a.x`: acme/finance (review requested)\n- `a.y`: finance team (listed only)\n- `a.z`: bob (review request refused)',
+      );
+    });
+
+    it('says a node has no owner when it has none', () => {
+      const body = buildPullRequestBody({
+        ...base,
+        owners: [{ nodeId: 'a.x', owner: '', review: 'listed' }],
+      });
+      expect(body).toContain('### Owners\n- `a.x`: no owner');
+      expect(body).not.toContain('review requested');
+      expect(body).not.toContain('review request refused');
+      expect(body).not.toContain('listed only');
+    });
+
+    it('sets the owners after the files and before the diff', () => {
+      const body = buildPullRequestBody({
+        ...base,
+        diff: '-a\n+b',
+        rationale: 'why',
+        owners: [{ nodeId: 'a.x', owner: 'alice', review: 'requested' }],
+      });
+      const files = body.indexOf('### Files changed');
+      const owners = body.indexOf('### Owners');
+      const changes = body.indexOf('### Changes');
+      expect(owners).toBeGreaterThan(files);
+      expect(changes).toBeGreaterThan(owners);
+      expect(body.indexOf('### Rationale')).toBeGreaterThan(changes);
+    });
+
+    it('keeps each owner to one line', () => {
+      const body = buildPullRequestBody({
+        ...base,
+        owners: [{ nodeId: 'a.x', owner: 'finance\n### Injected\t team', review: 'listed' }],
+      });
+      expect(body).toContain('- `a.x`: finance ### Injected team (listed only)');
+      expect(body).not.toContain('\n### Injected');
+    });
+
+    it('leaves the section out when no owner was recorded', () => {
+      expect(buildPullRequestBody(base)).not.toContain('### Owners');
+      expect(buildPullRequestBody({ ...base, owners: [] })).not.toContain('### Owners');
+    });
+  });
 });

@@ -34,16 +34,17 @@ export default function CreatePrModal({ proposal, onClose, onCreated }: Props) {
       const res = await createPullRequest(proposal.id);
       setResult(res);
       onCreated(res);
-      if (res.errors.length === 0) {
-        // Every owning service succeeded — behave exactly as before: show
-        // success, hand the link(s) to the caller, and close.
+      if (res.errors.length === 0 && (res.warnings ?? []).length === 0) {
+        // Every owning service succeeded and its owners were asked to review —
+        // show success, hand the link(s) to the caller, and close.
         setButtonState('success');
         onClose();
         setTimeout(() => setButtonState('idle'), 3000);
       } else {
-        // A partial success: some services opened, others didn't. Keep the
-        // modal open so the operator can see which is which — closing here
-        // would silently drop the services that still need attention.
+        // A partial success: some services opened, others didn't, or a pull
+        // request opened without its reviewers. Keep the modal open so the
+        // operator can see which is which — closing here would silently drop
+        // what still needs attention.
         setButtonState('idle');
       }
     } catch (err: unknown) {
@@ -97,6 +98,13 @@ export default function CreatePrModal({ proposal, onClose, onCreated }: Props) {
           <div className="info-strip info-strip--error">
             <span className="info-strip__icon">⚠</span>
             {result.errors.map(e => (e.service ? `${e.service}: ${e.error}` : e.error)).join('; ')}
+          </div>
+        )}
+
+        {result && (result.warnings ?? []).length > 0 && (
+          <div className="info-strip info-strip--warning">
+            <span className="info-strip__icon">⚠</span>
+            {(result.warnings ?? []).map(w => (w.service ? `${w.service}: ${w.warning}` : w.warning)).join('; ')}
           </div>
         )}
 

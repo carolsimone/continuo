@@ -95,7 +95,7 @@ func editOf(original, content string) remediation.Draft {
 
 func gatherPreviousTries(t *testing.T, tries repository.TryLister, attempts repository.AttemptLister, objects ports.EvidenceReader) []remediation.TryRecord {
 	t.Helper()
-	out, err := shared.NewPreviousTries(tries, attempts, objects, markSanitizer{}, discardLogger()).Gather(context.Background(),
+	out, err := shared.NewPreviousTries(tries, attempts, objects, discardLogger()).Gather(context.Background(),
 		step.ContextInput{Failure: previousTriesFailure()})
 	require.NoError(t, err)
 	got, ok := out.Evidence[remediation.KeyPreviousTries].([]remediation.TryRecord)
@@ -104,7 +104,7 @@ func gatherPreviousTries(t *testing.T, tries repository.TryLister, attempts repo
 }
 
 func TestPreviousTries_MetaNamesTheStepAndWhatItProvides(t *testing.T) {
-	m := shared.NewPreviousTries(nil, nil, nil, nil, nil).Meta()
+	m := shared.NewPreviousTries(nil, nil, nil, nil).Meta()
 	assert.Equal(t, "previous_tries", string(m.Name))
 	assert.Equal(t, step.KindContext, m.Kind)
 	assert.Equal(t, []remediation.EvidenceKey{remediation.KeyFailure}, m.Needs)
@@ -133,16 +133,16 @@ func TestPreviousTries_IncludesEarlierRoundsAndLegacyAttempts(t *testing.T) {
 
 	got := gatherPreviousTries(t, tries, attempts, diffObjects{"s3://diffs/1": "-a\n+legacy"})
 
-	sanitizedGate := []remediation.Finding{{Code: "verification_failed", Message: "<model.a: still broken>"}}
+	gate := []remediation.Finding{broken}
 	record := func(round, try, attempt int, content string) remediation.TryRecord {
 		return remediation.TryRecord{
 			Round: round, Try: try, Attempt: attempt,
 			Clusters: []remediation.ClusterRecord{{
 				Type: "dbt-validation", TargetNodeID: "model.a", Members: []string{"model.a"},
-				Edits:  []remediation.EditRecord{{Path: "models/a.sql", Diff: "<" + proposal.ComputeUnifiedDiff("select a\n", content, "models/a.sql") + ">"}},
+				Edits:  []remediation.EditRecord{{Path: "models/a.sql", Diff: proposal.ComputeUnifiedDiff("select a\n", content, "models/a.sql")}},
 				Rounds: [][]remediation.Finding{nil},
 			}},
-			Gate: sanitizedGate,
+			Gate: gate,
 		}
 	}
 	assert.Equal(t, []remediation.TryRecord{
@@ -150,13 +150,13 @@ func TestPreviousTries_IncludesEarlierRoundsAndLegacyAttempts(t *testing.T) {
 			Round: 1, Attempt: 1,
 			Clusters: []remediation.ClusterRecord{{
 				Members: []string{"model.a", "model.b"},
-				Edits:   []remediation.EditRecord{{Path: "models/a.sql", Diff: "<-a\n+legacy>"}},
+				Edits:   []remediation.EditRecord{{Path: "models/a.sql", Diff: "-a\n+legacy"}},
 			}},
-			Gate: []remediation.Finding{{Message: "<legacy still broken>"}},
+			Gate: []remediation.Finding{{Message: "legacy still broken"}},
 		},
 		record(1, 1, 2, "select b\n"),
 		record(2, 1, 4, "select c\n"),
-	}, got, "the legacy attempt and every earlier try at the node, oldest first, sanitized; the try being made is left out")
+	}, got, "the legacy attempt and every earlier try at the node, oldest first; the try being made is left out")
 	assert.Equal(t, [][2]string{{"acme", "rel-1"}}, tries.calls)
 	assert.Equal(t, []repository.ProposalFilter{{ReleaseID: "rel-1", Source: "validation"}}, attempts.filters)
 }
@@ -176,15 +176,15 @@ func TestPreviousTries_AHistoryThatCannotBeReadIsAStepError(t *testing.T) {
 	ctx := context.Background()
 	in := step.ContextInput{Failure: previousTriesFailure()}
 
-	_, err := shared.NewPreviousTries(&fakeTries{err: errors.New("db down")}, &fakeProposals{}, nil, markSanitizer{}, discardLogger()).Gather(ctx, in)
+	_, err := shared.NewPreviousTries(&fakeTries{err: errors.New("db down")}, &fakeProposals{}, nil, discardLogger()).Gather(ctx, in)
 	require.ErrorContains(t, err, "db down")
 
-	_, err = shared.NewPreviousTries(&fakeTries{}, &fakeProposals{err: errors.New("db down")}, nil, markSanitizer{}, discardLogger()).Gather(ctx, in)
+	_, err = shared.NewPreviousTries(&fakeTries{}, &fakeProposals{err: errors.New("db down")}, nil, discardLogger()).Gather(ctx, in)
 	require.ErrorContains(t, err, "db down")
 }
 
 func TestPreviousTries_NoReadersGiveNoTries(t *testing.T) {
-	out, err := shared.NewPreviousTries(nil, nil, nil, markSanitizer{}, discardLogger()).Gather(context.Background(),
+	out, err := shared.NewPreviousTries(nil, nil, nil, discardLogger()).Gather(context.Background(),
 		step.ContextInput{Failure: previousTriesFailure()})
 	require.NoError(t, err)
 	got, ok := out.Evidence[remediation.KeyPreviousTries].([]remediation.TryRecord)
@@ -203,6 +203,6 @@ func TestPreviousTries_NoEvidenceReaderShowsLegacyAttemptsWithoutDiffs(t *testin
 	assert.Equal(t, []remediation.TryRecord{{
 		Round: 1, Attempt: 1,
 		Clusters: []remediation.ClusterRecord{{Members: []string{"model.a"}}},
-		Gate:     []remediation.Finding{{Message: "<legacy still broken>"}},
+		Gate:     []remediation.Finding{{Message: "legacy still broken"}},
 	}}, got)
 }

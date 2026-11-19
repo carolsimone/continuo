@@ -1,18 +1,22 @@
 package ports
 
-import "context"
+import (
+	"context"
+
+	"github.com/carolsimone/continuo/pkg/domain/model"
+)
 
 // RuntimeDbt is the CandidateSource.Runtime value for a dbt node — the only
 // runtime whose RawCode is model source text a fix can be proposed against.
 // Every other value (including an absent one) marks RawCode as something else,
 // and the caller must not send it to the LLM.
-const RuntimeDbt = "dbt"
+const RuntimeDbt = string(model.NodeRuntimeDbt)
 
 // RuntimePython is the CandidateSource.Runtime value for a python node. Its
 // RawCode is the node's normalized contract entry as canonical JSON — the
 // control plane's view of what the node declares, which is exactly what a
 // contract fix has to correct, and is never model source text.
-const RuntimePython = "python"
+const RuntimePython = string(model.NodeRuntimePython)
 
 // CandidateSource is one node's source as the release's code bundle records
 // it. For a dbt node (Runtime == RuntimeDbt) RawCode is the model file text;
@@ -33,4 +37,12 @@ type CandidateSourceReader interface {
 	// ErrNotFound (the caller falls back to the repo read); a transient fetch
 	// error is returned with its cause so the trigger redelivers.
 	NodeSource(ctx context.Context, bundleURI, uniqueID, releaseID string) (CandidateSource, error)
+	// NodeOwners returns, from one read of the bundle at bundleURI, the owner
+	// the bundle records for each of nodeIDs: a dbt node's config `meta.owner`,
+	// a python node's contract entry `owner` (its ODCS team.name). A node the
+	// bundle does not hold, or holds with no owner as a string, is absent from
+	// the map. The bundle itself is read as NodeSource reads it: a bundle that
+	// cannot be read for good, or belongs to another release, yields
+	// ErrNotFound, and a transient fetch error is returned with its cause.
+	NodeOwners(ctx context.Context, bundleURI, releaseID string, nodeIDs []string) (map[string]string, error)
 }

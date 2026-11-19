@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/pkg/sanitize"
 )
 
 // Status is the lifecycle outcome of one proposal attempt.
@@ -72,6 +73,31 @@ type NodeOutcome struct {
 	// Code is the reason the node was handed over when its outcome is not part
 	// of a verified fix. It is empty when the outcome carries no code.
 	Code model.HandoverReason
+}
+
+// Cleaned is the outcome with its reason cleaned when it carries a code. A coded
+// reason is a hand-over message, which reaches the release page and the
+// remediation.handed_over:v1 event, and it can echo what a failure printed, so
+// every credential and email address in it is replaced by its fixed marker. An
+// outcome with no code is returned as it is.
+func (o NodeOutcome) Cleaned() NodeOutcome {
+	if o.Code != "" {
+		o.Reason = sanitize.Text(o.Reason)
+	}
+	return o
+}
+
+// CleanedOutcomes is a copy of outcomes in which every outcome is Cleaned. The
+// map it is given is not changed. A nil map gives nil.
+func CleanedOutcomes(outcomes map[string]NodeOutcome) map[string]NodeOutcome {
+	if outcomes == nil {
+		return nil
+	}
+	out := make(map[string]NodeOutcome, len(outcomes))
+	for node, o := range outcomes {
+		out[node] = o.Cleaned()
+	}
+	return out
 }
 
 // Verification is one fix-verification run posted to judge the edits made to
@@ -141,6 +167,10 @@ type Proposal struct {
 	// cluster whose fixer skipped or failed leaves its members
 	// skipped/failed while other members verify.
 	NodeOutcomes map[string]NodeOutcome
+	// Approvers is who must approve what the attempt did with each node a
+	// remediation settled at its end, fixed or handed over, one entry per node
+	// sorted by node id. It is empty for an attempt of the proposal driver.
+	Approvers []Approver
 	// Verifications is one fix-verification run per edited service;
 	// VerificationRunID is the view of the first.
 	Verifications []Verification

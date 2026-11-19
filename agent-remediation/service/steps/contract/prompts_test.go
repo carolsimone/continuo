@@ -36,17 +36,16 @@ func promptEvidence() remediation.Evidence {
 }
 
 // laneEvidence is the evidence the lane's pythonEvidence builds for the same
-// inputs: the error excerpt and the declaring file's text are sanitized there,
-// and the rest arrives already sanitized.
+// inputs.
 func laneEvidence(noReads bool) prompt.PythonEvidence {
 	return prompt.PythonEvidence{
 		NodeID:          nodeID,
 		NoReads:         noReads,
-		ErrorExcerpt:    "<column amount missing>",
+		ErrorExcerpt:    "column amount missing",
 		RunnerLog:       "<runner log>",
 		ContractEntry:   `<{"table":"rates"}>`,
 		YAMLPath:        "svc/contracts/fx.yaml",
-		YAMLText:        "<nodes:\n  - table: rates\n>",
+		YAMLText:        "nodes:\n  - table: rates\n",
 		CurrentContract: "<id: fx.rates\nversion: \"3\"\n>",
 		UpstreamChanges: upstreamChanges,
 		Precedents:      precedentList,
@@ -71,7 +70,7 @@ func promptCases() []promptCase {
 	return []promptCase{
 		{
 			name:     "python-contract",
-			build:    func() step.Prompt { return contract.NewPythonContract(markSanitizer{}) },
+			build:    func() step.Prompt { return contract.NewPythonContract() },
 			wantStep: "python-contract",
 			nodeType: "python-node",
 			laneResult: func(noReads bool) prompt.ProposeRequest {
@@ -80,7 +79,7 @@ func promptCases() []promptCase {
 		},
 		{
 			name:     "python-parse",
-			build:    func() step.Prompt { return contract.NewPythonParse(markSanitizer{}) },
+			build:    func() step.Prompt { return contract.NewPythonParse() },
 			wantStep: "python-parse",
 			nodeType: "python-node",
 			laneResult: func(noReads bool) prompt.ProposeRequest {
@@ -89,7 +88,7 @@ func promptCases() []promptCase {
 		},
 		{
 			name:     "csv-contract",
-			build:    func() step.Prompt { return contract.NewCSVContract(markSanitizer{}) },
+			build:    func() step.Prompt { return contract.NewCSVContract() },
 			wantStep: "csv-contract",
 			nodeType: "python-csv",
 			laneResult: func(noReads bool) prompt.ProposeRequest {
@@ -155,7 +154,7 @@ func TestPrompts_APythonAPINodeIsToldItDeclaresNoReadsInTheValidationPrompt(t *t
 	f := failure(func(f *remediation.Failure) { f.Target.NodeType = "python-api" })
 	model := answers(answer())
 
-	proposeWith(t, contract.NewPythonContract(markSanitizer{}), f, promptEvidence(), model)
+	proposeWith(t, contract.NewPythonContract(), f, promptEvidence(), model)
 
 	require.Len(t, model.reqs, 1)
 	assert.Equal(t, withTries(prompt.AssemblePythonContractFix(laneEvidence(true))), model.reqs[0])

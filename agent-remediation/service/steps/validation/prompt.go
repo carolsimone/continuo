@@ -22,7 +22,6 @@ const sourceValidation = "validation"
 // source.
 type DBTValidation struct {
 	artifacts        ports.ArtifactWriter
-	sanitizer        ports.LogSanitizer
 	serviceRepoPaths map[string]string
 }
 
@@ -31,8 +30,8 @@ var _ step.Prompt = (*DBTValidation)(nil)
 // NewDBTValidation builds the dbt-validation step. serviceRepoPaths maps a
 // service name to its path inside the repository. It calls no port until
 // Propose.
-func NewDBTValidation(artifacts ports.ArtifactWriter, sanitizer ports.LogSanitizer, serviceRepoPaths map[string]string) *DBTValidation {
-	return &DBTValidation{artifacts: artifacts, sanitizer: sanitizer, serviceRepoPaths: serviceRepoPaths}
+func NewDBTValidation(artifacts ports.ArtifactWriter, serviceRepoPaths map[string]string) *DBTValidation {
+	return &DBTValidation{artifacts: artifacts, serviceRepoPaths: serviceRepoPaths}
 }
 
 // Meta describes the step.
@@ -140,7 +139,7 @@ func (p *DBTValidation) Propose(ctx context.Context, in step.PromptInput, m step
 		return step.PromptOutput{}, fmt.Errorf("write candidate diff: %w", err)
 	}
 
-	applyDiagnosis := step.WithPreviousTries(prompt.AssembleSourceFix(p.sanitizer.Sanitize(bundle.Source), nodeID, res.Rationale), in.Evidence)
+	applyDiagnosis := step.WithPreviousTries(prompt.AssembleSourceFix(bundle.Source, nodeID, res.Rationale), in.Evidence)
 	return p.sourceFix(ctx, f, bundle, repoPrefix, applyDiagnosis, draft, m)
 }
 

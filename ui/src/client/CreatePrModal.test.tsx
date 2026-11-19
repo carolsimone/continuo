@@ -187,6 +187,44 @@ describe('CreatePrModal', () => {
     expect(screen.getByRole('button', { name: /^Create PR$/i })).toBeEnabled();
   });
 
+  it('keeps the modal open and shows why the owners were not asked to review an opened pull request', async () => {
+    mockCreatePullRequest.mockResolvedValue({
+      pull_requests: [{ service: 'core', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10 }],
+      errors: [],
+      warnings: [{ service: 'core', warning: 'GitHub refused the review request (status 422): not a collaborator' }],
+    });
+    const { onClose, onCreated } = renderModal();
+
+    fireEvent.click(screen.getByRole('button', { name: /Create PR/i }));
+
+    // The pull request exists, so its link is shown beside the reason.
+    const link = await screen.findByRole('link', { name: /core: open PR ↗/i });
+    expect(link).toHaveAttribute('href', 'https://github.com/org/core-repo/pull/10');
+    const strip = document.querySelector('.info-strip--warning') as HTMLElement;
+    expect(strip).toBeInTheDocument();
+    expect(strip.textContent).toContain('core: GitHub refused the review request (status 422): not a collaborator');
+    expect(document.querySelector('.info-strip--error')).toBeNull();
+
+    expect(onCreated).toHaveBeenCalledTimes(1);
+    // Closing here would hide the warning before it was read.
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('closes as before when the response carries no warning, or an empty list of them', async () => {
+    mockCreatePullRequest.mockResolvedValue({
+      pull_requests: [{ service: '', pr_url: 'https://github.com/org/repo/pull/99', pr_number: 99 }],
+      errors: [],
+      warnings: [],
+    });
+    const { onClose } = renderModal();
+
+    fireEvent.click(screen.getByRole('button', { name: /Create PR/i }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(document.querySelector('.info-strip--warning')).toBeNull();
+  });
+
   it('renders no link for a pull_requests entry with an empty pr_url', async () => {
     // Defensive case: the server is not expected to send this (a URL-less
     // FAILED_PRECONDITION is routed to errors[], not pull_requests), but the

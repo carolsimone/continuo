@@ -247,6 +247,20 @@ func nodeOutcomesToProto(outcomes map[string]proposal.NodeOutcome) map[string]*r
 	return out
 }
 
+// approversToProto converts a slice of domain Approver values to the proto
+// representation. A nil or empty input produces a nil slice rather than a list
+// containing a zero-valued element.
+func approversToProto(approvers []proposal.Approver) []*remediationv1.Approver {
+	if len(approvers) == 0 {
+		return nil
+	}
+	out := make([]*remediationv1.Approver, 0, len(approvers))
+	for _, a := range approvers {
+		out = append(out, &remediationv1.Approver{NodeId: a.NodeID, Owner: a.Owner, Source: string(a.Source)})
+	}
+	return out
+}
+
 // verificationsToProto converts a slice of domain Verification values to the
 // proto representation. A nil or empty input produces a nil slice rather
 // than a list containing a zero-valued element. ActivatedAt is formatted as
@@ -358,6 +372,7 @@ func viewToProto(v proposal.View, prServices []string) *remediationv1.Proposal {
 		PullRequests:        pullRequestsToProto(v.PullRequests),
 		PrServices:          prServices,
 		Services:            v.Services,
+		Approvers:           approversToProto(v.Approvers),
 	}
 }
 
@@ -381,5 +396,6 @@ func claimToProto(c proposal.PRClaim) *remediationv1.BeginPullRequestResponse {
 		Edits:           editsToProto(c.Edits),
 		ResolvedNodeIds: c.ResolvedNodeIDs,
 		Service:         c.Service,
+		Approvers:       approversToProto(c.Approvers),
 	}
 }

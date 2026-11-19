@@ -19,6 +19,7 @@ const (
 	fieldPreflight      = "preflight"
 	fieldAcrossClusters = "across_clusters"
 	fieldGate           = "gate"
+	fieldApprover       = "approver"
 )
 
 // Validate checks every flow and type of set against the steps reg holds and
@@ -26,10 +27,15 @@ const (
 // that cannot run is an error: an unknown step, a step at a stage it may not
 // stand in, a missing stage, a flow that lists no loaded type, a gate that is
 // not exactly one step that runs the verification, a step that reads evidence
-// no earlier step of its chain provides, `rounds` below 1 (a type runs at
+// no earlier step of its chain provides, a flow with no `model_may_see` or one
+// that names an unknown class, a context step of a flow or of a type the flow
+// lists that provides evidence of a data class the flow's `model_may_see`
+// leaves out, a prompt step of a listed type that reads such evidence (or any
+// evidence with no class), `rounds` below 1 (a type runs at
 // least one pre-flight round), `tries` below 1, an output that is not
 // a pull request or a hand-over or that publishes an event outside the stream
-// contract, an unsupported version or trigger, and two listed types that can
+// contract, a flow with no approver or one that names a step that is not an
+// approver, an unsupported version or trigger, and two listed types that can
 // select the same failure. A type no flow lists is only a warning.
 func Validate(set workflow.Set, reg *Registry) (warnings []string, err error) {
 	v := &validator{set: set, reg: reg, seen: map[string]bool{}}
@@ -97,6 +103,7 @@ func (v *validator) flow(f workflow.Flow) {
 	}
 	v.overlaps(f, listed)
 
+	v.modelMaySee(f)
 	v.stage(f.Context, workflow.StageContext, fieldContext)
 	v.stage(f.AcrossClusters, workflow.StageCrossCluster, fieldAcrossClusters)
 	gate := v.stage(f.Gate, workflow.StageGate, fieldGate)
@@ -111,9 +118,88 @@ func (v *validator) flow(f workflow.Flow) {
 
 	v.output(f.OnPass, "on_pass", workflow.OutputPullRequest)
 	v.output(f.OnGiveUp, "on_give_up", workflow.OutputHandOver)
+	if f.Approver.Name == "" {
+		v.refuse(f.Pos, "flow %q has no approver, and a flow names the step that works out who approves its fixes (approver: node_owner)", f.Name)
+	} else {
+		v.stage([]workflow.StepRef{f.Approver}, workflow.StageApprover, fieldApprover)
+	}
 
+	v.classes(f, fmt.Sprintf("flow %q", f.Name), f.Context)
 	for _, t := range listed {
+		owner := fmt.Sprintf("type %q", t.Name)
+		v.classes(f, owner, t.Context)
+		v.promptClasses(f, owner, t.Agent.Prompt)
 		v.chain(f, t)
+	}
+}
+
+// modelMaySee refuses a flow that lists no data class for the model, or one
+// that names a class that does not exist.
+func (v *validator) modelMaySee(f workflow.Flow) {
+	all := joinClasses(workflow.DataClasses())
+	if len(f.ModelMaySee) == 0 {
+		v.refuse(f.ModelMaySeePos, "flow %q has no model_may_see, and a flow lists the classes of content the model may see (%s)", f.Name, all)
+	}
+	for _, c := range f.ModelMaySee {
+		if !c.IsValid() {
+			v.refuse(f.ModelMaySeePos, "flow %q has model_may_see class %q, which is none of %s", f.Name, c, all)
+		}
+	}
+}
+
+// holdsClasses reports whether the flow's model_may_see is usable for checking
+// the data classes of its steps: it lists at least one class and every class
+// it lists exists. A flow whose list is not usable is refused once, by
+// modelMaySee, and its steps are not checked against the list.
+func holdsClasses(f workflow.Flow) bool {
+	return len(f.ModelMaySee) > 0 && !slices.ContainsFunc(f.ModelMaySee, func(c workflow.DataClass) bool { return !c.IsValid() })
+}
+
+// classes refuses every context step of owner (a flow or a type) that provides
+// evidence the flow does not let the model see: a key of a data class the
+// flow's model_may_see leaves out, or a key with no class at all.
+func (v *validator) classes(f workflow.Flow, owner string, refs []workflow.StepRef) {
+	if !holdsClasses(f) {
+		return
+	}
+	for _, r := range refs {
+		_, m, ok := v.reg.Lookup(r.Name)
+		if !ok || m.Kind != step.KindContext {
+			continue
+		}
+		for _, key := range m.Provides {
+			v.holdToClasses(f, owner, r, "provides", key)
+		}
+	}
+}
+
+// promptClasses refuses the prompt step of a type, at its line, for every
+// evidence key it reads that the flow does not let the model see. The prompt
+// builds the model's request from its keys, so the failure itself is among them.
+func (v *validator) promptClasses(f workflow.Flow, owner string, prompt workflow.StepRef) {
+	if !holdsClasses(f) || prompt.Name == "" {
+		return
+	}
+	_, m, ok := v.reg.Lookup(prompt.Name)
+	if !ok || m.Kind != step.KindPrompt {
+		return
+	}
+	for _, key := range m.Needs {
+		v.holdToClasses(f, owner, prompt, "reads", key)
+	}
+}
+
+// holdToClasses refuses, at the line of r, a step of owner whose evidence key
+// has no data class or one that the flow's model_may_see leaves out. verb says
+// whether the step provides the key or reads it.
+func (v *validator) holdToClasses(f workflow.Flow, owner string, r workflow.StepRef, verb string, key remediation.EvidenceKey) {
+	class, known := v.reg.EvidenceClass(key)
+	switch {
+	case !known:
+		v.refuse(r.Pos, "step %q %s %q, which has no data class", r.Name, verb, key)
+	case !slices.Contains(f.ModelMaySee, class):
+		v.refuse(r.Pos, "%s uses step %q, which %s %q (class %s), and flow %q does not let the model see %s (model_may_see: %s)",
+			owner, r.Name, verb, key, class, f.Name, class, joinClasses(f.ModelMaySee))
 	}
 }
 
@@ -199,9 +285,19 @@ func kindOf(stage workflow.Stage) step.Kind {
 		return step.KindContext
 	case workflow.StagePrompt:
 		return step.KindPrompt
+	case workflow.StageApprover:
+		return step.KindApprover
 	default:
 		return step.KindCheck
 	}
+}
+
+func joinClasses(classes []workflow.DataClass) string {
+	names := make([]string, len(classes))
+	for i, c := range classes {
+		names[i] = string(c)
+	}
+	return strings.Join(names, ", ")
 }
 
 func joinStages(stages []workflow.Stage) string {

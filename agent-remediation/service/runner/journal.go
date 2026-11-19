@@ -77,6 +77,17 @@ func (j journal) done(cluster int, step string, round int) (remediation.StepRun,
 	return s, ok && s.Status == remediation.StepDone
 }
 
+// worked reports whether any step of the cluster has a row: a cluster handed
+// over when its try opened ran none.
+func (j journal) worked(cluster int) bool {
+	for k := range j {
+		if k.cluster == cluster {
+			return true
+		}
+	}
+	return false
+}
+
 // promptRow returns the done row of the prompt step of one cluster in one
 // round, whatever the step's name: a round has one prompt row, written by the
 // type's prompt as the runner had it loaded when the round ran.
@@ -187,11 +198,12 @@ func (r *Runner) countFailure(ctx context.Context, row remediation.StepRun, caus
 
 // commitStep commits the rows of a step run and the clusters it changed, in
 // one transaction after holding the lease, and clears the failures run's
-// remediation counted in a row before it (clearFailures). A commit that fails
-// is recorded as a failure of blame, the row of the step that ran.
+// remediation counted in a row before it (clearFailures). The metric samples
+// the step collected are counted once it committed. A commit that fails is
+// recorded as a failure of blame, the row of the step that ran.
 func (r *Runner) commitStep(ctx context.Context, run tryRun, blame remediation.StepRun, rows []remediation.StepRun, clusters []remediation.Cluster) error {
 	now := r.clock.Now()
-	err := r.commit(ctx, blame.RemediationID, func(u uow.UnitOfWork) error {
+	err := r.commitRun(ctx, run, func(u uow.UnitOfWork) error {
 		if err := r.clearFailures(ctx, u, run); err != nil {
 			return err
 		}
@@ -249,8 +261,14 @@ func (r *Runner) withEvidence(ev remediation.Evidence, row remediation.StepRun, 
 // first round recorded, in the order the rows were written. The rows are the
 // context steps that ran, whatever the loaded files list now.
 func (r *Runner) gatheredEvidence(run tryRun, c remediation.Cluster, f remediation.Failure) (remediation.Evidence, error) {
+	return r.gatheredIn(run.journal, c, f)
+}
+
+// gatheredIn is the evidence cluster c gathered, as gatheredEvidence reads it,
+// from j, the journal of c's try.
+func (r *Runner) gatheredIn(j journal, c remediation.Cluster, f remediation.Failure) (remediation.Evidence, error) {
 	ev := remediation.NewEvidence().With(remediation.KeyFailure, f)
-	for _, row := range run.journal.doneRows(c.Cluster, string(step.KindContext), contextRound) {
+	for _, row := range j.doneRows(c.Cluster, string(step.KindContext), contextRound) {
 		rec, err := serialization.DecodeRecord[serialization.ContextRecord](row.Output)
 		if err != nil {
 			return ev, fmt.Errorf("decode the output of step %s: %w", row.Step, err)

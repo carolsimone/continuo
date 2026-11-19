@@ -18,7 +18,7 @@ import (
 
 const (
 	fixedSource = "select new_name as old_name, new_name from raw"
-	diffText    = "<ancestor diff>"
+	diffText    = "ancestor diff"
 )
 
 var precedentList = []prompt.Precedent{{ReleaseID: "old", NodeID: "n0", ErrorExcerpt: "same error"}}
@@ -39,7 +39,7 @@ func answer(source, confidence string) ports.ProposeResult {
 	return ports.ProposeResult{ProposedSQL: source, Rationale: "kept the old column", Confidence: confidence, Model: "model-1"}
 }
 
-func newPrompt() *upstream.Prompt { return upstream.NewPrompt(markSanitizer{}, repoPaths) }
+func newPrompt() *upstream.Prompt { return upstream.NewPrompt(repoPaths) }
 
 func proposeUpstream(t *testing.T, f remediation.Failure, ev remediation.Evidence, m *fakeModel) step.PromptOutput {
 	t.Helper()
@@ -50,16 +50,16 @@ func proposeUpstream(t *testing.T, f remediation.Failure, ev remediation.Evidenc
 }
 
 // expectedRequest is the request the upstream lane builds from the inputs the
-// step is given: the ancestor's source and the members' excerpts sanitized, the
-// diff and precedents as gathered.
+// step is given: the ancestor's source, the members' excerpts, the diff and the
+// precedents as gathered.
 func expectedRequest(crossService bool) prompt.ProposeRequest {
 	return prompt.AssembleUpstreamFix(prompt.UpstreamEvidence{
 		TargetNodeID:  targetID,
-		TargetSource:  "<" + targetSource + ">",
+		TargetSource:  targetSource,
 		OwnChangeDiff: diffText,
 		Members: []prompt.MemberFailure{
-			{NodeID: "model.up-svc.m1", Service: targetSvc, ErrorExcerpt: "<column old_name missing>"},
-			{NodeID: "model.up-svc.m2", ErrorExcerpt: "<column old_name missing too>"},
+			{NodeID: "model.up-svc.m1", Service: targetSvc, ErrorExcerpt: "column old_name missing"},
+			{NodeID: "model.up-svc.m2", ErrorExcerpt: "column old_name missing too"},
 		},
 		Precedents:   precedentList,
 		CrossService: crossService,
@@ -67,7 +67,7 @@ func expectedRequest(crossService bool) prompt.ProposeRequest {
 }
 
 func TestPrompt_MetaNamesTheStepAndWhatItReads(t *testing.T) {
-	m := upstream.NewPrompt(nil, nil).Meta()
+	m := upstream.NewPrompt(nil).Meta()
 	assert.Equal(t, "upstream", string(m.Name))
 	assert.Equal(t, step.KindPrompt, m.Kind)
 	assert.NotEmpty(t, m.Description)
@@ -102,11 +102,11 @@ func TestPrompt_NoPrecedentsLeavesThePrecedentSectionOut(t *testing.T) {
 
 	want := prompt.AssembleUpstreamFix(prompt.UpstreamEvidence{
 		TargetNodeID:  targetID,
-		TargetSource:  "<" + targetSource + ">",
+		TargetSource:  targetSource,
 		OwnChangeDiff: diffText,
 		Members: []prompt.MemberFailure{
-			{NodeID: "model.up-svc.m1", Service: targetSvc, ErrorExcerpt: "<column old_name missing>"},
-			{NodeID: "model.up-svc.m2", ErrorExcerpt: "<column old_name missing too>"},
+			{NodeID: "model.up-svc.m1", Service: targetSvc, ErrorExcerpt: "column old_name missing"},
+			{NodeID: "model.up-svc.m2", ErrorExcerpt: "column old_name missing too"},
 		},
 	})
 	assert.Equal(t, want, model.reqs[0])

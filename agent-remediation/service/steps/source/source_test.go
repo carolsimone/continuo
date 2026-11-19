@@ -12,14 +12,6 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 )
 
-// markSanitizer wraps what it is given, so a test can tell sanitized text from
-// raw text.
-type markSanitizer struct{}
-
-func (markSanitizer) Sanitize(s string) string { return "<" + s + ">" }
-
-var _ ports.LogSanitizer = markSanitizer{}
-
 // fakeSource serves files and directory listings from maps and records reads.
 type fakeSource struct {
 	files   map[string]string

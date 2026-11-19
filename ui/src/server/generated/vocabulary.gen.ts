@@ -16,6 +16,9 @@ export const VALIDATION_OPS: readonly ValidationOp[] = ['build_from_sql', 'build
 export type HandoverReason = 'tries_spent' | 'preflight_rounds_spent' | 'declined' | 'no_type' | 'classifier_infra' | 'classifier_unhealable_parse' | 'no_repository' | 'unverifiable_edits';
 export const HANDOVER_REASONS: readonly HandoverReason[] = ['tries_spent', 'preflight_rounds_spent', 'declined', 'no_type', 'classifier_infra', 'classifier_unhealable_parse', 'no_repository', 'unverifiable_edits'];
 
+export type ApproverSource = 'bundle' | 'contract_file' | 'none';
+export const APPROVER_SOURCES: readonly ApproverSource[] = ['bundle', 'contract_file', 'none'];
+
 export type RemediationSource = 'validation' | 'compile' | 'seed_build' | 'duplicate_table' | 'parse';
 export const REMEDIATION_SOURCES: readonly RemediationSource[] = ['validation', 'compile', 'seed_build', 'duplicate_table', 'parse'];
 

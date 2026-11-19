@@ -9,6 +9,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
+	"github.com/carolsimone/continuo/agent-remediation/service/steps/approver"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/contract"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/cross"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/gate"
@@ -29,11 +30,48 @@ type entry struct {
 	meta step.Meta
 }
 
-// Registry holds every step the runner can run and the Go type of every
-// evidence key, so a flow file can be checked against them.
+// evidenceSpec is what the registry knows of one evidence key: a constructor of
+// the zero value of its Go type, and the data class its content falls in.
+type evidenceSpec struct {
+	zero  func() any
+	class workflow.DataClass
+}
+
+// builtinEvidence is every evidence key the runner or a registered step puts in
+// a cluster's evidence, with its type and data class. A step that provides a
+// new key adds it here.
+func builtinEvidence() map[remediation.EvidenceKey]evidenceSpec {
+	return map[remediation.EvidenceKey]evidenceSpec{
+		// The keys the runner itself puts in a cluster's evidence.
+		remediation.KeyFailure: {func() any { return remediation.Failure{} }, workflow.ClassLogs},
+		remediation.KeyDraft:   {func() any { return remediation.Draft{} }, workflow.ClassCode},
+		// The keys the registered steps provide.
+		remediation.KeyDBTLog:               {func() any { return remediation.Text("") }, workflow.ClassLogs},
+		remediation.KeyFailurePrecedents:    {func() any { return []prompt.Precedent{} }, workflow.ClassLogs},
+		remediation.KeyUpstreamChanges:      {func() any { return []prompt.UpstreamChange{} }, workflow.ClassCode},
+		remediation.KeySourceFiles:          {func() any { return remediation.SourceFiles{} }, workflow.ClassCode},
+		remediation.KeyCandidateSQL:         {func() any { return remediation.Text("") }, workflow.ClassCode},
+		remediation.KeyCodeBundleSource:     {func() any { return remediation.CandidateSource{} }, workflow.ClassCode},
+		remediation.KeyOwnChangeDiff:        {func() any { return remediation.Text("") }, workflow.ClassCode},
+		remediation.KeyChangedAncestorDiffs: {func() any { return []prompt.ReleaseUpstreamChange{} }, workflow.ClassCode},
+		remediation.KeyContractFile:         {func() any { return remediation.ContractFile{} }, workflow.ClassCode},
+		remediation.KeyContractEntry:        {func() any { return remediation.Text("") }, workflow.ClassCode},
+		remediation.KeyCurrentContract:      {func() any { return remediation.Text("") }, workflow.ClassCode},
+		remediation.KeyImagePackages:        {func() any { return remediation.ImagePackages{} }, workflow.ClassCode},
+		remediation.KeyPackagedContract:     {func() any { return remediation.Bytes{} }, workflow.ClassCode},
+		remediation.KeyUpstreamTarget:       {func() any { return remediation.UpstreamTarget{} }, workflow.ClassCode},
+		// The earlier tries at the failure, including the diffs of the model's
+		// own drafts. It records what happened in those tries, so it is classed
+		// logs, whatever the diffs hold.
+		remediation.KeyPreviousTries: {func() any { return []remediation.TryRecord{} }, workflow.ClassLogs},
+	}
+}
+
+// Registry holds every step the runner can run and the Go type and data class
+// of every evidence key, so a flow file can be checked against them.
 type Registry struct {
 	steps    map[workflow.StepName]entry
-	evidence map[remediation.EvidenceKey]func() any
+	evidence map[remediation.EvidenceKey]evidenceSpec
 }
 
 // NewRegistry builds every step from c. Constructing a step never calls a
@@ -41,55 +79,34 @@ type Registry struct {
 // its steps.
 func NewRegistry(c Collaborators) *Registry {
 	r := &Registry{
-		steps: map[workflow.StepName]entry{},
-		// The keys the runner itself puts in a cluster's evidence. Each step
-		// that provides another key adds it here.
-		evidence: map[remediation.EvidenceKey]func() any{
-			remediation.KeyFailure: func() any { return remediation.Failure{} },
-			remediation.KeyDraft:   func() any { return remediation.Draft{} },
-			// The keys the registered steps provide.
-			remediation.KeyDBTLog:               func() any { return remediation.Text("") },
-			remediation.KeyFailurePrecedents:    func() any { return []prompt.Precedent{} },
-			remediation.KeyUpstreamChanges:      func() any { return []prompt.UpstreamChange{} },
-			remediation.KeySourceFiles:          func() any { return remediation.SourceFiles{} },
-			remediation.KeyCandidateSQL:         func() any { return remediation.Text("") },
-			remediation.KeyCodeBundleSource:     func() any { return remediation.CandidateSource{} },
-			remediation.KeyOwnChangeDiff:        func() any { return remediation.Text("") },
-			remediation.KeyChangedAncestorDiffs: func() any { return []prompt.ReleaseUpstreamChange{} },
-			remediation.KeyContractFile:         func() any { return remediation.ContractFile{} },
-			remediation.KeyContractEntry:        func() any { return remediation.Text("") },
-			remediation.KeyCurrentContract:      func() any { return remediation.Text("") },
-			remediation.KeyImagePackages:        func() any { return remediation.ImagePackages{} },
-			remediation.KeyPreviousTries:        func() any { return []remediation.TryRecord{} },
-			remediation.KeyPackagedContract:     func() any { return remediation.Bytes{} },
-			remediation.KeyUpstreamTarget:       func() any { return remediation.UpstreamTarget{} },
-		},
+		steps:    map[workflow.StepName]entry{},
+		evidence: builtinEvidence(),
 	}
-	r.register(shared.NewDBTLog(c.Evidence, c.Sanitizer, c.Logger))
-	r.register(shared.NewPrecedents(c.Precedents, c.Sanitizer, c.Logger))
-	r.register(shared.NewUpstreamChanges(c.Upstream, c.Sanitizer, c.Logger))
+	r.register(shared.NewDBTLog(c.Evidence, c.Logger))
+	r.register(shared.NewPrecedents(c.Precedents, c.Logger))
+	r.register(shared.NewUpstreamChanges(c.Upstream, c.Logger))
 	r.register(shared.NewContentChanged())
 	r.register(shared.NewConfidenceNotLow())
-	r.register(shared.NewPreviousTries(c.Tries, c.PriorAttempts, c.Evidence, c.Sanitizer, c.Logger))
+	r.register(shared.NewPreviousTries(c.Tries, c.PriorAttempts, c.Evidence, c.Logger))
 	r.register(source.NewFailingNodeSource(c.Source, c.Locator, c.ServiceRepoPaths, c.Logger))
-	r.register(source.NewDBTCompile(c.Sanitizer))
-	r.register(source.NewDBTParse(c.Sanitizer))
-	r.register(source.NewSeed(c.Sanitizer))
-	r.register(source.NewDuplicateTable(c.Sanitizer))
+	r.register(source.NewDBTCompile())
+	r.register(source.NewDBTParse())
+	r.register(source.NewSeed())
+	r.register(source.NewDuplicateTable())
 	r.register(source.NewTargetFileWasShown())
 	r.register(validation.NewCandidateSQL(c.Evidence, c.Logger))
 	r.register(validation.NewCodeBundleSource(c.CandidateSource, c.Source, c.Locator, c.ServiceRepoPaths, c.Logger))
-	r.register(validation.NewOwnChangeDiff(c.Versions, c.Sanitizer, c.Logger))
-	r.register(validation.NewChangedAncestorDiffs(c.CandidateSource, c.Versions, c.Sanitizer, c.Logger))
-	r.register(validation.NewDBTValidation(c.Artifacts, c.Sanitizer, c.ServiceRepoPaths))
+	r.register(validation.NewOwnChangeDiff(c.Versions, c.Logger))
+	r.register(validation.NewChangedAncestorDiffs(c.CandidateSource, c.Versions, c.Logger))
+	r.register(validation.NewDBTValidation(c.Artifacts, c.ServiceRepoPaths))
 	r.register(contract.NewContractFile(c.Archive, c.ContractLocator, c.Logger))
 	r.register(contract.NewFailingSiblings(c.Archive, c.ContractLocator, c.Releases, c.Logger))
-	r.register(contract.NewContractEntry(c.CandidateSource, c.Sanitizer, c.Logger))
-	r.register(contract.NewCurrentContract(c.CurrentContracts, c.Sanitizer, c.Logger))
+	r.register(contract.NewContractEntry(c.CandidateSource, c.Logger))
+	r.register(contract.NewCurrentContract(c.CurrentContracts, c.Logger))
 	r.register(contract.NewImagePackages(c.ImagePackages, c.Logger))
-	r.register(contract.NewPythonContract(c.Sanitizer))
-	r.register(contract.NewPythonParse(c.Sanitizer))
-	r.register(contract.NewCSVContract(c.Sanitizer))
+	r.register(contract.NewPythonContract())
+	r.register(contract.NewPythonParse())
+	r.register(contract.NewCSVContract())
 	r.register(contract.NewContractPathsInsideFolder())
 	r.register(contract.NewYAMLReads(c.ContractInspector))
 	r.register(contract.NewNodeIdentityUnchanged(c.ContractInspector))
@@ -98,12 +115,13 @@ func NewRegistry(c Collaborators) *Registry {
 	r.register(contract.NewNoNewSecretRef(c.ContractInspector))
 	r.register(contract.NewDeclaredOnce(c.ContractLocator))
 	r.register(contract.NewContractPackages(c.Packager, c.ImagePackages, c.SQLDialect))
-	r.register(upstream.NewTarget(c.CandidateSource, c.Locator, c.Versions, c.Sanitizer, c.ServiceRepoPaths, c.Logger))
-	r.register(upstream.NewPrompt(c.Sanitizer, c.ServiceRepoPaths))
+	r.register(upstream.NewTarget(c.CandidateSource, c.Locator, c.Versions, c.ServiceRepoPaths, c.Logger))
+	r.register(upstream.NewPrompt(c.ServiceRepoPaths))
 	r.register(cross.NewEditsMapToAService(c.ServiceRepoPaths, c.Logger))
 	r.register(cross.NewNoPathEditedTwice(c.ServiceRepoPaths, c.Logger))
 	r.register(cross.NewOneManifestKind(c.ServiceRepoPaths, c.Logger))
 	r.register(gate.NewVerificationRun(c.Evidence, c.Artifacts, c.Releases, c.Pipeline, c.ServiceRepoPaths, c.Clock, c.VerificationTimeout, c.Logger))
+	r.register(approver.NewNodeOwner(c.CandidateSource, c.ContractInspector, c.Logger))
 	r.register(outputs.NewPullRequest(c.Clock))
 	r.register(outputs.NewHandOver())
 	return r
@@ -127,7 +145,7 @@ func (r *Registry) register(s described) {
 }
 
 // implementsKind reports whether s has the methods the runner calls on a step
-// of kind k. An approver step has no interface the runner checks.
+// of kind k.
 func implementsKind(s described, k step.Kind) bool {
 	switch k {
 	case step.KindContext:
@@ -146,7 +164,8 @@ func implementsKind(s described, k step.Kind) bool {
 		_, isGiveUp := s.(step.GiveUpOutput)
 		return isPass || isGiveUp
 	case step.KindApprover:
-		return true
+		_, ok := s.(step.Approver)
+		return ok
 	default:
 		return false
 	}
@@ -176,6 +195,13 @@ func (r *Registry) All() []step.Meta {
 // EvidenceType returns a constructor of the zero value of the Go type k holds.
 // It reports false for a key no step or runner provides.
 func (r *Registry) EvidenceType(k remediation.EvidenceKey) (func() any, bool) {
-	f, ok := r.evidence[k]
-	return f, ok
+	spec, ok := r.evidence[k]
+	return spec.zero, ok
+}
+
+// EvidenceClass returns the data class of the content k holds. It reports
+// false for a key no step or runner provides.
+func (r *Registry) EvidenceClass(k remediation.EvidenceKey) (workflow.DataClass, bool) {
+	spec, ok := r.evidence[k]
+	return spec.class, ok
 }

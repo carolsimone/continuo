@@ -285,6 +285,21 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	require.Greater(t, changesAt, -1, "the PR body carries the diff; body=%q", stubPR.Body)
 	require.Greater(t, rationaleAt, changesAt, "the diff comes before the rationale; body=%q", stubPR.Body)
 
+	// (g3) The node's owner is asked to review. ftable_e's owner is the one its
+	//      dbt project declares (config.meta.owner, testOwner), which is a GitHub
+	//      login, so the owner is a requested user reviewer, and the body names
+	//      the owner against the node it owns.
+	var requestedUsers []string
+	for _, reviewer := range stubPR.RequestedReviewers {
+		requestedUsers = append(requestedUsers, reviewer.Login)
+	}
+	require.Equal(t, []string{testOwner}, requestedUsers,
+		"stub-github must have recorded a review request for the node's owner; pr=%+v", stubPR)
+	require.Empty(t, stubPR.RequestedTeams, "the owner is a user, not a team")
+	require.Contains(t, stubPR.Body,
+		fmt.Sprintf("### Owners\n- `%s`: %s (review requested)", ftableEUniqueID, testOwner),
+		"the body lists the owner against the node it fixes")
+
 	// (h) Idempotency: a second POST to the same endpoint must not create a
 	//     second PR. The service's claim is now 'open', so beginPullRequest CAS
 	//     conflicts with FAILED_PRECONDITION; the route recognizes the embedded

@@ -93,6 +93,11 @@ message Proposal {
   // services plus the edited ones, sorted — the same set the
   // ListProposalsRequest.service filter matches a proposal on.
   repeated string services = 35;
+  // approvers is who must approve what this attempt did with each node a
+  // remediation settled at its end, the fixed nodes and the handed-over ones,
+  // one entry per node sorted by node_id. Empty on an attempt of the legacy
+  // engine and on one with no approvers recorded.
+  repeated Approver approvers = 36;
 }
 
 // ListProposalsRequest filters the proposal list. Empty fields are ignored.
@@ -154,6 +159,10 @@ message BeginPullRequestResponse {
   // service is the owning-service group this claim covers, echoing the
   // request's service; "" is the legacy whole-proposal group.
   string service = 17;
+  // approvers is who must approve the claim's fix: the proposal's approvers of
+  // the nodes in resolved_node_ids, sorted by node_id. A node the proposal
+  // records no approver for has no entry.
+  repeated Approver approvers = 18;
 }
 
 // RecordPullRequestRequest stores the PR metadata after a PR is opened.
@@ -210,6 +219,17 @@ message NodeOutcome {
   string status = 1;
   string reason = 2;
   string code = 3;
+}
+
+// Approver is who must approve what an attempt did with one node: the node's
+// owner, as source says where it was read from. source is "bundle" (the owner
+// the release's code bundle records for the node), "contract_file" (the team of
+// the node's contract file in the repository) or "none" (no owner was found),
+// and owner is empty when source is "none".
+message Approver {
+  string node_id = 1;
+  string owner = 2;
+  string source = 3;
 }
 
 // Verification is one fix-verification run per edited service and the

@@ -13,6 +13,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
+	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 )
@@ -85,6 +86,7 @@ func (r *Runner) submitGate(ctx context.Context, run tryRun, checked []checkedCl
 		}
 		row.Findings = verdict.Result.Findings
 		r.finish(&row)
+		run.countStage("", ports.StageGate, row)
 		return r.commitFlowStep(ctx, run, row, func(u uow.UnitOfWork) error {
 			return r.failTryOnFindings(ctx, u, run, checked, row.Step, row.Findings)
 		})
@@ -316,9 +318,10 @@ func (r *Runner) concluded(row remediation.StepRun, res remediation.CheckResult)
 	return row, nil
 }
 
-// passGate runs the flow's pass output on the verified drafts, hands over the
-// nodes the attempt's final row leaves to a human (handOver), passes the try
-// and ends the remediation, in one transaction with the gate's row. When the
+// passGate runs the flow's approver for the nodes the verified drafts cover and
+// its pass output on those drafts, handed the approvers, hands over the nodes
+// the attempt's final row leaves to a human (handOver), passes the try and
+// ends the remediation, in one transaction with the gate's row. When the
 // attempt's proposal row is no longer verifying, no output runs: the try fails
 // and the remediation ends.
 func (r *Runner) passGate(ctx context.Context, run tryRun, row remediation.StepRun, attempt proposal.View, checked []checkedCluster, verdict step.GateVerdict) error {
@@ -335,37 +338,53 @@ func (r *Runner) passGate(ctx context.Context, run tryRun, row remediation.StepR
 	if err != nil {
 		return r.countFailure(ctx, row, err)
 	}
-	outRow := r.newRow(run, flowCluster, string(outName), kindOutput, flowRound, run.flow.Revision)
-	r.finish(&outRow)
 	moved := false
-	err = r.commit(ctx, row.RemediationID, func(u uow.UnitOfWork) error {
+	err = r.commitRun(ctx, run, func(u uow.UnitOfWork) error {
 		repo := u.RemediationRepo()
 		if err := repo.SaveStep(ctx, gateRow); err != nil {
 			return fmt.Errorf("save step %s: %w", gateRow.Step, err)
 		}
+		run.countStage("", ports.StageGate, gateRow)
 		current, err := u.ProposalRepo().Get(ctx, attempt.ID)
 		if err != nil {
 			return fmt.Errorf("read proposal %s: %w", attempt.ID, err)
 		}
 		if current.Status != proposal.StatusVerifying {
 			moved = true
-			return r.endTry(ctx, u, run, remediation.TryFailed)
+			if err := r.endTry(ctx, u, run, remediation.TryFailed); err != nil {
+				return err
+			}
+			run.countOutcomes(current.NodeOutcomes)
+			return nil
 		}
-		in := step.OutputInput{Remediation: run.snap.Remediation, Try: *run.snap.Try, Trigger: run.trigger, Snapshot: run.snap}
+		fixed := draftsOf(checked)
+		approvers, err := r.approversFor(ctx, run, fixed, coveredNodes(fixed))
+		if err != nil {
+			return err
+		}
+		in := step.OutputInput{Remediation: run.snap.Remediation, Try: *run.snap.Try, Trigger: run.trigger, Snapshot: run.snap, Approvers: approvers}
+		outRow := r.newRow(run, flowCluster, string(outName), kindOutput, flowRound, run.flow.Revision)
 		if err := out.Pass(ctx, u, in, v); err != nil {
 			return fmt.Errorf("step %s: %w", outName, err)
 		}
+		r.finish(&outRow)
 		if err := repo.SaveStep(ctx, outRow); err != nil {
 			return fmt.Errorf("save step %s: %w", outRow.Step, err)
 		}
+		run.countStage("", ports.StageOutput, outRow)
 		final, err := u.ProposalRepo().Get(ctx, attempt.ID)
 		if err != nil {
 			return fmt.Errorf("read proposal %s: %w", attempt.ID, err)
 		}
-		if err := r.handOver(ctx, u, run, final.NodeOutcomes); err != nil {
+		if err := r.handOver(ctx, u, run, final.Attempt, final.NodeOutcomes); err != nil {
 			return err
 		}
-		return r.endTry(ctx, u, run, remediation.TryPassed)
+		if err := r.endTry(ctx, u, run, remediation.TryPassed); err != nil {
+			return err
+		}
+		run.countTries(ports.TryPassed)
+		run.countOutcomes(final.NodeOutcomes)
+		return nil
 	})
 	if err != nil {
 		return r.countFailure(ctx, row, err)
@@ -407,22 +426,35 @@ func (r *Runner) failGate(ctx context.Context, run tryRun, row remediation.StepR
 		return false, r.countFailure(ctx, row, err)
 	}
 	final := mergeVerifications(attempt.Verifications, verdict.Verifications)
-	err = r.commit(ctx, row.RemediationID, func(u uow.UnitOfWork) error {
+	err = r.commitRun(ctx, run, func(u uow.UnitOfWork) error {
 		if err := r.clearFailures(ctx, u, run); err != nil {
 			return err
 		}
 		if err := u.RemediationRepo().SaveStep(ctx, gateRow); err != nil {
 			return fmt.Errorf("save step %s: %w", gateRow.Step, err)
 		}
+		run.countStage("", ports.StageGate, gateRow)
 		hit, err := u.ProposalRepo().MarkVerifyFailed(ctx, attempt.ID, verdict.VerifyError, final)
 		if err != nil {
 			return fmt.Errorf("mark verify failed: %w", err)
 		}
 		failed = hit
 		if !hit {
-			return r.endTry(ctx, u, run, remediation.TryFailed)
+			current, err := u.ProposalRepo().Get(ctx, attempt.ID)
+			if err != nil {
+				return fmt.Errorf("read proposal %s: %w", attempt.ID, err)
+			}
+			if err := r.endTry(ctx, u, run, remediation.TryFailed); err != nil {
+				return err
+			}
+			run.countOutcomes(current.NodeOutcomes)
+			return nil
 		}
-		return r.saveTry(ctx, u, *run.snap.Try, remediation.TryFailed, time.Time{})
+		if err := r.saveTry(ctx, u, *run.snap.Try, remediation.TryFailed, time.Time{}); err != nil {
+			return err
+		}
+		run.countTries(ports.TryGateFailed)
+		return nil
 	})
 	if err != nil {
 		return false, r.countFailure(ctx, row, err)
