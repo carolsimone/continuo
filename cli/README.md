@@ -109,7 +109,7 @@ A schedule is a group of models that run together, picked by their first dbt tag
 
 ### Nodes
 
-A node is one model, seed or python script. Node commands take it as `<service> <schema> <table>`, and `node list` shows these three for every node the live release builds. `node contract`, `node contract-history` and `node contract-diff` take the node's `unique_id` instead, its schema and table joined by a dot (`<schema>.<table>`).
+A node is one model, seed or python script. Node commands take it as `<service> <schema> <table>`, and `node list` shows these three for every node the live release builds. `node contract`, `node contract-history` and `node contract-diff` take the node's `unique_id` instead: its schema and table joined by a dot, in lower case (`<schema>.<table>`). `node list` shows a schema declared with capitals in its declared spelling, and the contract commands do not fold case.
 
 | Command | What it does | Changes state |
 |---|---|:--:|
