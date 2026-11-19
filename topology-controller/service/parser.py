@@ -20,8 +20,9 @@ relation, service, kind, schedule, criticality, owner, file path,
 materialization and timeout) are read back from that contract, so the topology
 says what the contract says. Its schema keeps the spelling the project
 declares, which the contract's id holds in lower case. A node whose contract
-fails its checks, or that the library cannot read, is not a node of the result
-but one FailedNode of it, so a release names every invalid contract at once. A
+fails its checks, whose contract's id is not the node's unique_id, or that the
+library cannot read, is not a node of the result but one FailedNode of it, so a
+release names every invalid contract at once. A
 seed the compile extras name is also checked against its CSV header: a column
 that the header and the seed's contract do not both have makes the contract
 invalid.
@@ -50,6 +51,7 @@ from domain.model import (
     ServiceProvenance,
     SkippedNode,
     SkipReason,
+    relation_key,
 )
 from domain.node_timeout import timeout_seconds
 from service.compile_extras import seed_columns_hash
@@ -271,6 +273,30 @@ def _topology_facts(node_id: str, facts: dbt.RunFacts) -> tuple[NodeType, int | 
         raise _library_defect(node_id, error) from error
 
 
+def _id_issue(node: dict, document: Mapping[str, Any]) -> Issue | None:
+    """The issue of a generated contract whose id is not the unique_id continuo gives
+    its node, or None when the two are equal.
+
+    The library lowers `<schema>.<table>` as one string, while the node's unique_id
+    lowers the declared schema and the table each on its own (relation_key). The two
+    differ only where `str.lower` writes a capital Σ in another form, such as a schema
+    that ends in one (`DATAΣ.Orders`). The bundle keys a contract by its node's
+    unique_id, and a reader of the bundle refuses an entry whose document carries
+    another id, so such a contract is invalid. Its id is written by the library, so the
+    team renames the schema or the table. Counted as the library's `identity` reason."""
+    contract_id = document["id"]
+    schema, table = node["schema"], document["name"]
+    node_key = relation_key(schema, table)
+    if contract_id == node_key:
+        return None
+    return Issue(
+        "id", "identity",
+        f"the contract's id is {contract_id!r}, and continuo names its node {node_key!r}: the schema"
+        f" {schema!r} and the table {table!r} lower-case differently apart than joined, so rename the schema"
+        " or the table",
+    )
+
+
 def _header_issues(node_id: str, document: Mapping[str, Any], header: Sequence[str] | None) -> list[str]:
     """What a seed's CSV `header` and the columns its generated `document` declares
     disagree on, in the library's words; none for a seed with no known header."""
@@ -298,10 +324,11 @@ def _contract(
     the compile extras name (`seed`, None for any other node), the fingerprint of
     its columns; or the FailedNode that says why the node has none.
 
-    A field the library cannot read, a contract with issues and a seed whose
-    declared columns differ from the CSV header its extras give are the team's to
-    fix, so each is a FailedNode. A seed with both gets one FailedNode that names
-    every problem. The seed's extras are fingerprinted as soon as the contract is
+    A field the library cannot read, a contract with issues, a contract whose id is
+    not the node's unique_id and a seed whose declared columns differ from the CSV
+    header its extras give are the team's to fix, so each is a FailedNode. A node
+    with more than one of the last three gets one FailedNode that names every
+    problem. The seed's extras are fingerprinted as soon as the contract is
     generated, which refuses text canonical JSON cannot write (an
     InvalidNodeSettingError naming the node) before any header text is compared
     or put in a failed node. Any other error from the library is a defect, raised
@@ -324,6 +351,9 @@ def _contract(
             issues = validator.check_dbt(generated.document, on_cache=on_cache)
     except Exception as error:
         raise _library_defect(node_id, error) from error
+    mismatch = _id_issue(node, generated.document)
+    if mismatch is not None:
+        issues = [*issues, mismatch]
     header_issues = _header_issues(node_id, generated.document, seed.header if seed is not None else None)
     if issues or header_issues:
         return _issues_failure(
@@ -384,12 +414,15 @@ def parse_manifest(
     code, config, hashes, declared columns, seed settings and test count) comes
     from the manifest. Only such a node counts the tests attached to it.
 
-    A contract with issues, a seed whose declared columns differ from its CSV
-    header, and a node field the library cannot read, is a FailedNode of the
-    result (invalid_contract) naming the node, its service, its file and every
-    issue, each issue counted on `timings` by its reason (a column of a seed the
-    header and the contract disagree on as `validate`/`seed_header`, a field the
-    library cannot read as `generate`/`manifest_shape`). `progress` is
+    A contract with issues, a contract whose id is not the unique_id the node gets
+    (the library lowers `<schema>.<table>` as one string, the unique_id each part on
+    its own, and a capital Σ can lower differently), a seed whose declared columns
+    differ from its CSV header, and a node field the library cannot read, is a
+    FailedNode of the result (invalid_contract) naming the node, its service, its
+    file and every issue, each issue counted on `timings` by its reason (an id that
+    is not the unique_id as `validate`/`identity`, a column of a seed the header and
+    the contract disagree on as `validate`/`seed_header`, a field the library
+    cannot read as `generate`/`manifest_shape`). `progress` is
     called once for each model, seed and snapshot a gate does not leave out,
     after its node or its FailedNode is made.
 

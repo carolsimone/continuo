@@ -3,7 +3,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from domain.contract_vocabulary import NodeRuntime, NodeType
-from domain.model import ManifestNode, TableRef, UpstreamDep
+from domain.model import ManifestNode, TableRef, UpstreamDep, relation_key
 
 
 @dataclass(frozen=True)
@@ -56,7 +56,7 @@ def unknown_external_nodes(
     for node in nodes:
         if node.node_type == NodeType.DBT_TEST:
             continue
-        built.add(f"{node.schema_name.lower()}.{node.table_name.lower()}")
+        built.add(relation_key(node.schema_name, node.table_name))
         built.add(node.resolved_relation_id)
 
     found: dict[str, ManifestNode] = {}

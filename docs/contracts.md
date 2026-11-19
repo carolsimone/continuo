@@ -719,6 +719,14 @@ topology's schema keeps your spelling, `Analytics`, because dbt builds the
 table under it, and validation copies the table from there. The SQL of the
 readers names the schema the way dbt wrote it, and continuo finds the node.
 
+continuo writes the schema and the name in lower case one at a time, while the
+library writes `<schema>.<name>` in lower case as one string, so the contract's
+`id` must come out the same both ways. It does not for a capital Greek `Σ` in
+the wrong place: a schema that ends in one, such as `DATAΣ` before the table
+`Orders`, is `dataς` on its own and `dataσ.orders` as one string. Such a node
+rejects the release as `invalid_contract`, and the rejection names both names.
+Rename the schema or the table. The check you run in CI does not find it.
+
 The table the node writes is its `alias` when it has one, and the contract keeps
 it as the `physicalName`. Another node's SQL reaches it through that table. Two
 nodes that write the same table are rejected as `duplicate_table`. So are two

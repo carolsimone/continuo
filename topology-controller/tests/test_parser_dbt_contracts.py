@@ -193,6 +193,55 @@ def test_a_schema_declared_with_capitals_keeps_its_spelling_while_the_ids_are_lo
         "Analytics.orders", "analytics.orders")
 
 
+_FINAL_SIGMA, _SIGMA = "ς", "σ"
+
+
+@pytest.mark.parametrize("schema, table, contract_id, node_key", [
+    # A schema that ends in a capital Σ before a table that starts with a cased letter.
+    ("DATAΣ", "Orders", f"data{_SIGMA}.orders", f"data{_FINAL_SIGMA}.orders"),
+    # A table that starts with a capital Σ and no cased letter after it.
+    ("x", "Σ_1", f"x.{_FINAL_SIGMA}_1", f"x.{_SIGMA}_1"),
+], ids=["schema-ends-in-sigma", "table-starts-with-sigma"])
+def test_a_contract_whose_id_is_not_the_node_key_is_an_invalid_contract(tmp_path, schema, table, contract_id, node_key):
+    """The library lowers `<schema>.<table>` as one string, continuo each part on its own. Where
+    the two differ, the bundle would key the contract by a unique_id its document does not carry,
+    and catalog refuses such a bundle whole, so the node is an invalid contract naming both ids."""
+    timings = _timings()
+    parsed = parse_manifest(
+        _manifest(tmp_path, _node(table, schema=schema), _node("customers")), timings=timings)
+
+    assert [node.unique_id for node in parsed.nodes] == ["analytics.customers"]
+    assert parsed.failed == (FailedNode(
+        node_id=contract_id,
+        kind=ParseFailureKind.INVALID_CONTRACT,
+        service="shop",
+        file_path=f"models/{table}.sql",
+        node_type=NodeType.DBT_MODEL,
+        detail=f"id: the contract's id is {contract_id!r}, and continuo names its node {node_key!r}: the schema"
+               f" {schema!r} and the table {table!r} lower-case differently apart than joined, so rename the"
+               " schema or the table",
+    ),)
+    assert timings.contract_failures == {("validate", "identity"): 1}
+
+
+def test_an_id_that_is_not_the_node_key_is_named_with_the_contracts_other_issues(tmp_path):
+    timings = _timings()
+    (failed,) = parse_manifest(
+        _manifest(tmp_path, _node("Orders", schema="DATAΣ", meta={"criticality": "high"})), timings=timings).failed
+
+    assert failed.detail.startswith("customProperties[3].value: `criticality` is 'high'")
+    assert "; id: the contract's id is " in failed.detail
+    assert timings.contract_failures == {("validate", "value"): 1, ("validate", "identity"): 1}
+
+
+@pytest.mark.parametrize("schema, table", [
+    ("analytics", "orders"), ("Analytics", "Orders"), ("ΣΧΗΜΑ", "orders"), ("DATAΣ", "_orders"),
+], ids=["lower-case", "ascii-capitals", "sigma-that-lowers-alike", "final-sigma-before-no-cased-letter"])
+def test_a_contract_whose_id_is_the_node_key_is_valid(tmp_path, schema, table):
+    (node,) = parse_manifest(_manifest(tmp_path, _node(table, schema=schema))).nodes
+    assert node.unique_id == node.contract.document["id"] == f"{schema}.{table}".lower()
+
+
 # --- an invalid contract is a failed node -----------------------------------------
 
 def test_a_bad_timeout_and_a_bad_criticality_are_invalid_contracts(tmp_path):
@@ -659,6 +708,29 @@ def test_a_schema_with_capitals_keeps_its_spelling_in_the_topology_under_a_lower
     (reads,) = [prop["value"] for prop in contracts["reporting.daily_orders"]["document"]["schema"][0]["customProperties"]
                 if prop["property"] == "reads"]
     assert reads == ["analytics.orders"]
+
+
+def test_a_release_with_a_contract_whose_id_is_not_the_node_key_is_rejected_and_stores_nothing(tmp_path):
+    """No contract bundle reaches catalog keyed by a unique_id its document does not carry: the
+    release is rejected as invalid_contract before the code bundle, the contract bundle and the
+    topology artifact are written."""
+    publisher, writer, bundle_writer = MagicMock(), RecordingArtifactWriter(), RecordingContractBundleWriter()
+    code_bundle_uploader = MagicMock()
+    source = source_of(_dbt_file(
+        tmp_path, "service-1.json", "service-1", dbt_node("Orders") | {"schema": "DATAΣ"}, dbt_node("fine")))
+
+    timings = build_handler(source, publisher, make_uploader(), bundle_uploader=code_bundle_uploader,
+                            artifact_writer=writer, contract_bundle_writer=bundle_writer).handle(release_id="rel-1")
+
+    kwargs = _failed_kwargs(publisher)
+    assert kwargs["failure_kind"] == ParseFailureKind.INVALID_CONTRACT
+    assert kwargs["detail"] == f"1 node failed to parse: data{_SIGMA}.orders"
+    (failed,) = kwargs["failed_nodes"]
+    assert (failed.node_id, failed.kind, failed.service, failed.file_path) == (
+        f"data{_SIGMA}.orders", ParseFailureKind.INVALID_CONTRACT, "service-1", "models/Orders.sql")
+    assert f"continuo names its node 'data{_FINAL_SIGMA}.orders'" in failed.detail
+    assert (code_bundle_uploader.upload.call_args_list, bundle_writer.writes, writer.writes) == ([], [], [])
+    assert timings.contract_failures == {("validate", "identity"): 1}
 
 
 @pytest.mark.parametrize("two_services", [False, True], ids=["one-service", "two-services"])

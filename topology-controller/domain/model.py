@@ -13,6 +13,20 @@ DEFAULT_TENANT_ID = "default"
 the topology artifact's key and stamps every event this service writes."""
 
 
+def relation_key(schema_name: str, name: str) -> str:
+    """The key of the relation `<schema>.<name>` across continuo: the schema and
+    the name each lowered by `str.lower`, then joined with a dot. A node's
+    unique_id, the upstream it names and the relation its build writes are all
+    keyed this way.
+
+    Each part is lowered on its own, so the result can differ from lowering the
+    joined string: `str.lower` writes a capital Σ as the final `ς` when a cased
+    letter comes before it and none after it, looking past a dot. `DATAΣ` and
+    `Orders` give `dataς.orders`, while `"DATAΣ.Orders".lower()` is
+    `dataσ.orders`."""
+    return f"{schema_name.lower()}.{name.lower()}"
+
+
 class ManifestKind(StrEnum):
     """Which artifact dialect a service's release payload speaks.
 
@@ -178,7 +192,7 @@ class UpstreamDep:
         topology. Deriving this property the same way ensures the identities
         always agree, preventing silent divergence from mixed-case declarations.
         """
-        return f"{self.schema_name.lower()}.{self.table_name.lower()}"
+        return relation_key(self.schema_name, self.table_name)
 
 
 @dataclass(frozen=True)
@@ -281,8 +295,9 @@ class ManifestNode:
         one relation and must not produce two identities. The declared
         schema_name and table_name are left untouched — they render into SQL
         and DDL, where the declared spelling is what addresses the relation.
-        For a dbt model, seed or snapshot it is its contract's `id`, which the
-        contracts library writes in lower case too.
+        For a dbt model, seed or snapshot it equals its contract's `id`: the
+        contracts library lowers `<schema>.<table>` as one string, and the
+        parse refuses a contract whose id is not this key (see relation_key).
 
         A dbt test is not a relation: it writes no table and dbt already
         gives it a globally unique manifest id, so that id is its identity
@@ -290,7 +305,7 @@ class ManifestNode:
         """
         if self.identity:
             return self.identity
-        return f"{self.schema_name.lower()}.{self.table_name.lower()}"
+        return relation_key(self.schema_name, self.table_name)
 
     @property
     def node_key(self) -> tuple[str, str]:
@@ -324,7 +339,7 @@ class ManifestNode:
         """
         if self.node_type == NodeType.DBT_TEST:
             return ""
-        return f"{self.schema_name.lower()}.{self.relation.lower()}"
+        return relation_key(self.schema_name, self.relation)
 
     @property
     def relation(self) -> str:
