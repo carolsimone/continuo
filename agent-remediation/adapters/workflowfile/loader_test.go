@@ -1,6 +1,9 @@
 package workflowfile
 
 import (
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -9,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/workflows"
 )
 
 const flowYAML = `kind: flow
@@ -308,4 +312,141 @@ func TestLoad_ReadsTheApproverAsOneStepName(t *testing.T) {
 			assert.Contains(t, err.Error(), "approver")
 		})
 	}
+}
+
+// A Kubernetes ConfigMap mount holds each file twice: as a symlink at the top
+// (probe.yaml -> ..data/probe.yaml) and inside a timestamped directory that
+// ..data points at. Entries whose names start with a dot are the mount's own
+// bookkeeping, so each file loads once.
+func TestLoad_SkipsKubernetesConfigMapInternals(t *testing.T) {
+	dir := kubeletMount(t, "probe.yaml", "kind: type\nversion: 1\nname: probe\nmatch: { cluster: single }\n")
+
+	set, err := Load(os.DirFS(dir))
+
+	require.NoError(t, err)
+	require.Len(t, set.Types, 1)
+	assert.Equal(t, "probe.yaml", set.Types["probe"].File)
+}
+
+// kubeletMount lays out dir like a kubelet's ConfigMap volume holding one file:
+// the file in a timestamped directory, a ..data symlink to that directory and
+// a symlink of the file's name through ..data.
+func kubeletMount(t *testing.T, name, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	stamp := "..2026_11_19_10_00_00.0123456789"
+	require.NoError(t, os.Mkdir(filepath.Join(dir, stamp), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, stamp, name), []byte(content), 0o600))
+	require.NoError(t, os.Symlink(stamp, filepath.Join(dir, "..data")))
+	require.NoError(t, os.Symlink(filepath.Join("..data", name), filepath.Join(dir, name)))
+	return dir
+}
+
+func TestLoad_SkipsHiddenFilesAndDirectories(t *testing.T) {
+	fsys := fstest.MapFS{
+		"types/x.yaml":         {Data: []byte("kind: type\nname: x\n")},
+		".gitkeep":             {Data: []byte("")},
+		".hidden.yaml":         {Data: []byte("kind: type\nname: hidden\n")},
+		".dir/inside.yaml":     {Data: []byte("kind: type\nname: inside\n")},
+		"types/.draft.yaml":    {Data: []byte("kind: type\nname: draft\n")},
+		"types/.old/copy.yaml": {Data: []byte("kind: type\nname: copy\n")},
+	}
+
+	set, err := Load(fsys)
+
+	require.NoError(t, err)
+	assert.Len(t, set.Types, 1)
+	assert.Contains(t, set.Types, "x")
+}
+
+func TestLoad_AcceptsYmlFiles(t *testing.T) {
+	fsys := fstest.MapFS{
+		"f.yml": {Data: []byte(flowYAML)},
+		"t.yml": {Data: []byte(typeYAML)},
+		"u.YML": {Data: []byte("kind: type\nname: upper\n")},
+	}
+
+	set, err := Load(fsys)
+
+	require.NoError(t, err)
+	assert.Contains(t, set.Flows, "rejected-release")
+	assert.Contains(t, set.Types, "dbt-compile")
+	assert.NotContains(t, set.Types, "upper", "an extension other than .yaml and .yml is not read")
+}
+
+func TestLoad_ReadsBasedOn(t *testing.T) {
+	fsys := fstest.MapFS{
+		"f.yaml": {Data: []byte("kind: flow\nname: f\nbased_on: rejected-release@0123456789ab\n")},
+		"t.yaml": {Data: []byte("kind: type\nname: t\nbased_on: dbt-compile@fedcba987654\n")},
+		"n.yaml": {Data: []byte("kind: type\nname: n\n")},
+	}
+
+	set, err := Load(fsys)
+
+	require.NoError(t, err)
+	assert.Equal(t, "rejected-release@0123456789ab", set.Flows["f"].BasedOn)
+	assert.Equal(t, "dbt-compile@fedcba987654", set.Types["t"].BasedOn)
+	assert.Empty(t, set.Types["n"].BasedOn)
+}
+
+// based_on is one name and one revision joined by an @, so a value that is
+// not is refused with the line of the key, and a fixture has no based_on.
+func TestLoad_RefusesAMalformedBasedOn(t *testing.T) {
+	for name, value := range map[string]string{
+		"no @":           "dbt-compile",
+		"two @":          "dbt-compile@abc@def",
+		"empty name":     `"@0123456789ab"`,
+		"empty revision": "dbt-compile@",
+		"empty":          `""`,
+		"null":           "",
+	} {
+		for kind, body := range map[string]string{
+			"flow": "kind: flow\nname: f\nbased_on: " + value + "\n",
+			"type": "kind: type\nname: t\nmatch: { cluster: single }\nbased_on: " + value + "\n",
+		} {
+			t.Run(kind+" with "+name, func(t *testing.T) {
+				_, err := Load(fstest.MapFS{"x.yaml": {Data: []byte(body)}})
+
+				require.Error(t, err)
+				line := strings.Count(strings.SplitAfter(body, "based_on")[0], "\n") + 1
+				assert.Contains(t, err.Error(), "x.yaml:"+strconv.Itoa(line)+":")
+				assert.Contains(t, err.Error(), "based_on")
+				assert.Contains(t, err.Error(), "<name>@<revision>")
+			})
+		}
+	}
+
+	t.Run("a list", func(t *testing.T) {
+		_, err := Load(fstest.MapFS{"x.yaml": {Data: []byte("kind: type\nname: t\nbased_on: [a@b]\n")}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "x.yaml:3")
+	})
+}
+
+// A match.source that no failure can carry selects nothing, and the node it
+// was meant for is handed over with no type and no error at startup, so the
+// loader refuses it with the line of the key and the sources that exist.
+func TestLoad_RefusesAnUnknownMatchSource(t *testing.T) {
+	fsys := fstest.MapFS{
+		"types/typo.yaml": {Data: []byte("kind: type\nversion: 1\nname: typo\nmatch:\n  cluster: single\n  source: valdation\n")},
+	}
+
+	_, err := Load(fsys)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `types/typo.yaml:6: match.source "valdation" is not a remediation source (valid: validation, compile, seed_build, duplicate_table, parse)`)
+}
+
+func TestLoad_AnAbsentMatchSourceMatchesAnySource(t *testing.T) {
+	set, err := Load(fstest.MapFS{"t.yaml": {Data: []byte("kind: type\nname: any\nmatch: { cluster: single }\n")}})
+	require.NoError(t, err)
+	assert.Empty(t, set.Types["any"].Match.Source)
+}
+
+func TestLoad_EveryBuiltInFileLoads(t *testing.T) {
+	set, err := Load(workflows.Builtin)
+
+	require.NoError(t, err)
+	assert.Contains(t, set.Flows, "rejected-release")
+	assert.Len(t, set.Types, 10)
 }

@@ -3,12 +3,15 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -240,7 +243,7 @@ func TestMain_LeaseOwnerNamesHostAndProcess(t *testing.T) {
 // TestMain_BuiltinFilesLoadAndValidate: the files built into the binary load
 // and every flow and type of them runs against the registry.
 func TestMain_BuiltinFilesLoadAndValidate(t *testing.T) {
-	set, err := loadRunnerFiles(workflows.Builtin, runner.Collaborators{}, discardLogger())
+	set, err := loadRunnerFiles(workflows.Builtin, nil, runner.Collaborators{}, discardLogger())
 	require.NoError(t, err)
 	assert.Contains(t, set.Flows, "rejected-release")
 }
@@ -277,7 +280,7 @@ func TestMain_FilesWithoutTheTriggerFlowStopStartup(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 
-	_, err := loadRunnerFiles(builtinRenamed(t, "another-flow"), runner.Collaborators{}, logger)
+	_, err := loadRunnerFiles(builtinRenamed(t, "another-flow"), nil, runner.Collaborators{}, logger)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `"rejected-release"`)
@@ -290,7 +293,7 @@ func TestMain_FilesWithoutTheTriggerFlowStopStartup(t *testing.T) {
 // warned about at startup. The legacy engine reads the variable, and an equal
 // value changes nothing, so neither warns.
 func TestMain_WarnsWhenTheRunnerIgnoresMaxAttempts(t *testing.T) {
-	files, err := loadRunnerFiles(workflows.Builtin, runner.Collaborators{}, discardLogger())
+	files, err := loadRunnerFiles(workflows.Builtin, nil, runner.Collaborators{}, discardLogger())
 	require.NoError(t, err)
 	tries := files.Flows["rejected-release"].Tries
 
@@ -342,7 +345,7 @@ approver: node_owner
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 
-	_, err := loadRunnerFiles(fsys, runner.Collaborators{}, logger)
+	_, err := loadRunnerFiles(fsys, nil, runner.Collaborators{}, logger)
 
 	require.Error(t, err)
 	refusals := 0
@@ -426,4 +429,214 @@ func TestMain_APollerWithALongIntervalStaysHealthyBetweenPasses(t *testing.T) {
 	assert.NoError(t, h.healthy(budget))
 	h.last.Store(time.Now().Add(-budget - time.Minute).UnixNano())
 	assert.Error(t, h.healthy(budget))
+}
+
+// logLines parses the JSON log lines buf holds.
+func logLines(t *testing.T, buf *bytes.Buffer) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var entry map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &entry), line)
+		out = append(out, entry)
+	}
+	return out
+}
+
+// builtinFile is the content of a built-in file.
+func builtinFile(t *testing.T, name string) string {
+	t.Helper()
+	data, err := fs.ReadFile(workflows.Builtin, name)
+	require.NoError(t, err)
+	return string(data)
+}
+
+// TestMain_InstallFilesFolder: a folder that does not exist (or is not named)
+// means the install has no files, a folder is read as a file system, and a
+// path that exists but is not a readable folder is an error, so startup stops
+// rather than running without the files the install put there.
+func TestMain_InstallFilesFolder(t *testing.T) {
+	t.Run("a missing folder is no install files", func(t *testing.T) {
+		fsys, err := installFiles(filepath.Join(t.TempDir(), "absent"))
+
+		require.NoError(t, err)
+		assert.Nil(t, fsys)
+	})
+
+	t.Run("no folder named is no install files", func(t *testing.T) {
+		fsys, err := installFiles("")
+
+		require.NoError(t, err)
+		assert.Nil(t, fsys)
+	})
+
+	t.Run("a file is refused", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), "workflows")
+		require.NoError(t, os.WriteFile(file, []byte("kind: type\n"), 0o600))
+
+		fsys, err := installFiles(file)
+
+		require.Error(t, err)
+		assert.Nil(t, fsys)
+		assert.Contains(t, err.Error(), file)
+		assert.Contains(t, err.Error(), "not a directory")
+	})
+
+	t.Run("a folder with a file in it", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "t.yaml"), []byte("kind: type\n"), 0o600))
+
+		fsys, err := installFiles(dir)
+
+		require.NoError(t, err)
+		data, err := fs.ReadFile(fsys, "t.yaml")
+		require.NoError(t, err)
+		assert.Equal(t, "kind: type\n", string(data))
+	})
+
+	t.Run("an empty folder", func(t *testing.T) {
+		fsys, err := installFiles(t.TempDir())
+
+		require.NoError(t, err)
+		assert.NotNil(t, fsys)
+	})
+
+	t.Run("a folder that cannot be read is refused", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root reads every folder")
+		}
+		dir := filepath.Join(t.TempDir(), "locked")
+		require.NoError(t, os.Mkdir(dir, 0o700))
+		require.NoError(t, os.Chmod(dir, 0o000))
+		// A folder needs its execute bit back before the test's temp dir can be removed.
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) }) //nolint:gosec // G302: a folder, not a file; 0o600 would leave it unsearchable.
+
+		fsys, err := installFiles(dir)
+
+		require.Error(t, err)
+		assert.Nil(t, fsys)
+		assert.Contains(t, err.Error(), dir)
+	})
+}
+
+// TestMain_InstallFilesCanBeAKubernetesConfigMapMount: the chart mounts the
+// install's files as a ConfigMap, whose volume holds each file as a symlink
+// through ..data into a timestamped directory. Each file loads once.
+func TestMain_InstallFilesCanBeAKubernetesConfigMapMount(t *testing.T) {
+	dir := t.TempDir()
+	stamp := "..2026_11_19_10_00_00.0123456789"
+	require.NoError(t, os.Mkdir(filepath.Join(dir, stamp), 0o750))
+	tuned := builtinFile(t, "types/dbt-compile.yaml") + "# tuned for this install\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, stamp, "dbt-compile.yaml"), []byte(tuned), 0o600))
+	require.NoError(t, os.Symlink(stamp, filepath.Join(dir, "..data")))
+	require.NoError(t, os.Symlink(filepath.Join("..data", "dbt-compile.yaml"), filepath.Join(dir, "dbt-compile.yaml")))
+	install, err := installFiles(dir)
+	require.NoError(t, err)
+
+	set, err := loadRunnerFiles(workflows.Builtin, install, runner.Collaborators{}, discardLogger())
+
+	require.NoError(t, err)
+	assert.Equal(t, "dbt-compile.yaml", set.Types["dbt-compile"].File)
+}
+
+// TestMain_InstallTypeListedByAReplacedFlow: an install replaces the flow every
+// heal trigger runs with a copy that lists one more type, and adds that type.
+// Both load, and the flow lists the install's type after the built-in ones.
+func TestMain_InstallTypeListedByAReplacedFlow(t *testing.T) {
+	flow := strings.Replace(builtinFile(t, "flows/rejected-release.yaml"),
+		"  - cross-service-upstream\n", "  - cross-service-upstream\n  - dbt-test-validation\n", 1)
+	require.Contains(t, flow, "dbt-test-validation")
+	typ := strings.NewReplacer(
+		"name: dbt-validation", "name: dbt-test-validation",
+		"node_types: [dbt-model, dbt-seed, dbt-snapshot, none]", "node_types: [dbt-test]",
+	).Replace(builtinFile(t, "types/dbt-validation.yaml"))
+	install := fstest.MapFS{
+		"rejected-release.yaml":    {Data: []byte(flow)},
+		"dbt-test-validation.yaml": {Data: []byte(typ)},
+	}
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	set, err := loadRunnerFiles(workflows.Builtin, install, runner.Collaborators{}, logger)
+
+	require.NoError(t, err)
+	assert.Contains(t, set.Types, "dbt-test-validation")
+	listed := set.Flows["rejected-release"].Types
+	assert.Equal(t, "dbt-test-validation", listed[len(listed)-1])
+	assert.Equal(t, "rejected-release.yaml", set.Flows["rejected-release"].File)
+	var replaced bool
+	for _, e := range logLines(t, &buf) {
+		if e["warning"] == "flow rejected-release: replaced by rejected-release.yaml" {
+			replaced = true
+			assert.Equal(t, "WARN", e["level"])
+		}
+	}
+	assert.True(t, replaced, "the replacement is logged at Warn:\n%s", buf.String())
+}
+
+// TestMain_AnInstallsReplacementIsLoggedBeforeTheFilesAreChecked: every note of
+// the install load is logged before the steps of the files are checked, so a
+// file refused by that check still shows which built-in it was meant to
+// replace.
+func TestMain_AnInstallsReplacementIsLoggedBeforeTheFilesAreChecked(t *testing.T) {
+	typ := strings.Replace(builtinFile(t, "types/dbt-compile.yaml"), "[target_file_was_shown,", "[no_such_check, target_file_was_shown,", 1)
+	require.Contains(t, typ, "no_such_check")
+	install := fstest.MapFS{"dbt-compile.yaml": {Data: []byte(typ)}}
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	_, err := loadRunnerFiles(workflows.Builtin, install, runner.Collaborators{}, logger)
+
+	require.Error(t, err)
+	noteAt, refusalAt := -1, -1
+	for i, e := range logLines(t, &buf) {
+		switch {
+		case e["warning"] == "type dbt-compile: replaced by dbt-compile.yaml":
+			noteAt = i
+		case e["level"] == "ERROR" && strings.Contains(e["refusal"].(string), "no_such_check"):
+			refusalAt = i
+		}
+	}
+	require.GreaterOrEqual(t, noteAt, 0, buf.String())
+	require.GreaterOrEqual(t, refusalAt, 0, buf.String())
+	assert.Less(t, noteAt, refusalAt)
+}
+
+// TestMain_ARefusedInstallFileStopsStartup: an install file the loader refuses
+// stops startup, and each refusal is logged with the file and line.
+func TestMain_ARefusedInstallFileStopsStartup(t *testing.T) {
+	install := fstest.MapFS{"typo.yaml": {Data: []byte("kind: type\nversion: 1\nname: typo\nmatch: { cluster: single, source: valdation }\n")}}
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	set, err := loadRunnerFiles(workflows.Builtin, install, runner.Collaborators{}, logger)
+
+	require.Error(t, err)
+	assert.Empty(t, set.Flows)
+	assert.Contains(t, err.Error(), "typo.yaml:4:")
+	var logged bool
+	for _, e := range logLines(t, &buf) {
+		if e["level"] == "ERROR" && strings.Contains(e["refusal"].(string), "typo.yaml:4:") {
+			logged = true
+		}
+	}
+	assert.True(t, logged, buf.String())
+}
+
+// TestMain_NoInstallFilesLoadsTheBuiltIns: with no install, and with an install
+// folder holding nothing, the built-in files load alone and nothing is logged.
+func TestMain_NoInstallFilesLoadsTheBuiltIns(t *testing.T) {
+	want, err := loadRunnerFiles(workflows.Builtin, nil, runner.Collaborators{}, discardLogger())
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	got, err := loadRunnerFiles(workflows.Builtin, fstest.MapFS{}, runner.Collaborators{}, logger)
+
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+	assert.Empty(t, buf.String())
 }

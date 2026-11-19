@@ -346,9 +346,14 @@ func main() {
 		proposals: proposalRepo,
 		tries:     remediationRepo,
 	}, logger)
-	files, err := loadRunnerFiles(workflows.Builtin, collab, logger)
+	install, err := installFiles(cfg.WorkflowsDir)
 	if err != nil {
-		logger.Error("the built-in remediation files are refused", "error", err)
+		logger.Error("the install's remediation files cannot be read", "error", err)
+		os.Exit(1)
+	}
+	files, err := loadRunnerFiles(workflows.Builtin, install, collab, logger)
+	if err != nil {
+		logger.Error("the remediation files are refused", "error", err)
 		os.Exit(1)
 	}
 	warnIgnoredMaxAttempts(cfg, files, logger)
@@ -723,17 +728,48 @@ func newRunnerDeps(cfg config.Config, collab runner.Collaborators, files workflo
 	}
 }
 
-// loadRunnerFiles loads the remediation files of fsys, checks every flow and
-// type of them against the steps collab's registry holds, and checks that they
-// define the flow every heal trigger runs. Every refusal is logged on its own
-// line and the error that joins them is returned; a warning is logged and does
-// not stop startup. The worker drives the runner's remediations with either
-// engine, so files without the trigger's flow stop startup with either.
-func loadRunnerFiles(fsys fs.FS, collab runner.Collaborators, logger *slog.Logger) (workflow.Set, error) {
-	set, err := workflowfile.Load(fsys)
+// installFiles is the folder dir, where an install keeps its own remediation
+// files, as a file system. An empty dir, or a folder that does not exist, means
+// the install has none and gives a nil file system. A path that exists but is
+// not a folder, or whose entries cannot be listed, is an error, so startup
+// stops rather than running without the files the install put there.
+func installFiles(dir string) (fs.FS, error) {
+	if dir == "" {
+		return nil, nil
+	}
+	info, err := os.Stat(dir)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("remediation files folder %s: %w", dir, err)
+	case !info.IsDir():
+		return nil, fmt.Errorf("remediation files folder %s is not a directory", dir)
+	}
+	if _, err := os.ReadDir(dir); err != nil {
+		return nil, fmt.Errorf("remediation files folder %s: %w", dir, err)
+	}
+	return os.DirFS(dir), nil
+}
+
+// loadRunnerFiles loads the built-in remediation files and, over them, the
+// install's (install is nil when it has none), checks every flow and type of
+// them against the steps collab's registry holds, and checks that they define
+// the flow every heal trigger runs. Every refusal is logged on its own line and
+// the error that joins them is returned; a warning is logged and does not stop
+// startup. What the install's files replace, and the files copied from a
+// built-in that has changed since, are logged at Warn before the files are
+// checked, so a file that check refuses still shows what it was meant to
+// replace. The worker drives the runner's remediations with either engine, so
+// files without the trigger's flow stop startup with either.
+func loadRunnerFiles(builtin, install fs.FS, collab runner.Collaborators, logger *slog.Logger) (workflow.Set, error) {
+	set, notes, err := workflowfile.LoadInstall(builtin, install)
 	if err != nil {
 		logRefusals(logger, err)
 		return workflow.Set{}, err
+	}
+	for _, n := range notes {
+		logger.Warn("remediation file", "warning", n)
 	}
 	warnings, err := runner.Validate(set, runner.NewRegistry(collab))
 	for _, w := range warnings {

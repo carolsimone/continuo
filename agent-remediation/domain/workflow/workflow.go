@@ -104,6 +104,10 @@ type Type struct {
 	Context   []StepRef
 	Agent     Agent
 	Preflight []StepRef
+	// BasedOn is the `<name>@<revision>` the file's based_on field holds: the
+	// built-in type the file was copied from and the revision of it that was
+	// copied. Empty when the file has no based_on.
+	BasedOn string
 	// Revision identifies the file's content when it was loaded.
 	Revision string
 	File     string
@@ -153,6 +157,10 @@ type Flow struct {
 	// ModelMaySeePos is where the list was written, or the flow's own position
 	// when the file has none.
 	ModelMaySeePos Pos
+	// BasedOn is the `<name>@<revision>` the file's based_on field holds: the
+	// built-in flow the file was copied from and the revision of it that was
+	// copied. Empty when the file has no based_on.
+	BasedOn string
 	// Revision identifies the file's content when it was loaded.
 	Revision string
 	File     string

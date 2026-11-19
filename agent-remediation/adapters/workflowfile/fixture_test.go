@@ -2,6 +2,7 @@ package workflowfile
 
 import (
 	"encoding/json"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/service/conformance"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	"github.com/carolsimone/continuo/agent-remediation/workflows"
 	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
 )
@@ -398,4 +400,88 @@ func TestLoadFixtures_ReportsProblemsInFileOrder(t *testing.T) {
 			assert.True(t, strings.HasPrefix(lines[3], `f.yaml:10: field "passes"`), lines[3])
 		}
 	}
+}
+
+const minimalTypeFixture = "kind: fixture\nversion: 1\ntype: probe\ntrigger: { nodes: [{ node_id: a }] }\n"
+
+// A ConfigMap mount's own entries (..data and the timestamped directory) are
+// not read, so a fixture file loads once.
+func TestLoadFixtures_SkipsKubernetesConfigMapInternals(t *testing.T) {
+	dir := kubeletMount(t, "probe.yaml", minimalTypeFixture)
+
+	fixtures, err := LoadFixtures(os.DirFS(dir))
+
+	require.NoError(t, err)
+	require.Len(t, fixtures, 1)
+	assert.Equal(t, "probe.yaml", fixtures[0].File)
+}
+
+func TestLoadFixtures_SkipsHiddenFilesAndDirectories(t *testing.T) {
+	fsys := fstest.MapFS{
+		"types/x.yaml":     {Data: []byte(minimalTypeFixture)},
+		".hidden.yaml":     {Data: []byte(minimalTypeFixture)},
+		".dir/inside.yaml": {Data: []byte(minimalTypeFixture)},
+	}
+
+	fixtures, err := LoadFixtures(fsys)
+
+	require.NoError(t, err)
+	assert.Len(t, fixtures, 1)
+}
+
+func TestLoadFixtures_AcceptsYmlFiles(t *testing.T) {
+	fsys := fstest.MapFS{
+		"a.yml": {Data: []byte(minimalTypeFixture)},
+		"b.YML": {Data: []byte(strings.Replace(minimalTypeFixture, "probe", "upper", 1))},
+	}
+
+	fixtures, err := LoadFixtures(fsys)
+
+	require.NoError(t, err)
+	require.Len(t, fixtures, 1)
+	assert.Equal(t, "a.yml", fixtures[0].File)
+}
+
+// The suite plays only the first passing try of a member, so a revision block
+// under a member's answers would do nothing: the loader refuses it, naming the
+// field path and the line of the key. The fixture's own answers.revision is
+// played and stays accepted.
+func TestLoadFixtures_RefusesMemberAnswersRevision(t *testing.T) {
+	doc := "kind: fixture\nversion: 1\ntype: x\ntrigger: { nodes: [{ node_id: a }] }\n" +
+		"member_answers:\n" +
+		"  model.sales.base:\n" +
+		"    pass: [{ proposed_sql: \"select 1\" }]\n" +
+		"  model.sales.orders:\n" +
+		"    revision:\n" +
+		"      pass: [{ proposed_sql: \"select 2\" }]\n"
+
+	fixtures, err := LoadFixtures(fstest.MapFS{"f.yaml": {Data: []byte(doc)}})
+
+	require.Error(t, err)
+	assert.Nil(t, fixtures)
+	assert.Contains(t, err.Error(), "f.yaml:9: member_answers.model.sales.orders.revision: a member's revision answers are not played")
+	assert.Contains(t, err.Error(), "answers.revision")
+
+	top := "kind: fixture\nversion: 1\ntype: x\ntrigger: { nodes: [{ node_id: a }] }\n" +
+		"answers:\n  revision:\n    pass: [{ proposed_sql: \"select 3\" }]\n"
+	fixtures, err = LoadFixtures(fstest.MapFS{"f.yaml": {Data: []byte(top)}})
+	require.NoError(t, err)
+	require.Len(t, fixtures, 1)
+	require.Len(t, fixtures[0].Answers.Revision.Pass, 1)
+}
+
+func TestLoadFixtures_RefusesBasedOn(t *testing.T) {
+	doc := minimalTypeFixture + "based_on: dbt-compile@0123456789ab\n"
+
+	_, err := LoadFixtures(fstest.MapFS{"f.yaml": {Data: []byte(doc)}})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `f.yaml:5: field "based_on" is not known here`)
+}
+
+func TestLoadFixtures_EveryBuiltInFixtureLoads(t *testing.T) {
+	fixtures, err := LoadFixtures(workflows.Builtin)
+
+	require.NoError(t, err)
+	assert.NotEmpty(t, fixtures)
 }
