@@ -504,21 +504,39 @@ func TestMain_InstallFilesFolder(t *testing.T) {
 		assert.NotNil(t, fsys)
 	})
 
-	t.Run("a folder that cannot be read is refused", func(t *testing.T) {
-		if os.Geteuid() == 0 {
-			t.Skip("root reads every folder")
+	// The listing is replaced by one that fails, so the refusal does not depend
+	// on the permissions of the user running the test (root lists every folder).
+	t.Run("a folder that cannot be listed is refused", func(t *testing.T) {
+		dir := t.TempDir()
+		var listed []string
+		failing := func(name string) ([]fs.DirEntry, error) {
+			listed = append(listed, name)
+			return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrPermission}
 		}
-		dir := filepath.Join(t.TempDir(), "locked")
-		require.NoError(t, os.Mkdir(dir, 0o700))
-		require.NoError(t, os.Chmod(dir, 0o000))
-		// A folder needs its execute bit back before the test's temp dir can be removed.
-		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) }) //nolint:gosec // G302: a folder, not a file; 0o600 would leave it unsearchable.
 
-		fsys, err := installFiles(dir)
+		fsys, err := installFilesListing(dir, failing)
 
 		require.Error(t, err)
 		assert.Nil(t, fsys)
+		assert.Equal(t, []string{dir}, listed)
+		assert.ErrorIs(t, err, fs.ErrPermission)
 		assert.Contains(t, err.Error(), dir)
+	})
+
+	t.Run("a folder that can be listed is read through the listing it was given", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "t.yaml"), []byte("kind: type\n"), 0o600))
+		var listed []string
+		listing := func(name string) ([]fs.DirEntry, error) {
+			listed = append(listed, name)
+			return os.ReadDir(name)
+		}
+
+		fsys, err := installFilesListing(dir, listing)
+
+		require.NoError(t, err)
+		require.NotNil(t, fsys)
+		assert.Equal(t, []string{dir}, listed)
 	})
 }
 

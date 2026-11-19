@@ -734,6 +734,15 @@ func newRunnerDeps(cfg config.Config, collab runner.Collaborators, files workflo
 // not a folder, or whose entries cannot be listed, is an error, so startup
 // stops rather than running without the files the install put there.
 func installFiles(dir string) (fs.FS, error) {
+	return installFilesListing(dir, os.ReadDir)
+}
+
+// installFilesListing is installFiles with the function that lists the
+// folder's entries given. A listing that fails is a refusal whoever runs the
+// process, whatever the folder's permissions allow: the seam lets a test
+// make the listing fail without depending on the user's rights, which a
+// root user is never refused.
+func installFilesListing(dir string, list func(name string) ([]fs.DirEntry, error)) (fs.FS, error) {
 	if dir == "" {
 		return nil, nil
 	}
@@ -746,7 +755,7 @@ func installFiles(dir string) (fs.FS, error) {
 	case !info.IsDir():
 		return nil, fmt.Errorf("remediation files folder %s is not a directory", dir)
 	}
-	if _, err := os.ReadDir(dir); err != nil {
+	if _, err := list(dir); err != nil {
 		return nil, fmt.Errorf("remediation files folder %s: %w", dir, err)
 	}
 	return os.DirFS(dir), nil
