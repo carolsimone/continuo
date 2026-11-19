@@ -801,13 +801,14 @@ example, with your files under `remediation/`:
 
 ```bash
 docker run --rm -v "$PWD/remediation:/files:ro" \
-  ghcr.io/carolsimone/continuo-agent-remediation:<version> \
+  ghcr.io/carolsimone/continuo-agent-remediation:v<version> \
   remediation-check files /files
 ```
 
-The image is `<global.imageRegistry>/<global.imageRepositoryPrefix>/continuo-agent-remediation:<version>`
+The image is `<global.imageRegistry>/<global.imageRepositoryPrefix>/continuo-agent-remediation:v<version>`
 (the chart's defaults are `ghcr.io` and `carolsimone`), with `<version>` the
-continuo version you run. remediation-check needs that folder and nothing
+continuo version you run, without the `v` (`0.25.0` gives the tag `v0.25.0`).
+remediation-check needs that folder and nothing
 else: no network, no database and no cluster (it plays the scenarios against
 fakes, in temporary files). The image runs as user 65532, so every file must
 be readable by any user. A message names a file by its path
