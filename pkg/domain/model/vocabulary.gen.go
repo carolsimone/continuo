@@ -284,6 +284,42 @@ func (v HandoverReason) IsValid() bool {
 	return false
 }
 
+// ApproverSource — Where agent-remediation read the owner of a node of a rejected release, the person or team who must approve what a remediation did with that node. It names the owner on each approver of a proposal, which the gRPC reads carry to the release page.
+// Values come from the vocabulary "approver_source" in contract.yaml, in
+// declaration order.
+type ApproverSource string
+
+const (
+	// ApproverSourceBundle — the owner the release's code bundle records for the node (a dbt node's config meta.owner, a python node's contract team.name).
+	ApproverSourceBundle ApproverSource = "bundle"
+	// ApproverSourceContractFile — the team.name of the node's ODCS contract file in the repository, for a node the code bundle names no owner for.
+	ApproverSourceContractFile ApproverSource = "contract_file"
+	// ApproverSourceNone — no owner was found for the node, so the approver's owner is empty.
+	ApproverSourceNone ApproverSource = "none"
+)
+
+// ApproverSources returns every value in contract.yaml declaration order.
+func ApproverSources() []ApproverSource {
+	return []ApproverSource{
+		ApproverSourceBundle,
+		ApproverSourceContractFile,
+		ApproverSourceNone,
+	}
+}
+
+// IsValid reports whether v is a value declared in contract.yaml.
+func (v ApproverSource) IsValid() bool {
+	switch v {
+	case ApproverSourceBundle:
+		return true
+	case ApproverSourceContractFile:
+		return true
+	case ApproverSourceNone:
+		return true
+	}
+	return false
+}
+
 // RemediationSource — The pipeline stage that produced the failure of a node a remediation works on.
 // Values come from the vocabulary "remediation_source" in contract.yaml, in
 // declaration order.

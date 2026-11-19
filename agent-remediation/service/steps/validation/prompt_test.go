@@ -36,7 +36,7 @@ func validationEvidence(bundle remediation.CandidateSource) remediation.Evidence
 	return remediation.NewEvidence().
 		With(remediation.KeyCandidateSQL, remediation.Text(candidateSQL)).
 		With(remediation.KeyCodeBundleSource, bundle).
-		With(remediation.KeyDBTLog, remediation.Text("sanitized log")).
+		With(remediation.KeyDBTLog, remediation.Text("the dbt log")).
 		With(remediation.KeyOwnChangeDiff, remediation.Text("<own diff>")).
 		With(remediation.KeyUpstreamChanges, upstreamChanges).
 		With(remediation.KeyFailurePrecedents, precedentList).
@@ -68,7 +68,7 @@ func firstRequest(ancestorsKnown bool) prompt.ProposeRequest {
 		NodeID:                 "model.svc.a",
 		ErrorSignature:         "sig-1",
 		CandidateSQL:           candidateSQL,
-		DBTLog:                 "sanitized log",
+		DBTLog:                 "the dbt log",
 		OwnChangeDiff:          "<own diff>",
 		UpstreamChanges:        upstreamChanges,
 		Precedents:             precedentList,
@@ -77,14 +77,14 @@ func firstRequest(ancestorsKnown bool) prompt.ProposeRequest {
 	})
 }
 
-// secondRequest is the source-fix request the lane builds: the sanitized source
-// and the first answer's rationale.
+// secondRequest is the source-fix request the lane builds: the source and the
+// first answer's rationale.
 func secondRequest() prompt.ProposeRequest {
-	return prompt.AssembleSourceFix("<"+modelSource+">", "model.svc.a", diagnosisNote)
+	return prompt.AssembleSourceFix(modelSource, "model.svc.a", diagnosisNote)
 }
 
 func newValidationPrompt(w *fakeArtifacts) *validation.DBTValidation {
-	return validation.NewDBTValidation(w, markSanitizer{}, repoPaths)
+	return validation.NewDBTValidation(w, repoPaths)
 }
 
 func proposeValidation(t *testing.T, w *fakeArtifacts, f remediation.Failure, ev remediation.Evidence, m *fakeModel) step.PromptOutput {
@@ -96,7 +96,7 @@ func proposeValidation(t *testing.T, w *fakeArtifacts, f remediation.Failure, ev
 }
 
 func TestDBTValidation_MetaNamesTheStepAndWhatItReads(t *testing.T) {
-	m := validation.NewDBTValidation(nil, nil, nil).Meta()
+	m := validation.NewDBTValidation(nil, nil).Meta()
 	assert.Equal(t, "dbt-validation", string(m.Name))
 	assert.Equal(t, step.KindPrompt, m.Kind)
 	assert.NotEmpty(t, m.Description)

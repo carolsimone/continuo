@@ -55,6 +55,11 @@ type View struct {
 	// cluster whose fixer skipped or failed leaves its members
 	// skipped/failed while other members verify.
 	NodeOutcomes map[string]NodeOutcome
+	// Approvers is who must approve what the attempt did with each node a
+	// remediation settled at its end, fixed or handed over, one entry per node
+	// sorted by node id. It is empty for an attempt of the proposal driver and
+	// for one with no approvers recorded.
+	Approvers []Approver
 	// Verifications is one fix-verification run per edited service;
 	// VerificationRunID is the view of the first.
 	Verifications []Verification
@@ -159,6 +164,10 @@ type PRClaim struct {
 	Rationale       string
 	Confidence      Confidence
 	Model           string
+	// Approvers is who must approve the claim's fix: the row's approvers of the
+	// nodes in ResolvedNodeIDs, sorted by node id. A node the row records no
+	// approver for has no entry.
+	Approvers []Approver
 	// ClaimedAt is the pr_claimed_at value BeginPR's CAS persisted for this
 	// claim, read back from the row rather than trusted from the caller's
 	// clock. The caller carries it forward and must present it back to

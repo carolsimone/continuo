@@ -305,10 +305,11 @@ func waitForHandOver(t *testing.T, ctx context.Context, tap *streamTap, releaseI
 	return all[0]
 }
 
-// assertHandOver checks that h names the fixture with the classifier's reason
-// and the trigger's detail (the failure's error line) as its message, and that
-// the remediation it reports is done after one try that ran no step but the
-// hand-over.
+// assertHandOver checks that h names the fixture with the classifier's reason,
+// the trigger's detail (the failure's error line) as its message and the
+// fixture's owner (service-2's dbt project owner, read from the code bundle),
+// and that the remediation it reports is done after one try that ran no step
+// but the hand-over.
 func assertHandOver(t *testing.T, ctx context.Context, clients *testClients, h tappedHandOver, releaseID string, round int, detail string) {
 	t.Helper()
 	require.Equal(t, pkgevents.DefaultTenantID, h.TenantID, "the hand-over carries the remediation's tenant")
@@ -318,6 +319,7 @@ func assertHandOver(t *testing.T, ctx context.Context, clients *testClients, h t
 		NodeID:  unfixableInfraUniqueID,
 		Reason:  string(model.HandoverReasonClassifierInfra),
 		Message: detail,
+		Owner:   testOwner,
 	}}, h.Nodes)
 	requireErrorLine(t, h.Nodes[0].Message)
 

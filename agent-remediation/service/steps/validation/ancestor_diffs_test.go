@@ -27,7 +27,7 @@ func withAncestors(as ...remediation.ChangedAncestor) func(*remediation.Failure)
 }
 
 func TestChangedAncestorDiffs_MetaNamesWhatItNeedsAndProvides(t *testing.T) {
-	m := validation.NewChangedAncestorDiffs(nil, nil, nil, nil).Meta()
+	m := validation.NewChangedAncestorDiffs(nil, nil, nil).Meta()
 	assert.Equal(t, "changed_ancestor_diffs", string(m.Name))
 	assert.Equal(t, step.KindContext, m.Kind)
 	assert.NotEmpty(t, m.Description)
@@ -40,11 +40,11 @@ func TestChangedAncestorDiffs_DiffsEachAncestorsBundleSourceAgainstItsPromotedVe
 	versions := &fakeVersions{versions: map[string]ports.CurrentVersion{"model.svc.up": {RawCode: "select 1"}}}
 	f := failure(withAncestors(remediation.ChangedAncestor{NodeID: "model.svc.up", Service: "svc", FilePath: "models/up.sql", Depth: 1}))
 
-	out := gather(t, validation.NewChangedAncestorDiffs(bundle, versions, markSanitizer{}, discardLogger()), f, remediation.NewEvidence())
+	out := gather(t, validation.NewChangedAncestorDiffs(bundle, versions, discardLogger()), f, remediation.NewEvidence())
 
 	assert.Equal(t, []prompt.ReleaseUpstreamChange{{
 		NodeID: "model.svc.up", Service: "svc", Depth: 1,
-		Diff: "<" + proposal.ComputeUnifiedDiff("select 1", "select 2", "model.svc.up") + ">",
+		Diff: proposal.ComputeUnifiedDiff("select 1", "select 2", "model.svc.up"),
 	}}, ancestorDiffs(t, out))
 	assert.Equal(t, []bundleCall{{"s3://bundle/rel-1", "model.svc.up", "rel-1"}}, bundle.calls)
 }
@@ -59,7 +59,7 @@ func TestChangedAncestorDiffs_ShowsTheThreeNearestByDepthThenId(t *testing.T) {
 	}
 	f := failure(withAncestors(as...))
 
-	out := gather(t, validation.NewChangedAncestorDiffs(&fakeBundle{}, &fakeVersions{}, markSanitizer{}, discardLogger()), f, remediation.NewEvidence())
+	out := gather(t, validation.NewChangedAncestorDiffs(&fakeBundle{}, &fakeVersions{}, discardLogger()), f, remediation.NewEvidence())
 
 	got := ancestorDiffs(t, out)
 	var ids []string
@@ -82,7 +82,7 @@ func TestChangedAncestorDiffs_ListsAnAncestorWithNoDiffWhenItsSourceOrVersionIsU
 		remediation.ChangedAncestor{NodeID: "new", Depth: 3},
 	))
 
-	out := gather(t, validation.NewChangedAncestorDiffs(bundle, versions, markSanitizer{}, discardLogger()), f, remediation.NewEvidence())
+	out := gather(t, validation.NewChangedAncestorDiffs(bundle, versions, discardLogger()), f, remediation.NewEvidence())
 
 	got := ancestorDiffs(t, out)
 	require.Len(t, got, 3)
@@ -92,7 +92,7 @@ func TestChangedAncestorDiffs_ListsAnAncestorWithNoDiffWhenItsSourceOrVersionIsU
 }
 
 func TestChangedAncestorDiffs_NoAncestorsProvidesAnEmptyList(t *testing.T) {
-	out := gather(t, validation.NewChangedAncestorDiffs(&fakeBundle{}, &fakeVersions{}, markSanitizer{}, discardLogger()), failure(nil), remediation.NewEvidence())
+	out := gather(t, validation.NewChangedAncestorDiffs(&fakeBundle{}, &fakeVersions{}, discardLogger()), failure(nil), remediation.NewEvidence())
 
 	got := ancestorDiffs(t, out)
 	assert.NotNil(t, got)

@@ -92,7 +92,12 @@ type Proposal struct {
 	// services is every service this attempt touched — the failing nodes'
 	// services plus the edited ones, sorted — the same set the
 	// ListProposalsRequest.service filter matches a proposal on.
-	Services      []string `protobuf:"bytes,35,rep,name=services,proto3" json:"services,omitempty"`
+	Services []string `protobuf:"bytes,35,rep,name=services,proto3" json:"services,omitempty"`
+	// approvers is who must approve what this attempt did with each node a
+	// remediation settled at its end, the fixed nodes and the handed-over ones,
+	// one entry per node sorted by node_id. Empty on an attempt of the legacy
+	// engine and on one with no approvers recorded.
+	Approvers     []*Approver `protobuf:"bytes,36,rep,name=approvers,proto3" json:"approvers,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -372,6 +377,13 @@ func (x *Proposal) GetServices() []string {
 	return nil
 }
 
+func (x *Proposal) GetApprovers() []*Approver {
+	if x != nil {
+		return x.Approvers
+	}
+	return nil
+}
+
 // ListProposalsRequest filters the proposal list. Empty fields are ignored.
 type ListProposalsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -626,7 +638,11 @@ type BeginPullRequestResponse struct {
 	ResolvedNodeIds []string `protobuf:"bytes,16,rep,name=resolved_node_ids,json=resolvedNodeIds,proto3" json:"resolved_node_ids,omitempty"`
 	// service is the owning-service group this claim covers, echoing the
 	// request's service; "" is the legacy whole-proposal group.
-	Service       string `protobuf:"bytes,17,opt,name=service,proto3" json:"service,omitempty"`
+	Service string `protobuf:"bytes,17,opt,name=service,proto3" json:"service,omitempty"`
+	// approvers is who must approve the claim's fix: the proposal's approvers of
+	// the nodes in resolved_node_ids, sorted by node_id. A node the proposal
+	// records no approver for has no entry.
+	Approvers     []*Approver `protobuf:"bytes,18,rep,name=approvers,proto3" json:"approvers,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -778,6 +794,13 @@ func (x *BeginPullRequestResponse) GetService() string {
 		return x.Service
 	}
 	return ""
+}
+
+func (x *BeginPullRequestResponse) GetApprovers() []*Approver {
+	if x != nil {
+		return x.Approvers
+	}
+	return nil
 }
 
 // RecordPullRequestRequest stores the PR metadata after a PR is opened.
@@ -1147,6 +1170,71 @@ func (x *NodeOutcome) GetCode() string {
 	return ""
 }
 
+// Approver is who must approve what an attempt did with one node: the node's
+// owner, as source says where it was read from. source is "bundle" (the owner
+// the release's code bundle records for the node), "contract_file" (the team of
+// the node's contract file in the repository) or "none" (no owner was found),
+// and owner is empty when source is "none".
+type Approver struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Owner         string                 `protobuf:"bytes,2,opt,name=owner,proto3" json:"owner,omitempty"`
+	Source        string                 `protobuf:"bytes,3,opt,name=source,proto3" json:"source,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Approver) Reset() {
+	*x = Approver{}
+	mi := &file_proto_remediation_v1_remediation_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Approver) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Approver) ProtoMessage() {}
+
+func (x *Approver) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_remediation_v1_remediation_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Approver.ProtoReflect.Descriptor instead.
+func (*Approver) Descriptor() ([]byte, []int) {
+	return file_proto_remediation_v1_remediation_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *Approver) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
+}
+
+func (x *Approver) GetOwner() string {
+	if x != nil {
+		return x.Owner
+	}
+	return ""
+}
+
+func (x *Approver) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
 // Verification is one fix-verification run per edited service and the
 // durable summary of how it went. phase is queued | running | passed |
 // failed (empty before the first read); activated_at is RFC 3339 or empty;
@@ -1165,7 +1253,7 @@ type Verification struct {
 
 func (x *Verification) Reset() {
 	*x = Verification{}
-	mi := &file_proto_remediation_v1_remediation_proto_msgTypes[12]
+	mi := &file_proto_remediation_v1_remediation_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1177,7 +1265,7 @@ func (x *Verification) String() string {
 func (*Verification) ProtoMessage() {}
 
 func (x *Verification) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_remediation_v1_remediation_proto_msgTypes[12]
+	mi := &file_proto_remediation_v1_remediation_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1190,7 +1278,7 @@ func (x *Verification) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Verification.ProtoReflect.Descriptor instead.
 func (*Verification) Descriptor() ([]byte, []int) {
-	return file_proto_remediation_v1_remediation_proto_rawDescGZIP(), []int{12}
+	return file_proto_remediation_v1_remediation_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *Verification) GetService() string {
@@ -1261,7 +1349,7 @@ type PullRequest struct {
 
 func (x *PullRequest) Reset() {
 	*x = PullRequest{}
-	mi := &file_proto_remediation_v1_remediation_proto_msgTypes[13]
+	mi := &file_proto_remediation_v1_remediation_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1273,7 +1361,7 @@ func (x *PullRequest) String() string {
 func (*PullRequest) ProtoMessage() {}
 
 func (x *PullRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_remediation_v1_remediation_proto_msgTypes[13]
+	mi := &file_proto_remediation_v1_remediation_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1286,7 +1374,7 @@ func (x *PullRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PullRequest.ProtoReflect.Descriptor instead.
 func (*PullRequest) Descriptor() ([]byte, []int) {
-	return file_proto_remediation_v1_remediation_proto_rawDescGZIP(), []int{13}
+	return file_proto_remediation_v1_remediation_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *PullRequest) GetService() string {
@@ -1356,8 +1444,7 @@ var File_proto_remediation_v1_remediation_proto protoreflect.FileDescriptor
 
 const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\n" +
-	"&proto/remediation/v1/remediation.proto\x12\x0eremediation.v1\"\xe1\n" +
-	"\n" +
+	"&proto/remediation/v1/remediation.proto\x12\x0eremediation.v1\"\x99\v\n" +
 	"\bProposal\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06source\x18\x02 \x01(\tR\x06source\x12\x1d\n" +
@@ -1403,7 +1490,8 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\rpull_requests\x18! \x03(\v2\x1b.remediation.v1.PullRequestR\fpullRequests\x12\x1f\n" +
 	"\vpr_services\x18\" \x03(\tR\n" +
 	"prServices\x12\x1a\n" +
-	"\bservices\x18# \x03(\tR\bservices\x1a\\\n" +
+	"\bservices\x18# \x03(\tR\bservices\x126\n" +
+	"\tapprovers\x18$ \x03(\v2\x18.remediation.v1.ApproverR\tapprovers\x1a\\\n" +
 	"\x11NodeOutcomesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x121\n" +
 	"\x05value\x18\x02 \x01(\v2\x1b.remediation.v1.NodeOutcomeR\x05value:\x028\x01\"\x98\x01\n" +
@@ -1420,7 +1508,7 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"C\n" +
 	"\x17BeginPullRequestRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
-	"\aservice\x18\x02 \x01(\tR\aservice\"\xa3\x04\n" +
+	"\aservice\x18\x02 \x01(\tR\aservice\"\xdb\x04\n" +
 	"\x18BeginPullRequestResponse\x12\x1f\n" +
 	"\vproposal_id\x18\x01 \x01(\tR\n" +
 	"proposalId\x12\x12\n" +
@@ -1445,7 +1533,8 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"claimed_at\x18\x0e \x01(\tR\tclaimedAt\x12.\n" +
 	"\x05edits\x18\x0f \x03(\v2\x18.remediation.v1.FileEditR\x05edits\x12*\n" +
 	"\x11resolved_node_ids\x18\x10 \x03(\tR\x0fresolvedNodeIds\x12\x18\n" +
-	"\aservice\x18\x11 \x01(\tR\aservice\"\x95\x01\n" +
+	"\aservice\x18\x11 \x01(\tR\aservice\x126\n" +
+	"\tapprovers\x18\x12 \x03(\v2\x18.remediation.v1.ApproverR\tapprovers\"\x95\x01\n" +
 	"\x18RecordPullRequestRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
 	"\x06pr_url\x18\x02 \x01(\tR\x05prUrl\x12\x1b\n" +
@@ -1469,7 +1558,11 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\vNodeOutcome\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x12\x12\n" +
-	"\x04code\x18\x03 \x01(\tR\x04code\"\xa2\x01\n" +
+	"\x04code\x18\x03 \x01(\tR\x04code\"Q\n" +
+	"\bApprover\x12\x17\n" +
+	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x14\n" +
+	"\x05owner\x18\x02 \x01(\tR\x05owner\x12\x16\n" +
+	"\x06source\x18\x03 \x01(\tR\x06source\"\xa2\x01\n" +
 	"\fVerification\x12\x18\n" +
 	"\aservice\x18\x01 \x01(\tR\aservice\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x15\n" +
@@ -1509,7 +1602,7 @@ func file_proto_remediation_v1_remediation_proto_rawDescGZIP() []byte {
 	return file_proto_remediation_v1_remediation_proto_rawDescData
 }
 
-var file_proto_remediation_v1_remediation_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_proto_remediation_v1_remediation_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_proto_remediation_v1_remediation_proto_goTypes = []any{
 	(*Proposal)(nil),                  // 0: remediation.v1.Proposal
 	(*ListProposalsRequest)(nil),      // 1: remediation.v1.ListProposalsRequest
@@ -1523,33 +1616,36 @@ var file_proto_remediation_v1_remediation_proto_goTypes = []any{
 	(*FailPullRequestResponse)(nil),   // 9: remediation.v1.FailPullRequestResponse
 	(*FileEdit)(nil),                  // 10: remediation.v1.FileEdit
 	(*NodeOutcome)(nil),               // 11: remediation.v1.NodeOutcome
-	(*Verification)(nil),              // 12: remediation.v1.Verification
-	(*PullRequest)(nil),               // 13: remediation.v1.PullRequest
-	nil,                               // 14: remediation.v1.Proposal.NodeOutcomesEntry
+	(*Approver)(nil),                  // 12: remediation.v1.Approver
+	(*Verification)(nil),              // 13: remediation.v1.Verification
+	(*PullRequest)(nil),               // 14: remediation.v1.PullRequest
+	nil,                               // 15: remediation.v1.Proposal.NodeOutcomesEntry
 }
 var file_proto_remediation_v1_remediation_proto_depIdxs = []int32{
 	10, // 0: remediation.v1.Proposal.edits:type_name -> remediation.v1.FileEdit
-	14, // 1: remediation.v1.Proposal.node_outcomes:type_name -> remediation.v1.Proposal.NodeOutcomesEntry
-	12, // 2: remediation.v1.Proposal.verifications:type_name -> remediation.v1.Verification
-	13, // 3: remediation.v1.Proposal.pull_requests:type_name -> remediation.v1.PullRequest
-	0,  // 4: remediation.v1.ListProposalsResponse.proposals:type_name -> remediation.v1.Proposal
-	10, // 5: remediation.v1.BeginPullRequestResponse.edits:type_name -> remediation.v1.FileEdit
-	11, // 6: remediation.v1.Proposal.NodeOutcomesEntry.value:type_name -> remediation.v1.NodeOutcome
-	1,  // 7: remediation.v1.RemediationProposals.ListProposals:input_type -> remediation.v1.ListProposalsRequest
-	3,  // 8: remediation.v1.RemediationProposals.GetProposal:input_type -> remediation.v1.GetProposalRequest
-	4,  // 9: remediation.v1.RemediationProposals.BeginPullRequest:input_type -> remediation.v1.BeginPullRequestRequest
-	6,  // 10: remediation.v1.RemediationProposals.RecordPullRequest:input_type -> remediation.v1.RecordPullRequestRequest
-	8,  // 11: remediation.v1.RemediationProposals.FailPullRequest:input_type -> remediation.v1.FailPullRequestRequest
-	2,  // 12: remediation.v1.RemediationProposals.ListProposals:output_type -> remediation.v1.ListProposalsResponse
-	0,  // 13: remediation.v1.RemediationProposals.GetProposal:output_type -> remediation.v1.Proposal
-	5,  // 14: remediation.v1.RemediationProposals.BeginPullRequest:output_type -> remediation.v1.BeginPullRequestResponse
-	7,  // 15: remediation.v1.RemediationProposals.RecordPullRequest:output_type -> remediation.v1.RecordPullRequestResponse
-	9,  // 16: remediation.v1.RemediationProposals.FailPullRequest:output_type -> remediation.v1.FailPullRequestResponse
-	12, // [12:17] is the sub-list for method output_type
-	7,  // [7:12] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	15, // 1: remediation.v1.Proposal.node_outcomes:type_name -> remediation.v1.Proposal.NodeOutcomesEntry
+	13, // 2: remediation.v1.Proposal.verifications:type_name -> remediation.v1.Verification
+	14, // 3: remediation.v1.Proposal.pull_requests:type_name -> remediation.v1.PullRequest
+	12, // 4: remediation.v1.Proposal.approvers:type_name -> remediation.v1.Approver
+	0,  // 5: remediation.v1.ListProposalsResponse.proposals:type_name -> remediation.v1.Proposal
+	10, // 6: remediation.v1.BeginPullRequestResponse.edits:type_name -> remediation.v1.FileEdit
+	12, // 7: remediation.v1.BeginPullRequestResponse.approvers:type_name -> remediation.v1.Approver
+	11, // 8: remediation.v1.Proposal.NodeOutcomesEntry.value:type_name -> remediation.v1.NodeOutcome
+	1,  // 9: remediation.v1.RemediationProposals.ListProposals:input_type -> remediation.v1.ListProposalsRequest
+	3,  // 10: remediation.v1.RemediationProposals.GetProposal:input_type -> remediation.v1.GetProposalRequest
+	4,  // 11: remediation.v1.RemediationProposals.BeginPullRequest:input_type -> remediation.v1.BeginPullRequestRequest
+	6,  // 12: remediation.v1.RemediationProposals.RecordPullRequest:input_type -> remediation.v1.RecordPullRequestRequest
+	8,  // 13: remediation.v1.RemediationProposals.FailPullRequest:input_type -> remediation.v1.FailPullRequestRequest
+	2,  // 14: remediation.v1.RemediationProposals.ListProposals:output_type -> remediation.v1.ListProposalsResponse
+	0,  // 15: remediation.v1.RemediationProposals.GetProposal:output_type -> remediation.v1.Proposal
+	5,  // 16: remediation.v1.RemediationProposals.BeginPullRequest:output_type -> remediation.v1.BeginPullRequestResponse
+	7,  // 17: remediation.v1.RemediationProposals.RecordPullRequest:output_type -> remediation.v1.RecordPullRequestResponse
+	9,  // 18: remediation.v1.RemediationProposals.FailPullRequest:output_type -> remediation.v1.FailPullRequestResponse
+	14, // [14:19] is the sub-list for method output_type
+	9,  // [9:14] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_proto_remediation_v1_remediation_proto_init() }
@@ -1563,7 +1659,7 @@ func file_proto_remediation_v1_remediation_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_remediation_v1_remediation_proto_rawDesc), len(file_proto_remediation_v1_remediation_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   15,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

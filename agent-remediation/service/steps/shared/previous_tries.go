@@ -20,11 +20,10 @@ import (
 // runner's own tries from their journal and the legacy engine's attempts from
 // their proposal rows.
 type PreviousTries struct {
-	tries     repository.TryLister
-	attempts  repository.AttemptLister
-	evidence  ports.EvidenceReader
-	sanitizer ports.LogSanitizer
-	logger    *slog.Logger
+	tries    repository.TryLister
+	attempts repository.AttemptLister
+	evidence ports.EvidenceReader
+	logger   *slog.Logger
 }
 
 var _ step.ContextSource = (*PreviousTries)(nil)
@@ -33,8 +32,8 @@ var _ step.ContextSource = (*PreviousTries)(nil)
 // runner tries, a nil attempts reader no legacy attempts, and a nil evidence
 // reader legacy attempts with no diffs. It calls no port until Gather.
 func NewPreviousTries(tries repository.TryLister, attempts repository.AttemptLister, evidence ports.EvidenceReader,
-	sanitizer ports.LogSanitizer, logger *slog.Logger) *PreviousTries {
-	return &PreviousTries{tries: tries, attempts: attempts, evidence: evidence, sanitizer: sanitizer, logger: LoggerOrDefault(logger)}
+	logger *slog.Logger) *PreviousTries {
+	return &PreviousTries{tries: tries, attempts: attempts, evidence: evidence, logger: LoggerOrDefault(logger)}
 }
 
 // Meta describes the step.
@@ -43,7 +42,7 @@ func (*PreviousTries) Meta() step.Meta {
 		Name: "previous_tries",
 		Kind: step.KindContext,
 		Description: "Lists the earlier tries at the cluster's failing nodes in this release, in this round and the rounds before it, oldest first: " +
-			"each try's diffs, what its pre-flight and cross-cluster checks found and why its verification failed, sanitized. " +
+			"each try's diffs, what its pre-flight and cross-cluster checks found and why its verification failed. " +
 			"The legacy engine's attempts are listed with their verification error and diffs.",
 		Needs:    []remediation.EvidenceKey{remediation.KeyFailure},
 		Provides: []remediation.EvidenceKey{remediation.KeyPreviousTries},
@@ -51,8 +50,8 @@ func (*PreviousTries) Meta() step.Meta {
 }
 
 // Gather returns the tries made before the failure's own (its trigger's round
-// and its try) whose clusters held any of its member nodes, oldest first, every
-// text in them sanitized. The runner's tries come from the journal of every
+// and its try) whose clusters held any of its member nodes, oldest first. The
+// runner's tries come from the journal of every
 // remediation of the release; a try whose journal does not decode is left out
 // and logged. The legacy attempts are the release's proposal rows of the
 // trigger's source that belong to no remediation and name a member; a diff of
@@ -71,11 +70,7 @@ func (s *PreviousTries) Gather(ctx context.Context, in step.ContextInput) (step.
 		return step.ContextOutput{}, err
 	}
 	earlier := remediation.TryRecords(append(records, legacy...), memberIDs(f), remediation.TryRef{Round: f.Trigger.Round, Try: f.Try})
-	out := make([]remediation.TryRecord, 0, len(earlier))
-	for _, rec := range earlier {
-		out = append(out, s.sanitized(rec))
-	}
-	return step.ContextOutput{Evidence: map[remediation.EvidenceKey]any{remediation.KeyPreviousTries: out}}, nil
+	return step.ContextOutput{Evidence: map[remediation.EvidenceKey]any{remediation.KeyPreviousTries: earlier}}, nil
 }
 
 // runnerTries reads every try of the failure's release from the journal.
@@ -148,44 +143,6 @@ func (s *PreviousTries) legacyDiffs(ctx context.Context, v proposal.View) []reme
 			continue
 		}
 		out = append(out, remediation.EditRecord{Path: e.Path, Diff: raw})
-	}
-	return out
-}
-
-// sanitized is rec with every diff, finding message and outcome sanitized,
-// since they leave for an external model.
-func (s *PreviousTries) sanitized(rec remediation.TryRecord) remediation.TryRecord {
-	clusters := make([]remediation.ClusterRecord, 0, len(rec.Clusters))
-	for _, c := range rec.Clusters {
-		var edits []remediation.EditRecord
-		for _, e := range c.Edits {
-			edits = append(edits, remediation.EditRecord{Path: e.Path, Diff: s.sanitizer.Sanitize(e.Diff)})
-		}
-		var rounds [][]remediation.Finding
-		for _, r := range c.Rounds {
-			rounds = append(rounds, s.findings(r))
-		}
-		c.Edits, c.Rounds = edits, rounds
-		if c.Outcome != "" {
-			c.Outcome = s.sanitizer.Sanitize(c.Outcome)
-		}
-		clusters = append(clusters, c)
-	}
-	rec.Clusters = clusters
-	rec.CrossCluster = s.findings(rec.CrossCluster)
-	rec.Gate = s.findings(rec.Gate)
-	return rec
-}
-
-// findings is fs with each message sanitized. No findings stay nil.
-func (s *PreviousTries) findings(fs []remediation.Finding) []remediation.Finding {
-	if fs == nil {
-		return nil
-	}
-	out := make([]remediation.Finding, len(fs))
-	for i, f := range fs {
-		f.Message = s.sanitizer.Sanitize(f.Message)
-		out[i] = f
 	}
 	return out
 }

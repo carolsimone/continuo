@@ -1,16 +1,13 @@
 package sanitizer
 
-import (
-	"github.com/carolsimone/continuo/pkg/sanitize"
-	"github.com/carolsimone/continuo/agent-remediation/service/ports"
-)
+import "github.com/carolsimone/continuo/agent-remediation/service/ports"
 
-// Passthrough adapts the shared pkg/sanitize seam to agent-remediation's
-// LogSanitizer port, so dbt logs and code stored in the graph run through the
-// same redaction rules.
+// Passthrough is the LogSanitizer of the legacy lanes: it returns a dbt log or a
+// source text exactly as it was given. The runner does not use it; the runner
+// cleans every text it sends the model with its own pkg/sanitize.Redactor.
 type Passthrough struct{}
 
-// Sanitize applies the shared redaction rules to a dbt log.
-func (Passthrough) Sanitize(log string) string { return sanitize.Text(log) }
+// Sanitize returns log unchanged.
+func (Passthrough) Sanitize(log string) string { return log }
 
 var _ ports.LogSanitizer = Passthrough{}

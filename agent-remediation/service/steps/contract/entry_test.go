@@ -16,7 +16,7 @@ import (
 
 func gatherEntry(t *testing.T, b *fakeBundle, f remediation.Failure) (step.ContextOutput, error) {
 	t.Helper()
-	return contract.NewContractEntry(b, markSanitizer{}, discardLogger()).Gather(context.Background(),
+	return contract.NewContractEntry(b, discardLogger()).Gather(context.Background(),
 		step.ContextInput{Failure: f, Evidence: remediation.NewEvidence()})
 }
 
@@ -28,7 +28,7 @@ func entryOf(t *testing.T, out step.ContextOutput) remediation.Text {
 }
 
 func TestContractEntry_MetaNamesTheStepAndWhatItProvides(t *testing.T) {
-	m := contract.NewContractEntry(nil, nil, nil).Meta()
+	m := contract.NewContractEntry(nil, nil).Meta()
 	assert.Equal(t, "contract_entry", string(m.Name))
 	assert.Equal(t, step.KindContext, m.Kind)
 	assert.NotEmpty(t, m.Description)
@@ -36,7 +36,7 @@ func TestContractEntry_MetaNamesTheStepAndWhatItProvides(t *testing.T) {
 	assert.Equal(t, []remediation.EvidenceKey{remediation.KeyContractEntry}, m.Provides)
 }
 
-func TestContractEntry_ReadsTheBundlesNormalizedContractSanitized(t *testing.T) {
+func TestContractEntry_ReadsTheBundlesNormalizedContract(t *testing.T) {
 	b := &fakeBundle{nodes: map[string]ports.CandidateSource{
 		nodeID: {Runtime: ports.RuntimePython, RawCode: `{"table":"rates"}`},
 	}}
@@ -45,7 +45,7 @@ func TestContractEntry_ReadsTheBundlesNormalizedContractSanitized(t *testing.T) 
 
 	require.NoError(t, err)
 	assert.False(t, out.Declined)
-	assert.Equal(t, remediation.Text(`<{"table":"rates"}>`), entryOf(t, out))
+	assert.Equal(t, remediation.Text(`{"table":"rates"}`), entryOf(t, out))
 	assert.Equal(t, []bundleCall{{"s3://bundle/rel-1", nodeID, "rel-1"}}, b.calls)
 }
 

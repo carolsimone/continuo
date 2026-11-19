@@ -33,15 +33,15 @@ func (f *fakeVersions) CurrentVersion(_ context.Context, id string) (ports.Curre
 var _ ports.VersionReader = (*fakeVersions)(nil)
 
 func differ(v *fakeVersions) shared.ChangeDiffer {
-	return shared.ChangeDiffer{Versions: v, Sanitizer: markSanitizer{}, Logger: discardLogger()}
+	return shared.ChangeDiffer{Versions: v, Logger: discardLogger()}
 }
 
-func TestChangeDiffer_IsTheSanitizedDiffFromThePromotedVersion(t *testing.T) {
+func TestChangeDiffer_IsTheDiffFromThePromotedVersion(t *testing.T) {
 	v := &fakeVersions{versions: map[string]ports.CurrentVersion{"model.a": {RawCode: "select 1"}}}
 
 	got := differ(v).Diff(context.Background(), "model.a", "select 2")
 
-	assert.Equal(t, "<"+proposal.ComputeUnifiedDiff("select 1", "select 2", "model.a")+">", got)
+	assert.Equal(t, proposal.ComputeUnifiedDiff("select 1", "select 2", "model.a"), got)
 	assert.Equal(t, []string{"model.a"}, v.calls)
 }
 
@@ -83,16 +83,15 @@ func TestChangeDiffer_CapsALongDiffAtARuneBoundary(t *testing.T) {
 	}
 }
 
-func TestChangeDiffer_TruncatesAfterSanitizing(t *testing.T) {
-	// The sanitizer wraps the whole diff, so the result ends with the cut marker
-	// when truncation runs last, and with the sanitizer's closing mark when it
-	// runs first.
-	v := &fakeVersions{versions: map[string]ports.CurrentVersion{"model.a": {RawCode: "select 1"}}}
+func TestChangeDiffer_ComparesTwoCleanedTexts(t *testing.T) {
+	stored := "select 'password=[redacted:secret]' as pw\nselect 1"
+	v := &fakeVersions{versions: map[string]ports.CurrentVersion{"model.a": {RawCode: stored}}}
 
-	got := differ(v).Diff(context.Background(), "model.a", "select '"+strings.Repeat("x", 9000)+"'")
+	got := differ(v).Diff(context.Background(), "model.a", "select 'password=hunter2' as pw\nselect 2")
 
-	assert.True(t, strings.HasPrefix(got, "<"))
-	assert.True(t, strings.HasSuffix(got, "\n… (diff truncated)"), "truncation runs after the sanitizer")
+	assert.Equal(t, proposal.ComputeUnifiedDiff(stored, "select 'password=[redacted:secret]' as pw\nselect 2", "model.a"), got,
+		"the candidate is cleaned as the catalog cleans what it stores, so only the real change shows")
+	assert.NotContains(t, got, "hunter2")
 }
 
 func TestLoggerOrDefault_ReplacesANilLogger(t *testing.T) {

@@ -16,7 +16,6 @@ import (
 // normalized contract from the release's code bundle.
 type ContractEntry struct {
 	candidates ports.CandidateSourceReader
-	sanitizer  ports.LogSanitizer
 	logger     *slog.Logger
 }
 
@@ -24,8 +23,8 @@ var _ step.ContextSource = (*ContractEntry)(nil)
 
 // NewContractEntry builds the contract_entry step. It calls no port until
 // Gather.
-func NewContractEntry(candidates ports.CandidateSourceReader, sanitizer ports.LogSanitizer, logger *slog.Logger) *ContractEntry {
-	return &ContractEntry{candidates: candidates, sanitizer: sanitizer, logger: shared.LoggerOrDefault(logger)}
+func NewContractEntry(candidates ports.CandidateSourceReader, logger *slog.Logger) *ContractEntry {
+	return &ContractEntry{candidates: candidates, logger: shared.LoggerOrDefault(logger)}
 }
 
 // Meta describes the step.
@@ -33,7 +32,7 @@ func (*ContractEntry) Meta() step.Meta {
 	return step.Meta{
 		Name: "contract_entry",
 		Kind: step.KindContext,
-		Description: "Reads the failing python node's entry from the release's code bundle: its normalized contract as canonical JSON, sanitized. " +
+		Description: "Reads the failing python node's entry from the release's code bundle: its normalized contract as canonical JSON. " +
 			"Provides an empty text when the release has no bundle, the entry is not in it or it records another runtime.",
 		Needs:    []remediation.EvidenceKey{remediation.KeyFailure},
 		Provides: []remediation.EvidenceKey{remediation.KeyContractEntry},
@@ -57,7 +56,7 @@ func (s *ContractEntry) Gather(ctx context.Context, in step.ContextInput) (step.
 	src, err := s.candidates.NodeSource(ctx, bundleURI, nodeID, f.Trigger.ReleaseID)
 	switch {
 	case err == nil && src.Runtime == ports.RuntimePython:
-		return entryOutput(s.sanitizer.Sanitize(src.RawCode)), nil
+		return entryOutput(src.RawCode), nil
 	case err == nil:
 		s.logger.Warn("code bundle records a non-python runtime for a python node; omitting the contract entry",
 			"node", nodeID, "runtime", src.Runtime)

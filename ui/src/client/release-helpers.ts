@@ -1,5 +1,5 @@
 import { HANDOVER_REASONS, type HandoverReason } from '../server/generated/vocabulary.gen';
-import { NodeValidationResult, ProposalDTO, PullRequestDTO, ReleaseTransition } from './types';
+import { ApproverDTO, NodeValidationResult, ProposalDTO, PullRequestDTO, ReleaseTransition } from './types';
 
 // releasePillClass maps a status to a design-system pill variant. It handles
 // release lifecycle statuses (promoted/rejected/validating/…), verification-run
@@ -147,6 +147,15 @@ export function proposalReasonForNode(p: ProposalDTO, nodeId: string): string {
 export function proposalCodeForNode(p: ProposalDTO, nodeId: string): HandoverReason | undefined {
   const code = p.node_outcomes?.[nodeId]?.code;
   return code && (HANDOVER_REASONS as readonly string[]).includes(code) ? code : undefined;
+}
+
+// proposalApproverForNode reads who must approve what a batched attempt did
+// with one specific node. It reads only that node's own entry: an attempt of
+// the legacy engine records none, and a node the attempt recorded no approver
+// for has none either, which says the owner was not recorded, not that the node
+// has no owner (an entry with an empty owner says that).
+export function proposalApproverForNode(p: ProposalDTO, nodeId: string): ApproverDTO | undefined {
+  return p.approvers?.find(a => a.node_id === nodeId);
 }
 
 // proposalPullRequests lists every pull request opened from this proposal.

@@ -29,6 +29,7 @@ func TestEveryRegisteredStepIsUsedByABuiltinFile(t *testing.T) {
 		mark(f.Context...)
 		mark(f.AcrossClusters...)
 		mark(f.Gate...)
+		mark(f.Approver)
 		// An output step is named by the action of the flow's output.
 		used[workflow.StepName(f.OnPass.Action)] = true
 		used[workflow.StepName(f.OnGiveUp.Action)] = true
@@ -59,6 +60,17 @@ func TestBuiltinFilesValidate(t *testing.T) {
 	warnings, err := runner.Validate(set, runner.NewRegistry(runner.Collaborators{}))
 	require.NoError(t, err)
 	require.Empty(t, warnings)
+}
+
+// TestBuiltinFlowLetsTheModelSeeCodeAndLogs: the built-in flow shows the model
+// source code and the text failures and tools report, and no rows of data.
+func TestBuiltinFlowLetsTheModelSeeCodeAndLogs(t *testing.T) {
+	set, err := workflowfile.Load(workflows.Builtin)
+	require.NoError(t, err)
+
+	flow, ok := set.Flows["rejected-release"]
+	require.True(t, ok)
+	require.Equal(t, []workflow.DataClass{workflow.ClassCode, workflow.ClassLogs}, flow.ModelMaySee)
 }
 
 // TestBuiltinTypesCheckSiblingsBeforeImagePackages: a python or csv cluster

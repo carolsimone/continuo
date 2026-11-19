@@ -6,10 +6,10 @@
 // and its diff are persisted as artifacts, so before this there was no record of
 // what was actually fed to the LLM for a given proposal.
 //
-// The prompt content is already sanitized by each Fixer before it reaches this
-// port (the shown files, the dbt log, and the precedents all pass through the
-// LogSanitizer during assembly), so logging it exposes nothing the request does
-// not already send to the external model.
+// The runner cleans every request with its Redactor before it reaches this
+// port, so a runner prompt is logged with placeholders in place of the values.
+// The legacy lanes pass their texts through the LogSanitizer, which returns them
+// unchanged, so their prompts are logged exactly as they are sent.
 //
 // The decorator is wired inside the caching decorator (it wraps the real
 // provider; the cache wraps it), so a prompt is logged exactly when the model is

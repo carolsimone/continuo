@@ -64,6 +64,14 @@
 //	GET  /repos/{owner}/{repo}/pulls/{n}
 //	    Returns the current PR state (404 when never opened).
 //
+//	POST /repos/{owner}/{repo}/pulls/{n}/requested_reviewers
+//	    Records the users ("reviewers") and teams ("team_reviewers") a review
+//	    was requested from, adding to what was asked before and listing nobody
+//	    twice. Returns 201 with the PR JSON, which lists them as
+//	    requested_reviewers ([{login}]) and requested_teams ([{slug}]) the way
+//	    GitHub does. 404 for a PR that was never opened, 422 for a body that
+//	    is not JSON.
+//
 //	PUT  /repos/{owner}/{repo}/pulls/{n}/merge
 //	    Marks PR as merged and closed. Resolves the PR's head branch to its
 //	    latest written commit (see branchRefs) and records/returns that as the
@@ -88,6 +96,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -169,6 +178,10 @@ type stubPRState struct {
 	Closed         bool
 	Merged         bool
 	MergeCommitSHA string
+	// RequestedUsers and RequestedTeams are the user logins and team slugs a
+	// review was requested from, in the order they were first asked.
+	RequestedUsers []string
+	RequestedTeams []string
 }
 
 // resetPRs clears all PR state and rewinds the PR-number counter back to
@@ -761,6 +774,7 @@ func tarballOf(root, prefix, commit string) ([]byte, error) {
 //
 //	GET  pulls?head=&state=  -> PRs matching head branch and state (see listPulls)
 //	POST pulls                -> opens a new stub PR (registers lifecycle state)
+//	POST pulls/{n}/requested_reviewers -> records the users and teams asked
 //	GET  pulls/{n}             -> current PR state (404 when never opened)
 //	PUT  pulls/{n}/merge       -> mark merged, resolving merge_commit_sha to
 //	                              the head branch's latest written commit
@@ -800,6 +814,37 @@ func handlePulls(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(pullJSON(st))
+
+	case strings.HasSuffix(after, "/requested_reviewers") && r.Method == http.MethodPost:
+		n, err := strconv.Atoi(strings.TrimSuffix(after, "/requested_reviewers"))
+		if err != nil {
+			http.Error(w, "bad pull number", http.StatusBadRequest)
+			return
+		}
+		var body struct {
+			Reviewers     []string `json:"reviewers"`
+			TeamReviewers []string `json:"team_reviewers"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "unprocessable body", http.StatusUnprocessableEntity)
+			return
+		}
+		prMu.Lock()
+		st, ok := prStates[n]
+		var snapshot stubPRState
+		if ok {
+			st.RequestedUsers = appendNew(st.RequestedUsers, body.Reviewers)
+			st.RequestedTeams = appendNew(st.RequestedTeams, body.TeamReviewers)
+			snapshot = *st
+		}
+		prMu.Unlock()
+		if !ok {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(pullJSON(&snapshot))
 
 	case strings.HasSuffix(after, "/merge") && r.Method == http.MethodPut:
 		n, err := strconv.Atoi(strings.TrimSuffix(after, "/merge"))
@@ -875,6 +920,17 @@ func handlePulls(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// appendNew returns have with each name of add it does not hold yet appended,
+// in the order add lists them.
+func appendNew(have, add []string) []string {
+	for _, name := range add {
+		if !slices.Contains(have, name) {
+			have = append(have, name)
+		}
+	}
+	return have
+}
+
 // writePullJSON renders the current lifecycle state of PR n in the shape the
 // GitHub pulls API returns; unknown n is a 404.
 func writePullJSON(w http.ResponseWriter, n int) {
@@ -911,17 +967,27 @@ func pullJSON(st *stubPRState) map[string]interface{} {
 	if createdAt == "" {
 		createdAt = stubClosedAt
 	}
+	users := make([]map[string]string, 0, len(st.RequestedUsers))
+	for _, login := range st.RequestedUsers {
+		users = append(users, map[string]string{"login": login})
+	}
+	teams := make([]map[string]string, 0, len(st.RequestedTeams))
+	for _, slug := range st.RequestedTeams {
+		teams = append(teams, map[string]string{"slug": slug})
+	}
 	return map[string]interface{}{
-		"number":           st.Number,
-		"title":            st.Title,
-		"body":             st.Body,
-		"state":            state,
-		"merged":           st.Merged,
-		"merged_at":        mergedAt,
-		"closed_at":        closedAt,
-		"created_at":       createdAt,
-		"html_url":         fmt.Sprintf("http://stub-github/pull/%d", st.Number),
-		"merge_commit_sha": st.MergeCommitSHA,
+		"requested_reviewers": users,
+		"requested_teams":     teams,
+		"number":              st.Number,
+		"title":               st.Title,
+		"body":                st.Body,
+		"state":               state,
+		"merged":              st.Merged,
+		"merged_at":           mergedAt,
+		"closed_at":           closedAt,
+		"created_at":          createdAt,
+		"html_url":            fmt.Sprintf("http://stub-github/pull/%d", st.Number),
+		"merge_commit_sha":    st.MergeCommitSHA,
 	}
 }
 

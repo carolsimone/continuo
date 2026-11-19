@@ -46,7 +46,7 @@ const (
 	RemediationRequestedV3 = "remediation.requested:v3"
 	// RemediationProposedV1 — One verified fix proposal per (release, attempt), carrying every node the attempt resolves and every file it edits; emitted by the remediation agent, consumed by the PR creator and approval surfaces.
 	RemediationProposedV1 = "remediation.proposed:v1"
-	// RemediationHandedOverV1 — One event when a remediation ends with nodes a human must fix, each with its reason code; emitted by the remediation agent, read by people and not consumed by any service.
+	// RemediationHandedOverV1 — One event when a remediation ends with nodes a human must fix, each with its reason code and its owner; emitted by the remediation agent, read by people and not consumed by any service.
 	RemediationHandedOverV1 = "remediation.handed_over:v1"
 	// RemediationPrOpenedV1 — Emitted when an operator opens a GitHub PR from a fix proposal, one per (release, attempt) and carrying every node the PR resolves; consumed by catalog's case-base proposals group.
 	RemediationPrOpenedV1 = "remediation.pr_opened:v1"

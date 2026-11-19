@@ -7,6 +7,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	"github.com/carolsimone/continuo/pkg/sanitize"
 )
 
 // maxChangeDiffBytes caps a change diff (what this release changed in a node
@@ -17,16 +18,15 @@ const maxChangeDiffBytes = 8192
 // ChangeDiffer diffs a node's source in the release against the version that
 // runs now.
 type ChangeDiffer struct {
-	Versions  ports.VersionReader
-	Sanitizer ports.LogSanitizer
-	Logger    *slog.Logger
+	Versions ports.VersionReader
+	Logger   *slog.Logger
 }
 
 // Diff is the unified diff from nodeID's promoted version to candidateSource,
-// sanitized before it is truncated, like every other source string sent to the
-// model, so a secret in a changed line is redacted rather than sent. It is empty
-// when the node has no promoted version or the version read fails, which is
-// logged.
+// capped. The catalog stores a version's code cleaned by sanitize.Text, so the
+// diff compares that text with the candidate cleaned the same way, and the
+// catalog's redaction never shows as a change. It is empty when the node has no
+// promoted version or the version read fails, which is logged.
 func (d ChangeDiffer) Diff(ctx context.Context, nodeID, candidateSource string) string {
 	cur, ok, err := d.Versions.CurrentVersion(ctx, nodeID)
 	if err != nil {
@@ -36,5 +36,5 @@ func (d ChangeDiffer) Diff(ctx context.Context, nodeID, candidateSource string) 
 	if !ok {
 		return ""
 	}
-	return prompt.TruncateDiff(d.Sanitizer.Sanitize(proposal.ComputeUnifiedDiff(cur.RawCode, candidateSource, nodeID)), maxChangeDiffBytes)
+	return prompt.TruncateDiff(proposal.ComputeUnifiedDiff(sanitize.Text(cur.RawCode), sanitize.Text(candidateSource), nodeID), maxChangeDiffBytes)
 }

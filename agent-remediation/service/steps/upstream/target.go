@@ -31,12 +31,12 @@ var _ step.ContextSource = (*Target)(nil)
 
 // NewTarget builds the upstream_target step. serviceRepoPaths maps a service
 // name to its path inside the repository. It calls no port until Gather.
-func NewTarget(candidates ports.CandidateSourceReader, locator ports.NodeLocator, versions ports.VersionReader, sanitizer ports.LogSanitizer, serviceRepoPaths map[string]string, logger *slog.Logger) *Target {
+func NewTarget(candidates ports.CandidateSourceReader, locator ports.NodeLocator, versions ports.VersionReader, serviceRepoPaths map[string]string, logger *slog.Logger) *Target {
 	logger = shared.LoggerOrDefault(logger)
 	return &Target{
 		candidates:       candidates,
 		locator:          locator,
-		changes:          shared.ChangeDiffer{Versions: versions, Sanitizer: sanitizer, Logger: logger},
+		changes:          shared.ChangeDiffer{Versions: versions, Logger: logger},
 		serviceRepoPaths: serviceRepoPaths,
 		logger:           logger,
 	}

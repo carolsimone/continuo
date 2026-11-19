@@ -1,9 +1,10 @@
 // Package step defines the contract between the runner and the steps it runs.
 // A step is a small unit of work at one stage of a remediation: it gathers
 // evidence, builds a model request, checks a draft, checks every cluster's
-// draft together, judges a try at the verification gate, or hands the result
-// over. Each step describes itself with a Meta, and the runner reaches it only
-// through the interface of its Kind. This package imports no adapter.
+// draft together, judges a try at the verification gate, works out who must
+// approve the result, or hands the result over. Each step describes itself
+// with a Meta, and the runner reaches it only through the interface of its
+// Kind. This package imports no adapter.
 package step
 
 import (
@@ -28,7 +29,7 @@ const (
 	KindPrompt Kind = "prompt"
 	// KindCheck is a Check, a CrossCheck or a LongCheck.
 	KindCheck Kind = "check"
-	// KindApprover picks who reviews a proposal.
+	// KindApprover is an Approver.
 	KindApprover Kind = "approver"
 	// KindOutput is a PassOutput or a GiveUpOutput.
 	KindOutput Kind = "output"
@@ -188,6 +189,25 @@ type GateVerdict struct {
 	Phases        []proposal.Verification
 }
 
+// Approver works out who must approve what a remediation did with each of its
+// nodes. The runner runs it inside the transaction that ends the remediation,
+// before the outputs, which it hands the approvers to. An error fails that
+// transaction, so the end runs again; node_owner returns none, so an owner it
+// cannot read never stops an end.
+type Approver interface {
+	Meta() Meta
+	Approvers(ctx context.Context, in ApproverInput) ([]proposal.Approver, error)
+}
+
+// ApproverInput is what an approver reads: the trigger, the nodes to name an
+// approver for and the clusters they were worked in, each with the evidence
+// its steps gathered (and its draft, for a cluster the fix covers).
+type ApproverInput struct {
+	Trigger  remediation.Trigger
+	Clusters []ClusterDraft
+	Nodes    []string
+}
+
 // PassOutput hands a verified proposal over, inside the unit of work that
 // commits the pass.
 type PassOutput interface {
@@ -204,10 +224,14 @@ type GiveUpOutput interface {
 
 // OutputInput is what an output step reads. HandedOver is set for the give-up
 // output: every node the remediation leaves to a human, sorted by node id.
+// Approvers is who must approve each node the output acts on, sorted by node
+// id: the nodes the verified fix covers for the pass output, and the nodes
+// handed over for the give-up output.
 type OutputInput struct {
 	Remediation remediation.Remediation
 	Try         remediation.Try
 	Trigger     remediation.Trigger
 	Snapshot    remediation.Snapshot
 	HandedOver  []remediation.HandOver
+	Approvers   []proposal.Approver
 }

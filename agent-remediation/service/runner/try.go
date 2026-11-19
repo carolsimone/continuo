@@ -16,6 +16,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/typology"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
+	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
@@ -108,7 +109,7 @@ func (r *Runner) NextTry(ctx context.Context, id uuid.UUID) error {
 func (r *Runner) openTry(ctx context.Context, run tryRun) error {
 	t := run.trigger
 	rem := run.snap.Remediation
-	return r.commit(ctx, rem.ID, func(u uow.UnitOfWork) error {
+	return r.commitRun(ctx, run, func(u uow.UnitOfWork) error {
 		inRound, total, err := countAttempts(ctx, u.ProposalRepo(), t)
 		if err != nil {
 			return err
@@ -146,8 +147,8 @@ func (r *Runner) openTry(ctx context.Context, run tryRun) error {
 // failures counted on the remediation's own row are cleared: the try opened.
 //
 // Each node settled for good (settledNodes) comes first, as a single cluster of
-// its own already handed over with the outcome it was settled with; it runs no
-// step. Only the other nodes are grouped into clusters to work. The in-flight
+// its own already handed over with the outcome and the type it was settled with;
+// it runs no step. Only the other nodes are grouped into clusters to work. The in-flight
 // row names every cluster handed over at once with its outcome, and every
 // other node as being worked on.
 func (r *Runner) startTry(ctx context.Context, u uow.UnitOfWork, run tryRun, attempt int) error {
@@ -204,19 +205,27 @@ func (r *Runner) startTry(ctx context.Context, u uow.UnitOfWork, run tryRun, att
 	return nil
 }
 
+// settledNode is a node settled for good: the outcome it was settled with and
+// the type of the cluster that settled it, empty for a node the classifier
+// marked unfixable, which no cluster ever worked.
+type settledNode struct {
+	outcome  proposal.NodeOutcome
+	typeName string
+}
+
 // settledNodes is every node of the remediation settled for good, with the
 // outcome it was settled with: each trigger node the classifier marked
 // unfixable, with the classifier's outcome, and, when the try being replaced
 // failed, each member of one of its clusters whose outcome carries a settled
-// code (settledCode). The clusters a try carries are themselves handed over
-// with their code, so a node once settled stays settled in every later try. A
-// node handed over because its pre-flight rounds are spent is not settled, and
-// is grouped again.
-func settledNodes(run tryRun) map[string]proposal.NodeOutcome {
-	out := map[string]proposal.NodeOutcome{}
+// code (settledCode), with the type of that cluster. The clusters a try carries
+// are themselves handed over with their code and type, so a node once settled
+// stays settled in every later try. A node handed over because its pre-flight
+// rounds are spent is not settled, and is grouped again.
+func settledNodes(run tryRun) map[string]settledNode {
+	out := map[string]settledNode{}
 	for _, n := range run.trigger.Nodes {
 		if n.Unfixable != nil {
-			out[n.NodeID] = unfixableOutcome(*n.Unfixable)
+			out[n.NodeID] = settledNode{outcome: unfixableOutcome(*n.Unfixable)}
 		}
 	}
 	if run.snap.Try == nil || run.snap.Try.Status != remediation.TryFailed {
@@ -228,7 +237,7 @@ func settledNodes(run tryRun) map[string]proposal.NodeOutcome {
 		}
 		for _, m := range c.Members {
 			if _, ok := out[m]; !ok {
-				out[m] = *c.Outcome
+				out[m] = settledNode{outcome: *c.Outcome, typeName: c.TypeName}
 			}
 		}
 	}
@@ -268,10 +277,10 @@ func attemptOutcomes(t remediation.Trigger, o proposal.NodeOutcome) map[string]p
 	return out
 }
 
-// settledCluster is cluster n of a try for the node settled for good with
-// outcome o: a single cluster targeting the node, already handed over, with no
-// type.
-func (r *Runner) settledCluster(rem remediation.Remediation, try remediation.Try, n int, nodeID string, o proposal.NodeOutcome) remediation.Cluster {
+// settledCluster is cluster n of a try for the node settled for good: a single
+// cluster targeting the node, already handed over with the settled outcome and
+// the type of the cluster that settled it.
+func (r *Runner) settledCluster(rem remediation.Remediation, try remediation.Try, n int, nodeID string, s settledNode) remediation.Cluster {
 	return remediation.Cluster{
 		RemediationID: rem.ID,
 		Try:           try.Try,
@@ -279,9 +288,10 @@ func (r *Runner) settledCluster(rem remediation.Remediation, try remediation.Try
 		Kind:          workflow.ClusterSingle,
 		TargetNodeID:  nodeID,
 		Members:       []string{nodeID},
+		TypeName:      s.typeName,
 		Status:        remediation.ClusterHandedOver,
 		Round:         1,
-		Outcome:       &o,
+		Outcome:       &s.outcome,
 		UpdatedAt:     r.clock.Now(),
 	}
 }
@@ -376,23 +386,31 @@ func triedMessage(tried int, why string) string {
 
 // endWithAttempt records the attempt's terminal proposal row, hands over the
 // nodes whose outcome in it carries a code and ends the remediation, in u's
-// transaction.
+// transaction. Once the transaction commits, each node counts with how it
+// ended.
 func (r *Runner) endWithAttempt(ctx context.Context, u uow.UnitOfWork, run tryRun, attempt int, p proposal.Proposal) error {
 	if err := r.recordAttempt(ctx, u, run, attempt, p); err != nil {
 		return err
 	}
-	if err := r.handOver(ctx, u, run, p.NodeOutcomes); err != nil {
+	if err := r.handOver(ctx, u, run, attempt, p.NodeOutcomes); err != nil {
 		return err
 	}
-	return r.endRemediation(ctx, u, run.snap.Remediation)
+	if err := r.endRemediation(ctx, u, run.snap.Remediation); err != nil {
+		return err
+	}
+	run.countOutcomes(p.NodeOutcomes)
+	return nil
 }
 
-// handOver runs the flow's give-up output, in u's transaction, for every node
-// of an ending remediation whose final outcome carries a code
-// (remediation.HandOvers). A remediation that made a try records the output on
-// that try's journal. With no node to hand over, nothing runs and nothing is
-// written.
-func (r *Runner) handOver(ctx context.Context, u uow.UnitOfWork, run tryRun, outcomes map[string]proposal.NodeOutcome) error {
+// handOver runs the flow's approver and then its give-up output, in u's
+// transaction, for every node of an ending remediation whose final outcome
+// carries a code (remediation.HandOvers): each node's approver, worked out from
+// the clusters of the current try and the earlier clusters that settled the
+// nodes it carried (workedClusters), is recorded on the row of
+// the remediation's attempt, which the caller has already recorded, and handed
+// to the output. A remediation that made a try records the output on that try's
+// journal. With no node to hand over, nothing runs and nothing is written.
+func (r *Runner) handOver(ctx context.Context, u uow.UnitOfWork, run tryRun, attempt int, outcomes map[string]proposal.NodeOutcome) error {
 	handed := remediation.HandOvers(outcomes)
 	if len(handed) == 0 {
 		return nil
@@ -402,19 +420,38 @@ func (r *Runner) handOver(ctx context.Context, u uow.UnitOfWork, run tryRun, out
 	if err != nil {
 		return err
 	}
-	in := step.OutputInput{Remediation: run.snap.Remediation, Trigger: run.trigger, Snapshot: run.snap, HandedOver: handed}
+	clusters, err := r.workedClusters(ctx, u.RemediationRepo(), run)
+	if err != nil {
+		return err
+	}
+	nodes := make([]string, len(handed))
+	for i, h := range handed {
+		nodes[i] = h.NodeID
+	}
+	approvers, err := r.approversFor(ctx, run, clusters, nodes)
+	if err != nil {
+		return err
+	}
+	if len(approvers) > 0 {
+		if err := u.ProposalRepo().RecordApprovers(ctx, run.trigger.ReleaseID, attempt, approvers); err != nil {
+			return fmt.Errorf("record the approvers of attempt %d: %w", attempt, err)
+		}
+	}
+	in := step.OutputInput{Remediation: run.snap.Remediation, Trigger: run.trigger, Snapshot: run.snap, HandedOver: handed, Approvers: approvers}
+	var row remediation.StepRun
 	if run.snap.Try != nil {
 		in.Try = *run.snap.Try
+		row = r.newRow(run, flowCluster, string(name), kindOutput, flowRound, run.flow.Revision)
 	}
 	if err := out.GiveUp(ctx, u, in); err != nil {
 		return fmt.Errorf("step %s: %w", name, err)
 	}
 	if run.snap.Try != nil {
-		row := r.newRow(run, flowCluster, string(name), kindOutput, flowRound, run.flow.Revision)
 		r.finish(&row)
 		if err := u.RemediationRepo().SaveStep(ctx, row); err != nil {
 			return fmt.Errorf("save step %s: %w", name, err)
 		}
+		run.countStage("", ports.StageOutput, row)
 	}
 	r.logger.Info("nodes handed over", "remediation", run.snap.Remediation.ID, "release", run.trigger.ReleaseID,
 		"nodes", len(handed), "output", name)
@@ -424,9 +461,11 @@ func (r *Runner) handOver(ctx context.Context, u uow.UnitOfWork, run tryRun, out
 // recordAttempt stamps the trigger's identity and the remediation onto the
 // attempt's proposal row, derives its representative views, and upserts it in
 // u's transaction. A row that narrows no nodes addresses the trigger's whole
-// failing set.
+// failing set. The row stores the message of every coded outcome cleaned
+// (proposal.CleanedOutcomes); the caller's outcomes are left as they are.
 func (r *Runner) recordAttempt(ctx context.Context, u uow.UnitOfWork, run tryRun, attempt int, p proposal.Proposal) error {
 	t := run.trigger
+	p.NodeOutcomes = proposal.CleanedOutcomes(p.NodeOutcomes)
 	p.Source = t.Source
 	p.ReleaseID = t.ReleaseID
 	p.RemediationID = run.snap.Remediation.ID.String()
@@ -497,14 +536,19 @@ func (r *Runner) finishTry(ctx context.Context, run tryRun) error {
 func (r *Runner) settleTry(ctx context.Context, run tryRun) error {
 	outcomes := nodeOutcomes(run.snap.Clusters)
 	p := proposal.Proposal{Status: settledStatus(outcomes), NodeOutcomes: outcomes}
-	if err := r.commit(ctx, run.snap.Remediation.ID, func(u uow.UnitOfWork) error {
+	if err := r.commitRun(ctx, run, func(u uow.UnitOfWork) error {
 		if err := r.recordAttempt(ctx, u, run, run.snap.Try.Attempt, p); err != nil {
 			return err
 		}
-		if err := r.handOver(ctx, u, run, outcomes); err != nil {
+		if err := r.handOver(ctx, u, run, run.snap.Try.Attempt, outcomes); err != nil {
 			return err
 		}
-		return r.endTry(ctx, u, run, remediation.TryFailed)
+		if err := r.endTry(ctx, u, run, remediation.TryFailed); err != nil {
+			return err
+		}
+		run.countTries("")
+		run.countOutcomes(outcomes)
+		return nil
 	}); err != nil {
 		return err
 	}
@@ -535,6 +579,7 @@ func (r *Runner) runCrossCheck(ctx context.Context, run tryRun, checked []checke
 	}
 	row.Findings = res.Findings
 	r.finish(&row)
+	run.countStage("", ports.StageCrossCluster, row)
 	return r.commitFlowStep(ctx, run, row, func(u uow.UnitOfWork) error {
 		if len(res.Findings) == 0 {
 			return nil
@@ -545,10 +590,11 @@ func (r *Runner) runCrossCheck(ctx context.Context, run tryRun, checked []checke
 
 // commitFlowStep commits a flow-level step's row and what fn writes, in one
 // transaction after holding the lease, and clears the failures run's
-// remediation counted in a row before it (clearFailures). A commit that fails
-// is recorded as a failure of the step.
+// remediation counted in a row before it (clearFailures). The metric samples
+// the step collected are counted once it committed. A commit that fails is
+// recorded as a failure of the step.
 func (r *Runner) commitFlowStep(ctx context.Context, run tryRun, row remediation.StepRun, fn func(u uow.UnitOfWork) error) error {
-	err := r.commit(ctx, row.RemediationID, func(u uow.UnitOfWork) error {
+	err := r.commitRun(ctx, run, func(u uow.UnitOfWork) error {
 		if err := r.clearFailures(ctx, u, run); err != nil {
 			return err
 		}
@@ -577,7 +623,11 @@ func (r *Runner) failTryOnFindings(ctx context.Context, u uow.UnitOfWork, run tr
 	if err := r.recordRefusal(ctx, u, run, checked, reason); err != nil {
 		return err
 	}
-	return r.saveTry(ctx, u, *run.snap.Try, remediation.TryFailed, time.Time{})
+	if err := r.saveTry(ctx, u, *run.snap.Try, remediation.TryFailed, time.Time{}); err != nil {
+		return err
+	}
+	run.countTries(ports.TryChecksFailed)
+	return nil
 }
 
 // recordRefusal records the attempt of the current try failed for reason, in
@@ -639,8 +689,8 @@ func (r *Runner) endTry(ctx context.Context, u uow.UnitOfWork, run tryRun, to re
 
 // generatingProposal is the in-flight row of an attempt, naming the trigger's
 // whole failing set: the members of each of the try's clusters handed over as
-// it opened with the cluster's outcome, and every other node as being worked
-// on.
+// it opened with the cluster's outcome, its message cleaned, and every other
+// node as being worked on.
 func generatingProposal(id uuid.UUID, t remediation.Trigger, attempt int, now time.Time, clusters []remediation.Cluster) proposal.Proposal {
 	nodeIDs := t.NodeIDs()
 	outcomes := outcomesFor(nodeIDs, proposal.NodeOutcome{Status: proposal.StatusGenerating})
@@ -658,7 +708,7 @@ func generatingProposal(id uuid.UUID, t remediation.Trigger, attempt int, now ti
 		RemediationID:    id.String(),
 		RemediationRound: t.Round,
 		ResolvedNodeIDs:  nodeIDs,
-		NodeOutcomes:     outcomes,
+		NodeOutcomes:     proposal.CleanedOutcomes(outcomes),
 		Attempt:          attempt,
 		Status:           proposal.StatusGenerating,
 		Services:         t.Services(),

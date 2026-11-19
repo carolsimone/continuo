@@ -71,8 +71,8 @@ type RemediationRequestedAncestor struct {
 // Unfixable is the classifier's verdict that no fix proposal can help a node.
 // Reason is model.HandoverReasonClassifierInfra or
 // model.HandoverReasonClassifierUnhealableParse; Detail is what actually
-// failed: the failure's key error line, or the matched rule when no line
-// exists.
+// failed: the failure's key error line, cleaned of credentials and email
+// addresses, or the matched rule when no line exists.
 type Unfixable struct {
 	Reason string `json:"reason"`
 	Detail string `json:"detail"`

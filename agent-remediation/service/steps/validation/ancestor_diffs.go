@@ -28,11 +28,11 @@ var _ step.ContextSource = (*ChangedAncestorDiffs)(nil)
 
 // NewChangedAncestorDiffs builds the changed_ancestor_diffs step. It calls no
 // port until Gather.
-func NewChangedAncestorDiffs(candidates ports.CandidateSourceReader, versions ports.VersionReader, sanitizer ports.LogSanitizer, logger *slog.Logger) *ChangedAncestorDiffs {
+func NewChangedAncestorDiffs(candidates ports.CandidateSourceReader, versions ports.VersionReader, logger *slog.Logger) *ChangedAncestorDiffs {
 	logger = shared.LoggerOrDefault(logger)
 	return &ChangedAncestorDiffs{
 		candidates: candidates,
-		changes:    shared.ChangeDiffer{Versions: versions, Sanitizer: sanitizer, Logger: logger},
+		changes:    shared.ChangeDiffer{Versions: versions, Logger: logger},
 		logger:     logger,
 	}
 }

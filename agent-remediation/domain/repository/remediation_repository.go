@@ -42,7 +42,8 @@ type TryLister interface {
 // a remediation through a lease, which only the lease methods change.
 //
 // An implementation bound to a unit of work's transaction is what a step's
-// commit uses (Hold, Load and the Save methods), and what resumes a
+// commit uses (Hold, Load and the Save methods, and ListContextOfEarlierTries
+// in the commit that ends a remediation), and what resumes a
 // remediation a redriven trigger names (LockByRelease, HasLaterRound and the
 // Save methods). One bound to the database
 // serves the worker, the verification poller, the retention sweeper and the
@@ -80,6 +81,14 @@ type RemediationRepository interface {
 	// rely on it; any other caller may read a torn state, and acts on the
 	// remediation only after it claims it and gets it again.
 	Get(ctx context.Context, id uuid.UUID) (remediation.Snapshot, error)
+
+	// ListContextOfEarlierTries returns one snapshot per try of the remediation
+	// before try before, newest first. Each holds that try, its clusters that
+	// have a member among nodes (ordered by cluster) and, of those clusters'
+	// steps, only the done context rows (ordered by id); its Remediation is left
+	// empty. It reads in the unit of work's transaction. With no node, or no
+	// earlier try, it returns none.
+	ListContextOfEarlierTries(ctx context.Context, id uuid.UUID, before int, nodes []string) ([]remediation.Snapshot, error)
 
 	// Load returns the remediation as Get does, for a write. It is called in a
 	// unit of work after Hold, whose row lock the transaction holds, so the

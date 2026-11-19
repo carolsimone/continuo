@@ -28,10 +28,40 @@ export interface CreatePRInput {
   title: string;
   /** PR body / description */
   body: string;
+  /** GitHub logins of the users asked to review the new pull request. */
+  reviewers?: string[];
+  /** Slugs of the teams of the repository's organization asked to review it. */
+  teamReviewers?: string[];
+  /**
+   * The body the pull request has once GitHub has refused to ask some of the
+   * reviewers above, given the users and team slugs it refused. When GitHub
+   * refuses any, the creator replaces the body it opened the pull request with
+   * by this one, so the body does not say a review was requested that was not.
+   * Without it the body is left as it was opened.
+   */
+  bodyWithRefused?: (refused: RefusedReviewers) => string;
+}
+
+/** The users (logins) and teams (slugs) GitHub would not take as reviewers. */
+export interface RefusedReviewers {
+  users: string[];
+  teams: string[];
+}
+
+export interface CreatedPullRequest {
+  url: string;
+  number: number;
+  /**
+   * What went wrong after the pull request opened: the owners GitHub refused as
+   * reviewers (with its status and message for each), and a failure to update
+   * the body to say so. Absent when every owner was asked, when nobody was to
+   * be asked, and for a pull request that was already open.
+   */
+  warnings?: string[];
 }
 
 export interface PullRequestCreator {
-  create(input: CreatePRInput): Promise<{ url: string; number: number }>;
+  create(input: CreatePRInput): Promise<CreatedPullRequest>;
 }
 
 /**
@@ -89,7 +119,77 @@ export interface OctokitLike {
       head: string;
       state: 'open' | 'closed' | 'all';
     }): Promise<{ data: Array<{ html_url: string; number: number }> }>;
+    requestReviewers(params: {
+      owner: string;
+      repo: string;
+      pull_number: number;
+      reviewers: string[];
+      team_reviewers: string[];
+    }): Promise<unknown>;
+    update(params: { owner: string; repo: string; pull_number: number; body: string }): Promise<unknown>;
   };
+}
+
+// refusalText says what GitHub answered to a call: its status and the message
+// of its answer, which is all an Octokit error is read for here (the error
+// object itself can carry the outgoing request and its credentials).
+function refusalText(err: unknown): string {
+  const e = (err ?? {}) as { status?: number; message?: string };
+  const status = e.status ? ` (status ${e.status})` : '';
+  const message = (e.message ?? 'no message').replace(/\s+/g, ' ').trim().slice(0, 300);
+  return `${status}: ${message}`;
+}
+
+// requestReviews asks the users and teams to review a pull request. GitHub
+// validates the list as a whole, so one user who is not a collaborator, or one
+// team without access to the repository, refuses the others with it. When the
+// combined request is refused and there is more than one owner, each user and
+// each team is asked on its own, so every owner GitHub does take is asked and
+// only the ones it refuses are reported.
+async function requestReviews(
+  octokit: OctokitLike,
+  pr: { owner: string; repo: string; number: number },
+  users: string[],
+  teams: string[],
+): Promise<{ refused: RefusedReviewers; refusals: string[] }> {
+  const ask = async (reviewers: string[], team_reviewers: string[]): Promise<unknown> => {
+    try {
+      await octokit.pulls.requestReviewers({
+        owner: pr.owner,
+        repo: pr.repo,
+        pull_number: pr.number,
+        reviewers,
+        team_reviewers,
+      });
+      return undefined;
+    } catch (err: unknown) {
+      return err ?? new Error('request failed');
+    }
+  };
+
+  const owners = [
+    ...users.map((name) => ({ kind: 'user' as const, name, label: name })),
+    ...teams.map((name) => ({ kind: 'team' as const, name, label: `team ${name}` })),
+  ];
+  const refused: RefusedReviewers = { users: [], teams: [] };
+  const refusals: string[] = [];
+  const refuse = (owner: (typeof owners)[number], err: unknown) => {
+    (owner.kind === 'user' ? refused.users : refused.teams).push(owner.name);
+    refusals.push(`${owner.label}${refusalText(err)}`);
+  };
+
+  const combined = await ask(users, teams);
+  if (combined === undefined) return { refused, refusals };
+  // A single owner's refusal is the combined request's: asking again changes nothing.
+  if (owners.length === 1) {
+    refuse(owners[0], combined);
+    return { refused, refusals };
+  }
+  for (const owner of owners) {
+    const err = await ask(owner.kind === 'user' ? [owner.name] : [], owner.kind === 'team' ? [owner.name] : []);
+    if (err !== undefined) refuse(owner, err);
+  }
+  return { refused, refusals };
 }
 
 /**
@@ -103,10 +203,17 @@ export interface OctokitLike {
  *      the base commit's tree, and commit that tree with the base commit as parent.
  *   4. Point the head branch at the new commit via git.updateRef.
  *   5. Open the PR via pulls.create — on 422 (PR already exists) resolve the existing PR via pulls.list.
+ *   6. For a PR just opened, ask the reviewers and teams of the input to review it
+ *      via pulls.requestReviewers (see requestReviews for a refused request). A
+ *      refusal does not fail the call: the PR is open, the owners GitHub refused
+ *      come back in warnings, and the body is rewritten (pulls.update) through
+ *      input.bodyWithRefused so it does not claim their reviews were requested.
+ *      A PR that already existed is returned as it is: its reviewers are not asked
+ *      again, since that would request a review again from an owner who gave one.
  */
 export function makePullRequestCreator(octokit: OctokitLike): PullRequestCreator {
   return {
-    async create(input: CreatePRInput): Promise<{ url: string; number: number }> {
+    async create(input: CreatePRInput): Promise<CreatedPullRequest> {
       // A commit over no files produces a tree identical to its parent, which
       // GitHub then refuses to open a pull request for — surfacing several
       // steps later as an unexplained 422 with no PR to fall back to. Say what
@@ -216,7 +323,37 @@ export function makePullRequestCreator(octokit: OctokitLike): PullRequestCreator
           title: input.title,
           body: input.body,
         });
-        return { url: prData.data.html_url, number: prData.data.number };
+        const opened = { url: prData.data.html_url, number: prData.data.number };
+
+        // Step 6: ask the owners to review. The pull request is open whatever
+        // GitHub answers here, so a refusal is reported, not thrown.
+        const reviewers = input.reviewers ?? [];
+        const teamReviewers = input.teamReviewers ?? [];
+        if (reviewers.length === 0 && teamReviewers.length === 0) return opened;
+        const { refused, refusals } = await requestReviews(
+          octokit,
+          { owner, repo: repoName, number: opened.number },
+          reviewers,
+          teamReviewers,
+        );
+        if (refusals.length === 0) return opened;
+
+        const warnings = [`GitHub refused the review request for ${refusals.join('; ')}`];
+        if (input.bodyWithRefused) {
+          try {
+            await octokit.pulls.update({
+              owner,
+              repo: repoName,
+              pull_number: opened.number,
+              body: input.bodyWithRefused(refused),
+            });
+          } catch (updateErr: unknown) {
+            warnings.push(
+              `The pull request body still says the refused reviews were requested: GitHub would not update it${refusalText(updateErr)}`,
+            );
+          }
+        }
+        return { ...opened, warnings };
       } catch (err: unknown) {
         const e = err as { status?: number };
         if (e.status !== 422) throw err;

@@ -88,6 +88,9 @@ const (
 	// KindCheck is the kind of a check's row: a pre-flight check, a
 	// cross-cluster check or the gate.
 	KindCheck = "check"
+	// KindContext is the kind of a context step's row: what one context step
+	// gathered for a cluster before its prompt.
+	KindContext = "context"
 	// FlowCluster is the cluster number of a flow-level row: a cross-cluster
 	// check, the gate or an output.
 	FlowCluster = 0

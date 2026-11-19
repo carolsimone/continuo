@@ -15,7 +15,7 @@ import (
 )
 
 func TestUpstreamChanges_MetaNamesWhatItNeedsAndProvides(t *testing.T) {
-	m := shared.NewUpstreamChanges(nil, nil, nil).Meta()
+	m := shared.NewUpstreamChanges(nil, nil).Meta()
 	assert.Equal(t, "upstream_changes", string(m.Name))
 	assert.Equal(t, step.KindContext, m.Kind)
 	assert.NotEmpty(t, m.Description)
@@ -23,23 +23,25 @@ func TestUpstreamChanges_MetaNamesWhatItNeedsAndProvides(t *testing.T) {
 	assert.Equal(t, []remediation.EvidenceKey{remediation.KeyUpstreamChanges}, m.Provides)
 }
 
-func TestUpstreamChanges_SanitizesEachDiffWithoutTouchingTheReadersSlice(t *testing.T) {
+func TestUpstreamChanges_ProvidesEachChangeWithoutSharingTheReadersSlice(t *testing.T) {
 	reader := &fakeUpstream{changes: []prompt.UpstreamChange{
 		{NodeID: "model.up", Depth: 1, CodeDiff: "code", ConfigDiff: "cfg", Truncated: true},
 	}}
-	out, err := shared.NewUpstreamChanges(reader, markSanitizer{}, discardLogger()).
+	out, err := shared.NewUpstreamChanges(reader, discardLogger()).
 		Gather(context.Background(), step.ContextInput{Failure: failureWithLog("")})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"model.a"}, reader.nodes)
 	assert.Equal(t, []prompt.UpstreamChange{
-		{NodeID: "model.up", Depth: 1, CodeDiff: "<code>", ConfigDiff: "<cfg>", Truncated: true},
+		{NodeID: "model.up", Depth: 1, CodeDiff: "code", ConfigDiff: "cfg", Truncated: true},
 	}, out.Evidence[remediation.KeyUpstreamChanges])
-	assert.Equal(t, "code", reader.changes[0].CodeDiff)
+	got := out.Evidence[remediation.KeyUpstreamChanges].([]prompt.UpstreamChange)
+	got[0].CodeDiff = "changed"
+	assert.Equal(t, "code", reader.changes[0].CodeDiff, "the provided slice is a copy")
 }
 
 func TestUpstreamChanges_AnErrorProvidesNoChanges(t *testing.T) {
 	reader := &fakeUpstream{err: errors.New("catalog down")}
-	out, err := shared.NewUpstreamChanges(reader, markSanitizer{}, discardLogger()).
+	out, err := shared.NewUpstreamChanges(reader, discardLogger()).
 		Gather(context.Background(), step.ContextInput{Failure: failureWithLog("")})
 	require.NoError(t, err)
 	assert.Empty(t, out.Decline)

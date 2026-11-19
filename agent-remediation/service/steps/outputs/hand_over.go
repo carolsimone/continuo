@@ -20,7 +20,7 @@ const nameHandOver workflow.StepName = "hand_over"
 
 // HandOver is the give-up output `hand_over`. It announces on
 // remediation.handed_over:v1 every node a remediation leaves to a human, each
-// with the reason it was handed over for.
+// with the reason it was handed over for and its owner.
 type HandOver struct{}
 
 var _ step.GiveUpOutput = (*HandOver)(nil)
@@ -36,13 +36,15 @@ func (*HandOver) Meta() step.Meta {
 		Name: nameHandOver,
 		Kind: step.KindOutput,
 		Description: "Enqueues one remediation.handed_over:v1 event naming every node the remediation leaves to a human, " +
-			"each with its reason code and message, in the transaction that ends the remediation.",
+			"each with its reason code, its message and its owner, in the transaction that ends the remediation.",
 	}
 }
 
 // GiveUp enqueues the remediation.handed_over:v1 event of the nodes
 // in.HandedOver names, in u's transaction, its payload stored under the
-// remediation's tenant. Tries is how many tries the remediation made. The
+// remediation's tenant. Each node names its owner, taken from the approver in
+// in.Approvers for that node, and none when there is no approver or it found no
+// owner. Tries is how many tries the remediation made. The
 // entry id is derived from the remediation, so a remediation announces its
 // hand-over once: a second enqueue collides with the first. With no node
 // handed over, nothing is written. No inbound message drove the write, so the
@@ -52,9 +54,13 @@ func (*HandOver) GiveUp(ctx context.Context, u uow.UnitOfWork, in step.OutputInp
 		return nil
 	}
 	rem := in.Remediation
+	owners := make(map[string]string, len(in.Approvers))
+	for _, a := range in.Approvers {
+		owners[a.NodeID] = a.Owner
+	}
 	nodes := make([]events.HandedOverNode, 0, len(in.HandedOver))
 	for _, h := range in.HandedOver {
-		nodes = append(nodes, events.HandedOverNode{NodeID: h.NodeID, Reason: string(h.Code), Message: h.Message})
+		nodes = append(nodes, events.HandedOverNode{NodeID: h.NodeID, Reason: string(h.Code), Message: h.Message, Owner: owners[h.NodeID]})
 	}
 	body, err := json.Marshal(events.RemediationHandedOver{
 		RemediationID:    rem.ID.String(),

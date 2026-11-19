@@ -6,6 +6,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/pkg/sanitize"
 )
 
 // maxRationaleUpstream caps how many changed ancestors the rationale names,
@@ -16,7 +17,10 @@ const maxRationaleUpstream = 3
 // hold onto the facts the cluster's rationale is composed from. The
 // changed-ancestor analysis is supplied only by a validation rejection, so only
 // a validation trigger reports the upstream set as known; every other source
-// leaves it unknown even when a node carries a ChangedAncestors entry.
+// leaves it unknown even when a node carries a ChangedAncestors entry. A
+// member's error line is the trigger's raw text, so it is cleaned by
+// sanitize.Text and its quoted data values masked before a pull request shows
+// it.
 func rationaleFactsFor(t remediation.Trigger, c remediation.Cluster, d remediation.Draft) proposal.RationaleFacts {
 	f := proposal.RationaleFacts{
 		TargetNodeID:  c.TargetNodeID,
@@ -30,7 +34,7 @@ func rationaleFactsFor(t remediation.Trigger, c remediation.Cluster, d remediati
 		if !ok {
 			continue
 		}
-		f.Members = append(f.Members, proposal.RationaleMember{NodeID: n.NodeID, Service: n.Service, ErrorLine: proposal.RedactDataValues(n.ErrorExcerpt)})
+		f.Members = append(f.Members, proposal.RationaleMember{NodeID: n.NodeID, Service: n.Service, ErrorLine: proposal.RedactDataValues(sanitize.Text(n.ErrorExcerpt))})
 		for _, a := range n.ChangedAncestors {
 			if cur, seen := nearest[a.NodeID]; !seen || a.Depth < cur.Depth {
 				nearest[a.NodeID] = proposal.RationaleUpstream{NodeID: a.NodeID, Service: a.Service, Depth: a.Depth}

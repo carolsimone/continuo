@@ -49,4 +49,30 @@ describe('proto wire: remediation.proto', () => {
     expect(result.node_outcomes['s.handed']).toEqual({ status: 'escalated', reason: 'no type matches', code: 'no_type' });
     expect(result.node_outcomes['s.fixed']).toEqual({ status: 'proposed', reason: '', code: '' });
   });
+
+  it('GetProposal carries who must approve each node', () => {
+    const result = getProposalRoundTrip({
+      id: 'p1',
+      approvers: [
+        { node_id: 's.a', owner: 'finance', source: 'bundle' },
+        { node_id: 's.b', owner: '', source: 'none' },
+      ],
+    });
+    expect(result.approvers).toEqual([
+      { node_id: 's.a', owner: 'finance', source: 'bundle' },
+      { node_id: 's.b', owner: '', source: 'none' },
+    ]);
+  });
+
+  it('BeginPullRequest carries the approvers of the claim nodes', () => {
+    const method = (packageDefinition as Record<string, any>)['remediation.v1.RemediationProposals'].BeginPullRequest;
+    expect(method, 'missing rpc method: BeginPullRequest').toBeTruthy();
+    const buf: Buffer = method.responseSerialize({
+      proposal_id: 'p1',
+      resolved_node_ids: ['s.a'],
+      approvers: [{ node_id: 's.a', owner: 'finance', source: 'contract_file' }],
+    });
+    const result = method.responseDeserialize(buf) as Record<string, any>;
+    expect(result.approvers).toEqual([{ node_id: 's.a', owner: 'finance', source: 'contract_file' }]);
+  });
 });

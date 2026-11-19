@@ -164,6 +164,9 @@ func (r *proposalRepository) Upsert(_ context.Context, p proposal.Proposal) erro
 		if next.RemediationID == "" {
 			next.RemediationID = old.RemediationID
 		}
+		if len(next.Approvers) == 0 {
+			next.Approvers = old.Approvers
+		}
 		row.p = next
 		return nil
 	})
@@ -193,6 +196,10 @@ func (row *proposalRow) view() proposal.View {
 	if len(verifications) == 0 {
 		verifications = nil
 	}
+	approvers := p.Approvers
+	if len(approvers) == 0 {
+		approvers = nil
+	}
 	return proposal.View{
 		ID:                  row.id,
 		Source:              p.Source,
@@ -206,6 +213,7 @@ func (row *proposalRow) view() proposal.View {
 		Status:              p.Status,
 		NodeOutcomes:        outcomes,
 		Verifications:       verifications,
+		Approvers:           approvers,
 		VerificationRunID:   p.VerificationRunID,
 		Services:            p.Services,
 		VerifyError:         row.verifyError,
@@ -422,6 +430,20 @@ func (r *proposalRepository) UpdateVerificationPhase(_ context.Context, id, runI
 				row.p.Verifications[i].ActivatedAt = cloneTimePtr(activatedAt)
 			}
 		}
+		return nil
+	})
+}
+
+// RecordApprovers adds approvers to the row of the attempt, as
+// proposal.MergeApprovers does. It is ErrNotFound when the release has no row
+// for the attempt.
+func (r *proposalRepository) RecordApprovers(_ context.Context, releaseID string, attempt int, approvers []proposal.Approver) error {
+	return r.gate(func(d *data) error {
+		row := d.findProposal(releaseID, attempt)
+		if row == nil {
+			return repository.ErrNotFound
+		}
+		row.p.Approvers = proposal.MergeApprovers(row.p.Approvers, approvers)
 		return nil
 	})
 }

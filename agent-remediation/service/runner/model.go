@@ -24,11 +24,14 @@ const promptVersionLen = 12
 // commit is answered by the response cache, and the failure it was built for,
 // so the logged prompt names it. It sums what the calls report for the step's
 // journal row, and keeps the last request and the answer it got, which the row's
-// output stores for a later round to revise.
+// output stores for a later round to revise. It reports the tokens of each call
+// the model itself answered to count, and none of an answer the response cache
+// replayed.
 type model struct {
 	llm     ports.LLMProvider
 	key     string
 	failure promptlog.Failure
+	count   func(in, out int)
 
 	calls         int
 	cached        int
@@ -43,12 +46,14 @@ type model struct {
 var _ step.Model = (*model)(nil)
 
 // newModel builds the handle of one prompt step run: the remediation's try,
-// cluster and round name its idempotency key.
-func newModel(llm ports.LLMProvider, id uuid.UUID, try, cluster, round int, failure promptlog.Failure) *model {
+// cluster and round name its idempotency key. count, which may be nil, is
+// called with the input and output tokens of each call the model answered.
+func newModel(llm ports.LLMProvider, id uuid.UUID, try, cluster, round int, failure promptlog.Failure, count func(in, out int)) *model {
 	return &model{
 		llm:     llm,
 		key:     fmt.Sprintf("remediation:%s:try:%d:cluster:%d:round:%d", id, try, cluster, round),
 		failure: failure,
+		count:   count,
 	}
 }
 
@@ -66,6 +71,8 @@ func (m *model) Propose(ctx context.Context, req prompt.ProposeRequest) (ports.P
 	m.calls++
 	if res.Cached {
 		m.cached++
+	} else if m.count != nil {
+		m.count(res.Usage.Input, res.Usage.Output)
 	}
 	m.tokensIn += res.Usage.Input
 	m.tokensOut += res.Usage.Output

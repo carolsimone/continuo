@@ -123,10 +123,6 @@ func (e fakeEvidence) Fetch(_ context.Context, uri string) (string, error) {
 	return "", ports.ErrNotFound
 }
 
-type nopSanitizer struct{}
-
-func (nopSanitizer) Sanitize(s string) string { return s }
-
 // noUpstream is a graph that knows no change upstream of any node.
 type noUpstream struct{}
 
@@ -144,13 +140,40 @@ func (noPrecedents) Precedents(context.Context, ports.PrecedentQuery) ([]prompt.
 	return nil, nil
 }
 
-// noBundle is a code bundle that holds only the nodes in nodes. onRead runs
-// on every read.
+// noBundle is a code bundle that holds only the nodes in nodes and records
+// the owners in owners. onRead runs on every source read, ownerReads counts the
+// owners reads, and every read answers err while it is set.
 type noBundle struct {
-	mu     sync.Mutex
-	reads  int
-	nodes  map[string]ports.CandidateSource
-	onRead func(n int)
+	mu         sync.Mutex
+	reads      int
+	ownerReads int
+	nodes      map[string]ports.CandidateSource
+	owners     map[string]string
+	onRead     func(n int)
+	err        error
+}
+
+func (b *noBundle) NodeOwners(_ context.Context, _, _ string, nodeIDs []string) (map[string]string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.ownerReads++
+	if b.err != nil {
+		return nil, b.err
+	}
+	out := map[string]string{}
+	for _, id := range nodeIDs {
+		if o, ok := b.owners[id]; ok {
+			out[id] = o
+		}
+	}
+	return out, nil
+}
+
+// ownerReadCount is how many owners reads the bundle answered.
+func (b *noBundle) ownerReadCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.ownerReads
 }
 
 func (b *noBundle) NodeSource(_ context.Context, _, nodeID, _ string) (ports.CandidateSource, error) {
@@ -159,6 +182,9 @@ func (b *noBundle) NodeSource(_ context.Context, _, nodeID, _ string) (ports.Can
 	b.reads++
 	if b.onRead != nil {
 		b.onRead(b.reads)
+	}
+	if b.err != nil {
+		return ports.CandidateSource{}, b.err
 	}
 	if src, ok := b.nodes[nodeID]; ok {
 		return src, nil
@@ -429,6 +455,8 @@ func testFiles(tries int) workflow.Set {
 		Tries:          tries,
 		OnPass:         workflow.Output{Action: workflow.OutputPullRequest, Emits: baseName(streams.RemediationProposedV1)},
 		OnGiveUp:       workflow.Output{Action: workflow.OutputHandOver, Emits: baseName(streams.RemediationHandedOverV1)},
+		ModelMaySee:    []workflow.DataClass{workflow.ClassCode, workflow.ClassLogs},
+		Approver:       workflow.StepRef{Name: "node_owner"},
 		Revision:       flowRevision,
 		File:           flowFile,
 	}
@@ -498,6 +526,9 @@ type harness struct {
 	blockBeginUnderADeadline atomic.Bool
 	// phaseWrites counts the runner's UpdateVerificationPhase calls.
 	phaseWrites atomic.Int64
+	// metrics is what every runner the harness builds counts on, nil unless a
+	// test sets it.
+	metrics ports.RemediationMetrics
 }
 
 // verificationTimeout is how long the gate lets a verification run take.
@@ -547,6 +578,9 @@ type option func(*harness)
 func withMaintenance() option { return func(h *harness) { h.maintenance = true } }
 
 func withStepTimeout(d time.Duration) option { return func(h *harness) { h.stepTimeout = d } }
+
+// withMetrics makes every runner, worker and sweeper of the harness count on m.
+func withMetrics(m ports.RemediationMetrics) option { return func(h *harness) { h.metrics = m } }
 
 func withTries(n int) option {
 	return func(h *harness) { h.files = testFiles(n) }
@@ -639,7 +673,6 @@ func newHarness(t *testing.T, opts ...option) *harness {
 	h.collab = runner.Collaborators{
 		Source:    h.source,
 		Evidence:  h.evidence,
-		Sanitizer: nopSanitizer{},
 		Artifacts: h.artifacts,
 		Logger:    discard,
 		ServiceRepoPaths: map[string]string{
@@ -708,6 +741,7 @@ func (h *harness) runnerOwnedBy(files workflow.Set, owner string) *runner.Runner
 		Owner:               owner,
 		VerificationTimeout: verificationTimeout,
 		StepTimeout:         h.stepTimeout,
+		Metrics:             h.metrics,
 	})
 }
 

@@ -38,20 +38,24 @@ type Sweeper struct {
 	owner    string
 	clock    ports.Clock
 	logger   *slog.Logger
+	metrics  ports.RemediationMetrics
 	interval time.Duration
 }
 
 // NewSweeper builds a sweeper. repo returns the remediation repository bound to
 // the database, newUoW opens the transaction that ends a remediation, and owner
-// names the sweeper's lease.
-func NewSweeper(newUoW func() uow.UnitOfWork, repo func() repository.RemediationRepository, owner string, clock ports.Clock, logger *slog.Logger) *Sweeper {
+// names the sweeper's lease. A nil metrics counts nothing.
+func NewSweeper(newUoW func() uow.UnitOfWork, repo func() repository.RemediationRepository, owner string, clock ports.Clock, logger *slog.Logger, metrics ports.RemediationMetrics) *Sweeper {
 	if clock == nil {
 		clock = ports.SystemClock{}
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Sweeper{newUoW: newUoW, repo: repo, owner: owner, clock: clock, logger: logger, interval: sweepInterval}
+	if metrics == nil {
+		metrics = ports.NopRemediationMetrics{}
+	}
+	return &Sweeper{newUoW: newUoW, repo: repo, owner: owner, clock: clock, logger: logger, metrics: metrics, interval: sweepInterval}
 }
 
 // Run sweeps at once and then every minute, until ctx ends.
@@ -119,6 +123,6 @@ func (s *Sweeper) sweep(ctx context.Context, id uuid.UUID) error {
 			s.logger.Warn("could not let go of a remediation's lease; it ends by itself", "remediation", id, "error", err)
 		}
 	}()
-	_, err = stuckEnder{newUoW: s.newUoW, clock: s.clock, logger: s.logger}.endIfStuck(ctx, id, s.owner)
+	_, err = stuckEnder{newUoW: s.newUoW, clock: s.clock, logger: s.logger, metrics: s.metrics}.endIfStuck(ctx, id, s.owner)
 	return err
 }

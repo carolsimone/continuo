@@ -91,6 +91,11 @@ func (f fakeCandidateSource) NodeSource(_ context.Context, _, _, _ string) (port
 	return f.src, f.err
 }
 
+// NodeOwners records no owner of any node.
+func (f fakeCandidateSource) NodeOwners(context.Context, string, string, []string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+
 // fakeUpstream returns fixed upstream changes, or an error, for
 // UpstreamChangeReader.UpstreamChanges.
 type fakeUpstream struct {
@@ -370,6 +375,10 @@ func (r *fakeProposalRepo) MarkVerifyFailed(_ context.Context, _, _ string, _ []
 
 func (r *fakeProposalRepo) MarkFixVerified(_ context.Context, _ remediation.Verified) (bool, error) {
 	return false, nil
+}
+
+func (r *fakeProposalRepo) RecordApprovers(_ context.Context, _ string, _ int, _ []proposal.Approver) error {
+	return nil
 }
 
 func (r *fakeProposalRepo) ReopenTryAttempt(_ context.Context, _ uuid.UUID, _ int, _ proposal.Status, _ map[string]proposal.NodeOutcome) (bool, error) {

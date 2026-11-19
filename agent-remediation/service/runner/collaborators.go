@@ -17,7 +17,6 @@ import (
 type Collaborators struct {
 	Source    ports.SourceReader
 	Evidence  ports.EvidenceReader
-	Sanitizer ports.LogSanitizer
 	Artifacts ports.ArtifactWriter
 	Logger    *slog.Logger
 	// ServiceRepoPaths maps a service name to its repository path.

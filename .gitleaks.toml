@@ -20,6 +20,9 @@ paths = [
   # Recorded HTTP fixtures for the GitHub stub contain synthetic tokens that
   # exist to exercise parsing, not to authenticate anything.
   '''^tests/e2e/stub-github/.*\.json$''',
+  # The redaction rules' own tests hold synthetic secrets of every shape the
+  # rules must catch (fake PEM keys, token shapes, URL passwords); none is live.
+  '''(^|/)pkg/sanitize/[^/]*_test\.go$''',
   # The developer-local .env is git-ignored and so can never be committed. A
   # directory scan still reaches it, where it would always flag the throwaway
   # GitHub App key that scripts/ensure-dev-env.sh generates there by design.
