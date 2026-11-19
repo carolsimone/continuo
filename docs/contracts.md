@@ -434,6 +434,12 @@ customProperties:
             "version": 3, "contract_hash": "sha256:3f1c..."}]}
 ```
 
+An entry whose `servers` entry names another schema than the id's, such as
+`Analytics` for `analytics.orders`, also holds that schema as `"physical_schema":
+"Analytics"`. The entry of every other file has no such key. catalog puts a file
+again when the schema of its `servers` entry changes, even when only the case
+changes and the contract does not.
+
 While catalog is part way through a rewrite, the index lists each file it is
 about to put or delete with `"version": 0` and an empty `contract_hash`. A file
 at version 0 is one that no index vouches for, so wait for the final index.
@@ -471,7 +477,13 @@ servers:
 
 - `type` is `postgres` or `trino`. It comes from `validation.engine`, and you do
   not set it.
-- `schema` is the contract's schema, the part of the id before the table name.
+- `schema` is the schema the node is declared in, the one dbt and continuo
+  build the table in, in the topology's spelling. A schema declared with
+  capitals, such as `Analytics`, keeps them here, while the contract's `id` stays
+  in lower case (`analytics.orders`). A node the topology has not reached yet has
+  no declared schema, and its entry takes the part of the id before the table
+  name. Where the two spellings are the same, as they are for every node
+  declared in a lower-case schema, the entry reads as it would from the id.
 - On Trino, `database` fills the field `catalog` of the entry. Set it
   explicitly. When it is empty, continuo uses `validation.warehouseDatabase`,
   and that is the name of a Postgres database.
@@ -725,7 +737,9 @@ A schema you declare with capitals, such as `Analytics`, is lower case in the
 node's name and the contract's `id`, so the node is `analytics.orders`. The
 topology's schema keeps your spelling, `Analytics`, because dbt builds the
 table under it, and validation copies the table from there. The SQL of the
-readers names the schema the way dbt wrote it, and continuo finds the node.
+readers names the schema the way dbt wrote it, and continuo finds the node. The
+`servers` entry of the node's published file names `Analytics` too, so an
+outside tool binds the file to the table that exists.
 
 continuo writes the schema and the name in lower case one at a time, while the
 library writes `<schema>.<name>` in lower case as one string, so the contract's
