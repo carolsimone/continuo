@@ -1266,8 +1266,10 @@ refuses and why.
 **A dbt release is rejected with `invalid_contract`.** At least one dbt node's
 contract is not valid, or a seed's declared columns and CSV header differ. The
 release page names each failed node with its problems. On your machine,
-`continuo-contracts dbt check` on the project folder shows the same problems.
-Fix each one and release again with a new `release_id`.
+`continuo-contracts dbt check` on the project folder shows the problems it can
+find without compiling the SQL: `dbt parse` compiles nothing, so it cannot see a
+table that only the compiled SQL names. Fix each one and release again with a
+new `release_id`.
 [What makes a dbt contract invalid](contracts.md#what-makes-a-dbt-contract-invalid)
 lists them.
 

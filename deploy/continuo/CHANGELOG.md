@@ -18,14 +18,14 @@ shipped in those.
 - Breaking: every dbt model, seed and snapshot has an ODCS contract that continuo builds from your dbt project, and an invalid one rejects the release as `invalid_contract`. A seed whose declared columns and CSV header differ is one of them.
 - New: catalog keeps and publishes dbt contracts, and the release page shows how long the parse and the contract generation took.
 - New: under `agentRemediation.engine=runner`, the release page says why each node was handed to a human, and a remediation that ends as a system failure is dead-lettered and can be redriven.
-- You must act first (steps below): run `continuo-contracts dbt check <project>` on the dbt project folder of each service and fix every error line, seed headers included.
+- You must act first (steps below): run `continuo-contracts dbt check <project>` on the dbt project folder of each service, fix every error line, seed headers included, and release and promote each fix before you upgrade.
 - You must act (steps below): upgrade with no remediation in flight and the remediation outboxes drained. With your own Redis, apply the new Redis rules with the upgrade, not before.
 - No values change is needed. On 0.23.0 or earlier, upgrade to 0.24.0 first.
 
 ### Upgrade steps
 
 1. **On 0.23.0 or earlier:** upgrade to 0.24.0 first and follow its steps (0.22.0 or earlier: to 0.23.0 first). The steps below start from 0.24.0.
-2. **Check every dbt service before you upgrade.** Run `continuo-contracts dbt check <project>` (continuo-contracts 0.3.1) on the dbt project folder of each service and fix every error line, seed headers included. The check takes the folder's name, with `_` written `-`, as the service. When you deploy the project under another name, pass `--service <that name>`: the check fails a node of another service, as the release does (`invalid_artifact`). This version rejects a release whose dbt contract is invalid (see Breaking). `docs/contracts.md`, "Check a dbt project in CI", says how.
+2. **Check every dbt service, and release its fixes, before you upgrade.** Run `continuo-contracts dbt check <project>` (continuo-contracts 0.3.1) on the dbt project folder of each service and fix every error line, seed headers included. The check takes the folder's name, with `_` written `-`, as the service. When you deploy the project under another name, pass `--service <that name>`: the check fails a node of another service, as the release does (`invalid_artifact`). This version rejects a release whose dbt contract is invalid (see Breaking). Release and promote each fix on the version you run now: every release parses the production manifest of every service, not only the one it changes. So after the upgrade, one service with an invalid contract rejects the release of every other service, and two such services block each other's fix. If you upgraded first, go back to the version you ran before (`helm upgrade <release> <chart> --version <that version> --reuse-values`), release and promote the fixes, then upgrade again. Going back is safe: this version's only database migration, release migration V31, adds three columns that may be empty, and the version before it neither reads nor writes them. `docs/contracts.md`, "Check a dbt project in CI", says how.
 3. **Upgrade with no remediation in flight.** This version retires `remediation.requested:v2` and `remediation.retry_requested:v1`, and a row stored for them is never delivered after the upgrade (see Breaking). Do it in this order:
    1. Turn maintenance mode on, on the chart version you run now: `helm upgrade <release> <chart> --version <the version you run now> --reuse-values --set maintenance.enabled=true`. No new release starts, so no new release is rejected while you wait.
    2. Wait until no release is compiling, parsing, seed-building or validating, no remediation attempt is generating or verifying, and `remediation_outbox`, `release_controller_outbox` and `agent_remediation_outbox` hold no row with status `pending` or `scheduled`.
@@ -55,7 +55,8 @@ This release changes no values key, and it ships as a `MINOR`.
   - A dbt test and an `unknown-external` table have no contract.
   - These reject the release as `invalid_contract`, and each rejection names the node and the field:
     - A `meta.criticality` other than `REGULATORY`, `CORE` or `SECONDARY`. The parse took any value as written.
-    - A `meta.timeout_minutes` that is not a whole number from 1 to 10,080. It was `invalid_artifact`.
+    - A `meta.timeout_minutes` that is not a whole number from 1 to 10,080, one written `30.0` or `"30"` included. It was `invalid_artifact`.
+    - A `meta.owner` that holds only whitespace. The parse took it as the owner. An empty `meta.owner` still leaves the node out.
     - A first tag with more than 50 characters or with whitespace in it, and a schema with whitespace, a dot or a slash in it. dbt accepts them.
     - A node field the contracts library cannot read, such as `tags`, `fqn`, `name`, `version`, `meta.owner`, `description`, a column's `data_type`, or a `deprecation_date` that is not written `YYYY-MM-DD`. The parse took most of them as written.
     - A node whose manifest entry has no `config.materialized` or no `original_file_path`. dbt always writes both.
@@ -64,8 +65,8 @@ This release changes no values key, and it ships as a `MINOR`.
   - The release reads a seed's header from `compile-extras.json`. A seed that file does not name is not compared, and the parse logs one warning per release with the number of such seeds.
   - An empty `meta.timeout_minutes` (`""`, `[]` or `{}`) reads as no timeout, and an empty `meta.criticality` as `SECONDARY`. The parse refused an empty timeout before.
   - A contract's id is the node's id, in lower case: the model `orders` in the schema `Analytics` has the contract id `analytics.orders`. The topology's schema and the warehouse relation keep the spelling your project declares.
-  - One rejection names every invalid contract of the release, dbt and Python ones together. A manifest that is malformed as a whole (a `metadata.project_name` or the links of a test that are not text, text that UTF-8 cannot encode) is still `invalid_artifact`, and a defect of the library is `internal`.
-  - Before you upgrade, run `continuo-contracts dbt check <project>` (continuo-contracts 0.3.1) on the dbt project folder of each service and fix every error line, seed headers included (step 2).
+  - One rejection names every invalid contract of the release, dbt and Python ones together. A manifest that is malformed as a whole (a `metadata.project_name` or the links of a test that are not text, a kept node or test with no `fqn`, text that UTF-8 cannot encode) is still `invalid_artifact`, and a defect of the library is `internal`.
+  - Before you upgrade, run `continuo-contracts dbt check <project>` (continuo-contracts 0.3.1) on the dbt project folder of each service, fix every error line, seed headers included, and release and promote the fixes (step 2).
 
 ### Added
 

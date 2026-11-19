@@ -945,7 +945,9 @@ These make a dbt contract invalid:
 
 - A `meta.criticality` other than `REGULATORY`, `CORE` or `SECONDARY`.
 - A first tag with more than 50 characters or with whitespace in it.
-- A `meta.timeout_minutes` that is not a whole number from 1 to 10,080.
+- A `meta.timeout_minutes` that is not a whole number from 1 to 10,080, such as
+  `30.0` or `"30"`.
+- A `meta.owner` that holds only whitespace. An empty one leaves the node out.
 - A schema with whitespace, a dot or a slash in it.
 - A manifest entry with no `config.materialized` or no `original_file_path`. dbt
   always writes both.
@@ -992,20 +994,20 @@ model, seed and snapshot:
 4. It compares each seed's declared columns with the first row of the seed's CSV
    file in your project folder.
 
-It prints a line for each thing it finds. A line is `info` for a node that is
-left out, for a dormant node and for a seed of an installed package, and `error`
+It prints a line for each thing it finds. A line is `INFO` for a node that is
+left out, for a dormant node and for a seed of an installed package, and `ERROR`
 for a problem. A node with several problems gets one line for each, and a node
-with nothing to say gets no line. The lines go to the error output, and a line
-reads `<manifest node id>: <message>` (the message alone for a line about the
-whole service):
+with nothing to say gets no line. The lines go to the error output. Each starts
+with its level and then reads `<manifest node id>: <message>` (the message alone
+for a line about the whole service):
 
 ```text
-LITE CHECK. Passing it does not guarantee that continuo will create this service's contracts at release time.
-seed.finance.seed_operational_costs: cost_date is in the CSV header but not declared
-What only the release does:
-  dbt runs in the team's image: continuo compiles the project in the team's own image, and CI can run another dbt version.
-  ...
-LITE CHECK. Passing it does not guarantee that continuo will create this service's contracts at release time.
+INFO LITE CHECK. Passing it does not guarantee that continuo will create this service's contracts at release time.
+ERROR seed.finance.seed_operational_costs: cost_date is in the CSV header but not declared
+INFO What only the release does:
+INFO   dbt runs in the team's image: continuo compiles the project in the team's own image, and CI can run another dbt version.
+...
+INFO LITE CHECK. Passing it does not guarantee that continuo will create this service's contracts at release time.
 ```
 
 The command exits with 0 when no line is an error. It exits with 1 when a line is
@@ -1054,3 +1056,11 @@ when `compile-extras.json` names the seed.
 
 Run the check on every pull request of a dbt service, and fix every error line,
 seed headers included, before you release.
+
+Before you upgrade continuo, run the check with the version the new chart's
+CHANGELOG names, and release and promote each fix on the version you run now.
+A release parses the production manifest of every service, not only the one it
+changes. So after the upgrade, one service with an invalid contract rejects the
+release of every other service, and two such services block each other's fix.
+If you upgraded first, go back to the chart version you ran before, release and
+promote the fixes, then upgrade again.
