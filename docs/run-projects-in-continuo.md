@@ -209,8 +209,9 @@ customProperties:
 The value is an integer from 1 to 10,080 minutes (seven days). continuo
 validates it at release time: anything else, a string such as `"2h"`, zero, a
 negative number or a larger one, rejects the release, and the rejection names the
-node and the key. A dbt node is rejected as `invalid_artifact`, and a Python
-contract as `invalid_contract`.
+node and the key. A dbt node and a Python contract are both rejected as
+`invalid_contract`. [What makes a dbt contract invalid](contracts.md#what-makes-a-dbt-contract-invalid)
+lists what else does.
 
 continuo records the timeout with each release, and a run keeps the timeouts of
 the release it runs on. The timeout is not part of a node's content hash, so a
@@ -234,6 +235,10 @@ a retry.
 A seed is a CSV that dbt loads into a table. When you change the CSV, continuo
 loads it again after the release is promoted. This section says what that load
 does to the table and to the views that read it.
+
+A seed's YAML must declare every column of its CSV header, and only those. When
+the two differ, the release is rejected as `invalid_contract`, and the rejection
+names each column ([Columns](contracts.md#columns) has the details).
 
 What a load does depends on your warehouse.
 

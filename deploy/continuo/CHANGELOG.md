@@ -15,26 +15,30 @@ shipped in those.
 **TL;DR**
 
 - Breaking: the remediation streams move to `remediation.requested:v3` and `remediation.retry_requested:v2`, and the old versions are retired.
+- Breaking: every dbt model, seed and snapshot has an ODCS contract that continuo builds from your dbt project, and an invalid one rejects the release as `invalid_contract`. A seed whose declared columns and CSV header differ is one of them.
+- New: catalog keeps and publishes dbt contracts, and the release page shows how long the parse and the contract generation took.
 - New: under `agentRemediation.engine=runner`, the release page says why each node was handed to a human, and a remediation that ends as a system failure is dead-lettered and can be redriven.
+- You must act first (steps below): run `continuo-contracts dbt check <service>` on each dbt service and fix every error line, seed headers included.
 - You must act (steps below): upgrade with no remediation in flight and the remediation outboxes drained. With your own Redis, apply the new Redis rules with the upgrade, not before.
 - No values change is needed. On 0.23.0 or earlier, upgrade to 0.24.0 first.
 
 ### Upgrade steps
 
 1. **On 0.23.0 or earlier:** upgrade to 0.24.0 first and follow its steps (0.22.0 or earlier: to 0.23.0 first). The steps below start from 0.24.0.
-2. **Upgrade with no remediation in flight.** This version retires `remediation.requested:v2` and `remediation.retry_requested:v1`, and a row stored for them is never delivered after the upgrade (see Breaking). Do it in this order:
+2. **Check every dbt service before you upgrade.** Run `continuo-contracts dbt check <service>` (continuo-contracts 0.3.0) on each dbt service and fix every error line, seed headers included. This version rejects a release whose dbt contract is invalid (see Breaking). `docs/contracts.md`, "Check a dbt project in CI", says how.
+3. **Upgrade with no remediation in flight.** This version retires `remediation.requested:v2` and `remediation.retry_requested:v1`, and a row stored for them is never delivered after the upgrade (see Breaking). Do it in this order:
    1. Turn maintenance mode on, on the chart version you run now: `helm upgrade <release> <chart> --version <the version you run now> --reuse-values --set maintenance.enabled=true`. No new release starts, so no new release is rejected while you wait.
    2. Wait until no release is compiling, parsing, seed-building or validating, no remediation attempt is generating or verifying, and `remediation_outbox`, `release_controller_outbox` and `agent_remediation_outbox` hold no row with status `pending` or `scheduled`.
    3. Run the upgrade to this version with maintenance mode still on: pass `--version <this version>` and keep `--set maintenance.enabled=true`, with your usual values.
    4. Turn maintenance mode off: `helm upgrade <release> <chart> --version <this version> --reuse-values --set maintenance.enabled=false`.
-3. **With your own Redis, apply the new rules from `deploy/redis-acl-rules.acl` with the upgrade, not before** (see Changed).
-4. **With `streamReaper.enabled=false`, delete the consumer groups of the retired remediation streams** after the upgrade. The commands are in Breaking. With the stream reaper on, dead-letter-controller deletes those streams with their groups.
+4. **With your own Redis, apply the new rules from `deploy/redis-acl-rules.acl` with the upgrade, not before** (see Changed).
+5. **With `streamReaper.enabled=false`, delete the consumer groups of the retired remediation streams** after the upgrade. The commands are in Breaking. With the stream reaper on, dead-letter-controller deletes those streams with their groups.
 
 This release changes no values key, and it ships as a `MINOR`.
 
 ### Breaking
 
-- **The remediation streams change version.** TL;DR: remediation sends its heal trigger on `remediation.requested:v3`, and release-controller sends "Try again" on `remediation.retry_requested:v2`. `remediation.requested:v2` and `remediation.retry_requested:v1` are retired. Upgrade when no remediation is in flight (step 2).
+- **The remediation streams change version.** TL;DR: remediation sends its heal trigger on `remediation.requested:v3`, and release-controller sends "Try again" on `remediation.retry_requested:v2`. `remediation.requested:v2` and `remediation.retry_requested:v1` are retired. Upgrade when no remediation is in flight (step 3).
   - Both streams carry the envelope of the other versioned streams: `event_id`, `tenant_id`, `occurred_at`, `producer` and `schema_version` beside the `payload`. A script that reads them must read the new shape.
   - `remediation.requested:v3` is one trigger per rejected release and round, and it carries every failing node. A node the classifier judged no fix can reach is marked `unfixable`, with the reason `classifier_infra` or `classifier_unhealable_parse`. agent-remediation proposes no fix for it, and catalog keeps it out of its case base.
   - `remediation.retry_requested:v2` carries the release's stored `release.rejected:v1` payload unchanged, as `rejection`, with the round beside it.
@@ -47,6 +51,21 @@ This release changes no values key, and it ships as a `MINOR`.
     XGROUP DESTROY continuo:remediation.requested:v2 catalog-remediation-requested-rejections
     XGROUP DESTROY continuo:remediation.retry_requested:v1 remediation-retry-requested
     ```
+- **Every dbt node continuo keeps has an ODCS contract, and an invalid one rejects the release.** TL;DR: continuo builds the contract of each dbt model, seed and snapshot from your dbt project and the tests on the node (`continuo-contracts` 0.3.0), and the release's topology reads its facts from that contract. A dbt node whose definitions make an invalid contract rejects the release as `invalid_contract`, naming the node and the field. Run `continuo-contracts dbt check <service>` on each dbt service before you upgrade (step 2).
+  - A dbt test and an `unknown-external` table have no contract.
+  - These reject the release as `invalid_contract`, and each rejection names the node and the field:
+    - A `meta.criticality` other than `REGULATORY`, `CORE` or `SECONDARY`. The parse took any value as written.
+    - A `meta.timeout_minutes` that is not a whole number from 1 to 10,080. It was `invalid_artifact`.
+    - A first tag with more than 50 characters or with whitespace in it, and a schema with whitespace, a dot or a slash in it. dbt accepts them.
+    - A node field of the wrong shape (`tags`, `fqn`, `name`, `version`). It was `invalid_artifact`.
+    - A node whose manifest entry has no `config.materialized` or no `original_file_path`. dbt always writes both.
+    - A table that the compiled SQL names, or a read the node declares in `meta.continuo.reads`, that cannot be written `<schema>.<table>`.
+    - A seed whose declared columns and CSV header differ, in either direction and by exact name. The rejection names the seed and each column: `<column> is in the CSV header but not declared` or `<column> is declared but not in the CSV header`. A seed that declares no column is rejected for every column of its header.
+  - The release reads a seed's header from `compile-extras.json`. A seed that file does not name is not compared, and the parse logs one warning per release with the number of such seeds.
+  - An empty `meta.timeout_minutes` (`""`, `[]` or `{}`) reads as no timeout, and an empty `meta.criticality` as `SECONDARY`. The parse refused an empty timeout before.
+  - A schema declared with capitals, such as `Analytics`, is written in lower case in the contract's id and in the topology (`analytics.orders`). The topology kept the capitals before.
+  - One rejection names every invalid contract of the release, dbt and Python ones together. A manifest that is malformed as a whole (a `metadata.project_name` or the links of a test that are not text, text that UTF-8 cannot encode) is still `invalid_artifact`, and a defect of the library is `internal`.
+  - Before you upgrade, run `continuo-contracts dbt check <service>` (continuo-contracts 0.3.0) on each dbt service and fix every error line, seed headers included (step 2).
 
 ### Added
 
@@ -55,6 +74,10 @@ This release changes no values key, and it ships as a `MINOR`.
   - The codes are `tries_spent`, `unverifiable_edits`, `preflight_rounds_spent`, `declined`, `no_type`, `no_repository`, `classifier_infra` and `classifier_unhealable_parse`. Each node outcome that agent-remediation's `remediation.v1.RemediationProposals` returns carries its code as `code`.
   - A node the classifier judged unfixable is on the release page too. An infrastructure error says to run the release again.
   - A node that a step declined, that no type matches or that the classifier judged unfixable is not tried again in a later try of the same round.
+- **catalog keeps every dbt contract version, and the live folder publishes dbt contracts.** TL;DR: a dbt model, seed or snapshot has contract versions in catalog like a Python node, and `continuo node contract`, `node contract-history`, `node contract-diff` and the Contract tab of the node page show them. The live contracts folder has one file for each, except an ephemeral model, which makes no table. The Contract tab of a dbt test or an `unknown-external` table says `This node has no contract. A dbt test and an unknown-external table have none.` The contract bundle of a release holds both families, counted in `summary.by_family`.
+- **The release page shows how long the parse and the contract generation took.** TL;DR: under the parsing step, `parsing <s> s` and `generating contracts <s> s · <n> contracts (dbt <d>, python <p>)`. `manifest.loaded.candidate:v2` carries `parse_ms` and `contracts_ms` on both outcomes and `contracts_by_family` on `ok`. release-controller keeps them in three nullable columns of `release_pipeline_runs` (release migration V31) and returns them on its internal `GET /releases/{id}` only when set. The public release status names none of them.
+- **New labels on the topology-controller metrics.** TL;DR: `continuo_topology_stage_duration_seconds` has the stage `contract_generation`, and `continuo_topology_contract_failures_total` has the stage `generate` with the reason `manifest_shape`, and the reason `seed_header` on the stage `validate`. All of them are exported at 0 from startup. If you copied the rule `TopologyStageNearLivenessBudget` from `deploy/OBSERVABILITY.md`, add `contract_generation` to the stages it leaves out, in both expressions: this stage refreshes the liveness heartbeat after every contract.
+- **A dbt service's CI can check its contracts before a release.** TL;DR: `continuo-contracts dbt check <project> --dbt <dbt>` (continuo-contracts 0.3.0) runs `dbt parse`, which needs no warehouse, and does with each model, seed and snapshot what the release does, seed headers included. `docs/contracts.md`, "Check a dbt project in CI", says what only the release checks.
 
 ### Changed
 
@@ -66,8 +89,9 @@ This release changes no values key, and it ships as a `MINOR`.
   - `remediation.requested:v2` and `remediation.retry_requested:v1` are retired streams: no login names them, and dead-letter-controller deletes their keys from Redis.
 - **topology-controller reads the dbt node gates from continuo-contracts 0.3.0.** TL;DR: topology-controller pins `continuo-contracts` 0.3.0, which also decides which models, seeds and snapshots of a dbt manifest a release keeps, and gives each its service, schedule and table. A service team's CI that pins the same version, `continuo-contracts` 0.3.0, gets the same answer for the same node. No values change is needed.
   - For a well-formed manifest, the nodes a release keeps do not change: a node with no owner, a node tagged `local_stub` and an untagged node of an installed dbt package are still left out, in that order.
-  - A node that has an owner and a `tags`, `fqn` (its first entry must be a string), `name` or `version` of the wrong shape, or a manifest whose `metadata.project_name` is not a string, rejects the release `invalid_artifact`. The detail names the node (`manifest` for the project name): it reads `<manifest path>: InvalidNodeSettingError('<node id>: tags must be a list of strings, got str')`. dbt writes none of these.
+  - A node that has an owner and whose `tags`, `fqn` (its first entry must be a string), `name` or `version` has the wrong shape rejects the release `invalid_contract`. The detail names the node and the field, as in `model.shop.orders: tags must be a list of strings, got str`. A manifest whose `metadata.project_name` is not a string rejects the release `invalid_artifact`, and its detail names `manifest`. dbt writes none of these.
   - A node whose `config` is null or a list, or whose `meta` is a string, is left out as `no_owner`. An untagged node with no `fqn`, or an empty one, in a manifest whose project is known is left out as `installed_package`. Before, either failed the release.
+- **The schema-check cache of topology-controller holds up to 100,000 documents.** TL;DR: dbt contracts share the cache with Python ones, and a cache of 10,000 would push Python contracts out on every release of a large estate. No values change is needed.
 
 ## [0.24.0] - 2026-11-17
 
