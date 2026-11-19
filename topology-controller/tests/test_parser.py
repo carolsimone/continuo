@@ -896,10 +896,14 @@ def test_a_versioned_model_is_a_node_named_with_its_version(tmp_path, version, t
     ({"tags": "daily"}, "model.svc_a.bad: tags must be a list of strings, got str"),
     ({"tags": ["daily", 3]}, "model.svc_a.bad: tags[1] must be a string, got int"),
     ({"fqn": "svc_a"}, "model.svc_a.bad: fqn must be a list, got str"),
+    ({"fqn": [5]}, "model.svc_a.bad: fqn[0] must be a string, got int"),
+    ({"name": ""}, "model.svc_a.bad: name must be a non-empty string, got an empty string"),
+    ({"version": True}, "model.svc_a.bad: version must be a string or a number, got bool"),
 ])
 def test_a_gate_that_cannot_read_a_node_field_is_an_invalid_artifact(tmp_path, changes, message):
-    """A node the earlier gates let through, whose `tags` or `fqn` is not the shape dbt
-    writes, is an artifact the parse refuses, naming the node as the manifest does."""
+    """A node the no-owner gate lets through, whose `tags`, `fqn`, `name` or `version` is
+    not the shape dbt writes, is an artifact the parse refuses, naming the node as the
+    manifest does."""
     node = _svc_a_model("bad")
     node.update(changes)
     with pytest.raises(InvalidNodeSettingError) as raised:

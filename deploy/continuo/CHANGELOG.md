@@ -65,8 +65,9 @@ This release changes no values key, and it ships as a `MINOR`.
   - `continuo_catalog` reads `remediation.requested:v3`.
   - `remediation.requested:v2` and `remediation.retry_requested:v1` are retired streams: no login names them, and dead-letter-controller deletes their keys from Redis.
 - **topology-controller reads the dbt node gates from continuo-contracts 0.3.0.** TL;DR: topology-controller pins `continuo-contracts` 0.3.0, which also decides which models, seeds and snapshots of a dbt manifest a release keeps, and gives each its service, schedule and table. A service team's CI that pins the same version, `continuo-contracts` 0.3.0, gets the same answer for the same node. No values change is needed.
-  - The nodes a release keeps do not change: a node with no owner, a node tagged `local_stub` and an untagged node of an installed dbt package are still left out, in that order.
-  - A node the gates keep, whose `tags` is not a list of strings or whose `fqn` is not a list of strings, rejects the release `invalid_artifact`, with a detail that starts with the node's id. dbt writes neither.
+  - For a well-formed manifest, the nodes a release keeps do not change: a node with no owner, a node tagged `local_stub` and an untagged node of an installed dbt package are still left out, in that order.
+  - A node that has an owner and a `tags`, `fqn` (its first entry must be a string), `name` or `version` of the wrong shape, or a manifest whose `metadata.project_name` is not a string, rejects the release `invalid_artifact`. The detail names the node (`manifest` for the project name): it reads `<manifest path>: InvalidNodeSettingError('<node id>: tags must be a list of strings, got str')`. dbt writes none of these.
+  - A node whose `config` is null or a list, or whose `meta` is a string, is left out as `no_owner`. An untagged node with no `fqn`, or an empty one, in a manifest whose project is known is left out as `installed_package`. Before, either failed the release.
 
 ## [0.24.0] - 2026-11-17
 

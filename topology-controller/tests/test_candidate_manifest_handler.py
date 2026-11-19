@@ -250,6 +250,28 @@ def test_handle_publishes_failed_on_missing_nodes_key(tmp_path):
     publisher.publish_ok.assert_not_called()
 
 
+def test_the_failed_detail_of_a_node_with_unreadable_tags_names_the_node(tmp_path):
+    bad = tmp_path / "bad_tags.json"
+    bad.write_text(json.dumps({
+        "nodes": {
+            "model.svc.t": {
+                "resource_type": "model", "name": "t", "schema": "s", "fqn": ["svc", "t"],
+                "config": {"meta": {"owner": "team"}}, "tags": "daily",
+            }
+        }
+    }))
+    source = create_autospec(ManifestSourcePort)
+    source.list_manifests.return_value = [ManifestFile(path=str(bad), image_tag="")]
+    publisher = MagicMock()
+
+    build_handler(source, publisher, make_uploader()).handle(release_id="rel-bad-tags")
+
+    kw = _failed_kwargs(publisher)
+    assert kw["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
+    assert kw["detail"] == (
+        f"{bad}: InvalidNodeSettingError('model.svc.t: tags must be a list of strings, got str')")
+
+
 def test_handle_publishes_failed_on_node_with_empty_fqn(tmp_path):
     """A node whose dbt shape is invalid (empty `fqn`) raises InvalidNodeSettingError
     in parse_manifest; that is permanent, so publish failed rather than stranding
