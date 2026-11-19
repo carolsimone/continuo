@@ -92,7 +92,7 @@ func TestPublished_TheDesignsPublishedFile(t *testing.T) {
 		},
 	})
 
-	got := contractversion.Published(storedKPIs(), 3, warehouseServer(), provenance52())
+	got := contractversion.Published(storedKPIs(), 3, warehouseServer(), "", provenance52())
 
 	assert.Equal(t, want, got)
 }
@@ -100,7 +100,7 @@ func TestPublished_TheDesignsPublishedFile(t *testing.T) {
 func TestPublished_LeavesTheStoredFormUntouchedAndSharesNothingWithIt(t *testing.T) {
 	stored := storedKPIs()
 
-	got := contractversion.Published(stored, 3, warehouseServer(), provenance52())
+	got := contractversion.Published(stored, 3, warehouseServer(), "", provenance52())
 
 	assert.Equal(t, storedKPIs(), stored, "publishing changes nothing in the stored form")
 	got["team"].(map[string]any)["name"] = "changed"
@@ -112,7 +112,7 @@ func TestPublished_LeavesTheStoredFormUntouchedAndSharesNothingWithIt(t *testing
 func TestPublished_NoServerWithoutAHost(t *testing.T) {
 	noHost := &contractversion.Server{Type: "postgres", Port: 5432, Database: "continuo_dbt"}
 	for name, server := range map[string]*contractversion.Server{"nil": nil, "a server with no host": noHost} {
-		got := contractversion.Published(storedKPIs(), 3, server, provenance52())
+		got := contractversion.Published(storedKPIs(), 3, server, "", provenance52())
 		assert.NotContains(t, got, "servers", name)
 		assert.Equal(t, "3", got["version"], name)
 	}
@@ -121,7 +121,7 @@ func TestPublished_NoServerWithoutAHost(t *testing.T) {
 func TestPublished_TrinoUsesCatalog(t *testing.T) {
 	server := &contractversion.Server{Type: "trino", Host: "trino.internal.example", Port: 8080, Database: "iceberg"}
 
-	got := contractversion.Published(storedKPIs(), 1, server, provenance52())
+	got := contractversion.Published(storedKPIs(), 1, server, "", provenance52())
 
 	assert.Equal(t, []any{map[string]any{
 		"server":  "warehouse",
@@ -136,7 +136,7 @@ func TestPublished_TrinoUsesCatalog(t *testing.T) {
 func TestPublished_AnEmptyDatabaseIsLeftOut(t *testing.T) {
 	server := &contractversion.Server{Type: "postgres", Host: "h", Port: 5432}
 
-	got := contractversion.Published(storedKPIs(), 1, server, provenance52())
+	got := contractversion.Published(storedKPIs(), 1, server, "", provenance52())
 
 	entry := got["servers"].([]any)[0].(map[string]any)
 	assert.NotContains(t, entry, "database")
@@ -148,25 +148,85 @@ func TestPublished_TheSchemaIsTheIDUpToItsFirstDot(t *testing.T) {
 	stored := storedKPIs()
 	stored["id"] = "analytics.dim_customer.v2"
 
-	got := contractversion.Published(stored, 1, warehouseServer(), provenance52())
+	got := contractversion.Published(stored, 1, warehouseServer(), "", provenance52())
 
 	assert.Equal(t, "analytics", got["servers"].([]any)[0].(map[string]any)["schema"])
+}
+
+// dbt quotes the schema it builds in, so a node declared in "Analytics" lives in
+// a schema a consumer binds to only by that spelling, while the logical id is
+// lower case. The servers entry names the declared spelling; the id stays.
+func TestPublished_TheServersEntryNamesTheDeclaredSchemaNotTheIDsSpelling(t *testing.T) {
+	stored := storedKPIs()
+
+	got := contractversion.Published(stored, 1, warehouseServer(), "Analytics", provenance52())
+
+	assert.Equal(t, "Analytics", got["servers"].([]any)[0].(map[string]any)["schema"])
+	assert.Equal(t, kpis, got["id"], "the logical id keeps its lower-case spelling")
+	assert.Equal(t, kpis, stored["id"])
+}
+
+func TestPublished_NoDeclaredSchemaNamesTheIDsSchema(t *testing.T) {
+	got := contractversion.Published(storedKPIs(), 1, warehouseServer(), "", provenance52())
+
+	assert.Equal(t, "analytics", got["servers"].([]any)[0].(map[string]any)["schema"])
+}
+
+// A node declared in a lower-case schema, which is every node of an install
+// that quotes nothing, publishes the same file with or without its declared
+// schema: the declared spelling and the id's agree.
+func TestPublished_ALowerCaseDeclaredSchemaPublishesWhatTheIDsSchemaDoes(t *testing.T) {
+	declared := contractversion.Published(storedKPIs(), 3, warehouseServer(), "analytics", provenance52())
+	fromID := contractversion.Published(storedKPIs(), 3, warehouseServer(), "", provenance52())
+
+	assert.Equal(t, fromID, declared)
+}
+
+func TestPublished_TheDeclaredSchemaIsShownOnlyInAServersEntry(t *testing.T) {
+	noHost := &contractversion.Server{Type: "postgres", Port: 5432, Database: "continuo_dbt"}
+	for name, server := range map[string]*contractversion.Server{"nil": nil, "a server with no host": noHost} {
+		got := contractversion.Published(storedKPIs(), 3, server, "Analytics", provenance52())
+
+		assert.NotContains(t, got, "servers", name)
+		assert.Equal(t, contractversion.Published(storedKPIs(), 3, server, "", provenance52()), got, name)
+	}
 }
 
 func TestPublished_AnIDWithNoSchemaGivesNoSchemaKey(t *testing.T) {
 	stored := storedKPIs()
 	stored["id"] = "py_daily_kpis"
 
-	got := contractversion.Published(stored, 1, warehouseServer(), provenance52())
+	got := contractversion.Published(stored, 1, warehouseServer(), "", provenance52())
 
 	assert.NotContains(t, got["servers"].([]any)[0].(map[string]any), "schema")
+}
+
+func TestServerSchema(t *testing.T) {
+	for name, tc := range map[string]struct {
+		id       string
+		declared string
+		want     string
+	}{
+		"the declared schema wins over the id's":      {"analytics.orders", "Analytics", "Analytics"},
+		"a lower-case declared schema is the same":    {"analytics.orders", "analytics", "analytics"},
+		"no declared schema takes the id's":           {"analytics.orders", "", "analytics"},
+		"a versioned id keeps its schema":             {"analytics.dim_customer.v2", "", "analytics"},
+		"an id with no schema part and none declared": {"orders", "", ""},
+		"a declared schema names an id with no dot":   {"orders", "Analytics", "Analytics"},
+		"no id and none declared":                     {"", "", ""},
+	} {
+		stored := map[string]any{"id": tc.id}
+		assert.Equal(t, tc.want, contractversion.ServerSchema(stored, tc.declared), name)
+	}
+	assert.Empty(t, contractversion.ServerSchema(map[string]any{"id": 3}, ""), "an id that is no text has no schema")
+	assert.Empty(t, contractversion.ServerSchema(nil, ""), "a nil document has none")
 }
 
 func TestPublished_TheProvenanceIsTheOnlyOneEvenWhenTheStoredFormCarriesOne(t *testing.T) {
 	stored := storedKPIs()
 	stored["customProperties"] = append(stored["customProperties"].([]any), customProperty("provenance", map[string]any{"releaseId": "stale"}))
 
-	got := contractversion.Published(stored, 3, nil, provenance52())
+	got := contractversion.Published(stored, 3, nil, "", provenance52())
 
 	var provenances []any
 	for _, p := range got["customProperties"].([]any) {
@@ -183,7 +243,7 @@ func TestPublished_TheProvenanceIsTheOnlyOneEvenWhenTheStoredFormCarriesOne(t *t
 func TestPublished_AContractWithNoCustomPropertiesGetsTheProvenanceAlone(t *testing.T) {
 	stored := map[string]any{"id": kpis, "version": "0"}
 
-	got := contractversion.Published(stored, 2, nil, provenance52())
+	got := contractversion.Published(stored, 2, nil, "", provenance52())
 
 	props, ok := got["customProperties"].([]any)
 	require.True(t, ok)
@@ -196,7 +256,7 @@ func TestPublished_PromotedAtIsRFC3339UTC(t *testing.T) {
 	prov := provenance52()
 	prov.PromotedAt = time.Date(2026, 11, 27, 18, 40, 12, 987654321, time.FixedZone("CEST", 2*60*60))
 
-	got := contractversion.Published(storedKPIs(), 3, nil, prov)
+	got := contractversion.Published(storedKPIs(), 3, nil, "", prov)
 
 	props := got["customProperties"].([]any)
 	value := props[len(props)-1].(map[string]any)["value"].(map[string]any)

@@ -2,6 +2,7 @@ package serialization_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,8 +54,14 @@ func storedKPIs() map[string]any {
 // publishedKPIs is the design's published py_daily_kpis: version 3, on an
 // install with the warehouse server settings, promoted by rel-77aa0bc-230.
 func publishedKPIs() map[string]any {
+	return publishedKPIsDeclaredIn("")
+}
+
+// publishedKPIsDeclaredIn is publishedKPIs for a node whose declared schema is
+// schema ("" for a node that has none).
+func publishedKPIsDeclaredIn(schema string) map[string]any {
 	server := &contractversion.Server{Type: "postgres", Host: "warehouse.internal.example", Port: 5432, Database: "continuo_dbt"}
-	return contractversion.Published(storedKPIs(), 3, server, contractversion.Provenance{
+	return contractversion.Published(storedKPIs(), 3, server, schema, contractversion.Provenance{
 		ContractHash:      "sha256:3f1c...",
 		ContentHash:       "sha256:91d4...",
 		ReleaseID:         "rel-77aa0bc-230",
@@ -113,6 +120,23 @@ func TestODCSYAML_RendersTheDesignsPublishedFileInItsKeyOrder(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, wantKPIs, string(got))
+}
+
+// A node declared in a lower-case schema renders the design's file byte for
+// byte, and one declared in a quoted schema renders its servers entry with that
+// spelling and nothing else changed: the id stays in lower case.
+func TestODCSYAML_RendersTheDeclaredSchemaInTheServersEntryOnly(t *testing.T) {
+	lower, err := serialization.ODCSYAML{}.Render(publishedKPIsDeclaredIn("analytics"))
+	require.NoError(t, err)
+	assert.Equal(t, wantKPIs, string(lower))
+
+	quoted, err := serialization.ODCSYAML{}.Render(publishedKPIsDeclaredIn("Analytics"))
+
+	require.NoError(t, err)
+	want := strings.Replace(wantKPIs, "database: continuo_dbt, schema: analytics}", "database: continuo_dbt, schema: Analytics}", 1)
+	require.NotEqual(t, wantKPIs, want)
+	assert.Equal(t, want, string(quoted))
+	assert.Contains(t, string(quoted), "id: analytics.py_daily_kpis\n")
 }
 
 // The rendered file reads back as the document it was rendered from, so

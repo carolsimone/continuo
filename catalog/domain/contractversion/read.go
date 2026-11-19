@@ -57,4 +57,9 @@ type LiveContract struct {
 	ContractHash string
 	Document     map[string]any
 	Provenance   Provenance
+	// PhysicalSchema is the schema the node is declared in and builds in, in
+	// the spelling the topology swap stored on the node, which can differ in
+	// case from the schema part of its lower-case contract id. It is empty
+	// while no swap has written the node.
+	PhysicalSchema string
 }

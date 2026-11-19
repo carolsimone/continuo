@@ -16,9 +16,13 @@ import (
 	s3infra "github.com/carolsimone/continuo/catalog/adapters/s3"
 	serializationinfra "github.com/carolsimone/continuo/catalog/adapters/serialization"
 	"github.com/carolsimone/continuo/catalog/domain/contractversion"
+	"github.com/carolsimone/continuo/catalog/domain/topology"
 	"github.com/carolsimone/continuo/catalog/service/handlers"
+	"github.com/carolsimone/continuo/catalog/service/uow"
 	"github.com/carolsimone/continuo/pkg/contractbundle"
 	"github.com/carolsimone/continuo/pkg/objectstore"
+	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -236,6 +240,84 @@ func TestLiveFolder_APromotionPublishesADbtContractButNotAnEphemeralOne(t *testi
 	assert.Equal(t, []string{dbtID, pythonID}, listed, "the index lists the files, not the ephemeral model")
 	assert.Equal(t, int64(3), f.versions(), "the ephemeral model's contract is stored all the same")
 	assert.Equal(t, int64(41), f.value(`MATCH (n:Node {tenant_id: $tenant_id, unique_id: '`+ephemeralID+`'}) RETURN n.contract_promotion_seq AS v`))
+}
+
+// swapTopology applies the topology swap of promotion seq to the tenant's
+// graph: one dbt model per entry of schemas, whose key is its unique id and
+// whose value is the schema it is declared in.
+func (f *liveFolderFixture) swapTopology(releaseID string, seq int64, schemas map[string]string) {
+	f.t.Helper()
+	var nodes []topology.ReleasePromotedTopologyNode
+	for id, schema := range schemas {
+		nodes = append(nodes, topology.ReleasePromotedTopologyNode{
+			UniqueID: id, SchemaName: schema, TableName: id[strings.Index(id, ".")+1:], ServiceName: "svc",
+			NodeType: "dbt-model", ContentHash: "sha256:" + id, ImageTag: "img", Schedule: "daily",
+			UpstreamUniqueIDs: []string{},
+		})
+	}
+	marker := uow.Marker{TenantID: f.tenantID, Group: streams.CatalogReleaseTopology, MessageID: uuid.NewString()}
+	err := f.uow.Write(context.Background(), marker, true, func(ctx context.Context, tx uow.Tx) error {
+		_, err := tx.Topology().PromoteRelease(ctx, f.tenantID, releaseID, seq, nodes, time.Now())
+		return err
+	})
+	require.NoError(f.t, err)
+}
+
+// servers returns the servers entries of the published file of uniqueID.
+func (f *liveFolderFixture) servers(uniqueID string) []any {
+	f.t.Helper()
+	body, ok := f.object(uniqueID + ".odcs.yaml")
+	require.True(f.t, ok, "%s has a file", uniqueID)
+	var published map[string]any
+	require.NoError(f.t, yaml.Unmarshal([]byte(body), &published))
+	assert.Equal(f.t, uniqueID, published["id"], "the logical id never takes the declared spelling")
+	servers, _ := published["servers"].([]any)
+	return servers
+}
+
+// serverSchema is the schema the servers entry of uniqueID's file names.
+func (f *liveFolderFixture) serverSchema(uniqueID string) any {
+	f.t.Helper()
+	servers := f.servers(uniqueID)
+	require.Len(f.t, servers, 1)
+	return servers[0].(map[string]any)["schema"]
+}
+
+// A dbt model built in a quoted schema is declared in "Analytics" on its :Node
+// while its contract id is lower case, and its file's servers entry names the
+// declared spelling, the physical schema a consumer binds to. A node the
+// contracts group created before any topology swap has no declared schema and
+// falls back to the id's. The next promotion, whose topology swap changes only
+// the case of the schema, puts the file again, though the contract is the same.
+func TestLiveFolder_AServersEntryNamesTheNodesDeclaredSchema(t *testing.T) {
+	server := &contractversion.Server{Type: "postgres", Host: "warehouse.internal.example", Port: 5432, Database: "continuo_dbt"}
+	f := newLiveFolderFixture(t, server)
+	const dbtID, pythonID = "analytics.governed", "analytics.py_daily_kpis"
+	f.swapTopology("rel-1", 41, map[string]string{dbtID: "Analytics"})
+	doc := f.sharedBundle("rel-1")
+
+	require.NoError(t, f.handler.Handle(context.Background(), "41-0", nil, f.promote(doc, 41)))
+
+	assert.Equal(t, "Analytics", f.serverSchema(dbtID), "the declared schema, not the id's lower case")
+	assert.Equal(t, "analytics", f.serverSchema(pythonID), "a node with no declared schema falls back to the id's")
+	raw, _ := f.object("_index.json")
+	var index map[string]any
+	require.NoError(t, json.Unmarshal([]byte(raw), &index))
+	assert.Equal(t, []any{
+		map[string]any{"unique_id": dbtID, "key": dbtID + ".odcs.yaml", "version": float64(1),
+			"contract_hash": doc.Contracts[dbtID].ContractHash, "physical_schema": "Analytics"},
+		map[string]any{"unique_id": pythonID, "key": pythonID + ".odcs.yaml", "version": float64(1),
+			"contract_hash": doc.Contracts[pythonID].ContractHash},
+	}, index["files"], "the index keeps a spelling only where it differs from the id's")
+
+	f.swapTopology("rel-2", 42, map[string]string{dbtID: "analytics"})
+	before := len(f.livePuts())
+	doc.ReleaseID = "rel-2"
+	require.NoError(t, f.handler.Handle(context.Background(), "42-0", nil, f.promote(doc, 42)))
+
+	assert.Equal(t, "analytics", f.serverSchema(dbtID))
+	assert.Equal(t, []string{"_index.json", dbtID + ".odcs.yaml", "_index.json"}, f.livePuts()[before:],
+		"only the file whose schema changed is put, between the interim and the final index")
 }
 
 // ephemeralModel is the contract of the ephemeral dbt model uniqueID, written

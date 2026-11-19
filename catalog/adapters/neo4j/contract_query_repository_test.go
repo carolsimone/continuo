@@ -143,10 +143,11 @@ func TestContractQueryRepository_LiveIsThePromotionsNodes(t *testing.T) {
 	assertUTC(t, promotedAtOf(41), got.Provenance.PromotedAt)
 	got.Provenance.PromotedAt = time.Time{}
 	assert.Equal(t, contractversion.LiveContract{
-		UniqueID:     kpisNode,
-		Version:      1,
-		ContractHash: contractA,
-		Document:     contractDocument(kpisNode, "service-py"),
+		UniqueID:       kpisNode,
+		Version:        1,
+		ContractHash:   contractA,
+		Document:       contractDocument(kpisNode, "service-py"),
+		PhysicalSchema: "analytics",
 		Provenance: contractversion.Provenance{
 			ContractHash:      contractA,
 			ContentHash:       kpisContent,
@@ -168,6 +169,27 @@ func TestContractQueryRepository_LiveIsThePromotionsNodes(t *testing.T) {
 	none, err := f.contractReader().LatestPromotionSeq(ctx, f.another().tenant)
 	require.NoError(t, err)
 	assert.Zero(t, none, "a tenant with no contract has no contract promotion")
+}
+
+// The live set carries each node's declared schema, the spelling the topology
+// swap stored on the :Node, which can differ in case from the lower-case
+// contract id; a node the contracts group created before any swap has none.
+func TestContractQueryRepository_LiveCarriesTheDeclaredSchema(t *testing.T) {
+	f := newSwapFixture(t)
+	quoted := modelNode("analytics.quoted")
+	quoted.SchemaName = "Analytics"
+	f.promoteAt("rel-40", 40, []topology.ReleasePromotedTopologyNode{quoted}, time.Now())
+	f.writeContracts(contractPromotion("rel-41", 41),
+		contractOf("analytics.quoted", contractA, "svc"), contractOf("analytics.unswapped", contractB, "svc"))
+
+	live, err := f.contractReader().Live(context.Background(), f.tenant, 41)
+
+	require.NoError(t, err)
+	require.Len(t, live, 2)
+	assert.Equal(t, "analytics.quoted", live[0].UniqueID)
+	assert.Equal(t, "Analytics", live[0].PhysicalSchema, "the swap's spelling, not the lower-case id's")
+	assert.Equal(t, "analytics.unswapped", live[1].UniqueID)
+	assert.Empty(t, live[1].PhysicalSchema, "a node no swap has written has no declared schema")
 }
 
 // A retired node keeps its history and its pointer, and has no current
