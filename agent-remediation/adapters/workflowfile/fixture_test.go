@@ -484,4 +484,5 @@ func TestLoadFixtures_EveryBuiltInFixtureLoads(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotEmpty(t, fixtures)
+	assert.Len(t, fixtures, builtinYAMLFiles(t, "fixtures"), "one fixture per built-in fixture file")
 }

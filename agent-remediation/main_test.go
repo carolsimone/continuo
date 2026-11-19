@@ -564,8 +564,12 @@ func TestMain_InstallFilesCanBeAKubernetesConfigMapMount(t *testing.T) {
 // heal trigger runs with a copy that lists one more type, and adds that type.
 // Both load, and the flow lists the install's type after the built-in ones.
 func TestMain_InstallTypeListedByAReplacedFlow(t *testing.T) {
+	builtin, err := loadRunnerFiles(workflows.Builtin, nil, runner.Collaborators{}, discardLogger())
+	require.NoError(t, err)
+	builtinTypes := builtin.Flows["rejected-release"].Types
+	lastBuiltin := builtinTypes[len(builtinTypes)-1]
 	flow := strings.Replace(builtinFile(t, "flows/rejected-release.yaml"),
-		"  - cross-service-upstream\n", "  - cross-service-upstream\n  - dbt-test-validation\n", 1)
+		"  - "+lastBuiltin+"\n", "  - "+lastBuiltin+"\n  - dbt-test-validation\n", 1)
 	require.Contains(t, flow, "dbt-test-validation")
 	typ := strings.NewReplacer(
 		"name: dbt-validation", "name: dbt-test-validation",
@@ -582,8 +586,8 @@ func TestMain_InstallTypeListedByAReplacedFlow(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Contains(t, set.Types, "dbt-test-validation")
-	listed := set.Flows["rejected-release"].Types
-	assert.Equal(t, "dbt-test-validation", listed[len(listed)-1])
+	assert.Equal(t, append(append([]string{}, builtinTypes...), "dbt-test-validation"),
+		set.Flows["rejected-release"].Types, "the install's type follows every built-in type")
 	assert.Equal(t, "rejected-release.yaml", set.Flows["rejected-release"].File)
 	var replaced bool
 	for _, e := range logLines(t, &buf) {

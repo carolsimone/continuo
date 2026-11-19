@@ -160,7 +160,9 @@ func TestRunner_APythonParseFailureNoTypeMatchesIsHandedOverWithoutAModelCall(t 
 
 			want := proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: noTypeReason, Code: model.HandoverReasonNoType}
 			c := h.cluster(id, 1, 1)
-			assert.Equal(t, "", c.TypeName)
+			assert.Equal(t, "", c.TypeName, "type %s now matches a %s node whose parse failed. This test says no built-in type does, "+
+				"so a built-in type that takes the case over must also drop %s from this test's node types, "+
+				"and its own fixture must test it", c.TypeName, nodeType, nodeType)
 			assert.Equal(t, remediation.ClusterHandedOver, c.Status)
 			assert.Equal(t, &want, c.Outcome)
 			assert.Equal(t, []string{"hand_over"}, stepNames(h.store.Steps(id)), "no step runs, and the hand-over is recorded")

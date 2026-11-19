@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"maps"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -65,6 +67,22 @@ func withoutFixture(s conformance.Suite, typeName string) conformance.Suite {
 	return s
 }
 
+// builtinTypeFiles is how many type files the built-in files hold. It walks the
+// files and does not load them, so a type the loader dropped still counts.
+func builtinTypeFiles(t *testing.T) int {
+	t.Helper()
+	var n int
+	require.NoError(t, fs.WalkDir(workflows.Builtin, "types", func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && (path.Ext(p) == ".yaml" || path.Ext(p) == ".yml") {
+			n++
+		}
+		return err
+	}))
+	return n
+}
+
+// The built-in flow lists every built-in type, and each is played through every
+// type scenario.
 func TestSuite_BuiltinFilesPass(t *testing.T) {
 	s := builtinSuite(t)
 	warnings, err := runner.Validate(s.Files, runner.NewRegistry(runner.Collaborators{}))
@@ -73,7 +91,7 @@ func TestSuite_BuiltinFilesPass(t *testing.T) {
 
 	results := s.Run(ctx)
 	flow := s.Files.Flows[flowName]
-	require.Len(t, flow.Types, 10)
+	require.Len(t, flow.Types, builtinTypeFiles(t), "the flow lists every built-in type file's type")
 	require.Len(t, results, len(flow.Types)*len(conformance.TypeScenarios()))
 	for _, r := range results {
 		assert.NoError(t, r.Err, "type %s, scenario %s", r.Type, r.Scenario)

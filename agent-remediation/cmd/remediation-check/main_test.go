@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/adapters/workflowfile"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/agent-remediation/service/conformance"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner/step"
 	"github.com/carolsimone/continuo/agent-remediation/workflows"
@@ -38,13 +41,51 @@ type wireScenario struct {
 
 const builtinDir = "../../workflows"
 
-// What the built-in files hold and play: 29 files (1 flow, 10 types, 10 type
-// fixtures and 8 flow fixtures) and 88 scenarios (10 types x 8 type scenarios,
-// then 1 flow x 8 flow scenarios).
-const (
-	builtinFileCount     = 29
-	builtinScenarioCount = 88
-)
+// builtinYAMLFiles is how many *.yaml and *.yml files the built-in files hold
+// under dir ("." for all of them). It walks the files and does not load them,
+// so a file that fails to load is still counted and a count taken from a load
+// can never hide it.
+func builtinYAMLFiles(t *testing.T, dir string) int {
+	t.Helper()
+	var n int
+	require.NoError(t, fs.WalkDir(workflows.Builtin, dir, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && (path.Ext(p) == ".yaml" || path.Ext(p) == ".yml") {
+			n++
+		}
+		return err
+	}))
+	return n
+}
+
+// builtinFileCount is the number of files the built-in files hold: the flow
+// and type files and the fixtures of the types and of the flows.
+func builtinFileCount(t *testing.T) int {
+	t.Helper()
+	return builtinYAMLFiles(t, ".")
+}
+
+// builtinScenarioCount is the number of scenarios the built-in files play:
+// every built-in type through every type scenario, then every built-in flow
+// through every flow scenario. A built-in flow or type file holds one flow or
+// one type, and every built-in type is listed by a flow.
+func builtinScenarioCount(t *testing.T) int {
+	t.Helper()
+	return builtinYAMLFiles(t, "types")*len(conformance.TypeScenarios()) +
+		builtinYAMLFiles(t, "flows")*len(conformance.FlowScenarios())
+}
+
+// lineOf is the line, counted from 1, of the first line of text that starts
+// with prefix.
+func lineOf(t *testing.T, text, prefix string) int {
+	t.Helper()
+	for i, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return i + 1
+		}
+	}
+	require.FailNow(t, "no line starts with "+prefix)
+	return 0
+}
 
 func runFiles(t *testing.T, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
@@ -70,10 +111,8 @@ func TestFiles_BuiltinDirPasses(t *testing.T) {
 	require.Equal(t, 0, code, "stderr: %s\nstdout: %s", stderr, stdout)
 	assert.Empty(t, r.Errors)
 	assert.Empty(t, r.Warnings)
-	// 1 flow, 10 types, 10 type fixtures and 8 flow fixtures.
-	assert.Equal(t, 29, r.Files)
-	// 10 types x 8 type scenarios, then 1 flow x 8 flow scenarios.
-	require.Len(t, r.Scenarios, 88)
+	assert.Equal(t, builtinFileCount(t), r.Files)
+	require.Len(t, r.Scenarios, builtinScenarioCount(t))
 	for _, s := range r.Scenarios {
 		assert.True(t, s.OK, "%s %s: %s", s.Type, s.Scenario, s.Error)
 		assert.Empty(t, s.Error)
@@ -139,7 +178,7 @@ approver: node_owner
 	assert.NotNil(t, r.Warnings)
 	assert.NotNil(t, r.Scenarios)
 	assert.Empty(t, r.Scenarios, "the suite is skipped when the files do not validate")
-	assert.Equal(t, builtinFileCount+1, r.Files, "the install's one file and every built-in file")
+	assert.Equal(t, builtinFileCount(t)+1, r.Files, "the install's one file and every built-in file")
 }
 
 func TestFiles_AFileThatDoesNotLoadExitsOneWithEmptyArrays(t *testing.T) {
@@ -163,8 +202,8 @@ func TestFiles_AnEmptyDirChecksTheBuiltInsAlone(t *testing.T) {
 	require.Equal(t, 0, code, "stderr: %s\nstdout: %s", stderr, stdout)
 	assert.Empty(t, r.Errors)
 	assert.Empty(t, r.Warnings)
-	assert.Equal(t, builtinFileCount, r.Files)
-	require.Len(t, r.Scenarios, builtinScenarioCount)
+	assert.Equal(t, builtinFileCount(t), r.Files)
+	require.Len(t, r.Scenarios, builtinScenarioCount(t))
 	for _, s := range r.Scenarios {
 		assert.True(t, s.OK, "%s %s: %s", s.Type, s.Scenario, s.Error)
 	}
@@ -261,7 +300,9 @@ func TestFiles_AGateOfTwoStepsExitsOne(t *testing.T) {
 
 			assert.Equal(t, 1, code, stderr)
 			r := decode(t, stdout)
-			assert.Contains(t, strings.Join(r.Errors, "\n"), `flows/rejected-release.yaml:22: flow "rejected-release" has 2 gate steps`,
+			gateLine := lineOf(t, builtinText(t, "flows/rejected-release.yaml"), "gate:")
+			assert.Contains(t, strings.Join(r.Errors, "\n"),
+				fmt.Sprintf(`flows/rejected-release.yaml:%d: flow "rejected-release" has 2 gate steps`, gateLine),
 				"the refusal names the line of the second gate step")
 			assert.Empty(t, r.Scenarios, "the suite is skipped when the files do not validate")
 		})
@@ -310,7 +351,8 @@ func TestFiles_ATypeWithNoRoundsExitsOne(t *testing.T) {
 	assert.Equal(t, 1, code, stderr)
 	r := decode(t, stdout)
 	require.Len(t, r.Errors, 1, "%v", r.Errors)
-	assert.Equal(t, `types/dbt-compile.yaml:8: type "dbt-compile" has rounds 0, and a type runs at least one pre-flight round, so rounds must be 1 or more`, r.Errors[0])
+	agentLine := lineOf(t, builtinText(t, "types/dbt-compile.yaml"), "agent:")
+	assert.Equal(t, fmt.Sprintf(`types/dbt-compile.yaml:%d: type "dbt-compile" has rounds 0, and a type runs at least one pre-flight round, so rounds must be 1 or more`, agentLine), r.Errors[0])
 	assert.Empty(t, r.Scenarios, "the suite is skipped when the files do not validate")
 }
 
@@ -401,12 +443,12 @@ func TestFiles_AnInstallTypeWithoutAFixtureFails(t *testing.T) {
 			others = append(others, s)
 		}
 	}
-	require.Len(t, own, 8, "a type is played through eight scenarios")
+	require.Len(t, own, len(conformance.TypeScenarios()), "a type is played through every type scenario")
 	for _, s := range own {
 		assert.False(t, s.OK, s.Scenario)
 		assert.Contains(t, s.Error, "type my-validation has no fixture", s.Scenario)
 	}
-	require.Len(t, others, builtinScenarioCount, "every built-in scenario is still in the report")
+	require.Len(t, others, builtinScenarioCount(t), "every built-in scenario is still in the report")
 	for _, s := range others {
 		assert.True(t, s.OK, "%s %s: %s", s.Type, s.Scenario, s.Error)
 	}
@@ -449,7 +491,7 @@ func TestFiles_AnInstallReplacementIsChecked(t *testing.T) {
 				replaced++
 			}
 		}
-		assert.Equal(t, 8, replaced, "the replacement is played through every scenario, with the built-in fixture")
+		assert.Equal(t, len(conformance.TypeScenarios()), replaced, "the replacement is played through every type scenario, with the built-in fixture")
 	})
 }
 
@@ -472,7 +514,7 @@ func TestFiles_AnInstallFixtureReplacesTheBuiltInFixtureOfItsType(t *testing.T) 
 	assert.Equal(t, 1, code, stderr)
 	r := decode(t, stdout)
 	assert.Empty(t, r.Errors)
-	require.Len(t, r.Scenarios, builtinScenarioCount)
+	require.Len(t, r.Scenarios, builtinScenarioCount(t))
 	var failedOfCompile int
 	for _, s := range r.Scenarios {
 		switch {

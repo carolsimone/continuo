@@ -1,7 +1,9 @@
 package workflowfile
 
 import (
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -443,10 +445,27 @@ func TestLoad_AnAbsentMatchSourceMatchesAnySource(t *testing.T) {
 	assert.Empty(t, set.Types["any"].Match.Source)
 }
 
+// builtinYAMLFiles is how many *.yaml and *.yml files the built-in files hold
+// under dir. It walks the files and does not load them, so a count taken from a
+// load can never hide a file the loader dropped.
+func builtinYAMLFiles(t *testing.T, dir string) int {
+	t.Helper()
+	var n int
+	require.NoError(t, fs.WalkDir(workflows.Builtin, dir, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && (path.Ext(p) == ".yaml" || path.Ext(p) == ".yml") {
+			n++
+		}
+		return err
+	}))
+	return n
+}
+
+// Every built-in flow and type file defines one flow or one type.
 func TestLoad_EveryBuiltInFileLoads(t *testing.T) {
 	set, err := Load(workflows.Builtin)
 
 	require.NoError(t, err)
 	assert.Contains(t, set.Flows, "rejected-release")
-	assert.Len(t, set.Types, 10)
+	assert.Len(t, set.Flows, builtinYAMLFiles(t, "flows"), "one flow per built-in flow file")
+	assert.Len(t, set.Types, builtinYAMLFiles(t, "types"), "one type per built-in type file")
 }
