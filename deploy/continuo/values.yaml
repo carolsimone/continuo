@@ -679,8 +679,12 @@ agentRemediation:
     # ends in .yaml or .yml and does not start with a dot. A document whose kind
     # is not flow, type or fixture, or whose version agent-remediation does not
     # load, fails the render, naming the file. A change rolls agent-remediation
-    # only. Empty (the default) runs the built-in files alone. See "Remediation
-    # files" in the chart's README.
+    # only. Empty (the default) loads the built-in files alone. Flows and types
+    # run only with engine: runner; under legacy the files are loaded and
+    # checked at startup, and only remediations the runner started use them.
+    # Upgrade with your values file or --reset-then-reuse-values, not
+    # --reuse-values, which keeps the services list of the chart a release was
+    # installed with. See "Remediation files" in the chart's README.
     files: {}
 
 databaseInit:

@@ -39,6 +39,43 @@ func TestRemediationWorkflowFileVersionMatchesTheChart(t *testing.T) {
 	}
 }
 
+// The chart refuses a remediation file whose kind agent-remediation does not
+// load, so the kinds continuo.agentRemediation.assertWorkflowFiles accepts are
+// exactly the kind constants of agent-remediation/adapters/workflowfile
+// (`kind<Name> = "<kind>"`). Both are read from the source by their shape, and
+// the test fails when either shape is not found.
+func TestRemediationWorkflowFileKindsMatchTheChart(t *testing.T) {
+	src := readRepoFile(t, "agent-remediation", "adapters", "workflowfile", "file.go")
+	var want []string
+	for _, m := range regexp.MustCompile(`(?m)^\s*kind[A-Z][A-Za-z]* += "([a-z]+)"$`).FindAllStringSubmatch(src, -1) {
+		want = append(want, m[1])
+	}
+	if len(want) == 0 {
+		t.Fatal("agent-remediation/adapters/workflowfile/file.go declares no `kind<Name> = \"<kind>\"` constant")
+	}
+
+	helpers := readRepoFile(t, "deploy", "continuo", "templates", "_helpers.tpl")
+	_, body, found := strings.Cut(helpers, `define "continuo.agentRemediation.assertWorkflowFiles"`)
+	if !found {
+		t.Fatal(`templates/_helpers.tpl defines no "continuo.agentRemediation.assertWorkflowFiles"`)
+	}
+	body, _, _ = strings.Cut(body, "{{- define ")
+	list := regexp.MustCompile(`has \(toString \$doc\.kind\) \(list ((?:"[a-z]+" ?)+)\)`).FindStringSubmatch(body)
+	if list == nil {
+		t.Fatal(`continuo.agentRemediation.assertWorkflowFiles checks no "has (toString $doc.kind) (list \"<kind>\" ...)"`)
+	}
+	var got []string
+	for _, m := range regexp.MustCompile(`"([a-z]+)"`).FindAllStringSubmatch(list[1], -1) {
+		got = append(got, m[1])
+	}
+
+	slices.Sort(want)
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Errorf("the chart accepts remediation file kinds %v, agent-remediation loads %v", got, want)
+	}
+}
+
 // workflowsValuesService is the part of a values.yaml services entry the
 // workflows folder check reads.
 type workflowsValuesService struct {

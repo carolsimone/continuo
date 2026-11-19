@@ -563,8 +563,28 @@ if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" -f scripts/ins
      --set-file "agentRemediation.workflows.files.valid\.yaml=${wf}/valid.yaml" > /dev/null 2> "${tmp}/workflows.err"; then
   echo "FAIL: remediation files rendered with no agent-remediation volume to mount them"; exit 1
 fi
-grep -qF 'agentRemediation.workflows.files is set, but services[agent-remediation] has no volume remediation-workflows, so' "${tmp}/workflows.err" \
-  || { echo "FAIL: unexpected error:"; cat "${tmp}/workflows.err"; exit 1; }
+for want in \
+  'agentRemediation.workflows.files is set, but services[agent-remediation] has no volume remediation-workflows, so' \
+  "a release upgraded with --reuse-values keeps an older chart's services list, so upgrade once with your values file or --reset-then-reuse-values"; do
+  grep -qF "$want" "${tmp}/workflows.err" || { echo "FAIL: want '${want}', got:"; cat "${tmp}/workflows.err"; exit 1; }
+done
+# An install starts its own files from copies of the built-in ones, so the
+# chart accepts every built-in flow, type and fixture file as an install file.
+# A ConfigMap key holds no `/`, so each file is passed under its path with
+# every `/` written `-` (flows/rejected-release.yaml as
+# flows-rejected-release.yaml).
+echo "--- every built-in remediation file renders as an install file"
+builtin_files=0
+while IFS= read -r path; do
+  key="${path#agent-remediation/workflows/}"
+  key="${key//\//-}"
+  helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+    --set-file "agentRemediation.workflows.files.${key//./\\.}=${path}" > /dev/null 2> "${tmp}/builtin-workflow.err" \
+    || { echo "FAIL: the built-in remediation file ${path} failed the render as ${key}:"; cat "${tmp}/builtin-workflow.err"; exit 1; }
+  builtin_files=$((builtin_files + 1))
+done < <(find agent-remediation/workflows -type f \( -name '*.yaml' -o -name '*.yml' \) | sort)
+[ "$builtin_files" -gt 0 ] || { echo "FAIL: found no built-in remediation file under agent-remediation/workflows"; exit 1; }
+echo "${builtin_files} built-in remediation files render as install files"
 
 # NOTES.txt tells an upgrading operator that schedules are no longer read from
 # the chart, and an installing one nothing about it. `helm template` prints no

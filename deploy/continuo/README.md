@@ -296,7 +296,7 @@ Every container in this chart, bundled or not, gets:
 | `services[].podAnnotations` | Annotations on the service's pods (default none), such as the Vault Agent injector's. Install-time only. |
 | `services[].credentialDelivery` | `env` or `file` for that service, overriding `credentials.delivery`; empty (default) uses it. Install-time only. |
 | `services[].volumes` / `services[].volumeMounts` | Extra volumes of any Kubernetes type (`csi`, `secret`, `configMap`, ...) and their mounts. A `configMap` volume with an empty name mounts the chart's ConfigMap for the services that have one; on agent-remediation, which has two, the one of the volume's name (`service-repos` or `remediation-workflows`), and `service-repos` for a volume of any other name. Install-time only. |
-| `agentRemediation.workflows.files` | The install's own remediation flow, type and fixture files, as `{<name>: <content>}` (default `{}`), each passed with `--set-file agentRemediation.workflows.files.<name>\.yaml=<path>`. They become the ConfigMap `<release>-agent-remediation-workflows`, which agent-remediation mounts at `/etc/continuo-workflows` (`AGENT_REMEDIATION_WORKFLOWS_DIR`) and loads over its built-in files at startup. A change rolls agent-remediation only. A file that agent-remediation would refuse for its kind or its `version` fails the render, naming the file. See [Remediation files](#7-remediation-files). |
+| `agentRemediation.workflows.files` | The install's own remediation flow, type and fixture files, as `{<name>: <content>}` (default `{}`), each passed with `--set-file agentRemediation.workflows.files.<name>\.yaml=<path>`. They become the ConfigMap `<release>-agent-remediation-workflows`, which agent-remediation mounts at `/etc/continuo-workflows` (`AGENT_REMEDIATION_WORKFLOWS_DIR`) and loads over its built-in files at startup. Flows and types run only with `agentRemediation.engine: runner`; under `legacy` the files are loaded and checked at startup, and only remediations the runner started use them. A change rolls agent-remediation only. A file that agent-remediation would refuse for its kind or its `version` fails the render, naming the file. See [Remediation files](#7-remediation-files). |
 | `services[].resources` / `defaultResources` | Per-service CPU/memory requests and limits; any service without its own `resources` block falls back to `defaultResources`. |
 
 Every continuo service reads each credential either from the variable itself or from a file named by `<VAR>_FILE`, whichever the chart, or another deployment, sets. Setting both fails the service's start with `<VAR>: set <VAR> or <VAR>_FILE, not both`, and so does a file that is missing or empty. One trailing newline is trimmed from the file, nothing else. The Postgres and Redis passwords are read again for every new connection a service opens, so a rotated file reaches the next connection without a restart, and connections already open keep working; every other credential is read once, at start.
@@ -697,33 +697,48 @@ force-push or reuse one.
 
 ## 7. Remediation files
 
-agent-remediation fixes a rejected release by running a **flow**. A flow
-lists the steps around each model call and the **types** it may use. A type
-says which failures it handles and what the model is shown. A **fixture** is a
-test case a type or a flow is played against. Each flow, type and fixture is a
-YAML file. agent-remediation ships its own files, and an install can add files
-or replace the built-in ones.
+Under `agentRemediation.engine: runner`, agent-remediation fixes a rejected
+release by running a **flow**. A flow lists the steps around each model call
+and the **types** it may use. A type says which failures it handles and what
+the model is shown. A **fixture** is a test case a type or a flow is played
+against. Each flow, type and fixture is a YAML file. agent-remediation ships
+its own files, and an install can add files or replace the built-in ones.
+
+**Which engine runs them.** Flows and types run only with
+`agentRemediation.engine: runner`. Under `legacy`, the default, the files are
+loaded and checked at startup, and only remediations the runner started use
+them. While the engine is `legacy` and your files add or change a flow or a
+type, agent-remediation logs a warning at startup that names them.
 
 **Where the files live.** Keep your files in your install's own git
 repository, next to your values file. Pass each file to the chart with
 `--set-file`. The key is the file name, with each dot written as `\.`:
 
 ```bash
-helm upgrade <release> <chart> --reuse-values \
+helm upgrade <release> <chart> -f <your values file> \
   --set-file 'agentRemediation.workflows.files.rejected-release\.yaml=remediation/rejected-release.yaml' \
   --set-file 'agentRemediation.workflows.files.dbt-validation\.yaml=remediation/dbt-validation.yaml'
 ```
 
+Pass your values file, not `--reuse-values`: `--reuse-values` keeps the
+`services` list of the chart the release was installed with, so a release
+first installed from an older chart has no `remediation-workflows` volume and
+the render fails. `--reset-then-reuse-values` (Helm 3.14 or newer) works too:
+it takes this chart's defaults, then the values the release had.
+
 The chart puts the files in the ConfigMap
 `<release>-agent-remediation-workflows`. agent-remediation mounts it at
 `/etc/continuo-workflows` and reads the files when it starts. With no files,
-agent-remediation runs its built-in files alone.
+agent-remediation loads its built-in files alone.
 
-**Adding a type.** Every heal trigger runs the flow named `rejected-release`,
-and a type runs only when that flow lists it. So to add a type, pass its file
-and replace the flow: copy the built-in `rejected-release` flow, add your type
-to its `types` list, and pass the whole file. A flow with another name is
-checked at startup, but nothing runs it.
+**Adding a type.** Under the runner engine, every heal trigger runs the flow
+named `rejected-release`, and a type runs only when that flow lists it. So to
+add a type, pass its file and replace the flow: copy the built-in
+`rejected-release` flow, add your type to its `types` list, and pass the whole
+file. A flow with another name is loaded and checked, but no heal trigger runs
+it: startup and `remediation-check files` warn
+`flow <name>: no heal trigger runs it`, and `remediation-check files` still
+plays it, so it needs flow fixtures of its own.
 
 **Replacing a built-in file.** A flow or type file whose `name` is the name of
 a built-in flow or type replaces it whole. Nothing is merged: each list in your
@@ -733,23 +748,41 @@ logged.
 
 **Tracking the built-in you copied.** Write `based_on: <name>@<revision>` in a
 flow or type file you copied from a built-in. The revision is the first 12 hex
-characters of the sha256 of the built-in file's bytes:
+characters of the sha256 of the built-in file's bytes. Take the built-in file
+in the continuo repository at the tag of the version you run, under
+`agent-remediation/workflows/`:
 
 ```bash
-sha256sum agent-remediation/workflows/types/dbt-validation.yaml | cut -c1-12
+git -C <your clone of continuo> show v<version>:agent-remediation/workflows/types/dbt-validation.yaml \
+  | sha256sum | cut -c1-12
 ```
 
-agent-remediation warns at startup when that built-in has changed since, or
-when no built-in has that name, so you know to look at your copy again. An
-empty `based_on:` is refused, and so is one that is not a name and a revision
-joined by exactly one `@`.
+agent-remediation warns at startup when that built-in has changed since, and
+the warning prints the built-in's current revision
+(`based on <name>@<revision>, which is now @<revision>`). It also warns when
+no built-in has that name, so you know to look at your copy again. An empty
+`based_on:` is refused, and so is one that is not a name and a revision joined
+by exactly one `@`.
 
-**Fixtures.** `remediation-check files` plays every type and flow against its
-fixtures. An install type that replaces a built-in type and ships no fixture
-is played against the built-in's fixture of that name. A replaced flow keeps
-the built-in flow fixtures. A type that is new to the install needs its own
-fixture, or `remediation-check files` fails it. agent-remediation still
-starts.
+**Fixtures.** `remediation-check files` plays every type a flow lists, and
+every flow, against its fixtures. Your fixture of a type replaces the built-in
+fixture of that type, and your fixture of a flow and scenario replaces the
+built-in one.
+- An install type that replaces a built-in type and ships no fixture is played
+  against the built-in's fixture of that name.
+- A type that is new to the install needs its own fixture, or
+  `remediation-check files` fails it. agent-remediation still starts.
+- A replaced flow is played against the built-in flow fixtures.
+- A built-in type that no loaded flow lists, because your `rejected-release`
+  drops it, has its built-in fixture left out, and `remediation-check files`
+  warns `<file>: skipped, no loaded flow lists type <name>`.
+- A flow whose types or cross-cluster checks differ from the built-in's can
+  fail a built-in type or flow fixture whose failure the built-in flow handled,
+  such as a shared-upstream member falling back to a type you dropped. Ship
+  your own fixture of the same type, or of the same flow and scenario, to
+  replace it.
+- A fixture of yours that nothing plays fails: one of a type no flow lists, or
+  of a flow no file defines.
 
 **File names and what the chart checks.** A file name holds letters, digits,
 `.`, `_` and `-`, ends in `.yaml` or `.yml`, and does not start with `.`. The
@@ -762,8 +795,25 @@ agent-remediation checks the rest when it starts.
 **Checking the files in CI.** Run `remediation-check files <dir>` inside the
 agent-remediation image of the continuo version you install, with `<dir>` the
 folder of your files. It reads the files as agent-remediation does, plays them
-against their fixtures, prints one JSON report and exits non-zero on a bad
-file. `remediation-check steps` prints the catalog of steps, as JSON.
+against their fixtures, prints one JSON report and exits 0 when every file is
+good, 1 on a bad file or a failed scenario, and 2 on a usage error. For
+example, with your files under `remediation/`:
+
+```bash
+docker run --rm -v "$PWD/remediation:/files:ro" \
+  ghcr.io/carolsimone/continuo-agent-remediation:<version> \
+  remediation-check files /files
+```
+
+The image is `<global.imageRegistry>/<global.imageRepositoryPrefix>/continuo-agent-remediation:<version>`
+(the chart's defaults are `ghcr.io` and `carolsimone`), with `<version>` the
+continuo version you run. remediation-check needs that folder and nothing
+else: no network, no database and no cluster (it plays the scenarios against
+fakes, in temporary files). The image runs as user 65532, so every file must
+be readable by any user. A message names a file by its path
+under the folder, and a path under `flows/`, `types/` or `fixtures/` that your
+folder does not hold is a built-in file. `remediation-check steps` prints the
+catalog of steps, as JSON.
 
 **Rolling out a change.** The pod template of agent-remediation carries the
 ConfigMap's digest, so a `helm upgrade` that changes a file rolls
