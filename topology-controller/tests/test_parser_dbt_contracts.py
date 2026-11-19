@@ -717,7 +717,7 @@ def test_a_release_whose_seeds_all_have_a_known_header_logs_no_unchecked_seeds(t
 def _publishing(redis):
     """The real publisher over a recording redis client."""
     return CandidateManifestPublisher(
-        redis, MANIFEST_LOADED_CANDIDATE_V2, producer="topology-controller", continuo_contracts="0.3.0")
+        redis, MANIFEST_LOADED_CANDIDATE_V2, producer="topology-controller", continuo_contracts="0.3.1")
 
 
 def _published_rejection(redis) -> dict:

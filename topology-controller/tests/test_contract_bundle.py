@@ -585,7 +585,7 @@ def _stored(unique_id: str, *, service: str = "service-py", family: str = "pytho
 
 def _bundle(contracts, **overrides):
     args = {
-        "tenant_id": "default", "release_id": "rel-1", "library_version": "0.3.0", "contracts": contracts,
+        "tenant_id": "default", "release_id": "rel-1", "library_version": "0.3.1", "contracts": contracts,
         "provenance": {}, "timings": {"stages_ms": {}, "nodes": {}, "columns": {}, "validation_cache": {}},
     }
     args.update(overrides)
@@ -613,9 +613,9 @@ def test_the_bundle_keys_its_contracts_by_unique_id_and_counts_them():
 
 
 def test_the_bundle_names_the_library_and_the_schema_it_was_checked_against():
-    doc = _bundle([], library_version="0.3.0")
+    doc = _bundle([], library_version="0.3.1")
 
-    assert doc["continuo_contracts"] == "0.3.0"
+    assert doc["continuo_contracts"] == "0.3.1"
     assert doc["odcs_schema_sha256"] == SCHEMA_SHA256
     assert (doc["tenant_id"], doc["release_id"]) == ("default", "rel-1")
 

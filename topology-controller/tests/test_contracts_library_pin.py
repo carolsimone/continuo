@@ -12,11 +12,11 @@ SERVICE_ROOT = Path(__file__).parent.parent
 
 
 def test_continuo_contracts_is_pinned_exactly():
-    assert '"continuo-contracts==0.3.0"' in (SERVICE_ROOT / "pyproject.toml").read_text()
+    assert '"continuo-contracts==0.3.1"' in (SERVICE_ROOT / "pyproject.toml").read_text()
 
 
 def test_installed_library_is_the_pinned_version():
-    assert importlib.metadata.version("continuo-contracts") == "0.3.0"
+    assert importlib.metadata.version("continuo-contracts") == "0.3.1"
 
 
 def test_the_domain_skip_reasons_are_the_librarys():
@@ -47,5 +47,5 @@ def test_an_install_whose_library_version_is_not_x_y_z_refuses_to_boot(monkeypat
 
 
 def test_an_install_whose_library_version_is_x_y_z_boots(monkeypatch):
-    monkeypatch.setattr(importlib.metadata, "version", lambda name: "0.3.0")
-    assert runpy.run_path(contracts_library.__file__)["LIBRARY_VERSION"] == "0.3.0"
+    monkeypatch.setattr(importlib.metadata, "version", lambda name: "0.3.1")
+    assert runpy.run_path(contracts_library.__file__)["LIBRARY_VERSION"] == "0.3.1"

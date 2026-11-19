@@ -75,7 +75,7 @@ bytes and every baseline parses the same estate.
 - 10 dbt services, `svc-0` to `svc-9`, with the models split evenly, and one
   python service, `svc-py`, of one node per ten models. `svc-py` is written as
   its `odcs-bundle.json` (kind `python-odcs`), one ODCS contract per node with
-  its read queries, valid under continuo-contracts 0.3.0.
+  its read queries, valid under continuo-contracts 0.3.1.
 - Each model has `--columns` columns, a compiled SQL of a CTE over one upstream,
   a window sum and a left join to a second, and two generic not-null tests.
 - Each dbt service has one seed, and a `compile-extras.json` beside its manifest.

@@ -42,7 +42,7 @@ const (
 	// topology-controller pins (topology-controller/pyproject.toml). That
 	// library reads and checks every contract of a release, and the release's
 	// parse result and contract bundle name it.
-	topologyContractsVersion = "0.3.0"
+	topologyContractsVersion = "0.3.1"
 
 	// dbtContractFamily is the family the contract bundle gives the contract of
 	// a dbt model, seed or snapshot.

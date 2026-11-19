@@ -327,7 +327,7 @@ A part of such an answer, with the other fields left out:
 
 ```json
 {"release_id": "rel-py-v2", "status": "rejected", "terminal": true,
- "reject_reason": "invalid_contract", "continuo_contracts": "0.3.0"}
+ "reject_reason": "invalid_contract", "continuo_contracts": "0.3.1"}
 ```
 
 A dbt service has no bundle from its CI: continuo generates its contracts. Its
@@ -419,7 +419,7 @@ customProperties:
     property: provenance
     value: {contractHash: "sha256:3f1c...", contentHash: "sha256:91d4...",
             releaseId: rel-77aa0bc-230, promotionSeq: 52,
-            promotedAt: "2026-11-27T16:40:12Z", continuoContracts: 0.3.0,
+            promotedAt: "2026-11-27T16:40:12Z", continuoContracts: 0.3.1,
             sourcePath: contracts/py_daily_kpis.odcs.yaml}
 ```
 
@@ -985,8 +985,10 @@ With the manifest that `dbt parse` wrote, it does what the release does with eac
 model, seed and snapshot:
 
 1. It leaves out the nodes that continuo leaves out.
-2. It generates the contract of each node it keeps, and checks it.
-3. It compares each seed's declared columns with the first row of the seed's CSV
+2. It checks that each node it keeps belongs to the service (see `--service`
+   below).
+3. It generates the contract of each node it keeps, and checks it.
+4. It compares each seed's declared columns with the first row of the seed's CSV
    file in your project folder.
 
 It prints a line for each thing it finds. A line is `info` for a node that is
@@ -1011,9 +1013,20 @@ an error or `dbt parse` fails, and with 2 when it cannot run, for example when n
 `lite`, `ok`, `service`, `lines` and `contracts`, the `contract_hash` of each
 valid contract by contract id. With `--manifest <file>`, it reads a
 `manifest.json` you built already and runs no dbt, and it still reads the seeds'
-CSV files from the project folder. `--service` names the service when the
-manifest names no project. Without it, the service is the folder's name with `_`
-written `-`.
+CSV files from the project folder.
+
+`--service` is the name of the service you deploy the project under. Without
+it, the check takes the folder's name, with `_` written `-`. The check compares
+the service of each node it keeps with it, as the release does, and a node of
+another service is an error line: the release rejects such a manifest as
+`invalid_artifact`. So when the folder is not named after the service, pass
+`--service`:
+
+```bash
+continuo-contracts dbt check dbt/finance_project --service finance --dbt .venv-dbt/bin/dbt
+```
+
+`--service` is also the project's service when the manifest names no project.
 
 The check is lite: a run with no error does not promise that the release
 creates the service's contracts. It prints that sentence first and last, and it
