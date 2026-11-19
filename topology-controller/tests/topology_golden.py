@@ -87,9 +87,9 @@ def release_outputs(name: str) -> dict[str, Any]:
 
     The topology artifact is a set of nodes: its writer sorts the nodes by unique_id and each node's
     upstream_unique_ids, so `topology_nodes` is sorted the same way and the order the handler
-    happened to produce them in is not part of the capture. Nothing else the handler returns is
-    left out of either document, and neither holds a time, a path or an id that differs from one
-    run to the next."""
+    happened to produce them in is not part of the capture. Every field of each node and of the
+    bundle is kept, and neither document holds a time, a path or an id that differs from one run to
+    the next."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         manifests = _manifest_files(name, tmp_dir)
         publisher, artifact_writer, bundle_uploader = MagicMock(), RecordingArtifactWriter(), FakeBundleUploader()
@@ -140,10 +140,10 @@ def _sorted_upstreams(node: Mapping[str, Any]) -> dict[str, Any]:
 
 def _as_json(document: Mapping[str, Any]) -> dict[str, Any]:
     """The document as a JSON round trip returns it: enum members as their values, tuples as lists."""
-    return json.loads(_dump(document))
+    return json.loads(golden_text(document))
 
 
-def _dump(document: Mapping[str, Any]) -> str:
+def golden_text(document: Mapping[str, Any]) -> str:
     """The text of a golden file: sorted keys, so that the order a dict was filled in does not show."""
     return json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
 
@@ -155,7 +155,7 @@ def write_golden_files() -> None:
         stale.unlink()
         logger.info("removed %s", stale.name)
     for name in GOLDEN:
-        golden_path(name).write_text(_dump(release_outputs(name)), encoding="utf-8")
+        golden_path(name).write_text(golden_text(release_outputs(name)), encoding="utf-8")
         logger.info("wrote %s", golden_path(name).name)
 
 
