@@ -9,6 +9,7 @@ import pytest
 
 from domain.contract_vocabulary import ParseFailureKind
 from domain.model import FailedNode, ManifestFile
+from service.contracts_library import LIBRARY_VERSION, version_triple
 from service.release_timings import ReleaseOutcome
 from tests.fakes import (
     RecordingArtifactWriter,
@@ -155,14 +156,16 @@ def test_a_failed_release_counts_each_issue(tmp_path):
 
 def test_a_bundle_the_install_cannot_read_reports_its_message_plain(tmp_path):
     publisher = MagicMock()
-    source = source_of(bundle_file(tmp_path, demo_nodes(), producer_contracts="0.3.0"))
+    major, minor, _ = version_triple(LIBRARY_VERSION)
+    newer = f"{major}.{minor + 1}.0"
+    source = source_of(bundle_file(tmp_path, demo_nodes(), producer_contracts=newer))
 
     python_handler(source, publisher).handle(release_id="rel-1")
 
     kwargs = _failed_kwargs(publisher)
     assert kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
     assert kwargs["detail"] == (
-        "service-py: the bundle was written by continuo-contracts 0.3.0 and this install runs 0.2.0:"
+        f"service-py: the bundle was written by continuo-contracts {newer} and this install runs {LIBRARY_VERSION}:"
         " upgrade continuo, or pin an older runtime")
     assert kwargs["failed_nodes"] == []
 

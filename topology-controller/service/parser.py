@@ -11,14 +11,17 @@ snapshot a gate leaves out (no owner, a local stub, an untagged node of an
 installed dbt package) is reported through the caller's `skipped` list, never
 raised. A model or snapshot of the project with an owner and no tag is kept
 with an empty schedule (a dormant node); a seed of the project with no tag
-takes the `seed` schedule.
+takes the `seed` schedule. Which nodes are left out, a kept node's service,
+schedule and table name all come from continuo-contracts' `dbt` module, so a
+producer's CI and this parse answer alike.
 """
 import json
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from continuo_contracts.errors import ContractsError
+from continuo_contracts import dbt
+from continuo_contracts.errors import ContractsError, DbtNodeError
 
 from domain.exceptions import InvalidNodeSettingError
 from domain.model import (
@@ -36,8 +39,6 @@ from service.dbt_hashing import CodeUnit, DbtHashParts, ManifestContext, hash_db
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_RESOURCE_TYPES = {"model", "seed", "snapshot"}
-
 
 @contextmanager
 def _rejecting_hash_input(label: str) -> Iterator[None]:
@@ -51,6 +52,18 @@ def _rejecting_hash_input(label: str) -> Iterator[None]:
         raise InvalidNodeSettingError(f"{label}: {error}") from error
 
 
+@contextmanager
+def _rejecting_node_shape() -> Iterator[None]:
+    """Raise a field the library cannot read (a `tags` that is not a list of strings,
+    an `fqn` of another shape, a `name` that is empty) as an InvalidNodeSettingError
+    carrying the library's message, which starts with the node's id: it is the
+    artifact's fault, so the release is rejected instead of retried."""
+    try:
+        yield
+    except DbtNodeError as error:
+        raise InvalidNodeSettingError(str(error)) from error
+
+
 def _hash(label: str, node: dict, ctx: ManifestContext) -> DbtHashParts:
     with _rejecting_hash_input(label):
         return hash_dbt_node(node, ctx)
@@ -62,29 +75,27 @@ _RESOURCE_TYPE_TO_NODE_TYPE = {
     "snapshot": NodeType.DBT_SNAPSHOT,
 }
 
-# The schedule a node of the project takes when it carries no tag. A seed loads
-# on the "seed" schedule; a model or snapshot has none, so it is a dormant node.
-_RESOURCE_TYPE_UNTAGGED_SCHEDULE: dict[str, str] = {
-    "model":    "",
-    "seed":     "seed",
-    "snapshot": "",
-}
-
 
 def _skipped(node_id: str, node: dict, reason: SkipReason) -> SkippedNode:
-    """The report of a node a gate left out. The service is read tolerantly: a
-    node the parse never builds can still lack an fqn without raising."""
-    service = (node.get("fqn") or [""])[0].replace("_", "-")
+    """The report of a node a gate left out. The service is read tolerantly, as
+    the first entry of a well-formed fqn: a node the parse never builds can lack
+    an fqn, or carry one of another shape, without raising."""
+    fqn = node.get("fqn")
+    first = fqn[0] if isinstance(fqn, list) and fqn else ""
+    service = first.replace("_", "-") if isinstance(first, str) else ""
     return SkippedNode(node_id=node_id, service=service, reason=reason)
 
 
-def _project_service(root_project: str, declared_service: str) -> str:
-    """The service of the dbt project the manifest was compiled from: the
-    manifest's own project name (`metadata.project_name`) with `_` written as
-    `-`, else the service the release declares the manifest for; "" when
-    neither is known. A model, seed or snapshot whose fqn starts with another
-    name is a node of an installed dbt package."""
-    return root_project.replace("_", "-") if root_project else declared_service
+def _service(node_id: str, node: dict) -> str:
+    """The service of a node the parse builds, a kept node or a test: the first
+    entry of its fqn, with `_` written `-`. dbt writes an fqn for every node, so a
+    node with none does not say which service it belongs to, and the artifact is
+    refused."""
+    with _rejecting_node_shape():
+        service = dbt.node_service(node)
+    if not node.get("fqn"):
+        raise InvalidNodeSettingError(f"{node_id}: fqn must be a non-empty list of strings")
+    return service
 
 
 def _seed_full_refresh(resource_type: str, config: dict) -> bool | None:
@@ -92,16 +103,6 @@ def _seed_full_refresh(resource_type: str, config: dict) -> bool | None:
     and for every node that is not a seed."""
     value = config.get("full_refresh")
     return value if resource_type == "seed" and isinstance(value, bool) else None
-
-
-def _table_name(node: dict) -> str:
-    """The table name a dbt node is known by: its name, or "<name>.v<version>"
-    for a versioned model, so each version of a model is a node of its own and
-    the name is also the dbt selector of that version."""
-    version = node.get("version")
-    if version is None or version == "":
-        return node["name"]
-    return f"{node['name']}.v{version}"
 
 
 def parse_manifest(
@@ -122,60 +123,58 @@ def parse_manifest(
 
     A model, seed or snapshot that a gate leaves out is never an error: when
     `skipped` is given, the node is appended to it with its reason, and nothing
-    is logged here, so the caller reports every skip in one place. The gates run
-    in this order: no owner, a `local_stub` tag, then no tag on a node of an
-    installed dbt package. dbt applies a project's top-level `+meta` to the
-    nodes of its installed packages too, so a package's node can carry the
-    project's owner; with no tag it is not the service's to schedule. A node of
-    a package that carries a tag is kept under the package's service, so the
-    caller's service check refuses it. The project is the manifest's own
-    `metadata.project_name`, else `declared_service`. When neither is known, no
-    node is left out for belonging to a package.
+    is logged here, so the caller reports every skip in one place. The gates are
+    `dbt.skip_reason`'s and run in this order: no owner, a `local_stub` tag, then
+    no tag on a node of an installed dbt package. dbt applies a project's
+    top-level `+meta` to the nodes of its installed packages too, so a package's
+    node can carry the project's owner; with no tag it is not the service's to
+    schedule. A node of a package that carries a tag is kept under the package's
+    service, so the caller's service check refuses it. The project is the
+    manifest's own `metadata.project_name`, else `declared_service`. When neither
+    is known, no node is left out for belonging to a package.
+
+    A field the library cannot read (a `tags` that is not a list of strings on a
+    node the earlier gates let through, an `fqn` that is not a list, a
+    `metadata.project_name` that is not a string) raises InvalidNodeSettingError
+    with the library's message, which starts with the node's id, and so does a
+    kept node or a test with no `fqn` entry.
     """
     with open(manifest_path) as f:
         manifest = json.load(f)
 
     with _rejecting_hash_input(manifest_path):
         ctx = ManifestContext.from_manifest(manifest, extras)
-    project_service = _project_service(ctx.root_project, declared_service)
+    with _rejecting_node_shape():
+        project = dbt.project_service(manifest, declared_service)
     nodes = []
     node_by_id: dict[str, ManifestNode] = {}
     used_units: dict[str, CodeUnit] = {}
     path_checksum_seeds: list[str] = []
     for node_id, node in manifest["nodes"].items():
         resource_type = node["resource_type"]
-        if resource_type not in SUPPORTED_RESOURCE_TYPES:
+        if resource_type not in dbt.RESOURCE_TYPES:
             # A test is read by the second pass, so it is not "unsupported".
             if resource_type != "test":
                 logger.debug("Skipping node with unsupported resource_type",
                              extra={"node_id": node_id, "resource_type": resource_type})
             continue
 
-        owner = (node.get("config", {}).get("meta") or {}).get("owner")
-        if not owner:
+        node.setdefault("unique_id", node_id)
+        with _rejecting_node_shape():
+            reason = dbt.skip_reason(node, project=project)
+        if reason is not None:
             if skipped is not None:
-                skipped.append(_skipped(node_id, node, SkipReason.NO_OWNER))
+                skipped.append(_skipped(node_id, node, SkipReason(reason)))
             continue
 
-        tags = node.get("tags", [])
-        if "local_stub" in tags:
-            if skipped is not None:
-                skipped.append(_skipped(node_id, node, SkipReason.LOCAL_STUB))
-            continue
-
-        service_name = node["fqn"][0].replace("_", "-")
-        if not tags and project_service and service_name != project_service:
-            if skipped is not None:
-                skipped.append(_skipped(node_id, node, SkipReason.INSTALLED_PACKAGE))
-            continue
-
-        schedule_name = tags[0] if tags else _RESOURCE_TYPE_UNTAGGED_SCHEDULE[resource_type]
-
-        meta = node.get("config", {}).get("meta") or {}
+        meta = node["config"]["meta"]
+        owner = meta["owner"]
         criticality = meta.get("criticality", "SECONDARY")
 
-        node.setdefault("unique_id", node_id)
-        table_name = _table_name(node)
+        service_name = _service(node_id, node)
+        with _rejecting_node_shape():
+            schedule_name = dbt.schedule(node)
+            table_name = dbt.table_name(node)
         label = f"{node['schema']}.{table_name}".lower()
         parts = _hash(label, node, ctx)
         used_units.update(parts.units)
@@ -251,12 +250,13 @@ def parse_manifest(
             continue
         compiled = node.get("compiled_code", "")
         node.setdefault("unique_id", node_id)
+        test_service = _service(node_id, node)
         parts = _hash(node_id, node, ctx)
         used_units.update(parts.units)
         test_nodes.append(ManifestNode(
             table_name=node["name"],
             schema_name=node["schema"],
-            service_name=node["fqn"][0].replace("_", "-"),
+            service_name=test_service,
             owner="",
             schedule_name="",
             criticality="SECONDARY",

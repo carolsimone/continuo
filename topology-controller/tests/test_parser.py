@@ -3,6 +3,7 @@ import json
 import logging
 from pathlib import Path
 import pytest
+from continuo_contracts import dbt
 from continuo_contracts.hashing import shared_fold
 from domain.contract_vocabulary import NodeType
 from domain.dormant import is_dormant
@@ -816,3 +817,129 @@ def test_full_refresh_is_a_seeds_boolean_setting(tmp_path, resource_type, value,
     path = _manifest_path(tmp_path, {f"{resource_type}.svc.revenue": _node(resource_type=resource_type, config=config)})
     (parsed,) = parse_manifest(path, "v1").nodes
     assert parsed.full_refresh is expected
+
+
+def _project_model(name="orders", **over):
+    """A node of the project `shop_core`, whose fqn starts with the project's name."""
+    return _svc_a_model(name, **{"fqn": ["shop_core", name], **over})
+
+
+def _without(node, *keys):
+    return {key: value for key, value in node.items() if key not in keys}
+
+
+VARIANTS = {
+    "tagged project model": _project_model(),
+    "untagged project model": _project_model(tags=[]),
+    "untagged project seed": _project_model("countries", tags=[], resource_type="seed"),
+    "untagged project snapshot": _project_model("history", tags=[], resource_type="snapshot"),
+    "versioned project model": _project_model(version=2),
+    "model with no tags key": _without(_project_model(), "tags"),
+    "no owner": _project_model(owner=None),
+    "empty owner": _project_model(config={"meta": {"owner": ""}}),
+    "no config": _without(_project_model(), "config"),
+    "null config": _project_model(config=None),
+    "list config": _project_model(config=[]),
+    "null meta": _project_model(config={"meta": None}),
+    "string meta": _project_model(config={"meta": "team-a"}),
+    "local stub": _project_model(tags=["local_stub"]),
+    "local stub among tags": _project_model(tags=["daily", "local_stub"]),
+    "local stub with no owner": _project_model(owner=None, tags=["local_stub"]),
+    "untagged package model": _package_node("pkg_model"),
+    "untagged package seed": _package_node("pkg_seed", resource_type="seed"),
+    "tagged package model": _package_node("pkg_daily", tags=["daily"]),
+    "package local stub": _package_node("pkg_stub", tags=["local_stub"]),
+    "untagged package model with no owner": _package_node("pkg_bare", owner=None),
+    "untagged model with no fqn": _without(_project_model(tags=[]), "fqn"),
+    "untagged model with an empty fqn": _project_model(tags=[], fqn=[]),
+}
+
+
+def _library_gate(node):
+    return dbt.skip_reason(json.loads(json.dumps(node)), project="shop-core")
+
+
+def test_the_variants_reach_every_gate_and_the_kept_case():
+    assert {_library_gate(node) for node in VARIANTS.values()} == {None, *dbt.SKIP_REASONS}
+
+
+@pytest.mark.parametrize("node", VARIANTS.values(), ids=VARIANTS.keys())
+def test_the_parser_skips_exactly_what_the_library_skips(tmp_path, node):
+    node_id = f"{node['resource_type']}.shop_core.variant"
+    path = _write_manifest(tmp_path, {node_id: node}, metadata={"project_name": "shop_core"})
+    reason = _library_gate(node)
+    skipped: list[SkippedNode] = []
+
+    kept = parse_manifest(path, skipped=skipped).nodes
+
+    if reason is None:
+        assert skipped == []
+        (parsed,) = kept
+        library_node = json.loads(json.dumps(node))
+        assert (parsed.service_name, parsed.schedule_name, parsed.table_name) == (
+            dbt.node_service(library_node), dbt.schedule(library_node), dbt.table_name(library_node))
+    else:
+        assert kept == []
+        assert [(s.node_id, s.reason.value) for s in skipped] == [(node_id, reason)]
+
+
+@pytest.mark.parametrize("version, table", [
+    (2, "orders.v2"), ("2", "orders.v2"), ("", "orders"), (None, "orders"),
+])
+def test_a_versioned_model_is_a_node_named_with_its_version(tmp_path, version, table):
+    path = _write_nodes(tmp_path, **{"model.svc_a.orders": _svc_a_model("orders", version=version)})
+    (parsed,) = parse_manifest(path).nodes
+    assert parsed.table_name == table
+
+
+@pytest.mark.parametrize("changes, message", [
+    ({"tags": "daily"}, "model.svc_a.bad: tags must be a list of strings, got str"),
+    ({"tags": ["daily", 3]}, "model.svc_a.bad: tags[1] must be a string, got int"),
+    ({"fqn": "svc_a"}, "model.svc_a.bad: fqn must be a list, got str"),
+])
+def test_a_gate_that_cannot_read_a_node_field_is_an_invalid_artifact(tmp_path, changes, message):
+    """A node the earlier gates let through, whose `tags` or `fqn` is not the shape dbt
+    writes, is an artifact the parse refuses, naming the node as the manifest does."""
+    node = _svc_a_model("bad")
+    node.update(changes)
+    with pytest.raises(InvalidNodeSettingError) as raised:
+        parse_manifest(_write_nodes(tmp_path, **{"model.svc_a.bad": node}))
+    assert str(raised.value) == message
+
+
+@pytest.mark.parametrize("fqn", [None, []])
+def test_a_kept_node_with_no_fqn_entry_is_an_invalid_artifact(tmp_path, fqn):
+    """dbt writes an fqn for every node. A node the gates keep with none does not say
+    which service it belongs to, so the parse refuses the artifact."""
+    node = _without(_svc_a_model("bad"), "fqn")
+    if fqn is not None:
+        node["fqn"] = fqn
+    with pytest.raises(InvalidNodeSettingError) as raised:
+        parse_manifest(_write_nodes(tmp_path, **{"model.svc_a.bad": node}))
+    assert str(raised.value) == "model.svc_a.bad: fqn must be a non-empty list of strings"
+
+
+def test_a_test_node_with_no_fqn_entry_is_an_invalid_artifact(tmp_path):
+    test_node = {
+        "resource_type": "test", "name": "not_null_kept_id", "schema": "analytics", "fqn": [],
+        "attached_node": "model.svc_a.kept", "compiled_code": "select id from analytics.kept where id is null",
+    }
+    path = _write_nodes(tmp_path, **{"model.svc_a.kept": _svc_a_model("kept"), "test.svc_a.not_null": test_node})
+    with pytest.raises(InvalidNodeSettingError) as raised:
+        parse_manifest(path)
+    assert str(raised.value) == "test.svc_a.not_null: fqn must be a non-empty list of strings"
+
+
+def test_a_project_name_that_is_not_a_string_is_an_invalid_artifact(tmp_path):
+    path = _write_manifest(tmp_path, {"model.svc_a.m": _svc_a_model("m")}, metadata={"project_name": 7})
+    with pytest.raises(InvalidNodeSettingError) as raised:
+        parse_manifest(path)
+    assert str(raised.value) == "manifest: metadata.project_name must be a string, got int"
+
+
+@pytest.mark.parametrize("fqn", ["svc_a", [], [5], None])
+def test_the_report_of_a_skipped_node_never_raises_on_its_fqn(tmp_path, fqn):
+    bare = _svc_a_model("bare", owner=None, fqn=fqn)
+    skipped: list[SkippedNode] = []
+    parse_manifest(_write_nodes(tmp_path, **{"model.svc_a.bare": bare}), skipped=skipped)
+    assert skipped == [SkippedNode("model.svc_a.bare", "", SkipReason.NO_OWNER)]

@@ -251,8 +251,8 @@ def test_handle_publishes_failed_on_missing_nodes_key(tmp_path):
 
 
 def test_handle_publishes_failed_on_node_with_empty_fqn(tmp_path):
-    """A node whose dbt shape is invalid (empty `fqn`) raises IndexError in
-    parse_manifest; that is permanent, so publish failed rather than stranding
+    """A node whose dbt shape is invalid (empty `fqn`) raises InvalidNodeSettingError
+    in parse_manifest; that is permanent, so publish failed rather than stranding
     the release as a transient error."""
     bad = tmp_path / "empty_fqn.json"
     bad.write_text(json.dumps({
