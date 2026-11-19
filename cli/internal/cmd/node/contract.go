@@ -65,9 +65,10 @@ Every dbt model, seed and snapshot has a contract, and so has every Python node.
 A dbt test and an unknown-external table have none: asking for one is not_found.
 
 Arguments:
-  <unique_id>  The node's unique_id, "<schema>.<table>" (for example
-               analytics.orders): the schema_name and table_name of a
-               row of "node list" joined by a dot.
+  <unique_id>  The node's unique_id, "<schema>.<table>" in lower case (for
+               example analytics.orders): the schema_name and table_name
+               of a row of "node list" joined by a dot and written in
+               lower case.
 
 Output (stdout, JSON):
   {"contract":{"unique_id":string,"version":number,"contract_hash":string,

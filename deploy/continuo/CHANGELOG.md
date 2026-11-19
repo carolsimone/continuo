@@ -51,7 +51,7 @@ This release changes no values key, and it ships as a `MINOR`.
     XGROUP DESTROY continuo:remediation.requested:v2 catalog-remediation-requested-rejections
     XGROUP DESTROY continuo:remediation.retry_requested:v1 remediation-retry-requested
     ```
-- **Every dbt node continuo keeps has an ODCS contract, and an invalid one rejects the release.** TL;DR: continuo builds the contract of each dbt model, seed and snapshot from your dbt project and the tests on the node (`continuo-contracts` 0.3.1), and the release's topology reads its facts from that contract. A dbt node whose definitions make an invalid contract rejects the release as `invalid_contract`, naming the node and the field. Run `continuo-contracts dbt check <project>` on the dbt project folder of each service before you upgrade (step 2).
+- **Every dbt node continuo keeps has an ODCS contract, and an invalid one rejects the release.** TL;DR: continuo builds the contract of each dbt model, seed and snapshot from your dbt project and the tests on the node (`continuo-contracts` 0.3.1), and the release's topology reads its facts from that contract. A dbt node whose definitions make an invalid contract rejects the release as `invalid_contract`, naming the node and what is wrong. Run `continuo-contracts dbt check <project>` on the dbt project folder of each service before you upgrade (step 2).
   - A dbt test and an `unknown-external` table have no contract.
   - These reject the release as `invalid_contract`, and each rejection names the node and what is wrong:
     - A `meta.criticality` other than `REGULATORY`, `CORE` or `SECONDARY`. The parse took any value as written.

@@ -45,9 +45,9 @@ each version as JSON text. An added path has an empty before_json and a removed
 path an empty after_json. Two equal versions give an empty list.
 
 Arguments:
-  <unique_id>  The node's unique_id, "<schema>.<table>" (for example
-               analytics.orders, a dbt model, or analytics.py_daily_kpis,
-               a Python node).
+  <unique_id>  The node's unique_id, "<schema>.<table>" in lower case (for
+               example analytics.orders, a dbt model, or
+               analytics.py_daily_kpis, a Python node).
   <from>       The version to diff from: a whole number of 1 or more.
   <to>         The version to diff to: a whole number of 1 or more.
 

@@ -35,9 +35,9 @@ current. A node with no history, or one the catalog does not know, gives an
 empty list: this command never answers not_found.
 
 Arguments:
-  <unique_id>  The node's unique_id, "<schema>.<table>" (for example
-               analytics.orders, a dbt model, or analytics.py_daily_kpis,
-               a Python node).
+  <unique_id>  The node's unique_id, "<schema>.<table>" in lower case (for
+               example analytics.orders, a dbt model, or
+               analytics.py_daily_kpis, a Python node).
   [limit]      Optional. The most versions returned, newest first: a whole
                number from 0 up. Default 0, which lists every version.
 
