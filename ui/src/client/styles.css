@@ -1072,12 +1072,16 @@ a.release-author:hover { text-decoration: underline; }
 .release-timeline__connector { width: 28px; height: 1px; margin-top: 9px; background: #cbd5e1; flex-shrink: 0; }
 .release-timeline__step:first-child .release-timeline__connector { display: none; }
 .release-timeline__body { display: flex; flex-direction: column; gap: 4px; }
-.release-timeline__at {
+.release-timeline__at,
+.release-timeline__line {
   font-size: 11.5px;
   color: #64748b;
-  white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+.release-timeline__at { white-space: nowrap; }
+/* A fact of the step, under its timestamp. It wraps, so a long line does not
+   push the steps after it out of view. */
+.release-timeline__line { max-width: 32ch; }
 .release-timeline__step--upcoming .pill-sm { background: transparent; border: 1px dashed #cbd5e1; color: #94a3b8; }
 .release-timeline__hint { font-size: 11px; color: #94a3b8; white-space: nowrap; }
 /* Text for assistive technology only: read out, never drawn. */

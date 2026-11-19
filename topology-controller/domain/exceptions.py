@@ -45,8 +45,13 @@ class InvalidOdcsBundleError(ValueError):
 
 
 class InvalidNodeSettingError(ValueError):
-    """A node declares a setting the system cannot honour (a bad value for one
-    of its `meta` keys). The detail names the node and the key."""
+    """A dbt manifest holds a value the parse cannot honour as a whole: a
+    `metadata.project_name` or a `nodes` of the wrong shape, a test whose `fqn`
+    or links to the nodes it tests cannot be read, a node the parse builds with
+    no `fqn` entry, or a value the hashing refuses. No one node's contract is to
+    blame, so the release is an invalid artifact. The message names where the
+    value was found (a node, a test, `manifest` or the manifest's path) and the
+    field."""
 
 
 class InvalidCompileExtrasError(ValueError):

@@ -1,0 +1,59 @@
+{
+  "code_bundle": {
+    "contract_version": 1,
+    "nodes": {
+      "public.my_seed": {
+        "code_unit_ids": [],
+        "compiled_code": "",
+        "compiled_hash": "",
+        "config": {
+          "materialized": "seed",
+          "meta": {
+            "owner": "data-platform"
+          }
+        },
+        "config_hash": "11dbb760fe2f6c1e67df38238b53676628db21dbd16b7fedceb0b900024cb99f",
+        "content_hash": "sha256:3c6b49cef1126f973a430e45a5314cd50dc90db9b58b9bfe516849323d29abc7",
+        "hashed_config": {
+          "materialized": "seed",
+          "relation": {
+            "alias": "my_seed",
+            "schema": "public"
+          }
+        },
+        "raw_code": "",
+        "runtime": "dbt",
+        "shared_code_hash": "",
+        "source_hash": ""
+      }
+    },
+    "provenance": {
+      "service-1": {
+        "dbt_version": "",
+        "image_tag": "registry.example/service-1:1",
+        "packages": {},
+        "path_checksum_seeds": []
+      }
+    },
+    "release_id": "rel-1",
+    "shared_code": {},
+    "tests": {}
+  },
+  "topology_nodes": [
+    {
+      "content_hash": "sha256:3c6b49cef1126f973a430e45a5314cd50dc90db9b58b9bfe516849323d29abc7",
+      "image_tag": "registry.example/service-1:1",
+      "materialized": "seed",
+      "node_type": "dbt-seed",
+      "original_file_path": "seeds/my_seed.csv",
+      "resolved_relation_id": "public.my_seed",
+      "schedule": "seed",
+      "schema_name": "public",
+      "service_name": "service-1",
+      "table_name": "my_seed",
+      "test_count": 0,
+      "unique_id": "public.my_seed",
+      "upstream_unique_ids": []
+    }
+  ]
+}

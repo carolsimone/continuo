@@ -32,11 +32,17 @@ type LiveIndex struct {
 }
 
 // LiveIndexFile is one published file of the live folder: the node, the
-// counter of its current contract and that contract's hash.
+// counter of its current contract, that contract's hash and the schema the
+// file's servers entry names in place of the id's. A file whose entry names the
+// schema part of its contract id, or that has no servers entry, has an empty
+// PhysicalSchema, so an entry that records none is the file of an id's own
+// schema, and a file is current when its version, hash and PhysicalSchema all
+// match.
 type LiveIndexFile struct {
-	UniqueID     string
-	Version      int64
-	ContractHash string
+	UniqueID       string
+	Version        int64
+	ContractHash   string
+	PhysicalSchema string
 }
 
 // ErrLiveIndexUnreadable is the error of an index the store holds but cannot

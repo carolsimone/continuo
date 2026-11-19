@@ -94,25 +94,38 @@ func (p Provenance) value() map[string]any {
 	}
 }
 
+// ServerSchema is the schema of a published contract's `servers` entry:
+// declared, the schema the node is declared in and builds in, when it is not
+// empty, and otherwise the part of stored's id before its first dot ("" when
+// the id has no dot), so a versioned dbt model's `schema.name.vN` keeps its
+// schema. A contract id is lower case while a dbt schema can be quoted with
+// capitals, so only the declared spelling names the schema the warehouse holds.
+func ServerSchema(stored map[string]any, declared string) string {
+	if declared != "" {
+		return declared
+	}
+	id, _ := stored["id"].(string)
+	schema, _, found := strings.Cut(id, ".")
+	if !found {
+		return ""
+	}
+	return schema
+}
+
 // Published returns the published form of a stored contract: a copy whose
 // `version` is the node's counter written as a string, whose `servers` list
 // holds the install's warehouse entry when server has a host, and whose
 // `customProperties` end with the continuo provenance property (any provenance
-// the stored form carried is replaced). The schema of a servers entry is the
-// contract id up to its first dot, so a versioned dbt model's
-// `schema.name.vN` keeps its schema. stored is not changed, and the result
-// shares nothing with it.
-func Published(stored map[string]any, version int64, server *Server, prov Provenance) map[string]any {
+// the stored form carried is replaced). The schema of a servers entry is
+// ServerSchema(stored, schema), where schema is the node's declared schema
+// ("" when it has none); the contract id is not changed. stored is not
+// changed, and the result shares nothing with it.
+func Published(stored map[string]any, version int64, server *Server, schema string, prov Provenance) map[string]any {
 	out := cloneObject(stored)
 	out["version"] = strconv.FormatInt(version, 10)
 
 	if server != nil && server.Host != "" {
-		id, _ := stored["id"].(string)
-		schema, _, found := strings.Cut(id, ".")
-		if !found {
-			schema = ""
-		}
-		out["servers"] = []any{server.entry(schema)}
+		out["servers"] = []any{server.entry(ServerSchema(stored, schema))}
 	}
 
 	props, _ := out["customProperties"].([]any)

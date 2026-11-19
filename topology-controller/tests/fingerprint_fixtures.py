@@ -4,7 +4,9 @@ Each variant under tests/fixtures/dbt_fingerprints/manifests/<variant>/ holds th
 manifest.json.gz and compile-extras.json that real dbt wrote for the fixture project
 with one edit applied (tests/fixtures/dbt_fingerprints/variants.py names the edits,
 generate.py compiles them). These helpers parse a variant with the topology-controller
-parser and compare its content hashes with another variant's.
+parser and compare its content hashes with another variant's. `enforced_dbt_node`,
+`column_tests` and `stored_dbt_contracts` build hand-written nodes of an enforced dbt
+contract and store their contracts the way the contract bundle does.
 """
 from __future__ import annotations
 
@@ -149,3 +151,68 @@ def manifest_checksum(dbt_unique_id: str) -> str:
     with gzip.open(MANIFESTS_DIR / "base" / "manifest.json.gz", "rt", encoding="utf-8") as f:
         manifest = json.load(f)
     return manifest["nodes"][dbt_unique_id]["checksum"]["checksum"]
+
+
+_NODE_FILE_PATH = {"model": "models/{}.sql", "seed": "seeds/{}.csv", "snapshot": "snapshots/{}.sql"}
+
+
+def enforced_dbt_node(resource_type: str, *, described: bool = False) -> dict:
+    """A model, seed or snapshot of the project `shop`, shaped like a manifest node of dbt 1.12
+    and with `contract.enforced: true`. It declares `id` (integer, a not_null constraint) and
+    `amount` (numeric(12,2)); a model also declares a primary key. With `described`, the node
+    and its columns carry a description and tags."""
+    name = f"enforced_{resource_type}"
+    source = "" if resource_type == "seed" else "select 1 as id"
+    columns = {"id": {"name": "id", "data_type": "integer", "constraints": [{"type": "not_null"}]},
+               "amount": {"name": "amount", "data_type": "numeric(12,2)"}}
+    if described:
+        columns["id"].update(description="The key.", tags=["key"])
+        columns["amount"].update(description="The amount in euros.", tags=["money"])
+    return {
+        "unique_id": f"{resource_type}.shop.{name}", "resource_type": resource_type, "name": name,
+        "schema": "analytics", "fqn": ["shop", name], "tags": ["daily"],
+        "original_file_path": _NODE_FILE_PATH[resource_type].format(name),
+        "config": {"materialized": resource_type if resource_type != "model" else "table",
+                   "meta": {"owner": "team-a"}, "contract": {"enforced": True}},
+        "checksum": {"name": "sha256", "checksum": "ab" * 32}, "raw_code": source, "compiled_code": source,
+        "depends_on": {"macros": [], "nodes": []},
+        "description": "The enforced node." if described else "",
+        "columns": columns,
+        **({"constraints": [{"type": "primary_key", "columns": ["id"]}]} if resource_type == "model" else {}),
+    }
+
+
+def column_tests(node: dict) -> list[dict]:
+    """The `not_null` and `unique` generic tests of the `id` column of `node`, shaped like the
+    test nodes dbt writes, which become rules of the node's contract."""
+    tests = []
+    for kind in ("not_null", "unique"):
+        name = f"{kind}_{node['name']}_id"
+        tests.append({
+            "unique_id": f"test.shop.{name}", "resource_type": "test", "name": name,
+            "schema": "analytics_dbt_test__audit", "fqn": ["shop", name],
+            "original_file_path": "models/schema.yml", "attached_node": node["unique_id"], "column_name": "id",
+            "test_metadata": {
+                "name": kind,
+                "kwargs": {"column_name": "id", "model": "{{ get_where_subquery(ref('x')) }}"},
+            },
+            "depends_on": {"macros": [f"macro.dbt.test_{kind}"], "nodes": [node["unique_id"]]},
+            "config": {"severity": "ERROR"},
+            "compiled_code": f"select id from analytics.{node['name']} where id is null",
+        })
+    return tests
+
+
+def stored_dbt_contracts(tmp_dir: str, *nodes: dict) -> tuple[ParsedArtifact, list]:
+    """Parse a manifest of `nodes` (tests included) and store the contract of each node that has
+    one as the contract bundle does. Returns the parsed artifact and the stored contracts."""
+    from config.config import _SYSTEM_RELATIONS
+    from service.contract_bundle import store_contracts
+    from service.parser import parse_manifest
+
+    path = os.path.join(tmp_dir, "shop.manifest.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"metadata": {"project_name": "shop"}, "macros": {}, "nodes": {n["unique_id"]: n for n in nodes}}, f)
+    parsed = parse_manifest(path)
+    assert parsed.failed == (), parsed.failed
+    return parsed, store_contracts(parsed.nodes, {}, _SYSTEM_RELATIONS["postgres"])

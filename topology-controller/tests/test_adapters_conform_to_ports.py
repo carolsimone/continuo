@@ -56,7 +56,9 @@ def test_check_is_structural_not_nominal():
     guard inspects the surface rather than trusting inheritance."""
 
     class MissingPublishFailed:
-        def publish_ok(self, *, release_id, artifact, code_bundle_uri, contract_bundle):
+        def publish_ok(
+            self, *, release_id, artifact, code_bundle_uri, contract_bundle, parse_ms, contracts_ms, contracts_by_family,
+        ):
             ...
 
     assert not issubclass(MissingPublishFailed, CandidatePublisherPort)

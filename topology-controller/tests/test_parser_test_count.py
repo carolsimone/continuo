@@ -11,8 +11,8 @@ def _write(tmp_path, manifest: dict) -> str:
 def _model(name):
     return {
         "resource_type": "model", "name": name, "schema": "analytics",
-        "fqn": ["svc_a", name], "tags": ["daily"],
-        "config": {"meta": {"owner": "team@x.com"}},
+        "fqn": ["svc_a", name], "tags": ["daily"], "original_file_path": f"models/{name}.sql",
+        "config": {"materialized": "table", "meta": {"owner": "team@x.com"}},
         "checksum": {"checksum": "abc"}, "compiled_code": "select 1",
     }
 

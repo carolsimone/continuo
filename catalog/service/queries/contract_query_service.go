@@ -54,7 +54,7 @@ func (s *ContractQueryService) GetNodeContract(ctx context.Context, tenantID, un
 	if !includeDocument {
 		return out, nil
 	}
-	published := contractversion.Published(version.Document, version.Version, nil, contractversion.Provenance{
+	published := contractversion.Published(version.Document, version.Version, nil, "", contractversion.Provenance{
 		ContractHash:      version.ContractHash,
 		ContentHash:       version.ContentHash,
 		ReleaseID:         version.ReleaseID,

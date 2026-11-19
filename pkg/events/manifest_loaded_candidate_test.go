@@ -142,6 +142,57 @@ func TestManifestLoadedCandidateFields_FailedCarriesTheLibraryVersion(t *testing
 	assert.NotContains(t, payload, "contract_bundle_sha256", "a failed release writes no contract bundle")
 }
 
+func TestManifestLoadedCandidate_DecodesTheParseTimings(t *testing.T) {
+	ok := loadManifestLoadedCandidateFixture(t, "testdata/manifest_loaded_candidate_v2_ok.json")
+	_, p, err := events.DecodeManifestLoadedCandidate(fixtureFields(t, ok.Fields))
+	require.NoError(t, err)
+	assert.Equal(t, int64(4180), p.ParseMs)
+	assert.Equal(t, int64(1260), p.ContractsMs)
+	assert.Equal(t, map[string]int{"dbt": 3, "python": 2}, p.ContractsByFamily)
+
+	failed := loadManifestLoadedCandidateFixture(t, "testdata/manifest_loaded_candidate_v2_failed.json")
+	_, p, err = events.DecodeManifestLoadedCandidate(fixtureFields(t, failed.Fields))
+	require.NoError(t, err)
+	assert.Equal(t, int64(310), p.ParseMs)
+	assert.Equal(t, int64(45), p.ContractsMs)
+	assert.Nil(t, p.ContractsByFamily, "a failed parse counts no contracts by family")
+}
+
+func TestManifestLoadedCandidateFields_BothOutcomesCarryTheDurationsAndOnlyOKTheCounts(t *testing.T) {
+	render := func(p events.ManifestLoadedCandidate) map[string]any {
+		t.Helper()
+		got, err := events.ManifestLoadedCandidateFields("default", "topology-controller", time.Unix(0, 0), p)
+		require.NoError(t, err)
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal([]byte(got["payload"].(string)), &payload))
+		return payload
+	}
+
+	ok := render(events.ManifestLoadedCandidate{
+		ReleaseID: "rel-1", Status: events.ManifestStatusOK, TopologyURI: "s3://b/k", TopologySHA256: "abc",
+		ParseMs: 7, ContractsMs: 3, ContractsByFamily: map[string]int{"dbt": 2},
+	})
+	assert.EqualValues(t, 7, ok["parse_ms"])
+	assert.EqualValues(t, 3, ok["contracts_ms"])
+	assert.Equal(t, map[string]any{"dbt": float64(2)}, ok["contracts_by_family"])
+
+	failed := render(events.ManifestLoadedCandidate{
+		ReleaseID: "rel-2", Status: events.ManifestStatusFailed, FailureKind: "invalid_sql", Detail: "d",
+		ParseMs: 9, ContractsMs: 4, ContractsByFamily: map[string]int{"dbt": 2},
+	})
+	assert.EqualValues(t, 9, failed["parse_ms"])
+	assert.EqualValues(t, 4, failed["contracts_ms"])
+	assert.NotContains(t, failed, "contracts_by_family", "only an ok parse counts the contracts it wrote")
+}
+
+func TestManifestLoadedCandidateFields_AnOKReleaseWithNoContractsCarriesAnEmptyCount(t *testing.T) {
+	got, err := events.ManifestLoadedCandidateFields("default", "topology-controller", time.Unix(0, 0), events.ManifestLoadedCandidate{
+		ReleaseID: "rel-1", Status: events.ManifestStatusOK, TopologyURI: "s3://b/k", TopologySHA256: "abc",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, got["payload"], `"contracts_by_family":{}`)
+}
+
 func TestDecodeManifestLoadedCandidate_AnEntryWithoutTheNewFieldsDecodes(t *testing.T) {
 	for name, payload := range map[string]string{
 		"ok":     `{"release_id":"rel-1","status":"ok","topology_uri":"s3://b/k","topology_sha256":"abc","node_count":1,"code_bundle_uri":"s3://b/c"}`,
@@ -160,8 +211,30 @@ func TestDecodeManifestLoadedCandidate_AnEntryWithoutTheNewFieldsDecodes(t *test
 			assert.Empty(t, p.ContractBundleURI)
 			assert.Empty(t, p.ContractBundleSHA256)
 			assert.Empty(t, p.ContinuoContracts)
+			assert.Zero(t, p.ParseMs)
+			assert.Zero(t, p.ContractsMs)
+			// A nil map is how an absent key decodes: the event of an older producer.
+			assert.Nil(t, p.ContractsByFamily)
 		})
 	}
+}
+
+// TestDecodeManifestLoadedCandidate_AnEmptyCountByFamilyIsNotNil pins the other
+// half of that rule: a producer that reports the count writes {} for a release
+// with no contract, which decodes as an empty map that is not nil.
+func TestDecodeManifestLoadedCandidate_AnEmptyCountByFamilyIsNotNil(t *testing.T) {
+	_, p, err := events.DecodeManifestLoadedCandidate(map[string]string{
+		"event_id":       "e",
+		"tenant_id":      "default",
+		"occurred_at":    "2026-10-08T09:30:00.000000Z",
+		"producer":       "topology-controller",
+		"schema_version": "1",
+		"payload": `{"release_id":"rel-1","status":"ok","topology_uri":"s3://b/k","topology_sha256":"abc",` +
+			`"node_count":0,"code_bundle_uri":"","parse_ms":12,"contracts_ms":0,"contracts_by_family":{}}`,
+	})
+	require.NoError(t, err)
+	assert.NotNil(t, p.ContractsByFamily)
+	assert.Empty(t, p.ContractsByFamily)
 }
 
 func TestDecodeManifestLoadedCandidate_RejectsMalformedEntries(t *testing.T) {

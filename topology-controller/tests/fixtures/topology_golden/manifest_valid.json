@@ -1,0 +1,179 @@
+{
+  "code_bundle": {
+    "contract_version": 1,
+    "nodes": {
+      "public.my_seed": {
+        "code_unit_ids": [],
+        "compiled_code": "",
+        "compiled_hash": "",
+        "config": {
+          "materialized": "seed",
+          "meta": {
+            "owner": "data-platform"
+          }
+        },
+        "config_hash": "11dbb760fe2f6c1e67df38238b53676628db21dbd16b7fedceb0b900024cb99f",
+        "content_hash": "sha256:3c6b49cef1126f973a430e45a5314cd50dc90db9b58b9bfe516849323d29abc7",
+        "hashed_config": {
+          "materialized": "seed",
+          "relation": {
+            "alias": "my_seed",
+            "schema": "public"
+          }
+        },
+        "raw_code": "",
+        "runtime": "dbt",
+        "shared_code_hash": "",
+        "source_hash": ""
+      },
+      "public.my_snapshot": {
+        "code_unit_ids": [],
+        "compiled_code": "",
+        "compiled_hash": "",
+        "config": {
+          "materialized": "snapshot",
+          "meta": {
+            "owner": "data-platform"
+          }
+        },
+        "config_hash": "fa4d17a178870829edebef44d40a385dc232f51cb627e026ceb0db6763c4b24e",
+        "content_hash": "sha256:ec3d8caa4a1514dd0d3199efda44076ea12969aa377f465420b737991e60c36a",
+        "hashed_config": {
+          "materialized": "snapshot",
+          "relation": {
+            "alias": "my_snapshot",
+            "schema": "public"
+          }
+        },
+        "raw_code": "",
+        "runtime": "dbt",
+        "shared_code_hash": "",
+        "source_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "public.orders": {
+        "code_unit_ids": [],
+        "compiled_code": "SELECT id FROM public.users",
+        "compiled_hash": "b0c8a4d065117e6ec541f0f6795c86ee56006cef4180b7ba36367435bb05605a",
+        "config": {
+          "materialized": "table",
+          "meta": {
+            "criticality": "CORE",
+            "owner": "data-platform"
+          }
+        },
+        "config_hash": "7e3f190f03e0e087cdba2ec66ac61fc44c8cb824e1b39afd3da8050d1a765d72",
+        "content_hash": "sha256:0e2627de0f7e2607ebd1e02f5b15571a7adf807b5f35a97cd2e17f8936d3e1df",
+        "hashed_config": {
+          "materialized": "table",
+          "relation": {
+            "alias": "orders",
+            "schema": "public"
+          }
+        },
+        "raw_code": "",
+        "runtime": "dbt",
+        "shared_code_hash": "",
+        "source_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "public.users": {
+        "code_unit_ids": [],
+        "compiled_code": "SELECT 1 AS id",
+        "compiled_hash": "611f76bb5b4ae387967515bd6b0b59857bf03416a03866cc7b9549829994370e",
+        "config": {
+          "materialized": "table",
+          "meta": {
+            "owner": "data-platform"
+          }
+        },
+        "config_hash": "e65b61c3f3acc54002598cd4213108dcd785d9c49224cea637d6bd431063c284",
+        "content_hash": "sha256:addd822a40ac7163970695a2a8935dff4b4eb3fc14a3677a91320d7d61fae2c5",
+        "hashed_config": {
+          "materialized": "table",
+          "relation": {
+            "alias": "users",
+            "schema": "public"
+          }
+        },
+        "raw_code": "",
+        "runtime": "dbt",
+        "shared_code_hash": "",
+        "source_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    "provenance": {
+      "service-1": {
+        "dbt_version": "",
+        "image_tag": "registry.example/service-1:1",
+        "packages": {},
+        "path_checksum_seeds": []
+      }
+    },
+    "release_id": "rel-1",
+    "shared_code": {},
+    "tests": {}
+  },
+  "topology_nodes": [
+    {
+      "content_hash": "sha256:3c6b49cef1126f973a430e45a5314cd50dc90db9b58b9bfe516849323d29abc7",
+      "image_tag": "registry.example/service-1:1",
+      "materialized": "seed",
+      "node_type": "dbt-seed",
+      "original_file_path": "seeds/my_seed.csv",
+      "resolved_relation_id": "public.my_seed",
+      "schedule": "daily",
+      "schema_name": "public",
+      "service_name": "service-1",
+      "table_name": "my_seed",
+      "test_count": 0,
+      "unique_id": "public.my_seed",
+      "upstream_unique_ids": []
+    },
+    {
+      "content_hash": "sha256:ec3d8caa4a1514dd0d3199efda44076ea12969aa377f465420b737991e60c36a",
+      "image_tag": "registry.example/service-1:1",
+      "materialized": "snapshot",
+      "node_type": "dbt-snapshot",
+      "original_file_path": "snapshots/my_snapshot.sql",
+      "resolved_relation_id": "public.my_snapshot",
+      "schedule": "daily",
+      "schema_name": "public",
+      "service_name": "service-1",
+      "table_name": "my_snapshot",
+      "test_count": 0,
+      "unique_id": "public.my_snapshot",
+      "upstream_unique_ids": []
+    },
+    {
+      "content_hash": "sha256:0e2627de0f7e2607ebd1e02f5b15571a7adf807b5f35a97cd2e17f8936d3e1df",
+      "image_tag": "registry.example/service-1:1",
+      "materialized": "table",
+      "node_type": "dbt-model",
+      "original_file_path": "models/orders.sql",
+      "resolved_relation_id": "public.orders",
+      "schedule": "daily",
+      "schema_name": "public",
+      "service_name": "service-1",
+      "table_name": "orders",
+      "test_count": 0,
+      "unique_id": "public.orders",
+      "upstream_unique_ids": [
+        "public.users"
+      ]
+    },
+    {
+      "content_hash": "sha256:addd822a40ac7163970695a2a8935dff4b4eb3fc14a3677a91320d7d61fae2c5",
+      "image_tag": "registry.example/service-1:1",
+      "materialized": "table",
+      "node_type": "dbt-model",
+      "original_file_path": "models/users.sql",
+      "resolved_relation_id": "public.users",
+      "schedule": "daily",
+      "schema_name": "public",
+      "service_name": "service-1",
+      "table_name": "users",
+      "test_count": 0,
+      "unique_id": "public.users",
+      "upstream_unique_ids": []
+    }
+  ]
+}

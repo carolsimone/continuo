@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest';
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import PipelineTimeline from '../../src/client/PipelineTimeline';
 
 describe('PipelineTimeline', () => {
@@ -62,5 +62,57 @@ describe('PipelineTimeline', () => {
     const { container } = render(<PipelineTimeline transitions={[]} />);
     expect(container.querySelector('.section-header__title')?.textContent).toBe('Timeline');
     expect(container.querySelectorAll('.release-timeline__step').length).toBe(0);
+  });
+
+  describe('parse and contract generation', () => {
+    const step = (to: string) => ({ to, at: '2026-09-05T14:25:36Z' });
+    const generated = { parse_ms: 2140, contracts_ms: 610, contracts_by_family: { dbt: 45, python: 3 } };
+
+    it('shows parsing and contract generation under the parsing step', () => {
+      render(<PipelineTimeline transitions={[step('parsing'), step('validating')]} run={generated} />);
+      expect(screen.getByText('parsing 2.1 s')).toBeInTheDocument();
+      expect(screen.getByText('generating contracts 0.6 s · 48 contracts (dbt 45, python 3)')).toBeInTheDocument();
+    });
+
+    it('puts both lines in the parsing step and in no other step', () => {
+      const { container } = render(
+        <PipelineTimeline transitions={[step('received'), step('compiling'), step('parsing'), step('validating')]} run={generated} />,
+      );
+      const steps = Array.from(container.querySelectorAll('.release-timeline__step'));
+      expect(steps.map(s => s.querySelector('.pill-sm')?.textContent)).toEqual(['received', 'compiling', 'parsing', 'validating']);
+      expect(steps.map(s => Array.from(s.querySelectorAll('.release-timeline__line')).map(l => l.textContent))).toEqual([
+        [],
+        [],
+        ['parsing 2.1 s', 'generating contracts 0.6 s · 48 contracts (dbt 45, python 3)'],
+        [],
+      ]);
+    });
+
+    it('shows no sub-lines for a release without them', () => {
+      const { container } = render(
+        <PipelineTimeline transitions={[step('parsing'), step('validating')]} run={{ manifestKind: 'dbt' }} />,
+      );
+      expect(container.querySelector('.release-timeline__line')).toBeNull();
+      expect(screen.queryByText(/^parsing \d/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/generating contracts/)).not.toBeInTheDocument();
+    });
+
+    it('shows no sub-lines when the run has not reached parsing, whatever it carries', () => {
+      const { container } = render(<PipelineTimeline transitions={[step('received'), step('compiling')]} run={generated} />);
+      expect(container.querySelector('.release-timeline__line')).toBeNull();
+    });
+
+    it('does not add them to the ghost of a parsing step the run has not reached', () => {
+      const { container } = render(
+        <PipelineTimeline transitions={[step('received'), step('compiling')]} run={{ manifestKind: 'dbt', ...generated }} />,
+      );
+      expect(container.querySelector('.release-timeline__step--upcoming .release-timeline__line')).toBeNull();
+    });
+
+    it('shows the durations without a count when the parse did not count its contracts', () => {
+      render(<PipelineTimeline transitions={[step('parsing')]} run={{ parse_ms: 2140, contracts_ms: 610 }} />);
+      expect(screen.getByText('parsing 2.1 s')).toBeInTheDocument();
+      expect(screen.getByText('generating contracts 0.6 s')).toBeInTheDocument();
+    });
   });
 });

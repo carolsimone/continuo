@@ -5,9 +5,11 @@
       "name": "summary",
       "schema": "test_schema",
       "fqn": ["service-4", "summary"],
+      "original_file_path": "models/summary.sql",
       "tags": ["daily"],
       "resource_type": "model",
       "config": {
+        "materialized": "table",
         "meta": { "owner": "team-d", "criticality": "SECONDARY" }
       },
       "compiled_code": "SELECT * FROM test_schema.py_metrics",

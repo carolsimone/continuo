@@ -205,10 +205,7 @@ export default function NodeContractPanel({ service, schema, table }: Props) {
   if (contract === null && versions.length === 0) {
     return (
       <section className="detail-card">
-        <p className="empty">
-          This node has no contract. Only Python services released as python-odcs have contracts; continuo keeps a
-          version of each one it promotes.
-        </p>
+        <p className="empty">This node has no contract. A dbt test and an unknown-external table have none.</p>
       </section>
     );
   }

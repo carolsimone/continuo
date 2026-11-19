@@ -322,11 +322,20 @@ export interface UpcomingStage {
   condition?: string;
 }
 
-// What decides a run's path through the pipeline: how its artifact is parsed
-// ('dbt', 'python' or 'python-odcs'), and whether it is a bootstrap release.
+// What the timeline reads of a run: what decides its path through the
+// pipeline (how its artifact is parsed, 'dbt', 'python' or 'python-odcs', and
+// whether it is a bootstrap release) and what its parse reported (see
+// parseLines). The parse fields are absent until the parse reports them.
 export interface PipelineRun {
   manifestKind?: string;
   bootstrap?: boolean;
+  // Milliseconds the parse took without its contract stages, and milliseconds
+  // those stages took.
+  parse_ms?: number;
+  contracts_ms?: number;
+  // How many contracts the parse wrote, by family (`dbt`, `python`); a family
+  // with none has no key.
+  contracts_by_family?: Record<string, number>;
 }
 
 // The manifest kinds of a Python service's release. Both skip the compile leg
@@ -367,6 +376,49 @@ export function upcomingStages(transitions: ReleaseTransition[], run: PipelineRu
   const reached = PIPELINE_STAGES.indexOf(last.to);
   if (reached === -1) return [];
   return pipelinePath(run).filter(s => PIPELINE_STAGES.indexOf(s.stage) > reached);
+}
+
+const PARSING_LABEL = 'parsing';
+const CONTRACTS_LABEL = 'generating contracts';
+
+// seconds writes a duration in milliseconds as seconds with one decimal. It
+// rounds the integer tenths half up, so the text does not depend on the binary
+// form of the fraction (Number.toFixed turns 2.05 into 2.0), and a long
+// duration stays in seconds.
+function seconds(ms: number): string {
+  const tenths = Math.round(ms / 100);
+  return `${Math.floor(tenths / 10)}.${tenths % 10}`;
+}
+
+// contractCount writes the tail of the contract generation line: the contracts
+// written, then the families they belong to. A parse that did not count its
+// contracts leaves it empty, and a release with none says `0 contracts` with
+// no families.
+function contractCount(byFamily: Record<string, number> | undefined): string {
+  if (!byFamily) return '';
+  const families = Object.keys(byFamily).sort();
+  const total = families.reduce((sum, family) => sum + byFamily[family], 0);
+  const noun = total === 1 ? 'contract' : 'contracts';
+  const split = families.map(family => `${family} ${byFamily[family]}`).join(', ');
+  return ` · ${total} ${noun}${split ? ` (${split})` : ''}`;
+}
+
+// parseLines lists the lines the timeline shows under the parsing step: how
+// long the parse took and how long it took to generate the contracts, with how
+// many it wrote by family. A run gets a line for each duration it reported, so
+// a run that reported none has no line.
+export function parseLines(run: PipelineRun): { label: string; text: string }[] {
+  const lines: { label: string; text: string }[] = [];
+  if (typeof run.parse_ms === 'number') {
+    lines.push({ label: PARSING_LABEL, text: `${PARSING_LABEL} ${seconds(run.parse_ms)} s` });
+  }
+  if (typeof run.contracts_ms === 'number') {
+    lines.push({
+      label: CONTRACTS_LABEL,
+      text: `${CONTRACTS_LABEL} ${seconds(run.contracts_ms)} s${contractCount(run.contracts_by_family)}`,
+    });
+  }
+  return lines;
 }
 
 // shortSha abbreviates a commit to the seven characters git itself shows.

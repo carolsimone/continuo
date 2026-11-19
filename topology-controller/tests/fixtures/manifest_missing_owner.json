@@ -5,8 +5,9 @@
       "name": "orders",
       "schema": "public",
       "fqn": ["service_1", "orders"],
+      "original_file_path": "models/orders.sql",
       "tags": ["daily"],
-      "config": {"meta": {}},
+      "config": {"materialized": "table", "meta": {}},
       "compiled_code": "SELECT 1"
     }
   }

@@ -1,0 +1,76 @@
+{
+  "code_bundle": {
+    "contract_version": 1,
+    "nodes": {
+      "test_schema.summary": {
+        "code_unit_ids": [],
+        "compiled_code": "SELECT * FROM test_schema.py_metrics",
+        "compiled_hash": "fc4574ea199a219359eba69d84fda9b71c4cf571e7d72049aab70327cb2ca582",
+        "config": {
+          "materialized": "table",
+          "meta": {
+            "criticality": "SECONDARY",
+            "owner": "team-d"
+          }
+        },
+        "config_hash": "44148a6286fd42d61741e9077515ddf803c6c75ce07abf6410605b1400be1622",
+        "content_hash": "sha256:97b793d0c0c775c068880821b2f315ded67581d05a65ba9fe15e23eaf69482d1",
+        "hashed_config": {
+          "materialized": "table",
+          "relation": {
+            "alias": "summary",
+            "schema": "test_schema"
+          }
+        },
+        "raw_code": "",
+        "runtime": "dbt",
+        "shared_code_hash": "",
+        "source_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    "provenance": {
+      "service-4": {
+        "dbt_version": "",
+        "image_tag": "registry.example/service-4:1",
+        "packages": {},
+        "path_checksum_seeds": []
+      }
+    },
+    "release_id": "rel-1",
+    "shared_code": {},
+    "tests": {}
+  },
+  "topology_nodes": [
+    {
+      "content_hash": "",
+      "image_tag": "",
+      "node_type": "unknown-external",
+      "original_file_path": "",
+      "resolved_relation_id": "test_schema.py_metrics",
+      "schedule": "",
+      "schema_name": "test_schema",
+      "service_name": "",
+      "table_name": "py_metrics",
+      "test_count": 0,
+      "unique_id": "test_schema.py_metrics",
+      "upstream_unique_ids": []
+    },
+    {
+      "content_hash": "sha256:97b793d0c0c775c068880821b2f315ded67581d05a65ba9fe15e23eaf69482d1",
+      "image_tag": "registry.example/service-4:1",
+      "materialized": "table",
+      "node_type": "dbt-model",
+      "original_file_path": "models/summary.sql",
+      "resolved_relation_id": "test_schema.summary",
+      "schedule": "daily",
+      "schema_name": "test_schema",
+      "service_name": "service-4",
+      "table_name": "summary",
+      "test_count": 0,
+      "unique_id": "test_schema.summary",
+      "upstream_unique_ids": [
+        "test_schema.py_metrics"
+      ]
+    }
+  ]
+}

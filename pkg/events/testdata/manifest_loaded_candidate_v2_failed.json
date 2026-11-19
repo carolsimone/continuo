@@ -8,6 +8,8 @@
       "status": "failed",
       "failure_kind": "invalid_contract",
       "continuo_contracts": "0.2.0",
+      "parse_ms": 310,
+      "contracts_ms": 45,
       "detail": "1 node failed to parse: analytics.py_daily_kpis",
       "failed_nodes": [
         {
@@ -32,6 +34,8 @@
       "status": "failed",
       "failure_kind": "invalid_contract",
       "continuo_contracts": "0.2.0",
+      "parse_ms": 310,
+      "contracts_ms": 45,
       "detail": "1 node failed to parse: analytics.py_daily_kpis",
       "failed_nodes": [
         {

@@ -14,7 +14,7 @@ from service import candidate_artifacts, candidate_manifest_handler
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
 from service.compile_extras import seed_columns_hash
-from service.ports import ManifestSourcePort
+from service.ports import CandidatePublisherPort, ManifestSourcePort
 from service.release_timings import ReleaseOutcome, Stage
 from domain.contract_vocabulary import ParseFailureKind
 from tests.fakes import (
@@ -112,7 +112,8 @@ def test_handle_publishes_ok_with_empty_topology_when_no_manifests():
 
     assert writer.writes == [{"tenant_id": "default", "release_id": "rel-empty", "nodes": []}]
     publisher.publish_ok.assert_called_once_with(
-        release_id="rel-empty", artifact=writer.refs[0], code_bundle_uri="", contract_bundle=bundle_writer.refs[0])
+        release_id="rel-empty", artifact=writer.refs[0], code_bundle_uri="", contract_bundle=bundle_writer.refs[0],
+        parse_ms=0, contracts_ms=0, contracts_by_family={})
     publisher.publish_failed.assert_not_called()
 
 
@@ -250,9 +251,38 @@ def test_handle_publishes_failed_on_missing_nodes_key(tmp_path):
     publisher.publish_ok.assert_not_called()
 
 
+def test_the_failed_node_of_a_node_with_unreadable_tags_carries_the_librarys_message(tmp_path):
+    """A node's field the library cannot read leaves the node with no contract: it is
+    one invalid contract of the release, named by its unique_id, whose detail is the
+    library's message naming the node as the manifest does."""
+    bad = tmp_path / "bad_tags.json"
+    bad.write_text(json.dumps({
+        "nodes": {
+            "model.svc.t": {
+                "resource_type": "model", "name": "t", "schema": "s", "fqn": ["svc", "t"],
+                "original_file_path": "models/t.sql",
+                "config": {"materialized": "table", "meta": {"owner": "team"}}, "tags": "daily",
+            }
+        }
+    }))
+    source = create_autospec(ManifestSourcePort)
+    source.list_manifests.return_value = [ManifestFile(path=str(bad), image_tag="")]
+    publisher = MagicMock()
+
+    build_handler(source, publisher, make_uploader()).handle(release_id="rel-bad-tags")
+
+    kw = _failed_kwargs(publisher)
+    assert kw["failure_kind"] == ParseFailureKind.INVALID_CONTRACT
+    assert kw["detail"] == "1 node failed to parse: s.t"
+    assert kw["failed_nodes"] == [FailedNode(
+        node_id="s.t", kind=ParseFailureKind.INVALID_CONTRACT, service="svc", file_path="models/t.sql",
+        node_type="dbt-model", detail="model.svc.t: tags must be a list of strings, got str",
+    )]
+
+
 def test_handle_publishes_failed_on_node_with_empty_fqn(tmp_path):
-    """A node whose dbt shape is invalid (empty `fqn`) raises IndexError in
-    parse_manifest; that is permanent, so publish failed rather than stranding
+    """A node whose dbt shape is invalid (empty `fqn`) raises InvalidNodeSettingError
+    in parse_manifest; that is permanent, so publish failed rather than stranding
     the release as a transient error."""
     bad = tmp_path / "empty_fqn.json"
     bad.write_text(json.dumps({
@@ -282,7 +312,7 @@ def test_handle_publishes_failed_on_node_with_empty_fqn(tmp_path):
     publisher.publish_ok.assert_not_called()
 
 
-def test_a_bad_dbt_timeout_fails_the_whole_release_as_invalid_artifact(tmp_path):
+def test_a_bad_dbt_timeout_fails_the_release_as_an_invalid_contract(tmp_path):
     bad = tmp_path / "bad_timeout.json"
     bad.write_text(json.dumps({
         "macros": {},
@@ -292,7 +322,8 @@ def test_a_bad_dbt_timeout_fails_the_whole_release_as_invalid_artifact(tmp_path)
                 "name": "t",
                 "schema": "s",
                 "fqn": ["svc", "t"],
-                "config": {"meta": {"owner": "team", "timeout_minutes": "2h"}},
+                "original_file_path": "models/t.sql",
+                "config": {"materialized": "table", "meta": {"owner": "team", "timeout_minutes": "2h"}},
                 "tags": ["daily"],
             }
         },
@@ -306,9 +337,11 @@ def test_a_bad_dbt_timeout_fails_the_whole_release_as_invalid_artifact(tmp_path)
     handler.handle(release_id="rel-bad-timeout")  # must NOT raise
 
     kw = _failed_kwargs(publisher)
-    assert kw["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
-    assert "s.t" in kw["detail"]
-    assert "meta.timeout_minutes" in kw["detail"]
+    assert kw["failure_kind"] == ParseFailureKind.INVALID_CONTRACT
+    assert kw["detail"] == "1 node failed to parse: s.t"
+    (failed,) = kw["failed_nodes"]
+    assert (failed.node_id, failed.kind, failed.file_path) == ("s.t", ParseFailureKind.INVALID_CONTRACT, "models/t.sql")
+    assert "`timeoutMinutes` is '2h'" in failed.detail
     publisher.publish_ok.assert_not_called()
 
 
@@ -399,9 +432,10 @@ def test_handle_publishes_failed_service_mismatch(tmp_path):
                 "name": "orders",
                 "schema": "test_schema",
                 "fqn": ["service-2", "orders"],
+                "original_file_path": "models/orders.sql",
                 "tags": ["daily"],
                 "resource_type": "model",
-                "config": {"meta": {"owner": "team-b", "criticality": "SECONDARY"}},
+                "config": {"materialized": "table", "meta": {"owner": "team-b", "criticality": "SECONDARY"}},
                 "compiled_code": "SELECT 1",
                 "checksum": {"name": "sha256", "checksum": "abc123"},
             }
@@ -719,7 +753,8 @@ def test_empty_manifests_publish_empty_bundle_uri():
              artifact_writer=writer, contract_bundle_writer=bundle_writer).handle(release_id="rel-empty")
 
     publisher.publish_ok.assert_called_once_with(
-        release_id="rel-empty", artifact=writer.refs[0], code_bundle_uri="", contract_bundle=bundle_writer.refs[0])
+        release_id="rel-empty", artifact=writer.refs[0], code_bundle_uri="", contract_bundle=bundle_writer.refs[0],
+        parse_ms=0, contracts_ms=0, contracts_by_family={})
     assert bundle_uploader.uploads == []
 
 
@@ -734,7 +769,8 @@ def _manifest_with_single_macro(
                 "name": node_name,
                 "schema": "public",
                 "fqn": [service],
-                "config": {"meta": {"owner": "team"}},
+                "original_file_path": f"models/{node_name}.sql",
+                "config": {"materialized": "table", "meta": {"owner": "team"}},
                 "tags": ["nightly"],
                 "checksum": {"name": "sha256", "checksum": f"source-{node_name}"},
                 "depends_on": {"macros": ["macro.svc.m1"]},
@@ -1094,11 +1130,12 @@ def test_the_dbt_artifact_entry_shape_is_frozen(handler_with_mocks):
         "service_name": "service-2",
         "node_type": "dbt-model",
         "test_count": 0,
-        "content_hash": "sha256:bda620a0715892c4cbe860d989192941d6d435e00bb70d3626416447c48bed14",
+        "content_hash": "sha256:55ceac9b4f7f8902cc27398292e20b85400e66aba6545038bad673a208661cd0",
         "image_tag": "",
-        "original_file_path": "",
+        "original_file_path": "models/orders.sql",
         "upstream_unique_ids": ["test_schema.users"],
         "schedule": "daily",
+        "materialized": "table",
     }, sort_keys=True)
 
 
@@ -1206,9 +1243,11 @@ def test_upstream_unique_ids_match_node_unique_id_exactly_with_mixed_case(tmp_pa
                 "name": "upstream_table",
                 "schema": "Analytics",  # Mixed case
                 "fqn": ["service1", "upstream_table"],
+                "original_file_path": "models/upstream_table.sql",
                 "tags": ["daily"],
                 "resource_type": "model",
                 "config": {
+                    "materialized": "table",
                     "meta": {"owner": "team-a", "criticality": "CORE"}
                 },
                 "compiled_code": "SELECT 1 AS id",
@@ -1219,9 +1258,11 @@ def test_upstream_unique_ids_match_node_unique_id_exactly_with_mixed_case(tmp_pa
                 "name": "downstream_table",
                 "schema": "BusinessLayer",  # Mixed case
                 "fqn": ["service1", "downstream_table"],
+                "original_file_path": "models/downstream_table.sql",
                 "tags": ["daily"],
                 "resource_type": "model",
                 "config": {
+                    "materialized": "table",
                     "meta": {"owner": "team-a", "criticality": "CORE"}
                 },
                 "compiled_code": "SELECT * FROM Analytics.upstream_table",
@@ -1259,13 +1300,19 @@ def test_handle_returns_the_timings_of_every_stage_that_ran():
     timings = build_handler(source, MagicMock(), make_uploader(), clock=FakeClock(step=1.0)).handle(release_id="rel-1")
     ran = {stage: record for stage, record in timings.stages.items() if record.runs}
     assert set(ran) == {Stage.DOWNLOAD, Stage.DBT_PARSE, Stage.REGISTRY, Stage.RESOLVE, Stage.REWRITE,
-                        Stage.CANDIDATE_UPLOAD, Stage.CODE_BUNDLE, Stage.CANONICAL_HASHING, Stage.CONTRACT_BUNDLE,
+                        Stage.CANDIDATE_UPLOAD, Stage.CODE_BUNDLE, Stage.CONTRACT_GENERATION,
+                        Stage.CONTRACT_VALIDATION, Stage.CANONICAL_HASHING, Stage.CONTRACT_BUNDLE,
                         Stage.TOPOLOGY_ARTIFACT, Stage.PUBLISH}
     assert ran[Stage.DOWNLOAD].counts == {"manifests": 2, "bytes": 0}
     assert ran[Stage.DBT_PARSE].runs == 2
     assert ran[Stage.RESOLVE].counts == {"nodes": 2}
     assert (ran[Stage.REWRITE].runs, ran[Stage.CANDIDATE_UPLOAD].runs) == (2, 2)
-    assert all(record.seconds == record.runs for record in ran.values())
+    assert ran[Stage.CONTRACT_GENERATION].counts == ran[Stage.CONTRACT_VALIDATION].counts == {"nodes": 2}
+    # Each clock read is one second: a stage takes one second a run, and a dbt parse
+    # also the two reads of each contract stage it holds.
+    nested = 2 * (ran[Stage.CONTRACT_GENERATION].runs + ran[Stage.CONTRACT_VALIDATION].runs)
+    assert ran[Stage.DBT_PARSE].seconds == ran[Stage.DBT_PARSE].runs + nested
+    assert all(record.seconds == record.runs for stage, record in ran.items() if stage is not Stage.DBT_PARSE)
 
 
 def test_a_failed_release_times_its_publish(tmp_path):
@@ -1275,6 +1322,105 @@ def test_a_failed_release_times_its_publish(tmp_path):
     timings = dispatch_handler(source_of(ManifestFile(path=str(bad))), publisher).handle(release_id="rel-1")
     publisher.publish_failed.assert_called_once()
     assert timings.stages[Stage.PUBLISH].runs == 1
+
+
+def _autospec_publisher():
+    """A publisher that holds the handler to CandidatePublisherPort's signatures."""
+    return create_autospec(CandidatePublisherPort, instance=True)
+
+
+def test_the_published_durations_are_the_records():
+    """The release's parse ends at the instant the event is handed to the
+    publisher, so the numbers on the event are the record's own."""
+    publisher = _autospec_publisher()
+    timings = build_handler(
+        _make_source("manifest_service1.json", "manifest_service2.json"), publisher, make_uploader(),
+        clock=FakeClock(step=1.0),
+    ).handle(release_id="rel-1")
+
+    kwargs = publisher.publish_ok.call_args.kwargs
+    assert kwargs["parse_ms"] == timings.parse_ms()
+    assert kwargs["contracts_ms"] == timings.contracts_ms()
+    assert type(kwargs["parse_ms"]) is int and type(kwargs["contracts_ms"]) is int
+    assert kwargs["contracts_ms"] > 0, "the generation and the checks of the two dbt contracts ran"
+    assert kwargs["parse_ms"] > 0
+    publisher.publish_failed.assert_not_called()
+
+
+def test_the_published_durations_of_a_failed_release_are_the_records(monkeypatch, tmp_path):
+    def _raise(node, *, dialect, **kwargs):
+        raise InvalidCompiledSqlError(node_table_name=node.table_name, detail="broken")
+
+    monkeypatch.setattr("service.candidate_manifest_handler.referenced_tables", _raise)
+    publisher = _autospec_publisher()
+    timings = build_handler(
+        source_with_nodes(tmp_path, dbt_node("node_a")), publisher, make_uploader(), clock=FakeClock(step=1.0),
+    ).handle(release_id="rel-fail")
+
+    kwargs = _failed_kwargs(publisher)
+    assert kwargs["failure_kind"] == ParseFailureKind.INVALID_SQL
+    assert kwargs["parse_ms"] == timings.parse_ms()
+    assert kwargs["contracts_ms"] == timings.contracts_ms()
+    assert kwargs["contracts_ms"] > 0, "the node's contract was generated and checked before its SQL failed"
+    assert kwargs["parse_ms"] > 0
+    publisher.publish_ok.assert_not_called()
+
+
+def test_a_release_refused_before_any_contract_stage_publishes_valid_durations():
+    """Every publish happens inside a release's record, so a release that fails
+    before it reads a manifest still carries the time it took and no time
+    spent on contracts."""
+    publisher = _autospec_publisher()
+    handler = CandidateManifestHandler(
+        source=_make_source("manifest_service1.json"), publisher=publisher, bundle_uploader=FakeBundleUploader(),
+        artifact_writer=RecordingArtifactWriter(), contract_bundle_writer=RecordingContractBundleWriter(),
+        artifact_builders={Runtime.DBT: DbtSqlArtifactBuilder(make_uploader())},
+        dialect="postgres", system_relations=_SYSTEM_RELATIONS["postgres"], image_tags=None,
+        is_infrastructure_error=is_infrastructure, clock=FakeClock(step=1.0), memory=ScriptedMemoryProbe(0),
+    )
+
+    timings = handler.handle(release_id="rel-1")
+
+    kwargs = _failed_kwargs(publisher)
+    assert kwargs["failure_kind"] == ParseFailureKind.INTERNAL
+    assert kwargs["contracts_ms"] == 0
+    assert kwargs["parse_ms"] == timings.parse_ms() > 0
+    assert type(kwargs["parse_ms"]) is int
+
+
+def test_a_release_with_an_unknown_manifest_kind_publishes_valid_durations(tmp_path):
+    path = tmp_path / "manifest.json"
+    path.write_text("{}")
+    publisher = _autospec_publisher()
+
+    timings = dispatch_handler(
+        source_of(ManifestFile(path=str(path), kind="spark", declared_service="service-b")), publisher,
+        clock=FakeClock(step=1.0),
+    ).handle(release_id="rel-1")
+
+    kwargs = _failed_kwargs(publisher)
+    assert kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
+    assert kwargs["contracts_ms"] == 0
+    assert kwargs["parse_ms"] == timings.parse_ms() > 0
+
+
+def test_the_count_by_family_is_the_bundles_and_leaves_out_a_family_with_no_contract(tmp_path):
+    dbt = ManifestFile(path=str(FIXTURES / "manifest_service1.json"), image_tag="")
+    python = bundle_file(tmp_path, demo_nodes())
+    cases = {
+        "dbt only": ([dbt], {"dbt": 1}),
+        "python only": ([python], {"python": 3}),
+        "both": ([dbt, python], {"dbt": 1, "python": 3}),
+        "none": ([], {}),
+    }
+    for name, (files, want) in cases.items():
+        publisher = _autospec_publisher()
+        bundle_writer = RecordingContractBundleWriter()
+
+        python_handler(source_of(*files), publisher, contract_bundle_writer=bundle_writer).handle(release_id="rel-1")
+
+        got = publisher.publish_ok.call_args.kwargs["contracts_by_family"]
+        assert got == want == bundle_writer.document["summary"]["by_family"], name
 
 
 def _release_lines(caplog):
@@ -1317,7 +1463,8 @@ def _skipping_manifest(tmp_path, *nodes):
 
 def _model(name, *, owner="team-a", tags=("daily",)):
     return {"unique_id": f"model.svc_a.{name}", "resource_type": "model", "name": name, "schema": "analytics",
-            "fqn": ["svc_a", name], "tags": list(tags), "config": {"meta": {"owner": owner} if owner else {}},
+            "fqn": ["svc_a", name], "tags": list(tags), "original_file_path": f"models/{name}.sql",
+            "config": {"materialized": "table", "meta": {"owner": owner} if owner else {}},
             "checksum": {"checksum": name}, "compiled_code": "select 1"}
 
 
@@ -1495,7 +1642,8 @@ def test_the_handler_logs_each_path_checksum_seed(tmp_path, caplog):
 
 def test_the_topology_entry_carries_seed_columns_hash_only_when_set(tmp_path):
     seed = dbt_node("seed_countries") | {"unique_id": "seed.service-1.seed_countries", "resource_type": "seed",
-                                          "compiled_code": ""}
+                                          "compiled_code": "",
+                                          "columns": {"code": {"name": "code"}, "name": {"name": "name"}}}
     plain = dbt_node("plain_seed") | {"unique_id": "seed.service-1.plain_seed", "resource_type": "seed",
                                        "compiled_code": ""}
     source = source_with_nodes(tmp_path, seed, plain)
@@ -1534,6 +1682,7 @@ def test_the_reader_of_an_ephemeral_model_depends_on_it_and_on_the_tables_it_inl
 def test_topology_carries_materialized_full_refresh_and_seed_columns(tmp_path):
     seed = dbt_node("seed_fx_rates_eur") | {
         "unique_id": "seed.service-1.seed_fx_rates_eur", "resource_type": "seed", "compiled_code": "",
+        "columns": {"currency": {"name": "currency"}, "rate_to_eur": {"name": "rate_to_eur"}},
         "config": {"meta": {"owner": "team-a"}, "materialized": "seed", "full_refresh": True}}
     plain_seed = dbt_node("plain_seed") | {
         "unique_id": "seed.service-1.plain_seed", "resource_type": "seed", "compiled_code": "",

@@ -38,7 +38,7 @@ from continuo_contracts.vocabulary import continuo_values
 
 from domain.contract_vocabulary import NodeType, ParseFailureKind
 from domain.exceptions import InvalidOdcsBundleError, MalformedContractError
-from domain.model import AuthoredContract, FailedNode, ManifestFile, ManifestNode, ParsedArtifact, SkippedNode
+from domain.model import ContractFamily, FailedNode, ManifestFile, ManifestNode, NodeContract, ParsedArtifact, SkippedNode
 from domain.node_timeout import timeout_seconds
 from service.contract_validation import ContractValidator
 from service.contracts_library import LIBRARY_VERSION, VALIDATOR, version_triple
@@ -265,7 +265,8 @@ def _build_node(doc: Mapping[str, Any], entry: Mapping[str, str], *, service: st
         source_hash=entry["source_hash"],
         shared_code_hash=entry["shared_code_hash"],
     )
-    node.contract = AuthoredContract(
+    node.contract = NodeContract(
+        family=ContractFamily.PYTHON,
         document=doc,
         path=entry["path"],
         source_sha256=sha256_hex(entry["text"].encode("utf-8")),

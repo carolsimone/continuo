@@ -18,6 +18,18 @@ describe('release-client', () => {
     expect(calledUrl).toContain('limit=5');
   });
 
+  it('reads a release with its parse timings as release-controller sent them', async () => {
+    const body = {
+      release_id: 'rel-1', status: 'promoted',
+      parse_ms: 2140, contracts_ms: 610, contracts_by_family: { dbt: 45, python: 3 },
+    };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = createReleaseClient('http://rc:8088');
+    expect(await client.getRelease('rel-1')).toEqual(body);
+    expect(fetchMock.mock.calls[0][0]).toBe('http://rc:8088/releases/rel-1');
+  });
+
   it('throws with upstream status on non-2xx', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('nope', { status: 404 })));
     const client = createReleaseClient('http://rc:8088');

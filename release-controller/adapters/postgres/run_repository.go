@@ -53,7 +53,8 @@ const runColumns = `run_id, run_kind, status, image_tags, changed_service,
 	verifies_release_id, attempt, source_overlay_uri,
 	candidate_topology_uri, candidate_topology_sha256, candidate_node_count,
 	rebaseline, notices,
-	candidate_contract_bundle_uri, candidate_contract_bundle_sha256, continuo_contracts`
+	candidate_contract_bundle_uri, candidate_contract_bundle_sha256, continuo_contracts,
+	parse_ms, contracts_ms, contracts_by_family`
 
 const activeStatuses = `('compiling','parsing','seed_building','validating')`
 
@@ -90,6 +91,10 @@ type runRow struct {
 	CandidateContractBundleURI    string `db:"candidate_contract_bundle_uri"`
 	CandidateContractBundleSHA256 string `db:"candidate_contract_bundle_sha256"`
 	ContinuoContracts             string `db:"continuo_contracts"`
+
+	ParseMs           sql.NullInt64 `db:"parse_ms"`
+	ContractsMs       sql.NullInt64 `db:"contracts_ms"`
+	ContractsByFamily []byte        `db:"contracts_by_family"`
 }
 
 func (r *RunRepository) getOne(ctx context.Context, where string, args ...any) (*pipeline.Run, error) {
@@ -166,7 +171,7 @@ func (r *RunRepository) Save(ctx context.Context, run *pipeline.Run) error {
 	// beforehand.
 	res, err := r.q.ExecContext(ctx,
 		`INSERT INTO release_pipeline_runs (`+runColumns+`)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33)
 		 ON CONFLICT (run_id) DO UPDATE SET
 		   status = EXCLUDED.status,
 		   image_tags = EXCLUDED.image_tags,
@@ -185,7 +190,10 @@ func (r *RunRepository) Save(ctx context.Context, run *pipeline.Run) error {
 		   notices = EXCLUDED.notices,
 		   candidate_contract_bundle_uri = EXCLUDED.candidate_contract_bundle_uri,
 		   candidate_contract_bundle_sha256 = EXCLUDED.candidate_contract_bundle_sha256,
-		   continuo_contracts = EXCLUDED.continuo_contracts
+		   continuo_contracts = EXCLUDED.continuo_contracts,
+		   parse_ms = EXCLUDED.parse_ms,
+		   contracts_ms = EXCLUDED.contracts_ms,
+		   contracts_by_family = EXCLUDED.contracts_by_family
 		 WHERE release_pipeline_runs.run_kind = EXCLUDED.run_kind`,
 		args...)
 	if err != nil {
@@ -209,7 +217,7 @@ func (r *RunRepository) Create(ctx context.Context, run *pipeline.Run) (bool, er
 	}
 	res, err := r.q.ExecContext(ctx,
 		`INSERT INTO release_pipeline_runs (`+runColumns+`)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33)
 		 ON CONFLICT (run_id) DO NOTHING`,
 		args...)
 	if err != nil {
@@ -256,6 +264,23 @@ func encodeRun(run *pipeline.Run) ([]any, error) {
 		nodeCount = ref.NodeCount
 	}
 	bundle := run.CandidateContractBundle()
+	// A timing the parse did not report is SQL NULL, so "reported" is one SQL
+	// predicate (parse_ms IS NOT NULL), and an empty count is the object {}.
+	timings := run.ParseTimings()
+	var parseMs, contractsMs sql.NullInt64
+	if timings.ParseMs != nil {
+		parseMs = sql.NullInt64{Int64: *timings.ParseMs, Valid: true}
+	}
+	if timings.ContractsMs != nil {
+		contractsMs = sql.NullInt64{Int64: *timings.ContractsMs, Valid: true}
+	}
+	var contractsByFamily []byte
+	if timings.ContractsByFamily != nil {
+		contractsByFamily, err = json.Marshal(timings.ContractsByFamily)
+		if err != nil {
+			return nil, fmt.Errorf("marshal contracts_by_family: %w", err)
+		}
+	}
 	return []any{
 		run.ID(), string(run.Kind()), string(run.Status()), imageTagsJSON, run.ChangedService(),
 		pq.StringArray(run.ValidationNodeIDs()), failReason, run.FailDetail(), pq.StringArray(run.FailingNodes()),
@@ -264,6 +289,7 @@ func encodeRun(run *pipeline.Run) ([]any, error) {
 		run.VerifiesReleaseID(), run.Attempt(), run.SourceOverlayURI(),
 		topologyURI, topologySHA256, nodeCount, run.IsRebaseline(), noticesJSON,
 		bundle.URI, bundle.SHA256, run.ContinuoContracts(),
+		parseMs, contractsMs, contractsByFamily,
 	}, nil
 }
 
@@ -298,6 +324,18 @@ func rowToRun(row runRow) (*pipeline.Run, error) {
 		}
 		notices = serialization.NoticesToDomain(noticesDTO)
 	}
+	timings := release.ParseTimings{}
+	// The two durations are set together or not at all, as ParseTimings holds
+	// them: a row with only one of them reports neither.
+	if row.ParseMs.Valid && row.ContractsMs.Valid {
+		timings.ParseMs = &row.ParseMs.Int64
+		timings.ContractsMs = &row.ContractsMs.Int64
+	}
+	if row.ContractsByFamily != nil {
+		if err := json.Unmarshal(row.ContractsByFamily, &timings.ContractsByFamily); err != nil {
+			return nil, fmt.Errorf("unmarshal contracts_by_family: %w", err)
+		}
+	}
 	return pipeline.Rehydrate(pipeline.RehydrateInput{
 		ID:             row.RunID,
 		Kind:           pipeline.Kind(row.RunKind),
@@ -315,6 +353,7 @@ func rowToRun(row runRow) (*pipeline.Run, error) {
 			SHA256: row.CandidateContractBundleSHA256,
 		},
 		ContinuoContracts: row.ContinuoContracts,
+		ParseTimings:      timings,
 		ValidationNodeIDs: []string(row.ValidationNodeIDs),
 		PerNodeResults:    perNode,
 		FailReason:        row.FailReason.String,

@@ -1,0 +1,2542 @@
+{
+  "code_bundle": {
+    "contract_version": 1,
+    "nodes": {
+      "fp_analytics.cap_dep": {
+        "code_unit_ids": [
+          "fpshop:macro.fpshop.generate_schema_name",
+          "fpshop:operation.fpshop.fpshop-on-run-start-0"
+        ],
+        "compiled_code": "select id from \"continuo_dbt\".\"fp_analytics\".\"OrdersCap\"",
+        "compiled_hash": "175f97ccf9519f022755a37280859582b38bc267ae13ecbe7c1e0221fbcb3c2c",
+        "config": {
+          "access": "protected",
+          "alias": null,
+          "batch_size": null,
+          "begin": null,
+          "column_types": {},
+          "concurrent_batches": null,
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "database": null,
+          "docs": {
+            "node_color": null,
+            "show": true
+          },
+          "enabled": true,
+          "event_time": null,
+          "freshness": null,
+          "full_refresh": null,
+          "grants": {},
+          "group": null,
+          "incremental_strategy": null,
+          "lookback": 1,
+          "materialized": "table",
+          "meta": {
+            "owner": "shop"
+          },
+          "on_configuration_change": "apply",
+          "on_error": null,
+          "on_schema_change": "ignore",
+          "packages": [],
+          "persist_docs": {},
+          "post-hook": [],
+          "pre-hook": [],
+          "quoting": {},
+          "schema": null,
+          "static_analysis": null,
+          "tags": [
+            "daily"
+          ],
+          "unique_key": null
+        },
+        "config_hash": "a4b5e065b70a4f6c674b99250557a6941b3983749c7d119065c336dadb2b3f4f",
+        "content_hash": "sha256:5b8d06dd217669005ae43b7a522832f18cfd6b5f1b42d403e759da05d6d0f496",
+        "hashed_config": {
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "enabled": true,
+          "lookback": 1,
+          "materialized": "table",
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "relation": {
+            "alias": "cap_dep",
+            "schema": "fp_analytics"
+          }
+        },
+        "raw_code": "select id from {{ ref('cap_src') }}",
+        "runtime": "dbt",
+        "shared_code_hash": "e36610a9004ae5b17dcb48e28a14ee9d64b3ca970e8ce64e44a871bfaf774849",
+        "source_hash": "5a46545d585a13634ee02a106d330d9bf9f5ee29a2655cb6fb6fa3b924dc87bd"
+      },
+      "fp_analytics.cap_src": {
+        "code_unit_ids": [
+          "fpshop:macro.fpshop.generate_schema_name",
+          "fpshop:operation.fpshop.fpshop-on-run-start-0"
+        ],
+        "compiled_code": "\nselect id, amount from \"continuo_dbt\".\"fp_analytics\".\"orders\"",
+        "compiled_hash": "d0059256db75674734814bfadfad7ecf3611895b67c5ddaaafcbcc2fe4553ddf",
+        "config": {
+          "access": "protected",
+          "alias": "OrdersCap",
+          "batch_size": null,
+          "begin": null,
+          "column_types": {},
+          "concurrent_batches": null,
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "database": null,
+          "docs": {
+            "node_color": null,
+            "show": true
+          },
+          "enabled": true,
+          "event_time": null,
+          "freshness": null,
+          "full_refresh": null,
+          "grants": {},
+          "group": null,
+          "incremental_strategy": null,
+          "lookback": 1,
+          "materialized": "table",
+          "meta": {
+            "owner": "shop"
+          },
+          "on_configuration_change": "apply",
+          "on_error": null,
+          "on_schema_change": "ignore",
+          "packages": [],
+          "persist_docs": {},
+          "post-hook": [],
+          "pre-hook": [],
+          "quoting": {},
+          "schema": null,
+          "static_analysis": null,
+          "tags": [
+            "daily"
+          ],
+          "unique_key": null
+        },
+        "config_hash": "9191c02d571a2da05d8736c5040dcf18a14d1edef542533775caab2c3a9aa760",
+        "content_hash": "sha256:936ea829c6e3857381349d241cbfc9c080b2f54cacb54c8549d54743d8744229",
+        "hashed_config": {
+          "alias": "OrdersCap",
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "enabled": true,
+          "lookback": 1,
+          "materialized": "table",
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "relation": {
+            "alias": "OrdersCap",
+            "schema": "fp_analytics"
+          }
+        },
+        "raw_code": "{{ config(alias='OrdersCap') }}\nselect id, amount from {{ ref('orders') }}",
+        "runtime": "dbt",
+        "shared_code_hash": "e36610a9004ae5b17dcb48e28a14ee9d64b3ca970e8ce64e44a871bfaf774849",
+        "source_hash": "a5b479f75ecc8d7edd336521f0cd00d365c069c3221d69d79ea27dca06c16b41"
+      },
+      "fp_analytics.contracted": {
+        "code_unit_ids": [
+          "fpshop:macro.fpshop.generate_schema_name",
+          "fpshop:operation.fpshop.fpshop-on-run-start-0"
+        ],
+        "compiled_code": "select id, cast(amount as numeric(12,2)) as amount from \"continuo_dbt\".\"fp_analytics\".\"orders\"",
+        "compiled_hash": "a113c1dd7d94e0cc44f23cc9a4c689c1e22567beab59f1ac4b9a426812b4e80d",
+        "config": {
+          "access": "protected",
+          "alias": null,
+          "batch_size": null,
+          "begin": null,
+          "column_types": {},
+          "concurrent_batches": null,
+          "contract": {
+            "alias_types": true,
+            "enforced": true
+          },
+          "database": null,
+          "docs": {
+            "node_color": null,
+            "show": true
+          },
+          "enabled": true,
+          "event_time": null,
+          "freshness": null,
+          "full_refresh": null,
+          "grants": {},
+          "group": null,
+          "incremental_strategy": null,
+          "lookback": 1,
+          "materialized": "table",
+          "meta": {
+            "owner": "shop"
+          },
+          "on_configuration_change": "apply",
+          "on_error": null,
+          "on_schema_change": "ignore",
+          "packages": [],
+          "persist_docs": {},
+          "post-hook": [],
+          "pre-hook": [],
+          "quoting": {},
+          "schema": null,
+          "static_analysis": null,
+          "tags": [
+            "daily"
+          ],
+          "unique_key": null
+        },
+        "config_hash": "6b39013fbaf01c08c50cbe47571f048a0e5f06dda8dfc0796602f3bb47a4078f",
+        "content_hash": "sha256:f225a7a39213c875dd009bf78b21038f757edccfa5a65371c33a2517bd367467",
+        "hashed_config": {
+          "columns": [
+            {
+              "data_type": "integer",
+              "name": "id"
+            },
+            {
+              "data_type": "numeric(12,2)",
+              "name": "amount"
+            }
+          ],
+          "contract": {
+            "alias_types": true,
+            "enforced": true
+          },
+          "enabled": true,
+          "lookback": 1,
+          "materialized": "table",
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "relation": {
+            "alias": "contracted",
+            "schema": "fp_analytics"
+          }
+        },
+        "raw_code": "select id, cast(amount as numeric(12,2)) as amount from {{ ref('orders') }}",
+        "runtime": "dbt",
+        "shared_code_hash": "e36610a9004ae5b17dcb48e28a14ee9d64b3ca970e8ce64e44a871bfaf774849",
+        "source_hash": "478f9d80c964e5614f318e6ccb24fd3d06be9b604686d50b0dbdedf9b0c27a56"
+      },
+      "fp_analytics.dim_v.v1": {
+        "code_unit_ids": [
+          "fpshop:macro.fpshop.generate_schema_name",
+          "fpshop:operation.fpshop.fpshop-on-run-start-0"
+        ],
+        "compiled_code": "select id from \"continuo_dbt\".\"fp_analytics\".\"orders\"",
+        "compiled_hash": "15c89d8c6f7951e3446a7effce537ef4f61e04a598803534e29e20fb9c86e58a",
+        "config": {
+          "access": "protected",
+          "alias": null,
+          "batch_size": null,
+          "begin": null,
+          "column_types": {},
+          "concurrent_batches": null,
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "database": null,
+          "docs": {
+            "node_color": null,
+            "show": true
+          },
+          "enabled": true,
+          "event_time": null,
+          "freshness": null,
+          "full_refresh": null,
+          "grants": {},
+          "group": null,
+          "incremental_strategy": null,
+          "lookback": 1,
+          "materialized": "table",
+          "meta": {
+            "owner": "shop"
+          },
+          "on_configuration_change": "apply",
+          "on_error": null,
+          "on_schema_change": "ignore",
+          "packages": [],
+          "persist_docs": {},
+          "post-hook": [],
+          "pre-hook": [],
+          "quoting": {},
+          "schema": null,
+          "static_analysis": null,
+          "tags": [
+            "daily"
+          ],
+          "unique_key": null
+        },
+        "config_hash": "dd1cb7d415a7cec405cf20467f252146520d154b8ef824dae4976393ef712ee6",
+        "content_hash": "sha256:f593ffdadd909d43cfb98f1187805dc50a1afdbd1021ccc370f6ae7974ac9c6a",
+        "hashed_config": {
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "enabled": true,
+          "lookback": 1,
+          "materialized": "table",
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "relation": {
+            "alias": "dim_v_v1",
+            "schema": "fp_analytics"
+          }
+        },
+        "raw_code": "select id from {{ ref('orders') }}",
+        "runtime": "dbt",
+        "shared_code_hash": "e36610a9004ae5b17dcb48e28a14ee9d64b3ca970e8ce64e44a871bfaf774849",
+        "source_hash": "4dcb3e91b7e0c182acb55c6a4d518ed06cb1a5646c8c0f9197a8ec4a198ea617"
+      },
+      "fp_analytics.dim_v.v2": {
+        "code_unit_ids": [
+          "fpshop:macro.fpshop.generate_schema_name",
+          "fpshop:operation.fpshop.fpshop-on-run-start-0"
+        ],
+        "compiled_code": "select id, amount from \"continuo_dbt\".\"fp_analytics\".\"orders\"",
+        "compiled_hash": "166e8564db6d92c8420f0ad464bc199939965419d87c13b0234c7cd3e2130889",
+        "config": {
+          "access": "protected",
+          "alias": null,
+          "batch_size": null,
+          "begin": null,
+          "column_types": {},
+          "concurrent_batches": null,
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "database": null,
+          "docs": {
+            "node_color": null,
+            "show": true
+          },
+          "enabled": true,
+          "event_time": null,
+          "freshness": null,
+          "full_refresh": null,
+          "grants": {},
+          "group": null,
+          "incremental_strategy": null,
+          "lookback": 1,
+          "materialized": "table",
+          "meta": {
+            "owner": "shop"
+          },
+          "on_configuration_change": "apply",
+          "on_error": null,
+          "on_schema_change": "ignore",
+          "packages": [],
+          "persist_docs": {},
+          "post-hook": [],
+          "pre-hook": [],
+          "quoting": {},
+          "schema": null,
+          "static_analysis": null,
+          "tags": [
+            "daily"
+          ],
+          "unique_key": null
+        },
+        "config_hash": "9ee5fbe2c5c1c5e4f36e75cffb04f450feda1dbffa2a12a6335d13aa09e2f85e",
+        "content_hash": "sha256:bd167bf61bd5c35362d7badfae79f7c0c66ea3452e1bdc42ef47b84d67459159",
+        "hashed_config": {
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "enabled": true,
+          "lookback": 1,
+          "materialized": "table",
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "relation": {
+            "alias": "dim_v_v2",
+            "schema": "fp_analytics"
+          }
+        },
+        "raw_code": "select id, amount from {{ ref('orders') }}",
+        "runtime": "dbt",
+        "shared_code_hash": "e36610a9004ae5b17dcb48e28a14ee9d64b3ca970e8ce64e44a871bfaf774849",
+        "source_hash": "beac3440b7a9316c0802b34b2d1b613b5ffc8d290fa9c2c01280e8100026ce3e"
+      },
+      "fp_analytics.env_model": {
+        "code_unit_ids": [
+          "fpshop:macro.fpshop.generate_schema_name",
+          "fpshop:operation.fpshop.fpshop-on-run-start-0"
+        ],
+        "compiled_code": "select id, 'eu' as region\nfrom \"continuo_dbt\".\"fp_analytics\".\"orders\"",
+        "compiled_hash": "17539c875853611363519ab1f78ece1c503297ad393370b54f531407d6991cab",
+        "config": {
+          "access": "protected",
+          "alias": null,
+          "batch_size": null,
+          "begin": null,
+          "column_types": {},
+          "concurrent_batches": null,
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "database": null,
+          "docs": {
+            "node_color": null,
+            "show": true
+          },
+          "enabled": true,
+          "event_time": null,
+          "freshness": null,
+          "full_refresh": null,
+          "grants": {},
+          "group": null,
+          "incremental_strategy": null,
+          "lookback": 1,
+          "materialized": "table",
+          "meta": {
+            "owner": "shop"
+          },
+          "on_configuration_change": "apply",
+          "on_error": null,
+          "on_schema_change": "ignore",
+          "packages": [],
+          "persist_docs": {},
+          "post-hook": [],
+          "pre-hook": [],
+          "quoting": {},
+          "schema": null,
+          "static_analysis": null,
+          "tags": [
+            "daily"
+          ],
+          "unique_key": null
+        },
+        "config_hash": "7e72b82587ba0f73f7492808024b6b06e13e621a10b1e21963aab32731da0060",
+        "content_hash": "sha256:444bcc307d65d89c7a1017c75522f1e15f51b0f3825eae5e882e87832d8901a6",
+        "hashed_config": {
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "enabled": true,
+          "lookback": 1,
+          "materialized": "table",
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "relation": {
+            "alias": "env_model",
+            "schema": "fp_analytics"
+          }
+        },
+        "raw_code": "select id, '{{ env_var(\"FP_REGION\", \"eu\") }}' as region\nfrom {{ ref('orders') }}",
+        "runtime": "dbt",
+        "shared_code_hash": "e36610a9004ae5b17dcb48e28a14ee9d64b3ca970e8ce64e44a871bfaf774849",
+        "source_hash": "443e80b504eec80516d8344887aed34f7e65ed7dd8f3065c65cf4c845ac71f40"
+      },
+      "fp_analytics.eph": {
+        "code_unit_ids": [
+          "fpshop:macro.fpshop.generate_schema_name",
+          "fpshop:operation.fpshop.fpshop-on-run-start-0"
+        ],
+        "compiled_code": "\nselect id, amount from \"continuo_dbt\".\"fp_analytics\".\"orders\" where amount > 0",
+        "compiled_hash": "8abaab41c169fbaf6576b69485d0a6759b7aec76e96f76ac7965f03d9bf22877",
+        "config": {
+          "access": "protected",
+          "alias": null,
+          "batch_size": null,
+          "begin": null,
+          "column_types": {},
+          "concurrent_batches": null,
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "database": null,
+          "docs": {
+            "node_color": null,
+            "show": true
+          },
+          "enabled": true,
+          "event_time": null,
+          "freshness": null,
+          "full_refresh": null,
+          "grants": {},
+          "group": null,
+          "incremental_strategy": null,
+          "lookback": 1,
+          "materialized": "ephemeral",
+          "meta": {
+            "owner": "shop"
+          },
+          "on_configuration_change": "apply",
+          "on_error": null,
+          "on_schema_change": "ignore",
+          "packages": [],
+          "persist_docs": {},
+          "post-hook": [],
+          "pre-hook": [],
+          "quoting": {},
+          "schema": null,
+          "static_analysis": null,
+          "tags": [
+            "daily"
+          ],
+          "unique_key": null
+        },
+        "config_hash": "d0bd8ef1032e44dee681c31c6a38f9e02ced72c7fdad22d9eb0183649ddae221",
+        "content_hash": "sha256:f22dd09f7682ac8d0d896594b3d215d8fdbc2c3ecba4c9be0a2d97ab4c4eb8dc",
+        "hashed_config": {
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "enabled": true,
+          "lookback": 1,
+          "materialized": "ephemeral",
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "relation": {
+            "alias": "eph",
+            "schema": "fp_analytics"
+          }
+        },
+        "raw_code": "{{ config(materialized='ephemeral') }}\nselect id, amount from {{ ref('orders') }} where amount > 0",
+        "runtime": "dbt",
+        "shared_code_hash": "e36610a9004ae5b17dcb48e28a14ee9d64b3ca970e8ce64e44a871bfaf774849",
+        "source_hash": "4db5e0af418360a1fac20d65f5eedc162a618e48171dc0fc763edf1c2b09f089"
+      },
+      "fp_analytics.fresh": {
+        "code_unit_ids": [
+          "fpshop:macro.fpshop.generate_schema_name",
+          "fpshop:operation.fpshop.fpshop-on-run-start-0"
+        ],
+        "compiled_code": "select id, created_at from \"continuo_dbt\".\"fp_analytics\".\"orders\"",
+        "compiled_hash": "98f8fe0bdcecd0d434cbc572a04f26dc60948e2dc8ce5d9f9136fc93cc20339c",
+        "config": {
+          "access": "protected",
+          "alias": null,
+          "batch_size": null,
+          "begin": null,
+          "column_types": {},
+          "concurrent_batches": null,
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "database": null,
+          "docs": {
+            "node_color": null,
+            "show": true
+          },
+          "enabled": true,
+          "event_time": null,
+          "freshness": {
+            "build_after": {
+              "count": 4,
+              "period": "hour",
+              "updates_on": "any"
+            }
+          },
+          "full_refresh": null,
+          "grants": {},
+          "group": null,
+          "incremental_strategy": null,
+          "lookback": 1,
+          "materialized": "table",
+          "meta": {
+            "owner": "shop"
+          },
+          "on_configuration_change": "apply",
+          "on_error": null,
+          "on_schema_change": "ignore",
+          "packages": [],
+          "persist_docs": {},
+          "post-hook": [],
+          "pre-hook": [],
+          "quoting": {},
+          "schema": null,
+          "static_analysis": null,
+          "tags": [
+            "daily"
+          ],
+          "unique_key": null
+        },
+        "config_hash": "d68d3e91e4035c65050fc36a86dff8e974b761012de54f978966c962432828c4",
+        "content_hash": "sha256:e7ca7201b5370f914a627c625f8f06f9788d02c1fde0746d9f0b583664fbf491",
+        "hashed_config": {
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "enabled": true,
+          "lookback": 1,
+          "materialized": "table",
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "relation": {
+            "alias": "fresh",
+            "schema": "fp_analytics"
+          }
+        },
+        "raw_code": "select id, created_at from {{ ref('orders') }}",
+        "runtime": "dbt",
+        "shared_code_hash": "e36610a9004ae5b17dcb48e28a14ee9d64b3ca970e8ce64e44a871bfaf774849",
+        "source_hash": "cb6e88b0939f2b6feecb6100ae31874f934d899828b9de497409f40474c161ee"
+      },
+      "fp_analytics.from_eph": {
+        "code_unit_ids": [
+          "fpshop:macro.fpshop.generate_schema_name",
+          "fpshop:operation.fpshop.fpshop-on-run-start-0"
+        ],
+        "compiled_code": "with __dbt__cte__eph as (\n\nselect id, amount from \"continuo_dbt\".\"fp_analytics\".\"orders\" where amount > 0\n) select * from __dbt__cte__eph",
+        "compiled_hash": "35b37c331ac8ba8faa7c14847944a63ed1434643ed48e7707693c49a6be2520d",
+        "config": {
+          "access": "protected",
+          "alias": null,
+          "batch_size": null,
+          "begin": null,
+          "column_types": {},
+          "concurrent_batches": null,
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "database": null,
+          "docs": {
+            "node_color": null,
+            "show": true
+          },
+          "enabled": true,
+          "event_time": null,
+          "freshness": null,
+          "full_refresh": null,
+          "grants": {},
+          "group": null,
+          "incremental_strategy": null,
+          "lookback": 1,
+          "materialized": "table",
+          "meta": {
+            "owner": "shop"
+          },
+          "on_configuration_change": "apply",
+          "on_error": null,
+          "on_schema_change": "ignore",
+          "packages": [],
+          "persist_docs": {},
+          "post-hook": [],
+          "pre-hook": [],
+          "quoting": {},
+          "schema": null,
+          "static_analysis": null,
+          "tags": [
+            "daily"
+          ],
+          "unique_key": null
+        },
+        "config_hash": "3595ad8af2cb84b8b45a200e0a9769579015fd093c5e9e363955371544e3d746",
+        "content_hash": "sha256:dfcd51fd393e9819a1665aa0e63a714b152a55e121f301528098529c4f7de528",
+        "hashed_config": {
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "enabled": true,
+          "lookback": 1,
+          "materialized": "table",
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "relation": {
+            "alias": "from_eph",
+            "schema": "fp_analytics"
+          }
+        },
+        "raw_code": "select * from {{ ref('eph') }}",
+        "runtime": "dbt",
+        "shared_code_hash": "e36610a9004ae5b17dcb48e28a14ee9d64b3ca970e8ce64e44a871bfaf774849",
+        "source_hash": "619537e6ca914ae2700a23f2cab67acb42f546e1daacc3b05cdbf94e4f3afee9"
+      },
+      "fp_analytics.gov": {
+        "code_unit_ids": [
+          "fpshop:macro.fpshop.generate_schema_name",
+          "fpshop:operation.fpshop.fpshop-on-run-start-0"
+        ],
+        "compiled_code": "select id from \"continuo_dbt\".\"fp_analytics\".\"orders\"",
+        "compiled_hash": "15c89d8c6f7951e3446a7effce537ef4f61e04a598803534e29e20fb9c86e58a",
+        "config": {
+          "access": "public",
+          "alias": null,
+          "batch_size": null,
+          "begin": null,
+          "column_types": {},
+          "concurrent_batches": null,
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "database": null,
+          "docs": {
+            "node_color": null,
+            "show": true
+          },
+          "enabled": true,
+          "event_time": null,
+          "freshness": null,
+          "full_refresh": null,
+          "grants": {},
+          "group": "sales",
+          "incremental_strategy": null,
+          "lookback": 1,
+          "materialized": "table",
+          "meta": {
+            "owner": "shop"
+          },
+          "on_configuration_change": "apply",
+          "on_error": null,
+          "on_schema_change": "ignore",
+          "packages": [],
+          "persist_docs": {},
+          "post-hook": [],
+          "pre-hook": [],
+          "quoting": {},
+          "schema": null,
+          "static_analysis": null,
+          "tags": [
+            "daily"
+          ],
+          "unique_key": null
+        },
+        "config_hash": "ef4007f55d2776a5ee8e7de9767d77d66f2119bba205c39087106d3470c63220",
+        "content_hash": "sha256:c4f4d5aabdea238c6f6172c1b958182923c51ad5ea4eb6ed409281c43c6749b1",
+        "hashed_config": {
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "enabled": true,
+          "lookback": 1,
+          "materialized": "table",
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "relation": {
+            "alias": "gov",
+            "schema": "fp_analytics"
+          }
+        },
+        "raw_code": "select id from {{ ref('orders') }}",
+        "runtime": "dbt",
+        "shared_code_hash": "e36610a9004ae5b17dcb48e28a14ee9d64b3ca970e8ce64e44a871bfaf774849",
+        "source_hash": "4dcb3e91b7e0c182acb55c6a4d518ed06cb1a5646c8c0f9197a8ec4a198ea617"
+      },
+      "fp_analytics.incr": {
+        "code_unit_ids": [
+          "fpshop:macro.fpshop.generate_schema_name",
+          "fpshop:macro.fpshop.since",
+          "fpshop:operation.fpshop.fpshop-on-run-start-0"
+        ],
+        "compiled_code": "\nselect id, amount from \"continuo_dbt\".\"fp_analytics\".\"orders\"\n",
+        "compiled_hash": "0c8a2b2b9048c93491a98f16a9b8d6feb6874a3dd5527db6ef2ecdc798f8db86",
+        "config": {
+          "access": "protected",
+          "alias": null,
+          "batch_size": null,
+          "begin": null,
+          "column_types": {},
+          "concurrent_batches": null,
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "database": null,
+          "docs": {
+            "node_color": null,
+            "show": true
+          },
+          "enabled": true,
+          "event_time": null,
+          "freshness": null,
+          "full_refresh": null,
+          "grants": {},
+          "group": null,
+          "incremental_strategy": null,
+          "lookback": 1,
+          "materialized": "incremental",
+          "meta": {
+            "owner": "shop"
+          },
+          "on_configuration_change": "apply",
+          "on_error": null,
+          "on_schema_change": "ignore",
+          "packages": [],
+          "persist_docs": {},
+          "post-hook": [],
+          "pre-hook": [],
+          "quoting": {},
+          "schema": null,
+          "static_analysis": null,
+          "tags": [
+            "daily"
+          ],
+          "unique_key": "id"
+        },
+        "config_hash": "17d35e8b4dee1c2f8cd29cdd2d19f40899ba3f12933c3d36b2fe8d9ceae7b165",
+        "content_hash": "sha256:7b435f8624d237c673d83b634be1250d3ef0958581a379c493dfa35a0605a7dd",
+        "hashed_config": {
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "enabled": true,
+          "lookback": 1,
+          "materialized": "incremental",
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "relation": {
+            "alias": "incr",
+            "schema": "fp_analytics"
+          },
+          "unique_key": "id"
+        },
+        "raw_code": "{{ config(materialized='incremental', unique_key='id') }}\nselect id, amount from {{ ref('orders') }}\n{% if is_incremental() %} where id > {{ since() }} {% endif %}",
+        "runtime": "dbt",
+        "shared_code_hash": "8f446655cc15a73dfa0cb7112469f694f1011772f6c949eda7a81c8ac8d51fb4",
+        "source_hash": "1fbe721f37778605e1fc8d2521f185dcc749555a956f7fc8ab036221172a85b1"
+      },
+      "fp_analytics.macro_user": {
+        "code_unit_ids": [
+          "fpshop:macro.fpshop.generate_schema_name",
+          "fpshop:macro.fpshop.m_p",
+          "fpshop:macro.fpshop.m_q",
+          "fpshop:operation.fpshop.fpshop-on-run-start-0"
+        ],
+        "compiled_code": "select 1 as p, 2 as q",
+        "compiled_hash": "f356320f7d6d8f642a53056c3bd4609479ad07a22117ceccffd17d59d008cdbc",
+        "config": {
+          "access": "protected",
+          "alias": null,
+          "batch_size": null,
+          "begin": null,
+          "column_types": {},
+          "concurrent_batches": null,
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "database": null,
+          "docs": {
+            "node_color": null,
+            "show": true
+          },
+          "enabled": true,
+          "event_time": null,
+          "freshness": null,
+          "full_refresh": null,
+          "grants": {},
+          "group": null,
+          "incremental_strategy": null,
+          "lookback": 1,
+          "materialized": "table",
+          "meta": {
+            "owner": "shop"
+          },
+          "on_configuration_change": "apply",
+          "on_error": null,
+          "on_schema_change": "ignore",
+          "packages": [],
+          "persist_docs": {},
+          "post-hook": [],
+          "pre-hook": [],
+          "quoting": {},
+          "schema": null,
+          "static_analysis": null,
+          "tags": [
+            "daily"
+          ],
+          "unique_key": null
+        },
+        "config_hash": "03706d784b36643d87df34f92cdf8415ecf478a7ff57816b1151eaf4bc35d7bd",
+        "content_hash": "sha256:fc1a4c1a07345552a77de192bd80b406c9be9aae1a32d3aac5f9fb4cb6198710",
+        "hashed_config": {
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "enabled": true,
+          "lookback": 1,
+          "materialized": "table",
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "relation": {
+            "alias": "macro_user",
+            "schema": "fp_analytics"
+          }
+        },
+        "raw_code": "select {{ m_p() }} as p, {{ m_q() }} as q",
+        "runtime": "dbt",
+        "shared_code_hash": "e40e817ab5e325870d564ce3781336268775c8f31fceb1c7ce6c033a31c7f141",
+        "source_hash": "ffcf491e4d16d336a9b63632b6240ebc8e4859ede57c4a22ac8da4b246e2d830"
+      },
+      "fp_analytics.orders": {
+        "code_unit_ids": [
+          "fpshop:macro.fpshop.generate_schema_name",
+          "fpshop:operation.fpshop.fpshop-on-run-start-0",
+          "fpshop:unit_test.fpshop.orders.orders_has_one_row"
+        ],
+        "compiled_code": "select 1 as id, 10 as amount, 'ok  x' as status, current_timestamp as created_at",
+        "compiled_hash": "490e1ad340cb717da62c4c358335631b10a71d3aa50573de0f7e771ca18484ea",
+        "config": {
+          "access": "protected",
+          "alias": null,
+          "batch_size": null,
+          "begin": null,
+          "column_types": {},
+          "concurrent_batches": null,
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "database": null,
+          "docs": {
+            "node_color": null,
+            "show": true
+          },
+          "enabled": true,
+          "event_time": null,
+          "freshness": null,
+          "full_refresh": null,
+          "grants": {},
+          "group": null,
+          "incremental_strategy": null,
+          "lookback": 1,
+          "materialized": "table",
+          "meta": {
+            "owner": "shop"
+          },
+          "on_configuration_change": "apply",
+          "on_error": null,
+          "on_schema_change": "ignore",
+          "packages": [],
+          "persist_docs": {},
+          "post-hook": [],
+          "pre-hook": [],
+          "quoting": {},
+          "schema": null,
+          "static_analysis": null,
+          "tags": [
+            "daily"
+          ],
+          "unique_key": null
+        },
+        "config_hash": "bd6783d0ffa89803427c57234bde5402074e623fe7ab3d12505d3851d933faa4",
+        "content_hash": "sha256:63c4567756a9ded66c1e908ea7011976f77e3a0a77ebc1de93dd5d398aba59df",
+        "hashed_config": {
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "enabled": true,
+          "lookback": 1,
+          "materialized": "table",
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "relation": {
+            "alias": "orders",
+            "schema": "fp_analytics"
+          }
+        },
+        "raw_code": "select 1 as id, 10 as amount, 'ok  x' as status, current_timestamp as created_at",
+        "runtime": "dbt",
+        "shared_code_hash": "027290f02fbb18cb3fc1df783b8045469b50197906da74be5d2f6f8dfc145636",
+        "source_hash": "490e1ad340cb717da62c4c358335631b10a71d3aa50573de0f7e771ca18484ea"
+      },
+      "fp_analytics.orders_dep_1": {
+        "code_unit_ids": [
+          "fpshop:macro.fpshop.generate_schema_name",
+          "fpshop:operation.fpshop.fpshop-on-run-start-0"
+        ],
+        "compiled_code": "select id, amount from \"continuo_dbt\".\"fp_analytics\".\"orders\"",
+        "compiled_hash": "166e8564db6d92c8420f0ad464bc199939965419d87c13b0234c7cd3e2130889",
+        "config": {
+          "access": "protected",
+          "alias": null,
+          "batch_size": null,
+          "begin": null,
+          "column_types": {},
+          "concurrent_batches": null,
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "database": null,
+          "docs": {
+            "node_color": null,
+            "show": true
+          },
+          "enabled": true,
+          "event_time": null,
+          "freshness": null,
+          "full_refresh": null,
+          "grants": {},
+          "group": null,
+          "incremental_strategy": null,
+          "lookback": 1,
+          "materialized": "table",
+          "meta": {
+            "owner": "shop"
+          },
+          "on_configuration_change": "apply",
+          "on_error": null,
+          "on_schema_change": "ignore",
+          "packages": [],
+          "persist_docs": {},
+          "post-hook": [],
+          "pre-hook": [],
+          "quoting": {},
+          "schema": null,
+          "static_analysis": null,
+          "tags": [
+            "daily"
+          ],
+          "unique_key": null
+        },
+        "config_hash": "b4e1f8aed0ee672bbb6f098babc995d57f9e6582aa1e6cccff7c2b9383413d1b",
+        "content_hash": "sha256:48bdb5e6189507beb48dbd197835060e8536bcf3be0dd721cb3e42a0325fe32e",
+        "hashed_config": {
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "enabled": true,
+          "lookback": 1,
+          "materialized": "table",
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "relation": {
+            "alias": "orders_dep_1",
+            "schema": "fp_analytics"
+          }
+        },
+        "raw_code": "select id, amount from {{ ref('orders') }}",
+        "runtime": "dbt",
+        "shared_code_hash": "e36610a9004ae5b17dcb48e28a14ee9d64b3ca970e8ce64e44a871bfaf774849",
+        "source_hash": "beac3440b7a9316c0802b34b2d1b613b5ffc8d290fa9c2c01280e8100026ce3e"
+      },
+      "fp_analytics.orders_dep_2": {
+        "code_unit_ids": [
+          "fpshop:macro.fpshop.generate_schema_name",
+          "fpshop:operation.fpshop.fpshop-on-run-start-0"
+        ],
+        "compiled_code": "select id, status from \"continuo_dbt\".\"fp_analytics\".\"orders\"",
+        "compiled_hash": "e56e9d4753b082f848b81ea4185edbb618161d97e030b11cbee0af43a213f854",
+        "config": {
+          "access": "protected",
+          "alias": null,
+          "batch_size": null,
+          "begin": null,
+          "column_types": {},
+          "concurrent_batches": null,
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "database": null,
+          "docs": {
+            "node_color": null,
+            "show": true
+          },
+          "enabled": true,
+          "event_time": null,
+          "freshness": null,
+          "full_refresh": null,
+          "grants": {},
+          "group": null,
+          "incremental_strategy": null,
+          "lookback": 1,
+          "materialized": "table",
+          "meta": {
+            "owner": "shop"
+          },
+          "on_configuration_change": "apply",
+          "on_error": null,
+          "on_schema_change": "ignore",
+          "packages": [],
+          "persist_docs": {},
+          "post-hook": [],
+          "pre-hook": [],
+          "quoting": {},
+          "schema": null,
+          "static_analysis": null,
+          "tags": [
+            "daily"
+          ],
+          "unique_key": null
+        },
+        "config_hash": "7258429759b2699d254b5e23901e95220fbb17ae1a874ecd1e382b8a0de85c26",
+        "content_hash": "sha256:8a6bfad4e937e19ec939b495016a85429b1ef08f39c97e1ae65bf21eaa8d9a70",
+        "hashed_config": {
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "enabled": true,
+          "lookback": 1,
+          "materialized": "table",
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "relation": {
+            "alias": "orders_dep_2",
+            "schema": "fp_analytics"
+          }
+        },
+        "raw_code": "select id, status from {{ ref('orders') }}",
+        "runtime": "dbt",
+        "shared_code_hash": "e36610a9004ae5b17dcb48e28a14ee9d64b3ca970e8ce64e44a871bfaf774849",
+        "source_hash": "3d1fd54419c776b0a8ae52f1cdd167b7151f11008b9942c42d894ca1cc29c812"
+      },
+      "fp_analytics.recent": {
+        "code_unit_ids": [
+          "fpshop:macro.fpshop.generate_schema_name",
+          "fpshop:operation.fpshop.fpshop-on-run-start-0"
+        ],
+        "compiled_code": "select id, amount\nfrom \"continuo_dbt\".\"fp_analytics\".\"orders\"\nwhere created_at >= current_date - 30",
+        "compiled_hash": "d3de28258aa14bdc7962a5addf2f6f5d66b1fc686336f5e55f640d67dd2a4dbe",
+        "config": {
+          "access": "protected",
+          "alias": null,
+          "batch_size": null,
+          "begin": null,
+          "column_types": {},
+          "concurrent_batches": null,
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "database": null,
+          "docs": {
+            "node_color": null,
+            "show": true
+          },
+          "enabled": true,
+          "event_time": null,
+          "freshness": null,
+          "full_refresh": null,
+          "grants": {},
+          "group": null,
+          "incremental_strategy": null,
+          "lookback": 1,
+          "materialized": "table",
+          "meta": {
+            "owner": "shop"
+          },
+          "on_configuration_change": "apply",
+          "on_error": null,
+          "on_schema_change": "ignore",
+          "packages": [],
+          "persist_docs": {},
+          "post-hook": [],
+          "pre-hook": [],
+          "quoting": {},
+          "schema": null,
+          "static_analysis": null,
+          "tags": [
+            "daily"
+          ],
+          "unique_key": null
+        },
+        "config_hash": "6fd769b6ffda462c2ed7b71cd260cc84f86fa5c930e453b49f9c443c602a9f07",
+        "content_hash": "sha256:d25de541e539b7ec06a7e394904d1dabbe95ac0a61eade89b2e17ad0edcae48f",
+        "hashed_config": {
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "enabled": true,
+          "lookback": 1,
+          "materialized": "table",
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "relation": {
+            "alias": "recent",
+            "schema": "fp_analytics"
+          }
+        },
+        "raw_code": "select id, amount\nfrom {{ ref('orders') }}\nwhere created_at >= current_date - {{ var('cutoff_days') }}",
+        "runtime": "dbt",
+        "shared_code_hash": "e36610a9004ae5b17dcb48e28a14ee9d64b3ca970e8ce64e44a871bfaf774849",
+        "source_hash": "11910ab1c3a7ff8f855c0f6685bab25a4dce2b65d81430299ca12cf9aea140e4"
+      },
+      "fp_analytics.seed_big": {
+        "code_unit_ids": [
+          "fpshop:macro.fpshop.generate_schema_name",
+          "fpshop:operation.fpshop.fpshop-on-run-start-0"
+        ],
+        "compiled_code": "",
+        "compiled_hash": "",
+        "config": {
+          "alias": null,
+          "batch_size": null,
+          "begin": null,
+          "column_types": {},
+          "concurrent_batches": null,
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "database": null,
+          "delimiter": ",",
+          "docs": {
+            "node_color": null,
+            "show": true
+          },
+          "enabled": true,
+          "event_time": null,
+          "full_refresh": null,
+          "grants": {},
+          "group": null,
+          "incremental_strategy": null,
+          "lookback": 1,
+          "materialized": "seed",
+          "meta": {
+            "owner": "shop"
+          },
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "packages": [],
+          "persist_docs": {},
+          "post-hook": [],
+          "pre-hook": [],
+          "quote_columns": null,
+          "quoting": {},
+          "schema": null,
+          "static_analysis": null,
+          "tags": [
+            "daily"
+          ],
+          "unique_key": null
+        },
+        "config_hash": "0f349b6b7cdfdab7fb504833c9cde249d349694637af63b51e22317249bc1bb4",
+        "content_hash": "sha256:bbd43b61123e0f1beb4cccad80d636275ac211321fc64e687c4b90f287e965bd",
+        "hashed_config": {
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "delimiter": ",",
+          "enabled": true,
+          "lookback": 1,
+          "materialized": "seed",
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "relation": {
+            "alias": "seed_big",
+            "schema": "fp_analytics"
+          }
+        },
+        "raw_code": "",
+        "runtime": "dbt",
+        "shared_code_hash": "e36610a9004ae5b17dcb48e28a14ee9d64b3ca970e8ce64e44a871bfaf774849",
+        "source_hash": "32b1b3b03ac58791ebca90dc83127ac099022354ebbb87027ecf27d60c4c1c14"
+      },
+      "fp_analytics.seed_semi": {
+        "code_unit_ids": [
+          "fpshop:macro.fpshop.generate_schema_name",
+          "fpshop:operation.fpshop.fpshop-on-run-start-0"
+        ],
+        "compiled_code": "",
+        "compiled_hash": "",
+        "config": {
+          "alias": null,
+          "batch_size": null,
+          "begin": null,
+          "column_types": {},
+          "concurrent_batches": null,
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "database": null,
+          "delimiter": ";",
+          "docs": {
+            "node_color": null,
+            "show": true
+          },
+          "enabled": true,
+          "event_time": null,
+          "full_refresh": null,
+          "grants": {},
+          "group": null,
+          "incremental_strategy": null,
+          "lookback": 1,
+          "materialized": "seed",
+          "meta": {
+            "owner": "shop"
+          },
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "packages": [],
+          "persist_docs": {},
+          "post-hook": [],
+          "pre-hook": [],
+          "quote_columns": null,
+          "quoting": {},
+          "schema": null,
+          "static_analysis": null,
+          "tags": [
+            "daily"
+          ],
+          "unique_key": null
+        },
+        "config_hash": "70d98815367c0f8f6dc944f211dd808f8e4501064a9923c8c67e47dea393f541",
+        "content_hash": "sha256:41d1638c900ebebea73d90051b6bc7c4c64903f7a45d9aff402290abe1662ddf",
+        "hashed_config": {
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "delimiter": ";",
+          "enabled": true,
+          "lookback": 1,
+          "materialized": "seed",
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "relation": {
+            "alias": "seed_semi",
+            "schema": "fp_analytics"
+          }
+        },
+        "raw_code": "",
+        "runtime": "dbt",
+        "shared_code_hash": "e36610a9004ae5b17dcb48e28a14ee9d64b3ca970e8ce64e44a871bfaf774849",
+        "source_hash": "e14d774c47e7f9d6b08bcc93aff2e36d38a9b9832ab48e2c33c17a9e1ab40c0f"
+      },
+      "fp_analytics.seed_users": {
+        "code_unit_ids": [
+          "fpshop:macro.fpshop.generate_schema_name",
+          "fpshop:operation.fpshop.fpshop-on-run-start-0"
+        ],
+        "compiled_code": "",
+        "compiled_hash": "",
+        "config": {
+          "alias": null,
+          "batch_size": null,
+          "begin": null,
+          "column_types": {
+            "id": "integer"
+          },
+          "concurrent_batches": null,
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "database": null,
+          "delimiter": ",",
+          "docs": {
+            "node_color": null,
+            "show": true
+          },
+          "enabled": true,
+          "event_time": null,
+          "full_refresh": null,
+          "grants": {},
+          "group": null,
+          "incremental_strategy": null,
+          "lookback": 1,
+          "materialized": "seed",
+          "meta": {
+            "owner": "shop"
+          },
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "packages": [],
+          "persist_docs": {},
+          "post-hook": [],
+          "pre-hook": [],
+          "quote_columns": null,
+          "quoting": {},
+          "schema": null,
+          "static_analysis": null,
+          "tags": [
+            "daily"
+          ],
+          "unique_key": null
+        },
+        "config_hash": "bfe4bc2178856ada871683812e92218f46e208c7cb3de3210501f06151b042cb",
+        "content_hash": "sha256:ec48069a2612d36c6ddb466809d8cb9deee3f1cc516e902a366f4df74fb7c76f",
+        "hashed_config": {
+          "column_types": {
+            "id": "integer"
+          },
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "delimiter": ",",
+          "enabled": true,
+          "lookback": 1,
+          "materialized": "seed",
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "relation": {
+            "alias": "seed_users",
+            "schema": "fp_analytics"
+          }
+        },
+        "raw_code": "",
+        "runtime": "dbt",
+        "shared_code_hash": "e36610a9004ae5b17dcb48e28a14ee9d64b3ca970e8ce64e44a871bfaf774849",
+        "source_hash": "cd6cf4cc889d875e4fe4eb0ecd0a191eb6c5c4503710503dc613e262ef1875c4"
+      },
+      "fp_analytics.self_incr": {
+        "code_unit_ids": [
+          "fpshop:macro.fpshop.generate_schema_name",
+          "fpshop:operation.fpshop.fpshop-on-run-start-0"
+        ],
+        "compiled_code": "\nselect o.id, o.amount\nfrom \"continuo_dbt\".\"fp_analytics\".\"orders\" as o\nleft join \"continuo_dbt\".\"fp_analytics\".\"self_incr_tbl\" as t on t.id = o.id\nwhere t.id is null",
+        "compiled_hash": "9aad6683af0e4ddd43810345ba95d8e416f13031ac4c6cc524712e90b946bed0",
+        "config": {
+          "access": "protected",
+          "alias": "self_incr_tbl",
+          "batch_size": null,
+          "begin": null,
+          "column_types": {},
+          "concurrent_batches": null,
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "database": null,
+          "docs": {
+            "node_color": null,
+            "show": true
+          },
+          "enabled": true,
+          "event_time": null,
+          "freshness": null,
+          "full_refresh": null,
+          "grants": {},
+          "group": null,
+          "incremental_strategy": null,
+          "lookback": 1,
+          "materialized": "incremental",
+          "meta": {
+            "owner": "shop"
+          },
+          "on_configuration_change": "apply",
+          "on_error": null,
+          "on_schema_change": "ignore",
+          "packages": [],
+          "persist_docs": {},
+          "post-hook": [],
+          "pre-hook": [],
+          "quoting": {},
+          "schema": null,
+          "static_analysis": null,
+          "tags": [
+            "daily"
+          ],
+          "unique_key": null
+        },
+        "config_hash": "9bd2393298305001c59bcda1bed894e03032a9fd423749595953e3a2f7a38bfe",
+        "content_hash": "sha256:276aa87667c314ff7a9977f4bfe70bf64075e3e23ad3fb7282cac0ea0a3680e1",
+        "hashed_config": {
+          "alias": "self_incr_tbl",
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "enabled": true,
+          "lookback": 1,
+          "materialized": "incremental",
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "relation": {
+            "alias": "self_incr_tbl",
+            "schema": "fp_analytics"
+          }
+        },
+        "raw_code": "{{ config(materialized='incremental', alias='self_incr_tbl') }}\nselect o.id, o.amount\nfrom {{ ref('orders') }} as o\nleft join {{ this }} as t on t.id = o.id\nwhere t.id is null",
+        "runtime": "dbt",
+        "shared_code_hash": "e36610a9004ae5b17dcb48e28a14ee9d64b3ca970e8ce64e44a871bfaf774849",
+        "source_hash": "f8acc0735afa394f51d1f7633416a39d587a7a689502ef960ea64032a0168255"
+      },
+      "fp_analytics.snap_a": {
+        "code_unit_ids": [
+          "fpshop:macro.fpshop.generate_schema_name",
+          "fpshop:operation.fpshop.fpshop-on-run-start-0"
+        ],
+        "compiled_code": "\n\nselect * from \"continuo_dbt\".\"fp_analytics\".\"orders\"",
+        "compiled_hash": "b9416353d1ddc46eb38223df0cba1366db6f93fe9a319860e8d27e5499011151",
+        "config": {
+          "alias": null,
+          "batch_size": null,
+          "begin": null,
+          "check_cols": "all",
+          "column_types": {},
+          "concurrent_batches": null,
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "database": null,
+          "dbt_valid_to_current": null,
+          "docs": {
+            "node_color": null,
+            "show": true
+          },
+          "enabled": true,
+          "event_time": null,
+          "full_refresh": null,
+          "grants": {},
+          "group": null,
+          "incremental_strategy": null,
+          "lookback": 1,
+          "materialized": "snapshot",
+          "meta": {
+            "owner": "shop"
+          },
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "packages": [],
+          "persist_docs": {},
+          "post-hook": [],
+          "pre-hook": [],
+          "quoting": {},
+          "schema": null,
+          "snapshot_meta_column_names": {
+            "dbt_is_deleted": null,
+            "dbt_scd_id": null,
+            "dbt_updated_at": null,
+            "dbt_valid_from": null,
+            "dbt_valid_to": null
+          },
+          "static_analysis": null,
+          "strategy": "check",
+          "tags": [
+            "daily"
+          ],
+          "target_database": null,
+          "target_schema": null,
+          "unique_key": "id",
+          "updated_at": null
+        },
+        "config_hash": "afbc1029927ce871cdc0d38f5bad0559389b056384ceb8bd1ba187a919907840",
+        "content_hash": "sha256:b7d642dfdd84f3658ea87fed04edc586662fe3bd13b8415abbb8adf835f02283",
+        "hashed_config": {
+          "check_cols": "all",
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "enabled": true,
+          "lookback": 1,
+          "materialized": "snapshot",
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "relation": {
+            "alias": "snap_a",
+            "schema": "fp_analytics"
+          },
+          "strategy": "check",
+          "unique_key": "id"
+        },
+        "raw_code": "\n{{ config(unique_key='id', strategy='check', check_cols='all') }}\nselect * from {{ ref('orders') }}\n",
+        "runtime": "dbt",
+        "shared_code_hash": "e36610a9004ae5b17dcb48e28a14ee9d64b3ca970e8ce64e44a871bfaf774849",
+        "source_hash": "d862eba16d9d5eec1e3a5b49e780d39fe8542115a9e5a3f6bfe7e2bef906732e"
+      },
+      "fp_analytics.snap_b": {
+        "code_unit_ids": [
+          "fpshop:macro.fpshop.generate_schema_name",
+          "fpshop:operation.fpshop.fpshop-on-run-start-0"
+        ],
+        "compiled_code": "\n\nselect id, amount from \"continuo_dbt\".\"fp_analytics\".\"orders\"",
+        "compiled_hash": "34b0c2a94c819a30fa1b04d4b21ffa2a1d4dedb0dfaf113d3b43be36f04d0a37",
+        "config": {
+          "alias": null,
+          "batch_size": null,
+          "begin": null,
+          "check_cols": "all",
+          "column_types": {},
+          "concurrent_batches": null,
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "database": null,
+          "dbt_valid_to_current": null,
+          "docs": {
+            "node_color": null,
+            "show": true
+          },
+          "enabled": true,
+          "event_time": null,
+          "full_refresh": null,
+          "grants": {},
+          "group": null,
+          "incremental_strategy": null,
+          "lookback": 1,
+          "materialized": "snapshot",
+          "meta": {
+            "owner": "shop"
+          },
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "packages": [],
+          "persist_docs": {},
+          "post-hook": [],
+          "pre-hook": [],
+          "quoting": {},
+          "schema": null,
+          "snapshot_meta_column_names": {
+            "dbt_is_deleted": null,
+            "dbt_scd_id": null,
+            "dbt_updated_at": null,
+            "dbt_valid_from": null,
+            "dbt_valid_to": null
+          },
+          "static_analysis": null,
+          "strategy": "check",
+          "tags": [
+            "daily"
+          ],
+          "target_database": null,
+          "target_schema": null,
+          "unique_key": "id",
+          "updated_at": null
+        },
+        "config_hash": "1a63ed0dc5139a2dc64a954c92bc659aed15b041f0e2bd25e6383ad71336a30f",
+        "content_hash": "sha256:7259faceade29d4a973eeea9fbc4724d1f369efa03d3e957e6db18cb17f6d7b7",
+        "hashed_config": {
+          "check_cols": "all",
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "enabled": true,
+          "lookback": 1,
+          "materialized": "snapshot",
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "relation": {
+            "alias": "snap_b",
+            "schema": "fp_analytics"
+          },
+          "strategy": "check",
+          "unique_key": "id"
+        },
+        "raw_code": "\n{{ config(unique_key='id', strategy='check', check_cols='all') }}\nselect id, amount from {{ ref('orders') }}\n",
+        "runtime": "dbt",
+        "shared_code_hash": "e36610a9004ae5b17dcb48e28a14ee9d64b3ca970e8ce64e44a871bfaf774849",
+        "source_hash": "2a85bfdb013c3ba02a1e5737d5136468c413b1814ad9e292635152b05b9c7ab3"
+      },
+      "fp_analytics.snap_yml": {
+        "code_unit_ids": [
+          "fpshop:macro.fpshop.generate_schema_name",
+          "fpshop:operation.fpshop.fpshop-on-run-start-0"
+        ],
+        "compiled_code": "select * from \"continuo_dbt\".\"fp_analytics\".\"orders\"",
+        "compiled_hash": "0b0d3637fc087f999597a68c0c84a393807f8883f60f0eb490655e9ac1d43136",
+        "config": {
+          "alias": null,
+          "batch_size": null,
+          "begin": null,
+          "check_cols": "all",
+          "column_types": {},
+          "concurrent_batches": null,
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "database": null,
+          "dbt_valid_to_current": null,
+          "docs": {
+            "node_color": null,
+            "show": true
+          },
+          "enabled": true,
+          "event_time": null,
+          "full_refresh": null,
+          "grants": {},
+          "group": null,
+          "incremental_strategy": null,
+          "lookback": 1,
+          "materialized": "snapshot",
+          "meta": {
+            "owner": "shop"
+          },
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "packages": [],
+          "persist_docs": {},
+          "post-hook": [],
+          "pre-hook": [],
+          "quoting": {},
+          "schema": null,
+          "snapshot_meta_column_names": {
+            "dbt_is_deleted": null,
+            "dbt_scd_id": null,
+            "dbt_updated_at": null,
+            "dbt_valid_from": null,
+            "dbt_valid_to": null
+          },
+          "static_analysis": null,
+          "strategy": "check",
+          "tags": [
+            "daily"
+          ],
+          "target_database": null,
+          "target_schema": null,
+          "unique_key": "id",
+          "updated_at": null
+        },
+        "config_hash": "5677d5597809ff5e5e6081145f2ee738c84cdeac3b02ec1ac88c2da31c8e1b46",
+        "content_hash": "sha256:41df0194f8e4b3a40ac1c865b22ba7b3e6eb31d61416dddf1d53da3f539157b2",
+        "hashed_config": {
+          "check_cols": "all",
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "enabled": true,
+          "lookback": 1,
+          "materialized": "snapshot",
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "relation": {
+            "alias": "snap_yml",
+            "schema": "fp_analytics"
+          },
+          "strategy": "check",
+          "unique_key": "id"
+        },
+        "raw_code": "select * from {{ ref('orders') }}",
+        "runtime": "dbt",
+        "shared_code_hash": "e36610a9004ae5b17dcb48e28a14ee9d64b3ca970e8ce64e44a871bfaf774849",
+        "source_hash": "5898c35e1e611527add28e11c35a7d530f2fa6743c386e341a1d8379e8029b59"
+      },
+      "fp_analytics.src_model": {
+        "code_unit_ids": [
+          "fpshop:macro.fpshop.generate_schema_name",
+          "fpshop:operation.fpshop.fpshop-on-run-start-0"
+        ],
+        "compiled_code": "select * from \"continuo_dbt\".\"raw2\".\"events\"",
+        "compiled_hash": "ecfc089496f59351a7ac3e64d8a30e8059c47631d23ea7b4f681a1dbfbc0cb41",
+        "config": {
+          "access": "protected",
+          "alias": null,
+          "batch_size": null,
+          "begin": null,
+          "column_types": {},
+          "concurrent_batches": null,
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "database": null,
+          "docs": {
+            "node_color": null,
+            "show": true
+          },
+          "enabled": true,
+          "event_time": null,
+          "freshness": null,
+          "full_refresh": null,
+          "grants": {},
+          "group": null,
+          "incremental_strategy": null,
+          "lookback": 1,
+          "materialized": "table",
+          "meta": {
+            "owner": "shop"
+          },
+          "on_configuration_change": "apply",
+          "on_error": null,
+          "on_schema_change": "ignore",
+          "packages": [],
+          "persist_docs": {},
+          "post-hook": [],
+          "pre-hook": [],
+          "quoting": {},
+          "schema": null,
+          "static_analysis": null,
+          "tags": [
+            "daily"
+          ],
+          "unique_key": null
+        },
+        "config_hash": "7ae01ef2229d1ba14794052b88861299f1ab0f23959eff07d4683923053eca2f",
+        "content_hash": "sha256:9c40f63f06af399f9db7146b79d79fb4b1d023643664ea5ac8d9bd17fc4ca693",
+        "hashed_config": {
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "enabled": true,
+          "lookback": 1,
+          "materialized": "table",
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "relation": {
+            "alias": "src_model",
+            "schema": "fp_analytics"
+          }
+        },
+        "raw_code": "select * from {{ source('raw', 'events') }}",
+        "runtime": "dbt",
+        "shared_code_hash": "e36610a9004ae5b17dcb48e28a14ee9d64b3ca970e8ce64e44a871bfaf774849",
+        "source_hash": "73c0adc2c626060f8fa0769fe458f04aaca8266b7380354cdecf6deba8084869"
+      },
+      "fp_analytics.uses_dim": {
+        "code_unit_ids": [
+          "fpshop:macro.fpshop.generate_schema_name",
+          "fpshop:operation.fpshop.fpshop-on-run-start-0"
+        ],
+        "compiled_code": "select * from \"continuo_dbt\".\"fp_analytics\".\"dim_v_v1\"",
+        "compiled_hash": "0e0680aa538d20090681198071b760b6bb99e6401c9470d7ca88aa32f470eebc",
+        "config": {
+          "access": "protected",
+          "alias": null,
+          "batch_size": null,
+          "begin": null,
+          "column_types": {},
+          "concurrent_batches": null,
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "database": null,
+          "docs": {
+            "node_color": null,
+            "show": true
+          },
+          "enabled": true,
+          "event_time": null,
+          "freshness": null,
+          "full_refresh": null,
+          "grants": {},
+          "group": null,
+          "incremental_strategy": null,
+          "lookback": 1,
+          "materialized": "table",
+          "meta": {
+            "owner": "shop"
+          },
+          "on_configuration_change": "apply",
+          "on_error": null,
+          "on_schema_change": "ignore",
+          "packages": [],
+          "persist_docs": {},
+          "post-hook": [],
+          "pre-hook": [],
+          "quoting": {},
+          "schema": null,
+          "static_analysis": null,
+          "tags": [
+            "daily"
+          ],
+          "unique_key": null
+        },
+        "config_hash": "a9b05f123d7e801fdd8d9c5668237718a5ac4b1db89e3cb121f1a6a2c36a3f7c",
+        "content_hash": "sha256:d36f413d2112ecd8d1224cc714c25b4eed753be2e9ad42c697de25dd43936d7d",
+        "hashed_config": {
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "enabled": true,
+          "lookback": 1,
+          "materialized": "table",
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "relation": {
+            "alias": "uses_dim",
+            "schema": "fp_analytics"
+          }
+        },
+        "raw_code": "select * from {{ ref('dim_v') }}",
+        "runtime": "dbt",
+        "shared_code_hash": "e36610a9004ae5b17dcb48e28a14ee9d64b3ca970e8ce64e44a871bfaf774849",
+        "source_hash": "638faaae2b0bf7b198a27ebf7988e20bfea0dcf95eba9c450024915844d25aaa"
+      },
+      "fp_analytics.uses_udf": {
+        "code_unit_ids": [
+          "fpshop:function.fpshop.double_it",
+          "fpshop:macro.fpshop.generate_schema_name",
+          "fpshop:operation.fpshop.fpshop-on-run-start-0"
+        ],
+        "compiled_code": "select id, \"continuo_dbt\".\"fp_analytics\".\"double_it\"(amount) as doubled from \"continuo_dbt\".\"fp_analytics\".\"orders\"",
+        "compiled_hash": "66afed6e66e6ee170e017a74d004bde4275b15e8c3dba07c66641ea30304c460",
+        "config": {
+          "access": "protected",
+          "alias": null,
+          "batch_size": null,
+          "begin": null,
+          "column_types": {},
+          "concurrent_batches": null,
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "database": null,
+          "docs": {
+            "node_color": null,
+            "show": true
+          },
+          "enabled": true,
+          "event_time": null,
+          "freshness": null,
+          "full_refresh": null,
+          "grants": {},
+          "group": null,
+          "incremental_strategy": null,
+          "lookback": 1,
+          "materialized": "table",
+          "meta": {
+            "owner": "shop"
+          },
+          "on_configuration_change": "apply",
+          "on_error": null,
+          "on_schema_change": "ignore",
+          "packages": [],
+          "persist_docs": {},
+          "post-hook": [],
+          "pre-hook": [],
+          "quoting": {},
+          "schema": null,
+          "static_analysis": null,
+          "tags": [
+            "daily"
+          ],
+          "unique_key": null
+        },
+        "config_hash": "7102c025426bea783a007e1283c70191b1deca4c027c0fe2da756b561069bc2c",
+        "content_hash": "sha256:11e64c64f6d3e1fc372236fb9c8f83b8812d71b95ef931d2a6fbf868356dd788",
+        "hashed_config": {
+          "contract": {
+            "alias_types": true,
+            "enforced": false
+          },
+          "enabled": true,
+          "lookback": 1,
+          "materialized": "table",
+          "on_configuration_change": "apply",
+          "on_schema_change": "ignore",
+          "relation": {
+            "alias": "uses_udf",
+            "schema": "fp_analytics"
+          }
+        },
+        "raw_code": "select id, {{ function('double_it') }}(amount) as doubled from {{ ref('orders') }}",
+        "runtime": "dbt",
+        "shared_code_hash": "b0da764125982d0422bfa2252824917d8cb8b82a795b5efa4ba0cf6106247c03",
+        "source_hash": "03575954552084de8497346e4c69167541b4ef6b78bf0c7fb9a7787574b99187"
+      }
+    },
+    "provenance": {
+      "fpshop": {
+        "dbt_version": "1.12.0b1",
+        "image_tag": "registry.example/fpshop:1",
+        "packages": {
+          "dbt-adapters": "1.24.5",
+          "dbt-common": "1.39.0",
+          "dbt-core": "1.12.0b1",
+          "dbt-postgres": "1.10.0"
+        },
+        "path_checksum_seeds": []
+      }
+    },
+    "release_id": "rel-1",
+    "shared_code": {
+      "fpshop:function.fpshop.double_it": {
+        "checksum": "1bbc755a9aea7e7fc521963cca185be13d64a03361c13088c0d5339c6c923e25",
+        "depends_on": [],
+        "source": "{\"arguments\":[{\"data_type\":\"integer\",\"default_value\":null,\"name\":\"x\"}],\"compiled_code\":\"x * 2\",\"config\":{\"contract\":{\"alias_types\":true,\"enforced\":false},\"enabled\":true,\"lookback\":1,\"materialized\":\"function\",\"on_configuration_change\":\"apply\",\"on_schema_change\":\"ignore\",\"relation\":{\"alias\":\"double_it\",\"schema\":\"fp_analytics\"},\"snowflake\":{\"quote_args\":true},\"type\":\"scalar\"},\"language\":\"sql\",\"overloads\":[],\"raw_code\":\"x * 2\",\"returns\":{\"data_type\":\"integer\"}}"
+      },
+      "fpshop:macro.fpshop.generate_schema_name": {
+        "checksum": "615a9ea581b31614e18931aee95b8b3c9e6d0b1483fe250dcd10fdd59d860b78",
+        "depends_on": [],
+        "source": "{% macro generate_schema_name(custom_schema_name, node) -%}\n    {%- set override = env_var('DBT_TARGET_SCHEMA', '') -%}\n    {%- if override | length > 0 -%}\n        {{ override }}\n    {%- elif custom_schema_name is none -%}\n        {{ target.schema }}\n    {%- else -%}\n        {{ target.schema }}_{{ custom_schema_name | trim }}\n    {%- endif -%}\n{%- endmacro %}"
+      },
+      "fpshop:macro.fpshop.m_p": {
+        "checksum": "f8ae345ec2a26494ba25964bc0b7919af37b93bd5482b0285f13bf4fd0e3945f",
+        "depends_on": [],
+        "source": "{% macro m_p() %}1{% endmacro %}"
+      },
+      "fpshop:macro.fpshop.m_q": {
+        "checksum": "6da0a5fd65b7c1c295ca245eb79d6a1bea6ddfef413610f90ec6de0f4428ef0a",
+        "depends_on": [],
+        "source": "{% macro m_q() %}2{% endmacro %}"
+      },
+      "fpshop:macro.fpshop.since": {
+        "checksum": "ed7a8f4635880920fab7add1dcd713c8216a5119f225afd3be5333a491e64ffb",
+        "depends_on": [],
+        "source": "{% macro since() %}(select coalesce(max(id), 0) from {{ this }}){% endmacro %}"
+      },
+      "fpshop:operation.fpshop.fpshop-on-run-start-0": {
+        "checksum": "bb798cb9b3e1e3485891ee71d141b3af9f7254d9d8304688bf0f8ca0dd7a338b",
+        "depends_on": [],
+        "source": "select 1 as hook_start"
+      },
+      "fpshop:unit_test.fpshop.orders.orders_has_one_row": {
+        "checksum": "03fb46cd206bc0fac7d15123f85a0adc986329a33328b7bce6582b4ec8285788",
+        "depends_on": [],
+        "source": "{\"checksum\":\"03fb46cd206bc0fac7d15123f85a0adc986329a33328b7bce6582b4ec8285788\",\"config\":{\"enabled\":true,\"meta\":{},\"static_analysis\":null,\"tags\":[]},\"depends_on\":{\"macros\":[],\"nodes\":[\"model.fpshop.orders\"]},\"description\":\"\",\"expect\":{\"fixture\":null,\"format\":\"dict\",\"rows\":[{\"amount\":10,\"id\":1}]},\"fqn\":[\"fpshop\",\"orders\",\"orders_has_one_row\"],\"given\":[],\"model\":\"orders\",\"name\":\"orders_has_one_row\",\"original_file_path\":\"models/schema.yml\",\"overrides\":null,\"package_name\":\"fpshop\",\"path\":\"schema.yml\",\"resource_type\":\"unit_test\",\"schema\":\"fp_analytics\",\"unique_id\":\"unit_test.fpshop.orders.orders_has_one_row\",\"version\":null,\"versions\":null}"
+      }
+    },
+    "tests": {
+      "test.fpshop.not_null_orders_created_at.e4dfb4cb11": {
+        "compiled_code": "\n    \n    \n\n\n\nselect created_at\nfrom (select * from \"continuo_dbt\".\"fp_analytics\".\"orders\" where created_at > '2026-11-12 06:51:41.579485+00:00') dbt_subquery\nwhere created_at is null\n\n\n",
+        "compiled_hash": "",
+        "config_hash": "6830610d7440f9183514cae9bbbd9334cb5a54bae5e51c0c8706f8089b5bb489",
+        "content_hash": "sha256:361d2f0ab868890228fec1a675c584bd2da583d74733f4c417346d7cc92a7fc0",
+        "shared_code_hash": "",
+        "source_hash": "a178e68fa384d9a5c6f855b43b16a56797404f40bd8572fc638c02e5ee7a7845"
+      },
+      "test.fpshop.not_null_orders_id.84ef11d8fe": {
+        "compiled_code": "\n    \n    \n\n\n\nselect id\nfrom \"continuo_dbt\".\"fp_analytics\".\"orders\"\nwhere id is null\n\n\n",
+        "compiled_hash": "",
+        "config_hash": "abea95a0f89162e7d806e0c118546ec181ce7a91d81aae9cfc8725633fc347c9",
+        "content_hash": "sha256:736f69cfb39d520fef8136c4966b8674aaf35438c63a74e6e784c8ede4e544cb",
+        "shared_code_hash": "",
+        "source_hash": "9c70988b7869cb0963710d3cfbdd76b6a28dc75d92960a0b2880e81d696e5d73"
+      }
+    }
+  },
+  "topology_nodes": [
+    {
+      "content_hash": "sha256:5b8d06dd217669005ae43b7a522832f18cfd6b5f1b42d403e759da05d6d0f496",
+      "image_tag": "registry.example/fpshop:1",
+      "materialized": "table",
+      "node_type": "dbt-model",
+      "original_file_path": "models/cap_dep.sql",
+      "resolved_relation_id": "fp_analytics.cap_dep",
+      "schedule": "daily",
+      "schema_name": "fp_analytics",
+      "service_name": "fpshop",
+      "table_name": "cap_dep",
+      "test_count": 0,
+      "unique_id": "fp_analytics.cap_dep",
+      "upstream_unique_ids": [
+        "fp_analytics.cap_src"
+      ]
+    },
+    {
+      "content_hash": "sha256:936ea829c6e3857381349d241cbfc9c080b2f54cacb54c8549d54743d8744229",
+      "image_tag": "registry.example/fpshop:1",
+      "materialized": "table",
+      "node_type": "dbt-model",
+      "original_file_path": "models/cap_src.sql",
+      "relation_name": "OrdersCap",
+      "resolved_relation_id": "fp_analytics.orderscap",
+      "schedule": "daily",
+      "schema_name": "fp_analytics",
+      "service_name": "fpshop",
+      "table_name": "cap_src",
+      "test_count": 0,
+      "unique_id": "fp_analytics.cap_src",
+      "upstream_unique_ids": [
+        "fp_analytics.orders"
+      ]
+    },
+    {
+      "content_hash": "sha256:f225a7a39213c875dd009bf78b21038f757edccfa5a65371c33a2517bd367467",
+      "image_tag": "registry.example/fpshop:1",
+      "materialized": "table",
+      "node_type": "dbt-model",
+      "original_file_path": "models/contracted.sql",
+      "resolved_relation_id": "fp_analytics.contracted",
+      "schedule": "daily",
+      "schema_name": "fp_analytics",
+      "service_name": "fpshop",
+      "table_name": "contracted",
+      "test_count": 0,
+      "unique_id": "fp_analytics.contracted",
+      "upstream_unique_ids": [
+        "fp_analytics.orders"
+      ]
+    },
+    {
+      "content_hash": "sha256:f593ffdadd909d43cfb98f1187805dc50a1afdbd1021ccc370f6ae7974ac9c6a",
+      "image_tag": "registry.example/fpshop:1",
+      "materialized": "table",
+      "node_type": "dbt-model",
+      "original_file_path": "models/dim_v_v1.sql",
+      "relation_name": "dim_v_v1",
+      "resolved_relation_id": "fp_analytics.dim_v_v1",
+      "schedule": "daily",
+      "schema_name": "fp_analytics",
+      "service_name": "fpshop",
+      "table_name": "dim_v.v1",
+      "test_count": 0,
+      "unique_id": "fp_analytics.dim_v.v1",
+      "upstream_unique_ids": [
+        "fp_analytics.orders"
+      ]
+    },
+    {
+      "content_hash": "sha256:bd167bf61bd5c35362d7badfae79f7c0c66ea3452e1bdc42ef47b84d67459159",
+      "image_tag": "registry.example/fpshop:1",
+      "materialized": "table",
+      "node_type": "dbt-model",
+      "original_file_path": "models/dim_v_v2.sql",
+      "relation_name": "dim_v_v2",
+      "resolved_relation_id": "fp_analytics.dim_v_v2",
+      "schedule": "daily",
+      "schema_name": "fp_analytics",
+      "service_name": "fpshop",
+      "table_name": "dim_v.v2",
+      "test_count": 0,
+      "unique_id": "fp_analytics.dim_v.v2",
+      "upstream_unique_ids": [
+        "fp_analytics.orders"
+      ]
+    },
+    {
+      "content_hash": "sha256:444bcc307d65d89c7a1017c75522f1e15f51b0f3825eae5e882e87832d8901a6",
+      "image_tag": "registry.example/fpshop:1",
+      "materialized": "table",
+      "node_type": "dbt-model",
+      "original_file_path": "models/env_model.sql",
+      "resolved_relation_id": "fp_analytics.env_model",
+      "schedule": "daily",
+      "schema_name": "fp_analytics",
+      "service_name": "fpshop",
+      "table_name": "env_model",
+      "test_count": 0,
+      "unique_id": "fp_analytics.env_model",
+      "upstream_unique_ids": [
+        "fp_analytics.orders"
+      ]
+    },
+    {
+      "content_hash": "sha256:f22dd09f7682ac8d0d896594b3d215d8fdbc2c3ecba4c9be0a2d97ab4c4eb8dc",
+      "image_tag": "registry.example/fpshop:1",
+      "materialized": "ephemeral",
+      "node_type": "dbt-model",
+      "original_file_path": "models/eph.sql",
+      "resolved_relation_id": "fp_analytics.eph",
+      "schedule": "daily",
+      "schema_name": "fp_analytics",
+      "service_name": "fpshop",
+      "table_name": "eph",
+      "test_count": 0,
+      "unique_id": "fp_analytics.eph",
+      "upstream_unique_ids": [
+        "fp_analytics.orders"
+      ]
+    },
+    {
+      "content_hash": "sha256:e7ca7201b5370f914a627c625f8f06f9788d02c1fde0746d9f0b583664fbf491",
+      "image_tag": "registry.example/fpshop:1",
+      "materialized": "table",
+      "node_type": "dbt-model",
+      "original_file_path": "models/fresh.sql",
+      "resolved_relation_id": "fp_analytics.fresh",
+      "schedule": "daily",
+      "schema_name": "fp_analytics",
+      "service_name": "fpshop",
+      "table_name": "fresh",
+      "test_count": 0,
+      "unique_id": "fp_analytics.fresh",
+      "upstream_unique_ids": [
+        "fp_analytics.orders"
+      ]
+    },
+    {
+      "content_hash": "sha256:dfcd51fd393e9819a1665aa0e63a714b152a55e121f301528098529c4f7de528",
+      "image_tag": "registry.example/fpshop:1",
+      "materialized": "table",
+      "node_type": "dbt-model",
+      "original_file_path": "models/from_eph.sql",
+      "resolved_relation_id": "fp_analytics.from_eph",
+      "schedule": "daily",
+      "schema_name": "fp_analytics",
+      "service_name": "fpshop",
+      "table_name": "from_eph",
+      "test_count": 0,
+      "unique_id": "fp_analytics.from_eph",
+      "upstream_unique_ids": [
+        "fp_analytics.eph",
+        "fp_analytics.orders"
+      ]
+    },
+    {
+      "content_hash": "sha256:c4f4d5aabdea238c6f6172c1b958182923c51ad5ea4eb6ed409281c43c6749b1",
+      "image_tag": "registry.example/fpshop:1",
+      "materialized": "table",
+      "node_type": "dbt-model",
+      "original_file_path": "models/gov.sql",
+      "resolved_relation_id": "fp_analytics.gov",
+      "schedule": "daily",
+      "schema_name": "fp_analytics",
+      "service_name": "fpshop",
+      "table_name": "gov",
+      "test_count": 0,
+      "unique_id": "fp_analytics.gov",
+      "upstream_unique_ids": [
+        "fp_analytics.orders"
+      ]
+    },
+    {
+      "content_hash": "sha256:7b435f8624d237c673d83b634be1250d3ef0958581a379c493dfa35a0605a7dd",
+      "image_tag": "registry.example/fpshop:1",
+      "materialized": "incremental",
+      "node_type": "dbt-model",
+      "original_file_path": "models/incr.sql",
+      "resolved_relation_id": "fp_analytics.incr",
+      "schedule": "daily",
+      "schema_name": "fp_analytics",
+      "service_name": "fpshop",
+      "table_name": "incr",
+      "test_count": 0,
+      "unique_id": "fp_analytics.incr",
+      "upstream_unique_ids": [
+        "fp_analytics.orders"
+      ]
+    },
+    {
+      "content_hash": "sha256:fc1a4c1a07345552a77de192bd80b406c9be9aae1a32d3aac5f9fb4cb6198710",
+      "image_tag": "registry.example/fpshop:1",
+      "materialized": "table",
+      "node_type": "dbt-model",
+      "original_file_path": "models/macro_user.sql",
+      "resolved_relation_id": "fp_analytics.macro_user",
+      "schedule": "daily",
+      "schema_name": "fp_analytics",
+      "service_name": "fpshop",
+      "table_name": "macro_user",
+      "test_count": 0,
+      "unique_id": "fp_analytics.macro_user",
+      "upstream_unique_ids": []
+    },
+    {
+      "content_hash": "sha256:63c4567756a9ded66c1e908ea7011976f77e3a0a77ebc1de93dd5d398aba59df",
+      "image_tag": "registry.example/fpshop:1",
+      "materialized": "table",
+      "node_type": "dbt-model",
+      "original_file_path": "models/orders.sql",
+      "resolved_relation_id": "fp_analytics.orders",
+      "schedule": "daily",
+      "schema_name": "fp_analytics",
+      "service_name": "fpshop",
+      "table_name": "orders",
+      "test_count": 3,
+      "unique_id": "fp_analytics.orders",
+      "upstream_unique_ids": []
+    },
+    {
+      "content_hash": "sha256:48bdb5e6189507beb48dbd197835060e8536bcf3be0dd721cb3e42a0325fe32e",
+      "image_tag": "registry.example/fpshop:1",
+      "materialized": "table",
+      "node_type": "dbt-model",
+      "original_file_path": "models/orders_dep_1.sql",
+      "resolved_relation_id": "fp_analytics.orders_dep_1",
+      "schedule": "daily",
+      "schema_name": "fp_analytics",
+      "service_name": "fpshop",
+      "table_name": "orders_dep_1",
+      "test_count": 0,
+      "unique_id": "fp_analytics.orders_dep_1",
+      "upstream_unique_ids": [
+        "fp_analytics.orders"
+      ]
+    },
+    {
+      "content_hash": "sha256:8a6bfad4e937e19ec939b495016a85429b1ef08f39c97e1ae65bf21eaa8d9a70",
+      "image_tag": "registry.example/fpshop:1",
+      "materialized": "table",
+      "node_type": "dbt-model",
+      "original_file_path": "models/orders_dep_2.sql",
+      "resolved_relation_id": "fp_analytics.orders_dep_2",
+      "schedule": "daily",
+      "schema_name": "fp_analytics",
+      "service_name": "fpshop",
+      "table_name": "orders_dep_2",
+      "test_count": 0,
+      "unique_id": "fp_analytics.orders_dep_2",
+      "upstream_unique_ids": [
+        "fp_analytics.orders"
+      ]
+    },
+    {
+      "content_hash": "sha256:d25de541e539b7ec06a7e394904d1dabbe95ac0a61eade89b2e17ad0edcae48f",
+      "image_tag": "registry.example/fpshop:1",
+      "materialized": "table",
+      "node_type": "dbt-model",
+      "original_file_path": "models/recent.sql",
+      "resolved_relation_id": "fp_analytics.recent",
+      "schedule": "daily",
+      "schema_name": "fp_analytics",
+      "service_name": "fpshop",
+      "table_name": "recent",
+      "test_count": 0,
+      "unique_id": "fp_analytics.recent",
+      "upstream_unique_ids": [
+        "fp_analytics.orders"
+      ]
+    },
+    {
+      "content_hash": "sha256:bbd43b61123e0f1beb4cccad80d636275ac211321fc64e687c4b90f287e965bd",
+      "image_tag": "registry.example/fpshop:1",
+      "materialized": "seed",
+      "node_type": "dbt-seed",
+      "original_file_path": "seeds/seed_big.csv",
+      "resolved_relation_id": "fp_analytics.seed_big",
+      "schedule": "daily",
+      "schema_name": "fp_analytics",
+      "seed_columns": [
+        {
+          "name": "id",
+          "type": ""
+        },
+        {
+          "name": "label",
+          "type": ""
+        },
+        {
+          "name": "value",
+          "type": ""
+        }
+      ],
+      "seed_columns_hash": "sha256:1a61893a2cbc214d9225b3367b157f7ca1c2050218ac547c33e44c21178bd786",
+      "service_name": "fpshop",
+      "table_name": "seed_big",
+      "test_count": 0,
+      "unique_id": "fp_analytics.seed_big",
+      "upstream_unique_ids": []
+    },
+    {
+      "content_hash": "sha256:41d1638c900ebebea73d90051b6bc7c4c64903f7a45d9aff402290abe1662ddf",
+      "image_tag": "registry.example/fpshop:1",
+      "materialized": "seed",
+      "node_type": "dbt-seed",
+      "original_file_path": "seeds/seed_semi.csv",
+      "resolved_relation_id": "fp_analytics.seed_semi",
+      "schedule": "daily",
+      "schema_name": "fp_analytics",
+      "seed_columns": [
+        {
+          "name": "id",
+          "type": ""
+        },
+        {
+          "name": "label",
+          "type": ""
+        }
+      ],
+      "seed_columns_hash": "sha256:db01e3020bad4515b516e1c1d4d4990e2e939ffe479c0e9d0571a182c16d6376",
+      "service_name": "fpshop",
+      "table_name": "seed_semi",
+      "test_count": 0,
+      "unique_id": "fp_analytics.seed_semi",
+      "upstream_unique_ids": []
+    },
+    {
+      "content_hash": "sha256:ec48069a2612d36c6ddb466809d8cb9deee3f1cc516e902a366f4df74fb7c76f",
+      "image_tag": "registry.example/fpshop:1",
+      "materialized": "seed",
+      "node_type": "dbt-seed",
+      "original_file_path": "seeds/seed_users.csv",
+      "resolved_relation_id": "fp_analytics.seed_users",
+      "schedule": "daily",
+      "schema_name": "fp_analytics",
+      "seed_columns": [
+        {
+          "name": "id",
+          "type": "integer"
+        },
+        {
+          "name": "name",
+          "type": ""
+        },
+        {
+          "name": "amount",
+          "type": ""
+        }
+      ],
+      "seed_columns_hash": "sha256:becf8a6a34f8bb1cef787982d5bdfb455ea99fdd558fb1a5d28d6b67d3d8e84b",
+      "service_name": "fpshop",
+      "table_name": "seed_users",
+      "test_count": 0,
+      "unique_id": "fp_analytics.seed_users",
+      "upstream_unique_ids": []
+    },
+    {
+      "content_hash": "sha256:276aa87667c314ff7a9977f4bfe70bf64075e3e23ad3fb7282cac0ea0a3680e1",
+      "image_tag": "registry.example/fpshop:1",
+      "materialized": "incremental",
+      "node_type": "dbt-model",
+      "original_file_path": "models/self_incr.sql",
+      "relation_name": "self_incr_tbl",
+      "resolved_relation_id": "fp_analytics.self_incr_tbl",
+      "schedule": "daily",
+      "schema_name": "fp_analytics",
+      "service_name": "fpshop",
+      "table_name": "self_incr",
+      "test_count": 0,
+      "unique_id": "fp_analytics.self_incr",
+      "upstream_unique_ids": [
+        "fp_analytics.orders"
+      ]
+    },
+    {
+      "content_hash": "sha256:b7d642dfdd84f3658ea87fed04edc586662fe3bd13b8415abbb8adf835f02283",
+      "image_tag": "registry.example/fpshop:1",
+      "materialized": "snapshot",
+      "node_type": "dbt-snapshot",
+      "original_file_path": "snapshots/two.sql",
+      "resolved_relation_id": "fp_analytics.snap_a",
+      "schedule": "daily",
+      "schema_name": "fp_analytics",
+      "service_name": "fpshop",
+      "table_name": "snap_a",
+      "test_count": 0,
+      "unique_id": "fp_analytics.snap_a",
+      "upstream_unique_ids": [
+        "fp_analytics.orders"
+      ]
+    },
+    {
+      "content_hash": "sha256:7259faceade29d4a973eeea9fbc4724d1f369efa03d3e957e6db18cb17f6d7b7",
+      "image_tag": "registry.example/fpshop:1",
+      "materialized": "snapshot",
+      "node_type": "dbt-snapshot",
+      "original_file_path": "snapshots/two.sql",
+      "resolved_relation_id": "fp_analytics.snap_b",
+      "schedule": "daily",
+      "schema_name": "fp_analytics",
+      "service_name": "fpshop",
+      "table_name": "snap_b",
+      "test_count": 0,
+      "unique_id": "fp_analytics.snap_b",
+      "upstream_unique_ids": [
+        "fp_analytics.orders"
+      ]
+    },
+    {
+      "content_hash": "sha256:41df0194f8e4b3a40ac1c865b22ba7b3e6eb31d61416dddf1d53da3f539157b2",
+      "image_tag": "registry.example/fpshop:1",
+      "materialized": "snapshot",
+      "node_type": "dbt-snapshot",
+      "original_file_path": "models/schema.yml",
+      "resolved_relation_id": "fp_analytics.snap_yml",
+      "schedule": "daily",
+      "schema_name": "fp_analytics",
+      "service_name": "fpshop",
+      "table_name": "snap_yml",
+      "test_count": 0,
+      "unique_id": "fp_analytics.snap_yml",
+      "upstream_unique_ids": [
+        "fp_analytics.orders"
+      ]
+    },
+    {
+      "content_hash": "sha256:9c40f63f06af399f9db7146b79d79fb4b1d023643664ea5ac8d9bd17fc4ca693",
+      "image_tag": "registry.example/fpshop:1",
+      "materialized": "table",
+      "node_type": "dbt-model",
+      "original_file_path": "models/src_model.sql",
+      "resolved_relation_id": "fp_analytics.src_model",
+      "schedule": "daily",
+      "schema_name": "fp_analytics",
+      "service_name": "fpshop",
+      "table_name": "src_model",
+      "test_count": 0,
+      "unique_id": "fp_analytics.src_model",
+      "upstream_unique_ids": [
+        "raw2.events"
+      ]
+    },
+    {
+      "content_hash": "sha256:d36f413d2112ecd8d1224cc714c25b4eed753be2e9ad42c697de25dd43936d7d",
+      "image_tag": "registry.example/fpshop:1",
+      "materialized": "table",
+      "node_type": "dbt-model",
+      "original_file_path": "models/uses_dim.sql",
+      "resolved_relation_id": "fp_analytics.uses_dim",
+      "schedule": "daily",
+      "schema_name": "fp_analytics",
+      "service_name": "fpshop",
+      "table_name": "uses_dim",
+      "test_count": 0,
+      "unique_id": "fp_analytics.uses_dim",
+      "upstream_unique_ids": [
+        "fp_analytics.dim_v.v1"
+      ]
+    },
+    {
+      "content_hash": "sha256:11e64c64f6d3e1fc372236fb9c8f83b8812d71b95ef931d2a6fbf868356dd788",
+      "image_tag": "registry.example/fpshop:1",
+      "materialized": "table",
+      "node_type": "dbt-model",
+      "original_file_path": "models/uses_udf.sql",
+      "resolved_relation_id": "fp_analytics.uses_udf",
+      "schedule": "daily",
+      "schema_name": "fp_analytics",
+      "service_name": "fpshop",
+      "table_name": "uses_udf",
+      "test_count": 0,
+      "unique_id": "fp_analytics.uses_udf",
+      "upstream_unique_ids": [
+        "fp_analytics.orders"
+      ]
+    },
+    {
+      "content_hash": "",
+      "image_tag": "",
+      "node_type": "unknown-external",
+      "original_file_path": "",
+      "resolved_relation_id": "raw2.events",
+      "schedule": "",
+      "schema_name": "raw2",
+      "service_name": "",
+      "table_name": "events",
+      "test_count": 0,
+      "unique_id": "raw2.events",
+      "upstream_unique_ids": []
+    },
+    {
+      "content_hash": "sha256:361d2f0ab868890228fec1a675c584bd2da583d74733f4c417346d7cc92a7fc0",
+      "image_tag": "registry.example/fpshop:1",
+      "node_type": "dbt-test",
+      "original_file_path": "models/schema.yml",
+      "resolved_relation_id": "",
+      "schedule": "",
+      "schema_name": "fp_analytics_dbt_test__audit",
+      "service_name": "fpshop",
+      "table_name": "not_null_orders_created_at",
+      "test_count": 0,
+      "unique_id": "test.fpshop.not_null_orders_created_at.e4dfb4cb11",
+      "upstream_unique_ids": [
+        "fp_analytics.orders"
+      ]
+    },
+    {
+      "content_hash": "sha256:736f69cfb39d520fef8136c4966b8674aaf35438c63a74e6e784c8ede4e544cb",
+      "image_tag": "registry.example/fpshop:1",
+      "node_type": "dbt-test",
+      "original_file_path": "models/schema.yml",
+      "resolved_relation_id": "",
+      "schedule": "",
+      "schema_name": "fp_analytics_dbt_test__audit",
+      "service_name": "fpshop",
+      "table_name": "not_null_orders_id",
+      "test_count": 0,
+      "unique_id": "test.fpshop.not_null_orders_id.84ef11d8fe",
+      "upstream_unique_ids": [
+        "fp_analytics.orders"
+      ]
+    }
+  ]
+}

@@ -13,6 +13,20 @@ DEFAULT_TENANT_ID = "default"
 the topology artifact's key and stamps every event this service writes."""
 
 
+def relation_key(schema_name: str, name: str) -> str:
+    """The key of the relation `<schema>.<name>` across continuo: the schema and
+    the name each lowered by `str.lower`, then joined with a dot. A node's
+    unique_id, the upstream it names and the relation its build writes are all
+    keyed this way.
+
+    Each part is lowered on its own, so the result can differ from lowering the
+    joined string: `str.lower` writes a capital Σ as the final `ς` when a cased
+    letter comes before it and none after it, looking past a dot. `DATAΣ` and
+    `Orders` give `dataς.orders`, while `"DATAΣ.Orders".lower()` is
+    `dataσ.orders`."""
+    return f"{schema_name.lower()}.{name.lower()}"
+
+
 class ManifestKind(StrEnum):
     """Which artifact dialect a service's release payload speaks.
 
@@ -28,12 +42,13 @@ class SkipReason(StrEnum):
     """Why the parse leg leaves a dbt node out of the topology without failing
     the release: it declares no owner, it is a local stub, or it is a node of an
     installed dbt package (not of the project the manifest was compiled from)
-    that carries no tag. A value is the string the logs report. A model or
-    snapshot of the project with an owner and no schedule tag is not left out:
-    it is a dormant node with an empty schedule, and an untagged seed takes the
-    schedule `seed`. A node of an installed package with an owner and a tag (and
-    no `local_stub` tag) is not left out either: it is kept under the package's
-    service, which the release's service check refuses."""
+    that carries no tag. A value is the string the logs report, and the reason
+    continuo-contracts' `dbt.skip_reason` gives for that gate, in the order of the
+    gates. A model or snapshot of the project with an owner and no schedule tag
+    is not left out: it is a dormant node with an empty schedule, and an untagged
+    seed takes the schedule `seed`. A node of an installed package with an owner
+    and a tag (and no `local_stub` tag) is not left out either: it is kept under
+    the package's service, which the release's service check refuses."""
     NO_OWNER = "no_owner"
     LOCAL_STUB = "local_stub"
     INSTALLED_PACKAGE = "installed_package"
@@ -64,12 +79,29 @@ class FailedNode:
     detail: str
 
 
+class ContractFamily(StrEnum):
+    """Which producer wrote a node's ODCS contract: `dbt` for a dbt model, seed or
+    snapshot (generated from its manifest entry), `python` for a Python node (authored
+    in a contract file)."""
+    DBT = "dbt"
+    PYTHON = "python"
+
+
 @dataclass(frozen=True)
-class AuthoredContract:
-    """A contract file as its author wrote it: the document its text loads to,
-    the repository path of the file and the SHA-256 of the text's UTF-8 bytes
-    (bare hex)."""
-    document: Mapping[str, Any]
+class NodeContract:
+    """A node's ODCS contract as its producer wrote it, before it is stored.
+
+    `document` is the contract and `family` says who wrote it. `path` is the
+    repository path of the file the contract stands for (a Python contract file,
+    or the file of a dbt model, seed or snapshot) and `source_sha256` the SHA-256
+    (bare hex) of what the contract was written from: a Python contract file's
+    UTF-8 bytes, or the manifest fields the dbt generator read.
+
+    `document` is None once the contract's stored form is made (store_contracts):
+    nothing reads the producer's document after that, and a release of many
+    contracts would otherwise hold every one of them beside its stored form."""
+    family: ContractFamily
+    document: Mapping[str, Any] | None
     path: str
     source_sha256: str
 
@@ -86,10 +118,13 @@ class TopologyArtifactRef:
 
 @dataclass(frozen=True)
 class ContractBundleRef:
-    """Where a release's contract bundle lives and the SHA-256 of its stored
-    bytes: the reference the parse result carries instead of the contracts."""
+    """Where a release's contract bundle lives, the SHA-256 of its stored
+    bytes, and how many contracts the stored bundle holds by family (its
+    `summary.by_family`, a family with none left out): the reference the parse
+    result carries instead of the contracts."""
     uri: str
     sha256: str
+    by_family: dict[str, int]
 
 
 @dataclass(frozen=True)
@@ -164,7 +199,7 @@ class UpstreamDep:
         topology. Deriving this property the same way ensures the identities
         always agree, preventing silent divergence from mixed-case declarations.
         """
-        return f"{self.schema_name.lower()}.{self.table_name.lower()}"
+        return relation_key(self.schema_name, self.table_name)
 
 
 @dataclass(frozen=True)
@@ -243,8 +278,8 @@ class ManifestNode:
     # "view", "incremental", "ephemeral", ...); "" for a python node
     full_refresh: bool | None = None  # a dbt seed's config.full_refresh when it is
     # a bool; None for a seed that does not set one and for every other node
-    contract: AuthoredContract | None = None  # the ODCS contract file a python
-    # node was read from; None for a node read from any other document
+    contract: NodeContract | None = None  # the node's ODCS contract; None for a
+    # node that has none
 
     @property
     def seed_columns(self) -> list[dict[str, str]]:
@@ -267,6 +302,9 @@ class ManifestNode:
         one relation and must not produce two identities. The declared
         schema_name and table_name are left untouched — they render into SQL
         and DDL, where the declared spelling is what addresses the relation.
+        For a dbt model, seed or snapshot it equals its contract's `id`: the
+        contracts library lowers `<schema>.<table>` as one string, and the
+        parse refuses a contract whose id is not this key (see relation_key).
 
         A dbt test is not a relation: it writes no table and dbt already
         gives it a globally unique manifest id, so that id is its identity
@@ -274,7 +312,7 @@ class ManifestNode:
         """
         if self.identity:
             return self.identity
-        return f"{self.schema_name.lower()}.{self.table_name.lower()}"
+        return relation_key(self.schema_name, self.table_name)
 
     @property
     def node_key(self) -> tuple[str, str]:
@@ -308,7 +346,7 @@ class ManifestNode:
         """
         if self.node_type == NodeType.DBT_TEST:
             return ""
-        return f"{self.schema_name.lower()}.{self.relation.lower()}"
+        return relation_key(self.schema_name, self.relation)
 
     @property
     def relation(self) -> str:
@@ -389,14 +427,26 @@ class ParsedArtifact:
     code (dbt macros) they use, keyed by unit id, and, for a dbt manifest, what
     its compile ran with (None for a python contract).
 
-    A `python-odcs` bundle also reports `failed` (one FailedNode for each
-    contract that did not pass its checks, in path order) and
+    `failed` holds one FailedNode for each contract that did not pass its
+    checks: a `python-odcs` bundle's in path order, a dbt manifest's (a
+    generated contract with issues, or a node whose field the generator cannot
+    read) in manifest order. A `python-odcs` bundle also reports
     `python_provenance` (the producer's `continuo_python_runtime` and the
-    `image_packages` of the image the service runs); every other kind leaves
-    them empty. Each of its nodes carries its authored contract
-    (ManifestNode.contract)."""
+    `image_packages` of the image the service runs), which a dbt manifest
+    leaves empty. Each node but a dbt test carries its contract
+    (ManifestNode.contract).
+
+    `unchecked_seeds` holds the unique id of each seed node of a dbt manifest
+    whose CSV header the parse did not know (the compile extras do not name it),
+    so its declared columns were not compared with the header, sorted.
+
+    `relationship_tests_without_target` counts the relationships tests of a dbt
+    manifest whose target the manifest holds neither as a node nor as a source,
+    which the contracts they test carry as `custom` rules."""
     nodes: list[ManifestNode]
     shared_code: dict[str, dict]
     provenance: ServiceProvenance | None = None
     failed: tuple[FailedNode, ...] = ()
     python_provenance: dict[str, Any] | None = None
+    unchecked_seeds: tuple[str, ...] = ()
+    relationship_tests_without_target: int = 0
