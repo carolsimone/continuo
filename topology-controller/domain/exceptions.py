@@ -54,14 +54,6 @@ class InvalidNodeSettingError(ValueError):
     field."""
 
 
-class ContractGenerationError(RuntimeError):
-    """The contracts library failed where a manifest does not explain the failure:
-    a call raised an error the library does not raise for a malformed node, or a
-    contract it generated could not be checked. It is a defect in continuo, not a
-    fault of the team's project, so the release fails as internal, never as an
-    invalid artifact or an invalid contract."""
-
-
 class InvalidCompileExtrasError(ValueError):
     """A compile-extras.json that cannot be read or does not hold what the
     compile promises to write. A re-delivery cannot fix it."""

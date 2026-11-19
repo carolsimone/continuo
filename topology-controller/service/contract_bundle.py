@@ -247,6 +247,16 @@ def _library_call[T](stage: str, node: ManifestNode, timings: ReleaseTimings | N
         raise
 
 
+def contracts_by_family(contracts: Sequence[StoredContract]) -> dict[str, int]:
+    """How many of `contracts` each family holds, keyed by the family's value in
+    sorted order. A family with none has no key."""
+    counts: dict[str, int] = {}
+    for contract in contracts:
+        family = ContractFamily(contract.family).value
+        counts[family] = counts.get(family, 0) + 1
+    return dict(sorted(counts.items()))
+
+
 def build_contract_bundle(
     *,
     tenant_id: str,
@@ -270,14 +280,11 @@ def build_contract_bundle(
     with its inputs.
     """
     by_id: dict[str, dict[str, Any]] = {}
-    by_family: dict[str, int] = {}
     for contract in contracts:
         if contract.unique_id in by_id:
             raise ValueError(f"two contracts of the release carry the unique id {contract.unique_id}")
-        family = ContractFamily(contract.family).value
-        by_family[family] = by_family.get(family, 0) + 1
         by_id[contract.unique_id] = {
-            "family": family,
+            "family": ContractFamily(contract.family).value,
             "service": contract.service,
             "contract_hash": contract.contract_hash,
             "content_hash": contract.content_hash,
@@ -294,7 +301,7 @@ def build_contract_bundle(
         "provenance": copy.deepcopy(dict(provenance)),
         "summary": {
             "contracts": len(by_id),
-            "by_family": dict(sorted(by_family.items())),
+            "by_family": contracts_by_family(contracts),
             "invalid": 0,
             "skipped": 0,
         },

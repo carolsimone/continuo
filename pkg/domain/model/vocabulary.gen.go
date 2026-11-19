@@ -18,7 +18,7 @@ const (
 	ParseFailureKindInvalidSQL ParseFailureKind = "invalid_sql"
 	// ParseFailureKindUnqualifiedReference — a node references a relation without a schema qualifier.
 	ParseFailureKindUnqualifiedReference ParseFailureKind = "unqualified_reference"
-	// ParseFailureKindInvalidContract — a python node's contract does not satisfy the ODCS contract rules; every invalid contract of the release is named in one failure.
+	// ParseFailureKindInvalidContract — a dbt node's or python-odcs node's contract breaks the contract rules, or a seed's declared columns differ from its CSV header; every invalid contract of the release is named in one failure.
 	ParseFailureKindInvalidContract ParseFailureKind = "invalid_contract"
 	// ParseFailureKindInvalidArtifact — the uploaded manifest or contract is unreadable, empty, of unknown kind, names another service, or declares an invalid node setting.
 	ParseFailureKindInvalidArtifact ParseFailureKind = "invalid_artifact"
@@ -82,7 +82,7 @@ const (
 	RejectReasonInvalidSQL RejectReason = "invalid_sql"
 	// RejectReasonUnqualifiedReference — a node references a relation without a schema qualifier.
 	RejectReasonUnqualifiedReference RejectReason = "unqualified_reference"
-	// RejectReasonInvalidContract — a python node's contract in the release does not satisfy the ODCS contract rules.
+	// RejectReasonInvalidContract — a dbt node's or python-odcs node's contract in the release breaks the contract rules, or a seed's declared columns differ from its CSV header.
 	RejectReasonInvalidContract RejectReason = "invalid_contract"
 	// RejectReasonInvalidArtifact — a manifest or python contract in the release is unreadable, empty, of unknown kind, names another service, or declares an invalid node setting.
 	RejectReasonInvalidArtifact RejectReason = "invalid_artifact"

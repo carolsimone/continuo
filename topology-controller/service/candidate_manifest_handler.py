@@ -2,7 +2,6 @@ import logging
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 from domain.exceptions import (
-    ContractGenerationError,
     InvalidCompiledSqlError,
     InvalidOdcsBundleError,
     UnqualifiedTableReferenceError,
@@ -25,11 +24,13 @@ from service.code_bundle import build_code_bundle
 from service.contract_bundle import (
     StoredContract,
     build_contract_bundle,
+    contracts_by_family,
     invalid_contract_reads,
     shared_unique_ids,
     store_contracts,
 )
 from service.contracts_library import LIBRARY_VERSION
+from service.errors import ContractGenerationError
 from service.manifest_parsers import parser_for
 from service.ports import (
     CandidatePublisherPort,
@@ -130,9 +131,10 @@ def _artifact_entry(node: ManifestNode) -> dict:
 
 
 class CandidateManifestHandler:
-    """Parses a per-release set of dbt manifests and python contracts, writes
-    the resolved candidate topology to S3 as the release's topology artifact,
-    and publishes a reference to it back to release-controller.
+    """Parses a per-release set of dbt manifests and python-odcs bundles, with
+    the contract of each dbt and python node, writes the resolved candidate
+    topology to S3 as the release's topology artifact, and publishes a
+    reference to it back to release-controller.
 
     Every node carries its service's image tag from the release request
     (image_tags), the map release-controller assembled when it activated the
@@ -151,14 +153,15 @@ class CandidateManifestHandler:
     node plus the shared-code units they depend on, the tracked dbt tests, and
     each dbt service's provenance with the image tag the request names for it)
     is uploaded via bundle_uploader, then the release's contract bundle via
-    contract_bundle_writer (the stored form and hash of each python-odcs
-    contract, built from the tables each contract's read queries name, and the
-    provenance of each python-odcs service), then the topology artifact via
-    artifact_writer, and only then is the outcome published, so a published
-    reference never dangles. A release that publishes ok writes a contract
-    bundle even with no python-odcs contract. An empty release (no manifests)
-    writes an empty contract bundle and an artifact with no nodes and publishes
-    an empty code_bundle_uri.
+    contract_bundle_writer (the stored form and hash of each dbt and
+    python-odcs contract, with the tables its node's SQL or read queries name
+    and, for a dbt contract, the reads it declares, and the provenance of each
+    python-odcs service), then the topology artifact via artifact_writer, and
+    only then is the outcome published, so a published reference never
+    dangles. Every release that publishes ok writes a contract bundle, one with
+    no contract included. An empty release (no manifests) writes an empty
+    contract bundle and an artifact with no nodes and publishes an empty
+    code_bundle_uri.
 
     A write that fails with an S3 outage (is_infrastructure_error: S3
     unreachable, a 5xx) propagates to the consumer, which pauses and redelivers
@@ -655,7 +658,7 @@ class CandidateManifestHandler:
         with self._timings.stage(Stage.PUBLISH):
             self._publisher.publish_ok(
                 release_id=release_id, artifact=artifact, code_bundle_uri=code_bundle_uri,
-                contract_bundle=contract_bundle, contracts_by_family=bundle_document["summary"]["by_family"],
+                contract_bundle=contract_bundle, contracts_by_family=contracts_by_family(contracts),
                 **durations,
             )
         self._timings.outcome = ReleaseOutcome.OK

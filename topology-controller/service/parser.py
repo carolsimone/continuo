@@ -37,7 +37,7 @@ from continuo_contracts.errors import ContractsError, DbtNodeError
 from continuo_contracts.validate import Issue
 
 from domain.contract_vocabulary import ParseFailureKind
-from domain.exceptions import ContractGenerationError, InvalidNodeSettingError
+from domain.exceptions import InvalidNodeSettingError
 from domain.model import (
     CompileExtras,
     ContractFamily,
@@ -51,10 +51,12 @@ from domain.model import (
     SkippedNode,
     SkipReason,
 )
+from domain.node_timeout import timeout_seconds
 from service.compile_extras import seed_columns_hash
 from service.contract_validation import ContractValidator
 from service.contracts_library import VALIDATOR
 from service.dbt_hashing import CodeUnit, DbtHashParts, ManifestContext, hash_dbt_node
+from service.errors import ContractGenerationError
 from service.release_timings import ReleaseTimings, Stage
 
 logger = logging.getLogger(__name__)
@@ -258,6 +260,17 @@ def _library_defect(node_id: str, error: Exception) -> ContractGenerationError:
     return ContractGenerationError(f"{node_id}: the contracts library failed: {error!r}")
 
 
+def _topology_facts(node_id: str, facts: dbt.RunFacts) -> tuple[NodeType, int | None]:
+    """The node type and the task timeout in seconds that a valid contract's run
+    facts give. The library writes only a kind and a timeout its checks accept, so
+    a value the topology cannot take is a defect, raised as a
+    ContractGenerationError."""
+    try:
+        return NodeType(facts.kind), timeout_seconds(facts.timeout_minutes)
+    except ValueError as error:
+        raise _library_defect(node_id, error) from error
+
+
 def _header_issues(node_id: str, document: Mapping[str, Any], header: Sequence[str] | None) -> list[str]:
     """What a seed's CSV `header` and the columns its generated `document` declares
     disagree on, in the library's words; none for a seed with no known header."""
@@ -437,6 +450,7 @@ def parse_manifest(
             progress()
             continue
         generated, facts, columns_hash = built
+        node_type, task_timeout = _topology_facts(node_id, facts)
 
         parts = _hash(facts.unique_id, node, ctx)
         used_units.update(parts.units)
@@ -457,7 +471,7 @@ def parse_manifest(
             criticality=facts.criticality,
             dependency_sqls=[node["compiled_code"]] if node.get("compiled_code") else [],
             candidate_sql=node.get("compiled_code", ""),
-            node_type=NodeType(facts.kind),
+            node_type=node_type,
             content_hash=parts.content_hash,
             image_tag=image_tag,
             original_file_path=facts.file_path,
@@ -469,12 +483,12 @@ def parse_manifest(
             compiled_hash=parts.compiled_hash,
             hashed_config=parts.hashed_config,
             code_unit_ids=sorted(parts.units),
-            timeout_seconds=facts.timeout_minutes * 60 if facts.timeout_minutes is not None else None,
+            timeout_seconds=task_timeout,
             declared_columns=len(node.get("columns") or {}),
             contract=NodeContract(
                 family=ContractFamily.DBT,
                 document=generated.document,
-                path=node["original_file_path"],
+                path=facts.file_path,
                 source_sha256=generated.source_sha256,
             ),
         )

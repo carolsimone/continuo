@@ -20,6 +20,7 @@ from service.contract_bundle import (
     StoredContract,
     build_contract_bundle,
     contract_bundle_key,
+    contracts_by_family,
     invalid_contract_reads,
     shared_unique_ids,
     store_contracts,
@@ -590,6 +591,22 @@ def _bundle(contracts, **overrides):
     }
     args.update(overrides)
     return build_contract_bundle(**args)
+
+
+@pytest.mark.parametrize("families, want", [
+    ([], {}),
+    (["python", "python"], {"python": 2}),
+    (["python", "dbt", "dbt"], {"dbt": 2, "python": 1}),
+    (["dbt", "python", "dbt"], {"dbt": 2, "python": 1}),
+], ids=["none", "one-family", "both", "both-other-order"])
+def test_contracts_by_family_counts_each_family_and_leaves_out_one_with_none(families, want):
+    contracts = [_stored(f"analytics.t{i}", family=family) for i, family in enumerate(families)]
+
+    got = contracts_by_family(contracts)
+
+    assert got == want
+    assert list(got) == sorted(got)
+    assert _bundle(contracts)["summary"]["by_family"] == got
 
 
 def test_a_release_with_no_contract_has_an_empty_bundle():

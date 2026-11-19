@@ -14,9 +14,11 @@ from continuo_contracts.errors import CanonicalJsonError
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from domain.contract_vocabulary import NodeType, ParseFailureKind
 from domain.dormant import is_dormant
-from domain.exceptions import ContractGenerationError, InvalidNodeSettingError
+from domain.exceptions import InvalidNodeSettingError
 from domain.model import CompileExtras, ContractFamily, FailedNode, ManifestFile, SeedExtras
 from service.contract_validation import ContractValidator
+from service.errors import ContractGenerationError
+from service import parser
 from service.parser import parse_manifest
 from service.release_timings import (
     CONTRACT_FAILURE_REASONS,
@@ -147,8 +149,8 @@ def test_run_facts_come_from_the_contract(tmp_path, monkeypatch):
         "from-contract-service", NodeType.DBT_SNAPSHOT, "from_contract", "REGULATORY")
     assert (node.timeout_seconds, node.original_file_path, node.owner, node.materialized) == (
         420, "from/contract.sql", "from-contract-team", "from_contract")
-    # The contract stands for the node's file as the manifest names it.
-    assert node.contract.path == "models/orders.sql"
+    # The contract stands for the node's file as its run facts name it, as the node does.
+    assert node.contract.path == "from/contract.sql"
 
 
 def test_the_facts_a_well_formed_node_gets_from_its_contract_are_the_manifests(tmp_path):
@@ -168,6 +170,16 @@ def test_the_dormant_node_has_an_empty_schedule_from_its_contract(tmp_path):
     assert "schedule" not in {item["property"] for item in node.contract.document["customProperties"]}
     assert node.schedule_name == ""
     assert is_dormant(node.node_type, node.schedule_name)
+
+
+@pytest.mark.parametrize("criticality", ["", None])
+def test_an_empty_criticality_reads_as_secondary(tmp_path, criticality):
+    """The contract leaves out a field with no value, so an empty criticality is the
+    default, SECONDARY, and the contract is valid."""
+    parsed = parse_manifest(_manifest(tmp_path, _node("orders", meta={"criticality": criticality})))
+    assert parsed.failed == ()
+    (node,) = parsed.nodes
+    assert node.criticality == "SECONDARY"
 
 
 def test_a_schema_declared_with_capitals_keeps_its_spelling_while_the_ids_are_lower_case(tmp_path):
@@ -259,9 +271,17 @@ def test_a_manifest_shape_error_is_an_invalid_artifact(tmp_path, metadata, extra
     assert timings.contract_failures == {("generate", "manifest_shape"): 1}
 
 
-def test_a_kept_node_with_no_fqn_entry_is_still_an_invalid_artifact(tmp_path):
-    with pytest.raises(InvalidNodeSettingError, match="model.shop.orders: fqn must be a non-empty list of strings"):
-        parse_manifest(_manifest(tmp_path, _node("orders", fqn=[]), metadata={}))
+@pytest.mark.parametrize("resource_type", ["model", "seed", "snapshot"])
+def test_the_parsers_copies_of_the_librarys_kind_and_service_rules_agree_with_it(tmp_path, resource_type):
+    """A failed node takes its type from the resource type and its service from the
+    fqn without the library, which may have refused the node: for a well-formed node
+    both are what the library gives."""
+    node = _node("orders_daily", resource_type=resource_type, fqn=["shop_core", "orders_daily"])
+    manifest = json.loads(Path(_manifest(tmp_path, node)).read_text())
+    generated = dbt.generate(node, [], manifest=manifest)
+
+    assert parser._RESOURCE_TYPE_TO_NODE_TYPE[resource_type] == dbt.run_facts(generated.document).kind
+    assert parser._tolerant_service(node) == dbt.node_service(node) == "shop-core"
 
 
 def test_tests_attach_only_to_nodes_that_became_manifest_nodes(tmp_path):
@@ -461,6 +481,17 @@ def test_a_library_defect_raises_a_contract_generation_error(tmp_path, monkeypat
     with pytest.raises(ContractGenerationError, match="model.shop.orders: the contracts library failed") as raised:
         parse_manifest(_manifest(tmp_path, _node("orders")))
     assert raised.value.__cause__ is error
+
+
+@pytest.mark.parametrize("fact", [{"kind": "dbt-widget"}, {"timeout_minutes": 30.0}], ids=["kind", "timeout"])
+def test_a_run_fact_the_topology_cannot_take_raises_a_contract_generation_error(tmp_path, monkeypatch, fact):
+    """A valid contract's run facts name a kind of the node type vocabulary and a whole
+    timeout: any other value is a defect of the library, never the team's artifact."""
+    real = dbt.run_facts
+    monkeypatch.setattr(dbt, "run_facts", lambda document: dataclasses.replace(real(document), **fact))
+    with pytest.raises(ContractGenerationError, match="model.shop.orders: the contracts library failed: ValueError") as raised:
+        parse_manifest(_manifest(tmp_path, _node("orders")))
+    assert isinstance(raised.value.__cause__, ValueError)
 
 
 def test_a_library_defect_in_a_manifest_call_raises_a_contract_generation_error(tmp_path, monkeypatch):
