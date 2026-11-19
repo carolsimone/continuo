@@ -582,7 +582,16 @@ export default function ReleaseDetailPage() {
 
       <main className="page-content page-content--readable">
         <ServiceTiles imageTags={rel.image_tags || {}} changedService={rel.changed_service} />
-        <PipelineTimeline transitions={rel.transitions} run={{ manifestKind: rel.manifest_kind, bootstrap: rel.bootstrap }} />
+        <PipelineTimeline
+          transitions={rel.transitions}
+          run={{
+            manifestKind: rel.manifest_kind,
+            bootstrap: rel.bootstrap,
+            parse_ms: rel.parse_ms,
+            contracts_ms: rel.contracts_ms,
+            contracts_by_family: rel.contracts_by_family,
+          }}
+        />
         {rel.status === 'promoted' && <ReleaseRunsPanel releaseId={rel.release_id} />}
 
         <NodeResultsTable

@@ -1,5 +1,5 @@
 import { ReleaseTransition } from './types';
-import { PipelineRun, releasePillClass, upcomingStages } from './release-helpers';
+import { PipelineRun, parseLines, releasePillClass, upcomingStages } from './release-helpers';
 
 // PipelineTimeline shows a run's path through the pipeline: one step per
 // recorded transition, coloured like the run's status pill and stamped with
@@ -7,11 +7,13 @@ import { PipelineRun, releasePillClass, upcomingStages } from './release-helpers
 // stages its kind can still pass through (see upcomingStages): ghosted,
 // undated, read out as "(upcoming)" so they are not mistaken for completed
 // steps by ear, and — for a stage that does not run on every path — captioned
-// with what it depends on.
+// with what it depends on. A run whose parse reported its timings shows them
+// as lines under its parsing step (see parseLines).
 export default function PipelineTimeline({ transitions, run = {} }: {
   transitions: ReleaseTransition[];
   run?: PipelineRun;
 }) {
+  const parsing = parseLines(run);
   return (
     <>
       <div className="section-header">
@@ -26,6 +28,9 @@ export default function PipelineTimeline({ transitions, run = {} }: {
             <div className="release-timeline__body">
               <span className={`pill-sm ${releasePillClass(t.to).replace('pill--', 'pill-sm--')}`}>{t.to}</span>
               <span className="release-timeline__at">{t.at.slice(0, 19).replace('T', ' ')}</span>
+              {t.to === 'parsing' && parsing.map(line => (
+                <span key={line.label} className="release-timeline__line">{line.text}</span>
+              ))}
             </div>
           </li>
         ))}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { releasePillClass, reasonLabel, upcomingStages, shortSha } from '../../src/client/release-helpers';
+import { releasePillClass, reasonLabel, upcomingStages, parseLines, shortSha } from '../../src/client/release-helpers';
 
 describe('releasePillClass', () => {
   it('maps release lifecycle statuses to pill variants', () => {
@@ -99,6 +99,66 @@ describe('upcomingStages', () => {
   });
   it('is empty when nothing has been recorded yet', () => {
     expect(upcomingStages([], { manifestKind: 'dbt' })).toEqual([]);
+  });
+});
+
+describe('parseLines', () => {
+  it('names the parse and the contract generation, with the contracts counted by family', () => {
+    expect(parseLines({ parse_ms: 2140, contracts_ms: 610, contracts_by_family: { dbt: 45, python: 3 } })).toEqual([
+      { label: 'parsing', text: 'parsing 2.1 s' },
+      { label: 'generating contracts', text: 'generating contracts 0.6 s · 48 contracts (dbt 45, python 3)' },
+    ]);
+  });
+
+  it('has no lines for a run that reported none of the three fields', () => {
+    expect(parseLines({})).toEqual([]);
+    expect(parseLines({ manifestKind: 'dbt', bootstrap: false })).toEqual([]);
+  });
+
+  it('names only the family that has contracts, and never prints a family with none', () => {
+    expect(parseLines({ parse_ms: 900, contracts_ms: 300, contracts_by_family: { dbt: 45 } })[1].text)
+      .toBe('generating contracts 0.3 s · 45 contracts (dbt 45)');
+    expect(parseLines({ parse_ms: 900, contracts_ms: 300, contracts_by_family: { python: 3 } })[1].text)
+      .toBe('generating contracts 0.3 s · 3 contracts (python 3)');
+  });
+
+  it('says 0 contracts, with no family list, for a release that has none', () => {
+    expect(parseLines({ parse_ms: 900, contracts_ms: 300, contracts_by_family: {} })[1].text)
+      .toBe('generating contracts 0.3 s · 0 contracts');
+  });
+
+  it('says 1 contract, not 1 contracts, for a release that has one', () => {
+    expect(parseLines({ parse_ms: 900, contracts_ms: 300, contracts_by_family: { python: 1 } })[1].text)
+      .toBe('generating contracts 0.3 s · 1 contract (python 1)');
+  });
+
+  it('shows the durations alone, with no count, when the parse did not count its contracts', () => {
+    expect(parseLines({ parse_ms: 2140, contracts_ms: 610 })).toEqual([
+      { label: 'parsing', text: 'parsing 2.1 s' },
+      { label: 'generating contracts', text: 'generating contracts 0.6 s' },
+    ]);
+  });
+
+  it('shows a line only for the duration the run reported', () => {
+    expect(parseLines({ parse_ms: 2140 }).map(l => l.text)).toEqual(['parsing 2.1 s']);
+    expect(parseLines({ contracts_ms: 610 }).map(l => l.text)).toEqual(['generating contracts 0.6 s']);
+  });
+
+  it('rounds seconds to one decimal, half up, whatever the binary form of the fraction', () => {
+    const parsed = (ms: number) => parseLines({ parse_ms: ms })[0].text;
+    expect(parsed(2140)).toBe('parsing 2.1 s');
+    expect(parsed(2149)).toBe('parsing 2.1 s');
+    // 2.15 and 2.05 are not exact in binary, so Number.toFixed(1) would round them down.
+    expect(parsed(2150)).toBe('parsing 2.2 s');
+    expect(parsed(2050)).toBe('parsing 2.1 s');
+    expect(parsed(50)).toBe('parsing 0.1 s');
+    expect(parsed(49)).toBe('parsing 0.0 s');
+    expect(parsed(0)).toBe('parsing 0.0 s');
+  });
+
+  it('counts a long parse in seconds, not minutes', () => {
+    expect(parseLines({ parse_ms: 125400 })[0].text).toBe('parsing 125.4 s');
+    expect(parseLines({ contracts_ms: 3_600_000 })[0].text).toBe('generating contracts 3600.0 s');
   });
 });
 

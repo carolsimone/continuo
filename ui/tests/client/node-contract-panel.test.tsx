@@ -221,11 +221,12 @@ describe('NodeContractPanel', () => {
     expect(screen.queryByRole('region', { name: 'Compare versions' })).not.toBeInTheDocument();
   });
 
-  it('says a node with no contract has none and shows nothing else', async () => {
+  it('says which nodes have no contract', async () => {
     serve({ contract: null, versions: [] });
     renderPanel();
 
-    expect(await screen.findByText(/^This node has no contract\. Only Python services released as python-odcs have contracts/)).toBeInTheDocument();
+    expect(await screen.findByText('This node has no contract. A dbt test and an unknown-external table have none.')).toBeInTheDocument();
+    expect(screen.queryByText(/Only Python services/)).not.toBeInTheDocument();
     expect(screen.queryByRole('region')).not.toBeInTheDocument();
   });
 
@@ -277,7 +278,7 @@ describe('NodeContractPanel', () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText(/^This node has no contract\. Only Python services released as python-odcs have contracts/)).toBeInTheDocument();
+    expect(await screen.findByText('This node has no contract. A dbt test and an unknown-external table have none.')).toBeInTheDocument();
     expect(mockFetch).toHaveBeenCalledWith(other, expect.anything());
     expect(screen.queryByRole('region', { name: 'Current contract' })).not.toBeInTheDocument();
   });

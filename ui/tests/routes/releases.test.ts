@@ -132,6 +132,47 @@ describe('releases router', () => {
     expect(client.getRelease).toHaveBeenCalledWith('rX');
   });
 
+  // The release page reads the parse timings from this route, so the route hands
+  // release-controller's object on as it is: no field list to keep in step.
+  it('passes the parse timings of a release through, as release-controller sent them', async () => {
+    const release = {
+      release_id: 'rX', status: 'promoted',
+      parse_ms: 2140, contracts_ms: 610, contracts_by_family: { dbt: 45, python: 3 },
+    };
+    const client = { getRelease: vi.fn().mockResolvedValue(release) };
+    const app = appWith({ client, getLog: vi.fn() });
+    const res = await request(app).get('/api/releases/rX');
+    expect(res.status).toBe(200);
+    expect(res.body.parse_ms).toBe(2140);
+    expect(res.body.contracts_ms).toBe(610);
+    expect(res.body.contracts_by_family).toEqual({ dbt: 45, python: 3 });
+  });
+
+  it('keeps the parse timings when it adds the commit url', async () => {
+    const release = {
+      release_id: 'rX', status: 'promoted', repo: 'acme/dbt', commit_sha: 'abc1234',
+      parse_ms: 2140, contracts_ms: 610, contracts_by_family: { dbt: 45 },
+    };
+    const client = { getRelease: vi.fn().mockResolvedValue(release) };
+    const app = appWith({ client, getLog: vi.fn() });
+    const res = await request(app).get('/api/releases/rX');
+    expect(res.status).toBe(200);
+    expect(res.body.commit_url).toBe('https://github.com/acme/dbt/commit/abc1234');
+    expect(res.body.parse_ms).toBe(2140);
+    expect(res.body.contracts_ms).toBe(610);
+    expect(res.body.contracts_by_family).toEqual({ dbt: 45 });
+  });
+
+  it('names none of the parse timings when release-controller sent none', async () => {
+    const client = { getRelease: vi.fn().mockResolvedValue({ release_id: 'rX', status: 'rejected' }) };
+    const app = appWith({ client, getLog: vi.fn() });
+    const res = await request(app).get('/api/releases/rX');
+    expect(res.status).toBe(200);
+    for (const field of ['parse_ms', 'contracts_ms', 'contracts_by_family']) {
+      expect(res.body).not.toHaveProperty(field);
+    }
+  });
+
   it('maps upstream error status (404) to the response', async () => {
     const err: any = new Error('release-controller /releases/missing -> 404');
     err.status = 404;
