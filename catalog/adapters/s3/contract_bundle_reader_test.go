@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/catalog/domain/contractversion"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	"github.com/carolsimone/continuo/pkg/contractbundle"
 	"github.com/carolsimone/continuo/pkg/objectstore"
@@ -76,6 +77,7 @@ func TestContractBundleReader_ReadsTheFixture(t *testing.T) {
 			LibraryVersion string `json:"library_version"`
 			Contracts      []struct {
 				UniqueID     string          `json:"unique_id"`
+				Family       string          `json:"family"`
 				Service      string          `json:"service"`
 				ContractHash string          `json:"contract_hash"`
 				ContentHash  string          `json:"content_hash"`
@@ -85,8 +87,7 @@ func TestContractBundleReader_ReadsTheFixture(t *testing.T) {
 		} `json:"input"`
 	}
 	require.NoError(t, json.Unmarshal(raw, &fx))
-	require.Len(t, fx.Input.Contracts, 1)
-	want := fx.Input.Contracts[0]
+	require.Len(t, fx.Input.Contracts, 2)
 
 	mem := objectstoretest.NewMemory(defaultBucket)
 	sha := putContractBundle(t, mem, []byte(fx.Canonical))
@@ -97,19 +98,31 @@ func TestContractBundleReader_ReadsTheFixture(t *testing.T) {
 	assert.Equal(t, fx.Input.ReleaseID, bundle.ReleaseID)
 	assert.Equal(t, "default", bundle.TenantID, "the tenant the bundle was written for")
 	assert.Equal(t, fx.Input.LibraryVersion, bundle.ContinuoContracts)
-	require.Len(t, bundle.Contracts, 1)
-	got := bundle.Contracts[0]
-	assert.Equal(t, want.UniqueID, got.UniqueID)
-	assert.Equal(t, want.ContractHash, got.ContractHash)
-	assert.Equal(t, want.ContentHash, got.ContentHash)
-	assert.Equal(t, "python", got.Family)
-	assert.Equal(t, want.Service, got.Service)
-	assert.Equal(t, want.SourcePath, got.SourcePath)
-	assert.Equal(t, "contracts/py_daily_kpis.odcs.yaml", got.SourcePath)
-	var wantDocument map[string]any
-	require.NoError(t, json.Unmarshal(want.Document, &wantDocument))
-	assert.Equal(t, wantDocument, got.Document, "the document is the stored form, decoded")
-	assert.Equal(t, want.UniqueID, got.Document["id"])
+	require.Len(t, bundle.Contracts, 2)
+	byID := map[string]contractversion.Incoming{}
+	for _, c := range bundle.Contracts {
+		byID[c.UniqueID] = c
+	}
+	for _, want := range fx.Input.Contracts {
+		got, ok := byID[want.UniqueID]
+		require.True(t, ok, "the bundle holds %s", want.UniqueID)
+		assert.Equal(t, want.ContractHash, got.ContractHash, want.UniqueID)
+		assert.Equal(t, want.ContentHash, got.ContentHash, want.UniqueID)
+		assert.Equal(t, want.Family, got.Family, want.UniqueID)
+		assert.Equal(t, want.Service, got.Service, want.UniqueID)
+		assert.Equal(t, want.SourcePath, got.SourcePath, want.UniqueID)
+		// A number keeps the exact text the contract hash was taken over.
+		var wantDocument map[string]any
+		dec := json.NewDecoder(bytes.NewReader(want.Document))
+		dec.UseNumber()
+		require.NoError(t, dec.Decode(&wantDocument))
+		assert.Equal(t, wantDocument, got.Document, "%s: the document is the stored form, decoded", want.UniqueID)
+		assert.Equal(t, want.UniqueID, got.Document["id"])
+	}
+	assert.Equal(t, "python", byID["analytics.py_daily_kpis"].Family)
+	assert.Equal(t, "contracts/py_daily_kpis.odcs.yaml", byID["analytics.py_daily_kpis"].SourcePath)
+	assert.Equal(t, "dbt", byID["analytics.governed"].Family)
+	assert.Equal(t, "models/tagged/governed.sql", byID["analytics.governed"].SourcePath)
 	assert.Equal(t, []objectstoretest.Read{{Ref: contractBundleRef, MaxBytes: contractbundle.MaxObjectBytes}}, mem.Reads(),
 		"the bundle is read once, capped at the contract-bundle ceiling")
 }

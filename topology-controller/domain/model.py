@@ -65,11 +65,24 @@ class FailedNode:
     detail: str
 
 
+class ContractFamily(StrEnum):
+    """Which producer wrote a node's ODCS contract: `dbt` for a dbt model, seed or
+    snapshot (generated from its manifest entry), `python` for a Python node (authored
+    in a contract file)."""
+    DBT = "dbt"
+    PYTHON = "python"
+
+
 @dataclass(frozen=True)
-class AuthoredContract:
-    """A contract file as its author wrote it: the document its text loads to,
-    the repository path of the file and the SHA-256 of the text's UTF-8 bytes
-    (bare hex)."""
+class NodeContract:
+    """A node's ODCS contract as its producer wrote it, before it is stored.
+
+    `document` is the contract and `family` says who wrote it. `path` is the
+    repository path of the file the contract stands for (a Python contract file,
+    or the file of a dbt model, seed or snapshot) and `source_sha256` the SHA-256
+    (bare hex) of what the contract was written from: a Python contract file's
+    UTF-8 bytes, or the manifest fields the dbt generator read."""
+    family: ContractFamily
     document: Mapping[str, Any]
     path: str
     source_sha256: str
@@ -244,8 +257,8 @@ class ManifestNode:
     # "view", "incremental", "ephemeral", ...); "" for a python node
     full_refresh: bool | None = None  # a dbt seed's config.full_refresh when it is
     # a bool; None for a seed that does not set one and for every other node
-    contract: AuthoredContract | None = None  # the ODCS contract file a python
-    # node was read from; None for a node read from any other document
+    contract: NodeContract | None = None  # the node's ODCS contract; None for a
+    # node that has none
 
     @property
     def seed_columns(self) -> list[dict[str, str]]:
@@ -394,7 +407,7 @@ class ParsedArtifact:
     contract that did not pass its checks, in path order) and
     `python_provenance` (the producer's `continuo_python_runtime` and the
     `image_packages` of the image the service runs); every other kind leaves
-    them empty. Each of its nodes carries its authored contract
+    them empty. Each of its nodes carries its contract
     (ManifestNode.contract)."""
     nodes: list[ManifestNode]
     shared_code: dict[str, dict]

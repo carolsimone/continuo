@@ -85,6 +85,7 @@ def test_a_node_keeps_its_authored_contract(tmp_path):
     text = demo_text("py_daily_kpis")
     parsed = parse(bundle_file(tmp_path, demo_nodes()))
     kpis = parsed.nodes[2]
+    assert kpis.contract.family == "python"
     assert kpis.contract.document == yaml_strict.load(text)
     assert kpis.contract.source_sha256 == hashlib.sha256(text.encode("utf-8")).hexdigest()
     assert kpis.contract.path == KPIS_PATH
