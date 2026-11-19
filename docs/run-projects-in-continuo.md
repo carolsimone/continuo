@@ -1263,6 +1263,14 @@ and release again with a new `release_id`. The
 [Python contracts](contracts.md#what-continuo-refuses) page lists what continuo
 refuses and why.
 
+**A dbt release is rejected with `invalid_contract`.** At least one dbt node's
+contract is not valid, or a seed's declared columns and CSV header differ. The
+release page names each failed node with its problems. On your machine,
+`continuo-contracts dbt check` on the project folder shows the same problems.
+Fix each one and release again with a new `release_id`.
+[What makes a dbt contract invalid](contracts.md#what-makes-a-dbt-contract-invalid)
+lists them.
+
 **A python release is rejected with `invalid_artifact` and a detail that starts
 `the bundle was written by continuo-contracts`.** The runtime that packed your
 contracts carries a newer contract library than the one your install runs.

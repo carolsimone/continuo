@@ -647,7 +647,7 @@ the main ones:
 | `meta.owner` | `team.name` |
 | `tags`, in the order dbt lists them | `tags`. The first tag is also the property `schedule`, which a dormant node does not have |
 | `meta.criticality`, `meta.timeout_minutes` | the properties `criticality` and `timeoutMinutes` |
-| `config.materialized`, with `unique_key`, `incremental_strategy` and `on_schema_change` when set | the property `materialization`. The schema object's `physicalType` is `view` for a view, `ephemeral` for an ephemeral model and `table` for any other node |
+| `config.materialized`, with `unique_key` and `incremental_strategy` when set and `on_schema_change` when it is not `ignore` | the property `materialization`. The schema object's `physicalType` is `view` for a view, `ephemeral` for an ephemeral model and `table` for any other node |
 | The service, `original_file_path` and the resource type | the properties `service`, `filePath` and `kind` (`dbt-model`, `dbt-seed` or `dbt-snapshot`) |
 | `description` | `description.purpose` |
 | `meta.continuo.readers` and `config.grants` | `roles` |
@@ -655,7 +655,7 @@ the main ones:
 | A snapshot's `strategy`, `unique_key` and the like | the property `snapshot` |
 | A seed's `quote_columns` | the property `quoteColumns` |
 | `columns` | `properties`: the name, the description, the tags, the declared type (`physicalType`) with the logical type derived from it, and `classification` from `meta.continuo.classification`. A model's `primary_key` sets `primaryKey` on its columns |
-| The dbt tests of the node | `quality` rules on the column or the table. A `not_null` test also marks its column `required`, and a `unique` test marks it `unique`. A strict `relationships` test (severity `error`, no `where`) adds a relationship. Any other test is a `custom` rule |
+| The dbt tests of the node | `quality` rules on the column or the table. A `not_null` test also marks its column `required`, and a `unique` test marks it `unique`, when the test is strict: severity `error`, no `where`, and dbt's default `warn_if`, `error_if` and `fail_calc`. A strict `relationships` test adds a relationship. Any other test is a `custom` rule |
 
 A field with no value is left out. An empty `meta.timeout_minutes` (`""`, `[]`
 or `{}`) is no timeout, and an empty `meta.criticality` is `SECONDARY`.
@@ -927,12 +927,18 @@ contract, change the project and post a release.
 A dbt contract is invalid when the library cannot generate it or when it fails
 its checks. The release is then rejected as `invalid_contract`. One rejection
 names every invalid contract of the release, dbt and Python together. For each
-one it gives the node, its file and every problem. Each problem reads
-`<path>: <message>`, and `; ` joins them:
+one it gives the node, its file and every problem, joined with `; `. A problem
+of the contract itself reads `<path>: <message>`:
 
 ```text
 customProperties[3].value: `criticality` is 'high', it must be one of REGULATORY, CORE, SECONDARY
 ```
+
+The other problems read differently. A field the library cannot read starts
+with the node's id (`model.shop.orders: tags must be a list of strings, got
+str`). A table or a read that cannot be listed starts with `compiled SQL:` or
+`reads:`. A seed-header problem reads like `name is in the CSV header but not
+declared`, and the detail of such a seed starts with the seed's manifest id.
 
 These make a dbt contract invalid:
 
@@ -943,7 +949,8 @@ These make a dbt contract invalid:
 - A manifest entry with no `config.materialized` or no `original_file_path`. dbt
   always writes both.
 - A field of the node in a shape the library cannot read, such as `tags` that is
-  not a list of text.
+  not a list of text, a `meta.owner` that is not text, a column's `data_type`
+  that is not text, or a `deprecation_date` that is not written `YYYY-MM-DD`.
 - A table that the compiled SQL names, or a read that the node declares, that
   cannot be written `<schema>.<table>`.
 - A seed whose declared columns and CSV header differ (see
@@ -982,10 +989,12 @@ model, seed and snapshot:
 3. It compares each seed's declared columns with the first row of the seed's CSV
    file in your project folder.
 
-It prints one line for each node. A line is `info` for a node that is left out,
-for a dormant node and for a seed of an installed package. A line is `error`
-for a problem. The lines go to the error output, and an error line reads
-`<manifest node id>: <message>`:
+It prints a line for each thing it finds. A line is `info` for a node that is
+left out, for a dormant node and for a seed of an installed package, and `error`
+for a problem. A node with several problems gets one line for each, and a node
+with nothing to say gets no line. The lines go to the error output, and a line
+reads `<manifest node id>: <message>` (the message alone for a line about the
+whole service):
 
 ```text
 LITE CHECK. Passing it does not guarantee that continuo will create this service's contracts at release time.
