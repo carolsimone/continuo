@@ -26,11 +26,11 @@ import (
 // same stored contract is not current. Current, History and ByVersion read
 // the pointer through a live node whose contract watermark is at or above the
 // live folder's: a retired node, or a node the newest promotion the folder
-// recorded did not carry (its service no longer releases ODCS contracts),
-// keeps its pointer as the record of its last contract, but none of its
-// versions is current and it has no current contract, as the folder holds no
-// file of it. Live instead reads the nodes a promotion's bundle named, by
-// their contract watermark, whatever their active flag.
+// recorded did not carry (the release dropped it), keeps its pointer as the
+// record of its last contract, but none of its versions is current and it has
+// no current contract, as the folder holds no file of it. Live instead reads
+// the nodes a promotion's bundle named, by their contract watermark, whatever
+// their active flag.
 type ContractQueryRepository struct {
 	client Neo4jClient
 }

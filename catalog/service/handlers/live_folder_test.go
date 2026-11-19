@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -233,6 +235,42 @@ func liveContract(uniqueID string, version int64, hash string) contractversion.L
 	}
 }
 
+// dbtContract is uniqueID's current contract, a dbt node of kind (dbt-model,
+// dbt-seed or dbt-snapshot) built as materialized, in the form dbt.generate
+// stores: one schema object whose physicalType is "view" or "ephemeral" for
+// those two materializations and "table" for every other, the node's kind and
+// materialization as continuo custom properties, and the model's file as its
+// source.
+func dbtContract(uniqueID string, version int64, hash, kind, materialized string) contractversion.LiveContract {
+	table := uniqueID[strings.Index(uniqueID, ".")+1:]
+	physicalType := "table"
+	if materialized == "view" || materialized == "ephemeral" {
+		physicalType = materialized
+	}
+	path := "models/" + table + ".sql"
+	return contractversion.LiveContract{
+		UniqueID:     uniqueID,
+		Version:      version,
+		ContractHash: hash,
+		Document: map[string]any{
+			"apiVersion": "v3.2.0", "kind": "DataContract", "id": uniqueID, "name": table,
+			"version": "0", "status": "active",
+			"team": map[string]any{"name": "team-a"},
+			"tags": []any{"daily"},
+			"customProperties": []any{
+				map[string]any{"vendor": "continuo", "property": "kind", "value": kind},
+				map[string]any{"vendor": "continuo", "property": "filePath", "value": path},
+				map[string]any{"vendor": "continuo", "property": "materialization", "value": map[string]any{"materialized": materialized}},
+			},
+			"schema": []any{map[string]any{
+				"name": table, "physicalName": table, "physicalType": physicalType,
+				"properties": []any{map[string]any{"name": "id", "logicalType": "integer", "physicalType": "integer"}},
+			}},
+		},
+		Provenance: contractversion.Provenance{ContractHash: hash, ReleaseID: "rel-1", PromotionSeq: 3, SourcePath: path},
+	}
+}
+
 // ephemeralContract is uniqueID's contract for an ephemeral model.
 func ephemeralContract(uniqueID string) contractversion.LiveContract {
 	c := liveContract(uniqueID, 1, "sha256:eph")
@@ -379,6 +417,33 @@ func TestLiveRewrite_SkipsAnEphemeralContract(t *testing.T) {
 	assert.Equal(t, []string{"index", "put analytics.table", "delete analytics.was_table", "index"}, f.store.writes(),
 		"an interim index lists the new file before it is put")
 	assert.Equal(t, []ports.LiveIndexFile{{UniqueID: "analytics.table", Version: 1, ContractHash: "sha256:t1"}}, f.store.index.Files)
+}
+
+// A promotion's dbt contracts are published like any other: a table model, a
+// view, a seed and a snapshot each get their file and their index entry, and an
+// ephemeral model, which creates no table, gets neither.
+func TestLiveRewrite_WritesADbtContractButNotAnEphemeralOne(t *testing.T) {
+	f := newLiveFolderFixture(
+		dbtContract("analytics.orders", 2, "sha256:o2", "dbt-model", "table"),
+		dbtContract("analytics.orders_view", 1, "sha256:v1", "dbt-model", "view"),
+		dbtContract("analytics.countries", 1, "sha256:c1", "dbt-seed", "seed"),
+		dbtContract("analytics.orders_snapshot", 1, "sha256:s1", "dbt-snapshot", "snapshot"),
+		dbtContract("analytics.stg_orders", 1, "sha256:e1", "dbt-model", "ephemeral"),
+	)
+
+	require.NoError(t, f.rewrite(3))
+
+	assert.Equal(t, []string{"analytics.countries", "analytics.orders", "analytics.orders_snapshot", "analytics.orders_view"},
+		slices.Sorted(maps.Keys(f.store.files)), "every dbt contract but the ephemeral model's has its file")
+	assert.Equal(t, "analytics.orders v2 servers=true", string(f.store.files["analytics.orders"]),
+		"a dbt contract is published with the counter and the install's server, as any contract is")
+	assert.Equal(t, []ports.LiveIndexFile{
+		{UniqueID: "analytics.countries", Version: 1, ContractHash: "sha256:c1"},
+		{UniqueID: "analytics.orders", Version: 2, ContractHash: "sha256:o2"},
+		{UniqueID: "analytics.orders_snapshot", Version: 1, ContractHash: "sha256:s1"},
+		{UniqueID: "analytics.orders_view", Version: 1, ContractHash: "sha256:v1"},
+	}, f.store.index.Files, "the index lists the files, sorted, and not the ephemeral model")
+	assert.NotContains(t, f.store.writes(), "put analytics.stg_orders")
 }
 
 // A promotion at or below the folder's watermark rewrites nothing and takes

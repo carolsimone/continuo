@@ -61,10 +61,12 @@ their types and descriptions, as the contract the live release carries. The
 document is the contract as published, in ODCS (Open Data Contract Standard)
 YAML, without the "servers" list. The version is the number of the promotion
 that made this contract current; "node contract-history" lists the earlier ones.
+Every dbt model, seed and snapshot has a contract, and so has every Python node.
+A dbt test and an unknown-external table have none: asking for one is not_found.
 
 Arguments:
   <unique_id>  The node's unique_id, "<schema>.<table>" (for example
-               analytics.py_daily_kpis): the schema_name and table_name of a
+               analytics.orders): the schema_name and table_name of a
                row of "node list" joined by a dot.
 
 Output (stdout, JSON):
@@ -83,7 +85,7 @@ Errors:
   not_found  (exit 3)  the node has no contract, is retired, or its unique_id is not recorded
   unavailable(exit 5)  the catalog service is unreachable
   internal   (exit 6)  unexpected server error`,
-		Example: "  continuo node contract analytics.py_daily_kpis",
+		Example: "  continuo node contract analytics.orders\n  continuo node contract analytics.py_daily_kpis",
 		Annotations: map[string]string{
 			"output_schema": `{"contract":{"unique_id":"string","version":"number","contract_hash":"string","release_id":"string","promoted_at":"string","content_hash":"string","is_current":"boolean","same_as_version":"number","continuo_contracts":"string","document_yaml":"string"}}`,
 			"exit_codes":    `[0,2,3,5,6]`,

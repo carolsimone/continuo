@@ -50,7 +50,8 @@ const (
 // not an ephemeral model's, and the folder's index, whose final form is
 // written last. The nodes of
 // a promotion are those whose contract watermark is its seq: every bundle
-// names every python-odcs node of the release, so the set never waits for the
+// names every node of the release that has a contract (each dbt model, seed
+// and snapshot and each python-odcs node), so the set never waits for the
 // topology swap, takes a node the release added at once and drops a node the
 // release removed at once. A file's bytes depend only on the node's current
 // contract version and the publishing settings, so a rewrite puts only the

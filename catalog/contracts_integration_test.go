@@ -10,9 +10,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"os"
 	"testing"
 	"time"
 
+	neo4jinfra "github.com/carolsimone/continuo/catalog/adapters/neo4j"
 	s3infra "github.com/carolsimone/continuo/catalog/adapters/s3"
 	domainModel "github.com/carolsimone/continuo/catalog/domain/model"
 	"github.com/carolsimone/continuo/catalog/service/handlers"
@@ -102,13 +104,7 @@ func newContractsFixture(t *testing.T) *contractsFixture {
 // of the release naming the bundle and its SHA-256.
 func (f *contractsFixture) release(releaseID string, seq int64, contracts map[string]string) domainModel.PromoteReleaseInput {
 	f.t.Helper()
-	doc := contractbundle.Document{
-		SchemaVersion:     contractbundle.SchemaVersion,
-		TenantID:          f.tenantID,
-		ReleaseID:         releaseID,
-		ContinuoContracts: "0.2.0",
-		Contracts:         map[string]contractbundle.Contract{},
-	}
+	doc := f.bundle(releaseID)
 	for id, hash := range contracts {
 		body, err := json.Marshal(map[string]any{"id": id, "kind": "DataContract", "description": hash})
 		require.NoError(f.t, err)
@@ -118,6 +114,24 @@ func (f *contractsFixture) release(releaseID string, seq int64, contracts map[st
 			Document: body,
 		}
 	}
+	return f.promote(doc, seq)
+}
+
+// bundle is an empty contract bundle of the tenant's release releaseID.
+func (f *contractsFixture) bundle(releaseID string) contractbundle.Document {
+	return contractbundle.Document{
+		SchemaVersion:     contractbundle.SchemaVersion,
+		TenantID:          f.tenantID,
+		ReleaseID:         releaseID,
+		ContinuoContracts: "0.2.0",
+		Contracts:         map[string]contractbundle.Contract{},
+	}
+}
+
+// promote stores doc gzipped as topology-controller stores it and returns
+// promotion seq of doc's release naming the bundle and its SHA-256.
+func (f *contractsFixture) promote(doc contractbundle.Document, seq int64) domainModel.PromoteReleaseInput {
+	f.t.Helper()
 	raw, err := json.Marshal(doc)
 	require.NoError(f.t, err)
 	var gz bytes.Buffer
@@ -125,18 +139,47 @@ func (f *contractsFixture) release(releaseID string, seq int64, contracts map[st
 	_, err = w.Write(raw)
 	require.NoError(f.t, err)
 	require.NoError(f.t, w.Close())
-	ref := objectstore.Ref{Bucket: "continuo", Key: contractbundle.Key(f.tenantID, releaseID)}
+	ref := objectstore.Ref{Bucket: "continuo", Key: contractbundle.Key(f.tenantID, doc.ReleaseID)}
 	require.NoError(f.t, f.mem.Put(context.Background(), ref, gz.Bytes(), "application/gzip"))
 	sum := sha256.Sum256(gz.Bytes())
 
 	return domainModel.PromoteReleaseInput{
 		TenantID:             f.tenantID,
-		ReleaseID:            releaseID,
+		ReleaseID:            doc.ReleaseID,
 		PromotionSeq:         seq,
 		PromotedAt:           time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC).Add(time.Duration(seq) * time.Hour),
 		ContractBundleURI:    ref.String(),
 		ContractBundleSHA256: hex.EncodeToString(sum[:]),
 	}
+}
+
+// sharedBundle is the bundle of pkg/contractbundle/testdata/contracts_v1.json,
+// the document topology-controller's tests read a byte-identical copy of: a
+// dbt model, analytics.governed, and a Python node, analytics.py_daily_kpis,
+// as the contracts of the tenant's release releaseID.
+func (f *contractsFixture) sharedBundle(releaseID string) contractbundle.Document {
+	f.t.Helper()
+	raw, err := os.ReadFile("../pkg/contractbundle/testdata/contracts_v1.json")
+	require.NoError(f.t, err)
+	var fixture struct {
+		Canonical string `json:"canonical"`
+	}
+	require.NoError(f.t, json.Unmarshal(raw, &fixture))
+	var doc contractbundle.Document
+	require.NoError(f.t, json.Unmarshal([]byte(fixture.Canonical), &doc))
+	doc.TenantID, doc.ReleaseID = f.tenantID, releaseID
+	return doc
+}
+
+// decodedDocument decodes a stored contract the way catalog reads one back:
+// numbers as json.Number, the text the bundle holds.
+func decodedDocument(t *testing.T, raw json.RawMessage) map[string]any {
+	t.Helper()
+	var document map[string]any
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	require.NoError(t, dec.Decode(&document))
+	return document
 }
 
 // value runs a statement under the fixture's tenant and returns column v of
@@ -197,6 +240,50 @@ func TestContractsHandler_AFirstPromotionWritesVersionOne(t *testing.T) {
 	assert.Nil(t, f.inflight(), "transaction B clears the in-flight mark")
 	assert.Equal(t, []int{1}, f.metrics.versions)
 	assert.Equal(t, 1, f.live.calls)
+}
+
+// A promotion whose bundle holds a dbt contract next to a Python one records
+// both alike: each is its own version 1, with its promotion edge, its pointer
+// and the family and service its producer wrote on the stored contract, and the
+// dbt contract reads back as the document the bundle held.
+func TestContractsHandler_IngestsDbtContracts(t *testing.T) {
+	ctx := context.Background()
+	f := newContractsFixture(t)
+	doc := f.sharedBundle("rel-1")
+	const dbtID, pythonID = "analytics.governed", "analytics.py_daily_kpis"
+	dbtContract, pythonContract := doc.Contracts[dbtID], doc.Contracts[pythonID]
+	require.Equal(t, "dbt", dbtContract.Family, "the shared bundle holds a dbt contract")
+	require.Equal(t, "python", pythonContract.Family, "and a Python one")
+	for id := range doc.Contracts {
+		// The nodes the topology swap made live, so the current contract reads back.
+		f.exec(f.tenantID, `CREATE (:Node {tenant_id: $tenant_id, unique_id: $id, active: true})`, map[string]any{"id": id})
+	}
+
+	require.NoError(t, f.handler.Handle(ctx, "41-0", nil, f.promote(doc, 41)))
+
+	assert.Equal(t, int64(2), f.versions())
+	assert.Equal(t, int64(2), f.edges())
+	for id, want := range map[string]contractbundle.Contract{dbtID: dbtContract, pythonID: pythonContract} {
+		stored := `MATCH (v:ContractVersion {tenant_id: $tenant_id, unique_id: '` + id + `', contract_hash: '` + want.ContractHash + `'}) `
+		assert.Equal(t, want.Family, f.value(stored+`RETURN v.family AS v`), id)
+		assert.Equal(t, want.Service, f.value(stored+`RETURN v.service AS v`), id)
+		edge := `MATCH (:Node {tenant_id: $tenant_id, unique_id: '` + id + `'})-[e:CONTRACT_PROMOTED]->(:ContractVersion {tenant_id: $tenant_id, contract_hash: '` + want.ContractHash + `'}) `
+		assert.Equal(t, int64(1), f.value(edge+`RETURN e.version AS v`), id)
+		assert.Equal(t, int64(41), f.value(edge+`RETURN e.promotion_seq AS v`), id)
+		assert.Equal(t, want.ContentHash, f.value(edge+`RETURN e.content_hash AS v`), id)
+		assert.Equal(t, want.Source.Path, f.value(edge+`RETURN e.source_path AS v`), id)
+		assert.Equal(t, doc.ContinuoContracts, f.value(edge+`RETURN e.continuo_contracts AS v`), id)
+		assert.Equal(t, int64(1), f.value(`MATCH (:Node {tenant_id: $tenant_id, unique_id: '`+id+`'})-[p:CURRENT_CONTRACT]->(:ContractVersion {tenant_id: $tenant_id, contract_hash: '`+want.ContractHash+`'}) RETURN p.version AS v`), id)
+	}
+	assert.Equal(t, "models/tagged/governed.sql", dbtContract.Source.Path, "a dbt contract's source is the model's file")
+
+	current, err := neo4jinfra.NewContractQueryRepository(f.client).Current(ctx, f.tenantID, dbtID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), current.Version)
+	assert.Equal(t, dbtContract.ContractHash, current.ContractHash)
+	assert.Equal(t, decodedDocument(t, dbtContract.Document), current.Document, "the dbt contract reads back as the bundle held it")
+	assert.True(t, f.recorded("41-0"))
+	assert.Equal(t, []int{2}, f.metrics.versions)
 }
 
 // The same message delivered twice writes once: one edge, and one version
