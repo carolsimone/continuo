@@ -392,6 +392,43 @@ def test_every_invalid_contract_and_sql_error_is_named_once(tmp_path):
     ]
 
 
+def test_a_schema_with_capitals_is_lower_case_in_the_topology(tmp_path):
+    """A model declared in schema `Analytics` is the node `analytics.orders`, and the compiled SQL
+    of its readers, which dbt writes with the capitals, still names it: the reader's edge resolves
+    to it, its candidate SQL is redirected to the candidate schema like the read of any known node,
+    and the model's own read of its relation is left on production, as dbt wrote it."""
+    publisher, uploader = MagicMock(), make_uploader()
+    writer, bundle_writer = RecordingArtifactWriter(), RecordingContractBundleWriter()
+    orders = dbt_node("orders") | {
+        "schema": "Analytics", "compiled_code": 'SELECT MAX(id) AS id FROM "warehouse"."Analytics"."orders"'}
+    daily_orders = dbt_node("daily_orders") | {
+        "schema": "reporting", "compiled_code": 'SELECT id FROM "warehouse"."Analytics"."orders"'}
+    source = source_of(_dbt_file(tmp_path, "service-1.json", "service-1", orders, daily_orders))
+
+    build_handler(source, publisher, uploader, artifact_writer=writer,
+                  contract_bundle_writer=bundle_writer).handle(release_id="rel-1")
+
+    publisher.publish_failed.assert_not_called()
+    publisher.publish_ok.assert_called_once()
+    nodes = {node["unique_id"]: node for node in writer.nodes}
+    assert sorted(nodes) == ["analytics.orders", "reporting.daily_orders"]
+    assert (nodes["analytics.orders"]["schema_name"], nodes["analytics.orders"]["resolved_relation_id"]) == (
+        "analytics", "analytics.orders")
+    assert nodes["analytics.orders"]["upstream_unique_ids"] == []
+    assert nodes["reporting.daily_orders"]["upstream_unique_ids"] == ["analytics.orders"]
+    candidate_sql = {call.kwargs["unique_id"]: call.kwargs["sql"] for call in uploader.upload.call_args_list}
+    assert candidate_sql == {
+        "analytics.orders": 'SELECT MAX(id) AS id FROM "warehouse"."Analytics"."orders"',
+        "reporting.daily_orders": 'SELECT id FROM "warehouse"."_candidate_rel_1"."orders"',
+    }
+    contracts = bundle_writer.document["contracts"]
+    assert sorted(contracts) == ["analytics.orders", "reporting.daily_orders"]
+    assert contracts["analytics.orders"]["document"]["id"] == "analytics.orders"
+    (reads,) = [prop["value"] for prop in contracts["reporting.daily_orders"]["document"]["schema"][0]["customProperties"]
+                if prop["property"] == "reads"]
+    assert reads == ["analytics.orders"]
+
+
 @pytest.mark.parametrize("two_services", [False, True], ids=["one-service", "two-services"])
 def test_two_dbt_nodes_with_one_contract_id_publish_with_neither_contract_in_the_bundle(tmp_path, caplog, two_services):
     """release-controller rejects such a release as duplicate_table, naming every
