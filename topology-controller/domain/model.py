@@ -95,9 +95,13 @@ class NodeContract:
     repository path of the file the contract stands for (a Python contract file,
     or the file of a dbt model, seed or snapshot) and `source_sha256` the SHA-256
     (bare hex) of what the contract was written from: a Python contract file's
-    UTF-8 bytes, or the manifest fields the dbt generator read."""
+    UTF-8 bytes, or the manifest fields the dbt generator read.
+
+    `document` is None once the contract's stored form is made (store_contracts):
+    nothing reads the producer's document after that, and a release of many
+    contracts would otherwise hold every one of them beside its stored form."""
     family: ContractFamily
-    document: Mapping[str, Any]
+    document: Mapping[str, Any] | None
     path: str
     source_sha256: str
 

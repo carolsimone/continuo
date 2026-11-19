@@ -3,10 +3,13 @@ and the reference of the bundle the store holds, with that bundle's counts by fa
 import gzip
 import hashlib
 import json
+import tracemalloc
+from pathlib import Path
 
 import botocore.exceptions
 import pytest
 from continuo_contracts.canonical import canonical_json
+from continuo_contracts.errors import CanonicalJsonError
 
 import adapters.contract_bundle_writer as writer_module
 from adapters.contract_bundle_writer import ContractBundleWriter
@@ -326,3 +329,99 @@ def test_a_stored_bundle_that_cannot_be_read_raises_and_writes_nothing(stored):
         _write(s3, _dbt_and_python())
 
     assert s3.puts == []
+
+
+# --- the bytes are written a piece at a time ----------------------------------------------
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+# Two pairs of characters whose code point order and UTF-16 code unit order differ: a character
+# beyond the BMP is written as a surrogate pair (U+D800 to U+DFFF), so it sorts before U+E000 to
+# U+FFFF in RFC 8785 and after them by code point.
+_ASTRAL, _HIGH_BMP = "\U0001f600", "Ａ"
+
+
+def _fixture_bundle() -> tuple[dict, bytes]:
+    fixture = json.loads((FIXTURES / "contracts_v1.json").read_text())
+    given = fixture["input"]
+    document = build_contract_bundle(
+        tenant_id=given["tenant_id"], release_id=given["release_id"], library_version=given["library_version"],
+        contracts=[StoredContract(**c) for c in given["contracts"]], provenance=given["provenance"],
+        timings=given["timings"])
+    return document, fixture["canonical"].encode()
+
+
+def _columns(count: int, seed: int) -> list[dict]:
+    return [{"name": f"column_{seed}_{n:02d}", "logicalType": "string", "physicalType": "varchar(255)",
+             "description": f"Column {n} of contract {seed}, ünïcödé and {_ASTRAL} included.",
+             "quality": [{"id": f"not_null_{seed}_{n}", "metric": "nullValues", "mustBe": 0}]}
+            for n in range(count)]
+
+
+def _synthetic_bundle(contracts: int, *, columns: int = 4) -> dict:
+    """A bundle of `contracts` dbt contracts whose ids sort differently by code point and by UTF-16
+    code unit, with documents that hold keys named `summary` and keys beyond the BMP."""
+    names = ["a", "é", "Ω", "z", _HIGH_BMP, _ASTRAL, f"x{_ASTRAL}", f"x{_HIGH_BMP}", "\U00010000", "ﬁ"]
+    stored = []
+    for n in range(contracts):
+        unique_id = f"s{n % 7}.{names[n % len(names)]}_{n}"
+        document = {"id": unique_id, "apiVersion": "v3.2.0", "schema": [{"name": unique_id, "properties": _columns(
+            columns, n)}], "customProperties": [{"property": "meta", "value": {
+                "summary": {"by_family": {"dbt": n}}, f"k{_ASTRAL}": 1, f"k{_HIGH_BMP}": 2}}]}
+        stored.append(_contract(unique_id, ContractFamily.DBT if n % 3 else ContractFamily.PYTHON, document))
+    return _bundle(*stored, timings={"stages_ms": {"dbt_parse": 5, f"x{_ASTRAL}": 1, f"x{_HIGH_BMP}": 2}})
+
+
+def test_the_ids_of_the_synthetic_bundle_sort_differently_by_code_point_and_by_utf16():
+    ids = list(_synthetic_bundle(200)["contracts"])
+    assert sorted(ids) != sorted(ids, key=lambda key: key.encode("utf-16-be"))
+
+
+@pytest.mark.parametrize("make", [
+    lambda: _fixture_bundle()[0],
+    lambda: _synthetic_bundle(200),
+    lambda: {**_synthetic_bundle(3), f"top{_ASTRAL}": [1, {"b": 2, "a": 1}], f"top{_HIGH_BMP}": "x"},
+    lambda: {"contracts": [1, 2], "summary": {}},
+    lambda: {},
+], ids=["shared-fixture", "200-contracts", "top-level-keys-beyond-the-bmp", "contracts-not-a-mapping", "empty"])
+def test_the_streamed_bytes_are_gzip_compress_of_the_canonical_document(make):
+    document = make()
+    assert writer_module.gzipped_canonical_json(document) == gzip.compress(canonical_json(document), mtime=0)
+
+
+def test_the_streamed_bytes_of_the_shared_fixture_inflate_to_its_canonical_text():
+    document, canonical = _fixture_bundle()
+    assert gzip.decompress(writer_module.gzipped_canonical_json(document)) == canonical
+
+
+@pytest.mark.parametrize("document", [
+    {1: "a"}, {"contracts": {2: {}}}, {"a\ud800": 1}, {"contracts": {"x\ud800": {}}}, {"contracts": {"x": {1: 2}}},
+], ids=["top-level-key", "contract-id", "top-level-surrogate", "contract-id-surrogate", "nested-key"])
+def test_a_key_canonical_json_refuses_is_refused(document):
+    with pytest.raises(CanonicalJsonError):
+        canonical_json(document)
+    with pytest.raises(CanonicalJsonError):
+        writer_module.gzipped_canonical_json(document)
+
+
+def test_writing_a_large_bundle_holds_no_more_than_a_few_mebibytes_above_its_input():
+    """The canonical JSON of 2,000 contracts of 40 columns is larger than the bound on its own, so a
+    writer that built it whole (the pieces it joins, the text and its bytes) could not stay under it."""
+    document = _synthetic_bundle(2000, columns=40)
+    bound = 12 * 2**20
+    canonical = canonical_json(document)
+    assert len(canonical) > bound
+    expected = gzip.compress(canonical, mtime=0)
+    del canonical
+
+    tracemalloc.start()
+    try:
+        tracemalloc.reset_peak()
+        before, _ = tracemalloc.get_traced_memory()
+        body = writer_module.gzipped_canonical_json(document)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert peak - before < bound, f"the write held {(peak - before) / 2**20:.1f} MiB above its input"
+    assert body == expected

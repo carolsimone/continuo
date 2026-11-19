@@ -230,11 +230,33 @@ def test_a_node_with_no_contract_stores_nothing():
 
 def test_the_authored_document_is_not_changed():
     node = _kpis_node()
-    before = json.dumps(node.contract.document, sort_keys=True)
+    document = node.contract.document
+    before = json.dumps(document, sort_keys=True)
 
     store_contracts([node], {("service-py", "analytics.py_daily_kpis"): [TableRef("analytics", "daily_transactions", "")]}, POSTGRES_SYSTEM)
 
-    assert json.dumps(node.contract.document, sort_keys=True) == before
+    assert json.dumps(document, sort_keys=True) == before
+
+
+def test_a_stored_contract_keeps_no_producer_document_on_its_node():
+    """The stored form is all the bundle needs, so a large release does not hold every
+    generated and authored document beside it through the rest of its parse."""
+    nodes = [_kpis_node(), _dbt_node("governed")]
+    kept = [(n.contract.family, n.contract.path, n.contract.source_sha256) for n in nodes]
+
+    stored = store_contracts(nodes, {}, POSTGRES_SYSTEM)
+
+    assert [s.unique_id for s in stored] == [n.unique_id for n in nodes]
+    assert [n.contract.document for n in nodes] == [None, None]
+    assert [(n.contract.family, n.contract.path, n.contract.source_sha256) for n in nodes] == kept
+
+
+def test_a_contract_stored_twice_is_refused():
+    node = _kpis_node()
+    store_contracts([node], {}, POSTGRES_SYSTEM)
+
+    with pytest.raises(ValueError, match="analytics.py_daily_kpis: the contract is stored already"):
+        store_contracts([node], {}, POSTGRES_SYSTEM)
 
 
 @pytest.mark.parametrize(
@@ -433,11 +455,12 @@ def test_the_library_vector_through_topology_controller(name):
 
 def test_the_generated_dbt_document_is_not_changed():
     node = _dbt_node("governed")
-    before = json.dumps(node.contract.document, sort_keys=True)
+    document = node.contract.document
+    before = json.dumps(document, sort_keys=True)
 
     store_contracts([node], {node.node_key: [TableRef("analytics", "orders", "")]}, POSTGRES_SYSTEM)
 
-    assert json.dumps(node.contract.document, sort_keys=True) == before
+    assert json.dumps(document, sort_keys=True) == before
 
 
 def test_a_normalise_the_library_refuses_for_a_dbt_contract_is_counted_and_raised(monkeypatch):

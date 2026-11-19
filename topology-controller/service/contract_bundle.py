@@ -17,6 +17,7 @@ declares it, is the team's mistake: it is reported as an invalid contract before
 stored form is built.
 """
 import copy
+import dataclasses
 import json
 import logging
 import re
@@ -200,12 +201,19 @@ def store_contracts(
     error here is a defect, not a fault of the contract. It is counted on timings
     (stage `normalise` or `hash`, reason `value`) and raised, and the caller reports it as
     an internal failure of the release. progress is called after each contract.
+
+    Once a contract's stored form is made, its node keeps the contract without the
+    producer's document (NodeContract.document is None), which nothing reads after this
+    step, so the release does not hold both through the rest of its parse. A contract
+    whose document is released already raises ValueError: it was stored before.
     """
     stored: list[StoredContract] = []
     for node in nodes:
         contract = node.contract
         if contract is None:
             continue
+        if contract.document is None:
+            raise ValueError(f"{node.unique_id}: the contract is stored already, and its document released")
         tables = [f"{ref.schema}.{ref.table}" for ref in reads.get(node.node_key, ()) if not system.matches(ref)]
         document = _library_call("normalise", node, timings, lambda: _normalise(contract, node, tables))
         digest = _library_call("hash", node, timings, lambda: contract_hash(document))
@@ -219,6 +227,7 @@ def store_contracts(
             source_sha256=contract.source_sha256,
             document=document,
         ))
+        node.contract = dataclasses.replace(contract, document=None)
         progress()
     return stored
 

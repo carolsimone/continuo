@@ -6,6 +6,14 @@ decompresses it in transit: the bytes a reader downloads are the bytes whose
 SHA-256 the parse result carries. The gzip header holds no timestamp and no
 file name.
 
+The bytes are those of gzip.compress(canonical_json(document), mtime=0), made
+without the canonical JSON of the whole document, which a release of many
+contracts would hold several times over while it is built: each top-level value
+and each entry of `contracts` is written with canonical_json on its own and fed
+to a compressor at gzip.compress's settings. RFC 8785 writes an object's members
+sorted by the UTF-16 code units of their keys, joined by commas with no space,
+so the pieces join to the same text.
+
 A release's bundle is written once. The document records how long each stage of
 the parse took, so a second parse of the same release (a redelivered request, or
 a delivery another replica reclaimed while its first handler still runs) would
@@ -38,13 +46,15 @@ of counts raises UnreadableContractBundleError.
 import gzip
 import io
 import json
+import struct
 import time
 import zlib
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
 from botocore.exceptions import ClientError
 from continuo_contracts.canonical import canonical_json
+from continuo_contracts.errors import CanonicalJsonError
 from continuo_contracts.hashing import sha256_hex
 
 from domain.model import ContractBundleRef
@@ -64,6 +74,9 @@ _TAKEN_STATUSES = {409, 412}
 # (doubling after each refused put whose object is still not readable).
 _MAX_PUTS = 5
 _FIRST_WAIT_SECONDS = 0.2
+
+# The member of the bundle whose entries are written one at a time.
+_CONTRACTS = "contracts"
 
 # How much of a stored bundle's JSON is inflated at a time, and how much of its
 # end is kept to find its summary in: far more than the summary, `tenant_id` and
@@ -85,7 +98,7 @@ class ContractBundleWriter:
         uri = f"s3://{self._bucket}/{key}"
         stored = self._stored(key)
         if stored is None:
-            body = gzip.compress(canonical_json(document), mtime=0)
+            body = gzipped_canonical_json(document)
             stored = self._create(key, body)
             if stored == body:
                 by_family = dict(document["summary"]["by_family"])
@@ -124,6 +137,52 @@ class ContractBundleWriter:
             if str(exc.response.get("Error", {}).get("Code", "")) in _ABSENT_CODES:
                 return None
             raise
+
+
+def gzipped_canonical_json(document: Mapping[str, Any]) -> bytes:
+    """The bytes of gzip.compress(canonical_json(document), mtime=0), written a piece at
+    a time: the canonical JSON of the whole document is never held.
+
+    zlib at gzip.compress's settings (level 9, a gzip wrapper) writes the same deflate
+    stream whatever pieces its input comes in, and its header is patched as
+    gzip.compress patches it: no timestamp, and the OS byte 255."""
+    compressor = zlib.compressobj(9, zlib.DEFLATED, 31)
+    deflated = [compressor.compress(piece) for piece in _canonical_pieces(document)]
+    deflated.append(compressor.flush())
+    raw = b"".join(deflated)
+    return struct.pack("<4sLBB", raw, 0, raw[8], 255) + raw[10:]
+
+
+def _canonical_pieces(document: Mapping[str, Any]) -> Iterator[bytes]:
+    """canonical_json(document), as consecutive pieces: the document's members, and the
+    entries of its `contracts` mapping, each written on its own."""
+    yield b"{"
+    for index, (key, written_key, value) in enumerate(_members(document)):
+        yield (b"," if index else b"") + written_key
+        if key == _CONTRACTS and isinstance(value, Mapping):
+            yield b"{"
+            for position, (_, written_id, entry) in enumerate(_members(value)):
+                yield (b"," if position else b"") + written_id
+                yield canonical_json(entry)
+            yield b"}"
+        else:
+            yield canonical_json(value)
+    yield b"}"
+
+
+def _members(mapping: Mapping[str, Any]) -> list[tuple[str, bytes, Any]]:
+    """The members of `mapping` in RFC 8785 order, each as its key, the key written as
+    canonical JSON with its colon, and its value. The order is by the UTF-16 code units of
+    the keys, as canonical_json sorts them: a character beyond the BMP sorts as its
+    surrogate pair, before U+E000 to U+FFFF. A key that is not a string is refused, as
+    canonical_json refuses it, and so is a key it cannot write."""
+    members = []
+    for key, value in mapping.items():
+        if not isinstance(key, str):
+            raise CanonicalJsonError(f"$: object key of type {type(key).__name__} is not a string")
+        members.append((key, canonical_json(key) + b":", value))
+    members.sort(key=lambda member: member[0].encode("utf-16-be"))
+    return members
 
 
 def _stored_by_family(uri: str, stored: bytes) -> dict[str, int]:
