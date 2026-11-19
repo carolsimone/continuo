@@ -3,11 +3,14 @@ import json
 
 import pytest
 from continuo_contracts.canonical import canonical_json
-from continuo_contracts.fingerprints import hashed_config_denylist
+from continuo_contracts.fingerprints import classify, hashed_config_denylist
 from continuo_contracts.hashing import fold4, shared_fold
+from continuo_contracts.vocabulary import continuo_values
 
+from config.config import _SYSTEM_RELATIONS
 from domain.exceptions import InvalidNodeSettingError
 from domain.model import CompileExtras, SeedExtras
+from service.contract_bundle import store_contracts
 from service.dbt_hashing import (
     ManifestContext,
     RunMask,
@@ -350,17 +353,89 @@ def test_hash_dbt_node_folds_the_units_and_names_its_inputs():
     assert set(parts.units) == {"macro.fpshop.m", "operation.fpshop.fpshop-on-run-start-0"}
 
 
-@pytest.mark.parametrize("resource_type", ["seed", "snapshot", "test"])
-def test_an_enforced_contract_is_hashed_on_models_only(resource_type):
-    contract = {"config": {"contract": {"enforced": True}},
-                "columns": {"id": {"name": "id", "data_type": "integer"}},
-                "constraints": [{"type": "primary_key", "columns": ["id"]}]}
-    other = hash_dbt_node(_node(resource_type, **contract), _ctx())
-    assert not {"contract.columns", "constraints"} & other.inputs
-    assert not {"columns", "constraints"} & other.hashed_config.keys()
-    model = hash_dbt_node(_node("model", **contract), _ctx())
-    assert {"contract.columns", "constraints"} <= model.inputs
-    assert {"columns", "constraints"} <= model.hashed_config.keys()
+_ENFORCED = {"config": {"contract": {"enforced": True}},
+             "columns": {"id": {"name": "id", "data_type": "integer"}},
+             "constraints": [{"type": "primary_key", "columns": ["id"]}]}
+
+
+def _folds_the_declared_columns_and_constraints(resource_type: str) -> bool:
+    """Whether an enforced node of this type has its declared columns and constraints in its
+    hashed config, which is also whether it names them as hash inputs. The flag itself is in
+    the hashed config either way."""
+    parts = hash_dbt_node(_node(resource_type, **_ENFORCED), _ctx())
+    assert parts.hashed_config["contract"] == {"enforced": True}
+    folded = {"columns", "constraints"} & parts.hashed_config.keys()
+    named = {"contract.columns", "constraints"} & parts.inputs
+    assert (folded, named) in (({"columns", "constraints"}, {"contract.columns", "constraints"}), (set(), set()))
+    return bool(folded)
+
+
+def test_an_enforced_model_contract_is_folded_into_hashed_config():
+    assert _folds_the_declared_columns_and_constraints("model")
+    for name in ("contract.columns", "constraints"):
+        entry = classify("dbt-model", name)
+        assert entry is not None and entry.when is not None and entry.when.condition == "enforced", name
+
+
+def test_an_enforced_seed_contract_is_not_folded_into_hashed_config():
+    """dbt ignores a seed's `contract.enforced`: it builds a seed that sets the flag and declares
+    columns its CSV lacks and constraints from the CSV alone (dbt 1.12.0-b1, postgres), and the
+    manifest gives a seed no `contract`. The flag stays in the hashed config as a plain config
+    key, and the declared columns and constraints stay out of it."""
+    assert not _folds_the_declared_columns_and_constraints("seed")
+    assert classify("dbt-seed", "contract.columns") is None
+    assert classify("dbt-seed", "constraints") is None
+
+
+def test_an_enforced_snapshot_contract_is_not_folded_into_hashed_config():
+    """The hashed config of a snapshot holds the flag but not its declared columns and
+    constraints. This agrees with the dbt-snapshot entries of fingerprints.yaml, which have no
+    `when: enforced` and classify neither input, so the hashing and the declaration move
+    together."""
+    assert not _folds_the_declared_columns_and_constraints("snapshot")
+    assert classify("dbt-snapshot", "contract.columns") is None
+    assert classify("dbt-snapshot", "constraints") is None
+    declared = classify("dbt-snapshot", "odcs.schema.properties.name")
+    assert declared is not None and declared.when is None
+
+
+def test_an_enforced_flag_on_a_test_is_not_folded_into_hashed_config():
+    assert not _folds_the_declared_columns_and_constraints("test")
+
+
+def _enforced_dbt_node(resource_type: str) -> dict:
+    """A node of the project `shop` as dbt writes it, with an enforced contract."""
+    paths = {"model": "models/{}.sql", "seed": "seeds/{}.csv", "snapshot": "snapshots/{}.sql"}
+    name = f"enforced_{resource_type}"
+    source = "" if resource_type == "seed" else "select 1 as id"
+    return {
+        "unique_id": f"{resource_type}.shop.{name}", "resource_type": resource_type, "name": name,
+        "schema": "analytics", "fqn": ["shop", name], "tags": ["daily"],
+        "original_file_path": paths[resource_type].format(name),
+        "config": {"materialized": resource_type if resource_type != "model" else "table",
+                   "meta": {"owner": "team-a"}, "contract": {"enforced": True}},
+        "checksum": {"name": "sha256", "checksum": "ab" * 32}, "raw_code": source, "compiled_code": source,
+        "depends_on": {"macros": [], "nodes": []},
+        "columns": {"id": {"name": "id", "data_type": "integer", "constraints": [{"type": "not_null"}]},
+                    "amount": {"name": "amount", "data_type": "numeric(12,2)"}},
+        **({"constraints": [{"type": "primary_key", "columns": ["id"]}]} if resource_type == "model" else {}),
+    }
+
+
+@pytest.mark.parametrize("resource_type", ["model", "seed", "snapshot"])
+def test_the_stored_dbt_contract_of_an_enforced_node_holds_contract_enforced(tmp_path, resource_type):
+    node = _enforced_dbt_node(resource_type)
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps({"metadata": {"project_name": "shop"}, "macros": {}, "nodes": {node["unique_id"]: node}}))
+
+    parsed = parse_manifest(str(path))
+    (stored,) = store_contracts(parsed.nodes, {}, _SYSTEM_RELATIONS["postgres"])
+
+    assert parsed.failed == ()
+    assert continuo_values(stored.document["customProperties"])["contractEnforced"] is True
+    (parsed_node,) = parsed.nodes
+    assert parsed_node.hashed_config["contract"]["enforced"] is True
+    assert ("columns" in parsed_node.hashed_config) == (resource_type == "model")
 
 
 def test_a_contract_foreign_key_to_the_node_database_is_masked():
