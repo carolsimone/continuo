@@ -33,7 +33,14 @@ from tests.fakes import (
     make_uploader,
     source_of,
 )
-from tests.fingerprint_fixtures import VARIANTS, manifest_and_context, variant_paths
+from tests.fingerprint_fixtures import (
+    VARIANTS,
+    column_tests,
+    enforced_dbt_node,
+    manifest_and_context,
+    stored_dbt_contracts,
+    variant_paths,
+)
 
 FAMILY = {"model": "dbt-model", "seed": "dbt-seed", "snapshot": "dbt-snapshot", "test": "dbt-test"}
 
@@ -81,6 +88,8 @@ _FPSHOP_SERVICE = "fpshop"
 _DBT_FAMILIES = ("dbt-model", "dbt-seed", "dbt-snapshot")
 
 
+# The walk below mirrors the one in continuo-contracts' tests/test_fingerprints_guard.py, so a
+# field gets here the name that file's inputs lists give it.
 def _holds_objects(value: Any) -> bool:
     return isinstance(value, dict) or (isinstance(value, list) and any(isinstance(item, dict) for item in value))
 
@@ -174,7 +183,10 @@ def test_the_odcs_inputs_of_a_contract_are_named_as_fingerprints_yaml_names_them
 
 def test_the_stored_dbt_contracts_cover_every_dbt_family_and_the_fields_a_dbt_node_holds():
     """The guard below is not vacuous: the variants' stored contracts hold a model, a seed and a
-    snapshot, and between them the fields of each that a node of the fixture project can set."""
+    snapshot, and between them the fields of each that the fixture project's nodes set. The
+    fixture seeds declare no columns, so a seed's property fields are checked by the test of
+    declared columns below, and a field no fixture sets is checked by continuo-contracts' own
+    guard."""
     names: dict[str, set[str]] = {family: set() for family in _DBT_FAMILIES}
     for _, family, _, stored in _all_stored_dbt_contracts():
         names[family] |= _odcs_inputs(stored)
@@ -190,7 +202,7 @@ def test_the_stored_dbt_contracts_cover_every_dbt_family_and_the_fields_a_dbt_no
             "odcs.schema.properties.quality.metric", "odcs.schema.custom.reads", "odcs.custom.contractEnforced",
             "odcs.custom.access", "odcs.custom.group", "odcs.custom.freshnessBuildAfter", "odcs.description.purpose",
         },
-        "dbt-seed": set(),
+        "dbt-seed": set(),  # the fixture seeds declare no columns
         "dbt-snapshot": {"odcs.custom.snapshot", "odcs.schema.properties.name"},
     }
     floor = {"dbt-model": 25, "dbt-seed": 12, "dbt-snapshot": 15}
@@ -211,3 +223,30 @@ def test_every_field_of_a_stored_dbt_contract_is_classified(variant):
             if entry is None or entry.fingerprint not in ("contract", "both"):
                 missing[(family, name)] = unique_id
     assert not missing, (variant, missing)
+
+
+@pytest.mark.parametrize("resource_type", ["seed", "snapshot"])
+def test_every_field_of_an_enforced_seed_and_snapshot_with_declared_columns_is_classified(tmp_path, resource_type):
+    """A seed or a snapshot that declares described and tagged columns with data types, with
+    not_null and unique tests and an enforced contract, stored as the bundle stores it, holds the
+    property fields the fixture seeds lack, and each is classified for its family as moving the
+    contract."""
+    family = f"dbt-{resource_type}"
+    node = enforced_dbt_node(resource_type, described=True)
+    _, (stored,) = stored_dbt_contracts(str(tmp_path), node, *column_tests(node))
+    assert continuo_values(stored.document["customProperties"])["kind"] == family
+
+    names = _odcs_inputs(stored.document)
+
+    assert {
+        "odcs.custom.contractEnforced", "odcs.description.purpose", "odcs.schema.description",
+        "odcs.schema.properties.name", "odcs.schema.properties.physicalType", "odcs.schema.properties.logicalType",
+        "odcs.schema.properties.description", "odcs.schema.properties.tags",
+        "odcs.schema.properties.required", "odcs.schema.properties.unique",
+    } <= names
+    missing = {}
+    for name in sorted(names):
+        entry = fingerprints.classify(family, name)
+        if entry is None or entry.fingerprint not in ("contract", "both"):
+            missing[name] = None if entry is None else entry.fingerprint
+    assert not missing, (family, missing)

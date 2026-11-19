@@ -7,10 +7,8 @@ from continuo_contracts.fingerprints import classify, hashed_config_denylist
 from continuo_contracts.hashing import fold4, shared_fold
 from continuo_contracts.vocabulary import continuo_values
 
-from config.config import _SYSTEM_RELATIONS
 from domain.exceptions import InvalidNodeSettingError
 from domain.model import CompileExtras, SeedExtras
-from service.contract_bundle import store_contracts
 from service.dbt_hashing import (
     ManifestContext,
     RunMask,
@@ -28,6 +26,7 @@ from service.dbt_hashing import (
     static_macro_calls,
 )
 from service.parser import parse_manifest
+from tests.fingerprint_fixtures import enforced_dbt_node, stored_dbt_contracts
 
 RUN = RunMask(invocation_id="9ef3e1e9-a285-49db-8ad9-7eef23da70ef", run_started_at="2026-06-16T04:48:59.438570+00:00")
 
@@ -375,13 +374,15 @@ def test_an_enforced_model_contract_is_folded_into_hashed_config():
     for name in ("contract.columns", "constraints"):
         entry = classify("dbt-model", name)
         assert entry is not None and entry.when is not None and entry.when.condition == "enforced", name
+        assert entry.moves("config"), name
 
 
 def test_an_enforced_seed_contract_is_not_folded_into_hashed_config():
-    """dbt ignores a seed's `contract.enforced`: it builds a seed that sets the flag and declares
-    columns its CSV lacks and constraints from the CSV alone (dbt 1.12.0-b1, postgres), and the
-    manifest gives a seed no `contract`. The flag stays in the hashed config as a plain config
-    key, and the declared columns and constraints stay out of it."""
+    """dbt-core 1.12.0b1 with the postgres adapter ignores a seed's `contract.enforced`: the seed
+    materialization reads no contract, the manifest gives a seed no `contract`, and a seed that
+    sets the flag and declares columns its CSV lacks, with constraints, builds a table whose
+    column types and nullability come from the CSV alone. The flag stays in the hashed config as
+    a plain config key, and the declared columns and constraints stay out of it."""
     assert not _folds_the_declared_columns_and_constraints("seed")
     assert classify("dbt-seed", "contract.columns") is None
     assert classify("dbt-seed", "constraints") is None
@@ -403,35 +404,10 @@ def test_an_enforced_flag_on_a_test_is_not_folded_into_hashed_config():
     assert not _folds_the_declared_columns_and_constraints("test")
 
 
-def _enforced_dbt_node(resource_type: str) -> dict:
-    """A node of the project `shop` as dbt writes it, with an enforced contract."""
-    paths = {"model": "models/{}.sql", "seed": "seeds/{}.csv", "snapshot": "snapshots/{}.sql"}
-    name = f"enforced_{resource_type}"
-    source = "" if resource_type == "seed" else "select 1 as id"
-    return {
-        "unique_id": f"{resource_type}.shop.{name}", "resource_type": resource_type, "name": name,
-        "schema": "analytics", "fqn": ["shop", name], "tags": ["daily"],
-        "original_file_path": paths[resource_type].format(name),
-        "config": {"materialized": resource_type if resource_type != "model" else "table",
-                   "meta": {"owner": "team-a"}, "contract": {"enforced": True}},
-        "checksum": {"name": "sha256", "checksum": "ab" * 32}, "raw_code": source, "compiled_code": source,
-        "depends_on": {"macros": [], "nodes": []},
-        "columns": {"id": {"name": "id", "data_type": "integer", "constraints": [{"type": "not_null"}]},
-                    "amount": {"name": "amount", "data_type": "numeric(12,2)"}},
-        **({"constraints": [{"type": "primary_key", "columns": ["id"]}]} if resource_type == "model" else {}),
-    }
-
-
 @pytest.mark.parametrize("resource_type", ["model", "seed", "snapshot"])
 def test_the_stored_dbt_contract_of_an_enforced_node_holds_contract_enforced(tmp_path, resource_type):
-    node = _enforced_dbt_node(resource_type)
-    path = tmp_path / "manifest.json"
-    path.write_text(json.dumps({"metadata": {"project_name": "shop"}, "macros": {}, "nodes": {node["unique_id"]: node}}))
+    parsed, (stored,) = stored_dbt_contracts(str(tmp_path), enforced_dbt_node(resource_type))
 
-    parsed = parse_manifest(str(path))
-    (stored,) = store_contracts(parsed.nodes, {}, _SYSTEM_RELATIONS["postgres"])
-
-    assert parsed.failed == ()
     assert continuo_values(stored.document["customProperties"])["contractEnforced"] is True
     (parsed_node,) = parsed.nodes
     assert parsed_node.hashed_config["contract"]["enforced"] is True

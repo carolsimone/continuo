@@ -203,9 +203,9 @@ def hashed_config(node: Mapping, ctx: ManifestContext) -> dict:
 def _contract_enforced(node: Mapping) -> bool:
     """Whether the hashed config folds the node's declared columns and constraints:
     only for a model whose contract is enforced. A seed's flag stays a plain config
-    value, since dbt ignores it, and a snapshot's enforced contract is not folded, as
-    fingerprints.yaml declares for dbt-snapshot (its declared columns carry no
-    `when: enforced`). A test sets no contract."""
+    value, since dbt-core 1.12.0b1 with the postgres adapter ignores it, and a snapshot's
+    enforced contract is not folded, as fingerprints.yaml declares for dbt-snapshot (its
+    declared columns carry no `when: enforced`). A test sets no contract."""
     return node.get("resource_type") == "model" and (
         ((node.get("config") or {}).get("contract") or {}).get("enforced") is True)
 
