@@ -646,9 +646,10 @@ def test_a_seed_columns_hash_canonical_json_refuses_rejects_the_artifact(tmp_pat
     manifest = {"metadata": {}, "nodes": {"seed.svc.users": {
         "resource_type": "seed", "name": "users", "schema": "analytics", "fqn": ["svc", "users"], "tags": ["daily"],
         "original_file_path": "seeds/users.csv", "raw_code": "", "config": {"meta": {"owner": "o"}, "materialized": "seed"},
+        "columns": {"id": {"name": "id"}},
         "checksum": {"name": "sha256", "checksum": "ab" * 32}}}}
     (tmp_path / "manifest.json").write_text(json.dumps(manifest))
-    seed = SeedExtras(sha256="cd" * 32, header=("id\ud800",), column_types={})
+    seed = SeedExtras(sha256="cd" * 32, header=("id",), column_types={"id": "int\ud800"})
     extras = CompileExtras(service="svc", release_id="r", seeds={"seed.svc.users": seed}, project_flags={}, packages={})
     with pytest.raises(InvalidNodeSettingError, match="analytics.users"):
         parse_manifest(str(tmp_path / "manifest.json"), extras=extras)

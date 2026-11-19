@@ -1642,7 +1642,8 @@ def test_the_handler_logs_each_path_checksum_seed(tmp_path, caplog):
 
 def test_the_topology_entry_carries_seed_columns_hash_only_when_set(tmp_path):
     seed = dbt_node("seed_countries") | {"unique_id": "seed.service-1.seed_countries", "resource_type": "seed",
-                                          "compiled_code": ""}
+                                          "compiled_code": "",
+                                          "columns": {"code": {"name": "code"}, "name": {"name": "name"}}}
     plain = dbt_node("plain_seed") | {"unique_id": "seed.service-1.plain_seed", "resource_type": "seed",
                                        "compiled_code": ""}
     source = source_with_nodes(tmp_path, seed, plain)
@@ -1681,6 +1682,7 @@ def test_the_reader_of_an_ephemeral_model_depends_on_it_and_on_the_tables_it_inl
 def test_topology_carries_materialized_full_refresh_and_seed_columns(tmp_path):
     seed = dbt_node("seed_fx_rates_eur") | {
         "unique_id": "seed.service-1.seed_fx_rates_eur", "resource_type": "seed", "compiled_code": "",
+        "columns": {"currency": {"name": "currency"}, "rate_to_eur": {"name": "rate_to_eur"}},
         "config": {"meta": {"owner": "team-a"}, "materialized": "seed", "full_refresh": True}}
     plain_seed = dbt_node("plain_seed") | {
         "unique_id": "seed.service-1.plain_seed", "resource_type": "seed", "compiled_code": "",
