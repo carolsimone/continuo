@@ -15,6 +15,11 @@ from service.contract_validation import ContractValidator
 from tests.fakes import FakeClock, ScriptedMemoryProbe
 
 
+def _dbt_contracts(estate) -> int:
+    """The dbt nodes of the estate that get a contract: its models and seeds (a test has none)."""
+    return estate.models + estate.seeds
+
+
 def _run(estate, store, **kwargs):
     handler, publisher = build_handler(estate, store, clock=kwargs.pop("clock", FakeClock()),
                                        memory=ScriptedMemoryProbe(0), **kwargs)
@@ -56,7 +61,9 @@ def test_progress_is_reported_after_every_manifest_and_every_node_of_every_per_n
     monkeypatch.setattr(candidate_manifest_handler, "referenced_tables", slow_resolve)
     calls = []
     _run(estate, _SlowStore(estate.objects), clock=clock, progress=lambda: calls.append(clock.t))
-    assert len(calls) == len(estate.requests) + 2 * estate.dbt_nodes
+    # One call after each manifest and one per node in the resolve and the build, and
+    # one per dbt contract in the parse and in the stored form.
+    assert len(calls) == len(estate.requests) + 2 * estate.dbt_nodes + 2 * _dbt_contracts(estate)
     assert max(b - a for a, b in zip(calls, calls[1:])) <= 1.0
 
 
@@ -75,7 +82,7 @@ def test_progress_is_reported_after_a_node_that_fails_to_resolve(monkeypatch):
     handler.handle(estate.release_id)
 
     assert not publisher.ok
-    assert len(calls) == len(estate.requests) + estate.dbt_nodes
+    assert len(calls) == len(estate.requests) + estate.dbt_nodes + _dbt_contracts(estate)
 
 
 def test_progress_is_reported_after_a_node_whose_build_fails():
@@ -100,17 +107,15 @@ def test_progress_is_reported_after_a_node_whose_build_fails():
 
 
 def _the_validator_of_each_test_starts_empty(monkeypatch) -> list[int]:
-    """Give the ODCS parse a validator of its own (the process's has seen other
-    tests' contracts) and return a list that gets one entry per schema check
-    that really runs."""
+    """Give the dbt and ODCS parses one validator of their own (the process's has
+    seen other tests' contracts) and return a list that gets one entry per schema
+    check that really runs."""
     validator = ContractValidator()
     real_parser_for = candidate_manifest_handler.parser_for
 
     def parser_for(kind):
         parser = real_parser_for(kind)
-        if kind == ManifestKind.PYTHON_ODCS:
-            return dataclasses.replace(parser, parse=functools.partial(parser.parse, validator=validator))
-        return parser
+        return dataclasses.replace(parser, parse=functools.partial(parser.parse, validator=validator))
 
     monkeypatch.setattr(candidate_manifest_handler, "parser_for", parser_for)
     schema_checks: list[int] = []
@@ -133,8 +138,11 @@ def _with_one_contract_changed(estate, position):
 
 
 def test_a_warm_pass_validates_only_the_changed_contracts(monkeypatch):
+    """The dbt and Python contracts share one validator, so a warm pass checks none of
+    either again, and a changed Python contract is the only check of the next pass."""
     estate = generate_estate(100)
     assert estate.python_nodes == 10
+    dbt = _dbt_contracts(estate)
     schema_checks = _the_validator_of_each_test_starts_empty(monkeypatch)
 
     def parse(objects):
@@ -146,9 +154,9 @@ def test_a_warm_pass_validates_only_the_changed_contracts(monkeypatch):
         assert publisher.ok, publisher.failure
         return len(schema_checks), dict(timings.validation_cache)
 
-    assert parse(estate.objects) == (10, {"hit": 0, "miss": 10})
-    assert parse(estate.objects) == (0, {"hit": 10, "miss": 0})
-    assert parse(_with_one_contract_changed(estate, position=4)) == (1, {"hit": 9, "miss": 1})
+    assert parse(estate.objects) == (10 + dbt, {"hit": 0, "miss": 10 + dbt})
+    assert parse(estate.objects) == (0, {"hit": 10 + dbt, "miss": 0})
+    assert parse(_with_one_contract_changed(estate, position=4)) == (1, {"hit": 9 + dbt, "miss": 1})
 
 
 def test_progress_runs_at_least_once_per_python_node_in_every_per_node_stage(monkeypatch):
@@ -185,6 +193,8 @@ def test_progress_runs_at_least_once_per_python_node_in_every_per_node_stage(mon
     _run(estate, _SlowStore(estate.objects), clock=clock, progress=lambda: calls.append(clock.t))
 
     # One call after each manifest and one per node in the resolve and the build,
-    # and one per Python node in the contract validation and in the stored form.
-    assert len(calls) == len(estate.requests) + 2 * estate.dbt_nodes + 4 * estate.python_nodes
+    # one per Python node in the contract validation and in the stored form, and
+    # one per dbt contract in the parse and in the stored form.
+    assert len(calls) == (
+        len(estate.requests) + 2 * estate.dbt_nodes + 4 * estate.python_nodes + 2 * _dbt_contracts(estate))
     assert max(b - a for a, b in zip(calls, calls[1:])) <= 1.0

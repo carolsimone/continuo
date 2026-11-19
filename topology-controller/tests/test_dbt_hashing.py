@@ -145,8 +145,8 @@ def test_compiled_part_is_the_masked_compiled_code_of_models_and_snapshots_only(
 def _manifest(tmp_path, config: dict, raw_code: str = "select 1") -> str:
     manifest = {"metadata": {}, "nodes": {"model.svc.deep": {
         "resource_type": "model", "name": "deep", "schema": "analytics", "fqn": ["svc", "deep"], "tags": ["daily"],
-        "raw_code": raw_code, "compiled_code": "select 1",
-        "config": {"meta": {"owner": "o"}, **config}}}}
+        "original_file_path": "models/deep.sql", "raw_code": raw_code, "compiled_code": "select 1",
+        "config": {"meta": {"owner": "o"}, "materialized": "table", **config}}}}
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(manifest))
     return str(path)
@@ -594,7 +594,8 @@ def test_a_bare_call_an_imported_package_also_defines_still_reaches_the_built_in
 def test_a_seed_columns_hash_canonical_json_refuses_rejects_the_artifact(tmp_path):
     manifest = {"metadata": {}, "nodes": {"seed.svc.users": {
         "resource_type": "seed", "name": "users", "schema": "analytics", "fqn": ["svc", "users"], "tags": ["daily"],
-        "raw_code": "", "config": {"meta": {"owner": "o"}}, "checksum": {"name": "sha256", "checksum": "ab" * 32}}}}
+        "original_file_path": "seeds/users.csv", "raw_code": "", "config": {"meta": {"owner": "o"}, "materialized": "seed"},
+        "checksum": {"name": "sha256", "checksum": "ab" * 32}}}}
     (tmp_path / "manifest.json").write_text(json.dumps(manifest))
     seed = SeedExtras(sha256="cd" * 32, header=("id\ud800",), column_types={})
     extras = CompileExtras(service="svc", release_id="r", seeds={"seed.svc.users": seed}, project_flags={}, packages={})

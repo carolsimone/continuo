@@ -1,7 +1,12 @@
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
-from domain.exceptions import InvalidCompiledSqlError, InvalidOdcsBundleError, UnqualifiedTableReferenceError
+from domain.exceptions import (
+    ContractGenerationError,
+    InvalidCompiledSqlError,
+    InvalidOdcsBundleError,
+    UnqualifiedTableReferenceError,
+)
 from domain.external import SystemRelations, unknown_external_nodes
 from domain.model import (
     DEFAULT_TENANT_ID,
@@ -159,26 +164,30 @@ class CandidateManifestHandler:
     unreachable, a 5xx) propagates to the consumer, which pauses and redelivers
     the same message; nothing is published, so the release waits in parsing.
     Any other write failure publishes status=failed with kind internal. So does
-    a python contract the library refuses to store for any other reason: it
-    passed every check, so that is a defect, counted and reported as internal.
+    a contract, dbt or python, the library refuses to store for any other
+    reason: it passed every check, so that is a defect, counted and reported
+    as internal. A parse that raises ContractGenerationError (the contracts
+    library failed on a dbt manifest in a way the manifest does not explain)
+    is a defect too, reported as internal, never as invalid_artifact.
 
     Failures publish status=failed with a typed failure_kind and return
     normally so the consumer ACKs. A node whose SQL sqlglot cannot parse, or
     that references a relation without a schema, is collected rather than
-    fatal on first sight, and so is a python contract the parse of its bundle
-    finds invalid (the parse reports it as a failed node, with its own
-    failure kind) and a python contract whose read queries name a table it
-    cannot list as <schema>.<table> (invalid_contract, found by the resolve
+    fatal on first sight, and so is a contract, a dbt node's or a python
+    node's, that the parse of its manifest or bundle finds invalid (the parse
+    reports it as a failed node, with its own failure kind) and a contract
+    that cannot list as <schema>.<table> a table its node's SQL names, or that
+    a dbt contract declares it reads (invalid_contract, found by the resolve
     step, which has the tables each node reads): every valid node is resolved,
-    then one publish_failed
-    carries the whole failed set (failure_kind by contract precedence) so the
-    operator sees every broken node at once, in node id order whatever the
-    order of the manifests. An unreadable, empty, or wrong-service artifact
-    (and a manifest of an unknown kind) is invalid_artifact; a missing builder,
-    missing image tags or a refused S3 write is internal. Neither carries
-    failed nodes. Such an artifact-level error fails the release at once, so
-    its publish carries no failed nodes even when earlier manifests reported
-    invalid contracts.
+    then one publish_failed carries the whole failed set of every manifest
+    (failure_kind by contract precedence) so the operator sees every broken
+    node at once, in node id order whatever the order of the manifests. An
+    unreadable, empty, or wrong-service artifact (and a manifest of an
+    unknown kind) is invalid_artifact; a missing builder, missing image tags,
+    a refused S3 write or a defect of the contracts library is internal.
+    Neither carries failed nodes. Such an artifact-level error fails the
+    release at once, so its publish carries no failed nodes even when earlier
+    manifests reported invalid contracts.
 
     dialect is the sqlglot dialect of the warehouse the install targets,
     supplied by the composition root from the configured engine. It governs
@@ -225,17 +234,21 @@ class CandidateManifestHandler:
     record to observer; a handler that raised published nothing, logs no such
     line and tells the observer nothing.
 
-    progress is called once after each manifest's parse, once after each node's
-    resolve and once after each node's build, a failed one included, so the
-    caller can tell a release that is working through its nodes from one that
-    has stopped. Between two calls the handler does one manifest's parse (after
-    the in-memory bookkeeping of the manifest before it: skip logging,
-    shared-code namespacing, service checks), one node's resolve or one node's
-    build, except in these stretches, each of which must end within the
-    caller's staleness budget:
-    - from the start through the first manifest's parse: the image-tag check,
-      the listing of every manifest (every manifest's download included) and
-      that parse;
+    progress is called by a manifest's parse after each contract it reads (a
+    python contract) or generates (a dbt node's), and by the handler once after
+    each manifest's parse, once after each node's resolve and once after each
+    node's build, a failed one included, so the caller can tell a release that
+    is working through its nodes from one that has stopped. Between two calls
+    the handler does one contract's share of a parse (a python contract's checks
+    and node, a dbt node's contract, checks, hashes and node), one manifest's
+    work around its contracts (before the first: the manifest's reading and the
+    join of its tests, after the bookkeeping of the manifest before it: skip
+    logging, shared-code namespacing, service checks; after the last: the hashes
+    of its tests), one node's resolve or one node's build, except in these
+    stretches, each of which must end within the caller's staleness budget:
+    - from the start through the first contract of the first manifest's parse:
+      the image-tag check, the listing of every manifest (every manifest's
+      download included), that manifest's reading and that contract;
     - from the last manifest's parse through the first node's resolve: that
       manifest's own bookkeeping (skip logging, shared-code namespacing,
       service checks), the node registry and its lookup and the rewrite context
@@ -342,6 +355,17 @@ class CandidateManifestHandler:
                         mf, skipped=manifest_skips, progress=self._progress, timings=self._timings,
                     )
                     record.add(nodes=len(parsed.nodes))
+            except ContractGenerationError as exc:
+                # A defect of the contracts library, not of the team's
+                # manifest: the release fails as internal and is never blamed
+                # on the artifact.
+                logger.error(
+                    "candidate: the contracts library failed on a manifest",
+                    exc_info=exc,
+                    extra={"release_id": release_id, "service": mf.declared_service, "path": mf.path},
+                )
+                self._fail(release_id, ParseFailureKind.INTERNAL, f"{mf.declared_service or mf.path}: {exc}")
+                return
             except parser.permanent_errors as exc:
                 # Invalid JSON or yaml, a missing required key, or a malformed
                 # node are all permanent — re-delivery cannot fix them, so

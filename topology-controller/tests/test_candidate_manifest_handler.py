@@ -250,13 +250,17 @@ def test_handle_publishes_failed_on_missing_nodes_key(tmp_path):
     publisher.publish_ok.assert_not_called()
 
 
-def test_the_failed_detail_of_a_node_with_unreadable_tags_names_the_node(tmp_path):
+def test_the_failed_node_of_a_node_with_unreadable_tags_carries_the_librarys_message(tmp_path):
+    """A node's field the library cannot read leaves the node with no contract: it is
+    one invalid contract of the release, named by its unique_id, whose detail is the
+    library's message naming the node as the manifest does."""
     bad = tmp_path / "bad_tags.json"
     bad.write_text(json.dumps({
         "nodes": {
             "model.svc.t": {
                 "resource_type": "model", "name": "t", "schema": "s", "fqn": ["svc", "t"],
-                "config": {"meta": {"owner": "team"}}, "tags": "daily",
+                "original_file_path": "models/t.sql",
+                "config": {"materialized": "table", "meta": {"owner": "team"}}, "tags": "daily",
             }
         }
     }))
@@ -267,9 +271,12 @@ def test_the_failed_detail_of_a_node_with_unreadable_tags_names_the_node(tmp_pat
     build_handler(source, publisher, make_uploader()).handle(release_id="rel-bad-tags")
 
     kw = _failed_kwargs(publisher)
-    assert kw["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
-    assert kw["detail"] == (
-        f"{bad}: InvalidNodeSettingError('model.svc.t: tags must be a list of strings, got str')")
+    assert kw["failure_kind"] == ParseFailureKind.INVALID_CONTRACT
+    assert kw["detail"] == "1 node failed to parse: s.t"
+    assert kw["failed_nodes"] == [FailedNode(
+        node_id="s.t", kind=ParseFailureKind.INVALID_CONTRACT, service="svc", file_path="models/t.sql",
+        node_type="dbt-model", detail="model.svc.t: tags must be a list of strings, got str",
+    )]
 
 
 def test_handle_publishes_failed_on_node_with_empty_fqn(tmp_path):
@@ -304,7 +311,7 @@ def test_handle_publishes_failed_on_node_with_empty_fqn(tmp_path):
     publisher.publish_ok.assert_not_called()
 
 
-def test_a_bad_dbt_timeout_fails_the_whole_release_as_invalid_artifact(tmp_path):
+def test_a_bad_dbt_timeout_fails_the_release_as_an_invalid_contract(tmp_path):
     bad = tmp_path / "bad_timeout.json"
     bad.write_text(json.dumps({
         "macros": {},
@@ -314,7 +321,8 @@ def test_a_bad_dbt_timeout_fails_the_whole_release_as_invalid_artifact(tmp_path)
                 "name": "t",
                 "schema": "s",
                 "fqn": ["svc", "t"],
-                "config": {"meta": {"owner": "team", "timeout_minutes": "2h"}},
+                "original_file_path": "models/t.sql",
+                "config": {"materialized": "table", "meta": {"owner": "team", "timeout_minutes": "2h"}},
                 "tags": ["daily"],
             }
         },
@@ -328,9 +336,11 @@ def test_a_bad_dbt_timeout_fails_the_whole_release_as_invalid_artifact(tmp_path)
     handler.handle(release_id="rel-bad-timeout")  # must NOT raise
 
     kw = _failed_kwargs(publisher)
-    assert kw["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
-    assert "s.t" in kw["detail"]
-    assert "meta.timeout_minutes" in kw["detail"]
+    assert kw["failure_kind"] == ParseFailureKind.INVALID_CONTRACT
+    assert kw["detail"] == "1 node failed to parse: s.t"
+    (failed,) = kw["failed_nodes"]
+    assert (failed.node_id, failed.kind, failed.file_path) == ("s.t", ParseFailureKind.INVALID_CONTRACT, "models/t.sql")
+    assert "`timeoutMinutes` is '2h'" in failed.detail
     publisher.publish_ok.assert_not_called()
 
 
@@ -421,9 +431,10 @@ def test_handle_publishes_failed_service_mismatch(tmp_path):
                 "name": "orders",
                 "schema": "test_schema",
                 "fqn": ["service-2", "orders"],
+                "original_file_path": "models/orders.sql",
                 "tags": ["daily"],
                 "resource_type": "model",
-                "config": {"meta": {"owner": "team-b", "criticality": "SECONDARY"}},
+                "config": {"materialized": "table", "meta": {"owner": "team-b", "criticality": "SECONDARY"}},
                 "compiled_code": "SELECT 1",
                 "checksum": {"name": "sha256", "checksum": "abc123"},
             }
@@ -756,7 +767,8 @@ def _manifest_with_single_macro(
                 "name": node_name,
                 "schema": "public",
                 "fqn": [service],
-                "config": {"meta": {"owner": "team"}},
+                "original_file_path": f"models/{node_name}.sql",
+                "config": {"materialized": "table", "meta": {"owner": "team"}},
                 "tags": ["nightly"],
                 "checksum": {"name": "sha256", "checksum": f"source-{node_name}"},
                 "depends_on": {"macros": ["macro.svc.m1"]},
@@ -1229,9 +1241,11 @@ def test_upstream_unique_ids_match_node_unique_id_exactly_with_mixed_case(tmp_pa
                 "name": "upstream_table",
                 "schema": "Analytics",  # Mixed case
                 "fqn": ["service1", "upstream_table"],
+                "original_file_path": "models/upstream_table.sql",
                 "tags": ["daily"],
                 "resource_type": "model",
                 "config": {
+                    "materialized": "table",
                     "meta": {"owner": "team-a", "criticality": "CORE"}
                 },
                 "compiled_code": "SELECT 1 AS id",
@@ -1242,9 +1256,11 @@ def test_upstream_unique_ids_match_node_unique_id_exactly_with_mixed_case(tmp_pa
                 "name": "downstream_table",
                 "schema": "BusinessLayer",  # Mixed case
                 "fqn": ["service1", "downstream_table"],
+                "original_file_path": "models/downstream_table.sql",
                 "tags": ["daily"],
                 "resource_type": "model",
                 "config": {
+                    "materialized": "table",
                     "meta": {"owner": "team-a", "criticality": "CORE"}
                 },
                 "compiled_code": "SELECT * FROM Analytics.upstream_table",
@@ -1282,13 +1298,19 @@ def test_handle_returns_the_timings_of_every_stage_that_ran():
     timings = build_handler(source, MagicMock(), make_uploader(), clock=FakeClock(step=1.0)).handle(release_id="rel-1")
     ran = {stage: record for stage, record in timings.stages.items() if record.runs}
     assert set(ran) == {Stage.DOWNLOAD, Stage.DBT_PARSE, Stage.REGISTRY, Stage.RESOLVE, Stage.REWRITE,
-                        Stage.CANDIDATE_UPLOAD, Stage.CODE_BUNDLE, Stage.CANONICAL_HASHING, Stage.CONTRACT_BUNDLE,
+                        Stage.CANDIDATE_UPLOAD, Stage.CODE_BUNDLE, Stage.CONTRACT_GENERATION,
+                        Stage.CONTRACT_VALIDATION, Stage.CANONICAL_HASHING, Stage.CONTRACT_BUNDLE,
                         Stage.TOPOLOGY_ARTIFACT, Stage.PUBLISH}
     assert ran[Stage.DOWNLOAD].counts == {"manifests": 2, "bytes": 0}
     assert ran[Stage.DBT_PARSE].runs == 2
     assert ran[Stage.RESOLVE].counts == {"nodes": 2}
     assert (ran[Stage.REWRITE].runs, ran[Stage.CANDIDATE_UPLOAD].runs) == (2, 2)
-    assert all(record.seconds == record.runs for record in ran.values())
+    assert ran[Stage.CONTRACT_GENERATION].counts == ran[Stage.CONTRACT_VALIDATION].counts == {"nodes": 2}
+    # Each clock read is one second: a stage takes one second a run, and a dbt parse
+    # also the two reads of each contract stage it holds.
+    nested = 2 * (ran[Stage.CONTRACT_GENERATION].runs + ran[Stage.CONTRACT_VALIDATION].runs)
+    assert ran[Stage.DBT_PARSE].seconds == ran[Stage.DBT_PARSE].runs + nested
+    assert all(record.seconds == record.runs for stage, record in ran.items() if stage is not Stage.DBT_PARSE)
 
 
 def test_a_failed_release_times_its_publish(tmp_path):
@@ -1340,7 +1362,8 @@ def _skipping_manifest(tmp_path, *nodes):
 
 def _model(name, *, owner="team-a", tags=("daily",)):
     return {"unique_id": f"model.svc_a.{name}", "resource_type": "model", "name": name, "schema": "analytics",
-            "fqn": ["svc_a", name], "tags": list(tags), "config": {"meta": {"owner": owner} if owner else {}},
+            "fqn": ["svc_a", name], "tags": list(tags), "original_file_path": f"models/{name}.sql",
+            "config": {"materialized": "table", "meta": {"owner": owner} if owner else {}},
             "checksum": {"checksum": name}, "compiled_code": "select 1"}
 
 

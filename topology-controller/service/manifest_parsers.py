@@ -18,6 +18,8 @@ from domain.exceptions import (
 )
 from domain.model import ManifestFile, ManifestKind, ParsedArtifact, SkippedNode
 from service.compile_extras import load_compile_extras
+from service.contract_validation import ContractValidator
+from service.contracts_library import VALIDATOR
 from service.odcs_bundle_parser import parse_odcs_bundle
 from service.parser import parse_manifest
 from service.release_timings import ReleaseTimings
@@ -43,14 +45,19 @@ class ParseFn(Protocol):
 
 def _parse_dbt(
     mf: ManifestFile, *, skipped: list[SkippedNode] | None = None,
-    progress: Callable[[], None], timings: ReleaseTimings,
+    progress: Callable[[], None], timings: ReleaseTimings, validator: ContractValidator = VALIDATOR,
 ) -> ParsedArtifact:
     """Parse a dbt manifest with the compile extras downloaded beside it, when
     there are any. The extras must name the manifest's declared service, and the
     declared service stands for the manifest's project when the manifest does
-    not name it."""
+    not name it. Each node's contract is checked with `validator`, by default the
+    one this process keeps, so a contract unchanged since an earlier release is
+    answered from its memory."""
     extras = load_compile_extras(mf.extras_path, mf.declared_service) if mf.extras_path else None
-    return parse_manifest(mf.path, mf.image_tag, extras, skipped=skipped, declared_service=mf.declared_service)
+    return parse_manifest(
+        mf.path, mf.image_tag, extras, skipped=skipped, declared_service=mf.declared_service,
+        validator=validator, progress=progress, timings=timings,
+    )
 
 
 @dataclass(frozen=True)
@@ -59,7 +66,9 @@ class ManifestParser:
 
     permanent_errors are the exceptions a re-delivery cannot fix, so the handler
     publishes status=failed and the consumer ACKs. Every permanent parse error
-    is an invalid artifact: the handler reports it under that kind.
+    is an invalid artifact: the handler reports it under that kind. A
+    ContractGenerationError is not one: it is a defect, which the handler
+    reports as internal.
     """
     parse: ParseFn
     permanent_errors: tuple[type[Exception], ...]

@@ -45,11 +45,21 @@ class InvalidOdcsBundleError(ValueError):
 
 
 class InvalidNodeSettingError(ValueError):
-    """A dbt node, or the manifest it sits in, holds a value the parse cannot
-    honour: a bad value for one of the node's `meta` keys, a field of the wrong
-    shape (`tags`, `fqn`, `name`, `version`, `metadata.project_name`), or a value
-    the hashing refuses. The release is an invalid artifact. The message names the
-    node and the field."""
+    """A dbt manifest holds a value the parse cannot honour as a whole: a
+    `metadata.project_name` or a `nodes` of the wrong shape, a test whose `fqn`
+    or links to the nodes it tests cannot be read, a node the parse builds with
+    no `fqn` entry, or a value the hashing refuses. No one node's contract is to
+    blame, so the release is an invalid artifact. The message names where the
+    value was found (a node, a test, `manifest` or the manifest's path) and the
+    field."""
+
+
+class ContractGenerationError(RuntimeError):
+    """The contracts library failed where a manifest does not explain the failure:
+    a call raised an error the library does not raise for a malformed node, or a
+    contract it generated could not be checked. It is a defect in continuo, not a
+    fault of the team's project, so the release fails as internal, never as an
+    invalid artifact or an invalid contract."""
 
 
 class InvalidCompileExtrasError(ValueError):

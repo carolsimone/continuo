@@ -5,10 +5,10 @@ from pathlib import Path
 import pytest
 from continuo_contracts import dbt
 from continuo_contracts.hashing import shared_fold
-from domain.contract_vocabulary import NodeType
+from domain.contract_vocabulary import NodeType, ParseFailureKind
 from domain.dormant import is_dormant
 from domain.exceptions import InvalidNodeSettingError
-from domain.model import SkippedNode, SkipReason
+from domain.model import FailedNode, SkippedNode, SkipReason
 from service.parser import parse_manifest
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -138,7 +138,8 @@ def test_parse_sets_source_hash_from_the_normalised_raw_code_not_the_dbt_checksu
                 "name": "users",
                 "schema": "public",
                 "fqn": ["svc_a"],
-                "config": {"meta": {"owner": "team-a"}},
+                "original_file_path": "models/users.sql",
+                "config": {"materialized": "table", "meta": {"owner": "team-a"}},
                 "tags": ["nightly"],
                 "checksum": {"name": "sha256", "checksum": "deadbeefcafef00d"},
                 "raw_code": "select 1\r\n",
@@ -161,7 +162,8 @@ def _manifest_with(raw_code: str | None) -> dict:
         "name": "users",
         "schema": "public",
         "fqn": ["svc_a"],
-        "config": {"meta": {"owner": "team-a"}},
+        "original_file_path": "models/users.sql",
+        "config": {"materialized": "table", "meta": {"owner": "team-a"}},
         "tags": ["nightly"],
     }
     if raw_code is not None:
@@ -209,7 +211,8 @@ def _manifest_with_macros(model_macros: dict[str, str]) -> dict:
         "name": "orders",
         "schema": "public",
         "fqn": ["svc_a"],
-        "config": {"meta": {"owner": "team-a"}},
+        "original_file_path": "models/orders.sql",
+        "config": {"materialized": "table", "meta": {"owner": "team-a"}},
         "tags": ["nightly"],
         "checksum": {"name": "sha256", "checksum": "modelsource0001"},
         "raw_code": "select 1 as orders",
@@ -266,7 +269,8 @@ def test_transitive_macro_change_flips_model_hash(tmp_path):
             "nodes": {
                 "model.svc.orders": {
                     "resource_type": "model", "name": "orders", "schema": "public",
-                    "fqn": ["svc_a"], "config": {"meta": {"owner": "team-a"}},
+                    "fqn": ["svc_a"], "original_file_path": "models/orders.sql",
+                    "config": {"materialized": "table", "meta": {"owner": "team-a"}},
                     "tags": ["nightly"], "checksum": {"name": "sha256", "checksum": "modelsource0001"},
                     "depends_on": {"macros": ["macro.svc.a"]},
                 }
@@ -305,7 +309,8 @@ def test_parse_manifest_stamps_image_tag_on_every_node(tmp_path):
                 "name": "users",
                 "schema": "public",
                 "fqn": ["svc_a"],
-                "config": {"meta": {"owner": "team-a"}},
+                "original_file_path": "models/users.sql",
+                "config": {"materialized": "table", "meta": {"owner": "team-a"}},
                 "tags": ["nightly"],
             }
         }
@@ -328,7 +333,7 @@ def test_parse_manifest_captures_original_file_path(tmp_path):
                 "schema": "analytics",
                 "fqn": ["svc", "staging", "stg_orders"],
                 "original_file_path": "models/staging/stg_orders.sql",
-                "config": {"meta": {"owner": "team-a"}},
+                "config": {"materialized": "table", "meta": {"owner": "team-a"}},
                 "tags": ["daily"],
             }
         }
@@ -348,7 +353,8 @@ def _minimal_node(name: str, schema: str, fqn: list, owner: str, tags: list) -> 
         "name": name,
         "schema": schema,
         "fqn": fqn,
-        "config": {"meta": {"owner": owner}},
+        "original_file_path": f"models/{name}.sql",
+        "config": {"materialized": "table", "meta": {"owner": owner}},
         "tags": tags,
     }
 
@@ -564,13 +570,33 @@ def test_parse_leaves_an_undeclared_timeout_unset(tmp_path):
     assert node.timeout_seconds is None
 
 
-@pytest.mark.parametrize("value", [0, 10081, -5, "2h", "120", 1.5, True, []])
-def test_parse_rejects_a_bad_timeout(tmp_path, value):
+@pytest.mark.parametrize("value", [0, 10081, -5, "2h", "120", 1.5, True])
+def test_a_bad_timeout_is_an_invalid_contract_naming_the_node(tmp_path, value):
+    """The timeout's range is a contract rule: a value outside it fails the node's
+    contract, and the node is one failed node of the parse, not a node."""
     path = _manifest_path(tmp_path, {"model.svc.revenue": _timeout_node(timeout_minutes=value)})
-    with pytest.raises(InvalidNodeSettingError) as excinfo:
-        parse_manifest(path, "v1")
-    assert "analytics.revenue" in str(excinfo.value)
-    assert "meta.timeout_minutes" in str(excinfo.value)
+    parsed = parse_manifest(path, "v1")
+    assert parsed.nodes == []
+    assert parsed.failed == (FailedNode(
+        node_id="analytics.revenue",
+        kind=ParseFailureKind.INVALID_CONTRACT,
+        service="service-a",
+        file_path="models/revenue.sql",
+        node_type=NodeType.DBT_MODEL,
+        detail=f"customProperties[4].value: `timeoutMinutes` is {value!r}, it must be an integer number"
+               " of minutes from 1 to 10080",
+    ),)
+
+
+@pytest.mark.parametrize("value", [[], {}, ""])
+def test_an_empty_timeout_is_no_timeout(tmp_path, value):
+    """The contract leaves out a field with no value, so an empty timeout is read as
+    none declared."""
+    path = _manifest_path(tmp_path, {"model.svc.revenue": _timeout_node(timeout_minutes=value)})
+    parsed = parse_manifest(path, "v1")
+    assert parsed.failed == ()
+    (node,) = parsed.nodes
+    assert node.timeout_seconds is None
 
 
 def test_parse_ignores_a_bad_timeout_on_a_node_it_drops(tmp_path):
@@ -611,14 +637,22 @@ def _write_nodes(tmp_path, **nodes) -> str:
     return str(path)
 
 
+# What dbt writes for every node of each resource type: its materialization and the
+# file it is declared in.
+_MATERIALIZED = {"model": "table", "seed": "seed", "snapshot": "snapshot"}
+_FILE_PATH = {"model": "models/{}.sql", "seed": "seeds/{}.csv", "snapshot": "snapshots/{}.sql"}
+
+
 def _svc_a_model(name, *, owner="team-a", tags=("daily",), **over):
+    resource_type = over.get("resource_type", "model")
     node = {
         "resource_type": "model",
         "name": name,
         "schema": "analytics",
         "fqn": ["svc_a", name],
         "tags": list(tags),
-        "config": {"meta": {"owner": owner} if owner else {}},
+        "original_file_path": _FILE_PATH[resource_type].format(name),
+        "config": {"materialized": _MATERIALIZED[resource_type], "meta": {"owner": owner} if owner else {}},
         "checksum": {"checksum": name},
     }
     node.update(over)
@@ -892,23 +926,29 @@ def test_a_versioned_model_is_a_node_named_with_its_version(tmp_path, version, t
     assert parsed.table_name == table
 
 
-@pytest.mark.parametrize("changes, message", [
-    ({"tags": "daily"}, "model.svc_a.bad: tags must be a list of strings, got str"),
-    ({"tags": ["daily", 3]}, "model.svc_a.bad: tags[1] must be a string, got int"),
-    ({"fqn": "svc_a"}, "model.svc_a.bad: fqn must be a list, got str"),
-    ({"fqn": [5]}, "model.svc_a.bad: fqn[0] must be a string, got int"),
-    ({"name": ""}, "model.svc_a.bad: name must be a non-empty string, got an empty string"),
-    ({"version": True}, "model.svc_a.bad: version must be a string or a number, got bool"),
+@pytest.mark.parametrize("changes, name, service, message", [
+    ({"tags": "daily"}, "analytics.bad", "svc-a", "model.svc_a.bad: tags must be a list of strings, got str"),
+    ({"tags": ["daily", 3]}, "analytics.bad", "svc-a", "model.svc_a.bad: tags[1] must be a string, got int"),
+    ({"fqn": "svc_a"}, "analytics.bad", "", "model.svc_a.bad: fqn must be a list, got str"),
+    ({"fqn": [5]}, "analytics.bad", "", "model.svc_a.bad: fqn[0] must be a string, got int"),
+    ({"name": ""}, "model.svc_a.bad", "svc-a",
+     "model.svc_a.bad: name must be a non-empty string, got an empty string"),
+    ({"version": True}, "model.svc_a.bad", "svc-a",
+     "model.svc_a.bad: version must be a string or a number, got bool"),
 ])
-def test_a_gate_that_cannot_read_a_node_field_is_an_invalid_artifact(tmp_path, changes, message):
+def test_a_node_field_the_library_cannot_read_is_an_invalid_contract(tmp_path, changes, name, service, message):
     """A node the no-owner gate lets through, whose `tags`, `fqn`, `name` or `version` is
-    not the shape dbt writes, is an artifact the parse refuses, naming the node as the
-    manifest does."""
+    not the shape dbt writes, has no contract: it is one failed node of the parse, named by
+    its unique_id when that can be read (else by its manifest id), with the library's
+    message, which names the node as the manifest does, as its detail."""
     node = _svc_a_model("bad")
     node.update(changes)
-    with pytest.raises(InvalidNodeSettingError) as raised:
-        parse_manifest(_write_nodes(tmp_path, **{"model.svc_a.bad": node}))
-    assert str(raised.value) == message
+    parsed = parse_manifest(_write_nodes(tmp_path, **{"model.svc_a.bad": node}))
+    assert parsed.nodes == []
+    assert parsed.failed == (FailedNode(
+        node_id=name, kind=ParseFailureKind.INVALID_CONTRACT, service=service,
+        file_path="models/bad.sql", node_type=NodeType.DBT_MODEL, detail=message,
+    ),)
 
 
 @pytest.mark.parametrize("fqn", [None, []])

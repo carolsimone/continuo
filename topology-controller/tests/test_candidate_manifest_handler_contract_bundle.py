@@ -72,8 +72,10 @@ def test_every_ok_release_writes_one_bundle_before_the_topology_artifact():
     assert log == ["code_bundle", "contract_bundle", "topology_artifact"]
     [write] = bundle_writer.writes
     assert (write["tenant_id"], write["release_id"]) == ("default", "rel-1")
-    assert write["document"]["contracts"] == {}, "a dbt-only release has no contract"
-    assert write["document"]["summary"] == {"contracts": 0, "by_family": {}, "invalid": 0, "skipped": 0}
+    [(unique_id, contract)] = write["document"]["contracts"].items()
+    assert (unique_id, contract["family"], contract["service"], contract["source"]["path"]) == (
+        "test_schema.users", "dbt", "service-1", "models/users.sql")
+    assert write["document"]["summary"] == {"contracts": 1, "by_family": {"dbt": 1}, "invalid": 0, "skipped": 0}
     publisher.publish_ok.assert_called_once()
     kwargs = publisher.publish_ok.call_args.kwargs
     assert kwargs["contract_bundle"] == bundle_writer.refs[0]
@@ -257,14 +259,15 @@ def test_canonical_hashing_is_timed(tmp_path):
     assert timings.stages[Stage.CONTRACT_BUNDLE].runs == 1
 
 
-def test_canonical_hashing_of_a_release_with_no_contract_is_timed_with_none():
+def test_canonical_hashing_of_a_dbt_release_counts_its_dbt_contracts():
     log: list[str] = []
-    handler, _publisher, _bundle_writer, _topology_writer = _dbt_handler(log)
+    handler, _publisher, _bundle_writer, _topology_writer = _dbt_handler(
+        log, names=("manifest_service1.json", "manifest_service2.json"))
 
     timings = handler.handle(release_id="rel-1")
 
     record = timings.stages[Stage.CANONICAL_HASHING]
-    assert (record.runs, record.counts) == (1, {"contracts": 0})
+    assert (record.runs, record.counts) == (1, {"contracts": 2})
 
 
 # --- a failed release writes no contract bundle ----------------------------------

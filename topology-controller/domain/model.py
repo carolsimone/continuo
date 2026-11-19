@@ -403,11 +403,13 @@ class ParsedArtifact:
     code (dbt macros) they use, keyed by unit id, and, for a dbt manifest, what
     its compile ran with (None for a python contract).
 
-    A `python-odcs` bundle also reports `failed` (one FailedNode for each
-    contract that did not pass its checks, in path order) and
+    `failed` holds one FailedNode for each contract that did not pass its
+    checks: a `python-odcs` bundle's in path order, a dbt manifest's (a
+    generated contract with issues, or a node whose field the generator cannot
+    read) in manifest order. A `python-odcs` bundle also reports
     `python_provenance` (the producer's `continuo_python_runtime` and the
-    `image_packages` of the image the service runs); every other kind leaves
-    them empty. Each of its nodes carries its contract
+    `image_packages` of the image the service runs), which a dbt manifest
+    leaves empty. Each node but a dbt test carries its contract
     (ManifestNode.contract)."""
     nodes: list[ManifestNode]
     shared_code: dict[str, dict]

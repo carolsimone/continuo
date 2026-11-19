@@ -183,22 +183,21 @@ def python_handler(source, publisher, spec_uploader=None, dialect="postgres", ar
 
 def dbt_node(name, *, original_file_path=""):
     """A minimal valid dbt model node, for manifests built inline where a test
-    needs more than one node or a node with a source file_path — neither of
-    which manifest_service1.json's single, path-less fixture node has."""
-    node = {
+    needs more than one node or a node of its own. It carries the
+    `config.materialized` and `original_file_path` dbt writes for every node
+    (`models/<name>.sql` unless the test names another path)."""
+    return {
         "unique_id": f"model.service-1.{name}",
         "name": name,
         "schema": "test_schema",
         "fqn": ["service-1", name],
         "tags": ["daily"],
         "resource_type": "model",
-        "config": {"meta": {"owner": "team-a", "criticality": "CORE"}},
+        "original_file_path": original_file_path or f"models/{name}.sql",
+        "config": {"materialized": "table", "meta": {"owner": "team-a", "criticality": "CORE"}},
         "compiled_code": "SELECT 1 AS id",
         "checksum": {"name": "sha256", "checksum": f"hash-{name}"},
     }
-    if original_file_path:
-        node["original_file_path"] = original_file_path
-    return node
 
 
 def source_with_nodes(tmp_path, *nodes):

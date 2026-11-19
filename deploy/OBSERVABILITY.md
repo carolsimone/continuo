@@ -260,8 +260,8 @@ groups:
           summary: "catalog failed to write {{ $value }} files of the live contracts folder ({{ $labels.op }}) in the last 15 minutes"
       - alert: TopologyStageNearLivenessBudget
         expr: |
-          sum by (stage) (increase(continuo_topology_stage_duration_seconds_bucket{le="+Inf", stage!~"resolve|rewrite|candidate_upload|contract_validation|canonical_hashing"}[30m]))
-            - sum by (stage) (increase(continuo_topology_stage_duration_seconds_bucket{le="30.0", stage!~"resolve|rewrite|candidate_upload|contract_validation|canonical_hashing"}[30m]))
+          sum by (stage) (increase(continuo_topology_stage_duration_seconds_bucket{le="+Inf", stage!~"resolve|rewrite|candidate_upload|contract_generation|contract_validation|canonical_hashing"}[30m]))
+            - sum by (stage) (increase(continuo_topology_stage_duration_seconds_bucket{le="30.0", stage!~"resolve|rewrite|candidate_upload|contract_generation|contract_validation|canonical_hashing"}[30m]))
             > 0
         labels:
           severity: warning
@@ -269,7 +269,7 @@ groups:
           summary: "topology-controller's {{ $labels.stage }} stage took over 30 s; liveness restarts the pod about 80 s after its last heartbeat"
 ```
 
-The `or` in `ContinuoJobFailed` keeps the alert firing with the Job's name if the labels aren't exported. `CatalogExportStale` applies only with `catalog.backup.enabled`. `CatalogLiveContractWriteFailed` fires when the object store refuses a write of the live contracts folder. That usually means catalog's role lacks one of the grants in the chart README's "S3 access" table. catalog retries the promotion until the folder is written. A rewrite that cannot read `_index.json` (not JSON, or another `schema_version`) writes nothing and logs an error naming the key: delete that `_index.json`, and the next rewrite puts every file again. `TopologyStageNearLivenessBudget` leaves out `resolve`, `rewrite`, `candidate_upload`, `contract_validation` and `canonical_hashing`: these per-node stages refresh the heartbeat after every node or contract, so their summed time says nothing about it. `dbt_parse` refreshes the heartbeat once per manifest. `python_parse` of a `python-odcs` service refreshes it after every contract. So the rule is a coarse near-budget heuristic over a stage's total time in one release. Python bucket labels are written `30.0`, not `30`.
+The `or` in `ContinuoJobFailed` keeps the alert firing with the Job's name if the labels aren't exported. `CatalogExportStale` applies only with `catalog.backup.enabled`. `CatalogLiveContractWriteFailed` fires when the object store refuses a write of the live contracts folder. That usually means catalog's role lacks one of the grants in the chart README's "S3 access" table. catalog retries the promotion until the folder is written. A rewrite that cannot read `_index.json` (not JSON, or another `schema_version`) writes nothing and logs an error naming the key: delete that `_index.json`, and the next rewrite puts every file again. `TopologyStageNearLivenessBudget` leaves out `resolve`, `rewrite`, `candidate_upload`, `contract_generation`, `contract_validation` and `canonical_hashing`: these per-node stages refresh the heartbeat after every node or contract, so their summed time says nothing about it. `dbt_parse` refreshes the heartbeat after every contract of a model, seed or snapshot and once more when the manifest's parse ends, and `python_parse` of a `python-odcs` service after every contract. So the rule is a coarse near-budget heuristic over a stage's total time in one release. Python bucket labels are written `30.0`, not `30`.
 
 ## Datadog
 

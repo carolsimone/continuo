@@ -11,33 +11,57 @@ snapshot a gate leaves out (no owner, a local stub, an untagged node of an
 installed dbt package) is reported through the caller's `skipped` list, never
 raised. A model or snapshot of the project with an owner and no tag is kept
 with an empty schedule (a dormant node); a seed of the project with no tag
-takes the `seed` schedule. Which nodes are left out, a kept node's service,
-schedule and table name all come from continuo-contracts' `dbt` module, so a
-producer's CI and this parse answer alike.
+takes the `seed` schedule. Which nodes are left out comes from
+continuo-contracts' `dbt` module, so a producer's CI and this parse answer alike.
+
+Each node the gates keep gets its ODCS contract, which the library generates from
+the node and its tests and the parse checks. The node's run facts (its schema,
+table, relation, service, kind, schedule, criticality, owner, file path,
+materialization and timeout) are read back from that contract, so the topology
+says what the contract says. A node whose contract fails its checks, or that the
+library cannot read, is not a node of the result but one FailedNode of it, so a
+release names every invalid contract at once.
 """
 import json
 import logging
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import AbstractContextManager, contextmanager, nullcontext
+from typing import Any
 
 from continuo_contracts import dbt
 from continuo_contracts.errors import ContractsError, DbtNodeError
+from continuo_contracts.validate import Issue
 
-from domain.exceptions import InvalidNodeSettingError
+from domain.contract_vocabulary import ParseFailureKind
+from domain.exceptions import ContractGenerationError, InvalidNodeSettingError
 from domain.model import (
     CompileExtras,
+    ContractFamily,
+    FailedNode,
     ManifestNode,
+    NodeContract,
     NodeType,
     ParsedArtifact,
     ServiceProvenance,
     SkippedNode,
     SkipReason,
 )
-from domain.node_timeout import timeout_seconds
 from service.compile_extras import seed_columns_hash
+from service.contract_validation import ContractValidator
+from service.contracts_library import VALIDATOR
 from service.dbt_hashing import CodeUnit, DbtHashParts, ManifestContext, hash_dbt_node
+from service.release_timings import ReleaseTimings, Stage
 
 logger = logging.getLogger(__name__)
+
+# What a contract failure that no checked contract explains is counted as: the
+# library could not read the manifest entry it generates the contract from.
+_GENERATE = "generate"
+_MANIFEST_SHAPE = "manifest_shape"
+
+
+def _no_progress() -> None:
+    """The progress callback of a caller nobody watches."""
 
 
 @contextmanager
@@ -54,10 +78,10 @@ def _rejecting_hash_input(label: str) -> Iterator[None]:
 
 @contextmanager
 def _rejecting_node_shape() -> Iterator[None]:
-    """Raise a field the library cannot read (a `tags` that is not a list of strings,
-    an `fqn` of another shape, a `name` that is empty) as an InvalidNodeSettingError
-    carrying the library's message, which starts with the node's id: it is the
-    artifact's fault, so the release is rejected instead of retried."""
+    """Raise a field the library cannot read (an `fqn` that is not a list of
+    strings) as an InvalidNodeSettingError carrying the library's message, which
+    starts with the node's id: it is the artifact's fault, so the release is
+    rejected instead of retried."""
     try:
         yield
     except DbtNodeError as error:
@@ -76,26 +100,36 @@ _RESOURCE_TYPE_TO_NODE_TYPE = {
 }
 
 
-def _skipped(node_id: str, node: dict, reason: SkipReason) -> SkippedNode:
-    """The report of a node a gate left out. The service is read tolerantly, as
-    the first entry of a well-formed fqn: a node the parse never builds can lack
-    an fqn, or carry one of another shape, without raising."""
+def _tolerant_service(node: dict) -> str:
+    """The service of a node as the first entry of a well-formed fqn, with `_`
+    written `-`, or "" for an fqn of any other shape: the report of a node the
+    parse does not build must not raise on the field that kept it out."""
     fqn = node.get("fqn")
     first = fqn[0] if isinstance(fqn, list) and fqn else ""
-    service = first.replace("_", "-") if isinstance(first, str) else ""
-    return SkippedNode(node_id=node_id, service=service, reason=reason)
+    return first.replace("_", "-") if isinstance(first, str) else ""
+
+
+def _skipped(node_id: str, node: dict, reason: SkipReason) -> SkippedNode:
+    """The report of a node a gate left out. A node the parse never builds can
+    lack an fqn, or carry one of another shape, without raising."""
+    return SkippedNode(node_id=node_id, service=_tolerant_service(node), reason=reason)
 
 
 def _service(node_id: str, node: dict) -> str:
-    """The service of a node the parse builds, a kept node or a test: the first
-    entry of its fqn, with `_` written `-`. dbt writes an fqn for every node, so a
-    node with none does not say which service it belongs to, and the artifact is
-    refused."""
+    """The service of a dbt test the parse builds: the first entry of its fqn,
+    with `_` written `-`. dbt writes an fqn for every node, so a test with none
+    does not say which service it belongs to, and the artifact is refused."""
     with _rejecting_node_shape():
         service = dbt.node_service(node)
+    _require_fqn(node_id, node)
+    return service
+
+
+def _require_fqn(node_id: str, node: dict) -> None:
+    """Refuse a node the parse builds that has no fqn entry: dbt writes an fqn
+    for every node, so such a node does not say which service it belongs to."""
     if not node.get("fqn"):
         raise InvalidNodeSettingError(f"{node_id}: fqn must be a non-empty list of strings")
-    return service
 
 
 def _seed_full_refresh(resource_type: str, config: dict) -> bool | None:
@@ -105,6 +139,121 @@ def _seed_full_refresh(resource_type: str, config: dict) -> bool | None:
     return value if resource_type == "seed" and isinstance(value, bool) else None
 
 
+def _stage(timings: ReleaseTimings | None, stage: Stage) -> AbstractContextManager[object]:
+    """One node's run of `stage` on `timings`, which reads no memory; nothing is
+    timed without a record."""
+    if timings is None:
+        return nullcontext()
+    return timings.stage(stage, sample_memory=False, nodes=1)
+
+
+def _count_failure(timings: ReleaseTimings | None, stage: str, reason: str) -> None:
+    if timings is not None:
+        timings.add_contract_failure(stage, reason)
+
+
+def _ignore_cache(hit: bool) -> None:
+    """The cache callback of a parse with no timing record."""
+
+
+def _manifest_call[T](call: Callable[[], T], timings: ReleaseTimings | None) -> T:
+    """Run a library call that reads the manifest as a whole (its project, the
+    join of its tests to its nodes). A field it cannot read is no one node's
+    fault: it is counted and raised as an InvalidNodeSettingError carrying the
+    library's message, which starts with `manifest` or the test's id. Any other
+    error is a defect of the library, raised as a ContractGenerationError."""
+    try:
+        return call()
+    except DbtNodeError as error:
+        _count_failure(timings, _GENERATE, _MANIFEST_SHAPE)
+        raise InvalidNodeSettingError(str(error)) from error
+    except Exception as error:
+        raise ContractGenerationError(f"manifest: the contracts library failed: {error!r}") from error
+
+
+def _failed_node(name: str, node: dict, resource_type: str, detail: str) -> FailedNode:
+    """The invalid contract of a node the gates did not leave out. Its service
+    and file path are read tolerantly, as the node may hold either in a shape
+    the library refused."""
+    file_path = node.get("original_file_path")
+    return FailedNode(
+        node_id=name,
+        kind=ParseFailureKind.INVALID_CONTRACT,
+        service=_tolerant_service(node),
+        file_path=file_path if isinstance(file_path, str) else "",
+        node_type=_RESOURCE_TYPE_TO_NODE_TYPE[resource_type],
+        detail=detail,
+    )
+
+
+def _shape_failure(
+    node_id: str, node: dict, resource_type: str, error: DbtNodeError, timings: ReleaseTimings | None
+) -> FailedNode:
+    """The invalid contract of a node whose field the library cannot read. It is
+    named by its unique_id when the library can read that, else by its manifest
+    id, and the detail is the library's message, which starts with the manifest
+    id and names the field."""
+    _count_failure(timings, _GENERATE, _MANIFEST_SHAPE)
+    try:
+        name = dbt.unique_id(node)
+    except DbtNodeError:
+        name = node_id
+    return _failed_node(name, node, resource_type, str(error))
+
+
+def _issues_failure(
+    name: str, node: dict, resource_type: str, issues: list[Issue], timings: ReleaseTimings | None
+) -> FailedNode:
+    """The invalid contract of a node whose generated contract fails its checks:
+    every issue, each counted by its reason."""
+    for issue in issues:
+        _count_failure(timings, "validate", issue.reason)
+    return _failed_node(name, node, resource_type, "; ".join(str(issue) for issue in issues))
+
+
+def _library_defect(node_id: str, error: Exception) -> ContractGenerationError:
+    return ContractGenerationError(f"{node_id}: the contracts library failed: {error!r}")
+
+
+def _contract(
+    node_id: str,
+    node: dict,
+    resource_type: str,
+    tests: list[Mapping[str, Any]],
+    manifest: Mapping[str, Any],
+    *,
+    validator: ContractValidator,
+    timings: ReleaseTimings | None,
+) -> tuple[dbt.Generated, dbt.RunFacts] | FailedNode:
+    """The checked contract of a kept node and the run facts it gives, or the
+    FailedNode that says why the node has none.
+
+    A field the library cannot read and a contract with issues are the team's to
+    fix, so each is a FailedNode. Any other error from the library is a defect,
+    raised as a ContractGenerationError: `generate` never returns a contract
+    canonical JSON cannot write, so the check failing on one is a defect too."""
+    try:
+        with _stage(timings, Stage.CONTRACT_GENERATION):
+            generated = dbt.generate(node, tests, manifest=manifest)
+    except DbtNodeError as error:
+        return _shape_failure(node_id, node, resource_type, error, timings)
+    except Exception as error:
+        raise _library_defect(node_id, error) from error
+    on_cache = timings.add_validation_cache if timings is not None else _ignore_cache
+    try:
+        with _stage(timings, Stage.CONTRACT_VALIDATION):
+            issues = validator.check_dbt(generated.document, on_cache=on_cache)
+    except Exception as error:
+        raise _library_defect(node_id, error) from error
+    if issues:
+        return _issues_failure(generated.document["id"], node, resource_type, issues, timings)
+    try:
+        facts = dbt.run_facts(generated.document)
+    except Exception as error:
+        raise _library_defect(node_id, error) from error
+    return generated, facts
+
+
 def parse_manifest(
     manifest_path: str,
     image_tag: str = "",
@@ -112,8 +261,12 @@ def parse_manifest(
     *,
     skipped: list[SkippedNode] | None = None,
     declared_service: str = "",
+    validator: ContractValidator = VALIDATOR,
+    progress: Callable[[], None] = _no_progress,
+    timings: ReleaseTimings | None = None,
 ) -> ParsedArtifact:
-    """Parse a dbt manifest into its nodes and the shared code they use.
+    """Parse a dbt manifest into its nodes, the shared code they use and the
+    invalid contracts of the nodes that could not be built.
 
     `extras` is the compile-extras.json of the same service when its compile wrote
     one. A seed's source part is the SHA-256 of its file bytes the extras record,
@@ -133,20 +286,40 @@ def parse_manifest(
     manifest's own `metadata.project_name`, else `declared_service`. When neither
     is known, no node is left out for belonging to a package.
 
-    A field the library cannot read (a `tags` that is not a list of strings on a
-    node the earlier gates let through, an `fqn` that is not a list, a
-    `metadata.project_name` that is not a string) raises InvalidNodeSettingError
-    with the library's message, which starts with the node's id, and so does a
-    kept node or a test with no `fqn` entry.
+    Each node the gates keep, in manifest order, gets its contract from
+    `dbt.generate` (timed as `contract_generation` on `timings`), from the node
+    and the tests `dbt.tests_by_node` joins to it, and the contract is checked
+    with `validator.check_dbt` (timed as `contract_validation`, each cache lookup
+    counted). A valid contract becomes the node's `contract`, and the node's run
+    facts come from `dbt.run_facts` of it: its schema (the contract id's, in
+    lower case), table, relation, service, node type, schedule, criticality,
+    owner, file path, materialization and timeout. Everything else (its SQL,
+    code, config, hashes, declared columns, seed settings and test count) comes
+    from the manifest. Only such a node counts the tests attached to it.
+
+    A contract with issues, and a node field the library cannot read, is a
+    FailedNode of the result (invalid_contract) naming the node, its service,
+    its file and every issue, each issue counted on `timings` by its reason (a
+    field the library cannot read as `generate`/`manifest_shape`). `progress` is
+    called once for each model, seed and snapshot a gate does not leave out,
+    after its node or its FailedNode is made.
+
+    A manifest the library cannot read as a whole (a `metadata.project_name` that
+    is not a string, a test whose node links are not strings) raises
+    InvalidNodeSettingError with the library's message, which starts with
+    `manifest` or the test's id, and so does a kept node or a test with no `fqn`
+    entry and a test with an `fqn` that is not a list of strings. Any other error
+    from the library raises ContractGenerationError.
     """
     with open(manifest_path) as f:
         manifest = json.load(f)
 
     with _rejecting_hash_input(manifest_path):
         ctx = ManifestContext.from_manifest(manifest, extras)
-    with _rejecting_node_shape():
-        project = dbt.project_service(manifest, declared_service)
+    project = _manifest_call(lambda: dbt.project_service(manifest, declared_service), timings)
+    tests_of = _manifest_call(lambda: dbt.tests_by_node(manifest), timings)
     nodes = []
+    failed: list[FailedNode] = []
     node_by_id: dict[str, ManifestNode] = {}
     used_units: dict[str, CodeUnit] = {}
     path_checksum_seeds: list[str] = []
@@ -160,41 +333,49 @@ def parse_manifest(
             continue
 
         node.setdefault("unique_id", node_id)
-        with _rejecting_node_shape():
+        try:
             reason = dbt.skip_reason(node, project=project)
+        except DbtNodeError as error:
+            failed.append(_shape_failure(node_id, node, resource_type, error, timings))
+            progress()
+            continue
+        except Exception as error:
+            raise _library_defect(node_id, error) from error
         if reason is not None:
             if skipped is not None:
                 skipped.append(_skipped(node_id, node, SkipReason(reason)))
             continue
 
-        meta = node["config"]["meta"]
-        owner = meta["owner"]
-        criticality = meta.get("criticality", "SECONDARY")
+        _require_fqn(node_id, node)
+        built = _contract(
+            node_id, node, resource_type, tests_of.get(node_id, []), manifest,
+            validator=validator, timings=timings,
+        )
+        if isinstance(built, FailedNode):
+            failed.append(built)
+            progress()
+            continue
+        generated, facts = built
 
-        service_name = _service(node_id, node)
-        with _rejecting_node_shape():
-            schedule_name = dbt.schedule(node)
-            table_name = dbt.table_name(node)
-        label = f"{node['schema']}.{table_name}".lower()
-        parts = _hash(label, node, ctx)
+        parts = _hash(facts.unique_id, node, ctx)
         used_units.update(parts.units)
 
         manifest_node = ManifestNode(
-            table_name=table_name,
-            schema_name=node["schema"],
-            resolved_relation=node.get("alias") or table_name,
-            materialized=(node.get("config") or {}).get("materialized") or "",
+            table_name=facts.table,
+            schema_name=facts.schema,
+            resolved_relation=facts.physical_name,
+            materialized=facts.materialized,
             full_refresh=_seed_full_refresh(resource_type, node.get("config") or {}),
-            service_name=service_name,
-            owner=owner,
-            schedule_name=schedule_name,
-            criticality=criticality,
+            service_name=facts.service,
+            owner=facts.owner,
+            schedule_name=facts.schedule,
+            criticality=facts.criticality,
             dependency_sqls=[node["compiled_code"]] if node.get("compiled_code") else [],
             candidate_sql=node.get("compiled_code", ""),
-            node_type=_RESOURCE_TYPE_TO_NODE_TYPE[resource_type],
+            node_type=NodeType(facts.kind),
             content_hash=parts.content_hash,
             image_tag=image_tag,
-            original_file_path=node.get("original_file_path", ""),
+            original_file_path=facts.file_path,
             raw_code=node.get("raw_code", ""),
             config=node.get("config") or {},
             source_hash=parts.source_hash,
@@ -203,27 +384,29 @@ def parse_manifest(
             compiled_hash=parts.compiled_hash,
             hashed_config=parts.hashed_config,
             code_unit_ids=sorted(parts.units),
+            timeout_seconds=facts.timeout_minutes * 60 if facts.timeout_minutes is not None else None,
             declared_columns=len(node.get("columns") or {}),
+            contract=NodeContract(
+                family=ContractFamily.DBT,
+                document=generated.document,
+                path=node["original_file_path"],
+                source_sha256=generated.source_sha256,
+            ),
         )
         if resource_type == "model":
             manifest_node.test_count += len(ctx.unit_tests_by_node.get(node_id, ()))
         if resource_type == "seed":
             seed = extras.seeds.get(node_id) if extras is not None else None
             if seed is not None:
-                with _rejecting_hash_input(label):
+                with _rejecting_hash_input(facts.unique_id):
                     manifest_node.seed_columns_hash = seed_columns_hash(seed)
                 manifest_node.seed_header = seed.header
                 manifest_node.seed_column_types = dict(seed.column_types)
             if parts.path_checksum:
                 path_checksum_seeds.append(manifest_node.unique_id)
-        try:
-            manifest_node.timeout_seconds = timeout_seconds(meta.get("timeout_minutes"))
-        except ValueError as exc:
-            raise InvalidNodeSettingError(
-                f"{manifest_node.unique_id}: meta.timeout_minutes {exc}"
-            ) from exc
         nodes.append(manifest_node)
         node_by_id[node_id] = manifest_node
+        progress()
 
     # Second pass: tests. Each attaches its count to the tracked node(s) it
     # tests, and — when it tests at least one tracked node — becomes a
@@ -291,4 +474,4 @@ def parse_manifest(
         packages=dict(extras.packages) if extras is not None else {},
         path_checksum_seeds=tuple(sorted(path_checksum_seeds)),
     )
-    return ParsedArtifact(nodes=nodes, shared_code=shared_code, provenance=provenance)
+    return ParsedArtifact(nodes=nodes, shared_code=shared_code, provenance=provenance, failed=tuple(failed))
