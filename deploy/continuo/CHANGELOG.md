@@ -63,7 +63,7 @@ This release changes no values key, and it ships as a `MINOR`.
     - A seed whose declared columns and CSV header differ, in either direction and by exact name. The rejection names the seed and each column: `<column> is in the CSV header but not declared` or `<column> is declared but not in the CSV header`. A seed that declares no column is rejected for every column of its header.
   - The release reads a seed's header from `compile-extras.json`. A seed that file does not name is not compared, and the parse logs one warning per release with the number of such seeds.
   - An empty `meta.timeout_minutes` (`""`, `[]` or `{}`) reads as no timeout, and an empty `meta.criticality` as `SECONDARY`. The parse refused an empty timeout before.
-  - A schema declared with capitals, such as `Analytics`, is written in lower case in the contract's id and in the topology (`analytics.orders`). The topology kept the capitals before.
+  - A contract's id is the node's id, in lower case: the model `orders` in the schema `Analytics` has the contract id `analytics.orders`. The topology's schema and the warehouse relation keep the spelling your project declares.
   - One rejection names every invalid contract of the release, dbt and Python ones together. A manifest that is malformed as a whole (a `metadata.project_name` or the links of a test that are not text, text that UTF-8 cannot encode) is still `invalid_artifact`, and a defect of the library is `internal`.
   - Before you upgrade, run `continuo-contracts dbt check <project>` (continuo-contracts 0.3.1) on the dbt project folder of each service and fix every error line, seed headers included (step 2).
 

@@ -713,10 +713,11 @@ contract's `id`. `<schema>` is the schema dbt worked out for the node, after
 your `generate_schema_name`. `<name>` is the node's `name`. A versioned model is
 `<schema>.<name>.v<version>`, so each version is a node of its own.
 
-A schema you declare with capitals, such as `Analytics`, is written in lower
-case in the contract's `id` and in the topology, so the node is
-`analytics.orders`. The SQL of the readers names the schema the way dbt wrote
-it, and continuo finds the node.
+A schema you declare with capitals, such as `Analytics`, is lower case in the
+node's name and the contract's `id`, so the node is `analytics.orders`. The
+topology's schema keeps your spelling, `Analytics`, because dbt builds the
+table under it, and validation copies the table from there. The SQL of the
+readers names the schema the way dbt wrote it, and continuo finds the node.
 
 The table the node writes is its `alias` when it has one, and the contract keeps
 it as the `physicalName`. Another node's SQL reaches it through that table. Two

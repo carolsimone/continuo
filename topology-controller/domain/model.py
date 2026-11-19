@@ -281,6 +281,8 @@ class ManifestNode:
         one relation and must not produce two identities. The declared
         schema_name and table_name are left untouched — they render into SQL
         and DDL, where the declared spelling is what addresses the relation.
+        For a dbt model, seed or snapshot it is its contract's `id`, which the
+        contracts library writes in lower case too.
 
         A dbt test is not a relation: it writes no table and dbt already
         gives it a globally unique manifest id, so that id is its identity

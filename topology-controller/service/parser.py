@@ -15,14 +15,16 @@ takes the `seed` schedule. Which nodes are left out comes from
 continuo-contracts' `dbt` module, so a producer's CI and this parse answer alike.
 
 Each node the gates keep gets its ODCS contract, which the library generates from
-the node and its tests and the parse checks. The node's run facts (its schema,
-table, relation, service, kind, schedule, criticality, owner, file path,
+the node and its tests and the parse checks. The node's run facts (its table,
+relation, service, kind, schedule, criticality, owner, file path,
 materialization and timeout) are read back from that contract, so the topology
-says what the contract says. A node whose contract fails its checks, or that the
-library cannot read, is not a node of the result but one FailedNode of it, so a
-release names every invalid contract at once. A seed the compile extras name is
-also checked against its CSV header: a column that the header and the seed's
-contract do not both have makes the contract invalid.
+says what the contract says. Its schema keeps the spelling the project
+declares, which the contract's id holds in lower case. A node whose contract
+fails its checks, or that the library cannot read, is not a node of the result
+but one FailedNode of it, so a release names every invalid contract at once. A
+seed the compile extras name is also checked against its CSV header: a column
+that the header and the seed's contract do not both have makes the contract
+invalid.
 """
 import json
 import logging
@@ -362,9 +364,10 @@ def parse_manifest(
     and the tests `dbt.tests_by_node` joins to it, and the contract is checked
     with `validator.check_dbt` (timed as `contract_validation`, each cache lookup
     counted). A valid contract becomes the node's `contract`, and the node's run
-    facts come from `dbt.run_facts` of it: its schema (the contract id's, in
-    lower case), table, relation, service, node type, schedule, criticality,
-    owner, file path, materialization and timeout. Everything else (its SQL,
+    facts come from `dbt.run_facts` of it: its table, relation, service, node
+    type, schedule, criticality, owner, file path, materialization and timeout.
+    Its schema is the manifest's, in the spelling the project declares, while
+    its unique_id is the contract's id, in lower case. Everything else (its SQL,
     code, config, hashes, declared columns, seed settings and test count) comes
     from the manifest. Only such a node counts the tests attached to it.
 
@@ -440,7 +443,11 @@ def parse_manifest(
 
         manifest_node = ManifestNode(
             table_name=facts.table,
-            schema_name=facts.schema,
+            # The schema as the project declares it: dbt builds the relation
+            # under that spelling, and validation's SQL and DDL name it so. The
+            # contract's id holds it in lower case (facts.schema), as unique_id
+            # does.
+            schema_name=node["schema"],
             resolved_relation=facts.physical_name,
             materialized=facts.materialized,
             full_refresh=_seed_full_refresh(resource_type, node.get("config") or {}),

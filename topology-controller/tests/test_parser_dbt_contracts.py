@@ -126,7 +126,8 @@ def test_each_kept_node_carries_its_generated_contract(tmp_path):
 
 def test_run_facts_come_from_the_contract(tmp_path, monkeypatch):
     """Every run fact of the node is what `dbt.run_facts` reads from the contract, not
-    what the manifest says."""
+    what the manifest says, but the schema: it keeps the spelling the manifest declares,
+    which the contract's id holds in lower case."""
     real = dbt.run_facts
 
     def from_contract(document):
@@ -141,7 +142,7 @@ def test_run_facts_come_from_the_contract(tmp_path, monkeypatch):
     (node,) = parse_manifest(_manifest(tmp_path, _node("orders"))).nodes
 
     assert (node.schema_name, node.table_name, node.resolved_relation) == (
-        "from_contract_schema", "from_contract_table", "from_contract_relation")
+        "analytics", "from_contract_table", "from_contract_relation")
     assert (node.service_name, node.node_type, node.schedule_name, node.criticality) == (
         "from-contract-service", NodeType.DBT_SNAPSHOT, "from_contract", "REGULATORY")
     assert (node.timeout_seconds, node.original_file_path, node.owner, node.materialized) == (
@@ -169,10 +170,15 @@ def test_the_dormant_node_has_an_empty_schedule_from_its_contract(tmp_path):
     assert is_dormant(node.node_type, node.schedule_name)
 
 
-def test_a_schema_declared_with_capitals_is_lower_case(tmp_path):
+def test_a_schema_declared_with_capitals_keeps_its_spelling_while_the_ids_are_lower_case(tmp_path):
+    """dbt builds the relation under the declared spelling, so the node's schema keeps it,
+    while its unique_id and its contract's id are lower case."""
     (node,) = parse_manifest(_manifest(tmp_path, _node("orders", schema="Analytics"))).nodes
     assert (node.schema_name, node.unique_id, node.contract.document["id"]) == (
-        "analytics", "analytics.orders", "analytics.orders")
+        "Analytics", "analytics.orders", "analytics.orders")
+    # The relation the node builds is addressed with the declared schema; its id is lower case.
+    assert (f"{node.schema_name}.{node.relation}", node.resolved_relation_id) == (
+        "Analytics.orders", "analytics.orders")
 
 
 # --- an invalid contract is a failed node -----------------------------------------
@@ -585,11 +591,13 @@ def test_every_invalid_contract_and_sql_error_is_named_once(tmp_path):
     ]
 
 
-def test_a_schema_with_capitals_is_lower_case_in_the_topology(tmp_path):
-    """A model declared in schema `Analytics` is the node `analytics.orders`, and the compiled SQL
-    of its readers, which dbt writes with the capitals, still names it: the reader's edge resolves
-    to it, its candidate SQL is redirected to the candidate schema like the read of any known node,
-    and the model's own read of its relation is left on production, as dbt wrote it."""
+def test_a_schema_with_capitals_keeps_its_spelling_in_the_topology_under_a_lower_case_id(tmp_path):
+    """A model declared in schema `Analytics` is the node `analytics.orders` whose schema is
+    `Analytics`, the spelling dbt builds its relation under, so validation copies it from there.
+    The compiled SQL of its readers, which dbt writes with the capitals, still names it: the
+    reader's edge resolves to it, its candidate SQL is redirected to the candidate schema like the
+    read of any known node, and the model's own read of its relation is left on production, as
+    dbt wrote it. Its contract's id and the reader's declared reads are lower case."""
     publisher, uploader = MagicMock(), make_uploader()
     writer, bundle_writer = RecordingArtifactWriter(), RecordingContractBundleWriter()
     orders = dbt_node("orders") | {
@@ -606,7 +614,7 @@ def test_a_schema_with_capitals_is_lower_case_in_the_topology(tmp_path):
     nodes = {node["unique_id"]: node for node in writer.nodes}
     assert sorted(nodes) == ["analytics.orders", "reporting.daily_orders"]
     assert (nodes["analytics.orders"]["schema_name"], nodes["analytics.orders"]["resolved_relation_id"]) == (
-        "analytics", "analytics.orders")
+        "Analytics", "analytics.orders")
     assert nodes["analytics.orders"]["upstream_unique_ids"] == []
     assert nodes["reporting.daily_orders"]["upstream_unique_ids"] == ["analytics.orders"]
     candidate_sql = {call.kwargs["unique_id"]: call.kwargs["sql"] for call in uploader.upload.call_args_list}
