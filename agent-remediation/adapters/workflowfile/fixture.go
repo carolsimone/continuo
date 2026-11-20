@@ -268,6 +268,7 @@ func (l *loader) loadFixture(file string, root *yaml.Node) (conformance.Fixture,
 
 	fixture := conformance.Fixture{
 		File:             file,
+		Line:             root.Line,
 		Version:          f.Version,
 		Type:             f.Type,
 		Flow:             f.Flow,

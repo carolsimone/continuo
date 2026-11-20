@@ -177,6 +177,97 @@ func TestSuite_AFixtureForAFlowNoFileDefinesFails(t *testing.T) {
 	assert.Equal(t, "my-maintenance.yaml tests flow rejected-relase, which no file defines", unplayed[0].Err.Error())
 }
 
+// withSecondFlow is the suite with one more flow, named name: a copy of the
+// built-in flow that lists types, in that order and with tries tries, and every
+// built-in flow fixture copied to play it. The built-in flow is left as it is.
+func withSecondFlow(s conformance.Suite, name string, tries int, types ...string) conformance.Suite {
+	flow := s.Files.Flows[flowName]
+	flow.Name = name
+	flow.Types = types
+	flow.Tries = tries
+	flows := maps.Clone(s.Files.Flows)
+	flows[name] = flow
+	s.Files = workflow.Set{Flows: flows, Types: s.Files.Types}
+	fixtures := slices.Clone(s.Fixtures)
+	for _, f := range s.Fixtures {
+		if f.Flow == flowName {
+			f.Flow = name
+			f.File = name + "/" + f.File
+			fixtures = append(fixtures, f)
+		}
+	}
+	s.Fixtures = fixtures
+	return s
+}
+
+// A flow scenario runs the flow it is played for: the remediation of each of
+// its worlds follows that flow, so a second flow that lists one type fails the
+// scenario of two types with the same fixtures the built-in flow passes.
+func TestSuite_AFlowScenarioRunsTheNamedFlow(t *testing.T) {
+	s := withSecondFlow(builtinSuite(t), "second-flow", 3, "dbt-compile")
+	worlds := recordWorlds(&s)
+
+	second := map[conformance.Scenario]error{}
+	for _, r := range s.RunFlowScenarios(ctx, "second-flow") {
+		assert.Equal(t, "second-flow", r.Type)
+		second[r.Scenario] = r.Err
+	}
+	require.Len(t, second, len(conformance.FlowScenarios()))
+	require.Error(t, second[conformance.FlowTwoTypesOneService], "a flow that lists only dbt-compile cannot fix with two types")
+	assert.Contains(t, second[conformance.FlowTwoTypesOneService].Error(), "want two")
+	require.NotEmpty(t, *worlds)
+	for _, w := range *worlds {
+		for _, rem := range w.Remediations() {
+			assert.Equal(t, "second-flow", rem.Flow, "every remediation of a second-flow scenario follows second-flow")
+		}
+	}
+
+	*worlds = nil
+	for _, r := range s.RunFlowScenarios(ctx, flowName) {
+		assert.NoError(t, r.Err, "flow %s, scenario %s", r.Type, r.Scenario)
+	}
+	require.NotEmpty(t, *worlds)
+	for _, w := range *worlds {
+		for _, rem := range w.Remediations() {
+			assert.Equal(t, flowName, rem.Flow)
+		}
+	}
+}
+
+// A type's scenarios run in the first flow, by name, that lists it. A type
+// that only a second flow lists is fixed there, with that flow's tries, and
+// not in the built-in flow, which would hand its cluster over as no type.
+func TestSuite_ATypeOnlyASecondFlowListsRunsInThatFlow(t *testing.T) {
+	s := withSecondFlow(onlyTypes(builtinSuite(t), "dbt-parse"), "z-second-flow", 2, "dbt-compile")
+	s.Fixtures = slices.DeleteFunc(s.Fixtures, func(f conformance.Fixture) bool {
+		return f.Type != "" && f.Type != "dbt-parse" && f.Type != "dbt-compile"
+	})
+	worlds := recordWorlds(&s)
+
+	results := s.Run(ctx)
+
+	var compile []conformance.Result
+	for _, r := range results {
+		assert.NoError(t, r.Err, "type %s, scenario %s", r.Type, r.Scenario)
+		if r.Type == "dbt-compile" {
+			compile = append(compile, r)
+		}
+	}
+	assert.Len(t, compile, len(conformance.TypeScenarios()), "dbt-compile is played through every type scenario")
+	seen := 0
+	for _, w := range *worlds {
+		for _, rem := range w.Remediations() {
+			want := flowName
+			if w.typ == "dbt-compile" {
+				want = "z-second-flow"
+			}
+			assert.Equal(t, want, rem.Flow, "a remediation of a %s scenario", w.typ)
+			seen++
+		}
+	}
+	assert.Positive(t, seen)
+}
+
 func TestSuite_AFlowScenarioWithoutAFixtureFails(t *testing.T) {
 	s := builtinSuite(t)
 	s.Fixtures = slices.DeleteFunc(slices.Clone(s.Fixtures), func(f conformance.Fixture) bool {

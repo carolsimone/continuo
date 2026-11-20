@@ -10,11 +10,13 @@
 // files loads the files the service would load with <dir> as its install
 // folder: the built-in flow, type and fixture files, then the ones under <dir>
 // over them (an install file with the kind and name of a built-in replaces it
-// whole, any other file is added). It validates them against the steps the
-// runner registers, checks that they define the flow every heal trigger runs,
-// and runs the conformance suite over them: every type a flow lists through
-// every type scenario, and every flow through every flow scenario, in worlds of
-// scripted fakes over the memory store. A built-in type fixture of a type that
+// whole, any other file is added, and one at the path of a built-in file that
+// leaves the built-in loaded is an error). It validates them against the steps
+// the runner registers, checks that they define the flow every heal trigger
+// runs, and runs the conformance suite over them: every type a flow lists
+// through every type scenario, in the first flow by name that lists it, and
+// every flow through every flow scenario, each remediation following the flow
+// it plays, in worlds of scripted fakes over the memory store. A built-in type fixture of a type that
 // no loaded flow lists is left out of the suite, with a warning, while an
 // install's fixture that nothing plays (one of a type no flow lists, or of a
 // flow no file defines) fails. When the files do not load or do not validate
@@ -92,10 +94,12 @@ Purpose
   files the service loads with <dir> as its install folder: the built-in flow,
   type and fixture files, then the ones under <dir> over them. An install file
   with the kind and name of a built-in replaces it whole, and any other file is
-  added. It validates the result against the steps the runner registers, checks
-  that it defines the flow every heal trigger runs (rejected-release), and plays
-  every type a flow lists and every flow through the conformance scenarios, in
-  worlds of scripted fakes over the memory store. A built-in type fixture of a
+  added; one at the path of a built-in file that leaves the built-in loaded is
+  an error. It validates the result against the steps the runner registers,
+  checks that it defines the flow every heal trigger runs (rejected-release),
+  and plays every type a flow lists, in the first flow by name that lists it,
+  and every flow, as itself, through the conformance scenarios, in worlds of
+  scripted fakes over the memory store. A built-in type fixture of a
   type that no loaded flow lists is not played, and a warning says so. An
   install fixture that nothing plays fails: one of a type no flow lists, or of
   a flow no file defines. When the files do not load or do not validate it
@@ -398,7 +402,9 @@ func builtinFixturesToPlay(set workflow.Set, builtin []conformance.Fixture) (pla
 }
 
 // countFiles is the number of distinct files that hold a loaded flow, type or
-// fixture.
+// fixture. An install file and a built-in file never share a path while both
+// hold a loaded flow or type, or both a loaded fixture: the install loaders
+// refuse that.
 func countFiles(set workflow.Set, fixtures ...[]conformance.Fixture) int {
 	seen := map[string]bool{}
 	for _, f := range set.Flows {

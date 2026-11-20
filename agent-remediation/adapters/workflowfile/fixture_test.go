@@ -201,7 +201,9 @@ trigger: { nodes: [{ node_id: svc }] }
 	require.Len(t, fixtures, 3)
 	assert.Equal(t, "fixtures/several.yaml", fixtures[0].File)
 	assert.Equal(t, "dbt-validation", fixtures[0].Type)
+	assert.Equal(t, 1, fixtures[0].Line)
 	assert.Equal(t, "dbt-compile", fixtures[1].Type)
+	assert.Equal(t, strings.Count(typeFixtureYAML, "\n")+2, fixtures[1].Line, "a fixture's line is where its document starts")
 	assert.Equal(t, "fixtures/types/dbt-valid.yaml", fixtures[2].File)
 
 	set, err := Load(fsys)

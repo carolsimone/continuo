@@ -19,8 +19,10 @@ import (
 // type it tests in Type, and its trigger makes one cluster of that type; a
 // flow fixture names Flow and the flow Scenario it plays instead.
 type Fixture struct {
-	// File is where the fixture was read, for messages.
+	// File is where the fixture was read, and Line the line its document
+	// starts at, for messages.
 	File    string
+	Line    int
 	Version int
 
 	Type     string

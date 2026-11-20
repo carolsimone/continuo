@@ -676,6 +676,90 @@ func TestFiles_AFlowNoHealTriggerRunsIsNoted(t *testing.T) {
 	assert.Equal(t, len(conformance.FlowScenarios()), played, "the flow is still played")
 }
 
+// writeSecondFlow writes the install flow second-flow, the built-in flow
+// rejected-release renamed with edit applied, and a copy of every built-in
+// flow fixture that plays second-flow.
+func writeSecondFlow(t *testing.T, dir string, edit func(flow string) string) {
+	t.Helper()
+	flow := builtinText(t, "flows/rejected-release.yaml")
+	require.Contains(t, flow, "name: rejected-release\n")
+	writeInstallFile(t, dir, "second-flow.yaml", edit(strings.Replace(flow, "name: rejected-release\n", "name: second-flow\n", 1)))
+	const fixtures = "fixtures/flows/rejected-release"
+	entries, err := fs.ReadDir(workflows.Builtin, fixtures)
+	require.NoError(t, err)
+	require.NotEmpty(t, entries)
+	for _, e := range entries {
+		body := builtinText(t, fixtures+"/"+e.Name())
+		require.Contains(t, body, "flow: rejected-release\n")
+		writeInstallFile(t, dir, "second-flow-"+e.Name(), strings.Replace(body, "flow: rejected-release\n", "flow: second-flow\n", 1))
+	}
+}
+
+// An install's second flow is played as itself: each of its scenarios runs a
+// remediation that follows it. A second flow that lists one type fails the
+// scenarios it cannot pass with fixtures copied from rejected-release, while a
+// faithful copy of rejected-release passes them all.
+func TestFiles_ASecondFlowIsPlayedAsItself(t *testing.T) {
+	t.Run("a flow of one type fails the scenarios it cannot pass", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSecondFlow(t, dir, func(flow string) string {
+			head, rest, found := strings.Cut(flow, "types:\n")
+			require.True(t, found)
+			for strings.HasPrefix(rest, "  - ") {
+				_, rest, _ = strings.Cut(rest, "\n")
+			}
+			return head + "types:\n  - dbt-compile\n" + rest
+		})
+
+		code, stdout, stderr := runFiles(t, "files", dir)
+
+		assert.Equal(t, 1, code, stderr)
+		r := decode(t, stdout)
+		assert.Empty(t, r.Errors)
+		assert.Equal(t, []string{"flow second-flow: no heal trigger runs it"}, r.Warnings)
+		failed := failedScenarios(r)
+		assert.Contains(t, failed, "second-flow two_types_one_service")
+		for _, f := range failed {
+			assert.True(t, strings.HasPrefix(f, "second-flow "), "only second-flow's scenarios fail: %s", f)
+		}
+	})
+	t.Run("a faithful copy of rejected-release passes", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSecondFlow(t, dir, func(flow string) string { return flow })
+
+		code, stdout, stderr := runFiles(t, "files", dir)
+
+		assert.Equal(t, 0, code, stderr)
+		r := decode(t, stdout)
+		assert.Empty(t, r.Errors)
+		assert.Empty(t, failedScenarios(r))
+		var played int
+		for _, s := range r.Scenarios {
+			if s.Type == "second-flow" {
+				played++
+			}
+		}
+		assert.Equal(t, len(conformance.FlowScenarios()), played)
+	})
+}
+
+// An install file at the path of a built-in file that leaves the built-in's
+// type loaded would make one path name two files, so it is an error that names
+// both definitions, and the scenarios are skipped.
+func TestFiles_AnInstallFileAtABuiltInPathThatLeavesItLoadedExitsOne(t *testing.T) {
+	dir := t.TempDir()
+	body := strings.Replace(builtinText(t, "types/dbt-compile.yaml"), "name: dbt-compile\n", "name: my-compile\n", 1)
+	writeInstallFile(t, dir, "types/dbt-compile.yaml", body)
+
+	code, stdout, stderr := runFiles(t, "files", dir)
+
+	assert.Equal(t, 1, code, stderr)
+	r := decode(t, stdout)
+	assert.Equal(t, []string{fmt.Sprintf(`types/dbt-compile.yaml:%d: type "my-compile" is in a file with the path of the built-in file that defines type "dbt-compile", which stays loaded; give the install file another path`,
+		lineOf(t, body, "kind: type"))}, r.Errors)
+	assert.Empty(t, r.Scenarios)
+}
+
 // A flow fixture whose flow no file defines (a mistyped name) is played by no
 // flow, so it fails with a result that names its file.
 func TestFiles_AFlowFixtureOfAFlowNoFileDefinesFails(t *testing.T) {

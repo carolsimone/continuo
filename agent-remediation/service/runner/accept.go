@@ -41,6 +41,15 @@ func FlowsNoTriggerRuns(set workflow.Set) []string {
 	return notes
 }
 
+// acceptFlow is the flow Accept records on a remediation it creates: the
+// runner's Deps.Flow, or rejected-release when that is empty.
+func (r *Runner) acceptFlow() string {
+	if r.d.Flow != "" {
+		return r.d.Flow
+	}
+	return flowRejectedRelease
+}
+
 // Accepted is one heal trigger as the stream delivered it: the decoded trigger,
 // the payload bytes it was decoded from, the message's id and stream fields,
 // and the id of the producer's outbox entry when the message carries one.
@@ -52,7 +61,8 @@ type Accepted struct {
 	Fields        map[string]string
 }
 
-// Accept records a heal trigger as a running remediation, in one transaction
+// Accept records a heal trigger as a running remediation that follows the flow
+// acceptFlow names, in one transaction
 // that also claims the message: a redelivered message, or the same outbox entry
 // republished under a new message id, commits nothing and returns nil. A
 // trigger for a release and round that already has a remediation
@@ -103,7 +113,7 @@ func (r *Runner) Accept(ctx context.Context, a Accepted) error {
 		TenantID:         t.TenantID,
 		ReleaseID:        t.ReleaseID,
 		Round:            t.Round,
-		Flow:             flowRejectedRelease,
+		Flow:             r.acceptFlow(),
 		Status:           remediation.StatusRunning,
 		TriggerPayload:   a.Payload,
 		TriggerMessageID: a.MessageID,

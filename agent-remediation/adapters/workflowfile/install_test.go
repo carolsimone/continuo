@@ -436,3 +436,143 @@ func TestLoadInstallFixtures_RefusesABadInstallFixtureWithItsFileAndLine(t *test
 	assert.Nil(t, own)
 	assert.Contains(t, err.Error(), "bad.yaml:5:")
 }
+
+// revisionsByFile is the revision of every flow and type of set by the file it
+// was loaded from, and fails the test when two definitions of one file carry
+// different revisions: a file then names two loaded files.
+func revisionsByFile(t *testing.T, set workflow.Set) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	add := func(file, revision, what string) {
+		if prev, ok := out[file]; ok && prev != revision {
+			t.Errorf("%s: %s has revision %s, another definition of the file %s", file, what, revision, prev)
+		}
+		out[file] = revision
+	}
+	for name, f := range set.Flows {
+		add(f.File, f.Revision, "flow "+name)
+	}
+	for name, typ := range set.Types {
+		add(typ.File, typ.Revision, "type "+name)
+	}
+	return out
+}
+
+// An install file at the path of a built-in file that defines another flow or
+// type leaves that built-in loaded, so one path would name two loaded files.
+// The load refuses it, naming both definitions.
+func TestLoadInstall_RefusesAFileAtABuiltInPathWhoseDefinitionStaysLoaded(t *testing.T) {
+	for _, tc := range []struct {
+		name, path, body, want string
+	}{
+		{
+			name: "type",
+			path: "types/dbt-compile.yaml",
+			body: "kind: type\nversion: 1\nname: my-compile\nmatch: { cluster: single, source: compile }\n",
+			want: `types/dbt-compile.yaml:1: type "my-compile" is in a file with the path of the built-in file that defines type "dbt-compile", which stays loaded; give the install file another path`,
+		},
+		{
+			name: "flow",
+			path: "flows/rejected-release.yaml",
+			body: "kind: flow\nversion: 1\nname: my-flow\n",
+			want: `flows/rejected-release.yaml:1: flow "my-flow" is in a file with the path of the built-in file that defines flow "rejected-release", which stays loaded; give the install file another path`,
+		},
+		{
+			name: "type at a flow's path",
+			path: "flows/rejected-release.yaml",
+			body: "# a type kept where the built-in flow is\nkind: type\nversion: 1\nname: my-compile\nmatch: { cluster: single, source: compile }\n",
+			want: `flows/rejected-release.yaml:2: type "my-compile" is in a file with the path of the built-in file that defines flow "rejected-release", which stays loaded; give the install file another path`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			set, report, err := LoadInstall(builtinFiles(), fstest.MapFS{tc.path: {Data: []byte(tc.body)}})
+
+			require.Error(t, err)
+			assert.Equal(t, tc.want, err.Error())
+			assert.Equal(t, workflow.Set{}, set)
+			assert.Equal(t, InstallReport{}, report)
+		})
+	}
+}
+
+// A file at a built-in's path that replaces what the built-in file defines,
+// with other content or as a byte for byte copy, loads: the built-in is gone,
+// and the path names the install's file alone.
+func TestLoadInstall_AFileAtABuiltInPathThatReplacesItLoads(t *testing.T) {
+	builtin := builtinFiles()
+	for name, data := range map[string][]byte{
+		"replacement": []byte(installedCompile),
+		"copy":        builtin["types/dbt-compile.yaml"].Data,
+	} {
+		t.Run(name, func(t *testing.T) {
+			set, _, err := LoadInstall(builtin, fstest.MapFS{"types/dbt-compile.yaml": {Data: data}})
+
+			require.NoError(t, err)
+			own, err := Load(fstest.MapFS{"types/dbt-compile.yaml": {Data: data}})
+			require.NoError(t, err)
+			assert.Equal(t, own.Types["dbt-compile"].Revision, set.Types["dbt-compile"].Revision)
+			assert.Equal(t, own.Types["dbt-compile"].Revision, revisionsByFile(t, set)["types/dbt-compile.yaml"])
+		})
+	}
+}
+
+// Whether a built-in stays loaded decides, not which install file replaces
+// it: an install file at the path of a built-in type that another install
+// file replaces loads, and each path names one loaded file.
+func TestLoadInstall_AFileAtTheBuiltInPathOfATypeReplacedElsewhereLoads(t *testing.T) {
+	install := fstest.MapFS{
+		"types/dbt-compile.yaml": {Data: []byte("kind: type\nversion: 1\nname: my-compile\nmatch: { cluster: single, source: compile }\n")},
+		"compile.yaml":           {Data: []byte(installedCompile)},
+	}
+
+	set, _, err := LoadInstall(builtinFiles(), install)
+
+	require.NoError(t, err)
+	assert.Equal(t, "types/dbt-compile.yaml", set.Types["my-compile"].File)
+	assert.Equal(t, "compile.yaml", set.Types["dbt-compile"].File)
+	revisions := revisionsByFile(t, set)
+	assert.NotEqual(t, revisions["types/dbt-compile.yaml"], revisions["compile.yaml"])
+}
+
+// An install fixture at the path of a built-in fixture that tests something
+// else leaves that built-in fixture loaded, so the load refuses it, naming
+// both fixtures.
+func TestLoadInstallFixtures_RefusesAFileAtABuiltInPathWhoseFixtureStaysLoaded(t *testing.T) {
+	for _, tc := range []struct {
+		name, path, body, want string
+	}{
+		{
+			name: "type fixture",
+			path: "fixtures/types/dbt-compile.yaml",
+			body: fixtureOf("type: dbt-parse", "install-parse"),
+			want: `fixtures/types/dbt-compile.yaml:1: the fixture of type "dbt-parse" is in a file with the path of the built-in file that holds the fixture of type "dbt-compile", which stays loaded; give the install file another path`,
+		},
+		{
+			name: "flow fixture",
+			path: "fixtures/flows/maintenance.yaml",
+			body: fixtureOf("flow: rejected-release\nscenario: unfixable", "install-unfixable"),
+			want: `fixtures/flows/maintenance.yaml:1: the fixture of flow "rejected-release" and scenario "unfixable" is in a file with the path of the built-in file that holds the fixture of flow "rejected-release" and scenario "maintenance", which stays loaded; give the install file another path`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			kept, own, err := LoadInstallFixtures(builtinFiles(), fstest.MapFS{tc.path: {Data: []byte(tc.body)}})
+
+			require.Error(t, err)
+			assert.Equal(t, tc.want, err.Error())
+			assert.Nil(t, kept)
+			assert.Nil(t, own)
+		})
+	}
+}
+
+// A byte for byte copy of a built-in fixture at its path replaces it.
+func TestLoadInstallFixtures_ACopyAtTheBuiltInPathLoads(t *testing.T) {
+	builtin := builtinFiles()
+	install := fstest.MapFS{"fixtures/types/dbt-compile.yaml": builtin["fixtures/types/dbt-compile.yaml"]}
+
+	kept, own, err := LoadInstallFixtures(builtin, install)
+
+	require.NoError(t, err)
+	assert.NotContains(t, fixtureNodes(kept), "built-in-compile")
+	assert.Equal(t, []string{"built-in-compile"}, fixtureNodes(own))
+}

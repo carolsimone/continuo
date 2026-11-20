@@ -57,6 +57,11 @@ type Deps struct {
 	// Metrics counts the tries, rounds, outcomes, stages and model tokens of
 	// the remediations the runner drives. Nil counts nothing.
 	Metrics ports.RemediationMetrics
+	// Flow names the flow Accept records on every remediation it creates,
+	// which every drive of the remediation follows. Empty is the flow
+	// TriggerFlow returns, which every heal trigger runs; the conformance
+	// suite names the flow each of its scenarios plays.
+	Flow string
 }
 
 // Runner runs each remediation as a sequence of committed steps. Every step's

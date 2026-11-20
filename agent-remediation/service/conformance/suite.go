@@ -105,11 +105,12 @@ type Suite struct {
 
 // Run runs every type a flow lists through every type scenario, each in a
 // world of its own built from the type's fixture (as Mutate changed it, when
-// the suite has one), and returns one result per type and scenario, in flow
-// and scenario order. A listed type with no fixture, or with several, fails
-// every scenario. A fixture that nothing plays fails too, with one result of
-// its own: a type fixture for a type no flow lists, and a flow fixture for a
-// flow no file defines.
+// the suite has one) and in the first flow, by name, that lists the type, and
+// returns one result per type and scenario, in flow and scenario order. A
+// listed type with no fixture, or with several, fails every scenario. A
+// fixture that nothing plays fails too, with one result of its own: a type
+// fixture for a type no flow lists, and a flow fixture for a flow no file
+// defines.
 func (s Suite) Run(ctx context.Context) []Result {
 	listed := s.listedTypes()
 	byType := map[string][]Fixture{}
@@ -151,10 +152,11 @@ func (s Suite) Run(ctx context.Context) []Result {
 	return out
 }
 
-// listedType is a type a flow lists, with the tries of the first flow that
-// lists it.
+// listedType is a type a flow lists, with the first flow that lists it and
+// that flow's tries. The type's scenarios run in that flow.
 type listedType struct {
 	name  string
+	flow  string
 	tries int
 }
 
@@ -171,7 +173,7 @@ func (s Suite) listedTypes() []listedType {
 		flow := s.Files.Flows[name]
 		for _, t := range flow.Types {
 			if !slices.ContainsFunc(out, func(lt listedType) bool { return lt.name == t }) {
-				out = append(out, listedType{name: t, tries: flow.Tries})
+				out = append(out, listedType{name: t, flow: name, tries: flow.Tries})
 			}
 		}
 	}
@@ -200,8 +202,9 @@ func (sr *scenarioRun) requests() []prompt.ProposeRequest {
 	return out
 }
 
-// runType runs the listed type lt through scenario sc from its fixture f,
-// checks what the run wrote, and returns the model requests the run made.
+// runType runs the listed type lt through scenario sc from its fixture f, in
+// the first flow that lists it, checks what the run wrote, and returns the
+// model requests the run made.
 func (s Suite) runType(ctx context.Context, lt listedType, f Fixture, sc Scenario) ([]prompt.ProposeRequest, error) {
 	typ, ok := s.Files.Types[lt.name]
 	if !ok {
@@ -213,11 +216,11 @@ func (s Suite) runType(ctx context.Context, lt listedType, f Fixture, sc Scenari
 	}
 	oneRunCalls := 0
 	if sc == Redelivery {
-		if oneRunCalls, err = s.modelCallsOfOneRun(ctx, f, plan); err != nil {
+		if oneRunCalls, err = s.modelCallsOfOneRun(ctx, f, lt.flow, plan); err != nil {
 			return nil, fmt.Errorf("count the model calls of a run with no restart: %w", err)
 		}
 	}
-	sr, err := s.start(f, plan.script, false)
+	sr, err := s.start(f, lt.flow, plan.script, false)
 	if err != nil {
 		return nil, err
 	}
@@ -236,10 +239,10 @@ func (s Suite) runType(ctx context.Context, lt listedType, f Fixture, sc Scenari
 }
 
 // modelCallsOfOneRun is how often the model is called when the plan's trigger
-// is delivered once and driven to its end in a world of its own, with no
-// restart.
-func (s Suite) modelCallsOfOneRun(ctx context.Context, f Fixture, plan typePlan) (int, error) {
-	sr, err := s.start(f, plan.script, false)
+// is delivered once and driven to its end in flow, in a world of its own, with
+// no restart.
+func (s Suite) modelCallsOfOneRun(ctx context.Context, f Fixture, flow string, plan typePlan) (int, error) {
+	sr, err := s.start(f, flow, plan.script, false)
 	if err != nil {
 		return 0, err
 	}
