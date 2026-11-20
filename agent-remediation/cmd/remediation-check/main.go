@@ -14,13 +14,14 @@
 // leaves the built-in loaded is an error). It validates them against the steps
 // the runner registers, checks that they define the flow every heal trigger
 // runs, and runs the conformance suite over them: every type a flow lists
-// through every type scenario, in the first flow by name that lists it, and
-// every flow through every flow scenario, each remediation following the flow
-// it plays, in worlds of scripted fakes over the memory store. A built-in type fixture of a type that
-// no loaded flow lists is left out of the suite, with a warning, while an
-// install's fixture that nothing plays (one of a type no flow lists, or of a
-// flow no file defines) fails. When the files do not load or do not validate
-// it reports the errors, each message once, and skips the suite.
+// through every type scenario, in rejected-release when it lists the type, else
+// in the first flow by name that lists it, and every flow through every flow
+// scenario, each remediation following the flow it plays, in worlds of scripted
+// fakes over the memory store. A built-in type fixture of a type that no loaded
+// flow lists is left out of the suite, with a warning, while an install's
+// fixture that nothing plays (one of a type no flow lists, or of a flow no file
+// defines) fails. When the files do not load or do not validate it reports the
+// errors, each message once, and skips the suite.
 //
 // files prints one JSON object to stdout and nothing else:
 //
@@ -97,9 +98,10 @@ Purpose
   added; one at the path of a built-in file that leaves the built-in loaded is
   an error. It validates the result against the steps the runner registers,
   checks that it defines the flow every heal trigger runs (rejected-release),
-  and plays every type a flow lists, in the first flow by name that lists it,
-  and every flow, as itself, through the conformance scenarios, in worlds of
-  scripted fakes over the memory store. A built-in type fixture of a
+  and plays every type a flow lists (in rejected-release when it lists the
+  type, else in the first flow by name that lists it) and every flow, as
+  itself, through the conformance scenarios, in worlds of scripted fakes over
+  the memory store. A built-in type fixture of a
   type that no loaded flow lists is not played, and a warning says so. An
   install fixture that nothing plays fails: one of a type no flow lists, or of
   a flow no file defines. When the files do not load or do not validate it

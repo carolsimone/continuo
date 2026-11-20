@@ -234,9 +234,10 @@ func TestSuite_AFlowScenarioRunsTheNamedFlow(t *testing.T) {
 	}
 }
 
-// A type's scenarios run in the first flow, by name, that lists it. A type
-// that only a second flow lists is fixed there, with that flow's tries, and
-// not in the built-in flow, which would hand its cluster over as no type.
+// A type the flow heal triggers run does not list is played in the first flow,
+// by name, that lists it: a type that only a second flow lists is fixed there,
+// with that flow's tries, and not in the built-in flow, which would hand its
+// cluster over as no type.
 func TestSuite_ATypeOnlyASecondFlowListsRunsInThatFlow(t *testing.T) {
 	s := withSecondFlow(onlyTypes(builtinSuite(t), "dbt-parse"), "z-second-flow", 2, "dbt-compile")
 	s.Fixtures = slices.DeleteFunc(s.Fixtures, func(f conformance.Fixture) bool {
@@ -266,6 +267,35 @@ func TestSuite_ATypeOnlyASecondFlowListsRunsInThatFlow(t *testing.T) {
 		}
 	}
 	assert.Positive(t, seen)
+}
+
+// A type that the flow heal triggers run lists is played in that flow, with
+// its tries, even when a flow whose name sorts first lists the type too.
+func TestSuite_ATypeListedByTheProductionFlowIsPlayedThere(t *testing.T) {
+	s := withSecondFlow(onlyTypes(builtinSuite(t), "dbt-compile"), "a-experimental", 2, "dbt-compile")
+	s.Fixtures = slices.DeleteFunc(s.Fixtures, func(f conformance.Fixture) bool {
+		return f.Type != "" && f.Type != "dbt-compile"
+	})
+	production := s.Files.Flows[runner.TriggerFlowName]
+	require.Equal(t, 3, production.Tries)
+	require.Less(t, "a-experimental", runner.TriggerFlowName, "the other flow sorts first")
+	worlds := recordWorlds(&s)
+
+	results := s.Run(ctx)
+
+	require.Len(t, results, len(conformance.TypeScenarios()), "dbt-compile is played once, in one flow")
+	for _, r := range results {
+		assert.Equal(t, "dbt-compile", r.Type)
+		assert.NoError(t, r.Err, "scenario %s", r.Scenario)
+	}
+	mostTries := 0
+	for _, w := range *worlds {
+		for _, rem := range w.Remediations() {
+			assert.Equal(t, runner.TriggerFlowName, rem.Flow, "a remediation of a dbt-compile scenario")
+			mostTries = max(mostTries, len(w.Tries(rem.ID)))
+		}
+	}
+	assert.Equal(t, production.Tries, mostTries, "the scenario whose tries are all spent makes the production flow's tries")
 }
 
 func TestSuite_AFlowScenarioWithoutAFixtureFails(t *testing.T) {

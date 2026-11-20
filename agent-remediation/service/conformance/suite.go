@@ -13,6 +13,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
@@ -105,12 +106,12 @@ type Suite struct {
 
 // Run runs every type a flow lists through every type scenario, each in a
 // world of its own built from the type's fixture (as Mutate changed it, when
-// the suite has one) and in the first flow, by name, that lists the type, and
-// returns one result per type and scenario, in flow and scenario order. A
-// listed type with no fixture, or with several, fails every scenario. A
-// fixture that nothing plays fails too, with one result of its own: a type
-// fixture for a type no flow lists, and a flow fixture for a flow no file
-// defines.
+// the suite has one) and in the flow listedTypes picks for the type, and
+// returns one result per type and scenario, in the order listedTypes gives
+// the types and in scenario order. A listed type with no fixture, or with
+// several, fails every scenario. A fixture that nothing plays fails too, with
+// one result of its own: a type fixture for a type no flow lists, and a flow
+// fixture for a flow no file defines.
 func (s Suite) Run(ctx context.Context) []Result {
 	listed := s.listedTypes()
 	byType := map[string][]Fixture{}
@@ -152,22 +153,30 @@ func (s Suite) Run(ctx context.Context) []Result {
 	return out
 }
 
-// listedType is a type a flow lists, with the first flow that lists it and
-// that flow's tries. The type's scenarios run in that flow.
+// listedType is a type a flow lists, with the flow its scenarios run in and
+// that flow's tries, which the scenarios expect.
 type listedType struct {
 	name  string
 	flow  string
 	tries int
 }
 
-// listedTypes is every type a flow lists, flows in name order and each flow's
-// types in its order, each once.
+// listedTypes is every type a flow lists, each once, with the flow it is
+// played in: runner.TriggerFlowName, the flow every heal trigger runs, when
+// that flow lists the type, else the first flow by name that lists it. The
+// types come in the order of their flows, the trigger flow first and the
+// others by name, and in each flow's order.
 func (s Suite) listedTypes() []listedType {
 	flows := make([]string, 0, len(s.Files.Flows))
 	for name := range s.Files.Flows {
-		flows = append(flows, name)
+		if name != runner.TriggerFlowName {
+			flows = append(flows, name)
+		}
 	}
 	sort.Strings(flows)
+	if _, ok := s.Files.Flows[runner.TriggerFlowName]; ok {
+		flows = append([]string{runner.TriggerFlowName}, flows...)
+	}
 	var out []listedType
 	for _, name := range flows {
 		flow := s.Files.Flows[name]

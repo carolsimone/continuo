@@ -21,11 +21,11 @@ func flowsNamed(names ...string) workflow.Set {
 // Every heal trigger runs one flow, so each other flow the files define is
 // noted, in name order, and the flow the triggers run is not.
 func TestFlowsNoTriggerRuns_NotesEveryFlowButTheTriggers(t *testing.T) {
-	set := flowsNamed("my-flow", flowRejectedRelease, "another-flow")
+	set := flowsNamed("my-flow", TriggerFlowName, "another-flow")
 
 	trigger, err := TriggerFlow(set)
 	require.NoError(t, err)
-	assert.Equal(t, flowRejectedRelease, trigger.Name)
+	assert.Equal(t, TriggerFlowName, trigger.Name)
 
 	assert.Equal(t, []string{
 		"flow another-flow: no heal trigger runs it",
@@ -34,6 +34,6 @@ func TestFlowsNoTriggerRuns_NotesEveryFlowButTheTriggers(t *testing.T) {
 }
 
 func TestFlowsNoTriggerRuns_TheTriggersFlowAloneHasNoNote(t *testing.T) {
-	assert.Empty(t, FlowsNoTriggerRuns(flowsNamed(flowRejectedRelease)))
+	assert.Empty(t, FlowsNoTriggerRuns(flowsNamed(TriggerFlowName)))
 	assert.Empty(t, FlowsNoTriggerRuns(workflow.Set{}))
 }
