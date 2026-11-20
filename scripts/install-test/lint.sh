@@ -509,9 +509,9 @@ PY
 # files only while it is mounted at the folder agent-remediation reads them
 # from (AGENT_REMEDIATION_WORKFLOWS_DIR, else /etc/continuo-workflows, compared
 # without a trailing slash). Mounted anywhere else, or nowhere, it mounts
-# service-repos like a volume of any other name, so a services list written
-# before the remediation files, whose volume of that name holds the service
-# repository map at /etc/continuo, keeps it.
+# service-repos like a volume of any other name, so a services entry whose
+# volume of that name holds the service repository map at /etc/continuo keeps
+# it.
 echo "--- an empty-named remediation-workflows volume mounts the remediation files only at the folder agent-remediation reads"
 # single_volume_services <volumeMounts JSON> [<env JSON>] prints a services
 # list of one agent-remediation entry whose one volume is an empty-named

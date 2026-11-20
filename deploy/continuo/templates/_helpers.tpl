@@ -333,10 +333,11 @@ app.kubernetes.io/name: {{ .service }}
      seen here, and a line of a quoted string that starts with `kind: ` at the
      start of the line counts. The rest of each file is checked by
      agent-remediation at startup and by `remediation-check files`. The
-     loader's reading of each of these shapes is pinned by TestLoad_
-     EmptyDocuments, TestLoad_Directives and TestLoad_RefusesADuplicateKey in
-     agent-remediation/adapters/workflowfile; lint.sh renders the same shapes,
-     and TestLoad_AgreesWithTheChartsFixtures loads its fixture files.
+     loader's reading of each of these shapes is pinned by
+     TestLoad_EmptyDocuments, TestLoad_Directives and
+     TestLoad_RefusesADuplicateKey in agent-remediation/adapters/workflowfile;
+     lint.sh renders the same shapes, and TestLoad_AgreesWithTheChartsFixtures
+     loads its fixture files.
      Call: include "continuo.agentRemediation.assertWorkflowFiles" $ */}}
 {{- define "continuo.agentRemediation.assertWorkflowFiles" -}}
 {{- $supportedVersions := list 1 -}}
