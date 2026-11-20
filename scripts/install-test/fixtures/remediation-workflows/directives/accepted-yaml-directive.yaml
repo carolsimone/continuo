@@ -1,0 +1,6 @@
+%YAML 1.1
+---
+# A %YAML directive before the first marker belongs to the document the marker starts.
+kind: type
+version: 1
+name: lint-probe

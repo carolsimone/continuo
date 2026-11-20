@@ -1,0 +1,7 @@
+%YAML 1.1
+%YAML 1.1
+---
+# A document takes one %YAML directive.
+kind: type
+version: 1
+name: lint-probe

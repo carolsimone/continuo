@@ -1,0 +1,5 @@
+version: 2
+# A leftover version line above the version of the type.
+kind: type
+version: 1
+name: lint-probe

@@ -1,0 +1,18 @@
+# A fixture whose body holds kind and version keys below the top level, and a
+# block scalar whose lines start with them: none is a second top-level key.
+# version: 2
+kind: fixture
+version: 1
+type: lint-probe
+trigger:
+  nodes:
+    - node_id: model.lint.probe
+repo_files:
+  kind: the file named kind
+  version: |
+    kind: flow
+    version: 2
+---
+kind: type
+version: 1
+name: lint-probe

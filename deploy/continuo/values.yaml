@@ -676,10 +676,14 @@ agentRemediation:
     # agent-remediation mounts at /etc/continuo-workflows and loads over its
     # built-in files at startup: a file of a built-in's kind and name replaces
     # it whole, any other is added. A name is letters, digits, '.', '_' and '-',
-    # ends in .yaml or .yml and does not start with a dot. A document whose kind
-    # is not flow, type or fixture, or whose version agent-remediation does not
-    # load, fails the render, naming the file, and so does an empty document
-    # (a `---` that only blank lines or comments follow). With files set, the
+    # ends in .yaml or .yml and does not start with a dot. The mounted file
+    # holds the bytes given, so its revision is the file's own. A document
+    # whose kind is not flow, type or fixture, or whose version
+    # agent-remediation does not load, fails the render, naming the file, and
+    # so do a top-level kind or version line written twice, an empty document
+    # (a `---` that only blank lines or comments follow) and a directive
+    # (%YAML 1.1, %TAG) that no `---` follows; agent-remediation refuses every
+    # other duplicate key when it starts. With files set, the
     # render also fails unless agent-remediation's services entry has the
     # volume remediation-workflows as a ConfigMap volume with an empty
     # configMap.name (the only form that mounts this ConfigMap with its digest
@@ -897,9 +901,11 @@ defaultResources:
 #                                  volume with an empty name mounts the chart's
 #                                  ConfigMap for the services that have one;
 #                                  on agent-remediation, which has two, the one
-#                                  of the volume's name (service-repos or
-#                                  remediation-workflows), and service-repos
-#                                  for a volume of any other name.
+#                                  of the volume's name: service-repos, or
+#                                  remediation-workflows while the volume is
+#                                  mounted at AGENT_REMEDIATION_WORKFLOWS_DIR
+#                                  (/etc/continuo-workflows when unset); any
+#                                  other volume mounts service-repos.
 # These keys are install-time only: they shape the Deployments and
 # ServiceAccounts, and no service reads them.
 services:
@@ -1187,9 +1193,10 @@ services:
     # agent-remediation reads service_repos.yaml and its remediation files only
     # at startup. An empty configMap.name mounts the chart's ConfigMap of the
     # volume's name: service-repos (serviceRepos, or files/service_repos.yaml
-    # when that is empty) or agent-remediation-workflows
-    # (agentRemediation.workflows.files); a volume of any other name mounts
-    # service-repos. The digest of each is on the pod template, so
+    # when that is empty), or agent-remediation-workflows
+    # (agentRemediation.workflows.files) while the volume is mounted at
+    # AGENT_REMEDIATION_WORKFLOWS_DIR; any other volume mounts service-repos.
+    # The digest of each is on the pod template, so
     # `helm upgrade` rolls agent-remediation when one changes. Helm cannot hash
     # a ConfigMap of your own named here: after editing it, run
     # `kubectl rollout restart deployment/agent-remediation`.

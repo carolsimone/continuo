@@ -216,6 +216,17 @@ app.kubernetes.io/name: {{ .service }}
 {{- toJson (get $workflows "files" | default dict) -}}
 {{- end -}}
 
+{{/* The folder agent-remediation reads the install's remediation files from,
+     for its services entry (the argument): the entry's
+     AGENT_REMEDIATION_WORKFLOWS_DIR, else agent-remediation's
+     defaultWorkflowsDir (lint.sh reads it from config.go and renders a mount
+     there with no variable set), without a trailing slash, so that a
+     mountPath compares to it once its own trailing slash is trimmed.
+     Call: include "continuo.agentRemediation.workflowsDir" $svc */}}
+{{- define "continuo.agentRemediation.workflowsDir" -}}
+{{- toString (get (.env | default dict) "AGENT_REMEDIATION_WORKFLOWS_DIR") | default "/etc/continuo-workflows" | trimSuffix "/" -}}
+{{- end -}}
+
 {{/* Fails the render when agentRemediation.workflows.files is set and the
      agent-remediation services entry svc would not show the files to the
      service, naming the entry and what is wrong. The files reach the service
@@ -226,19 +237,15 @@ app.kubernetes.io/name: {{ .service }}
      the chart's own included, a changed file would not roll agent-remediation,
      which would keep serving the files it read at startup. It also needs a
      volumeMounts entry of that volume with no subPath at the folder
-     agent-remediation reads: the entry's AGENT_REMEDIATION_WORKFLOWS_DIR, else
-     $defaultDir, which is agent-remediation's defaultWorkflowsDir (lint.sh
-     reads it from config.go and renders a mount there with no variable set).
-     The two paths are compared without a trailing slash. An operator's own
-     services list, or an older chart's list that `helm upgrade --reuse-values`
-     keeps, may miss any of these; without files set nothing is checked, so
-     such a list still renders.
+     agent-remediation reads ("continuo.agentRemediation.workflowsDir"). An
+     operator's own services list, or an older chart's list that `helm upgrade
+     --reuse-values` keeps, may miss any of these; without files set nothing is
+     checked, so such a list still renders.
      Call: include "continuo.agentRemediation.assertWorkflowsMount" (dict "root" $ "svc" $svc) */}}
 {{- define "continuo.agentRemediation.assertWorkflowsMount" -}}
 {{- $root := .root -}}
 {{- $svc := .svc -}}
 {{- if (include "continuo.agentRemediation.workflowFiles" $root | fromJson) -}}
-{{- $defaultDir := "/etc/continuo-workflows" -}}
 {{- $volumeName := "remediation-workflows" -}}
 {{- $set := "agentRemediation.workflows.files is set, but" -}}
 {{- $volume := dict -}}
@@ -258,7 +265,7 @@ app.kubernetes.io/name: {{ .service }}
 {{- if $configMap -}}
 {{- fail (printf "%s services[%s].volumes[%s] names the ConfigMap %s, your own, so the files reach no pod; leave its configMap.name empty to mount the chart's ConfigMap of the files, or keep your files in %s and leave agentRemediation.workflows.files empty" $set $svc.name $volumeName $configMap $configMap) -}}
 {{- end -}}
-{{- $dir := toString (get ($svc.env | default dict) "AGENT_REMEDIATION_WORKFLOWS_DIR") | default $defaultDir -}}
+{{- $dir := include "continuo.agentRemediation.workflowsDir" $svc -}}
 {{- $mounts := list -}}
 {{- range $svc.volumeMounts }}{{ if eq .name $volumeName }}{{ $mounts = append $mounts . }}{{ end }}{{ end }}
 {{- if not $mounts -}}
@@ -269,7 +276,7 @@ app.kubernetes.io/name: {{ .service }}
 {{- $paths := list -}}
 {{- range $mounts -}}
 {{- $paths = append $paths (toString .mountPath) -}}
-{{- if eq (toString .mountPath | trimSuffix "/") (trimSuffix "/" $dir) -}}
+{{- if eq (toString .mountPath | trimSuffix "/") $dir -}}
 {{- if or .subPath .subPathExpr -}}
 {{- $subPath = toString (.subPath | default .subPathExpr) -}}
 {{- else -}}
@@ -287,52 +294,128 @@ app.kubernetes.io/name: {{ .service }}
 {{- end -}}
 
 {{/* Fails the render on a remediation file agent-remediation would refuse at
-     startup, naming the file. Each file is split into its YAML documents at
-     every line that starts with the marker `---` followed by a blank, a
-     carriage return or the end of the line, the separators the YAML loader
-     reads; the marker and that one character are dropped, so a comment or a
-     document written on the marker's line stays at the start of the next
-     document. The text before the first marker is a document only when it
-     holds more than blank lines and comments, so a file may start with
-     comments or a marker, and a file of comments alone holds no document. The
-     text after every marker is a document, and one that holds only blank
-     lines and comments (a trailing marker, two markers in a row) is an empty
-     document, which the loader refuses, so the render fails naming its
-     number. Every other document must parse as a YAML mapping whose kind is
-     flow, type or fixture and whose version is a number in
-     $supportedVersions, the versions agent-remediation loads
-     (pkg/deploycheck pins them to its workflow.SupportedVersion). fromYaml
-     reads a number as float64 and a quoted "1" as a string, so the version is
-     compared as a number only when it is one. The rest of each file is
-     checked by agent-remediation at startup and by `remediation-check files`;
-     the loader's reading of each placement of markers, blank lines and
-     comments is pinned by TestLoad_EmptyDocuments in
-     agent-remediation/adapters/workflowfile, and lint.sh renders the same
-     shapes.
+     startup, naming the file. It reads each file line by line, as the YAML
+     loader does:
+     - The file is split into fragments at every line that starts with the
+       marker `---` followed by a blank, a carriage return or the end of the
+       line; the marker and that one character are dropped, so a comment or a
+       document written on the marker's line stays at the start of the next
+       fragment.
+     - A fragment's content ends at its first `...` end marker line (`...`
+       followed by a blank, a carriage return or the end of the line) or its
+       first directive line (one that starts with %). What follows, up to the
+       next marker, may hold only blank lines, comments, end markers and
+       directives, or the render fails quoting the line. A % line is text, not
+       a directive, when the content before it does not parse on its own: it
+       continues a quoted string. Directive lines belong to the document the
+       next marker starts, so a directive with no marker after it fails the
+       render, and the directives are read with that document: fromYaml then
+       refuses what the loader refuses, a version other than %YAML 1.1, a
+       second %YAML, a repeated %TAG handle or an unknown directive.
+     - The content of the first fragment is a document only when it holds more
+       than blank lines and comments, so a file may start with comments,
+       directives or a marker, and a file of comments alone holds no
+       document; an end marker before any document fails the render. The
+       content of every later fragment is a document, and one that holds only
+       blank lines and comments (a trailing marker, two markers in a row, a
+       marker that a directive follows) is an empty document, which the loader
+       refuses, so the render fails naming its number.
+     Every other document must parse as a YAML mapping whose kind is flow,
+     type or fixture and whose version is a number in $supportedVersions, the
+     versions agent-remediation loads (pkg/deploycheck pins them to its
+     workflow.SupportedVersion). fromYaml reads a number as float64 and a
+     quoted "1" as a string, so the version is compared as a number only when
+     it is one. fromYaml also keeps the last of two keys of one mapping, which
+     the loader refuses, so the lines of each document that start with kind or
+     version and a colon, the top-level keys written in block style, are
+     counted, and two fail the render naming the document; a duplicate key
+     below the top level or written in flow style ({kind: a, kind: b}) is not
+     seen here, and a line of a quoted string that starts with `kind: ` at the
+     start of the line counts. The rest of each file is checked by
+     agent-remediation at startup and by `remediation-check files`. The
+     loader's reading of each of these shapes is pinned by TestLoad_
+     EmptyDocuments, TestLoad_Directives and TestLoad_RefusesADuplicateKey in
+     agent-remediation/adapters/workflowfile; lint.sh renders the same shapes,
+     and TestLoad_AgreesWithTheChartsFixtures loads its fixture files.
      Call: include "continuo.agentRemediation.assertWorkflowFiles" $ */}}
 {{- define "continuo.agentRemediation.assertWorkflowFiles" -}}
 {{- $supportedVersions := list 1 -}}
 {{- $supported := join ", " $supportedVersions -}}
 {{- range $name, $content := (include "continuo.agentRemediation.workflowFiles" . | fromJson) -}}
+{{- $file := printf "agentRemediation.workflows.files[%s]" $name -}}
+{{- $fragments := regexSplit "(?m)^---(?:[ \t\r]|$)" (toString $content) -1 -}}
 {{- $docs := list -}}
-{{- range $i, $text := regexSplit "(?m)^---(?:[ \t\r]|$)" (toString $content) -1 -}}
-{{- $blank := not (trim (regexReplaceAll "(?m)^[ \t]*#.*$" $text "")) -}}
-{{- if not (and $blank (eq $i 0)) -}}
-{{- $docs = append $docs (dict "text" $text "empty" $blank) -}}
+{{- $carry := "" -}}
+{{- range $i, $fragment := $fragments -}}
+{{- $body := list -}}
+{{- $suffix := list -}}
+{{- range $line := splitList "\n" $fragment -}}
+{{- if $suffix -}}
+{{- $suffix = append $suffix $line -}}
+{{- else if regexMatch "^\\.\\.\\.(?:[ \t\r]|$)" $line -}}
+{{- $suffix = list $line -}}
+{{- else if hasPrefix "%" $line -}}
+{{- $before := join "\n" $body -}}
+{{- $directive := not (trim (regexReplaceAll "(?m)^[ \t]*#.*$" $before "")) -}}
+{{- if not $directive -}}
+{{- $parsed := fromYaml $before -}}
+{{- $directive = not (and (hasKey $parsed "Error") (eq (len $parsed) 1)) -}}
 {{- end -}}
+{{- if $directive -}}
+{{- $suffix = list $line -}}
+{{- else -}}
+{{- $body = append $body $line -}}
+{{- end -}}
+{{- else -}}
+{{- $body = append $body $line -}}
+{{- end -}}
+{{- end -}}
+{{- $bodyText := join "\n" $body -}}
+{{- $blank := not (trim (regexReplaceAll "(?m)^[ \t]*#.*$" $bodyText "")) -}}
+{{- $directives := list -}}
+{{- range $line := $suffix -}}
+{{- if not (regexMatch "^(?:[ \t\r]*(?:#.*)?|%.*|\\.\\.\\.(?:[ \t\r]+(?:#.*)?)?)$" $line) -}}
+{{- fail (printf "%s: %q: only blank lines, comments and directives may follow a ... end marker or a %% directive before the next --- marker, and agent-remediation refuses anything else there; start each document with a --- marker" $file $line) -}}
+{{- end -}}
+{{- if or $directives (hasPrefix "%" $line) -}}
+{{- $directives = append $directives $line -}}
+{{- end -}}
+{{- end -}}
+{{- if and (eq $i 0) $blank $suffix -}}
+{{- if not (hasPrefix "%" (first $suffix)) -}}
+{{- fail (printf "%s: a ... end marker comes before any document, and agent-remediation refuses that; remove it" $file) -}}
+{{- end -}}
+{{- end -}}
+{{- if and $directives (eq (add1 $i) (len $fragments)) -}}
+{{- fail (printf "%s: the directive %s has no --- marker after it, and agent-remediation refuses that; start the document it is for with a --- marker, or remove the directive" $file (trim (first $directives))) -}}
+{{- end -}}
+{{- if not (and $blank (eq $i 0)) -}}
+{{- $text := $bodyText -}}
+{{- if $carry -}}
+{{- $text = printf "%s\n---\n%s" $carry $bodyText -}}
+{{- end -}}
+{{- $docs = append $docs (dict "text" $text "body" $bodyText "empty" $blank) -}}
+{{- end -}}
+{{- $carry = join "\n" $directives -}}
 {{- end -}}
 {{- range $i, $d := $docs -}}
 {{- if $d.empty -}}
-{{- fail (printf "agentRemediation.workflows.files[%s] document %d is empty: only blank lines or comments follow its --- marker, and agent-remediation refuses an empty document; remove the marker" $name (add1 $i)) -}}
+{{- fail (printf "%s document %d is empty: no content follows its --- marker before the next marker or the end of the file, and agent-remediation refuses an empty document; remove the marker" $file (add1 $i)) -}}
 {{- end -}}
 {{- $text := $d.text -}}
-{{- $where := printf "agentRemediation.workflows.files[%s]" $name -}}
+{{- $where := $file -}}
 {{- if gt (len $docs) 1 -}}
 {{- $where = printf "%s document %d" $where (add1 $i) -}}
 {{- end -}}
 {{- $doc := fromYaml $text -}}
 {{- if and (hasKey $doc "Error") (eq (len $doc) 1) -}}
 {{- fail (printf "%s: does not parse as a YAML mapping: %s" $where $doc.Error) -}}
+{{- end -}}
+{{- range $key := list "kind" "version" -}}
+{{- $count := len (regexFindAll (printf "(?m)^%s[ \t]*:(?:[ \t\r]|$)" $key) $d.body -1) -}}
+{{- if gt $count 1 -}}
+{{- fail (printf "%s document %d: %s is defined %d times, and agent-remediation refuses a key that one mapping defines twice; keep one" $file (add1 $i) $key $count) -}}
+{{- end -}}
 {{- end -}}
 {{- if not (hasKey $doc "kind") -}}
 {{- fail (printf "%s: has no kind (flow, type or fixture)" $where) -}}

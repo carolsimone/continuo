@@ -5,9 +5,17 @@
   AGENT_REMEDIATION_WORKFLOWS_DIR and loads the files over its built-in ones at
   startup. With no files the ConfigMap holds no key, and agent-remediation runs
   its built-in files alone. A file agent-remediation would refuse for its kind,
-  its version or an empty document fails the render here, before any pod
-  changes, and deployment.yaml fails the render when agent-remediation's
-  services entry would not mount this ConfigMap at that folder.
+  its version, a duplicate kind or version line, an empty document or a
+  misplaced directive fails the render here, before any pod changes, and
+  deployment.yaml fails the render when agent-remediation's services entry
+  would not mount this ConfigMap at that folder.
+
+  Each file is written as a JSON string, which YAML reads as a double-quoted
+  scalar: every byte of it, its trailing newlines included, comes back as
+  given, so the mounted file has the bytes, and so the revision, of the file
+  in Git. A key is written as given: the schema allows only letters, digits,
+  '.', '_' and '-' in a name ending in .yaml or .yml, which YAML reads as a
+  plain string.
 */ -}}
 {{- include "continuo.agentRemediation.assertWorkflowFiles" . -}}
 {{- $files := include "continuo.agentRemediation.workflowFiles" . | fromJson -}}
@@ -20,7 +28,9 @@ metadata:
     {{- include "continuo.labels" . | nindent 4 }}
 {{- if $files }}
 data:
-  {{- toYaml $files | nindent 2 }}
+  {{- range $name, $content := $files }}
+  {{ $name }}: {{ toJson (toString $content) }}
+  {{- end }}
 {{- else }}
 data: {}
 {{- end }}

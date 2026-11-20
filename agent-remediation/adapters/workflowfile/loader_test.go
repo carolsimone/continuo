@@ -238,6 +238,42 @@ func TestLoad_Directives(t *testing.T) {
 	}
 }
 
+// chartFixtures is the folder of the remediation files the chart's lint
+// (scripts/install-test/lint.sh) renders.
+const chartFixtures = "../../../scripts/install-test/fixtures/remediation-workflows"
+
+// The chart refuses at render time what the loader refuses at startup: each
+// file the lint renders as accepted-* loads, as flows and types and as
+// fixtures, and the service's loader refuses each refused-* file, for every
+// folder of shapes the chart reads line by line (markers, end markers,
+// directives, duplicate kind and version lines).
+func TestLoad_AgreesWithTheChartsFixtures(t *testing.T) {
+	for _, folder := range []string{"empty-documents", "directives", "duplicate-keys"} {
+		entries, err := os.ReadDir(filepath.Join(chartFixtures, folder))
+		require.NoError(t, err)
+		require.NotEmpty(t, entries, folder)
+		for _, e := range entries {
+			name := e.Name()
+			t.Run(folder+"/"+name, func(t *testing.T) {
+				data, err := os.ReadFile(filepath.Join(chartFixtures, folder, name)) //nolint:gosec // G304: a fixture file of the chart's lint in this repository.
+				require.NoError(t, err)
+				fsys := fstest.MapFS{name: {Data: data}}
+				_, loadErr := Load(fsys)
+				_, fixtureErr := LoadFixtures(fsys)
+				switch {
+				case strings.HasPrefix(name, "accepted-"):
+					assert.NoError(t, loadErr)
+					assert.NoError(t, fixtureErr)
+				case strings.HasPrefix(name, "refused-"):
+					assert.Error(t, loadErr)
+				default:
+					t.Fatalf("%s is neither accepted-* nor refused-*", name)
+				}
+			})
+		}
+	}
+}
+
 // A key that one mapping holds twice is refused wherever it is: at the top of
 // a flow or type, in a nested mapping, in flow style, and in a fixture, which
 // LoadFixtures reads. Helm's fromYaml keeps the last of two keys, so the chart

@@ -1,0 +1,9 @@
+# A document end marker with a comment on its line, then a marker and a second document.
+kind: type
+version: 1
+name: lint-probe
+... # the end of the first document
+---
+kind: flow
+version: 1
+name: lint-probe-flow

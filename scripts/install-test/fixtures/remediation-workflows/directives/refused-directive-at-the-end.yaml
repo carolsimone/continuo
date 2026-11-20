@@ -1,0 +1,5 @@
+# A document, then a directive that no marker follows.
+kind: type
+version: 1
+name: lint-probe
+%YAML 1.1

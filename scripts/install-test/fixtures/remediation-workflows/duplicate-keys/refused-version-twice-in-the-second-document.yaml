@@ -1,0 +1,9 @@
+# The second document defines its version twice.
+kind: type
+version: 1
+name: lint-probe
+---
+kind: flow
+version: 1
+name: lint-probe-flow
+version : 1
