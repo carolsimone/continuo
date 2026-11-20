@@ -20,8 +20,9 @@ operator-owned ConfigMaps (configMap.name set): no workload consumes the
 chart's copies there, so a change to them must roll nothing. A case whose
 values the chart refuses while a volume it names is operator-owned is left out
 of that render: the chart fails the render when agentRemediation.workflows.files
-is set and the remediation-workflows volume names an operator-owned ConfigMap,
-since the files would reach no pod. They run once more against a render where
+is set and the remediation-workflows volume names any ConfigMap, since an
+operator-owned one leaves the files out of the pod and a named one carries no
+digest. They run once more against a render where
 only agent-remediation's service-repos volume names an operator-owned
 ConfigMap: its other volume, the remediation workflows, keeps its digest, so
 each volume of a service decides its own.
@@ -85,7 +86,7 @@ CASES = [
     # The chart refuses a remediation file without a supported version, so the
     # probe file carries one; --set-json is what puts a newline in the value.
     # With files set, the chart refuses a remediation-workflows volume that names
-    # an operator-owned ConfigMap: the files would reach no pod.
+    # a ConfigMap: only an empty name mounts the files with their digest.
     {"name": "agentRemediation.workflows value", "configmap": "agent-remediation-workflows",
      "args": ["--set-json", 'agentRemediation.workflows.files.probe\\.yaml="kind: type\\nversion: 1\\n"'],
      "needs_chart_volume": "remediation-workflows"},

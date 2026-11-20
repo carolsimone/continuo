@@ -837,9 +837,12 @@ agent-remediation and no other service.
 `values.yaml` has the volume `remediation-workflows`, its mount and
 `AGENT_REMEDIATION_WORKFLOWS_DIR`. Copy them into your own list. While a file
 is set, the render fails, saying what is wrong, unless the entry has:
-- a volume `remediation-workflows` that is a ConfigMap volume of the chart's
-  ConfigMap: `configMap: {name: ""}`, or the name
-  `<release>-agent-remediation-workflows`;
+- a volume `remediation-workflows` that is a ConfigMap volume with an empty
+  name, `configMap: {name: ""}`. It mounts the chart's ConfigMap and is the
+  only form that puts the ConfigMap's digest on the pod template, so a changed
+  file rolls agent-remediation. A name, even the chart's own
+  `<release>-agent-remediation-workflows`, is refused: the pod would keep
+  serving the files it read at startup;
 - a `volumeMounts` entry of that volume, with no `subPath`, whose `mountPath`
   is the folder agent-remediation reads: the entry's
   `AGENT_REMEDIATION_WORKFLOWS_DIR`, or `/etc/continuo-workflows` when the

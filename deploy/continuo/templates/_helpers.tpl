@@ -220,8 +220,11 @@ app.kubernetes.io/name: {{ .service }}
      agent-remediation services entry svc would not show the files to the
      service, naming the entry and what is wrong. The files reach the service
      only when the entry has a volume remediation-workflows that is a
-     ConfigMap volume of the chart's own ConfigMap (an empty configMap.name,
-     or the name continuo.agentRemediationWorkflowsConfigMapName gives), and a
+     ConfigMap volume with an empty configMap.name, which mounts the chart's
+     own ConfigMap and is the only form that puts the ConfigMap's digest
+     (checksum/agent-remediation-workflows) on the pod template: with any name,
+     the chart's own included, a changed file would not roll agent-remediation,
+     which would keep serving the files it read at startup. It also needs a
      volumeMounts entry of that volume with no subPath at the folder
      agent-remediation reads: the entry's AGENT_REMEDIATION_WORKFLOWS_DIR, else
      $defaultDir, which is agent-remediation's defaultWorkflowsDir (lint.sh
@@ -249,8 +252,11 @@ app.kubernetes.io/name: {{ .service }}
 {{- end -}}
 {{- $chartConfigMap := include "continuo.agentRemediationWorkflowsConfigMapName" $root -}}
 {{- $configMap := toString (get ($volume.configMap | default dict) "name") -}}
-{{- if and $configMap (ne $configMap $chartConfigMap) -}}
-{{- fail (printf "%s services[%s].volumes[%s] names the ConfigMap %s, your own, so the files reach no pod; set its configMap.name to \"\" (or %s) to mount the chart's ConfigMap of the files, or keep your files in %s and leave agentRemediation.workflows.files empty" $set $svc.name $volumeName $configMap $chartConfigMap $configMap) -}}
+{{- if eq $configMap $chartConfigMap -}}
+{{- fail (printf "%s services[%s].volumes[%s] names the chart's ConfigMap %s, and a named ConfigMap gets no digest on the pod template, so a changed file would not roll agent-remediation and it would keep serving the old files; leave its configMap.name empty, which mounts the same ConfigMap with its digest" $set $svc.name $volumeName $configMap) -}}
+{{- end -}}
+{{- if $configMap -}}
+{{- fail (printf "%s services[%s].volumes[%s] names the ConfigMap %s, your own, so the files reach no pod; leave its configMap.name empty to mount the chart's ConfigMap of the files, or keep your files in %s and leave agentRemediation.workflows.files empty" $set $svc.name $volumeName $configMap $configMap) -}}
 {{- end -}}
 {{- $dir := toString (get ($svc.env | default dict) "AGENT_REMEDIATION_WORKFLOWS_DIR") | default $defaultDir -}}
 {{- $mounts := list -}}

@@ -627,12 +627,15 @@ for want in \
   grep -qF "$want" "${tmp}/workflows.err" || { echo "FAIL: want '${want}', got:"; cat "${tmp}/workflows.err"; exit 1; }
 done
 # With files set, an operator's own agent-remediation entry must mount the
-# chart's ConfigMap of the files, with no subPath, at the folder
-# agent-remediation reads: the entry's AGENT_REMEDIATION_WORKFLOWS_DIR, else
-# config.go's defaultWorkflowsDir, which the chart repeats (the case with no
-# variable set pins the two). Each way an entry can miss that fails the render
-# with its own message; an entry that moves the variable and the mount
-# together renders, and without files nothing is checked.
+# chart's ConfigMap of the files through a remediation-workflows volume with an
+# empty configMap.name, the only form that puts the ConfigMap's digest on the
+# pod template (so a changed file rolls the pod), with no subPath, at the
+# folder agent-remediation reads: the entry's AGENT_REMEDIATION_WORKFLOWS_DIR,
+# else config.go's defaultWorkflowsDir, which the chart repeats (the case with
+# no variable set pins the two). Each way an entry can miss that fails the
+# render with its own message, the chart's own ConfigMap named explicitly
+# among them; an entry that moves the variable and the mount together renders,
+# and without files nothing is checked.
 echo "--- agentRemediation.workflows.files: the files must be mounted where agent-remediation reads them"
 default_workflows_dir="$(sed -nE 's/^const defaultWorkflowsDir = "([^"]+)"$/\1/p' agent-remediation/config/config.go)"
 [ -n "$default_workflows_dir" ] || { echo "FAIL: agent-remediation/config/config.go declares no const defaultWorkflowsDir"; exit 1; }
@@ -649,7 +652,8 @@ workflows_services() {
 mount_problems=(
   "no volumeMount|services[agent-remediation] has no volumeMounts entry for the volume remediation-workflows, so the files reach no container; mount it at ${default_workflows_dir}|$(workflows_services '[]' "$chart_workflows_volume")"
   "a mount at another path|services[agent-remediation] mounts the volume remediation-workflows at /etc/elsewhere, and AGENT_REMEDIATION_WORKFLOWS_DIR is ${default_workflows_dir}, so|$(workflows_services '[{"name":"remediation-workflows","mountPath":"/etc/elsewhere"}]' "$chart_workflows_volume")"
-  "an operator-owned ConfigMap|services[agent-remediation].volumes[remediation-workflows] names the ConfigMap my-own-cm, your own, so the files reach no pod|$(workflows_services "$default_workflows_mount" '[{"name":"remediation-workflows","configMap":{"name":"my-own-cm"}}]')"
+  "an operator-owned ConfigMap|services[agent-remediation].volumes[remediation-workflows] names the ConfigMap my-own-cm, your own, so the files reach no pod; leave its configMap.name empty|$(workflows_services "$default_workflows_mount" '[{"name":"remediation-workflows","configMap":{"name":"my-own-cm"}}]')"
+  "the chart's ConfigMap named explicitly|services[agent-remediation].volumes[remediation-workflows] names the chart's ConfigMap continuo-agent-remediation-workflows, and a named ConfigMap gets no digest on the pod template, so a changed file would not roll agent-remediation and it would keep serving the old files; leave its configMap.name empty|$(workflows_services "$default_workflows_mount" '[{"name":"remediation-workflows","configMap":{"name":"continuo-agent-remediation-workflows"}}]')"
   "an emptyDir volume|services[agent-remediation].volumes[remediation-workflows] is not a ConfigMap volume, so the files reach no pod|$(workflows_services "$default_workflows_mount" '[{"name":"remediation-workflows","emptyDir":{}}]')"
   "a variable naming another folder than the mount|services[agent-remediation] mounts the volume remediation-workflows at ${default_workflows_dir}, and AGENT_REMEDIATION_WORKFLOWS_DIR is /etc/other, so|$(workflows_services "$default_workflows_mount" "$chart_workflows_volume" '{"AGENT_REMEDIATION_WORKFLOWS_DIR":"/etc/other"}')"
 )
@@ -685,33 +689,35 @@ done
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --skip-schema-validation --set-json "services=${subpath_services}" > /dev/null 2> "${tmp}/workflows.err" \
   || { echo "FAIL: with no remediation files, a services list with a subPath mount failed the render:"; cat "${tmp}/workflows.err"; exit 1; }
 # mounted_at <rendered manifest> <folder> checks that agent-remediation mounts
-# continuo-agent-remediation-workflows at the folder, with no subPath, and
-# reads AGENT_REMEDIATION_WORKFLOWS_DIR from there (or from the default).
+# continuo-agent-remediation-workflows at the folder, with no subPath, reads
+# AGENT_REMEDIATION_WORKFLOWS_DIR from there (or from the default), and carries
+# the ConfigMap's digest on its pod template.
 mounted_at() {
   python3 - "$1" "$2" "$default_workflows_dir" <<'PY'
 import sys, yaml
 docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
-pod = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "agent-remediation")["spec"]["template"]["spec"]
+template = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "agent-remediation")["spec"]["template"]
+pod = template["spec"]
 volumes = {v["name"]: v for v in pod["volumes"]}
 container = pod["containers"][0]
 env = {e["name"]: e.get("value") for e in container.get("env") or []}
 folder = (env.get("AGENT_REMEDIATION_WORKFLOWS_DIR") or sys.argv[3]).rstrip("/")
 mounts = [m for m in container["volumeMounts"] if m["name"] == "remediation-workflows"]
 sys.exit(0 if volumes["remediation-workflows"].get("configMap") == {"name": "continuo-agent-remediation-workflows"}
+         and "checksum/agent-remediation-workflows" in template["metadata"].get("annotations", {})
          and folder == sys.argv[2].rstrip("/")
          and any(m["mountPath"].rstrip("/") == folder and "subPath" not in m for m in mounts) else 1)
 PY
 }
 for good in \
   "${default_workflows_dir}|$(workflows_services "$default_workflows_mount" "$chart_workflows_volume")" \
-  "/opt/remediation-files|$(workflows_services '[{"name":"remediation-workflows","mountPath":"/opt/remediation-files"}]' "$chart_workflows_volume" '{"AGENT_REMEDIATION_WORKFLOWS_DIR":"/opt/remediation-files/"}')" \
-  "${default_workflows_dir}|$(workflows_services "$default_workflows_mount" '[{"name":"remediation-workflows","configMap":{"name":"continuo-agent-remediation-workflows"}}]')"; do
+  "/opt/remediation-files|$(workflows_services '[{"name":"remediation-workflows","mountPath":"/opt/remediation-files"}]' "$chart_workflows_volume" '{"AGENT_REMEDIATION_WORKFLOWS_DIR":"/opt/remediation-files/"}')"; do
   folder="${good%%|*}"
   helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set-json "services=${good#*|}" \
     --set-file "agentRemediation.workflows.files.valid\.yaml=${wf}/valid.yaml" > "${tmp}/workflows-mount.yaml" 2> "${tmp}/workflows.err" \
     || { echo "FAIL: remediation files mounted at ${folder} failed the render:"; cat "${tmp}/workflows.err"; exit 1; }
   mounted_at "${tmp}/workflows-mount.yaml" "$folder" \
-    || { echo "FAIL: the render does not mount continuo-agent-remediation-workflows at ${folder}, where agent-remediation reads"; exit 1; }
+    || { echo "FAIL: the render does not mount continuo-agent-remediation-workflows at ${folder}, where agent-remediation reads, with its digest on the pod template"; exit 1; }
 done
 mounted_at "${tmp}/workflows.yaml" "$default_workflows_dir" \
   || { echo "FAIL: the defaults render does not mount the remediation files at ${default_workflows_dir}"; exit 1; }

@@ -681,9 +681,11 @@ agentRemediation:
     # load, fails the render, naming the file, and so does an empty document
     # (a `---` that only blank lines or comments follow). With files set, the
     # render also fails unless agent-remediation's services entry has the
-    # volume remediation-workflows as a ConfigMap volume of this ConfigMap
-    # (configMap.name "" or the ConfigMap's name) and a volumeMounts entry of
-    # it, with no subPath, at the folder AGENT_REMEDIATION_WORKFLOWS_DIR names
+    # volume remediation-workflows as a ConfigMap volume with an empty
+    # configMap.name (the only form that mounts this ConfigMap with its digest
+    # on the pod template, so a changed file rolls the pod; a name, this
+    # ConfigMap's own included, is refused) and a volumeMounts entry of it,
+    # with no subPath, at the folder AGENT_REMEDIATION_WORKFLOWS_DIR names
     # (/etc/continuo-workflows when the entry does not set it), as the entry
     # below has them. A change rolls agent-remediation
     # only. Empty (the default) loads the built-in files alone. Flows and types
