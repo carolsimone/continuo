@@ -741,18 +741,20 @@ it: startup and `remediation-check files` warn
 plays it as itself, each scenario running a remediation that follows that
 flow, so it needs flow fixtures of its own: fixtures copied from
 `rejected-release` fail the scenarios the flow cannot handle, such as two
-types fixing one service in a flow that lists one type. A type is played in the
-first flow, by name, that lists it.
+types fixing one service in a flow that lists one type. A type is played in
+`rejected-release` when that flow lists it, else in the first flow, by name,
+that lists it.
 
 **Replacing a built-in file.** A flow or type file whose `name` is the name of
 a built-in flow or type replaces it whole. Nothing is merged: each list in your
 file is the whole list. agent-remediation logs every replacement when it
 starts. A file that is an exact copy of a built-in changes nothing and is not
 logged. In a folder you check with `remediation-check files` or mount yourself,
-a file at the path of a built-in file (`types/dbt-compile.yaml`, say) must
-define what that built-in file defines: one that defines another name, and so
-leaves the built-in loaded, is refused, so that a path names one file; give it
-another path. The chart's files never have a built-in's path, since their
+a file at the path of a built-in file (`types/dbt-compile.yaml`, say) is
+refused while the built-in it holds stays loaded, that is while no file of
+yours, at that path or another, replaces it, so that a path names one file;
+give it another path. A file there that replaces the built-in, or one at that
+path while another of your files replaces the built-in, loads. The chart's files never have a built-in's path, since their
 names hold no `/`.
 
 **Tracking the built-in you copied.** Write `based_on: <name>@<revision>` in a
