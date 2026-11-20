@@ -760,6 +760,45 @@ func TestFiles_AnInstallFileAtABuiltInPathThatLeavesItLoadedExitsOne(t *testing.
 	assert.Empty(t, r.Scenarios)
 }
 
+// A path names one loaded file across flows, types and fixtures: an install
+// fixture at the path of a built-in type file whose type stays loaded, or an
+// install type at the path of a built-in fixture file whose fixture stays
+// loaded, is an error that names both, and the scenarios are skipped.
+func TestFiles_AnInstallFileAtABuiltInPathOfAnotherKindExitsOne(t *testing.T) {
+	compileFixture := builtinText(t, "fixtures/types/dbt-compile.yaml")
+	myType := strings.Replace(builtinText(t, "types/dbt-compile.yaml"), "name: dbt-compile\n", "name: my-compile\n", 1)
+	for _, tc := range []struct {
+		name, path, body, want string
+	}{
+		{
+			name: "a fixture at a type's path",
+			path: "types/dbt-parse.yaml",
+			body: compileFixture,
+			want: fmt.Sprintf(`types/dbt-parse.yaml:%d: the fixture of type "dbt-compile" is in a file with the path of the built-in file that defines type "dbt-parse", which stays loaded; give the install file another path`,
+				lineOf(t, compileFixture, "kind: fixture")),
+		},
+		{
+			name: "a type at a fixture's path",
+			path: "fixtures/types/dbt-parse.yaml",
+			body: myType,
+			want: fmt.Sprintf(`fixtures/types/dbt-parse.yaml:%d: type "my-compile" is in a file with the path of the built-in file that holds the fixture of type "dbt-parse", which stays loaded; give the install file another path`,
+				lineOf(t, myType, "kind: type")),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeInstallFile(t, dir, tc.path, tc.body)
+
+			code, stdout, stderr := runFiles(t, "files", dir)
+
+			assert.Equal(t, 1, code, stderr)
+			r := decode(t, stdout)
+			assert.Equal(t, []string{tc.want}, r.Errors)
+			assert.Empty(t, r.Scenarios)
+		})
+	}
+}
+
 // A flow fixture whose flow no file defines (a mistyped name) is played by no
 // flow, so it fails with a result that names its file.
 func TestFiles_AFlowFixtureOfAFlowNoFileDefinesFails(t *testing.T) {

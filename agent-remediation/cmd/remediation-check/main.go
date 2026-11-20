@@ -10,8 +10,9 @@
 // files loads the files the service would load with <dir> as its install
 // folder: the built-in flow, type and fixture files, then the ones under <dir>
 // over them (an install file with the kind and name of a built-in replaces it
-// whole, any other file is added, and one at the path of a built-in file that
-// leaves the built-in loaded is an error). It validates them against the steps
+// whole, any other file is added, and one at the path of a built-in file whose
+// flow, type or fixture stays loaded, of whatever kind the install file is,
+// is an error). It validates them against the steps
 // the runner registers, checks that they define the flow every heal trigger
 // runs, and runs the conformance suite over them: every type a flow lists
 // through every type scenario, in rejected-release when it lists the type, else
@@ -95,8 +96,9 @@ Purpose
   files the service loads with <dir> as its install folder: the built-in flow,
   type and fixture files, then the ones under <dir> over them. An install file
   with the kind and name of a built-in replaces it whole, and any other file is
-  added; one at the path of a built-in file that leaves the built-in loaded is
-  an error. It validates the result against the steps the runner registers,
+  added; one at the path of a built-in file whose flow, type or fixture stays
+  loaded, of whatever kind the install file is, is an error. It validates the
+  result against the steps the runner registers,
   checks that it defines the flow every heal trigger runs (rejected-release),
   and plays every type a flow lists (in rejected-release when it lists the
   type, else in the first flow by name that lists it) and every flow, as
@@ -324,6 +326,9 @@ func checkFiles(ctx context.Context, dir string) report {
 	rep.Files = countFiles(set, builtinFixtures, installFixtures)
 	rep.addErrors(messages(loadErr)...)
 	rep.addErrors(messages(fixtureErr)...)
+	if len(rep.Errors) == 0 {
+		rep.addErrors(messages(workflowfile.CheckInstallPaths(workflows.Builtin, fsys))...)
+	}
 	if len(rep.Errors) > 0 {
 		return rep
 	}
@@ -404,9 +409,9 @@ func builtinFixturesToPlay(set workflow.Set, builtin []conformance.Fixture) (pla
 }
 
 // countFiles is the number of distinct files that hold a loaded flow, type or
-// fixture. An install file and a built-in file never share a path while both
-// hold a loaded flow or type, or both a loaded fixture: the install loaders
-// refuse that.
+// fixture. When the report holds no error, an install file and a built-in file
+// never share a path while both hold something loaded, whatever its kind:
+// workflowfile.CheckInstallPaths refuses that.
 func countFiles(set workflow.Set, fixtures ...[]conformance.Fixture) int {
 	seen := map[string]bool{}
 	for _, f := range set.Flows {

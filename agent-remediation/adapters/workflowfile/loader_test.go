@@ -178,6 +178,99 @@ func TestLoad_EmptyDocuments(t *testing.T) {
 	}
 }
 
+// How the loader reads YAML directives (`%YAML`, `%TAG`) and `...` end
+// markers. A directive line belongs to the document the next `---` marker
+// starts: before the first marker, after a `...` end marker, or after a
+// document, so a directive that no marker follows, or that text follows before
+// a marker, is refused. Only `%YAML 1.1` is a version the loader reads. After
+// a `...` end marker only blank lines, comments and directives may come before
+// the next marker, and a `...` before any document is refused. A line that
+// starts with % inside a quoted string is text. The chart's
+// continuo.agentRemediation.assertWorkflowFiles makes the same decision for
+// every shape, and scripts/install-test/lint.sh renders each of them (fixtures
+// under scripts/install-test/fixtures/remediation-workflows/directives/).
+func TestLoad_Directives(t *testing.T) {
+	const doc = "kind: type\nversion: 1\nname: probe\nmatch: { cluster: single, source: compile }\n"
+	const doc2 = "kind: type\nversion: 1\nname: probe-2\nmatch: { cluster: single, source: compile }\n"
+	for _, tc := range []struct {
+		name, data string
+		// refused is the message of the refusal, "" when the file loads.
+		refused string
+	}{
+		{name: "%YAML 1.1, a marker, a document", data: "%YAML 1.1\n---\n" + doc},
+		{name: "%YAML 1.1 with a comment, a marker, a document", data: "%YAML 1.1 # the version\n---\n" + doc},
+		{name: "%TAG, a marker, a document", data: "%TAG !e! tag:example.com,2000:\n---\n" + doc},
+		{name: "%YAML and %TAG, a marker, a document", data: "%YAML 1.1\n%TAG !e! tag:example.com,2000:\n---\n" + doc},
+		{name: "comments, a directive, comments, a marker, a document", data: "# the probe\n\n%YAML 1.1\n# more\n\n---\n" + doc},
+		{name: "a directive with CRLF line ends", data: "%YAML 1.1\r\n---\r\n" + strings.ReplaceAll(doc, "\n", "\r\n")},
+		{name: "a directive after an end marker, then a marker", data: doc + "...\n%YAML 1.1\n---\n" + doc2},
+		{name: "a directive after a document with no end marker, then a marker", data: doc + "%YAML 1.1\n---\n" + doc2},
+		{name: "an end marker with a comment, then a marker", data: doc + "... # end\n---\n" + doc2},
+		{name: "two end markers, then a marker", data: doc + "...\n...\n---\n" + doc2},
+		{name: "a quoted string continued on a line that starts with %", data: "kind: type\nversion: 1\nname: \"probe\n%x\"\nmatch: { cluster: single, source: compile }\n"},
+		{name: "%YAML 1.2", data: "%YAML 1.2\n---\n" + doc, refused: "f.yaml:1: found incompatible YAML document"},
+		{name: "%YAML 1.2 before a second document", data: doc + "...\n%YAML 1.2\n---\n" + doc2, refused: "f.yaml:5: found incompatible YAML document"},
+		{name: "two %YAML directives", data: "%YAML 1.1\n%YAML 1.1\n---\n" + doc, refused: "f.yaml:1: found duplicate %YAML directive"},
+		{name: "two %TAG directives of one handle", data: "%TAG !e! tag:a,2000:\n%TAG !e! tag:b,2000:\n---\n" + doc, refused: "f.yaml:1: found duplicate %TAG directive"},
+		{name: "an unknown directive", data: "%FOO bar\n---\n" + doc, refused: "f.yaml:1: found unknown directive name"},
+		{name: "a directive, then a document with no marker", data: "%YAML 1.1\n" + doc, refused: "f.yaml:2: mapping values are not allowed in this context"},
+		{name: "a directive alone", data: "%YAML 1.1\n", refused: "f.yaml:1: did not find expected <document start>"},
+		{name: "a directive and a comment, then nothing", data: "%YAML 1.1\n# c\n", refused: "f.yaml:2: did not find expected <document start>"},
+		{name: "a directive and a marker, then nothing", data: "%YAML 1.1\n---\n", refused: "f.yaml:3: a document must be a mapping with a kind"},
+		{name: "a directive at the end of the file after a document", data: doc + "%YAML 1.1\n", refused: "f.yaml:5: did not find expected <document start>"},
+		{name: "a directive after an end marker, then nothing", data: doc + "...\n%YAML 1.1\n", refused: "f.yaml:6: did not find expected <document start>"},
+		{name: "a directive right after a marker", data: doc + "---\n%YAML 1.1\n---\n" + doc2, refused: "f.yaml:6: a document must be a mapping with a kind"},
+		{name: "a directive, then an end marker, then a marker", data: "%YAML 1.1\n...\n---\n" + doc, refused: "f.yaml:1: did not find expected <document start>"},
+		{name: "a document after an end marker with no marker", data: doc + "...\n" + doc2, refused: "f.yaml:5: did not find expected <document start>"},
+		{name: "text after an end marker on its line", data: doc + "... x\n---\n" + doc2, refused: "f.yaml:4: did not find expected <document start>"},
+		{name: "an end marker before any document", data: "...\n---\n" + doc, refused: "f.yaml:1: did not find expected node content"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(fstest.MapFS{"f.yaml": {Data: []byte(tc.data)}})
+
+			if tc.refused == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Equal(t, tc.refused, err.Error())
+		})
+	}
+}
+
+// A key that one mapping holds twice is refused wherever it is: at the top of
+// a flow or type, in a nested mapping, in flow style, and in a fixture, which
+// LoadFixtures reads. Helm's fromYaml keeps the last of two keys, so the chart
+// can check only the lines it sees (duplicate top-level kind and version
+// lines) and leaves every other duplicate to this loader.
+func TestLoad_RefusesADuplicateKey(t *testing.T) {
+	for _, tc := range []struct {
+		name, data, refused string
+	}{
+		{name: "version twice", data: "version: 2\nkind: type\nversion: 1\nname: probe\n",
+			refused: `f.yaml:3: mapping key "version" already defined at line 1`},
+		{name: "kind twice", data: "kind: type\nversion: 1\nkind: type\nname: probe\n",
+			refused: `f.yaml:3: mapping key "kind" already defined at line 1`},
+		{name: "a nested key twice", data: "kind: type\nversion: 1\nname: probe\nmatch:\n  cluster: single\n  cluster: pair\n",
+			refused: `f.yaml:6: mapping key "cluster" already defined at line 5`},
+		{name: "a key twice in flow style", data: "kind: type\nversion: 1\nname: probe\nmatch: { cluster: single, cluster: pair }\n",
+			refused: `f.yaml:4: mapping key "cluster" already defined at line 4`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(fstest.MapFS{"f.yaml": {Data: []byte(tc.data)}})
+
+			require.Error(t, err)
+			assert.Equal(t, tc.refused, err.Error())
+		})
+	}
+	t.Run("version twice in a fixture", func(t *testing.T) {
+		_, err := LoadFixtures(fstest.MapFS{"f.yaml": {Data: []byte("kind: fixture\nversion: 1\nversion: 1\ntype: dbt-compile\n")}})
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `f.yaml:3: mapping key "version" already defined at line 2`)
+	})
+}
+
 func TestLoad_NamesTheFileAndLineOfAnUnknownField(t *testing.T) {
 	fsys := fstest.MapFS{
 		"types/x.yaml": {Data: []byte("kind: type\nversion: 1\nname: x\nagent:\n  rouds: 3\n")},
