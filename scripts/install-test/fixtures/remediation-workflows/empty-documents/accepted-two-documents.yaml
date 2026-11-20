@@ -1,0 +1,8 @@
+# Two documents, one marker between them.
+kind: type
+version: 1
+name: lint-probe
+---
+kind: flow
+version: 1
+name: lint-probe-flow

@@ -17,10 +17,14 @@ after, and compares the pod template of every Deployment and StatefulSet:
     it has to.
 The same cases then run against a render whose service volumes name
 operator-owned ConfigMaps (configMap.name set): no workload consumes the
-chart's copies there, so a change to them must roll nothing. They run once more
-against a render where only agent-remediation's service-repos volume names an
-operator-owned ConfigMap: its other volume, the remediation workflows, keeps
-its digest, so each volume of a service decides its own.
+chart's copies there, so a change to them must roll nothing. A case whose
+values the chart refuses while a volume it names is operator-owned is left out
+of that render: the chart fails the render when agentRemediation.workflows.files
+is set and the remediation-workflows volume names an operator-owned ConfigMap,
+since the files would reach no pod. They run once more against a render where
+only agent-remediation's service-repos volume names an operator-owned
+ConfigMap: its other volume, the remediation workflows, keeps its digest, so
+each volume of a service decides its own.
 
 It also checks that:
   - two identical renders give identical pod templates, so an upgrade that
@@ -63,7 +67,8 @@ def add_cancellation_reason(text: str) -> str:
 # chart's files/ directory (`file` + `edit`) or through values (`args`).
 # `reread_by` names consumers that re-read the file on every use and so must
 # not roll: the ui reads cancel-config.json per request
-# (ui/src/server/routes/config.ts).
+# (ui/src/server/routes/config.ts). `needs_chart_volume` names a volume that
+# must mount the chart's ConfigMap for the chart to render the case at all.
 CASES = [
     {"name": "shared config (global.logLevel)", "configmap": "config",
      "args": ["--set", "global.logLevel=DEBUG"]},
@@ -79,8 +84,11 @@ CASES = [
      "args": ["--set-string", "ciAuth.bindings.core[0].repositoryId=812345678"]},
     # The chart refuses a remediation file without a supported version, so the
     # probe file carries one; --set-json is what puts a newline in the value.
+    # With files set, the chart refuses a remediation-workflows volume that names
+    # an operator-owned ConfigMap: the files would reach no pod.
     {"name": "agentRemediation.workflows value", "configmap": "agent-remediation-workflows",
-     "args": ["--set-json", 'agentRemediation.workflows.files.probe\\.yaml="kind: type\\nversion: 1\\n"']},
+     "args": ["--set-json", 'agentRemediation.workflows.files.probe\\.yaml="kind: type\\nversion: 1\\n"'],
+     "needs_chart_volume": "remediation-workflows"},
     {"name": "files/cancel-config.json", "configmap": "cancel-config",
      "file": "files/cancel-config.json", "edit": add_cancellation_reason,
      "reread_by": {"ui"}},
@@ -143,20 +151,28 @@ def consumers(docs: list) -> dict:
     return out
 
 
-def operator_owned_values(chart: pathlib.Path, workdir: pathlib.Path, only: "set[str] | None" = None) -> pathlib.Path:
-    """A values file whose service volumes name operator-owned ConfigMaps: every
-    configMap volume, or only the volumes named in `only`."""
+def operator_owned_values(chart: pathlib.Path, workdir: pathlib.Path,
+                          only: "set[str] | None" = None) -> "tuple[pathlib.Path, set[str]]":
+    """A values file whose service volumes name operator-owned ConfigMaps (every
+    configMap volume, or only the volumes named in `only`), and the names of
+    the volumes it changed."""
     values = yaml.safe_load((chart / "values.yaml").read_text())
+    owned = set()
     for svc in values["services"]:
         for volume in svc.get("volumes") or []:
             if "configMap" in volume and (only is None or volume["name"] in only):
                 volume["configMap"]["name"] = f"operator-{volume['name']}"
+                owned.add(volume["name"])
     path = workdir / f"values-operator-configmaps-{'-'.join(sorted(only)) if only else 'all'}.yaml"
     path.write_text(yaml.safe_dump({"services": values["services"]}))
-    return path
+    return path, owned
 
 
-def check_topology(label: str, renderer: Renderer, base_args: list, failures: list) -> dict:
+def check_topology(label: str, renderer: Renderer, base_args: list, failures: list,
+                   operator_volumes: "set[str]" = frozenset()) -> dict:
+    """Runs every case against the render of base_args, in which the volumes
+    named in operator_volumes name operator-owned ConfigMaps; a case that needs
+    one of those volumes to mount the chart's ConfigMap is left out."""
     base = renderer.render(*base_args)
     base_tpl = pod_templates(base)
     if pod_templates(renderer.render(*base_args)) != base_tpl:
@@ -166,6 +182,10 @@ def check_topology(label: str, renderer: Renderer, base_args: list, failures: li
 
     for case in CASES:
         cm = f"{RELEASE}-{case['configmap']}"
+        if case.get("needs_chart_volume") in operator_volumes:
+            logger.info("[%s] %s left out: the chart refuses it while the %s volume names an operator-owned ConfigMap",
+                        label, case["name"], case["needs_chart_volume"])
+            continue
         changed = renderer.render_case(case, base_args)
         if chart_configmaps(changed).get(cm) == base_cms.get(cm):
             failures.append(f"[{label}] {case['name']}: ConfigMap {cm} is unchanged, so the case tests nothing")
@@ -206,8 +226,9 @@ def check(source_chart: pathlib.Path, kube_version: str, failures: list) -> None
             failures.append(f"chart ConfigMap {cm} is consumed by {', '.join(sorted(users[cm]))} but has no case in "
                             f"{pathlib.Path(__file__).name}; decide whether its consumers must roll when it changes")
 
-        operator_args = ["-f", str(operator_owned_values(source_chart, workdir))]
-        operator_users = check_topology("operator-owned ConfigMaps", renderer, operator_args, failures)
+        operator_values, operator_volumes = operator_owned_values(source_chart, workdir)
+        operator_users = check_topology("operator-owned ConfigMaps", renderer, ["-f", str(operator_values)], failures,
+                                        operator_volumes)
         for case in CASES:
             if "file" in case and f"{RELEASE}-{case['configmap']}" in operator_users:
                 failures.append(f"operator-owned render still mounts {RELEASE}-{case['configmap']}; "
@@ -217,8 +238,9 @@ def check(source_chart: pathlib.Path, kube_version: str, failures: list) -> None
         # service-repos volume operator-owned, a workflows change still rolls
         # it and a service-repos change rolls nothing: each volume decides its
         # own digest.
-        mixed_args = ["-f", str(operator_owned_values(source_chart, workdir, only={"service-repos"}))]
-        mixed_users = check_topology("operator-owned service-repos only", renderer, mixed_args, failures)
+        mixed_values, mixed_volumes = operator_owned_values(source_chart, workdir, only={"service-repos"})
+        mixed_users = check_topology("operator-owned service-repos only", renderer, ["-f", str(mixed_values)], failures,
+                                     mixed_volumes)
         if f"{RELEASE}-service-repos" in mixed_users:
             failures.append(f"the render with an operator-owned service-repos volume still mounts {RELEASE}-service-repos")
         if "agent-remediation" not in mixed_users.get(f"{RELEASE}-agent-remediation-workflows", {}):

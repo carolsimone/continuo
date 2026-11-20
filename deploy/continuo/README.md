@@ -296,7 +296,7 @@ Every container in this chart, bundled or not, gets:
 | `services[].podAnnotations` | Annotations on the service's pods (default none), such as the Vault Agent injector's. Install-time only. |
 | `services[].credentialDelivery` | `env` or `file` for that service, overriding `credentials.delivery`; empty (default) uses it. Install-time only. |
 | `services[].volumes` / `services[].volumeMounts` | Extra volumes of any Kubernetes type (`csi`, `secret`, `configMap`, ...) and their mounts. A `configMap` volume with an empty name mounts the chart's ConfigMap for the services that have one; on agent-remediation, which has two, the one of the volume's name (`service-repos` or `remediation-workflows`), and `service-repos` for a volume of any other name. Install-time only. |
-| `agentRemediation.workflows.files` | The install's own remediation flow, type and fixture files, as `{<name>: <content>}` (default `{}`), each passed with `--set-file agentRemediation.workflows.files.<name>\.yaml=<path>`. They become the ConfigMap `<release>-agent-remediation-workflows`, which agent-remediation mounts at `/etc/continuo-workflows` (`AGENT_REMEDIATION_WORKFLOWS_DIR`) and loads over its built-in files at startup. Flows and types run only with `agentRemediation.engine: runner`; under `legacy` the files are loaded and checked at startup, and only remediations the runner started use them. A change rolls agent-remediation only. A file that agent-remediation would refuse for its kind or its `version` fails the render, naming the file. See [Remediation files](#7-remediation-files). |
+| `agentRemediation.workflows.files` | The install's own remediation flow, type and fixture files, as `{<name>: <content>}` (default `{}`), each passed with `--set-file agentRemediation.workflows.files.<name>\.yaml=<path>`. They become the ConfigMap `<release>-agent-remediation-workflows`, which agent-remediation mounts at `/etc/continuo-workflows` (`AGENT_REMEDIATION_WORKFLOWS_DIR`) and loads over its built-in files at startup. Flows and types run only with `agentRemediation.engine: runner`; under `legacy` the files are loaded and checked at startup, and only remediations the runner started use them. A change rolls agent-remediation only. A file that agent-remediation would refuse for its kind, its `version` or an empty document fails the render, naming the file, and so does a `services` list whose agent-remediation entry does not mount the files where agent-remediation reads them. See [Remediation files](#7-remediation-files). |
 | `services[].resources` / `defaultResources` | Per-service CPU/memory requests and limits; any service without its own `resources` block falls back to `defaultResources`. |
 
 Every continuo service reads each credential either from the variable itself or from a file named by `<VAR>_FILE`, whichever the chart, or another deployment, sets. Setting both fails the service's start with `<VAR>: set <VAR> or <VAR>_FILE, not both`, and so does a file that is missing or empty. One trailing newline is trimmed from the file, nothing else. The Postgres and Redis passwords are read again for every new connection a service opens, so a rotated file reaches the next connection without a restart, and connections already open keep working; every other credential is read once, at start.
@@ -738,13 +738,22 @@ add a type, pass its file and replace the flow: copy the built-in
 file. A flow with another name is loaded and checked, but no heal trigger runs
 it: startup and `remediation-check files` warn
 `flow <name>: no heal trigger runs it`, and `remediation-check files` still
-plays it, so it needs flow fixtures of its own.
+plays it as itself, each scenario running a remediation that follows that
+flow, so it needs flow fixtures of its own: fixtures copied from
+`rejected-release` fail the scenarios the flow cannot handle, such as two
+types fixing one service in a flow that lists one type. A type is played in the
+first flow, by name, that lists it.
 
 **Replacing a built-in file.** A flow or type file whose `name` is the name of
 a built-in flow or type replaces it whole. Nothing is merged: each list in your
 file is the whole list. agent-remediation logs every replacement when it
 starts. A file that is an exact copy of a built-in changes nothing and is not
-logged.
+logged. In a folder you check with `remediation-check files` or mount yourself,
+a file at the path of a built-in file (`types/dbt-compile.yaml`, say) must
+define what that built-in file defines: one that defines another name, and so
+leaves the built-in loaded, is refused, so that a path names one file; give it
+another path. The chart's files never have a built-in's path, since their
+names hold no `/`.
 
 **Tracking the built-in you copied.** Write `based_on: <name>@<revision>` in a
 flow or type file you copied from a built-in. The revision is the first 12 hex
@@ -788,7 +797,11 @@ built-in one.
 `.`, `_` and `-`, ends in `.yaml` or `.yml`, and does not start with `.`. The
 chart refuses any other name. Every document of a file must be a YAML mapping
 whose `kind` is `flow`, `type` or `fixture` and whose `version` is a number
-agent-remediation supports (`1`). A file that breaks one of these fails
+agent-remediation supports (`1`). A `---` line that only blank lines or
+comments follow (a trailing `---`, two in a row) starts an empty document,
+which agent-remediation refuses, so the chart refuses it too
+(`document <n> is empty`); blank lines and comments before the first `---`
+are no document. A file that breaks one of these fails
 `helm install` and `helm upgrade`, and the error names the file.
 agent-remediation checks the rest when it starts.
 
@@ -823,8 +836,16 @@ agent-remediation and no other service.
 **With your own `services` list.** agent-remediation's entry in the chart's
 `values.yaml` has the volume `remediation-workflows`, its mount and
 `AGENT_REMEDIATION_WORKFLOWS_DIR`. Copy them into your own list. While a file
-is set and the entry has no `remediation-workflows` volume, the render fails. A
-`remediation-workflows` volume that names a ConfigMap of your own mounts that
-ConfigMap instead, and `agentRemediation.workflows.files` is not used; after
-you edit your ConfigMap, run
+is set, the render fails, saying what is wrong, unless the entry has:
+- a volume `remediation-workflows` that is a ConfigMap volume of the chart's
+  ConfigMap: `configMap: {name: ""}`, or the name
+  `<release>-agent-remediation-workflows`;
+- a `volumeMounts` entry of that volume, with no `subPath`, whose `mountPath`
+  is the folder agent-remediation reads: the entry's
+  `AGENT_REMEDIATION_WORKFLOWS_DIR`, or `/etc/continuo-workflows` when the
+  entry does not set it (a trailing `/` does not count).
+
+To keep your files in a ConfigMap of your own instead, name it on the
+`remediation-workflows` volume and leave `agentRemediation.workflows.files`
+empty; after you edit your ConfigMap, run
 `kubectl rollout restart deployment/agent-remediation`.

@@ -39,18 +39,11 @@
 {{- $_ := set $resolved $volume.name $entry }}
 {{- end }}
 {{- end }}
-{{- /* An operator's own `services` list, or the list of an older chart that
-       `helm upgrade --reuse-values` keeps, may carry an agent-remediation
-       entry with no remediation-workflows volume; the install's remediation
-       files would then reach no pod, so the render fails instead. A volume of
-       that name that names a ConfigMap of the operator's own mounts that
-       ConfigMap instead of the files. */}}
-{{- if and (eq $svc.name "agent-remediation") (include "continuo.agentRemediation.workflowFiles" $ | fromJson) }}
-{{- $hasWorkflowsVolume := false }}
-{{- range $svc.volumes }}{{ if eq .name "remediation-workflows" }}{{ $hasWorkflowsVolume = true }}{{ end }}{{ end }}
-{{- if not $hasWorkflowsVolume }}
-{{- fail "agentRemediation.workflows.files is set, but services[agent-remediation] has no volume remediation-workflows, so agent-remediation would never read the files; a release upgraded with --reuse-values keeps an older chart's services list, so upgrade once with your values file or --reset-then-reuse-values; with your own services list, add that volume, its volumeMounts entry and AGENT_REMEDIATION_WORKFLOWS_DIR as the chart's values.yaml has them" }}
-{{- end }}
+{{- /* With agentRemediation.workflows.files set, the agent-remediation entry
+       must mount the chart's ConfigMap of the files at the folder
+       agent-remediation reads, or the render fails naming what is missing. */}}
+{{- if eq $svc.name "agent-remediation" }}
+{{- include "continuo.agentRemediation.assertWorkflowsMount" (dict "root" $ "svc" $svc) }}
 {{- end }}
 {{- $isAgent := has $svc.name (list "agent-chat" "agent-remediation") }}
 {{- if $isAgent }}{{ include "continuo.agent.assertEnv" (dict "root" $ "svc" $svc) }}{{ end }}

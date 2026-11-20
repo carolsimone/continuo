@@ -1,0 +1,5 @@
+# A file that starts with a marker: the text before it is no document.
+---
+kind: type
+version: 1
+name: lint-probe

@@ -125,6 +125,59 @@ func TestLoad_ReadsSeveralDocumentsOfOneFileAndSkipsFixtures(t *testing.T) {
 	assert.Equal(t, set.Flows["rejected-release"].Revision, set.Types["dbt-compile"].Revision)
 }
 
+// How the loader reads each way a file can place its `---` markers, blank
+// lines and comments. Text before the first marker is no document when it
+// holds only blank lines and comments, and a file of such text alone loads
+// nothing. Every marker starts a document, so a marker followed by nothing,
+// by blank lines and comments only, or by another marker is an empty document,
+// which is refused at its line. The chart's continuo.agentRemediation.
+// assertWorkflowFiles makes the same decision for every shape, and
+// scripts/install-test/lint.sh renders each of them (fixtures under
+// scripts/install-test/fixtures/remediation-workflows/empty-documents/).
+func TestLoad_EmptyDocuments(t *testing.T) {
+	const doc = "kind: type\nversion: 1\nname: probe\nmatch: { cluster: single, source: compile }\n"
+	const doc2 = "kind: type\nversion: 1\nname: probe-2\nmatch: { cluster: single, source: compile }\n"
+	for _, tc := range []struct {
+		name, data string
+		// refusedAt is the line the refusal names, 0 when the file loads.
+		refusedAt int
+	}{
+		{name: "a leading marker", data: "---\n" + doc},
+		{name: "a leading marker with a comment", data: "--- # the probe\n" + doc},
+		{name: "comments and blank lines, then a marker", data: "# the probe\n\n---\n" + doc},
+		{name: "two documents", data: doc + "---\n" + doc2},
+		{name: "a document end marker", data: doc + "...\n"},
+		{name: "a document end marker, then comments", data: doc + "...\n# done\n"},
+		{name: "a document end marker, then a document", data: doc + "...\n---\n" + doc2},
+		{name: "an empty file", data: ""},
+		{name: "a file of comments", data: "# nothing here\n# yet\n"},
+		{name: "a file of blank lines", data: "\n\n"},
+		{name: "a trailing marker", data: doc + "---\n", refusedAt: 6},
+		{name: "a trailing marker with no newline", data: doc + "---", refusedAt: 6},
+		{name: "a trailing marker with blanks after it", data: doc + "---   \n", refusedAt: 6},
+		{name: "a trailing marker with CRLF line ends", data: strings.ReplaceAll(doc, "\n", "\r\n") + "---\r\n", refusedAt: 6},
+		{name: "a marker followed by comments", data: doc + "---\n# only a comment\n", refusedAt: 7},
+		{name: "a marker followed by blank lines", data: doc + "---\n\n\n", refusedAt: 8},
+		{name: "a marker with a comment, then nothing", data: doc + "--- # nothing\n", refusedAt: 6},
+		{name: "two leading markers", data: "---\n---\n" + doc, refusedAt: 2},
+		{name: "two markers between documents", data: doc + "---\n---\n" + doc2, refusedAt: 6},
+		{name: "a file of one marker", data: "---\n", refusedAt: 2},
+		{name: "comments, then a marker", data: "# the probe\n---\n", refusedAt: 3},
+		{name: "a document end marker, then a marker", data: doc + "...\n---\n", refusedAt: 7},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(fstest.MapFS{"f.yaml": {Data: []byte(tc.data)}})
+
+			if tc.refusedAt == 0 {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Equal(t, "f.yaml:"+strconv.Itoa(tc.refusedAt)+": a document must be a mapping with a kind", err.Error())
+		})
+	}
+}
+
 func TestLoad_NamesTheFileAndLineOfAnUnknownField(t *testing.T) {
 	fsys := fstest.MapFS{
 		"types/x.yaml": {Data: []byte("kind: type\nversion: 1\nname: x\nagent:\n  rouds: 3\n")},

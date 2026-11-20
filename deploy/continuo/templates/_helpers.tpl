@@ -216,31 +216,110 @@ app.kubernetes.io/name: {{ .service }}
 {{- toJson (get $workflows "files" | default dict) -}}
 {{- end -}}
 
+{{/* Fails the render when agentRemediation.workflows.files is set and the
+     agent-remediation services entry svc would not show the files to the
+     service, naming the entry and what is wrong. The files reach the service
+     only when the entry has a volume remediation-workflows that is a
+     ConfigMap volume of the chart's own ConfigMap (an empty configMap.name,
+     or the name continuo.agentRemediationWorkflowsConfigMapName gives), and a
+     volumeMounts entry of that volume with no subPath at the folder
+     agent-remediation reads: the entry's AGENT_REMEDIATION_WORKFLOWS_DIR, else
+     $defaultDir, which is agent-remediation's defaultWorkflowsDir (lint.sh
+     reads it from config.go and renders a mount there with no variable set).
+     The two paths are compared without a trailing slash. An operator's own
+     services list, or an older chart's list that `helm upgrade --reuse-values`
+     keeps, may miss any of these; without files set nothing is checked, so
+     such a list still renders.
+     Call: include "continuo.agentRemediation.assertWorkflowsMount" (dict "root" $ "svc" $svc) */}}
+{{- define "continuo.agentRemediation.assertWorkflowsMount" -}}
+{{- $root := .root -}}
+{{- $svc := .svc -}}
+{{- if (include "continuo.agentRemediation.workflowFiles" $root | fromJson) -}}
+{{- $defaultDir := "/etc/continuo-workflows" -}}
+{{- $volumeName := "remediation-workflows" -}}
+{{- $set := "agentRemediation.workflows.files is set, but" -}}
+{{- $volume := dict -}}
+{{- $found := false -}}
+{{- range $svc.volumes }}{{ if eq .name $volumeName }}{{ $volume = . }}{{ $found = true }}{{ end }}{{ end }}
+{{- if not $found -}}
+{{- fail (printf "%s services[%s] has no volume %s, so agent-remediation would never read the files; a release upgraded with --reuse-values keeps an older chart's services list, so upgrade once with your values file or --reset-then-reuse-values; with your own services list, add that volume, its volumeMounts entry and AGENT_REMEDIATION_WORKFLOWS_DIR as the chart's values.yaml has them" $set $svc.name $volumeName) -}}
+{{- end -}}
+{{- if not (hasKey $volume "configMap") -}}
+{{- fail (printf "%s services[%s].volumes[%s] is not a ConfigMap volume, so the files reach no pod; make it configMap: {name: \"\"}, which mounts the chart's ConfigMap of the files" $set $svc.name $volumeName) -}}
+{{- end -}}
+{{- $chartConfigMap := include "continuo.agentRemediationWorkflowsConfigMapName" $root -}}
+{{- $configMap := toString (get ($volume.configMap | default dict) "name") -}}
+{{- if and $configMap (ne $configMap $chartConfigMap) -}}
+{{- fail (printf "%s services[%s].volumes[%s] names the ConfigMap %s, your own, so the files reach no pod; set its configMap.name to \"\" (or %s) to mount the chart's ConfigMap of the files, or keep your files in %s and leave agentRemediation.workflows.files empty" $set $svc.name $volumeName $configMap $chartConfigMap $configMap) -}}
+{{- end -}}
+{{- $dir := toString (get ($svc.env | default dict) "AGENT_REMEDIATION_WORKFLOWS_DIR") | default $defaultDir -}}
+{{- $mounts := list -}}
+{{- range $svc.volumeMounts }}{{ if eq .name $volumeName }}{{ $mounts = append $mounts . }}{{ end }}{{ end }}
+{{- if not $mounts -}}
+{{- fail (printf "%s services[%s] has no volumeMounts entry for the volume %s, so the files reach no container; mount it at %s, the folder AGENT_REMEDIATION_WORKFLOWS_DIR names" $set $svc.name $volumeName $dir) -}}
+{{- end -}}
+{{- $mounted := false -}}
+{{- $subPath := "" -}}
+{{- $paths := list -}}
+{{- range $mounts -}}
+{{- $paths = append $paths (toString .mountPath) -}}
+{{- if eq (toString .mountPath | trimSuffix "/") (trimSuffix "/" $dir) -}}
+{{- if or .subPath .subPathExpr -}}
+{{- $subPath = toString (.subPath | default .subPathExpr) -}}
+{{- else -}}
+{{- $mounted = true -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if not $mounted -}}
+{{- if $subPath -}}
+{{- fail (printf "%s services[%s] mounts the volume %s at %s with subPath %s, which mounts one entry of the ConfigMap rather than the folder of files; remove the subPath" $set $svc.name $volumeName $dir $subPath) -}}
+{{- end -}}
+{{- fail (printf "%s services[%s] mounts the volume %s at %s, and AGENT_REMEDIATION_WORKFLOWS_DIR is %s, so agent-remediation would never read the files; mount the volume at the folder AGENT_REMEDIATION_WORKFLOWS_DIR names, or set the variable to the mount's path" $set $svc.name $volumeName (join ", " $paths) $dir) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{/* Fails the render on a remediation file agent-remediation would refuse at
      startup, naming the file. Each file is split into its YAML documents at
      every line that starts with the marker `---` followed by a blank, a
      carriage return or the end of the line, the separators the YAML loader
      reads; the marker and that one character are dropped, so a comment or a
      document written on the marker's line stays at the start of the next
-     document. Every document that holds more than comments must parse as a
-     YAML mapping whose kind is flow, type or fixture and whose version is a
-     number in $supportedVersions, the versions agent-remediation loads
+     document. The text before the first marker is a document only when it
+     holds more than blank lines and comments, so a file may start with
+     comments or a marker, and a file of comments alone holds no document. The
+     text after every marker is a document, and one that holds only blank
+     lines and comments (a trailing marker, two markers in a row) is an empty
+     document, which the loader refuses, so the render fails naming its
+     number. Every other document must parse as a YAML mapping whose kind is
+     flow, type or fixture and whose version is a number in
+     $supportedVersions, the versions agent-remediation loads
      (pkg/deploycheck pins them to its workflow.SupportedVersion). fromYaml
      reads a number as float64 and a quoted "1" as a string, so the version is
      compared as a number only when it is one. The rest of each file is
-     checked by agent-remediation at startup and by `remediation-check files`.
+     checked by agent-remediation at startup and by `remediation-check files`;
+     the loader's reading of each placement of markers, blank lines and
+     comments is pinned by TestLoad_EmptyDocuments in
+     agent-remediation/adapters/workflowfile, and lint.sh renders the same
+     shapes.
      Call: include "continuo.agentRemediation.assertWorkflowFiles" $ */}}
 {{- define "continuo.agentRemediation.assertWorkflowFiles" -}}
 {{- $supportedVersions := list 1 -}}
 {{- $supported := join ", " $supportedVersions -}}
 {{- range $name, $content := (include "continuo.agentRemediation.workflowFiles" . | fromJson) -}}
 {{- $docs := list -}}
-{{- range $text := regexSplit "(?m)^---(?:[ \t\r]|$)" (toString $content) -1 -}}
-{{- if trim (regexReplaceAll "(?m)^[ \t]*#.*$" $text "") -}}
-{{- $docs = append $docs $text -}}
+{{- range $i, $text := regexSplit "(?m)^---(?:[ \t\r]|$)" (toString $content) -1 -}}
+{{- $blank := not (trim (regexReplaceAll "(?m)^[ \t]*#.*$" $text "")) -}}
+{{- if not (and $blank (eq $i 0)) -}}
+{{- $docs = append $docs (dict "text" $text "empty" $blank) -}}
 {{- end -}}
 {{- end -}}
-{{- range $i, $text := $docs -}}
+{{- range $i, $d := $docs -}}
+{{- if $d.empty -}}
+{{- fail (printf "agentRemediation.workflows.files[%s] document %d is empty: only blank lines or comments follow its --- marker, and agent-remediation refuses an empty document; remove the marker" $name (add1 $i)) -}}
+{{- end -}}
+{{- $text := $d.text -}}
 {{- $where := printf "agentRemediation.workflows.files[%s]" $name -}}
 {{- if gt (len $docs) 1 -}}
 {{- $where = printf "%s document %d" $where (add1 $i) -}}

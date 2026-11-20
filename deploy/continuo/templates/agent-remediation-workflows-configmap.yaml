@@ -4,8 +4,10 @@
   agent-remediation mounts this ConfigMap at the folder in
   AGENT_REMEDIATION_WORKFLOWS_DIR and loads the files over its built-in ones at
   startup. With no files the ConfigMap holds no key, and agent-remediation runs
-  its built-in files alone. A file agent-remediation would refuse for its kind
-  or version fails the render here, before any pod changes.
+  its built-in files alone. A file agent-remediation would refuse for its kind,
+  its version or an empty document fails the render here, before any pod
+  changes, and deployment.yaml fails the render when agent-remediation's
+  services entry would not mount this ConfigMap at that folder.
 */ -}}
 {{- include "continuo.agentRemediation.assertWorkflowFiles" . -}}
 {{- $files := include "continuo.agentRemediation.workflowFiles" . | fromJson -}}

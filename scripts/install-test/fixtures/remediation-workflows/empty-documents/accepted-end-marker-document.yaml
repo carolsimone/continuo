@@ -1,0 +1,9 @@
+# A document closed by the document end marker, then a marker and a second document.
+kind: type
+version: 1
+name: lint-probe
+...
+---
+kind: flow
+version: 1
+name: lint-probe-flow

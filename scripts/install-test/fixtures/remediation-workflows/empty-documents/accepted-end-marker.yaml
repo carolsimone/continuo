@@ -1,0 +1,5 @@
+# A document closed by the document end marker.
+kind: type
+version: 1
+name: lint-probe
+...

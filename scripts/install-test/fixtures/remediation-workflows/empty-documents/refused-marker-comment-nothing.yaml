@@ -1,0 +1,5 @@
+# A document, then a marker with a comment on its line and nothing after it.
+kind: type
+version: 1
+name: lint-probe
+--- # nothing

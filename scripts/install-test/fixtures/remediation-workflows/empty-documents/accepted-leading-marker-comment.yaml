@@ -1,0 +1,5 @@
+# A file that starts with a marker with a comment on its line.
+--- # the probe
+kind: type
+version: 1
+name: lint-probe

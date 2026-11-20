@@ -1,0 +1,6 @@
+# A document closed by the document end marker, then comments.
+kind: type
+version: 1
+name: lint-probe
+...
+# done

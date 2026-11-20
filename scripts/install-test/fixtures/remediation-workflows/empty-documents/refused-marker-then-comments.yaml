@@ -1,0 +1,6 @@
+# A document, then a marker that only comments follow: an empty second document.
+kind: type
+version: 1
+name: lint-probe
+---
+# only a comment

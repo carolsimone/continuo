@@ -678,7 +678,14 @@ agentRemediation:
     # it whole, any other is added. A name is letters, digits, '.', '_' and '-',
     # ends in .yaml or .yml and does not start with a dot. A document whose kind
     # is not flow, type or fixture, or whose version agent-remediation does not
-    # load, fails the render, naming the file. A change rolls agent-remediation
+    # load, fails the render, naming the file, and so does an empty document
+    # (a `---` that only blank lines or comments follow). With files set, the
+    # render also fails unless agent-remediation's services entry has the
+    # volume remediation-workflows as a ConfigMap volume of this ConfigMap
+    # (configMap.name "" or the ConfigMap's name) and a volumeMounts entry of
+    # it, with no subPath, at the folder AGENT_REMEDIATION_WORKFLOWS_DIR names
+    # (/etc/continuo-workflows when the entry does not set it), as the entry
+    # below has them. A change rolls agent-remediation
     # only. Empty (the default) loads the built-in files alone. Flows and types
     # run only with engine: runner; under legacy the files are loaded and
     # checked at startup, and only remediations the runner started use them.
