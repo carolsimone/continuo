@@ -1,0 +1,10 @@
+# agent-remediation reads %YAML 1.1 only, in any document.
+kind: type
+version: 1
+name: lint-probe
+...
+%YAML 1.2
+---
+kind: flow
+version: 1
+name: lint-probe-flow

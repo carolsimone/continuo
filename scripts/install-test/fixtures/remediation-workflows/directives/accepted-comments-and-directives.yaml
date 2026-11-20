@@ -1,0 +1,10 @@
+# Comments, blank lines and directives before the first marker are no document.
+
+%YAML 1.1
+%TAG !e! tag:example.com,2000:
+# more
+
+---
+kind: type
+version: 1
+name: lint-probe

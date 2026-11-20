@@ -45,8 +45,9 @@ func FlowScenarios() []Scenario {
 
 // RunFlowScenarios runs the named flow through every flow scenario, each in a
 // world of its own built from the flow fixture that plays it (as Mutate changed
-// it, when the suite has one), and returns one result per scenario, in
-// scenario order, with the flow as the result's type.
+// it, when the suite has one), with every remediation following that flow, and
+// returns one result per scenario, in scenario order, with the flow as the
+// result's type.
 // A scenario with no fixture, or with several, fails. A fixture for a scenario
 // that is not a flow scenario fails too, with one result of its own. Every
 // cluster takes its fixture's passing answers, and every verification run
@@ -90,8 +91,9 @@ func (s Suite) RunFlowScenarios(ctx context.Context, flow string) []Result {
 	return out
 }
 
-// runFlow runs flow scenario sc from its fixture f, checks what the run wrote,
-// and returns the model requests the run made.
+// runFlow runs flow scenario sc from its fixture f, in the flow the fixture
+// names, checks what the run wrote, and returns the model requests the run
+// made.
 func (s Suite) runFlow(ctx context.Context, f Fixture, sc Scenario) ([]prompt.ProposeRequest, error) {
 	members, err := memberPasses(f)
 	if err != nil {
@@ -101,7 +103,7 @@ func (s Suite) runFlow(ctx context.Context, f Fixture, sc Scenario) ([]prompt.Pr
 	if sc == FlowCrossClusterFails {
 		script = script.everyTry(s.Files.Flows[f.Flow].Tries)
 	}
-	sr, err := s.start(f, script, sc == FlowMaintenance)
+	sr, err := s.start(f, f.Flow, script, sc == FlowMaintenance)
 	if err != nil {
 		return nil, err
 	}

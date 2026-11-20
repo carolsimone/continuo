@@ -346,12 +346,18 @@ func main() {
 		proposals: proposalRepo,
 		tries:     remediationRepo,
 	}, logger)
-	files, err := loadRunnerFiles(workflows.Builtin, collab, logger)
+	install, err := installFiles(cfg.WorkflowsDir)
 	if err != nil {
-		logger.Error("the built-in remediation files are refused", "error", err)
+		logger.Error("the install's remediation files cannot be read", "error", err)
+		os.Exit(1)
+	}
+	files, changed, err := loadRunnerFiles(workflows.Builtin, install, collab, logger)
+	if err != nil {
+		logger.Error("the remediation files are refused", "error", err)
 		os.Exit(1)
 	}
 	warnIgnoredMaxAttempts(cfg, files, logger)
+	warnInstallFilesUnusedByLegacy(cfg, changed, logger)
 	accept := startRunner(ctx, cfg, collab, files, runnerWiring{
 		llm:     cachedLLM,
 		newUoW:  newUoW,
@@ -723,19 +729,63 @@ func newRunnerDeps(cfg config.Config, collab runner.Collaborators, files workflo
 	}
 }
 
-// loadRunnerFiles loads the remediation files of fsys, checks every flow and
-// type of them against the steps collab's registry holds, and checks that they
-// define the flow every heal trigger runs. Every refusal is logged on its own
-// line and the error that joins them is returned; a warning is logged and does
-// not stop startup. The worker drives the runner's remediations with either
-// engine, so files without the trigger's flow stop startup with either.
-func loadRunnerFiles(fsys fs.FS, collab runner.Collaborators, logger *slog.Logger) (workflow.Set, error) {
-	set, err := workflowfile.Load(fsys)
+// installFiles is the folder dir, where an install keeps its own remediation
+// files, as a file system. An empty dir, or a folder that does not exist, means
+// the install has none and gives a nil file system. A path that exists but is
+// not a folder, or whose entries cannot be listed, is an error, so startup
+// stops rather than running without the files the install put there.
+func installFiles(dir string) (fs.FS, error) {
+	return installFilesListing(dir, os.ReadDir)
+}
+
+// installFilesListing is installFiles with the function that lists the
+// folder's entries given. A listing that fails is a refusal whoever runs the
+// process, whatever the folder's permissions allow: the seam lets a test
+// make the listing fail without depending on the user's rights, which a
+// root user is never refused.
+func installFilesListing(dir string, list func(name string) ([]fs.DirEntry, error)) (fs.FS, error) {
+	if dir == "" {
+		return nil, nil
+	}
+	info, err := os.Stat(dir)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("remediation files folder %s: %w", dir, err)
+	case !info.IsDir():
+		return nil, fmt.Errorf("remediation files folder %s is not a directory", dir)
+	}
+	if _, err := list(dir); err != nil {
+		return nil, fmt.Errorf("remediation files folder %s: %w", dir, err)
+	}
+	return os.DirFS(dir), nil
+}
+
+// loadRunnerFiles loads the built-in remediation files and, over them, the
+// install's (install is nil when it has none), checks every flow and type of
+// them against the steps collab's registry holds, and checks that they define
+// the flow every heal trigger runs. It returns the set and the flows and types
+// the install's files add or change ("flow <name>", "type <name>"). Every
+// refusal is logged on its own line and the error that joins them is returned;
+// a warning is logged and does not stop startup. What the install's files
+// replace, and the files copied from a built-in that has changed since, are
+// logged at Warn before the files are checked, so a file that check refuses
+// still shows what it was meant to replace. Each flow no heal trigger runs is
+// logged at Warn with the check's warnings. The worker drives the runner's
+// remediations with either engine, so files without the trigger's flow stop
+// startup with either.
+func loadRunnerFiles(builtin, install fs.FS, collab runner.Collaborators, logger *slog.Logger) (workflow.Set, []string, error) {
+	set, loaded, err := workflowfile.LoadInstall(builtin, install)
 	if err != nil {
 		logRefusals(logger, err)
-		return workflow.Set{}, err
+		return workflow.Set{}, nil, err
+	}
+	for _, n := range loaded.Notes {
+		logger.Warn("remediation file", "warning", n)
 	}
 	warnings, err := runner.Validate(set, runner.NewRegistry(collab))
+	warnings = append(warnings, runner.FlowsNoTriggerRuns(set)...)
 	for _, w := range warnings {
 		logger.Warn("remediation file", "warning", w)
 	}
@@ -744,9 +794,9 @@ func loadRunnerFiles(fsys fs.FS, collab runner.Collaborators, logger *slog.Logge
 	}
 	if err != nil {
 		logRefusals(logger, err)
-		return workflow.Set{}, err
+		return workflow.Set{}, nil, err
 	}
-	return set, nil
+	return set, loaded.Changed, nil
 }
 
 // warnIgnoredMaxAttempts warns at startup when the engine is the runner and
@@ -763,6 +813,20 @@ func warnIgnoredMaxAttempts(cfg config.Config, files workflow.Set, logger *slog.
 	}
 	logger.Warn("AGENT_REMEDIATION_MAX_ATTEMPTS is not read by the runner engine; the flow file's tries govern",
 		"max_attempts", cfg.MaxAttempts, "flow", flow.Name, "tries", flow.Tries)
+}
+
+// warnInstallFilesUnusedByLegacy warns at startup when the engine is legacy and
+// the install's files add or change a flow or type (changed names them): the
+// legacy handler works every new heal trigger without the files, so they run
+// only in a remediation the runner started. A byte for byte copy of a built-in
+// changes nothing and does not warn.
+func warnInstallFilesUnusedByLegacy(cfg config.Config, changed []string, logger *slog.Logger) {
+	if cfg.Engine != config.EngineLegacy || len(changed) == 0 {
+		return
+	}
+	logger.Warn("the install's remediation flows and types run only with AGENT_REMEDIATION_ENGINE=runner; "+
+		"the legacy engine works every new heal trigger without them, and only a remediation the runner started uses them",
+		"engine", cfg.Engine, "changed", changed)
 }
 
 // logRefusals logs each error joined in err on a line of its own.

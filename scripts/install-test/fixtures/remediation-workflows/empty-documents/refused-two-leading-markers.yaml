@@ -1,0 +1,6 @@
+# Two markers in a row before the document: an empty first document.
+---
+---
+kind: type
+version: 1
+name: lint-probe

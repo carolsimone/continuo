@@ -1,0 +1,4 @@
+# A synthetic remediation file for lint.sh whose document is a list, not a
+# mapping with a kind.
+- kind: type
+  version: 1

@@ -60,8 +60,9 @@ func (u hookedUoW) Commit() error {
 
 // start builds the world of a scenario and a runner over it, as the service
 // wires one: the suite's contract locator and inspector, the world's other
-// ports, and the suite's files.
-func (s Suite) start(f Fixture, script Script, maintenance bool) (*scenarioRun, error) {
+// ports, and the suite's files. Every remediation the runner accepts follows
+// the flow named flow.
+func (s Suite) start(f Fixture, flow string, script Script, maintenance bool) (*scenarioRun, error) {
 	if s.NewWorld == nil {
 		return nil, errors.New("the suite has no world to run a scenario in")
 	}
@@ -85,6 +86,7 @@ func (s Suite) start(f Fixture, script Script, maintenance bool) (*scenarioRun, 
 		Maintenance:         maintenance,
 		Owner:               owner,
 		VerificationTimeout: verificationTimeout,
+		Flow:                flow,
 	}
 	sr.r = runner.New(sr.deps)
 	return sr, nil

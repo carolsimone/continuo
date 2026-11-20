@@ -418,6 +418,7 @@ services:
       # The e2e suite proves the runner, so the local stack runs it; the
       # chart's agentRemediation.engine defaults to legacy.
       - AGENT_REMEDIATION_ENGINE=runner
+      - AGENT_REMEDIATION_WORKFLOWS_DIR=/etc/continuo-workflows
       - LOG_LEVEL=INFO
       - REMEDIATION_PR_POLL_INTERVAL=${REMEDIATION_PR_POLL_INTERVAL:-5s}
       - REMEDIATION_PR_OPENING_GRACE_PERIOD=${REMEDIATION_PR_OPENING_GRACE_PERIOD:-15s}
@@ -459,6 +460,10 @@ services:
       # the chart ships (deploy/continuo/files/service_repos.yaml) stay free
       # of test fixtures.
       - ./tests/e2e/config/service_repos.yaml:/etc/continuo/service_repos.yaml:ro
+      # An install's flow, type and fixture files, which agent-remediation loads
+      # over the built-in ones. The folder is empty here (only a .gitkeep), so
+      # the local stack runs the built-in files alone.
+      - ./tests/e2e/config/remediation-workflows:/etc/continuo-workflows:ro
     ports:
       # Host port 8094 avoids collision with other services.
       # The container-internal port remains 8092 (AGENT_REMEDIATION_HTTP_PORT).

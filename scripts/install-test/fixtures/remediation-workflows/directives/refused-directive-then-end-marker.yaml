@@ -1,0 +1,7 @@
+# A directive needs a marker after it, not a document end marker.
+%YAML 1.1
+...
+---
+kind: type
+version: 1
+name: lint-probe

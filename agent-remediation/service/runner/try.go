@@ -779,7 +779,9 @@ func (r *Runner) newCluster(rem remediation.Remediation, try remediation.Try, fl
 }
 
 // fileRevisions is the revision of the flow's file and of the file of every
-// type it lists, by file name.
+// type it lists, by file name. A file name names one file: definitions read
+// from one file share its revision, and the install loader refuses an install
+// file at the path of a built-in file whose definitions stay loaded.
 func fileRevisions(set workflow.Set, flow workflow.Flow) map[string]string {
 	out := map[string]string{fileName(flow.File, flow.Name): flow.Revision}
 	for _, name := range flow.Types {

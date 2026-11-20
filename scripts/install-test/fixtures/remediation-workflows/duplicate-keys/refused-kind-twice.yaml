@@ -1,0 +1,5 @@
+# Two kind lines in one document.
+kind: type
+version: 1
+kind: flow
+name: lint-probe

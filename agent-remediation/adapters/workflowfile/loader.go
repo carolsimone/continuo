@@ -22,6 +22,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // revisionLength is how many hex characters of a file's sha256 identify it.
@@ -31,38 +32,53 @@ const revisionLength = 12
 // "yaml: line 3: ...").
 var lineInMessage = regexp.MustCompile(`line (\d+)`)
 
-// Load reads every *.yaml file under the root of fsys, recursively, in path
-// order. A file may hold several documents separated by `---`. A document with
-// `kind: fixture` is skipped without decoding its body; LoadFixtures reads
-// those. Load returns every problem it finds, joined, and an empty Set when
-// there is one.
+// Load reads every *.yaml and *.yml file under the root of fsys, recursively,
+// in path order, and skips every file and directory whose name starts with a
+// dot (a Kubernetes ConfigMap volume keeps its own bookkeeping under such
+// names, with a second copy of each file). A file may hold several documents
+// separated by `---`. A document with `kind: fixture` is skipped without
+// decoding its body; LoadFixtures reads those. Load returns every problem it
+// finds, joined, and an empty Set when there is one.
 func Load(fsys fs.FS) (workflow.Set, error) {
 	l := loader{
 		set:      workflow.Set{Flows: map[string]workflow.Flow{}, Types: map[string]workflow.Type{}},
 		flowFile: map[string]workflow.Pos{},
 		typeFile: map[string]workflow.Pos{},
 	}
-	walkErr := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
+	if err := walkYAML(fsys, l.loadFile); err != nil {
+		l.errs = append(l.errs, err)
+	}
+	if len(l.errs) > 0 {
+		return workflow.Set{}, errors.Join(l.errs...)
+	}
+	return l.set, nil
+}
+
+// walkYAML calls visit with the path and content of every *.yaml and *.yml
+// file under the root of fsys, recursively, in path order. A file or directory
+// whose name starts with a dot is left out, with everything under it. It
+// returns the first error reading the tree.
+func walkYAML(fsys fs.FS, visit func(file string, data []byte)) error {
+	return fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || path.Ext(p) != ".yaml" {
+		if p != "." && strings.HasPrefix(d.Name(), ".") {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() || (path.Ext(p) != ".yaml" && path.Ext(p) != ".yml") {
 			return nil
 		}
 		data, err := fs.ReadFile(fsys, p)
 		if err != nil {
 			return err
 		}
-		l.loadFile(p, data)
+		visit(p, data)
 		return nil
 	})
-	if walkErr != nil {
-		l.errs = append(l.errs, walkErr)
-	}
-	if len(l.errs) > 0 {
-		return workflow.Set{}, errors.Join(l.errs...)
-	}
-	return l.set, nil
 }
 
 type loader struct {
@@ -217,6 +233,7 @@ func (l *loader) loadFlow(file, revision string, root *yaml.Node) {
 	default:
 		flow.Approver = workflow.StepRef{Name: workflow.StepName(f.Approver.Value), Pos: at(f.Approver.Line)}
 	}
+	flow.BasedOn = l.basedOn(file, root, f.BasedOn)
 	if len(l.errs) > before {
 		return
 	}
@@ -285,6 +302,8 @@ func (l *loader) loadType(file, revision string, root *yaml.Node) {
 	} else if f.Match.NodeTypes.Kind != 0 && f.Match.NodeTypes.Tag != "!!null" {
 		l.fail(file, f.Match.NodeTypes.Line, "node_types must be a list")
 	}
+	typ.BasedOn = l.basedOn(file, root, f.BasedOn)
+	l.checkMatchSource(file, root, f.Match.Source)
 	if len(l.errs) > before {
 		return
 	}
@@ -298,6 +317,37 @@ func (l *loader) loadType(file, revision string, root *yaml.Node) {
 	}
 	l.typeFile[typ.Name] = pos
 	l.set.Types[typ.Name] = typ
+}
+
+// basedOn returns the text of the based_on field of the flow or type mapping
+// root, whose value node is n: "" when the file has none. A value that is not
+// one name and one revision joined by an @ is refused at the line of the key.
+func (l *loader) basedOn(file string, root *yaml.Node, n yaml.Node) string {
+	if n.Kind == 0 {
+		return ""
+	}
+	name, revision, ok := strings.Cut(n.Value, "@")
+	if n.Kind != yaml.ScalarNode || !ok || name == "" || revision == "" || strings.Contains(revision, "@") {
+		l.fail(file, keyLine(root, "based_on", n.Line),
+			"based_on must be <name>@<revision>: the built-in the file was copied from and the revision of it that was copied")
+		return ""
+	}
+	return n.Value
+}
+
+// checkMatchSource refuses a match.source that is not a remediation source,
+// since no failure carries it and the type would never select a cluster. An
+// empty source is allowed and matches any source.
+func (l *loader) checkMatchSource(file string, root *yaml.Node, source string) {
+	if source == "" || model.RemediationSource(source).IsValid() {
+		return
+	}
+	valid := make([]string, 0, len(model.RemediationSources()))
+	for _, s := range model.RemediationSources() {
+		valid = append(valid, string(s))
+	}
+	l.fail(file, keyLine(valueOf(root, "match"), "source", root.Line),
+		"match.source %q is not a remediation source (valid: %s)", source, strings.Join(valid, ", "))
 }
 
 // refs maps a YAML list of step names to step references with their lines.

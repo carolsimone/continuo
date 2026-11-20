@@ -1,0 +1,6 @@
+# A document end marker with no document before it.
+...
+---
+kind: type
+version: 1
+name: lint-probe

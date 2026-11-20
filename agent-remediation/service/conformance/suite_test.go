@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"maps"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -65,6 +67,22 @@ func withoutFixture(s conformance.Suite, typeName string) conformance.Suite {
 	return s
 }
 
+// builtinTypeFiles is how many type files the built-in files hold. It walks the
+// files and does not load them, so a type the loader dropped still counts.
+func builtinTypeFiles(t *testing.T) int {
+	t.Helper()
+	var n int
+	require.NoError(t, fs.WalkDir(workflows.Builtin, "types", func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && (path.Ext(p) == ".yaml" || path.Ext(p) == ".yml") {
+			n++
+		}
+		return err
+	}))
+	return n
+}
+
+// The built-in flow lists every built-in type, and each is played through every
+// type scenario.
 func TestSuite_BuiltinFilesPass(t *testing.T) {
 	s := builtinSuite(t)
 	warnings, err := runner.Validate(s.Files, runner.NewRegistry(runner.Collaborators{}))
@@ -73,7 +91,7 @@ func TestSuite_BuiltinFilesPass(t *testing.T) {
 
 	results := s.Run(ctx)
 	flow := s.Files.Flows[flowName]
-	require.Len(t, flow.Types, 10)
+	require.Len(t, flow.Types, builtinTypeFiles(t), "the flow lists every built-in type file's type")
 	require.Len(t, results, len(flow.Types)*len(conformance.TypeScenarios()))
 	for _, r := range results {
 		assert.NoError(t, r.Err, "type %s, scenario %s", r.Type, r.Scenario)
@@ -123,6 +141,161 @@ func TestSuite_AFixtureForATypeNoFlowListsFails(t *testing.T) {
 		require.Error(t, r.Err)
 		assert.Contains(t, r.Err.Error(), "no flow lists")
 	}
+}
+
+// A flow fixture is played only by the flow it names, so one that names a flow
+// no file defines (a mistyped name) is played by nothing and fails with one
+// result that names its file. Every fixture of a loaded flow is left to
+// RunFlowScenarios.
+func TestSuite_AFixtureForAFlowNoFileDefinesFails(t *testing.T) {
+	s := onlyTypes(builtinSuite(t), "dbt-compile")
+	var mistyped conformance.Fixture
+	for _, f := range s.Fixtures {
+		if f.Flow == flowName && f.Scenario == conformance.FlowMaintenance {
+			mistyped = f
+		}
+	}
+	require.NotEmpty(t, mistyped.File, "the built-in maintenance fixture")
+	mistyped.Flow = "rejected-relase"
+	mistyped.File = "my-maintenance.yaml"
+	s.Fixtures = append(slices.Clone(s.Fixtures), mistyped)
+
+	results := s.Run(ctx)
+
+	var unplayed []conformance.Result
+	for _, r := range results {
+		if r.Type == "rejected-relase" {
+			unplayed = append(unplayed, r)
+		}
+		if r.Type == flowName {
+			assert.Fail(t, "Run reported a fixture of the loaded flow", "%s: %v", r.Scenario, r.Err)
+		}
+	}
+	require.Len(t, unplayed, 1)
+	assert.Equal(t, conformance.FlowMaintenance, unplayed[0].Scenario)
+	require.Error(t, unplayed[0].Err)
+	assert.Equal(t, "my-maintenance.yaml tests flow rejected-relase, which no file defines", unplayed[0].Err.Error())
+}
+
+// withSecondFlow is the suite with one more flow, named name: a copy of the
+// built-in flow that lists types, in that order and with tries tries, and every
+// built-in flow fixture copied to play it. The built-in flow is left as it is.
+func withSecondFlow(s conformance.Suite, name string, tries int, types ...string) conformance.Suite {
+	flow := s.Files.Flows[flowName]
+	flow.Name = name
+	flow.Types = types
+	flow.Tries = tries
+	flows := maps.Clone(s.Files.Flows)
+	flows[name] = flow
+	s.Files = workflow.Set{Flows: flows, Types: s.Files.Types}
+	fixtures := slices.Clone(s.Fixtures)
+	for _, f := range s.Fixtures {
+		if f.Flow == flowName {
+			f.Flow = name
+			f.File = name + "/" + f.File
+			fixtures = append(fixtures, f)
+		}
+	}
+	s.Fixtures = fixtures
+	return s
+}
+
+// A flow scenario runs the flow it is played for: the remediation of each of
+// its worlds follows that flow, so a second flow that lists one type fails the
+// scenario of two types with the same fixtures the built-in flow passes.
+func TestSuite_AFlowScenarioRunsTheNamedFlow(t *testing.T) {
+	s := withSecondFlow(builtinSuite(t), "second-flow", 3, "dbt-compile")
+	worlds := recordWorlds(&s)
+
+	second := map[conformance.Scenario]error{}
+	for _, r := range s.RunFlowScenarios(ctx, "second-flow") {
+		assert.Equal(t, "second-flow", r.Type)
+		second[r.Scenario] = r.Err
+	}
+	require.Len(t, second, len(conformance.FlowScenarios()))
+	require.Error(t, second[conformance.FlowTwoTypesOneService], "a flow that lists only dbt-compile cannot fix with two types")
+	assert.Contains(t, second[conformance.FlowTwoTypesOneService].Error(), "want two")
+	require.NotEmpty(t, *worlds)
+	for _, w := range *worlds {
+		for _, rem := range w.Remediations() {
+			assert.Equal(t, "second-flow", rem.Flow, "every remediation of a second-flow scenario follows second-flow")
+		}
+	}
+
+	*worlds = nil
+	for _, r := range s.RunFlowScenarios(ctx, flowName) {
+		assert.NoError(t, r.Err, "flow %s, scenario %s", r.Type, r.Scenario)
+	}
+	require.NotEmpty(t, *worlds)
+	for _, w := range *worlds {
+		for _, rem := range w.Remediations() {
+			assert.Equal(t, flowName, rem.Flow)
+		}
+	}
+}
+
+// A type the flow heal triggers run does not list is played in the first flow,
+// by name, that lists it: a type that only a second flow lists is fixed there,
+// with that flow's tries, and not in the built-in flow, which would hand its
+// cluster over as no type.
+func TestSuite_ATypeOnlyASecondFlowListsRunsInThatFlow(t *testing.T) {
+	s := withSecondFlow(onlyTypes(builtinSuite(t), "dbt-parse"), "z-second-flow", 2, "dbt-compile")
+	s.Fixtures = slices.DeleteFunc(s.Fixtures, func(f conformance.Fixture) bool {
+		return f.Type != "" && f.Type != "dbt-parse" && f.Type != "dbt-compile"
+	})
+	worlds := recordWorlds(&s)
+
+	results := s.Run(ctx)
+
+	var compile []conformance.Result
+	for _, r := range results {
+		assert.NoError(t, r.Err, "type %s, scenario %s", r.Type, r.Scenario)
+		if r.Type == "dbt-compile" {
+			compile = append(compile, r)
+		}
+	}
+	assert.Len(t, compile, len(conformance.TypeScenarios()), "dbt-compile is played through every type scenario")
+	seen := 0
+	for _, w := range *worlds {
+		for _, rem := range w.Remediations() {
+			want := flowName
+			if w.typ == "dbt-compile" {
+				want = "z-second-flow"
+			}
+			assert.Equal(t, want, rem.Flow, "a remediation of a %s scenario", w.typ)
+			seen++
+		}
+	}
+	assert.Positive(t, seen)
+}
+
+// A type that the flow heal triggers run lists is played in that flow, with
+// its tries, even when a flow whose name sorts first lists the type too.
+func TestSuite_ATypeListedByTheProductionFlowIsPlayedThere(t *testing.T) {
+	s := withSecondFlow(onlyTypes(builtinSuite(t), "dbt-compile"), "a-experimental", 2, "dbt-compile")
+	s.Fixtures = slices.DeleteFunc(s.Fixtures, func(f conformance.Fixture) bool {
+		return f.Type != "" && f.Type != "dbt-compile"
+	})
+	production := s.Files.Flows[runner.TriggerFlowName]
+	require.Equal(t, 3, production.Tries)
+	require.Less(t, "a-experimental", runner.TriggerFlowName, "the other flow sorts first")
+	worlds := recordWorlds(&s)
+
+	results := s.Run(ctx)
+
+	require.Len(t, results, len(conformance.TypeScenarios()), "dbt-compile is played once, in one flow")
+	for _, r := range results {
+		assert.Equal(t, "dbt-compile", r.Type)
+		assert.NoError(t, r.Err, "scenario %s", r.Scenario)
+	}
+	mostTries := 0
+	for _, w := range *worlds {
+		for _, rem := range w.Remediations() {
+			assert.Equal(t, runner.TriggerFlowName, rem.Flow, "a remediation of a dbt-compile scenario")
+			mostTries = max(mostTries, len(w.Tries(rem.ID)))
+		}
+	}
+	assert.Equal(t, production.Tries, mostTries, "the scenario whose tries are all spent makes the production flow's tries")
 }
 
 func TestSuite_AFlowScenarioWithoutAFixtureFails(t *testing.T) {

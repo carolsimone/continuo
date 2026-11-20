@@ -13,18 +13,42 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 )
 
-// flowRejectedRelease is the flow a heal trigger for a rejected release runs.
-const flowRejectedRelease = "rejected-release"
+// TriggerFlowName names the flow a heal trigger for a rejected release runs,
+// the one TriggerFlow returns.
+const TriggerFlowName = "rejected-release"
 
 // TriggerFlow returns the flow of set that every accepted heal trigger runs. It
 // is an error when set does not define it: every remediation Accept records
 // would then follow a flow no file defines, and could never be driven.
 func TriggerFlow(set workflow.Set) (workflow.Flow, error) {
-	f, ok := set.Flows[flowRejectedRelease]
+	f, ok := set.Flows[TriggerFlowName]
 	if !ok {
-		return workflow.Flow{}, fmt.Errorf("no file defines flow %q, which every heal trigger runs", flowRejectedRelease)
+		return workflow.Flow{}, fmt.Errorf("no file defines flow %q, which every heal trigger runs", TriggerFlowName)
 	}
 	return f, nil
+}
+
+// FlowsNoTriggerRuns notes each flow of set other than the one TriggerFlow
+// returns, in name order, as "flow <name>: no heal trigger runs it". Such a
+// flow is loaded and validated like any other, and remediation-check plays it,
+// but no remediation ever follows it.
+func FlowsNoTriggerRuns(set workflow.Set) []string {
+	var notes []string
+	for _, name := range sortedKeys(set.Flows) {
+		if name != TriggerFlowName {
+			notes = append(notes, fmt.Sprintf("flow %s: no heal trigger runs it", name))
+		}
+	}
+	return notes
+}
+
+// acceptFlow is the flow Accept records on a remediation it creates: the
+// runner's Deps.Flow, or rejected-release when that is empty.
+func (r *Runner) acceptFlow() string {
+	if r.d.Flow != "" {
+		return r.d.Flow
+	}
+	return TriggerFlowName
 }
 
 // Accepted is one heal trigger as the stream delivered it: the decoded trigger,
@@ -38,18 +62,18 @@ type Accepted struct {
 	Fields        map[string]string
 }
 
-// Accept records a heal trigger as a running remediation, in one transaction
-// that also claims the message: a redelivered message, or the same outbox entry
-// republished under a new message id, commits nothing and returns nil. A
-// trigger for a release and round that already has a remediation
-// (acceptExisting) resumes it when it ended as a system failure, which is what
-// a redrive of its dead letter delivers: a message with a new id and a new
-// outbox entry id. The remediation then goes on from the try and step it
-// stopped at, with no second remediation. A trigger for a remediation that
-// runs or is done, or for a round a later round replaced, only marks its
-// message completed. A trigger with no failing node is acknowledged with
-// nothing written. The work itself starts when a worker drives the
-// remediation.
+// Accept records a heal trigger as a running remediation that follows the flow
+// acceptFlow names, in one transaction that also claims the message: a
+// redelivered message, or the same outbox entry republished under a new message
+// id, commits nothing and returns nil. A trigger for a release and round that
+// already has a remediation (acceptExisting) resumes it when it ended as a
+// system failure, which is what a redrive of its dead letter delivers: a
+// message with a new id and a new outbox entry id. The remediation then goes on
+// from the try and step it stopped at, with no second remediation. A trigger
+// for a remediation that runs or is done, or for a round a later round
+// replaced, only marks its message completed. A trigger with no failing node is
+// acknowledged with nothing written. The work itself starts when a worker
+// drives the remediation.
 func (r *Runner) Accept(ctx context.Context, a Accepted) error {
 	t := a.Trigger
 	if t.Round < 1 {
@@ -89,7 +113,7 @@ func (r *Runner) Accept(ctx context.Context, a Accepted) error {
 		TenantID:         t.TenantID,
 		ReleaseID:        t.ReleaseID,
 		Round:            t.Round,
-		Flow:             flowRejectedRelease,
+		Flow:             r.acceptFlow(),
 		Status:           remediation.StatusRunning,
 		TriggerPayload:   a.Payload,
 		TriggerMessageID: a.MessageID,

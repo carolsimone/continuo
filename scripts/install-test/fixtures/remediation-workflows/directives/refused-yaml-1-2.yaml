@@ -1,0 +1,6 @@
+%YAML 1.2
+---
+# agent-remediation reads %YAML 1.1 only.
+kind: type
+version: 1
+name: lint-probe

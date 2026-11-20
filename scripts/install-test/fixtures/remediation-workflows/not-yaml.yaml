@@ -1,0 +1,5 @@
+# A synthetic remediation file for lint.sh that does not parse: the list after
+# name is never closed.
+kind: type
+version: 1
+name: [lint-probe

@@ -1,0 +1,9 @@
+# Text after a document end marker on its line.
+kind: type
+version: 1
+name: lint-probe
+... more
+---
+kind: flow
+version: 1
+name: lint-probe-flow

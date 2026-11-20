@@ -1,0 +1,10 @@
+# A directive after a document end marker belongs to the document the next marker starts.
+kind: type
+version: 1
+name: lint-probe
+...
+%YAML 1.1
+---
+kind: flow
+version: 1
+name: lint-probe-flow

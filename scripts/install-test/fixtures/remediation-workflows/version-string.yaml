@@ -1,0 +1,5 @@
+# A synthetic remediation file for lint.sh whose version is the string "1", which
+# agent-remediation refuses: the version is a number.
+kind: type
+version: "1"
+name: lint-probe

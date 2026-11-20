@@ -1,0 +1,60 @@
+# An install's fixture of the flow scenario two_services, for a
+# rejected-release flow that lists no dbt-validation: two dbt-parse fixes in
+# two services, sales and finance, each with a verification run of its own.
+kind: fixture
+version: 1
+flow: rejected-release
+scenario: two_services
+trigger:
+  source: parse
+  release_id: rel-lint-two-services
+  repo: o/repo
+  commit_sha: sha-lint-two-services
+  nodes:
+    - node_id: model.sales.orders
+      category: parse
+      error_signature: sig-orders-comma
+      reason: parse_error
+      error_excerpt: "Expecting ). Line 1, Col: 12.\n  select id total"
+      file_path: models/orders.sql
+      service: sales
+      node_type: dbt-model
+    - node_id: model.finance.revenue
+      category: parse
+      error_signature: sig-revenue-comma
+      reason: parse_error
+      error_excerpt: "Expecting ). Line 1, Col: 14.\n  select id net"
+      file_path: models/revenue.sql
+      service: finance
+      node_type: dbt-model
+service_repo_paths:
+  sales: services/sales
+  finance: services/finance
+repo_files:
+  services/sales/models/orders.sql: "select id total from raw_orders\n"
+  services/sales/dbt_project.yml: "name: sales\n"
+  services/finance/models/revenue.sql: "select id net from invoices\n"
+  services/finance/dbt_project.yml: "name: finance\n"
+release:
+  image_tag: sha-lint-two-services
+answers:
+  pass:
+    - target_file: services/sales/models/orders.sql
+      proposed_content: "select 1\n"
+      rationale: unused
+      confidence: high
+member_answers:
+  model.sales.orders:
+    pass:
+      - target_file: services/sales/models/orders.sql
+        proposed_content: "select id, total from raw_orders\n"
+        rationale: added the missing comma
+        confidence: high
+        model: claude-test
+  model.finance.revenue:
+    pass:
+      - target_file: services/finance/models/revenue.sql
+        proposed_content: "select id, net from invoices\n"
+        rationale: added the missing comma
+        confidence: high
+        model: claude-test

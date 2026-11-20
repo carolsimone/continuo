@@ -38,14 +38,14 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/workflows"
 )
 
-// The equivalence tests run each built-in type fixture through today's driver
-// and verification reconciler, and through the runner, each engine on a memory
-// store of its own with fakes built from the same fixture. Both engines must
-// send the same model requests, hand the contract packaging tool the same
-// contract files, submit the same verification runs over the same artifact
-// bytes, and leave proposal rows with the same statuses, node outcomes,
-// verification runs, edits, confidence and model. Reason texts are not
-// compared.
+// The equivalence tests run the fixture of each built-in type that today's
+// driver has a lane for through today's driver and verification reconciler, and
+// through the runner, each engine on a memory store of its own with fakes built
+// from the same fixture. Both engines must send the same model requests, hand
+// the contract packaging tool the same contract files, submit the same
+// verification runs over the same artifact bytes, and leave proposal rows with
+// the same statuses, node outcomes, verification runs, edits, confidence and
+// model. Reason texts are not compared.
 
 const (
 	// equivalenceFlow is the built-in flow whose types the tests run.
@@ -66,6 +66,16 @@ const (
 	equivalenceDialect = "trino"
 )
 
+// legacyLaneTypes are the built-in types that today's driver has a lane for,
+// the only ones the equivalence tests can compare. A built-in type added later
+// has no lane to compare with, so it is not listed here and the test needs no
+// change; a type of this list that the built-in flow stops listing is a lane
+// the runner no longer covers, and the test says so.
+var legacyLaneTypes = []string{
+	"dbt-compile", "dbt-parse", "seed-build", "duplicate-table", "dbt-validation",
+	"python-validation", "python-parse", "csv-validation", "shared-upstream", "cross-service-upstream",
+}
+
 // equivalenceScenarios are the scenarios both engines run, in run order, each
 // with the statuses its attempts end in. Only a first try is compared: a later
 // try of the runner is shown the earlier tries, which today's driver shows only
@@ -85,9 +95,12 @@ func TestEquivalence(t *testing.T) {
 
 	flow, ok := files.Flows[equivalenceFlow]
 	require.True(t, ok, "the built-in files define flow %s", equivalenceFlow)
-	require.Len(t, flow.Types, 10, "the flow lists the ten built-in types")
+	for _, typeName := range legacyLaneTypes {
+		require.Contains(t, flow.Types, typeName, "today's driver has a lane for built-in type %s, so the built-in flow must list it; "+
+			"if the type was removed on purpose, remove it from legacyLaneTypes too", typeName)
+	}
 
-	for _, typeName := range flow.Types {
+	for _, typeName := range legacyLaneTypes {
 		f := typeFixture(t, fixtures, typeName)
 		for _, sc := range equivalenceScenarios {
 			t.Run(typeName+"_"+string(sc.scenario), func(t *testing.T) {

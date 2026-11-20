@@ -1,0 +1,6 @@
+%FOO bar
+---
+# A directive other than %YAML and %TAG is refused.
+kind: type
+version: 1
+name: lint-probe

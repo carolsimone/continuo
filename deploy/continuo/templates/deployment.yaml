@@ -1,23 +1,66 @@
 {{- /*
-  The chart-managed ConfigMap each service mounts through its `volumes`
-  entries, keyed by service name. A volume whose configMap.name is empty
-  mounts the ConfigMap the `name` helper names. The services that read the
-  mounted file only at startup also set `checksum` and `template`: their pod
-  template carries `checksum/<checksum>`, the digest of the ConfigMap that
-  `template` renders, so `helm upgrade` rolls them when the file changes. The
-  ui re-reads cancel-config.json on every request from a directory mount the
-  kubelet keeps current, so it carries no digest and an edit reaches it without
-  a restart.
+  The chart-managed ConfigMaps each service mounts through its `volumes`
+  entries, keyed by service name, one entry per ConfigMap: `volume` is the
+  name of the volume that mounts it and `name` the helper that names it. A
+  volume whose configMap.name is empty mounts the ConfigMap of the entry whose
+  `volume` is the volume's own name, and the service's first entry when no
+  entry has that name. An entry that sets `mountedAt`, the helper that gives
+  the folder its service reads that ConfigMap from (called with the services
+  entry), is the ConfigMap of a volume of its name only while a volumeMounts
+  entry mounts the volume at that folder, both compared without a trailing
+  slash; a volume of that name mounted anywhere else, or nowhere, mounts the
+  service's first entry, as a volume of any other name does. The ConfigMaps a
+  service reads only at startup also set `checksum` and `template`: while an
+  empty-named volume mounts one, the pod template carries
+  `checksum/<checksum>`, the digest of the ConfigMap that `template` renders,
+  so `helm upgrade` rolls the service when that file changes. The ui re-reads
+  cancel-config.json on every request from a directory mount the kubelet keeps
+  current, so it carries no digest and an edit reaches it without a restart.
 */ -}}
 {{- $mountedConfigMaps := dict
-      "execution-controller" (dict "name" "continuo.dbtCommandsConfigMapName" "checksum" "dbt-commands" "template" "dbt-commands-configmap.yaml")
-      "agent-remediation" (dict "name" "continuo.serviceReposConfigMapName" "checksum" "service-repos" "template" "service-repos-configmap.yaml")
-      "ui" (dict "name" "continuo.cancelConfigMapName") }}
+      "execution-controller" (list (dict "volume" "dbt-commands" "name" "continuo.dbtCommandsConfigMapName" "checksum" "dbt-commands" "template" "dbt-commands-configmap.yaml"))
+      "agent-remediation" (list
+        (dict "volume" "service-repos" "name" "continuo.serviceReposConfigMapName" "checksum" "service-repos" "template" "service-repos-configmap.yaml")
+        (dict "volume" "remediation-workflows" "name" "continuo.agentRemediationWorkflowsConfigMapName" "checksum" "agent-remediation-workflows" "template" "agent-remediation-workflows-configmap.yaml" "mountedAt" "continuo.agentRemediation.workflowsDir"))
+      "ui" (list (dict "volume" "cancel-config" "name" "continuo.cancelConfigMapName")) }}
 {{- include "continuo.credentials.assertFiles" $ }}
 {{- range $svc := .Values.services }}
 {{- if $svc.enabled }}
 {{- $servesMetrics := has $svc.name (include "continuo.metrics.services" $ | fromJsonArray) }}
-{{- $mounted := default (dict) (get $mountedConfigMaps $svc.name) }}
+{{- $mounted := default (list) (get $mountedConfigMaps $svc.name) }}
+{{- /* $resolved: the $mounted entry each volume with an empty configMap.name
+       mounts, by volume name: the entry of the volume's own name (for an
+       entry with `mountedAt`, only while the volume is mounted at that
+       folder), else the service's first entry. A service the chart mounts no
+       ConfigMap into has nothing to fall back to, and the API server would
+       refuse the Deployment, so the render fails naming the volume. */}}
+{{- $resolved := dict }}
+{{- range $volume := $svc.volumes }}
+{{- if and (hasKey $volume "configMap") (not (dig "configMap" "name" "" $volume)) }}
+{{- if not $mounted }}
+{{- fail (printf "services[%s].volumes[%s]: configMap.name is empty, but the chart mounts no ConfigMap of its own into %s; name a ConfigMap you own, or remove the volume and its volumeMounts entry" $svc.name $volume.name $svc.name) }}
+{{- end }}
+{{- $entry := first $mounted }}
+{{- range $candidate := $mounted }}
+{{- if eq $candidate.volume $volume.name }}
+{{- $at := true }}
+{{- if $candidate.mountedAt }}
+{{- $folder := include $candidate.mountedAt $svc }}
+{{- $at = false }}
+{{- range $svc.volumeMounts }}{{ if and (eq .name $volume.name) (eq (toString .mountPath | trimSuffix "/") $folder) }}{{ $at = true }}{{ end }}{{ end }}
+{{- end }}
+{{- if $at }}{{ $entry = $candidate }}{{ end }}
+{{- end }}
+{{- end }}
+{{- $_ := set $resolved $volume.name $entry }}
+{{- end }}
+{{- end }}
+{{- /* With agentRemediation.workflows.files set, the agent-remediation entry
+       must mount the chart's ConfigMap of the files at the folder
+       agent-remediation reads, or the render fails naming what is missing. */}}
+{{- if eq $svc.name "agent-remediation" }}
+{{- include "continuo.agentRemediation.assertWorkflowsMount" (dict "root" $ "svc" $svc) }}
+{{- end }}
 {{- $isAgent := has $svc.name (list "agent-chat" "agent-remediation") }}
 {{- if $isAgent }}{{ include "continuo.agent.assertEnv" (dict "root" $ "svc" $svc) }}{{ end }}
 {{- /* How this service's credentials reach it ("continuo.credentialSource"):
@@ -85,17 +128,19 @@ spec:
         prometheus.io/port: {{ include "continuo.metrics.port" $ | quote }}
         prometheus.io/path: /metrics
         {{- end }}
-        {{- if $mounted.template }}
+        {{- $hashed := list }}
+        {{- range $entry := $mounted }}
         {{- $chartManaged := false }}
-        {{- range $volume := $svc.volumes }}
-        {{- if and (hasKey $volume "configMap") (not (dig "configMap" "name" "" $volume)) }}{{ $chartManaged = true }}{{ end }}
+        {{- range $resolved }}{{ if eq .volume $entry.volume }}{{ $chartManaged = true }}{{ end }}{{ end }}
+        {{- if and $entry.template $chartManaged }}{{ $hashed = append $hashed $entry }}{{ end }}
         {{- end }}
-        {{- if $chartManaged }}
+        {{- if $hashed }}
         # The service reads its mounted file only at startup; a changed file
         # must roll it. A volume naming an operator-owned ConfigMap is not
         # hashed: Helm cannot read it, so an edit to it needs
         # `kubectl rollout restart`.
-        checksum/{{ $mounted.checksum }}: {{ include (print $.Template.BasePath "/" $mounted.template) $ | sha256sum }}
+        {{- range $entry := $hashed }}
+        checksum/{{ $entry.checksum }}: {{ include (print $.Template.BasePath "/" $entry.template) $ | sha256sum }}
         {{- end }}
         {{- end }}
         {{- with $svc.podAnnotations }}
@@ -478,17 +523,12 @@ spec:
       {{- end }}
       {{- if $svc.volumes }}
         {{- /* Volumes of any type render as given. A configMap volume with an
-               empty name mounts the chart's ConfigMap for this service; a
-               service the chart mounts no ConfigMap into has nothing to fall
-               back to, and the API server would refuse the Deployment. */}}
+               empty name mounts the chart ConfigMap $resolved gives it. */}}
         {{- $volumes := list }}
         {{- range $volume := $svc.volumes }}
         {{- $volume = deepCopy $volume }}
         {{- if and (hasKey $volume "configMap") (not (dig "configMap" "name" "" $volume)) }}
-        {{- if not $mounted.name }}
-        {{- fail (printf "services[%s].volumes[%s]: configMap.name is empty, but the chart mounts no ConfigMap of its own into %s; name a ConfigMap you own, or remove the volume and its volumeMounts entry" $svc.name $volume.name $svc.name) }}
-        {{- end }}
-        {{- $_ := set $volume "configMap" (dict "name" (include $mounted.name $)) }}
+        {{- $_ := set $volume "configMap" (dict "name" (include (get $resolved $volume.name).name $)) }}
         {{- end }}
         {{- $volumes = append $volumes $volume }}
         {{- end }}

@@ -1,0 +1,8 @@
+# After a document end marker, the next document needs its marker.
+kind: type
+version: 1
+name: lint-probe
+...
+kind: flow
+version: 1
+name: lint-probe-flow

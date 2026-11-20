@@ -1,0 +1,9 @@
+# Two markers in a row between two documents: an empty second document.
+kind: type
+version: 1
+name: lint-probe
+---
+---
+kind: flow
+version: 1
+name: lint-probe-flow

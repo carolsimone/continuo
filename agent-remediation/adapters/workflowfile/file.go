@@ -12,10 +12,10 @@ const (
 // Allowed keys of every mapping a flow or type document holds. A key outside
 // these sets is refused with its line.
 var (
-	flowKeys      = []string{"kind", "version", "name", "trigger", "types", "context", "across_clusters", "gate", "tries", "output", "model_may_see", "approver"}
+	flowKeys      = []string{"kind", "version", "name", "trigger", "types", "context", "across_clusters", "gate", "tries", "output", "model_may_see", "approver", "based_on"}
 	outputKeys    = []string{"on_pass", "on_give_up"}
 	outputOneKeys = []string{"action", "emits"}
-	typeKeys      = []string{"kind", "version", "name", "match", "context", "agent", "preflight"}
+	typeKeys      = []string{"kind", "version", "name", "match", "context", "agent", "preflight", "based_on"}
 	matchKeys     = []string{"cluster", "source", "node_types"}
 	agentKeys     = []string{"prompt", "tools", "rounds"}
 )
@@ -35,6 +35,7 @@ type flowFile struct {
 	Output        outputFile  `yaml:"output"`
 	ModelMaySee   yaml.Node   `yaml:"model_may_see"`
 	Approver      yaml.Node   `yaml:"approver"`
+	BasedOn       yaml.Node   `yaml:"based_on"`
 }
 
 type outputFile struct {
@@ -56,6 +57,7 @@ type typeFile struct {
 	Context   []yaml.Node `yaml:"context"`
 	Agent     agentFile   `yaml:"agent"`
 	Preflight []yaml.Node `yaml:"preflight"`
+	BasedOn   yaml.Node   `yaml:"based_on"`
 }
 
 type matchFile struct {

@@ -1,0 +1,6 @@
+# Comments and blank lines before the first marker are no document.
+
+---
+kind: type
+version: 1
+name: lint-probe

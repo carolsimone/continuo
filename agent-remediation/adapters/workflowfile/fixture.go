@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"io/fs"
-	"path"
 	"reflect"
 	"strings"
 
@@ -176,31 +175,21 @@ type patchFile struct {
 	Node nodeFile `yaml:"node"`
 }
 
-// LoadFixtures reads every `kind: fixture` document under the root of fsys,
-// recursively, in path order, and skips every other document without
-// decoding it. A fixture's fields are checked as a flow's and a type's are: an
-// unknown field, a YAML alias, an unsupported version, a fixture that names
-// both or neither of a type and a flow, a flow fixture with no scenario, a
-// trigger with no failing node and a node marked unfixable with a reason no
-// classifier gives are refused, each with the file and the line.
-// LoadFixtures returns every problem it finds, joined, and no fixture when
-// there is one.
+// LoadFixtures reads every `kind: fixture` document of the *.yaml and *.yml
+// files under the root of fsys, recursively, in path order (leaving out what
+// Load leaves out), and skips every other document without decoding it. A
+// fixture's fields are checked as a flow's and a type's are: an unknown field,
+// a YAML alias, an unsupported version, a fixture that names both or neither
+// of a type and a flow, a flow fixture with no scenario, a trigger with no
+// failing node, a revision block under a member's answers and a node marked
+// unfixable with a reason no classifier gives are refused, each with the file
+// and the line. LoadFixtures returns every problem it finds, joined, and no
+// fixture when there is one.
 func LoadFixtures(fsys fs.FS) ([]conformance.Fixture, error) {
 	l := loader{}
 	var out []conformance.Fixture
-	walkErr := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() || path.Ext(p) != ".yaml" {
-			return nil
-		}
-		data, err := fs.ReadFile(fsys, p)
-		if err != nil {
-			return err
-		}
-		out = append(out, l.loadFixtureFile(p, data)...)
-		return nil
+	walkErr := walkYAML(fsys, func(file string, data []byte) {
+		out = append(out, l.loadFixtureFile(file, data)...)
 	})
 	if walkErr != nil {
 		l.errs = append(l.errs, walkErr)
@@ -243,6 +232,7 @@ func (l *loader) loadFixture(file string, root *yaml.Node) (conformance.Fixture,
 		return conformance.Fixture{}, false
 	}
 	l.checkFields(file, root, reflect.TypeFor[fixtureFile]())
+	l.refuseMemberRevisions(file, root)
 	var f fixtureFile
 	if err := root.Decode(&f); err != nil {
 		l.failYAML(file, err)
@@ -278,6 +268,7 @@ func (l *loader) loadFixture(file string, root *yaml.Node) (conformance.Fixture,
 
 	fixture := conformance.Fixture{
 		File:             file,
+		Line:             root.Line,
 		Version:          f.Version,
 		Type:             f.Type,
 		Flow:             f.Flow,
@@ -369,6 +360,27 @@ func (l *loader) checkUnfixable(file string, n nodeFile, node *yaml.Node, fallba
 	l.fail(file, keyLine(mark, "reason", keyLine(node, "unfixable", fallback)),
 		"unfixable reason %q is not one a classifier gives (%s, %s)",
 		n.Unfixable.Reason, model.HandoverReasonClassifierInfra, model.HandoverReasonClassifierUnhealableParse)
+}
+
+// refuseMemberRevisions refuses a `revision` block under an entry of
+// member_answers, at the line of its key. The suite plays the first passing try
+// of a member's answers and never a revision round of it, so the block would
+// change nothing; only the fixture's own answers.revision is played.
+func (l *loader) refuseMemberRevisions(file string, root *yaml.Node) {
+	members := valueOf(root, "member_answers")
+	if members == nil || members.Kind != yaml.MappingNode {
+		return
+	}
+	for i := 0; i+1 < len(members.Content); i += 2 {
+		node, answers := members.Content[i], members.Content[i+1]
+		if answers.Kind != yaml.MappingNode {
+			continue
+		}
+		if line := keyLine(answers, "revision", 0); line != 0 {
+			l.fail(file, line, "member_answers.%s.revision: a member's revision answers are not played, "+
+				"only the fixture's own answers.revision is", node.Value)
+		}
+	}
 }
 
 // checkFields refuses every mapping key under n that the Go type t gives no

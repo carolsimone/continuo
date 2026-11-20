@@ -1,0 +1,5 @@
+# A quoted string continued on a line that starts with % is text, not a directive.
+kind: type
+version: 1
+name: "lint-probe
+%not-a-directive"

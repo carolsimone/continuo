@@ -1,0 +1,6 @@
+%TAG !e! tag:example.com,2000:
+---
+# A %TAG directive before the first marker belongs to the document the marker starts.
+kind: type
+version: 1
+name: lint-probe

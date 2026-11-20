@@ -1,0 +1,5 @@
+# A document, then a marker that nothing follows: an empty second document.
+kind: type
+version: 1
+name: lint-probe
+---
