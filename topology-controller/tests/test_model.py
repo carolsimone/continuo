@@ -174,4 +174,8 @@ def test_the_registry_of_nodes_leaves_tests_out_and_marks_ephemeral_models():
 
 
 def test_the_manifest_kinds_are_the_values_a_release_names():
-    assert [kind.value for kind in ManifestKind] == ["dbt", "python-odcs"]
+    assert [kind.value for kind in ManifestKind] == ["dbt", "python-odcs", "ontology"]
+
+
+def test_the_ontology_is_a_manifest_kind():
+    assert ManifestKind.ONTOLOGY == "ontology"

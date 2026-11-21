@@ -32,10 +32,13 @@ class ManifestKind(StrEnum):
 
     Carried per manifest_keys entry on release.requested:v1. Absent means dbt.
     `dbt` is a service's `manifest.json`, `python-odcs` its ODCS bundle
-    (`odcs-bundle.json`).
+    (`odcs-bundle.json`), and `ontology` the install's company ontology
+    (`ontology.yaml`), which declares no node: it is read only to resolve and
+    check the contracts of the other services.
     """
     DBT = "dbt"
     PYTHON_ODCS = "python-odcs"
+    ONTOLOGY = "ontology"
 
 
 class SkipReason(StrEnum):
