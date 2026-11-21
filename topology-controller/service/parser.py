@@ -58,20 +58,10 @@ from service.contract_validation import ContractValidator
 from service.dbt_hashing import CodeUnit, DbtHashParts, ManifestContext, hash_dbt_node
 from service import manifest_shape
 from service.errors import ContractGenerationError
-from service.release_timings import ReleaseTimings, Stage
+from service.failed_contract import failure_detail
+from service.release_timings import REASON_IDENTITY, REASON_MANIFEST_SHAPE, FailureStage, ReleaseTimings, Stage
 
 logger = logging.getLogger(__name__)
-
-# What a contract failure that no checked contract explains is counted as: the
-# library could not read the manifest entry it generates the contract from.
-_GENERATE = "generate"
-_MANIFEST_SHAPE = "manifest_shape"
-
-# The stage a failure of a contract's checks is counted under, and the reason of
-# a column that a seed's CSV header and its contract do not both have: one
-# failure for each such column.
-_VALIDATE = "validate"
-_SEED_HEADER = "seed_header"
 
 # The generic test whose target `dbt.generate` resolves from `depends_on.nodes`,
 # dbt's namespace for its own generic tests, and the macro dbt resolves a bare
@@ -174,7 +164,7 @@ def _manifest_call[T](call: Callable[[], T], timings: ReleaseTimings) -> T:
     try:
         return call()
     except DbtNodeError as error:
-        timings.add_contract_failure(_GENERATE, _MANIFEST_SHAPE)
+        timings.add_contract_failure(FailureStage.GENERATE, REASON_MANIFEST_SHAPE)
         raise InvalidNodeSettingError(str(error)) from error
     except Exception as error:
         raise ContractGenerationError(f"manifest: the contracts library failed: {error!r}") from error
@@ -186,7 +176,7 @@ def _require_readable_nodes(manifest: Mapping[str, Any], timings: ReleaseTimings
     an InvalidNodeSettingError, since the artifact is at fault and a retry cannot fix it."""
     reason = manifest_shape.refusal(manifest["nodes"])
     if reason is not None:
-        timings.add_contract_failure(_GENERATE, _MANIFEST_SHAPE)
+        timings.add_contract_failure(FailureStage.GENERATE, REASON_MANIFEST_SHAPE)
         raise InvalidNodeSettingError(reason)
 
 
@@ -290,7 +280,7 @@ def _shape_failure(
     named by its unique_id when the library can read that, else by its manifest
     id, and the detail is the library's message, which starts with the manifest
     id and names the field."""
-    timings.add_contract_failure(_GENERATE, _MANIFEST_SHAPE)
+    timings.add_contract_failure(FailureStage.GENERATE, REASON_MANIFEST_SHAPE)
     try:
         name = dbt.unique_id(node)
     except DbtNodeError:
@@ -311,11 +301,7 @@ def _issues_failure(
     check reports a seed's contract issues before its header lines. A detail with
     header messages starts with the seed's manifest id, which they do not carry,
     as the detail of a node the library cannot read starts with its id."""
-    for issue in issues:
-        timings.add_contract_failure(_VALIDATE, issue.reason)
-    for _ in header_issues:
-        timings.add_contract_failure(_VALIDATE, _SEED_HEADER)
-    detail = "; ".join([*(str(issue) for issue in issues), *header_issues])
+    detail = failure_detail(timings, issues, header_issues)
     if header_issues:
         detail = f"{node_id}: {detail}"
     return _failed_node(name, node, resource_type, detail)
@@ -353,7 +339,7 @@ def _id_issue(node: dict, document: Mapping[str, Any]) -> Issue | None:
     if contract_id == node_key:
         return None
     return Issue(
-        "id", "identity",
+        "id", REASON_IDENTITY,
         f"the contract's id is {contract_id!r}, and continuo names its node {node_key!r}: the schema"
         f" {schema!r} and the table {table!r} lower-case differently apart than joined, so rename the schema"
         " or the table",

@@ -44,7 +44,14 @@ from service.contract_validation import ContractValidator
 from service.contracts_library import LIBRARY_VERSION, version_triple
 from service.python_kind_rules import RULES
 from service.python_node_builder import PythonNodeFields, build_python_node
-from service.release_timings import ReleaseTimings, Stage
+from service.failed_contract import failure_detail
+from service.release_timings import (
+    REASON_IDENTITY,
+    REASON_STRICT_YAML,
+    REASON_VALUE,
+    ReleaseTimings,
+    Stage,
+)
 
 BUNDLE_VERSION = 1
 CONTRACT_FILE_SUFFIX = ".odcs.yaml"
@@ -168,8 +175,7 @@ def _check_entries(raw: object) -> list[dict[str, str]]:
 
 def _failed_node(timings: ReleaseTimings, doc: object, path: str, service: str, issues: list[Issue]) -> FailedNode:
     """The FailedNode of a contract that did not pass its checks; each issue is counted."""
-    for issue in issues:
-        timings.add_contract_failure("validate", issue.reason)
+    detail = failure_detail(timings, issues)
     identifier = doc.get("id") if isinstance(doc, Mapping) else None
     return FailedNode(
         node_id=_failed_node_id(identifier) if isinstance(identifier, str) and identifier.strip() else path,
@@ -177,7 +183,7 @@ def _failed_node(timings: ReleaseTimings, doc: object, path: str, service: str, 
         service=service,
         file_path=path,
         node_type=_node_type(doc),
-        detail="; ".join(str(issue) for issue in issues),
+        detail=detail,
     )
 
 
@@ -201,7 +207,7 @@ def _id_issue(doc: Mapping[str, Any], node: ManifestNode, path: str) -> Issue | 
     if identifier == node.unique_id:
         return None
     return Issue(
-        "id", "identity",
+        "id", REASON_IDENTITY,
         f"{path} declares the id {identifier!r}, and continuo names its node {node.unique_id!r}:"
         " write the id in lower case",
     )
@@ -282,7 +288,7 @@ def _read_node(
     try:
         doc = yaml_strict.load(entry["text"])
     except StrictYamlError as exc:
-        return _failed_node(timings, None, path, service, [Issue("$", "strict_yaml", str(exc))])
+        return _failed_node(timings, None, path, service, [Issue("$", REASON_STRICT_YAML, str(exc))])
     with timings.stage(Stage.CONTRACT_VALIDATION, sample_memory=False, nodes=1):
         issues = validator.check(doc, path=path, service=service, on_cache=timings.add_validation_cache)
     if issues:
@@ -290,7 +296,7 @@ def _read_node(
     try:
         node = _build_node(doc, entry, service=service, image_tag=image_tag)
     except (ContractsError, MalformedContractError) as exc:
-        return _failed_node(timings, doc, path, service, [Issue("$", "value", str(exc))])
+        return _failed_node(timings, doc, path, service, [Issue("$", REASON_VALUE, str(exc))])
     mismatch = _id_issue(doc, node, path)
     if mismatch is not None:
         return _failed_node(timings, doc, path, service, [mismatch])
