@@ -296,6 +296,11 @@ These answers can come back from the release routes:
 | 409 `service "<name>" is released as kind "<kind>": a service cannot change between kind "ontology" and a node kind` | The service's production release has another kind, or the ontology service is released as a node kind. |
 | 400 `a verification run cannot have kind "ontology"` | A verification run names the kind `ontology`. |
 
+The kind-change 409 is given when a release is received. Two queued releases of one
+service, one `ontology` and one of a node kind, both pass that check. When the
+second of them comes up to run, it is rejected `invalid_artifact` with the same
+text, is never promoted and writes no production pointer.
+
 ## Writing a binding
 
 A binding is a key in `meta.continuo` of a dbt node, or a custom property of the
