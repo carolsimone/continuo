@@ -156,11 +156,12 @@ def manifest_checksum(dbt_unique_id: str) -> str:
 _NODE_FILE_PATH = {"model": "models/{}.sql", "seed": "seeds/{}.csv", "snapshot": "snapshots/{}.sql"}
 
 
-def enforced_dbt_node(resource_type: str, *, described: bool = False) -> dict:
+def enforced_dbt_node(resource_type: str, *, described: bool = False, enforced: bool = True) -> dict:
     """A model, seed or snapshot of the project `shop`, shaped like a manifest node of dbt 1.12
-    and with `contract.enforced: true`. It declares `id` (integer, a not_null constraint) and
-    `amount` (numeric(12,2)); a model also declares a primary key. With `described`, the node
-    and its columns carry a description and tags."""
+    and with `contract.enforced: true` (none without `enforced`: a snapshot with the flag is an
+    invalid contract). It declares `id` (integer, a not_null constraint) and `amount`
+    (numeric(12,2)); a model also declares a primary key. With `described`, the node and its
+    columns carry a description and tags."""
     name = f"enforced_{resource_type}"
     source = "" if resource_type == "seed" else "select 1 as id"
     columns = {"id": {"name": "id", "data_type": "integer", "constraints": [{"type": "not_null"}]},
@@ -173,7 +174,7 @@ def enforced_dbt_node(resource_type: str, *, described: bool = False) -> dict:
         "schema": "analytics", "fqn": ["shop", name], "tags": ["daily"],
         "original_file_path": _NODE_FILE_PATH[resource_type].format(name),
         "config": {"materialized": resource_type if resource_type != "model" else "table",
-                   "meta": {"owner": "team-a"}, "contract": {"enforced": True}},
+                   "meta": {"owner": "team-a"}, **({"contract": {"enforced": True}} if enforced else {})},
         "checksum": {"name": "sha256", "checksum": "ab" * 32}, "raw_code": source, "compiled_code": source,
         "depends_on": {"macros": [], "nodes": []},
         "description": "The enforced node." if described else "",

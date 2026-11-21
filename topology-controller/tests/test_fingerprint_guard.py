@@ -225,25 +225,27 @@ def test_every_field_of_a_stored_dbt_contract_is_classified(variant):
     assert not missing, (variant, missing)
 
 
-@pytest.mark.parametrize("resource_type", ["seed", "snapshot"])
-def test_every_field_of_an_enforced_seed_and_snapshot_with_declared_columns_is_classified(tmp_path, resource_type):
+@pytest.mark.parametrize("resource_type, enforced", [("seed", True), ("snapshot", False)])
+def test_every_field_of_a_seed_and_snapshot_with_declared_columns_is_classified(tmp_path, resource_type, enforced):
     """A seed or a snapshot that declares described and tagged columns with data types, with
-    not_null and unique tests and an enforced contract, stored as the bundle stores it, holds the
-    property fields the fixture seeds lack, and each is classified for its family as moving the
-    contract."""
+    not_null and unique tests, stored as the bundle stores it, holds the property fields the
+    fixture seeds lack, and each is classified for its family as moving the contract. The seed
+    enforces its contract. The snapshot does not: the validation refuses an enforced snapshot, as
+    dbt does not support contracts on snapshots."""
     family = f"dbt-{resource_type}"
-    node = enforced_dbt_node(resource_type, described=True)
+    node = enforced_dbt_node(resource_type, described=True, enforced=enforced)
     _, (stored,) = stored_dbt_contracts(str(tmp_path), node, *column_tests(node))
     assert continuo_values(stored.document["customProperties"])["kind"] == family
 
     names = _odcs_inputs(stored.document)
 
     assert {
-        "odcs.custom.contractEnforced", "odcs.description.purpose", "odcs.schema.description",
+        "odcs.description.purpose", "odcs.schema.description",
         "odcs.schema.properties.name", "odcs.schema.properties.physicalType", "odcs.schema.properties.logicalType",
         "odcs.schema.properties.description", "odcs.schema.properties.tags",
         "odcs.schema.properties.required", "odcs.schema.properties.unique",
     } <= names
+    assert ("odcs.custom.contractEnforced" in names) == enforced
     missing = {}
     for name in sorted(names):
         entry = fingerprints.classify(family, name)

@@ -327,7 +327,7 @@ A part of such an answer, with the other fields left out:
 
 ```json
 {"release_id": "rel-py-v2", "status": "rejected", "terminal": true,
- "reject_reason": "invalid_contract", "continuo_contracts": "0.3.1"}
+ "reject_reason": "invalid_contract", "continuo_contracts": "0.4.1"}
 ```
 
 A dbt service has no bundle from its CI: continuo generates its contracts. Its
@@ -419,7 +419,7 @@ customProperties:
     property: provenance
     value: {contractHash: "sha256:3f1c...", contentHash: "sha256:91d4...",
             releaseId: rel-77aa0bc-230, promotionSeq: 52,
-            promotedAt: "2026-11-27T16:40:12Z", continuoContracts: 0.3.1,
+            promotedAt: "2026-11-27T16:40:12Z", continuoContracts: 0.4.1,
             sourcePath: contracts/py_daily_kpis.odcs.yaml}
 ```
 
@@ -922,9 +922,11 @@ The setting `contract: {enforced: true}` is a dbt setting, and it stays in the
 node's config and in the contract as `contractEnforced`. Only a model folds its
 declared columns and constraints into the code version, because dbt (1.12.0b1
 with the postgres adapter) builds a model's table from them. dbt ignores the
-setting on a seed. It enforces it on a snapshot, and the code version does not
-fold a snapshot's declared columns or constraints, as the `fingerprints.yaml` of
-`continuo-contracts` declares for `dbt-snapshot`.
+setting on a seed. dbt does not support a contract on a snapshot: it enforces the
+contract on the snapshot's first run and fails every later run. So a snapshot
+with `contract.enforced: true` is an invalid contract (see
+[What makes a dbt contract invalid](#what-makes-a-dbt-contract-invalid)), and the
+code version never has to fold a snapshot's declared columns or constraints.
 
 A seed's file hash comes from `compile-extras.json`. When that file has no
 entry for the seed, continuo uses dbt's own checksum instead. For a seed over
@@ -993,11 +995,19 @@ These make a dbt contract invalid:
   cannot be written `<schema>.<table>`.
 - A seed whose declared columns and CSV header differ (see
   [Columns](#columns)).
+- A snapshot with `contract.enforced: true`. dbt does not support contracts on
+  snapshots: it enforces the contract on the first run and fails every later
+  run. Remove the setting from the snapshot.
+- A `meta.continuo` key that binds a node or a column to a company ontology
+  (`entity`, `grain`, `fixed` and `filter` on a node, `property`, `local`,
+  `from`, `agg`, `where` and `period` on a column) with the wrong shape.
 
 Other faults are not about one contract. A manifest that is not valid JSON, a
 `metadata.project_name` that is not text, a test whose links to its nodes are
-not lists of text, a kept node or test with no `fqn`, and text that UTF-8 cannot
-encode, such as a lone surrogate, reject the release as `invalid_artifact`. A
+not lists of text, a kept node or test with no `fqn`, a node that is not an
+object, a `compiled_code`, `raw_code` or `database` that is not text, a
+`depends_on` that is not an object, and text that UTF-8 cannot encode, such as a
+lone surrogate, reject the release as `invalid_artifact`. A
 defect in the `continuo-contracts` library itself ends the release as
 `internal`: continuo does not blame your project for it.
 
