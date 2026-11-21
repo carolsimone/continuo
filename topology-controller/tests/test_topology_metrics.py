@@ -89,6 +89,32 @@ def test_every_stage_and_reason_pair_is_exported_at_boot():
     assert len(samples) == len(CONTRACT_FAILURE_STAGES) * len(CONTRACT_FAILURE_REASONS)
 
 
+def test_every_ontology_stage_and_rule_pair_is_exported_at_boot():
+    """The ontology stage is a contract failure stage, and each rule of the library's ontology
+    checks is a reason under it, visible at 0 before a release has failed one."""
+    metrics = TopologyMetrics("topology-controller")
+    assert "ontology" in CONTRACT_FAILURE_STAGES
+    for rule in RULES:
+        assert _value(metrics, "continuo_topology_contract_failures_total", stage="ontology", reason=rule) == 0.0
+    assert _value(metrics, "continuo_topology_stage_duration_seconds_count", stage="ontology") == 0.0
+
+
+def test_an_ontology_failure_feeds_the_contract_counter_and_the_stage_histogram():
+    metrics = TopologyMetrics("topology-controller")
+    timings = _finished({"python": 1})
+    with timings.stage(Stage.ONTOLOGY):
+        pass
+    timings.add_contract_failure("ontology", "contract")
+    timings.add_contract_failure("ontology", "contract")
+    timings.add_contract_failure("ontology", "coverage")
+
+    metrics.release_finished(timings)
+
+    assert _value(metrics, "continuo_topology_contract_failures_total", stage="ontology", reason="contract") == 2.0
+    assert _value(metrics, "continuo_topology_contract_failures_total", stage="ontology", reason="coverage") == 1.0
+    assert _value(metrics, "continuo_topology_stage_duration_seconds_count", stage="ontology") == 1.0
+
+
 def test_both_validation_cache_results_are_exported_at_boot():
     metrics = TopologyMetrics("topology-controller")
     for result in ("hit", "miss"):

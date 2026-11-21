@@ -39,7 +39,9 @@ class Stage(StrEnum):
     the same parse.
 
     `ontology` runs only for a release with the ontology switch on that carries
-    an ontology: it reads the ontology file before the manifests are parsed."""
+    an ontology: it reads the ontology file before the manifests are parsed and
+    checks the stored contracts against it once they are stored, so it adds up
+    over its two runs."""
     DOWNLOAD = "download"
     DBT_PARSE = "dbt_parse"
     PYTHON_PARSE = "python_parse"
@@ -63,6 +65,7 @@ _CONTRACT_STAGES = (
     Stage.CONTRACT_GENERATION,
     Stage.CONTRACT_VALIDATION,
     Stage.CANONICAL_HASHING,
+    Stage.ONTOLOGY,
     Stage.CONTRACT_BUNDLE,
 )
 
@@ -196,9 +199,9 @@ class ReleaseTimings:
         self._published_at = self._clock.now()
 
     def contracts_ms(self) -> int:
-        """The milliseconds of the four contract stages (contract_generation,
-        contract_validation, canonical_hashing and contract_bundle), each
-        rounded as `stages_ms` rounds it."""
+        """The milliseconds of the five contract stages (contract_generation,
+        contract_validation, canonical_hashing, ontology and contract_bundle),
+        each rounded as `stages_ms` rounds it."""
         return sum(round(self.stages[stage].seconds * 1000) for stage in _CONTRACT_STAGES)
 
     def parse_ms(self) -> int:

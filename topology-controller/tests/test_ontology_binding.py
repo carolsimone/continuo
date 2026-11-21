@@ -22,7 +22,7 @@ principals:
     sales:
       owner_team: sales-team
   services:
-    service-1:
+    company-reports:
       domain: sales
       kind: dbt
   teams:
@@ -85,7 +85,7 @@ def test_a_valid_ontology_is_loaded_with_the_identity_of_its_release(tmp_path):
     assert loaded.service == "company-ontology"
     assert loaded.release_id == "rel-onto-4"
     assert isinstance(loaded.ontology, Ontology)
-    assert loaded.ontology.services() == ("service-1",)
+    assert loaded.ontology.services() == ("company-reports",)
     assert loaded.sha256 == loaded.ontology.sha256
     assert len(loaded.sha256) == 64
     assert loaded.findings == ()
@@ -140,10 +140,10 @@ def test_an_ontology_alone_is_a_release_with_no_node(tmp_path):
     publisher.publish_failed.assert_not_called()
 
 
-def test_with_the_switch_on_the_ontology_is_read_in_its_own_stage(tmp_path):
+def test_with_the_switch_on_the_ontology_is_read_and_then_checked_in_its_own_stage(tmp_path):
     _, timings, _ = handle([dbt_file(), ontology_file(tmp_path)], enabled=True)
 
-    assert timings.stages[Stage.ONTOLOGY].runs == 1
+    assert timings.stages[Stage.ONTOLOGY].runs == 2
 
 
 def test_with_the_switch_off_an_ontology_is_logged_and_ignored(tmp_path, caplog):

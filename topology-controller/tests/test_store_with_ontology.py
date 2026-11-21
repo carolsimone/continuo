@@ -9,7 +9,6 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import continuo_contracts
 import pytest
 from continuo_contracts import ontology as ontology_file
 from continuo_contracts.canonical import canonical_json
@@ -22,14 +21,10 @@ from domain.model import ContractFamily, ManifestFile, ManifestKind, ManifestNod
 from service.contract_bundle import StoredContract, build_contract_bundle, store_contracts
 from service.ontology_binding import ReleaseOntology, bind_contract, load_release_ontology, ontology_envelope
 from tests.fakes import RecordingContractBundleWriter, python_handler, source_of
-from tests.odcs_fixtures import bundle_file, bundle_node, demo_text
+from tests.odcs_fixtures import bound_kpis_text, bundle_file, bundle_node, demo_text, ontology_vector
 
 FIXTURES = Path(__file__).parent / "fixtures"
 POSTGRES_SYSTEM = _SYSTEM_RELATIONS["postgres"]
-_VECTORS = {
-    vector["name"]: vector
-    for vector in json.loads((Path(continuo_contracts.__file__).parent / "vectors" / "ontology.json").read_text())
-}
 NO_ONTOLOGY_WARNING = {
     "severity": "warning",
     "rule": "contract",
@@ -40,7 +35,7 @@ NO_ONTOLOGY_WARNING = {
 
 
 def _vector(name: str) -> dict:
-    return copy.deepcopy(_VECTORS[name])
+    return ontology_vector(name)
 
 
 def _release_ontology(tmp_path, text: str, *, service="company-ontology", release_id="rel-onto-4") -> ReleaseOntology:
@@ -325,46 +320,7 @@ def test_the_bundle_does_not_share_its_ontology_with_its_caller():
 
 # --- through the handler -------------------------------------------------------------------
 
-AUTHORED = """\
-apiVersion: v3.2.0
-kind: DataContract
-id: analytics.py_daily_kpis
-name: py_daily_kpis
-version: "0"
-description:
-  purpose: Daily transaction count and total amount in EUR, rolled up from analytics.daily_transactions.
-team:
-  name: service-py
-customProperties:
-  - {vendor: continuo, property: schedule, value: daily}
-  - {vendor: continuo, property: criticality, value: SECONDARY}
-  - {vendor: continuo, property: script, value: scripts/py_daily_kpis.py}
-  - vendor: continuo
-    property: readQueries
-    value:
-      daily: select created_at, amount_eur from analytics.daily_transactions
-schema:
-  - name: py_daily_kpis
-    physicalType: table
-    customProperties:
-      - {vendor: continuo, property: grain, value: [day]}
-    properties:
-      - name: day
-        physicalType: DATE
-        required: true
-        customProperties:
-          - {vendor: continuo, property: aggregate, value: {from: Transaction.created_at, period: day}}
-      - name: tx_count
-        physicalType: INTEGER
-        required: true
-        customProperties:
-          - {vendor: continuo, property: aggregate, value: {from: Transaction, agg: count}}
-      - name: total_amount
-        physicalType: "NUMERIC(12,2)"
-        required: true
-        customProperties:
-          - {vendor: continuo, property: aggregate, value: {from: Transaction.amount_eur, agg: sum}}
-"""
+AUTHORED = bound_kpis_text()
 
 
 def _release(tmp_path, *, enabled: bool, authored: str = AUTHORED, ontology_text: str | None = None):
@@ -423,8 +379,12 @@ def test_a_release_with_the_switch_on_stores_the_contracts_of_a_declared_service
         "release_id": "rel-onto-4",
         "sha256": ontology_file.load(ontology_text).sha256,
         "declared_services": ["core", "finance", "service-py"],
-        "findings": [],
+        "findings": bundle["ontology"]["findings"],
     }
+    # What the checker found of this contract and does not reject it for: it reads a table no
+    # contract of the release binds, and it is the one contract of the layer.
+    assert [(f["severity"], f["rule"]) for f in bundle["ontology"]["findings"]] == [
+        ("warning", "access"), ("info", "order")]
 
 
 def test_a_release_with_the_switch_on_and_no_ontology_keeps_the_bindings_and_warns(tmp_path):
