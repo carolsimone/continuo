@@ -15,9 +15,14 @@ customProperties:
   - {vendor: continuo, property: criticality, value: SECONDARY}
   - {vendor: continuo, property: script, value: scripts/py_api.py}
   - {vendor: continuo, property: secretRef, value: continuo-api-probe}
+# The bindings below tie the table and its columns to the thing ApiRecord of
+# fixtures/ontology/ontology.yaml. An install whose ontology switch is off stores
+# the contract without them.
 schema:
   - name: py_api
     physicalType: table
+    customProperties:
+      - {vendor: continuo, property: entity, value: ApiRecord}
     properties:
-      - {name: id, physicalType: INTEGER, required: true}
-      - {name: key_present, physicalType: INTEGER, required: true}
+      - {name: id, physicalType: INTEGER, required: true, customProperties: [{vendor: continuo, property: property, value: ApiRecord.id}]}
+      - {name: key_present, physicalType: INTEGER, required: true, customProperties: [{vendor: continuo, property: local, value: true}]}

@@ -207,7 +207,7 @@ func TestE2E_PythonODCSRelease_AnInvalidContractIsRejected(t *testing.T) {
 	seedServiceProd(t, ctx, clients, allServices)
 
 	invalid := strings.Replace(pyProbeContractText(t),
-		"{name: id, physicalType: INTEGER, required: true}", `{name: id, physicalType: "NUMERIC(12)", required: true}`, 1)
+		"{name: id, physicalType: INTEGER, required: true,", `{name: id, physicalType: "NUMERIC(12)", required: true,`, 1)
 	require.NotEqual(t, pyProbeContractText(t), invalid, "the py_probe contract declares an INTEGER id")
 
 	releaseID := "e2e-pyinv-" + uuid.NewString()[:8]

@@ -1,0 +1,38 @@
+# The ontology of ontology.yaml with the thing ProbeRow renamed ProbeRecord. It is
+# a valid ontology file, and it breaks the binding of the contract
+# e2e_schema.py_probe, whose entity is ProbeRow, so a release that carries it is
+# rejected.
+principals:
+  domains:
+    e2e:
+      owner_team: e2e
+  services:
+    svc-py-e2e:
+      domain: e2e
+      kind: python
+  teams:
+    e2e:
+      idp_group: e2e
+entities:
+  ProbeRecord:
+    owner: e2e
+    key:
+      id: integer
+    properties:
+      label:
+        type: string
+  CsvOrder:
+    owner: e2e
+    key:
+      order_id: integer
+    properties:
+      amount:
+        type: number
+  ApiRecord:
+    owner: e2e
+    key:
+      id: integer
+  BadShapeRow:
+    owner: e2e
+    key:
+      id: integer

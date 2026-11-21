@@ -1,0 +1,38 @@
+# The install's ontology as the ontology service releases it in the e2e suite.
+# It declares the py-probe service, svc-py-e2e, in the domain e2e, and one thing
+# for each of the service's four contracts. Every contract of the service binds
+# to one of them, so a release that carries this file checks all four.
+principals:
+  domains:
+    e2e:
+      owner_team: e2e
+  services:
+    svc-py-e2e:
+      domain: e2e
+      kind: python
+  teams:
+    e2e:
+      idp_group: e2e
+entities:
+  ProbeRow:
+    owner: e2e
+    key:
+      id: integer
+    properties:
+      label:
+        type: string
+  CsvOrder:
+    owner: e2e
+    key:
+      order_id: integer
+    properties:
+      amount:
+        type: number
+  ApiRecord:
+    owner: e2e
+    key:
+      id: integer
+  BadShapeRow:
+    owner: e2e
+    key:
+      id: integer
