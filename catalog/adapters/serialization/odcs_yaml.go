@@ -37,7 +37,8 @@ var (
 	serverKeyOrder       = []string{"server", "type", "host", "port", "database", "catalog", "schema"}
 	customPropertyOrder  = []string{"vendor", "property", "value"}
 	provenanceValueOrder = []string{
-		"contractHash", "contentHash", "releaseId", "promotionSeq", "promotedAt", "continuoContracts", "sourcePath",
+		"contractHash", "contentHash", "releaseId", "promotionSeq", "promotedAt", "continuoContracts", "ontologyVersion",
+		"sourcePath",
 	}
 )
 

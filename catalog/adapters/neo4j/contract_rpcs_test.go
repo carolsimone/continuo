@@ -31,7 +31,7 @@ func (f *swapFixture) newQueryHandler(versions *CodeVersionQueryRepository) *grp
 		NewNodeQueryRepository(f.client, quietLogger()),
 		queries.NewCodeVersionQueryService(versions),
 		queries.NewPrecedentQueryService(NewPrecedentQueryRepository(f.client, quietLogger())),
-		queries.NewContractQueryService(f.contractReader(), serialization.ODCSYAML{}, serialization.CanonicalJSON),
+		queries.NewContractQueryService(f.contractReader(), serialization.ODCSYAML{}, serialization.CanonicalJSON, ""),
 		quietLogger())
 }
 

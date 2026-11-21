@@ -128,7 +128,7 @@ func (f *fakeContractReader) LatestPromotionSeq(context.Context, string) (int64,
 var _ queries.ContractReader = (*fakeContractReader)(nil)
 
 func newContractService(reader queries.ContractReader) *queries.ContractQueryService {
-	return queries.NewContractQueryService(reader, serialization.ODCSYAML{}, serialization.CanonicalJSON)
+	return queries.NewContractQueryService(reader, serialization.ODCSYAML{}, serialization.CanonicalJSON, "")
 }
 
 // wantKPIsYAML is the published form of the current version: the stored
@@ -279,4 +279,49 @@ func TestGetNodeContractDiff_RefusesAVersionTheNodeDoesNotHave(t *testing.T) {
 
 	assert.ErrorIs(t, errTo, contractversion.ErrNotFound)
 	assert.ErrorIs(t, errFrom, contractversion.ErrNotFound)
+}
+
+// boundHistory is kpisHistory with the current version resolved against an
+// ontology release: a link on the contract, on its schema object and on a column.
+func boundHistory() []contractversion.VersionView {
+	history := kpisHistory()
+	link := func(thing string) []any {
+		return []any{map[string]any{"type": "ontology", "url": "continuo-ontology:" + thing}}
+	}
+	current := history[0]
+	current.OntologyVersion = "rel-o-3@sha256:abc123"
+	current.Document["authoritativeDefinitions"] = link("Kpi")
+	object := current.Document["schema"].([]any)[0].(map[string]any)
+	object["authoritativeDefinitions"] = link("Kpi")
+	object["properties"].([]any)[0].(map[string]any)["authoritativeDefinitions"] = link("Kpi.day")
+	history[0] = current
+	return history
+}
+
+// The document GetNodeContract returns is the published form the live folder
+// writes, ontology links absolute under the install's base URL included, and
+// its provenance names the ontology version the contract was resolved against.
+func TestGetNodeContract_ShowsAbsoluteLinks(t *testing.T) {
+	service := queries.NewContractQueryService(&fakeContractReader{history: boundHistory()},
+		serialization.ODCSYAML{}, serialization.CanonicalJSON, "https://ontology.example/things")
+
+	got, err := service.GetNodeContract(context.Background(), testTenant, kpisID, true)
+
+	require.NoError(t, err)
+	assert.Contains(t, got.DocumentYAML, "authoritativeDefinitions:\n  - {type: ontology, url: \"https://ontology.example/things/Kpi\"}\n")
+	assert.Contains(t, got.DocumentYAML, `{type: ontology, url: "https://ontology.example/things/Kpi.day"}`)
+	assert.NotContains(t, got.DocumentYAML, "continuo-ontology:")
+	assert.Contains(t, got.DocumentYAML, `ontologyVersion: "rel-o-3@sha256:abc123"`)
+	assert.Equal(t, "rel-o-3@sha256:abc123", got.Version.OntologyVersion)
+}
+
+// With no base URL the document keeps the links as stored.
+func TestGetNodeContract_WithNoBaseURLKeepsTheLinks(t *testing.T) {
+	got, err := newContractService(&fakeContractReader{history: boundHistory()}).
+		GetNodeContract(context.Background(), testTenant, kpisID, true)
+
+	require.NoError(t, err)
+	assert.Contains(t, got.DocumentYAML, `{type: ontology, url: "continuo-ontology:Kpi"}`)
+	assert.Contains(t, got.DocumentYAML, `{type: ontology, url: "continuo-ontology:Kpi.day"}`)
+	assert.NotContains(t, got.DocumentYAML, "https://")
 }

@@ -274,3 +274,50 @@ func TestContractQueryRepository_ANodeTheNewestPromotionLeftOutHasNoCurrentContr
 	require.NoError(t, err)
 	assert.Equal(t, contractB, cur.ContractHash, "a node the promotion carried keeps its current contract")
 }
+
+// A promotion that names the ontology its contracts were resolved against
+// records it on the edge, and every read of that edge carries it: the history,
+// the current version and the provenance of the live set. An edge of a
+// promotion that names none carries none.
+func TestContractQueryRepository_ReadsTheOntologyVersion(t *testing.T) {
+	f := newSwapFixture(t)
+	f.seedLiveNode(kpisNode)
+	ctx := context.Background()
+	p := contractPromotion("rel-41", 41)
+	p.OntologyVersion = "rel-o-3@sha256:abc123"
+	f.writeContracts(p, contractOf(kpisNode, contractA, "service-py"))
+	f.writeContracts(contractPromotion("rel-47", 47), contractOf(kpisNode, contractB, "analytics-eng"))
+
+	history, err := f.contractReader().History(ctx, f.tenant, kpisNode, 0)
+	require.NoError(t, err)
+	require.Len(t, history, 2)
+	assert.Empty(t, history[0].OntologyVersion, "version 2 names no ontology")
+	assert.Equal(t, "rel-o-3@sha256:abc123", history[1].OntologyVersion)
+
+	first, err := f.contractReader().ByVersion(ctx, f.tenant, kpisNode, 1)
+	require.NoError(t, err)
+	assert.Equal(t, "rel-o-3@sha256:abc123", first.OntologyVersion)
+
+	live41, err := f.contractReader().Live(ctx, f.tenant, 41)
+	require.NoError(t, err)
+	assert.Empty(t, live41, "promotion 47 reached the node after 41")
+	live47, err := f.contractReader().Live(ctx, f.tenant, 47)
+	require.NoError(t, err)
+	require.Len(t, live47, 1)
+	assert.Empty(t, live47[0].Provenance.OntologyVersion, "the edge that made version 2 current names no ontology")
+}
+
+// The live set's provenance carries the ontology version of the edge that made
+// each node's contract current.
+func TestContractQueryRepository_LiveProvenanceCarriesTheOntologyVersion(t *testing.T) {
+	f := newSwapFixture(t)
+	p := contractPromotion("rel-41", 41)
+	p.OntologyVersion = "rel-o-3@sha256:abc123"
+	f.writeContracts(p, contractOf(kpisNode, contractA, "service-py"))
+
+	live, err := f.contractReader().Live(context.Background(), f.tenant, 41)
+
+	require.NoError(t, err)
+	require.Len(t, live, 1)
+	assert.Equal(t, "rel-o-3@sha256:abc123", live[0].Provenance.OntologyVersion)
+}

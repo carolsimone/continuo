@@ -369,6 +369,22 @@ func TestContractsHandler_WritesTheVersionsThenRewritesThenRecordsTheMarker(t *t
 	assert.Equal(t, []string{ports.ContractStepIngest, ports.ContractStepLiveRewrite}, f.metrics.steps)
 }
 
+// The promotion the versions are written for carries the ontology the bundle's
+// contracts were resolved against, and none when the bundle names none.
+func TestContractsHandler_WritesThePromotionWithTheBundlesOntologyVersion(t *testing.T) {
+	for name, version := range map[string]string{"an ontology release": "rel-o-3@sha256:abc123", "none": ""} {
+		t.Run(name, func(t *testing.T) {
+			f := newContractsFixture()
+			f.bundles.bundle.OntologyVersion = version
+
+			require.NoError(t, f.handler.Handle(context.Background(), "1-0", nil, contractsInput()))
+
+			require.Len(t, f.repo.promos, 1)
+			assert.Equal(t, version, f.repo.promos[0].OntologyVersion)
+		})
+	}
+}
+
 // The versions counter moves once transaction A has committed, by what it
 // created; a transaction A whose commit is lost counts nothing.
 func TestContractsHandler_CountsVersionsAfterCommit(t *testing.T) {
