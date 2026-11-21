@@ -104,11 +104,74 @@ func (f *fakeReleaseRepo) List(_ context.Context, filter repository.ListFilter) 
 	return out, nil, nil
 }
 
+// ActiveCandidateServicesWithKind lists the services of the candidate runs of
+// the given manifest kind that have not ended, sorted and without repeats.
+func (f *fakeReleaseRepo) ActiveCandidateServicesWithKind(_ context.Context, kind release.ManifestKind) ([]string, error) {
+	seen := map[string]bool{}
+	names := []string{}
+	for _, r := range f.releases {
+		if r.Kind() != pipeline.KindCandidate || r.ManifestKind() != kind || r.Status().IsTerminal() || seen[r.ChangedService()] {
+			continue
+		}
+		seen[r.ChangedService()] = true
+		names = append(names, r.ChangedService())
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
 func (f *fakeReleaseRepo) DeleteFinishedBefore(context.Context, time.Time, []string) (int, error) {
 	return 0, nil
 }
 
 var _ repository.RunRepository = (*fakeReleaseRepo)(nil)
+
+// --- fakeServiceProdRepo: in-memory ServiceProdRepository ---
+
+type fakeServiceProdRepo struct {
+	rows map[string]*release.ServiceProd
+}
+
+func newFakeServiceProdRepo() *fakeServiceProdRepo {
+	return &fakeServiceProdRepo{rows: map[string]*release.ServiceProd{}}
+}
+
+// seedServiceProd stores sp as a production pointer the deps' unit of work
+// reads.
+func seedServiceProd(t *testing.T, deps *handlers.Deps, sp *release.ServiceProd) {
+	t.Helper()
+	require.NoError(t, deps.NewUoW().ServiceProdRepo().Upsert(context.Background(), sp))
+}
+
+func (f *fakeServiceProdRepo) List(context.Context) ([]*release.ServiceProd, error) {
+	out := make([]*release.ServiceProd, 0, len(f.rows))
+	for _, sp := range f.rows {
+		out = append(out, sp)
+	}
+	return out, nil
+}
+
+func (f *fakeServiceProdRepo) Get(_ context.Context, name string) (*release.ServiceProd, error) {
+	return f.rows[name], nil
+}
+
+func (f *fakeServiceProdRepo) Upsert(_ context.Context, sp *release.ServiceProd) error {
+	f.rows[sp.ServiceName()] = sp
+	return nil
+}
+
+func (f *fakeServiceProdRepo) ServicesWithKind(_ context.Context, kind release.ManifestKind) ([]string, error) {
+	names := []string{}
+	for name, sp := range f.rows {
+		if sp.ManifestKind() == kind {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+var _ repository.ServiceProdRepository = (*fakeServiceProdRepo)(nil)
 
 // --- fakeOutboxRepo: records every entry Create writes ---
 
@@ -134,13 +197,14 @@ var _ pkgoutbox.Repository = (*fakeOutboxRepo)(nil)
 // --- fakeUoW: a no-op transaction wrapping the fakes above ---
 
 type fakeUoW struct {
-	releases *fakeReleaseRepo
-	outbox   *fakeOutboxRepo
+	releases    *fakeReleaseRepo
+	serviceProd *fakeServiceProdRepo
+	outbox      *fakeOutboxRepo
 }
 
 func (u *fakeUoW) RunRepo() repository.RunRepository                             { return u.releases }
 func (u *fakeUoW) CurrentProdRepo() repository.CurrentProdRepository             { return nil }
-func (u *fakeUoW) ServiceProdRepo() repository.ServiceProdRepository             { return nil }
+func (u *fakeUoW) ServiceProdRepo() repository.ServiceProdRepository             { return u.serviceProd }
 func (u *fakeUoW) PromotionSequenceRepo() repository.PromotionSequenceRepository { return nil }
 func (u *fakeUoW) OutboxRepo() pkgoutbox.Repository                              { return u.outbox }
 func (u *fakeUoW) MessageProcessingRepo() messageprocessing.Repository           { return nil }
@@ -175,7 +239,7 @@ var _ ports.Clock = (fakeClock{})
 // newRetryRemediationDeps builds a handlers.Deps wired to fresh, empty fakes.
 func newRetryRemediationDeps(now time.Time) (*handlers.Deps, *fakeReleaseRepo) {
 	releases := &fakeReleaseRepo{releases: map[string]*pipeline.Run{}}
-	u := &fakeUoW{releases: releases, outbox: &fakeOutboxRepo{}}
+	u := &fakeUoW{releases: releases, serviceProd: newFakeServiceProdRepo(), outbox: &fakeOutboxRepo{}}
 	deps := &handlers.Deps{
 		NewUoW:    func() uow.UnitOfWork { return u },
 		Clock:     fakeClock{t: now},
@@ -312,7 +376,7 @@ func (erroringReleaseRepo) Load(context.Context, string) (*pipeline.Run, error) 
 func TestRetryRemediationHandler_GenericErrorIsInternal(t *testing.T) {
 	now := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	repo := erroringReleaseRepo{&fakeReleaseRepo{releases: map[string]*pipeline.Run{}}}
-	u := &fakeUoW{releases: repo.fakeReleaseRepo, outbox: &fakeOutboxRepo{}}
+	u := &fakeUoW{releases: repo.fakeReleaseRepo, serviceProd: newFakeServiceProdRepo(), outbox: &fakeOutboxRepo{}}
 	deps := &handlers.Deps{
 		NewUoW: func() uow.UnitOfWork {
 			return &loadErrUoW{fakeUoW: u, releaseRepo: repo}

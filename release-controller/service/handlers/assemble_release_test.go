@@ -61,3 +61,24 @@ func TestAssembleManifestSet_ThreadsKinds(t *testing.T) {
 	assert.Contains(t, set.ManifestKeys, release.ManifestKey{Service: "svc-dbt", S3URI: "s3://b/svc-dbt/rOld/manifest.json", Kind: release.ManifestKindDbt})
 	assert.Contains(t, set.ManifestKeys, release.ManifestKey{Service: "svc-py-old", S3URI: "s3://b/svc-py-old/rOld2/odcs-bundle.json", Kind: release.ManifestKindPythonODCS})
 }
+
+// The ontology service's pointer rides on every release like any other
+// service's, with its kind, so topology-controller reads the live ontology
+// beside the changed service's artifact. The ontology service's own release
+// replaces it.
+func TestAssembleManifestSet_CarriesTheOntologyPointerOnEveryRelease(t *testing.T) {
+	existing := []*release.ServiceProd{
+		release.NewServiceProd("company-ontology", "rOnt", "s3://b/company-ontology/rOnt/ontology.yaml", "t1", release.ManifestKindOntology, time.Unix(0, 0)),
+	}
+
+	set := handlers.AssembleManifestSet(existing, "b", "svc-dbt", "rNew", "t2", release.ManifestKindDbt)
+	assert.Equal(t, []release.ManifestKey{
+		{Service: "svc-dbt", S3URI: "s3://b/svc-dbt/rNew/manifest.json", Kind: release.ManifestKindDbt},
+		{Service: "company-ontology", S3URI: "s3://b/company-ontology/rOnt/ontology.yaml", Kind: release.ManifestKindOntology},
+	}, set.ManifestKeys)
+
+	set = handlers.AssembleManifestSet(existing, "b", "company-ontology", "rOnt2", "t3", release.ManifestKindOntology)
+	assert.Equal(t, []release.ManifestKey{
+		{Service: "company-ontology", S3URI: "s3://b/company-ontology/rOnt2/ontology.yaml", Kind: release.ManifestKindOntology},
+	}, set.ManifestKeys)
+}

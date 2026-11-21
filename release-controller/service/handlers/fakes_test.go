@@ -320,6 +320,24 @@ func (f *fakeRunRepo) Active(_ context.Context) (*pipeline.Run, error) {
 	return nil, nil
 }
 
+// ActiveCandidateServicesWithKind lists the services of the candidate runs of
+// the given manifest kind that have not ended, sorted and without repeats.
+func (f *fakeRunRepo) ActiveCandidateServicesWithKind(_ context.Context, kind release.ManifestKind) ([]string, error) {
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+	seen := map[string]bool{}
+	names := []string{}
+	for _, r := range f.store.releases {
+		if r.Kind() != pipeline.KindCandidate || r.ManifestKind() != kind || r.Status().IsTerminal() || seen[r.ChangedService()] {
+			continue
+		}
+		seen[r.ChangedService()] = true
+		names = append(names, r.ChangedService())
+	}
+	slices.Sort(names)
+	return names, nil
+}
+
 // List returns an empty page; handler unit tests do not exercise the list path.
 func (f *fakeRunRepo) List(_ context.Context, _ repository.ListFilter) ([]*pipeline.Run, *repository.ListCursor, error) {
 	return nil, nil, nil

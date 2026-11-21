@@ -58,6 +58,9 @@ const runColumns = `run_id, run_kind, status, image_tags, changed_service,
 
 const activeStatuses = `('compiling','parsing','seed_building','validating')`
 
+// terminalStatuses are the statuses that end a run of either kind.
+const terminalStatuses = `('promoted','rejected','superseded','passed','failed')`
+
 type runRow struct {
 	RunID             string         `db:"run_id"`
 	RunKind           string         `db:"run_kind"`
@@ -152,6 +155,36 @@ func (r *RunRepository) Active(ctx context.Context) (*pipeline.Run, error) {
 		return nil, fmt.Errorf("select active: %w", err)
 	}
 	return run, nil
+}
+
+// ActiveCandidateServicesWithKind lists the changed services of the candidate
+// runs of the given manifest kind that have not ended, sorted ascending and
+// without repeats.
+func (r *RunRepository) ActiveCandidateServicesWithKind(ctx context.Context, kind release.ManifestKind) ([]string, error) {
+	rows, err := r.q.QueryxContext(ctx,
+		`SELECT DISTINCT changed_service
+		   FROM release_pipeline_runs
+		  WHERE run_kind = 'candidate'
+		    AND manifest_kind = $1
+		    AND status NOT IN `+terminalStatuses+`
+		  ORDER BY changed_service`, string(kind))
+	if err != nil {
+		return nil, fmt.Errorf("select active candidate services of kind %q: %w", kind, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	services := []string{}
+	for rows.Next() {
+		var service string
+		if err := rows.Scan(&service); err != nil {
+			return nil, fmt.Errorf("scan active candidate service: %w", err)
+		}
+		services = append(services, service)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate active candidate services of kind %q: %w", kind, err)
+	}
+	return services, nil
 }
 
 // Save upserts the run keyed on run_id. Immutable facts (kind, service,
@@ -451,7 +484,7 @@ func (r *RunRepository) List(ctx context.Context, f repository.ListFilter) ([]*p
 func (r *RunRepository) DeleteFinishedBefore(ctx context.Context, cutoff time.Time, keepIDs []string) (int, error) {
 	rows, err := r.q.QueryxContext(ctx,
 		`DELETE FROM release_pipeline_runs
-		 WHERE status IN ('promoted','rejected','superseded','passed','failed')
+		 WHERE status IN `+terminalStatuses+`
 		   AND created_at < $1
 		   AND run_id <> ALL($2)
 		 RETURNING run_id, status`,
