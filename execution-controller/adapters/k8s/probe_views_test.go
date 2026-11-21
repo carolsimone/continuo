@@ -21,7 +21,7 @@ import (
 )
 
 func TestProbeJob_RunsTheProbeOpOnTheOutsideViews(t *testing.T) {
-	t.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-python-runtime-trino:v0.13.0")
+	t.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-python-runtime-trino:v0.14.0")
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "continuo-warehouse-validation")
 	job, err := probeJob(ports.ProbeRequest{JobName: "finance-analytics-seed-fx-rates-eur-6f1c-0", NodeID: "analytics.seed_fx_rates_eur",
 		Views: []string{"bi.fx_rates_report"}}, "default")

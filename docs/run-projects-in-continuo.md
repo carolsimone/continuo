@@ -664,7 +664,7 @@ with `image_contract_mismatch`.
 or the [uv install guide](https://docs.astral.sh/uv/getting-started/installation/).
 
 ```bash
-uv tool install continuo-python-runtime==0.13.0
+uv tool install continuo-python-runtime==0.14.0
 
 continuo-runtime validate services/service-py/contracts --dialect postgres
 

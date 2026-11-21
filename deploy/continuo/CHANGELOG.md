@@ -127,6 +127,7 @@ This release adds one values key, `agentRemediation.workflows.files`, with a saf
   - A node that has an owner and whose `tags`, `fqn` (its first entry must be a string), `name` or `version` has the wrong shape rejects the release `invalid_contract`. The detail names the node and the field, as in `model.shop.orders: tags must be a list of strings, got str`. A manifest whose `metadata.project_name` is not a string rejects the release `invalid_artifact`, and its detail names `manifest`. dbt writes none of these.
   - A node whose `config` is null or a list, or whose `meta` is a string, is left out as `no_owner`. An untagged node with no `fqn`, or an empty one, in a manifest whose project is known is left out as `installed_package`. Before, either failed the release.
 - **The schema-check cache of topology-controller holds up to 100,000 documents.** TL;DR: dbt contracts share the cache with Python ones, and a cache of 10,000 would push Python contracts out on every release of a large estate. No values change is needed.
+- The validation image defaults to `continuo-python-runtime-<engine>:v0.14.0`, and agent-remediation packs Python fixes with runtime 0.14.0 (continuo-contracts 0.4.1). An install that sets `validation.imageTag` keeps its value; `v0.12.0` is still the lowest the chart accepts.
 
 ## [0.24.0] - 2026-11-17
 
