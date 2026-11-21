@@ -283,7 +283,8 @@ def _read_node(
         doc = yaml_strict.load(entry["text"])
     except StrictYamlError as exc:
         return _failed_node(timings, None, path, service, [Issue("$", "strict_yaml", str(exc))])
-    issues = validator.check(doc, path=path, service=service, on_cache=timings.add_validation_cache)
+    with timings.stage(Stage.CONTRACT_VALIDATION, sample_memory=False, nodes=1):
+        issues = validator.check(doc, path=path, service=service, on_cache=timings.add_validation_cache)
     if issues:
         return _failed_node(timings, doc, path, service, issues)
     try:
@@ -327,10 +328,12 @@ def parse_odcs_bundle(
 
     `skipped` is accepted so every parse function takes the same arguments and is
     never appended to: a contract is read or it fails, it is never left out.
-    `progress` is called once after each contract. The per-contract checks run inside
-    the `contract_validation` stage of `timings`, which also counts each cache lookup
-    of `validator` and each contract failure by its reason. `library_version` is the
-    continuo-contracts version of this install, which the producer's must not exceed.
+    `progress` is called once after each contract. The library's check of each contract,
+    and nothing else of reading it (the YAML load and the node's build stay in the parse),
+    is the `contract_validation` stage of `timings`, as a dbt node's check is; `timings`
+    also counts each cache lookup of `validator` and each contract failure by its reason.
+    `library_version` is the continuo-contracts version of this install, which the
+    producer's must not exceed.
 
     Raises InvalidOdcsBundleError for a bundle that cannot be read as a whole (see the
     module docstring). A bundle with no node is an empty ParsedArtifact.
@@ -349,16 +352,13 @@ def parse_odcs_bundle(
 
     nodes: list[ManifestNode] = []
     failed: list[FailedNode] = []
-    with timings.stage(Stage.CONTRACT_VALIDATION, nodes=len(entries)):
-        for entry in entries:
-            read = _read_node(
-                entry, service=service, image_tag=mf.image_tag, validator=validator, timings=timings
-            )
-            if isinstance(read, FailedNode):
-                failed.append(read)
-            else:
-                nodes.append(read)
-            progress()
+    for entry in entries:
+        read = _read_node(entry, service=service, image_tag=mf.image_tag, validator=validator, timings=timings)
+        if isinstance(read, FailedNode):
+            failed.append(read)
+        else:
+            nodes.append(read)
+        progress()
     _check_one_node_per_id(nodes)
     return ParsedArtifact(
         nodes=nodes,

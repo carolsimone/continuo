@@ -57,6 +57,7 @@ from service.compile_extras import seed_columns_hash
 from service.contract_validation import ContractValidator
 from service.contracts_library import VALIDATOR
 from service.dbt_hashing import CodeUnit, DbtHashParts, ManifestContext, hash_dbt_node
+from service import manifest_shape
 from service.errors import ContractGenerationError
 from service.release_timings import ReleaseTimings, Stage
 
@@ -192,6 +193,16 @@ def _manifest_call[T](call: Callable[[], T], timings: ReleaseTimings | None) -> 
         raise ContractGenerationError(f"manifest: the contracts library failed: {error!r}") from error
 
 
+def _require_readable_nodes(manifest: Mapping[str, Any], timings: ReleaseTimings | None) -> None:
+    """Refuse a manifest whose nodes hold a field in a shape the hashing and the parse cannot
+    read (see `manifest_shape`): counted like any field the library cannot read, and raised as
+    an InvalidNodeSettingError, since the artifact is at fault and a retry cannot fix it."""
+    reason = manifest_shape.refusal(manifest["nodes"])
+    if reason is not None:
+        _count_failure(timings, _GENERATE, _MANIFEST_SHAPE)
+        raise InvalidNodeSettingError(reason)
+
+
 def _resolves_its_target(test: Mapping[str, Any]) -> bool:
     """Whether `dbt.generate` resolves the target of `test` from `depends_on.nodes`: it is
     dbt's own `relationships` test, and it has a tested node (an `attached_node`).
@@ -275,7 +286,7 @@ def _failed_node(name: str, node: dict, resource_type: str, detail: str) -> Fail
     and file path are read tolerantly, as the node may hold either in a shape
     the library refused."""
     file_path = node.get("original_file_path")
-    failed = FailedNode(
+    return FailedNode(
         node_id=name,
         kind=ParseFailureKind.INVALID_CONTRACT,
         service=_tolerant_service(node),
@@ -283,25 +294,6 @@ def _failed_node(name: str, node: dict, resource_type: str, detail: str) -> Fail
         node_type=_RESOURCE_TYPE_TO_NODE_TYPE[resource_type],
         detail=detail,
     )
-    _require_publishable(failed)
-    return failed
-
-
-def _require_publishable(failed: FailedNode) -> None:
-    """Refuse a failed node whose node id, service, file path or detail holds text
-    UTF-8 cannot encode (a lone surrogate that the manifest's JSON writes as an
-    escape): the event that reports the rejection is encoded as UTF-8, so such a
-    rejection could not be published and the release would get no parse result.
-    The artifact is at fault, so it is an InvalidNodeSettingError, whose message
-    writes the node id with the text escaped."""
-    for field, text in (("node id", failed.node_id), ("service", failed.service),
-                        ("file path", failed.file_path), ("detail", failed.detail)):
-        try:
-            text.encode("utf-8")
-        except UnicodeEncodeError:
-            raise InvalidNodeSettingError(
-                f"{ascii(failed.node_id)}: the {field} holds text UTF-8 cannot encode"
-            ) from None
 
 
 def _shape_failure(
@@ -519,19 +511,22 @@ def parse_manifest(
     is not a string, a test whose node links are not strings) raises
     InvalidNodeSettingError with the library's message, which starts with
     `manifest` or the test's id, and so does a kept node or a test with no `fqn`
-    entry and a test with an `fqn` that is not a list of strings. So does text
+    entry and a test with an `fqn` that is not a list of strings. So does a node, a test or
+    an on-run hook that is not an object or holds a field in a shape the hashing reads (a
+    `compiled_code` that is not text, a `depends_on` that is not an object: see `manifest_shape`),
+    with a message that starts with `manifest`. So does text
     UTF-8 cannot encode in the extras of a seed (checked when its contract is
-    generated, before its header is compared) or in the node id, service or file
-    path of a FailedNode, as no event could report such a rejection. Any other
-    error from the library raises ContractGenerationError.
+    generated, before its header is compared). Any other error from the library
+    raises ContractGenerationError.
     """
     with open(manifest_path) as f:
         manifest = json.load(f)
 
-    with _rejecting_hash_input(manifest_path):
-        ctx = ManifestContext.from_manifest(manifest, extras)
     project = _manifest_call(lambda: dbt.project_service(manifest, declared_service), timings)
     tests_of = _manifest_call(lambda: dbt.tests_by_node(manifest), timings)
+    _require_readable_nodes(manifest, timings)
+    with _rejecting_hash_input(manifest_path):
+        ctx = ManifestContext.from_manifest(manifest, extras)
     held_targets = _HeldTargets(manifest)
     nodes = []
     failed: list[FailedNode] = []

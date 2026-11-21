@@ -14,7 +14,8 @@ from domain.model import FailedNode, Runtime
 from service import odcs_bundle_parser
 from service.contract_validation import ContractValidator
 from service.odcs_bundle_parser import parse_odcs_bundle
-from service.release_timings import Stage
+from service.release_timings import ReleaseTimings, Stage
+from tests.fakes import FakeClock, ScriptedMemoryProbe
 from tests.odcs_fixtures import (
     IMAGE_TAG,
     SERVICE,
@@ -364,12 +365,45 @@ def test_progress_runs_after_an_invalid_node_too(tmp_path):
     assert len(calls) == 3 and len(parsed.failed) == 2
 
 
-def test_contract_validation_is_timed_inside_the_parse(tmp_path):
+def test_contract_validation_is_timed_once_for_each_contract_checked(tmp_path):
     timings = release_timings()
     parse(bundle_file(tmp_path, demo_nodes()), timings=timings)
     record = timings.stages[Stage.CONTRACT_VALIDATION]
-    assert (record.runs, record.counts) == (1, {"nodes": 3})
+    assert (record.runs, record.counts) == (3, {"nodes": 3})
     assert timings.validation_cache == {"hit": 0, "miss": 3}
+
+
+def test_only_the_library_check_is_timed_as_contract_validation(tmp_path, monkeypatch):
+    """The YAML load and the node's build are the parse's own work, so a release of Python contracts does
+    not report all of its parse as generating contracts: with a clock that also runs while a contract
+    is loaded and its node built, `contracts_ms` is the time of the checks alone."""
+    clock = FakeClock()
+    timings = ReleaseTimings("rel-1", clock, ScriptedMemoryProbe(0))
+
+    def taking(seconds, call):
+        def timed(*args, **kwargs):
+            clock.t += seconds
+            return call(*args, **kwargs)
+        return timed
+
+    class _SlowChecks(ContractValidator):
+        check = taking(2.0, ContractValidator.check)
+
+    monkeypatch.setattr(odcs_bundle_parser.yaml_strict, "load", taking(3.0, yaml_strict.load))
+    monkeypatch.setattr(odcs_bundle_parser, "_build_node", taking(5.0, odcs_bundle_parser._build_node))
+
+    parse(bundle_file(tmp_path, demo_nodes()), timings=timings, validator=_SlowChecks())
+
+    assert timings.stages[Stage.CONTRACT_VALIDATION].seconds == 3 * 2.0
+    assert timings.contracts_ms() == 6000
+
+
+def test_a_contract_that_is_not_yaml_is_never_checked_so_never_timed_as_validation(tmp_path):
+    timings = release_timings()
+    parsed = parse(bundle_file(tmp_path, [bundle_node("contracts/a.odcs.yaml", "a: [unclosed")]), timings=timings)
+
+    assert len(parsed.failed) == 1
+    assert timings.stages[Stage.CONTRACT_VALIDATION].runs == 0
 
 
 def test_a_second_parse_of_the_same_contracts_is_answered_from_the_cache(tmp_path):

@@ -79,6 +79,34 @@ def _failed_node_order(node: FailedNode) -> tuple[str, ...]:
     return (node.node_id, node.file_path, str(node.kind), node.service, str(node.node_type), node.detail)
 
 
+# How much of a failure's detail an unpublishable rejection quotes, written escaped.
+_ESCAPED_DETAIL_CAP = 200
+
+
+def _encodable(text: str) -> bool:
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _unencodable_text(detail: str, failed_nodes: Sequence[FailedNode]) -> str | None:
+    """Why the rejection cannot be published, or None when it can. The event is encoded as
+    UTF-8, which refuses text that holds a lone surrogate (a manifest's JSON writes one as an
+    escape): such a rejection would fail at the publish, the message would be retried and
+    dead-lettered, and the release would never be answered. The text itself is not repeated:
+    a node id is written escaped, and so is the part of the detail that is quoted."""
+    for node in failed_nodes:
+        for field, text in (("node id", node.node_id), ("service", node.service),
+                            ("file path", node.file_path), ("detail", node.detail)):
+            if not _encodable(text):
+                return f"{ascii(node.node_id)}: the {field} holds text UTF-8 cannot encode"
+    if not _encodable(detail):
+        return f"the failure's detail holds text UTF-8 cannot encode: {ascii(detail)[:_ESCAPED_DETAIL_CAP]}"
+    return None
+
+
 def _unreadable_manifest_detail(mf: ManifestFile, exc: Exception) -> str:
     """The detail of a release whose manifest cannot be read as a whole. A bundle
     error carries a message written for the operator, so it is the detail as it
@@ -738,7 +766,17 @@ class CandidateManifestHandler:
         detail: str,
         failed_nodes: Sequence[FailedNode] = (),
     ) -> None:
-        """Publish the release as failed, timed as the publish stage."""
+        """Publish the release as failed, timed as the publish stage. A rejection that holds text
+        UTF-8 cannot encode is published as an invalid artifact that names where it was found,
+        with no failed nodes, whatever its kind was: the text comes from the artifact."""
+        unencodable = _unencodable_text(detail, failed_nodes)
+        if unencodable is not None:
+            logger.warning(
+                "candidate: the rejection holds text UTF-8 cannot encode, so the release is rejected"
+                " as an invalid artifact",
+                extra={"release_id": release_id, "failure_kind": kind.value},
+            )
+            kind, detail, failed_nodes = ParseFailureKind.INVALID_ARTIFACT, unencodable, ()
         durations = self._close_the_parse()
         with self._timings.stage(Stage.PUBLISH):
             self._publisher.publish_failed(
