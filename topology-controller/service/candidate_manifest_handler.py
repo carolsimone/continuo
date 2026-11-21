@@ -855,7 +855,10 @@ class CandidateManifestHandler:
         a bundle another parse of the release stored first is the one catalog
         reads, so its counts are the ones published. The bundle's timings are
         those of the stages that ran before its own write. Each write follows
-        the same outage rule as every other write."""
+        the same outage rule as every other write. The release's line counts the
+        findings the ontology value holds, by severity."""
+        if ontology is not None:
+            self._timings.add_ontology_findings(finding["severity"] for finding in ontology["findings"])
         try:
             with self._timings.stage(Stage.CONTRACT_BUNDLE, contracts=len(contracts)):
                 bundle_document = build_contract_bundle(

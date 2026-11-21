@@ -2,6 +2,7 @@
 contracts are checked against the release's ontology. An error rejects the release naming the
 contract's node, and a warning or an information line goes to the contract bundle."""
 import json
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -331,3 +332,78 @@ def test_progress_is_called_after_each_contract_of_the_ontology_stage(tmp_path, 
     assert contracts == 3
     assert progress_calls >= contracts
     assert len(calls) > progress_calls, "progress is called while the contracts are stored too"
+
+
+# --- the release line ----------------------------------------------------------------------
+
+def _release_line(caplog):
+    """The one log line the release ends with."""
+    (line,) = [record for record in caplog.records if record.getMessage() == "release parsed"]
+    return line
+
+
+def _logged_release(tmp_path, caplog, **kwargs):
+    with caplog.at_level(logging.INFO, logger="service.candidate_manifest_handler"):
+        release(tmp_path, **kwargs)
+    return _release_line(caplog)
+
+
+def test_the_release_line_counts_the_warnings_and_information_the_check_found(tmp_path, caplog, monkeypatch):
+    """A line per finding would be one per contract of an undeclared service: the release line
+    carries one count per severity, and the findings themselves are in the contract bundle."""
+    monkeypatch.setattr(ontology_check, "check", failing_check([
+        Finding("warning", "contract", "analytics.a", "one", "analytics.a"),
+        Finding("warning", "contract", "analytics.b", "two", "analytics.b"),
+        Finding("warning", "access", "analytics.b", "three", "analytics.b"),
+        Finding("info", "order", "copy graph", "layers", None),
+        Finding("info", "contract", "service-py", "not declared", None),
+    ]))
+
+    line = _logged_release(tmp_path, caplog, ontology_text=valid_ontology())
+
+    assert (line.ontology_warnings, line.ontology_information) == (3, 2)
+    assert not any(record.getMessage() == "candidate: a finding of the ontology check" for record in caplog.records)
+
+
+def test_the_release_line_names_only_the_severities_the_check_found(tmp_path, caplog, monkeypatch):
+    monkeypatch.setattr(ontology_check, "check", failing_check([
+        Finding("info", "order", "copy graph", "layers", None)]))
+
+    line = _logged_release(tmp_path, caplog, ontology_text=valid_ontology())
+
+    assert line.ontology_information == 1
+    assert not hasattr(line, "ontology_warnings")
+
+
+def test_the_release_line_has_no_ontology_field_when_the_check_found_nothing(tmp_path, caplog, monkeypatch):
+    monkeypatch.setattr(ontology_check, "check", failing_check([]))
+
+    line = _logged_release(tmp_path, caplog, ontology_text=valid_ontology())
+
+    assert not [name for name in vars(line) if name.startswith("ontology")]
+
+
+def test_the_release_line_of_the_real_check_counts_what_the_bundle_lists(tmp_path, caplog):
+    with caplog.at_level(logging.INFO, logger="service.candidate_manifest_handler"):
+        _, writer, _ = release(tmp_path, ontology_text=valid_ontology())
+    line = _release_line(caplog)
+
+    severities = [finding["severity"] for finding in writer.document["ontology"]["findings"]]
+    assert (line.ontology_warnings, line.ontology_information) == (severities.count("warning"), severities.count("info"))
+    assert (line.ontology_warnings, line.ontology_information) == (1, 1)
+
+
+def test_the_release_line_of_a_switch_on_release_with_no_ontology_counts_its_one_warning(tmp_path, caplog):
+    line = _logged_release(tmp_path, caplog, ontology_text=None)
+
+    assert line.ontology_warnings == 1
+    assert not hasattr(line, "ontology_information")
+
+
+def test_the_release_line_has_no_ontology_field_with_the_switch_off(tmp_path, caplog):
+    """The line is what it was before the ontology existed, whether or not the release carries one."""
+    for ontology_text in (None, valid_ontology()):
+        caplog.clear()
+        line = _logged_release(tmp_path / str(ontology_text is None), caplog, ontology_text=ontology_text, enabled=False)
+
+        assert not [name for name in vars(line) if name.startswith("ontology")]

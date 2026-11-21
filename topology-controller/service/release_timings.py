@@ -82,6 +82,11 @@ CONTRACT_FAILURE_STAGES = ("generate", "validate", "normalise", "hash", "ontolog
 # checks.
 CONTRACT_FAILURE_REASONS: Final = (*REASONS, "manifest_shape", "seed_header", *RULES)
 
+# The fields of the release's log line that count the ontology's findings that do not
+# reject the release, by severity. A finding that rejects a release (an error) has its
+# own failure, so no field counts it.
+_ONTOLOGY_LOG_FIELDS = {"warning": "ontology_warnings", "info": "ontology_information"}
+
 # How a contract validation was answered: from the cache or by running the check.
 VALIDATION_CACHE_RESULTS = ("hit", "miss")
 
@@ -159,7 +164,9 @@ class ReleaseTimings:
     with none has no entry. `contract_failures` counts the contract failures
     the release met by (stage, reason), and `validation_cache` counts the
     contract validations answered from the cache (`hit`) and run (`miss`).
-    `outcome` and `failure_kind` stay unset until the release ends. The record
+    `ontology_findings` counts, by severity, the findings of a published release
+    with the ontology switch on that do not reject it; it stays empty for any
+    other release. `outcome` and `failure_kind` stay unset until the release ends. The record
     keeps its start time, read from the clock at construction, and
     `mark_published` fixes its end: `parse_ms` is the time between them
     without the contract stages, `contracts_ms` the time of those stages.
@@ -181,6 +188,7 @@ class ReleaseTimings:
         self.dormant: dict[str, int] = {}
         self.contract_failures: dict[tuple[str, str], int] = {}
         self.validation_cache: dict[str, int] = {result: 0 for result in VALIDATION_CACHE_RESULTS}
+        self.ontology_findings: dict[str, int] = {}
 
     def stage(self, name: Stage, *, sample_memory: bool = True, **counts: int) -> AbstractContextManager[StageRecord]:
         """Time one run of a stage. On exit, also when the body raised, the
@@ -245,6 +253,17 @@ class ReleaseTimings:
         """Count one contract validation as answered from the cache or run."""
         self.validation_cache["hit" if hit else "miss"] += 1
 
+    def add_ontology_findings(self, severities: Iterable[str]) -> None:
+        """Count findings of the ontology that do not reject the release, one severity
+        each (`warning` or `info`). Raises ValueError for any other severity, an error
+        included, and counts none of them."""
+        counted = list(severities)
+        unknown = sorted({severity for severity in counted if severity not in _ONTOLOGY_LOG_FIELDS})
+        if unknown:
+            raise ValueError(f"{unknown} is not a severity of a finding that leaves a release published")
+        for severity in counted:
+            self.ontology_findings[severity] = self.ontology_findings.get(severity, 0) + 1
+
     def bundle_timings(self) -> dict[str, object]:
         """The `timings` of the contract bundle: the milliseconds of each stage
         that has run so far, the nodes and columns of every runtime, and the
@@ -264,7 +283,9 @@ class ReleaseTimings:
 
     def log_fields(self) -> dict[str, object]:
         """The fields of the release's log line. `failure_kind` is present only
-        for a failed release."""
+        for a failed release, and `ontology_warnings` and `ontology_information`
+        (the counts of the findings the ontology check left to the contract
+        bundle) only when the release found some of that severity."""
         fields: dict[str, object] = {
             "release_id": self.release_id,
             "outcome": self.outcome.value if self.outcome is not None else None,
@@ -275,6 +296,9 @@ class ReleaseTimings:
             "stages_ms": self.stages_ms(),
             "peak_rss_bytes": self.peak_rss_bytes,
         }
+        for severity, field_name in _ONTOLOGY_LOG_FIELDS.items():
+            if severity in self.ontology_findings:
+                fields[field_name] = self.ontology_findings[severity]
         if self.outcome is ReleaseOutcome.FAILED and self.failure_kind is not None:
             fields["failure_kind"] = self.failure_kind.value
         return fields

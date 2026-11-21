@@ -97,6 +97,32 @@ def test_log_fields_carry_the_release_its_counts_and_every_stage():
     }
 
 
+def test_log_fields_carry_the_counts_of_the_ontology_findings_by_severity():
+    timings = _timings(FakeClock())
+    timings.add_ontology_findings(["warning", "info", "warning", "warning"])
+
+    fields = timings.log_fields()
+
+    assert (fields["ontology_warnings"], fields["ontology_information"]) == (3, 1)
+
+
+def test_log_fields_name_only_the_severities_found_and_none_before_any_is_counted():
+    timings = _timings(FakeClock())
+    assert not [name for name in timings.log_fields() if name.startswith("ontology")]
+
+    timings.add_ontology_findings(["info"])
+    assert timings.log_fields()["ontology_information"] == 1
+    assert "ontology_warnings" not in timings.log_fields()
+
+
+def test_a_finding_that_rejects_a_release_is_not_counted_on_its_line():
+    """An error has its own failure path, so only the severities that never reject are counted."""
+    timings = _timings(FakeClock())
+    with pytest.raises(ValueError, match="not a severity"):
+        timings.add_ontology_findings(["error"])
+    assert timings.ontology_findings == {}
+
+
 def test_add_skips_counts_each_skip_under_its_own_reason():
     timings = _timings()
     timings.add_skips([
