@@ -46,9 +46,10 @@ def ontology_manifest(tmp_path, text: str) -> ManifestFile:
 
 
 def release(tmp_path, *, ontology_text: str | None, tables=("py_daily_kpis",), extra=(), enabled=True,
-            publisher=None, progress=None, clock=None):
+            publisher=None, progress=None, clock=None, writer=None):
     """Release the bound contracts of service-py (one per table) with the ontology `ontology_text`,
-    when there is one. Returns the publisher, the contract bundle writer and the timing record."""
+    when there is one, through `writer` (a recording contract bundle writer unless given one).
+    Returns the publisher, the contract bundle writer and the timing record."""
     Path(tmp_path).mkdir(parents=True, exist_ok=True)
     files = [bundle_file(tmp_path, [
         bundle_node(f"contracts/{table}.odcs.yaml", bound_kpis_text(table)) for table in tables])]
@@ -56,7 +57,7 @@ def release(tmp_path, *, ontology_text: str | None, tables=("py_daily_kpis",), e
         files.append(ontology_manifest(tmp_path, ontology_text))
     files.extend(extra)
     publisher = publisher if publisher is not None else MagicMock()
-    writer = RecordingContractBundleWriter()
+    writer = writer if writer is not None else RecordingContractBundleWriter()
     timings = python_handler(
         source_of(*files), publisher, contract_bundle_writer=writer, ontology_enabled=enabled,
         progress=progress, clock=clock,
@@ -400,8 +401,27 @@ def test_the_release_line_of_a_switch_on_release_with_no_ontology_counts_its_one
     assert not hasattr(line, "ontology_information")
 
 
+def test_a_release_that_fails_to_write_has_no_ontology_field_on_its_line(tmp_path, caplog, monkeypatch):
+    """The counts are of a published release's findings: a release whose contract bundle cannot be
+    written ends failed, and its line carries no ontology field, though the check found some."""
+    monkeypatch.setattr(ontology_check, "check", failing_check([
+        Finding("warning", "contract", "analytics.a", "one", "analytics.a"),
+        Finding("info", "order", "copy graph", "layers", None),
+    ]))
+    writer = RecordingContractBundleWriter(fail=RuntimeError("the bucket refused the write"))
+
+    with caplog.at_level(logging.INFO, logger="service.candidate_manifest_handler"):
+        publisher, _, timings = release(tmp_path, ontology_text=valid_ontology(), writer=writer)
+
+    assert failed_kwargs(publisher)["failure_kind"] is ParseFailureKind.INTERNAL
+    line = _release_line(caplog)
+    assert line.outcome == "failed"
+    assert not [name for name in vars(line) if name.startswith("ontology")]
+    assert timings.ontology_findings == {}
+
+
 def test_the_release_line_has_no_ontology_field_with_the_switch_off(tmp_path, caplog):
-    """The line is what it was before the ontology existed, whether or not the release carries one."""
+    """The line carries no ontology field, whether or not the release carries an ontology."""
     for ontology_text in (None, valid_ontology()):
         caplog.clear()
         line = _logged_release(tmp_path / str(ontology_text is None), caplog, ontology_text=ontology_text, enabled=False)

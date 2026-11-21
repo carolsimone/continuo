@@ -855,10 +855,9 @@ class CandidateManifestHandler:
         a bundle another parse of the release stored first is the one catalog
         reads, so its counts are the ones published. The bundle's timings are
         those of the stages that ran before its own write. Each write follows
-        the same outage rule as every other write. The release's line counts the
-        findings the ontology value holds, by severity."""
-        if ontology is not None:
-            self._timings.add_ontology_findings(finding["severity"] for finding in ontology["findings"])
+        the same outage rule as every other write. Once both are written, the
+        release's line counts the findings the ontology value holds, by severity:
+        a release that fails to write counts none."""
         try:
             with self._timings.stage(Stage.CONTRACT_BUNDLE, contracts=len(contracts)):
                 bundle_document = build_contract_bundle(
@@ -881,6 +880,8 @@ class CandidateManifestHandler:
             self._reject_internal_unless_infra(release_id, exc)
             return
 
+        if ontology is not None:
+            self._timings.add_ontology_findings(finding["severity"] for finding in ontology["findings"])
         durations = self._close_the_parse()
         with self._timings.stage(Stage.PUBLISH):
             self._publisher.publish_ok(
