@@ -19,7 +19,7 @@ from domain.model import CompileExtras, ContractFamily, FailedNode, ManifestFile
 from service.contract_validation import ContractValidator
 from service.errors import ContractGenerationError
 from service import parser
-from service.parser import parse_manifest
+from tests.fakes import parse_manifest
 from service.release_timings import (
     CONTRACT_FAILURE_REASONS,
     CONTRACT_FAILURE_STAGES,

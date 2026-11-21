@@ -14,6 +14,7 @@ from service import candidate_artifacts, candidate_manifest_handler
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
 from service.compile_extras import seed_columns_hash
+from service.contract_validation import ContractValidator
 from service.ports import CandidatePublisherPort, ManifestSourcePort
 from service.release_timings import ReleaseOutcome, Stage
 from domain.contract_vocabulary import ParseFailureKind
@@ -527,6 +528,7 @@ def test_a_request_without_image_tags_fails_the_release_as_internal():
         is_infrastructure_error=is_infrastructure,
         clock=FakeClock(),
         memory=ScriptedMemoryProbe(0),
+        validator=ContractValidator(),
     )
 
     handler.handle(release_id="rel-1")
@@ -1166,6 +1168,7 @@ def test_a_release_mixes_dbt_and_python_and_resolves_edges_in_both_directions(tm
         is_infrastructure_error=is_infrastructure,
         clock=FakeClock(),
         memory=ScriptedMemoryProbe(0),
+        validator=ContractValidator(),
     )
     handler.handle(release_id="rel-1")
 
@@ -1213,6 +1216,7 @@ def test_a_python_node_rides_the_code_bundle_with_its_runtime_marker(tmp_path):
         is_infrastructure_error=is_infrastructure,
         clock=FakeClock(),
         memory=ScriptedMemoryProbe(0),
+        validator=ContractValidator(),
     )
 
     handler.handle(release_id="rel-1")
@@ -1377,6 +1381,7 @@ def test_a_release_refused_before_any_contract_stage_publishes_valid_durations()
         artifact_builders={Runtime.DBT: DbtSqlArtifactBuilder(make_uploader())},
         dialect="postgres", system_relations=_SYSTEM_RELATIONS["postgres"], image_tags=None,
         is_infrastructure_error=is_infrastructure, clock=FakeClock(step=1.0), memory=ScriptedMemoryProbe(0),
+        validator=ContractValidator(),
     )
 
     timings = handler.handle(release_id="rel-1")

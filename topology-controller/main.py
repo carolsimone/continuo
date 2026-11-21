@@ -37,6 +37,7 @@ from config.secrets import EnvOrFileCredentialProvider, read_secret
 from domain.model import Runtime
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
+from service.contract_validation import ContractValidator
 from service.contracts_library import LIBRARY_VERSION
 
 logger = logging.getLogger(__name__)
@@ -104,6 +105,10 @@ def main() -> None:
     system_relations = warehouse_system_relations()
     logger.info("topology-controller SQL dialect: %s", dialect)
 
+    # One validator for the process: it remembers the contracts it has checked, so a
+    # contract unchanged since an earlier release is not checked again.
+    validator = ContractValidator()
+
     def handle_release_requested(fields: dict) -> None:
         message = parse_release_requested(fields, S3_BUCKET)
         source = S3Source(bucket=message.bucket, env=S3_ENV, s3_client=s3_client, keys=message.requests)
@@ -127,6 +132,7 @@ def main() -> None:
             is_infrastructure_error=is_infrastructure,
             clock=MonotonicClock(),
             memory=ResidentMemoryProbe(),
+            validator=validator,
             # Looked up when a release is handled, by which time the consumer
             # exists: a handler that keeps working keeps /health fresh.
             progress=candidate_consumer.refresh_heartbeat,

@@ -5,6 +5,7 @@ import pytest
 
 from domain.exceptions import InvalidCompileExtrasError, InvalidOdcsBundleError
 from domain.model import ManifestFile, ManifestKind, ParsedArtifact, SkippedNode, SkipReason
+from service.contract_validation import ContractValidator
 from service.manifest_parsers import parser_for
 from tests.odcs_fixtures import bundle_file, demo_nodes, release_timings
 
@@ -14,6 +15,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 def _parse(kind, mf, **kwargs):
     """A kind's parse function as the handler calls it: with the progress callback and the
     timing record of the release."""
+    kwargs.setdefault("validator", ContractValidator())
     return parser_for(kind).parse(mf, progress=lambda: None, timings=release_timings(), **kwargs)
 
 
@@ -78,7 +80,8 @@ def test_the_odcs_entry_parses_a_bundle_with_the_library_this_install_runs_on(tm
     calls = []
 
     parsed = parser_for(ManifestKind.PYTHON_ODCS).parse(
-        bundle_file(tmp_path, demo_nodes()), progress=lambda: calls.append(1), timings=timings)
+        bundle_file(tmp_path, demo_nodes()), progress=lambda: calls.append(1), timings=timings,
+        validator=ContractValidator())
 
     assert [n.unique_id for n in parsed.nodes] == [
         "analytics.demo_orders_csv", "analytics.fx_eur_usd_rates", "analytics.py_daily_kpis"]

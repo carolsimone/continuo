@@ -28,6 +28,7 @@ from service.contract_bundle import (
     shared_unique_ids,
     store_contracts,
 )
+from service.contract_validation import ContractValidator
 from service.contracts_library import LIBRARY_VERSION
 from service.errors import ContractGenerationError
 from service.manifest_parsers import parser_for
@@ -219,6 +220,10 @@ class CandidateManifestHandler:
     release at once, so its publish carries no failed nodes even when earlier
     manifests reported invalid contracts.
 
+    validator checks every contract a manifest's parse reads or generates. The
+    composition root builds one for the process and gives it to each handler, so a
+    contract unchanged since an earlier release is answered from its memory.
+
     dialect is the sqlglot dialect of the warehouse the install targets,
     supplied by the composition root from the configured engine. It governs
     both dependency resolution and the candidate-schema rewrite, so the
@@ -320,6 +325,7 @@ class CandidateManifestHandler:
         is_infrastructure_error: Callable[[BaseException], bool],
         clock: ClockPort,
         memory: MemoryProbePort,
+        validator: ContractValidator,
         progress: Callable[[], None] = _no_progress,
         observer: ReleaseObserverPort = NoReleaseObserver(),
     ) -> None:
@@ -335,6 +341,7 @@ class CandidateManifestHandler:
         self._is_infrastructure_error = is_infrastructure_error
         self._clock = clock
         self._memory = memory
+        self._validator = validator
         self._progress = progress
         self._observer = observer
         # Replaced by the record of each release handle() starts.
@@ -397,6 +404,7 @@ class CandidateManifestHandler:
                 with self._timings.stage(parse_stage, manifests=1) as record:
                     parsed = parser.parse(
                         mf, skipped=manifest_skips, progress=self._progress, timings=self._timings,
+                        validator=self._validator,
                     )
                     record.add(nodes=len(parsed.nodes))
             except ContractGenerationError as exc:

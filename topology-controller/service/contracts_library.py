@@ -1,5 +1,4 @@
-"""The continuo-contracts library this process runs on: its version and the one validator
-every release checks its contracts with.
+"""The continuo-contracts library this process runs on: its version.
 
 The version is the one installed, which `pyproject.toml` pins exactly. A producer's bundle
 names the version it was written with, and the parse refuses one newer than this. The
@@ -11,7 +10,6 @@ import importlib.metadata
 import re
 from typing import Final
 
-from service.contract_validation import ContractValidator
 
 _VERSION = re.compile(r"[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}")
 
@@ -36,4 +34,3 @@ def _installed_version() -> str:
 
 
 LIBRARY_VERSION: Final = _installed_version()
-VALIDATOR: Final = ContractValidator()

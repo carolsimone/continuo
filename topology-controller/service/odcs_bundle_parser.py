@@ -41,7 +41,7 @@ from domain.exceptions import InvalidOdcsBundleError, MalformedContractError
 from domain.model import ContractFamily, FailedNode, ManifestFile, ManifestNode, NodeContract, ParsedArtifact, SkippedNode
 from domain.node_timeout import timeout_seconds
 from service.contract_validation import ContractValidator
-from service.contracts_library import LIBRARY_VERSION, VALIDATOR, version_triple
+from service.contracts_library import LIBRARY_VERSION, version_triple
 from service.python_kind_rules import RULES
 from service.python_node_builder import PythonNodeFields, build_python_node
 from service.release_timings import ReleaseTimings, Stage
@@ -320,7 +320,7 @@ def parse_odcs_bundle(
     skipped: list[SkippedNode] | None = None,
     progress: Callable[[], None],
     timings: ReleaseTimings,
-    validator: ContractValidator = VALIDATOR,
+    validator: ContractValidator,
     library_version: str = LIBRARY_VERSION,
 ) -> ParsedArtifact:
     """Parse a `python-odcs` producer bundle into the nodes of its valid contracts and

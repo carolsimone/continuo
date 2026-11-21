@@ -1,5 +1,5 @@
 import json
-from service.parser import parse_manifest
+from tests.fakes import parse_manifest
 
 
 def _write(tmp_path, manifest: dict) -> str:

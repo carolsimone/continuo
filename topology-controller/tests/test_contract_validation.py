@@ -112,9 +112,8 @@ def test_an_issue_is_the_librarys_issue():
     assert isinstance(issue, Issue)
 
 
-def test_the_process_holds_one_validator_and_the_library_version_it_runs_on():
+def test_the_process_runs_on_the_installed_library_version():
     assert contracts_library.LIBRARY_VERSION == importlib.metadata.version("continuo-contracts")
-    assert isinstance(contracts_library.VALIDATOR, ContractValidator)
 
 
 def test_check_dbt_runs_the_schema_once_per_document(monkeypatch):

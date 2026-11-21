@@ -7,6 +7,7 @@ from config.config import _SYSTEM_RELATIONS
 from domain.model import ManifestFile, Runtime
 from service.candidate_artifacts import DbtSqlArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
+from service.contract_validation import ContractValidator
 from service.ports import ManifestSourcePort
 from tests.fakes import FakeClock, RecordingArtifactWriter, RecordingContractBundleWriter, ScriptedMemoryProbe
 
@@ -80,7 +81,7 @@ def test_candidate_topology_carries_test_count(tmp_path):
         dialect="postgres",
         system_relations=_SYSTEM_RELATIONS["postgres"],
         image_tags={},
-        clock=FakeClock(), memory=ScriptedMemoryProbe(0),
+        clock=FakeClock(), memory=ScriptedMemoryProbe(0), validator=ContractValidator(),
     )
     handler.handle(release_id="rel-1")
 

@@ -29,7 +29,7 @@ contract do not both have makes the contract invalid.
 import json
 import logging
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import AbstractContextManager, contextmanager, nullcontext
+from contextlib import AbstractContextManager, contextmanager
 from typing import Any
 
 from continuo_contracts import dbt
@@ -55,7 +55,6 @@ from domain.model import (
 from domain.node_timeout import timeout_seconds
 from service.compile_extras import seed_columns_hash
 from service.contract_validation import ContractValidator
-from service.contracts_library import VALIDATOR
 from service.dbt_hashing import CodeUnit, DbtHashParts, ManifestContext, hash_dbt_node
 from service import manifest_shape
 from service.errors import ContractGenerationError
@@ -161,24 +160,12 @@ def _seed_full_refresh(resource_type: str, config: dict) -> bool | None:
     return value if resource_type == "seed" and isinstance(value, bool) else None
 
 
-def _stage(timings: ReleaseTimings | None, stage: Stage) -> AbstractContextManager[object]:
-    """One node's run of `stage` on `timings`, which reads no memory; nothing is
-    timed without a record."""
-    if timings is None:
-        return nullcontext()
+def _stage(timings: ReleaseTimings, stage: Stage) -> AbstractContextManager[object]:
+    """One node's run of `stage` on `timings`, which reads no memory."""
     return timings.stage(stage, sample_memory=False, nodes=1)
 
 
-def _count_failure(timings: ReleaseTimings | None, stage: str, reason: str) -> None:
-    if timings is not None:
-        timings.add_contract_failure(stage, reason)
-
-
-def _ignore_cache(hit: bool) -> None:
-    """The cache callback of a parse with no timing record."""
-
-
-def _manifest_call[T](call: Callable[[], T], timings: ReleaseTimings | None) -> T:
+def _manifest_call[T](call: Callable[[], T], timings: ReleaseTimings) -> T:
     """Run a library call that reads the manifest as a whole (its project, the
     join of its tests to its nodes). A field it cannot read is no one node's
     fault: it is counted and raised as an InvalidNodeSettingError carrying the
@@ -187,19 +174,19 @@ def _manifest_call[T](call: Callable[[], T], timings: ReleaseTimings | None) -> 
     try:
         return call()
     except DbtNodeError as error:
-        _count_failure(timings, _GENERATE, _MANIFEST_SHAPE)
+        timings.add_contract_failure(_GENERATE, _MANIFEST_SHAPE)
         raise InvalidNodeSettingError(str(error)) from error
     except Exception as error:
         raise ContractGenerationError(f"manifest: the contracts library failed: {error!r}") from error
 
 
-def _require_readable_nodes(manifest: Mapping[str, Any], timings: ReleaseTimings | None) -> None:
+def _require_readable_nodes(manifest: Mapping[str, Any], timings: ReleaseTimings) -> None:
     """Refuse a manifest whose nodes hold a field in a shape the hashing and the parse cannot
     read (see `manifest_shape`): counted like any field the library cannot read, and raised as
     an InvalidNodeSettingError, since the artifact is at fault and a retry cannot fix it."""
     reason = manifest_shape.refusal(manifest["nodes"])
     if reason is not None:
-        _count_failure(timings, _GENERATE, _MANIFEST_SHAPE)
+        timings.add_contract_failure(_GENERATE, _MANIFEST_SHAPE)
         raise InvalidNodeSettingError(reason)
 
 
@@ -297,13 +284,13 @@ def _failed_node(name: str, node: dict, resource_type: str, detail: str) -> Fail
 
 
 def _shape_failure(
-    node_id: str, node: dict, resource_type: str, error: DbtNodeError, timings: ReleaseTimings | None
+    node_id: str, node: dict, resource_type: str, error: DbtNodeError, timings: ReleaseTimings
 ) -> FailedNode:
     """The invalid contract of a node whose field the library cannot read. It is
     named by its unique_id when the library can read that, else by its manifest
     id, and the detail is the library's message, which starts with the manifest
     id and names the field."""
-    _count_failure(timings, _GENERATE, _MANIFEST_SHAPE)
+    timings.add_contract_failure(_GENERATE, _MANIFEST_SHAPE)
     try:
         name = dbt.unique_id(node)
     except DbtNodeError:
@@ -313,7 +300,7 @@ def _shape_failure(
 
 def _issues_failure(
     name: str, node_id: str, node: dict, resource_type: str, issues: list[Issue], header_issues: list[str],
-    timings: ReleaseTimings | None,
+    timings: ReleaseTimings,
 ) -> FailedNode:
     """The invalid contract of a node whose generated contract fails its checks,
     or of a seed whose declared columns differ from its CSV header: every issue,
@@ -325,9 +312,9 @@ def _issues_failure(
     header messages starts with the seed's manifest id, which they do not carry,
     as the detail of a node the library cannot read starts with its id."""
     for issue in issues:
-        _count_failure(timings, _VALIDATE, issue.reason)
+        timings.add_contract_failure(_VALIDATE, issue.reason)
     for _ in header_issues:
-        _count_failure(timings, _VALIDATE, _SEED_HEADER)
+        timings.add_contract_failure(_VALIDATE, _SEED_HEADER)
     detail = "; ".join([*(str(issue) for issue in issues), *header_issues])
     if header_issues:
         detail = f"{node_id}: {detail}"
@@ -394,7 +381,7 @@ def _contract(
     *,
     seed: SeedExtras | None,
     validator: ContractValidator,
-    timings: ReleaseTimings | None,
+    timings: ReleaseTimings,
 ) -> tuple[dbt.Generated, dbt.RunFacts, str | None] | FailedNode:
     """The checked contract of a kept node, the run facts it gives and, for a seed
     the compile extras name (`seed`, None for any other node), the fingerprint of
@@ -421,10 +408,9 @@ def _contract(
     if seed is not None:
         with _rejecting_hash_input(generated.document["id"]):
             columns_hash = seed_columns_hash(seed)
-    on_cache = timings.add_validation_cache if timings is not None else _ignore_cache
     try:
         with _stage(timings, Stage.CONTRACT_VALIDATION):
-            issues = validator.check_dbt(generated.document, on_cache=on_cache)
+            issues = validator.check_dbt(generated.document, on_cache=timings.add_validation_cache)
     except Exception as error:
         raise _library_defect(node_id, error) from error
     mismatch = _id_issue(node, generated.document)
@@ -449,9 +435,9 @@ def parse_manifest(
     *,
     skipped: list[SkippedNode] | None = None,
     declared_service: str = "",
-    validator: ContractValidator = VALIDATOR,
+    validator: ContractValidator,
     progress: Callable[[], None] = _no_progress,
-    timings: ReleaseTimings | None = None,
+    timings: ReleaseTimings,
 ) -> ParsedArtifact:
     """Parse a dbt manifest into its nodes, the shared code they use and the
     invalid contracts of the nodes that could not be built.

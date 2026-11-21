@@ -34,7 +34,8 @@ def test_the_estate_holds_models_tests_seeds_and_python_nodes():
 
 def test_the_real_handler_parses_the_estate():
     estate = generate_estate(20, columns=4)
-    handler, publisher = build_handler(estate, MemoryS3(estate.objects), clock=FakeClock(), memory=ScriptedMemoryProbe(0))
+    handler, publisher = build_handler(
+        estate, MemoryS3(estate.objects), clock=FakeClock(), memory=ScriptedMemoryProbe(0), validator=ContractValidator())
     handler.handle(estate.release_id)
     assert publisher.ok, publisher.failure
     assert publisher.node_count == estate.dbt_nodes + estate.python_nodes
@@ -106,7 +107,8 @@ def test_the_handler_writes_one_contract_bundle_and_keeps_it_on_the_next_pass():
     store = MemoryS3(estate.objects)
     key = contract_bundle_key("default", estate.release_id)
     for _ in range(2):
-        handler, publisher = build_handler(estate, store, clock=FakeClock(), memory=ScriptedMemoryProbe(0))
+        handler, publisher = build_handler(
+            estate, store, clock=FakeClock(), memory=ScriptedMemoryProbe(0), validator=ContractValidator())
         handler.handle(estate.release_id)
         assert publisher.ok, publisher.failure
     document = json.loads(gzip.decompress(store.get_object(Bucket="bench", Key=key)["Body"].read()))
