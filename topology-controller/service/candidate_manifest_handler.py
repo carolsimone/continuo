@@ -4,6 +4,7 @@ from typing import Any
 from domain.exceptions import (
     InvalidCompiledSqlError,
     InvalidOdcsBundleError,
+    InvalidOntologyError,
     UnqualifiedTableReferenceError,
 )
 from domain.external import SystemRelations, unknown_external_nodes
@@ -31,6 +32,7 @@ from service.contract_bundle import (
 from service.contracts_library import LIBRARY_VERSION
 from service.errors import ContractGenerationError
 from service.manifest_parsers import parser_for
+from service.ontology_binding import ReleaseOntology, load_release_ontology
 from service.ports import (
     CandidatePublisherPort,
     ClockPort,
@@ -191,6 +193,15 @@ class CandidateManifestHandler:
     release at once, so its publish carries no failed nodes even when earlier
     manifests reported invalid contracts.
 
+    A manifest of kind ontology is the install's company ontology: it declares
+    no node, so it is taken out of the set before the manifests are parsed. With
+    ontology_enabled it is read first (see service.ontology_binding): a file the
+    library cannot read, or one its own rules find an error in, is an
+    invalid_artifact naming the service that released it, and each of those
+    errors is counted as a contract failure of stage ontology. With the switch
+    off the file is ignored and one line at INFO says so. Two ontology manifests
+    in one release are an invalid_artifact whatever the switch says.
+
     dialect is the sqlglot dialect of the warehouse the install targets,
     supplied by the composition root from the configured engine. It governs
     both dependency resolution and the candidate-schema rewrite, so the
@@ -250,9 +261,10 @@ class CandidateManifestHandler:
 
     progress is called by a manifest's parse after each contract it reads (a
     python contract) or generates (a dbt node's), and by the handler once after
-    each manifest's parse, once after each node's resolve and once after each
-    node's build, a failed one included, so the caller can tell a release that
-    is working through its nodes from one that has stopped. Between two calls
+    the ontology is read, once after each manifest's parse, once after each
+    node's resolve and once after each node's build, a failed one included, so
+    the caller can tell a release that is working through its nodes from one
+    that has stopped. Between two calls
     the handler does one contract's share of a parse (a python contract's checks
     and node, a dbt node's contract, checks, hashes and node), one manifest's
     work around its contracts (before the first: the manifest's reading and the
@@ -262,7 +274,8 @@ class CandidateManifestHandler:
     stretches, each of which must end within the caller's staleness budget:
     - from the start through the first contract of the first manifest's parse:
       the image-tag check, the listing of every manifest (every manifest's
-      download included), that manifest's reading and that contract;
+      download included), the ontology's reading, that manifest's reading and
+      that contract;
     - from the last manifest's parse through the first node's resolve: that
       manifest's own bookkeeping (skip logging, shared-code namespacing,
       service checks), the node registry and its lookup and the rewrite context
@@ -292,6 +305,7 @@ class CandidateManifestHandler:
         is_infrastructure_error: Callable[[BaseException], bool],
         clock: ClockPort,
         memory: MemoryProbePort,
+        ontology_enabled: bool,
         progress: Callable[[], None] = _no_progress,
         observer: ReleaseObserverPort = NoReleaseObserver(),
     ) -> None:
@@ -307,6 +321,7 @@ class CandidateManifestHandler:
         self._is_infrastructure_error = is_infrastructure_error
         self._clock = clock
         self._memory = memory
+        self._ontology_enabled = ontology_enabled
         self._progress = progress
         self._observer = observer
         # Replaced by the record of each release handle() starts.
@@ -335,6 +350,12 @@ class CandidateManifestHandler:
         with self._timings.stage(Stage.DOWNLOAD) as record:
             manifests = self._source.list_manifests()
             record.add(manifests=len(manifests), bytes=sum(m.size_bytes for m in manifests))
+        # The ontology declares no node: it never reaches the parse loop below.
+        ontology_files = [mf for mf in manifests if mf.kind == ManifestKind.ONTOLOGY]
+        manifests = [mf for mf in manifests if mf.kind != ManifestKind.ONTOLOGY]
+        _, ended = self._read_ontology(release_id, ontology_files)
+        if ended:
+            return
         if not manifests:
             logger.warning(
                 "candidate: no manifest files found — publishing empty topology",
@@ -635,6 +656,54 @@ class CandidateManifestHandler:
             release_id, topology=topology, code_bundle_uri=code_bundle_uri,
             contracts=contracts, python_provenance=python_provenance,
         )
+
+    def _read_ontology(
+        self, release_id: str, files: Sequence[ManifestFile],
+    ) -> tuple[ReleaseOntology | None, bool]:
+        """The ontology this release uses, and whether the release ended here.
+
+        No ontology manifest is no ontology. Two are an invalid_artifact, with the
+        switch on or off. With the switch off the one file is ignored and logged.
+        With it on the file is loaded in the ontology stage: a file that cannot be
+        used publishes the release as an invalid_artifact, after counting each
+        error of the file's own rules as a contract failure of stage ontology."""
+        if not files:
+            return None, False
+        if len(files) > 1:
+            carried = sorted(f"one from {mf.declared_service or mf.path}" for mf in files)
+            self._fail(
+                release_id,
+                ParseFailureKind.INVALID_ARTIFACT,
+                f"an install has one ontology: the release carries {', '.join(carried[:-1])} and {carried[-1]}",
+            )
+            return None, True
+        (mf,) = files
+        if not self._ontology_enabled:
+            logger.info(
+                "candidate: the ontology switch is off, so the ontology is ignored",
+                extra={"release_id": release_id, "service": mf.declared_service or mf.path},
+            )
+            return None, False
+        try:
+            with self._timings.stage(Stage.ONTOLOGY):
+                loaded = load_release_ontology(mf)
+        except InvalidOntologyError as exc:
+            for rule in exc.rule_errors:
+                self._timings.add_contract_failure("ontology", rule)
+            self._fail(release_id, ParseFailureKind.INVALID_ARTIFACT, exc.detail)
+            return None, True
+        self._progress()
+        logger.info(
+            "candidate: the release's ontology is loaded",
+            extra={
+                "release_id": release_id,
+                "service": loaded.service,
+                "ontology_release_id": loaded.release_id,
+                "sha256": loaded.sha256,
+                "declared_services": list(loaded.ontology.services()),
+            },
+        )
+        return loaded, False
 
     def _publish(
         self,

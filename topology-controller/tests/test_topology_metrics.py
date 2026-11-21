@@ -1,3 +1,4 @@
+from continuo_contracts.ontology_check import RULES
 from continuo_contracts.validate import REASONS
 from prometheus_client import generate_latest
 
@@ -68,15 +69,16 @@ def test_the_dormant_gauge_is_exported_at_zero_from_boot():
 
 
 def test_every_stage_and_reason_pair_is_exported_at_boot():
-    """Every contract failure stage with every reason the library names and the
-    two reasons of the parse's own (a manifest entry the generator cannot read, a
+    """Every contract failure stage with every reason the library names (its
+    validation's and the rules of its ontology checks) and the two reasons of
+    the parse's own (a manifest entry the generator cannot read, a
     seed whose declared columns differ from its CSV header) are exported at 0
     before any release, so a rate over a failure that has not happened yet is 0
     and not absent."""
     metrics = TopologyMetrics("topology-controller")
     assert REASONS
-    assert CONTRACT_FAILURE_STAGES == ("generate", "validate", "normalise", "hash")
-    assert CONTRACT_FAILURE_REASONS == (*REASONS, "manifest_shape", "seed_header")
+    assert CONTRACT_FAILURE_STAGES == ("generate", "validate", "normalise", "hash", "ontology")
+    assert CONTRACT_FAILURE_REASONS == (*REASONS, "manifest_shape", "seed_header", *RULES)
     for stage in CONTRACT_FAILURE_STAGES:
         for reason in CONTRACT_FAILURE_REASONS:
             assert _value(metrics, "continuo_topology_contract_failures_total", stage=stage, reason=reason) == 0.0

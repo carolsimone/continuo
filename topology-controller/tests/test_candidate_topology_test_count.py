@@ -81,6 +81,7 @@ def test_candidate_topology_carries_test_count(tmp_path):
         system_relations=_SYSTEM_RELATIONS["postgres"],
         image_tags={},
         clock=FakeClock(), memory=ScriptedMemoryProbe(0),
+        ontology_enabled=False,
     )
     handler.handle(release_id="rel-1")
 

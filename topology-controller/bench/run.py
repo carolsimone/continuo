@@ -95,10 +95,13 @@ def build_handler(
     clock: ClockPort,
     memory: MemoryProbePort,
     dialect: str = "postgres",
+    ontology_enabled: bool = False,
     progress: Callable[[], None] = lambda: None,
 ) -> tuple[CandidateManifestHandler, RecordingPublisher]:
     """The handler `main.py` builds, over `store` instead of S3, with a
-    publisher that records the outcome instead of writing to Redis."""
+    publisher that records the outcome instead of writing to Redis. The
+    estate carries no ontology, so the switch has nothing to act on unless
+    a caller adds one."""
     publisher = RecordingPublisher()
     handler = CandidateManifestHandler(
         source=S3Source(bucket=BUCKET, env=_ENV, s3_client=store, keys=estate.requests),
@@ -118,6 +121,7 @@ def build_handler(
         is_infrastructure_error=lambda exc: False,
         clock=clock,
         memory=memory,
+        ontology_enabled=ontology_enabled,
         progress=progress,
     )
     return handler, publisher

@@ -18,6 +18,7 @@ from enum import StrEnum
 from types import TracebackType
 from typing import Final
 
+from continuo_contracts.ontology_check import RULES
 from continuo_contracts.validate import REASONS
 
 from domain.contract_vocabulary import ParseFailureKind
@@ -35,7 +36,10 @@ class Stage(StrEnum):
     `contract_validation` runs inside `python_parse` and `dbt_parse`: a
     contract is checked while its bundle or manifest is parsed. So the time of
     a parse includes the `contract_generation` and `contract_validation` time of
-    the same parse."""
+    the same parse.
+
+    `ontology` runs only for a release with the ontology switch on that carries
+    an ontology: it reads the ontology file before the manifests are parsed."""
     DOWNLOAD = "download"
     DBT_PARSE = "dbt_parse"
     PYTHON_PARSE = "python_parse"
@@ -47,6 +51,7 @@ class Stage(StrEnum):
     CONTRACT_GENERATION = "contract_generation"
     CONTRACT_VALIDATION = "contract_validation"
     CANONICAL_HASHING = "canonical_hashing"
+    ONTOLOGY = "ontology"
     CONTRACT_BUNDLE = "contract_bundle"
     TOPOLOGY_ARTIFACT = "topology_artifact"
     PUBLISH = "publish"
@@ -63,14 +68,16 @@ _CONTRACT_STAGES = (
 
 # The stages a contract failure is counted under: the generation of a dbt node's
 # contract from the manifest (`generate`), the checks of the parse (`validate`),
-# the stored form of a contract (`normalise`) and its hash (`hash`).
-CONTRACT_FAILURE_STAGES = ("generate", "validate", "normalise", "hash")
+# the stored form of a contract (`normalise`), its hash (`hash`) and the ontology
+# (`ontology`: the file itself and the contracts checked against it).
+CONTRACT_FAILURE_STAGES = ("generate", "validate", "normalise", "hash", "ontology")
 
 # The reasons a contract failure is counted under: every reason the contracts
 # library's validation names, `manifest_shape` for a manifest entry the
-# generation cannot read, and `seed_header` for a column that a seed's CSV header
-# and its contract do not both have.
-CONTRACT_FAILURE_REASONS: Final = (*REASONS, "manifest_shape", "seed_header")
+# generation cannot read, `seed_header` for a column that a seed's CSV header
+# and its contract do not both have, and every rule of the library's ontology
+# checks.
+CONTRACT_FAILURE_REASONS: Final = (*REASONS, "manifest_shape", "seed_header", *RULES)
 
 # How a contract validation was answered: from the cache or by running the check.
 VALIDATION_CACHE_RESULTS = ("hit", "miss")

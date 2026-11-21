@@ -12,6 +12,7 @@ from config.config import (
     MANIFEST_LOADED_CANDIDATE_STREAM,
     log_level,
     metrics_port,
+    ontology_enabled,
     redis_acl_mode,
     validate,
     warehouse_dialect,
@@ -103,6 +104,10 @@ def main() -> None:
     dialect = warehouse_dialect()
     system_relations = warehouse_system_relations()
     logger.info("topology-controller SQL dialect: %s", dialect)
+    # Resolved once at boot, like the dialect: validate() has already refused a
+    # switch this service cannot read.
+    ontology_switch = ontology_enabled()
+    logger.info("topology-controller ontology switch: %s", "on" if ontology_switch else "off")
 
     def handle_release_requested(fields: dict) -> None:
         message = parse_release_requested(fields, S3_BUCKET)
@@ -127,6 +132,7 @@ def main() -> None:
             is_infrastructure_error=is_infrastructure,
             clock=MonotonicClock(),
             memory=ResidentMemoryProbe(),
+            ontology_enabled=ontology_switch,
             # Looked up when a release is handled, by which time the consumer
             # exists: a handler that keeps working keeps /health fresh.
             progress=candidate_consumer.refresh_heartbeat,

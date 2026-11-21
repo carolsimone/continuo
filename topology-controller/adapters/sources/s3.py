@@ -21,7 +21,9 @@ class S3Source:
     maps to exactly one ManifestFile; declared_service is propagated onto the
     ManifestFile so the handler can validate that the downloaded manifest
     actually belongs to the declared service, and kind rides along from the
-    event so the handler knows which parser to use. No S3 listing is performed.
+    event so the handler knows which parser to use. The folder that holds the
+    object (`<service>/<release_id>/<file>`) is the release that wrote it, and
+    rides along as release_id. No S3 listing is performed.
 
     A dbt manifest is fetched with the compile-extras.json that sits beside it
     (same prefix); a release whose compile wrote none has extras_path "". A
@@ -51,6 +53,7 @@ class S3Source:
             result.append(ManifestFile(
                 path=local_path, image_tag="",
                 declared_service=request.service, kind=request.kind,
+                release_id=posixpath.basename(posixpath.dirname(request.key)),
                 size_bytes=os.path.getsize(local_path),
                 extras_path=self._download_extras(request) if request.kind == ManifestKind.DBT else "",
             ))

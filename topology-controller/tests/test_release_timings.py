@@ -69,7 +69,7 @@ def test_stages_ms_names_every_stage_in_pipeline_order_and_zero_for_one_that_did
     ms = timings.stages_ms()
     assert list(ms) == ["download", "dbt_parse", "python_parse", "registry", "resolve", "rewrite",
                         "candidate_upload", "code_bundle", "contract_generation", "contract_validation",
-                        "canonical_hashing", "contract_bundle", "topology_artifact", "publish"]
+                        "canonical_hashing", "ontology", "contract_bundle", "topology_artifact", "publish"]
     assert (ms["resolve"], ms["python_parse"]) == (660, 0)
 
 
@@ -143,8 +143,8 @@ def test_the_contract_stages_exist():
     assert (Stage.CONTRACT_GENERATION.value, Stage.CONTRACT_VALIDATION.value, Stage.CANONICAL_HASHING.value,
             Stage.CONTRACT_BUNDLE.value) == (
         "contract_generation", "contract_validation", "canonical_hashing", "contract_bundle")
-    assert [stage.value for stage in Stage][-6:] == [
-        "contract_generation", "contract_validation", "canonical_hashing", "contract_bundle",
+    assert [stage.value for stage in Stage][-7:] == [
+        "contract_generation", "contract_validation", "canonical_hashing", "ontology", "contract_bundle",
         "topology_artifact", "publish"]
 
 
@@ -169,6 +169,13 @@ def test_contract_failures_and_cache_add_up():
     timings.add_validation_cache(False)
     assert timings.contract_failures == {("validate", "column_type"): 2, ("hash", "unhashable"): 1}
     assert timings.validation_cache == {"hit": 1, "miss": 2}
+
+
+def test_an_ontology_failure_counts_under_the_ontology_stage_and_a_rule_of_the_library():
+    timings = _timings()
+    timings.add_contract_failure("ontology", "ontology")
+    timings.add_contract_failure("ontology", "contract")
+    assert timings.contract_failures == {("ontology", "ontology"): 1, ("ontology", "contract"): 1}
 
 
 def test_a_contract_failure_counts_only_under_a_stage_the_metrics_export():
