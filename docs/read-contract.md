@@ -112,7 +112,8 @@ release.
 
 The `ontology` value is `null` when the install's ontology switch is off, and
 then no contract's `document` holds a binding or an ontology link. With the
-switch on it is an object:
+switch on it is an object with the keys below. The `ontology` key is outside the
+read set, so this shape is just as unstable: it may change in any release.
 
 | Key | Type | Meaning |
 |---|---|---|

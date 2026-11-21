@@ -13,6 +13,12 @@ that names a thing the ontology does not have rejects the release.
 The ontology is off by default. With it off, continuo ignores the ontology and
 keeps no binding. [The switch](#the-switch) says how to turn it on.
 
+Three groups of people take part:
+
+- The operator of the install turns the switch on.
+- The owner of the ontology releases the ontology file.
+- Each service team writes bindings in its contracts and adds the check to its CI.
+
 This page starts with an example. The rest says how each part works:
 
 - [an example](#an-example)
@@ -50,7 +56,9 @@ entities:
 ```
 
 `principals` says who acts on data. Here that is one domain with its owner team,
-and two services that name their domain. `entities` says what the data is
+and two services that name their domain. The `kind` of a service in this file is
+the ontology's own word (`dbt` or `python`). The release kind of a Python service
+in continuo is `python-odcs`, and `python` is refused. `entities` says what the data is
 about. Here that is one thing, `Order`. It belongs to the domain `shop`, it is
 identified by `order_id`, and it has one property, `amount_eur`.
 
@@ -342,9 +350,10 @@ release. A warning or information does not.
 
 ## Checking bindings in CI
 
-Add the check to the CI of each service that writes bindings. It runs the same
-rules as a release for the part of the service it reads, and prints what a
-release would say about each binding. Do it before you release: a mistake then
+Add the check to the CI of each service that writes bindings. It runs four of the
+release's rules (`contract`, `coverage`, `quality` and `privacy`) over the
+contracts of the service, and prints what a release would say about each
+binding. Do it before you release: a mistake then
 fails the pull request, and a release is never rejected for it.
 
 The check needs the ontology file. Take it from your company's ontology
@@ -357,7 +366,7 @@ of [the dbt project](contracts.md#check-a-dbt-project-in-ci):
 
 ```bash
 continuo-contracts dbt check services/shop --service shop-dbt \
-  --ontology ontology/ontology.yaml --dbt .venv-dbt/bin/dbt
+  --ontology <ontology file> --dbt .venv-dbt/bin/dbt
 ```
 
 **A Python service.** Install `continuo-python-runtime`, at the version your
@@ -366,26 +375,12 @@ install uses (see [the CI steps](contracts.md#the-ci-steps)), and add
 
 ```bash
 continuo-runtime validate contracts --dialect postgres \
-  --service shop-py --ontology ontology/ontology.yaml
+  --service shop-py --ontology <ontology file>
 ```
 
-`--ontology` needs `--service`, the name your service has in the ontology.
-
-In a GitHub workflow, get the ontology file from its repository with a second
-checkout, and pin the commit:
-
-```yaml
-steps:
-  - uses: actions/checkout@v4
-  - uses: actions/checkout@v4
-    with:
-      repository: acme/ontology
-      ref: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567  # a commit of the ontology repository
-      path: ontology
-  - run: |
-      continuo-runtime validate contracts --dialect postgres \
-        --service shop-py --ontology ontology/ontology.yaml
-```
+`continuo-runtime validate` needs `--service` whenever it gets `--ontology`: it is
+the name your service has in the ontology. The dbt check takes the name of the
+project folder, with `_` written `-`, unless you pass `--service`.
 
 The two commands print each finding at its level, and exit with 1 when one is an
 error. A warning does not fail them. A file with an error of its own stops the

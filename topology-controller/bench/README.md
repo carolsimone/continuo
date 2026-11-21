@@ -71,7 +71,9 @@ of that child's stderr and exits 1.
 
 `bench/estate.py` builds the S3 objects of one release from `random.Random(seed)`
 (seed 1 unless a caller passes another), so the same arguments give the same
-bytes and every baseline parses the same estate.
+bytes for one version of the harness and of the pinned libraries, and two
+baselines of that version parse the same estate. The Python bundle's producer
+stamp names the runtime and library versions, so it changes with them.
 
 - 10 dbt services, `svc-0` to `svc-9`, with the models split evenly, and one
   python service, `svc-py`, of one node per ten models. `svc-py` is written as
@@ -90,6 +92,20 @@ bytes and every baseline parses the same estate.
   `dbt parse` of the finance service of continuo-demo (commit `3ab3a7e`) wrote
   with dbt-core 1.12.0b1 and dbt-postgres 1.10.0, the versions continuo's dbt
   images pin. The fixture stays the same from one baseline to the next.
+
+## Memory
+
+`peak_rss_bytes` and `max_rss_bytes` are the resident memory of the benchmark
+process, not of a pod. The process keeps the release's S3 objects in memory (51 MiB
+at 10,000 models with 20 columns, 60 MiB with `--ontology`, 79 MiB with 40 columns),
+which a pod keeps on disk, and it holds the interpreter and the libraries too.
+
+On a Mac host (Apple M4 Pro), a run of 10,000 models with 40 columns peaked at
+1,017 MiB in the cold pass and 1,083 MiB in the warm pass. With 20 columns it
+peaked at 783 MiB cold and 839 MiB warm, and with 20 columns and `--ontology` at
+1,003 MiB cold and 1,052 MiB warm. The chart's memory limit for topology-controller
+is 1 GiB (`values.yaml`). A Mac host and a Linux pod do not use memory in the same
+way, so these are figures to compare runs with, not what a pod uses.
 
 ## The ontology estate
 
