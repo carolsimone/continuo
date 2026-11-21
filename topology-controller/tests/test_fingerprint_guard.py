@@ -226,24 +226,30 @@ def test_every_field_of_a_stored_dbt_contract_is_classified(variant):
 
 
 @pytest.mark.parametrize("resource_type", ["seed", "snapshot"])
-def test_every_field_of_an_enforced_seed_and_snapshot_with_declared_columns_is_classified(tmp_path, resource_type):
+def test_every_field_of_a_seed_and_a_snapshot_with_declared_columns_is_classified(tmp_path, resource_type):
     """A seed or a snapshot that declares described and tagged columns with data types, with
-    not_null and unique tests and an enforced contract, stored as the bundle stores it, holds the
-    property fields the fixture seeds lack, and each is classified for its family as moving the
-    contract."""
+    not_null and unique tests, stored as the bundle stores it, holds the property fields the
+    fixture seeds lack, and each is classified for its family as moving the contract. The seed's
+    contract is enforced, which dbt ignores for a seed; a snapshot's is not, because the contracts
+    library refuses an enforced contract on a snapshot."""
     family = f"dbt-{resource_type}"
     node = enforced_dbt_node(resource_type, described=True)
+    if resource_type == "snapshot":
+        node["config"]["contract"] = {"enforced": False}
     _, (stored,) = stored_dbt_contracts(str(tmp_path), node, *column_tests(node))
     assert continuo_values(stored.document["customProperties"])["kind"] == family
 
     names = _odcs_inputs(stored.document)
 
-    assert {
-        "odcs.custom.contractEnforced", "odcs.description.purpose", "odcs.schema.description",
+    expected = {
+        "odcs.description.purpose", "odcs.schema.description",
         "odcs.schema.properties.name", "odcs.schema.properties.physicalType", "odcs.schema.properties.logicalType",
         "odcs.schema.properties.description", "odcs.schema.properties.tags",
         "odcs.schema.properties.required", "odcs.schema.properties.unique",
-    } <= names
+    }
+    if resource_type == "seed":
+        expected.add("odcs.custom.contractEnforced")
+    assert expected <= names
     missing = {}
     for name in sorted(names):
         entry = fingerprints.classify(family, name)
