@@ -49,14 +49,18 @@ const (
 	// and none is above two minutes: a hang costs one wait, which fails with a
 	// message naming what it waited for and the ceiling.
 	//
-	// ontologyOverallBudget cuts the whole test short when it runs slow.
+	// ontologyOverallBudget is the deadline of the context the test passes to
+	// its waits. A wait that is already running when it passes ends at its own
+	// ceiling, two minutes or less, after it.
 	ontologyOverallBudget = 10 * time.Minute
 
-	// ontologyReleaseBudget bounds a release from its post to promoted or
-	// rejected, the validation request included. Measured in CI: a python
-	// release 18 to 32 s, a release rejected for an invalid contract 5 s. The
-	// ontology release has no validation and no measurement of its own, so it
-	// takes the python release's.
+	// ontologyReleaseBudget bounds each wait of a release: the py-probe release
+	// waits for its validation request and then for promoted, each within it,
+	// and a release waits for promoted or for rejected within it. Measured in
+	// CI: a python release takes 18 to 32 s from its post to promoted and
+	// published, a release rejected for an invalid contract 5 s. The ontology
+	// release has no validation and no measurement of its own, so it takes the
+	// python release's.
 	ontologyReleaseBudget = 2 * time.Minute
 
 	// ontologySwitchBudget bounds the three services restarting and answering
@@ -129,15 +133,18 @@ var pyFixtureNodes = []string{pyProbeUniqueID, pyCsvUniqueID, pyAPIUniqueID, pyB
 //     and leaves the published contracts and the released ontology as they were;
 //  6. a dbt service released as kind ontology is refused with 409.
 //
-// Running time: about 3 minutes, the steps measured in CI added up (switch on
-// 23 s, py-probe release 32 s, ontology release 19 s, rejection 5 s, quiet
-// window 15 s, switch off 23 s: 117 s) plus the setup.
+// Running time: about 3 minutes. Measured in CI: a restart of services 23 s (the
+// maintenance test's, taken for the switch on and for the switch off), the
+// py-probe release 32 s and a rejection 5 s. Estimated: the ontology release,
+// 19 s, from the nearest measurement (a python release, 18.5 s). Fixed: the
+// quiet window, 15 s. Together 117 s, plus the setup.
 func TestE2E_Ontology(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
-	// A run that outlasts the overall budget is cut here, and every wait below
-	// has a ceiling of its own.
+	// The waits below take this context, which ends after the overall budget; a
+	// poll already running at that moment finishes at its own ceiling, two
+	// minutes or less, and every wait has a ceiling of its own.
 	ctx, cancel := context.WithTimeout(context.Background(), ontologyOverallBudget)
 	defer cancel()
 
@@ -530,7 +537,11 @@ func setOntology(t *testing.T, ctx context.Context, on bool) {
 		}()
 	}
 	wg.Wait()
-	require.NoError(t, errors.Join(relaunched...), "ontology=%t: relaunching the services did not finish within %s", on, ontologySwitchBudget)
+	outcome := "failed"
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		outcome = fmt.Sprintf("did not finish within %s", ontologySwitchBudget)
+	}
+	require.NoError(t, errors.Join(relaunched...), "ontology=%t: relaunching the services %s", on, outcome)
 
 	down := make([]string, len(ontologyProcesses))
 	for i, p := range ontologyProcesses {
@@ -566,13 +577,16 @@ func answersHealth(ctx context.Context, url string) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-// relaunch stops the service and starts it again with its setting for on.
+// relaunch stops the service and starts it again with its setting for on. A
+// process that does not run fails the switch going on, so a wrong process name
+// is reported at once; the switch going off starts the service whether or not
+// it runs, so a service that is down comes back.
 func (p ontologyProcess) relaunch(ctx context.Context, on bool) error {
 	if p.processName == "" {
 		if out, err := exec.CommandContext(ctx, "docker", "restart", "-t", "20", p.container).CombinedOutput(); err != nil { //nolint:gosec // fixed container names
 			return fmt.Errorf("docker restart %s: %v: %s", p.container, err, out)
 		}
-	} else if err := stopProcess(ctx, p.container, p.processName); err != nil {
+	} else if err := stopProcess(ctx, p.container, p.processName, on); err != nil {
 		return err
 	}
 	cmd := exec.CommandContext(ctx, "docker", "exec", "-d", "-e", p.env(on), p.container, "bash", "-c", p.command) //nolint:gosec // fixed arguments
@@ -582,15 +596,14 @@ func (p ontologyProcess) relaunch(ctx context.Context, on bool) error {
 	return nil
 }
 
-// stopProcess ends the process named name in container with SIGTERM and waits
-// ontologyStopGrace for it to exit, then ends it with SIGKILL and waits
-// ontologyKillGrace. It fails when no process of that name runs in the
-// container, so a wrong name is reported at once instead of leaving the old
-// process answering, and when the process outlives the kill. pkill and pgrep
-// match the process's own name exactly, so the `go test` of this suite, which
-// runs in the same container, is not touched.
-func stopProcess(ctx context.Context, container, name string) error {
-	run := func(args ...string) (matched bool, err error) {
+// processProbe runs one of pgrep, pkill and pkill -KILL against a container's
+// process and reports whether a process matched: false with a nil error is the
+// tools' exit 1, and any other failure (a missing tool, exit 127) is an error.
+type processProbe func(args ...string) (matched bool, err error)
+
+// dockerProbe runs the probes inside container with docker exec.
+func dockerProbe(ctx context.Context, container string) processProbe {
+	return func(args ...string) (bool, error) {
 		out, err := exec.CommandContext(ctx, "docker", append([]string{"exec", container}, args...)...).CombinedOutput() //nolint:gosec // fixed container and process names
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && exit.ExitCode() == 1 {
@@ -601,20 +614,39 @@ func stopProcess(ctx context.Context, container, name string) error {
 		}
 		return true, nil
 	}
-	matched, err := run("pgrep", "-x", name)
+}
+
+// stopProcess ends the process named name in container with SIGTERM and waits
+// ontologyStopGrace for it to exit, then ends it with SIGKILL and waits
+// ontologyKillGrace. It fails when the process outlives the kill. When
+// mustRun is true it also fails when no process of that name runs, so a wrong
+// name is reported at once instead of leaving the old process answering; when
+// it is false no process is the stopped state the caller wants, and it returns
+// nil. pkill and pgrep match the process's own name exactly, so the `go test`
+// of this suite, which runs in the same container, is not touched.
+func stopProcess(ctx context.Context, container, name string, mustRun bool) error {
+	return stopProcessWith(ctx, dockerProbe(ctx, container), container, name, mustRun)
+}
+
+// stopProcessWith is stopProcess over the probe that reaches the container.
+func stopProcessWith(ctx context.Context, probe processProbe, container, name string, mustRun bool) error {
+	matched, err := probe("pgrep", "-x", name)
 	if err != nil {
 		return err
 	}
 	if !matched {
-		return fmt.Errorf("no process named %q runs in %s", name, container)
+		if mustRun {
+			return fmt.Errorf("no process named %q runs in %s", name, container)
+		}
+		return nil
 	}
-	if _, err := run("pkill", "-x", name); err != nil {
+	if _, err := probe("pkill", "-x", name); err != nil {
 		return err
 	}
 	deadline := time.Now().Add(ontologyStopGrace)
 	killed := false
 	for {
-		running, err := run("pgrep", "-x", name)
+		running, err := probe("pgrep", "-x", name)
 		if err != nil {
 			return err
 		}
@@ -625,7 +657,7 @@ func stopProcess(ctx context.Context, container, name string) error {
 			if killed {
 				return fmt.Errorf("process %q still runs in %s %s after SIGKILL", name, container, ontologyKillGrace)
 			}
-			if _, err := run("pkill", "-KILL", "-x", name); err != nil {
+			if _, err := probe("pkill", "-KILL", "-x", name); err != nil {
 				return err
 			}
 			killed = true
@@ -652,5 +684,73 @@ func logOntologyProcessTails(t *testing.T) {
 			continue
 		}
 		t.Logf("last lines of %s:%s:\n%s", p.container, p.log, out)
+	}
+}
+
+// scriptedProbe answers the probes of stopProcessWith from a list of answers
+// per command, and records the commands it ran.
+type scriptedProbe struct {
+	pgrep []bool // the answers of successive `pgrep`s, the last one repeating
+	ran   []string
+}
+
+func (p *scriptedProbe) probe(args ...string) (bool, error) {
+	p.ran = append(p.ran, strings.Join(args, " "))
+	if args[0] != "pgrep" {
+		return true, nil
+	}
+	answer := p.pgrep[0]
+	if len(p.pgrep) > 1 {
+		p.pgrep = p.pgrep[1:]
+	}
+	return answer, nil
+}
+
+// With the switch going on, a process that does not run is an error that names
+// it and the container, and nothing is killed: a wrong process name would
+// otherwise leave the old process answering.
+func TestStopProcess_NoProcessFailsWhenTheSwitchGoesOn(t *testing.T) {
+	probe := &scriptedProbe{pgrep: []bool{false}}
+
+	err := stopProcessWith(context.Background(), probe.probe, "catalog", "catalog", true)
+
+	require.EqualError(t, err, `no process named "catalog" runs in catalog`)
+	assert.Equal(t, []string{"pgrep -x catalog"}, probe.ran, "nothing is killed")
+}
+
+// With the switch going off, a process that does not run is already stopped, so
+// the restore goes on to relaunch it: a catalog that crashed at startup, or
+// that is still compiling, must not stay down or come up with the old setting.
+func TestStopProcess_NoProcessIsStoppedWhenTheSwitchGoesOff(t *testing.T) {
+	probe := &scriptedProbe{pgrep: []bool{false}}
+
+	err := stopProcessWith(context.Background(), probe.probe, "catalog", "catalog", false)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"pgrep -x catalog"}, probe.ran, "nothing is killed")
+}
+
+// A running process is ended with SIGTERM and the call returns once it has
+// exited, whichever way the switch goes.
+func TestStopProcess_AProcessThatRunsIsTerminated(t *testing.T) {
+	for _, mustRun := range []bool{true, false} {
+		probe := &scriptedProbe{pgrep: []bool{true, false}}
+
+		err := stopProcessWith(context.Background(), probe.probe, "catalog", "catalog", mustRun)
+
+		require.NoError(t, err, "mustRun=%t", mustRun)
+		assert.Equal(t, []string{"pgrep -x catalog", "pkill -x catalog", "pgrep -x catalog"}, probe.ran, "mustRun=%t", mustRun)
+	}
+}
+
+// A probe that fails (a missing tool, exit 127) is an error whichever way the
+// switch goes.
+func TestStopProcess_AFailingProbeIsAnError(t *testing.T) {
+	for _, mustRun := range []bool{true, false} {
+		failing := func(...string) (bool, error) { return false, errors.New("pgrep: not found") }
+
+		err := stopProcessWith(context.Background(), failing, "catalog", "catalog", mustRun)
+
+		require.EqualError(t, err, "pgrep: not found", "mustRun=%t", mustRun)
 	}
 }
