@@ -9,8 +9,9 @@ installed dbt package, dormant nodes, a seed without tags and a table no node bu
 
 The committed files under tests/fixtures/topology_golden/ hold these outputs, one file per release.
 `contract_bundle_digest(name)` captures the contract bundle the same handler writes for the release
-with the ontology switch off, as one digest; tests/fixtures/contract_bundle_digests.json holds them
-all.
+with the ontology switch off, as one `sha256:<hex>` digest; tests/fixtures/contract_bundle_digests.json
+holds them all. The prefix keeps a secret scanner from reading a bare 64-character hex value next to a
+key such as `access` as a credential.
 
     uv run --frozen python -m tests.topology_golden --write
 
@@ -121,11 +122,11 @@ def release_outputs(name: str) -> dict[str, Any]:
 
 
 def contract_bundle_digest(name: str, *, ontology_enabled: bool = False) -> str:
-    """The SHA-256 of the canonical JSON of the contract bundle the handler writes for release `name`,
-    without its `continuo_contracts` and `timings` keys: the version of the library does not show, so
-    a new version that stores every contract as before leaves the digest where it was, and the
-    validation cache's counts, which depend on the releases the process handled before, do not
-    either."""
+    """The digest of the canonical JSON of the contract bundle the handler writes for release `name`,
+    as `sha256:<hex>` (the form every content hash takes), without the bundle's `continuo_contracts`
+    and `timings` keys: the version of the library does not show, so a new version that stores every
+    contract as before leaves the digest where it was, and the validation cache's counts, which
+    depend on the releases the process handled before, do not either."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         publisher, bundle_writer = MagicMock(), RecordingContractBundleWriter()
         build_handler(
@@ -137,7 +138,7 @@ def contract_bundle_digest(name: str, *, ontology_enabled: bool = False) -> str:
         raise RuntimeError(f"release {name!r} was not published ok: {publisher.publish_failed.call_args_list}")
     left_out = {"continuo_contracts", "timings"}
     document = {key: value for key, value in bundle_writer.document.items() if key not in left_out}
-    return hashlib.sha256(canonical_json(document)).hexdigest()
+    return f"sha256:{hashlib.sha256(canonical_json(document)).hexdigest()}"
 
 
 def golden_path(name: str) -> Path:

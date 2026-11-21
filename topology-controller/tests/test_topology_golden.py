@@ -1,4 +1,5 @@
 import json
+import re
 
 import pytest
 
@@ -58,6 +59,13 @@ def test_the_golden_directory_holds_one_file_per_release():
 
 def test_the_contract_bundle_digests_name_every_release():
     assert sorted(json.loads(DIGESTS_PATH.read_text(encoding="utf-8"))) == sorted(GOLDEN)
+
+
+def test_every_contract_bundle_digest_is_a_prefixed_sha256_value():
+    """A bare 64-character hex value beside a key such as `access` reads as a credential to a secret
+    scanner, so each digest is stored as `sha256:<hex>`."""
+    committed = json.loads(DIGESTS_PATH.read_text(encoding="utf-8"))
+    assert {name: value for name, value in committed.items() if not re.fullmatch(r"sha256:[0-9a-f]{64}", value)} == {}
 
 
 @pytest.mark.parametrize("name", GOLDEN)
