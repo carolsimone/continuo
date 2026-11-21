@@ -164,6 +164,32 @@ func TestRunRepository_ManifestKindRoundTrips(t *testing.T) {
 	assert.Equal(t, release.ManifestKindPythonODCS, got.ManifestKind())
 }
 
+// TestRunRepository_SavesAnOntologyRun proves the manifest_kind column accepts
+// the kind ontology and returns it unchanged, and still refuses a kind no
+// release can carry.
+func TestRunRepository_SavesAnOntologyRun(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewRunRepository(db, nil)
+	ctx := context.Background()
+
+	r := pipeline.NewCandidate("rel-ontology", "company-ontology", "img:1", false, false, "acme/ontology", "cafebabe",
+		release.ManifestKindOntology, time.Unix(100, 0).UTC())
+	require.NoError(t, repo.Save(ctx, r))
+
+	got, err := repo.Get(ctx, "rel-ontology")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, release.ManifestKindOntology, got.ManifestKind())
+
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO release_pipeline_runs
+		  (run_id, status, image_tags, created_at, repo, commit_sha, changed_service, manifest_kind, run_kind)
+		VALUES ('rel-bogus', 'received', '{}', $1, 'acme/x', 'cafebabe', 'svc', 'bogus', 'candidate')`,
+		time.Unix(100, 0).UTC())
+	require.Error(t, err, "the constraint accepts only the kinds a release can carry")
+	assert.Contains(t, err.Error(), "release_pipeline_runs_manifest_kind_check")
+}
+
 // TestRunRepository_AnOldPythonRunStillLoads proves a run row stored with the
 // python manifest kind, a kind no new release or verification can name, still
 // loads: the repository rehydrates the stored kind as it is and never parses

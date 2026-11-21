@@ -264,6 +264,45 @@ func TestAdvanceQueue_PythonODCSRelease_SkipsCompile_EmitsReleaseRequested(t *te
 		"release.requested carries the run's assembled image tags: topology-controller joins exactly these onto every node")
 }
 
+// The ontology service ships its ontology file before the release is
+// requested, so its release has no compile leg: it activates straight into
+// Parsing, and release.requested names the file as the service's artifact.
+func TestAdvanceQueue_AnOntologyReleaseGoesStraightToParsing(t *testing.T) {
+	deps, store := newDeps(time.Unix(200, 0).UTC())
+	deps.Bucket = "b"
+	store.SeedServiceProd(release.NewServiceProd("svc-dbt", "rOld", "s3://b/svc-dbt/rOld/manifest.json", "t-old", release.ManifestKindDbt, time.Unix(0, 0)))
+	store.SeedRelease(pipeline.NewCandidate("rOnt", "company-ontology", "img:1", false, false, "acme/ontology", "cafebabe",
+		release.ManifestKindOntology, deps.Clock.Now()))
+
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+
+	r, _ := store.GetRelease("rOnt")
+	assert.Equal(t, release.ManifestKindOntology, r.ManifestKind())
+	assert.Equal(t, pipeline.StatusParsing, r.Status(), "an ontology release has no compile leg")
+
+	entries := outboxEntries(store)
+	require.Len(t, entries, 1)
+	assert.Equal(t, streams.ReleaseRequestedV1, entries[0].StreamName, "no compile.requested for an ontology release")
+
+	var p struct {
+		ManifestKeys []struct {
+			Service string `json:"service"`
+			S3URI   string `json:"s3_uri"`
+			Kind    string `json:"kind"`
+		} `json:"manifest_keys"`
+	}
+	require.NoError(t, json.Unmarshal(entries[0].Payload, &p))
+	kinds := map[string]string{}
+	uris := map[string]string{}
+	for _, k := range p.ManifestKeys {
+		kinds[k.Service] = k.Kind
+		uris[k.Service] = k.S3URI
+	}
+	assert.Equal(t, map[string]string{"company-ontology": "ontology", "svc-dbt": "dbt"}, kinds)
+	assert.Equal(t, "s3://b/company-ontology/rOnt/ontology.yaml", uris["company-ontology"])
+	assert.Equal(t, "s3://b/svc-dbt/rOld/manifest.json", uris["svc-dbt"])
+}
+
 func TestAdvanceQueue_DbtRelease_StillCompiles(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"

@@ -31,10 +31,10 @@ import (
 //     manifest-key set is assembled again in HandleCompileResult (ok path),
 //     reading live service_prod a second time when the release advances to
 //     Parsing.
-//   - python-odcs: no compile leg exists — CI already packaged and uploaded
-//     the odcs-bundle.json before POST /releases — so the release goes straight
-//     to TransitionToParsing and emits release.requested:v1 with the set
-//     assembled here.
+//   - python-odcs and ontology: no compile leg exists — CI already uploaded
+//     the odcs-bundle.json or the ontology.yaml before POST /releases — so the
+//     release goes straight to TransitionToParsing and emits
+//     release.requested:v1 with the set assembled here.
 //
 // A run of the kind python, which only a row an earlier continuo version
 // stored holds, is never activated: it is rejected invalid_artifact
@@ -124,11 +124,12 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 	set := assembleFor(ctx, u, d.Logger, next, pointers, d.Bucket)
 	next.SetAssembledImageTags(set.ImageTags)
 
-	if next.ManifestKind().IsPython() {
-		// A python release has no compile leg: CI packaged and uploaded the
-		// contract bundle before POST /releases, so activation goes straight
-		// to Parsing and requests the manifest load with keys assembled from
-		// the same live service_prod read the activation guard used.
+	if !next.ManifestKind().HasCompileLeg() {
+		// A release of any kind but dbt has no compile leg: CI uploaded its
+		// artifact (the contract bundle or the ontology file) before
+		// POST /releases, so activation goes straight to Parsing and requests
+		// the manifest load with keys assembled from the same live
+		// service_prod read the activation guard used.
 		if err := next.TransitionToParsing(now); err != nil {
 			return fmt.Errorf("transition to parsing: %w", err)
 		}

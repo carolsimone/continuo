@@ -14,8 +14,8 @@ import (
 
 // emitReleaseRequested maps the assembled manifest keys onto the wire payload
 // and writes the release.requested:v1 outbox row. Shared by the compile-ok path
-// (dbt) and AdvanceQueue's skip-compile activation branch (python-odcs) so the two
-// emission sites cannot drift. imageTags is the run's assembled map; a nil map
+// (dbt) and AdvanceQueue's skip-compile activation branch (python-odcs and
+// ontology) so the two emission sites cannot drift. imageTags is the run's assembled map; a nil map
 // is sent as an empty object so the key is always present.
 func emitReleaseRequested(ctx context.Context, u uow.UnitOfWork, releaseID string, keys []release.ManifestKey, imageTags map[string]string) error {
 	manifestKeys := make([]pkgevents.ManifestKey, len(keys))
