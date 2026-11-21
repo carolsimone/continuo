@@ -3,7 +3,17 @@ import json
 import pytest
 
 from tests.fingerprint_fixtures import MANIFESTS_DIR
-from tests.topology_golden import FIXTURES, GOLDEN, GOLDEN_DIR, MANIFEST_RELEASES, golden_path, golden_text, release_outputs
+from tests.topology_golden import (
+    DIGESTS_PATH,
+    FIXTURES,
+    GOLDEN,
+    GOLDEN_DIR,
+    MANIFEST_RELEASES,
+    contract_bundle_digest,
+    golden_path,
+    golden_text,
+    release_outputs,
+)
 
 
 def _first_difference(actual: str, committed: str) -> str:
@@ -44,3 +54,17 @@ def test_every_fixture_manifest_is_in_a_golden_release():
 
 def test_the_golden_directory_holds_one_file_per_release():
     assert sorted(path.name for path in GOLDEN_DIR.glob("*")) == sorted(f"{name}.json" for name in GOLDEN)
+
+
+def test_the_contract_bundle_digests_name_every_release():
+    assert sorted(json.loads(DIGESTS_PATH.read_text(encoding="utf-8"))) == sorted(GOLDEN)
+
+
+@pytest.mark.parametrize("name", GOLDEN)
+def test_the_switch_off_keeps_every_golden(name):
+    """With the ontology switch off, the contract bundle of each fixture release is the one it was
+    before an ontology could be released: its stored contracts are hashed with their ontology part
+    taken away, and its `ontology` value is null. The digest committed for the release is the one
+    the bundle had before, with the version of the library left out."""
+    committed = json.loads(DIGESTS_PATH.read_text(encoding="utf-8"))
+    assert contract_bundle_digest(name, ontology_enabled=False) == committed[name]

@@ -32,7 +32,7 @@ from service.contract_bundle import (
 from service.contracts_library import LIBRARY_VERSION
 from service.errors import ContractGenerationError
 from service.manifest_parsers import parser_for
-from service.ontology_binding import ReleaseOntology, load_release_ontology
+from service.ontology_binding import ReleaseOntology, bind_contract, load_release_ontology, ontology_envelope
 from service.ports import (
     CandidatePublisherPort,
     ClockPort,
@@ -202,6 +202,14 @@ class CandidateManifestHandler:
     off the file is ignored and one line at INFO says so. Two ontology manifests
     in one release are an invalid_artifact whatever the switch says.
 
+    Each contract is kept in the form bind_contract gives its stored one: with
+    the switch off its ontology part (bindings and links) is taken away, so a
+    contract that writes bindings hashes as one that writes none; with the switch
+    on and no ontology it is kept as written; with an ontology a contract of a
+    service the ontology declares is filled in from it. The contract bundle's
+    ontology value is null with the switch off and otherwise names the ontology
+    the release used.
+
     dialect is the sqlglot dialect of the warehouse the install targets,
     supplied by the composition root from the configured engine. It governs
     both dependency resolution and the candidate-schema rewrite, so the
@@ -353,7 +361,7 @@ class CandidateManifestHandler:
         # The ontology declares no node: it never reaches the parse loop below.
         ontology_files = [mf for mf in manifests if mf.kind == ManifestKind.ONTOLOGY]
         manifests = [mf for mf in manifests if mf.kind != ManifestKind.ONTOLOGY]
-        _, ended = self._read_ontology(release_id, ontology_files)
+        release_ontology, ended = self._read_ontology(release_id, ontology_files)
         if ended:
             return
         if not manifests:
@@ -361,7 +369,10 @@ class CandidateManifestHandler:
                 "candidate: no manifest files found — publishing empty topology",
                 extra={"release_id": release_id},
             )
-            self._publish(release_id, topology=[], code_bundle_uri="", contracts=[], python_provenance={})
+            self._publish(
+                release_id, topology=[], code_bundle_uri="", contracts=[], python_provenance={},
+                ontology=self._ontology_value(release_ontology),
+            )
             return
 
         all_nodes = []
@@ -599,6 +610,9 @@ class CandidateManifestHandler:
                 contracts = store_contracts(
                     [node for node in all_nodes if node.unique_id not in shared], reads, self._system_relations,
                     progress=self._progress, timings=self._timings,
+                    bind=lambda stored, node: bind_contract(
+                        stored, enabled=self._ontology_enabled, release_ontology=release_ontology,
+                    ),
                 )
                 record.add(contracts=len(contracts))
         except Exception as exc:
@@ -655,7 +669,12 @@ class CandidateManifestHandler:
         self._publish(
             release_id, topology=topology, code_bundle_uri=code_bundle_uri,
             contracts=contracts, python_provenance=python_provenance,
+            ontology=self._ontology_value(release_ontology),
         )
+
+    def _ontology_value(self, release_ontology: ReleaseOntology | None) -> dict[str, Any] | None:
+        """The `ontology` value of this release's contract bundle (see ontology_envelope)."""
+        return ontology_envelope(enabled=self._ontology_enabled, release_ontology=release_ontology, findings=())
 
     def _read_ontology(
         self, release_id: str, files: Sequence[ManifestFile],
@@ -713,8 +732,10 @@ class CandidateManifestHandler:
         code_bundle_uri: str,
         contracts: Sequence[StoredContract],
         python_provenance: Mapping[str, Mapping[str, Any]],
+        ontology: Mapping[str, Any] | None,
     ) -> None:
-        """Write the release's contract bundle, then its topology artifact, then
+        """Write the release's contract bundle, which names the ontology the release
+        used (null with the ontology switch off), then its topology artifact, then
         publish the references to both with the durations of the parse and the
         stored bundle's count of contracts by family, which the writer returns:
         a bundle another parse of the release stored first is the one catalog
@@ -730,6 +751,7 @@ class CandidateManifestHandler:
                     contracts=contracts,
                     provenance=python_provenance,
                     timings=self._timings.bundle_timings(),
+                    ontology=ontology,
                 )
                 contract_bundle = self._contract_bundle_writer.write(
                     tenant_id=DEFAULT_TENANT_ID, release_id=release_id, document=bundle_document,
