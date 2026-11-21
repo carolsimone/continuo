@@ -187,6 +187,9 @@ func TestLoad_ReadsOntologyEnabled(t *testing.T) {
 
 func TestLoad_OntologyEnabledDefaultsToOffWhenUnset(t *testing.T) {
 	setRequiredEnv(t)
+	// t.Setenv records the variable's original value, so the test's end restores
+	// it after the unset below.
+	t.Setenv("ONTOLOGY_ENABLED", "")
 	require.NoError(t, os.Unsetenv("ONTOLOGY_ENABLED"))
 	v := &pkgconfig.Validator{}
 	assert.False(t, Load(v).OntologyEnabled)

@@ -220,6 +220,15 @@ func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) er
 	return u.Commit()
 }
 
+// kindChangeRefusalText is the refusal for a release of a service whose
+// service_prod row holds the kind stored, when the release's kind is on the
+// other side of the line between the ontology and the node kinds. Intake
+// answers it as a conflict and activation ends the run with it as its detail.
+func kindChangeRefusalText(service string, stored release.ManifestKind) string {
+	return fmt.Sprintf("service %q is released as kind %q: a service cannot change between kind %q and a node kind",
+		service, stored, release.ManifestKindOntology)
+}
+
 // refuseOntologyConflict returns ErrOntologyServiceConflict when a new release
 // of kind for service breaks the rules of the ontology service: the service is
 // released with a kind on the other side of the line between the ontology and
@@ -233,9 +242,8 @@ func refuseOntologyConflict(ctx context.Context, u uow.UnitOfWork, service strin
 	isOntology := kind == release.ManifestKindOntology
 	if stored != nil && (stored.ManifestKind() == release.ManifestKindOntology) != isOntology {
 		return refusal{
-			text: fmt.Sprintf("service %q is released as kind %q: a service cannot change between kind %q and a node kind",
-				service, stored.ManifestKind(), release.ManifestKindOntology),
-			as: ErrOntologyServiceConflict,
+			text: kindChangeRefusalText(service, stored.ManifestKind()),
+			as:   ErrOntologyServiceConflict,
 		}
 	}
 	if !isOntology {

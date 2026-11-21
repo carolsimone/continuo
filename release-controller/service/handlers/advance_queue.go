@@ -38,7 +38,10 @@ import (
 //
 // A run of the kind python, which only a row an earlier continuo version
 // stored holds, is never activated: it is rejected invalid_artifact
-// (rejectStoredPythonRun) and the run behind it is activated instead.
+// (rejectStoredPythonRun) and the run behind it is activated instead. So is a
+// run whose kind is on the other side of the line between the ontology and the
+// node kinds from its service's service_prod pointer: it is rejected
+// invalid_artifact with the kind-change refusal as its detail.
 //
 // While maintenance mode is on it activates only verification runs.
 func AdvanceQueue(ctx context.Context, d *Deps) error {
@@ -103,6 +106,22 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 	pointers, err := u.ServiceProdRepo().List(ctx)
 	if err != nil {
 		return fmt.Errorf("list service prod: %w", err)
+	}
+	// Intake refuses a kind change against the service_prod row it sees, but a
+	// run queued before another run of the service promoted meets the row that
+	// promotion wrote only here, where the queue lock is held and the pointers
+	// are read. Assembling the set for such a run would swap the service's
+	// manifest for an artifact of the other side and drop or replace its nodes.
+	if stored := pointerOf(pointers, next.ChangedService()); stored != nil &&
+		(stored.ManifestKind() == release.ManifestKindOntology) != (next.ManifestKind() == release.ManifestKindOntology) {
+		d.Logger.Warn("rejecting a run that changes its service between the kind ontology and a node kind",
+			"release_id", next.ID(), "service", next.ChangedService(),
+			"stored_kind", string(stored.ManifestKind()), "kind", string(next.ManifestKind()))
+		detail := kindChangeRefusalText(next.ChangedService(), stored.ManifestKind())
+		if err := rejectInvalidArtifactRun(ctx, d, u, next, detail, d.Clock.Now()); err != nil {
+			return err
+		}
+		return AdvanceQueue(ctx, d)
 	}
 	if cp != nil && cp.ReleaseID() != "" {
 		prod, err := loadProdTopology(ctx, d, cp)
@@ -188,6 +207,17 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 		return fmt.Errorf("commit: %w", err)
 	}
 	d.Telemetry.ReleaseParseRequested(ctx, next.ID())
+	return nil
+}
+
+// pointerOf returns the service_prod pointer of service, or nil when the
+// service has none.
+func pointerOf(pointers []*release.ServiceProd, service string) *release.ServiceProd {
+	for _, p := range pointers {
+		if p.ServiceName() == service {
+			return p
+		}
+	}
 	return nil
 }
 
