@@ -182,6 +182,96 @@ describe('POST /api/v1/releases', () => {
     }
   });
 
+  describe('the ontology 409s and the ontology 400', () => {
+    const post = (p: Principal, text: string, status: number, payload: Record<string, unknown> = body) => {
+      const client = fakeClient({ submitRelease: vi.fn(async () => ({ status, text })) });
+      return request(appAs(p, client)).post('/api/v1/releases').send(payload);
+    };
+    const GENERIC = 'release id already exists with different content';
+
+    // A kind change names the caller's own service, which the route has
+    // already checked against the identity's bindings, so it reaches both.
+    it.each([
+      ['a dbt service released as an ontology', 'service "core" is released as kind "dbt": a service cannot change between kind "ontology" and a node kind\n'],
+      ['the ontology released as a node kind', 'service "company-ontology" is released as kind "ontology": a service cannot change between kind "ontology" and a node kind\n'],
+      ['a python-odcs service', 'service "core" is released as kind "python-odcs": a service cannot change between kind "ontology" and a node kind\n'],
+      ['a name Go has to escape', 'service "co\\"re\\\\x" is released as kind "dbt": a service cannot change between kind "ontology" and a node kind\n'],
+    ])('passes the kind-change 409 of %s to a person and to a CI identity as it is', async (_n, text) => {
+      for (const p of [operator, ci()]) {
+        const res = await post(p, text, 409);
+        expect(res.status).toBe(409);
+        expect(res.body).toEqual({ error: text.trim(), code: 'release_kind_conflict' });
+      }
+    });
+
+    // The second ontology service is another service's name: a person reads it,
+    // a CI identity learns only the rule.
+    it('gives a person the second-ontology 409 as it is, and a CI identity the rule without the other service name', async () => {
+      const text = 'service "company-ontology" is the install\'s ontology: an install has one ontology service\n';
+      const person = await post(operator, text, 409);
+      expect(person.status).toBe(409);
+      expect(person.body).toEqual({ error: text.trim(), code: 'release_kind_conflict' });
+      const pipeline = await post(ci(), text, 409, { ...body, kind: 'ontology' });
+      expect(pipeline.status).toBe(409);
+      expect(pipeline.body).toEqual({ error: 'an install has one ontology service', code: 'release_kind_conflict' });
+      expect(JSON.stringify(pipeline.body)).not.toContain('company-ontology');
+    });
+
+    it('a name Go has to escape does not stop the second-ontology text from being recognised', async () => {
+      const res = await post(ci(), 'service "o\\"x\\\\" is the install\'s ontology: an install has one ontology service\n', 409);
+      expect(res.body.error).toBe('an install has one ontology service');
+    });
+
+    it('keeps every other 409 as it was: the generic text for a CI identity and the upstream text for a person', async () => {
+      for (const text of [
+        'release id already names a different candidate: "rel-1" has a different service, image tag, kind, bootstrap or rebaseline flag, or source change\n',
+        'run id already names a run of another kind: rel-1 is a verification\n',
+        'conflict',
+      ]) {
+        const ciRes = await post(ci(), text, 409);
+        expect(ciRes.body).toEqual({ error: GENERIC, code: 'release_kind_conflict' });
+        const person = await post(operator, text, 409);
+        expect(person.body).toEqual({ error: text.trim(), code: 'release_kind_conflict' });
+      }
+    });
+
+    // A text is one of the two only when it is that text whole: a line before or
+    // after it, another wording, or a name that does not read as one Go-quoted
+    // string leaves it the generic conflict for a CI identity.
+    it.each([
+      ['a line before the second-ontology text', 'release id already names a different candidate\nservice "o" is the install\'s ontology: an install has one ontology service'],
+      ['a line after the second-ontology text', 'service "o" is the install\'s ontology: an install has one ontology service\nrelease id already names a different candidate'],
+      ['text after the second-ontology text', 'service "o" is the install\'s ontology: an install has one ontology service, and "rel-2" is queued'],
+      ['text before the second-ontology text', 'conflict: service "o" is the install\'s ontology: an install has one ontology service'],
+      ['an unquoted service name', 'service o is the install\'s ontology: an install has one ontology service'],
+      ['a quote inside the name', 'service "o"x" is the install\'s ontology: an install has one ontology service'],
+      ['another wording of the second-ontology text', 'service "o" is the ontology: an install has one ontology service'],
+      ['a line before the kind-change text', 'x\nservice "core" is released as kind "dbt": a service cannot change between kind "ontology" and a node kind'],
+      ['text after the kind-change text', 'service "core" is released as kind "dbt": a service cannot change between kind "ontology" and a node kind (rel-9)'],
+      ['an unquoted kind', 'service "core" is released as kind dbt: a service cannot change between kind "ontology" and a node kind'],
+      ['a kind that names another service', 'service "core" is released as kind "dbt" by "other": a service cannot change between kind "ontology" and a node kind'],
+      ['a kind-change text of another rule', 'service "core" is released as kind "dbt": a service cannot change between kind "python" and a node kind'],
+    ])('answers a CI identity the generic 409 for %s, and a person the text', async (_n, text) => {
+      const ciRes = await post(ci(), text, 409);
+      expect(ciRes.body).toEqual({ error: GENERIC, code: 'release_kind_conflict' });
+      const person = await post(operator, text, 409);
+      expect(person.body).toEqual({ error: text.trim(), code: 'release_kind_conflict' });
+    });
+
+    // release-controller refuses the kind ontology with a 400 while the install's
+    // ontology switch is off; it reaches the caller as any 400 does.
+    it('passes the 400 for kind ontology with the switch off through as bad_request, to a person and to a CI identity', async () => {
+      const text = 'kind "ontology" is accepted only when the install\'s ontology switch is on (contracts.ontology.enabled)\n';
+      for (const p of [operator, ci()]) {
+        const client = fakeClient({ submitRelease: vi.fn(async () => ({ status: 400, text })) });
+        const res = await request(appAs(p, client)).post('/api/v1/releases').send({ ...body, kind: 'ontology' });
+        expect(res.status).toBe(400);
+        expect(res.body).toEqual({ error: text.trim(), code: 'bad_request' });
+        expect(client.submitRelease).toHaveBeenCalledWith(expect.objectContaining({ kind: 'ontology' }));
+      }
+    });
+  });
+
   it.each([
     ['a dot-segment id', '..'],
     ['a slash', 'rel/1'],
