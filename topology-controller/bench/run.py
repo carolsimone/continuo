@@ -99,9 +99,9 @@ def build_handler(
     progress: Callable[[], None] = lambda: None,
 ) -> tuple[CandidateManifestHandler, RecordingPublisher]:
     """The handler `main.py` builds, over `store` instead of S3, with a
-    publisher that records the outcome instead of writing to Redis. The
-    estate carries no ontology, so the switch has nothing to act on unless
-    a caller adds one."""
+    publisher that records the outcome instead of writing to Redis.
+    `ontology_enabled` is the install's ontology switch: it checks the
+    estate's contracts only when the estate carries an ontology."""
     publisher = RecordingPublisher()
     handler = CandidateManifestHandler(
         source=S3Source(bucket=BUCKET, env=_ENV, s3_client=store, keys=estate.requests),
@@ -136,12 +136,13 @@ def _max_rss_bytes() -> int:
 
 def _run_child(args: argparse.Namespace) -> int:
     """Parse the estate twice and write one JSON line per pass to stdout."""
-    estate = generate_estate(args.size, columns=args.columns)
+    estate = generate_estate(args.size, columns=args.columns, ontology=args.ontology)
     store = MemoryS3(estate.objects, put_latency_ms=args.put_latency_ms)
     for pass_name in ("cold", "warm"):
         store.reset_counts()
         handler, publisher = build_handler(
             estate, store, clock=MonotonicClock(), memory=ResidentMemoryProbe(), dialect=args.dialect,
+            ontology_enabled=args.ontology,
         )
         started = time.perf_counter()
         # Each pass parses a release of its own: the contract bundle is written once
@@ -156,6 +157,7 @@ def _run_child(args: argparse.Namespace) -> int:
             "size": args.size,
             "columns": args.columns,
             "put_latency_ms": args.put_latency_ms,
+            "ontology": args.ontology,
             "pass": pass_name,
             "rep": args.rep,
             "nodes": {"dbt": estate.dbt_nodes, "python": estate.python_nodes},
@@ -250,13 +252,16 @@ def _environment() -> dict:
 
 
 def _child_command(args: argparse.Namespace, size: int, rep: int) -> list[str]:
-    return [
+    command = [
         sys.executable, "-m", "bench.run", "--child",
         "--size", str(size), "--rep", str(rep),
         "--columns", str(args.columns),
         "--put-latency-ms", str(args.put_latency_ms),
         "--dialect", args.dialect,
     ]
+    if args.ontology:
+        command.append("--ontology")
+    return command
 
 
 def _run_parent(args: argparse.Namespace) -> int:
@@ -299,6 +304,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--put-latency-ms", type=float, default=0.0,
                         help="milliseconds each S3 put and download sleeps, to stand in for a round trip")
     parser.add_argument("--dialect", choices=_DIALECTS, default="postgres", help="the warehouse's SQL dialect")
+    parser.add_argument("--ontology", action="store_true",
+                        help="release the estate with an ontology that every model, seed and python node binds to,"
+                             " and parse it with the ontology switch on")
     parser.add_argument("--out", help="the JSON-lines file to write, for example bench/results/baseline.jsonl")
     parser.add_argument("--child", action="store_true", help="internal: run one size and repetition")
     parser.add_argument("--size", type=int, help="internal: the model count of the child's run")

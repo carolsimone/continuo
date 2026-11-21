@@ -7,6 +7,14 @@ and `compile-extras.json` per dbt service, and the python service's
 value comes from one `random.Random(seed)`, so the same arguments always give
 the same bytes and two baselines parse the same estate.
 
+With `ontology=True` the release also carries the install's ontology, a
+manifest of kind `ontology`, and every contract of the estate binds to it: all
+the services are declared under one domain, `bench`, and the ontology holds one
+thing, `BenchRow`, with the key `id`. Every model, seed and python node is a copy
+of that thing, its key column is bound to `BenchRow.id` and every other column
+is `local`, so the ontology check has nothing to refuse. Without it the estate
+holds no ontology and no binding.
+
 The SQL is only parsed and rewritten, never run, so its cost depends on its
 shape and size, not on what it means. Each manifest carries the macros of a
 real dbt project (`fixtures/macros.json.gz`), which is most of a real
@@ -39,8 +47,8 @@ _PYTHON_SERVICE = "svc-py"
 _PYTHON_SCHEMA = "py"
 # What `continuo-runtime pack` writes into the bundle's producer: its own version
 # and the continuo-contracts version it checked the contracts with.
-_PYTHON_RUNTIME_VERSION = "0.13.0"
-_CONTRACTS_VERSION = "0.2.0"
+_PYTHON_RUNTIME_VERSION = "0.14.0"
+_CONTRACTS_VERSION = "0.4.1"
 _PYTHON_IMAGE_PACKAGES = {"pyarrow": "26.0.0"}
 _DBT_PACKAGES = {
     "dbt-core": "1.12.0b1",
@@ -54,6 +62,17 @@ _SEED_COLUMNS = ["id", "code", "value"]
 # The columns the model SQL names beyond c0: its window sums c2, so a model
 # needs at least three columns.
 _MIN_COLUMNS = 3
+# The ontology of an estate built with `ontology=True`: the service that releases
+# it and its release id, the one domain every service belongs to, the one thing
+# every contract is a copy of and that thing's key part.
+_ONTOLOGY_SERVICE = "bench-ontology"
+_ONTOLOGY_RELEASE_ID = "rel-bench-ontology"
+_ONTOLOGY_DOMAIN = "bench"
+_ONTOLOGY_THING = "BenchRow"
+_ONTOLOGY_KEY = "id"
+# The column of a model or python node that carries the key part, and of a seed.
+_MODEL_KEY_COLUMN = "c0"
+_SEED_KEY_COLUMN = "id"
 
 
 @dataclass(frozen=True)
@@ -131,9 +150,21 @@ def _model_sql(columns: list[str], upstreams: list[tuple[str, str]], relation: C
     )
 
 
-def _model_node(service: int, name: str, columns: list[str], upstreams: list[tuple[str, str]]) -> dict:
-    schema = f"s{service}"
+def _dbt_bindings(columns: dict[str, dict], key_column: str) -> dict[str, dict]:
+    """`columns` with the ontology bindings in each column's `meta.continuo`: the key
+    column is the thing's key part, every other column is `local`."""
+    key = {"property": f"{_ONTOLOGY_THING}.{_ONTOLOGY_KEY}"}
     return {
+        name: {**column, "meta": {"continuo": key if name == key_column else {"local": True}}}
+        for name, column in columns.items()
+    }
+
+
+def _model_node(
+    service: int, name: str, columns: list[str], upstreams: list[tuple[str, str]], *, ontology: bool = False,
+) -> dict:
+    schema = f"s{service}"
+    node = {
         "unique_id": f"model.svc_{service}.{name}",
         "resource_type": "model",
         "name": name,
@@ -152,6 +183,10 @@ def _model_node(service: int, name: str, columns: list[str], upstreams: list[tup
         "raw_code": _model_sql(columns, upstreams, _ref),
         "compiled_code": _model_sql(columns, upstreams),
     }
+    if ontology:
+        node["config"]["meta"]["continuo"] = {"entity": _ONTOLOGY_THING}
+        node["columns"] = _dbt_bindings(node["columns"], _MODEL_KEY_COLUMN)
+    return node
 
 
 def _test_node(service: int, model: dict, column: str) -> dict:
@@ -173,9 +208,9 @@ def _test_node(service: int, model: dict, column: str) -> dict:
     }
 
 
-def _seed_node(service: int) -> dict:
+def _seed_node(service: int, *, ontology: bool = False) -> dict:
     name = f"seed_svc_{service}"
-    return {
+    node = {
         "unique_id": f"seed.svc_{service}.{name}",
         "resource_type": "seed",
         "name": name,
@@ -192,6 +227,10 @@ def _seed_node(service: int) -> dict:
         },
         "depends_on": {"macros": []},
     }
+    if ontology:
+        node["config"]["meta"]["continuo"] = {"entity": _ONTOLOGY_THING}
+        node["columns"] = _dbt_bindings(node["columns"], _SEED_KEY_COLUMN)
+    return node
 
 
 def _compile_extras(service: int, release_id: str, seed: dict) -> dict:
@@ -209,10 +248,15 @@ def _compile_extras(service: int, release_id: str, seed: dict) -> dict:
     }
 
 
-def _python_contract(table: str, columns: list[str], reads: dict[str, str]) -> dict:
+def _continuo_property(name: str, value: object) -> dict:
+    return {"vendor": "continuo", "property": name, "value": value}
+
+
+def _python_contract(table: str, columns: list[str], reads: dict[str, str], *, ontology: bool = False) -> dict:
     """The ODCS contract of a python node: its read queries, its schedule and one
-    INTEGER column for each of `columns`."""
-    return {
+    INTEGER column for each of `columns`. With `ontology` the table binds to the
+    thing, the first column to its key part and every other column is `local`."""
+    contract = {
         "apiVersion": "v3.2.0",
         "kind": "DataContract",
         "id": f"{_PYTHON_SCHEMA}.{table}",
@@ -232,20 +276,49 @@ def _python_contract(table: str, columns: list[str], reads: dict[str, str]) -> d
             "properties": [{"name": column, "physicalType": "INTEGER"} for column in columns],
         }],
     }
+    if ontology:
+        schema_object = contract["schema"][0]
+        schema_object["customProperties"] = [_continuo_property("entity", _ONTOLOGY_THING)]
+        for position, column in enumerate(schema_object["properties"]):
+            binding = (
+                _continuo_property("property", f"{_ONTOLOGY_THING}.{_ONTOLOGY_KEY}")
+                if position == 0 else _continuo_property("local", True)
+            )
+            column["customProperties"] = [binding]
+    return contract
 
 
-def _python_bundle_node(index: int, columns: list[str], reads: dict[str, str]) -> dict:
+def _python_bundle_node(index: int, columns: list[str], reads: dict[str, str], *, ontology: bool = False) -> dict:
     """One entry of the producer bundle's `nodes`: the contract file's path and
     text, and the hash of the node's source the producer computes (the estate's
     nodes share no code with each other)."""
     table = f"py_{index:05d}"
-    contract = _python_contract(table, columns, reads)
+    contract = _python_contract(table, columns, reads, ontology=ontology)
     return {
         "path": f"contracts/{table}.odcs.yaml",
         "text": yaml.safe_dump(contract, sort_keys=False),
         "source_hash": _sha256(table),
         "shared_code_hash": "",
     }
+
+
+def _ontology_text(dbt_services: int, *, python_service: bool) -> str:
+    """The ontology file of an estate: every service under the domain `bench`, and the
+    one thing `BenchRow` that every contract is a copy of."""
+    services = {f"svc-{service}": {"domain": _ONTOLOGY_DOMAIN, "kind": "dbt"} for service in range(dbt_services)}
+    if python_service:
+        services[_PYTHON_SERVICE] = {"domain": _ONTOLOGY_DOMAIN, "kind": "python"}
+    document = {
+        "principals": {
+            "domains": {_ONTOLOGY_DOMAIN: {"owner_team": _ONTOLOGY_DOMAIN}},
+            "services": services,
+            "teams": {_ONTOLOGY_DOMAIN: {"idp_group": _ONTOLOGY_DOMAIN}},
+        },
+        "entities": {
+            _ONTOLOGY_THING: {"owner": _ONTOLOGY_DOMAIN, "key": {_ONTOLOGY_KEY: "integer"}},
+        },
+    }
+    return yaml.safe_dump(document, sort_keys=False)
 
 
 def generate_estate(
@@ -257,12 +330,14 @@ def generate_estate(
     python_share: float = 0.1,
     seed: int = DEFAULT_SEED,
     release_id: str = "rel-bench",
+    ontology: bool = False,
 ) -> Estate:
     """Build the estate of `models` dbt models spread over `services` dbt
     services, each with `columns` columns and `tests_per_model` not-null tests,
     one seed per service, and, when `python_share` is above zero, one python
     service of `round(models * python_share)` nodes (at least one), each node
-    one contract of the service's ODCS bundle."""
+    one contract of the service's ODCS bundle. With `ontology` the release also
+    carries the ontology that every model, seed and python node binds to."""
     if models < 1 or services < 1:
         raise ValueError("an estate needs at least one model and one service")
     if columns < _MIN_COLUMNS:
@@ -284,7 +359,7 @@ def generate_estate(
     for service, count in enumerate(_split(models, services)):
         schema = f"s{service}"
         service_name = f"svc-{service}"
-        seed_node = _seed_node(service)
+        seed_node = _seed_node(service, ontology=ontology)
         nodes: dict[str, dict] = {seed_node["unique_id"]: seed_node}
         for position in range(count):
             name = f"m_{index:05d}"
@@ -293,7 +368,7 @@ def generate_estate(
             else:
                 picks = rng.sample(range(len(built)), min(2, len(built)))
                 upstreams = [built[pick] for pick in picks]
-            model = _model_node(service, name, column_names, upstreams)
+            model = _model_node(service, name, column_names, upstreams, ontology=ontology)
             nodes[model["unique_id"]] = model
             for column in column_names[:tests_per_model]:
                 test = _test_node(service, model, column)
@@ -331,7 +406,7 @@ def generate_estate(
                 for read, pick in enumerate(picks)
             }
             python_reads += len(reads)
-            bundle_nodes.append(_python_bundle_node(position, column_names, reads))
+            bundle_nodes.append(_python_bundle_node(position, column_names, reads, ontology=ontology))
         bundle = {
             "bundle_version": 1,
             "service": _PYTHON_SERVICE,
@@ -346,6 +421,11 @@ def generate_estate(
         objects[bundle_key] = json.dumps(bundle, sort_keys=True).encode()
         requests.append(ManifestRequest(service=_PYTHON_SERVICE, key=bundle_key, kind=ManifestKind.PYTHON_ODCS))
         image_tags[_PYTHON_SERVICE] = _IMAGE_TAG
+
+    if ontology:
+        ontology_key = f"{_ONTOLOGY_SERVICE}/{_ONTOLOGY_RELEASE_ID}/ontology.yaml"
+        objects[ontology_key] = _ontology_text(services, python_service=python_share > 0).encode()
+        requests.append(ManifestRequest(service=_ONTOLOGY_SERVICE, key=ontology_key, kind=ManifestKind.ONTOLOGY))
 
     return Estate(
         release_id=release_id,
