@@ -104,7 +104,7 @@ func TestE2E_PythonNodeTimeout_ReachesRunControllerThroughTheRuntimeCLI(t *testi
 	// consumed entries, so the validation check reads what the tap recorded.
 	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
 
-	releaseID, cleanup := promotePythonContractRelease(t, ctx, clients, validationTap, bundle,
+	releaseID, cleanup := promotePythonContractRelease(t, ctx, clients, validationTap, defaultPythonReleaseBudget, bundle,
 		[]string{pyTimeoutUniqueID, pyNoTimeoutUniqueID}, pyTimeoutUniqueID)
 	defer cleanup()
 

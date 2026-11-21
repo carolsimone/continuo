@@ -45,14 +45,57 @@ const (
 	// and no ontology is released.
 	noOntologyWarning = "the ontology switch is on and no ontology is released: bindings are kept as written and not checked"
 
-	// ontologySwitchBudget covers the three services restarting, with a cold
-	// `go run` build each, and answering their health checks.
-	ontologySwitchBudget = 4 * time.Minute
+	// The ceilings below are four to five times the durations measured in CI,
+	// and none is above two minutes: a hang costs one wait, which fails with a
+	// message naming what it waited for and the ceiling.
+	//
+	// ontologyOverallBudget cuts the whole test short when it runs slow.
+	ontologyOverallBudget = 10 * time.Minute
+
+	// ontologyReleaseBudget bounds a release from its post to promoted or
+	// rejected, the validation request included. Measured in CI: a python
+	// release 18 to 32 s, a release rejected for an invalid contract 5 s. The
+	// ontology release has no validation and no measurement of its own, so it
+	// takes the python release's.
+	ontologyReleaseBudget = 2 * time.Minute
+
+	// ontologySwitchBudget bounds the three services restarting and answering
+	// their health checks together. Measured in CI: the maintenance test's
+	// restart of services, 23 s.
+	ontologySwitchBudget = 2 * time.Minute
+
+	// ontologyContractsBudget bounds catalog reading a promoted release: the
+	// topology swap, a new contract version and the live folder. It has no
+	// measurement of its own: it is part of the 32 s a python release takes to
+	// be promoted and published.
+	ontologyContractsBudget = time.Minute
+
+	// ontologyAnswerBudget bounds an answer a service gives at once: a 400, a
+	// 409, a health check, a query. Measured in CI: under 0.1 s.
+	ontologyAnswerBudget = 5 * time.Second
+
+	// ontologyStopGrace is how long a stopped process has to exit before it is
+	// killed (the grace `docker restart -t 20` gives the other services), and
+	// ontologyKillGrace how long it has after the kill.
+	ontologyStopGrace = 20 * time.Second
+	ontologyKillGrace = 10 * time.Second
 
 	// ontologyQuietWindow is how long the test waits after a rejection before
 	// it asserts that no remediation trigger names the release.
 	ontologyQuietWindow = 15 * time.Second
 )
+
+// ontologyPythonRelease is the budget of the py-probe release: the validation
+// request and the promotion are a release's, and the topology swap is catalog
+// reading it.
+var ontologyPythonRelease = pythonReleaseBudget{
+	validationRequested: ontologyReleaseBudget,
+	promoted:            ontologyReleaseBudget,
+	swapped:             ontologyContractsBudget,
+}
+
+// ontologyHealthClient answers a health check within ontologyAnswerBudget.
+var ontologyHealthClient = &http.Client{Timeout: ontologyAnswerBudget}
 
 // ontologyFile is the ontology the test releases, and ontologyBreakingFile
 // the same ontology with the thing ProbeRow renamed: a valid file that breaks
@@ -85,16 +128,25 @@ var pyFixtureNodes = []string{pyProbeUniqueID, pyCsvUniqueID, pyAPIUniqueID, pyB
 //     invalid_contract on the node it breaks, sends no remediation trigger,
 //     and leaves the published contracts and the released ontology as they were;
 //  6. a dbt service released as kind ontology is refused with 409.
+//
+// Running time: about 3 minutes, the steps measured in CI added up (switch on
+// 23 s, py-probe release 32 s, ontology release 19 s, rejection 5 s, quiet
+// window 15 s, switch off 23 s: 117 s) plus the setup.
 func TestE2E_Ontology(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
-	// additive polls: two restarts of the services (4m each), the py-probe
-	// release (validation 8m within the promotion's 10m, the swap 2m, the
-	// contracts 2m), the ontology release (10m, contracts 2m) and the
-	// rejection (3m).
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
+	// A run that outlasts the overall budget is cut here, and every wait below
+	// has a ceiling of its own.
+	ctx, cancel := context.WithTimeout(context.Background(), ontologyOverallBudget)
 	defer cancel()
+
+	// A plain HTTP call of this test, the helpers' included, answers within
+	// ontologyAnswerBudget or fails. This cleanup is registered first, so it runs
+	// last.
+	httpTimeout := http.DefaultClient.Timeout
+	http.DefaultClient.Timeout = ontologyAnswerBudget
+	t.Cleanup(func() { http.DefaultClient.Timeout = httpTimeout })
 
 	clients := setupClients(t, ctx)
 	verifyServicesHealthy(t)
@@ -108,11 +160,13 @@ func TestE2E_Ontology(t *testing.T) {
 	// The switch is off again, and neither service this test releases is left
 	// in service_prod, whatever happens below: a later release would
 	// otherwise assemble the ontology and the py-probe contracts into every
-	// manifest set.
-	t.Cleanup(func() {
-		forgetOntologyServices(t, clients)
-		setOntology(t, context.Background(), false)
-	})
+	// manifest set. Cleanups run last-in first-out and each still runs when
+	// another fails, so the services are forgotten first and the switch is
+	// restored last, whichever of the two fails. Each has a context and a
+	// ceiling of its own (the switch restart ontologySwitchBudget), because it
+	// must run after the overall budget has run out too.
+	t.Cleanup(func() { setOntology(t, context.Background(), false) })
+	t.Cleanup(func() { forgetOntologyServices(t, clients) })
 	forgetOntologyServices(t, clients)
 
 	// ── 1. the switch is off: a release of kind ontology is refused ──────────
@@ -124,9 +178,9 @@ func TestE2E_Ontology(t *testing.T) {
 	setOntology(t, ctx, true)
 
 	// ── 3. the py-probe service is released with the switch on and no ontology
-	firstID, cleanup := promotePythonFixtureRelease(t, ctx, clients, validationTap)
+	firstID, cleanup := promotePythonFixtureRelease(t, ctx, clients, validationTap, ontologyPythonRelease)
 	defer cleanup()
-	waitForLiveIndexOf(t, ctx, clients, firstID, contractsBudget)
+	waitForLiveIndexOf(t, ctx, clients, firstID, ontologyContractsBudget)
 
 	first := candidateContractBundle(t, ctx, clients, firstID)
 	require.NotEqual(t, "null", strings.TrimSpace(string(first.Ontology)), "the bundle of a release with the switch on holds an ontology value")
@@ -154,7 +208,7 @@ func TestE2E_Ontology(t *testing.T) {
 	putOntologyFile(t, ctx, clients, ontologyID, ontologyFile)
 	status, body = submitOntologyRelease(t, clients, ontologyE2EService, ontologyID)
 	require.Equal(t, http.StatusAccepted, status, "POST /api/v1/releases of the ontology: %v", body)
-	waitForReleasePromoted(t, ctx, clients, ontologyID, 10*time.Minute)
+	waitForReleasePromoted(t, ctx, clients, ontologyID, ontologyReleaseBudget)
 
 	detail := getReleaseJSON(t, clients, ontologyID)
 	assert.Empty(t, detail["validation_node_ids"], "an ontology release changes no node's content_hash, so it validates nothing")
@@ -185,7 +239,7 @@ func TestE2E_Ontology(t *testing.T) {
 		assert.NotEqual(t, "error", f.Severity, "an ontology release that promoted has no error finding: %+v", f)
 	}
 
-	waitForLiveIndexOf(t, ctx, clients, ontologyID, contractsBudget)
+	waitForLiveIndexOf(t, ctx, clients, ontologyID, ontologyContractsBudget)
 	for _, node := range pyFixtureNodes {
 		v := latestContractVersion(t, ctx, clients, node)
 		assert.Greater(t, v.GetVersion(), beforeOntology[node].GetVersion(), "%s: the resolved contract is a new version", node)
@@ -227,7 +281,7 @@ func TestE2E_Ontology(t *testing.T) {
 	putOntologyFile(t, ctx, clients, breakingID, ontologyBreakingFile)
 	status, body = submitOntologyRelease(t, clients, ontologyE2EService, breakingID)
 	require.Equal(t, http.StatusAccepted, status, "POST /api/v1/releases of the breaking ontology: %v", body)
-	waitForReleaseRejected(t, ctx, clients, breakingID, 3*time.Minute)
+	waitForReleaseRejected(t, ctx, clients, breakingID, ontologyReleaseBudget)
 
 	rejected := getReleaseJSON(t, clients, breakingID)
 	assert.Equal(t, "invalid_contract", rejected["reject_reason"])
@@ -343,11 +397,11 @@ func (p publishedOntology) objectLinks() []string {
 // latestContractVersion returns the newest contract version catalog holds for
 // uniqueID, as catalog's gRPC read returns it (the CLI's payload leaves out the
 // ontology version). catalog restarts during the test, so the read is retried
-// while its connection comes back.
+// while its connection comes back, for at most ontologyContractsBudget.
 func latestContractVersion(t *testing.T, ctx context.Context, clients *testClients, uniqueID string) *catalogv1.ContractVersionView {
 	t.Helper()
 	var latest *catalogv1.ContractVersionView
-	pollUntil(t, ctx, time.Minute, time.Second, func() (bool, error) {
+	pollUntil(t, ctx, ontologyContractsBudget, time.Second, func() (bool, error) {
 		resp, err := clients.catalogClient.ListNodeContractVersions(ctx, &catalogv1.ListNodeContractVersionsRequest{UniqueId: uniqueID})
 		if err != nil {
 			return false, nil
@@ -359,7 +413,7 @@ func latestContractVersion(t *testing.T, ctx context.Context, clients *testClien
 			return int(a.GetVersion() - b.GetVersion())
 		})
 		return true, nil
-	}, fmt.Sprintf("catalog holds no contract version of %s", uniqueID))
+	}, fmt.Sprintf("catalog returned no contract version of %s", uniqueID))
 	return latest
 }
 
@@ -386,7 +440,8 @@ func submitOntologyRelease(t *testing.T, clients *testClients, service, releaseI
 // the test releases, and any release of them still in flight.
 func forgetOntologyServices(t *testing.T, clients *testClients) {
 	t.Helper()
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), ontologyAnswerBudget)
+	defer cancel()
 	resetReleaseControllerQueue(t, ctx, clients)
 	_, err := clients.releaseDB.ExecContext(ctx,
 		`DELETE FROM service_prod WHERE service_name IN ($1, $2)`, ontologyE2EService, pyE2EService)
@@ -443,11 +498,13 @@ var ontologyProcesses = []ontologyProcess{
 }
 
 // setOntology restarts topology-controller, release-controller and catalog
-// with the ontology switch set to on, in parallel, and waits until each answers
-// its health check. topology-controller and release-controller restart their
-// container, as setMaintenance does; catalog's container runs this test, so
-// only catalog's process is stopped and started again. The relaunch inherits
-// the container's compose environment except for the overridden setting.
+// with the ontology switch set to on, all three at once, and waits until each
+// answers its health check. topology-controller and release-controller restart
+// their container, as setMaintenance does; catalog's container runs this test,
+// so only catalog's process is stopped and started again. The relaunch inherits
+// the container's compose environment except for the overridden setting. The
+// relaunches and the health checks share one ceiling, ontologySwitchBudget, so
+// a service that does not come back costs one wait, and the failure names it.
 func setOntology(t *testing.T, ctx context.Context, on bool) {
 	t.Helper()
 	start := time.Now()
@@ -458,31 +515,55 @@ func setOntology(t *testing.T, ctx context.Context, on bool) {
 			logOntologyProcessTails(t)
 		}
 	}()
-	errs := make(chan error, len(ontologyProcesses))
+	ctx, cancel := context.WithTimeout(ctx, ontologySwitchBudget)
+	defer cancel()
+
+	relaunched := make([]error, len(ontologyProcesses))
 	var wg sync.WaitGroup
-	for _, p := range ontologyProcesses {
+	for i, p := range ontologyProcesses {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			errs <- p.relaunch(ctx, on)
+			if err := p.relaunch(ctx, on); err != nil {
+				relaunched[i] = fmt.Errorf("%s: %w", p.container, err)
+			}
 		}()
 	}
 	wg.Wait()
-	close(errs)
-	for err := range errs {
-		require.NoError(t, err)
+	require.NoError(t, errors.Join(relaunched...), "ontology=%t: relaunching the services did not finish within %s", on, ontologySwitchBudget)
+
+	down := make([]string, len(ontologyProcesses))
+	for i, p := range ontologyProcesses {
+		down[i] = p.container
 	}
-	for _, p := range ontologyProcesses {
-		pollUntil(t, ctx, ontologySwitchBudget, time.Second, func() (bool, error) {
-			resp, err := http.Get(p.health) //nolint:gosec,noctx // fixed health URL
-			if err != nil {
-				return false, nil
+	deadline, _ := ctx.Deadline()
+	pollUntilDescribed(t, ctx, time.Until(deadline), time.Second, func() (bool, error) {
+		down = down[:0]
+		for _, p := range ontologyProcesses {
+			if !answersHealth(ctx, p.health) {
+				down = append(down, p.container)
 			}
-			_ = resp.Body.Close()
-			return resp.StatusCode == http.StatusOK, nil
-		}, p.container+" did not become healthy after the ontology switch restart")
-	}
+		}
+		return len(down) == 0, nil
+	}, func() string {
+		return fmt.Sprintf("ontology=%t: %s did not answer a health check within %s of the restart",
+			on, strings.Join(down, ", "), ontologySwitchBudget)
+	})
 	t.Logf("ontology=%t restart took %s", on, time.Since(start).Round(time.Second))
+}
+
+// answersHealth reports whether url answers 200 within ontologyAnswerBudget.
+func answersHealth(ctx context.Context, url string) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := ontologyHealthClient.Do(req) //nolint:gosec // fixed health URL
+	if err != nil {
+		return false
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
 
 // relaunch stops the service and starts it again with its setting for on.
@@ -502,9 +583,12 @@ func (p ontologyProcess) relaunch(ctx context.Context, on bool) error {
 }
 
 // stopProcess ends the process named name in container with SIGTERM and waits
-// for it to exit, then with SIGKILL when it has not exited after a minute.
-// pkill and pgrep match the process's own name exactly, so the `go test` of
-// this suite, which runs in the same container, is not touched.
+// ontologyStopGrace for it to exit, then ends it with SIGKILL and waits
+// ontologyKillGrace. It fails when no process of that name runs in the
+// container, so a wrong name is reported at once instead of leaving the old
+// process answering, and when the process outlives the kill. pkill and pgrep
+// match the process's own name exactly, so the `go test` of this suite, which
+// runs in the same container, is not touched.
 func stopProcess(ctx context.Context, container, name string) error {
 	run := func(args ...string) (matched bool, err error) {
 		out, err := exec.CommandContext(ctx, "docker", append([]string{"exec", container}, args...)...).CombinedOutput() //nolint:gosec // fixed container and process names
@@ -517,10 +601,18 @@ func stopProcess(ctx context.Context, container, name string) error {
 		}
 		return true, nil
 	}
+	matched, err := run("pgrep", "-x", name)
+	if err != nil {
+		return err
+	}
+	if !matched {
+		return fmt.Errorf("no process named %q runs in %s", name, container)
+	}
 	if _, err := run("pkill", "-x", name); err != nil {
 		return err
 	}
-	deadline := time.Now().Add(time.Minute)
+	deadline := time.Now().Add(ontologyStopGrace)
+	killed := false
 	for {
 		running, err := run("pgrep", "-x", name)
 		if err != nil {
@@ -530,14 +622,18 @@ func stopProcess(ctx context.Context, container, name string) error {
 			return nil
 		}
 		if time.Now().After(deadline) {
+			if killed {
+				return fmt.Errorf("process %q still runs in %s %s after SIGKILL", name, container, ontologyKillGrace)
+			}
 			if _, err := run("pkill", "-KILL", "-x", name); err != nil {
 				return err
 			}
-			deadline = time.Now().Add(30 * time.Second)
+			killed = true
+			deadline = time.Now().Add(ontologyKillGrace)
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("process %q in %s did not exit before the context ended: %w", name, container, ctx.Err())
 		case <-time.After(500 * time.Millisecond):
 		}
 	}

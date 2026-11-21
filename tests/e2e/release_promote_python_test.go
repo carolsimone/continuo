@@ -243,7 +243,7 @@ func TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes(t *testing.T) 
 	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
 	compileTap := startStreamTap(t, ctx, clients.redisClient, streams.CompileRequestedV1)
 
-	releaseID, cleanup := promotePythonFixtureRelease(t, ctx, clients, validationTap)
+	releaseID, cleanup := promotePythonFixtureRelease(t, ctx, clients, validationTap, defaultPythonReleaseBudget)
 	defer cleanup()
 
 	// Skip-compile threading: the validation request names exactly the python
@@ -270,11 +270,26 @@ func TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes(t *testing.T) 
 	t.Log("✅ python release skipped compile, validated via build_from_columns, promoted, and swapped topology")
 }
 
+// pythonReleaseBudget holds the ceilings of the three waits a python release
+// makes after it is posted: for the validation request, for the promotion, and
+// for the topology swap.
+type pythonReleaseBudget struct {
+	validationRequested, promoted, swapped time.Duration
+}
+
+// defaultPythonReleaseBudget is the budget of the tests that run real
+// validation Jobs against a cold stack.
+var defaultPythonReleaseBudget = pythonReleaseBudget{
+	validationRequested: 8 * time.Minute,
+	promoted:            10 * time.Minute,
+	swapped:             2 * time.Minute,
+}
+
 // promotePythonFixtureRelease promotes the python fixture service's bundle
 // (see pyFixtureBundle): it seeds the csv object the py_csv node reads, then
-// drives the release through promotePythonContractRelease. The caller MUST
-// defer the returned cleanup.
-func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *testClients, validationTap *streamTap) (string, func()) {
+// drives the release through promotePythonContractRelease within budget. The
+// caller MUST defer the returned cleanup.
+func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *testClients, validationTap *streamTap, budget pythonReleaseBudget) (string, func()) {
 	t.Helper()
 
 	// The py_csv node's contract names this exact key; seeded before the
@@ -282,7 +297,7 @@ func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *tes
 	// a later run) the harness's full fetch resolve against real content.
 	putS3Object(t, ctx, clients, pyCsvSourceKey, pyCsvFixtureData)
 
-	return promotePythonContractRelease(t, ctx, clients, validationTap, pyFixtureBundle(t, ctx, nil),
+	return promotePythonContractRelease(t, ctx, clients, validationTap, budget, pyFixtureBundle(t, ctx, nil),
 		[]string{pyProbeUniqueID, pyBadShapeUniqueID, pyCsvUniqueID, pyAPIUniqueID}, pyProbeUniqueID)
 }
 
@@ -291,8 +306,9 @@ func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *tes
 // bundle to S3 before the POST (the ordering a domain repository's CI must
 // honour), posts a python-odcs release naming the side-loaded fixture image, checks the
 // validation request names exactly validationNodes, waits for promotion, and
-// waits for swapNode to appear in the swapped topology. It returns the release
-// id and a cleanup the caller MUST defer.
+// waits for swapNode to appear in the swapped topology, each wait within its
+// ceiling in budget. It returns the release id and a cleanup the caller MUST
+// defer.
 //
 // The cleanup is returned for the caller to defer, so it runs when the test
 // function returns, while releaseDB is still open: the cleanup setupClients
@@ -300,7 +316,7 @@ func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *tes
 // service_prod pointer would drag this service's contract into every later
 // test's assembled manifest set.
 func promotePythonContractRelease(t *testing.T, ctx context.Context, clients *testClients, validationTap *streamTap,
-	bundle []byte, validationNodes []string, swapNode string) (string, func()) {
+	budget pythonReleaseBudget, bundle []byte, validationNodes []string, swapNode string) (string, func()) {
 	t.Helper()
 
 	releaseID := "e2e-py-" + uuid.NewString()[:8]
@@ -331,12 +347,12 @@ func promotePythonContractRelease(t *testing.T, ctx context.Context, clients *te
 	putODCSBundle(t, ctx, clients, pyE2EService, releaseID, bundle)
 	postPythonRelease(t, clients, pyE2EService, releaseID, pyFixtureImage, false)
 
-	assertValidationRequestedNodes(t, ctx, validationTap, releaseID, validationNodes)
+	assertValidationRequestedNodesWithin(t, ctx, validationTap, releaseID, validationNodes, budget.validationRequested)
 
 	// Real build_from_columns Jobs run in kind against the published runner
 	// image; on success the release promotes and the topology swaps.
-	waitForReleasePromoted(t, ctx, clients, releaseID, 10*time.Minute)
-	waitForTopologySwap(t, ctx, clients, releaseID, swapNode, 2*time.Minute)
+	waitForReleasePromoted(t, ctx, clients, releaseID, budget.promoted)
+	waitForTopologySwap(t, ctx, clients, releaseID, swapNode, budget.swapped)
 
 	return releaseID, cleanup
 }
@@ -369,7 +385,7 @@ func TestE2E_PythonNodeRun_MaterializesAndReportsFailures(t *testing.T) {
 	// consumed entries, so the checks below read what the taps recorded.
 	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
 
-	_, cleanup := promotePythonFixtureRelease(t, ctx, clients, validationTap)
+	_, cleanup := promotePythonFixtureRelease(t, ctx, clients, validationTap, defaultPythonReleaseBudget)
 	defer cleanup()
 
 	t.Run("conforming node materializes its declared rows", func(t *testing.T) {

@@ -124,7 +124,7 @@ func TestE2E_PythonODCSRelease_IsPromotedAndPublished(t *testing.T) {
 
 	// ── 1. the py-probe service is promoted as python-odcs ──────────────────
 	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
-	firstID, cleanup := promotePythonFixtureRelease(t, ctx, clients, validationTap)
+	firstID, cleanup := promotePythonFixtureRelease(t, ctx, clients, validationTap, defaultPythonReleaseBudget)
 	defer cleanup()
 
 	// ── 2. catalog records the contract, and the CLI prints it ───────────────
