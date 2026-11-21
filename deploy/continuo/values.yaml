@@ -640,10 +640,12 @@ catalog:
 #   ontology links of a contract as stored, each starting with
 #   `continuo-ontology:`. Otherwise an absolute http or https URL with a host,
 #   no query, no fragment and no whitespace, which catalog puts, with a slash,
-#   in front of each link, so `continuo-ontology:ProbeRow` is published as
-#   `<baseUrl>/ProbeRow` in the live contracts folder and in `continuo node
+#   in front of each link, so `continuo-ontology:Transaction` is published as
+#   `<baseUrl>/Transaction` in the live contracts folder and in `continuo node
 #   contract`. catalog trims one trailing slash and refuses to start on a value
-#   that is not empty and not such a URL.
+#   that is not empty and not such a URL. The schema refuses more than catalog
+#   does: an address with credentials, an IPv6 literal, an empty port, an
+#   upper-case scheme and whitespace in the path.
 contracts:
   publish:
     server:

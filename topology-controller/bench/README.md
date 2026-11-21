@@ -42,6 +42,7 @@ there.
 | `--columns` | `20` | Columns of every model, and of every python node's output. At least 3. |
 | `--put-latency-ms` | `0.0` | Milliseconds every S3 put and download sleeps, standing in for a network round trip. |
 | `--dialect` | `postgres` | The warehouse's SQL dialect, `postgres` or `trino`. |
+| `--ontology` | off | Release the estate with an ontology that every model, seed and python node binds to, and parse it with the install's ontology switch on ([below](#the-ontology-estate)). |
 | `--out` | required | The JSON-lines file to write. |
 
 `--child`, `--size` and `--rep` are internal: the parent starts one child per
@@ -75,7 +76,8 @@ bytes and every baseline parses the same estate.
 - 10 dbt services, `svc-0` to `svc-9`, with the models split evenly, and one
   python service, `svc-py`, of one node per ten models. `svc-py` is written as
   its `odcs-bundle.json` (kind `python-odcs`), one ODCS contract per node with
-  its read queries, valid under continuo-contracts 0.4.1.
+  its read queries, valid under continuo-contracts 0.4.1. The bundle's producer
+  names `continuo-python-runtime` 0.14.0 and continuo-contracts 0.4.1.
 - Each model has `--columns` columns, a compiled SQL of a CTE over one upstream,
   a window sum and a left join to a second, and two generic not-null tests.
 - Each dbt service has one seed, and a `compile-extras.json` beside its manifest.
@@ -88,6 +90,33 @@ bytes and every baseline parses the same estate.
   `dbt parse` of the finance service of continuo-demo (commit `3ab3a7e`) wrote
   with dbt-core 1.12.0b1 and dbt-postgres 1.10.0, the versions continuo's dbt
   images pin. The fixture stays the same from one baseline to the next.
+
+## The ontology estate
+
+With `--ontology` the release also carries the install's ontology: one more
+manifest, of kind `ontology`, in the key `bench-ontology/rel-bench-ontology/ontology.yaml`.
+The handler is built with the ontology switch on, so the `ontology` stage runs
+on a real ontology file and a real set of bindings, and the stored contracts are
+filled in from the ontology.
+
+- Every service of the estate, `svc-0` to `svc-9` and `svc-py`, is declared in the
+  ontology under one domain, `bench`.
+- The ontology holds one thing, `BenchRow`, with the key part `id`.
+- Every model, seed and python node is a copy of `BenchRow`: a model's `config.meta.continuo`
+  and a python table's custom properties say `entity: BenchRow`. The key
+  column (`c0` of a model or python node, `id` of a seed) is bound to `BenchRow.id`,
+  and every other column is `local`.
+- The check finds no error. Its one information finding, the layers of the copy
+  graph, lists every copy, so it grows with the estate.
+
+Without `--ontology` the estate holds no ontology and no binding, and the
+handler runs with the switch off, so the `ontology` stage reads zero.
+A run with `--ontology` and one without it parse the same models, tests and
+seeds, so `python -m bench.compare` of the two files shows what the ontology
+adds. The `ontology` stage is the check and the reading of the file. The rest of
+its cost is in `canonical_hashing`, which fills each contract in from the
+ontology, and in `contract_validation` and the bundle, since a bound contract is
+larger.
 
 ## The result line
 
@@ -107,6 +136,7 @@ One JSON object per line, one line per size, pass and repetition.
 | `size` | The model count. |
 | `columns` | The columns of each model. |
 | `put_latency_ms` | The latency of each S3 put and download. |
+| `ontology` | `true` when the run used `--ontology`, else `false`. A file written without the flag has no such field. |
 | `pass` | `cold` or `warm`. |
 | `rep` | The repetition number, from 1. |
 | `nodes` | `{"dbt": n, "python": n}`: the dbt models, tests and seeds, and the python nodes. |

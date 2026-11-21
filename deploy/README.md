@@ -127,9 +127,10 @@ whose repository matches no binding is refused on every route, including
 The workflow requests a token whose audience is the same origin continuo expects,
 then submits the release and polls it to a terminal status. This example
 releases a dbt service, so it sends only the three required fields. `kind`
-names how continuo reads the service's artifact: `dbt` (the default when absent)
-or `python-odcs` (a Python service's `odcs-bundle.json`, see
-[Python contracts](../docs/contracts.md)).
+names how continuo reads the service's artifact: `dbt` (the default when absent),
+`python-odcs` (a Python service's `odcs-bundle.json`, see
+[Python contracts](../docs/contracts.md)) or `ontology` (the install's company
+ontology, see [the company ontology](../docs/ontology.md)).
 The first release of a service has no production version to validate against,
 so it is sent with `"bootstrap": true`, which needs a binding with
 `allowBootstrap: true`. These and the other submit fields are described below.
@@ -181,8 +182,8 @@ All three routes live under `/api/v1` on the `ui`. Each takes
 | `GET /api/v1/current-prod` | Which release production is serving: `{current_prod_release_id, node_count, updated_at}`. An empty `current_prod_release_id` means production has never been seeded. |
 
 **Submit body.** `release_id`, `service` and `image_tag` are required;
-`bootstrap` and `rebaseline` (JSON booleans), `kind` (`dbt`, the default, or
-`python-odcs`), `repo` and `commit_sha` are optional. Any other field is a `400`. `release_id` must
+`bootstrap` and `rebaseline` (JSON booleans), `kind` (`dbt`, the default,
+`python-odcs` or `ontology`), `repo` and `commit_sha` are optional. Any other field is a `400`. `release_id` must
 match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`: it starts with a letter or digit and
 continues with letters, digits, `.`, `_` or `-`, at most 128 characters in all;
 anything else is a `400`. With a CI token, `repo` and `commit_sha` are taken from
@@ -223,13 +224,13 @@ one read every few seconds.
 
 | Status | `code` | Meaning |
 |---|---|---|
-| 400 | `bad_request` | Malformed JSON, an unknown or mistyped field, a missing required field, `rebaseline` without `"bootstrap": true`, a `release_id` outside the pattern above, or a `kind` other than `dbt` or `python-odcs`: the kind `python` is refused with a message that says to release the service as `python-odcs`. |
+| 400 | `bad_request` | Malformed JSON, an unknown or mistyped field, a missing required field, `rebaseline` without `"bootstrap": true`, a `release_id` outside the pattern above, or a `kind` other than `dbt`, `python-odcs` or `ontology`: the kind `python` is refused with a message that says to release the service as `python-odcs`, and the kind `ontology` is refused while the install's ontology switch is off (`contracts.ontology.enabled`). |
 | 401 | `invalid_token` | The bearer token is malformed, expired, for the wrong audience, from an untrusted issuer, signed with an algorithm other than RS256, or valid for longer than one hour. The response carries `WWW-Authenticate: Bearer error="invalid_token"`. A request with no credential at all answers `401` with code `unauthenticated`. |
 | 403 | `forbidden` | The identity may not do this: a repository not bound to the service it submits, a repository bound to no service at all (on every route), a viewer submitting, or a CI token calling any other route. |
 | 403 | `claim_mismatch` | The body's `repo` or `commit_sha` differs from the token's. |
 | 403 | `bootstrap_not_allowed` | `"bootstrap": true` from a binding without `allowBootstrap`. |
 | 404 | `not_found` | No such release, a release of a service the CI token's repository is not bound to, or an id outside the `release_id` pattern. |
-| 409 | `release_kind_conflict` | The `release_id` already names a release with a different service, `image_tag`, `kind`, bootstrap flag, rebaseline flag, `repo` or `commit_sha`. The release service makes this check. A person's `error` carries its message; a CI token gets `release id already exists with different content`, which names no other release. |
+| 409 | `release_kind_conflict` | The `release_id` already names a release with a different service, `image_tag`, `kind`, bootstrap flag, rebaseline flag, `repo` or `commit_sha`. It is also the answer to the two ontology conflicts: the kind `ontology` for a service while another service is the install's ontology, and a service that changes between the kind `ontology` and a node kind. The release service makes these checks. A person's `error` carries its message. A CI token gets `release id already exists with different content`, which names no other release, except for the two ontology conflicts. The kind change, whose message names only the caller's own service (`service "<name>" is released as kind "<kind>": a service cannot change between kind "ontology" and a node kind`), reaches a CI token as it is. The second ontology service reaches it as `an install has one ontology service`, with the other service's name left out. |
 | 429 | `rate_limited` | More than 30 submits, or more than 300 reads (`GET /api/v1/releases/{id}` and `GET /api/v1/current-prod` together), in a minute from one principal (a repository for CI, a user for a person), counted per `ui` pod. Submits and reads have separate budgets. |
 | 503 | `auth_unavailable` | The token's issuer could not be reached, its discovery document or signing keys could not be read, or its key set has no usable RS256 key, publishes a `kid` twice, or holds an RSA key shorter than 2048 bits; the dashboard keeps working. Retry. |
 | 503 | `upstream_unavailable` | The release service is unreachable or failed. Retry; a submit is idempotent. |
