@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -62,6 +63,7 @@ const (
 	contractsServerPortKey      = "CONTRACTS_SERVER_PORT"
 	contractsServerDatabaseKey  = "CONTRACTS_SERVER_DATABASE"
 	contractHistoryRetentionKey = "CONTRACT_HISTORY_RETENTION_DAYS"
+	ontologyBaseURLKey          = "ONTOLOGY_BASE_URL"
 
 	// defaultWarehouseEngine is the engine an install that never chose one runs.
 	defaultWarehouseEngine = "postgres"
@@ -120,6 +122,13 @@ type Config struct {
 	// days of contract versions the retention sweeper keeps, from 0 to 36500.
 	// 0 keeps every version.
 	ContractHistoryRetentionDays int
+
+	// OntologyBaseURL is ONTOLOGY_BASE_URL with one trailing slash removed: the
+	// absolute http or https URL a published contract's ontology links start
+	// with, in place of the `continuo-ontology:` prefix a stored contract
+	// carries. It is empty when the install sets none, and the links are then
+	// published as stored.
+	OntologyBaseURL string
 }
 
 // Load reads configuration from environment variables.
@@ -146,6 +155,7 @@ func Load(v *pkgconfig.Validator, schedules ports.BackupScheduleParser) Config {
 		WarehouseEngine:              engine,
 		ContractsServer:              server,
 		ContractHistoryRetentionDays: loadContractHistoryRetentionDays(v),
+		OntologyBaseURL:              loadOntologyBaseURL(v),
 	}
 }
 
@@ -257,6 +267,29 @@ func loadContractHistoryRetentionDays(v *pkgconfig.Validator) int {
 		return 0
 	}
 	return days
+}
+
+// loadOntologyBaseURL reads ONTOLOGY_BASE_URL (default empty). A value that is
+// not an absolute http or https URL with a host, no query and no fragment is
+// recorded on v and "" is returned, so catalog refuses to start rather than
+// publish links that do not open. One trailing slash is removed, so a link
+// joins the URL with a single slash.
+func loadOntologyBaseURL(v *pkgconfig.Validator) string {
+	raw := os.Getenv(ontologyBaseURLKey)
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	valid := err == nil &&
+		(u.Scheme == "http" || u.Scheme == "https") &&
+		u.Host != "" &&
+		!strings.ContainsAny(raw, "?#")
+	if !valid {
+		v.Add(fmt.Sprintf("%s (invalid value %q: expected an absolute http or https URL with a host, no query and no fragment)",
+			ontologyBaseURLKey, raw))
+		return ""
+	}
+	return strings.TrimSuffix(raw, "/")
 }
 
 func envInt(key string, fallback int) int { return pkgconfig.EnvIntOrDefault(key, fallback) }

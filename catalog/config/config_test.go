@@ -256,11 +256,11 @@ func TestNeo4jPasswordMissingIsReported(t *testing.T) {
 	}
 }
 
-// contractsEnvKeys are the install settings of the published contracts and the
-// warehouse engine they derive from.
+// contractsEnvKeys are the install settings of the published contracts, the
+// warehouse engine they derive from and the base URL of their ontology links.
 var contractsEnvKeys = []string{
 	"WAREHOUSE_ENGINE", "CONTRACTS_SERVER_HOST", "CONTRACTS_SERVER_PORT", "CONTRACTS_SERVER_DATABASE",
-	"CONTRACT_HISTORY_RETENTION_DAYS",
+	"CONTRACT_HISTORY_RETENTION_DAYS", "ONTOLOGY_BASE_URL",
 }
 
 // clearContractsEnv unsets every contracts install setting for the test.
@@ -506,6 +506,83 @@ func TestLoad_ContractsServer_ABlankDatabaseIsRefused(t *testing.T) {
 			}
 			if cfg.ContractsServer != nil {
 				t.Fatalf("ContractsServer = %+v, want nil", *cfg.ContractsServer)
+			}
+		})
+	}
+}
+
+// An install that sets no ontology base URL, or sets a valid one, starts, and
+// the URL is kept without one trailing slash, so a link joins it with a single
+// slash.
+func TestLoad_OntologyBaseURL(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want string
+	}{
+		{raw: "", want: ""},
+		{raw: "https://ontology.example", want: "https://ontology.example"},
+		{raw: "https://ontology.example/", want: "https://ontology.example"},
+		{raw: "https://x/things/", want: "https://x/things"},
+		{raw: "https://x/things", want: "https://x/things"},
+		{raw: "http://ontology.internal:8080/things", want: "http://ontology.internal:8080/things"},
+		{raw: "https://x//", want: "https://x/"},
+	}
+	for _, c := range cases {
+		t.Run(c.raw, func(t *testing.T) {
+			clearContractsEnv(t)
+			t.Setenv("ONTOLOGY_BASE_URL", c.raw)
+			var v pkgconfig.Validator
+			cfg := Load(&v, croninfra.BackupScheduleParser{})
+			if problems := contractsProblems(v.Missing()); len(problems) != 0 {
+				t.Fatalf("Load recorded %v", problems)
+			}
+			if cfg.OntologyBaseURL != c.want {
+				t.Fatalf("OntologyBaseURL = %q, want %q", cfg.OntologyBaseURL, c.want)
+			}
+		})
+	}
+}
+
+// A base URL that is not an absolute http or https URL with a host, no query
+// and no fragment stops catalog at boot, naming the key and the value: a link
+// built from it would not open.
+func TestLoad_OntologyBaseURLRefusesWhatIsNotAnAbsoluteHTTPURL(t *testing.T) {
+	for _, raw := range []string{
+		"ftp://x", "https://", "http://", "x/y", "/things", "ontology.example", "https://x?q=1", "https://x/things?",
+		"https://x#section", "https://x/things#", "https:///things", "mailto:a@b.c", "https://x y",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			clearContractsEnv(t)
+			t.Setenv("ONTOLOGY_BASE_URL", raw)
+			var v pkgconfig.Validator
+			cfg := Load(&v, croninfra.BackupScheduleParser{})
+			problems := contractsProblems(v.Missing())
+			if len(problems) != 1 || !strings.HasPrefix(problems[0], "ONTOLOGY_BASE_URL ") {
+				t.Fatalf("problems = %v, want one naming ONTOLOGY_BASE_URL", problems)
+			}
+			if !strings.Contains(problems[0], fmt.Sprintf("%q", raw)) {
+				t.Fatalf("problem = %q, want it to quote the value %q", problems[0], raw)
+			}
+			if cfg.OntologyBaseURL != "" {
+				t.Fatalf("OntologyBaseURL = %q on a refused value, want empty", cfg.OntologyBaseURL)
+			}
+		})
+	}
+}
+
+// catalog has nothing to do with the install's ontology switch: it starts
+// whatever ONTOLOGY_ENABLED holds, and records no problem for it.
+func TestLoad_DoesNotReadTheOntologySwitch(t *testing.T) {
+	for _, raw := range []string{"", "true", "false", "TRUE", "maybe"} {
+		t.Run(raw, func(t *testing.T) {
+			clearContractsEnv(t)
+			t.Setenv("ONTOLOGY_ENABLED", raw)
+			var v pkgconfig.Validator
+			Load(&v, croninfra.BackupScheduleParser{})
+			for _, problem := range v.Missing() {
+				if strings.Contains(problem, "ONTOLOGY_ENABLED") {
+					t.Fatalf("Load recorded %q for ONTOLOGY_ENABLED", problem)
+				}
 			}
 		})
 	}
