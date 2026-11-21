@@ -2407,6 +2407,27 @@ blank. Each failure names its key. catalog repeats these checks at startup.
 {{- end -}}
 
 {{/*
+ONTOLOGY_ENABLED for the shared ConfigMap: "true" or "false". A release without
+a contracts.ontology block (for example after helm upgrade --reuse-values)
+renders "false"; the schema refuses a non-boolean value.
+*/ -}}
+{{- define "continuo.ontology.enabled" -}}
+{{- $o := (.Values.contracts | default dict).ontology | default dict -}}
+{{- if and (hasKey $o "enabled") $o.enabled -}}true{{- else -}}false{{- end -}}
+{{- end -}}
+
+{{/*
+ONTOLOGY_BASE_URL for the shared ConfigMap: contracts.ontology.baseUrl, empty
+when the release has no such key. The schema holds the value to what catalog
+accepts at startup: empty, or an absolute http or https URL with a host, no
+query and no fragment.
+*/ -}}
+{{- define "continuo.ontology.baseUrl" -}}
+{{- $o := (.Values.contracts | default dict).ontology | default dict -}}
+{{- dig "baseUrl" "" $o -}}
+{{- end -}}
+
+{{/*
 CONTRACT_HISTORY_RETENTION_DAYS for the shared ConfigMap:
 catalog.contractHistory.retentionDays. A release without a catalog block, or
 without the key, gets 0, which keeps every version; a value that is not a whole

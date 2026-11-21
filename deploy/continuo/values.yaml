@@ -627,12 +627,32 @@ catalog:
 # CONTRACTS_SERVER_HOST, CONTRACTS_SERVER_PORT and CONTRACTS_SERVER_DATABASE, so
 # a change restarts every continuo service, and catalog rewrites every file of
 # the live folder when it starts with other settings.
+# The install's ontology. Both keys reach the services through the shared
+# ConfigMap, so a change restarts every continuo service.
+# enabled: ONTOLOGY_ENABLED, read by topology-controller and release-controller,
+#   which each refuse to start on any value other than true or false. While it
+#   is false (the default), release-controller refuses a release of kind
+#   `ontology`, and topology-controller stores each contract without its
+#   ontology part and ignores an ontology a release carries. While it is true,
+#   a release that carries the install's ontology resolves each contract of a
+#   service the ontology declares and checks the contracts against it.
+# baseUrl: ONTOLOGY_BASE_URL, read by catalog. Empty (the default) publishes the
+#   ontology links of a contract as stored, each starting with
+#   `continuo-ontology:`. Otherwise an absolute http or https URL with a host,
+#   no query, no fragment and no whitespace, which catalog puts, with a slash,
+#   in front of each link, so `continuo-ontology:ProbeRow` is published as
+#   `<baseUrl>/ProbeRow` in the live contracts folder and in `continuo node
+#   contract`. catalog trims one trailing slash and refuses to start on a value
+#   that is not empty and not such a URL.
 contracts:
   publish:
     server:
       host: ""
       port: 0
       database: ""
+  ontology:
+    enabled: false
+    baseUrl: ""
 
 # Maintenance mode. While enabled, continuo starts no new work and lets the
 # work already running finish: ui, the public release API and the CLI refuse new
