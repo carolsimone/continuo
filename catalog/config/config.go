@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/carolsimone/continuo/catalog/domain/contractversion"
 	"github.com/carolsimone/continuo/catalog/service/ports"
@@ -270,10 +271,11 @@ func loadContractHistoryRetentionDays(v *pkgconfig.Validator) int {
 }
 
 // loadOntologyBaseURL reads ONTOLOGY_BASE_URL (default empty). A value that is
-// not an absolute http or https URL with a host, no query and no fragment is
-// recorded on v and "" is returned, so catalog refuses to start rather than
-// publish links that do not open. One trailing slash is removed, so a link
-// joins the URL with a single slash.
+// not an absolute http or https URL with a host name, no query, no fragment, no
+// credentials and no whitespace or control character is recorded on v and ""
+// is returned, so catalog refuses to start rather than publish links that do
+// not open or that carry a credential into every published contract. One
+// trailing slash is removed, so a link joins the URL with a single slash.
 func loadOntologyBaseURL(v *pkgconfig.Validator) string {
 	raw := os.Getenv(ontologyBaseURLKey)
 	if raw == "" {
@@ -282,10 +284,12 @@ func loadOntologyBaseURL(v *pkgconfig.Validator) string {
 	u, err := url.Parse(raw)
 	valid := err == nil &&
 		(u.Scheme == "http" || u.Scheme == "https") &&
-		u.Host != "" &&
-		!strings.ContainsAny(raw, "?#")
+		u.User == nil &&
+		u.Hostname() != "" &&
+		!strings.ContainsAny(raw, "?#") &&
+		!strings.ContainsFunc(raw, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) })
 	if !valid {
-		v.Add(fmt.Sprintf("%s (invalid value %q: expected an absolute http or https URL with a host, no query and no fragment)",
+		v.Add(fmt.Sprintf("%s (invalid value %q: expected an absolute http or https URL with a host name, no credentials, no query, no fragment and no whitespace)",
 			ontologyBaseURLKey, raw))
 		return ""
 	}

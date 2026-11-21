@@ -197,7 +197,7 @@ The ontology has two values in the chart. Both are in `values.yaml`, under
 | Value | Default | What it does |
 |---|---|---|
 | `enabled` | `false` | Turns the ontology on for the install. |
-| `baseUrl` | `""` | The web address that the ontology links of published contracts start with. Empty, or an `http://` or `https://` address with a host and no query or fragment. |
+| `baseUrl` | `""` | The web address that the ontology links of published contracts start with. Empty, or an `http://` or `https://` address with a host name, no credentials, no query or fragment and no whitespace. |
 
 **With the switch off** (the default), continuo ignores the ontology:
 

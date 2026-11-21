@@ -638,14 +638,16 @@ catalog:
 #   service the ontology declares and checks the contracts against it.
 # baseUrl: ONTOLOGY_BASE_URL, read by catalog. Empty (the default) publishes the
 #   ontology links of a contract as stored, each starting with
-#   `continuo-ontology:`. Otherwise an absolute http or https URL with a host,
-#   no query and no fragment, which catalog puts, with a slash,
-#   in front of each link, so `continuo-ontology:Transaction` is published as
-#   `<baseUrl>/Transaction` in the live contracts folder and in `continuo node
-#   contract`. catalog trims one trailing slash and refuses to start on a value
-#   that is not empty and not such a URL. The schema refuses more than catalog
-#   does: an address with credentials, an IPv6 literal, an empty port, an
-#   upper-case scheme and whitespace in the path.
+#   `continuo-ontology:`. Otherwise an absolute http or https URL with a host
+#   name, no credentials, no query, no fragment and no whitespace, which catalog
+#   puts, with a slash, in front of each link, so
+#   `continuo-ontology:Transaction` is published as `<baseUrl>/Transaction` in
+#   the live contracts folder and in `continuo node contract`. catalog trims one
+#   trailing slash and refuses to start on a value that is not empty and not
+#   such a URL. The schema refuses more than catalog does: an IPv6 literal, an
+#   empty port, an upper-case scheme, a host with a character other than
+#   letters, digits, `.`, `_`, `~` and `-`, and a path with a character other
+#   than letters, digits, `._~-!$&'()*+,;=:@/` and `%XX` escapes.
 contracts:
   publish:
     server:

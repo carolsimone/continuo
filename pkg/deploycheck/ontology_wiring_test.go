@@ -64,11 +64,13 @@ func TestOntologyKeysMatchTheChart(t *testing.T) {
 // contracts.ontology.baseUrl is checked by the chart's values schema and again
 // by catalog at boot. The schema's pattern accepts nothing catalog refuses, so
 // a value that renders never stops catalog: an empty value, or an absolute
-// http or https URL with a host, no query, no fragment and no whitespace. The
-// values catalog accepts and refuses in its own tests are held to that rule
-// below. The pattern is stricter than catalog on four values catalog accepts:
-// a space in the path, credentials in the URL, an empty port and a host written
-// as an IPv6 literal.
+// http or https URL with a host name, no credentials, no query, no fragment and
+// no whitespace or control character. The values catalog accepts and refuses
+// in its own tests are held to that rule below. The pattern is stricter than
+// catalog on a few values catalog accepts: a host written as an IPv6 literal,
+// an empty port, an upper-case scheme, a host with a character other than
+// letters, digits and "._~-", and a path with a character outside the URL's
+// unreserved and sub-delimiter characters, ":@/" and percent escapes.
 func TestOntologyBaseURLSchemaPatternIsAsStrictAsCatalog(t *testing.T) {
 	var schema struct {
 		Properties struct {
@@ -114,7 +116,9 @@ func TestOntologyBaseURLSchemaPatternIsAsStrictAsCatalog(t *testing.T) {
 		"ftp://x", "https://", "http://", "x/y", "/things", "ontology.example", "https://x?q=1", "https://x/things?",
 		"https://x#section", "https://x/things#", "https:///things", "mailto:a@b.c", "https://x y", "https://x/a b",
 		" https://x", "https://x ", "https://x/\tthings", "https://x/things\n", "https://x:port/", "https://x/%zz",
-		"https://user:secret@x/things", "https://x:/things", "http://[::1]:8080/things",
+		"https://user:secret@x/things", "https://user@x", "https://@x", "https://:@x/things",
+		"http://:8080", "http://:8080/things", "https://x/a\x01b", "https://x/a\u00a0b",
+		"https://x:/things", "http://[::1]:8080/things", "HTTPS://x/things", "https://ex$ample/things", "https://x/caf\u00e9",
 	} {
 		if re.MatchString(raw) {
 			t.Errorf("pattern accepts %q, which the chart must refuse", raw)

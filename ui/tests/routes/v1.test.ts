@@ -95,12 +95,20 @@ describe('POST /api/v1/releases', () => {
   });
 
   it('unbound service is forbidden; bootstrap without allowBootstrap is bootstrap_not_allowed', async () => {
-    const app = appAs(ci({ core: false }), fakeClient());
+    const client = fakeClient();
+    const app = appAs(ci({ core: false }), client);
     expect((await request(app).post('/api/v1/releases').send({ ...body, service: 'marketing' })).body.code).toBe('forbidden');
+    // The kind ontology of an unbound service is refused the same way: the
+    // kind-change 409 of release-controller reaches a caller only after the
+    // route has checked the identity's bindings.
+    expect((await request(app).post('/api/v1/releases').send({ ...body, service: 'marketing', kind: 'ontology' })).body.code).toBe('forbidden');
     expect((await request(app).post('/api/v1/releases').send({ ...body, bootstrap: true })).body.code).toBe('bootstrap_not_allowed');
     // A repository that matches no binding at all.
-    const none = await request(appAs(ci({}), fakeClient())).post('/api/v1/releases').send(body);
+    const noneClient = fakeClient();
+    const none = await request(appAs(ci({}), noneClient)).post('/api/v1/releases').send(body);
     expect([none.status, none.body.code]).toEqual([403, 'forbidden']);
+    expect(client.submitRelease).not.toHaveBeenCalled();
+    expect(noneClient.submitRelease).not.toHaveBeenCalled();
   });
 
   it('forwards rebaseline with bootstrap', async () => {

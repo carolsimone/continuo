@@ -313,6 +313,8 @@ func TestGetNodeContract_ShowsAbsoluteLinks(t *testing.T) {
 	assert.NotContains(t, got.DocumentYAML, "continuo-ontology:")
 	assert.Contains(t, got.DocumentYAML, `ontologyVersion: "rel-o-3@sha256:abc123"`)
 	assert.Equal(t, "rel-o-3@sha256:abc123", got.Version.OntologyVersion)
+	assert.Equal(t, "sha256:aaa", got.Version.ContractHash,
+		"the rewrite touches the published document, never the recorded hash")
 }
 
 // With no base URL the document keeps the links as stored.

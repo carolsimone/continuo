@@ -543,13 +543,18 @@ func TestLoad_OntologyBaseURL(t *testing.T) {
 	}
 }
 
-// A base URL that is not an absolute http or https URL with a host, no query
-// and no fragment stops catalog at boot, naming the key and the value: a link
-// built from it would not open.
+// A base URL that is not an absolute http or https URL with a host name, no
+// query, no fragment, no credentials and no whitespace or control character
+// stops catalog at boot, naming the key and the value: a link built from it
+// would not open, or would carry a credential into every published contract.
 func TestLoad_OntologyBaseURLRefusesWhatIsNotAnAbsoluteHTTPURL(t *testing.T) {
 	for _, raw := range []string{
 		"ftp://x", "https://", "http://", "x/y", "/things", "ontology.example", "https://x?q=1", "https://x/things?",
 		"https://x#section", "https://x/things#", "https:///things", "mailto:a@b.c", "https://x y",
+		"https://user:secret@x/things", "https://user@x", "https://@x", "https://:@x/things",
+		"http://:8080", "http://:8080/things",
+		"https://x/a b", "https://x/things ", " https://x", "https://x/a\tb", "https://x/a\nb", "https://x/a\x01b",
+		"https://x/a\u00a0b", "https://x/a\u2003b",
 	} {
 		t.Run(raw, func(t *testing.T) {
 			clearContractsEnv(t)

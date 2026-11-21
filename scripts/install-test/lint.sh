@@ -1527,8 +1527,8 @@ fi
 # through the shared ConfigMap as ONTOLOGY_ENABLED, exactly "true" or "false",
 # and ONTOLOGY_BASE_URL. The schema refuses a non-boolean switch, a key it does
 # not name and a base URL that catalog refuses at startup (a value that is not
-# empty and not an absolute http or https URL with a host, no query and no
-# fragment), and also one with whitespace or credentials. Values without a
+# empty and not an absolute http or https URL with a host name, no credentials,
+# no query, no fragment and no whitespace), and a few more. Values without a
 # contracts.ontology block (as `helm upgrade --reuse-values` can produce) render
 # the defaults, and no service's own env shadows the two keys.
 echo "--- contracts.ontology reaches the ConfigMap; a switch or a base URL a service cannot honour is refused"
@@ -1557,8 +1557,8 @@ helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set-string cont
   || { echo "FAIL: an empty contracts.ontology.baseUrl must render"; exit 1; }
 grep -qF 'ONTOLOGY_BASE_URL: ""' "${tmp}/ontology-empty.yaml" \
   || { echo "FAIL: an empty contracts.ontology.baseUrl must reach the ConfigMap as empty"; exit 1; }
-# Each of these is refused by the schema, which names the key: catalog stops at
-# boot on the first five, and the chart refuses the rest as well.
+# Each of these is refused by the schema, which names the key, and catalog stops
+# at boot on each of them as well.
 for refused in 'ftp://x' 'https://' 'x/y' 'https://x?q=1' 'https://x#section' 'https://x/a b' ' https://x' 'https://user:secret@x/things'; do
   if out="$(helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set-string "contracts.ontology.baseUrl=${refused}" 2>&1)"; then
     echo "FAIL: contracts.ontology.baseUrl=${refused} must fail the render"; exit 1

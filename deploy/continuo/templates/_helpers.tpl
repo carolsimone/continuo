@@ -2419,8 +2419,8 @@ renders "false"; the schema refuses a non-boolean value.
 {{/*
 ONTOLOGY_BASE_URL for the shared ConfigMap: contracts.ontology.baseUrl, empty
 when the release has no such key. The schema holds the value to what catalog
-accepts at startup: empty, or an absolute http or https URL with a host, no
-query and no fragment.
+accepts at startup: empty, or an absolute http or https URL with a host name, no
+credentials, no query, no fragment and no whitespace.
 */ -}}
 {{- define "continuo.ontology.baseUrl" -}}
 {{- $o := (.Values.contracts | default dict).ontology | default dict -}}
