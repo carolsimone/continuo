@@ -4,8 +4,10 @@
 release that carries dbt services and one python service: a dbt `manifest.json`
 and `compile-extras.json` per dbt service, and the python service's
 `odcs-bundle.json` (kind `python-odcs`), one ODCS contract per node. Every
-value comes from one `random.Random(seed)`, so the same arguments always give
-the same bytes and two baselines parse the same estate.
+value comes from one `random.Random(seed)`, so with `ontology=False` the same
+arguments give the same bytes and two baselines parse the same estate, for one
+version of the harness and of the libraries it pins: the python bundle's
+producer stamp names the runtime and library versions, so it moves with them.
 
 With `ontology=True` the release also carries the install's ontology, a
 manifest of kind `ontology`, and every contract of the estate binds to it: all

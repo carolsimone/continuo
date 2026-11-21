@@ -96,16 +96,22 @@ stamp names the runtime and library versions, so it changes with them.
 ## Memory
 
 `peak_rss_bytes` and `max_rss_bytes` are the resident memory of the benchmark
-process, not of a pod. The process keeps the release's S3 objects in memory (51 MiB
+process, not of a pod. The process keeps the estate's input objects in memory (51 MiB
 at 10,000 models with 20 columns, 60 MiB with `--ontology`, 79 MiB with 40 columns),
 which a pod keeps on disk, and it holds the interpreter and the libraries too.
+Those figures are the input objects only: the in-memory S3 also keeps the bodies
+the handler sends it, which are `put_bytes` (43 to 61 MiB at 10,000 models).
 
-On a Mac host (Apple M4 Pro), a run of 10,000 models with 40 columns peaked at
-1,017 MiB in the cold pass and 1,083 MiB in the warm pass. With 20 columns it
-peaked at 783 MiB cold and 839 MiB warm, and with 20 columns and `--ontology` at
-1,003 MiB cold and 1,052 MiB warm. The chart's memory limit for topology-controller
-is 1 GiB (`values.yaml`). A Mac host and a Linux pod do not use memory in the same
-way, so these are figures to compare runs with, not what a pod uses.
+Every figure below is the median of 3 repetitions. On a Mac host (Apple M4 Pro),
+a run of 10,000 models with 40 columns peaked at 1,017 MiB in the cold pass and
+1,083 MiB in the warm pass. With 20 columns it peaked at 783 MiB cold and 839 MiB
+warm, and with 20 columns and `--ontology` at 1,003 MiB cold and 1,052 MiB warm.
+In a Linux container limited to one CPU (`--cpus=1`), a run of 10,000 models with
+20 columns peaked at 510.8 MiB cold and 566.0 MiB warm (the result file
+`cpus1-c20.jsonl`), against 783 MiB and 839 MiB on the host. The chart's memory
+limit for topology-controller is 1 GiB (`values.yaml`). A Mac host and a Linux pod
+do not use memory in the same way, so these are figures to compare runs with, not
+what a pod uses.
 
 ## The ontology estate
 

@@ -354,7 +354,7 @@ Add the check to the CI of each service that writes bindings. It runs four of th
 release's rules (`contract`, `coverage`, `quality` and `privacy`) over the
 contracts of the service, and prints what a release would say about each
 binding. Do it before you release: a mistake then
-fails the pull request, and a release is never rejected for it.
+fails the pull request.
 
 The check needs the ontology file. Take it from your company's ontology
 repository, at a commit you pin. It never comes from continuo.
