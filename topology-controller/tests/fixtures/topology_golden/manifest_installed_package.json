@@ -1,4 +1,9 @@
 {
+  "candidate_sql": {
+    "analytics.countries": "",
+    "analytics.monthly_report": "SELECT id FROM \"_candidate_rel_1\".orders",
+    "analytics.orders": "SELECT id FROM analytics.pkg_model"
+  },
   "code_bundle": {
     "contract_version": 1,
     "nodes": {

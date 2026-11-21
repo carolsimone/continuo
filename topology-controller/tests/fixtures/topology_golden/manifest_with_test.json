@@ -1,4 +1,8 @@
 {
+  "candidate_sql": {
+    "test.service-1.not_null_users_id.9f3a1b2c": "SELECT id FROM \"_candidate_rel_1\".users WHERE id IS NULL",
+    "test_schema.users": "SELECT 1 AS id"
+  },
   "code_bundle": {
     "contract_version": 1,
     "nodes": {

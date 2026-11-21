@@ -1,4 +1,9 @@
 {
+  "candidate_sql": {
+    "test_schema.orders": "SELECT * FROM \"_candidate_rel_1\".users",
+    "test_schema.summary": "SELECT * FROM test_schema.py_metrics",
+    "test_schema.users": "SELECT 1 AS id"
+  },
   "code_bundle": {
     "contract_version": 1,
     "nodes": {

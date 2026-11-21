@@ -1,4 +1,7 @@
 {
+  "candidate_sql": {
+    "test_schema.summary": "SELECT * FROM test_schema.py_metrics"
+  },
   "code_bundle": {
     "contract_version": 1,
     "nodes": {

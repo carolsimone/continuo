@@ -1,4 +1,7 @@
 {
+  "candidate_sql": {
+    "test_schema.users": "SELECT 1 AS id"
+  },
   "code_bundle": {
     "contract_version": 1,
     "nodes": {
