@@ -58,7 +58,8 @@ func (s *Server) handleReceiveCandidate(w http.ResponseWriter, r *http.Request) 
 			writeMaintenance(w)
 			return
 		}
-		if errors.Is(err, handlers.ErrRunKindConflict) || errors.Is(err, handlers.ErrReleaseIDConflict) {
+		if errors.Is(err, handlers.ErrRunKindConflict) || errors.Is(err, handlers.ErrReleaseIDConflict) ||
+			errors.Is(err, handlers.ErrOntologyServiceConflict) {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}

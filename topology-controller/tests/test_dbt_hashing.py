@@ -389,15 +389,11 @@ def test_an_enforced_seed_contract_is_not_folded_into_hashed_config():
 
 
 def test_an_enforced_snapshot_contract_is_not_folded_into_hashed_config():
-    """The validation refuses `contract.enforced` on a snapshot, because dbt does not support
-    contracts on snapshots, so a release never hashes an enforced one: the hashed config of a
-    snapshot holds the flag but not its declared columns and constraints. The dbt-snapshot entries
-    of fingerprints.yaml still classify the two inputs `when: enforced`, which is classification
-    only, as nothing hashes them."""
+    """The hashed config of a snapshot holds the flag but not its declared columns and
+    constraints. The contracts library refuses an enforced contract on a snapshot (dbt does not
+    support one), so no release keeps such a snapshot and none has a `content_hash` to fold them
+    into."""
     assert not _folds_the_declared_columns_and_constraints("snapshot")
-    for name in ("contract.columns", "constraints"):
-        entry = classify("dbt-snapshot", name)
-        assert entry is not None and entry.when is not None and entry.when.condition == "enforced", name
 
 
 def test_an_enforced_flag_on_a_test_is_not_folded_into_hashed_config():

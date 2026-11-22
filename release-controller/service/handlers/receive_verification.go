@@ -60,6 +60,12 @@ func (i ReceiveVerificationInput) validate() (release.ManifestKind, error) {
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
+	if kind == release.ManifestKindOntology {
+		return "", refusal{
+			text: fmt.Sprintf("a verification run cannot have kind %q", release.ManifestKindOntology),
+			as:   ErrInvalidInput,
+		}
+	}
 	if kind.IsPython() && i.SourceOverlayURI != "" {
 		return "", fmt.Errorf("%w: source_overlay_uri is accepted only with kind dbt", ErrInvalidInput)
 	}

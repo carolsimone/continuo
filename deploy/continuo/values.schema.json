@@ -549,6 +549,21 @@
               }
             }
           }
+        },
+        "ontology": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "The install's ontology switch (ONTOLOGY_ENABLED), read by topology-controller and release-controller. false: a release of kind ontology is refused and contracts are stored without their ontology part. true: a release that carries the ontology resolves and checks the contracts of the services it declares."
+            },
+            "baseUrl": {
+              "type": "string",
+              "pattern": "^$|^https?://[A-Za-z0-9._~-]+(:[0-9]+)?(/([A-Za-z0-9._~!$&'()*+,;=:@/-]|%[0-9A-Fa-f]{2})*)?$",
+              "description": "Where the ontology's links point (ONTOLOGY_BASE_URL), read by catalog. Empty publishes each ontology link as stored. Otherwise an absolute http or https URL with a host name or an IPv4 address, an optional port and path, and no query, fragment, whitespace or credentials. catalog puts it, with a slash, in front of each link."
+            }
+          }
         }
       }
     },

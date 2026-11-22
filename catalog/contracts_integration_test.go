@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -104,7 +105,15 @@ func newContractsFixture(t *testing.T) *contractsFixture {
 // of the release naming the bundle and its SHA-256.
 func (f *contractsFixture) release(releaseID string, seq int64, contracts map[string]string) domainModel.PromoteReleaseInput {
 	f.t.Helper()
+	return f.releaseResolvedAgainst(releaseID, seq, contracts, nil)
+}
+
+// releaseResolvedAgainst is release for a bundle whose ontology value is
+// ontology (nil leaves it null, as an install with the switch off writes it).
+func (f *contractsFixture) releaseResolvedAgainst(releaseID string, seq int64, contracts map[string]string, ontology json.RawMessage) domainModel.PromoteReleaseInput {
+	f.t.Helper()
 	doc := f.bundle(releaseID)
+	doc.Ontology = ontology
 	for id, hash := range contracts {
 		body, err := json.Marshal(map[string]any{"id": id, "kind": "DataContract", "description": hash})
 		require.NoError(f.t, err)
@@ -284,6 +293,33 @@ func TestContractsHandler_IngestsDbtContracts(t *testing.T) {
 	assert.Equal(t, decodedDocument(t, dbtContract.Document), current.Document, "the dbt contract reads back as the bundle held it")
 	assert.True(t, f.recorded("41-0"))
 	assert.Equal(t, []int{2}, f.metrics.versions)
+}
+
+// A promotion whose bundle names the ontology release its contracts were
+// resolved against records "<release_id>@sha256:<hex>" on the promotion edge it
+// creates, and a later promotion whose bundle names none records none, so each
+// version keeps the ontology it used.
+func TestContractsHandler_RecordsTheOntologyVersion(t *testing.T) {
+	ctx := context.Background()
+	f := newContractsFixture(t)
+	const id = "analytics.py_daily_kpis"
+	f.exec(f.tenantID, `CREATE (:Node {tenant_id: $tenant_id, unique_id: $id, active: true})`, map[string]any{"id": id})
+	ontology := json.RawMessage(`{"enabled":true,"service":"ontology","release_id":"rel-o-3","sha256":"abc123","declared_services":[],"findings":[]}`)
+
+	require.NoError(t, f.handler.Handle(ctx, "41-0", nil, f.releaseResolvedAgainst("rel-1", 41, map[string]string{id: "sha256:3f1c"}, ontology)))
+	require.NoError(t, f.handler.Handle(ctx, "47-0", nil, f.release("rel-2", 47, map[string]string{id: "sha256:a0b1"})))
+
+	edge := `MATCH (:Node {tenant_id: $tenant_id, unique_id: '` + id + `'})-[e:CONTRACT_PROMOTED {version: %d}]->(:ContractVersion {tenant_id: $tenant_id}) `
+	assert.Equal(t, "rel-o-3@sha256:abc123", f.value(fmt.Sprintf(edge, 1)+`RETURN e.ontology_version AS v`))
+	assert.Nil(t, f.value(fmt.Sprintf(edge, 2)+`RETURN e.ontology_version AS v`), "a promotion that names no ontology records none")
+
+	current, err := neo4jinfra.NewContractQueryRepository(f.client).Current(ctx, f.tenantID, id)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), current.Version)
+	assert.Empty(t, current.OntologyVersion)
+	first, err := neo4jinfra.NewContractQueryRepository(f.client).ByVersion(ctx, f.tenantID, id, 1)
+	require.NoError(t, err)
+	assert.Equal(t, "rel-o-3@sha256:abc123", first.OntologyVersion, "the first version keeps the ontology it used")
 }
 
 // The same message delivered twice writes once: one edge, and one version

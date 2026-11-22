@@ -1,7 +1,7 @@
-"""A rejection whose text UTF-8 cannot encode is published as an invalid artifact that names where
-the text was found. The event is encoded as UTF-8, and a lone surrogate (a JSON escape in the
-release request or the manifest) makes that encode raise: the message would be retried, then
-dead-lettered, and the release would get no answer."""
+"""A rejection whose text UTF-8 cannot encode is published as an invalid artifact that names the release
+and shows the first such text escaped. The event is encoded as UTF-8, and a lone surrogate (a JSON
+escape in the release request or the manifest) makes that encode raise: the message would be retried,
+then dead-lettered, and the release would get no answer."""
 import json
 from unittest.mock import MagicMock
 
@@ -77,15 +77,15 @@ def test_a_failed_node_holding_unencodable_text_is_published_as_an_invalid_artif
     assert payload["status"] == "failed"
     assert payload["failure_kind"] == "invalid_artifact"
     assert payload["failed_nodes"] == []
-    assert payload["detail"].endswith(f": the {field} holds text UTF-8 cannot encode")
-    assert _LONE_SURROGATE not in payload["detail"]
+    assert payload["detail"].startswith("release rel-1: the failure holds text UTF-8 cannot encode (")
+    assert r"\ud800" in payload["detail"], "the text is shown escaped"
 
 
-def test_the_failed_node_that_is_named_has_its_text_written_escaped(tmp_path, monkeypatch):
+def test_the_text_that_is_shown_is_the_first_one_that_cannot_be_encoded_and_is_written_escaped(tmp_path, monkeypatch):
     payload = _release_whose_parse_finds(
-        tmp_path, monkeypatch, _failed(node_id="analytics.orders" + _LONE_SURROGATE))
+        tmp_path, monkeypatch, _failed(file_path="models/orders" + _LONE_SURROGATE + ".sql"))
 
-    assert payload["detail"] == r"'analytics.orders\ud800': the node id holds text UTF-8 cannot encode"
+    assert payload["detail"] == r"release rel-1: the failure holds text UTF-8 cannot encode (models/orders\ud800.sql)"
 
 
 @pytest.mark.parametrize("kind", [ParseFailureKind.INVALID_SQL, ParseFailureKind.INVALID_CONTRACT])
@@ -115,8 +115,7 @@ def test_a_declared_service_holding_unencodable_text_gets_a_rejection_not_a_retr
     payload = _published(redis)
     assert (payload["status"], payload["failure_kind"], payload["failed_nodes"]) == ("failed", "invalid_artifact", [])
     assert payload["detail"] == (
-        "the failure's detail holds text UTF-8 cannot encode: "
-        r"'service\ud800: manifest contains no model/seed nodes'")
+        r"release rel-1: the failure holds text UTF-8 cannot encode (service\ud800: manifest contains no model/seed nodes)")
 
 
 def test_the_quoted_part_of_an_unencodable_detail_is_capped(tmp_path):
@@ -129,6 +128,6 @@ def test_the_quoted_part_of_an_unencodable_detail_is_capped(tmp_path):
     build_handler(source, _publishing(redis), make_uploader()).handle(release_id="rel-1")
 
     detail = _published(redis)["detail"]
-    assert detail.startswith("the failure's detail holds text UTF-8 cannot encode: ")
-    assert len(detail) <= 300
+    assert detail.startswith("release rel-1: the failure holds text UTF-8 cannot encode (")
+    assert len(detail) < 600, "what is shown of the text is cut"
 

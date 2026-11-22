@@ -184,6 +184,32 @@ def test_source_carries_the_declared_kind_onto_each_manifest_file():
         source.cleanup()
 
 
+@pytest.mark.parametrize("key, kind, release_id", [
+    ("company-ontology/rel-7/ontology.yaml", ManifestKind.ONTOLOGY, "rel-7"),
+    ("service-1/rel-9/manifest.json", ManifestKind.DBT, "rel-9"),
+    ("marketing-py/rel-3/odcs-bundle.json", ManifestKind.PYTHON_ODCS, "rel-3"),
+])
+def test_the_release_id_comes_from_the_key(key, kind, release_id):
+    """The folder that holds the artifact is the release that wrote it, which is not
+    the release being parsed when production's artifact of the service is used."""
+    source = _make_s3_source(keys=[ManifestRequest(service="svc", key=key, kind=kind)])
+    try:
+        assert [f.release_id for f in source.list_manifests()] == [release_id]
+    finally:
+        source.cleanup()
+
+
+def test_the_ontology_is_downloaded_as_one_object_with_no_extras():
+    source = _make_s3_source(keys=[
+        ManifestRequest(service="onto", key="onto/rel-7/ontology.yaml", kind=ManifestKind.ONTOLOGY)])
+    try:
+        (manifest,) = source.list_manifests()
+        assert manifest.extras_path == ""
+        assert source._s3.download_file.call_count == 1
+    finally:
+        source.cleanup()
+
+
 def test_s3_source_counts_its_manifests_before_downloading():
     source = _make_s3_source(keys=[
         ManifestRequest(service="service-1", key="service-1/rel-1/manifest.json"),

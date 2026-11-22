@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
@@ -264,6 +265,45 @@ func TestAdvanceQueue_PythonODCSRelease_SkipsCompile_EmitsReleaseRequested(t *te
 		"release.requested carries the run's assembled image tags: topology-controller joins exactly these onto every node")
 }
 
+// The ontology service ships its ontology file before the release is
+// requested, so its release has no compile leg: it activates straight into
+// Parsing, and release.requested names the file as the service's artifact.
+func TestAdvanceQueue_AnOntologyReleaseGoesStraightToParsing(t *testing.T) {
+	deps, store := ontologyDeps(time.Unix(200, 0).UTC())
+	deps.Bucket = "b"
+	store.SeedServiceProd(release.NewServiceProd("svc-dbt", "rOld", "s3://b/svc-dbt/rOld/manifest.json", "t-old", release.ManifestKindDbt, time.Unix(0, 0)))
+	store.SeedRelease(pipeline.NewCandidate("rOnt", "company-ontology", "img:1", false, false, "acme/ontology", "cafebabe",
+		release.ManifestKindOntology, deps.Clock.Now()))
+
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+
+	r, _ := store.GetRelease("rOnt")
+	assert.Equal(t, release.ManifestKindOntology, r.ManifestKind())
+	assert.Equal(t, pipeline.StatusParsing, r.Status(), "an ontology release has no compile leg")
+
+	entries := outboxEntries(store)
+	require.Len(t, entries, 1)
+	assert.Equal(t, streams.ReleaseRequestedV1, entries[0].StreamName, "no compile.requested for an ontology release")
+
+	var p struct {
+		ManifestKeys []struct {
+			Service string `json:"service"`
+			S3URI   string `json:"s3_uri"`
+			Kind    string `json:"kind"`
+		} `json:"manifest_keys"`
+	}
+	require.NoError(t, json.Unmarshal(entries[0].Payload, &p))
+	kinds := map[string]string{}
+	uris := map[string]string{}
+	for _, k := range p.ManifestKeys {
+		kinds[k.Service] = k.Kind
+		uris[k.Service] = k.S3URI
+	}
+	assert.Equal(t, map[string]string{"company-ontology": "ontology", "svc-dbt": "dbt"}, kinds)
+	assert.Equal(t, "s3://b/company-ontology/rOnt/ontology.yaml", uris["company-ontology"])
+	assert.Equal(t, "s3://b/svc-dbt/rOld/manifest.json", uris["svc-dbt"])
+}
+
 func TestAdvanceQueue_DbtRelease_StillCompiles(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
@@ -474,4 +514,88 @@ func releaseRequestedImageTags(t *testing.T, payload []byte) map[string]string {
 	}
 	require.NoError(t, json.Unmarshal(payload, &p))
 	return p.ImageTags
+}
+
+// assertKindChangeRejectedAtActivation checks that the queued run releaseID of
+// the service service ended with kind-change refusal text as an invalid_artifact
+// rejection, was never parsed, and left the service's service_prod row and
+// current_prod as they were.
+func assertKindChangeRejectedAtActivation(t *testing.T, store *fakeStore, releaseID, service, refusal string, row *release.ServiceProd) {
+	t.Helper()
+	r := mustGetRelease(t, store, releaseID)
+	assert.Equal(t, pipeline.StatusRejected, r.Status(), "a kind change is rejected, never promoted")
+	assert.Equal(t, string(pkg_model.RejectReasonInvalidArtifact), r.FailReason())
+	assert.Equal(t, refusal, r.FailDetail())
+
+	assert.Equal(t, row.ManifestKind(), store.GetServiceProd(service).ManifestKind(), "the service keeps its stored kind")
+	assert.Equal(t, row.ReleaseID(), store.GetServiceProd(service).ReleaseID(), "no service_prod row is written")
+	assert.Zero(t, store.CurrentProdUpsertCalls(), "current_prod is not moved")
+	for _, e := range store.OutboxEntries() {
+		assert.NotEqual(t, streams.ReleaseRequestedV1, e.StreamName, "a refused kind change requests no parse")
+		assert.NotEqual(t, streams.ReleasePromotedV2, e.StreamName, "a refused kind change is not promoted")
+	}
+
+	var rejected struct {
+		ReleaseID   string `json:"release_id"`
+		Reason      string `json:"reason"`
+		ErrorDetail string `json:"error_detail"`
+	}
+	require.NoError(t, json.Unmarshal(findEntry(t, store, streams.ReleaseRejectedV1).Payload, &rejected))
+	assert.Equal(t, releaseID, rejected.ReleaseID)
+	assert.Equal(t, string(pkg_model.RejectReasonInvalidArtifact), rejected.Reason)
+	assert.Equal(t, refusal, rejected.ErrorDetail)
+	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
+}
+
+// A dbt release of the service may promote between the intake of a queued
+// ontology release of the same service and its activation, so activation
+// refuses the kind change too: the ontology file would replace the service's
+// manifest and drop its nodes.
+func TestAdvanceQueue_AnOntologyRunOfAServiceNowReleasedAsDbtIsRejectedAtActivation(t *testing.T) {
+	deps, store := ontologyDeps(time.Unix(200, 0).UTC())
+	deps.Bucket = "b"
+	row := release.NewServiceProd("svc-x", "rDbt", "s3://b/svc-x/rDbt/manifest.json", "t-dbt", release.ManifestKindDbt, time.Unix(0, 0))
+	store.SeedServiceProd(row)
+	store.SeedRelease(pipeline.NewCandidate("rOnt", "svc-x", "img:1", false, false, "acme/ontology", "cafebabe",
+		release.ManifestKindOntology, deps.Clock.Now()))
+	store.SeedRelease(pipeline.NewCandidate("rBehind", "svc-y", "img:2", false, false, "acme/demo", "deadbeef",
+		release.ManifestKindDbt, deps.Clock.Now().Add(time.Second)))
+
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+
+	assertKindChangeRejectedAtActivation(t, store, "rOnt", "svc-x",
+		`service "svc-x" is released as kind "dbt": a service cannot change between kind "ontology" and a node kind`, row)
+	assert.Equal(t, pipeline.StatusCompiling, mustGetRelease(t, store, "rBehind").Status(),
+		"the queue activates the next run once the kind change is rejected")
+}
+
+// The ontology service of an install may be released as a node kind by a dbt
+// run queued before the ontology was released: activation refuses it, so the
+// install's ontology is not silently replaced by a dbt service.
+func TestAdvanceQueue_ADbtRunOfTheOntologyServiceIsRejectedAtActivation(t *testing.T) {
+	deps, store := newDeps(time.Unix(200, 0).UTC())
+	deps.Bucket = "b"
+	row := release.NewServiceProd("svc-x", "rOnt", "s3://b/svc-x/rOnt/ontology.yaml", "img:1", release.ManifestKindOntology, time.Unix(0, 0))
+	store.SeedServiceProd(row)
+	store.SeedRelease(pipeline.NewCandidate("rDbt", "svc-x", "img:2", false, false, "acme/demo", "deadbeef",
+		release.ManifestKindDbt, deps.Clock.Now()))
+
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+
+	assertKindChangeRejectedAtActivation(t, store, "rDbt", "svc-x",
+		`service "svc-x" is released as kind "ontology": a service cannot change between kind "ontology" and a node kind`, row)
+}
+
+// A run whose kind is on the same side of the line as its service's stored
+// kind activates as usual.
+func TestAdvanceQueue_ARunKeepingItsServicesKindSideIsNotRejected(t *testing.T) {
+	deps, store := ontologyDeps(time.Unix(200, 0).UTC())
+	deps.Bucket = "b"
+	store.SeedServiceProd(release.NewServiceProd("svc-x", "rOnt", "s3://b/svc-x/rOnt/ontology.yaml", "img:1", release.ManifestKindOntology, time.Unix(0, 0)))
+	store.SeedRelease(pipeline.NewCandidate("rOnt2", "svc-x", "img:2", false, false, "acme/ontology", "cafebabe",
+		release.ManifestKindOntology, deps.Clock.Now()))
+
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+
+	assert.Equal(t, pipeline.StatusParsing, mustGetRelease(t, store, "rOnt2").Status())
 }

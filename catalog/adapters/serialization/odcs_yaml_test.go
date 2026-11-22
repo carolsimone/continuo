@@ -69,7 +69,7 @@ func publishedKPIsDeclaredIn(schema string) map[string]any {
 		SourcePath:        "contracts/py_daily_kpis.odcs.yaml",
 		PromotionSeq:      52,
 		PromotedAt:        time.Date(2026, 11, 27, 16, 40, 12, 0, time.UTC),
-	})
+	}, "")
 }
 
 // wantKPIs is design 3.9's published file as the renderer writes it. It
@@ -242,4 +242,31 @@ func TestODCSYAML_WritesANumberAsItsText(t *testing.T) {
 	assert.Equal(t, 9007199254740993, back["limit"])
 	assert.InDelta(t, 0.1, back["ratio"], 0)
 	assert.InDelta(t, 1e21, back["big"], 0)
+}
+
+// The ontology version a contract was resolved against is the provenance fact
+// after the library version and before the source path, and the ontology links
+// the published form carries render as absolute URLs.
+func TestODCSYAML_RendersTheOntologyVersionAndAbsoluteLinks(t *testing.T) {
+	stored := storedKPIs()
+	stored["authoritativeDefinitions"] = []any{map[string]any{"type": "ontology", "url": "continuo-ontology:Kpi"}}
+	published := contractversion.Published(stored, 3, nil, "", contractversion.Provenance{
+		ContractHash:      "sha256:3f1c...",
+		ContentHash:       "sha256:91d4...",
+		ReleaseID:         "rel-77aa0bc-230",
+		ContinuoContracts: "0.2.0",
+		OntologyVersion:   "rel-o-3@sha256:abc123",
+		SourcePath:        "contracts/py_daily_kpis.odcs.yaml",
+		PromotionSeq:      52,
+		PromotedAt:        time.Date(2026, 11, 27, 16, 40, 12, 0, time.UTC),
+	}, "https://ontology.example/things")
+
+	got, err := serialization.ODCSYAML{}.Render(published)
+
+	require.NoError(t, err)
+	want := strings.Replace(wantKPIs, "servers:\n  - {server: warehouse, type: postgres, host: warehouse.internal.example, port: 5432, database: continuo_dbt, schema: analytics}\n", "", 1)
+	want = strings.Replace(want, "customProperties:\n", "authoritativeDefinitions:\n  - {type: ontology, url: \"https://ontology.example/things/Kpi\"}\ncustomProperties:\n", 1)
+	want = strings.Replace(want, "      continuoContracts: 0.2.0\n", "      continuoContracts: 0.2.0\n      ontologyVersion: \"rel-o-3@sha256:abc123\"\n", 1)
+	require.NotEqual(t, wantKPIs, want)
+	assert.Equal(t, want, string(got))
 }

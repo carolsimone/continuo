@@ -73,6 +73,7 @@ func (r *ContractBundleReader) Fetch(ctx context.Context, uri, sha256Hex string)
 		TenantID:          doc.TenantID,
 		ReleaseID:         doc.ReleaseID,
 		ContinuoContracts: doc.ContinuoContracts,
+		OntologyVersion:   doc.OntologyVersion(),
 		Contracts:         contracts,
 	}, nil
 }

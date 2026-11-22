@@ -79,6 +79,82 @@ func TestHandleReceiveCandidate_RefusesPythonWith400AndTheMessage(t *testing.T) 
 	assert.Empty(t, releases.releases)
 }
 
+// While the install's ontology switch is off, POST /releases refuses the kind
+// ontology as a client error whose body is the message, and stores nothing.
+func TestHandleReceiveCandidate_RefusesOntologyWhileTheSwitchIsOffWith400(t *testing.T) {
+	deps, releases := newRetryRemediationDeps(time.Unix(100, 0).UTC())
+	in := validCandidateInput()
+	in.Kind = "ontology"
+
+	rec := postCandidate(newTestServer(deps), in)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Equal(t, `kind "ontology" is accepted only when the install's ontology switch is on (contracts.ontology.enabled)`+"\n", rec.Body.String())
+	assert.Empty(t, releases.releases)
+}
+
+func TestHandleReceiveCandidate_AcceptsOntologyWhileTheSwitchIsOn(t *testing.T) {
+	deps, releases := newRetryRemediationDeps(time.Unix(100, 0).UTC())
+	deps.OntologyEnabled = true
+	in := validCandidateInput()
+	in.Kind = "ontology"
+
+	rec := postCandidate(newTestServer(deps), in)
+
+	require.Equal(t, http.StatusAccepted, rec.Code)
+	assert.Equal(t, release.ManifestKindOntology, releases.releases["rel-1"].ManifestKind())
+}
+
+// The rules about the ontology service are conflicts with what the install
+// holds, so POST /releases answers each with 409 and the message as the body.
+func TestHandleReceiveCandidate_OntologyConflictsAre409(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	t.Run("a second ontology service", func(t *testing.T) {
+		deps, releases := newRetryRemediationDeps(now)
+		deps.OntologyEnabled = true
+		seedServiceProd(t, deps, release.NewServiceProd("ontology-a", "rel-0", "s3://b/ontology-a/rel-0/ontology.yaml", "img:1",
+			release.ManifestKindOntology, now))
+		in := validCandidateInput()
+		in.Service, in.Kind = "ontology-b", "ontology"
+
+		rec := postCandidate(newTestServer(deps), in)
+
+		require.Equal(t, http.StatusConflict, rec.Code)
+		assert.Equal(t, `service "ontology-a" is the install's ontology: an install has one ontology service`+"\n", rec.Body.String())
+		assert.Empty(t, releases.releases)
+	})
+
+	t.Run("a dbt service released as the ontology", func(t *testing.T) {
+		deps, releases := newRetryRemediationDeps(now)
+		deps.OntologyEnabled = true
+		seedServiceProd(t, deps, release.NewServiceProd("core", "rel-0", "s3://b/core/rel-0/manifest.json", "img:1",
+			release.ManifestKindDbt, now))
+		in := validCandidateInput()
+		in.Kind = "ontology"
+
+		rec := postCandidate(newTestServer(deps), in)
+
+		require.Equal(t, http.StatusConflict, rec.Code)
+		assert.Equal(t, `service "core" is released as kind "dbt": a service cannot change between kind "ontology" and a node kind`+"\n", rec.Body.String())
+		assert.Empty(t, releases.releases)
+	})
+
+	t.Run("the ontology service released as python-odcs", func(t *testing.T) {
+		deps, releases := newRetryRemediationDeps(now)
+		deps.OntologyEnabled = true
+		seedServiceProd(t, deps, release.NewServiceProd("core", "rel-0", "s3://b/core/rel-0/ontology.yaml", "img:1",
+			release.ManifestKindOntology, now))
+		in := validCandidateInput()
+		in.Kind = "python-odcs"
+
+		rec := postCandidate(newTestServer(deps), in)
+
+		require.Equal(t, http.StatusConflict, rec.Code)
+		assert.Equal(t, `service "core" is released as kind "ontology": a service cannot change between kind "ontology" and a node kind`+"\n", rec.Body.String())
+		assert.Empty(t, releases.releases)
+	})
+}
+
 // beginFailsUoW stands in for a database that cannot open a transaction; its
 // error text carries an internal address that must never reach a caller.
 type beginFailsUoW struct{ *fakeUoW }
@@ -91,7 +167,7 @@ func (beginFailsUoW) Begin(context.Context) error {
 // the cause is logged, never returned.
 func TestHandleReceiveCandidate_StorageFailureIs500WithoutInternalText(t *testing.T) {
 	deps, releases := newRetryRemediationDeps(time.Unix(100, 0).UTC())
-	failing := beginFailsUoW{&fakeUoW{releases: releases, outbox: &fakeOutboxRepo{}}}
+	failing := beginFailsUoW{&fakeUoW{releases: releases, serviceProd: newFakeServiceProdRepo(), outbox: &fakeOutboxRepo{}}}
 	deps.NewUoW = func() uow.UnitOfWork { return failing }
 	var logged bytes.Buffer
 	srv := NewServer(liveness.NewRegistry(), "0", slog.New(slog.NewTextHandler(&logged, nil)))

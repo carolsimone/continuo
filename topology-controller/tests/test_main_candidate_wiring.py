@@ -562,3 +562,39 @@ def test_main_stops_when_the_permission_fence_refuses_the_login(monkeypatch):
     with pytest.raises(PermissionFenceError):
         main.main()
     assert _RecordingConsumer.instances == []
+
+
+@pytest.mark.parametrize("raw, enabled", [(None, False), ("", False), ("false", False), ("true", True)])
+def test_main_passes_the_switch_to_the_handler(monkeypatch, raw, enabled):
+    """main reads ONTOLOGY_ENABLED once and hands the handler the answer, so the switch the
+    chart renders reaches the code that acts on it."""
+    _common_monkeypatches(monkeypatch)
+    if raw is None:
+        monkeypatch.delenv("ONTOLOGY_ENABLED", raising=False)
+    else:
+        monkeypatch.setenv("ONTOLOGY_ENABLED", raw)
+    captured = {}
+
+    class FakeCandidateHandler:
+        def __init__(self, **kw):
+            captured.update(kw)
+
+        def handle(self, release_id):
+            pass
+
+    monkeypatch.setattr(main, "CandidateManifestHandler", FakeCandidateHandler)
+    monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None))
+
+    main.main()
+    _RecordingConsumer.instances[0].message_handler({b"payload": json.dumps({
+        "release_id": "rel-1", "manifest_keys": [], "image_tags": {},
+    }).encode()})
+
+    assert captured["ontology_enabled"] is enabled
+
+
+def test_main_refuses_an_unreadable_ontology_switch(monkeypatch):
+    _common_monkeypatches(monkeypatch)
+    monkeypatch.setenv("ONTOLOGY_ENABLED", "yes")
+    with pytest.raises(RuntimeError, match="ONTOLOGY_ENABLED"):
+        main.main()

@@ -927,8 +927,15 @@ func postRelease(t *testing.T, clients *testClients, service, releaseID, imageTa
 // This proves the changed-node derivation produced exactly the intended scope.
 func assertValidationRequestedNodes(t *testing.T, ctx context.Context, validationTap *streamTap, releaseID string, want []string) {
 	t.Helper()
+	assertValidationRequestedNodesWithin(t, ctx, validationTap, releaseID, want, 8*time.Minute)
+}
+
+// assertValidationRequestedNodesWithin is assertValidationRequestedNodes with
+// the ceiling of its wait given.
+func assertValidationRequestedNodesWithin(t *testing.T, ctx context.Context, validationTap *streamTap, releaseID string, want []string, timeout time.Duration) {
+	t.Helper()
 	var got []string
-	pollUntil(t, ctx, 8*time.Minute, 1*time.Second, func() (bool, error) {
+	pollUntil(t, ctx, timeout, 1*time.Second, func() (bool, error) {
 		msgs := validationTap.Entries()
 		for _, msg := range msgs {
 			payload, _ := msg.Values["payload"].(string)

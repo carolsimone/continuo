@@ -1,14 +1,17 @@
 import json
+import re
 
 import pytest
 
 from tests.fingerprint_fixtures import MANIFESTS_DIR
 from tests.topology_golden import (
+    DIGESTS_PATH,
     FIXTURES,
     GOLDEN,
     GOLDEN_DIR,
     MANIFEST_RELEASES,
     TRINO_RELEASES,
+    contract_bundle_digest,
     golden_path,
     golden_text,
     release_outputs,
@@ -93,3 +96,24 @@ def test_the_candidate_sql_of_a_trino_release_keeps_a_cte_a_read_the_engine_owns
     assert "latest AS (SELECT * FROM \"_candidate_rel_1\".trino_events)" in sql["test_schema.trino_daily"]
     assert "FROM system.runtime.nodes AS n CROSS JOIN information_schema.tables AS t" in sql["test_schema.trino_health"]
     assert "FROM hive.raw.events AS e" in sql["test_schema.trino_events"]
+
+
+def test_the_contract_bundle_digests_name_every_release():
+    assert sorted(json.loads(DIGESTS_PATH.read_text(encoding="utf-8"))) == sorted(GOLDEN)
+
+
+def test_every_contract_bundle_digest_is_a_prefixed_sha256_value():
+    """A bare 64-character hex value beside a key such as `access` reads as a credential to a secret
+    scanner, so each digest is stored as `sha256:<hex>`."""
+    committed = json.loads(DIGESTS_PATH.read_text(encoding="utf-8"))
+    assert {name: value for name, value in committed.items() if not re.fullmatch(r"sha256:[0-9a-f]{64}", value)} == {}
+
+
+@pytest.mark.parametrize("name", GOLDEN)
+def test_the_switch_off_keeps_every_golden(name):
+    """With the ontology switch off, the contract bundle of each fixture release is the one it was
+    before an ontology could be released: its stored contracts are hashed with their ontology part
+    taken away, and its `ontology` value is null. The digest committed for the release is the one
+    the bundle had before, with the version of the library left out."""
+    committed = json.loads(DIGESTS_PATH.read_text(encoding="utf-8"))
+    assert contract_bundle_digest(name, ontology_enabled=False) == committed[name]

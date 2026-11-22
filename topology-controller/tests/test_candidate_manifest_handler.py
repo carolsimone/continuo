@@ -529,6 +529,7 @@ def test_a_request_without_image_tags_fails_the_release_as_internal():
         clock=FakeClock(),
         memory=ScriptedMemoryProbe(0),
         validator=ContractValidator(),
+        ontology_enabled=False,
     )
 
     handler.handle(release_id="rel-1")
@@ -1169,6 +1170,7 @@ def test_a_release_mixes_dbt_and_python_and_resolves_edges_in_both_directions(tm
         clock=FakeClock(),
         memory=ScriptedMemoryProbe(0),
         validator=ContractValidator(),
+        ontology_enabled=False,
     )
     handler.handle(release_id="rel-1")
 
@@ -1217,6 +1219,7 @@ def test_a_python_node_rides_the_code_bundle_with_its_runtime_marker(tmp_path):
         clock=FakeClock(),
         memory=ScriptedMemoryProbe(0),
         validator=ContractValidator(),
+        ontology_enabled=False,
     )
 
     handler.handle(release_id="rel-1")
@@ -1382,6 +1385,7 @@ def test_a_release_refused_before_any_contract_stage_publishes_valid_durations()
         dialect="postgres", system_relations=_SYSTEM_RELATIONS["postgres"], image_tags=None,
         is_infrastructure_error=is_infrastructure, clock=FakeClock(step=1.0), memory=ScriptedMemoryProbe(0),
         validator=ContractValidator(),
+        ontology_enabled=False,
     )
 
     timings = handler.handle(release_id="rel-1")

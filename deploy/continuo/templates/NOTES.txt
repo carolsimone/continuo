@@ -29,7 +29,7 @@ UPGRADE NOTES
   reloaded; a Python service is released as "python-odcs", built on
   continuo-python-runtime 0.13.0 or later. The steps are in deploy/README.md,
   "Re-baseline after a fingerprint change".
-  The default validation image is now v0.13.0.
+  The default validation image is now v0.14.0.
   An overridden dbt-commands file whose run commands parse with other --vars,
   --target, --profile, --profiles-dir or --project-dir values than its compile
   command stops execution-controller from starting.

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -342,7 +343,7 @@ func (f *liveFolderFixture) rewrite(seq int64) error {
 func (f *liveFolderFixture) folderWith(renderer ports.PublishedRenderer, server *contractversion.Server) {
 	f.settings = fingerprintOf(server)
 	f.folder = handlers.NewLiveFolder(f.reader, f.store, renderer, f.lease, f.lease, f.metrics,
-		server, func() time.Time { return liveClock }, newTestLogger())
+		server, "", func() time.Time { return liveClock }, newTestLogger())
 }
 
 func newLiveFolderFixture(live ...contractversion.LiveContract) *liveFolderFixture {
@@ -354,7 +355,7 @@ func newLiveFolderFixture(live ...contractversion.LiveContract) *liveFolderFixtu
 		settings: fingerprintOf(liveServer),
 	}
 	f.folder = handlers.NewLiveFolder(f.reader, f.store, fakeRenderer{}, f.lease, f.lease, f.metrics,
-		liveServer, func() time.Time { return liveClock }, newTestLogger())
+		liveServer, "", func() time.Time { return liveClock }, newTestLogger())
 	return f
 }
 
@@ -837,7 +838,7 @@ func TestLiveRewrite_ASettingsFlipAfterAFailedRewritePutsEveryFileAgain(t *testi
 	// Catalog goes back to publishing with no server.
 	delete(f.store.failDelete, "analytics.z")
 	f.folder = handlers.NewLiveFolder(f.reader, f.store, fakeRenderer{}, f.lease, f.lease, f.metrics,
-		nil, func() time.Time { return liveClock }, newTestLogger())
+		nil, "", func() time.Time { return liveClock }, newTestLogger())
 	require.NoError(t, f.rewrite(54))
 
 	assert.Equal(t, "analytics.a v1 servers=false", string(f.store.files["analytics.a"]))
@@ -881,7 +882,7 @@ func TestLiveRewrite_AnUnreadableIndexIsLoggedWithItsFix(t *testing.T) {
 	f := newLiveFolderFixture(liveContract("analytics.a", 1, "sha256:a1"))
 	var logs bytes.Buffer
 	f.folder = handlers.NewLiveFolder(f.reader, f.store, fakeRenderer{}, f.lease, f.lease, f.metrics,
-		liveServer, func() time.Time { return liveClock }, slog.New(slog.NewTextHandler(&logs, nil)))
+		liveServer, "", func() time.Time { return liveClock }, slog.New(slog.NewTextHandler(&logs, nil)))
 	f.store.readErr = fmt.Errorf("%w: decode the live index tenants/default/contracts/live/_index.json: bad json",
 		ports.ErrLiveIndexUnreadable)
 
@@ -918,7 +919,7 @@ func TestLiveRewrite_ARedeliveryAfterAFailedRewritePutsTheNewFileAgain(t *testin
 func TestLiveRewrite_NoServerPublishesNoServersEntry(t *testing.T) {
 	f := newLiveFolderFixture(liveContract("analytics.a", 1, "sha256:a1"))
 	f.folder = handlers.NewLiveFolder(f.reader, f.store, fakeRenderer{}, f.lease, f.lease, f.metrics,
-		nil, func() time.Time { return liveClock }, newTestLogger())
+		nil, "", func() time.Time { return liveClock }, newTestLogger())
 
 	require.NoError(t, f.rewrite(3))
 
@@ -1076,4 +1077,87 @@ func TestLiveRewrite_ReportsTheSettingsOnlyWhenTheFolderCarriesThem(t *testing.T
 	assert.Equal(t, []string{done.settings}, done.reported)
 	assert.Equal(t, []string{""}, atWatermark.reported)
 	assert.Equal(t, []string{""}, superseded.reported)
+}
+
+// ── ontology links ───────────────────────────────────────────────────────────
+
+// jsonRenderer renders a published contract as its JSON text.
+type jsonRenderer struct{}
+
+func (jsonRenderer) Render(doc map[string]any) ([]byte, error) { return json.Marshal(doc) }
+
+var _ ports.PublishedRenderer = jsonRenderer{}
+
+// boundContract is uniqueID's current contract as a contract that resolved
+// against an ontology release stores it: a link on its schema object and one on
+// a column, promoted with the ontology version it was resolved against.
+func boundContract(uniqueID string, version int64, hash string) contractversion.LiveContract {
+	c := liveContract(uniqueID, version, hash)
+	link := func(thing string) []any {
+		return []any{map[string]any{"type": "ontology", "url": contractversion.OntologyLinkPrefix + thing}}
+	}
+	object := c.Document["schema"].([]any)[0].(map[string]any)
+	object["authoritativeDefinitions"] = link("Transaction")
+	object["properties"] = []any{map[string]any{"name": "id", "authoritativeDefinitions": link("Transaction.id")}}
+	c.Provenance.OntologyVersion = "rel-o-3@sha256:abc123"
+	return c
+}
+
+// A file the folder writes carries absolute ontology links under the install's
+// base URL and the ontology version its contract was resolved against.
+func TestLiveRewrite_PublishesAbsoluteOntologyLinks(t *testing.T) {
+	f := newLiveFolderFixture(boundContract("analytics.a", 1, "sha256:a1"))
+	f.folder = handlers.NewLiveFolder(f.reader, f.store, jsonRenderer{}, f.lease, f.lease, f.metrics,
+		nil, "https://ontology.example/things", func() time.Time { return liveClock }, newTestLogger())
+
+	require.NoError(t, f.rewrite(3))
+
+	body := string(f.store.files["analytics.a"])
+	assert.Contains(t, body, `"url":"https://ontology.example/things/Transaction"`)
+	assert.Contains(t, body, `"url":"https://ontology.example/things/Transaction.id"`)
+	assert.NotContains(t, body, contractversion.OntologyLinkPrefix)
+	assert.Contains(t, body, `"ontologyVersion":"rel-o-3@sha256:abc123"`)
+}
+
+// With no base URL the files keep the links as stored.
+func TestLiveRewrite_WithNoBaseURLKeepsTheOntologyLinks(t *testing.T) {
+	f := newLiveFolderFixture(boundContract("analytics.a", 1, "sha256:a1"))
+	f.folder = handlers.NewLiveFolder(f.reader, f.store, jsonRenderer{}, f.lease, f.lease, f.metrics,
+		nil, "", func() time.Time { return liveClock }, newTestLogger())
+
+	require.NoError(t, f.rewrite(3))
+
+	body := string(f.store.files["analytics.a"])
+	assert.Contains(t, body, `"url":"continuo-ontology:Transaction"`)
+	assert.Contains(t, body, `"url":"continuo-ontology:Transaction.id"`)
+}
+
+// A folder written under one base URL is rewritten whole at start when the
+// install sets another: every file, though no contract changed, and the new
+// fingerprint is stored.
+func TestSettingsFingerprint_ABaseURLChangeRewritesTheFolder(t *testing.T) {
+	f := newLiveFolderFixture(boundContract("analytics.a", 1, "sha256:a1"), boundContract("analytics.b", 2, "sha256:b2"))
+	folderAt := func(baseURL string) *handlers.LiveFolder {
+		return handlers.NewLiveFolder(f.reader, f.store, jsonRenderer{}, f.lease, f.lease, f.metrics,
+			nil, baseURL, func() time.Time { return liveClock }, newTestLogger())
+	}
+	f.folder = folderAt("https://old.example/things")
+	settings, err := f.folder.Rewrite(context.Background(), livePromotion(3))
+	require.NoError(t, err)
+	f.lease.seq, f.lease.release, f.lease.settings = 3, "rel-3", settings
+	require.Contains(t, string(f.store.files["analytics.a"]), `"url":"https://old.example/things/Transaction"`)
+
+	f.folder = folderAt("https://new.example/ontology")
+	before := len(f.store.writes())
+	require.NoError(t, f.folder.RefreshAtStart(context.Background(), fakeTenants{"default"}, time.Millisecond))
+
+	for _, id := range []string{"analytics.a", "analytics.b"} {
+		body := string(f.store.files[id])
+		assert.Contains(t, body, `"url":"https://new.example/ontology/Transaction"`, id)
+		assert.NotContains(t, body, "old.example", id)
+	}
+	assert.ElementsMatch(t, []string{"put analytics.a", "put analytics.b"}, f.store.writes()[before+1:len(f.store.writes())-1],
+		"every file is put again between the interim and the final index")
+	assert.NotEqual(t, settings, f.lease.settings, "the new fingerprint is stored")
+	assert.Equal(t, f.lease.settingsSaved[len(f.lease.settingsSaved)-1], f.lease.settings)
 }

@@ -58,7 +58,7 @@ func fingerprintOf(server *contractversion.Server) string {
 func (f *liveFolderFixture) newLiveFolder(server *contractversion.Server) *handlers.LiveFolder {
 	lease := neo4jinfra.NewLiveFolderLease(f.client, quietLogger())
 	return handlers.NewLiveFolder(neo4jinfra.NewContractQueryRepository(f.client), s3infra.NewLiveContractsStore(f.mem),
-		serializationinfra.ODCSYAML{}, lease, lease, f.metrics, server, time.Now, quietLogger())
+		serializationinfra.ODCSYAML{}, lease, lease, f.metrics, server, "", time.Now, quietLogger())
 }
 
 func newLiveFolderFixture(t *testing.T, server *contractversion.Server) *liveFolderFixture {
@@ -69,7 +69,7 @@ func newLiveFolderFixture(t *testing.T, server *contractversion.Server) *liveFol
 		neo4jinfra.NewContractQueryRepository(c.client),
 		s3infra.NewLiveContractsStore(c.mem),
 		serializationinfra.ODCSYAML{},
-		lease, lease, c.metrics, server,
+		lease, lease, c.metrics, server, "",
 		func() time.Time { return time.Date(2026, 11, 27, 16, 40, 14, 0, time.UTC) },
 		quietLogger(),
 	)

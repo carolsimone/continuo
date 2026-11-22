@@ -16,6 +16,18 @@ export const SUBMIT_RATE_LIMIT_PER_MINUTE = 30;
 // every few seconds per job, with headroom for parallel jobs of one repository.
 export const READ_RATE_LIMIT_PER_MINUTE = 300;
 const CI_CONFLICT_MESSAGE = 'release id already exists with different content';
+// The two ontology conflicts release-controller answers with 409, matched whole:
+// one quoted service name (Go's %q, so a quote or backslash in it is escaped)
+// and nothing else on the line. A kind change names the service the caller
+// submitted. A second ontology service names another service.
+const GO_QUOTED = String.raw`"(?:[^"\\]|\\.)*"`;
+const ONTOLOGY_KIND_CHANGE_CONFLICT = new RegExp(
+  `^service ${GO_QUOTED} is released as kind "[a-z][a-z0-9-]*": a service cannot change between kind "ontology" and a node kind$`,
+);
+const SECOND_ONTOLOGY_CONFLICT = new RegExp(
+  `^service ${GO_QUOTED} is the install's ontology: an install has one ontology service$`,
+);
+const SECOND_ONTOLOGY_CI_MESSAGE = 'an install has one ontology service';
 const SUBMIT_FIELDS = new Set(['release_id', 'service', 'image_tag', 'bootstrap', 'rebaseline', 'kind', 'repo', 'commit_sha']);
 const TERMINAL = new Set(['promoted', 'rejected', 'superseded']);
 // A release id is a single URL path segment and an object-key component
@@ -194,6 +206,17 @@ function auditSubmit(p: Principal, raw: unknown, outcome: number): void {
   });
 }
 
+// conflictMessage is what a caller reads of release-controller's 409 text: a
+// person reads it as it is, and a CI identity reads the generic message, except
+// for a kind change, which it reads as it is, and a second ontology service,
+// which it reads as the rule alone.
+function conflictMessage(p: Principal, text: string): string {
+  if (p.kind !== 'ci') return text;
+  if (ONTOLOGY_KIND_CHANGE_CONFLICT.test(text)) return text;
+  if (SECOND_ONTOLOGY_CONFLICT.test(text)) return SECOND_ONTOLOGY_CI_MESSAGE;
+  return CI_CONFLICT_MESSAGE;
+}
+
 export function createV1Router(releases: ReleaseClient, publicUrl?: string): Router {
   const router = Router();
 
@@ -273,9 +296,11 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
     // kind, bootstrap or rebaseline flag, or source change. A person gets its message; a CI
     // identity gets a generic one, because the id may belong to a release of a
     // service its repository is not bound to, and the message names the run's
-    // kind.
+    // kind. The two ontology conflicts reach a CI identity too, because one
+    // names only the service it is bound to and the other has the other
+    // service's name removed (see conflictMessage).
     if (upstream.status === 409) {
-      return fail(res, 409, 'release_kind_conflict', p.kind === 'ci' ? CI_CONFLICT_MESSAGE : upstream.text.trim());
+      return fail(res, 409, 'release_kind_conflict', conflictMessage(p, upstream.text.trim()));
     }
     if (upstream.status === 400) return fail(res, 400, 'bad_request', upstream.text.trim());
     if (upstream.status === 503 && upstreamCode(upstream.text) === MAINTENANCE_CODE) {

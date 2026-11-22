@@ -10,11 +10,12 @@ continuo-contracts library's canonical_json), and tests/fixtures/contracts_v1.js
 copy of the fixture the Go package reads, pins this builder to what that package decodes.
 
 `store_contracts` turns each node's contract into its stored form (the document the
-hashes are taken from, with the tables the node reads) and hashes it, and
-`build_contract_bundle` assembles the document. A contract that cannot list a table its
-node reads (`invalid_contract_reads`), whether the node's SQL names it or a dbt contract
-declares it, is the team's mistake: it is reported as an invalid contract before any
-stored form is built.
+hashes are taken from, with the tables the node reads), lets the caller's `bind` add
+the ontology part to it or take it away, and hashes it, and `build_contract_bundle`
+assembles the document, with the ontology the release used or null. A contract that
+cannot list a table its node reads (`invalid_contract_reads`), whether the node's SQL
+names it or a dbt contract declares it, is the team's mistake: it is reported as an
+invalid contract before any stored form is built.
 """
 import copy
 import dataclasses
@@ -68,6 +69,12 @@ class StoredContract:
 
 def _no_progress() -> None:
     """The progress callback of a caller nobody watches."""
+
+
+def _as_stored(stored: dict[str, Any], node: ManifestNode) -> dict[str, Any]:
+    """The binder of a caller that has no ontology part to add or take away: the stored
+    form as it is."""
+    return stored
 
 
 def _unlistable_reason(entry: str) -> str | None:
@@ -187,6 +194,7 @@ def store_contracts(
     *,
     progress: Callable[[], None] = _no_progress,
     timings: ReleaseTimings | None = None,
+    bind: Callable[[dict[str, Any], ManifestNode], dict[str, Any]] = _as_stored,
 ) -> list[StoredContract]:
     """The stored form and hash of the contract of each node that has one, in node order.
 
@@ -197,10 +205,15 @@ def store_contracts(
     also keeps the tables its meta declares it reads. The library lower-cases the names,
     sorts them and lists each once.
 
+    bind receives each stored form and its node and returns the form that is kept and
+    hashed: the caller's way to take the ontology part away, keep it as written or fill it
+    from the ontology. It runs after the stored form is made and before the hash, so the
+    hash is the bound form's.
+
     A contract reaching this point has passed every check of the parse, so a library
-    error here is a defect, not a fault of the contract. It is counted on timings
-    (stage `normalise` or `hash`, reason `value`) and raised, and the caller reports it as
-    an internal failure of the release. progress is called after each contract.
+    error here, bind's included, is a defect, not a fault of the contract. It is counted on
+    timings (stage `normalise` or `hash`, reason `value`) and raised, and the caller reports
+    it as an internal failure of the release. progress is called after each contract.
 
     Once a contract's stored form is made, its node keeps the contract without the
     producer's document (NodeContract.document is None), which nothing reads after this
@@ -215,7 +228,8 @@ def store_contracts(
         if contract.document is None:
             raise ValueError(f"{node.unique_id}: the contract is stored already, and its document released")
         tables = [f"{ref.schema}.{ref.table}" for ref in reads.get(node.node_key, ()) if not system.matches(ref)]
-        document = _library_call(FailureStage.NORMALISE, node, timings, lambda: _normalise(contract, node, tables))
+        document = _library_call(
+            FailureStage.NORMALISE, node, timings, lambda: bind(_normalise(contract, node, tables), node))
         digest = _library_call(FailureStage.HASH, node, timings, lambda: contract_hash(document))
         stored.append(StoredContract(
             unique_id=node.unique_id,
@@ -274,6 +288,7 @@ def build_contract_bundle(
     contracts: Sequence[StoredContract],
     provenance: Mapping[str, Mapping[str, Any]],
     timings: Mapping[str, Any],
+    ontology: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The bundle document of a release.
 
@@ -281,7 +296,9 @@ def build_contract_bundle(
     caller leaves out the contracts of every id shared_unique_ids names. Each contract
     keeps its own family. provenance holds, per service whose contracts a producer bundle
     carried, the runtime that packed them and the packages of its image; timings is the
-    release's ReleaseTimings.bundle_timings(). The summary counts the contracts the bundle
+    release's ReleaseTimings.bundle_timings(). ontology is the value of the document's
+    `ontology` key: None, written as null, for a release with the ontology switch off.
+    The summary counts the contracts the bundle
     holds, in all and by family (a family with none has no key). Its `invalid` and
     `skipped` are 0: a release with an invalid contract fails and publishes no bundle.
     library_version is the continuo-contracts version that stored the contracts, and the
@@ -306,7 +323,7 @@ def build_contract_bundle(
         "release_id": release_id,
         "odcs_schema_sha256": SCHEMA_SHA256,
         "continuo_contracts": library_version,
-        "ontology": None,
+        "ontology": copy.deepcopy(dict(ontology)) if ontology is not None else None,
         "provenance": copy.deepcopy(dict(provenance)),
         "summary": {
             "contracts": len(by_id),

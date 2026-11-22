@@ -60,5 +60,7 @@ data:
   CONTRACTS_SERVER_PORT: {{ int $contractsServer.port | quote }}
   CONTRACTS_SERVER_DATABASE: {{ $contractsServer.database | quote }}
   CONTRACT_HISTORY_RETENTION_DAYS: {{ include "continuo.catalog.contractHistory.retentionDays" . | quote }}
+  ONTOLOGY_ENABLED: {{ include "continuo.ontology.enabled" . | quote }}
+  ONTOLOGY_BASE_URL: {{ include "continuo.ontology.baseUrl" . | quote }}
   MAINTENANCE_ENABLED: {{ include "continuo.maintenance.enabled" . | quote }}
   AGENT_REMEDIATION_ENGINE: {{ dig "engine" "legacy" (default (dict) .Values.agentRemediation) | quote }}

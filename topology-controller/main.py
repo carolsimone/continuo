@@ -12,6 +12,7 @@ from config.config import (
     MANIFEST_LOADED_CANDIDATE_STREAM,
     log_level,
     metrics_port,
+    ontology_enabled,
     redis_acl_mode,
     validate,
     warehouse_dialect,
@@ -104,6 +105,10 @@ def main() -> None:
     dialect = warehouse_dialect()
     system_relations = warehouse_system_relations()
     logger.info("topology-controller SQL dialect: %s", dialect)
+    # Resolved once at boot, like the dialect: validate() has already refused a
+    # switch this service cannot read.
+    ontology_switch = ontology_enabled()
+    logger.info("topology-controller ontology switch: %s", "on" if ontology_switch else "off")
 
     # One validator for the process: it remembers the contracts it has checked, so a
     # contract unchanged since an earlier release is not checked again.
@@ -133,6 +138,7 @@ def main() -> None:
             clock=MonotonicClock(),
             memory=ResidentMemoryProbe(),
             validator=validator,
+            ontology_enabled=ontology_switch,
             # Looked up when a release is handled, by which time the consumer
             # exists: a handler that keeps working keeps /health fresh.
             progress=candidate_consumer.refresh_heartbeat,

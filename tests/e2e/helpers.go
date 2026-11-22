@@ -160,7 +160,7 @@ func pollUntilDescribed(
 	for {
 		select {
 		case <-deadline:
-			t.Fatal(describe())
+			t.Fatalf("%s (waited %s)", describe(), timeout)
 		case <-ticker.C:
 			success, err := condition()
 			if err != nil {

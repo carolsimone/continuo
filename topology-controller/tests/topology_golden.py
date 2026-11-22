@@ -11,15 +11,20 @@ without tags and a table no node builds. Every release parses for postgres, the 
 except the `trino_` ones, which parse for Trino: how an edge is resolved, which reads are the
 engine's own and which tables are unknown-external depend on the engine.
 
-The committed files under tests/fixtures/topology_golden/ hold these outputs, one file per release:
+The committed files under tests/fixtures/topology_golden/ hold these outputs, one file per release.
+`contract_bundle_digest(name)` captures the contract bundle the same handler writes for the release
+with the ontology switch off, as one `sha256:<hex>` digest; tests/fixtures/contract_bundle_digests.json
+holds them all. The prefix keeps a secret scanner from reading a bare 64-character hex value next to a
+key such as `access` as a credential.
 
     uv run --frozen python -m tests.topology_golden --write
 
-rewrites them from the code as it stands.
+rewrites the golden files and the digests from the code as it stands.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import sys
@@ -29,15 +34,25 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
+from continuo_contracts.canonical import canonical_json
+
 from config.config import system_relations_for
 from domain.model import ManifestFile
-from tests.fakes import FakeBundleUploader, RecordingArtifactWriter, build_handler, make_uploader, source_of
+from tests.fakes import (
+    FakeBundleUploader,
+    RecordingArtifactWriter,
+    RecordingContractBundleWriter,
+    build_handler,
+    make_uploader,
+    source_of,
+)
 from tests.fingerprint_fixtures import VARIANTS, variant_paths
 
 logger = logging.getLogger(__name__)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 GOLDEN_DIR = FIXTURES / "topology_golden"
+DIGESTS_PATH = FIXTURES / "contract_bundle_digests.json"
 
 RELEASE_ID = "rel-1"
 
@@ -128,6 +143,28 @@ def release_outputs(name: str) -> dict[str, Any]:
     })
 
 
+def contract_bundle_digest(name: str, *, ontology_enabled: bool = False) -> str:
+    """The digest of the canonical JSON of the contract bundle the handler writes for release `name`,
+    as `sha256:<hex>` (the form every content hash takes), without the bundle's `continuo_contracts`
+    and `timings` keys: the version of the library does not show, so a new version that stores every
+    contract as before leaves the digest where it was, and the validation cache's counts, which
+    depend on the releases the process handled before, do not either."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        publisher, bundle_writer = MagicMock(), RecordingContractBundleWriter()
+        dialect = TRINO if name in TRINO_RELEASES else "postgres"
+        build_handler(
+            source_of(*_manifest_files(name, tmp_dir)), publisher, make_uploader(), dialect=dialect,
+            system_relations=system_relations_for(dialect),
+            bundle_uploader=FakeBundleUploader(), contract_bundle_writer=bundle_writer, image_tags=IMAGE_TAGS,
+            ontology_enabled=ontology_enabled,
+        ).handle(release_id=RELEASE_ID)
+    if publisher.publish_ok.call_count != 1:
+        raise RuntimeError(f"release {name!r} was not published ok: {publisher.publish_failed.call_args_list}")
+    left_out = {"continuo_contracts", "timings"}
+    document = {key: value for key, value in bundle_writer.document.items() if key not in left_out}
+    return f"sha256:{hashlib.sha256(canonical_json(document)).hexdigest()}"
+
+
 def golden_path(name: str) -> Path:
     """The committed file that holds the outputs of release `name`."""
     return GOLDEN_DIR / f"{name}.json"
@@ -179,6 +216,9 @@ def write_golden_files() -> None:
     for name in GOLDEN:
         golden_path(name).write_text(golden_text(release_outputs(name)), encoding="utf-8")
         logger.info("wrote %s", golden_path(name).name)
+    digests = {name: contract_bundle_digest(name) for name in GOLDEN}
+    DIGESTS_PATH.write_text(json.dumps(digests, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    logger.info("wrote %s", DIGESTS_PATH.name)
 
 
 def main(argv: list[str] | None = None) -> None:

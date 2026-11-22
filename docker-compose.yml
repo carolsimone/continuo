@@ -182,7 +182,7 @@ services:
       # side-loads it into the kind node cache, so validation pods must use the
       # cached image. Production omits this and defaults to Always.
       - VALIDATION_IMAGE_PULL_POLICY=IfNotPresent
-      - VALIDATION_IMAGE=ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.13.0
+      - VALIDATION_IMAGE=ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.14.0
       # Warehouse credentials for validation pods come from this Secret (envFrom).
       - VALIDATION_WAREHOUSE_SECRET=continuo-warehouse-validation
       # Job pods read the S3 key pair from this Secret in the kind cluster
@@ -266,6 +266,9 @@ services:
       - CONTRACTS_SERVER_PORT=0
       - CONTRACTS_SERVER_DATABASE=continuo_dbt
       - CONTRACT_HISTORY_RETENTION_DAYS=0
+      # The base URL of the ontology links a published contract carries: the
+      # chart's contracts.ontology.baseUrl. Empty publishes each link as stored.
+      - ONTOLOGY_BASE_URL=
       # Application
       - GRPC_PORT=50052
       - HTTP_PORT=8087
@@ -332,6 +335,9 @@ services:
       # The warehouse engine each release's seed reload notices predict for;
       # mirrors the chart's validation.engine.
       - WAREHOUSE_ENGINE=postgres
+      # The install's ontology switch: the chart's contracts.ontology.enabled.
+      # While it is false, a release of kind ontology is refused.
+      - ONTOLOGY_ENABLED=false
     ports:
       - "8088:8088"
       - "50056:50056"
@@ -874,6 +880,10 @@ services:
       # move to the candidate schema. Mirrors the chart's validation.engine; the
       # local stack runs Postgres.
       WAREHOUSE_ENGINE: postgres
+      # The install's ontology switch: the chart's contracts.ontology.enabled.
+      # While it is false, a contract is stored without its ontology part and
+      # an ontology a release carries is ignored.
+      ONTOLOGY_ENABLED: "false"
       LOG_LEVEL: INFO
       METRICS_PORT: "9464"
     volumes:
