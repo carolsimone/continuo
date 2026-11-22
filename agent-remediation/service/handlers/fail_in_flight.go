@@ -3,6 +3,8 @@ package handlers
 import (
 	"context"
 	"fmt"
+
+	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 )
 
 // FailInFlight finalizes a release's in-flight 'generating' proposal row as
@@ -27,7 +29,7 @@ func FailInFlight(ctx context.Context, deps Deps, releaseID, reason string) (int
 	}
 	defer func() { _ = u.Rollback() }()
 
-	n, err := u.ProposalRepo().FailGenerating(ctx, releaseID, reason)
+	n, err := u.ProposalRepo().FailGenerating(ctx, releaseID, proposal.CleanedReason(reason))
 	if err != nil {
 		return 0, fmt.Errorf("fail in-flight generating row: %w", err)
 	}

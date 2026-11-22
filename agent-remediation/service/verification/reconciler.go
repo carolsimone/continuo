@@ -210,7 +210,7 @@ func (r *Reconciler) resolve(ctx context.Context, v proposal.View) {
 		switch st.Phase {
 		case proposal.PhaseFailed:
 			anyFailed = true
-			ver.Error = namedErrors(st.NodeErrors, sortedNodes(st.NodeErrors))
+			ver.Error = proposal.CleanedReason(namedErrors(st.NodeErrors, sortedNodes(st.NodeErrors)))
 			for node, msg := range st.NodeErrors {
 				nodeErrors[node] = msg
 			}
@@ -328,7 +328,7 @@ func (r *Reconciler) rejected(ctx context.Context, v proposal.View, verifyErr st
 	}
 	defer func() { _ = u.Rollback() }()
 
-	hit, err := u.ProposalRepo().MarkVerifyFailed(ctx, v.ID, verifyErr, final)
+	hit, err := u.ProposalRepo().MarkVerifyFailed(ctx, v.ID, proposal.CleanedReason(verifyErr), final)
 	if err != nil {
 		r.logger.Warn("verification: mark verify failed", "proposal_id", v.ID, "error", err)
 		return
@@ -493,7 +493,7 @@ func (r *Reconciler) abandonInFlight(ctx context.Context, v proposal.View, cause
 	defer func() { _ = u.Rollback() }()
 
 	n, err := u.ProposalRepo().FailGenerating(ctx, v.ReleaseID,
-		"the next fix attempt could not be started: "+cause.Error())
+		proposal.CleanedReason("the next fix attempt could not be started: "+cause.Error()))
 	if err != nil {
 		r.logger.Warn("verification: abandon in-flight attempt",
 			"proposal_id", v.ID, "release", v.ReleaseID, "error", err)

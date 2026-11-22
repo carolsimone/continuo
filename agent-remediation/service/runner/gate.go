@@ -282,9 +282,17 @@ func sameTime(a, b *time.Time) bool {
 	return a.Equal(*b)
 }
 
+// cleanedError is the run with its error cleaned (proposal.CleanedReason): the error
+// is what a verification run's nodes printed, and the row shows it.
+func cleanedError(v proposal.Verification) proposal.Verification {
+	v.Error = proposal.CleanedReason(v.Error)
+	return v
+}
+
 // mergeVerifications is the stored runs with each run read in this poll in
 // place of its stored entry, so a run the poll could not read keeps what was
-// recorded for it. A run read that is not stored is added after them.
+// recorded for it. A run read that is not stored is added after them. The error of
+// each run is cleaned as the row records it.
 func mergeVerifications(stored, read []proposal.Verification) []proposal.Verification {
 	byRun := make(map[string]proposal.Verification, len(read))
 	for _, v := range read {
@@ -296,11 +304,11 @@ func mergeVerifications(stored, read []proposal.Verification) []proposal.Verific
 			v = got
 			delete(byRun, v.RunID)
 		}
-		out = append(out, v)
+		out = append(out, cleanedError(v))
 	}
 	for _, v := range read {
 		if _, ok := byRun[v.RunID]; ok {
-			out = append(out, v)
+			out = append(out, cleanedError(v))
 		}
 	}
 	return out
@@ -434,7 +442,7 @@ func (r *Runner) failGate(ctx context.Context, run tryRun, row remediation.StepR
 			return fmt.Errorf("save step %s: %w", gateRow.Step, err)
 		}
 		run.countStage("", ports.StageGate, gateRow)
-		hit, err := u.ProposalRepo().MarkVerifyFailed(ctx, attempt.ID, verdict.VerifyError, final)
+		hit, err := u.ProposalRepo().MarkVerifyFailed(ctx, attempt.ID, proposal.CleanedReason(verdict.VerifyError), final)
 		if err != nil {
 			return fmt.Errorf("mark verify failed: %w", err)
 		}

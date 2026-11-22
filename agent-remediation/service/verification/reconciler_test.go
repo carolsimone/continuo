@@ -617,6 +617,46 @@ func TestReconcileOnce_OneFailedVerificationFailsTheWholeAttempt(t *testing.T) {
 	assert.Len(t, h.proposer.triggers, 1, "a failed attempt starts the next one")
 }
 
+// A failed verification run records what its nodes printed, on the attempt's row as
+// verify_error and on the run's entry, and both are shown: neither holds a credential
+// or an email address that a node's error line echoed.
+func TestReconcileOnce_FailedVerificationRecordsItsErrorCleaned(t *testing.T) {
+	const dirtyNodeError = "dial postgres://etl:hunter2@db/x refused, contact ops@acme.com" //nolint:gosec // G101: a made-up connection string the cleaner must redact.
+	h := newHarness(t, verifyingRow("p1", 1, time.Minute))
+	h.pipeline.statuses["verify-rel-1-svc-a1"] = ports.VerificationStatus{
+		Phase:      proposal.PhaseFailed,
+		NodeErrors: map[string]string{"analytics.orders": dirtyNodeError},
+	}
+
+	h.reconciler.ReconcileOnce(context.Background())
+
+	const want = "analytics.orders: dial postgres://etl:[redacted:secret]@db/x refused, contact [redacted:email]"
+	assert.Equal(t, want, h.repo.row("p1").VerifyError)
+	require.Len(t, h.repo.row("p1").Verifications, 1)
+	assert.Equal(t, want, h.repo.row("p1").Verifications[0].Error)
+}
+
+// When the next attempt cannot be started, the row it left in flight is failed with
+// why, and the error that stopped it can echo what a service printed.
+func TestReconcileOnce_AnAbandonedAttemptRecordsItsReasonCleaned(t *testing.T) {
+	inFlight := proposal.View{
+		ID: "p2", ReleaseID: "rel-1", Attempt: 2, Status: proposal.StatusGenerating,
+		NodeOutcomes: map[string]proposal.NodeOutcome{"analytics.orders": {Status: proposal.StatusGenerating}},
+	}
+	h := newHarness(t, verifyingRow("p1", 1, time.Minute), inFlight)
+	h.pipeline.statuses["verify-rel-1-svc-a1"] = ports.VerificationStatus{
+		Phase: proposal.PhaseFailed, NodeErrors: map[string]string{"analytics.orders": "still wrong"},
+	}
+	h.proposer.err = errors.New("the stream is down: postgres://etl:hunter2@db/x, ask ops@acme.com")
+
+	h.reconciler.ReconcileOnce(context.Background())
+
+	assert.Equal(t, proposal.StatusFailed, h.repo.row("p2").Status)
+	assert.Equal(t,
+		"the next fix attempt could not be started: the stream is down: postgres://etl:[redacted:secret]@db/x, ask [redacted:email]",
+		h.repo.row("p2").Rationale)
+}
+
 // TestReconcileOnce_RowNamingOnlyAVerificationRunIDStillResolves covers the row
 // that records no per-service verifications and names its single verification
 // run in VerificationRunID alone: that run is the one verification judging
