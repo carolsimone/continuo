@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // ManifestLoadedCandidateSchemaVersion is the schema_version of
@@ -43,21 +45,21 @@ type ManifestFailedNode struct {
 // the durations are zero or empty on an entry from a producer that does not
 // write them.
 type ManifestLoadedCandidate struct {
-	ReleaseID            string               `json:"release_id"`
-	Status               string               `json:"status"`
-	TopologyURI          string               `json:"topology_uri,omitempty"`
-	TopologySHA256       string               `json:"topology_sha256,omitempty"`
-	NodeCount            int                  `json:"node_count,omitempty"`
-	CodeBundleURI        string               `json:"code_bundle_uri,omitempty"`
-	ContractBundleURI    string               `json:"contract_bundle_uri,omitempty"`
-	ContractBundleSHA256 string               `json:"contract_bundle_sha256,omitempty"`
-	ContinuoContracts    string               `json:"continuo_contracts,omitempty"`
-	ParseMs              int64                `json:"parse_ms,omitempty"`
-	ContractsMs          int64                `json:"contracts_ms,omitempty"`
-	ContractsByFamily    map[string]int       `json:"contracts_by_family,omitempty"`
-	FailureKind          string               `json:"failure_kind,omitempty"`
-	Detail               string               `json:"detail,omitempty"`
-	FailedNodes          []ManifestFailedNode `json:"failed_nodes,omitempty"`
+	ReleaseID            string                       `json:"release_id"`
+	Status               string                       `json:"status"`
+	TopologyURI          string                       `json:"topology_uri,omitempty"`
+	TopologySHA256       string                       `json:"topology_sha256,omitempty"`
+	NodeCount            int                          `json:"node_count,omitempty"`
+	CodeBundleURI        string                       `json:"code_bundle_uri,omitempty"`
+	ContractBundleURI    string                       `json:"contract_bundle_uri,omitempty"`
+	ContractBundleSHA256 string                       `json:"contract_bundle_sha256,omitempty"`
+	ContinuoContracts    string                       `json:"continuo_contracts,omitempty"`
+	ParseMs              int64                        `json:"parse_ms,omitempty"`
+	ContractsMs          int64                        `json:"contracts_ms,omitempty"`
+	ContractsByFamily    map[model.ContractFamily]int `json:"contracts_by_family,omitempty"`
+	FailureKind          string                       `json:"failure_kind,omitempty"`
+	Detail               string                       `json:"detail,omitempty"`
+	FailedNodes          []ManifestFailedNode         `json:"failed_nodes,omitempty"`
 }
 
 // ManifestLoadedCandidateEventID derives the event id of a release's
@@ -85,7 +87,7 @@ func ManifestLoadedCandidateFields(tenantID, producer string, occurredAt time.Ti
 	if p.Status == ManifestStatusOK {
 		byFamily := p.ContractsByFamily
 		if byFamily == nil {
-			byFamily = map[string]int{}
+			byFamily = map[model.ContractFamily]int{}
 		}
 		return env.Fields(map[string]any{
 			"release_id":             p.ReleaseID,

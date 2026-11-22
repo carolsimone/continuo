@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/stretchr/testify/assert"
@@ -73,7 +74,7 @@ func TestGetVerificationRun_ReturnsTheParseTimings(t *testing.T) {
 		want    map[string]any
 	}{
 		"a parsed run": {
-			timings: release.ParseTimings{ParseMs: &parseMs, ContractsMs: &contractsMs, ContractsByFamily: map[string]int{"dbt": 3, "python": 2}},
+			timings: release.ParseTimings{ParseMs: &parseMs, ContractsMs: &contractsMs, ContractsByFamily: map[model.ContractFamily]int{"dbt": 3, "python": 2}},
 			want:    map[string]any{"parse_ms": 4180.0, "contracts_ms": 1260.0, "contracts_by_family": map[string]any{"dbt": 3.0, "python": 2.0}},
 		},
 		"a rejected parse": {
@@ -81,7 +82,7 @@ func TestGetVerificationRun_ReturnsTheParseTimings(t *testing.T) {
 			want:    map[string]any{"parse_ms": 4180.0, "contracts_ms": 1260.0},
 		},
 		"a run with no contracts": {
-			timings: release.ParseTimings{ParseMs: &parseMs, ContractsMs: &contractsMs, ContractsByFamily: map[string]int{}},
+			timings: release.ParseTimings{ParseMs: &parseMs, ContractsMs: &contractsMs, ContractsByFamily: map[model.ContractFamily]int{}},
 			want:    map[string]any{"parse_ms": 4180.0, "contracts_ms": 1260.0, "contracts_by_family": map[string]any{}},
 		},
 		"a run the parse has not reached": {

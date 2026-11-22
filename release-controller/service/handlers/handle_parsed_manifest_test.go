@@ -271,7 +271,7 @@ func TestHandleParsedManifest_ARejectedParseStoresTheLibraryVersion(t *testing.T
 // failed parse and an ok result whose topology cannot be read.
 func TestHandleParsedManifest_RecordsTheParseTimings(t *testing.T) {
 	topo := release.Topology{{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{}}}
-	timings := release.NewParseTimings(4180, 1260, map[string]int{"dbt": 3, "python": 2})
+	timings := release.NewParseTimings(4180, 1260, map[pkg_model.ContractFamily]int{"dbt": 3, "python": 2})
 	wantMs := func(ms int64) *int64 { return &ms }
 
 	t.Run("validating", func(t *testing.T) {
@@ -285,7 +285,7 @@ func TestHandleParsedManifest_RecordsTheParseTimings(t *testing.T) {
 		assert.Equal(t, pipeline.StatusValidating, r.Status())
 		assert.Equal(t, wantMs(4180), r.ParseTimings().ParseMs)
 		assert.Equal(t, wantMs(1260), r.ParseTimings().ContractsMs)
-		assert.Equal(t, map[string]int{"dbt": 3, "python": 2}, r.ParseTimings().ContractsByFamily)
+		assert.Equal(t, map[pkg_model.ContractFamily]int{"dbt": 3, "python": 2}, r.ParseTimings().ContractsByFamily)
 	})
 
 	t.Run("bootstrap", func(t *testing.T) {

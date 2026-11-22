@@ -8,7 +8,11 @@
 // decode and encode documents; this package never does.
 package contractversion
 
-import "time"
+import (
+	"time"
+
+	"github.com/carolsimone/continuo/pkg/domain/model"
+)
 
 // Version is one immutable stored contract. Its identity is (UniqueID,
 // ContractHash): the same contract promoted twice, or promoted again after
@@ -16,7 +20,7 @@ import "time"
 type Version struct {
 	UniqueID     string
 	ContractHash string
-	Family       string
+	Family       model.ContractFamily
 	Service      string
 	// FirstReleaseID is the release whose promotion first carried this
 	// contract into the graph.
@@ -43,7 +47,7 @@ type Incoming struct {
 	UniqueID     string
 	ContractHash string
 	ContentHash  string
-	Family       string
+	Family       model.ContractFamily
 	Service      string
 	// SourcePath is the file the contract was read from.
 	SourcePath string

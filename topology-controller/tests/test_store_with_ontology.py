@@ -268,7 +268,7 @@ def _bundle_inputs(given: dict) -> dict:
         "tenant_id": given["tenant_id"],
         "release_id": given["release_id"],
         "library_version": given["library_version"],
-        "contracts": [StoredContract(**c) for c in given["contracts"]],
+        "contracts": [StoredContract(**{**c, "family": ContractFamily(c["family"])}) for c in given["contracts"]],
         "provenance": given["provenance"],
         "timings": given["timings"],
         "ontology": given["ontology"],

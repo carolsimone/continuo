@@ -58,9 +58,9 @@ func TestParsedManifestInput_CarriesTheParseTimings(t *testing.T) {
 	ok := parsedManifestInput(pkgevents.ManifestLoadedCandidate{
 		ReleaseID: "r1", Status: pkgevents.ManifestStatusOK,
 		TopologyURI: "s3://continuo/tenants/default/topologies/r1/topology.json.gz", TopologySHA256: "ab", NodeCount: 3,
-		ParseMs: 4180, ContractsMs: 1260, ContractsByFamily: map[string]int{"dbt": 3, "python": 2},
+		ParseMs: 4180, ContractsMs: 1260, ContractsByFamily: map[pkg_model.ContractFamily]int{"dbt": 3, "python": 2},
 	}, slog.Default())
-	assert.Equal(t, release.NewParseTimings(4180, 1260, map[string]int{"dbt": 3, "python": 2}), ok.ParseTimings)
+	assert.Equal(t, release.NewParseTimings(4180, 1260, map[pkg_model.ContractFamily]int{"dbt": 3, "python": 2}), ok.ParseTimings)
 
 	failed := parsedManifestInput(pkgevents.ManifestLoadedCandidate{
 		ReleaseID: "r1", Status: pkgevents.ManifestStatusFailed, FailureKind: "invalid_sql", Detail: "x",

@@ -2,6 +2,7 @@ package events_test
 
 import (
 	"encoding/json"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"os"
 	"testing"
 	"time"
@@ -148,7 +149,7 @@ func TestManifestLoadedCandidate_DecodesTheParseTimings(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(4180), p.ParseMs)
 	assert.Equal(t, int64(1260), p.ContractsMs)
-	assert.Equal(t, map[string]int{"dbt": 3, "python": 2}, p.ContractsByFamily)
+	assert.Equal(t, map[model.ContractFamily]int{"dbt": 3, "python": 2}, p.ContractsByFamily)
 
 	failed := loadManifestLoadedCandidateFixture(t, "testdata/manifest_loaded_candidate_v2_failed.json")
 	_, p, err = events.DecodeManifestLoadedCandidate(fixtureFields(t, failed.Fields))
@@ -170,7 +171,7 @@ func TestManifestLoadedCandidateFields_BothOutcomesCarryTheDurationsAndOnlyOKThe
 
 	ok := render(events.ManifestLoadedCandidate{
 		ReleaseID: "rel-1", Status: events.ManifestStatusOK, TopologyURI: "s3://b/k", TopologySHA256: "abc",
-		ParseMs: 7, ContractsMs: 3, ContractsByFamily: map[string]int{"dbt": 2},
+		ParseMs: 7, ContractsMs: 3, ContractsByFamily: map[model.ContractFamily]int{"dbt": 2},
 	})
 	assert.EqualValues(t, 7, ok["parse_ms"])
 	assert.EqualValues(t, 3, ok["contracts_ms"])
@@ -178,7 +179,7 @@ func TestManifestLoadedCandidateFields_BothOutcomesCarryTheDurationsAndOnlyOKThe
 
 	failed := render(events.ManifestLoadedCandidate{
 		ReleaseID: "rel-2", Status: events.ManifestStatusFailed, FailureKind: "invalid_sql", Detail: "d",
-		ParseMs: 9, ContractsMs: 4, ContractsByFamily: map[string]int{"dbt": 2},
+		ParseMs: 9, ContractsMs: 4, ContractsByFamily: map[model.ContractFamily]int{"dbt": 2},
 	})
 	assert.EqualValues(t, 9, failed["parse_ms"])
 	assert.EqualValues(t, 4, failed["contracts_ms"])

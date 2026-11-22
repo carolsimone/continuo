@@ -349,7 +349,7 @@ def _fixture_bundle() -> tuple[dict, bytes]:
     given = fixture["input"]
     document = build_contract_bundle(
         tenant_id=given["tenant_id"], release_id=given["release_id"], library_version=given["library_version"],
-        contracts=[StoredContract(**c) for c in given["contracts"]], provenance=given["provenance"],
+        contracts=[StoredContract(**{**c, "family": ContractFamily(c["family"])}) for c in given["contracts"]], provenance=given["provenance"],
         timings=given["timings"])
     return document, fixture["canonical"].encode()
 

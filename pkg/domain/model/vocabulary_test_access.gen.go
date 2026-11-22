@@ -13,6 +13,7 @@ func VocabularyValuesForTest() map[string][]string {
 		"ValidationOp": {"build_from_sql", "build_from_columns", "check_binds", "clone_from_prod"},
 		"HandoverReason": {"tries_spent", "preflight_rounds_spent", "declined", "no_type", "classifier_infra", "classifier_unhealable_parse", "no_repository", "unverifiable_edits"},
 		"ApproverSource": {"bundle", "contract_file", "none"},
+		"ContractFamily": {"dbt", "python"},
 		"RemediationSource": {"validation", "compile", "seed_build", "duplicate_table", "parse"},
 		"DeadLetterKind": {"permanent", "transient_exhausted", "trimmed"},
 		"NodeRuntime": {"dbt", "python", "external"},
