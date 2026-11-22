@@ -2,7 +2,20 @@ import pytest
 
 from domain.contract_vocabulary import NodeType, ParseFailureKind
 from domain.model import ManifestNode, Runtime, SkippedNode, SkipReason
-from service.release_timings import ReleaseOutcome, ReleaseTimings, Stage, StageRecord
+from service.release_timings import (
+    CONTRACT_FAILURE_REASONS,
+    CONTRACT_FAILURE_STAGES,
+    REASON_IDENTITY,
+    REASON_MANIFEST_SHAPE,
+    REASON_SEED_HEADER,
+    REASON_STRICT_YAML,
+    REASON_VALUE,
+    FailureStage,
+    ReleaseOutcome,
+    ReleaseTimings,
+    Stage,
+    StageRecord,
+)
 from tests.fakes import FakeClock, ScriptedMemoryProbe
 
 
@@ -189,11 +202,11 @@ def test_contract_failures_and_cache_add_up():
     timings = _timings()
     timings.add_contract_failure("validate", "column_type")
     timings.add_contract_failure("validate", "column_type")
-    timings.add_contract_failure("hash", "unhashable")
+    timings.add_contract_failure(FailureStage.HASH, REASON_VALUE)
     timings.add_validation_cache(True)
     timings.add_validation_cache(False)
     timings.add_validation_cache(False)
-    assert timings.contract_failures == {("validate", "column_type"): 2, ("hash", "unhashable"): 1}
+    assert timings.contract_failures == {("validate", "column_type"): 2, ("hash", "value"): 1}
     assert timings.validation_cache == {"hit": 1, "miss": 2}
 
 
@@ -209,6 +222,31 @@ def test_a_contract_failure_counts_only_under_a_stage_the_metrics_export():
     with pytest.raises(ValueError, match="not a contract failure stage"):
         timings.add_contract_failure("validation", "value")
     assert timings.contract_failures == {}
+
+
+def test_a_contract_failure_counts_only_under_a_reason_the_metrics_export():
+    timings = _timings()
+    with pytest.raises(ValueError, match="'unhashable' is not a contract failure reason"):
+        timings.add_contract_failure("hash", "unhashable")
+    assert timings.contract_failures == {}
+
+
+def test_a_stage_given_as_the_enum_is_counted_under_its_plain_name():
+    timings = _timings()
+    timings.add_contract_failure(FailureStage.NORMALISE, REASON_VALUE)
+    (key,) = timings.contract_failures
+    assert key == ("normalise", "value") and type(key[0]) is str
+
+
+@pytest.mark.parametrize("reason", [
+    REASON_MANIFEST_SHAPE, REASON_SEED_HEADER, REASON_STRICT_YAML, REASON_IDENTITY, REASON_VALUE,
+])
+def test_every_reason_this_service_writes_is_one_the_metrics_export(reason):
+    assert reason in CONTRACT_FAILURE_REASONS
+
+
+def test_the_failure_stages_are_the_enums_values_in_order():
+    assert CONTRACT_FAILURE_STAGES == ("generate", "validate", "normalise", "hash", "ontology")
 
 
 def test_bundle_timings_hold_the_stages_that_ran_so_far():

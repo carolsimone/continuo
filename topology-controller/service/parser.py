@@ -29,7 +29,7 @@ contract do not both have makes the contract invalid.
 import json
 import logging
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import AbstractContextManager, contextmanager, nullcontext
+from contextlib import AbstractContextManager, contextmanager
 from typing import Any
 
 from continuo_contracts import dbt
@@ -55,23 +55,13 @@ from domain.model import (
 from domain.node_timeout import timeout_seconds
 from service.compile_extras import seed_columns_hash
 from service.contract_validation import ContractValidator
-from service.contracts_library import VALIDATOR
 from service.dbt_hashing import CodeUnit, DbtHashParts, ManifestContext, hash_dbt_node
 from service.errors import ContractGenerationError
-from service.release_timings import ReleaseTimings, Stage
+from service.failed_contract import count_and_describe
+from service.manifest_shape import refusal as unreadable_manifest_reason
+from service.release_timings import REASON_IDENTITY, REASON_MANIFEST_SHAPE, FailureStage, ReleaseTimings, Stage
 
 logger = logging.getLogger(__name__)
-
-# What a contract failure that no checked contract explains is counted as: the
-# library could not read the manifest entry it generates the contract from.
-_GENERATE = "generate"
-_MANIFEST_SHAPE = "manifest_shape"
-
-# The stage a failure of a contract's checks is counted under, and the reason of
-# a column that a seed's CSV header and its contract do not both have: one
-# failure for each such column.
-_VALIDATE = "validate"
-_SEED_HEADER = "seed_header"
 
 # The generic test whose target `dbt.generate` resolves from `depends_on.nodes`,
 # dbt's namespace for its own generic tests, and the macro dbt resolves a bare
@@ -160,24 +150,12 @@ def _seed_full_refresh(resource_type: str, config: dict) -> bool | None:
     return value if resource_type == "seed" and isinstance(value, bool) else None
 
 
-def _stage(timings: ReleaseTimings | None, stage: Stage) -> AbstractContextManager[object]:
-    """One node's run of `stage` on `timings`, which reads no memory; nothing is
-    timed without a record."""
-    if timings is None:
-        return nullcontext()
+def _stage(timings: ReleaseTimings, stage: Stage) -> AbstractContextManager[object]:
+    """One node's run of `stage` on `timings`, which reads no memory."""
     return timings.stage(stage, sample_memory=False, nodes=1)
 
 
-def _count_failure(timings: ReleaseTimings | None, stage: str, reason: str) -> None:
-    if timings is not None:
-        timings.add_contract_failure(stage, reason)
-
-
-def _ignore_cache(hit: bool) -> None:
-    """The cache callback of a parse with no timing record."""
-
-
-def _manifest_call[T](call: Callable[[], T], timings: ReleaseTimings | None) -> T:
+def _manifest_call[T](call: Callable[[], T], timings: ReleaseTimings) -> T:
     """Run a library call that reads the manifest as a whole (its project, the
     join of its tests to its nodes). A field it cannot read is no one node's
     fault: it is counted and raised as an InvalidNodeSettingError carrying the
@@ -186,10 +164,21 @@ def _manifest_call[T](call: Callable[[], T], timings: ReleaseTimings | None) -> 
     try:
         return call()
     except DbtNodeError as error:
-        _count_failure(timings, _GENERATE, _MANIFEST_SHAPE)
+        timings.add_contract_failure(FailureStage.GENERATE, REASON_MANIFEST_SHAPE)
         raise InvalidNodeSettingError(str(error)) from error
     except Exception as error:
         raise ContractGenerationError(f"manifest: the contracts library failed: {error!r}") from error
+
+
+def _require_readable_manifest(manifest: Mapping[str, Any], timings: ReleaseTimings) -> None:
+    """Refuse a manifest that holds a field in a shape the hashing and the parse cannot read, in
+    its nodes or in the entries of its macros, functions and unit tests (see
+    `service/manifest_shape.py`): counted like any field the library cannot read, and raised as
+    an InvalidNodeSettingError, since the artifact is at fault and a retry cannot fix it."""
+    reason = unreadable_manifest_reason(manifest)
+    if reason is not None:
+        timings.add_contract_failure(FailureStage.GENERATE, REASON_MANIFEST_SHAPE)
+        raise InvalidNodeSettingError(reason)
 
 
 def _resolves_its_target(test: Mapping[str, Any]) -> bool:
@@ -275,7 +264,7 @@ def _failed_node(name: str, node: dict, resource_type: str, detail: str) -> Fail
     and file path are read tolerantly, as the node may hold either in a shape
     the library refused."""
     file_path = node.get("original_file_path")
-    failed = FailedNode(
+    return FailedNode(
         node_id=name,
         kind=ParseFailureKind.INVALID_CONTRACT,
         service=_tolerant_service(node),
@@ -283,35 +272,16 @@ def _failed_node(name: str, node: dict, resource_type: str, detail: str) -> Fail
         node_type=_RESOURCE_TYPE_TO_NODE_TYPE[resource_type],
         detail=detail,
     )
-    _require_publishable(failed)
-    return failed
-
-
-def _require_publishable(failed: FailedNode) -> None:
-    """Refuse a failed node whose node id, service, file path or detail holds text
-    UTF-8 cannot encode (a lone surrogate that the manifest's JSON writes as an
-    escape): the event that reports the rejection is encoded as UTF-8, so such a
-    rejection could not be published and the release would get no parse result.
-    The artifact is at fault, so it is an InvalidNodeSettingError, whose message
-    writes the node id with the text escaped."""
-    for field, text in (("node id", failed.node_id), ("service", failed.service),
-                        ("file path", failed.file_path), ("detail", failed.detail)):
-        try:
-            text.encode("utf-8")
-        except UnicodeEncodeError:
-            raise InvalidNodeSettingError(
-                f"{ascii(failed.node_id)}: the {field} holds text UTF-8 cannot encode"
-            ) from None
 
 
 def _shape_failure(
-    node_id: str, node: dict, resource_type: str, error: DbtNodeError, timings: ReleaseTimings | None
+    node_id: str, node: dict, resource_type: str, error: DbtNodeError, timings: ReleaseTimings
 ) -> FailedNode:
     """The invalid contract of a node whose field the library cannot read. It is
     named by its unique_id when the library can read that, else by its manifest
     id, and the detail is the library's message, which starts with the manifest
     id and names the field."""
-    _count_failure(timings, _GENERATE, _MANIFEST_SHAPE)
+    timings.add_contract_failure(FailureStage.GENERATE, REASON_MANIFEST_SHAPE)
     try:
         name = dbt.unique_id(node)
     except DbtNodeError:
@@ -321,7 +291,7 @@ def _shape_failure(
 
 def _issues_failure(
     name: str, node_id: str, node: dict, resource_type: str, issues: list[Issue], header_issues: list[str],
-    timings: ReleaseTimings | None,
+    timings: ReleaseTimings,
 ) -> FailedNode:
     """The invalid contract of a node whose generated contract fails its checks,
     or of a seed whose declared columns differ from its CSV header: every issue,
@@ -332,11 +302,7 @@ def _issues_failure(
     check reports a seed's contract issues before its header lines. A detail with
     header messages starts with the seed's manifest id, which they do not carry,
     as the detail of a node the library cannot read starts with its id."""
-    for issue in issues:
-        _count_failure(timings, _VALIDATE, issue.reason)
-    for _ in header_issues:
-        _count_failure(timings, _VALIDATE, _SEED_HEADER)
-    detail = "; ".join([*(str(issue) for issue in issues), *header_issues])
+    detail = count_and_describe(timings, issues, header_issues)
     if header_issues:
         detail = f"{node_id}: {detail}"
     return _failed_node(name, node, resource_type, detail)
@@ -374,7 +340,7 @@ def _id_issue(node: dict, document: Mapping[str, Any]) -> Issue | None:
     if contract_id == node_key:
         return None
     return Issue(
-        "id", "identity",
+        "id", REASON_IDENTITY,
         f"the contract's id is {contract_id!r}, and continuo names its node {node_key!r}: the schema"
         f" {schema!r} and the table {table!r} lower-case differently apart than joined, so rename the schema"
         " or the table",
@@ -402,7 +368,7 @@ def _contract(
     *,
     seed: SeedExtras | None,
     validator: ContractValidator,
-    timings: ReleaseTimings | None,
+    timings: ReleaseTimings,
 ) -> tuple[dbt.Generated, dbt.RunFacts, str | None] | FailedNode:
     """The checked contract of a kept node, the run facts it gives and, for a seed
     the compile extras name (`seed`, None for any other node), the fingerprint of
@@ -429,10 +395,9 @@ def _contract(
     if seed is not None:
         with _rejecting_hash_input(generated.document["id"]):
             columns_hash = seed_columns_hash(seed)
-    on_cache = timings.add_validation_cache if timings is not None else _ignore_cache
     try:
         with _stage(timings, Stage.CONTRACT_VALIDATION):
-            issues = validator.check_dbt(generated.document, on_cache=on_cache)
+            issues = validator.check_dbt(generated.document, on_cache=timings.add_validation_cache)
     except Exception as error:
         raise _library_defect(node_id, error) from error
     mismatch = _id_issue(node, generated.document)
@@ -457,9 +422,9 @@ def parse_manifest(
     *,
     skipped: list[SkippedNode] | None = None,
     declared_service: str = "",
-    validator: ContractValidator = VALIDATOR,
+    validator: ContractValidator,
     progress: Callable[[], None] = _no_progress,
-    timings: ReleaseTimings | None = None,
+    timings: ReleaseTimings,
 ) -> ParsedArtifact:
     """Parse a dbt manifest into its nodes, the shared code they use and the
     invalid contracts of the nodes that could not be built.
@@ -519,19 +484,23 @@ def parse_manifest(
     is not a string, a test whose node links are not strings) raises
     InvalidNodeSettingError with the library's message, which starts with
     `manifest` or the test's id, and so does a kept node or a test with no `fqn`
-    entry and a test with an `fqn` that is not a list of strings. So does text
+    entry and a test with an `fqn` that is not a list of strings. So does a node, a test or
+    an on-run hook that is not an object or holds a field in a shape the hashing reads (a
+    `compiled_code` that is not text, a `depends_on` that is not an object), a `nodes` that is
+    null, and a macro, function or unit test entry that is not an object (see
+    `service/manifest_shape.py`), with a message that starts with `manifest`. So does text
     UTF-8 cannot encode in the extras of a seed (checked when its contract is
-    generated, before its header is compared) or in the node id, service or file
-    path of a FailedNode, as no event could report such a rejection. Any other
-    error from the library raises ContractGenerationError.
+    generated, before its header is compared). Any other error from the library
+    raises ContractGenerationError.
     """
     with open(manifest_path) as f:
         manifest = json.load(f)
 
-    with _rejecting_hash_input(manifest_path):
-        ctx = ManifestContext.from_manifest(manifest, extras)
     project = _manifest_call(lambda: dbt.project_service(manifest, declared_service), timings)
     tests_of = _manifest_call(lambda: dbt.tests_by_node(manifest), timings)
+    _require_readable_manifest(manifest, timings)
+    with _rejecting_hash_input(manifest_path):
+        ctx = ManifestContext.from_manifest(manifest, extras)
     held_targets = _HeldTargets(manifest)
     nodes = []
     failed: list[FailedNode] = []

@@ -33,7 +33,7 @@ from continuo_contracts.vocabulary import continuo_values
 from domain.contract_vocabulary import NodeType, ParseFailureKind
 from domain.external import SystemRelations
 from domain.model import ContractFamily, FailedNode, ManifestNode, NodeContract, TableRef
-from service.release_timings import ReleaseTimings
+from service.release_timings import REASON_VALUE, FailureStage, ReleaseTimings
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +160,7 @@ def invalid_contract_reads(
                 )
     if timings is not None:
         for _ in problems:
-            timings.add_contract_failure("normalise", "value")
+            timings.add_contract_failure(FailureStage.NORMALISE, REASON_VALUE)
     if not problems:
         return None
     return FailedNode(
@@ -228,8 +228,9 @@ def store_contracts(
         if contract.document is None:
             raise ValueError(f"{node.unique_id}: the contract is stored already, and its document released")
         tables = [f"{ref.schema}.{ref.table}" for ref in reads.get(node.node_key, ()) if not system.matches(ref)]
-        document = _library_call("normalise", node, timings, lambda: bind(_normalise(contract, node, tables), node))
-        digest = _library_call("hash", node, timings, lambda: contract_hash(document))
+        document = _library_call(
+            FailureStage.NORMALISE, node, timings, lambda: bind(_normalise(contract, node, tables), node))
+        digest = _library_call(FailureStage.HASH, node, timings, lambda: contract_hash(document))
         stored.append(StoredContract(
             unique_id=node.unique_id,
             family=ContractFamily(contract.family),
@@ -254,7 +255,7 @@ def _normalise(contract: NodeContract, node: ManifestNode, tables: list[str]) ->
     return normalise_python(contract.document, service=node.service_name, reads=tables)
 
 
-def _library_call[T](stage: str, node: ManifestNode, timings: ReleaseTimings | None, call: Callable[[], T]) -> T:
+def _library_call[T](stage: FailureStage, node: ManifestNode, timings: ReleaseTimings | None, call: Callable[[], T]) -> T:
     """Run one call of the contracts library for node. A failure is logged with the node's
     name, counted under stage and raised as it is."""
     try:
@@ -262,10 +263,10 @@ def _library_call[T](stage: str, node: ManifestNode, timings: ReleaseTimings | N
     except Exception:
         logger.exception(
             "candidate: the library refused a contract that passed every check",
-            extra={"node_id": node.unique_id, "service": node.service_name, "stage": stage},
+            extra={"node_id": node.unique_id, "service": node.service_name, "stage": stage.value},
         )
         if timings is not None:
-            timings.add_contract_failure(stage, "value")
+            timings.add_contract_failure(stage, REASON_VALUE)
         raise
 
 

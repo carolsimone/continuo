@@ -9,7 +9,7 @@ from domain.contract_vocabulary import NodeType, ParseFailureKind
 from domain.dormant import is_dormant
 from domain.exceptions import InvalidNodeSettingError
 from domain.model import FailedNode, SkippedNode, SkipReason
-from service.parser import parse_manifest
+from tests.fakes import parse_manifest
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

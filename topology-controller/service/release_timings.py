@@ -69,18 +69,37 @@ _CONTRACT_STAGES = (
     Stage.CONTRACT_BUNDLE,
 )
 
-# The stages a contract failure is counted under: the generation of a dbt node's
-# contract from the manifest (`generate`), the checks of the parse (`validate`),
-# the stored form of a contract (`normalise`), its hash (`hash`) and the ontology
-# (`ontology`: the file itself and the contracts checked against it).
-CONTRACT_FAILURE_STAGES = ("generate", "validate", "normalise", "hash", "ontology")
+class FailureStage(StrEnum):
+    """The stage a contract failure is counted under: the generation of a dbt node's
+    contract from the manifest, the checks of the parse, the stored form of a contract,
+    its hash, and the ontology (the ontology file itself and the contracts checked
+    against it)."""
+    GENERATE = "generate"
+    VALIDATE = "validate"
+    NORMALISE = "normalise"
+    HASH = "hash"
+    ONTOLOGY = "ontology"
+
+
+CONTRACT_FAILURE_STAGES: Final = tuple(stage.value for stage in FailureStage)
+
+# The reasons this service counts besides the contracts library's own: a manifest entry
+# the generation cannot read, and a column that a seed's CSV header and its contract do
+# not both have.
+REASON_MANIFEST_SHAPE: Final = "manifest_shape"
+REASON_SEED_HEADER: Final = "seed_header"
+
+# The reasons of the library's vocabulary that this service reports itself, for a contract
+# the strict YAML reader refuses, whose id is not its node's, or that a later step refuses
+# after every check accepted it.
+REASON_STRICT_YAML: Final = "strict_yaml"
+REASON_IDENTITY: Final = "identity"
+REASON_VALUE: Final = "value"
 
 # The reasons a contract failure is counted under: every reason the contracts
-# library's validation names, `manifest_shape` for a manifest entry the
-# generation cannot read, `seed_header` for a column that a seed's CSV header
-# and its contract do not both have, and every rule of the library's ontology
-# checks.
-CONTRACT_FAILURE_REASONS: Final = (*REASONS, "manifest_shape", "seed_header", *RULES)
+# library's validation names, the two this service adds, and every rule of the
+# library's ontology checks.
+CONTRACT_FAILURE_REASONS: Final = (*REASONS, REASON_MANIFEST_SHAPE, REASON_SEED_HEADER, *RULES)
 
 # The fields of the release's log line that count the ontology's findings that do not
 # reject the release, by severity. A finding that rejects a release (an error) has its
@@ -240,13 +259,17 @@ class ReleaseTimings:
         for skip in skips:
             self.skipped[skip.reason] += 1
 
-    def add_contract_failure(self, stage: str, reason: str) -> None:
-        """Count one contract failure under its stage (one of
-        CONTRACT_FAILURE_STAGES) and reason. Raises ValueError for another
-        stage, so every counted failure lands on a series exported from boot."""
+    def add_contract_failure(self, stage: FailureStage | str, reason: str) -> None:
+        """Count one contract failure under its stage (one of CONTRACT_FAILURE_STAGES)
+        and reason (one of CONTRACT_FAILURE_REASONS). Raises ValueError for another
+        stage or reason, so every counted failure lands on a series exported from boot.
+        A label no code of this service writes is a defect, and it is not hidden: the
+        release is retried, then dead-lettered."""
         if stage not in CONTRACT_FAILURE_STAGES:
             raise ValueError(f"{stage!r} is not a contract failure stage, expected one of {CONTRACT_FAILURE_STAGES}")
-        key = (stage, reason)
+        if reason not in CONTRACT_FAILURE_REASONS:
+            raise ValueError(f"{reason!r} is not a contract failure reason, expected one of {CONTRACT_FAILURE_REASONS}")
+        key = (str(stage), reason)
         self.contract_failures[key] = self.contract_failures.get(key, 0) + 1
 
     def add_validation_cache(self, hit: bool) -> None:

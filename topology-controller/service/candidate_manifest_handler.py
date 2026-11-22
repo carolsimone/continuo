@@ -32,6 +32,7 @@ from service.contract_bundle import (
     shared_unique_ids,
     store_contracts,
 )
+from service.contract_validation import ContractValidator
 from service.contracts_library import LIBRARY_VERSION
 from service.errors import ContractGenerationError
 from service.manifest_parsers import parser_for
@@ -47,7 +48,7 @@ from service.ports import (
     ReleaseObserverPort,
     TopologyArtifactWriterPort,
 )
-from service.release_timings import ReleaseOutcome, ReleaseTimings, Stage
+from service.release_timings import FailureStage, ReleaseOutcome, ReleaseTimings, Stage
 from service.resolver import resolve_upstream_deps
 from service.rewriter import candidate_schema_name
 from service.table_refs import referenced_tables
@@ -218,6 +219,10 @@ class CandidateManifestHandler:
     release at once, so its publish carries no failed nodes even when earlier
     manifests reported invalid contracts.
 
+    validator checks every contract a manifest's parse reads or generates. The
+    composition root builds one for the process and gives it to each handler, so a
+    contract unchanged since an earlier release is answered from its memory.
+
     A manifest of kind ontology is the install's company ontology: it declares
     no node, so it is taken out of the set before the manifests are parsed. With
     ontology_enabled it is read first (see service.ontology_binding): a file the
@@ -352,6 +357,7 @@ class CandidateManifestHandler:
         is_infrastructure_error: Callable[[BaseException], bool],
         clock: ClockPort,
         memory: MemoryProbePort,
+        validator: ContractValidator,
         ontology_enabled: bool,
         progress: Callable[[], None] = _no_progress,
         observer: ReleaseObserverPort = NoReleaseObserver(),
@@ -368,6 +374,7 @@ class CandidateManifestHandler:
         self._is_infrastructure_error = is_infrastructure_error
         self._clock = clock
         self._memory = memory
+        self._validator = validator
         self._ontology_enabled = ontology_enabled
         self._progress = progress
         self._observer = observer
@@ -440,6 +447,7 @@ class CandidateManifestHandler:
                 with self._timings.stage(parse_stage, manifests=1) as record:
                     parsed = parser.parse(
                         mf, skipped=manifest_skips, progress=self._progress, timings=self._timings,
+                        validator=self._validator,
                     )
                     record.add(nodes=len(parsed.nodes))
             except ContractGenerationError as exc:
@@ -754,7 +762,7 @@ class CandidateManifestHandler:
         if not errors:
             return findings
         for error in errors:
-            self._timings.add_contract_failure("ontology", error.rule)
+            self._timings.add_contract_failure(FailureStage.ONTOLOGY, error.rule)
         unnamed = [error for error in errors if error.contract_id is None]
         if unnamed:
             self._fail(
@@ -822,7 +830,7 @@ class CandidateManifestHandler:
                 loaded = load_release_ontology(mf)
         except InvalidOntologyError as exc:
             for rule in exc.rule_errors:
-                self._timings.add_contract_failure("ontology", rule)
+                self._timings.add_contract_failure(FailureStage.ONTOLOGY, rule)
             self._fail(release_id, ParseFailureKind.INVALID_ARTIFACT, exc.detail)
             return None, True
         self._progress()

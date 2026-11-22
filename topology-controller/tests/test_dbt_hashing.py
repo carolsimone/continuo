@@ -25,7 +25,7 @@ from service.dbt_hashing import (
     source_part,
     static_macro_calls,
 )
-from service.parser import parse_manifest
+from tests.fakes import parse_manifest
 from tests.fingerprint_fixtures import enforced_dbt_node, stored_dbt_contracts
 
 RUN = RunMask(invocation_id="9ef3e1e9-a285-49db-8ad9-7eef23da70ef", run_started_at="2026-06-16T04:48:59.438570+00:00")

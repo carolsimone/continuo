@@ -43,5 +43,6 @@
   "manifest_service4": "sha256:0609375922bb3d267d1f314f823186fda39673948d63c6dfc68a5e4596b068c7",
   "manifest_valid": "sha256:32b846744a110f5d232123f8ba38c730408231415a68dc9ecd960421b31841d5",
   "manifest_with_test": "sha256:5c60482cc08fc43cde4f6fde7fb056273c9144ce0cb870664b00a3b0659166b3",
-  "manifests_service1_service2_service4": "sha256:8534e83601bfcf841ba9a2e32294dfa86b7c6a8edc7992790876db783c30f0c3"
+  "manifests_service1_service2_service4": "sha256:8534e83601bfcf841ba9a2e32294dfa86b7c6a8edc7992790876db783c30f0c3",
+  "trino_manifest_trino": "sha256:67ef93cf56993893cd594675c642b37e348f4a20f4ec16a30f8ca8684cc40152"
 }

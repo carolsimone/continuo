@@ -1,0 +1,108 @@
+{
+  "nodes": {
+    "model.service-1.trino_events": {
+      "unique_id": "model.service-1.trino_events",
+      "name": "trino_events",
+      "schema": "test_schema",
+      "fqn": [
+        "service-1",
+        "trino_events"
+      ],
+      "original_file_path": "models/trino_events.sql",
+      "tags": [
+        "daily"
+      ],
+      "resource_type": "model",
+      "config": {
+        "materialized": "table",
+        "meta": {
+          "owner": "team-trino",
+          "criticality": "SECONDARY"
+        }
+      },
+      "compiled_code": "SELECT e.id, date_trunc('day', e.created_at) AS day, CAST(e.id AS VARCHAR) AS id_text FROM hive.raw.events e",
+      "checksum": {
+        "name": "sha256",
+        "checksum": "7472696e6f5f6576656e74737472696e6f5f6576656e74737472696e6f5f6576"
+      }
+    },
+    "model.service-1.trino_daily": {
+      "unique_id": "model.service-1.trino_daily",
+      "name": "trino_daily",
+      "schema": "test_schema",
+      "fqn": [
+        "service-1",
+        "trino_daily"
+      ],
+      "original_file_path": "models/trino_daily.sql",
+      "tags": [
+        "daily"
+      ],
+      "resource_type": "model",
+      "config": {
+        "materialized": "table",
+        "meta": {
+          "owner": "team-trino",
+          "criticality": "SECONDARY"
+        }
+      },
+      "compiled_code": "WITH latest AS (SELECT * FROM test_schema.trino_events) SELECT l.day, count(*) AS n FROM latest l CROSS JOIN UNNEST(ARRAY[1, 2]) AS t(x) GROUP BY l.day",
+      "checksum": {
+        "name": "sha256",
+        "checksum": "7472696e6f5f6461696c797472696e6f5f6461696c797472696e6f5f6461696c"
+      }
+    },
+    "model.service-1.trino_report": {
+      "unique_id": "model.service-1.trino_report",
+      "name": "trino_report",
+      "schema": "test_schema",
+      "fqn": [
+        "service-1",
+        "trino_report"
+      ],
+      "original_file_path": "models/trino_report.sql",
+      "tags": [
+        "daily"
+      ],
+      "resource_type": "model",
+      "config": {
+        "materialized": "table",
+        "meta": {
+          "owner": "team-trino",
+          "criticality": "SECONDARY"
+        }
+      },
+      "compiled_code": "SELECT d.day, d.n FROM warehouse.test_schema.trino_daily d",
+      "checksum": {
+        "name": "sha256",
+        "checksum": "7472696e6f5f7265706f72747472696e6f5f7265706f72747472696e6f5f7265"
+      }
+    },
+    "model.service-1.trino_health": {
+      "unique_id": "model.service-1.trino_health",
+      "name": "trino_health",
+      "schema": "test_schema",
+      "fqn": [
+        "service-1",
+        "trino_health"
+      ],
+      "original_file_path": "models/trino_health.sql",
+      "tags": [
+        "daily"
+      ],
+      "resource_type": "model",
+      "config": {
+        "materialized": "table",
+        "meta": {
+          "owner": "team-trino",
+          "criticality": "SECONDARY"
+        }
+      },
+      "compiled_code": "SELECT n.node_id, t.table_name FROM system.runtime.nodes n CROSS JOIN information_schema.tables t",
+      "checksum": {
+        "name": "sha256",
+        "checksum": "7472696e6f5f6865616c74687472696e6f5f6865616c74687472696e6f5f6865"
+      }
+    }
+  }
+}

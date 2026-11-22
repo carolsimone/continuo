@@ -1,5 +1,3 @@
-import dataclasses
-import functools
 import json
 
 import sqlglot
@@ -21,6 +19,7 @@ def _dbt_contracts(estate) -> int:
 
 
 def _run(estate, store, **kwargs):
+    kwargs.setdefault("validator", ContractValidator())
     handler, publisher = build_handler(estate, store, clock=kwargs.pop("clock", FakeClock()),
                                        memory=ScriptedMemoryProbe(0), **kwargs)
     handler.handle(estate.release_id)
@@ -77,7 +76,7 @@ def test_progress_is_reported_after_a_node_that_fails_to_resolve(monkeypatch):
     calls = []
     handler, publisher = build_handler(
         estate, MemoryS3(estate.objects), clock=FakeClock(), memory=ScriptedMemoryProbe(0),
-        progress=lambda: calls.append(1),
+        validator=ContractValidator(), progress=lambda: calls.append(1),
     )
     handler.handle(estate.release_id)
 
@@ -97,7 +96,7 @@ def test_progress_is_reported_after_a_node_whose_build_fails():
 
     handler, publisher = build_handler(
         estate, _FailingStore(estate.objects), clock=FakeClock(), memory=ScriptedMemoryProbe(0),
-        progress=lambda: calls.append(1),
+        validator=ContractValidator(), progress=lambda: calls.append(1),
     )
     handler.handle(estate.release_id)
 
@@ -106,18 +105,8 @@ def test_progress_is_reported_after_a_node_whose_build_fails():
     assert len(calls) == calls_when_the_put_failed[0] + 1
 
 
-def _the_validator_of_each_test_starts_empty(monkeypatch) -> list[int]:
-    """Give the dbt and ODCS parses one validator of their own (the process's has
-    seen other tests' contracts) and return a list that gets one entry per schema
-    check that really runs."""
-    validator = ContractValidator()
-    real_parser_for = candidate_manifest_handler.parser_for
-
-    def parser_for(kind):
-        parser = real_parser_for(kind)
-        return dataclasses.replace(parser, parse=functools.partial(parser.parse, validator=validator))
-
-    monkeypatch.setattr(candidate_manifest_handler, "parser_for", parser_for)
+def _counting_schema_checks(monkeypatch) -> list[int]:
+    """Return a list that gets one entry per schema check that really runs."""
     schema_checks: list[int] = []
     real_schema_issues = contract_validation.schema_issues
     monkeypatch.setattr(
@@ -143,12 +132,13 @@ def test_a_warm_pass_validates_only_the_changed_contracts(monkeypatch):
     estate = generate_estate(100)
     assert estate.python_nodes == 10
     dbt = _dbt_contracts(estate)
-    schema_checks = _the_validator_of_each_test_starts_empty(monkeypatch)
+    schema_checks = _counting_schema_checks(monkeypatch)
+    validator = ContractValidator()
 
     def parse(objects):
         schema_checks.clear()
         handler, publisher = build_handler(
-            estate, MemoryS3(objects), clock=FakeClock(), memory=ScriptedMemoryProbe(0),
+            estate, MemoryS3(objects), clock=FakeClock(), memory=ScriptedMemoryProbe(0), validator=validator,
         )
         timings = handler.handle(estate.release_id)
         assert publisher.ok, publisher.failure

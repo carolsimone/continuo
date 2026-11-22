@@ -41,10 +41,17 @@ from domain.exceptions import InvalidOdcsBundleError, MalformedContractError
 from domain.model import ContractFamily, FailedNode, ManifestFile, ManifestNode, NodeContract, ParsedArtifact, SkippedNode
 from domain.node_timeout import timeout_seconds
 from service.contract_validation import ContractValidator
-from service.contracts_library import LIBRARY_VERSION, VALIDATOR, version_triple
+from service.contracts_library import LIBRARY_VERSION, version_triple
 from service.python_kind_rules import RULES
 from service.python_node_builder import PythonNodeFields, build_python_node
-from service.release_timings import ReleaseTimings, Stage
+from service.failed_contract import count_and_describe
+from service.release_timings import (
+    REASON_IDENTITY,
+    REASON_STRICT_YAML,
+    REASON_VALUE,
+    ReleaseTimings,
+    Stage,
+)
 
 BUNDLE_VERSION = 1
 CONTRACT_FILE_SUFFIX = ".odcs.yaml"
@@ -168,8 +175,7 @@ def _check_entries(raw: object) -> list[dict[str, str]]:
 
 def _failed_node(timings: ReleaseTimings, doc: object, path: str, service: str, issues: list[Issue]) -> FailedNode:
     """The FailedNode of a contract that did not pass its checks; each issue is counted."""
-    for issue in issues:
-        timings.add_contract_failure("validate", issue.reason)
+    detail = count_and_describe(timings, issues)
     identifier = doc.get("id") if isinstance(doc, Mapping) else None
     return FailedNode(
         node_id=_failed_node_id(identifier) if isinstance(identifier, str) and identifier.strip() else path,
@@ -177,7 +183,7 @@ def _failed_node(timings: ReleaseTimings, doc: object, path: str, service: str, 
         service=service,
         file_path=path,
         node_type=_node_type(doc),
-        detail="; ".join(str(issue) for issue in issues),
+        detail=detail,
     )
 
 
@@ -201,7 +207,7 @@ def _id_issue(doc: Mapping[str, Any], node: ManifestNode, path: str) -> Issue | 
     if identifier == node.unique_id:
         return None
     return Issue(
-        "id", "identity",
+        "id", REASON_IDENTITY,
         f"{path} declares the id {identifier!r}, and continuo names its node {node.unique_id!r}:"
         " write the id in lower case",
     )
@@ -282,14 +288,15 @@ def _read_node(
     try:
         doc = yaml_strict.load(entry["text"])
     except StrictYamlError as exc:
-        return _failed_node(timings, None, path, service, [Issue("$", "strict_yaml", str(exc))])
-    issues = validator.check(doc, path=path, service=service, on_cache=timings.add_validation_cache)
+        return _failed_node(timings, None, path, service, [Issue("$", REASON_STRICT_YAML, str(exc))])
+    with timings.stage(Stage.CONTRACT_VALIDATION, sample_memory=False, nodes=1):
+        issues = validator.check(doc, path=path, service=service, on_cache=timings.add_validation_cache)
     if issues:
         return _failed_node(timings, doc, path, service, issues)
     try:
         node = _build_node(doc, entry, service=service, image_tag=image_tag)
     except (ContractsError, MalformedContractError) as exc:
-        return _failed_node(timings, doc, path, service, [Issue("$", "value", str(exc))])
+        return _failed_node(timings, doc, path, service, [Issue("$", REASON_VALUE, str(exc))])
     mismatch = _id_issue(doc, node, path)
     if mismatch is not None:
         return _failed_node(timings, doc, path, service, [mismatch])
@@ -319,7 +326,7 @@ def parse_odcs_bundle(
     skipped: list[SkippedNode] | None = None,
     progress: Callable[[], None],
     timings: ReleaseTimings,
-    validator: ContractValidator = VALIDATOR,
+    validator: ContractValidator,
     library_version: str = LIBRARY_VERSION,
 ) -> ParsedArtifact:
     """Parse a `python-odcs` producer bundle into the nodes of its valid contracts and
@@ -327,10 +334,12 @@ def parse_odcs_bundle(
 
     `skipped` is accepted so every parse function takes the same arguments and is
     never appended to: a contract is read or it fails, it is never left out.
-    `progress` is called once after each contract. The per-contract checks run inside
-    the `contract_validation` stage of `timings`, which also counts each cache lookup
-    of `validator` and each contract failure by its reason. `library_version` is the
-    continuo-contracts version of this install, which the producer's must not exceed.
+    `progress` is called once after each contract. The library's check of each contract,
+    and nothing else of reading it (the YAML load and the node's build stay in the parse),
+    is the `contract_validation` stage of `timings`, as a dbt node's check is; `timings`
+    also counts each cache lookup of `validator` and each contract failure by its reason.
+    `library_version` is the continuo-contracts version of this install, which the
+    producer's must not exceed.
 
     Raises InvalidOdcsBundleError for a bundle that cannot be read as a whole (see the
     module docstring). A bundle with no node is an empty ParsedArtifact.
@@ -349,16 +358,13 @@ def parse_odcs_bundle(
 
     nodes: list[ManifestNode] = []
     failed: list[FailedNode] = []
-    with timings.stage(Stage.CONTRACT_VALIDATION, nodes=len(entries)):
-        for entry in entries:
-            read = _read_node(
-                entry, service=service, image_tag=mf.image_tag, validator=validator, timings=timings
-            )
-            if isinstance(read, FailedNode):
-                failed.append(read)
-            else:
-                nodes.append(read)
-            progress()
+    for entry in entries:
+        read = _read_node(entry, service=service, image_tag=mf.image_tag, validator=validator, timings=timings)
+        if isinstance(read, FailedNode):
+            failed.append(read)
+        else:
+            nodes.append(read)
+        progress()
     _check_one_node_per_id(nodes)
     return ParsedArtifact(
         nodes=nodes,

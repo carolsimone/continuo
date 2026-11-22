@@ -9,7 +9,7 @@ from domain.model import NodeType
 from tests.fingerprint_fixtures import (
     base_extras, base_manifest_path, candidate_sql_of, manifest_checksum, moved, node_of, parse_and_resolve, parse_variant,
 )
-from service.parser import parse_manifest
+from tests.fakes import parse_manifest
 
 
 def test_a_recompile_with_no_edit_moves_nothing():

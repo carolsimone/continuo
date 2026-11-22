@@ -1,4 +1,7 @@
 {
+  "candidate_sql": {
+    "public.my_seed": ""
+  },
   "code_bundle": {
     "contract_version": 1,
     "nodes": {

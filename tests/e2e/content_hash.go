@@ -58,22 +58,13 @@ const topologyControllerContainer = "topology-controller"
 // leaves in the container, so a wedged docker exec cannot hang the test's end.
 const workDirCleanupTimeout = 30 * time.Second
 
-// contentHashScript parses the manifest.json in the directory named by its one
-// argument, with the compile-extras.json beside it when there is one, through
-// topology-controller's own parser, and prints {unique_id: content_hash} of
-// every node the parser yields as JSON, its only stdout line. Diagnostics go
-// to stderr.
-const contentHashScript = `
-import json, logging, os, sys
-logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
-from service.compile_extras import load_compile_extras
-from service.parser import parse_manifest
-d = sys.argv[1]
-extras_path = os.path.join(d, "compile-extras.json")
-extras = load_compile_extras(extras_path, "") if os.path.exists(extras_path) else None
-parsed = parse_manifest(os.path.join(d, "manifest.json"), "", extras)
-print(json.dumps({n.unique_id: n.content_hash for n in parsed.nodes}, sort_keys=True))
-`
+// contentHashTool is the script, in the topology-controller image, that parses the
+// manifest.json in the directory named by its one argument, with the
+// compile-extras.json beside it when there is one, through topology-controller's own
+// parser, and prints {unique_id: content_hash} of every node the parser yields as
+// JSON, its only stdout line (topology-controller/tools/content_hash.py, which the
+// service's own tests run).
+const contentHashTool = "tools/content_hash.py"
 
 var (
 	contentHashCacheMu sync.Mutex
@@ -86,7 +77,7 @@ var (
 // A manifest it yields no node from fails the test.
 // topology-controller's parser is the one implementation of the formula, so
 // the harness asks it rather than keeping a copy: both files are copied into
-// the topology-controller container and a short script there runs
+// the topology-controller container and its content-hash script runs
 // parse_manifest over them with the container's installed environment
 // (`uv run --no-sync`, so the running service's venv is never re-synced).
 // Results are kept for the life of the process,
@@ -131,8 +122,8 @@ func contentHashesOf(t *testing.T, ctx context.Context, service string, manifest
 		require.NoError(t, err, "docker cp %s: %s", dst, out)
 	}
 
-	out, err = exec.CommandContext(ctx, "docker", "exec", "-w", "/app", "-e", "PYTHONPATH=/app/proto", //nolint:gosec // fixed script, directory mktemp named
-		topologyControllerContainer, "uv", "run", "--no-sync", "python", "-c", contentHashScript, remote).Output()
+	out, err = exec.CommandContext(ctx, "docker", "exec", "-w", "/app", "-e", "PYTHONPATH=/app:/app/proto", //nolint:gosec // fixed script, directory mktemp named
+		topologyControllerContainer, "uv", "run", "--no-sync", "python", contentHashTool, remote).Output()
 	require.NoError(t, err, "hash the manifest with topology-controller's parser: %s", exitStderr(err))
 
 	var hashes map[string]string

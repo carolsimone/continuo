@@ -19,7 +19,6 @@ from domain.exceptions import (
 from domain.model import ManifestFile, ManifestKind, ParsedArtifact, SkippedNode
 from service.compile_extras import load_compile_extras
 from service.contract_validation import ContractValidator
-from service.contracts_library import VALIDATOR
 from service.odcs_bundle_parser import parse_odcs_bundle
 from service.parser import parse_manifest
 from service.release_timings import ReleaseTimings
@@ -28,9 +27,10 @@ from service.release_timings import ReleaseTimings
 class ParseFn(Protocol):
     """A kind's parse function: the downloaded artifact to its nodes and shared
     code. A node the parse leaves out without failing is appended to `skipped`
-    when it is given. `progress` is called as the parse works through its nodes
-    and `timings` is the release's timing record; a parse with nothing to report
-    to either ignores them."""
+    when it is given. `progress` is called as the parse works through its nodes,
+    `timings` is the release's timing record and `validator` checks each contract
+    (the one the process keeps, so a contract unchanged since an earlier release
+    is answered from its memory)."""
 
     def __call__(
         self,
@@ -39,20 +39,19 @@ class ParseFn(Protocol):
         skipped: list[SkippedNode] | None = None,
         progress: Callable[[], None],
         timings: ReleaseTimings,
+        validator: ContractValidator,
     ) -> ParsedArtifact:
         ...
 
 
 def _parse_dbt(
     mf: ManifestFile, *, skipped: list[SkippedNode] | None = None,
-    progress: Callable[[], None], timings: ReleaseTimings, validator: ContractValidator = VALIDATOR,
+    progress: Callable[[], None], timings: ReleaseTimings, validator: ContractValidator,
 ) -> ParsedArtifact:
     """Parse a dbt manifest with the compile extras downloaded beside it, when
     there are any. The extras must name the manifest's declared service, and the
     declared service stands for the manifest's project when the manifest does
-    not name it. Each node's contract is checked with `validator`, by default the
-    one this process keeps, so a contract unchanged since an earlier release is
-    answered from its memory."""
+    not name it. Each node's contract is checked with `validator`."""
     extras = load_compile_extras(mf.extras_path, mf.declared_service) if mf.extras_path else None
     return parse_manifest(
         mf.path, mf.image_tag, extras, skipped=skipped, declared_service=mf.declared_service,

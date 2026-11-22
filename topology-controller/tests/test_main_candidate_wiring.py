@@ -15,6 +15,7 @@ from adapters.topology_artifact_writer import TopologyArtifactWriter
 from config.config import _SYSTEM_RELATIONS, SERVICE_NAME
 from config.secrets import EnvOrFileCredentialProvider
 from domain.model import ManifestRequest
+from service.contract_validation import ContractValidator
 from service.contracts_library import LIBRARY_VERSION
 from service.errors import PermanentMessageError
 from streams_contract import (
@@ -453,6 +454,26 @@ def test_main_hands_each_handler_the_contract_bundle_writer_over_the_installs_bu
     writer = captured["contract_bundle_writer"]
     assert isinstance(writer, ContractBundleWriter)
     assert writer._bucket == "continuo"
+
+
+def test_main_hands_every_handler_the_one_validator_of_the_process(monkeypatch):
+    """A handler is built for each release. They share one validator, so a contract unchanged
+    since an earlier release is answered from its memory, and no other validator exists to
+    forget it."""
+    _common_monkeypatches(monkeypatch)
+    built = []
+    monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None))
+    monkeypatch.setattr(main, "CandidateManifestHandler",
+                        lambda **kw: built.append(kw) or SimpleNamespace(handle=lambda release_id: None))
+    main.main()
+    release = {b"payload": json.dumps({"release_id": "rel-1", "manifest_keys": [], "image_tags": {}}).encode()}
+
+    _RecordingConsumer.instances[0].message_handler(release)
+    _RecordingConsumer.instances[0].message_handler(release)
+
+    first, second = (kwargs["validator"] for kwargs in built)
+    assert isinstance(first, ContractValidator)
+    assert first is second
 
 
 def test_main_publishes_parse_results_on_the_v2_stream_as_this_service(monkeypatch):
