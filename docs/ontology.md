@@ -201,7 +201,11 @@ The ontology has two values in the chart. Both are in `values.yaml`, under
 
 **With the switch off** (the default), continuo ignores the ontology:
 
-- A release of the kind `ontology` is refused with a 400.
+- A release of the kind `ontology` is refused with a 400. A release of that kind
+  that is queued or parsing when the switch is turned off is rejected
+  `invalid_artifact` with the text of the 400, at its activation or at its parse
+  result, and is never promoted, so production never holds an ontology file that
+  nobody read.
 - The ontology of a release is ignored, and the log says so once.
 - Each contract is stored without its bindings and links. A contract that writes
   bindings has the same hash as the same contract with none.

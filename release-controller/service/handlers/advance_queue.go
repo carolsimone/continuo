@@ -39,9 +39,13 @@ import (
 // A run of the kind python, which only a row an earlier continuo version
 // stored holds, is never activated: it is rejected invalid_artifact
 // (rejectStoredPythonRun) and the run behind it is activated instead. So is a
-// run whose kind is on the other side of the line between the ontology and the
-// node kinds from its service's service_prod pointer: it is rejected
-// invalid_artifact with the kind-change refusal as its detail.
+// run of the kind ontology met while the install's ontology switch is off (a
+// run accepted while it was on): it is rejected invalid_artifact with
+// ErrOntologyDisabled as its detail (rejectOntologyRunWhileSwitchOff), before
+// anything is assembled. So is a run whose kind is on the other side of the
+// line between the ontology and the node kinds from its service's service_prod
+// pointer: it is rejected invalid_artifact with the kind-change refusal as its
+// detail.
 //
 // While maintenance mode is on it activates only verification runs.
 func AdvanceQueue(ctx context.Context, d *Deps) error {
@@ -78,6 +82,15 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 		// The rejection ends the run and commits, so the queue is advanced
 		// again for the run behind it.
 		if err := rejectStoredPythonRun(ctx, d, u, next, d.Clock.Now()); err != nil {
+			return err
+		}
+		return AdvanceQueue(ctx, d)
+	}
+	if isOntologyRunWhileSwitchOff(d, next) {
+		// Nothing needs assembling for a run that is not activated. The
+		// rejection ends the run and commits, so the queue is advanced again
+		// for the run behind it.
+		if err := rejectOntologyRunWhileSwitchOff(ctx, d, u, next, d.Clock.Now()); err != nil {
 			return err
 		}
 		return AdvanceQueue(ctx, d)

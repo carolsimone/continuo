@@ -269,7 +269,7 @@ func TestAdvanceQueue_PythonODCSRelease_SkipsCompile_EmitsReleaseRequested(t *te
 // requested, so its release has no compile leg: it activates straight into
 // Parsing, and release.requested names the file as the service's artifact.
 func TestAdvanceQueue_AnOntologyReleaseGoesStraightToParsing(t *testing.T) {
-	deps, store := newDeps(time.Unix(200, 0).UTC())
+	deps, store := ontologyDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	store.SeedServiceProd(release.NewServiceProd("svc-dbt", "rOld", "s3://b/svc-dbt/rOld/manifest.json", "t-old", release.ManifestKindDbt, time.Unix(0, 0)))
 	store.SeedRelease(pipeline.NewCandidate("rOnt", "company-ontology", "img:1", false, false, "acme/ontology", "cafebabe",
@@ -552,7 +552,7 @@ func assertKindChangeRejectedAtActivation(t *testing.T, store *fakeStore, releas
 // refuses the kind change too: the ontology file would replace the service's
 // manifest and drop its nodes.
 func TestAdvanceQueue_AnOntologyRunOfAServiceNowReleasedAsDbtIsRejectedAtActivation(t *testing.T) {
-	deps, store := newDeps(time.Unix(200, 0).UTC())
+	deps, store := ontologyDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	row := release.NewServiceProd("svc-x", "rDbt", "s3://b/svc-x/rDbt/manifest.json", "t-dbt", release.ManifestKindDbt, time.Unix(0, 0))
 	store.SeedServiceProd(row)
@@ -589,7 +589,7 @@ func TestAdvanceQueue_ADbtRunOfTheOntologyServiceIsRejectedAtActivation(t *testi
 // A run whose kind is on the same side of the line as its service's stored
 // kind activates as usual.
 func TestAdvanceQueue_ARunKeepingItsServicesKindSideIsNotRejected(t *testing.T) {
-	deps, store := newDeps(time.Unix(200, 0).UTC())
+	deps, store := ontologyDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	store.SeedServiceProd(release.NewServiceProd("svc-x", "rOnt", "s3://b/svc-x/rOnt/ontology.yaml", "img:1", release.ManifestKindOntology, time.Unix(0, 0)))
 	store.SeedRelease(pipeline.NewCandidate("rOnt2", "svc-x", "img:2", false, false, "acme/ontology", "cafebabe",
