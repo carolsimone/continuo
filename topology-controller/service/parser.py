@@ -58,7 +58,7 @@ from service.contract_validation import ContractValidator
 from service.dbt_hashing import CodeUnit, DbtHashParts, ManifestContext, hash_dbt_node
 from service.errors import ContractGenerationError
 from service.failed_contract import count_and_describe
-from service.manifest_shape import refusal as unreadable_node_reason
+from service.manifest_shape import refusal as unreadable_manifest_reason
 from service.release_timings import REASON_IDENTITY, REASON_MANIFEST_SHAPE, FailureStage, ReleaseTimings, Stage
 
 logger = logging.getLogger(__name__)
@@ -170,11 +170,12 @@ def _manifest_call[T](call: Callable[[], T], timings: ReleaseTimings) -> T:
         raise ContractGenerationError(f"manifest: the contracts library failed: {error!r}") from error
 
 
-def _require_readable_nodes(manifest: Mapping[str, Any], timings: ReleaseTimings) -> None:
-    """Refuse a manifest whose nodes hold a field in a shape the hashing and the parse cannot
-    read (see `service/manifest_shape.py`): counted like any field the library cannot read, and raised as
+def _require_readable_manifest(manifest: Mapping[str, Any], timings: ReleaseTimings) -> None:
+    """Refuse a manifest that holds a field in a shape the hashing and the parse cannot read, in
+    its nodes or in the entries of its macros, functions and unit tests (see
+    `service/manifest_shape.py`): counted like any field the library cannot read, and raised as
     an InvalidNodeSettingError, since the artifact is at fault and a retry cannot fix it."""
-    reason = unreadable_node_reason(manifest["nodes"])
+    reason = unreadable_manifest_reason(manifest)
     if reason is not None:
         timings.add_contract_failure(FailureStage.GENERATE, REASON_MANIFEST_SHAPE)
         raise InvalidNodeSettingError(reason)
@@ -485,8 +486,9 @@ def parse_manifest(
     `manifest` or the test's id, and so does a kept node or a test with no `fqn`
     entry and a test with an `fqn` that is not a list of strings. So does a node, a test or
     an on-run hook that is not an object or holds a field in a shape the hashing reads (a
-    `compiled_code` that is not text, a `depends_on` that is not an object: see `manifest_shape`),
-    with a message that starts with `manifest`. So does text
+    `compiled_code` that is not text, a `depends_on` that is not an object), a `nodes` that is
+    null, and a macro, function or unit test entry that is not an object (see
+    `service/manifest_shape.py`), with a message that starts with `manifest`. So does text
     UTF-8 cannot encode in the extras of a seed (checked when its contract is
     generated, before its header is compared). Any other error from the library
     raises ContractGenerationError.
@@ -496,7 +498,7 @@ def parse_manifest(
 
     project = _manifest_call(lambda: dbt.project_service(manifest, declared_service), timings)
     tests_of = _manifest_call(lambda: dbt.tests_by_node(manifest), timings)
-    _require_readable_nodes(manifest, timings)
+    _require_readable_manifest(manifest, timings)
     with _rejecting_hash_input(manifest_path):
         ctx = ManifestContext.from_manifest(manifest, extras)
     held_targets = _HeldTargets(manifest)

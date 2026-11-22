@@ -1,10 +1,11 @@
 """The shape of the manifest fields that the hashing and the parse read without the contracts library.
 
 dbt writes each of these fields as text, an object or a list. The library refuses a field it reads in
-another shape (`DbtNodeError`). The hashing and the parse read a few more fields themselves, and a value
-of another shape there fails deep in the fold with an `AttributeError`, which the handler would retry
-instead of rejecting. `refusal` names the first such field in the library's words, so the release is an
-invalid artifact. A null stands for an empty value, as everywhere the parse reads these fields.
+another shape (`DbtNodeError`). The hashing and the parse read a few more fields themselves: the fields
+of a node, and the entries of the manifest's `macros`, `functions` and `unit_tests`. A value of another
+shape there fails deep in the fold with an `AttributeError`, which the handler would retry instead of
+rejecting. `refusal` names the first such field in the library's words, so the release is an invalid
+artifact. A null node field stands for an empty value, as everywhere the parse reads these fields.
 """
 from collections.abc import Mapping
 from typing import Any
@@ -30,6 +31,10 @@ _NODE_FIELDS: tuple[tuple[str, str], ...] = (
 )
 _DEPENDS_ON_FIELDS: tuple[str, ...] = ("macros", "nodes")
 
+# The collections of the manifest the hashing reads entry by entry: a macro's code and its calls, the
+# functions a node reaches, and the unit tests of a node. Each is an object of objects (null reads as none).
+_ENTRY_COLLECTIONS: tuple[str, ...] = ("macros", "functions", "unit_tests")
+
 
 def _is(kind: str, value: Any) -> bool:
     if kind == _STRING:
@@ -43,10 +48,24 @@ def _wrong(where: str, kind: str, value: Any) -> str:
     return f"manifest: {where} must be {kind}, got {type(value).__name__}"
 
 
-def refusal(nodes: Mapping[str, Any]) -> str | None:
-    """The reason the first node the parse reads (in manifest order) cannot be read, or None when
-    every such node has the shape the parse expects. The reason starts with `manifest`, as the
-    library's refusal of a manifest field does, and names the node and the field."""
+def refusal(manifest: Mapping[str, Any]) -> str | None:
+    """The reason `manifest` cannot be read, or None when everything the parse reads has the shape it
+    expects: `nodes` is an object, `macros`, `functions` and `unit_tests` are objects of objects, and the
+    first node the parse reads (in manifest order) has fields of the right shape. The reason starts with
+    `manifest`, as the library's refusal of a manifest field does, and names the field. A manifest with
+    no `nodes` key raises KeyError, as the parse's own read of it does."""
+    nodes = manifest["nodes"]
+    if not isinstance(nodes, Mapping):
+        return _wrong("nodes", _MAPPING, nodes)
+    for collection in _ENTRY_COLLECTIONS:
+        entries = manifest.get(collection)
+        if entries is None:
+            continue
+        if not isinstance(entries, Mapping):
+            return _wrong(collection, _MAPPING, entries)
+        for key, entry in entries.items():
+            if not isinstance(entry, Mapping):
+                return _wrong(f"{collection}.{key}", _MAPPING, entry)
     for node_id, node in nodes.items():
         if not isinstance(node, Mapping):
             return _wrong(f"nodes.{node_id}", _MAPPING, node)

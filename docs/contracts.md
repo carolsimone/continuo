@@ -1028,8 +1028,9 @@ Other faults are not about one contract. A manifest that is not valid JSON, a
 `metadata.project_name` that is not text, a test whose links to its nodes are
 not lists of text, a kept node or test with no `fqn`, a node that is not an
 object, a `compiled_code`, `raw_code` or `database` that is not text, a
-`depends_on` that is not an object, and text that UTF-8 cannot encode, such as a
-lone surrogate, reject the release as `invalid_artifact`. A
+`depends_on` that is not an object, a `nodes` that is null, a macro, function or
+unit test entry that is not an object, and text that UTF-8 cannot encode, such as
+a lone surrogate, reject the release as `invalid_artifact`. A
 defect in the `continuo-contracts` library itself ends the release as
 `internal`: continuo does not blame your project for it.
 
