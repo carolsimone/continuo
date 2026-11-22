@@ -594,7 +594,10 @@ func TestE2E_PythonUpsertNode_UpdatesByKeyKeepsOldRowsAndRefusesDrift(t *testing
 			}
 		}()
 
-		setUpsertPhase(t, ctx, 2)
+		// Phase 1 returns ids 1 to 3 with id 2 labelled b, while the table
+		// holds B: a write that was not refused would turn id 2 back into b,
+		// so the rows assertion below tells a refused run from a repeated one.
+		setUpsertPhase(t, ctx, 1)
 		runID, scheduleName := triggerPythonNodeRun(t, ctx, clients, "py_upsert")
 		defer cleanupSingleNodeRun(t, ctx, clients, runID, scheduleName)
 
