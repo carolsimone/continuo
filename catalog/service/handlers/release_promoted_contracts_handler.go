@@ -145,6 +145,7 @@ func (h *ReleasePromotedContractsHandler) Handle(
 		TenantID:          in.TenantID,
 		ReleaseID:         in.ReleaseID,
 		ContinuoContracts: bundle.ContinuoContracts,
+		OntologyVersion:   bundle.OntologyVersion,
 		PromotionSeq:      in.PromotionSeq,
 		PromotedAt:        in.PromotedAt,
 	}

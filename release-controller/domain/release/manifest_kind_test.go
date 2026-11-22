@@ -34,10 +34,29 @@ func TestParseManifestKind_AcceptsPythonODCS(t *testing.T) {
 	assert.Equal(t, "python-odcs", string(k))
 }
 
+func TestParseManifestKind_AcceptsOntology(t *testing.T) {
+	k, err := release.ParseManifestKind("ontology")
+	require.NoError(t, err)
+	assert.Equal(t, release.ManifestKindOntology, k)
+	assert.Equal(t, "ontology", string(k))
+}
+
+// Only a dbt service is compiled before it is parsed: a python-odcs service
+// ships a contract bundle and the ontology service ships its ontology file,
+// both uploaded before the release is requested. A stored python run has no
+// compile leg either.
+func TestHasCompileLeg_OnlyDbt(t *testing.T) {
+	assert.True(t, release.ManifestKindDbt.HasCompileLeg())
+	assert.False(t, release.ManifestKindPythonODCS.HasCompileLeg())
+	assert.False(t, release.ManifestKindOntology.HasCompileLeg())
+	assert.False(t, release.ManifestKindPython.HasCompileLeg())
+}
+
 func TestManifestKind_IsPythonCoversBothPythonKinds(t *testing.T) {
 	assert.True(t, release.ManifestKindPython.IsPython())
 	assert.True(t, release.ManifestKindPythonODCS.IsPython())
 	assert.False(t, release.ManifestKindDbt.IsPython())
+	assert.False(t, release.ManifestKindOntology.IsPython(), "the ontology file is not a python service's artifact")
 }
 
 // A stored row may still carry the python kind, so the constant stays: it is
@@ -52,5 +71,5 @@ func TestParseManifestKind_RejectsEmptyAndUnknown(t *testing.T) {
 	assert.Error(t, err, "empty-to-dbt defaulting is the API boundary's job, not the domain's")
 
 	_, err = release.ParseManifestKind("r")
-	assert.EqualError(t, err, `unknown manifest kind "r" (expected "dbt" or "python-odcs")`)
+	assert.EqualError(t, err, `unknown manifest kind "r" (expected "dbt", "python-odcs" or "ontology")`)
 }

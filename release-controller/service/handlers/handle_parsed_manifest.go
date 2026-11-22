@@ -68,7 +68,10 @@ type HandleParsedManifestInput struct {
 // transitions to Validating, and emits validation.requested:v1.
 // A stored run of the kind python is rejected invalid_artifact whatever the
 // result (rejectStoredPythonRun), so neither a bootstrap nor a
-// nothing-to-validate promotion reaches it.
+// nothing-to-validate promotion reaches it. So is a run of the kind ontology
+// met while the install's ontology switch is off, with ErrOntologyDisabled as
+// its detail (rejectOntologyRunWhileSwitchOff): topology-controller ignores the
+// ontology file then, so its ok result vouches for nothing.
 func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestInput) error {
 	u := d.NewUoW()
 	if err := u.Begin(ctx); err != nil {
@@ -108,6 +111,9 @@ func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestI
 	now := d.Clock.Now()
 	if isStoredPythonRun(r) {
 		return rejectStoredPythonRun(ctx, d, u, r, now)
+	}
+	if isOntologyRunWhileSwitchOff(d, r) {
+		return rejectOntologyRunWhileSwitchOff(ctx, d, u, r, now)
 	}
 
 	// Both outcomes name the continuo-contracts version that read the release's

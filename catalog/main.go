@@ -292,7 +292,9 @@ func main() {
 	// (tenants/<tenant>/contracts/live/) under the tenant's live-folder lease,
 	// which is not the export lease, renewing the message's in-flight mark
 	// while the rewrite runs. The published files carry the install's warehouse
-	// servers entry (cfg.ContractsServer, nil when no host is set). Isolated
+	// servers entry (cfg.ContractsServer, nil when no host is set) and absolute
+	// ontology links under cfg.OntologyBaseURL, as GetNodeContract's document
+	// does. Isolated
 	// from the swap and the code versions so neither waits on the contracts.
 	// Its series are registered here whatever the install enables, every label
 	// pair at 0.
@@ -307,6 +309,7 @@ func main() {
 		liveFolderLease,
 		contractMetrics,
 		cfg.ContractsServer,
+		cfg.OntologyBaseURL,
 		time.Now,
 		logger,
 	)
@@ -406,7 +409,7 @@ func main() {
 	codeVersionQueries := queries.NewCodeVersionQueryService(codeVersionQueryRepo)
 	precedentQueryRepo := neo4jinfra.NewPrecedentQueryRepository(neo4jClient, logger)
 	precedentQueries := queries.NewPrecedentQueryService(precedentQueryRepo)
-	contractQueries := queries.NewContractQueryService(contractReader, serializationinfra.ODCSYAML{}, serializationinfra.CanonicalJSON)
+	contractQueries := queries.NewContractQueryService(contractReader, serializationinfra.ODCSYAML{}, serializationinfra.CanonicalJSON, cfg.OntologyBaseURL)
 	queryHandler := grpcinfra.NewQueryHandler(queryRepo, codeVersionQueries, precedentQueries, contractQueries, logger)
 
 	grpcServer, err := grpcinfra.NewServer(cfg.GRPCPort, queryHandler, logger)

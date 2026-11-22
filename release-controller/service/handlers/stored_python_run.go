@@ -22,16 +22,21 @@ func isStoredPythonRun(r *pipeline.Run) bool {
 }
 
 // rejectStoredPythonRun ends a stored kind-python run before any leg acts on
-// it: a candidate ends rejected invalid_artifact and emits release.rejected:v1
-// with the parse body, a verification ends failed with no release event, and
-// both emit pipeline.run.finished:v1. The detail is the refusal
-// ParseManifestKind gives for the kind. invalid_artifact is not healable, so
-// remediation does not act on the rejection. It writes neither current_prod
-// nor service_prod, and it commits u.
+// it, with the refusal ParseManifestKind gives for the kind as its detail
+// (rejectInvalidArtifactRun).
 func rejectStoredPythonRun(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, now time.Time) error {
 	d.Logger.Warn("rejecting a stored run of the kind python",
 		"release_id", r.ID(), "service", r.ChangedService(), "status", string(r.Status()))
-	detail := release.ErrPythonKindNotAccepted.Error()
+	return rejectInvalidArtifactRun(ctx, d, u, r, release.ErrPythonKindNotAccepted.Error(), now)
+}
+
+// rejectInvalidArtifactRun ends a run that no leg can act on: a candidate ends
+// rejected invalid_artifact and emits release.rejected:v1 with the parse body,
+// a verification ends failed with no release event, and both emit
+// pipeline.run.finished:v1. The detail names why the run cannot proceed.
+// invalid_artifact is not healable, so remediation does not act on the
+// rejection. It writes neither current_prod nor service_prod, and it commits u.
+func rejectInvalidArtifactRun(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, detail string, now time.Time) error {
 	reason := pkg_model.RejectReasonInvalidArtifact
 	if err := r.Fail(string(pkg_model.RejectReasonInvalidArtifact), detail, []string{}, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)

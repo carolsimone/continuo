@@ -47,6 +47,24 @@ func (s Server) Fingerprint(sum func([]byte) string) string {
 	return sum(fmt.Appendf(nil, "type=%q\nhost=%q\nport=%d\ndatabase=%q\n", s.Type, s.Host, s.Port, s.Database))
 }
 
+// PublishingFingerprint identifies the published output of every install
+// setting a published file shows: the warehouse server (nil is a server with no
+// host) and the base URL of the ontology links, which counts only when it is
+// not empty. An install with no base URL keeps the fingerprint the server alone
+// gives, so a folder written before the setting existed is current.
+func PublishingFingerprint(server *Server, ontologyBaseURL string, sum func([]byte) string) string {
+	s := Server{}
+	if server != nil {
+		s = *server
+	}
+	if ontologyBaseURL == "" {
+		return s.Fingerprint(sum)
+	}
+	return s.Fingerprint(func(text []byte) string {
+		return sum(fmt.Appendf(text, "ontologyBaseURL=%q\n", ontologyBaseURL))
+	})
+}
+
 // entry is the server's `servers` list entry for a contract in schema. The
 // database key is `catalog` for trino. An empty database or schema is left out.
 func (s Server) entry(schema string) map[string]any {
@@ -77,13 +95,17 @@ type Provenance struct {
 	ReleaseID         string
 	ContinuoContracts string
 	SourcePath        string
-	PromotionSeq      int64
-	PromotedAt        time.Time
+	// OntologyVersion names the ontology the contract was resolved against,
+	// "<release_id>@sha256:<hex>"; it is empty when the promotion names none.
+	OntologyVersion string
+	PromotionSeq    int64
+	PromotedAt      time.Time
 }
 
-// value is the provenance custom property's value. promotedAt is RFC 3339 UTC.
+// value is the provenance custom property's value. promotedAt is RFC 3339 UTC,
+// and ontologyVersion is present only when the promotion names an ontology.
 func (p Provenance) value() map[string]any {
-	return map[string]any{
+	value := map[string]any{
 		"contractHash":      p.ContractHash,
 		"contentHash":       p.ContentHash,
 		"releaseId":         p.ReleaseID,
@@ -92,6 +114,10 @@ func (p Provenance) value() map[string]any {
 		"continuoContracts": p.ContinuoContracts,
 		"sourcePath":        p.SourcePath,
 	}
+	if p.OntologyVersion != "" {
+		value["ontologyVersion"] = p.OntologyVersion
+	}
+	return value
 }
 
 // ServerSchema is the schema of a published contract's `servers` entry:
@@ -112,17 +138,28 @@ func ServerSchema(stored map[string]any, declared string) string {
 	return schema
 }
 
+// OntologyLinkPrefix starts the `url` of an `authoritativeDefinitions` entry
+// that links a stored contract to a thing or a field of the ontology, as in
+// `continuo-ontology:Transaction.amount`.
+const OntologyLinkPrefix = "continuo-ontology:"
+
 // Published returns the published form of a stored contract: a copy whose
 // `version` is the node's counter written as a string, whose `servers` list
 // holds the install's warehouse entry when server has a host, and whose
 // `customProperties` end with the continuo provenance property (any provenance
 // the stored form carried is replaced). The schema of a servers entry is
 // ServerSchema(stored, schema), where schema is the node's declared schema
-// ("" when it has none); the contract id is not changed. stored is not
-// changed, and the result shares nothing with it.
-func Published(stored map[string]any, version int64, server *Server, schema string, prov Provenance) map[string]any {
+// ("" when it has none); the contract id is not changed. When ontologyBaseURL is
+// not empty, each ontology link of the contract, of its schema objects and of
+// their columns (a url that starts with OntologyLinkPrefix) becomes an absolute
+// link: the base URL, a slash and the rest of the link. stored is not changed,
+// and the result shares nothing with it.
+func Published(stored map[string]any, version int64, server *Server, schema string, prov Provenance, ontologyBaseURL string) map[string]any {
 	out := cloneObject(stored)
 	out["version"] = strconv.FormatInt(version, 10)
+	if ontologyBaseURL != "" {
+		absoluteOntologyLinks(out, ontologyBaseURL)
+	}
 
 	if server != nil && server.Host != "" {
 		out["servers"] = []any{server.entry(ServerSchema(stored, schema))}
@@ -141,6 +178,31 @@ func Published(stored map[string]any, version int64, server *Server, schema stri
 		"value":    prov.value(),
 	})
 	return out
+}
+
+// absoluteOntologyLinks rewrites, in place, the ontology links of doc, of each
+// of its schema objects and of each of their columns to start with baseURL.
+func absoluteOntologyLinks(doc map[string]any, baseURL string) {
+	rewrite := func(node any) {
+		object, _ := node.(map[string]any)
+		definitions, _ := object["authoritativeDefinitions"].([]any)
+		for _, d := range definitions {
+			definition, _ := d.(map[string]any)
+			if url, ok := definition["url"].(string); ok && strings.HasPrefix(url, OntologyLinkPrefix) {
+				definition["url"] = baseURL + "/" + strings.TrimPrefix(url, OntologyLinkPrefix)
+			}
+		}
+	}
+	rewrite(doc)
+	objects, _ := doc["schema"].([]any)
+	for _, o := range objects {
+		rewrite(o)
+		object, _ := o.(map[string]any)
+		columns, _ := object["properties"].([]any)
+		for _, column := range columns {
+			rewrite(column)
+		}
+	}
 }
 
 // IsEphemeral reports whether a stored contract describes an ephemeral model:

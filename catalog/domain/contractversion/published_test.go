@@ -92,7 +92,7 @@ func TestPublished_TheDesignsPublishedFile(t *testing.T) {
 		},
 	})
 
-	got := contractversion.Published(storedKPIs(), 3, warehouseServer(), "", provenance52())
+	got := contractversion.Published(storedKPIs(), 3, warehouseServer(), "", provenance52(), "")
 
 	assert.Equal(t, want, got)
 }
@@ -100,7 +100,7 @@ func TestPublished_TheDesignsPublishedFile(t *testing.T) {
 func TestPublished_LeavesTheStoredFormUntouchedAndSharesNothingWithIt(t *testing.T) {
 	stored := storedKPIs()
 
-	got := contractversion.Published(stored, 3, warehouseServer(), "", provenance52())
+	got := contractversion.Published(stored, 3, warehouseServer(), "", provenance52(), "")
 
 	assert.Equal(t, storedKPIs(), stored, "publishing changes nothing in the stored form")
 	got["team"].(map[string]any)["name"] = "changed"
@@ -112,7 +112,7 @@ func TestPublished_LeavesTheStoredFormUntouchedAndSharesNothingWithIt(t *testing
 func TestPublished_NoServerWithoutAHost(t *testing.T) {
 	noHost := &contractversion.Server{Type: "postgres", Port: 5432, Database: "continuo_dbt"}
 	for name, server := range map[string]*contractversion.Server{"nil": nil, "a server with no host": noHost} {
-		got := contractversion.Published(storedKPIs(), 3, server, "", provenance52())
+		got := contractversion.Published(storedKPIs(), 3, server, "", provenance52(), "")
 		assert.NotContains(t, got, "servers", name)
 		assert.Equal(t, "3", got["version"], name)
 	}
@@ -121,7 +121,7 @@ func TestPublished_NoServerWithoutAHost(t *testing.T) {
 func TestPublished_TrinoUsesCatalog(t *testing.T) {
 	server := &contractversion.Server{Type: "trino", Host: "trino.internal.example", Port: 8080, Database: "iceberg"}
 
-	got := contractversion.Published(storedKPIs(), 1, server, "", provenance52())
+	got := contractversion.Published(storedKPIs(), 1, server, "", provenance52(), "")
 
 	assert.Equal(t, []any{map[string]any{
 		"server":  "warehouse",
@@ -136,7 +136,7 @@ func TestPublished_TrinoUsesCatalog(t *testing.T) {
 func TestPublished_AnEmptyDatabaseIsLeftOut(t *testing.T) {
 	server := &contractversion.Server{Type: "postgres", Host: "h", Port: 5432}
 
-	got := contractversion.Published(storedKPIs(), 1, server, "", provenance52())
+	got := contractversion.Published(storedKPIs(), 1, server, "", provenance52(), "")
 
 	entry := got["servers"].([]any)[0].(map[string]any)
 	assert.NotContains(t, entry, "database")
@@ -148,7 +148,7 @@ func TestPublished_TheSchemaIsTheIDUpToItsFirstDot(t *testing.T) {
 	stored := storedKPIs()
 	stored["id"] = "analytics.dim_customer.v2"
 
-	got := contractversion.Published(stored, 1, warehouseServer(), "", provenance52())
+	got := contractversion.Published(stored, 1, warehouseServer(), "", provenance52(), "")
 
 	assert.Equal(t, "analytics", got["servers"].([]any)[0].(map[string]any)["schema"])
 }
@@ -159,7 +159,7 @@ func TestPublished_TheSchemaIsTheIDUpToItsFirstDot(t *testing.T) {
 func TestPublished_TheServersEntryNamesTheDeclaredSchemaNotTheIDsSpelling(t *testing.T) {
 	stored := storedKPIs()
 
-	got := contractversion.Published(stored, 1, warehouseServer(), "Analytics", provenance52())
+	got := contractversion.Published(stored, 1, warehouseServer(), "Analytics", provenance52(), "")
 
 	assert.Equal(t, "Analytics", got["servers"].([]any)[0].(map[string]any)["schema"])
 	assert.Equal(t, kpis, got["id"], "the logical id keeps its lower-case spelling")
@@ -167,7 +167,7 @@ func TestPublished_TheServersEntryNamesTheDeclaredSchemaNotTheIDsSpelling(t *tes
 }
 
 func TestPublished_NoDeclaredSchemaNamesTheIDsSchema(t *testing.T) {
-	got := contractversion.Published(storedKPIs(), 1, warehouseServer(), "", provenance52())
+	got := contractversion.Published(storedKPIs(), 1, warehouseServer(), "", provenance52(), "")
 
 	assert.Equal(t, "analytics", got["servers"].([]any)[0].(map[string]any)["schema"])
 }
@@ -176,8 +176,8 @@ func TestPublished_NoDeclaredSchemaNamesTheIDsSchema(t *testing.T) {
 // that quotes nothing, publishes the same file with or without its declared
 // schema: the declared spelling and the id's agree.
 func TestPublished_ALowerCaseDeclaredSchemaPublishesWhatTheIDsSchemaDoes(t *testing.T) {
-	declared := contractversion.Published(storedKPIs(), 3, warehouseServer(), "analytics", provenance52())
-	fromID := contractversion.Published(storedKPIs(), 3, warehouseServer(), "", provenance52())
+	declared := contractversion.Published(storedKPIs(), 3, warehouseServer(), "analytics", provenance52(), "")
+	fromID := contractversion.Published(storedKPIs(), 3, warehouseServer(), "", provenance52(), "")
 
 	assert.Equal(t, fromID, declared)
 }
@@ -185,10 +185,10 @@ func TestPublished_ALowerCaseDeclaredSchemaPublishesWhatTheIDsSchemaDoes(t *test
 func TestPublished_TheDeclaredSchemaIsShownOnlyInAServersEntry(t *testing.T) {
 	noHost := &contractversion.Server{Type: "postgres", Port: 5432, Database: "continuo_dbt"}
 	for name, server := range map[string]*contractversion.Server{"nil": nil, "a server with no host": noHost} {
-		got := contractversion.Published(storedKPIs(), 3, server, "Analytics", provenance52())
+		got := contractversion.Published(storedKPIs(), 3, server, "Analytics", provenance52(), "")
 
 		assert.NotContains(t, got, "servers", name)
-		assert.Equal(t, contractversion.Published(storedKPIs(), 3, server, "", provenance52()), got, name)
+		assert.Equal(t, contractversion.Published(storedKPIs(), 3, server, "", provenance52(), ""), got, name)
 	}
 }
 
@@ -196,7 +196,7 @@ func TestPublished_AnIDWithNoSchemaGivesNoSchemaKey(t *testing.T) {
 	stored := storedKPIs()
 	stored["id"] = "py_daily_kpis"
 
-	got := contractversion.Published(stored, 1, warehouseServer(), "", provenance52())
+	got := contractversion.Published(stored, 1, warehouseServer(), "", provenance52(), "")
 
 	assert.NotContains(t, got["servers"].([]any)[0].(map[string]any), "schema")
 }
@@ -226,7 +226,7 @@ func TestPublished_TheProvenanceIsTheOnlyOneEvenWhenTheStoredFormCarriesOne(t *t
 	stored := storedKPIs()
 	stored["customProperties"] = append(stored["customProperties"].([]any), customProperty("provenance", map[string]any{"releaseId": "stale"}))
 
-	got := contractversion.Published(stored, 3, nil, "", provenance52())
+	got := contractversion.Published(stored, 3, nil, "", provenance52(), "")
 
 	var provenances []any
 	for _, p := range got["customProperties"].([]any) {
@@ -243,7 +243,7 @@ func TestPublished_TheProvenanceIsTheOnlyOneEvenWhenTheStoredFormCarriesOne(t *t
 func TestPublished_AContractWithNoCustomPropertiesGetsTheProvenanceAlone(t *testing.T) {
 	stored := map[string]any{"id": kpis, "version": "0"}
 
-	got := contractversion.Published(stored, 2, nil, "", provenance52())
+	got := contractversion.Published(stored, 2, nil, "", provenance52(), "")
 
 	props, ok := got["customProperties"].([]any)
 	require.True(t, ok)
@@ -256,7 +256,7 @@ func TestPublished_PromotedAtIsRFC3339UTC(t *testing.T) {
 	prov := provenance52()
 	prov.PromotedAt = time.Date(2026, 11, 27, 18, 40, 12, 987654321, time.FixedZone("CEST", 2*60*60))
 
-	got := contractversion.Published(storedKPIs(), 3, nil, "", prov)
+	got := contractversion.Published(storedKPIs(), 3, nil, "", prov, "")
 
 	props := got["customProperties"].([]any)
 	value := props[len(props)-1].(map[string]any)["value"].(map[string]any)
@@ -359,4 +359,95 @@ func TestServerFingerprint_NoHostMeansNoServerWhateverElseIsSet(t *testing.T) {
 	trinoNoHost := contractversion.Server{Type: "trino", Port: 8080, Database: "iceberg"}
 	assert.Equal(t, unset.Fingerprint(sumHex), trinoNoHost.Fingerprint(sumHex))
 	assert.NotEqual(t, unset.Fingerprint(sumHex), warehouseServer().Fingerprint(sumHex))
+}
+
+// boundKPIs is storedKPIs as a contract that resolved against an ontology
+// writes it: a link on the contract, one on the schema object and one on each of
+// two columns, beside links that name no ontology.
+func boundKPIs() map[string]any {
+	link := func(url string) map[string]any { return map[string]any{"type": "ontology", "url": url} }
+	stored := storedKPIs()
+	stored["authoritativeDefinitions"] = []any{link("continuo-ontology:Kpi"), map[string]any{"type": "businessDefinition", "url": "https://wiki.example/kpis"}}
+	object := stored["schema"].([]any)[0].(map[string]any)
+	object["authoritativeDefinitions"] = []any{link("continuo-ontology:Kpi")}
+	columns := object["properties"].([]any)
+	columns[0].(map[string]any)["authoritativeDefinitions"] = []any{link("continuo-ontology:Kpi.day")}
+	columns[2].(map[string]any)["authoritativeDefinitions"] = []any{
+		link("continuo-ontology:Kpi.total_amount"), map[string]any{"type": "other", "url": "https://x.example/continuo-ontology:Kpi"},
+	}
+	return stored
+}
+
+// definitionURLs lists the url of each authoritativeDefinitions entry of a
+// contract, its schema object and its columns, in document order.
+func definitionURLs(doc map[string]any) []string {
+	var urls []string
+	collect := func(node map[string]any) {
+		defs, _ := node["authoritativeDefinitions"].([]any)
+		for _, d := range defs {
+			urls = append(urls, d.(map[string]any)["url"].(string))
+		}
+	}
+	collect(doc)
+	for _, object := range doc["schema"].([]any) {
+		collect(object.(map[string]any))
+		for _, column := range object.(map[string]any)["properties"].([]any) {
+			collect(column.(map[string]any))
+		}
+	}
+	return urls
+}
+
+func TestPublished_MakesOntologyLinksAbsolute(t *testing.T) {
+	stored := boundKPIs()
+
+	got := contractversion.Published(stored, 3, nil, "", provenance52(), "https://ontology.example/things")
+
+	assert.Equal(t, []string{
+		"https://ontology.example/things/Kpi",
+		"https://wiki.example/kpis",
+		"https://ontology.example/things/Kpi",
+		"https://ontology.example/things/Kpi.day",
+		"https://ontology.example/things/Kpi.total_amount",
+		"https://x.example/continuo-ontology:Kpi",
+	}, definitionURLs(got), "a link on the contract, the schema object and each column starts with the base, and any other link is untouched")
+	assert.Equal(t, definitionURLs(boundKPIs()), definitionURLs(stored), "the stored form keeps its relative links")
+	got["authoritativeDefinitions"].([]any)[0].(map[string]any)["url"] = "changed"
+	assert.Equal(t, definitionURLs(boundKPIs()), definitionURLs(stored), "the published copy shares no link with the stored form")
+}
+
+func TestPublished_KeepsLinksWhenNoBaseURLIsSet(t *testing.T) {
+	got := contractversion.Published(boundKPIs(), 3, nil, "", provenance52(), "")
+
+	assert.Equal(t, definitionURLs(boundKPIs()), definitionURLs(got))
+	assert.Contains(t, definitionURLs(got), "continuo-ontology:Kpi.day")
+}
+
+func TestPublished_AddsOntologyVersionToTheProvenanceOnlyWhenSet(t *testing.T) {
+	provenanceOf := func(doc map[string]any) map[string]any {
+		props := doc["customProperties"].([]any)
+		return props[len(props)-1].(map[string]any)["value"].(map[string]any)
+	}
+
+	none := contractversion.Published(storedKPIs(), 3, nil, "", provenance52(), "")
+	assert.NotContains(t, provenanceOf(none), "ontologyVersion", "a promotion with no ontology publishes none")
+
+	prov := provenance52()
+	prov.OntologyVersion = "rel-9f8e7d6-14@sha256:bd4d"
+	got := contractversion.Published(storedKPIs(), 3, nil, "", prov, "")
+	assert.Equal(t, "rel-9f8e7d6-14@sha256:bd4d", provenanceOf(got)["ontologyVersion"])
+	assert.Len(t, provenanceOf(got), len(provenanceOf(none))+1, "it is the only property the version adds")
+}
+
+func TestPublishingFingerprint_NamesTheBaseURLOnlyWhenItIsSet(t *testing.T) {
+	// With no base URL the text is the server's alone, so an install that never
+	// sets one keeps the fingerprint its folder was written with.
+	assert.Equal(t, warehouseServer().Fingerprint(identity), contractversion.PublishingFingerprint(warehouseServer(), "", identity))
+	assert.Equal(t, contractversion.Server{}.Fingerprint(identity), contractversion.PublishingFingerprint(nil, "", identity),
+		"no server is a server with no host")
+
+	assert.Equal(t, warehouseServer().Fingerprint(identity)+"ontologyBaseURL=\"https://ontology.example/things\"\n",
+		contractversion.PublishingFingerprint(warehouseServer(), "https://ontology.example/things", identity))
+	assert.NotEqual(t, contractversion.PublishingFingerprint(nil, "https://a.example", sumHex), contractversion.PublishingFingerprint(nil, "https://b.example", sumHex))
+	assert.NotEqual(t, contractversion.PublishingFingerprint(nil, "", sumHex), contractversion.PublishingFingerprint(nil, "https://a.example", sumHex))
 }

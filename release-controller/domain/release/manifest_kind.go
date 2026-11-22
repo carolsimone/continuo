@@ -3,13 +3,15 @@ package release
 import "fmt"
 
 // ManifestKind discriminates how a service's release artifact is authored and
-// parsed: a dbt manifest.json, or a python service's odcs-bundle.json, one ODCS
-// contract per node. It travels POST /releases → Release →
+// parsed: a dbt manifest.json, a python service's odcs-bundle.json (one ODCS
+// contract per node), or the install's ontology.yaml (the company ontology,
+// which declares no node). It travels POST /releases → Release →
 // service_prod.manifest_kind → ManifestKey → the per-entry kind on
 // release.requested:v1. release-controller only moves (service, pointer, kind)
 // triples; topology-controller is the sole component that parses
-// kind-specifically. Values must match topology-controller's ManifestKind enum
-// (domain/model.py), except ManifestKindPython, which only a stored row holds.
+// kind-specifically. The kinds ParseManifestKind accepts must match
+// topology-controller's ManifestKind enum (domain/model.py); only
+// ManifestKindPython, which only a stored row holds, is not in it.
 type ManifestKind string
 
 const (
@@ -20,6 +22,9 @@ const (
 	// before it can reach production.
 	ManifestKindPython     ManifestKind = "python"
 	ManifestKindPythonODCS ManifestKind = "python-odcs"
+	// ManifestKindOntology is the kind of the install's ontology service: its
+	// artifact is ontology.yaml, it has no node, and it has no compile leg.
+	ManifestKindOntology ManifestKind = "ontology"
 )
 
 // ErrPythonKindNotAccepted is the refusal of the kind python: the error
@@ -30,9 +35,16 @@ var ErrPythonKindNotAccepted = fmt.Errorf(
 	ManifestKindPython, ManifestKindPythonODCS)
 
 // IsPython reports whether the kind is one of the two python kinds: a python
-// service has no compile leg and no source overlay, whichever artifact it ships.
+// service has no source overlay, whichever artifact it ships.
 func (k ManifestKind) IsPython() bool {
 	return k == ManifestKindPython || k == ManifestKindPythonODCS
+}
+
+// HasCompileLeg reports whether a release of the kind is compiled before it is
+// parsed. Only a dbt service is: every other kind ships its artifact before the
+// release is requested, so its release goes straight to parsing.
+func (k ManifestKind) HasCompileLeg() bool {
+	return k == ManifestKindDbt
 }
 
 // ParseManifestKind validates a raw kind string from a new release or
@@ -43,11 +55,11 @@ func (k ManifestKind) IsPython() bool {
 // loads.
 func ParseManifestKind(s string) (ManifestKind, error) {
 	switch ManifestKind(s) {
-	case ManifestKindDbt, ManifestKindPythonODCS:
+	case ManifestKindDbt, ManifestKindPythonODCS, ManifestKindOntology:
 		return ManifestKind(s), nil
 	case ManifestKindPython:
 		return "", ErrPythonKindNotAccepted
 	default:
-		return "", fmt.Errorf("unknown manifest kind %q (expected %q or %q)", s, ManifestKindDbt, ManifestKindPythonODCS)
+		return "", fmt.Errorf("unknown manifest kind %q (expected %q, %q or %q)", s, ManifestKindDbt, ManifestKindPythonODCS, ManifestKindOntology)
 	}
 }

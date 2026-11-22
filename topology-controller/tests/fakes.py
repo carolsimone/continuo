@@ -113,11 +113,12 @@ class FakeBundleUploader:
 def build_handler(source, publisher, uploader, bundle_uploader=None, dialect="postgres",
                   image_tags=None, artifact_writer=None, contract_bundle_writer=None,
                   system_relations=_SYSTEM_RELATIONS["postgres"], clock=None, memory=None,
-                  observer=None) -> CandidateManifestHandler:
+                  observer=None, ontology_enabled=False) -> CandidateManifestHandler:
     """Build a handler pinned to the postgres dialect and its system relations,
     a fake bundle uploader, a recording artifact writer, a recording contract
-    bundle writer, an empty image-tag map and no release observer unless a test
-    names otherwise. Outages are recognised by the consumer's own classifier.
+    bundle writer, an empty image-tag map, no release observer and the ontology
+    switch off unless a test names otherwise. Outages are recognised by the
+    consumer's own classifier.
 
     `uploader` is the dbt candidate-SQL uploader; it is wrapped in the dbt
     artifact builder here so these cases keep asserting directly on the upload
@@ -137,13 +138,14 @@ def build_handler(source, publisher, uploader, bundle_uploader=None, dialect="po
         is_infrastructure_error=is_infrastructure,
         clock=clock or FakeClock(),
         memory=memory or ScriptedMemoryProbe(0),
+        ontology_enabled=ontology_enabled,
         observer=observer if observer is not None else NoReleaseObserver(),
     )
 
 
 def dispatch_handler(source, publisher, artifact_builders=None, dialect="postgres", artifact_writer=None,
                      system_relations=_SYSTEM_RELATIONS["postgres"], clock=None, memory=None, progress=None,
-                     contract_bundle_writer=None, bundle_uploader=None):
+                     contract_bundle_writer=None, bundle_uploader=None, ontology_enabled=False):
     """A handler for the parse-dispatch cases.
 
     These cases all fail (or are rejected) before any node reaches the artifact
@@ -164,18 +166,19 @@ def dispatch_handler(source, publisher, artifact_builders=None, dialect="postgre
         is_infrastructure_error=is_infrastructure,
         clock=clock or FakeClock(),
         memory=memory or ScriptedMemoryProbe(0),
+        ontology_enabled=ontology_enabled,
         progress=progress or (lambda: None),
     )
 
 
 def python_handler(source, publisher, spec_uploader=None, dialect="postgres", artifact_writer=None,
                    system_relations=_SYSTEM_RELATIONS["postgres"], progress=None, contract_bundle_writer=None,
-                   bundle_uploader=None, clock=None, memory=None):
+                   bundle_uploader=None, clock=None, memory=None, ontology_enabled=False):
     """A handler wired for both kinds, for cases that publish a python node."""
     return dispatch_handler(
         source, publisher, dialect=dialect, artifact_writer=artifact_writer,
         system_relations=system_relations, progress=progress, contract_bundle_writer=contract_bundle_writer,
-        bundle_uploader=bundle_uploader, clock=clock, memory=memory,
+        bundle_uploader=bundle_uploader, clock=clock, memory=memory, ontology_enabled=ontology_enabled,
         artifact_builders={
             Runtime.DBT: DbtSqlArtifactBuilder(make_uploader()),
             Runtime.PYTHON: PythonSpecArtifactBuilder(

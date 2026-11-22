@@ -61,3 +61,18 @@ class InvalidCompileExtrasError(ValueError):
     def __init__(self, detail: str) -> None:
         self.detail = detail
         super().__init__(f"compile-extras.json: {detail}")
+
+
+class InvalidOntologyError(ValueError):
+    """The install's ontology file cannot be used as a whole: it is not UTF-8 text, it is
+    not an ontology file the library reads, one of its own rules finds an error in it, or
+    the release it belongs to cannot be read from its key. A re-delivery cannot fix it.
+    The message leads with the service that released the file.
+
+    rule_errors holds the rule of each error the file's own rules found, one entry per
+    error, so the release can count them; it is empty when the file did not load."""
+
+    def __init__(self, detail: str, rule_errors: tuple[str, ...] = ()) -> None:
+        self.detail = detail
+        self.rule_errors = rule_errors
+        super().__init__(detail)

@@ -31,20 +31,25 @@ type ContractQueryService struct {
 	renderer ports.PublishedRenderer
 	// renderValue writes the value of a changed path as JSON text.
 	renderValue func(any) string
+	// ontologyBaseURL is the URL the published ontology links start with; empty
+	// publishes them as stored.
+	ontologyBaseURL string
 }
 
 // NewContractQueryService constructs a ContractQueryService. renderValue
 // writes one decoded JSON value as text and is called for the values of a
-// diff's rows.
-func NewContractQueryService(reader ContractReader, renderer ports.PublishedRenderer, renderValue func(any) string) *ContractQueryService {
-	return &ContractQueryService{reader: reader, renderer: renderer, renderValue: renderValue}
+// diff's rows. ontologyBaseURL is the install's base URL for ontology links,
+// the one the live folder publishes with, or "" for none.
+func NewContractQueryService(reader ContractReader, renderer ports.PublishedRenderer, renderValue func(any) string, ontologyBaseURL string) *ContractQueryService {
+	return &ContractQueryService{reader: reader, renderer: renderer, renderValue: renderValue, ontologyBaseURL: ontologyBaseURL}
 }
 
 // GetNodeContract returns the contract a live node has now. With
 // includeDocument it also renders the contract's published form, as the live
-// folder writes it but with no `servers` list, since that list names an
-// install's warehouse and this answer is the contract itself. A node with no
-// current contract returns contractversion.ErrNotFound.
+// folder writes it (absolute ontology links included) but with no `servers`
+// list, since that list names an install's warehouse and this answer is the
+// contract itself. A node with no current contract returns
+// contractversion.ErrNotFound.
 func (s *ContractQueryService) GetNodeContract(ctx context.Context, tenantID, uniqueID string, includeDocument bool) (NodeContract, error) {
 	version, err := s.reader.Current(ctx, tenantID, uniqueID)
 	if err != nil {
@@ -60,9 +65,10 @@ func (s *ContractQueryService) GetNodeContract(ctx context.Context, tenantID, un
 		ReleaseID:         version.ReleaseID,
 		ContinuoContracts: version.ContinuoContracts,
 		SourcePath:        version.SourcePath,
+		OntologyVersion:   version.OntologyVersion,
 		PromotionSeq:      version.PromotionSeq,
 		PromotedAt:        version.PromotedAt,
-	})
+	}, s.ontologyBaseURL)
 	body, err := s.renderer.Render(published)
 	if err != nil {
 		return NodeContract{}, fmt.Errorf("ContractQueryService.GetNodeContract: render node %s version %d: %w", uniqueID, version.Version, err)

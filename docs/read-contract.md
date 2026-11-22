@@ -110,6 +110,23 @@ The keys `odcs_schema_sha256`, `ontology`, `provenance`, `summary`, `failures`
 and `timings` are in the document but not in the read set. They may change in any
 release.
 
+The `ontology` value is `null` when the install's ontology switch is off, and
+then no contract's `document` holds a binding or an ontology link. With the
+switch on it is an object with the keys below. The `ontology` key is outside the
+read set, so this shape is just as unstable: it may change in any release.
+
+| Key | Type | Meaning |
+|---|---|---|
+| `enabled` | boolean | `true`. |
+| `service`, `release_id`, `sha256` | string or `null` | The ontology the release used: the service that released the file, the release that wrote it and the SHA-256 of its text. Each is `null` when no ontology is released. |
+| `declared_services` | array of strings | The services the ontology declares, sorted. Empty when no ontology is released. |
+| `findings` | array of objects | Every warning and information finding of the ontology check, sorted by severity, rule, subject and message. Each has `severity`, `rule`, `subject`, `message` and `contract_id` (`null` when the finding is not about one contract). An error is not here: it rejects the release. |
+
+With the switch on and an ontology released, the `document` of a contract of a
+service the ontology declares is filled in from it, so its `contract_hash` is not
+the hash the same contract has with the switch off. [The company
+ontology](ontology.md) says what is filled in.
+
 ## What changes a version
 
 - **A key of the read set is removed, renamed, retyped, or given another

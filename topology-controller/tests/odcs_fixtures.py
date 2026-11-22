@@ -10,6 +10,7 @@ import hashlib
 import json
 from pathlib import Path
 
+import continuo_contracts
 import yaml
 
 from domain.model import ManifestFile, ManifestKind
@@ -87,6 +88,58 @@ def python_node(
         }],
     }
     return bundle_node(f"contracts/{table}.odcs.yaml", yaml.safe_dump(contract, sort_keys=False))
+
+
+def bound_kpis_text(table: str = "py_daily_kpis") -> str:
+    """The demo contract `py_daily_kpis` for the table `table`, with its grain and the three
+    aggregates of its columns bound to the things of the library's ontology vectors (Transaction)."""
+    return f"""\
+apiVersion: v3.2.0
+kind: DataContract
+id: analytics.{table}
+name: {table}
+version: "0"
+description:
+  purpose: Daily transaction count and total amount in EUR, rolled up from analytics.daily_transactions.
+team:
+  name: service-py
+customProperties:
+  - {{vendor: continuo, property: schedule, value: daily}}
+  - {{vendor: continuo, property: criticality, value: SECONDARY}}
+  - {{vendor: continuo, property: script, value: scripts/{table}.py}}
+  - vendor: continuo
+    property: readQueries
+    value:
+      daily: select created_at, amount_eur from analytics.daily_transactions
+schema:
+  - name: {table}
+    physicalType: table
+    customProperties:
+      - {{vendor: continuo, property: grain, value: [day]}}
+    properties:
+      - name: day
+        physicalType: DATE
+        required: true
+        customProperties:
+          - {{vendor: continuo, property: aggregate, value: {{from: Transaction.created_at, period: day}}}}
+      - name: tx_count
+        physicalType: INTEGER
+        required: true
+        customProperties:
+          - {{vendor: continuo, property: aggregate, value: {{from: Transaction, agg: count}}}}
+      - name: total_amount
+        physicalType: "NUMERIC(12,2)"
+        required: true
+        customProperties:
+          - {{vendor: continuo, property: aggregate, value: {{from: Transaction.amount_eur, agg: sum}}}}
+"""
+
+
+def ontology_vector(name: str) -> dict:
+    """The library's ontology vector `name`: a stored form that writes bindings, the ontology text
+    it was resolved against, the resolved form, its hash and the checker's findings."""
+    vectors = json.loads((Path(continuo_contracts.__file__).parent / "vectors" / "ontology.json").read_text())
+    return next(vector for vector in vectors if vector["name"] == name)
 
 
 def demo_node(name: str) -> dict:

@@ -18,8 +18,13 @@ customProperties:
     property: readQueries
     value:
       tables: select schemaname from pg_catalog.pg_tables
+# The bindings below tie the table and its columns to the thing BadShapeRow of
+# fixtures/ontology/ontology.yaml. An install whose ontology switch is off stores
+# the contract without them.
 schema:
   - name: py_bad_shape
     physicalType: table
+    customProperties:
+      - {vendor: continuo, property: entity, value: BadShapeRow}
     properties:
-      - {name: id, physicalType: INTEGER, required: true}
+      - {name: id, physicalType: INTEGER, required: true, customProperties: [{vendor: continuo, property: property, value: BadShapeRow.id}]}

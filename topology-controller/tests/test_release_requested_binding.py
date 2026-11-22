@@ -94,6 +94,23 @@ def test_kind_defaults_to_dbt_and_is_threaded_when_present():
     ]
 
 
+def test_the_ontology_kind_reaches_the_source_verbatim():
+    got = parse_release_requested(
+        _fields({
+            "release_id": "rel-1",
+            "manifest_keys": [
+                {"service": "company-ontology", "kind": "ontology",
+                 "s3_uri": "s3://continuo/company-ontology/rel-1/ontology.yaml"},
+            ],
+        }),
+        _DEFAULT_BUCKET,
+    )
+
+    assert [(r.service, r.key, r.kind) for r in got.requests] == [
+        ("company-ontology", "company-ontology/rel-1/ontology.yaml", ManifestKind.ONTOLOGY),
+    ]
+
+
 def test_an_explicitly_empty_kind_is_not_defaulted_to_dbt():
     """Only an absent kind defaults. A producer that set the field to "" chose a
     value, and it is not a kind this build can parse — passing it through lets

@@ -1,9 +1,13 @@
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
+
+from continuo_contracts import ontology_check
+from continuo_contracts.ontology_check import RELEASE_RULES, Finding
 from domain.exceptions import (
     InvalidCompiledSqlError,
     InvalidOdcsBundleError,
+    InvalidOntologyError,
     UnqualifiedTableReferenceError,
 )
 from domain.external import SystemRelations, unknown_external_nodes
@@ -31,6 +35,7 @@ from service.contract_bundle import (
 from service.contracts_library import LIBRARY_VERSION
 from service.errors import ContractGenerationError
 from service.manifest_parsers import parser_for
+from service.ontology_binding import ReleaseOntology, bind_contract, load_release_ontology, ontology_envelope
 from service.ports import (
     CandidatePublisherPort,
     ClockPort,
@@ -49,6 +54,9 @@ from service.table_refs import referenced_tables
 from domain.contract_vocabulary import ParseFailureKind
 
 logger = logging.getLogger(__name__)
+
+# How many characters of a text UTF-8 cannot encode a failure shows, escaped.
+_UNENCODABLE_SHOWN = 500
 
 _NO_IMAGE_TAGS = (
     "the release request carries no image_tags, so no node can be given the "
@@ -77,6 +85,25 @@ def _failed_node_order(node: FailedNode) -> tuple[str, ...]:
     then by every other field so that two nodes agreeing on those three still
     have one order, whatever order the manifests came in."""
     return (node.node_id, node.file_path, str(node.kind), node.service, str(node.node_type), node.detail)
+
+
+def _encodable(text: str) -> bool:
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _unencodable_text(detail: str, failed_nodes: Sequence[FailedNode]) -> str | None:
+    """The first text of a failure that UTF-8 cannot encode (a lone surrogate, as a
+    contract or an ontology that came from JSON can quote), or None when every text of it
+    can be. The event that reports a failure is encoded as UTF-8, so a failure with such
+    a text cannot be published."""
+    texts = [detail]
+    for node in failed_nodes:
+        texts.extend((node.node_id, node.service, node.file_path, node.detail))
+    return next((text for text in texts if not _encodable(text)), None)
 
 
 def _unreadable_manifest_detail(mf: ManifestFile, exc: Exception) -> str:
@@ -191,6 +218,36 @@ class CandidateManifestHandler:
     release at once, so its publish carries no failed nodes even when earlier
     manifests reported invalid contracts.
 
+    A manifest of kind ontology is the install's company ontology: it declares
+    no node, so it is taken out of the set before the manifests are parsed. With
+    ontology_enabled it is read first (see service.ontology_binding): a file the
+    library cannot read, or one its own rules find an error in, is an
+    invalid_artifact naming the service that released it, and each of those
+    errors is counted as a contract failure of stage ontology. With the switch
+    off the file is ignored and one line at INFO says so. Two ontology manifests
+    in one release are an invalid_artifact whatever the switch says.
+
+    Each contract is kept in the form bind_contract gives its stored one: with
+    the switch off its ontology part (bindings and links) is taken away, so a
+    contract that writes bindings hashes as one that writes none; with the switch
+    on and no ontology it is kept as written; with an ontology a contract of a
+    service the ontology declares is filled in from it. The contract bundle's
+    ontology value is null with the switch off and otherwise names the ontology
+    the release used.
+
+    With an ontology loaded, the stored contracts of the whole release are
+    checked against it once every node has resolved and every contract is
+    stored (the check never runs for a release that has a failed node). An
+    error of the check is the failure of the contract's node (invalid_contract,
+    naming the rule and what it found), or, when it names no contract, an
+    invalid_artifact naming the ontology's service. A warning or an information
+    line never rejects the release: it goes into the ontology value of the
+    contract bundle.
+
+    A failure whose text UTF-8 cannot encode is published as an invalid_artifact
+    that names the release, because the event that reports it is encoded as
+    UTF-8 and could never be published.
+
     dialect is the sqlglot dialect of the warehouse the install targets,
     supplied by the composition root from the configured engine. It governs
     both dependency resolution and the candidate-schema rewrite, so the
@@ -250,9 +307,10 @@ class CandidateManifestHandler:
 
     progress is called by a manifest's parse after each contract it reads (a
     python contract) or generates (a dbt node's), and by the handler once after
-    each manifest's parse, once after each node's resolve and once after each
-    node's build, a failed one included, so the caller can tell a release that
-    is working through its nodes from one that has stopped. Between two calls
+    the ontology is read, once after each manifest's parse, once after each
+    node's resolve and once after each node's build, a failed one included, so
+    the caller can tell a release that is working through its nodes from one
+    that has stopped. Between two calls
     the handler does one contract's share of a parse (a python contract's checks
     and node, a dbt node's contract, checks, hashes and node), one manifest's
     work around its contracts (before the first: the manifest's reading and the
@@ -262,7 +320,8 @@ class CandidateManifestHandler:
     stretches, each of which must end within the caller's staleness budget:
     - from the start through the first contract of the first manifest's parse:
       the image-tag check, the listing of every manifest (every manifest's
-      download included), that manifest's reading and that contract;
+      download included), the ontology's reading, that manifest's reading and
+      that contract;
     - from the last manifest's parse through the first node's resolve: that
       manifest's own bookkeeping (skip logging, shared-code namespacing,
       service checks), the node registry and its lookup and the rewrite context
@@ -270,8 +329,9 @@ class CandidateManifestHandler:
     - from the last node's resolve through the first node's build: the
       unknown-external step (in-memory work linear in the number of table references),
       then the stored form of the first contract (progress is called after each
-      contract, so the stretch from one to the next is one contract's), then
-      that build;
+      contract, so the stretch from one to the next is one contract's), then,
+      with an ontology, the check, which calls progress after each contract of
+      each rule it runs, then that build;
     - from the last node's build through the code bundle, its upload, the
       contract bundle and its write, the topology artifact and the publish.
     A release that ends early, with no manifest or with a failure, ends in the
@@ -292,6 +352,7 @@ class CandidateManifestHandler:
         is_infrastructure_error: Callable[[BaseException], bool],
         clock: ClockPort,
         memory: MemoryProbePort,
+        ontology_enabled: bool,
         progress: Callable[[], None] = _no_progress,
         observer: ReleaseObserverPort = NoReleaseObserver(),
     ) -> None:
@@ -307,6 +368,7 @@ class CandidateManifestHandler:
         self._is_infrastructure_error = is_infrastructure_error
         self._clock = clock
         self._memory = memory
+        self._ontology_enabled = ontology_enabled
         self._progress = progress
         self._observer = observer
         # Replaced by the record of each release handle() starts.
@@ -335,12 +397,21 @@ class CandidateManifestHandler:
         with self._timings.stage(Stage.DOWNLOAD) as record:
             manifests = self._source.list_manifests()
             record.add(manifests=len(manifests), bytes=sum(m.size_bytes for m in manifests))
+        # The ontology declares no node: it never reaches the parse loop below.
+        ontology_files = [mf for mf in manifests if mf.kind == ManifestKind.ONTOLOGY]
+        manifests = [mf for mf in manifests if mf.kind != ManifestKind.ONTOLOGY]
+        release_ontology, ended = self._read_ontology(release_id, ontology_files)
+        if ended:
+            return
         if not manifests:
             logger.warning(
                 "candidate: no manifest files found — publishing empty topology",
                 extra={"release_id": release_id},
             )
-            self._publish(release_id, topology=[], code_bundle_uri="", contracts=[], python_provenance={})
+            self._publish(
+                release_id, topology=[], code_bundle_uri="", contracts=[], python_provenance={},
+                ontology=self._ontology_value(release_ontology),
+            )
             return
 
         all_nodes = []
@@ -578,11 +649,21 @@ class CandidateManifestHandler:
                 contracts = store_contracts(
                     [node for node in all_nodes if node.unique_id not in shared], reads, self._system_relations,
                     progress=self._progress, timings=self._timings,
+                    bind=lambda stored, node: bind_contract(
+                        stored, enabled=self._ontology_enabled, release_ontology=release_ontology,
+                    ),
                 )
                 record.add(contracts=len(contracts))
         except Exception as exc:
             self._reject_internal_unless_infra(release_id, exc)
             return
+
+        findings: list[Finding] = []
+        if release_ontology is not None:
+            checked = self._check_ontology(release_id, release_ontology, all_nodes, contracts)
+            if checked is None:
+                return
+            findings = checked
 
         topology: list[dict] = []
         for node in all_nodes:
@@ -634,7 +715,128 @@ class CandidateManifestHandler:
         self._publish(
             release_id, topology=topology, code_bundle_uri=code_bundle_uri,
             contracts=contracts, python_provenance=python_provenance,
+            ontology=self._ontology_value(release_ontology, findings),
         )
+
+    def _ontology_value(
+        self, release_ontology: ReleaseOntology | None, findings: Sequence[Finding] = (),
+    ) -> dict[str, Any] | None:
+        """The `ontology` value of this release's contract bundle (see ontology_envelope)."""
+        return ontology_envelope(
+            enabled=self._ontology_enabled, release_ontology=release_ontology, findings=findings)
+
+    def _check_ontology(
+        self,
+        release_id: str,
+        release_ontology: ReleaseOntology,
+        nodes: Sequence[ManifestNode],
+        contracts: Sequence[StoredContract],
+    ) -> list[Finding] | None:
+        """Check the stored contracts against the release's ontology, in the ontology stage.
+
+        Returns the findings that do not reject the release, or None once the release has
+        been published as failed. Each error is counted as a contract failure of stage
+        ontology, under the rule that found it. An error that names a contract is that
+        contract's node failing as an invalid contract, the errors of one node joined in
+        one detail. An error that names none is an invalid artifact that names the
+        ontology's service, and fails the release at once with no failed node. A finding
+        that names a contract the release does not hold is a defect of the library."""
+        try:
+            with self._timings.stage(Stage.ONTOLOGY, contracts=len(contracts)):
+                findings = ontology_check.check(
+                    release_ontology.ontology, [stored.document for stored in contracts],
+                    rules=RELEASE_RULES, progress=self._progress,
+                )
+        except Exception as exc:
+            self._reject_internal_unless_infra(release_id, exc)
+            return None
+        errors = [finding for finding in findings if finding.severity == "error"]
+        if not errors:
+            return findings
+        for error in errors:
+            self._timings.add_contract_failure("ontology", error.rule)
+        unnamed = [error for error in errors if error.contract_id is None]
+        if unnamed:
+            self._fail(
+                release_id,
+                ParseFailureKind.INVALID_ARTIFACT,
+                f"{release_ontology.service}: "
+                + "; ".join(f"ontology {error.rule}: {error.subject}: {error.message}" for error in unnamed),
+            )
+            return None
+        by_contract = {stored.document["id"]: stored for stored in contracts}
+        node_types = {node.unique_id: node.node_type for node in nodes}
+        details: dict[str, list[str]] = {}
+        for error in errors:
+            details.setdefault(error.contract_id, []).append(f"ontology {error.rule}: {error.message}")
+        failed: list[FailedNode] = []
+        for contract_id, messages in details.items():
+            stored = by_contract.get(contract_id)
+            if stored is None:
+                self._fail(
+                    release_id,
+                    ParseFailureKind.INTERNAL,
+                    f"the ontology check named the contract {contract_id!r}, which the release does not hold",
+                )
+                return None
+            failed.append(FailedNode(
+                node_id=stored.unique_id,
+                kind=ParseFailureKind.INVALID_CONTRACT,
+                service=stored.service,
+                file_path=stored.source_path,
+                node_type=node_types[stored.unique_id],
+                detail="; ".join(messages),
+            ))
+        self._fail(release_id, ParseFailureKind.INVALID_CONTRACT, _summary(failed), failed)
+        return None
+
+    def _read_ontology(
+        self, release_id: str, files: Sequence[ManifestFile],
+    ) -> tuple[ReleaseOntology | None, bool]:
+        """The ontology this release uses, and whether the release ended here.
+
+        No ontology manifest is no ontology. Two are an invalid_artifact, with the
+        switch on or off. With the switch off the one file is ignored and logged.
+        With it on the file is loaded in the ontology stage: a file that cannot be
+        used publishes the release as an invalid_artifact, after counting each
+        error of the file's own rules as a contract failure of stage ontology."""
+        if not files:
+            return None, False
+        if len(files) > 1:
+            carried = sorted(f"one from {mf.declared_service or mf.path}" for mf in files)
+            self._fail(
+                release_id,
+                ParseFailureKind.INVALID_ARTIFACT,
+                f"an install has one ontology: the release carries {', '.join(carried[:-1])} and {carried[-1]}",
+            )
+            return None, True
+        (mf,) = files
+        if not self._ontology_enabled:
+            logger.info(
+                "candidate: the ontology switch is off, so the ontology is ignored",
+                extra={"release_id": release_id, "service": mf.declared_service or mf.path},
+            )
+            return None, False
+        try:
+            with self._timings.stage(Stage.ONTOLOGY):
+                loaded = load_release_ontology(mf)
+        except InvalidOntologyError as exc:
+            for rule in exc.rule_errors:
+                self._timings.add_contract_failure("ontology", rule)
+            self._fail(release_id, ParseFailureKind.INVALID_ARTIFACT, exc.detail)
+            return None, True
+        self._progress()
+        logger.info(
+            "candidate: the release's ontology is loaded",
+            extra={
+                "release_id": release_id,
+                "service": loaded.service,
+                "ontology_release_id": loaded.release_id,
+                "sha256": loaded.sha256,
+                "declared_services": list(loaded.ontology.services()),
+            },
+        )
+        return loaded, False
 
     def _publish(
         self,
@@ -644,14 +846,18 @@ class CandidateManifestHandler:
         code_bundle_uri: str,
         contracts: Sequence[StoredContract],
         python_provenance: Mapping[str, Mapping[str, Any]],
+        ontology: Mapping[str, Any] | None,
     ) -> None:
-        """Write the release's contract bundle, then its topology artifact, then
+        """Write the release's contract bundle, which names the ontology the release
+        used (null with the ontology switch off), then its topology artifact, then
         publish the references to both with the durations of the parse and the
         stored bundle's count of contracts by family, which the writer returns:
         a bundle another parse of the release stored first is the one catalog
         reads, so its counts are the ones published. The bundle's timings are
         those of the stages that ran before its own write. Each write follows
-        the same outage rule as every other write."""
+        the same outage rule as every other write. Once both are written, the
+        release's line counts the findings the ontology value holds, by severity:
+        a release that fails to write counts none."""
         try:
             with self._timings.stage(Stage.CONTRACT_BUNDLE, contracts=len(contracts)):
                 bundle_document = build_contract_bundle(
@@ -661,6 +867,7 @@ class CandidateManifestHandler:
                     contracts=contracts,
                     provenance=python_provenance,
                     timings=self._timings.bundle_timings(),
+                    ontology=ontology,
                 )
                 contract_bundle = self._contract_bundle_writer.write(
                     tenant_id=DEFAULT_TENANT_ID, release_id=release_id, document=bundle_document,
@@ -673,6 +880,8 @@ class CandidateManifestHandler:
             self._reject_internal_unless_infra(release_id, exc)
             return
 
+        if ontology is not None:
+            self._timings.add_ontology_findings(finding["severity"] for finding in ontology["findings"])
         durations = self._close_the_parse()
         with self._timings.stage(Stage.PUBLISH):
             self._publisher.publish_ok(
@@ -738,7 +947,16 @@ class CandidateManifestHandler:
         detail: str,
         failed_nodes: Sequence[FailedNode] = (),
     ) -> None:
-        """Publish the release as failed, timed as the publish stage."""
+        """Publish the release as failed, timed as the publish stage. A failure with a
+        text UTF-8 cannot encode could never be published, and the release would be
+        retried for ever, so it is published as an invalid artifact that names the
+        release and shows that text escaped, with no failed node."""
+        unencodable = _unencodable_text(detail, failed_nodes)
+        if unencodable is not None:
+            kind = ParseFailureKind.INVALID_ARTIFACT
+            shown = unencodable.encode("ascii", "backslashreplace").decode("ascii")[:_UNENCODABLE_SHOWN]
+            detail = f"release {release_id}: the failure holds text UTF-8 cannot encode ({shown})"
+            failed_nodes = ()
         durations = self._close_the_parse()
         with self._timings.stage(Stage.PUBLISH):
             self._publisher.publish_failed(

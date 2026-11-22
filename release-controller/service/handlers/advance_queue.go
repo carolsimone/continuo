@@ -31,14 +31,21 @@ import (
 //     manifest-key set is assembled again in HandleCompileResult (ok path),
 //     reading live service_prod a second time when the release advances to
 //     Parsing.
-//   - python-odcs: no compile leg exists — CI already packaged and uploaded
-//     the odcs-bundle.json before POST /releases — so the release goes straight
-//     to TransitionToParsing and emits release.requested:v1 with the set
-//     assembled here.
+//   - python-odcs and ontology: no compile leg exists — CI already uploaded
+//     the odcs-bundle.json or the ontology.yaml before POST /releases — so the
+//     release goes straight to TransitionToParsing and emits
+//     release.requested:v1 with the set assembled here.
 //
 // A run of the kind python, which only a row an earlier continuo version
 // stored holds, is never activated: it is rejected invalid_artifact
-// (rejectStoredPythonRun) and the run behind it is activated instead.
+// (rejectStoredPythonRun) and the run behind it is activated instead. So is a
+// run of the kind ontology met while the install's ontology switch is off (a
+// run accepted while it was on): it is rejected invalid_artifact with
+// ErrOntologyDisabled as its detail (rejectOntologyRunWhileSwitchOff), before
+// anything is assembled. So is a run whose kind is on the other side of the
+// line between the ontology and the node kinds from its service's service_prod
+// pointer: it is rejected invalid_artifact with the kind-change refusal as its
+// detail.
 //
 // While maintenance mode is on it activates only verification runs.
 func AdvanceQueue(ctx context.Context, d *Deps) error {
@@ -79,6 +86,15 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 		}
 		return AdvanceQueue(ctx, d)
 	}
+	if isOntologyRunWhileSwitchOff(d, next) {
+		// Nothing needs assembling for a run that is not activated. The
+		// rejection ends the run and commits, so the queue is advanced again
+		// for the run behind it.
+		if err := rejectOntologyRunWhileSwitchOff(ctx, d, u, next, d.Clock.Now()); err != nil {
+			return err
+		}
+		return AdvanceQueue(ctx, d)
+	}
 
 	// Activation guard for the per-service model. The full topology is
 	// reconstructed from the service_prod pointer table plus this release's
@@ -104,6 +120,22 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 	if err != nil {
 		return fmt.Errorf("list service prod: %w", err)
 	}
+	// Intake refuses a kind change against the service_prod row it sees, but a
+	// run queued before another run of the service promoted meets the row that
+	// promotion wrote only here, where the queue lock is held and the pointers
+	// are read. Assembling the set for such a run would swap the service's
+	// manifest for an artifact of the other side and drop or replace its nodes.
+	if stored := pointerOf(pointers, next.ChangedService()); stored != nil &&
+		(stored.ManifestKind() == release.ManifestKindOntology) != (next.ManifestKind() == release.ManifestKindOntology) {
+		d.Logger.Warn("rejecting a run that changes its service between the kind ontology and a node kind",
+			"release_id", next.ID(), "service", next.ChangedService(),
+			"stored_kind", string(stored.ManifestKind()), "kind", string(next.ManifestKind()))
+		detail := kindChangeRefusalText(next.ChangedService(), stored.ManifestKind())
+		if err := rejectInvalidArtifactRun(ctx, d, u, next, detail, d.Clock.Now()); err != nil {
+			return err
+		}
+		return AdvanceQueue(ctx, d)
+	}
 	if cp != nil && cp.ReleaseID() != "" {
 		prod, err := loadProdTopology(ctx, d, cp)
 		if err != nil {
@@ -124,11 +156,12 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 	set := assembleFor(ctx, u, d.Logger, next, pointers, d.Bucket)
 	next.SetAssembledImageTags(set.ImageTags)
 
-	if next.ManifestKind().IsPython() {
-		// A python release has no compile leg: CI packaged and uploaded the
-		// contract bundle before POST /releases, so activation goes straight
-		// to Parsing and requests the manifest load with keys assembled from
-		// the same live service_prod read the activation guard used.
+	if !next.ManifestKind().HasCompileLeg() {
+		// A release of any kind but dbt has no compile leg: CI uploaded its
+		// artifact (the contract bundle or the ontology file) before
+		// POST /releases, so activation goes straight to Parsing and requests
+		// the manifest load with keys assembled from the same live
+		// service_prod read the activation guard used.
 		if err := next.TransitionToParsing(now); err != nil {
 			return fmt.Errorf("transition to parsing: %w", err)
 		}
@@ -187,6 +220,17 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 		return fmt.Errorf("commit: %w", err)
 	}
 	d.Telemetry.ReleaseParseRequested(ctx, next.ID())
+	return nil
+}
+
+// pointerOf returns the service_prod pointer of service, or nil when the
+// service has none.
+func pointerOf(pointers []*release.ServiceProd, service string) *release.ServiceProd {
+	for _, p := range pointers {
+		if p.ServiceName() == service {
+			return p
+		}
+	}
 	return nil
 }
 

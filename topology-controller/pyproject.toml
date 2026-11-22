@@ -9,7 +9,7 @@ dependencies = [
     "protobuf>=7.36.2",
     "boto3>=1.43.126",
     "prometheus-client==0.26.0",
-    "continuo-contracts==0.3.1",
+    "continuo-contracts==0.4.1",
 ]
 
 [project.optional-dependencies]

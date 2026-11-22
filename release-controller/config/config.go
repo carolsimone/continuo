@@ -1,6 +1,9 @@
 package config
 
 import (
+	"fmt"
+	"os"
+
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	"github.com/carolsimone/continuo/pkg/warehouse"
 )
@@ -45,6 +48,31 @@ type Config struct {
 	// on it. An engine without a family is recorded on the validator, so
 	// release-controller refuses to start.
 	WarehouseFamily warehouse.Family
+
+	// OntologyEnabled is ONTOLOGY_ENABLED, the install's ontology switch: it
+	// is false when the variable is unset or empty. While it is false,
+	// release-controller refuses a release of kind ontology.
+	OntologyEnabled bool
+}
+
+// ontologyEnabledEnvKey names the environment variable of the install's
+// ontology switch.
+const ontologyEnabledEnvKey = "ONTOLOGY_ENABLED"
+
+// loadOntologyEnabled reads ONTOLOGY_ENABLED: unset or empty is off, and
+// exactly "true" or "false" is read as written. Any other spelling is recorded
+// on v, so the service refuses to start instead of reading a switch it cannot
+// honour as off.
+func loadOntologyEnabled(v *pkgconfig.Validator) bool {
+	switch raw := os.Getenv(ontologyEnabledEnvKey); raw {
+	case "", "false":
+		return false
+	case "true":
+		return true
+	default:
+		v.Add(fmt.Sprintf(`%s (invalid value %q: expected "true" or "false")`, ontologyEnabledEnvKey, raw))
+		return false
+	}
 }
 
 // Load reads configuration from environment variables.
@@ -74,5 +102,7 @@ func Load(v *pkgconfig.Validator) Config {
 
 		WarehouseEngine: engine,
 		WarehouseFamily: family,
+
+		OntologyEnabled: loadOntologyEnabled(v),
 	}
 }

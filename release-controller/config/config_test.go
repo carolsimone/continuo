@@ -169,3 +169,45 @@ func TestLoad_WarehouseFamily(t *testing.T) {
 	Load(v)
 	assert.Contains(t, strings.Join(v.Missing(), ","), "WAREHOUSE_ENGINE (unsupported")
 }
+
+// ONTOLOGY_ENABLED is the install's ontology switch: unset or empty is off, and
+// exactly "true" or "false" is read as written.
+func TestLoad_ReadsOntologyEnabled(t *testing.T) {
+	for raw, want := range map[string]bool{"": false, "false": false, "true": true} {
+		t.Run("value "+raw, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv("ONTOLOGY_ENABLED", raw)
+			v := &pkgconfig.Validator{}
+			cfg := Load(v)
+			assert.Equal(t, want, cfg.OntologyEnabled)
+			assert.Empty(t, v.Missing())
+		})
+	}
+}
+
+func TestLoad_OntologyEnabledDefaultsToOffWhenUnset(t *testing.T) {
+	setRequiredEnv(t)
+	// t.Setenv records the variable's original value, so the test's end restores
+	// it after the unset below.
+	t.Setenv("ONTOLOGY_ENABLED", "")
+	require.NoError(t, os.Unsetenv("ONTOLOGY_ENABLED"))
+	v := &pkgconfig.Validator{}
+	assert.False(t, Load(v).OntologyEnabled)
+	assert.Empty(t, v.Missing())
+}
+
+// Any other spelling stops the service at boot, naming the variable, so an
+// install never runs with a switch release-controller cannot read.
+func TestLoad_OntologyEnabledRefusesAnyOtherValue(t *testing.T) {
+	for _, raw := range []string{"TRUE", "1", "yes", " true", "true "} {
+		t.Run("value "+raw, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv("ONTOLOGY_ENABLED", raw)
+			v := &pkgconfig.Validator{}
+			cfg := Load(v)
+			assert.False(t, cfg.OntologyEnabled)
+			require.Len(t, v.Missing(), 1)
+			assert.Contains(t, v.Missing()[0], "ONTOLOGY_ENABLED")
+		})
+	}
+}

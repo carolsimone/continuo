@@ -194,6 +194,30 @@ def redis_acl_mode() -> str:
     return raw
 
 
+# ONTOLOGY_ENABLED (the chart's contracts.ontology.enabled, injected through the
+# shared ConfigMap): with it true, a release carrying the install's ontology
+# resolves each contract of a service the ontology declares and checks the
+# contracts against it. With it false or unset, a contract is stored without its
+# ontology part and an ontology a release carries is ignored.
+_ONTOLOGY_SWITCH = {"true": True, "false": False}
+
+
+def ontology_enabled() -> bool:
+    """Return the ONTOLOGY_ENABLED this install declares: False when it is unset or empty.
+
+    Raises RuntimeError for any value other than `true` or `false`, in lower case
+    and without surrounding space, the two words the chart renders, so a switch
+    this service cannot read stops it at startup instead of reading as off.
+    """
+    raw = os.environ.get("ONTOLOGY_ENABLED", "")
+    if not raw:
+        return False
+    try:
+        return _ONTOLOGY_SWITCH[raw]
+    except KeyError:
+        raise RuntimeError(f"unsupported ONTOLOGY_ENABLED {raw!r}: expected true or false") from None
+
+
 # Candidate-parse flow: release.requested:v1 → manifest.loaded.candidate:v2.
 RELEASE_REQUESTED_STREAM         = RELEASE_REQUESTED_V1
 RELEASE_REQUESTED_GROUP          = TOPOLOGY_CONTROLLER_RELEASE_REQUESTED
@@ -221,8 +245,8 @@ def validate() -> None:
     unsupported WAREHOUSE_ENGINE, which is optional but must name an engine
     this service has a SQL dialect and a list of system relations for, a
     LOG_LEVEL that names no level this service logs at, a METRICS_PORT that is
-    not a whole number from 1 to 65535, and a REDIS_ACL_MODE other than shared
-    or perService.
+    not a whole number from 1 to 65535, a REDIS_ACL_MODE other than shared
+    or perService, and an ONTOLOGY_ENABLED other than true or false.
     """
     missing = [key for key in _REQUIRED if not os.environ.get(key)]
     missing += [key for key in _REQUIRED_SECRETS if not read_secret(key)]
@@ -237,3 +261,4 @@ def validate() -> None:
     log_level()
     metrics_port()
     redis_acl_mode()
+    ontology_enabled()

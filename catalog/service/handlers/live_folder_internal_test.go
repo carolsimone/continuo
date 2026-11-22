@@ -124,7 +124,7 @@ func (nopRenderer) Render(map[string]any) ([]byte, error) { return nil, nil }
 func TestLiveRewrite_AStalledLeaseRenewalFailsTheRewrite(t *testing.T) {
 	store := &indexStore{}
 	folder := NewLiveFolder(slowReader{}, store, nopRenderer{}, stallingLease{}, stallingLease{}, silentMetrics{},
-		nil, time.Now, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		nil, "", time.Now, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	folder.leaseRenewEvery = 10 * time.Millisecond
 	folder.renewTimeout = 20 * time.Millisecond
 
@@ -139,4 +139,33 @@ func TestLiveRewrite_AStalledLeaseRenewalFailsTheRewrite(t *testing.T) {
 	assert.Empty(t, settings)
 	assert.Zero(t, store.indexes)
 	assert.False(t, errors.Is(err, context.Canceled))
+}
+
+// An install that sets no ontology base URL keeps the settings fingerprint its
+// live folder was written with, so an upgrade rewrites no file. The values are
+// the SHA-256 of the canonical text of the server alone: "server=none\n" for no
+// server and the four server lines for a warehouse.
+func TestSettingsFingerprint_AnEmptyBaseURLKeepsTheOldFingerprint(t *testing.T) {
+	warehouse := &contractversion.Server{Type: "postgres", Host: "warehouse.internal", Port: 5432, Database: "continuo_dbt"}
+
+	assert.Equal(t, "ded41b553a6e8f798c7e35b01b95fca3c4457b8d5c5294a66dcdb878dea352a5", settingsFingerprint(nil, ""),
+		"no server and no base URL")
+	assert.Equal(t, "ded41b553a6e8f798c7e35b01b95fca3c4457b8d5c5294a66dcdb878dea352a5",
+		settingsFingerprint(&contractversion.Server{Type: "postgres", Port: 5432}, ""), "a server with no host is no server")
+	assert.Equal(t, "711a4c7b2e1195304e7a3d9a7bf95337c9b99e5ef6dbec8fc4d385fd60e6e723", settingsFingerprint(warehouse, ""),
+		"a warehouse server and no base URL")
+}
+
+// A base URL is part of what a file shows, so setting it, or changing it, gives
+// the folder a new fingerprint, with or without a server.
+func TestSettingsFingerprint_ABaseURLChangesTheFingerprint(t *testing.T) {
+	warehouse := &contractversion.Server{Type: "postgres", Host: "warehouse.internal", Port: 5432, Database: "continuo_dbt"}
+	for name, server := range map[string]*contractversion.Server{"no server": nil, "a warehouse": warehouse} {
+		none := settingsFingerprint(server, "")
+		a := settingsFingerprint(server, "https://ontology.example/things")
+		b := settingsFingerprint(server, "https://ontology.example/other")
+		assert.NotEqual(t, none, a, name)
+		assert.NotEqual(t, a, b, name)
+		assert.Equal(t, a, settingsFingerprint(server, "https://ontology.example/things"), name)
+	}
 }

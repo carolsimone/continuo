@@ -64,6 +64,28 @@ func TestServiceProdRepository_UpsertListGet(t *testing.T) {
 	assert.Equal(t, release.ManifestKindPythonODCS, gotPy.ManifestKind())
 }
 
+// TestServiceProdRepository_StoresAnOntologyService proves service_prod accepts
+// a row of the kind ontology and returns it, and still refuses a kind no
+// release can carry.
+func TestServiceProdRepository_StoresAnOntologyService(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewServiceProdRepository(db)
+	ctx := context.Background()
+	now := time.Unix(1_000_000, 0).UTC()
+
+	require.NoError(t, repo.Upsert(ctx, release.NewServiceProd("company-ontology", "rel-1",
+		"s3://b/company-ontology/rel-1/ontology.yaml", "img:1", release.ManifestKindOntology, now)))
+	got, err := repo.Get(ctx, "company-ontology")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, release.ManifestKindOntology, got.ManifestKind())
+
+	_, err = db.ExecContext(ctx, `INSERT INTO service_prod (service_name, release_id, manifest_s3_key, image_tag, manifest_kind)
+		VALUES ('svc-bogus', 'rel-1', 's3://b/svc-bogus/rel-1/manifest.json', 'img:1', 'bogus')`)
+	require.Error(t, err, "the constraint accepts only the kinds a release can carry")
+	assert.Contains(t, err.Error(), "service_prod_manifest_kind_check")
+}
+
 // TestServicesWithKind_ListsThePythonServices writes service_prod rows of its
 // own, in reverse name order, and reads them back by kind. It deletes only the rows
 // it wrote, so rows other tests left in the table stay.

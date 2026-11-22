@@ -11,20 +11,24 @@ fingerprints.yaml classifies as moving the contract hash would change contract_h
 no declaration saying so. The stored contracts of every variant are the ones the handler
 writes to the contract bundle, and their fields are named the way the file names them.
 """
+import json
 import tempfile
 from collections.abc import Iterator
 from functools import cache
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
+import continuo_contracts
 import pytest
-from continuo_contracts import fingerprints
+from continuo_contracts import fingerprints, ontology
 from continuo_contracts.fingerprints import unclassified
 from continuo_contracts.python import PythonColumn, PythonNode, code_projection
 from continuo_contracts.vocabulary import continuo_values
 
 from domain.model import ManifestFile
 from service.dbt_hashing import hash_dbt_node
+from service.ontology_binding import ReleaseOntology, bind_contract
 from tests.fakes import (
     FakeBundleUploader,
     RecordingArtifactWriter,
@@ -226,26 +230,64 @@ def test_every_field_of_a_stored_dbt_contract_is_classified(variant):
 
 
 @pytest.mark.parametrize("resource_type", ["seed", "snapshot"])
-def test_every_field_of_an_enforced_seed_and_snapshot_with_declared_columns_is_classified(tmp_path, resource_type):
+def test_every_field_of_a_seed_and_a_snapshot_with_declared_columns_is_classified(tmp_path, resource_type):
     """A seed or a snapshot that declares described and tagged columns with data types, with
-    not_null and unique tests and an enforced contract, stored as the bundle stores it, holds the
-    property fields the fixture seeds lack, and each is classified for its family as moving the
-    contract."""
+    not_null and unique tests, stored as the bundle stores it, holds the property fields the
+    fixture seeds lack, and each is classified for its family as moving the contract. The seed's
+    contract is enforced, which dbt ignores for a seed; a snapshot's is not, because the contracts
+    library refuses an enforced contract on a snapshot."""
     family = f"dbt-{resource_type}"
     node = enforced_dbt_node(resource_type, described=True)
+    if resource_type == "snapshot":
+        node["config"]["contract"] = {"enforced": False}
     _, (stored,) = stored_dbt_contracts(str(tmp_path), node, *column_tests(node))
     assert continuo_values(stored.document["customProperties"])["kind"] == family
 
     names = _odcs_inputs(stored.document)
 
-    assert {
-        "odcs.custom.contractEnforced", "odcs.description.purpose", "odcs.schema.description",
+    expected = {
+        "odcs.description.purpose", "odcs.schema.description",
         "odcs.schema.properties.name", "odcs.schema.properties.physicalType", "odcs.schema.properties.logicalType",
         "odcs.schema.properties.description", "odcs.schema.properties.tags",
         "odcs.schema.properties.required", "odcs.schema.properties.unique",
-    } <= names
+    }
+    if resource_type == "seed":
+        expected.add("odcs.custom.contractEnforced")
+    assert expected <= names
     missing = {}
     for name in sorted(names):
+        entry = fingerprints.classify(family, name)
+        if entry is None or entry.fingerprint not in ("contract", "both"):
+            missing[name] = None if entry is None else entry.fingerprint
+    assert not missing, (family, missing)
+
+
+# The library's vectors whose ontology fills something in: the one of a service the ontology does
+# not declare resolves to its stored form.
+_ONTOLOGY_VECTORS = [
+    vector
+    for vector in json.loads(
+        (Path(continuo_contracts.__file__).parent / "vectors" / "ontology.json").read_text(encoding="utf-8"))
+    if vector["resolved"] != vector["stored"]
+]
+
+
+@pytest.mark.parametrize("vector", _ONTOLOGY_VECTORS, ids=lambda vector: vector["name"])
+def test_every_field_of_a_resolved_contract_is_classified(vector):
+    """A contract the ontology fills in (a domain, links, bound logical types, semantic types, a
+    key, a classification) holds fields no unresolved contract has, and each moves the contract
+    hash: fingerprints.yaml classifies it for the family of the contract, a dbt model's, a dbt
+    seed's or a python node's."""
+    loaded = ontology.load(vector["ontology"])
+    release_ontology = ReleaseOntology(
+        service="company-ontology", release_id="rel-1", sha256=loaded.sha256, ontology=loaded, findings=())
+    resolved = bind_contract(vector["stored"], enabled=True, release_ontology=release_ontology)
+    family = continuo_values(resolved["customProperties"])["kind"]
+    assert family in ("python-node", "dbt-model", "dbt-seed")
+
+    assert _odcs_inputs(resolved) - _odcs_inputs(vector["stored"]), "the ontology fills in a new field"
+    missing = {}
+    for name in sorted(_odcs_inputs(resolved)):
         entry = fingerprints.classify(family, name)
         if entry is None or entry.fingerprint not in ("contract", "both"):
             missing[name] = None if entry is None else entry.fingerprint

@@ -35,6 +35,10 @@ type Deps struct {
 	// finish.
 	Maintenance bool
 
+	// OntologyEnabled is ONTOLOGY_ENABLED, the install's ontology switch.
+	// While false, a release of kind ontology is refused.
+	OntologyEnabled bool
+
 	// Family is the warehouse family of WAREHOUSE_ENGINE and Engine its name:
 	// each release's seed reload notices predict what a seed's load drops by
 	// the family, and name the engine in their reasons.
