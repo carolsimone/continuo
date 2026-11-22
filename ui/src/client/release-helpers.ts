@@ -395,14 +395,15 @@ function seconds(ms: number): string {
 // contractCount writes the tail of the contract generation line: the contracts
 // written, then the families they belong to. A parse that did not count its
 // contracts leaves it empty, and a release with none says `0 contracts` with
-// no families.
+// no families. The count and its noun are joined by a no-break space, so a
+// narrow line never ends on the number.
 function contractCount(byFamily: Record<string, number> | undefined): string {
   if (!byFamily) return '';
   const families = Object.keys(byFamily).sort();
   const total = families.reduce((sum, family) => sum + byFamily[family], 0);
   const noun = total === 1 ? 'contract' : 'contracts';
   const split = families.map(family => `${family} ${byFamily[family]}`).join(', ');
-  return ` · ${total} ${noun}${split ? ` (${split})` : ''}`;
+  return ` · ${total}\u00a0${noun}${split ? ` (${split})` : ''}`;
 }
 
 // parseLines lists the lines the timeline shows under the parsing step: how

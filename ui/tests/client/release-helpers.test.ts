@@ -106,7 +106,7 @@ describe('parseLines', () => {
   it('names the parse and the contract generation, with the contracts counted by family', () => {
     expect(parseLines({ parse_ms: 2140, contracts_ms: 610, contracts_by_family: { dbt: 45, python: 3 } })).toEqual([
       { label: 'parsing', text: 'parsing 2.1 s' },
-      { label: 'generating contracts', text: 'generating contracts 0.6 s · 48 contracts (dbt 45, python 3)' },
+      { label: 'generating contracts', text: 'generating contracts 0.6 s · 48\u00a0contracts (dbt 45, python 3)' },
     ]);
   });
 
@@ -117,19 +117,19 @@ describe('parseLines', () => {
 
   it('names only the family that has contracts, and never prints a family with none', () => {
     expect(parseLines({ parse_ms: 900, contracts_ms: 300, contracts_by_family: { dbt: 45 } })[1].text)
-      .toBe('generating contracts 0.3 s · 45 contracts (dbt 45)');
+      .toBe('generating contracts 0.3 s · 45\u00a0contracts (dbt 45)');
     expect(parseLines({ parse_ms: 900, contracts_ms: 300, contracts_by_family: { python: 3 } })[1].text)
-      .toBe('generating contracts 0.3 s · 3 contracts (python 3)');
+      .toBe('generating contracts 0.3 s · 3\u00a0contracts (python 3)');
   });
 
   it('says 0 contracts, with no family list, for a release that has none', () => {
     expect(parseLines({ parse_ms: 900, contracts_ms: 300, contracts_by_family: {} })[1].text)
-      .toBe('generating contracts 0.3 s · 0 contracts');
+      .toBe('generating contracts 0.3 s · 0\u00a0contracts');
   });
 
   it('says 1 contract, not 1 contracts, for a release that has one', () => {
     expect(parseLines({ parse_ms: 900, contracts_ms: 300, contracts_by_family: { python: 1 } })[1].text)
-      .toBe('generating contracts 0.3 s · 1 contract (python 1)');
+      .toBe('generating contracts 0.3 s · 1\u00a0contract (python 1)');
   });
 
   it('shows the durations alone, with no count, when the parse did not count its contracts', () => {

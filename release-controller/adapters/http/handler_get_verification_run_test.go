@@ -62,3 +62,53 @@ func TestHandleGetVerificationRun_UnknownIDAnswers404(t *testing.T) {
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
+
+// GET /verification-runs/{id} returns the parse timings a run recorded, as a release does:
+// how long the parse took, how long its contracts took, and how many contracts the contract
+// bundle holds by family. A rejected parse has the durations and no count.
+func TestGetVerificationRun_ReturnsTheParseTimings(t *testing.T) {
+	parseMs, contractsMs := int64(4180), int64(1260)
+	cases := map[string]struct {
+		timings release.ParseTimings
+		want    map[string]any
+	}{
+		"a parsed run": {
+			timings: release.ParseTimings{ParseMs: &parseMs, ContractsMs: &contractsMs, ContractsByFamily: map[string]int{"dbt": 3, "python": 2}},
+			want:    map[string]any{"parse_ms": 4180.0, "contracts_ms": 1260.0, "contracts_by_family": map[string]any{"dbt": 3.0, "python": 2.0}},
+		},
+		"a rejected parse": {
+			timings: release.ParseTimings{ParseMs: &parseMs, ContractsMs: &contractsMs},
+			want:    map[string]any{"parse_ms": 4180.0, "contracts_ms": 1260.0},
+		},
+		"a run with no contracts": {
+			timings: release.ParseTimings{ParseMs: &parseMs, ContractsMs: &contractsMs, ContractsByFamily: map[string]int{}},
+			want:    map[string]any{"parse_ms": 4180.0, "contracts_ms": 1260.0, "contracts_by_family": map[string]any{}},
+		},
+		"a run the parse has not reached": {
+			timings: release.NewParseTimings(0, 0, nil),
+			want:    map[string]any{},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			deps, releases := newRetryRemediationDeps(time.Unix(1, 0).UTC())
+			releases.releases["verify-1"] = pipeline.Rehydrate(pipeline.RehydrateInput{
+				ID: "verify-1", Kind: pipeline.KindVerification, Status: pipeline.StatusValidating, ParseTimings: tc.timings,
+			})
+
+			rec := httptest.NewRecorder()
+			newTestServer(deps).Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/verification-runs/verify-1", nil))
+			require.Equal(t, http.StatusOK, rec.Code)
+			var decoded map[string]any
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &decoded))
+
+			for _, key := range []string{"parse_ms", "contracts_ms", "contracts_by_family"} {
+				if want, ok := tc.want[key]; ok {
+					assert.Equal(t, want, decoded[key], key)
+				} else {
+					assert.NotContains(t, decoded, key)
+				}
+			}
+		})
+	}
+}
