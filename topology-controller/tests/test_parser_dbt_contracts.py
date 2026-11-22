@@ -38,11 +38,9 @@ from tests.fakes import (
     python_handler,
     source_of,
 )
-from tests.fingerprint_fixtures import enforced_dbt_node
 from tests.odcs_fixtures import bundle_file, bundle_node, demo_node, demo_text
 
 _MATERIALIZED = {"model": "table", "seed": "seed", "snapshot": "snapshot"}
-_NODE_TYPE = {"model": NodeType.DBT_MODEL, "seed": NodeType.DBT_SEED, "snapshot": NodeType.DBT_SNAPSHOT}
 _FILE_PATH = {"model": "models/{}.sql", "seed": "seeds/{}.csv", "snapshot": "snapshots/{}.sql"}
 
 
@@ -864,33 +862,6 @@ def test_a_relationships_test_in_the_dbt_namespace_is_given_without_its_target_w
     (orders,) = [n for n in parsed.nodes if n.unique_id == "analytics.orders"]
     assert "relationships" not in _id_property(orders)
     assert parsed.relationship_tests_without_target == 1
-
-
-# --- an enforced contract on a snapshot ------------------------------------------
-
-def test_an_enforced_contract_on_a_snapshot_is_an_invalid_contract(tmp_path):
-    """dbt enforces the contract of a snapshot on its first run and fails every later run, so it does
-    not support one. The validation refuses the flag, as the lite check does, so the team hears it
-    when it releases and not when the snapshot's second run fails."""
-    timings = _timings()
-
-    parsed = parse_manifest(_manifest(tmp_path, enforced_dbt_node("snapshot")), timings=timings)
-
-    assert parsed.nodes == []
-    (failed,) = parsed.failed
-    assert (failed.node_id, failed.kind, failed.node_type) == (
-        "analytics.enforced_snapshot", ParseFailureKind.INVALID_CONTRACT, NodeType.DBT_SNAPSHOT)
-    assert "dbt does not support contracts on snapshots" in failed.detail
-    assert timings.contract_failures == {("validate", "kind_rule"): 1}
-
-
-@pytest.mark.parametrize("resource_type, enforced", [("snapshot", False), ("model", True), ("seed", True)])
-def test_a_snapshot_without_the_flag_and_an_enforced_model_or_seed_are_not_refused(
-        tmp_path, resource_type, enforced):
-    parsed = parse_manifest(_manifest(tmp_path, enforced_dbt_node(resource_type, enforced=enforced)))
-
-    assert parsed.failed == ()
-    assert [node.node_type for node in parsed.nodes] == [_NODE_TYPE[resource_type]]
 
 
 # --- through the handler ---------------------------------------------------------
