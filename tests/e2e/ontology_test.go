@@ -336,7 +336,7 @@ func TestE2E_Ontology(t *testing.T) {
 	assert.Equal(t, ontologyKindChangeText, body["error"])
 	var runs int
 	require.NoError(t, clients.releaseDB.QueryRowContext(ctx,
-		`SELECT count(*) FROM release_pipeline_runs WHERE release_id = $1`, kindChangeID).Scan(&runs))
+		`SELECT count(*) FROM release_pipeline_runs WHERE run_id = $1`, kindChangeID).Scan(&runs))
 	assert.Zero(t, runs, "a refused release creates no run")
 	t.Logf("✅ service-1 released as kind ontology answers 409: %v", body["error"])
 }
