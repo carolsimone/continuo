@@ -18,6 +18,7 @@ from enum import StrEnum
 from types import TracebackType
 from typing import Final
 
+from continuo_contracts.ontology_check import RULES
 from continuo_contracts.validate import REASONS
 
 from domain.contract_vocabulary import ParseFailureKind
@@ -35,7 +36,12 @@ class Stage(StrEnum):
     `contract_validation` runs inside `python_parse` and `dbt_parse`: a
     contract is checked while its bundle or manifest is parsed. So the time of
     a parse includes the `contract_generation` and `contract_validation` time of
-    the same parse."""
+    the same parse.
+
+    `ontology` runs only for a release with the ontology switch on that carries
+    an ontology: it reads the ontology file before the manifests are parsed and
+    checks the stored contracts against it once they are stored, so it adds up
+    over its two runs."""
     DOWNLOAD = "download"
     DBT_PARSE = "dbt_parse"
     PYTHON_PARSE = "python_parse"
@@ -47,6 +53,7 @@ class Stage(StrEnum):
     CONTRACT_GENERATION = "contract_generation"
     CONTRACT_VALIDATION = "contract_validation"
     CANONICAL_HASHING = "canonical_hashing"
+    ONTOLOGY = "ontology"
     CONTRACT_BUNDLE = "contract_bundle"
     TOPOLOGY_ARTIFACT = "topology_artifact"
     PUBLISH = "publish"
@@ -58,19 +65,46 @@ _CONTRACT_STAGES = (
     Stage.CONTRACT_GENERATION,
     Stage.CONTRACT_VALIDATION,
     Stage.CANONICAL_HASHING,
+    Stage.ONTOLOGY,
     Stage.CONTRACT_BUNDLE,
 )
 
-# The stages a contract failure is counted under: the generation of a dbt node's
-# contract from the manifest (`generate`), the checks of the parse (`validate`),
-# the stored form of a contract (`normalise`) and its hash (`hash`).
-CONTRACT_FAILURE_STAGES = ("generate", "validate", "normalise", "hash")
+class FailureStage(StrEnum):
+    """The stage a contract failure is counted under: the generation of a dbt node's
+    contract from the manifest, the checks of the parse, the stored form of a contract,
+    its hash, and the ontology (the ontology file itself and the contracts checked
+    against it)."""
+    GENERATE = "generate"
+    VALIDATE = "validate"
+    NORMALISE = "normalise"
+    HASH = "hash"
+    ONTOLOGY = "ontology"
+
+
+CONTRACT_FAILURE_STAGES: Final = tuple(stage.value for stage in FailureStage)
+
+# The reasons this service counts besides the contracts library's own: a manifest entry
+# the generation cannot read, and a column that a seed's CSV header and its contract do
+# not both have.
+REASON_MANIFEST_SHAPE: Final = "manifest_shape"
+REASON_SEED_HEADER: Final = "seed_header"
+
+# The reasons of the library's vocabulary that this service reports itself, for a contract
+# the strict YAML reader refuses, whose id is not its node's, or that a later step refuses
+# after every check accepted it.
+REASON_STRICT_YAML: Final = "strict_yaml"
+REASON_IDENTITY: Final = "identity"
+REASON_VALUE: Final = "value"
 
 # The reasons a contract failure is counted under: every reason the contracts
-# library's validation names, `manifest_shape` for a manifest entry the
-# generation cannot read, and `seed_header` for a column that a seed's CSV header
-# and its contract do not both have.
-CONTRACT_FAILURE_REASONS: Final = (*REASONS, "manifest_shape", "seed_header")
+# library's validation names, the two this service adds, and every rule of the
+# library's ontology checks.
+CONTRACT_FAILURE_REASONS: Final = (*REASONS, REASON_MANIFEST_SHAPE, REASON_SEED_HEADER, *RULES)
+
+# The fields of the release's log line that count the ontology's findings that do not
+# reject the release, by severity. A finding that rejects a release (an error) has its
+# own failure, so no field counts it.
+_ONTOLOGY_LOG_FIELDS = {"warning": "ontology_warnings", "info": "ontology_information"}
 
 # How a contract validation was answered: from the cache or by running the check.
 VALIDATION_CACHE_RESULTS = ("hit", "miss")
@@ -149,7 +183,9 @@ class ReleaseTimings:
     with none has no entry. `contract_failures` counts the contract failures
     the release met by (stage, reason), and `validation_cache` counts the
     contract validations answered from the cache (`hit`) and run (`miss`).
-    `outcome` and `failure_kind` stay unset until the release ends. The record
+    `ontology_findings` counts, by severity, the findings of a published release
+    with the ontology switch on that do not reject it; it stays empty for any
+    other release. `outcome` and `failure_kind` stay unset until the release ends. The record
     keeps its start time, read from the clock at construction, and
     `mark_published` fixes its end: `parse_ms` is the time between them
     without the contract stages, `contracts_ms` the time of those stages.
@@ -171,6 +207,7 @@ class ReleaseTimings:
         self.dormant: dict[str, int] = {}
         self.contract_failures: dict[tuple[str, str], int] = {}
         self.validation_cache: dict[str, int] = {result: 0 for result in VALIDATION_CACHE_RESULTS}
+        self.ontology_findings: dict[str, int] = {}
 
     def stage(self, name: Stage, *, sample_memory: bool = True, **counts: int) -> AbstractContextManager[StageRecord]:
         """Time one run of a stage. On exit, also when the body raised, the
@@ -189,9 +226,9 @@ class ReleaseTimings:
         self._published_at = self._clock.now()
 
     def contracts_ms(self) -> int:
-        """The milliseconds of the four contract stages (contract_generation,
-        contract_validation, canonical_hashing and contract_bundle), each
-        rounded as `stages_ms` rounds it."""
+        """The milliseconds of the five contract stages (contract_generation,
+        contract_validation, canonical_hashing, ontology and contract_bundle),
+        each rounded as `stages_ms` rounds it."""
         return sum(round(self.stages[stage].seconds * 1000) for stage in _CONTRACT_STAGES)
 
     def parse_ms(self) -> int:
@@ -222,18 +259,33 @@ class ReleaseTimings:
         for skip in skips:
             self.skipped[skip.reason] += 1
 
-    def add_contract_failure(self, stage: str, reason: str) -> None:
-        """Count one contract failure under its stage (one of
-        CONTRACT_FAILURE_STAGES) and reason. Raises ValueError for another
-        stage, so every counted failure lands on a series exported from boot."""
+    def add_contract_failure(self, stage: FailureStage | str, reason: str) -> None:
+        """Count one contract failure under its stage (one of CONTRACT_FAILURE_STAGES)
+        and reason (one of CONTRACT_FAILURE_REASONS). Raises ValueError for another
+        stage or reason, so every counted failure lands on a series exported from boot.
+        A label no code of this service writes is a defect, and it is not hidden: the
+        release is retried, then dead-lettered."""
         if stage not in CONTRACT_FAILURE_STAGES:
             raise ValueError(f"{stage!r} is not a contract failure stage, expected one of {CONTRACT_FAILURE_STAGES}")
-        key = (stage, reason)
+        if reason not in CONTRACT_FAILURE_REASONS:
+            raise ValueError(f"{reason!r} is not a contract failure reason, expected one of {CONTRACT_FAILURE_REASONS}")
+        key = (str(stage), reason)
         self.contract_failures[key] = self.contract_failures.get(key, 0) + 1
 
     def add_validation_cache(self, hit: bool) -> None:
         """Count one contract validation as answered from the cache or run."""
         self.validation_cache["hit" if hit else "miss"] += 1
+
+    def add_ontology_findings(self, severities: Iterable[str]) -> None:
+        """Count findings of the ontology that do not reject the release, one severity
+        each (`warning` or `info`). Raises ValueError for any other severity, an error
+        included, and counts none of them."""
+        counted = list(severities)
+        unknown = sorted({severity for severity in counted if severity not in _ONTOLOGY_LOG_FIELDS})
+        if unknown:
+            raise ValueError(f"{unknown} is not a severity of a finding that leaves a release published")
+        for severity in counted:
+            self.ontology_findings[severity] = self.ontology_findings.get(severity, 0) + 1
 
     def bundle_timings(self) -> dict[str, object]:
         """The `timings` of the contract bundle: the milliseconds of each stage
@@ -254,7 +306,9 @@ class ReleaseTimings:
 
     def log_fields(self) -> dict[str, object]:
         """The fields of the release's log line. `failure_kind` is present only
-        for a failed release."""
+        for a failed release, and `ontology_warnings` and `ontology_information`
+        (the counts of the findings the ontology check left to the contract
+        bundle) only when the release found some of that severity."""
         fields: dict[str, object] = {
             "release_id": self.release_id,
             "outcome": self.outcome.value if self.outcome is not None else None,
@@ -265,6 +319,9 @@ class ReleaseTimings:
             "stages_ms": self.stages_ms(),
             "peak_rss_bytes": self.peak_rss_bytes,
         }
+        for severity, field_name in _ONTOLOGY_LOG_FIELDS.items():
+            if severity in self.ontology_findings:
+                fields[field_name] = self.ontology_findings[severity]
         if self.outcome is ReleaseOutcome.FAILED and self.failure_kind is not None:
             fields["failure_kind"] = self.failure_kind.value
         return fields

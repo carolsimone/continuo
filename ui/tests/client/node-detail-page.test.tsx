@@ -1993,7 +1993,8 @@ describe('NodeDetailPage — tabs', () => {
     renderAt('');
 
     await screen.findByText('Node history');
-    expect(screen.getByRole('tab', { name: /History/ })).toHaveTextContent('History2');
+    // The heading renders before the history read lands, so the count is awaited.
+    await waitFor(() => expect(screen.getByRole('tab', { name: /History/ })).toHaveTextContent('History2'));
     expect(screen.getByRole('tab', { name: 'Contract' })).toHaveTextContent(/^Contract$/);
   });
 

@@ -212,7 +212,8 @@ func main() {
 
 		Topologies: s3adapter.NewTopologyArtifactStore(objectStore, cfg.S3.Bucket, topologyCacheSize),
 
-		Maintenance: cfg.Maintenance,
+		Maintenance:     cfg.Maintenance,
+		OntologyEnabled: cfg.OntologyEnabled,
 
 		Rejections: serialization.ReleaseRejectedJSON{},
 

@@ -323,8 +323,8 @@ export interface UpcomingStage {
 }
 
 // What the timeline reads of a run: what decides its path through the
-// pipeline (how its artifact is parsed, 'dbt', 'python' or 'python-odcs', and
-// whether it is a bootstrap release) and what its parse reported (see
+// pipeline (how its artifact is parsed, 'dbt', 'python', 'python-odcs' or
+// 'ontology', and whether it is a bootstrap release) and what its parse reported (see
 // parseLines). The parse fields are absent until the parse reports them.
 export interface PipelineRun {
   manifestKind?: string;
@@ -338,15 +338,17 @@ export interface PipelineRun {
   contracts_by_family?: Record<string, number>;
 }
 
-// The manifest kinds of a Python service's release. Both skip the compile leg
-// and the seed build, as release-controller's ManifestKind.IsPython does.
-const PYTHON_MANIFEST_KINDS = ['python', 'python-odcs'];
+// The manifest kinds whose release skips the compile leg and the seed build:
+// CI builds and uploads the artifact before the release is posted, and only a
+// dbt release compiles and builds seeds. release-controller's
+// ManifestKind.HasCompileLeg decides the same.
+const KINDS_WITHOUT_COMPILE = ['python', 'python-odcs', 'ontology'];
 
 // pipelinePath lists the stages a run of this kind passes through, in order,
 // naming the condition on each stage that does not run on every path:
-// - compiling: dbt only — a python service's own CI builds and uploads its
-//   contract bundle before the release is posted, so activation goes straight
-//   to parsing;
+// - compiling: dbt only — the CI of any other kind builds and uploads its
+//   artifact (a Python service's contract bundle, the ontology file) before
+//   the release is posted, so activation goes straight to parsing;
 // - parsing: every run;
 // - seed_building: dbt only, and only when the validation set holds a new or
 //   changed seed;
@@ -355,12 +357,12 @@ const PYTHON_MANIFEST_KINDS = ['python', 'python-odcs'];
 //   release, which promotes right after parsing.
 // An unknown kind takes the dbt path, the common one.
 function pipelinePath(run: PipelineRun): UpcomingStage[] {
-  const python = PYTHON_MANIFEST_KINDS.includes(run.manifestKind ?? '');
+  const compiles = !KINDS_WITHOUT_COMPILE.includes(run.manifestKind ?? '');
   const path: UpcomingStage[] = [{ stage: 'received' }];
-  if (!python) path.push({ stage: 'compiling' });
+  if (compiles) path.push({ stage: 'compiling' });
   path.push({ stage: 'parsing' });
   if (run.bootstrap) return path;
-  if (!python) path.push({ stage: 'seed_building', condition: 'if seeds changed' });
+  if (compiles) path.push({ stage: 'seed_building', condition: 'if seeds changed' });
   path.push({ stage: 'validating', condition: 'unless nothing changed' });
   return path;
 }

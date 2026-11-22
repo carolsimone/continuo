@@ -1,4 +1,10 @@
 {
+  "candidate_sql": {
+    "public.my_seed": "",
+    "public.my_snapshot": "",
+    "public.orders": "SELECT id FROM \"_candidate_rel_1\".users",
+    "public.users": "SELECT 1 AS id"
+  },
   "code_bundle": {
     "contract_version": 1,
     "nodes": {

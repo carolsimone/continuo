@@ -19,7 +19,7 @@ from domain.model import CompileExtras, ContractFamily, FailedNode, ManifestFile
 from service.contract_validation import ContractValidator
 from service.errors import ContractGenerationError
 from service import parser
-from service.parser import parse_manifest
+from tests.fakes import parse_manifest
 from service.release_timings import (
     CONTRACT_FAILURE_REASONS,
     CONTRACT_FAILURE_STAGES,
@@ -261,6 +261,36 @@ def test_a_bad_timeout_and_a_bad_criticality_are_invalid_contracts(tmp_path):
                " to 10080",
     ),)
     assert timings.contract_failures == {("validate", "value"): 2}
+
+
+def test_an_enforced_snapshot_contract_is_an_invalid_contract(tmp_path):
+    """dbt enforces a snapshot's contract on its first run and fails every later run, so the
+    library refuses it and the node is a failed node of the release."""
+    timings = _timings()
+    snapshot = _node("orders_history", resource_type="snapshot")
+    snapshot["config"]["contract"] = {"enforced": True}
+
+    parsed = parse_manifest(_manifest(tmp_path, snapshot, _node("customers")), timings=timings)
+
+    assert [node.unique_id for node in parsed.nodes] == ["analytics.customers"]
+    (failed,) = parsed.failed
+    assert failed.node_id == "analytics.orders_history"
+    assert failed.kind is ParseFailureKind.INVALID_CONTRACT
+    assert failed.node_type == NodeType.DBT_SNAPSHOT
+    assert failed.detail == (
+        "customProperties[6]: a dbt-snapshot node does not take `contractEnforced`: dbt does not support"
+        " contracts on snapshots, remove `contract.enforced` from the snapshot")
+    assert timings.contract_failures == {("validate", "kind_rule"): 1}
+
+
+def test_a_snapshot_whose_contract_is_not_enforced_is_valid(tmp_path):
+    snapshot = _node("orders_history", resource_type="snapshot")
+    snapshot["config"]["contract"] = {"enforced": False}
+
+    parsed = parse_manifest(_manifest(tmp_path, snapshot))
+
+    assert parsed.failed == ()
+    assert [node.unique_id for node in parsed.nodes] == ["analytics.orders_history"]
 
 
 def test_every_invalid_contract_of_a_manifest_is_named_and_the_valid_nodes_are_kept(tmp_path):

@@ -1,4 +1,7 @@
 {
+  "candidate_sql": {
+    "test_schema.orders": "SELECT * FROM test_schema.users"
+  },
   "code_bundle": {
     "contract_version": 1,
     "nodes": {

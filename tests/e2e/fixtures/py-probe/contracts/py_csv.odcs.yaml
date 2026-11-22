@@ -15,9 +15,14 @@ customProperties:
   - {vendor: continuo, property: schedule, value: daily}
   - {vendor: continuo, property: criticality, value: SECONDARY}
   - {vendor: continuo, property: csvSource, value: "s3://continuo/fixtures/orders.csv"}
+# The bindings below tie the table and its columns to the thing CsvOrder of
+# fixtures/ontology/ontology.yaml. An install whose ontology switch is off stores
+# the contract without them.
 schema:
   - name: py_csv
     physicalType: table
+    customProperties:
+      - {vendor: continuo, property: entity, value: CsvOrder}
     properties:
-      - {name: order_id, physicalType: INTEGER, required: true}
-      - {name: amount, physicalType: DOUBLE PRECISION}
+      - {name: order_id, physicalType: INTEGER, required: true, customProperties: [{vendor: continuo, property: property, value: CsvOrder.order_id}]}
+      - {name: amount, physicalType: DOUBLE PRECISION, customProperties: [{vendor: continuo, property: property, value: CsvOrder.amount}]}

@@ -102,6 +102,45 @@ func TestDecode_ReadsTheFixture(t *testing.T) {
 	}
 }
 
+func loadOntologyFixture(t *testing.T) bundleFixture {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/contracts_v1_ontology.json")
+	require.NoError(t, err)
+	var fx bundleFixture
+	require.NoError(t, json.Unmarshal(raw, &fx))
+	require.NotEmpty(t, fx.Canonical)
+	return fx
+}
+
+func TestDecode_ReadsTheOntologyVersion(t *testing.T) {
+	obj := gz(t, []byte(loadOntologyFixture(t).Canonical))
+
+	doc, err := contractbundle.Decode(obj, sha(obj))
+	require.NoError(t, err)
+
+	assert.Equal(t, "rel-9f8e7d6-14@sha256:bd4d098b4e54cd2181b7c553c13827313c3638a1a145104d51d127733f9a0da0", doc.OntologyVersion())
+	assert.Equal(t, contractbundle.Summary{Contracts: 2, ByFamily: map[string]int{"dbt": 1, "python": 1}}, doc.Summary)
+}
+
+func TestOntologyVersion_IsEmptyWhenTheBundleNamesNoOntologyRelease(t *testing.T) {
+	for name, ontology := range map[string]string{
+		"a switch off":                  `null`,
+		"no ontology key":               ``,
+		"a switch on and no ontology":   `{"enabled":true,"service":null,"release_id":null,"sha256":null,"declared_services":[],"findings":[]}`,
+		"a release id and no digest":    `{"enabled":true,"service":"o","release_id":"rel-1","sha256":null}`,
+		"a digest and no release id":    `{"enabled":true,"service":"o","release_id":"","sha256":"ab"}`,
+		"an ontology that is no object": `"rel-1"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			doc := contractbundle.Document{}
+			if ontology != "" {
+				doc.Ontology = json.RawMessage(ontology)
+			}
+			assert.Empty(t, doc.OntologyVersion())
+		})
+	}
+}
+
 func TestDecode_AcceptsAnUppercaseChecksum(t *testing.T) {
 	obj := gz(t, []byte(loadFixture(t).Canonical))
 	upper := bytes.ToUpper([]byte(sha(obj)))

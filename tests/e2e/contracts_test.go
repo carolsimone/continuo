@@ -42,7 +42,7 @@ const (
 	// topology-controller pins (topology-controller/pyproject.toml). That
 	// library reads and checks every contract of a release, and the release's
 	// parse result and contract bundle name it.
-	topologyContractsVersion = "0.3.1"
+	topologyContractsVersion = "0.4.1"
 
 	// dbtContractFamily is the family the contract bundle gives the contract of
 	// a dbt model, seed or snapshot.
@@ -124,7 +124,7 @@ func TestE2E_PythonODCSRelease_IsPromotedAndPublished(t *testing.T) {
 
 	// ── 1. the py-probe service is promoted as python-odcs ──────────────────
 	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
-	firstID, cleanup := promotePythonFixtureRelease(t, ctx, clients, validationTap)
+	firstID, cleanup := promotePythonFixtureRelease(t, ctx, clients, validationTap, defaultPythonReleaseBudget)
 	defer cleanup()
 
 	// ── 2. catalog records the contract, and the CLI prints it ───────────────
@@ -207,7 +207,7 @@ func TestE2E_PythonODCSRelease_AnInvalidContractIsRejected(t *testing.T) {
 	seedServiceProd(t, ctx, clients, allServices)
 
 	invalid := strings.Replace(pyProbeContractText(t),
-		"{name: id, physicalType: INTEGER, required: true}", `{name: id, physicalType: "NUMERIC(12)", required: true}`, 1)
+		"{name: id, physicalType: INTEGER, required: true,", `{name: id, physicalType: "NUMERIC(12)", required: true,`, 1)
 	require.NotEqual(t, pyProbeContractText(t), invalid, "the py_probe contract declares an INTEGER id")
 
 	releaseID := "e2e-pyinv-" + uuid.NewString()[:8]

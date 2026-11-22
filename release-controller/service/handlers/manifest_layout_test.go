@@ -17,3 +17,8 @@ func TestCanonicalManifestKey_PythonODCSIsTheBundle(t *testing.T) {
 	assert.Equal(t, "s3://b/svc-py/r1/odcs-bundle.json",
 		handlers.CanonicalManifestKey("b", "svc-py", "r1", release.ManifestKindPythonODCS))
 }
+
+func TestCanonicalManifestKey_OntologyIsOntologyYaml(t *testing.T) {
+	assert.Equal(t, "s3://b/company-ontology/r1/ontology.yaml",
+		handlers.CanonicalManifestKey("b", "company-ontology", "r1", release.ManifestKindOntology))
+}

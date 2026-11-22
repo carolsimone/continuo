@@ -147,7 +147,7 @@ app.kubernetes.io/name: {{ .service }}
 {{- fail (printf "validation.imageTag=%q predates seed_preflight (the seed reload check, added in v0.12.0): run-controller sends that op to every seed load that drops its table, and this runner cannot run it, so each such load would fail before dbt starts. Re-pin validation.imageTag to \"v0.12.0\" or later, or drop the override to track the chart's default." $tag) -}}
 {{- end -}}
 {{- else -}}
-{{- $tag = "v0.13.0" -}}{{/* CONTINUO_VALIDATION_DEFAULT_TAG — must equal values.yaml's validation.imageTag default */}}
+{{- $tag = "v0.14.0" -}}{{/* CONTINUO_VALIDATION_DEFAULT_TAG — must equal values.yaml's validation.imageTag default */}}
 {{- end -}}
 {{- if .Values.global.imageRegistry -}}
 {{- printf "%s/%s/continuo-python-runtime-%s:%s" .Values.global.imageRegistry .Values.global.imageRepositoryPrefix $eng $tag -}}
@@ -2404,6 +2404,27 @@ blank. Each failure names its key. catalog repeats these checks at startup.
 {{- end -}}
 {{- end -}}
 {{- dict "host" $host "port" $port "database" $database | toJson -}}
+{{- end -}}
+
+{{/*
+ONTOLOGY_ENABLED for the shared ConfigMap: "true" or "false". A release without
+a contracts.ontology block (for example after helm upgrade --reuse-values)
+renders "false"; the schema refuses a non-boolean value.
+*/ -}}
+{{- define "continuo.ontology.enabled" -}}
+{{- $o := (.Values.contracts | default dict).ontology | default dict -}}
+{{- if and (hasKey $o "enabled") $o.enabled -}}true{{- else -}}false{{- end -}}
+{{- end -}}
+
+{{/*
+ONTOLOGY_BASE_URL for the shared ConfigMap: contracts.ontology.baseUrl, empty
+when the release has no such key. The schema holds the value to what catalog
+accepts at startup: empty, or an absolute http or https URL with a host name, no
+credentials, no query, no fragment and no whitespace.
+*/ -}}
+{{- define "continuo.ontology.baseUrl" -}}
+{{- $o := (.Values.contracts | default dict).ontology | default dict -}}
+{{- dig "baseUrl" "" $o -}}
 {{- end -}}
 
 {{/*

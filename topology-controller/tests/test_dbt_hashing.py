@@ -25,7 +25,7 @@ from service.dbt_hashing import (
     source_part,
     static_macro_calls,
 )
-from service.parser import parse_manifest
+from tests.fakes import parse_manifest
 from tests.fingerprint_fixtures import enforced_dbt_node, stored_dbt_contracts
 
 RUN = RunMask(invocation_id="9ef3e1e9-a285-49db-8ad9-7eef23da70ef", run_started_at="2026-06-16T04:48:59.438570+00:00")
@@ -390,21 +390,17 @@ def test_an_enforced_seed_contract_is_not_folded_into_hashed_config():
 
 def test_an_enforced_snapshot_contract_is_not_folded_into_hashed_config():
     """The hashed config of a snapshot holds the flag but not its declared columns and
-    constraints. This agrees with the dbt-snapshot entries of fingerprints.yaml, which have no
-    `when: enforced` and classify neither input, so the hashing and the declaration move
-    together."""
+    constraints. The contracts library refuses an enforced contract on a snapshot (dbt does not
+    support one), so no release keeps such a snapshot and none has a `content_hash` to fold them
+    into."""
     assert not _folds_the_declared_columns_and_constraints("snapshot")
-    assert classify("dbt-snapshot", "contract.columns") is None
-    assert classify("dbt-snapshot", "constraints") is None
-    declared = classify("dbt-snapshot", "odcs.schema.properties.name")
-    assert declared is not None and declared.when is None
 
 
 def test_an_enforced_flag_on_a_test_is_not_folded_into_hashed_config():
     assert not _folds_the_declared_columns_and_constraints("test")
 
 
-@pytest.mark.parametrize("resource_type", ["model", "seed", "snapshot"])
+@pytest.mark.parametrize("resource_type", ["model", "seed"])
 def test_the_stored_dbt_contract_of_an_enforced_node_holds_contract_enforced(tmp_path, resource_type):
     parsed, (stored,) = stored_dbt_contracts(str(tmp_path), enforced_dbt_node(resource_type))
 

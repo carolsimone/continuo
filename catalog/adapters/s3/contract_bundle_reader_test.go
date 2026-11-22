@@ -329,3 +329,41 @@ func TestContractBundleReader_KeepsANumberAsItsText(t *testing.T) {
 	assert.Equal(t, json.Number("9007199254740993"), bundle.Contracts[0].Document["limit"])
 	assert.Equal(t, json.Number("0.1"), bundle.Contracts[0].Document["ratio"])
 }
+
+// A bundle resolved against an ontology release names it as
+// "<release_id>@sha256:<hex>", which the reader hands on beside the contracts.
+func TestContractBundleReader_ReadsTheOntologyVersion(t *testing.T) {
+	raw, err := os.ReadFile("../../../pkg/contractbundle/testdata/contracts_v1_ontology.json")
+	require.NoError(t, err)
+	var fx struct {
+		Canonical string `json:"canonical"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &fx))
+	mem := objectstoretest.NewMemory(defaultBucket)
+	sha := putContractBundle(t, mem, []byte(fx.Canonical))
+
+	bundle, err := fetchContractBundle(t, mem, sha)
+	require.NoError(t, err)
+
+	assert.Equal(t, "rel-9f8e7d6-14@sha256:bd4d098b4e54cd2181b7c553c13827313c3638a1a145104d51d127733f9a0da0", bundle.OntologyVersion)
+}
+
+// A bundle that names no ontology release, whether its ontology value is null,
+// absent or an object with no release, carries no ontology version.
+func TestContractBundleReader_ABundleWithNoOntologyReleaseHasNoOntologyVersion(t *testing.T) {
+	for name, ontology := range map[string]string{
+		"null":                        `"ontology":null,`,
+		"absent":                      ``,
+		"a switch on and no ontology": `"ontology":{"enabled":true,"service":null,"release_id":null,"sha256":null,"declared_services":[],"findings":[]},`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			mem := objectstoretest.NewMemory(defaultBucket)
+			sha := putContractBundle(t, mem, fmt.Appendf(nil,
+				`{"schema_version":1,"tenant_id":"default","release_id":"rel-1","continuo_contracts":"0.4.1",%s"contracts":{}}`, ontology))
+
+			bundle, err := fetchContractBundle(t, mem, sha)
+			require.NoError(t, err)
+			assert.Empty(t, bundle.OntologyVersion)
+		})
+	}
+}

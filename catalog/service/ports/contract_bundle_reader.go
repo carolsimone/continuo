@@ -23,12 +23,16 @@ var ErrContractBundleInvalid = errors.New("contract bundle invalid")
 
 // ContractBundle is what a release's contract bundle holds for catalog: the
 // tenant and release it belongs to, the continuo-contracts version that wrote
-// it, and one Incoming per contract, sorted by unique id.
+// it, the ontology its contracts were resolved against, and one Incoming per
+// contract, sorted by unique id.
 type ContractBundle struct {
 	TenantID          string
 	ReleaseID         string
 	ContinuoContracts string
-	Contracts         []contractversion.Incoming
+	// OntologyVersion is "<release_id>@sha256:<hex>" of the ontology release
+	// the contracts were resolved against, empty when the bundle names none.
+	OntologyVersion string
+	Contracts       []contractversion.Incoming
 }
 
 // ContractBundleReader reads a release's contract bundle and verifies it

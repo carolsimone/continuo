@@ -12,6 +12,7 @@ from config.config import (
     MANIFEST_LOADED_CANDIDATE_STREAM,
     log_level,
     metrics_port,
+    ontology_enabled,
     redis_acl_mode,
     validate,
     warehouse_dialect,
@@ -37,6 +38,7 @@ from config.secrets import EnvOrFileCredentialProvider, read_secret
 from domain.model import Runtime
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
+from service.contract_validation import ContractValidator
 from service.contracts_library import LIBRARY_VERSION
 
 logger = logging.getLogger(__name__)
@@ -103,6 +105,14 @@ def main() -> None:
     dialect = warehouse_dialect()
     system_relations = warehouse_system_relations()
     logger.info("topology-controller SQL dialect: %s", dialect)
+    # Resolved once at boot, like the dialect: validate() has already refused a
+    # switch this service cannot read.
+    ontology_switch = ontology_enabled()
+    logger.info("topology-controller ontology switch: %s", "on" if ontology_switch else "off")
+
+    # One validator for the process: it remembers the contracts it has checked, so a
+    # contract unchanged since an earlier release is not checked again.
+    validator = ContractValidator()
 
     def handle_release_requested(fields: dict) -> None:
         message = parse_release_requested(fields, S3_BUCKET)
@@ -127,6 +137,8 @@ def main() -> None:
             is_infrastructure_error=is_infrastructure,
             clock=MonotonicClock(),
             memory=ResidentMemoryProbe(),
+            validator=validator,
+            ontology_enabled=ontology_switch,
             # Looked up when a release is handled, by which time the consumer
             # exists: a handler that keeps working keeps /health fresh.
             progress=candidate_consumer.refresh_heartbeat,

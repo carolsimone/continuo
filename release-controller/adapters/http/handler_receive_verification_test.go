@@ -85,6 +85,21 @@ func TestHandleReceiveVerification_RefusesPythonWith400AndTheMessage(t *testing.
 	}
 }
 
+// A verification run never has the kind ontology: POST /verification-runs
+// refuses it as a client error whose body is the message, and stores nothing.
+func TestHandleReceiveVerification_RefusesOntologyWith400(t *testing.T) {
+	deps, releases := newRetryRemediationDeps(time.Unix(100, 0).UTC())
+	deps.OntologyEnabled = true
+	in := validVerificationInput()
+	in.Kind = "ontology"
+
+	rec := postVerificationRun(newTestServer(deps), in)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Equal(t, `a verification run cannot have kind "ontology"`+"\n", rec.Body.String())
+	assert.Empty(t, releases.releases)
+}
+
 func TestHandleReceiveVerification_CandidateIDConflictIs409(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, releases := newRetryRemediationDeps(now)

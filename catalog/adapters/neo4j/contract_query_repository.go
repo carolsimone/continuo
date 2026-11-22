@@ -147,7 +147,8 @@ func (r *ContractQueryRepository) one(ctx context.Context, tenantID, uniqueID, q
 
 // liveContractsCypher returns the current contract of every node whose
 // contract watermark is $promotion_seq, with the promotion edge that made it
-// current and the node's declared schema (null for a node only the contracts
+// current (its ontology_version is null when the promotion named no ontology)
+// and the node's declared schema (null for a node only the contracts
 // group has written), sorted by unique id.
 const liveContractsCypher = `
 MATCH (n:Node {tenant_id: $tenant_id})-[cur:CURRENT_CONTRACT]->(v:ContractVersion {tenant_id: $tenant_id})
@@ -156,7 +157,8 @@ MATCH (n)-[e:CONTRACT_PROMOTED]->(v)
 WHERE e.version = cur.version
 RETURN n.unique_id AS unique_id, n.schema_name AS schema_name, e.version AS version, v.contract_hash AS contract_hash,
        v.document AS document, e.content_hash AS content_hash, e.release_id AS release_id, e.continuo_contracts AS continuo_contracts,
-       e.source_path AS source_path, e.promotion_seq AS promotion_seq, e.promoted_at AS promoted_at
+       e.ontology_version AS ontology_version, e.source_path AS source_path, e.promotion_seq AS promotion_seq,
+       e.promoted_at AS promoted_at
 ORDER BY unique_id`
 
 // latestContractPromotionCypher returns the largest contract watermark of
@@ -187,6 +189,7 @@ func (r *ContractQueryRepository) Live(ctx context.Context, tenantID string, pro
 			content, _ := recordString(rec, "content_hash")
 			release, _ := recordString(rec, "release_id")
 			library, _ := recordString(rec, "continuo_contracts")
+			ontology, _ := recordString(rec, "ontology_version")
 			source, _ := recordString(rec, "source_path")
 			schema, _ := recordString(rec, "schema_name")
 			out = append(out, contractversion.LiveContract{
@@ -199,6 +202,7 @@ func (r *ContractQueryRepository) Live(ctx context.Context, tenantID string, pro
 					ContentHash:       content,
 					ReleaseID:         release,
 					ContinuoContracts: library,
+					OntologyVersion:   ontology,
 					SourcePath:        source,
 					PromotionSeq:      toInt64(recordValue(rec, "promotion_seq")),
 					PromotedAt:        recordTime(rec, "promoted_at"),

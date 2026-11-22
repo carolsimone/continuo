@@ -181,8 +181,11 @@ def hashed_config(node: Mapping, ctx: ManifestContext) -> dict:
     `severity` is lower-cased; `relation` carries the schema and alias the node
     writes, in their declared spelling; a model whose contract is enforced adds
     its declared columns in order and its model-level constraints, masked like
-    the rest (a foreign key's `to` names the node's database). Nulls and empty
-    containers are dropped last.
+    the rest (a foreign key's `to` names the node's database). A seed's and a
+    snapshot's declared columns and constraints are never added: dbt ignores a
+    seed's enforced contract, and the contracts library refuses a snapshot's, so
+    no release keeps an enforced snapshot. Nulls and empty containers are
+    dropped last.
     """
     database = node.get("database") or ""
     raw_config = node.get("config") or {}
@@ -203,9 +206,11 @@ def hashed_config(node: Mapping, ctx: ManifestContext) -> dict:
 def _contract_enforced(node: Mapping) -> bool:
     """Whether the hashed config folds the node's declared columns and constraints:
     only for a model whose contract is enforced. A seed's flag stays a plain config
-    value, since dbt-core 1.12.0b1 with the postgres adapter ignores it, and a snapshot's
-    enforced contract is not folded, as fingerprints.yaml declares for dbt-snapshot (its
-    declared columns carry no `when: enforced`). A test sets no contract."""
+    value, since dbt-core 1.12.0b1 with the postgres adapter ignores it. A snapshot's
+    enforced contract is not folded: dbt does not support a contract on a snapshot (it
+    enforces it on the first run and fails every later one), so the contracts library
+    refuses it and the parse fails the node as an invalid contract before any release
+    keeps it. A test sets no contract."""
     return node.get("resource_type") == "model" and (
         ((node.get("config") or {}).get("contract") or {}).get("enforced") is True)
 

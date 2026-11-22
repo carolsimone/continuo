@@ -14,6 +14,7 @@ import (
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
+	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/domain/repository"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
@@ -193,6 +194,9 @@ func (r *fakeReleaseRepo) Active(ctx context.Context) (*pipeline.Run, error) {
 	return nil, nil
 }
 func (r *fakeReleaseRepo) List(ctx context.Context, f repository.ListFilter) ([]*pipeline.Run, *repository.ListCursor, error) {
+	panic("not implemented")
+}
+func (r *fakeReleaseRepo) ActiveCandidateServicesWithKind(ctx context.Context, kind release.ManifestKind) ([]string, error) {
 	panic("not implemented")
 }
 func (r *fakeReleaseRepo) DeleteFinishedBefore(ctx context.Context, cutoff time.Time, keepReleaseIDs []string) (int, error) {

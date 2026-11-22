@@ -80,6 +80,9 @@ type LiveFolder struct {
 	settings  string
 	now       func() time.Time
 	logger    *slog.Logger
+	// ontologyBaseURL is the URL the published ontology links start with;
+	// empty publishes them as stored.
+	ontologyBaseURL string
 	// leaseTTL, leaseRenewEvery and renewTimeout time the live-folder lease:
 	// liveLeaseTTL, liveLeaseRenewEvery and liveRenewTimeout.
 	leaseTTL        time.Duration
@@ -88,7 +91,9 @@ type LiveFolder struct {
 }
 
 // NewLiveFolder creates a LiveFolder that publishes with server, the install's
-// warehouse entry (nil, or a server with no host, publishes no servers entry).
+// warehouse entry (nil, or a server with no host, publishes no servers entry),
+// and ontologyBaseURL, the URL the files' ontology links start with ("" keeps
+// them as stored).
 func NewLiveFolder(
 	contracts queries.ContractReader,
 	store ports.LiveContractsStore,
@@ -97,6 +102,7 @@ func NewLiveFolder(
 	state ports.LiveFolderState,
 	metrics ports.ContractMetrics,
 	server *contractversion.Server,
+	ontologyBaseURL string,
 	now func() time.Time,
 	logger *slog.Logger,
 ) *LiveFolder {
@@ -108,9 +114,11 @@ func NewLiveFolder(
 		state:     state,
 		metrics:   metrics,
 		server:    server,
-		settings:  settingsFingerprint(server),
+		settings:  settingsFingerprint(server, ontologyBaseURL),
 		now:       now,
 		logger:    logger,
+
+		ontologyBaseURL: ontologyBaseURL,
 
 		leaseTTL:        liveLeaseTTL,
 		leaseRenewEvery: liveLeaseRenewEvery,
@@ -119,13 +127,10 @@ func NewLiveFolder(
 }
 
 // settingsFingerprint is the hex SHA-256 fingerprint of the publishing
-// settings; nil fingerprints as a server with no host.
-func settingsFingerprint(server *contractversion.Server) string {
-	s := contractversion.Server{}
-	if server != nil {
-		s = *server
-	}
-	return s.Fingerprint(func(b []byte) string {
+// settings: the server (nil fingerprints as a server with no host) and, when
+// it is set, the ontology base URL. A change of either rewrites every file.
+func settingsFingerprint(server *contractversion.Server, ontologyBaseURL string) string {
+	return contractversion.PublishingFingerprint(server, ontologyBaseURL, func(b []byte) string {
 		sum := sha256.Sum256(b)
 		return hex.EncodeToString(sum[:])
 	})
@@ -411,7 +416,7 @@ func (l *LiveFolder) write(
 	}
 	if err := l.each(ctx, len(puts), ports.LiveWritePut, func(ctx context.Context, i int) error {
 		c := puts[i]
-		body, err := l.renderer.Render(contractversion.Published(c.Document, c.Version, l.server, c.PhysicalSchema, c.Provenance))
+		body, err := l.renderer.Render(contractversion.Published(c.Document, c.Version, l.server, c.PhysicalSchema, c.Provenance, l.ontologyBaseURL))
 		if err != nil {
 			return fmt.Errorf("render the live contract of %s: %w", c.UniqueID, err)
 		}

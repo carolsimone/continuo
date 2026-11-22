@@ -2,7 +2,20 @@ import pytest
 
 from domain.contract_vocabulary import NodeType, ParseFailureKind
 from domain.model import ManifestNode, Runtime, SkippedNode, SkipReason
-from service.release_timings import ReleaseOutcome, ReleaseTimings, Stage, StageRecord
+from service.release_timings import (
+    CONTRACT_FAILURE_REASONS,
+    CONTRACT_FAILURE_STAGES,
+    REASON_IDENTITY,
+    REASON_MANIFEST_SHAPE,
+    REASON_SEED_HEADER,
+    REASON_STRICT_YAML,
+    REASON_VALUE,
+    FailureStage,
+    ReleaseOutcome,
+    ReleaseTimings,
+    Stage,
+    StageRecord,
+)
 from tests.fakes import FakeClock, ScriptedMemoryProbe
 
 
@@ -69,7 +82,7 @@ def test_stages_ms_names_every_stage_in_pipeline_order_and_zero_for_one_that_did
     ms = timings.stages_ms()
     assert list(ms) == ["download", "dbt_parse", "python_parse", "registry", "resolve", "rewrite",
                         "candidate_upload", "code_bundle", "contract_generation", "contract_validation",
-                        "canonical_hashing", "contract_bundle", "topology_artifact", "publish"]
+                        "canonical_hashing", "ontology", "contract_bundle", "topology_artifact", "publish"]
     assert (ms["resolve"], ms["python_parse"]) == (660, 0)
 
 
@@ -95,6 +108,32 @@ def test_log_fields_carry_the_release_its_counts_and_every_stage():
         "stages_ms": timings.stages_ms(),
         "peak_rss_bytes": 0,
     }
+
+
+def test_log_fields_carry_the_counts_of_the_ontology_findings_by_severity():
+    timings = _timings(FakeClock())
+    timings.add_ontology_findings(["warning", "info", "warning", "warning"])
+
+    fields = timings.log_fields()
+
+    assert (fields["ontology_warnings"], fields["ontology_information"]) == (3, 1)
+
+
+def test_log_fields_name_only_the_severities_found_and_none_before_any_is_counted():
+    timings = _timings(FakeClock())
+    assert not [name for name in timings.log_fields() if name.startswith("ontology")]
+
+    timings.add_ontology_findings(["info"])
+    assert timings.log_fields()["ontology_information"] == 1
+    assert "ontology_warnings" not in timings.log_fields()
+
+
+def test_a_finding_that_rejects_a_release_is_not_counted_on_its_line():
+    """An error has its own failure path, so only the severities that never reject are counted."""
+    timings = _timings(FakeClock())
+    with pytest.raises(ValueError, match="not a severity"):
+        timings.add_ontology_findings(["error"])
+    assert timings.ontology_findings == {}
 
 
 def test_add_skips_counts_each_skip_under_its_own_reason():
@@ -143,8 +182,8 @@ def test_the_contract_stages_exist():
     assert (Stage.CONTRACT_GENERATION.value, Stage.CONTRACT_VALIDATION.value, Stage.CANONICAL_HASHING.value,
             Stage.CONTRACT_BUNDLE.value) == (
         "contract_generation", "contract_validation", "canonical_hashing", "contract_bundle")
-    assert [stage.value for stage in Stage][-6:] == [
-        "contract_generation", "contract_validation", "canonical_hashing", "contract_bundle",
+    assert [stage.value for stage in Stage][-7:] == [
+        "contract_generation", "contract_validation", "canonical_hashing", "ontology", "contract_bundle",
         "topology_artifact", "publish"]
 
 
@@ -163,12 +202,19 @@ def test_contract_failures_and_cache_add_up():
     timings = _timings()
     timings.add_contract_failure("validate", "column_type")
     timings.add_contract_failure("validate", "column_type")
-    timings.add_contract_failure("hash", "unhashable")
+    timings.add_contract_failure(FailureStage.HASH, REASON_VALUE)
     timings.add_validation_cache(True)
     timings.add_validation_cache(False)
     timings.add_validation_cache(False)
-    assert timings.contract_failures == {("validate", "column_type"): 2, ("hash", "unhashable"): 1}
+    assert timings.contract_failures == {("validate", "column_type"): 2, ("hash", "value"): 1}
     assert timings.validation_cache == {"hit": 1, "miss": 2}
+
+
+def test_an_ontology_failure_counts_under_the_ontology_stage_and_a_rule_of_the_library():
+    timings = _timings()
+    timings.add_contract_failure("ontology", "ontology")
+    timings.add_contract_failure("ontology", "contract")
+    assert timings.contract_failures == {("ontology", "ontology"): 1, ("ontology", "contract"): 1}
 
 
 def test_a_contract_failure_counts_only_under_a_stage_the_metrics_export():
@@ -176,6 +222,31 @@ def test_a_contract_failure_counts_only_under_a_stage_the_metrics_export():
     with pytest.raises(ValueError, match="not a contract failure stage"):
         timings.add_contract_failure("validation", "value")
     assert timings.contract_failures == {}
+
+
+def test_a_contract_failure_counts_only_under_a_reason_the_metrics_export():
+    timings = _timings()
+    with pytest.raises(ValueError, match="'unhashable' is not a contract failure reason"):
+        timings.add_contract_failure("hash", "unhashable")
+    assert timings.contract_failures == {}
+
+
+def test_a_stage_given_as_the_enum_is_counted_under_its_plain_name():
+    timings = _timings()
+    timings.add_contract_failure(FailureStage.NORMALISE, REASON_VALUE)
+    (key,) = timings.contract_failures
+    assert key == ("normalise", "value") and type(key[0]) is str
+
+
+@pytest.mark.parametrize("reason", [
+    REASON_MANIFEST_SHAPE, REASON_SEED_HEADER, REASON_STRICT_YAML, REASON_IDENTITY, REASON_VALUE,
+])
+def test_every_reason_this_service_writes_is_one_the_metrics_export(reason):
+    assert reason in CONTRACT_FAILURE_REASONS
+
+
+def test_the_failure_stages_are_the_enums_values_in_order():
+    assert CONTRACT_FAILURE_STAGES == ("generate", "validate", "normalise", "hash", "ontology")
 
 
 def test_bundle_timings_hold_the_stages_that_ran_so_far():

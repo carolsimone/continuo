@@ -22,6 +22,7 @@ dbt service reads [dbt nodes](#dbt-nodes) at the end. It covers:
 - [reading a contract back](#reading-a-contract-back) and [the history](#the-history-of-a-contract)
 - [the live folder](#the-live-folder) and [a DataHub recipe](#a-datahub-recipe)
 - [the contract bundle](#the-contract-bundle)
+- [binding a contract to the company ontology](ontology.md)
 - [moving from `contract.yaml`](#moving-from-contractyaml)
 - [dbt nodes](#dbt-nodes), [what makes a dbt contract invalid](#what-makes-a-dbt-contract-invalid)
   and [how to check a dbt project in CI](#check-a-dbt-project-in-ci)
@@ -130,6 +131,12 @@ stored contract holds them:
 | `logicalType` on each column | Derived from its `physicalType`: `date`, `integer`, `number`, `string` and so on. |
 | `reads` | The tables your read queries name, each as `<schema>.<table>`. |
 
+With the install's ontology switch on, the stored contract of a service the
+ontology declares holds more: its `domain`, a link to each thing it is bound to
+and what the ontology knows of each bound column. [The company
+ontology](ontology.md#what-continuo-fills-in) says what. With the switch off,
+continuo stores the contract without its bindings.
+
 For `py_daily_kpis`, the stored contract holds this on top of what you wrote:
 
 ```yaml
@@ -162,6 +169,7 @@ the field. The last row is the one exception: it rejects the release as
 | `partitioned: true`, a `partitionKeyPosition` that is not the default | The runtime cannot honour them. |
 | `filePath`, `materialization`, `contractEnforced`, `access`, `group`, `deprecationDate`, `freshnessBuildAfter`, `snapshot`, `quoteColumns` | These describe how dbt builds a node. Nothing reads them on a Python node, so a stored one would say something untrue. |
 | A continuo property that does not exist | Most often a spelling mistake. |
+| An ontology binding of the wrong shape, such as `entity` with a number | The ontology bindings are `entity`, `grain`, `fixed` and `filter` on the table, and `property`, `local` and `aggregate` on a column. continuo checks their shape whether the ontology is on or off. See [the company ontology](ontology.md#writing-a-binding). |
 | `assets` on a `python-csv` node | A csv node has no script, so nothing reads the asset. |
 | A `NUMERIC(12)` or any other type outside the runtime's list | The runtime must be able to create the column. |
 | A read query with two statements | A read is one `SELECT`. |
@@ -254,9 +262,11 @@ Your pipeline does these steps, in this order.
    `--dialect trino` on a Trino install. The step stops at the first file that
    is not valid and prints every problem of that file. Fix the file, then run
    the step again to check the next one. A mistake fails the pull request and
-   never reaches a release.
+   never reaches a release. A contract that binds to the company ontology is
+   checked against it with `--service <name> --ontology <file>` (see
+   [the company ontology](ontology.md#checking-bindings-in-ci)).
 2. **Build the image** and push it. The image base is
-   `ghcr.io/carolsimone/continuo-python-runtime-<engine>:v0.13.0`.
+   `ghcr.io/carolsimone/continuo-python-runtime-<engine>:v0.14.0`.
 3. **Pack the contracts.** `pack` checks the files again, lints the scripts and
    writes one bundle:
 
@@ -318,7 +328,7 @@ install's. Three places tell you the version:
   another version. continuo's own CI fails a change of that version that has
   no such line.
 - The runtime's own CHANGELOG names the library version each runtime release
-  carries. `continuo-python-runtime` 0.13.0 carries `continuo-contracts` 0.2.0.
+  carries. `continuo-python-runtime` 0.14.0 carries `continuo-contracts` 0.4.1.
 - `GET /api/v1/releases/<id>` has the field `continuo_contracts`: the version
   that read this release's contracts. It is `""` until the parse ends. It is set
   for a rejected release too, so a rejection tells you which version said no.
@@ -327,7 +337,7 @@ A part of such an answer, with the other fields left out:
 
 ```json
 {"release_id": "rel-py-v2", "status": "rejected", "terminal": true,
- "reject_reason": "invalid_contract", "continuo_contracts": "0.3.1"}
+ "reject_reason": "invalid_contract", "continuo_contracts": "0.4.1"}
 ```
 
 A dbt service has no bundle from its CI: continuo generates its contracts. Its
@@ -405,7 +415,7 @@ its text changes, deletes the file of a node that is no longer live, and writes
 one the folder already shows rewrites nothing, so a late or repeated promotion
 never puts an old contract back.
 
-A published file is the stored contract with three changes:
+A published file is the stored contract with these changes:
 
 - `version` is the number catalog counted, as text. It is `"3"` after the third
   change.
@@ -419,9 +429,18 @@ customProperties:
     property: provenance
     value: {contractHash: "sha256:3f1c...", contentHash: "sha256:91d4...",
             releaseId: rel-77aa0bc-230, promotionSeq: 52,
-            promotedAt: "2026-11-27T16:40:12Z", continuoContracts: 0.3.1,
+            promotedAt: "2026-11-27T16:40:12Z", continuoContracts: 0.4.1,
             sourcePath: contracts/py_daily_kpis.odcs.yaml}
 ```
+
+- A contract that was filled in from the company ontology has one more key in
+  `provenance`, `ontologyVersion`: the release of the ontology and the SHA-256 of
+  its file, `<release id>@sha256:<hex>`. A contract that no ontology touched has
+  no such key.
+- When the operator sets `contracts.ontology.baseUrl`, each ontology link of the
+  contract (`continuo-ontology:Order`) is the absolute address
+  `<baseUrl>/Order`. With no `baseUrl` the links stay as stored. See
+  [the company ontology](ontology.md#the-switch).
 
 `_index.json` lists the files and the promotion they belong to:
 
@@ -554,7 +573,10 @@ tenants/default/topologies/<release_id>/contracts.json.gz
 It holds the contract of every dbt model, seed and snapshot and of every Python
 node of the release. It is canonical JSON, compressed with gzip. The events that
 announce a release carry its URI and its SHA-256. It is written once and never
-changes.
+changes. Its `ontology` value is `null` unless the install's ontology switch is
+on, and otherwise names the ontology the release used and lists what the check
+found that did not reject the release (see
+[the company ontology](ontology.md#where-to-read-the-result)).
 [Reading releases from continuo](read-contract.md) says which of its fields a
 tool may rely on.
 
@@ -922,9 +944,11 @@ The setting `contract: {enforced: true}` is a dbt setting, and it stays in the
 node's config and in the contract as `contractEnforced`. Only a model folds its
 declared columns and constraints into the code version, because dbt (1.12.0b1
 with the postgres adapter) builds a model's table from them. dbt ignores the
-setting on a seed. It enforces it on a snapshot, and the code version does not
-fold a snapshot's declared columns or constraints, as the `fingerprints.yaml` of
-`continuo-contracts` declares for `dbt-snapshot`.
+setting on a seed. dbt does not support a contract on a snapshot: it enforces the
+contract on the snapshot's first run and fails every later run. So a snapshot
+with `contract.enforced: true` is an invalid contract (see
+[What makes a dbt contract invalid](#what-makes-a-dbt-contract-invalid)), and the
+code version never has to fold a snapshot's declared columns or constraints.
 
 A seed's file hash comes from `compile-extras.json`. When that file has no
 entry for the seed, continuo uses dbt's own checksum instead. For a seed over
@@ -993,11 +1017,20 @@ These make a dbt contract invalid:
   cannot be written `<schema>.<table>`.
 - A seed whose declared columns and CSV header differ (see
   [Columns](#columns)).
+- A snapshot with `contract: {enforced: true}`. dbt does not support a contract
+  on a snapshot: it enforces it on the first run and fails every later run.
+  Remove the flag.
+- An ontology binding of the wrong shape in a node's `meta.continuo` or in a
+  column's, such as `entity: 42`. This is so whether the ontology is on or off
+  (see [the company ontology](ontology.md#writing-a-binding)).
 
 Other faults are not about one contract. A manifest that is not valid JSON, a
 `metadata.project_name` that is not text, a test whose links to its nodes are
-not lists of text, a kept node or test with no `fqn`, and text that UTF-8 cannot
-encode, such as a lone surrogate, reject the release as `invalid_artifact`. A
+not lists of text, a kept node or test with no `fqn`, a node that is not an
+object, a `compiled_code`, `raw_code` or `database` that is not text, a
+`depends_on` that is not an object, a `nodes` that is null, a macro, function or
+unit test entry that is not an object, and text that UTF-8 cannot encode, such as
+a lone surrogate, reject the release as `invalid_artifact`. A
 defect in the `continuo-contracts` library itself ends the release as
 `internal`: continuo does not blame your project for it.
 
@@ -1028,6 +1061,11 @@ model, seed and snapshot:
 3. It generates the contract of each node it keeps, and checks it.
 4. It compares each seed's declared columns with the first row of the seed's CSV
    file in your project folder.
+
+With `--ontology <file>` it also reads the bindings of each contract against the
+company's ontology file (see
+[the company ontology](ontology.md#checking-bindings-in-ci)). Without it, it
+checks no binding against an ontology.
 
 It prints a line for each thing it finds. A line is `INFO` for a node that is
 left out, for a dormant node and for a seed of an installed package, and `ERROR`
@@ -1081,8 +1119,10 @@ lists what only the release does between them:
 - The install runs the `continuo-contracts` version its chart names, and your CI
   can pin another.
 - `servers` and absolute links exist only in published files.
-- The list ends with the install's ontology. A release of this continuo checks no
-  ontology, so that row changes nothing for you.
+- The list ends with the install's ontology. With the ontology switch on, the
+  release checks each binding against the ontology the install runs. The lite
+  check reads the file `--ontology` names, which can differ, and without
+  `--ontology` it checks no binding.
 
 Two more differences concern seeds. The lite check reads the CSV file, and the
 release reads the header from `compile-extras.json`. The lite check does not

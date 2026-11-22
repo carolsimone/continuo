@@ -208,7 +208,7 @@ func TestDeployLegs_TheJobGetsTheInstallsTaskTimeout(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
-			t.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.13.0")
+			t.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.14.0")
 			client := newValidationTestClient()
 
 			require.NoError(t, deployLeg(NewDeployer(client, "default", 15*time.Minute, 2*time.Hour)))
@@ -233,7 +233,7 @@ func seedJobParams() JobParams {
 
 func setPreflightEnv(t *testing.T) {
 	t.Helper()
-	t.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.13.0")
+	t.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.14.0")
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "continuo-warehouse-validation")
 	t.Setenv("S3_BUCKET", "continuo")
 }
@@ -252,7 +252,7 @@ func lastInitContainer(t *testing.T, pf seedreload.Preflight) corev1.Container {
 }
 
 func TestBuildPodSpec_ASeedWithAPreflightRunsItLastBeforeDbt(t *testing.T) {
-	t.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.13.0")
+	t.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.14.0")
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "continuo-warehouse-validation")
 	t.Setenv("S3_BUCKET", "continuo")
 	p := seedJobParams() // dbt-seed, SchemaName "analytics", TableName "seed_fx_rates_eur"
@@ -275,7 +275,7 @@ func TestBuildPodSpec_ASeedWithAPreflightRunsItLastBeforeDbt(t *testing.T) {
 		assert.NotEqual(t, "DBT_TARGET_SCHEMA", e.Name, "R0's seed_preflight reads PROD_SCHEMA, never DBT_TARGET_SCHEMA")
 	}
 	assert.Equal(t, "continuo-warehouse-validation", last.EnvFrom[0].SecretRef.Name)
-	assert.Equal(t, "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.13.0", last.Image)
+	assert.Equal(t, "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.14.0", last.Image)
 	assert.Equal(t, continuoImageSecurityContext(), last.SecurityContext)
 	// The runner's exit code is the container's: a stop (1) or a bad input
 	// (2) fails the init container, so dbt never starts and nothing is dropped.
@@ -324,9 +324,9 @@ func TestBuildPodSpec_APreflightThatCannotRunIsPermanent(t *testing.T) {
 		relation string
 		image    string
 	}{
-		"a relation of no dot":    {"seed_fx_rates_eur", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.13.0"},
-		"a relation of no schema": {".seed", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.13.0"},
-		"a relation of no name":   {"analytics.", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.13.0"},
+		"a relation of no dot":    {"seed_fx_rates_eur", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.14.0"},
+		"a relation of no schema": {".seed", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.14.0"},
+		"a relation of no name":   {"analytics.", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.14.0"},
 		"no validation image":     {"analytics.seed_fx_rates_eur", ""},
 	} {
 		t.Run(name, func(t *testing.T) {

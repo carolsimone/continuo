@@ -1,4 +1,7 @@
 {
+  "candidate_sql": {
+    "public.orders": "SELECT 1"
+  },
   "code_bundle": {
     "contract_version": 1,
     "nodes": {

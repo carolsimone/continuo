@@ -446,3 +446,20 @@ func TestContractRepository_AChangeWrittenTwiceIsRecordedOnce(t *testing.T) {
 	assert.Equal(t, contractB, hash)
 	assert.Equal(t, int64(2), pointer["version"])
 }
+
+// A promotion that names an ontology stores its version on each edge it
+// creates, and an edge of a promotion that names none has no such property.
+func TestContractRepository_RecordsTheOntologyVersionOnTheEdge(t *testing.T) {
+	f := newSwapFixture(t)
+	f.seedLiveNode(kpisNode)
+	p := contractPromotion("rel-4e5f6a7-212", 41)
+	p.OntologyVersion = "rel-9f8e7d6-14@sha256:bd4d098b"
+
+	f.writeContracts(p, contractOf(kpisNode, contractA, "service-py"))
+	f.writeContracts(contractPromotion("rel-5d6e7f8-219", 47), contractOf(kpisNode, contractB, "analytics-eng"))
+
+	edges := f.promotions(kpisNode)
+	require.Len(t, edges, 2)
+	assert.Equal(t, "rel-9f8e7d6-14@sha256:bd4d098b", edges[0].props["ontology_version"])
+	assert.NotContains(t, edges[1].props, "ontology_version")
+}

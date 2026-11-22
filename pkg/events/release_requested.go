@@ -6,8 +6,8 @@ import (
 )
 
 // ManifestKey names one service's artifact in a release.requested:v1 payload.
-// Kind is "dbt" or "python-odcs" and is always written; a reader treats an
-// absent kind as "dbt".
+// Kind is "dbt", "python-odcs" or "ontology" and is always written; a reader
+// treats an absent kind as "dbt".
 type ManifestKey struct {
 	Service string `json:"service"`
 	S3URI   string `json:"s3_uri"`

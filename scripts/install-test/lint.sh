@@ -1523,6 +1523,69 @@ if [ -n "$shadows" ]; then
   echo "FAIL: catalog's own env must not shadow the ConfigMap's CONTRACTS_* keys:"; echo "$shadows"; exit 1
 fi
 
+# contracts.ontology.enabled and contracts.ontology.baseUrl reach every service
+# through the shared ConfigMap as ONTOLOGY_ENABLED, exactly "true" or "false",
+# and ONTOLOGY_BASE_URL. The schema refuses a non-boolean switch, a key it does
+# not name and a base URL that catalog refuses at startup (a value that is not
+# empty and not an absolute http or https URL with a host name, no credentials,
+# no query, no fragment and no whitespace), and a few more. Values without a
+# contracts.ontology block (as `helm upgrade --reuse-values` can produce) render
+# the defaults, and no service's own env shadows the two keys.
+echo "--- contracts.ontology reaches the ConfigMap; a switch or a base URL a service cannot honour is refused"
+grep -qF 'ONTOLOGY_ENABLED: "false"' "${tmp}/defaults.yaml" \
+  || { echo "FAIL: the default render does not set ONTOLOGY_ENABLED to false"; exit 1; }
+grep -qF 'ONTOLOGY_BASE_URL: ""' "${tmp}/defaults.yaml" \
+  || { echo "FAIL: the default render does not set ONTOLOGY_BASE_URL to empty"; exit 1; }
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+  --set contracts.ontology.enabled=true --set contracts.ontology.baseUrl=https://ontology.example/things \
+  > "${tmp}/ontology-set.yaml" \
+  || { echo "FAIL: contracts.ontology.enabled=true with a base URL must render"; exit 1; }
+grep -qF 'ONTOLOGY_ENABLED: "true"' "${tmp}/ontology-set.yaml" \
+  || { echo "FAIL: contracts.ontology.enabled=true does not reach the shared ConfigMap"; exit 1; }
+grep -qF 'ONTOLOGY_BASE_URL: "https://ontology.example/things"' "${tmp}/ontology-set.yaml" \
+  || { echo "FAIL: contracts.ontology.baseUrl does not reach the shared ConfigMap"; exit 1; }
+# A value catalog accepts renders as written (catalog trims one trailing slash
+# when it starts), and an explicit empty value is the default.
+for accepted in https://ontology.example/things/ http://ontology.internal:8080/things https://ontology.example; do
+  helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+    --set-string "contracts.ontology.baseUrl=${accepted}" > "${tmp}/ontology-url.yaml" \
+    || { echo "FAIL: contracts.ontology.baseUrl=${accepted} must render"; exit 1; }
+  grep -qF "ONTOLOGY_BASE_URL: \"${accepted}\"" "${tmp}/ontology-url.yaml" \
+    || { echo "FAIL: contracts.ontology.baseUrl=${accepted} does not reach the shared ConfigMap as written"; exit 1; }
+done
+helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set-string contracts.ontology.baseUrl= > "${tmp}/ontology-empty.yaml" \
+  || { echo "FAIL: an empty contracts.ontology.baseUrl must render"; exit 1; }
+grep -qF 'ONTOLOGY_BASE_URL: ""' "${tmp}/ontology-empty.yaml" \
+  || { echo "FAIL: an empty contracts.ontology.baseUrl must reach the ConfigMap as empty"; exit 1; }
+# Each of these is refused by the schema, which names the key, and catalog stops
+# at boot on each of them as well.
+for refused in 'ftp://x' 'https://' 'x/y' 'https://x?q=1' 'https://x#section' 'https://x/a b' ' https://x' 'https://user:secret@x/things'; do
+  if out="$(helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set-string "contracts.ontology.baseUrl=${refused}" 2>&1)"; then
+    echo "FAIL: contracts.ontology.baseUrl=${refused} must fail the render"; exit 1
+  fi
+  grep -qF 'contracts' <<<"$out" && grep -qF 'baseUrl' <<<"$out" \
+    || { echo "FAIL: the render refusing contracts.ontology.baseUrl=${refused} does not name baseUrl:"; echo "$out"; exit 1; }
+done
+for refused in 'enabled=yes' 'enabled=TRUE' 'enabled=1' 'bogus=1'; do
+  if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set-string "contracts.ontology.${refused}" > /dev/null 2>&1; then
+    echo "FAIL: contracts.ontology.${refused} must fail the render"; exit 1
+  fi
+done
+for absent in contracts=null contracts.ontology=null; do
+  helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set "${absent}" > "${tmp}/ontology-absent.yaml" \
+    || { echo "FAIL: rendering with ${absent} failed; values without an ontology block must render"; exit 1; }
+  grep -qF 'ONTOLOGY_ENABLED: "false"' "${tmp}/ontology-absent.yaml" \
+    && grep -qF 'ONTOLOGY_BASE_URL: ""' "${tmp}/ontology-absent.yaml" \
+    || { echo "FAIL: a release with ${absent} must get the default ontology settings"; exit 1; }
+done
+for svc in topology-controller release-controller catalog; do
+  shadows="$(deployment_env_entries "$svc" "${tmp}/defaults.yaml" 'ONTOLOGY_ENABLED|ONTOLOGY_BASE_URL')" \
+    || { echo "FAIL: the default render has no Deployment named ${svc}"; exit 1; }
+  if [ -n "$shadows" ]; then
+    echo "FAIL: ${svc}'s own env must not shadow the ConfigMap's ONTOLOGY_* keys:"; echo "$shadows"; exit 1
+  fi
+done
+
 # maintenance.enabled reaches every service through the shared ConfigMap as
 # exactly "true" or "false"; a non-boolean value fails the render, and values
 # without a maintenance block (as `helm upgrade --reuse-values` can produce)

@@ -42,7 +42,7 @@ def variant_paths(name: str, tmp_dir: str) -> tuple[str, str]:
 def parse_variant(name: str, *, extras: bool = True) -> ParsedArtifact:
     """The parsed artifact of a variant, with its compile extras unless extras is False."""
     from service.compile_extras import load_compile_extras
-    from service.parser import parse_manifest
+    from tests.fakes import parse_manifest
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         manifest_path, extras_path = variant_paths(name, tmp_dir)
@@ -208,7 +208,7 @@ def stored_dbt_contracts(tmp_dir: str, *nodes: dict) -> tuple[ParsedArtifact, li
     one as the contract bundle does. Returns the parsed artifact and the stored contracts."""
     from config.config import _SYSTEM_RELATIONS
     from service.contract_bundle import store_contracts
-    from service.parser import parse_manifest
+    from tests.fakes import parse_manifest
 
     path = os.path.join(tmp_dir, "shop.manifest.json")
     with open(path, "w", encoding="utf-8") as f:

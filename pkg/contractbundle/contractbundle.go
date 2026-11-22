@@ -37,7 +37,8 @@ const MaxDocumentBytes = 512 << 20
 
 // Document is the whole bundle of one release. Ontology, Failures and Timings
 // are kept as the JSON the writer produced: a reader of the contracts does not
-// interpret them.
+// interpret them, except that OntologyVersion names the ontology the contracts
+// were resolved against.
 type Document struct {
 	SchemaVersion     int                          `json:"schema_version"`
 	TenantID          string                       `json:"tenant_id"`
@@ -52,6 +53,26 @@ type Document struct {
 	// Contracts holds one entry per node, keyed by the node's unique id
 	// ("<schema>.<table>").
 	Contracts map[string]Contract `json:"contracts"`
+}
+
+// OntologyVersion names the ontology the bundle's contracts were resolved
+// against: "<release_id>@sha256:<hex>", the release of the ontology service that
+// wrote the file and the SHA-256 of the file's text. It is empty when the
+// bundle names no ontology release: the install's ontology switch was off, or it
+// was on and no ontology was released. A reader never has to tell the two
+// apart, and a value it cannot read as a release id and a digest names none.
+func (d Document) OntologyVersion() string {
+	var ontology struct {
+		ReleaseID string `json:"release_id"`
+		SHA256    string `json:"sha256"`
+	}
+	if len(d.Ontology) == 0 || json.Unmarshal(d.Ontology, &ontology) != nil {
+		return ""
+	}
+	if ontology.ReleaseID == "" || ontology.SHA256 == "" {
+		return ""
+	}
+	return ontology.ReleaseID + "@sha256:" + ontology.SHA256
 }
 
 // ServiceProvenance records what built a service's Python contracts: the

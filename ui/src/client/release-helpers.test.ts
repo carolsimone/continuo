@@ -3,7 +3,7 @@ import {
   groupByStage, stageLabel, reasonLabel, proposalKey,
   proposalNodeIds, proposalStatusForNode, proposalReasonForNode, proposalCodeForNode,
   releasePillClass, verificationPhase, verificationRunPhase,
-  effectiveRound, groupProposals, proposalPillClass,
+  effectiveRound, groupProposals, proposalPillClass, upcomingStages,
 } from './release-helpers';
 import { HANDOVER_TEXT } from './handover-text';
 import { HANDOVER_REASONS } from '../server/generated/vocabulary.gen';
@@ -310,5 +310,40 @@ describe('proposalPillClass', () => {
   it('falls back to the release vocabulary for an unknown status', () => {
     expect(proposalPillClass('cancelled_by_operator')).toBe('pill--cancelled');
     expect(proposalPillClass('whatever')).toBe('pill--pending');
+  });
+});
+
+describe('upcomingStages', () => {
+  const at = '2026-11-20T10:00:00Z';
+  const reached = (...stages: string[]) => stages.map(to => ({ to, at }));
+  const stagesOf = (to: string, manifestKind?: string) => upcomingStages(reached(to), { manifestKind }).map(s => s.stage);
+
+  it('takes a dbt release through compiling, parsing, seed building and validating', () => {
+    expect(stagesOf('received', 'dbt')).toEqual(['compiling', 'parsing', 'seed_building', 'validating']);
+  });
+
+  it('takes a release of an unknown kind down the dbt path', () => {
+    expect(stagesOf('received', 'something-new')).toEqual(['compiling', 'parsing', 'seed_building', 'validating']);
+    expect(stagesOf('received')).toEqual(['compiling', 'parsing', 'seed_building', 'validating']);
+  });
+
+  it.each(['python', 'python-odcs'])('shows no compiling and no seed building for a %s release', kind => {
+    expect(stagesOf('received', kind)).toEqual(['parsing', 'validating']);
+  });
+
+  it('shows no compiling and no seed building for an ontology release', () => {
+    expect(stagesOf('received', 'ontology')).toEqual(['parsing', 'validating']);
+    expect(stagesOf('parsing', 'ontology')).toEqual(['validating']);
+    expect(stagesOf('validating', 'ontology')).toEqual([]);
+  });
+
+  it('shows no validating for a bootstrap ontology release, which promotes after parsing', () => {
+    const run = { manifestKind: 'ontology', bootstrap: true };
+    expect(upcomingStages(reached('received'), run).map(s => s.stage)).toEqual(['parsing']);
+  });
+
+  it('lists nothing for a run that has finished or recorded no transition', () => {
+    expect(upcomingStages(reached('received', 'promoted'), { manifestKind: 'ontology' })).toEqual([]);
+    expect(upcomingStages([], { manifestKind: 'ontology' })).toEqual([]);
   });
 });

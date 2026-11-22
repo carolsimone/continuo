@@ -32,10 +32,13 @@ class ManifestKind(StrEnum):
 
     Carried per manifest_keys entry on release.requested:v1. Absent means dbt.
     `dbt` is a service's `manifest.json`, `python-odcs` its ODCS bundle
-    (`odcs-bundle.json`).
+    (`odcs-bundle.json`), and `ontology` the install's company ontology
+    (`ontology.yaml`), which declares no node: it is read only to resolve and
+    check the contracts of the other services.
     """
     DBT = "dbt"
     PYTHON_ODCS = "python-odcs"
+    ONTOLOGY = "ontology"
 
 
 class SkipReason(StrEnum):
@@ -144,6 +147,10 @@ class ManifestFile:
     # The raw wire value, not narrowed to ManifestKind: an unrecognized kind is
     # a permanent failure the handler reports, not an exception at decode time.
     kind: str = ManifestKind.DBT
+    # The release that wrote the artifact: the folder that holds it in the store,
+    # which is not the release being parsed when production's artifact of a
+    # service stands in for a new one. "" when the source does not know it.
+    release_id: str = ""
     size_bytes: int = 0  # the fetched file's size on disk
     # The downloaded compile-extras.json that sits beside a dbt manifest; "" when
     # the object is absent or the artifact is not dbt.

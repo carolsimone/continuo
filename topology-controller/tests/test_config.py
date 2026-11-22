@@ -373,3 +373,44 @@ def test_validate_refuses_a_bad_metrics_port(monkeypatch):
     from config.config import validate
     with pytest.raises(RuntimeError, match="METRICS_PORT"):
         validate()
+
+
+def test_ontology_enabled_is_false_when_unset(monkeypatch):
+    monkeypatch.delenv("ONTOLOGY_ENABLED", raising=False)
+    from config.config import ontology_enabled
+    assert ontology_enabled() is False
+
+
+@pytest.mark.parametrize("raw,on", [("", False), ("false", False), ("true", True)])
+def test_ontology_enabled_reads_true_or_false(monkeypatch, raw, on):
+    """A rendered-but-empty ConfigMap value is treated as unset, which is off."""
+    monkeypatch.setenv("ONTOLOGY_ENABLED", raw)
+    from config.config import ontology_enabled
+    assert ontology_enabled() is on
+
+
+@pytest.mark.parametrize("raw", ["TRUE", "False", "1", "0", "yes", "on", " true", "true ", "null"])
+def test_ontology_enabled_refuses_any_other_value(monkeypatch, raw):
+    """Only the two words the chart renders are a setting: any other spelling stops the
+    service at boot instead of reading as off."""
+    monkeypatch.setenv("ONTOLOGY_ENABLED", raw)
+    from config.config import ontology_enabled
+    with pytest.raises(RuntimeError, match=f"unsupported ONTOLOGY_ENABLED {raw!r}: expected true or false"):
+        ontology_enabled()
+
+
+def test_validate_refuses_a_bad_ontology_switch(monkeypatch):
+    """The unreadable switch lands at startup, via validate()."""
+    monkeypatch.setenv("REDIS_URL", "redis://redis:6379")
+    monkeypatch.setenv("REDIS_PASSWORD", "redis-pw")
+    monkeypatch.setenv("S3_ENDPOINT_URL", "http://minio:9000")
+    monkeypatch.setenv("S3_BUCKET", "continuo")
+    monkeypatch.setenv("S3_ENV", "local")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "minioadmin")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "minioadmin")
+    monkeypatch.setenv("ONTOLOGY_ENABLED", "yes")
+
+    from config.config import validate
+    with pytest.raises(RuntimeError, match="ONTOLOGY_ENABLED"):
+        validate()

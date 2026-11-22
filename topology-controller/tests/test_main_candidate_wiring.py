@@ -15,6 +15,7 @@ from adapters.topology_artifact_writer import TopologyArtifactWriter
 from config.config import _SYSTEM_RELATIONS, SERVICE_NAME
 from config.secrets import EnvOrFileCredentialProvider
 from domain.model import ManifestRequest
+from service.contract_validation import ContractValidator
 from service.contracts_library import LIBRARY_VERSION
 from service.errors import PermanentMessageError
 from streams_contract import (
@@ -455,6 +456,26 @@ def test_main_hands_each_handler_the_contract_bundle_writer_over_the_installs_bu
     assert writer._bucket == "continuo"
 
 
+def test_main_hands_every_handler_the_one_validator_of_the_process(monkeypatch):
+    """A handler is built for each release. They share one validator, so a contract unchanged
+    since an earlier release is answered from its memory, and no other validator exists to
+    forget it."""
+    _common_monkeypatches(monkeypatch)
+    built = []
+    monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None))
+    monkeypatch.setattr(main, "CandidateManifestHandler",
+                        lambda **kw: built.append(kw) or SimpleNamespace(handle=lambda release_id: None))
+    main.main()
+    release = {b"payload": json.dumps({"release_id": "rel-1", "manifest_keys": [], "image_tags": {}}).encode()}
+
+    _RecordingConsumer.instances[0].message_handler(release)
+    _RecordingConsumer.instances[0].message_handler(release)
+
+    first, second = (kwargs["validator"] for kwargs in built)
+    assert isinstance(first, ContractValidator)
+    assert first is second
+
+
 def test_main_publishes_parse_results_on_the_v2_stream_as_this_service(monkeypatch):
     _common_monkeypatches(monkeypatch)
     built = []
@@ -541,3 +562,39 @@ def test_main_stops_when_the_permission_fence_refuses_the_login(monkeypatch):
     with pytest.raises(PermissionFenceError):
         main.main()
     assert _RecordingConsumer.instances == []
+
+
+@pytest.mark.parametrize("raw, enabled", [(None, False), ("", False), ("false", False), ("true", True)])
+def test_main_passes_the_switch_to_the_handler(monkeypatch, raw, enabled):
+    """main reads ONTOLOGY_ENABLED once and hands the handler the answer, so the switch the
+    chart renders reaches the code that acts on it."""
+    _common_monkeypatches(monkeypatch)
+    if raw is None:
+        monkeypatch.delenv("ONTOLOGY_ENABLED", raising=False)
+    else:
+        monkeypatch.setenv("ONTOLOGY_ENABLED", raw)
+    captured = {}
+
+    class FakeCandidateHandler:
+        def __init__(self, **kw):
+            captured.update(kw)
+
+        def handle(self, release_id):
+            pass
+
+    monkeypatch.setattr(main, "CandidateManifestHandler", FakeCandidateHandler)
+    monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None))
+
+    main.main()
+    _RecordingConsumer.instances[0].message_handler({b"payload": json.dumps({
+        "release_id": "rel-1", "manifest_keys": [], "image_tags": {},
+    }).encode()})
+
+    assert captured["ontology_enabled"] is enabled
+
+
+def test_main_refuses_an_unreadable_ontology_switch(monkeypatch):
+    _common_monkeypatches(monkeypatch)
+    monkeypatch.setenv("ONTOLOGY_ENABLED", "yes")
+    with pytest.raises(RuntimeError, match="ONTOLOGY_ENABLED"):
+        main.main()

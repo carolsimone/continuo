@@ -4,16 +4,42 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/carolsimone/continuo/pkg/maintenance"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/service/uow"
 )
 
 // ErrInvalidCandidate marks a submission the caller got wrong (a missing or
 // unsupported field), as opposed to an infrastructure failure while storing it.
 // Callers answer it as a client error and everything else as a server error.
 var ErrInvalidCandidate = errors.New("invalid candidate")
+
+// refusal is an error whose message is the whole text a caller reads, and that
+// matches the sentinel it is answered as.
+type refusal struct {
+	text string
+	as   error
+}
+
+func (r refusal) Error() string        { return r.text }
+func (r refusal) Is(target error) bool { return target == r.as }
+
+// ErrOntologyDisabled marks a release of kind ontology submitted while the
+// install's ontology switch is off. It is an ErrInvalidCandidate, so callers
+// answer it as a client error.
+var ErrOntologyDisabled error = refusal{
+	text: fmt.Sprintf("kind %q is accepted only when the install's ontology switch is on (contracts.ontology.enabled)",
+		release.ManifestKindOntology),
+	as: ErrInvalidCandidate,
+}
+
+// ErrOntologyServiceConflict marks a release that breaks the rules of the
+// ontology service: a second ontology service, or a service that changes
+// between the kind ontology and a node kind. Callers answer it as a conflict.
+var ErrOntologyServiceConflict = errors.New("ontology service conflict")
 
 // ErrReleaseIDConflict marks a submission whose release id already names a
 // candidate with a different service, image tag, manifest kind, bootstrap
@@ -43,9 +69,10 @@ type ReceiveCandidateInput struct {
 	CommitSHA  string
 	// Kind selects how this service's artifact is parsed: "dbt"
 	// (manifest.json — the default when absent, so existing CI callers are
-	// untouched) or "python-odcs" (odcs-bundle.json, uploaded by the domain
-	// repo's CI before this POST). Anything else, the python kind included, is
-	// rejected (HTTP 400).
+	// untouched), "python-odcs" (odcs-bundle.json, uploaded by the domain
+	// repo's CI before this POST) or "ontology" (ontology.yaml, the install's
+	// company ontology, accepted only while the install's ontology switch is
+	// on). Anything else, the python kind included, is rejected (HTTP 400).
 	Kind string
 	// Shadow, SourceOverlayURI, and VerifiesReleaseID are fix-verification
 	// concepts and are refused here (HTTP 400): a fix-verification run is
@@ -119,6 +146,13 @@ func resubmitOutcome(existing *pipeline.Run, in ReceiveCandidateInput, kind rele
 // wraps ErrReleaseIDConflict; any other error is a storage failure. The caller
 // (HTTP handler) is responsible for returning 202 Accepted to CI. It refuses
 // with maintenance.ErrActive while maintenance mode is on.
+//
+// A release of kind ontology is refused with ErrOntologyDisabled while the
+// install's ontology switch is off. When the submission would create a run,
+// the ontology service's rules apply (ErrOntologyServiceConflict): an install
+// has one ontology service, and a service never changes between the kind
+// ontology and a node kind. A release id the install already stored is
+// answered as a resubmit whatever the install holds now.
 func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) error {
 	if d.Maintenance {
 		return maintenance.ErrActive
@@ -130,17 +164,35 @@ func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) er
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidCandidate, err)
 	}
+	if kind == release.ManifestKindOntology && !d.OntologyEnabled {
+		return ErrOntologyDisabled
+	}
 	u := d.NewUoW()
 	if err := u.Begin(ctx); err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer u.Rollback() //nolint:errcheck
 
+	if kind == release.ManifestKindOntology {
+		// The release-queue lock serializes ontology submissions with each
+		// other and with promotions, so two submissions for two services
+		// cannot both pass the one-ontology-service check, and a promotion
+		// cannot change service_prod between the check and the insert. It is
+		// taken before the run row is loaded, as every holder of both locks
+		// takes them.
+		if err := u.LockReleaseQueue(ctx); err != nil {
+			return fmt.Errorf("lock release queue: %w", err)
+		}
+	}
+
 	existing, err := u.RunRepo().Load(ctx, in.ReleaseID)
 	if err != nil {
 		return fmt.Errorf("load run: %w", err)
 	}
 	if existing == nil {
+		if err := refuseOntologyConflict(ctx, u, in.Service, kind); err != nil {
+			return err
+		}
 		r := pipeline.NewCandidate(in.ReleaseID, in.Service, in.ImageTag, in.Bootstrap, in.Rebaseline, in.Repo, in.CommitSHA, kind, d.Clock.Now())
 		inserted, err := u.RunRepo().Create(ctx, r)
 		if err != nil {
@@ -166,4 +218,51 @@ func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) er
 		return err
 	}
 	return u.Commit()
+}
+
+// kindChangeRefusalText is the refusal for a release of a service whose
+// service_prod row holds the kind stored, when the release's kind is on the
+// other side of the line between the ontology and the node kinds. Intake
+// answers it as a conflict and activation ends the run with it as its detail.
+func kindChangeRefusalText(service string, stored release.ManifestKind) string {
+	return fmt.Sprintf("service %q is released as kind %q: a service cannot change between kind %q and a node kind",
+		service, stored, release.ManifestKindOntology)
+}
+
+// refuseOntologyConflict returns ErrOntologyServiceConflict when a new release
+// of kind for service breaks the rules of the ontology service: the service is
+// released with a kind on the other side of the line between the ontology and
+// the node kinds, or another service already is the install's ontology, in
+// service_prod or in a candidate run that has not ended.
+func refuseOntologyConflict(ctx context.Context, u uow.UnitOfWork, service string, kind release.ManifestKind) error {
+	stored, err := u.ServiceProdRepo().Get(ctx, service)
+	if err != nil {
+		return fmt.Errorf("get service_prod %q: %w", service, err)
+	}
+	isOntology := kind == release.ManifestKindOntology
+	if stored != nil && (stored.ManifestKind() == release.ManifestKindOntology) != isOntology {
+		return refusal{
+			text: kindChangeRefusalText(service, stored.ManifestKind()),
+			as:   ErrOntologyServiceConflict,
+		}
+	}
+	if !isOntology {
+		return nil
+	}
+	released, err := u.ServiceProdRepo().ServicesWithKind(ctx, release.ManifestKindOntology)
+	if err != nil {
+		return fmt.Errorf("list the services released as kind %q: %w", release.ManifestKindOntology, err)
+	}
+	queued, err := u.RunRepo().ActiveCandidateServicesWithKind(ctx, release.ManifestKindOntology)
+	if err != nil {
+		return fmt.Errorf("list the candidate runs of kind %q: %w", release.ManifestKindOntology, err)
+	}
+	others := slices.DeleteFunc(slices.Concat(released, queued), func(name string) bool { return name == service })
+	if len(others) == 0 {
+		return nil
+	}
+	return refusal{
+		text: fmt.Sprintf("service %q is the install's ontology: an install has one ontology service", slices.Min(others)),
+		as:   ErrOntologyServiceConflict,
+	}
 }
