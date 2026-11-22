@@ -1,0 +1,26 @@
+# python-api node that writes with modeType upsert: its pod receives Secret
+# continuo-api-upsert as env vars, and the script returns the rows of the phase
+# that UPSERT_PHASE names. Every run updates the rows whose id is already in the
+# table, adds the new ones and keeps the rows the script no longer returns.
+apiVersion: v3.2.0
+kind: DataContract
+id: e2e_schema.py_upsert
+name: py_upsert
+version: "0"
+description:
+  purpose: python-api node for the e2e upsert write path
+team:
+  name: e2e
+customProperties:
+  - {vendor: continuo, property: kind, value: python-api}
+  - {vendor: continuo, property: schedule, value: daily}
+  - {vendor: continuo, property: criticality, value: SECONDARY}
+  - {vendor: continuo, property: script, value: scripts/py_upsert.py}
+  - {vendor: continuo, property: secretRef, value: continuo-api-upsert}
+  - {vendor: continuo, property: modeType, value: upsert}
+schema:
+  - name: py_upsert
+    physicalType: table
+    properties:
+      - {name: id, physicalType: INTEGER, required: true, primaryKey: true, primaryKeyPosition: 1}
+      - {name: label, physicalType: "VARCHAR(16)"}

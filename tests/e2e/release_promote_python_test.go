@@ -32,11 +32,17 @@ const (
 	pyBadShapeUniqueID = "e2e_schema.py_bad_shape"
 	pyCsvUniqueID      = "e2e_schema.py_csv"
 	pyAPIUniqueID      = "e2e_schema.py_api"
+	pyUpsertUniqueID   = "e2e_schema.py_upsert"
 
 	// pyAPISecret is the continuo-api-* Secret the py_api node's contract
 	// names in secretRef. The run subtests create and delete it themselves in
 	// the namespace the e2e Jobs run in, so its presence is under test control.
 	pyAPISecret = "continuo-api-probe"
+
+	// pyUpsertSecret is the continuo-api-* Secret the py_upsert node's contract
+	// names in secretRef. It holds UPSERT_PHASE, the key that picks the rows the
+	// node's script returns, and setUpsertPhase rewrites it before every run.
+	pyUpsertSecret = "continuo-api-upsert"
 
 	// pyFixtureImage is the domain image scripts/setup.sh builds and side-loads
 	// into kind. The release posts it as image_tag and execution-controller runs it
@@ -257,6 +263,7 @@ func TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes(t *testing.T) 
 	assertValidationNodeOp(t, ctx, validationTap, releaseID, pyProbeUniqueID, model.ValidationOpBuildFromColumns, ".json")
 	assertValidationNodeOp(t, ctx, validationTap, releaseID, pyCsvUniqueID, model.ValidationOpBuildFromColumns, ".json")
 	assertValidationNodeOp(t, ctx, validationTap, releaseID, pyAPIUniqueID, model.ValidationOpBuildFromColumns, ".json")
+	assertValidationNodeOp(t, ctx, validationTap, releaseID, pyUpsertUniqueID, model.ValidationOpBuildFromColumns, ".json")
 	assertNoCompileRequested(t, compileTap, releaseID)
 
 	// The promoted pointer records the python-odcs kind and the bundle.
@@ -283,7 +290,7 @@ func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *tes
 	putS3Object(t, ctx, clients, pyCsvSourceKey, pyCsvFixtureData)
 
 	return promotePythonContractRelease(t, ctx, clients, validationTap, pyFixtureBundle(t, ctx, nil),
-		[]string{pyProbeUniqueID, pyBadShapeUniqueID, pyCsvUniqueID, pyAPIUniqueID}, pyProbeUniqueID)
+		[]string{pyProbeUniqueID, pyBadShapeUniqueID, pyCsvUniqueID, pyAPIUniqueID, pyUpsertUniqueID}, pyProbeUniqueID)
 }
 
 // promotePythonContractRelease drives pyE2EService through a full release of
@@ -400,23 +407,7 @@ func TestE2E_PythonNodeRun_MaterializesAndReportsFailures(t *testing.T) {
 
 		verifySchedulerFailed(t, ctx, clients, runID)
 
-		var runResultsURI string
-		pollUntil(t, ctx, 3*time.Minute, 2*time.Second, func() (bool, error) {
-			err := clients.runControllerDB.QueryRowContext(ctx, `
-				SELECT COALESCE(a.run_results_uri, '')
-				FROM task_attempts a
-				JOIN tasks t ON t.task_id = a.task_id
-				WHERE t.run_id = $1
-				ORDER BY a.last_report_at DESC NULLS LAST
-				LIMIT 1
-			`, runID).Scan(&runResultsURI)
-			if err != nil {
-				return false, nil
-			}
-			return runResultsURI != "", nil
-		}, "task_attempts never recorded a run_results_uri for the failed python node")
-
-		body := getS3Object(t, ctx, clients, runResultsURI)
+		body := failedRunResults(t, ctx, clients, runID)
 		assert.Contains(t, string(body), `"status":"error"`)
 		assert.Contains(t, string(body), "ConformError:",
 			"the structured result must carry the harness's deterministic error class")
@@ -490,6 +481,187 @@ func TestE2E_PythonNodeRun_MaterializesAndReportsFailures(t *testing.T) {
 	})
 }
 
+// TestE2E_PythonUpsertNode_UpdatesByKeyKeepsOldRowsAndRefusesDrift proves the
+// write path of a python-api node with modeType upsert end to end. It promotes
+// the python fixture service, then runs py_upsert in phases, each phase being
+// the UPSERT_PHASE its Secret names: the first run creates the table with the
+// key as its primary key and inserts the rows, the second updates the row whose
+// id it returns again, adds the new id and keeps the row it no longer returns,
+// a run whose script returns no row leaves the table as it is, and a run
+// against a table that gained a column the contract does not declare fails
+// before it writes. The sub-tests run in order: each starts from the table the
+// one before left.
+func TestE2E_PythonUpsertNode_UpdatesByKeyKeepsOldRowsAndRefusesDrift(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	clients := setupClients(t, ctx)
+
+	verifyServicesHealthy(t)
+	verifyK8sAvailable(t, ctx)
+	requireReleaseControllerHealthy(t, clients)
+
+	// Tap the streams before the release is posted: the trim loop removes
+	// consumed entries, so the checks below read what the taps recorded.
+	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
+
+	_, cleanup := promotePythonFixtureRelease(t, ctx, clients, validationTap)
+	defer cleanup()
+
+	// The runtime under test creates the table in the warehouse, so a table an
+	// earlier run left, with its rows and columns, is dropped before the first
+	// run and again when the test ends, together with the Secret that holds the
+	// phase. The deferred calls run while the pools are still open.
+	dropPyUpsertTable(t, ctx, clients)
+	defer dropPyUpsertTable(t, context.Background(), clients)
+	defer deleteUpsertSecret(t, context.Background())
+
+	firstRows := []pyUpsertRow{{1, "a"}, {2, "b"}, {3, "c"}}
+	updatedRows := []pyUpsertRow{{1, "a"}, {2, "B"}, {3, "c"}, {4, "d"}}
+
+	ok := t.Run("phase 1 creates the table and inserts the rows", func(t *testing.T) {
+		setUpsertPhase(t, ctx, 1)
+		runID, scheduleName := triggerPythonNodeRun(t, ctx, clients, "py_upsert")
+		defer cleanupSingleNodeRun(t, ctx, clients, runID, scheduleName)
+
+		verifySchedulerSucceeded(t, ctx, clients, runID)
+
+		assert.Equal(t, firstRows, readPyUpsertRows(t, ctx, clients),
+			"the first run must insert exactly the rows of phase 1")
+		t.Log("✅ upsert node created its table and inserted the first rows")
+	})
+	if !ok {
+		return
+	}
+
+	ok = t.Run("phase 2 updates by key and keeps the rows the script no longer returns", func(t *testing.T) {
+		setUpsertPhase(t, ctx, 2)
+		runID, scheduleName := triggerPythonNodeRun(t, ctx, clients, "py_upsert")
+		defer cleanupSingleNodeRun(t, ctx, clients, runID, scheduleName)
+
+		verifySchedulerSucceeded(t, ctx, clients, runID)
+
+		assert.Equal(t, updatedRows, readPyUpsertRows(t, ctx, clients),
+			"id 2 must carry its new label, id 4 must be added and id 1, which phase 2 does not return, must stay")
+
+		var keyColumns []string
+		require.NoError(t, clients.dbtDB.SelectContext(ctx, &keyColumns, `
+			SELECT kcu.column_name
+			FROM information_schema.table_constraints tc
+			JOIN information_schema.key_column_usage kcu
+			  ON kcu.constraint_schema = tc.constraint_schema
+			 AND kcu.constraint_name = tc.constraint_name
+			 AND kcu.table_name = tc.table_name
+			WHERE tc.table_schema = 'e2e_schema' AND tc.table_name = 'py_upsert'
+			  AND tc.constraint_type = 'PRIMARY KEY'
+			ORDER BY kcu.ordinal_position
+		`))
+		assert.Equal(t, []string{"id"}, keyColumns,
+			"the contract's key must be the table's primary key")
+		t.Log("✅ upsert node updated by key, added the new row and kept the old one")
+	})
+	if !ok {
+		return
+	}
+
+	ok = t.Run("phase 3 with no rows leaves the table unchanged", func(t *testing.T) {
+		setUpsertPhase(t, ctx, 3)
+		runID, scheduleName := triggerPythonNodeRun(t, ctx, clients, "py_upsert")
+		defer cleanupSingleNodeRun(t, ctx, clients, runID, scheduleName)
+
+		verifySchedulerSucceeded(t, ctx, clients, runID)
+
+		assert.Equal(t, updatedRows, readPyUpsertRows(t, ctx, clients),
+			"an upsert of no row must not delete or change any row")
+		t.Log("✅ upsert node with an empty result kept every row")
+	})
+	if !ok {
+		return
+	}
+
+	t.Run("a table that gained a column fails the run and keeps its rows", func(t *testing.T) {
+		_, err := clients.dbtDB.ExecContext(ctx, `ALTER TABLE e2e_schema.py_upsert ADD COLUMN extra INTEGER`)
+		require.NoError(t, err, "add a column the contract does not declare")
+		defer func() {
+			dropCtx, dropCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer dropCancel()
+			if _, err := clients.dbtDB.ExecContext(dropCtx,
+				`ALTER TABLE e2e_schema.py_upsert DROP COLUMN IF EXISTS extra`); err != nil {
+				t.Errorf("cleanup: drop column extra: %v", err)
+			}
+		}()
+
+		setUpsertPhase(t, ctx, 2)
+		runID, scheduleName := triggerPythonNodeRun(t, ctx, clients, "py_upsert")
+		defer cleanupSingleNodeRun(t, ctx, clients, runID, scheduleName)
+
+		verifySchedulerFailed(t, ctx, clients, runID)
+
+		body := failedRunResults(t, ctx, clients, runID)
+		assert.Contains(t, string(body), `"status":"error"`)
+		assert.Contains(t, string(body), "LoadError:",
+			"the structured result must carry the harness's load error class")
+		assert.Contains(t, string(body), "unexpected column(s)",
+			"the run must fail on the column the contract does not declare, not for another reason")
+
+		assert.Equal(t, updatedRows, readPyUpsertRows(t, ctx, clients),
+			"a refused run must leave the table's rows as they were")
+		t.Log("✅ upsert node refused a table whose columns drifted from its contract")
+	})
+}
+
+// pyUpsertRow is one row of the py_upsert node's table.
+type pyUpsertRow struct {
+	ID    int    `db:"id"`
+	Label string `db:"label"`
+}
+
+// readPyUpsertRows returns every row of the py_upsert table, ordered by id.
+func readPyUpsertRows(t *testing.T, ctx context.Context, clients *testClients) []pyUpsertRow {
+	t.Helper()
+	var rows []pyUpsertRow
+	require.NoError(t, clients.dbtDB.SelectContext(ctx, &rows,
+		`SELECT id, label FROM e2e_schema.py_upsert ORDER BY id`))
+	return rows
+}
+
+// dropPyUpsertTable drops the py_upsert node's table, whose rows and columns a
+// run builds on, so a test starts from the table its first run creates and
+// leaves none behind.
+func dropPyUpsertTable(t *testing.T, ctx context.Context, clients *testClients) {
+	t.Helper()
+	dropCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	_, err := clients.dbtDB.ExecContext(dropCtx, `DROP TABLE IF EXISTS e2e_schema.py_upsert`)
+	require.NoError(t, err, "drop e2e_schema.py_upsert")
+}
+
+// failedRunResults waits until the latest attempt of the run's task has
+// recorded its run results, and returns the structured result object the
+// attempt uploaded.
+func failedRunResults(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID) []byte {
+	t.Helper()
+	var runResultsURI string
+	pollUntil(t, ctx, 3*time.Minute, 2*time.Second, func() (bool, error) {
+		err := clients.runControllerDB.QueryRowContext(ctx, `
+			SELECT COALESCE(a.run_results_uri, '')
+			FROM task_attempts a
+			JOIN tasks t ON t.task_id = a.task_id
+			WHERE t.run_id = $1
+			ORDER BY a.last_report_at DESC NULLS LAST
+			LIMIT 1
+		`, runID).Scan(&runResultsURI)
+		if err != nil {
+			return false, nil
+		}
+		return runResultsURI != "", nil
+	}, "task_attempts never recorded a run_results_uri for the failed python node")
+	return getS3Object(t, ctx, clients, runResultsURI)
+}
+
 // createAPISecret (re)creates the py_api node's continuo-api-* Secret in the
 // namespace the e2e Jobs run in, holding a dummy PROBE_API_KEY.
 func createAPISecret(t *testing.T, ctx context.Context) {
@@ -507,6 +679,26 @@ func deleteAPISecret(t *testing.T, ctx context.Context) {
 	out, err := exec.CommandContext(ctx, "kubectl", "delete", "secret", pyAPISecret,
 		"-n", "default", "--ignore-not-found").CombinedOutput()
 	require.NoError(t, err, "delete %s: %s", pyAPISecret, out)
+}
+
+// setUpsertPhase (re)creates the py_upsert node's continuo-api-* Secret in the
+// namespace the e2e Jobs run in, holding UPSERT_PHASE=<phase>: the run that
+// starts next reads the phase from it.
+func setUpsertPhase(t *testing.T, ctx context.Context, phase int) {
+	t.Helper()
+	_ = exec.CommandContext(ctx, "kubectl", "delete", "secret", pyUpsertSecret, "-n", "default", "--ignore-not-found").Run()
+	out, err := exec.CommandContext(ctx, "kubectl", "create", "secret", "generic", pyUpsertSecret, //nolint:gosec // fixed arguments; phase is an int
+		"-n", "default", fmt.Sprintf("--from-literal=UPSERT_PHASE=%d", phase)).CombinedOutput()
+	require.NoError(t, err, "create %s: %s", pyUpsertSecret, out)
+}
+
+// deleteUpsertSecret removes the py_upsert node's continuo-api-* Secret;
+// deleting an absent Secret is not an error.
+func deleteUpsertSecret(t *testing.T, ctx context.Context) {
+	t.Helper()
+	out, err := exec.CommandContext(ctx, "kubectl", "delete", "secret", pyUpsertSecret,
+		"-n", "default", "--ignore-not-found").CombinedOutput()
+	require.NoError(t, err, "delete %s: %s", pyUpsertSecret, out)
 }
 
 // triggerPythonNodeRun starts a single-node run of the named python fixture
