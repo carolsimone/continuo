@@ -430,6 +430,10 @@ func FuzzCleanAndRestore(f *testing.F) {
 		"[redacted:email:01] [redacted:email:99999999999999999999999] a@b.co",
 		`password: str = "hunter2"`, `api_key: Optional[str] = "sk-live"`, `token = os.environ["TOKEN"]`,
 		"password: |\n  x", "https://example.com:443?email=a@b.com",
+		"password: |\n  hunter2\nnext: x", "token: >-\n  a\n\n  b\n", "- password: |\n    x\n  user: bob", "db:\n  password: |+\n    x\n  user: y",
+		"password: |\r\n  hunter2\r\n", "password: |\n  [redacted:secret:1]\n", "password: |\n  a@b.co\n  [redacted:email:2]",
+		"-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOY\n-----END PGP PRIVATE KEY BLOCK-----", "-----BEGIN PGP PRIVATE KEY BLOCK-----\ncut",
+		"Authorization: BEARER abcdefgh1234567", "authorization: bEaReR abcdefgh1234567",
 		"password: xK9(mP2q", "password=xK9(mP2)q", "PGPASSWORD=Ab[cd]9 psql", `token = os.getenv(KEY, "d")`,
 		"[redacted:email:9223372036854775806] a@x.org b@x.org", "[redacted:email:999999999] a@x.org",
 		"password=[redacted:secret:1]x", "password=hunter2", "password=hunter2 [redacted:secret:1]x url=postgres://app:[redacted:secret:1]9@db/x",
@@ -538,6 +542,11 @@ var leakyPieces = []struct{ text, secret string }{
 	{`api_key = b"Zq7bytesLit"`, "Zq7bytesLit"},
 	{`password: str = """Zq7annotTriple"""`, "Zq7annotTriple"},
 	{pemKey, "MIIEowIBAAKCAQEAxJ5g1c0Zk3lQ"},
+	{"\npassword: |\n  Zq7blockLit\n  Zq7blockMore", "Zq7blockLit"},
+	{"\ntoken: >-\n    Zq7foldedLit\n\n    Zq7foldedMore", "Zq7foldedMore"},
+	{"\n- api_key: |\n    Zq7listBlock\n  user: bob", "Zq7listBlock"},
+	{"-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOYBF2Zq7pgpBody\n-----END PGP PRIVATE KEY BLOCK-----", "lQOYBF2Zq7pgpBody"},
+	{"Authorization: BEARER Zq7bearerUpper12", "Zq7bearerUpper12"},
 }
 
 // neutralPieces are texts that hold no secret.
@@ -606,8 +615,9 @@ func TestRedactor_LeavesNoSecretInATextMadeOfPieces(t *testing.T) {
 var piecesOfText = []string{
 	"password", "PGPASSWORD", "token", "secret_key", "api-key", "=", ":", "=>", " ", "  ", "\t", "\n", ",", ";", "&", "?", "#", "/",
 	"(", ")", "[", "]", "{", "}", "{{", "$(", "\"", "'", "''", `"""`, "'''", `b"`, `\"\"\"`, `\\\"`, "\\\"", ".", "|", ">", "-", "x", "hunter2", "Tr0ub4dor", "abc.def", "os.getenv", "str",
-	"None", "null", "Bearer ", "Bearer 00000000", awsKeyID, githubPAT, jwt, "ops@acme.com", "a@b.co", "@", "://", "https://u:pw@h.example.com/x",
-	"-----BEGIN PRIVATE KEY-----", "-----END PRIVATE KEY-----", "body",
+	"None", "null", "Bearer ", "BEARER ", "bearer ", "Bearer 00000000", awsKeyID, githubPAT, jwt, "ops@acme.com", "a@b.co", "@", "://", "https://u:pw@h.example.com/x",
+	"-----BEGIN PRIVATE KEY-----", "-----END PRIVATE KEY-----", "-----BEGIN PGP PRIVATE KEY BLOCK-----", "-----END PGP PRIVATE KEY BLOCK-----", "body",
+	"password: |", "token: >-", "\n  ", "\n    ", "|-", ">+", "|2",
 	"[redacted:secret]", "[redacted:secret:1]", "[redacted:email:2]", "[redacted:key:1]", "[redacted:email:9223372036854775806]",
 }
 
