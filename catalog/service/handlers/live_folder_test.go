@@ -22,6 +22,7 @@ import (
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	"github.com/carolsimone/continuo/catalog/service/queries"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/topologyartifact"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -537,10 +538,11 @@ func TestLiveRewrite_ACaseOnlyChangeOfTheDeclaredSchemaPutsTheFileAgain(t *testi
 	assert.Equal(t, []ports.LiveIndexFile{{UniqueID: id, Version: 1, ContractHash: "sha256:o1"}}, f.store.index.Files)
 }
 
-// A node the contracts group created before the topology swap has no declared
-// schema, and the swap that gives it one never rewrites the folder: the next
-// promotion's rewrite puts the file whose entry now names a different schema.
-func TestLiveRewrite_ADeclaredSchemaThatArrivesAfterTheFirstRewriteIsPublishedByTheNext(t *testing.T) {
+// A folder that reads no topology artifact names the schema the graph holds. A node
+// the contracts group created before the topology swap has none, and the swap that
+// gives it one does not rewrite the folder: the next rewrite puts the file whose
+// entry now names a different schema.
+func TestLiveRewrite_WithNoArtifactADeclaredSchemaThatArrivesAfterTheFirstRewriteIsPublishedByTheNext(t *testing.T) {
 	const id = "analytics.orders"
 	f := newLiveFolderFixture(liveContract(id, 1, "sha256:o1"))
 	f.folderWith(schemaRenderer{}, liveServer)
@@ -551,6 +553,149 @@ func TestLiveRewrite_ADeclaredSchemaThatArrivesAfterTheFirstRewriteIsPublishedBy
 	require.NoError(t, f.rewrite(4))
 
 	assert.Equal(t, id+" schema=Analytics", string(f.store.files[id]))
+}
+
+// ── the schema a promotion's own topology artifact declares ───────────────────
+
+// declaringFolder replaces the fixture's folder with one that reads the promotion's
+// topology artifact for the schema of each node, and returns the artifact reader.
+func (f *liveFolderFixture) declaringFolder() *fakeArtifactReader {
+	artifacts := &fakeArtifactReader{}
+	f.settings = fingerprintOf(liveServer)
+	f.folder = handlers.NewLiveFolder(f.reader, f.store, schemaRenderer{}, f.lease, f.lease, f.metrics,
+		liveServer, "", func() time.Time { return liveClock }, newTestLogger(), handlers.WithDeclaredSchemas(artifacts))
+	return artifacts
+}
+
+// declaring registers the artifact of promotion seq, which declares each node of
+// schemas in its schema.
+func declaring(artifacts *fakeArtifactReader, seq int64, schemas map[string]string) {
+	in := livePromotion(seq)
+	doc := topologyartifact.Document{SchemaVersion: 1, TenantID: in.TenantID, ReleaseID: in.ReleaseID}
+	for id, schema := range schemas {
+		doc.Nodes = append(doc.Nodes, topologyartifact.Node{UniqueID: id, SchemaName: schema})
+	}
+	if artifacts.docs == nil {
+		artifacts.docs = map[string]topologyartifact.Document{}
+	}
+	artifacts.docs[in.TopologyURI] = doc
+}
+
+// A node the contracts group created before the topology swap has no schema in the
+// graph yet. The first live file of that node names the schema its promotion's
+// artifact declares, not the lower-case schema of its contract id.
+func TestLiveRewrite_ANodeTheSwapHasNotReachedYetNamesTheSchemaOfThePromotionsArtifact(t *testing.T) {
+	const id = "analytics.orders"
+	f := newLiveFolderFixture(liveContract(id, 1, "sha256:o1"))
+	artifacts := f.declaringFolder()
+	declaring(artifacts, 3, map[string]string{id: "Analytics"})
+
+	require.NoError(t, f.rewrite(3))
+
+	assert.Equal(t, id+" schema=Analytics", string(f.store.files[id]))
+	assert.Equal(t, []ports.LiveIndexFile{{UniqueID: id, Version: 1, ContractHash: "sha256:o1", PhysicalSchema: "Analytics"}}, f.store.index.Files)
+	assert.Equal(t, []string{livePromotion(3).TopologyURI}, artifacts.calls, "the promotion's artifact is read once")
+}
+
+// A node whose schema changes only in case has the old spelling in the graph until the
+// swap runs. The rewrite that runs before it names the new spelling, from the artifact.
+func TestLiveRewrite_ASchemaThatChangesOnlyInCaseNamesTheNewSpellingBeforeTheSwapRuns(t *testing.T) {
+	const id = "analytics.orders"
+	f := newLiveFolderFixture(declaredIn(liveContract(id, 1, "sha256:o1"), "analytics"))
+	artifacts := f.declaringFolder()
+	declaring(artifacts, 3, map[string]string{id: "analytics"})
+	require.NoError(t, f.rewrite(3))
+	require.Equal(t, id+" schema=analytics", string(f.store.files[id]))
+
+	declaring(artifacts, 4, map[string]string{id: "Analytics"}) // the graph still holds "analytics"
+	require.NoError(t, f.rewrite(4))
+
+	assert.Equal(t, id+" schema=Analytics", string(f.store.files[id]))
+}
+
+// The artifact is the promotion's own truth: a node it declares in another schema than
+// the graph holds names the artifact's, and a node it does not declare keeps the graph's.
+func TestLiveRewrite_TheArtifactWinsOverTheGraphForTheNodesItDeclares(t *testing.T) {
+	f := newLiveFolderFixture(
+		declaredIn(liveContract("analytics.declared", 1, "sha256:d1"), "stale"),
+		declaredIn(liveContract("analytics.absent", 1, "sha256:a1"), "Kept"),
+		declaredIn(liveContract("analytics.blank", 1, "sha256:b1"), "FromGraph"),
+	)
+	artifacts := f.declaringFolder()
+	declaring(artifacts, 3, map[string]string{"analytics.declared": "Fresh", "analytics.blank": ""})
+
+	require.NoError(t, f.rewrite(3))
+
+	assert.Equal(t, "analytics.declared schema=Fresh", string(f.store.files["analytics.declared"]))
+	assert.Equal(t, "analytics.absent schema=Kept", string(f.store.files["analytics.absent"]))
+	assert.Equal(t, "analytics.blank schema=FromGraph", string(f.store.files["analytics.blank"]),
+		"a node the artifact declares in no schema keeps the graph's")
+}
+
+// An artifact that is corrupt, or is another tenant's or release's, is the swap's to
+// dead-letter: the rewrite goes on with the schemas the graph holds.
+func TestLiveRewrite_AnArtifactThatIsNotThePromotionsFallsBackToTheGraph(t *testing.T) {
+	const id = "analytics.orders"
+	for name, arrange := range map[string]func(a *fakeArtifactReader){
+		"corrupt": func(a *fakeArtifactReader) { a.err = fmt.Errorf("%w: checksum", ports.ErrTopologyArtifactCorrupt) },
+		"another release": func(a *fakeArtifactReader) {
+			declaring(a, 3, map[string]string{id: "Wrong"})
+			doc := a.docs[livePromotion(3).TopologyURI]
+			doc.ReleaseID = "rel-other"
+			a.docs[livePromotion(3).TopologyURI] = doc
+		},
+		"another tenant": func(a *fakeArtifactReader) {
+			declaring(a, 3, map[string]string{id: "Wrong"})
+			doc := a.docs[livePromotion(3).TopologyURI]
+			doc.TenantID = "other"
+			a.docs[livePromotion(3).TopologyURI] = doc
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newLiveFolderFixture(declaredIn(liveContract(id, 1, "sha256:o1"), "FromGraph"))
+			arrange(f.declaringFolder())
+
+			require.NoError(t, f.rewrite(3))
+
+			assert.Equal(t, id+" schema=FromGraph", string(f.store.files[id]))
+		})
+	}
+}
+
+// An artifact that is not there yet, or storage that fails, fails the rewrite before it
+// writes anything, so the message is retried and the files are put once with the right schema.
+func TestLiveRewrite_AnArtifactThatCannotBeReadFailsTheRewriteBeforeItWrites(t *testing.T) {
+	const id = "analytics.orders"
+	for name, cause := range map[string]error{
+		"missing":         fmt.Errorf("%w: late", ports.ErrTopologyArtifactNotFound),
+		"storage is down": errors.New("connection refused"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newLiveFolderFixture(liveContract(id, 1, "sha256:o1"))
+			f.declaringFolder().err = cause
+
+			err := f.rewrite(3)
+
+			require.Error(t, err)
+			require.ErrorIs(t, err, cause)
+			assert.Empty(t, f.store.writes(), "nothing is written")
+		})
+	}
+}
+
+// The rewrite a settings change or a start-up refresh makes is for no promotion's
+// artifact: it reads none and names the schemas the graph holds, which the swap has set.
+func TestLiveRewriteAll_ReadsNoArtifact(t *testing.T) {
+	const id = "analytics.orders"
+	f := newLiveFolderFixture(declaredIn(liveContract(id, 1, "sha256:o1"), "Analytics"))
+	artifacts := f.declaringFolder()
+	declaring(artifacts, 3, map[string]string{id: "Other"})
+	f.lease.seq, f.lease.release = 3, "rel-3"
+
+	require.NoError(t, f.folder.RewriteAll(context.Background(), "default"))
+
+	assert.Equal(t, id+" schema=Analytics", string(f.store.files[id]))
+	assert.Empty(t, artifacts.calls)
 }
 
 // An index whose entries carry no physical schema was written for files whose
