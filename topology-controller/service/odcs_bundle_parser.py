@@ -44,7 +44,7 @@ from service.contract_validation import ContractValidator
 from service.contracts_library import LIBRARY_VERSION, version_triple
 from service.python_kind_rules import RULES
 from service.python_node_builder import PythonNodeFields, build_python_node
-from service.failed_contract import failure_detail
+from service.failed_contract import count_and_describe
 from service.release_timings import (
     REASON_IDENTITY,
     REASON_STRICT_YAML,
@@ -175,7 +175,7 @@ def _check_entries(raw: object) -> list[dict[str, str]]:
 
 def _failed_node(timings: ReleaseTimings, doc: object, path: str, service: str, issues: list[Issue]) -> FailedNode:
     """The FailedNode of a contract that did not pass its checks; each issue is counted."""
-    detail = failure_detail(timings, issues)
+    detail = count_and_describe(timings, issues)
     identifier = doc.get("id") if isinstance(doc, Mapping) else None
     return FailedNode(
         node_id=_failed_node_id(identifier) if isinstance(identifier, str) and identifier.strip() else path,

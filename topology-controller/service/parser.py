@@ -56,9 +56,9 @@ from domain.node_timeout import timeout_seconds
 from service.compile_extras import seed_columns_hash
 from service.contract_validation import ContractValidator
 from service.dbt_hashing import CodeUnit, DbtHashParts, ManifestContext, hash_dbt_node
-from service import manifest_shape
 from service.errors import ContractGenerationError
-from service.failed_contract import failure_detail
+from service.failed_contract import count_and_describe
+from service.manifest_shape import refusal as unreadable_node_reason
 from service.release_timings import REASON_IDENTITY, REASON_MANIFEST_SHAPE, FailureStage, ReleaseTimings, Stage
 
 logger = logging.getLogger(__name__)
@@ -172,9 +172,9 @@ def _manifest_call[T](call: Callable[[], T], timings: ReleaseTimings) -> T:
 
 def _require_readable_nodes(manifest: Mapping[str, Any], timings: ReleaseTimings) -> None:
     """Refuse a manifest whose nodes hold a field in a shape the hashing and the parse cannot
-    read (see `manifest_shape`): counted like any field the library cannot read, and raised as
+    read (see `service/manifest_shape.py`): counted like any field the library cannot read, and raised as
     an InvalidNodeSettingError, since the artifact is at fault and a retry cannot fix it."""
-    reason = manifest_shape.refusal(manifest["nodes"])
+    reason = unreadable_node_reason(manifest["nodes"])
     if reason is not None:
         timings.add_contract_failure(FailureStage.GENERATE, REASON_MANIFEST_SHAPE)
         raise InvalidNodeSettingError(reason)
@@ -301,7 +301,7 @@ def _issues_failure(
     check reports a seed's contract issues before its header lines. A detail with
     header messages starts with the seed's manifest id, which they do not carry,
     as the detail of a node the library cannot read starts with its id."""
-    detail = failure_detail(timings, issues, header_issues)
+    detail = count_and_describe(timings, issues, header_issues)
     if header_issues:
         detail = f"{node_id}: {detail}"
     return _failed_node(name, node, resource_type, detail)

@@ -12,8 +12,8 @@ from continuo_contracts.validate import Issue
 from service.release_timings import REASON_SEED_HEADER, FailureStage, ReleaseTimings
 
 
-def failure_detail(timings: ReleaseTimings, issues: Sequence[Issue], header_issues: Sequence[str] = ()) -> str:
-    """The detail of a failed contract, and the count of what is wrong with it.
+def count_and_describe(timings: ReleaseTimings, issues: Sequence[Issue], header_issues: Sequence[str] = ()) -> str:
+    """Count what is wrong with a failed contract, and return its detail.
 
     Each of `issues` is counted as a failure of the `validate` stage by its own reason, and
     each of `header_issues` (the messages of a seed whose CSV header and declared columns
