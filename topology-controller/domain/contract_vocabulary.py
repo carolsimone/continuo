@@ -71,6 +71,12 @@ class ApproverSource(StrEnum):
     NONE = "none"
 
 
+class ContractFamily(StrEnum):
+    """Which producer wrote a node's ODCS contract. It travels on manifest.loaded.candidate:v2 (the count of contracts by family), is stored on each contract of a release's contract bundle and on each contract version in catalog, and the release page shows the count."""
+    DBT = "dbt"
+    PYTHON = "python"
+
+
 class RemediationSource(StrEnum):
     """The pipeline stage that produced the failure of a node a remediation works on."""
     VALIDATION = "validation"

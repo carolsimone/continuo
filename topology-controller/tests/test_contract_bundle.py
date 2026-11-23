@@ -117,7 +117,7 @@ def _inputs(given: dict) -> dict:
         "tenant_id": given["tenant_id"],
         "release_id": given["release_id"],
         "library_version": given["library_version"],
-        "contracts": [StoredContract(**c) for c in given["contracts"]],
+        "contracts": [StoredContract(**{**c, "family": ContractFamily(c["family"])}) for c in given["contracts"]],
         "provenance": given["provenance"],
         "timings": given["timings"],
     }
@@ -601,8 +601,9 @@ def test_a_declared_read_passes_the_check_exactly_when_the_library_lists_it(entr
 # --- the bundle -----------------------------------------------------------------
 
 def _stored(unique_id: str, *, service: str = "service-py", family: str = "python") -> StoredContract:
+    """A stored contract of `family`, a value of the contract_family vocabulary (any other value raises ValueError)."""
     return StoredContract(
-        unique_id=unique_id, family=family, service=service, contract_hash="sha256:" + "a" * 64, content_hash="sha256:" + "b" * 64,
+        unique_id=unique_id, family=ContractFamily(family), service=service, contract_hash="sha256:" + "a" * 64, content_hash="sha256:" + "b" * 64,
         source_path=f"contracts/{unique_id.split('.')[1]}.odcs.yaml", source_sha256="c" * 64,
         document={"id": unique_id})
 

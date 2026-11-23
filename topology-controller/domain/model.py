@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from domain.contract_vocabulary import ParseFailureKind
+from domain.contract_vocabulary import ContractFamily, ParseFailureKind
 from domain.contract_vocabulary import NodeRuntime as Runtime
 from domain.contract_vocabulary import NodeType
 
@@ -80,14 +80,6 @@ class FailedNode:
     file_path: str
     node_type: str
     detail: str
-
-
-class ContractFamily(StrEnum):
-    """Which producer wrote a node's ODCS contract: `dbt` for a dbt model, seed or
-    snapshot (generated from its manifest entry), `python` for a Python node (authored
-    in a contract file)."""
-    DBT = "dbt"
-    PYTHON = "python"
 
 
 @dataclass(frozen=True)

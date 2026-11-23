@@ -23,6 +23,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // SchemaVersion is the only document schema_version this build reads. A
@@ -85,25 +87,25 @@ type ServiceProvenance struct {
 // Summary counts the bundle's contracts, in all and by family, the contracts
 // that failed validation (Invalid) and the nodes the release left out (Skipped).
 type Summary struct {
-	Contracts int            `json:"contracts"`
-	ByFamily  map[string]int `json:"by_family"`
-	Invalid   int            `json:"invalid"`
-	Skipped   int            `json:"skipped"`
+	Contracts int                          `json:"contracts"`
+	ByFamily  map[model.ContractFamily]int `json:"by_family"`
+	Invalid   int                          `json:"invalid"`
+	Skipped   int                          `json:"skipped"`
 }
 
 // Contract is one node's contract. Family names the producer that wrote it,
-// "dbt" for a dbt model, seed or snapshot and "python" for a Python node, and
-// the reader keeps it as the writer wrote it. Document is its stored form, the
+// `dbt` for a dbt model, seed or snapshot and `python` for a Python node (see
+// model.ContractFamily), and the reader keeps it as the writer wrote it. Document is its stored form, the
 // ODCS document the hashes are taken from, kept as the JSON the writer
 // produced. ContractHash is the hash of that document and ContentHash the
 // node's code fingerprint.
 type Contract struct {
-	Family       string          `json:"family"`
-	Service      string          `json:"service"`
-	ContractHash string          `json:"contract_hash"`
-	ContentHash  string          `json:"content_hash"`
-	Source       Source          `json:"source"`
-	Document     json.RawMessage `json:"document"`
+	Family       model.ContractFamily `json:"family"`
+	Service      string               `json:"service"`
+	ContractHash string               `json:"contract_hash"`
+	ContentHash  string               `json:"content_hash"`
+	Source       Source               `json:"source"`
+	Document     json.RawMessage      `json:"document"`
 }
 
 // Source is the file a contract stands for: its path in the service's

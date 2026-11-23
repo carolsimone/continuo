@@ -1,6 +1,10 @@
 package release
 
-import "maps"
+import (
+	"maps"
+
+	"github.com/carolsimone/continuo/pkg/domain/model"
+)
 
 // ParseTimings is what a parse result says about the parse of one run: how long
 // the parse took, how long its contract stages took, and how many contracts the
@@ -17,7 +21,7 @@ type ParseTimings struct {
 	ContractsMs *int64
 	// ContractsByFamily is nil when the parse reported no count, and empty when it
 	// counted a release with no contracts. Only an ok parse counts.
-	ContractsByFamily map[string]int
+	ContractsByFamily map[model.ContractFamily]int
 }
 
 // NewParseTimings builds the timings a parse result carries from its decoded
@@ -28,7 +32,7 @@ type ParseTimings struct {
 // reports 0 for both reads as not reported too. Any other pair is kept as
 // decoded, a zero beside a non-zero included. A nil count stays unset, and an
 // empty one is kept as the count of a release with no contracts.
-func NewParseTimings(parseMs, contractsMs int64, contractsByFamily map[string]int) ParseTimings {
+func NewParseTimings(parseMs, contractsMs int64, contractsByFamily map[model.ContractFamily]int) ParseTimings {
 	t := ParseTimings{ContractsByFamily: maps.Clone(contractsByFamily)}
 	if parseMs != 0 || contractsMs != 0 {
 		t.ParseMs = &parseMs

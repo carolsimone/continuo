@@ -1,6 +1,7 @@
 package release_test
 
 import (
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"testing"
 
 	"github.com/carolsimone/continuo/release-controller/domain/release"
@@ -15,22 +16,22 @@ func TestNewParseTimings_ANilCountIsAbsentAndAnEmptyOneIsNot(t *testing.T) {
 	})
 
 	t.Run("an empty count", func(t *testing.T) {
-		got := release.NewParseTimings(10, 4, map[string]int{})
+		got := release.NewParseTimings(10, 4, map[model.ContractFamily]int{})
 		require.NotNil(t, got.ContractsByFamily, "a release with no contracts reports an empty count")
 		assert.Empty(t, got.ContractsByFamily)
 	})
 
 	t.Run("a count with families", func(t *testing.T) {
-		got := release.NewParseTimings(10, 4, map[string]int{"dbt": 3, "python": 2})
-		assert.Equal(t, map[string]int{"dbt": 3, "python": 2}, got.ContractsByFamily)
+		got := release.NewParseTimings(10, 4, map[model.ContractFamily]int{"dbt": 3, "python": 2})
+		assert.Equal(t, map[model.ContractFamily]int{"dbt": 3, "python": 2}, got.ContractsByFamily)
 	})
 }
 
 func TestNewParseTimings_TwoZeroDurationsAreAbsent(t *testing.T) {
-	got := release.NewParseTimings(0, 0, map[string]int{"dbt": 1})
+	got := release.NewParseTimings(0, 0, map[model.ContractFamily]int{"dbt": 1})
 	assert.Nil(t, got.ParseMs, "a producer that predates the durations decodes both as zero")
 	assert.Nil(t, got.ContractsMs)
-	assert.Equal(t, map[string]int{"dbt": 1}, got.ContractsByFamily, "the count is judged on its own")
+	assert.Equal(t, map[model.ContractFamily]int{"dbt": 1}, got.ContractsByFamily, "the count is judged on its own")
 }
 
 func TestNewParseTimings_OneNonZeroDurationReportsBoth(t *testing.T) {
@@ -54,8 +55,8 @@ func TestNewParseTimings_OneNonZeroDurationReportsBoth(t *testing.T) {
 }
 
 func TestNewParseTimings_DoesNotShareTheCountWithItsCaller(t *testing.T) {
-	counts := map[string]int{"dbt": 3}
+	counts := map[model.ContractFamily]int{"dbt": 3}
 	got := release.NewParseTimings(1, 1, counts)
 	counts["dbt"] = 99
-	assert.Equal(t, map[string]int{"dbt": 3}, got.ContractsByFamily)
+	assert.Equal(t, map[model.ContractFamily]int{"dbt": 3}, got.ContractsByFamily)
 }

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"os"
 	"testing"
 
@@ -86,14 +87,14 @@ func TestDecode_ReadsTheFixture(t *testing.T) {
 	assert.Equal(t, "0.13.0", doc.Provenance["service-py"].ContinuoPythonRuntime)
 	assert.Equal(t, map[string]string{"pyarrow": "26.0.0"}, doc.Provenance["service-py"].ImagePackages)
 
-	assert.Equal(t, contractbundle.Summary{Contracts: 2, ByFamily: map[string]int{"dbt": 1, "python": 1}}, doc.Summary)
+	assert.Equal(t, contractbundle.Summary{Contracts: 2, ByFamily: map[model.ContractFamily]int{"dbt": 1, "python": 1}}, doc.Summary)
 
 	require.Len(t, fx.Input.Contracts, 2)
 	require.Len(t, doc.Contracts, 2)
 	for _, want := range fx.Input.Contracts {
 		got, ok := doc.Contracts[want.UniqueID]
 		require.True(t, ok, "the contracts are keyed by unique id: %s", want.UniqueID)
-		assert.Equal(t, want.Family, got.Family, want.UniqueID)
+		assert.Equal(t, model.ContractFamily(want.Family), got.Family, want.UniqueID)
 		assert.Equal(t, want.Service, got.Service, want.UniqueID)
 		assert.Equal(t, want.ContractHash, got.ContractHash, want.UniqueID)
 		assert.Equal(t, want.ContentHash, got.ContentHash, want.UniqueID)
@@ -119,7 +120,7 @@ func TestDecode_ReadsTheOntologyVersion(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "rel-9f8e7d6-14@sha256:bd4d098b4e54cd2181b7c553c13827313c3638a1a145104d51d127733f9a0da0", doc.OntologyVersion())
-	assert.Equal(t, contractbundle.Summary{Contracts: 2, ByFamily: map[string]int{"dbt": 1, "python": 1}}, doc.Summary)
+	assert.Equal(t, contractbundle.Summary{Contracts: 2, ByFamily: map[model.ContractFamily]int{"dbt": 1, "python": 1}}, doc.Summary)
 }
 
 func TestOntologyVersion_IsEmptyWhenTheBundleNamesNoOntologyRelease(t *testing.T) {
@@ -205,7 +206,7 @@ func TestDecode_IgnoresKeysItDoesNotKnow(t *testing.T) {
 	obj := gz(t, []byte(`{"schema_version":1,"tenant_id":"default","release_id":"r","later":{"x":1},"contracts":{"a.b":{"family":"python","later":true}}}`))
 	doc, err := contractbundle.Decode(obj, sha(obj))
 	require.NoError(t, err)
-	assert.Equal(t, "python", doc.Contracts["a.b"].Family)
+	assert.Equal(t, model.ContractFamilyPython, doc.Contracts["a.b"].Family)
 }
 
 func TestKey(t *testing.T) {

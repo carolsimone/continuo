@@ -140,7 +140,7 @@ def invalid_contract_reads(
     contract = node.contract
     if contract is None:
         return None
-    family = ContractFamily(contract.family)
+    family = contract.family
     problems: list[str] = []
     # A table is one problem however many catalogs the queries name it through.
     tables = sorted({(ref.schema, ref.table) for ref in refs if not system.matches(ref)})
@@ -233,7 +233,7 @@ def store_contracts(
         digest = _library_call(FailureStage.HASH, node, timings, lambda: contract_hash(document))
         stored.append(StoredContract(
             unique_id=node.unique_id,
-            family=ContractFamily(contract.family),
+            family=contract.family,
             service=node.service_name,
             contract_hash=digest,
             content_hash=node.content_hash,
@@ -250,7 +250,7 @@ def _normalise(contract: NodeContract, node: ManifestNode, tables: list[str]) ->
     """The stored form of a node's contract, by the rules of its family: a dbt contract
     joins the tables it names with the ones it declares, a Python contract takes the
     node's service."""
-    if ContractFamily(contract.family) is ContractFamily.DBT:
+    if contract.family is ContractFamily.DBT:
         return normalise_dbt(contract.document, reads=tables)
     return normalise_python(contract.document, service=node.service_name, reads=tables)
 
@@ -275,7 +275,7 @@ def contracts_by_family(contracts: Sequence[StoredContract]) -> dict[str, int]:
     sorted order. A family with none has no key."""
     counts: dict[str, int] = {}
     for contract in contracts:
-        family = ContractFamily(contract.family).value
+        family = contract.family.value
         counts[family] = counts.get(family, 0) + 1
     return dict(sorted(counts.items()))
 
@@ -310,7 +310,7 @@ def build_contract_bundle(
         if contract.unique_id in by_id:
             raise ValueError(f"two contracts of the release carry the unique id {contract.unique_id}")
         by_id[contract.unique_id] = {
-            "family": ContractFamily(contract.family).value,
+            "family": contract.family.value,
             "service": contract.service,
             "contract_hash": contract.contract_hash,
             "content_hash": contract.content_hash,

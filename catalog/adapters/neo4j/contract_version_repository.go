@@ -211,7 +211,7 @@ func (r *contractVersionRepository) Write(
 		versions = append(versions, map[string]any{
 			"unique_id":        v.UniqueID,
 			"contract_hash":    v.ContractHash,
-			"family":           v.Family,
+			"family":           string(v.Family),
 			"service":          v.Service,
 			"document":         document,
 			"first_release_id": v.FirstReleaseID,

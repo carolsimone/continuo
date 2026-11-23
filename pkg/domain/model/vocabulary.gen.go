@@ -320,6 +320,37 @@ func (v ApproverSource) IsValid() bool {
 	return false
 }
 
+// ContractFamily — Which producer wrote a node's ODCS contract. It travels on manifest.loaded.candidate:v2 (the count of contracts by family), is stored on each contract of a release's contract bundle and on each contract version in catalog, and the release page shows the count.
+// Values come from the vocabulary "contract_family" in contract.yaml, in
+// declaration order.
+type ContractFamily string
+
+const (
+	// ContractFamilyDbt — a dbt model, seed or snapshot, whose contract topology-controller generates from its manifest entry and its tests.
+	ContractFamilyDbt ContractFamily = "dbt"
+	// ContractFamilyPython — a Python node, whose contract its service authors in a file of its repository and packs into odcs-bundle.json.
+	ContractFamilyPython ContractFamily = "python"
+)
+
+// ContractFamilies returns every value in contract.yaml declaration order.
+func ContractFamilies() []ContractFamily {
+	return []ContractFamily{
+		ContractFamilyDbt,
+		ContractFamilyPython,
+	}
+}
+
+// IsValid reports whether v is a value declared in contract.yaml.
+func (v ContractFamily) IsValid() bool {
+	switch v {
+	case ContractFamilyDbt:
+		return true
+	case ContractFamilyPython:
+		return true
+	}
+	return false
+}
+
 // RemediationSource — The pipeline stage that produced the failure of a node a remediation works on.
 // Values come from the vocabulary "remediation_source" in contract.yaml, in
 // declaration order.

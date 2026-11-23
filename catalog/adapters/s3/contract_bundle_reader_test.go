@@ -17,6 +17,7 @@ import (
 	"github.com/carolsimone/continuo/catalog/domain/contractversion"
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	"github.com/carolsimone/continuo/pkg/contractbundle"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/objectstore"
 	"github.com/carolsimone/continuo/pkg/objectstore/objectstoretest"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
@@ -108,7 +109,7 @@ func TestContractBundleReader_ReadsTheFixture(t *testing.T) {
 		require.True(t, ok, "the bundle holds %s", want.UniqueID)
 		assert.Equal(t, want.ContractHash, got.ContractHash, want.UniqueID)
 		assert.Equal(t, want.ContentHash, got.ContentHash, want.UniqueID)
-		assert.Equal(t, want.Family, got.Family, want.UniqueID)
+		assert.Equal(t, model.ContractFamily(want.Family), got.Family, want.UniqueID)
 		assert.Equal(t, want.Service, got.Service, want.UniqueID)
 		assert.Equal(t, want.SourcePath, got.SourcePath, want.UniqueID)
 		// A number keeps the exact text the contract hash was taken over.
@@ -119,9 +120,9 @@ func TestContractBundleReader_ReadsTheFixture(t *testing.T) {
 		assert.Equal(t, wantDocument, got.Document, "%s: the document is the stored form, decoded", want.UniqueID)
 		assert.Equal(t, want.UniqueID, got.Document["id"])
 	}
-	assert.Equal(t, "python", byID["analytics.py_daily_kpis"].Family)
+	assert.Equal(t, model.ContractFamilyPython, byID["analytics.py_daily_kpis"].Family)
 	assert.Equal(t, "contracts/py_daily_kpis.odcs.yaml", byID["analytics.py_daily_kpis"].SourcePath)
-	assert.Equal(t, "dbt", byID["analytics.governed"].Family)
+	assert.Equal(t, model.ContractFamilyDbt, byID["analytics.governed"].Family)
 	assert.Equal(t, "models/tagged/governed.sql", byID["analytics.governed"].SourcePath)
 	assert.Equal(t, []objectstoretest.Read{{Ref: contractBundleRef, MaxBytes: contractbundle.MaxObjectBytes}}, mem.Reads(),
 		"the bundle is read once, capped at the contract-bundle ceiling")

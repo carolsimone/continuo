@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -260,7 +261,7 @@ func TestGetRelease_ReturnsTheParseTimings(t *testing.T) {
 		want    map[string]any
 	}{
 		"a parsed release": {
-			timings: release.ParseTimings{ParseMs: &parseMs, ContractsMs: &contractsMs, ContractsByFamily: map[string]int{"dbt": 3, "python": 2}},
+			timings: release.ParseTimings{ParseMs: &parseMs, ContractsMs: &contractsMs, ContractsByFamily: map[model.ContractFamily]int{"dbt": 3, "python": 2}},
 			want:    map[string]any{"parse_ms": 4180.0, "contracts_ms": 1260.0, "contracts_by_family": map[string]any{"dbt": 3.0, "python": 2.0}},
 		},
 		"a rejected release": {
@@ -268,7 +269,7 @@ func TestGetRelease_ReturnsTheParseTimings(t *testing.T) {
 			want:    map[string]any{"parse_ms": 310.0, "contracts_ms": 45.0},
 		},
 		"a release with no contracts": {
-			timings: release.ParseTimings{ParseMs: &parseMs, ContractsMs: &contractsMs, ContractsByFamily: map[string]int{}},
+			timings: release.ParseTimings{ParseMs: &parseMs, ContractsMs: &contractsMs, ContractsByFamily: map[model.ContractFamily]int{}},
 			want:    map[string]any{"parse_ms": 4180.0, "contracts_ms": 1260.0, "contracts_by_family": map[string]any{}},
 		},
 	}
