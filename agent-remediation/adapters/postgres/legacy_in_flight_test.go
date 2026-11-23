@@ -17,9 +17,10 @@ import (
 // generating takes the reason as its rationale; a row that was verifying takes
 // it as its verify error and keeps its rationale, edits and verifications. On
 // both, each node outcome still in flight becomes failed with the reason and
-// every other outcome stays as it was. A row of a remediation, whatever its
-// status, and a row that is not in flight are left alone, and a second call
-// finds nothing to move.
+// every other outcome stays as it was, and a row that recorded no outcome at
+// all is failed too and still reads back with none. A row of a remediation,
+// whatever its status, and a row that is not in flight are left alone, and a
+// second call finds nothing to move.
 func TestStartup_FailsTodaysAttemptsInFlight(t *testing.T) {
 	forEachImpl(t, func(t *testing.T, env contractEnv) {
 		ctx := context.Background()
@@ -55,6 +56,12 @@ func TestStartup_FailsTodaysAttemptsInFlight(t *testing.T) {
 				"model.b": settledFailure,
 			},
 			CreatedAt: contractBase,
+		}))
+		// An attempt that recorded no per-node outcome at all: its node_outcomes
+		// holds no entries, which aggregates to SQL NULL, not an empty object.
+		require.NoError(t, env.proposals.InsertGenerating(ctx, proposal.Proposal{
+			Source: "validation", ReleaseID: "rel-legacy-inflight-no-outcomes", NodeID: "model.a",
+			ResolvedNodeIDs: []string{"model.a"}, Attempt: 1, NodeOutcomes: nil, CreatedAt: contractBase,
 		}))
 		// The runner's rows in flight, which this version drives.
 		require.NoError(t, env.proposals.InsertGenerating(ctx, proposal.Proposal{
@@ -97,7 +104,7 @@ func TestStartup_FailsTodaysAttemptsInFlight(t *testing.T) {
 
 		moved, err := env.proposals.FailLegacyInFlight(ctx, reason)
 		require.NoError(t, err)
-		require.Equal(t, 2, moved, "the old engine's two rows in flight, and no other")
+		require.Equal(t, 3, moved, "the old engine's three rows in flight, and no other")
 
 		verifying := get("rel-legacy-inflight-verifying", 1)
 		require.Equal(t, proposal.StatusFailed, verifying.Status)
@@ -120,6 +127,11 @@ func TestStartup_FailsTodaysAttemptsInFlight(t *testing.T) {
 			"model.b": settledFailure,
 		}, generating.NodeOutcomes, "the outcome in flight fails with the reason, the one that ended stays")
 
+		noOutcomes := get("rel-legacy-inflight-no-outcomes", 1)
+		require.Equal(t, proposal.StatusFailed, noOutcomes.Status)
+		require.Equal(t, reason, noOutcomes.Rationale)
+		require.Empty(t, noOutcomes.NodeOutcomes, "a row with no per-node outcome still reads back with none")
+
 		require.Equal(t, untouched[0], get("rel-legacy-inflight-runner", 1), "a runner row generating is the runner's to finish")
 		require.Equal(t, untouched[1], get("rel-legacy-inflight-runner", 2), "so is a runner row verifying")
 		require.Equal(t, untouched[2], get("rel-legacy-inflight-ended", 1), "a row that failed already is left as it is")
@@ -130,6 +142,7 @@ func TestStartup_FailsTodaysAttemptsInFlight(t *testing.T) {
 		require.Zero(t, moved, "a second call finds nothing in flight")
 		require.Equal(t, verifying, get("rel-legacy-inflight-verifying", 1))
 		require.Equal(t, generating, get("rel-legacy-inflight-generating", 1))
+		require.Equal(t, noOutcomes, get("rel-legacy-inflight-no-outcomes", 1))
 		for i, want := range untouched {
 			require.Equal(t, want, get(want.ReleaseID, want.Attempt), "row %d after the second call", i)
 		}
