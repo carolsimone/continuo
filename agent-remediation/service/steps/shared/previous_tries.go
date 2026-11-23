@@ -43,7 +43,8 @@ func (*PreviousTries) Meta() step.Meta {
 		Kind: step.KindContext,
 		Description: "Lists the earlier tries at the cluster's failing nodes in this release, in this round and the rounds before it, oldest first: " +
 			"each try's diffs, what its pre-flight and cross-cluster checks found and why its verification failed. " +
-			"Attempts recorded with no remediation are listed with their verification error and diffs.",
+			"Attempts recorded with no remediation are listed with their verification error and diffs, " +
+			"except one the startup sweep failed, which no verification judged.",
 		Needs:    []remediation.EvidenceKey{remediation.KeyFailure},
 		Provides: []remediation.EvidenceKey{remediation.KeyPreviousTries},
 	}
@@ -54,10 +55,11 @@ func (*PreviousTries) Meta() step.Meta {
 // runner's tries come from the journal of every remediation of the release; a
 // try whose journal does not decode is left out and logged. The attempts with
 // no remediation are the release's proposal rows of the trigger's source that
-// belong to no remediation and name a member; a diff of theirs that cannot be
-// read is left out and logged, since the attempt still shows with its error. An error reading the journal or the proposal rows is
-// the step's, so the runner tries the step again rather than show the model a
-// partial history.
+// belong to no remediation and name a member, except a row the startup sweep
+// failed (nothing judged it); a diff of theirs that cannot be read is left out
+// and logged, since the attempt still shows with its error. An error reading
+// the journal or the proposal rows is the step's, so the runner tries the step
+// again rather than show the model a partial history.
 func (s *PreviousTries) Gather(ctx context.Context, in step.ContextInput) (step.ContextOutput, error) {
 	f := in.Failure
 	records, err := s.runnerTries(ctx, f)
@@ -109,7 +111,7 @@ func (s *PreviousTries) attemptsWithNoRemediation(ctx context.Context, f remedia
 	members := memberIDs(f)
 	var out []remediation.TryRecord
 	for _, v := range views {
-		if v.RemediationID != "" || !namesAny(v.ResolvedNodeIDs, members) {
+		if v.RemediationID != "" || sweptAtStartup(v) || !namesAny(v.ResolvedNodeIDs, members) {
 			continue
 		}
 		rec := remediation.TryRecord{
@@ -123,6 +125,14 @@ func (s *PreviousTries) attemptsWithNoRemediation(ctx context.Context, f remedia
 		out = append(out, rec)
 	}
 	return out, nil
+}
+
+// sweptAtStartup reports whether the startup sweep failed an attempt row with no
+// remediation: the sweep stores its reason as the verify error of a verifying
+// row and as the rationale of a generating one. No gate judged such a row, so it
+// is no evidence that its change fails.
+func sweptAtStartup(v proposal.View) bool {
+	return v.VerifyError == proposal.NoRemediationInFlightReason || v.Rationale == proposal.NoRemediationInFlightReason
 }
 
 // attemptDiffs reads an attempt's stored diffs. An edit with no diff, or whose

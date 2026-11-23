@@ -31,6 +31,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/adapters/workflowfile"
 	remediationv1 "github.com/carolsimone/continuo/agent-remediation/api/remediation/v1"
 	"github.com/carolsimone/continuo/agent-remediation/config"
+	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
 	"github.com/carolsimone/continuo/agent-remediation/service/llmcache"
@@ -63,12 +64,6 @@ const llmClientTimeout = 120 * time.Second
 // control to the read loop. The handler only records the trigger as a
 // remediation, one database transaction, so the ceiling is generous.
 const consumerHandlerTimeout = 5 * time.Minute
-
-// noRemediationInFlightReason is the reason an attempt row in flight that
-// belongs to no remediation is failed with at startup. It is stored on the row
-// and on each of its node outcomes still in flight, so the release page shows
-// it and offers "Try again".
-const noRemediationInFlightReason = "continuo changed its remediation engine while this attempt was in flight; use Try again"
 
 // dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
 // are unset: two connections per stream consumer (a handler's transaction and
@@ -323,13 +318,13 @@ func main() {
 		os.Exit(1)
 	}
 	// The runner stamps a remediation on every attempt row it writes, so a row
-	// in flight with none is driven by nothing. It is failed before the runner
-	// starts, since the worker numbers a new attempt from the terminal rows of
-	// its round, so a row still in flight at that number would collide with its
-	// first attempt.
-	if err := failLegacyInFlight(ctx, proposalRepo, logger); err != nil {
-		logger.Error("failing the attempt rows in flight that belong to no remediation", "error", err)
-		os.Exit(1)
+	// in flight with none is driven by nothing. Until it is failed,
+	// release-controller's retry gate and the release page read its round as
+	// having a fix still open, which keeps "Try again" blocked. The sweep runs
+	// before the runner's loops and the consumer start, so no new work begins
+	// while such a row is open.
+	if stop, code := sweepAtStartup(ctx, proposalRepo, logger); stop {
+		os.Exit(code)
 	}
 	accept := startRunner(ctx, cfg, collab, files, runnerWiring{
 		llm:     cachedLLM,
@@ -503,20 +498,39 @@ func loopBudgets(cfg config.Config) (worker, poller time.Duration) {
 	return worker, poller
 }
 
+// sweepAtStartup runs failLegacyInFlight and says whether the process must stop
+// and with what exit code. A sweep that fails while ctx is done was cut short by
+// a shutdown, which stops cleanly (code 0) as the other startup waits do,
+// whatever error the driver reported for its cancelled statement. Any other
+// failure of the sweep stops startup with code 1.
+func sweepAtStartup(ctx context.Context, repo repository.ProposalRepository, logger *slog.Logger) (stop bool, code int) {
+	err := failLegacyInFlight(ctx, repo, logger)
+	switch {
+	case err == nil:
+		return false, 0
+	case ctx.Err() != nil:
+		logger.Info("shutdown requested during the startup sweep of attempt rows with no remediation")
+		return true, 0
+	default:
+		logger.Error("failing the attempt rows in flight that belong to no remediation", "error", err)
+		return true, 1
+	}
+}
+
 // failLegacyInFlight fails every attempt row in flight that belongs to no
 // remediation, which nothing drives since the runner stamps a remediation on
 // every row it writes, and logs how many it moved: at Warn when there are any,
 // at Info when there are none. It is idempotent, so every start runs it.
 func failLegacyInFlight(ctx context.Context, repo repository.ProposalRepository, logger *slog.Logger) error {
-	n, err := repo.FailLegacyInFlight(ctx, noRemediationInFlightReason)
+	n, err := repo.FailLegacyInFlight(ctx, proposal.NoRemediationInFlightReason)
 	if err != nil {
 		return err
 	}
 	if n == 0 {
-		logger.Info("no in-flight attempt row lacks a remediation", "count", n)
+		logger.Info("no attempt row with no remediation was in flight", "count", n)
 		return nil
 	}
-	logger.Warn("failed in-flight attempt rows that have no remediation", "count", n, "reason", noRemediationInFlightReason)
+	logger.Warn("failed in-flight attempt rows that have no remediation", "count", n)
 	return nil
 }
 

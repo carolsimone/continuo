@@ -34,6 +34,14 @@ const (
 	StatusEscalated Status = "escalated"
 )
 
+// NoRemediationInFlightReason is the reason the startup sweep fails an attempt
+// row with it: a row in flight that belongs to no remediation, which nothing
+// drives. A generating row stores it as its rationale, a verifying row as its
+// verify error, and each of its node outcomes still in flight as the outcome's
+// reason, so the release page shows it and offers "Try again". No gate judged
+// such a row, so the earlier-tries evidence leaves it out.
+const NoRemediationInFlightReason = "continuo changed its remediation engine while this attempt was in flight; use Try again"
+
 // Phase is where a fix-verification run stands, as this service last read it
 // from release-controller. queued: waiting its turn in the pipeline's FIFO.
 // running: in one of the legs. passed / failed: the verdict.

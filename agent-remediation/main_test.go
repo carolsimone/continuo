@@ -197,6 +197,42 @@ func TestMain_FailLegacyInFlight(t *testing.T) {
 	}
 }
 
+// TestMain_SweepAtStartup: a sweep that succeeds lets startup go on, and a
+// failed one stops it. A failure while the context is done is a shutdown that
+// cut the sweep short, whatever error the driver reported for it, so it stops
+// cleanly (exit 0, logged at Info) as the other startup waits do; any other
+// failure stops with exit 1, logged at Error.
+func TestMain_SweepAtStartup(t *testing.T) {
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, tc := range []struct {
+		name      string
+		ctx       context.Context
+		repo      *inFlightRepo
+		wantStop  bool
+		wantCode  int
+		wantLevel string
+	}{
+		{name: "the sweep succeeds", ctx: context.Background(), repo: &inFlightRepo{moved: 2}, wantLevel: "WARN"},
+		{name: "the sweep fails", ctx: context.Background(), repo: &inFlightRepo{err: errors.New("database is down")}, wantStop: true, wantCode: 1, wantLevel: "ERROR"},
+		{name: "a shutdown cuts the sweep short with the driver's own error", ctx: cancelled, repo: &inFlightRepo{err: errors.New("driver: bad connection")}, wantStop: true, wantCode: 0, wantLevel: "INFO"},
+		{name: "a shutdown cuts the sweep short with context.Canceled", ctx: cancelled, repo: &inFlightRepo{err: context.Canceled}, wantStop: true, wantCode: 0, wantLevel: "INFO"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+			stop, code := sweepAtStartup(tc.ctx, tc.repo, logger)
+
+			assert.Equal(t, tc.wantStop, stop)
+			assert.Equal(t, tc.wantCode, code)
+			lines := logLines(t, &buf)
+			require.Len(t, lines, 1, buf.String())
+			assert.Equal(t, tc.wantLevel, lines[0]["level"])
+		})
+	}
+}
+
 // TestMain_RunnerLoopsStart verifies that startRunner, which main calls with
 // its lifecycle's Go, starts the worker, the gate poller and the sweeper, and
 // that each does its work.

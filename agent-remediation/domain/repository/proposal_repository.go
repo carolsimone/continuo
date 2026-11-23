@@ -149,6 +149,13 @@ type ProposalRepository interface {
 	// has none, and left alone it would stay in flight for good and keep the
 	// release page from offering "Try again".
 	//
+	// A runner row whose remediation the retention sweeper deleted also has no
+	// remediation id (the column is cleared when the remediation goes), so the
+	// selection cannot tell it from a row that never had one. That is safe: the
+	// sweeper deletes only 'done' and 'system_failure' remediations, whose rows
+	// are terminal, never 'generating' or 'verifying', so no row of a deleted
+	// remediation is in flight.
+	//
 	// Each row moves to 'failed' with reason on it. A row that was generating
 	// takes reason as its rationale. A row that was verifying takes it as its
 	// verify error and keeps its rationale, edits and verifications. On both,

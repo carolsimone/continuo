@@ -22,6 +22,12 @@ import (
 // still reads back with none. A row of a remediation, whatever its status, and a
 // row that is not in flight are left alone, and a second call finds nothing to
 // move.
+//
+// The remediation_id of a proposal row is cleared (ON DELETE SET NULL) when the
+// retention sweeper deletes its remediation, so a runner row of a deleted
+// remediation is selected by "no remediation id" like any other. That never
+// moves a row the runner drives: the sweeper deletes only done and system_failure
+// remediations, whose rows are terminal and never generating or verifying.
 func TestFailLegacyInFlight_FailsRowsWithNoRemediation(t *testing.T) {
 	forEachImpl(t, func(t *testing.T, env contractEnv) {
 		ctx := context.Background()

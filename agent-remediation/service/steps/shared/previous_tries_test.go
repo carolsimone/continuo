@@ -206,3 +206,35 @@ func TestPreviousTries_NoEvidenceReaderShowsAttemptsWithNoRemediationWithoutDiff
 		Gate:     []remediation.Finding{{Message: "unowned attempt still broken"}},
 	}}, got)
 }
+
+// TestPreviousTries_LeavesOutAnAttemptTheStartupSweepFailed: an attempt row with
+// no remediation that the startup sweep failed was never judged by a gate, so
+// the model is not told its change failed. A generating row the sweep failed
+// holds the reason as its rationale, a verifying one as its verify error (with
+// its edits and diffs kept); both are left out, and another row with no
+// remediation is still listed.
+func TestPreviousTries_LeavesOutAnAttemptTheStartupSweepFailed(t *testing.T) {
+	attempts := &fakeProposals{views: []proposal.View{
+		{
+			Attempt: 1, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, Status: proposal.StatusFailed,
+			Rationale: "the model's rationale", VerifyError: proposal.NoRemediationInFlightReason,
+			Edits: []proposal.FileEdit{{Path: "models/a.sql", DiffURI: "s3://diffs/swept"}},
+		},
+		{
+			Attempt: 2, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, Status: proposal.StatusFailed,
+			Rationale: proposal.NoRemediationInFlightReason,
+		},
+		{
+			Attempt: 3, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, Status: proposal.StatusFailed,
+			Rationale: "the model's rationale", VerifyError: "judged and still broken",
+		},
+	}}
+
+	got := gatherPreviousTries(t, &fakeTries{}, attempts, diffObjects{"s3://diffs/swept": "-a\n+swept"})
+
+	assert.Equal(t, []remediation.TryRecord{{
+		Round: 1, Attempt: 3,
+		Clusters: []remediation.ClusterRecord{{Members: []string{"model.a"}}},
+		Gate:     []remediation.Finding{{Message: "judged and still broken"}},
+	}}, got, "only the row a gate judged is an earlier try")
+}
