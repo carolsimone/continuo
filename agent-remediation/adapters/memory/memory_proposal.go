@@ -174,9 +174,6 @@ func (r *proposalRepository) Upsert(_ context.Context, p proposal.Proposal) erro
 		row := d.findProposal(p.ReleaseID, p.Attempt)
 		if row == nil {
 			p.RemediationRound = roundOrDefault(p.RemediationRound)
-			if len(p.TriggerPayload) == 0 {
-				p.TriggerPayload = []byte("{}")
-			}
 			d.proposals = append(d.proposals, &proposalRow{id: uuid.NewString(), p: cloneProposal(p)})
 			return nil
 		}
@@ -186,9 +183,6 @@ func (r *proposalRepository) Upsert(_ context.Context, p proposal.Proposal) erro
 		next.RemediationRound = old.RemediationRound
 		next.NodeID = old.NodeID
 		next.ErrorSignature = old.ErrorSignature
-		if len(next.TriggerPayload) == 0 {
-			next.TriggerPayload = []byte("{}")
-		}
 		if next.RemediationID == "" {
 			next.RemediationID = old.RemediationID
 		}

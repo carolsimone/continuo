@@ -144,17 +144,11 @@ type ProposalRepository interface {
 
 	// FailLegacyInFlight fails every attempt row in flight that belongs to no
 	// remediation, and returns how many rows it moved. Such a row is
-	// 'generating' or 'verifying' with no remediation id: the runner stamps the
-	// remediation on every attempt row it writes, so nothing drives a row that
-	// has none, and left alone it would stay in flight for good and keep the
-	// release page from offering "Try again".
-	//
-	// A runner row whose remediation the retention sweeper deleted also has no
-	// remediation id (the column is cleared when the remediation goes), so the
-	// selection cannot tell it from a row that never had one. That is safe: the
-	// sweeper deletes only 'done' and 'system_failure' remediations, whose rows
-	// are terminal, never 'generating' or 'verifying', so no row of a deleted
-	// remediation is in flight.
+	// 'generating' or 'verifying' with no remediation: the runner stamps the
+	// remediation on every attempt row it writes, and a remediation is deleted
+	// only once it has finished, when its rows are terminal. So nothing drives
+	// a row in flight that has no remediation, and left alone it would stay in
+	// flight for good and keep the release page from offering "Try again".
 	//
 	// Each row moves to 'failed' with reason on it. A row that was generating
 	// takes reason as its rationale. A row that was verifying takes it as its

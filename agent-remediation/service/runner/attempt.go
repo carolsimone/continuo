@@ -147,7 +147,6 @@ func verifyingAttempt(run tryRun, checked []checkedCluster, verifications []prop
 		SourceResolved: true,
 		Repo:           t.Repo,
 		CommitSHA:      t.CommitSHA,
-		TriggerPayload: run.snap.Remediation.TriggerPayload,
 	}
 	var rationales []string
 	for _, d := range draftsOf(checked) {

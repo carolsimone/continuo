@@ -1440,7 +1440,6 @@ func TestProposalRepositoryVerifyingLifecycle(t *testing.T) {
 	ctx := context.Background()
 	repo := NewProposalRepository(db, nil)
 
-	trigger := []byte(`{"source":"validation","node_id":"model.p.orders","message_id":"123-0"}`)
 	p := proposal.Proposal{
 		Source:            "validation",
 		ReleaseID:         "rel-verify-1",
@@ -1449,7 +1448,6 @@ func TestProposalRepositoryVerifyingLifecycle(t *testing.T) {
 		Attempt:           1,
 		Status:            proposal.StatusVerifying,
 		VerificationRunID: "verify-rel-abc",
-		TriggerPayload:    trigger,
 		Confidence:        proposal.ConfidenceHigh,
 		Rationale:         "proposed fix awaiting verification",
 		Model:             "claude-3-5-sonnet",
@@ -1478,6 +1476,40 @@ func TestProposalRepositoryVerifyingLifecycle(t *testing.T) {
 	require.False(t, hit, "second MarkFixVerified must be a no-op: the row is no longer 'verifying'")
 }
 
+// TestProposalRepositoryUpsertLeavesTriggerPayloadAlone pins that Upsert does
+// not write the proposal.trigger_payload column: a row it inserts keeps the
+// column's default '{}', and a row it finalizes keeps whatever the column
+// already held.
+func TestProposalRepositoryUpsertLeavesTriggerPayloadAlone(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db, nil)
+
+	p := proposal.Proposal{
+		Source:         "validation",
+		ReleaseID:      "rel-trigger-payload",
+		NodeID:         "model.p.orders",
+		ErrorSignature: "sig-trigger-payload",
+		Attempt:        1,
+		Status:         proposal.StatusVerifying,
+		Model:          "claude-3-5-sonnet",
+		CreatedAt:      time.Now().UTC(),
+	}
+	id := seedProposal(t, repo, db, p)
+
+	var payload string
+	require.NoError(t, db.GetContext(ctx, &payload, `SELECT trigger_payload::text FROM proposal WHERE id = $1`, id))
+	require.JSONEq(t, `{}`, payload, "an inserted row keeps the column's default")
+
+	_, err := db.ExecContext(ctx, `UPDATE proposal SET trigger_payload = '{"kept":true}'::jsonb WHERE id = $1`, id)
+	require.NoError(t, err)
+	p.Status = proposal.StatusProposed
+	require.NoError(t, repo.Upsert(ctx, p))
+
+	require.NoError(t, db.GetContext(ctx, &payload, `SELECT trigger_payload::text FROM proposal WHERE id = $1`, id))
+	require.JSONEq(t, `{"kept":true}`, payload, "finalizing a row leaves the column as it was")
+}
+
 // TestProposalRepositoryMarkVerifyFailed verifies that MarkVerifyFailed
 // finalizes a verifying proposal to 'failed' and records verify_error, and
 // that a second call is an idempotent no-op once the row has moved on.
@@ -1494,7 +1526,6 @@ func TestProposalRepositoryMarkVerifyFailed(t *testing.T) {
 		Attempt:           1,
 		Status:            proposal.StatusVerifying,
 		VerificationRunID: "verify-rel-def",
-		TriggerPayload:    []byte(`{"source":"validation","node_id":"model.p.customers"}`),
 		Confidence:        proposal.ConfidenceMedium,
 		Rationale:         "proposed fix awaiting verification",
 		Model:             "claude-3-5-sonnet",
@@ -2540,7 +2571,7 @@ func seedVerifying(t *testing.T, db *sqlx.DB, releaseID string, vs []proposal.Ve
 		Source: "validation", ReleaseID: releaseID, RemediationRound: 1, NodeID: "model.core.orders",
 		ResolvedNodeIDs: []string{"model.core.orders"}, ErrorSignature: "sig", Attempt: 1,
 		Status: proposal.StatusVerifying, Verifications: vs, Services: proposal.UnionServices(verificationServiceNames(vs)),
-		TriggerPayload: []byte(`{}`), CreatedAt: time.Now().UTC(),
+		CreatedAt: time.Now().UTC(),
 	}
 	p.NormalizeRepresentativeViews()
 	require.NoError(t, repo.InsertGenerating(ctx, p))
@@ -2558,7 +2589,7 @@ func seedTerminal(t *testing.T, db *sqlx.DB, releaseID string, services []string
 	p := proposal.Proposal{
 		Source: "validation", ReleaseID: releaseID, RemediationRound: 1, NodeID: "model.core.orders",
 		ResolvedNodeIDs: []string{"model.core.orders"}, ErrorSignature: "sig", Attempt: 1,
-		Status: proposal.StatusProposed, Services: services, TriggerPayload: []byte(`{}`), CreatedAt: time.Now().UTC(),
+		Status: proposal.StatusProposed, Services: services, CreatedAt: time.Now().UTC(),
 	}
 	p.NormalizeRepresentativeViews()
 	require.NoError(t, repo.Upsert(context.Background(), p))

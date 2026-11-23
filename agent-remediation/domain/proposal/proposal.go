@@ -23,7 +23,7 @@ const (
 	// fix whose correctness cannot be judged synchronously: the agent has
 	// proposed a fix and posted a fix-verification run to carry it through the
 	// full parse -> candidate-schema -> validation pipeline. The row carries the
-	// run's id (VerificationRunID) and the raw trigger payload (TriggerPayload).
+	// run's id (VerificationRunID).
 	// The gate poller polls the run and finalizes the attempt to 'proposed' (the
 	// fix verified) or 'failed' (with the run's error recorded as evidence for
 	// the next try).
@@ -199,11 +199,7 @@ type Proposal struct {
 	VerificationRunID string
 	// Services is every service this attempt touched: the failing nodes'
 	// services plus the edited ones.
-	Services []string
-	// TriggerPayload is the raw heal-trigger payload that drove this attempt,
-	// stored with the row and kept when the attempt is finalized. Empty for an
-	// attempt that never entered verification.
-	TriggerPayload []byte
+	Services       []string
 	Confidence     Confidence
 	Rationale      string
 	ProposedSQLURI string

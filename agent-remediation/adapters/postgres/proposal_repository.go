@@ -179,6 +179,13 @@ func (r *ProposalRepository) FailGenerating(ctx context.Context, releaseID, reas
 //
 // The WHERE clause is the whole selection: a row of a remediation, and a row
 // that is not in flight, match nothing, so a second call moves no row.
+//
+// A row whose remediation the retention sweeper deleted also has a NULL
+// remediation_id (the foreign key is ON DELETE SET NULL), so the selection
+// cannot tell it from a row that never had one. That is safe: the sweeper
+// deletes only 'done' and 'system_failure' remediations, whose rows are
+// terminal, never 'generating' or 'verifying', so no row of a deleted
+// remediation is in flight.
 func (r *ProposalRepository) FailLegacyInFlight(ctx context.Context, reason string) (int, error) {
 	res, err := r.q.ExecContext(ctx,
 		`UPDATE proposal
@@ -216,17 +223,16 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 	const stmt = `
 		INSERT INTO proposal
 			(source, release_id, remediation_round, node_id, error_signature, attempt,
-			 status, verification_run_id, trigger_payload,
+			 status, verification_run_id,
 			 confidence, rationale, proposed_sql_uri, diff_uri,
 			 candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
 			 model, created_at,
 			 repo, commit_sha, file_path, file_edits,
 			 resolved_node_ids, node_outcomes, verifications, services, remediation_id, approvers)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
 		ON CONFLICT (release_id, attempt) DO UPDATE SET
 			status                 = EXCLUDED.status,
 			verification_run_id    = EXCLUDED.verification_run_id,
-			trigger_payload        = EXCLUDED.trigger_payload,
 			confidence             = EXCLUDED.confidence,
 			rationale              = EXCLUDED.rationale,
 			proposed_sql_uri       = EXCLUDED.proposed_sql_uri,
@@ -269,7 +275,7 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 	}
 	if _, err := r.q.ExecContext(ctx, stmt,
 		p.Source, p.ReleaseID, roundOrDefault(p.RemediationRound), p.NodeID, p.ErrorSignature, p.Attempt,
-		p.Status, p.VerificationRunID, triggerPayloadOrDefault(p.TriggerPayload),
+		p.Status, p.VerificationRunID,
 		p.Confidence, p.Rationale, p.ProposedSQLURI, p.DiffURI,
 		p.CandidateFixSQLURI, p.CandidateFixDiffURI, p.SourceResolved,
 		p.Model, p.CreatedAt,
@@ -279,17 +285,6 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 		return fmt.Errorf("insert proposal: %w", err)
 	}
 	return nil
-}
-
-// triggerPayloadOrDefault returns the raw trigger_payload bytes to write,
-// defaulting to an empty JSON object when the proposal carries none so the
-// column (NOT NULL) is never written as SQL NULL — the same defaulting
-// marshalFileEdits applies to the file_edits column.
-func triggerPayloadOrDefault(raw []byte) []byte {
-	if len(raw) == 0 {
-		return []byte("{}")
-	}
-	return raw
 }
 
 // proposalRow is the persistence DTO for a full proposal projection. The db
@@ -815,7 +810,7 @@ func (r *ProposalRepository) List(ctx context.Context, filter repository.Proposa
 }
 
 // beginPRClaimCAS is the atomic claim BeginPR issues: it moves a (proposal,
-// service) child row from '' or 'failed' to 'opening' — stamping pr_claimed_at
+// service) child row from empty or 'failed' to 'opening' — stamping pr_claimed_at
 // — only while the parent proposal is still source-resolved and 'proposed'. The
 // correlated EXISTS re-checks those two preconditions inside the same UPDATE as
 // the pr_state guard, so a status or source_resolved change committed between
@@ -833,7 +828,7 @@ const beginPRClaimCAS = `
 	RETURNING pr_claimed_at`
 
 // BeginPR atomically claims one (proposal, service) pull request for creation:
-// the child proposal_pull_request row's pr_state moves from '' or 'failed' to
+// the child proposal_pull_request row's pr_state moves from empty or 'failed' to
 // 'opening', stamping pr_claimed_at with claimedAt. The child row is created on
 // first claim by an INSERT … ON CONFLICT DO NOTHING; the UPDATE … RETURNING is
 // the single-winner guard, so concurrent callers for the same service see 0

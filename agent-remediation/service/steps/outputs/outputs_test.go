@@ -67,7 +67,7 @@ func verifying(rem remediation.Remediation) proposal.Proposal {
 			{Path: "dbt/services/sales/models/a.sql", ContentURI: "s3://b/a.sql", DiffURI: "s3://b/a.diff", TargetNodeID: "model.a"},
 			{Path: "dbt/services/finance/models/b.sql", ContentURI: "s3://b/b.sql", DiffURI: "s3://b/b.diff", TargetNodeID: "model.b"},
 		},
-		TriggerPayload: []byte(`{}`), CreatedAt: now,
+		CreatedAt: now,
 	}
 }
 
