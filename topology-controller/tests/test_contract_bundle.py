@@ -601,7 +601,7 @@ def test_a_declared_read_passes_the_check_exactly_when_the_library_lists_it(entr
 # --- the bundle -----------------------------------------------------------------
 
 def _stored(unique_id: str, *, service: str = "service-py", family: str = "python") -> StoredContract:
-    """A stored contract of `family`, which the library of families refuses (ValueError) when it names none."""
+    """A stored contract of `family`, a value of the contract_family vocabulary (any other value raises ValueError)."""
     return StoredContract(
         unique_id=unique_id, family=ContractFamily(family), service=service, contract_hash="sha256:" + "a" * 64, content_hash="sha256:" + "b" * 64,
         source_path=f"contracts/{unique_id.split('.')[1]}.odcs.yaml", source_sha256="c" * 64,

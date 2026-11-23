@@ -332,8 +332,8 @@ const (
 	ContractFamilyPython ContractFamily = "python"
 )
 
-// ContractFamilys returns every value in contract.yaml declaration order.
-func ContractFamilys() []ContractFamily {
+// ContractFamilies returns every value in contract.yaml declaration order.
+func ContractFamilies() []ContractFamily {
 	return []ContractFamily{
 		ContractFamilyDbt,
 		ContractFamilyPython,

@@ -746,6 +746,49 @@ func TestEmitVocabulary_ListNamesArePlural(t *testing.T) {
 	}
 }
 
+func TestPlural_SpellsTheEnglishPlural(t *testing.T) {
+	for name, want := range map[string]string{
+		"FailureClass":   "FailureClasses",
+		"NodeType":       "NodeTypes",
+		"ContractFamily": "ContractFamilies",
+		"RunKey":         "RunKeys",
+	} {
+		if got := plural(name); got != want {
+			t.Errorf("plural(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestEmitVocabulary_AConsonantYListNameEndsInIes(t *testing.T) {
+	c, err := loadAndValidate(strings.NewReader(`
+key_prefix: "continuo:"
+streams: []
+vocabularies:
+  - name: contract_family
+    const: ContractFamily
+    description: Producer.
+    values:
+      - {value: dbt, const: Dbt, description: dbt.}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	goSrc, err := emitGoVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tsSrc, err := emitTSVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "func ContractFamilies() []ContractFamily"; !strings.Contains(goSrc, want) {
+		t.Errorf("missing %q\n%s", want, goSrc)
+	}
+	if want := "export const CONTRACT_FAMILIES: readonly ContractFamily[]"; !strings.Contains(tsSrc, want) {
+		t.Errorf("missing %q\n%s", want, tsSrc)
+	}
+}
+
 const fullRefreshYAML = `
 key_prefix: "continuo:"
 streams: []

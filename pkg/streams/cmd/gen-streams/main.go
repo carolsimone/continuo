@@ -1040,10 +1040,13 @@ export const {{ .ClassConst }}: Readonly<Record<{{ .Const }}, {{ .ClassType }}>>
 }
 
 // plural is the plural of a vocabulary's Go name: FailureClass → FailureClasses,
-// NodeType → NodeTypes.
+// ContractFamily → ContractFamilies (a y after a consonant), NodeType → NodeTypes.
 func plural(name string) string {
-	if strings.HasSuffix(name, "s") {
+	switch {
+	case strings.HasSuffix(name, "s"):
 		return name + "es"
+	case len(name) > 1 && name[len(name)-1] == 'y' && !strings.ContainsRune("aeiouAEIOU", rune(name[len(name)-2])):
+		return name[:len(name)-1] + "ies"
 	}
 	return name + "s"
 }

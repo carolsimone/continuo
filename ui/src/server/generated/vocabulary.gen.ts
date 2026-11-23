@@ -20,7 +20,7 @@ export type ApproverSource = 'bundle' | 'contract_file' | 'none';
 export const APPROVER_SOURCES: readonly ApproverSource[] = ['bundle', 'contract_file', 'none'];
 
 export type ContractFamily = 'dbt' | 'python';
-export const CONTRACT_FAMILYS: readonly ContractFamily[] = ['dbt', 'python'];
+export const CONTRACT_FAMILIES: readonly ContractFamily[] = ['dbt', 'python'];
 
 export type RemediationSource = 'validation' | 'compile' | 'seed_build' | 'duplicate_table' | 'parse';
 export const REMEDIATION_SOURCES: readonly RemediationSource[] = ['validation', 'compile', 'seed_build', 'duplicate_table', 'parse'];
