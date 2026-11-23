@@ -33,7 +33,7 @@ func TestFailingSiblings_MetaNamesTheStepAndProvidesNothing(t *testing.T) {
 	assert.Empty(t, m.Provides)
 }
 
-func TestFailingSiblings_ADeclaredSiblingInTheSameDirectoryDeclinesWithTheLanesText(t *testing.T) {
+func TestFailingSiblings_ADeclaredSiblingInTheSameDirectoryDeclinesNamingBothNodes(t *testing.T) {
 	a := &fakeArchive{t: t}
 	l := &fakeLocator{located: map[string]ports.Located{"fx.other": sameDir("other")}}
 	r := &fakeReleases{failing: map[string]string{nodeID: "e1", "py.fx.other": "e2"}}

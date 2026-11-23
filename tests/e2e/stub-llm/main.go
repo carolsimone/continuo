@@ -534,7 +534,7 @@ func writeProposeFixResponse(w http.ResponseWriter, userContent string, params m
 		case strings.Contains(userContent, step2Marker):
 			// Step-2: corrected real model source. The rationale below is an
 			// invented cause (nothing upstream renamed anything) so the e2e
-			// can prove it lands under "Model's note:" beneath the driver's
+			// can prove it lands under "Model's note:" beneath the runner's
 			// own facts rather than replacing them.
 			proposedSQL = step2SourceFix
 			rationale = "upstream renamed amount to amount_eur"

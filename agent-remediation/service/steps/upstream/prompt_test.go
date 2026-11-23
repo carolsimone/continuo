@@ -75,7 +75,7 @@ func TestPrompt_MetaNamesTheStepAndWhatItReads(t *testing.T) {
 	assert.Empty(t, m.Provides)
 }
 
-func TestPrompt_MakesTheLanesRequest(t *testing.T) {
+func TestPrompt_MakesItsRequestWithOneModelCall(t *testing.T) {
 	model := &fakeModel{res: answer(fixedSource, "high")}
 
 	proposeUpstream(t, failure(nil), upstreamEvidence(), model)
@@ -170,7 +170,7 @@ func TestUpstream_AnUnchangedAnswerIsADraftTheChecksRefuse(t *testing.T) {
 	}
 }
 
-func TestPrompt_AModelErrorIsReturnedAsTheLaneReturnsIt(t *testing.T) {
+func TestPrompt_AModelErrorIsReturnedWrappedAsAnLLMProposeError(t *testing.T) {
 	model := &fakeModel{err: errBoom}
 
 	_, err := newPrompt().Propose(context.Background(), step.PromptInput{Failure: failure(nil), Evidence: upstreamEvidence()}, model)

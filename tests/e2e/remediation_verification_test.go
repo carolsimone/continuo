@@ -31,7 +31,7 @@ const (
 // Both fixtures live in service-2 on purpose: a cross-service failure is fixed
 // at the producer, so only a same-service pair exercises a consumer-side fix.
 //
-// The attempt cap lets the agent retry the same stub answer after this test
+// The flow's tries let the runner retry the same stub answer after this test
 // returns; those later verification runs fail the same way and drain through
 // the release FIFO without touching any other test's state.
 func TestE2E_Verification_FailsConsumerFixThatIgnoresChangedUpstream(t *testing.T) {

@@ -1084,7 +1084,7 @@ describe('remediation router', () => {
       expect(input.body).toContain('### Owners\n- `s.a`: no owner');
     });
 
-    it('names no owners and asks nobody for a claim that records none (legacy engine)', async () => {
+    it('names no owners and asks nobody for a claim that records none', async () => {
       const remediation = makeRemediation({ beginPullRequest: vi.fn().mockResolvedValue(claimWith([])) });
       const prCreator = makePrCreator();
       const app = appWith({ remediation, prCreator, getObject: makeGetObject() });

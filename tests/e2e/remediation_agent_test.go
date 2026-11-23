@@ -36,7 +36,8 @@ import (
 //	  verification run per edited service, which lays the proposed source over
 //	  the service's dbt project and runs the real compile + validation pipeline
 //	→ the verification run stops at "passed"
-//	→ the reconciler flips the proposal to status=proposed
+//	→ the runner's gate poller reads the verdict and the proposal moves to
+//	  status=proposed
 //	→ emits remediation.proposed:v1 via outbox publisher
 //
 // The stub-llm (tests/e2e/stub-llm/main.go) detects the propose_fix tool in
@@ -193,7 +194,8 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	// (d) Assert the source-resolved path succeeded: stub-github served the real
 	//     model source and stub-llm (Step-2 branch) returned the corrected source.
 	//     The proposal row must reflect source_resolved=true and the URI must end
-	//     with ".source.sql" (the key suffix written by the handler for Step-2).
+	//     with ".source.sql" (the key suffix a prompt step gives the corrected
+	//     source).
 	require.True(t, row.SourceResolved, "proposal row must have source_resolved=true (stub-github served real source)")
 	require.True(t,
 		strings.HasSuffix(row.ProposedSQLURI, ".source.sql"),
@@ -201,9 +203,9 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	t.Logf("source-resolved confirmed: proposed_sql_uri=%s", row.ProposedSQLURI)
 
 	// (e) Assert the remediation.proposed:v1 event carries source_resolved=true.
-	//     This field is set by the handler's enqueue call and is forwarded on
-	//     the wire so downstream consumers can distinguish source-level proposals
-	//     from candidate-SQL proposals.
+	//     This field is set by the pull_request output step when it enqueues the
+	//     event and is forwarded on the wire so downstream consumers can
+	//     distinguish source-level proposals from candidate-SQL proposals.
 	require.True(t, proposed.SourceResolved,
 		"%s must carry source_resolved=true", streams.RemediationProposedV1)
 

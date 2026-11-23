@@ -979,8 +979,8 @@ func TestHandleParsedManifest_OK_NothingToValidate_PromotesDirectly(t *testing.T
 // there is nothing left to measure.
 //
 // A candidate that declares no node at all measured nothing and can prove
-// nothing, so it fails instead — the outcome the fix-verification reconciler
-// already treats as a failed attempt.
+// nothing, so it fails instead — the outcome agent-remediation's gate poller
+// already records as a failed attempt.
 //
 // The last subtest is the control: the same empty validation set on a
 // candidate release must still promote directly, since emitting an empty

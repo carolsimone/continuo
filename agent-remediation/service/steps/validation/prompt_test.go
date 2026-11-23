@@ -107,7 +107,7 @@ func TestDBTValidation_MetaNamesTheStepAndWhatItReads(t *testing.T) {
 	assert.Empty(t, m.Provides)
 }
 
-func TestDBTValidation_MakesTheLanesTwoRequests(t *testing.T) {
+func TestDBTValidation_MakesItsTwoRequests(t *testing.T) {
 	model := answers(stepOne(fixedSQL), stepTwo(fixedSource, "high"))
 
 	proposeValidation(t, &fakeArtifacts{}, failure(nil), validationEvidence(resolvedBundle()), model)

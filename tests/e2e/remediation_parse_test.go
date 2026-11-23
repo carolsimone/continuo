@@ -35,8 +35,8 @@ const parseFixReleaseService = "service-1"
 // parseFixBrokenService is the service whose production-pinned manifest carries
 // the unparseable node, and the service whose source the fix edits. Both halves
 // live in one repository (services/<name> per tests/e2e/config/service_repos.yaml),
-// so the repo and commit the release carries are the ones the fixer reads the
-// offending model from.
+// so the repo and commit the release carries are the ones the dbt-parse type
+// reads the offending model from.
 const parseFixBrokenService = "service-2"
 
 // TestE2E_Remediation_ParseFailureProposesFix drives a SQL syntax error caught
@@ -51,8 +51,9 @@ const parseFixBrokenService = "service-2"
 //	→ release-controller: Fail(invalid_sql), RecordStageResults("parse")
 //	→ release.rejected:v1 {stage: parse, per_node: [{kind, detail, file_path, service}]}
 //	→ remediation: ClassifyParse → remediation.requested:v3 (source=parse)
-//	→ agent-remediation parseFixer: reads the model from stub-github under
-//	  service-2's repo prefix, asks stub-llm → proposal row (source=parse)
+//	→ agent-remediation's dbt-parse type: its failing_node_source step reads
+//	  the model from stub-github under service-2's repo prefix, its prompt asks
+//	  stub-llm → proposal row (source=parse)
 //	→ one fix-verification run lays the corrected model over service-2's dbt
 //	  project, compiles and validates it, and passes → proposal proposed
 //	→ remediation.proposed:v1, and the retry endpoint accepts the reason as
@@ -60,7 +61,7 @@ const parseFixBrokenService = "service-2"
 //
 // ftable_e is the node under repair because the whole rest of the suite already
 // proves this exact corrected source compiles and validates in service-2's
-// project: it is what the validation lane proposes for the same model.
+// project: it is what the dbt-validation type proposes for the same model.
 func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -72,7 +73,7 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	// parse leg; the proposal budget covers the fix-verification run, which is
 	// a whole second pipeline in kind — compile service-2 with the overlay,
 	// build the candidate schema, run the validation Jobs — and matches what
-	// the validation lane's own trigger-to-terminal-proposal wait budgets for
+	// the dbt-validation type's own trigger-to-terminal-proposal wait budgets for
 	// the same span (TestE2E_AgentRemediation_ProposesFixForRejection).
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Minute)
 	defer cancel()
@@ -206,7 +207,7 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	assert.Equal(t, filePath, trigger.Nodes[0].FilePath)
 	// The service is what resolves the repository prefix for a parse fix: a
 	// parse failure's node id is a real node id, not compile's synthetic
-	// service id, so the fixer cannot derive the prefix from it.
+	// service id, so the dbt-parse type cannot derive the prefix from it.
 	assert.Equal(t, parseFixBrokenService, trigger.Nodes[0].Service)
 	assert.NotEmpty(t, trigger.Nodes[0].ErrorExcerpt)
 	assert.Empty(t, trigger.Nodes[0].DBTLogURI, "a parse failure has no log")
