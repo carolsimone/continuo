@@ -193,12 +193,15 @@ func deliveryCount(rem remediation.Remediation, why stuck) int64 {
 }
 
 // failAttemptRow fails the proposal row of the current try's attempt with
-// reason, by what the row is: an attempt still generating is failed, and an
+// reason, cleaned (proposal.CleanedReason), by what the row is: an attempt still generating is failed, and an
 // attempt whose runs are still being judged is failed as a verification that
 // did not pass, with the runs it recorded. A try with no row of its own leaves
 // the release's in-flight row failed, if it has one. Any other row already
 // says how its attempt ended.
 func failAttemptRow(ctx context.Context, repo repository.ProposalRepository, snap remediation.Snapshot, reason string) error {
+	// The reason holds the last error of a step, which can echo what a source or a
+	// service printed, and the row shows it.
+	reason = proposal.CleanedReason(reason)
 	releaseID := snap.Remediation.ReleaseID
 	if snap.Try != nil {
 		views, err := repo.List(ctx, repository.ProposalFilter{ReleaseID: releaseID})

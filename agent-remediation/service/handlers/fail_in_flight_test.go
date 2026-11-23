@@ -36,6 +36,26 @@ func TestFailInFlight_FinalizesGeneratingRow(t *testing.T) {
 	require.True(t, u.committed, "the failing write must be committed")
 }
 
+// The reason is the error that dropped the trigger, which can echo what a service
+// printed, and the row shows it: it is recorded with no credential and no email address.
+func TestFailInFlight_RecordsTheReasonCleaned(t *testing.T) {
+	u := newFakeUoW()
+	require.NoError(t, u.pr.InsertGenerating(context.Background(), proposal.Proposal{
+		ReleaseID: "rel-x", Attempt: 1, Status: proposal.StatusGenerating,
+		ResolvedNodeIDs: []string{"core"},
+		NodeOutcomes:    map[string]proposal.NodeOutcome{"core": {Status: proposal.StatusGenerating}},
+	}))
+	d := Deps{NewUoW: func() uow.UnitOfWork { return u }, Logger: slog.Default()}
+
+	_, err := FailInFlight(context.Background(), d, "rel-x",
+		"remediation trigger dead-lettered: dial postgres://etl:hunter2@db/x refused, ask ops@acme.com")
+
+	require.NoError(t, err)
+	require.Equal(t,
+		"remediation trigger dead-lettered: dial postgres://etl:[redacted:secret]@db/x refused, ask [redacted:email]",
+		u.pr.generating[0].Rationale)
+}
+
 // TestFailInFlight_NoGeneratingRowIsNoOp verifies idempotency: a release with no
 // in-flight row (already finalized, or never started one) reports zero rows
 // moved and no error, so a redundant drop notification is harmless.

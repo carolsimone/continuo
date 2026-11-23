@@ -100,6 +100,15 @@ func CleanedOutcomes(outcomes map[string]NodeOutcome) map[string]NodeOutcome {
 	return out
 }
 
+// CleanedReason is text an attempt's row records as why the attempt failed, such as
+// the errors of a verification run or the reason a remediation stopped, with every
+// credential, private key and email address replaced by its fixed marker. Such a
+// text can echo what a warehouse, a build or a log printed, and the release page
+// and the Proposal read show it.
+func CleanedReason(reason string) string {
+	return sanitize.Text(reason)
+}
+
 // Verification is one fix-verification run posted to judge the edits made to
 // a single service, and the durable summary of how it went. The summary
 // outlives the run itself: release-controller prunes finished runs on its
