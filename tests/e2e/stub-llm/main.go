@@ -27,7 +27,7 @@
 //  2. propose_python_fix mode: when the request body contains a tool named
 //     "propose_python_fix", the server returns a NON-STREAMING response whose
 //     tool call carries an updated_files array — the multi-file answer the
-//     python-node contract fixer expects. The reply is derived from the prompt
+//     python-contract prompt steps expect. The reply is derived from the prompt
 //     rather than canned: the stub reads back the contract file it was shown
 //     and returns it with the unbindable relation in its declared read
 //     replaced, which is what a model asked to fix that failure would do. See
@@ -114,7 +114,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// stream:false and parses choices[0].message.tool_calls[0].function.
 	// Branch on the user-content marker to distinguish Step-1 (candidate SQL)
 	// from Step-2 (real source fix via stub-github).
-	// propose_python_fix mode: the python-node contract fixer forces its own
+	// propose_python_fix mode: the python-contract prompt steps force their own
 	// tool, whose answer is a list of complete files rather than a single
 	// content string. Checked before propose_fix because the two are distinct
 	// tools with incompatible answer shapes.
@@ -204,7 +204,7 @@ func proposeFixParams(tools []toolDef) map[string]bool {
 // firstShownFile returns the path of the first "File <path>:" block in a
 // compile-fix prompt. prompt.AssembleCompileFix renders the offending file
 // first, so this is the file the stub targets. Returns "" if none is found, in
-// which case the compile fixer defaults target_file to the offending file.
+// which case the step reads the empty target_file as the one file it showed.
 func firstShownFile(userContent string) string {
 	const marker = "File "
 	for _, line := range strings.Split(userContent, "\n") {
@@ -352,18 +352,13 @@ func contractYAML(userContent string) string {
 	return rest[:end]
 }
 
-// priorAttemptsHeading opens the section the legacy engine's
-// prompt.AssemblePythonContractFix renders for the earlier attempts at the
-// same failure, and earlierTriesHeading the section the runner engine's
-// prompt.WithPreviousTries appends to every request of a try after the first.
-// Each section exists only when an earlier attempt or try was recorded, so
-// either heading is what tells a retry apart from a first attempt. A later
-// pre-flight round of the first try carries neither: it shows the model its
-// previous answer under its own heading, and is no retry.
-const (
-	priorAttemptsHeading = "Previous fix attempts for this node"
-	earlierTriesHeading  = "## Earlier tries at this failure"
-)
+// earlierTriesHeading opens the section prompt.WithPreviousTries appends to
+// every request of a try after the first, with the diffs the earlier tries
+// applied and why each was refused. The section exists only when an earlier try
+// was recorded, so the heading is what tells a retry apart from a first
+// attempt. A later pre-flight round of the first try does not carry it: it
+// shows the model its previous answer under its own heading, and is no retry.
+const earlierTriesHeading = "## Earlier tries at this failure"
 
 // promptAroundContract returns the request with the contract file it showed cut
 // out of it: what the prompt assembler wrote AROUND that file — the failure, the
@@ -384,9 +379,8 @@ func promptAroundContract(userContent, contract string) string {
 }
 
 // isRetryShownTheRejectedRead reports whether this request is a retry that was
-// actually shown what the earlier attempt did: the prompt carries the
-// prior-attempts section of either engine, and the prompt names the relation
-// the earlier attempt declared.
+// actually shown what the earlier try did: the prompt carries the earlier-tries
+// section, and the prompt names the relation the earlier try declared.
 //
 // Both halves are required, and both are read from around the contract file.
 // The heading alone would answer a retry correctly even when the evidence the
@@ -396,12 +390,11 @@ func promptAroundContract(userContent, contract string) string {
 // including in text the stub was never meant to read.
 func isRetryShownTheRejectedRead(userContent, contract string) bool {
 	around := promptAroundContract(userContent, contract)
-	shown := strings.Contains(around, priorAttemptsHeading) || strings.Contains(around, earlierTriesHeading)
-	return shown && strings.Contains(around, stillBrokenRead)
+	return strings.Contains(around, earlierTriesHeading) && strings.Contains(around, stillBrokenRead)
 }
 
 // writeProposePythonFixResponse returns a deterministic, non-streaming answer
-// for the python-node contract fixer: the contract file the prompt showed,
+// for the python-contract prompt steps: the contract file the prompt showed,
 // with the relation in its declared read rewritten.
 //
 // Which rewrite depends on the fixture, so one stub drives both e2e scenarios:
@@ -412,17 +405,16 @@ func isRetryShownTheRejectedRead(userContent, contract string) bool {
 //     next attempt's evidence;
 //   - the loop fixture on a retry gets bindingRead, so the second
 //     verification run validates. A retry is recognised by
-//     isRetryShownTheRejectedRead: the prompt's prior-attempts section (the
-//     legacy engine's or the runner's earlier tries) exists AND the prompt
-//     names the relation the earlier attempt declared, which reaches it only
-//     through that attempt's recorded verification error or the diff it
-//     applied. A retry whose prompt lost that evidence therefore
-//     keeps getting the answer that already failed, and the e2e test driving
-//     it never goes green;
+//     isRetryShownTheRejectedRead: the prompt's earlier-tries section exists
+//     AND the prompt names the relation the earlier try declared, which
+//     reaches it only through that try's recorded gate error or the diff it
+//     applied. A retry whose prompt lost that evidence therefore keeps getting
+//     the answer that already failed, and the e2e test driving it never goes
+//     green;
 //   - every other fixture gets bindingRead immediately.
 //
 // A prompt with no contract file in it yields an empty updated_files list,
-// which the fixer records as a failed attempt — a legible failure rather than
+// which the runner records as a failed attempt — a legible failure rather than
 // a malformed file written onto a checkout.
 func writeProposePythonFixResponse(w http.ResponseWriter, userContent string) {
 	path := contractFilePath(userContent)
@@ -493,7 +485,7 @@ func writeProposeFixResponse(w http.ResponseWriter, userContent string, params m
 	var toolArgs map[string]string
 	switch {
 	case params["target_file"] && strings.Contains(userContent, parseFixMarker):
-		// Parse fix: the parse lane declares the same tool as a compile fix, so
+		// Parse fix: the dbt-parse step declares the same tool as a compile fix, so
 		// the prompt heading is the only thing that tells the two apart — hence
 		// this case sits above the compile one.
 		toolArgs = map[string]string{

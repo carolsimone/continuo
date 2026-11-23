@@ -1,6 +1,5 @@
 # A python-csv node whose declared columns do not match the csv's header. The
-# fix renames the column in the node's ODCS contract. Built from the csv lane's tests
-# (service/fixer/csv_validation_test.go).
+# fix renames the column in the node's ODCS contract.
 kind: fixture
 version: 1
 type: csv-validation

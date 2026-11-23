@@ -308,8 +308,8 @@ export function createRemediationRouter(
     }
 
     // The owners of the fixed nodes are asked to review the pull request. A
-    // claim of a proposal that records no owners (the legacy engine's) has no
-    // approvers, so it asks nobody and its body names no owners.
+    // claim of a proposal that records no owners (a row with no remediation id)
+    // has no approvers, so it asks nobody and its body names no owners.
     // A team is asked only when its org owns the repository (claim.repo is
     // "owner/name"); another org's team is listed.
     const approvers: Approver[] = claim.approvers ?? [];

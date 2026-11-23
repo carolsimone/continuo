@@ -75,7 +75,7 @@ type Proposal struct {
 	// node_id is their representative.
 	ResolvedNodeIds []string `protobuf:"bytes,30,rep,name=resolved_node_ids,json=resolvedNodeIds,proto3" json:"resolved_node_ids,omitempty"`
 	// node_outcomes is, per failing node, how this attempt ended for it — a
-	// cluster whose fixer skipped or failed leaves its members
+	// cluster that was skipped or failed leaves its members
 	// skipped/failed while other members verify.
 	NodeOutcomes map[string]*NodeOutcome `protobuf:"bytes,31,rep,name=node_outcomes,json=nodeOutcomes,proto3" json:"node_outcomes,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// verifications is one fix-verification run per edited service; the first
@@ -95,8 +95,8 @@ type Proposal struct {
 	Services []string `protobuf:"bytes,35,rep,name=services,proto3" json:"services,omitempty"`
 	// approvers is who must approve what this attempt did with each node a
 	// remediation settled at its end, the fixed nodes and the handed-over ones,
-	// one entry per node sorted by node_id. Empty on an attempt of the legacy
-	// engine and on one with no approvers recorded.
+	// one entry per node sorted by node_id. Empty on an attempt row with no
+	// remediation id and on one with no approvers recorded.
 	Approvers     []*Approver `protobuf:"bytes,36,rep,name=approvers,proto3" json:"approvers,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

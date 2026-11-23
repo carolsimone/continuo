@@ -1,8 +1,7 @@
 # Two sales models fail the same way below base_orders, which the release
 # changed: it dropped the amount column both of them read. The fix restores
 # the column in base_orders once. When it cannot, each member falls back to a
-# dbt-validation fix of its own. Built from the upstream lane's tests
-# (service/fixer/upstream_test.go).
+# dbt-validation fix of its own.
 kind: fixture
 version: 1
 type: shared-upstream

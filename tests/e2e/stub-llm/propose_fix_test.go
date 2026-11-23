@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// singleFileToolParams is the parameter set the compile AND the parse lane
-// declare on propose_fix: prompt.AssembleParseFix builds its request from
+// singleFileToolParams is the parameter set the dbt-compile AND the dbt-parse
+// prompt step declare on propose_fix: prompt.AssembleParseFix builds its request from
 // AssembleCompileFix and swaps only the system prompt, the user body and the
 // tool description, so the declared parameters cannot tell the two apart. The
 // prompt body is the only discriminator, which is what the routing below and
@@ -79,14 +79,14 @@ func proposeFixArgs(t *testing.T, userContent string, params map[string]bool) ma
 	return args
 }
 
-// TestProposeFix_SingleFileLaneRoutesOnThePromptHeading is the guard on the
+// TestProposeFix_SingleFileToolRoutesOnThePromptHeading is the guard on the
 // property the parse e2e test rests on: a parse fix and a compile fix declare
 // the same tool parameters, so only the heading their prompt renders separates
 // them. Answering a parse prompt with the compile fixture would lay a model
 // body carrying its own schedule tag over the node under repair, and answering
 // a compile prompt with the parse fixture would replace the malformed-Jinja
 // fixture with a model that never exercised the Jinja error at all.
-func TestProposeFix_SingleFileLaneRoutesOnThePromptHeading(t *testing.T) {
+func TestProposeFix_SingleFileToolRoutesOnThePromptHeading(t *testing.T) {
 	for name, tc := range map[string]struct {
 		userContent string
 		wantContent string
@@ -118,26 +118,26 @@ func TestProposeFix_SingleFileLaneRoutesOnThePromptHeading(t *testing.T) {
 	}
 }
 
-// TestProposeFix_ParseMarkerDoesNotDivertTheSeedOrValidationLanes pins that the
-// new routing is scoped to the single-file lane: the seed and validation lanes
+// TestProposeFix_ParseMarkerDoesNotDivertTheSeedOrValidationTools pins that the
+// new routing is scoped to the single-file tool: the seed and validation tools
 // declare different parameters, and a prompt of theirs that happened to carry
 // the parse heading must still get its own answer.
-func TestProposeFix_ParseMarkerDoesNotDivertTheSeedOrValidationLanes(t *testing.T) {
+func TestProposeFix_ParseMarkerDoesNotDivertTheSeedOrValidationTools(t *testing.T) {
 	withMarker := singleFilePrompt("Seed: seeds/customers.csv", parseFixMarker, "boom")
 
 	seed := proposeFixArgs(t, withMarker, map[string]bool{"proposed_content": true, "rationale": true, "confidence": true})
 	if seed["proposed_content"] != seedFixContent {
-		t.Errorf("the seed lane must still answer with the corrected CSV, got %q", seed["proposed_content"])
+		t.Errorf("the seed tool must still answer with the corrected CSV, got %q", seed["proposed_content"])
 	}
 	if _, ok := seed["target_file"]; ok {
-		t.Error("the seed lane's tool declares no target_file, so the answer must not carry one")
+		t.Error("the seed tool declares no target_file, so the answer must not carry one")
 	}
 
 	validation := proposeFixArgs(t, withMarker, map[string]bool{"proposed_sql": true, "rationale": true, "confidence": true})
 	if validation["proposed_sql"] == "" {
-		t.Error("the validation lane must still answer with proposed_sql")
+		t.Error("the validation tool must still answer with proposed_sql")
 	}
 	if _, ok := validation["proposed_content"]; ok {
-		t.Error("the validation lane's tool declares no proposed_content, so the answer must not carry one")
+		t.Error("the validation tool declares no proposed_content, so the answer must not carry one")
 	}
 }

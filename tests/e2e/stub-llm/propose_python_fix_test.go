@@ -15,32 +15,20 @@ const (
 	loopFixturePath = "services/svc-py-e2e-loop/contracts/py_loop_read.odcs.yaml"
 )
 
-// priorAttemptSection is the earlier-attempts section a retry's prompt carries,
-// rendered exactly as prompt.AssemblePythonContractFix renders it: the heading,
-// the attempt line with the error its verification run reported, and the diff
-// that attempt applied.
-const priorAttemptSection = "Previous fix attempts for this node, oldest first — do not repeat a change that was already rejected:\n" +
-	"Attempt 1 — verification failed: relation \"public.still_wrong_name\" does not exist\n" +
-	"  Changed " + loopFixturePath + ":\n" +
-	"```diff\n" +
-	"-      missing: select id from public.loop_wrong_name\n" +
-	"+      missing: select id from public.still_wrong_name\n" +
-	"```\n\n"
-
-// pythonFixPrompt renders the user message the python contract fixer sends,
-// in the same order and with the same markers prompt.AssemblePythonContractFix
-// writes: the failing node, the validation error, the declaring contract file
-// verbatim inside a ```yaml fence, then the optional earlier-attempts section.
+// pythonFixPrompt renders the user message the python-contract prompt step
+// sends, in the same order and with the same markers
+// prompt.AssemblePythonContractFix writes: the failing node, the validation
+// error, the declaring contract file verbatim inside a ```yaml fence, then the
+// closing instruction.
 //
 // It is written out here rather than imported because stub-llm is its own Go
 // module with no dependencies — the container image it builds carries nothing
 // but the standard library.
-func pythonFixPrompt(contract, priorAttempts string) string {
+func pythonFixPrompt(contract string) string {
 	var b strings.Builder
 	b.WriteString("Failed python node: e2e_schema.py_loop_read\n\n")
 	b.WriteString("Validation error:\n```\nrelation \"public.loop_wrong_name\" does not exist\n```\n\n")
 	b.WriteString("Contract file " + loopFixturePath + " that declares it:\n```yaml\n" + contract + "\n```\n\n")
-	b.WriteString(priorAttempts)
 	b.WriteString("Return the complete new content of every file you change.")
 	return b.String()
 }
@@ -115,7 +103,7 @@ func readLoopFixture(t *testing.T) string {
 // first verification run and the e2e test timed out waiting for a rejection
 // it could no longer get. Reading the real file is what makes this test notice.
 func TestProposePythonFix_LoopFixture_FirstAttemptStaysBroken(t *testing.T) {
-	path, content := proposedFile(t, pythonFixPrompt(readLoopFixture(t), ""))
+	path, content := proposedFile(t, pythonFixPrompt(readLoopFixture(t)))
 
 	if path != loopFixturePath {
 		t.Errorf("want the contract file the prompt showed (%s), got %s", loopFixturePath, path)
@@ -135,48 +123,17 @@ func TestProposePythonFix_LoopFixture_FirstAttemptStaysBroken(t *testing.T) {
 func TestProposePythonFix_LoopFixture_CommentsCannotAnswerForTheModel(t *testing.T) {
 	contract := strings.Replace(readLoopFixture(t), "customProperties:\n", "customProperties:\n"+
 		"  # the first answer points at "+stillBrokenRead+", the retry at "+bindingRead+"\n"+
-		"  # "+priorAttemptsHeading+"\n", 1)
+		"  # "+earlierTriesHeading+"\n", 1)
 
-	_, content := proposedFile(t, pythonFixPrompt(contract, ""))
+	_, content := proposedFile(t, pythonFixPrompt(contract))
 
 	if !strings.Contains(content, "select id from "+stillBrokenRead) {
 		t.Errorf("a comment in the contract file must not turn a first attempt into a retry; got:\n%s", content)
 	}
 }
 
-// TestProposePythonFix_LoopFixture_RetryShownTheErrorBinds is the other half:
-// once the prompt carries what the rejected attempt changed and why it failed,
-// the stub answers with the relation the e2e test creates in the warehouse, so
-// the second verification run validates.
-func TestProposePythonFix_LoopFixture_RetryShownTheErrorBinds(t *testing.T) {
-	_, content := proposedFile(t, pythonFixPrompt(readLoopFixture(t), priorAttemptSection))
-
-	if !strings.Contains(content, "select id from "+bindingRead) {
-		t.Errorf("a retry shown the rejected attempt must declare the binding read; got:\n%s", content)
-	}
-	if strings.Contains(content, stillBrokenRead) {
-		t.Errorf("a retry must not repeat the read that was already rejected; got:\n%s", content)
-	}
-}
-
-// TestProposePythonFix_RetryWithoutTheRejectedEvidenceKeepsFailing proves the
-// loop test measures what it claims to. An attempt row alone — the heading with
-// no error and no diff behind it — is not evidence, and must not earn the
-// answer that passes: if the rejected attempt's own error stops reaching the
-// prompt, the retry keeps getting the fix that already failed.
-func TestProposePythonFix_RetryWithoutTheRejectedEvidenceKeepsFailing(t *testing.T) {
-	const emptyAttempt = "Previous fix attempts for this node, oldest first — do not repeat a change that was already rejected:\n" +
-		"Attempt 1\n\n"
-
-	_, content := proposedFile(t, pythonFixPrompt(readLoopFixture(t), emptyAttempt))
-
-	if !strings.Contains(content, "select id from "+stillBrokenRead) {
-		t.Errorf("a retry shown no evidence must keep getting the answer that already failed; got:\n%s", content)
-	}
-}
-
-// earlierTriesSection is the section the runner engine appends to a later
-// try's request, rendered as prompt.WithPreviousTries renders it: the heading,
+// earlierTriesSection is the section a try after the first appends to its
+// request, rendered as prompt.WithPreviousTries renders it: the heading,
 // its instruction, then one part per earlier try with the diff that try
 // applied and why the verification gate failed it.
 const earlierTriesSection = "\n\n## Earlier tries at this failure\n" +
@@ -189,40 +146,44 @@ const earlierTriesSection = "\n\n## Earlier tries at this failure\n" +
 	"```\n" +
 	"Why the gate failed: e2e_schema.py_loop_read: relation \"public.still_wrong_name\" does not exist"
 
-// runnerPythonFixPrompt is the request the runner engine sends for the loop
-// fixture: the contract-fix request, with no earlier-attempts section of its
-// own, and the earlier tries appended after it.
-func runnerPythonFixPrompt(contract, earlierTries string) string {
-	return pythonFixPrompt(contract, "") + earlierTries
+// pythonFixPromptAfter is the request a later try or a later pre-flight round
+// sends for the loop fixture: the contract-fix request with the given section
+// (the earlier tries, or the previous answer with the checks' findings)
+// appended after it.
+func pythonFixPromptAfter(contract, section string) string {
+	return pythonFixPrompt(contract) + section
 }
 
-// TestProposePythonFix_LoopFixture_RunnerRetryShownTheEarlierTryBinds is the
-// runner engine's retry: its second try carries the earlier tries under its own
+// TestProposePythonFix_LoopFixture_RetryShownTheEarlierTryBinds is the other
+// half of the first-attempt test: a retry carries the earlier tries under their
 // heading, with the read the first try declared in that try's diff and gate
-// error, and gets the binding read.
-func TestProposePythonFix_LoopFixture_RunnerRetryShownTheEarlierTryBinds(t *testing.T) {
-	_, content := proposedFile(t, runnerPythonFixPrompt(readLoopFixture(t), earlierTriesSection))
+// error, so the stub answers with the relation the e2e test creates in the
+// warehouse and the second verification run validates.
+func TestProposePythonFix_LoopFixture_RetryShownTheEarlierTryBinds(t *testing.T) {
+	_, content := proposedFile(t, pythonFixPromptAfter(readLoopFixture(t), earlierTriesSection))
 
 	if !strings.Contains(content, "select id from "+bindingRead) {
-		t.Errorf("a runner try shown the earlier try must declare the binding read; got:\n%s", content)
+		t.Errorf("a retry shown the earlier try must declare the binding read; got:\n%s", content)
 	}
 	if strings.Contains(content, stillBrokenRead) {
-		t.Errorf("a runner try must not repeat the read the earlier try failed for; got:\n%s", content)
+		t.Errorf("a retry must not repeat the read the earlier try failed for; got:\n%s", content)
 	}
 }
 
-// TestProposePythonFix_LoopFixture_RunnerRetryWithoutTheEvidenceKeepsFailing:
-// the runner's heading alone, with no earlier try's diff or gate error behind
-// it, earns no binding read.
-func TestProposePythonFix_LoopFixture_RunnerRetryWithoutTheEvidenceKeepsFailing(t *testing.T) {
+// TestProposePythonFix_LoopFixture_RetryWithoutTheEvidenceKeepsFailing proves
+// the loop test measures what it claims to: the earlier-tries heading alone,
+// with no earlier try's diff or gate error behind it, earns no binding read, so
+// if the rejected try's own error stops reaching the prompt the retry keeps
+// getting the fix that already failed.
+func TestProposePythonFix_LoopFixture_RetryWithoutTheEvidenceKeepsFailing(t *testing.T) {
 	const emptyTries = "\n\n## Earlier tries at this failure\n" +
 		"These tries at the same failure did not pass. Do not repeat a change that did not pass; correct what each try was refused for.\n" +
 		"\n### Try 1 (round 1)\nNothing was recorded for this try."
 
-	_, content := proposedFile(t, runnerPythonFixPrompt(readLoopFixture(t), emptyTries))
+	_, content := proposedFile(t, pythonFixPromptAfter(readLoopFixture(t), emptyTries))
 
 	if !strings.Contains(content, "select id from "+stillBrokenRead) {
-		t.Errorf("a runner try shown no evidence must keep getting the answer that already failed; got:\n%s", content)
+		t.Errorf("a retry shown no evidence must keep getting the answer that already failed; got:\n%s", content)
 	}
 }
 
@@ -235,7 +196,7 @@ func TestProposePythonFix_LoopFixture_RevisionInTheFirstTryStaysBroken(t *testin
 		"\n```\n\n## What the checks found\n- reads_kept: a read was dropped\n" +
 		"\nCorrect every finding and call the tool again with your complete answer."
 
-	_, content := proposedFile(t, runnerPythonFixPrompt(readLoopFixture(t), revision))
+	_, content := proposedFile(t, pythonFixPromptAfter(readLoopFixture(t), revision))
 
 	if !strings.Contains(content, "select id from "+stillBrokenRead) {
 		t.Errorf("a revision within the first try is not a retry; got:\n%s", content)
@@ -251,7 +212,7 @@ func TestProposePythonFix_BadReadFixtureBindsImmediately(t *testing.T) {
 		t.Fatalf("read the single-attempt contract fixture: %v", err)
 	}
 
-	_, content := proposedFile(t, pythonFixPrompt(string(raw), ""))
+	_, content := proposedFile(t, pythonFixPrompt(string(raw)))
 
 	if !strings.Contains(content, "select id from "+bindingRead) {
 		t.Errorf("the single-attempt fixture must be repaired on its first attempt; got:\n%s", content)
@@ -259,7 +220,7 @@ func TestProposePythonFix_BadReadFixtureBindsImmediately(t *testing.T) {
 }
 
 // TestProposePythonFix_NoContractFileYieldsNoFiles pins the degenerate case the
-// fixer turns into a legible failed attempt rather than a malformed write: a
+// runner turns into a legible failed attempt rather than a malformed write: a
 // prompt carrying no contract file gets an answer carrying no files.
 func TestProposePythonFix_NoContractFileYieldsNoFiles(t *testing.T) {
 	rec := httptest.NewRecorder()
