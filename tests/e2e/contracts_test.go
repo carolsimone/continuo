@@ -44,10 +44,6 @@ const (
 	// parse result and contract bundle name it.
 	topologyContractsVersion = "0.4.1"
 
-	// dbtContractFamily is the family the contract bundle gives the contract of
-	// a dbt model, seed or snapshot.
-	dbtContractFamily = "dbt"
-
 	// dbtProbeTeam and dbtProbeSchedule are what service-1's dbt project
 	// (dbt/services/service-1/dbt_project.yml) gives the rel_probe model: its
 	// +meta owner, which its contract carries as team.name, and its schedule
@@ -562,11 +558,11 @@ func contractsCLI(t *testing.T, ctx context.Context) (string, []string) {
 func assertDbtNodeContract(t *testing.T, ctx context.Context, clients *testClients, releaseID string, node topologyartifact.Node) {
 	t.Helper()
 	bundle := candidateContractBundle(t, ctx, clients, releaseID)
-	assert.Positive(t, bundle.Summary.ByFamily[dbtContractFamily], "the bundle counts the release's dbt contracts")
+	assert.Positive(t, bundle.Summary.ByFamily[model.ContractFamilyDbt], "the bundle counts the release's dbt contracts")
 
 	stored, ok := bundle.Contracts[node.UniqueID]
 	require.True(t, ok, "the contract bundle of %s holds a contract for %s", releaseID, node.UniqueID)
-	assert.Equal(t, dbtContractFamily, stored.Family)
+	assert.Equal(t, model.ContractFamilyDbt, stored.Family)
 	assert.Equal(t, node.ServiceName, stored.Service)
 	assert.Equal(t, node.ContentHash, stored.ContentHash, "the contract carries its node's code fingerprint")
 	assert.NotEmpty(t, stored.ContractHash)
