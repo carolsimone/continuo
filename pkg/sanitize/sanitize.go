@@ -14,12 +14,13 @@
 // The rules, in order, with the marker each one writes:
 //
 //  1. a private key block, from its BEGIN line to its END line, or to the end
-//     of the text when the END line is missing (key);
+//     of the text when the END line is missing (key): PEM (-----BEGIN RSA
+//     PRIVATE KEY-----) and PGP armour (-----BEGIN PGP PRIVATE KEY BLOCK-----);
 //  2. the password of a URL, scheme://user:password@host, where the user and
 //     the password end before the first slash, question mark or number sign
 //     (secret);
 //  3. a token of a known shape: an AWS access key id, a GitHub token, a JWT or
-//     a bearer token (secret);
+//     a bearer token, whatever the case of the word Bearer (secret);
 //  4. the value of a key that names a secret, such as password=..., "token":
 //     "..." or api_key: ..., and the quoted literal of an annotated assignment,
 //     password: str = "..." (secret). A quoted value is the whole literal: a
@@ -29,7 +30,10 @@
 //     unquoted value is a literal only, not code that reads a value
 //     (os.environ["TOKEN"], ${TOKEN}, or settings.PASSWORD written after an
 //     operator with a space on each side), not a null or a boolean, not a
-//     block scalar and not a type;
+//     block scalar indicator and not a type. A block scalar (password: |, token:
+//     >-) has no value on its own line: its value is the lines under it, the
+//     indented lines that follow, up to the first line indented no deeper than
+//     the key, all of them one secret;
 //  5. an email address (email).
 //
 // Every rule reads the text as Text writes it: the rules run over the text,
@@ -307,18 +311,77 @@ func keepSecretValue(s string, loc []int) bool {
 	return true
 }
 
+// blockScalarHeader is the line that opens a block scalar whose key names a
+// secret: the key, a colon and an indicator (|, >, with an indent digit and a
+// chomping sign), and nothing else but a comment. Group 1 is what comes before
+// the key on the line, its indentation and the dashes of a list: its length is
+// the column of the key. The key may carry a prefix, as secretKey does, and no
+// suffix.
+var blockScalarHeader = regexp.MustCompile(`(?m)^([ \t]*(?:-[ \t]+)*)["']?[\w.-]*?` + secretKey +
+	`["']?[ \t]*:[ \t]*[|>](?:[0-9][+-]?|[+-][0-9]?)?[ \t]*(?:#[^\n]*)?\r?$`)
+
+// blockScalarSpans returns the spans of the secrets that block scalars hold. The
+// value of a block scalar is the lines under its header that are indented deeper
+// than its key, with the blank lines between them: it ends at the first line
+// that has text and is indented no deeper. A span runs from the first character
+// of the first line of the value to the end of the last line that has text, so
+// the header, the indentation and the blank lines after the value stay. A
+// value that holds only markers is already redacted and is left alone, so
+// redacting the output of Text finds nothing. The text is read once, line by
+// line, and a header inside a value belongs to that value.
+func blockScalarSpans(text string) []span {
+	var spans []span
+	readTo := 0
+	for _, m := range blockScalarHeader.FindAllStringSubmatchIndex(text, -1) {
+		if m[0] < readTo {
+			continue
+		}
+		keyColumn := m[3] - m[2]
+		start, end := -1, -1
+		pos := m[1] // the end of the header line: a line feed, or the end of the text
+		for pos < len(text) {
+			lineStart := pos + 1
+			lineEnd := len(text)
+			if i := strings.IndexByte(text[lineStart:], '\n'); i >= 0 {
+				lineEnd = lineStart + i
+			}
+			line := strings.TrimRight(text[lineStart:lineEnd], "\r")
+			indent := len(line) - len(strings.TrimLeft(line, " \t"))
+			if indent < len(line) {
+				if indent <= keyColumn {
+					break
+				}
+				if start < 0 {
+					start = lineStart + indent
+				}
+				end = lineStart + len(line)
+			}
+			pos = lineEnd
+		}
+		readTo = max(pos, m[1])
+		if start >= 0 && strings.TrimSpace(markerAny.ReplaceAllString(text[start:end], "")) != "" {
+			spans = append(spans, span{start, end, kindSecret})
+		}
+	}
+	return spans
+}
+
 // pattern is one regular expression of a rule and the capture groups that hold
 // the text to replace. With no group the whole match is replaced; with groups
 // the first one that took part in the match is. needs lists lower case words
 // the pattern cannot match without: it is tried only on a text that holds one
 // of them, in some case, which spares the slow patterns the most of a large
 // text that has none. keep, when set, is asked about each match, with its
-// submatch locations, and a match it refuses is dropped.
+// submatch locations, and a match it refuses is dropped. A pattern with a scan
+// has no regular expression: scan finds its spans in the text itself, for what
+// a regular expression cannot read, such as the lines that are indented deeper
+// than another one.
 type pattern struct {
 	re     *regexp.Regexp
 	groups []int
 	needs  []string
 	keep   func(s string, loc []int) bool
+	scan   func(text string) []span
 }
 
 // rule is one redaction rule. A rule that takes in absorbs the earlier matches
@@ -333,23 +396,24 @@ type rule struct {
 // when two overlap.
 var rules = []rule{
 	{kindKey, []pattern{
-		{regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|\z)`), nil, nil, nil},
+		{regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|\z)`), nil, nil, nil, nil},
 	}, false},
 	{kindSecret, []pattern{
-		{regexp.MustCompile(`://(?:` + markerPattern + `|[^` + userinfoChars + `:])*:([^` + userinfoChars + `]+)@[^` + urlChars + `]`), []int{1}, nil, nil},
+		{regexp.MustCompile(`://(?:` + markerPattern + `|[^` + userinfoChars + `:])*:([^` + userinfoChars + `]+)@[^` + urlChars + `]`), []int{1}, nil, nil, nil},
 	}, false},
 	{kindSecret, []pattern{
-		{regexp.MustCompile(`AKIA[0-9A-Z]{16}`), nil, nil, nil},
-		{regexp.MustCompile(`gh[pousr]_[A-Za-z0-9]{36,}`), nil, nil, nil},
-		{regexp.MustCompile(`eyJ[\w-]+\.eyJ[\w-]+\.[\w-]+`), nil, nil, nil},
-		{regexp.MustCompile(`\b[Bb]earer[ \t]+[A-Za-z0-9._~+/=-]{8,}`), nil, []string{"earer"}, nil},
+		{regexp.MustCompile(`AKIA[0-9A-Z]{16}`), nil, nil, nil, nil},
+		{regexp.MustCompile(`gh[pousr]_[A-Za-z0-9]{36,}`), nil, nil, nil, nil},
+		{regexp.MustCompile(`eyJ[\w-]+\.eyJ[\w-]+\.[\w-]+`), nil, nil, nil, nil},
+		{regexp.MustCompile(`\b(?i:bearer)[ \t]+[A-Za-z0-9._~+/=-]{8,}`), nil, []string{"earer"}, nil, nil},
 	}, false},
 	{kindSecret, []pattern{
-		{secretValueRE, []int{2, 3, 4, 5, 6, 7, bareGroup}, secretKeyHints, keepSecretValue},
-		{regexp.MustCompile(secretAnnotated), []int{1, 2, 3, 4}, secretKeyHints, nil},
+		{secretValueRE, []int{2, 3, 4, 5, 6, 7, bareGroup}, secretKeyHints, keepSecretValue, nil},
+		{regexp.MustCompile(secretAnnotated), []int{1, 2, 3, 4}, secretKeyHints, nil, nil},
+		{nil, nil, secretKeyHints, nil, blockScalarSpans},
 	}, true},
 	{kindEmail, []pattern{
-		{regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}`), nil, []string{"@"}, nil},
+		{regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}`), nil, []string{"@"}, nil, nil},
 	}, false},
 }
 
@@ -364,6 +428,9 @@ type span struct {
 func (p pattern) candidates(k kind, text, lower string) []span {
 	if len(p.needs) > 0 && !containsAny(lower, p.needs) {
 		return nil
+	}
+	if p.scan != nil {
+		return p.scan(text)
 	}
 	var found []span
 	for _, loc := range p.re.FindAllStringSubmatchIndex(text, -1) {

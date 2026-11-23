@@ -3,6 +3,7 @@ package sanitize_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/carolsimone/continuo/pkg/sanitize"
 	"github.com/stretchr/testify/assert"
@@ -53,6 +54,18 @@ func TestText_RedactsAPrivateKeyBlock(t *testing.T) {
 			`{"msg":"-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----\n","level":"info"}`,
 			`{"msg":"[redacted:key]\n","level":"info"}`,
 		},
+		"a PGP block": {
+			"-----BEGIN PGP PRIVATE KEY BLOCK-----\nVersion: GnuPG\n\nlQOYBF2Z\n-----END PGP PRIVATE KEY BLOCK-----",
+			"[redacted:key]",
+		},
+		"a PGP block between two lines": {
+			"before\n-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOYBF2Z\n-----END PGP PRIVATE KEY BLOCK-----\nafter",
+			"before\n[redacted:key]\nafter",
+		},
+		"a PGP block cut before its END line": {
+			"error near\n-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOYBF2Z",
+			"error near\n[redacted:key]",
+		},
 		// An excerpt cut mid-key has no END line: everything after BEGIN goes.
 		"a block cut before its END line": {
 			"error near\n-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkq",
@@ -67,9 +80,11 @@ func TestText_RedactsAPrivateKeyBlock(t *testing.T) {
 
 func TestText_KeepsPublicKeyMaterial(t *testing.T) {
 	for name, in := range map[string]string{
-		"a certificate": "-----BEGIN CERTIFICATE-----\nMIIC\n-----END CERTIFICATE-----",
-		"a public key":  "-----BEGIN PUBLIC KEY-----\nMFkw\n-----END PUBLIC KEY-----",
-		"a mention":     "the PRIVATE KEY header is written on its own line",
+		"a certificate":    "-----BEGIN CERTIFICATE-----\nMIIC\n-----END CERTIFICATE-----",
+		"a public key":     "-----BEGIN PUBLIC KEY-----\nMFkw\n-----END PUBLIC KEY-----",
+		"a PGP public key": "-----BEGIN PGP PUBLIC KEY BLOCK-----\nmQEN\n-----END PGP PUBLIC KEY BLOCK-----",
+		"a PGP signature":  "-----BEGIN PGP SIGNATURE-----\niQEz\n-----END PGP SIGNATURE-----",
+		"a mention":        "the PRIVATE KEY header is written on its own line",
 	} {
 		t.Run(name, func(t *testing.T) {
 			assert.Equal(t, in, sanitize.Text(in))
@@ -139,6 +154,18 @@ func TestText_RedactsKnownTokenShapes(t *testing.T) {
 			"Authorization: Bearer abc123.def456-ghi789",
 			"Authorization: [redacted:secret]",
 		},
+		"a bearer token with the scheme in capitals": {
+			"Authorization: BEARER abcdef1234567890abcdef",
+			"Authorization: [redacted:secret]",
+		},
+		"a bearer token with the scheme in lower case": {
+			"authorization: bearer abcdef1234567890abcdef",
+			"authorization: [redacted:secret]",
+		},
+		"a bearer token with the scheme in mixed case": {
+			"Authorization: BeArEr abcdef1234567890abcdef",
+			"Authorization: [redacted:secret]",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			assert.Equal(t, tc.want, sanitize.Text(tc.in))
@@ -155,6 +182,9 @@ func TestText_KeepsLookalikesOfTokenShapes(t *testing.T) {
 		"a JWT header with no payload":                   "eyJhbGciOiJIUzI1NiJ9",
 		"the word bearer in a sentence":                  "Bearer of bad news",
 		"a bearer with a token shorter than a real one":  "Bearer x",
+		"the word BEARER in a sentence":                  "BEARER of bad news",
+		"a word that only starts with bearer":            "bearers abcdef1234567890",
+		"a capitalised bearer with a short token":        "BEARER x",
 		"an Authorization header with another scheme":    "Authorization: Basic",
 		"a base64 text that does not start like a token": "dGhpcyBpcyBub3QgYSB0b2tlbg==",
 	} {
@@ -366,12 +396,143 @@ func TestText_KeepsAnUnquotedValueThatIsNotALiteral(t *testing.T) {
 		"a JSON null":                              `{"password": null, "user": "bob"}`,
 		"a Python None":                            `password = None`,
 		"a boolean":                                `token: false`,
-		"a YAML literal block":                     "password: |\n  line\n",
-		"a YAML folded block":                      "token: >-\n  line\n",
-		"a YAML literal block with a chomp":        "token: |-\n  line\n",
+		"a block scalar with no line under it":     "password: |\n",
+		"a block scalar indicator alone":           "token: >-",
 	} {
 		t.Run(name, func(t *testing.T) {
 			assert.Equal(t, in, sanitize.Text(in))
+		})
+	}
+}
+
+// A block scalar has no value on its own line: its value is the lines under it,
+// indented deeper than its key, and all of them are one secret. The header, the
+// indentation and what follows the value stay.
+func TestText_RedactsTheLinesUnderABlockScalar(t *testing.T) {
+	for name, tc := range map[string]struct{ in, want string }{
+		"a literal block":        {"password: |\n  hunter2\n", "password: |\n  [redacted:secret]\n"},
+		"a folded block":         {"token: >\n  hunter2\n", "token: >\n  [redacted:secret]\n"},
+		"a literal block, strip": {"password: |-\n  hunter2\n", "password: |-\n  [redacted:secret]\n"},
+		"a folded block, strip":  {"token: >-\n  hunter2\n", "token: >-\n  [redacted:secret]\n"},
+		"a literal block, keep":  {"password: |+\n  hunter2\n", "password: |+\n  [redacted:secret]\n"},
+		"a folded block, keep":   {"token: >+\n  hunter2\n", "token: >+\n  [redacted:secret]\n"},
+		"an indentation digit":   {"password: |2\n  hunter2\n", "password: |2\n  [redacted:secret]\n"},
+		"a digit and a sign":     {"password: >2-\n  hunter2\n", "password: >2-\n  [redacted:secret]\n"},
+		"a sign and a digit":     {"password: |-2\n  hunter2\n", "password: |-2\n  [redacted:secret]\n"},
+		"every line of the block is one secret": {
+			"password: |\n  line one\n  line two\n    deeper\n",
+			"password: |\n  [redacted:secret]\n",
+		},
+		"the blank lines inside the block go with it": {
+			"password: |\n  a\n\n  b\nnext: 1\n",
+			"password: |\n  [redacted:secret]\nnext: 1\n",
+		},
+		"the blank lines after the block stay": {
+			"password: |\n  a\n\n\nnext: 1\n",
+			"password: |\n  [redacted:secret]\n\n\nnext: 1\n",
+		},
+		"the block ends where the text ends": {"password: |\n  hunter2", "password: |\n  [redacted:secret]"},
+		"a sibling key ends the block": {
+			"db:\n  password: |\n    hunter2\n  user: bob\n",
+			"db:\n  password: |\n    [redacted:secret]\n  user: bob\n",
+		},
+		"a key of an outer mapping ends the block": {
+			"db:\n  password: |\n    hunter2\nhost: x\n",
+			"db:\n  password: |\n    [redacted:secret]\nhost: x\n",
+		},
+		"a key in a list item": {
+			"- password: |\n    hunter2\n  user: bob\n",
+			"- password: |\n    [redacted:secret]\n  user: bob\n",
+		},
+		"a key in a nested list": {
+			"- - token: >\n      hunter2\n    user: bob\n",
+			"- - token: >\n      [redacted:secret]\n    user: bob\n",
+		},
+		"a comment after the indicator": {
+			"password: | # the password\n  hunter2\n",
+			"password: | # the password\n  [redacted:secret]\n",
+		},
+		"a key with a prefix": {"DB_PASSWORD: |\n  hunter2\n", "DB_PASSWORD: |\n  [redacted:secret]\n"},
+		"a quoted key":        {"\"password\": |\n  hunter2\n", "\"password\": |\n  [redacted:secret]\n"},
+		"lines that end in a carriage return": {
+			"password: |\r\n  hunter2\r\nnext: 1\r\n",
+			"password: |\r\n  [redacted:secret]\r\nnext: 1\r\n",
+		},
+		"another secret inside the block goes with it": {
+			"password: |\n  ops@acme.com\n  postgres://u:pw@h/x\n",
+			"password: |\n  [redacted:secret]\n",
+		},
+		"a key inside the block belongs to the block": {
+			"password: |\n  token: |\n    hunter2\nnext: 1\n",
+			"password: |\n  [redacted:secret]\nnext: 1\n",
+		},
+		"two blocks": {
+			"password: |\n  a\ntoken: >\n  b\n",
+			"password: |\n  [redacted:secret]\ntoken: >\n  [redacted:secret]\n",
+		},
+		"a block after a line that is not one": {
+			"select 1\npassword: |\n  hunter2\n",
+			"select 1\npassword: |\n  [redacted:secret]\n",
+		},
+		"a block under a marker line": {
+			"[redacted:email]\npassword: |\n  hunter2\n",
+			"[redacted:email]\npassword: |\n  [redacted:secret]\n",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.want, sanitize.Text(tc.in))
+		})
+	}
+}
+
+// What is not a secret block scalar stays: a key that names no secret, a header
+// with nothing under it, a line that is not indented deeper than the key, and a
+// block that is redacted already.
+func TestText_KeepsWhatIsNotTheBlockOfASecret(t *testing.T) {
+	for name, in := range map[string]string{ //nolint:gosec // G101: texts that look like credentials but are not.
+		"a key that names no secret":              "name: |\n  hunter2\n",
+		"a key with a suffix":                     "password_hint: |\n  hunter2\n",
+		"a key that holds a secret word inside":   "tokens: >\n  hunter2\n",
+		"a header with no line under it":          "password: |\n",
+		"a header with only blank lines under it": "password: |\n\n  \n\t\n",
+		"a line at the indentation of the key":    "password: |\nnext: 1\n",
+		"a line less indented than the key":       "db:\n  password: |\nhost: x\n",
+		"a list item's sibling key":               "- password: |\n  user: bob\n",
+		"a value on the header line":              "password: | hunter2\n  next\n",
+		"a block that is redacted already":        "password: |\n  [redacted:secret]\n",
+		"a numbered placeholder as the block":     "password: |\n  [redacted:secret:7]\n  [redacted:email:2]\n",
+		"a header in a sentence":                  "set the password: |\n  hunter2\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, in, sanitize.Text(in))
+		})
+	}
+}
+
+// The scanner reads the text once, whatever its shape: a text made of many
+// headers, one made of one long value, and one of long lines take about as long
+// as ten times fewer of them do, and not a hundred times.
+func TestText_ReadsBlockScalarsInLinearTime(t *testing.T) {
+	shapes := map[string]func(n int) string{
+		"many headers":      func(n int) string { return strings.Repeat("password: |\n  x\n", n) },
+		"one long value":    func(n int) string { return "password: |\n" + strings.Repeat("  line of the value\n", n) },
+		"nested headers":    func(n int) string { return "password: |\n" + strings.Repeat("  token: |\n    x\n", n) },
+		"long key runs":     func(n int) string { return strings.Repeat(strings.Repeat("a", 200)+"\n", n) },
+		"headers that fail": func(n int) string { return strings.Repeat("password_hint: |\n  x\n", n) },
+	}
+	cost := func(text string) time.Duration {
+		best := time.Hour
+		for range 3 {
+			start := time.Now()
+			sanitize.Text(text)
+			best = min(best, time.Since(start))
+		}
+		return best
+	}
+	for name, shape := range shapes {
+		t.Run(name, func(t *testing.T) {
+			small, large := cost(shape(2000)), cost(shape(20000))
+			assert.Less(t, large, 40*max(small, time.Millisecond), "ten times the text took %s against %s", large, small)
 		})
 	}
 }
