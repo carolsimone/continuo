@@ -70,7 +70,6 @@ func TestLoadInstall_AnInstallFileReplacesTheBuiltInWhole(t *testing.T) {
 	require.Len(t, typ.Context, 1, "the built-in's context steps are not merged into the install's")
 	assert.Equal(t, []string{"dbt-model"}, typ.Match.NodeTypes)
 	assert.Equal(t, []string{"type dbt-compile: replaced by my-compile.yaml"}, report.Notes)
-	assert.Equal(t, []string{"type dbt-compile"}, report.Changed)
 
 	assert.Equal(t, "types/dbt-parse.yaml", set.Types["dbt-parse"].File, "a built-in the install does not name stays")
 	assert.Contains(t, set.Flows, "rejected-release")
@@ -103,7 +102,6 @@ func TestLoadInstall_AddsAnInstallOnlyType(t *testing.T) {
 	assert.Contains(t, set.Types, "dbt-compile")
 	assert.Contains(t, set.Types, "dbt-parse")
 	assert.Empty(t, report.Notes, "adding a type replaces nothing")
-	assert.Equal(t, []string{"type csv-extra"}, report.Changed, "an added type is a change the install makes")
 }
 
 // based_on names the built-in a file was copied from and the revision copied.
@@ -249,7 +247,6 @@ func TestLoadInstall_AnEmptyDirLoadsTheBuiltIns(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, want, set)
 			assert.Empty(t, report.Notes)
-			assert.Empty(t, report.Changed)
 		})
 	}
 }
@@ -267,7 +264,6 @@ func TestLoadInstall_AnIdenticalCopyIsNotReplaced(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Empty(t, report.Notes)
-	assert.Empty(t, report.Changed, "a byte for byte copy changes nothing")
 	base, err := Load(builtin)
 	require.NoError(t, err)
 	assert.Equal(t, base.Types["dbt-compile"].Revision, set.Types["dbt-compile"].Revision)
@@ -282,25 +278,6 @@ func TestLoadInstall_ACopyWithOneByteChangedIsReplaced(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"type dbt-compile: replaced by dbt-compile.yaml"}, report.Notes)
-}
-
-// Changed names every flow and type the install adds or changes, flows first
-// and then types, each by name, and leaves out a byte for byte copy of a
-// built-in.
-func TestLoadInstall_ChangedNamesWhatTheInstallAddsOrChanges(t *testing.T) {
-	builtin := builtinFiles()
-	install := fstest.MapFS{
-		"z-extra.yaml":     {Data: []byte("kind: type\nversion: 1\nname: csv-extra\nmatch: { cluster: single, source: validation }\n")},
-		"a-copy.yaml":      builtin["types/dbt-parse.yaml"],
-		"my-compile.yaml":  {Data: []byte(installedCompile)},
-		"flow.yaml":        {Data: []byte("kind: flow\nversion: 1\nname: rejected-release\n")},
-		"another-flow.yml": {Data: []byte("kind: flow\nversion: 1\nname: another-flow\n")},
-	}
-
-	_, report, err := LoadInstall(builtin, install)
-
-	require.NoError(t, err)
-	assert.Equal(t, []string{"flow another-flow", "flow rejected-release", "type csv-extra", "type dbt-compile"}, report.Changed)
 }
 
 // The notes come in a fixed order: flows by name, then types by name, each

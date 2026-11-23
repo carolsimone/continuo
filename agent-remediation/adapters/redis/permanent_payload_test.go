@@ -4,10 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/carolsimone/continuo/agent-remediation/service/handlers"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
-	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 )
@@ -15,18 +13,10 @@ import (
 // A payload no redelivery can decode must reach the consumer as a permanent
 // error, so it is dead-lettered instead of silently acknowledged.
 func TestHandlers_UndecodablePayloadIsPermanent(t *testing.T) {
-	t.Run("legacy", func(t *testing.T) {
-		requireUndecodablePayloadPermanent(t, newLegacyRemediationRequestedHandler(handlers.Deps{}))
+	h := newRemediationRequestedHandler(func(context.Context, runner.Accepted) error {
+		t.Fatal("a payload that cannot be decoded must not be accepted")
+		return nil
 	})
-	t.Run("runner", func(t *testing.T) {
-		requireUndecodablePayloadPermanent(t, newRunnerRemediationRequestedHandler(func(context.Context, runner.Accepted) error {
-			t.Fatal("a payload that cannot be decoded must not be accepted")
-			return nil
-		}))
-	})
-}
-
-func requireUndecodablePayloadPermanent(t *testing.T, h pkgredis.MessageHandler) {
 	valid, _ := requestedMessageOf(t, "3-0", "acme", requestedFixture(), nil)
 	withField := func(field string, value any) goredis.XMessage {
 		values := map[string]any{}

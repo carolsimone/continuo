@@ -40,7 +40,6 @@ func TestLoad_DefaultsAndRequired(t *testing.T) {
 	cfg := Load(v)
 	require.Empty(t, v.Missing())
 	assert.Equal(t, "8092", cfg.HTTPPort)
-	assert.Equal(t, 3, cfg.MaxAttempts)
 	assert.Equal(t, "catalog:50052", cfg.CatalogAddr)
 	assert.Equal(t, time.Hour, cfg.LLMCacheTTL, "LLM_CACHE_TTL must default to 1h so no new required env var is introduced")
 }
@@ -456,39 +455,50 @@ func TestGitHubTokenGivenTwiceIsRefused(t *testing.T) {
 	assert.Contains(t, v.Missing(), "GITHUB_TOKEN: set GITHUB_TOKEN or GITHUB_TOKEN_FILE, not both")
 }
 
-// TestLoad_EngineDefaultsToLegacy verifies that an install which never set
-// AGENT_REMEDIATION_ENGINE keeps running today's fix proposer.
-func TestLoad_EngineDefaultsToLegacy(t *testing.T) {
+// loadWith loads the configuration with the named variables set on top of the
+// base environment, and returns the loaded Config and what the validator
+// reports.
+func loadWith(t *testing.T, env map[string]string) (Config, []string) {
+	t.Helper()
 	setBaseEnv(t)
-	t.Setenv("AGENT_REMEDIATION_ENGINE", "")
+	for k, val := range env {
+		t.Setenv(k, val)
+	}
 	v := &pkgconfig.Validator{}
 	cfg := Load(v)
-	require.Empty(t, v.Missing())
-	assert.Equal(t, EngineLegacy, cfg.Engine)
+	return cfg, v.Missing()
 }
 
-func TestLoad_EngineAcceptsBothEngines(t *testing.T) {
-	for _, engine := range []string{EngineLegacy, EngineRunner} {
-		t.Run(engine, func(t *testing.T) {
-			setBaseEnv(t)
-			t.Setenv("AGENT_REMEDIATION_ENGINE", engine)
-			v := &pkgconfig.Validator{}
-			cfg := Load(v)
-			require.Empty(t, v.Missing())
-			assert.Equal(t, engine, cfg.Engine)
+// TestLoad_IgnoresTheRemovedMaxAttemptsSetting verifies that a leftover
+// AGENT_REMEDIATION_MAX_ATTEMPTS in an install's environment changes nothing
+// the service loads and does not stop start-up: the attempts a remediation
+// makes come from its flow's tries.
+func TestLoad_IgnoresTheRemovedMaxAttemptsSetting(t *testing.T) {
+	without, missingWithout := loadWith(t, map[string]string{"AGENT_REMEDIATION_MAX_ATTEMPTS": ""})
+	require.Empty(t, missingWithout)
+	for _, val := range []string{"7", "not-a-number"} {
+		t.Run(val, func(t *testing.T) {
+			with, missing := loadWith(t, map[string]string{"AGENT_REMEDIATION_MAX_ATTEMPTS": val})
+			require.Empty(t, missing)
+			assert.Equal(t, without, with)
 		})
 	}
 }
 
-// TestLoad_UnknownEngineFailsStartup verifies that an engine the service
-// cannot run stops startup, naming the key and the accepted values, instead of
-// falling back to another engine.
-func TestLoad_UnknownEngineFailsStartup(t *testing.T) {
-	setBaseEnv(t)
-	t.Setenv("AGENT_REMEDIATION_ENGINE", "x")
-	v := &pkgconfig.Validator{}
-	Load(v)
-	assert.Equal(t, []string{`AGENT_REMEDIATION_ENGINE (unsupported "x": expected one of legacy, runner)`}, v.Missing())
+// TestLoad_IgnoresTheRemovedEngineSetting verifies that a leftover
+// AGENT_REMEDIATION_ENGINE in an install's environment, whatever its value,
+// changes nothing the service loads and does not stop start-up: every heal
+// trigger runs through the one engine.
+func TestLoad_IgnoresTheRemovedEngineSetting(t *testing.T) {
+	without, missingWithout := loadWith(t, map[string]string{"AGENT_REMEDIATION_ENGINE": ""})
+	require.Empty(t, missingWithout)
+	for _, val := range []string{"legacy", "runner", "x"} {
+		t.Run(val, func(t *testing.T) {
+			with, missing := loadWith(t, map[string]string{"AGENT_REMEDIATION_ENGINE": val})
+			require.Empty(t, missing)
+			assert.Equal(t, without, with)
+		})
+	}
 }
 
 // TestLoad_WorkflowsDirDefault verifies that an install that never set

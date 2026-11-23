@@ -25,7 +25,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 )
 
-// consumeOne runs the runner engine's consumer of remediation.requested:v3 on
+// consumeOne runs the consumer of remediation.requested:v3 on
 // rc, whose stream holds the consumer's group, until it accepts one message,
 // and returns what it accepted.
 func consumeOne(t *testing.T, rc *goredis.Client) runner.Accepted {
@@ -33,7 +33,7 @@ func consumeOne(t *testing.T, rc *goredis.Client) runner.Accepted {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	got := make(chan runner.Accepted, 1)
-	consumer := NewRemediationRequestedRunnerConsumer(rc, func(_ context.Context, a runner.Accepted) error {
+	consumer := NewRemediationRequestedConsumer(rc, func(_ context.Context, a runner.Accepted) error {
 		select {
 		case got <- a:
 		default:
@@ -116,12 +116,12 @@ func redriveValues(dl pkgevents.ConsumerDeadLetter, deadLetterID, redriveRowID u
 
 // TestBinding_ARedrivenDeadLetterReachesTheRunnerAsTheTriggerItWas follows a
 // heal trigger through the runner's dead letter and dead-letter-controller's
-// redrive back into the runner engine's consumer: the trigger the consumer
-// accepted is dead-lettered as the runner stores it, rendered by the outbox
-// publisher, decoded as dead-letter-controller stores it, and published again
-// with the fields a redrive adds. The consumer accepts the original trigger,
-// payload and tenant under a new dedup id and the redrive's outbox entry id,
-// with the stream's fields the first delivery had and no redrive field.
+// redrive back into the consumer: the trigger the consumer accepted is
+// dead-lettered as the runner stores it, rendered by the outbox publisher,
+// decoded as dead-letter-controller stores it, and published again with the
+// fields a redrive adds. The consumer accepts the original trigger, payload and
+// tenant under a new dedup id and the redrive's outbox entry id, with the
+// stream's fields the first delivery had and no redrive field.
 func TestBinding_ARedrivenDeadLetterReachesTheRunnerAsTheTriggerItWas(t *testing.T) {
 	ctx := context.Background()
 	rc := newTestRedis(t)
