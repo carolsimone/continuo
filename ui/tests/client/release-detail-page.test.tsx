@@ -446,7 +446,7 @@ describe('ReleaseDetailPage — parse and contract generation', () => {
     const { container } = renderDetail();
     await waitFor(() => expect(screen.getByText('rel_abc')).toBeInTheDocument());
     const lines = Array.from(container.querySelectorAll('.release-timeline__line')).map(l => l.textContent);
-    expect(lines).toEqual(['parsing 2.1 s', 'generating contracts 0.6 s · 48 contracts (dbt 45, python 3)']);
+    expect(lines).toEqual(['parsing 2.1 s', 'generating contracts 0.6 s · 48\u00a0contracts (dbt 45, python 3)']);
   });
 
   it('shows no such lines for a release that recorded none', async () => {

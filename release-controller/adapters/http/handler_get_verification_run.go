@@ -20,11 +20,12 @@ func rfc3339OrEmpty(t time.Time, ok bool) string {
 
 // verificationRunResponse builds the JSON object returned by
 // GET /verification-runs/{id}. per_node_results keeps the release shape so
-// the UI renders both with one table.
+// the UI renders both with one table, and the parse timings are named as a
+// release names them.
 func verificationRunResponse(r *pipeline.Run) map[string]any {
 	activated, aok := r.ActivatedAt()
 	finished, fok := r.FinishedAt()
-	return map[string]any{
+	body := map[string]any{
 		"run_id":              r.ID(),
 		"status":              string(r.Status()),
 		"changed_service":     r.ChangedService(),
@@ -42,6 +43,8 @@ func verificationRunResponse(r *pipeline.Run) map[string]any {
 		"image_tags":          r.ImageTags(),
 		"manifest_kind":       string(r.ManifestKind()),
 	}
+	addParseTimings(body, r.ParseTimings())
+	return body
 }
 
 func (s *Server) handleGetVerificationRun(w http.ResponseWriter, r *http.Request) {

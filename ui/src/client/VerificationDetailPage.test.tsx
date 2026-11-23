@@ -54,6 +54,38 @@ describe('VerificationDetailPage', () => {
   });
 });
 
+describe('VerificationDetailPage — parse timings', () => {
+  const parsed = {
+    ...run,
+    transitions: [
+      { to: 'received', at: '2026-09-02T10:00:00Z' },
+      { to: 'parsing', at: '2026-09-02T10:01:00Z' },
+      { to: 'failed', at: '2026-09-02T10:09:00Z' },
+    ],
+    parse_ms: 4180, contracts_ms: 1260, contracts_by_family: { dbt: 3, python: 2 },
+  };
+
+  function serve(body: object) {
+    global.fetch = vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve(body) })) as unknown as typeof fetch;
+  }
+
+  const lines = () => Array.from(document.querySelectorAll('.release-timeline__line')).map(el => el.textContent);
+
+  it('shows how long the parse and the contract generation took, as a release page does', async () => {
+    serve(parsed);
+    renderAt('verify-rel-1-core-a2');
+    await screen.findByText('verify-rel-1-core-a2');
+    expect(lines()).toEqual(['parsing 4.2 s', 'generating contracts 1.3 s · 5\u00a0contracts (dbt 3, python 2)']);
+  });
+
+  it('shows no line for a run whose parse reported nothing', async () => {
+    serve({ ...parsed, parse_ms: undefined, contracts_ms: undefined, contracts_by_family: undefined });
+    renderAt('verify-rel-1-core-a2');
+    await screen.findByText('verify-rel-1-core-a2');
+    expect(lines()).toEqual([]);
+  });
+});
+
 describe('VerificationDetailPage — brand header', () => {
   it('starts the header with the brand, before the back link', async () => {
     renderAt('verify-rel-1-core-a2');

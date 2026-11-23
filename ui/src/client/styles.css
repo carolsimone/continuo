@@ -1068,10 +1068,14 @@ a.release-author:hover { text-decoration: underline; }
   list-style: none;
   overflow-x: auto;
 }
-.release-timeline__step { display: flex; align-items: flex-start; }
+/* A step keeps the width its content needs, so on a narrow screen the timeline
+   scrolls sideways inside its own box instead of squeezing each step down to its
+   timestamp, which would wrap a fact of the step onto three rows. */
+.release-timeline__step { display: flex; align-items: flex-start; flex-shrink: 0; }
 .release-timeline__connector { width: 28px; height: 1px; margin-top: 9px; background: #cbd5e1; flex-shrink: 0; }
 .release-timeline__step:first-child .release-timeline__connector { display: none; }
-.release-timeline__body { display: flex; flex-direction: column; gap: 4px; }
+/* The pill is as wide as its text, not stretched to the widest line under it. */
+.release-timeline__body { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .release-timeline__at,
 .release-timeline__line {
   font-size: 11.5px;

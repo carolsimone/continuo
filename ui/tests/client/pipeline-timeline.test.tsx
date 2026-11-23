@@ -83,7 +83,7 @@ describe('PipelineTimeline', () => {
       expect(steps.map(s => Array.from(s.querySelectorAll('.release-timeline__line')).map(l => l.textContent))).toEqual([
         [],
         [],
-        ['parsing 2.1 s', 'generating contracts 0.6 s · 48 contracts (dbt 45, python 3)'],
+        ['parsing 2.1 s', 'generating contracts 0.6 s · 48\u00a0contracts (dbt 45, python 3)'],
         [],
       ]);
     });

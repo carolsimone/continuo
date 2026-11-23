@@ -639,6 +639,11 @@ export interface VerificationRunDetail {
   per_node_results: NodeValidationResult[] | null;
   image_tags: Record<string, string>;
   manifest_kind: string;
+  // What the parse reported, as on a release (see ReleaseDetail): absent until
+  // the parse reports them, and absent on a run whose parse never did.
+  parse_ms?: number;
+  contracts_ms?: number;
+  contracts_by_family?: Record<string, number>;
 }
 
 // One row of a release's verification-run list, newest first.
