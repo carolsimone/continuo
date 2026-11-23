@@ -63,4 +63,3 @@ data:
   ONTOLOGY_ENABLED: {{ include "continuo.ontology.enabled" . | quote }}
   ONTOLOGY_BASE_URL: {{ include "continuo.ontology.baseUrl" . | quote }}
   MAINTENANCE_ENABLED: {{ include "continuo.maintenance.enabled" . | quote }}
-  AGENT_REMEDIATION_ENGINE: {{ dig "engine" "legacy" (default (dict) .Values.agentRemediation) | quote }}

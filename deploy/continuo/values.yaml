@@ -676,21 +676,8 @@ contracts:
 maintenance:
   enabled: false
 
-# agent-remediation's fix proposer and the remediation files it runs.
+# The remediation files agent-remediation runs.
 agentRemediation:
-  # The fix proposer. Read by agent-remediation at startup (the shared
-  # ConfigMap's AGENT_REMEDIATION_ENGINE), so changing it restarts every
-  # continuo service, and agent-remediation refuses to start on any value other
-  # than the two below.
-  # legacy: each heal trigger of a rejected release is handled by the proposer
-  #   that has run so far, one attempt after another in one handler.
-  # runner: each heal trigger becomes a remediation that agent-remediation works
-  #   as a sequence of committed steps, so a restart continues from the last
-  #   step and two replicas never work one remediation.
-  # Both engines run the remediation worker, the verification poller and the
-  # sweeper, so a remediation started by the runner always finishes after the
-  # value is set back to legacy.
-  engine: legacy
   workflows:
     # The install's own remediation flow, type and fixture files, as
     # {<file name>: <file content>}. Keep them in your own git repository and
@@ -716,9 +703,7 @@ agentRemediation:
     # with no subPath, at the folder AGENT_REMEDIATION_WORKFLOWS_DIR names
     # (/etc/continuo-workflows when the entry does not set it), as the entry
     # below has them. A change rolls agent-remediation
-    # only. Empty (the default) loads the built-in files alone. Flows and types
-    # run only with engine: runner; under legacy the files are loaded and
-    # checked at startup, and only remediations the runner started use them.
+    # only. Empty (the default) loads the built-in files alone.
     # Upgrade with your values file or --reset-then-reuse-values, not
     # --reuse-values, which keeps the services list of the chart a release was
     # installed with. See "Remediation files" in the chart's README.
