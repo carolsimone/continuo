@@ -22,6 +22,7 @@ import (
 	"github.com/carolsimone/continuo/catalog/service/ports"
 	"github.com/carolsimone/continuo/catalog/service/uow"
 	"github.com/carolsimone/continuo/pkg/contractbundle"
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/objectstore"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -261,8 +262,8 @@ func TestContractsHandler_IngestsDbtContracts(t *testing.T) {
 	doc := f.sharedBundle("rel-1")
 	const dbtID, pythonID = "analytics.governed", "analytics.py_daily_kpis"
 	dbtContract, pythonContract := doc.Contracts[dbtID], doc.Contracts[pythonID]
-	require.Equal(t, "dbt", dbtContract.Family, "the shared bundle holds a dbt contract")
-	require.Equal(t, "python", pythonContract.Family, "and a Python one")
+	require.Equal(t, pkgmodel.ContractFamilyDbt, dbtContract.Family, "the shared bundle holds a dbt contract")
+	require.Equal(t, pkgmodel.ContractFamilyPython, pythonContract.Family, "and a Python one")
 	for id := range doc.Contracts {
 		// The nodes the topology swap made live, so the current contract reads back.
 		f.exec(f.tenantID, `CREATE (:Node {tenant_id: $tenant_id, unique_id: $id, active: true})`, map[string]any{"id": id})
@@ -274,7 +275,7 @@ func TestContractsHandler_IngestsDbtContracts(t *testing.T) {
 	assert.Equal(t, int64(2), f.edges())
 	for id, want := range map[string]contractbundle.Contract{dbtID: dbtContract, pythonID: pythonContract} {
 		stored := `MATCH (v:ContractVersion {tenant_id: $tenant_id, unique_id: '` + id + `', contract_hash: '` + want.ContractHash + `'}) `
-		assert.Equal(t, want.Family, f.value(stored+`RETURN v.family AS v`), id)
+		assert.Equal(t, string(want.Family), f.value(stored+`RETURN v.family AS v`), id)
 		assert.Equal(t, want.Service, f.value(stored+`RETURN v.service AS v`), id)
 		edge := `MATCH (:Node {tenant_id: $tenant_id, unique_id: '` + id + `'})-[e:CONTRACT_PROMOTED]->(:ContractVersion {tenant_id: $tenant_id, contract_hash: '` + want.ContractHash + `'}) `
 		assert.Equal(t, int64(1), f.value(edge+`RETURN e.version AS v`), id)

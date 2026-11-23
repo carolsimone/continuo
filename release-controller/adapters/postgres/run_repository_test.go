@@ -897,7 +897,7 @@ func TestRunRepository_SavesAndLoadsTheParseTimings(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, release.ParseTimings{}, got.ParseTimings(), "no timings until the parse result arrives")
 
-	want := release.NewParseTimings(4180, 1260, map[string]int{"dbt": 3, "python": 2})
+	want := release.NewParseTimings(4180, 1260, map[model.ContractFamily]int{"dbt": 3, "python": 2})
 	got.SetParseTimings(want)
 	require.NoError(t, repo.Save(ctx, got))
 
@@ -949,11 +949,11 @@ func TestRunRepository_TheParseTimingsKeepTheirPresenceThroughStorage(t *testing
 			timings: release.NewParseTimings(310, 45, nil),
 		},
 		"an empty count": {
-			timings:      release.NewParseTimings(310, 45, map[string]int{}),
+			timings:      release.NewParseTimings(310, 45, map[model.ContractFamily]int{}),
 			wantByFamily: sql.NullString{String: `{}`, Valid: true},
 		},
 		"one zero duration": {
-			timings:      release.NewParseTimings(0, 45, map[string]int{"python": 1}),
+			timings:      release.NewParseTimings(0, 45, map[model.ContractFamily]int{"python": 1}),
 			wantByFamily: sql.NullString{String: `{"python": 1}`, Valid: true},
 		},
 	}
@@ -1003,7 +1003,7 @@ func TestRunRepository_ARowWithOnlyOneDurationLoadsWithNeither(t *testing.T) {
 		t.Run(column+" NULL", func(t *testing.T) {
 			r := pipeline.NewCandidate(id, "svc", "img:1", false, false, "acme/demo", "cafebabe",
 				release.ManifestKindDbt, time.Unix(100, 0).UTC())
-			r.SetParseTimings(release.NewParseTimings(310, 45, map[string]int{"dbt": 2}))
+			r.SetParseTimings(release.NewParseTimings(310, 45, map[model.ContractFamily]int{"dbt": 2}))
 			created, err := repo.Create(ctx, r)
 			require.NoError(t, err)
 			require.True(t, created)
@@ -1012,7 +1012,7 @@ func TestRunRepository_ARowWithOnlyOneDurationLoadsWithNeither(t *testing.T) {
 
 			got, err := repo.Get(ctx, id)
 			require.NoError(t, err)
-			assert.Equal(t, release.ParseTimings{ContractsByFamily: map[string]int{"dbt": 2}}, got.ParseTimings())
+			assert.Equal(t, release.ParseTimings{ContractsByFamily: map[model.ContractFamily]int{"dbt": 2}}, got.ParseTimings())
 		})
 	}
 }
