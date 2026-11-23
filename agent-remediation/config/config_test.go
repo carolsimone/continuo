@@ -485,11 +485,11 @@ func TestLoad_IgnoresTheRemovedMaxAttemptsSetting(t *testing.T) {
 	}
 }
 
-// TestLoad_IgnoresTheRemovedEngineSetting verifies that a leftover
+// TestLoad_IgnoresAgentRemediationEngine verifies that an
 // AGENT_REMEDIATION_ENGINE in an install's environment, whatever its value,
-// changes nothing the service loads and does not stop start-up: every heal
-// trigger runs through the one engine.
-func TestLoad_IgnoresTheRemovedEngineSetting(t *testing.T) {
+// changes nothing the service loads and does not stop start-up: the service
+// reads no such setting.
+func TestLoad_IgnoresAgentRemediationEngine(t *testing.T) {
 	without, missingWithout := loadWith(t, map[string]string{"AGENT_REMEDIATION_ENGINE": ""})
 	require.Empty(t, missingWithout)
 	for _, val := range []string{"legacy", "runner", "x"} {

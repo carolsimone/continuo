@@ -1,7 +1,7 @@
 // Package typology deterministically partitions a release's failing node set
 // into clusters, each naming the node whose source a fix must edit. It is pure:
 // it consumes the failing set and a precomputed DAG view (both supplied by the
-// driver) and performs no I/O, so the routing decision is testable without the
+// runner) and performs no I/O, so the routing decision is testable without the
 // LLM or any port.
 package typology
 
@@ -29,7 +29,7 @@ type ChangedAncestor struct {
 	Depth   int
 }
 
-// DagView answers the graph questions grouping needs, precomputed by the driver
+// DagView answers the graph questions grouping needs, precomputed by the runner
 // from the trigger. ChangedAncestorsByNode maps a failing node's id to its
 // ancestors that changed in this release, in the trigger's order (sorted by id).
 type DagView struct {

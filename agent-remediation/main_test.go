@@ -197,9 +197,9 @@ func TestMain_FailLegacyInFlight(t *testing.T) {
 	}
 }
 
-// TestMain_RunnerLoopsStart: startRunner, which main calls with its
-// lifecycle's Go, starts the worker, the gate poller and the sweeper, and each
-// does its work.
+// TestMain_RunnerLoopsStart verifies that startRunner, which main calls with
+// its lifecycle's Go, starts the worker, the gate poller and the sweeper, and
+// that each does its work.
 func TestMain_RunnerLoopsStart(t *testing.T) {
 	repo := &spyRepo{}
 	cfg := config.Config{VerificationPollInterval: time.Hour}

@@ -176,7 +176,7 @@ func TestAnthropic_ReadsTokenUsage(t *testing.T) {
 
 // anthropicRecordedResponseWithTargetFile is a recorded /v1/messages response whose
 // tool_use input additionally carries target_file and proposed_content, as produced
-// by the compile/seed error-class fixers.
+// by the compile and seed prompts.
 const anthropicRecordedResponseWithTargetFile = `{
   "id": "msg_01def",
   "type": "message",

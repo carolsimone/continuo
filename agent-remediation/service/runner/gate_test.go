@@ -358,12 +358,12 @@ func TestRunner_GateFailStartsTheNextTry(t *testing.T) {
 
 func TestRunner_EachTryIsShownTheEarlierTriesAtItsFailure(t *testing.T) {
 	h := newHarness(t, withPreviousTries())
-	h.legacyAttempt(1, proposal.StatusFailed)
+	h.attemptWithNoRemediation(1, proposal.StatusFailed)
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 
 	require.NoError(t, h.drive(id))
 	first := h.llm.lastRequest().User
-	assert.Contains(t, first, "\n\n## Earlier tries at this failure\n", "the first try is shown the legacy attempt")
+	assert.Contains(t, first, "\n\n## Earlier tries at this failure\n", "the first try is shown the attempt with no remediation")
 	assert.Contains(t, first, "### Attempt 1 (round 1)\nNothing was recorded for this try.")
 	assert.NotContains(t, first, "### Try ", "the try being made is not one of its earlier tries")
 

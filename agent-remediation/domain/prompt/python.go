@@ -5,24 +5,6 @@ import (
 	"strings"
 )
 
-// AttemptDiff is one file's unified diff from an earlier fix attempt, named by
-// the repository path that attempt changed.
-type AttemptDiff struct {
-	Path string
-	Diff string
-}
-
-// PriorAttempt is one earlier fix attempt for the same failing node: the diffs
-// it applied and the error the verification run that judged it reported back.
-// Showing both is what makes a later attempt better informed than the one
-// before it — without them the model would keep re-proposing the change that
-// has already been tried and rejected.
-type PriorAttempt struct {
-	Attempt     int
-	VerifyError string
-	Diffs       []AttemptDiff
-}
-
 // PythonEvidence is the failure evidence for a python node whose contract
 // failed validation. A python node's fix is made in its ODCS contract file, not
 // in a SQL file, so the evidence pairs the control plane's normalized view of
@@ -51,9 +33,6 @@ type PythonEvidence struct {
 	CurrentContract string
 	UpstreamChanges []UpstreamChange
 	Precedents      []Precedent
-	// PriorAttempts are the earlier attempts at this same failure, oldest
-	// first.
-	PriorAttempts []PriorAttempt
 	// NoReads is set when the node declares no reads and fetches its own data.
 	NoReads bool
 }
@@ -141,7 +120,6 @@ func pythonContractRequest(system, errorLabel string, ev PythonEvidence) Propose
 
 	renderUpstreamChanges(&u, ev.UpstreamChanges)
 	renderPrecedents(&u, ev.Precedents)
-	renderPriorAttempts(&u, ev.PriorAttempts)
 
 	u.WriteString("Return the complete new content of every file you change.")
 
@@ -203,7 +181,7 @@ func renderUpstreamChanges(b *strings.Builder, cs []UpstreamChange) {
 
 // renderReleaseUpstreamChanges writes what this release changed upstream of
 // the failing node, nearest first, or the one line stating that nothing did.
-// Nothing is written when the lane could not know (known is false).
+// Nothing is written when the prompt could not know (known is false).
 func renderReleaseUpstreamChanges(b *strings.Builder, nodeID string, cs []ReleaseUpstreamChange, known bool) {
 	if !known {
 		return
@@ -220,27 +198,6 @@ func renderReleaseUpstreamChanges(b *strings.Builder, nodeID string, cs []Releas
 			continue
 		}
 		fmt.Fprintf(b, "```diff\n%s\n```\n", c.Diff)
-	}
-	b.WriteString("\n")
-}
-
-// renderPriorAttempts writes the earlier-attempts section: what each attempt
-// changed and why its verification run failed it. No attempts → no
-// section.
-func renderPriorAttempts(b *strings.Builder, as []PriorAttempt) {
-	if len(as) == 0 {
-		return
-	}
-	b.WriteString("Previous fix attempts for this node, oldest first — do not repeat a change that was already rejected:\n")
-	for _, a := range as {
-		fmt.Fprintf(b, "Attempt %d", a.Attempt)
-		if a.VerifyError != "" {
-			fmt.Fprintf(b, " — verification failed: %s", a.VerifyError)
-		}
-		b.WriteString("\n")
-		for _, d := range a.Diffs {
-			fmt.Fprintf(b, "  Changed %s:\n```diff\n%s\n```\n", d.Path, d.Diff)
-		}
 	}
 	b.WriteString("\n")
 }

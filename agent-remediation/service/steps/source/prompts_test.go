@@ -185,7 +185,7 @@ func TestSeed_BuildsTheLanesRequestAndAlwaysTargetsTheCSV(t *testing.T) {
 		assert.Equal(t, "a,b\n1,2", e.Content)
 		assert.Equal(t, "proposed-fix/rel-1/seed.svc.a/attempt-2.source.sql", e.ContentKey)
 		assert.Equal(t, "proposed-fix/rel-1/seed.svc.a/attempt-2.source.diff", e.DiffKey)
-		assert.Empty(t, out.Draft.SuspectedRoot, "the seed lane reads no suspected root")
+		assert.Empty(t, out.Draft.SuspectedRoot, "the seed prompt reads no suspected root")
 	}
 }
 

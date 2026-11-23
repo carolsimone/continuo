@@ -479,7 +479,7 @@ func TestCSVReadKept(t *testing.T) {
 			[]ports.NodeDeclaration{decl("fx", "rates", "csv"), decl("fx", "sib", "csv")},
 			[]ports.NodeDeclaration{decl("fx", "rates", "csv"), decl("fx", "sib")},
 			[]remediation.Finding{csv("fx.sib")}},
-		{"the first finding across a lower-key sibling breach and a csv breach is the lane's first",
+		{"the first finding across a lower-key sibling breach and a csv breach is the check's first",
 			[]ports.NodeDeclaration{decl("fx", "rates", "csv"), decl("fx", "a_sib", "s")},
 			[]ports.NodeDeclaration{decl("fx", "rates"), decl("fx", "a_sib")},
 			[]remediation.Finding{blanket(`"s"`, "fx.a_sib"), csv("fx.rates")}},

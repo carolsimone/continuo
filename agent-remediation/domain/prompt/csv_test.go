@@ -26,15 +26,6 @@ func csvEvidence() CsvEvidence {
 				ErrorExcerpt: "column missing", RejectedAt: "2026-08-01T00:00:00Z",
 				Resolved: true, ResolutionDiff: "-old\n+new", PRURL: "https://example.test/pr/1"},
 		},
-		PriorAttempts: []PriorAttempt{
-			{
-				Attempt:     1,
-				VerifyError: "verification failed: customer_id still missing",
-				Diffs: []AttemptDiff{
-					{Path: "services/service-csv/contracts/py_csv_orders.odcs.yaml", Diff: "-    - name: cust_id\n+    - name: customer_id"},
-				},
-			},
-		},
 	}
 }
 
@@ -64,10 +55,6 @@ func TestAssembleCsvContractFix_RendersEverySection(t *testing.T) {
 	require.Contains(t, u, "+materialized: table")
 	require.Contains(t, u, "How similar failures were fixed before")
 	require.Contains(t, u, "https://example.test/pr/1")
-
-	// Prior attempts: the verification run's error and the diff that attempt made.
-	require.Contains(t, u, "verification failed: customer_id still missing")
-	require.Contains(t, u, "+    - name: customer_id")
 }
 
 // TestAssembleCsvContractFix_SectionsOmittedWhenAbsent verifies that an
@@ -83,7 +70,6 @@ func TestAssembleCsvContractFix_SectionsOmittedWhenAbsent(t *testing.T) {
 	})
 	u := req.User
 
-	require.NotContains(t, u, "Previous fix attempts")
 	require.NotContains(t, u, "How similar failures were fixed before")
 	require.NotContains(t, u, "Recent upstream changes")
 	require.NotContains(t, u, "```json")
@@ -120,7 +106,7 @@ func TestAssembleCsvContractFix_ToolSchema(t *testing.T) {
 
 // TestAssembleCsvContractFix_SystemPromptScopesTheEdit pins the rules that
 // keep a csv contract fix from breaking the release it is meant to repair,
-// and that keep it a genuinely different prompt from the python-node lane's:
+// and that keep it a genuinely different prompt from the python-node prompt's:
 // the model must be told what a fix may touch (the columns of
 // schema[0].properties, the csvSource uri), that the csvSource may never be
 // deleted or renamed, and that the node's kind is identity it may never

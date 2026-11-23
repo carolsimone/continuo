@@ -39,25 +39,21 @@ var (
 type ProposalFilter struct {
 	Status  string
 	PRState string
-	// ReleaseID, Source, and NodeID together address the attempts that
-	// addressed one failing node in one release — the slice a fixer reads to
-	// show the model what earlier attempts tried and why they were rejected.
-	// ReleaseID, when set alone, restricts the listing to one release. NodeID
-	// matches rows whose resolved_node_ids contains the id — the attempts
-	// that addressed that node, whether or not it is their representative.
+	// ReleaseID restricts the listing to one release. Source, when set with
+	// it, restricts the listing to the attempts made for one source of failure
+	// in that release.
 	ReleaseID string
 	Source    string
-	NodeID    string
 	// Service, when set, matches proposals whose services contain it.
 	Service string
 	Limit   int
 }
 
-// AttemptLister is the repository slice a fixer reads while assembling
-// evidence: the attempts already recorded for the failing node it is fixing.
-// It is a narrower view of the List method ProposalRepository already
-// declares, so a consumer that only needs this one slice does not have to
-// depend on the full repository.
+// AttemptLister is the repository slice the previous-tries step reads: the
+// attempts already recorded for a release, which show the model what earlier
+// attempts tried and why they were rejected. It is a narrower view of the List
+// method ProposalRepository already declares, so a consumer that only needs
+// this one slice does not have to depend on the full repository.
 type AttemptLister interface {
 	List(ctx context.Context, filter ProposalFilter) ([]proposal.View, error)
 }
@@ -105,7 +101,7 @@ type ProposalRepository interface {
 	// CountAttempts returns the number of TERMINAL proposal attempts recorded for
 	// one remediation round of one release: the attempt cap is a budget per
 	// (release_id, remediation_round), counted over the release's whole failing
-	// set rather than per node, since one attempt now addresses every node it
+	// set rather than per node, since one attempt addresses every node it
 	// covers at once. The release is part of the key because the attempt cap
 	// bounds how often one release's failure is retried: a later release is new
 	// code, and its attempts are its own, never charged to an earlier release's
@@ -135,26 +131,23 @@ type ProposalRepository interface {
 	// would keep that node reporting a fix as still being generated even with the
 	// row failed.
 	//
-	// It exists for the one writer that starts an attempt with nothing behind it
-	// to redeliver. A trigger consumed from the stream is redelivered when the
-	// driver errors, and the redelivery reuses the in-flight row the driver had
-	// already committed. The verification reconciler starts an attempt from a
-	// run's status instead, so when the driver errors there the row stays in
-	// flight with nothing that will ever finish it — and every reader, the
-	// release page included, keeps reporting a fix as still being generated.
+	// The runner calls it when a remediation ends as a system failure while its
+	// attempt row is still generating: the row would stay in flight with nothing
+	// that will ever finish it, and every reader, the release page included,
+	// would keep reporting a fix as still being generated.
 	//
-	// The match is releaseID alone: one attempt now addresses the release's
-	// whole failing set, so at most one row can be generating for a release at
-	// a time, and the row it must finalize is unambiguous without a node or
+	// The match is releaseID alone: one attempt addresses the release's whole
+	// failing set, so at most one row can be generating for a release at a
+	// time, and the row it must finalize is unambiguous without a node or
 	// error-signature match.
 	FailGenerating(ctx context.Context, releaseID, reason string) (int, error)
 
 	// FailLegacyInFlight fails every attempt row in flight that belongs to no
 	// remediation, and returns how many rows it moved. Such a row is
-	// 'generating' or 'verifying' with no remediation id: no code of this
-	// version drives it, since the runner stamps the remediation on every
-	// attempt row it writes, so left alone it would stay in flight for good
-	// and keep the release page from offering "Try again".
+	// 'generating' or 'verifying' with no remediation id: the runner stamps the
+	// remediation on every attempt row it writes, so nothing drives a row that
+	// has none, and left alone it would stay in flight for good and keep the
+	// release page from offering "Try again".
 	//
 	// Each row moves to 'failed' with reason on it. A row that was generating
 	// takes reason as its rationale. A row that was verifying takes it as its
@@ -258,25 +251,15 @@ type ProposalRepository interface {
 	// terminal or never opened) — an idempotent no-op.
 	RecordPROutcome(ctx context.Context, id, service string, outcome proposal.PROutcome, closedAt time.Time) (bool, error)
 
-	// ListVerifying returns the proposal driver's proposals awaiting
-	// verification (status='verifying'), oldest first, capped at 20 rows so the
-	// polling reconciler always makes bounded progress across every in-flight
-	// verification rather than being starved by one stuck row. A proposal that
-	// belongs to a remediation is left out: the runner finalizes those itself.
-	ListVerifying(ctx context.Context) ([]proposal.View, error)
-
-	// MarkVerified finalizes a proposal every verification run passed,
-	// transitioning status 'verifying' -> 'proposed'. It also rewrites every
-	// node_outcomes entry still at 'verifying' to 'proposed', so a per-node
-	// reader agrees with the row's own status. verifications is the final
-	// per-run summary, written in the same statement. hit reports whether the
-	// CAS fired; false means the row was no longer 'verifying' — already
-	// finalized by a concurrent or repeated reconciler pass.
-	MarkVerified(ctx context.Context, id string, verifications []proposal.Verification) (hit bool, err error)
-
-	// MarkFixVerified finalizes a proposal the runner verified, exactly as
-	// MarkVerified does with the proposal id and verifications v carries. It
-	// refuses a zero Verified with an error and writes nothing.
+	// MarkFixVerified finalizes a proposal the runner verified, every
+	// verification run having passed, transitioning status 'verifying' ->
+	// 'proposed'. It also rewrites every node_outcomes entry still at
+	// 'verifying' to 'proposed', so a per-node reader agrees with the row's own
+	// status. The proposal id and the final per-run summary come from v, and
+	// the summary is written in the same statement. hit reports whether the CAS
+	// fired; false means the row was no longer 'verifying', already finalized
+	// by a concurrent or repeated pass. It refuses a zero Verified with an
+	// error and writes nothing.
 	MarkFixVerified(ctx context.Context, v remediation.Verified) (hit bool, err error)
 
 	// MarkVerifyFailed finalizes a proposal a verification run rejected,
@@ -284,7 +267,7 @@ type ProposalRepository interface {
 	// the next attempt can use it as evidence. It also rewrites every
 	// node_outcomes entry still at 'verifying' to 'failed'. verifications is
 	// the final per-run summary, written in the same statement. hit reports
-	// whether the CAS fired, with the same semantics as MarkVerified.
+	// whether the CAS fired, with the same semantics as MarkFixVerified.
 	MarkVerifyFailed(ctx context.Context, id, verifyErr string, verifications []proposal.Verification) (hit bool, err error)
 
 	// ReopenTryAttempt moves the failed row of one attempt of the remediation
@@ -311,7 +294,7 @@ type ProposalRepository interface {
 
 	// UpdateVerificationPhase records the phase (and, once known, the
 	// activation time) of one of the proposal's verification runs, leaving
-	// the others untouched. Called by the reconciler only when the phase it
+	// the others untouched. Called by the gate poller only when the phase it
 	// read differs from the stored one.
 	UpdateVerificationPhase(ctx context.Context, id, runID string, phase proposal.Phase, activatedAt *time.Time) error
 }

@@ -21,7 +21,7 @@ func TestTryRecords_KeepsOnlyEarlierTriesOfTheseNodes(t *testing.T) {
 		{Round: 1, Try: 2, Attempt: 2, Clusters: []ClusterRecord{cluster("model.up", "model.a", "model.b")}},
 		// An earlier try that never held the node.
 		{Round: 1, Try: 3, Attempt: 3, Clusters: []ClusterRecord{cluster("model.z", "model.z")}},
-		// An attempt of the legacy engine, which has no try number.
+		// An attempt that belongs to no remediation, which has no try number.
 		{Round: 1, Try: 0, Attempt: 1, Clusters: []ClusterRecord{cluster("model.a", "model.a")}},
 	}
 

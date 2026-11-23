@@ -284,7 +284,7 @@ func TestRunner_AHandedOverAttemptRowStoresItsNodesApprovers(t *testing.T) {
 		"the tries are spent": {
 			setup: func(h *harness) {
 				for attempt := 1; attempt <= 3; attempt++ {
-					h.legacyAttempt(attempt, proposal.StatusFailed)
+					h.attemptWithNoRemediation(attempt, proposal.StatusFailed)
 				}
 			},
 			trigger: func() remediation.Trigger { return trigger("compile", compileNode("svc-b"), compileNode("svc-a")) },

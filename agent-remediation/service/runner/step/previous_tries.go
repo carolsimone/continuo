@@ -20,7 +20,7 @@ func WithPreviousTries(req prompt.ProposeRequest, ev remediation.Evidence) promp
 }
 
 // previousTries is each record as the prompt shows it. A runner try is labelled
-// by its try and round, a legacy attempt (try 0) by its attempt and round. Its
+// by its try and round, an attempt with no remediation (try 0) by its attempt and round. Its
 // diffs are every cluster's edits; its findings are each pre-flight round's
 // findings, then how a cluster ended when it ended without a checked draft,
 // then the cross-cluster findings; its gate error is the gate's finding

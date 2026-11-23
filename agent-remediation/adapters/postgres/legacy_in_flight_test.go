@@ -12,16 +12,17 @@ import (
 	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
-// FailLegacyInFlight fails the attempt rows no code of this version drives: a
-// row in flight (generating or verifying) with no remediation. A row that was
-// generating takes the reason as its rationale; a row that was verifying takes
-// it as its verify error and keeps its rationale, edits and verifications. On
-// both, each node outcome still in flight becomes failed with the reason and
-// every other outcome stays as it was, and a row that recorded no outcome at
-// all is failed too and still reads back with none. A row of a remediation,
-// whatever its status, and a row that is not in flight are left alone, and a
-// second call finds nothing to move.
-func TestStartup_FailsTodaysAttemptsInFlight(t *testing.T) {
+// FailLegacyInFlight fails the attempt rows that nothing drives, since the
+// runner stamps a remediation on every row it writes: a row in flight
+// (generating or verifying) with no remediation. A row that was generating takes
+// the reason as its rationale; a row that was verifying takes it as its verify
+// error and keeps its rationale, edits and verifications. On both, each node
+// outcome still in flight becomes failed with the reason and every other outcome
+// stays as it was, and a row that recorded no outcome at all is failed too and
+// still reads back with none. A row of a remediation, whatever its status, and a
+// row that is not in flight are left alone, and a second call finds nothing to
+// move.
+func TestFailLegacyInFlight_FailsRowsWithNoRemediation(t *testing.T) {
 	forEachImpl(t, func(t *testing.T, env contractEnv) {
 		ctx := context.Background()
 		const reason = "continuo changed its remediation engine while this attempt was in flight; use Try again"
@@ -36,7 +37,7 @@ func TestStartup_FailsTodaysAttemptsInFlight(t *testing.T) {
 		edits := []proposal.FileEdit{{Path: "models/a.sql", ContentURI: "s3://c", DiffURI: "s3://d", TargetNodeID: "model.a", MemberNodeIDs: []string{"model.a"}}}
 		runs := []proposal.Verification{{Service: "svc", Kind: "dbt", RunID: "run-1", Phase: proposal.PhaseQueued}}
 
-		// The old engine's attempt in verification: a fix under check.
+		// A row with no remediation in verification: a fix under check.
 		require.NoError(t, env.proposals.Upsert(ctx, proposal.Proposal{
 			Source: "validation", ReleaseID: "rel-legacy-inflight-verifying", NodeID: "model.a",
 			ResolvedNodeIDs: []string{"model.a", "model.b", "model.c"}, Attempt: 1, Status: proposal.StatusVerifying,
@@ -47,7 +48,7 @@ func TestStartup_FailsTodaysAttemptsInFlight(t *testing.T) {
 			},
 			Edits: edits, Verifications: runs, Rationale: "the fix", SourceResolved: true, CreatedAt: contractBase,
 		}))
-		// The old engine's attempt still calling the model.
+		// A row with no remediation still generating.
 		require.NoError(t, env.proposals.InsertGenerating(ctx, proposal.Proposal{
 			Source: "validation", ReleaseID: "rel-legacy-inflight-generating", NodeID: "model.a",
 			ResolvedNodeIDs: []string{"model.a", "model.b"}, Attempt: 1,
@@ -63,7 +64,7 @@ func TestStartup_FailsTodaysAttemptsInFlight(t *testing.T) {
 			Source: "validation", ReleaseID: "rel-legacy-inflight-no-outcomes", NodeID: "model.a",
 			ResolvedNodeIDs: []string{"model.a"}, Attempt: 1, NodeOutcomes: nil, CreatedAt: contractBase,
 		}))
-		// The runner's rows in flight, which this version drives.
+		// The runner's rows in flight, which carry their remediation.
 		require.NoError(t, env.proposals.InsertGenerating(ctx, proposal.Proposal{
 			Source: "validation", ReleaseID: "rel-legacy-inflight-runner", RemediationID: r.ID.String(), NodeID: "model.a",
 			ResolvedNodeIDs: []string{"model.a"}, Attempt: 1,
@@ -77,7 +78,7 @@ func TestStartup_FailsTodaysAttemptsInFlight(t *testing.T) {
 			NodeOutcomes: runnerVerifying, Edits: edits, Verifications: runs, Rationale: "the runner's fix", SourceResolved: true,
 			CreatedAt: contractBase,
 		}))
-		// The old engine's rows that ended: nothing to fail.
+		// Rows with no remediation that ended: nothing to fail.
 		require.NoError(t, env.proposals.Upsert(ctx, proposal.Proposal{
 			Source: "validation", ReleaseID: "rel-legacy-inflight-ended", NodeID: "model.a",
 			ResolvedNodeIDs: []string{"model.a"}, Attempt: 1, Status: proposal.StatusFailed,
@@ -104,7 +105,7 @@ func TestStartup_FailsTodaysAttemptsInFlight(t *testing.T) {
 
 		moved, err := env.proposals.FailLegacyInFlight(ctx, reason)
 		require.NoError(t, err)
-		require.Equal(t, 3, moved, "the old engine's three rows in flight, and no other")
+		require.Equal(t, 3, moved, "the three rows in flight with no remediation, and no other")
 
 		verifying := get("rel-legacy-inflight-verifying", 1)
 		require.Equal(t, proposal.StatusFailed, verifying.Status)

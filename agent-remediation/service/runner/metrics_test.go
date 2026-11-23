@@ -434,6 +434,21 @@ func TestRunner_CountsEachNodeWhenItsRemediationEnds(t *testing.T) {
 	})
 }
 
+// markProposedByHand moves the verifying attempt row id to proposed, as a
+// repository call made outside the runner would.
+func markProposedByHand(h *harness, id string) error {
+	checked, err := remediation.NewChecked(remediation.Draft{}, nil)
+	if err != nil {
+		return err
+	}
+	verified, err := remediation.NewVerified(id, []remediation.Checked{checked}, nil, nil)
+	if err != nil {
+		return err
+	}
+	_, err = h.store.ProposalRepository().MarkFixVerified(ctx, verified)
+	return err
+}
+
 // A remediation whose attempt row someone else moved while its try was
 // verifying still ends, and counts each node from the row as it then stands:
 // fixed for a node the row holds proposed, handed over for a node whose outcome
@@ -448,16 +463,14 @@ func TestRunner_CountsTheNodesOfARemediationWhoseAttemptRowMoved(t *testing.T) {
 	}{
 		"the gate passed, the row was proposed by hand": {
 			move: func(h *harness, id string) error {
-				_, err := h.store.ProposalRepository().MarkVerified(ctx, id, nil)
-				return err
+				return markProposedByHand(h, id)
 			},
 			phase: proposal.PhasePassed,
 			want:  []string{sample("dbt-compile", "fixed", ""), sample("none", "handed_over", "no_type")},
 		},
 		"the gate failed, the row was proposed by hand": {
 			move: func(h *harness, id string) error {
-				_, err := h.store.ProposalRepository().MarkVerified(ctx, id, nil)
-				return err
+				return markProposedByHand(h, id)
 			},
 			phase: proposal.PhaseFailed,
 			want:  []string{sample("dbt-compile", "fixed", ""), sample("none", "handed_over", "no_type")},

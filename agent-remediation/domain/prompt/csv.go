@@ -38,9 +38,6 @@ type CsvEvidence struct {
 	CurrentContract string
 	UpstreamChanges []UpstreamChange
 	Precedents      []Precedent
-	// PriorAttempts are the earlier attempts at this same failure, oldest
-	// first.
-	PriorAttempts []PriorAttempt
 	// NoReads is carried so the struct converts to and from PythonEvidence; a
 	// python-csv node always declares its one read, its csvSource, so it is
 	// never set.
@@ -87,7 +84,6 @@ func AssembleCsvContractFix(ev CsvEvidence) ProposeRequest {
 
 	renderUpstreamChanges(&u, ev.UpstreamChanges)
 	renderPrecedents(&u, ev.Precedents)
-	renderPriorAttempts(&u, ev.PriorAttempts)
 
 	u.WriteString("Return the complete new content of every file you change.")
 

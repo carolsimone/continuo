@@ -23,10 +23,10 @@ const (
 	// fix whose correctness cannot be judged synchronously: the agent has
 	// proposed a fix and posted a fix-verification run to carry it through the
 	// full parse -> candidate-schema -> validation pipeline. The row carries the
-	// run's id (VerificationRunID) and the raw trigger payload (TriggerPayload)
-	// so an asynchronous reconciler can poll the run and finalize the attempt to
-	// 'proposed' (the fix verified) or 'failed' (with the run's error recorded
-	// as evidence for the next attempt).
+	// run's id (VerificationRunID) and the raw trigger payload (TriggerPayload).
+	// The gate poller polls the run and finalizes the attempt to 'proposed' (the
+	// fix verified) or 'failed' (with the run's error recorded as evidence for
+	// the next try).
 	StatusVerifying Status = "verifying"
 	StatusProposed  Status = "proposed"
 	StatusSkipped   Status = "skipped"
@@ -118,7 +118,7 @@ type Verification struct {
 	Service string
 	Kind    string
 	RunID   string
-	// Phase is the run's last-read phase; "" on a row the reconciler has
+	// Phase is the run's last-read phase; "" on a row the gate poller has
 	// not yet read since the run was recorded.
 	Phase       Phase
 	ActivatedAt *time.Time
@@ -161,7 +161,7 @@ type Proposal struct {
 	Source    string
 	ReleaseID string
 	// RemediationID is the id of the runner's remediation this attempt belongs
-	// to. It is empty for an attempt the proposal driver made.
+	// to. It is empty for an attempt row that belongs to no remediation.
 	RemediationID string
 	// RemediationRound is the release's remediation round this attempt belongs to; the attempt cap is counted within a round.
 	RemediationRound int
@@ -173,12 +173,12 @@ type Proposal struct {
 	Attempt         int
 	Status          Status
 	// NodeOutcomes is, per failing node, how this attempt ended for it — a
-	// cluster whose fixer skipped or failed leaves its members
+	// cluster the runner skipped or failed leaves its members
 	// skipped/failed while other members verify.
 	NodeOutcomes map[string]NodeOutcome
 	// Approvers is who must approve what the attempt did with each node a
 	// remediation settled at its end, fixed or handed over, one entry per node
-	// sorted by node id. It is empty for an attempt of the proposal driver.
+	// sorted by node id. It is empty for an attempt row that belongs to no remediation.
 	Approvers []Approver
 	// Verifications is one fix-verification run per edited service;
 	// VerificationRunID is the view of the first.
@@ -192,12 +192,9 @@ type Proposal struct {
 	// Services is every service this attempt touched: the failing nodes'
 	// services plus the edited ones.
 	Services []string
-	// TriggerPayload is the raw remediation.requested:v1 payload that drove
-	// this attempt, written when Status is (or was) StatusVerifying so a
-	// reconciler can rebuild the trigger and retry with the verification run's
-	// error as new evidence. It is kept when the attempt is finalized —
-	// rebuilding the retry reads it from a row that has already moved to
-	// 'failed'. Empty for an attempt that never entered verification.
+	// TriggerPayload is the raw heal-trigger payload that drove this attempt,
+	// stored with the row and kept when the attempt is finalized. Empty for an
+	// attempt that never entered verification.
 	TriggerPayload []byte
 	Confidence     Confidence
 	Rationale      string

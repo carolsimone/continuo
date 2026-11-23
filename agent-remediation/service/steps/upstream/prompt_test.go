@@ -49,7 +49,7 @@ func proposeUpstream(t *testing.T, f remediation.Failure, ev remediation.Evidenc
 	return out
 }
 
-// expectedRequest is the request the upstream lane builds from the inputs the
+// expectedRequest is the request the upstream prompt builds from the inputs the
 // step is given: the ancestor's source, the members' excerpts, the diff and the
 // precedents as gathered.
 func expectedRequest(crossService bool) prompt.ProposeRequest {

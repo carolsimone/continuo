@@ -8,72 +8,12 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/carolsimone/continuo/agent-remediation/serialization"
-	"github.com/carolsimone/continuo/agent-remediation/service/handlers"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 )
-
-// TriggerFromPayload decodes the payload of a heal trigger as a store holds it
-// (a remediation.requested:v3 payload, or one stored from
-// remediation.requested:v2) into the handlers.Trigger of the legacy engine: the
-// failing nodes a fix can reach. A node the classifier marked unfixable is left
-// out, since no fix is proposed for it. The dedup identity fields (MessageID,
-// OutboxEntryID) are left unset: they belong to the Redis message that
-// delivered the payload rather than to the payload itself, so a caller
-// replaying stored bytes supplies an identity of its own. RawPayload is set to
-// raw so a replayed trigger carries the same bytes the original did. Returns an
-// error if the payload cannot be decoded.
-func TriggerFromPayload(raw []byte) (handlers.Trigger, error) {
-	p, err := pkgevents.DecodeRemediationRequestedPayload(raw)
-	if err != nil {
-		return handlers.Trigger{}, fmt.Errorf("decode remediation.requested payload: %w", err)
-	}
-	return legacyTrigger(p, raw), nil
-}
-
-// legacyTrigger maps a decoded heal trigger to the handlers.Trigger of the
-// legacy engine, which works the nodes a fix can reach and never sees an
-// unfixable one. raw is the payload the trigger was decoded from.
-func legacyTrigger(p pkgevents.RemediationRequested, raw []byte) handlers.Trigger {
-	nodes := make([]handlers.TriggerNode, 0, len(p.Nodes))
-	for _, n := range p.Nodes {
-		if n.Unfixable != nil {
-			continue
-		}
-		node := handlers.TriggerNode{
-			NodeID:               n.NodeID,
-			RelationID:           n.RelationID,
-			ErrorSignature:       n.ErrorSignature,
-			Category:             n.Category,
-			Reason:               n.Reason,
-			ErrorExcerpt:         n.ErrorExcerpt,
-			DBTLogURI:            n.DBTLogURI,
-			CandidateArtifactURI: n.CandidateArtifactURI,
-			FilePath:             n.FilePath,
-			Service:              n.Service,
-			NodeType:             n.NodeType,
-			OtherService:         n.OtherService,
-			OtherFilePath:        n.OtherFilePath,
-		}
-		for _, a := range n.ChangedAncestors {
-			node.ChangedAncestors = append(node.ChangedAncestors, handlers.ChangedAncestor(a))
-		}
-		nodes = append(nodes, node)
-	}
-	return handlers.Trigger{
-		Source:           p.Source,
-		ReleaseID:        p.ReleaseID,
-		RemediationRound: p.RemediationRound,
-		Repo:             p.Repo,
-		CommitSHA:        p.CommitSHA,
-		CodeBundleURI:    p.CodeBundleURI,
-		Nodes:            nodes,
-		RawPayload:       raw,
-	}
-}
 
 // NewRemediationRequestedConsumer constructs the StreamConsumer of
 // remediation.requested:v3: each message is handed to accept, which records it

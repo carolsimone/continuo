@@ -109,8 +109,8 @@ func clusterByChangedAncestor(group []FailingNode, dag DagView) []Cluster {
 		// A prospective cluster whose members are ALL dbt-test nodes is not a fix
 		// target: a test binds again when the model it guards is fixed, and a test
 		// that is itself wrong is a human's edit. Leave those members unclaimed so
-		// they fall through to the independent default, where the driver skips a
-		// dbt-test target. A mixed cluster (at least one model/seed/snapshot) still
+		// they fall through to the independent default, where the runner hands a
+		// dbt-test target over. A mixed cluster (at least one model/seed/snapshot) still
 		// forms, so the model is fixed and its tests ride along.
 		if allDbtTest(members, nodeTypeByID) {
 			continue

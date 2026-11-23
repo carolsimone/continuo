@@ -19,7 +19,7 @@ import (
 // FailGenerating rewrote, keeping every outcome FailGenerating left alone.
 // Reopened verifying, it loses its verify error and keeps its edits, runs and
 // rationale, with the outcomes given. It changes no row of another
-// remediation, no row of the driver and no row that is not failed.
+// remediation, no row that belongs to no remediation and no row that is not failed.
 func TestProposalRepository_ReopenTryAttemptMovesOnlyItsFailedRowBack(t *testing.T) {
 	forEachImpl(t, func(t *testing.T, env contractEnv) {
 		ctx := context.Background()
@@ -90,7 +90,7 @@ func TestProposalRepository_ReopenTryAttemptMovesOnlyItsFailedRowBack(t *testing
 
 		require.NoError(t, env.proposals.Upsert(ctx, proposal.Proposal{
 			Source: "validation", ReleaseID: "rel-reopen", NodeID: "model.a", Attempt: 3, Status: proposal.StatusFailed,
-			Rationale: "the driver's", CreatedAt: contractBase,
+			Rationale: "no remediation's", CreatedAt: contractBase,
 		}))
 		require.NoError(t, env.proposals.Upsert(ctx, proposal.Proposal{
 			Source: "validation", ReleaseID: "rel-reopen-other", RemediationID: other.ID.String(), NodeID: "model.a",

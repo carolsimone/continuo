@@ -24,7 +24,7 @@ type NodeIdentity struct {
 	// node has no script at all — so a fix that silently flips it changes
 	// which of those rule sets governs the node without changing anything a
 	// human reviewing the diff would necessarily notice. Comparing it as
-	// identity refuses that regardless of which lane produced the answer.
+	// identity refuses that regardless of which prompt produced the answer.
 	Kind string
 	// Owner (the contract's team.name), Schedule, and Criticality are the
 	// operational fields a run is scheduled and escalated by; they belong to

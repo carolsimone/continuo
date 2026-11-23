@@ -322,10 +322,11 @@ func main() {
 		logger.Error("the remediation files are refused", "error", err)
 		os.Exit(1)
 	}
-	// An attempt row in flight that belongs to no remediation is driven by no
-	// code of this version. It is failed before the runner starts, since the
-	// worker numbers a new attempt from the terminal rows of its round, so a
-	// row still in flight at that number would collide with its first attempt.
+	// The runner stamps a remediation on every attempt row it writes, so a row
+	// in flight with none is driven by nothing. It is failed before the runner
+	// starts, since the worker numbers a new attempt from the terminal rows of
+	// its round, so a row still in flight at that number would collide with its
+	// first attempt.
 	if err := failLegacyInFlight(ctx, proposalRepo, logger); err != nil {
 		logger.Error("failing the attempt rows in flight that belong to no remediation", "error", err)
 		os.Exit(1)
@@ -503,9 +504,9 @@ func loopBudgets(cfg config.Config) (worker, poller time.Duration) {
 }
 
 // failLegacyInFlight fails every attempt row in flight that belongs to no
-// remediation, which no code of this version drives, and logs how many it
-// moved: at Warn when there are any, at Info when there are none. It is
-// idempotent, so every start runs it.
+// remediation, which nothing drives since the runner stamps a remediation on
+// every row it writes, and logs how many it moved: at Warn when there are any,
+// at Info when there are none. It is idempotent, so every start runs it.
 func failLegacyInFlight(ctx context.Context, repo repository.ProposalRepository, logger *slog.Logger) error {
 	n, err := repo.FailLegacyInFlight(ctx, noRemediationInFlightReason)
 	if err != nil {

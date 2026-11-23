@@ -25,9 +25,9 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 )
 
-// consumeOne runs the consumer of remediation.requested:v3 on
-// rc, whose stream holds the consumer's group, until it accepts one message,
-// and returns what it accepted.
+// consumeOne runs the consumer of remediation.requested:v3 on rc, whose stream
+// holds the consumer's group, until it accepts one message, and returns what it
+// accepted.
 func consumeOne(t *testing.T, rc *goredis.Client) runner.Accepted {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

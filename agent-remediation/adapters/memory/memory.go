@@ -1,10 +1,9 @@
 // Package memory is the in-memory implementation of the unit of work and of
-// every repository the runner, the proposal driver and the verification
-// reconciler use. It keeps the semantics of the Postgres adapters that the code
-// above them relies on: compare-and-set updates, the (release_id, attempt)
-// uniqueness of proposals, message-processing dedup on both axes, foreign keys
-// and cascades, and leases. The runner's tests and the repository contract test
-// run against it.
+// every repository the runner uses. It keeps the semantics of the Postgres
+// adapters that the code above them relies on: compare-and-set updates, the
+// (release_id, attempt) uniqueness of proposals, message-processing dedup on
+// both axes, foreign keys and cascades, and leases. The runner's tests and the
+// repository contract test run against it.
 package memory
 
 import (
@@ -58,7 +57,7 @@ func (s *Store) RemediationRepository() repository.RemediationRepository {
 }
 
 // ProposalRepository returns the proposal repository for use outside a unit of
-// work, as the verification reconciler's lister uses it.
+// work, as the previous-tries step's attempt lister uses it.
 func (s *Store) ProposalRepository() repository.ProposalRepository {
 	return &proposalRepository{gate: s.autocommit}
 }

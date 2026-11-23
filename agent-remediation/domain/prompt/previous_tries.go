@@ -15,6 +15,13 @@ const (
 	maxPreviousTryDiffBytes = 8192
 )
 
+// AttemptDiff is one file's unified diff from an earlier fix attempt, named by
+// the repository path that attempt changed.
+type AttemptDiff struct {
+	Path string
+	Diff string
+}
+
 // PreviousTry is one earlier try at the same failure as the model is shown it:
 // the heading it is shown under, the diffs it applied, one line per thing its
 // pre-flight checks found, and why the verification gate failed it. Every text

@@ -15,12 +15,9 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 )
 
-// verifyingBatchLimit caps ListVerifying as the Postgres repository does.
-const verifyingBatchLimit = 20
-
 // proposalRepository is the in-memory repository.ProposalRepository. It covers
-// what the proposal driver, the verification reconciler and the runner call;
-// the pull-request methods return errors.ErrUnsupported.
+// what the runner calls; the pull-request methods return
+// errors.ErrUnsupported.
 type proposalRepository struct {
 	gate gate
 }
@@ -248,7 +245,6 @@ func (row *proposalRow) view() proposal.View {
 		VerificationRunID:   p.VerificationRunID,
 		Services:            p.Services,
 		VerifyError:         row.verifyError,
-		TriggerPayload:      p.TriggerPayload,
 		Confidence:          p.Confidence,
 		Rationale:           p.Rationale,
 		ProposedSQLURI:      p.ProposedSQLURI,
@@ -298,9 +294,6 @@ func (r *proposalRepository) List(_ context.Context, filter repository.ProposalF
 			if filter.Source != "" && v.Source != filter.Source {
 				continue
 			}
-			if filter.NodeID != "" && !containsString(row.p.ResolvedNodeIDs, filter.NodeID) {
-				continue
-			}
 			if filter.Service != "" && !containsString(v.Services, filter.Service) {
 				continue
 			}
@@ -322,25 +315,6 @@ func containsString(list []string, s string) bool {
 		}
 	}
 	return false
-}
-
-// ListVerifying returns the driver's verifying proposals, oldest first, capped
-// at the batch limit. A proposal of a remediation is left out.
-func (r *proposalRepository) ListVerifying(context.Context) ([]proposal.View, error) {
-	var out []proposal.View
-	err := r.gate(func(d *data) error {
-		for _, row := range d.proposals {
-			if row.p.Status == proposal.StatusVerifying && row.p.RemediationID == "" {
-				out = append(out, row.view())
-			}
-		}
-		sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
-		if len(out) > verifyingBatchLimit {
-			out = out[:verifyingBatchLimit]
-		}
-		return nil
-	})
-	return out, err
 }
 
 // finishVerifying moves a verifying row to status, writing verifications and
@@ -365,23 +339,18 @@ func (d *data) finishVerifying(id string, status proposal.Status, verifyError st
 	return true
 }
 
-// MarkVerified moves a verifying proposal to proposed.
-func (r *proposalRepository) MarkVerified(_ context.Context, id string, verifications []proposal.Verification) (bool, error) {
-	var hit bool
-	err := r.gate(func(d *data) error {
-		hit = d.finishVerifying(id, proposal.StatusProposed, "", verifications)
-		return nil
-	})
-	return hit, err
-}
-
-// MarkFixVerified refuses a zero Verified and otherwise does what MarkVerified
-// does with the proposal id and verifications it carries.
-func (r *proposalRepository) MarkFixVerified(ctx context.Context, v remediation.Verified) (bool, error) {
+// MarkFixVerified refuses a zero Verified and otherwise moves the verifying
+// proposal it names to proposed, writing the verifications it carries.
+func (r *proposalRepository) MarkFixVerified(_ context.Context, v remediation.Verified) (bool, error) {
 	if v.IsZero() {
 		return false, errors.New("mark fix verified: the verified proposal is the zero value")
 	}
-	return r.MarkVerified(ctx, v.ProposalID(), v.Verifications())
+	var hit bool
+	err := r.gate(func(d *data) error {
+		hit = d.finishVerifying(v.ProposalID(), proposal.StatusProposed, "", v.Verifications())
+		return nil
+	})
+	return hit, err
 }
 
 // MarkVerifyFailed moves a verifying proposal to failed and records the error.

@@ -167,7 +167,7 @@ func TestSharedUpstream_AllTestMembersUnderOneModel_NotClaimed(t *testing.T) {
 	// Two same-signature dbt-test nodes whose shared changed ancestor is the model
 	// they guard (which bound OK and is not in the failing set) must NOT form an
 	// upstream cluster: a tests-only failure is a dead end, not a model fix. They
-	// stay unclaimed so the driver skips each one.
+	// stay unclaimed so the runner hands each one over.
 	nodes := []FailingNode{
 		{NodeID: "analytics.tbind.not_null_amount_eur", ErrorSignature: "missing_col_x", NodeType: "dbt-test"},
 		{NodeID: "analytics.assert_tbind_amount_positive", ErrorSignature: "missing_col_x", NodeType: "dbt-test"},

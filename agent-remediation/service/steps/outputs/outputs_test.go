@@ -148,7 +148,7 @@ func TestPullRequest_MarksTheFixVerifiedAndEnqueuesTheProposedEvent(t *testing.T
 	assert.Nil(t, e.MessageProcessingID)
 
 	// The payload is stored under the remediation's tenant and built from the
-	// row's fields, as handlers.Enqueue builds it.
+	// row's fields.
 	tenantID, body, err := outbox.UnwrapTenant(e.Payload)
 	require.NoError(t, err)
 	assert.Equal(t, rem.TenantID, tenantID)

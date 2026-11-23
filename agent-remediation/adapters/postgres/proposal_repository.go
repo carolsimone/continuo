@@ -86,7 +86,7 @@ func textArray(s []string) pq.StringArray {
 }
 
 // remediationIDArg is the remediation_id column value of a proposal: NULL for
-// an attempt the proposal driver made, the remediation's id otherwise.
+// an attempt row that belongs to no remediation, the remediation's id otherwise.
 func remediationIDArg(id string) any {
 	if id == "" {
 		return nil
@@ -135,7 +135,7 @@ func (r *ProposalRepository) InsertGenerating(ctx context.Context, p proposal.Pr
 // entry left at 'generating' would keep the FIX cell spinning and hide the
 // release's "Try again" even though the row itself is failed.
 //
-// One attempt now addresses a release's whole failing set, so at most one row
+// One attempt addresses a release's whole failing set, so at most one row
 // per release can be generating at a time: the release id alone identifies
 // the row unambiguously, with no node or error-signature match needed.
 //
@@ -307,7 +307,6 @@ type proposalRow struct {
 	Status              string         `db:"status"`
 	VerificationRunID   string         `db:"verification_run_id"`
 	VerifyError         string         `db:"verify_error"`
-	TriggerPayload      []byte         `db:"trigger_payload"`
 	Confidence          string         `db:"confidence"`
 	Rationale           string         `db:"rationale"`
 	ProposedSQLURI      string         `db:"proposed_sql_uri"`
@@ -553,7 +552,6 @@ func (row proposalRow) toView() proposal.View {
 		VerificationRunID:   row.VerificationRunID,
 		Services:            []string(row.Services),
 		VerifyError:         row.VerifyError,
-		TriggerPayload:      row.TriggerPayload,
 		Confidence:          proposal.Confidence(row.Confidence),
 		Rationale:           row.Rationale,
 		ProposedSQLURI:      row.ProposedSQLURI,
@@ -577,7 +575,7 @@ func (row proposalRow) toView() proposal.View {
 }
 
 const proposalColumns = `id, source, release_id, remediation_round, node_id, error_signature, attempt,
-		       status, verification_run_id, verify_error, trigger_payload,
+		       status, verification_run_id, verify_error,
 		       confidence, rationale, proposed_sql_uri, diff_uri,
 		       candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
 		       repo, commit_sha, file_path, file_edits, model, created_at,
@@ -785,10 +783,6 @@ func (r *ProposalRepository) List(ctx context.Context, filter repository.Proposa
 	if filter.Source != "" {
 		args = append(args, filter.Source)
 		q += fmt.Sprintf(" AND source = $%d", len(args))
-	}
-	if filter.NodeID != "" {
-		args = append(args, filter.NodeID)
-		q += fmt.Sprintf(" AND resolved_node_ids ? $%d", len(args))
 	}
 	if filter.Service != "" {
 		args = append(args, filter.Service)
@@ -1093,28 +1087,6 @@ func (r *ProposalRepository) RecordPROutcome(ctx context.Context, id, service st
 	return n > 0, nil
 }
 
-// verifyingBatchLimit caps ListVerifying so a single stuck row can never
-// starve every other in-flight verification: the polling reconciler always
-// makes bounded progress on each tick.
-const verifyingBatchLimit = 20
-
-// ListVerifying returns the proposal driver's proposals awaiting verification
-// (status='verifying'), oldest first, capped at verifyingBatchLimit. A proposal
-// that belongs to a remediation is left out: the runner finalizes those.
-func (r *ProposalRepository) ListVerifying(ctx context.Context) ([]proposal.View, error) {
-	q := `SELECT ` + proposalColumns + ` FROM proposal
-	      WHERE status = $1 AND remediation_id IS NULL ORDER BY created_at ASC LIMIT $2`
-	var rows []proposalRow
-	if err := r.q.SelectContext(ctx, &rows, q, proposal.StatusVerifying, verifyingBatchLimit); err != nil {
-		return nil, fmt.Errorf("list verifying proposals: %w", err)
-	}
-	views := make([]proposal.View, 0, len(rows))
-	for _, row := range rows {
-		views = append(views, row.toView())
-	}
-	return views, nil
-}
-
 // rewriteVerifyingOutcomes is the node_outcomes assignment that carries an
 // attempt's per-node outcomes along with the attempt itself: every node still
 // waiting on verification takes the status the attempt just reached, while
@@ -1132,48 +1104,41 @@ const rewriteVerifyingOutcomes = `
 		FROM jsonb_each(node_outcomes) AS e(k, v)
 	), '{}'::jsonb)`
 
-// MarkVerified finalizes a proposal every verification run validated the fix,
-// transitioning status 'verifying' -> 'proposed', carrying every node that
-// was waiting on those runs to 'proposed' with it, and writing verifications
-// as the final per-run summary. The WHERE status='verifying' guard is the
-// same compare-and-set contract as every other state transition in this
-// file: a row already finalized by a concurrent or repeated reconciler pass
-// leaves 0 rows affected rather than a blind overwrite. hit reports whether
-// the CAS fired.
-func (r *ProposalRepository) MarkVerified(ctx context.Context, id string, verifications []proposal.Verification) (bool, error) {
-	v, err := marshalVerifications(verifications)
+// MarkFixVerified finalizes a proposal the runner verified: every verification
+// run passed, so status 'verifying' becomes 'proposed', every node that was
+// waiting on those runs is carried to 'proposed' with it, and the verifications
+// the Verified carries are written as the final per-run summary. It refuses a
+// zero Verified, which holds no proof that its drafts were checked and
+// verified. The WHERE status='verifying' guard is the same compare-and-set
+// contract as every other state transition in this file: a row already
+// finalized by a concurrent or repeated pass leaves 0 rows affected rather than
+// a blind overwrite. hit reports whether the CAS fired.
+func (r *ProposalRepository) MarkFixVerified(ctx context.Context, v remediation.Verified) (bool, error) {
+	if v.IsZero() {
+		return false, errors.New("mark fix verified: the verified proposal is the zero value")
+	}
+	verifications, err := marshalVerifications(v.Verifications())
 	if err != nil {
 		return false, fmt.Errorf("marshal proposal verifications: %w", err)
 	}
 	res, err := r.q.ExecContext(ctx,
 		`UPDATE proposal SET status=$3, verifications=$4, `+rewriteVerifyingOutcomes+` WHERE id=$1 AND status=$2`,
-		id, proposal.StatusVerifying, proposal.StatusProposed, v)
+		v.ProposalID(), proposal.StatusVerifying, proposal.StatusProposed, verifications)
 	if err != nil {
-		return false, fmt.Errorf("mark verified: %w", err)
+		return false, fmt.Errorf("mark fix verified: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return false, fmt.Errorf("mark verified: rows affected: %w", err)
+		return false, fmt.Errorf("mark fix verified: rows affected: %w", err)
 	}
 	return n > 0, nil
-}
-
-// MarkFixVerified finalizes a proposal the runner verified. It refuses a zero
-// Verified, which holds no proof that its drafts were checked and verified, and
-// otherwise does what MarkVerified does with the proposal id and verifications
-// the Verified carries.
-func (r *ProposalRepository) MarkFixVerified(ctx context.Context, v remediation.Verified) (bool, error) {
-	if v.IsZero() {
-		return false, errors.New("mark fix verified: the verified proposal is the zero value")
-	}
-	return r.MarkVerified(ctx, v.ProposalID(), v.Verifications())
 }
 
 // MarkVerifyFailed finalizes a proposal a verification run rejected,
 // transitioning status 'verifying' -> 'failed', carrying every node that was
 // waiting on those runs to 'failed' with it, recording verifyErr so the next
 // attempt can use it as evidence, and writing verifications as the final
-// per-run summary. The CAS guard and hit semantics mirror MarkVerified.
+// per-run summary. The CAS guard and hit semantics mirror MarkFixVerified.
 func (r *ProposalRepository) MarkVerifyFailed(ctx context.Context, id, verifyErr string, verifications []proposal.Verification) (bool, error) {
 	v, err := marshalVerifications(verifications)
 	if err != nil {
