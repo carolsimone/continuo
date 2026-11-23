@@ -166,6 +166,43 @@ func (r *ProposalRepository) FailGenerating(ctx context.Context, releaseID, reas
 	return int(n), nil
 }
 
+// FailLegacyInFlight fails, in one UPDATE, every attempt row in flight that
+// belongs to no remediation: status 'generating' or 'verifying' with a NULL
+// remediation_id. A row that was generating takes reason as its rationale, as
+// FailGenerating writes it; a row that was verifying takes reason as its
+// verify_error and keeps its rationale, edits and verifications, as
+// MarkVerifyFailed writes it. The SET expressions read the row as it was, so
+// each of them sees the status the row had. Every node_outcomes entry still
+// 'generating' or 'verifying' becomes {"status": "failed", "reason": reason}
+// and the rest are copied through; the COALESCE keeps the column (NOT NULL)
+// writable for a row with no entries, which aggregates to NULL.
+//
+// The WHERE clause is the whole selection: a row of a remediation, and a row
+// that is not in flight, match nothing, so a second call moves no row.
+func (r *ProposalRepository) FailLegacyInFlight(ctx context.Context, reason string) (int, error) {
+	res, err := r.q.ExecContext(ctx,
+		`UPDATE proposal
+		   SET status = $2::text,
+		       rationale = CASE WHEN status = $3::text THEN $1::text ELSE rationale END,
+		       verify_error = CASE WHEN status = $4::text THEN $1::text ELSE verify_error END,
+		       node_outcomes = COALESCE((
+		         SELECT jsonb_object_agg(k, CASE WHEN v->>'status' IN ($3::text, $4::text)
+		              THEN jsonb_build_object('status', $2::text, 'reason', $1::text)
+		              ELSE v END)
+		           FROM jsonb_each(node_outcomes) AS e(k, v)),
+		         node_outcomes)
+		 WHERE remediation_id IS NULL AND status IN ($3::text, $4::text)`,
+		reason, proposal.StatusFailed, proposal.StatusGenerating, proposal.StatusVerifying)
+	if err != nil {
+		return 0, fmt.Errorf("fail in-flight proposals of no remediation: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("fail in-flight proposals of no remediation: rows affected: %w", err)
+	}
+	return int(n), nil
+}
+
 // Upsert records the terminal outcome of a proposal attempt on the natural key
 // (release_id, attempt): when an in-flight generating row exists (the common
 // healable path) it is finalized in place via ON CONFLICT … DO UPDATE;

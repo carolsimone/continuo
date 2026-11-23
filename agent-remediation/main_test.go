@@ -145,6 +145,58 @@ func (s *spyRepo) ListPastDeadline(context.Context, time.Time, int) ([]uuid.UUID
 	return nil, nil
 }
 
+// inFlightRepo is a proposal repository that records the reason
+// FailLegacyInFlight is called with and answers with moved and err.
+type inFlightRepo struct {
+	repository.ProposalRepository
+	reasons []string
+	moved   int
+	err     error
+}
+
+func (r *inFlightRepo) FailLegacyInFlight(_ context.Context, reason string) (int, error) {
+	r.reasons = append(r.reasons, reason)
+	return r.moved, r.err
+}
+
+// TestMain_FailLegacyInFlight: the startup step asks the repository to fail
+// the attempt rows in flight that belong to no remediation with the reason the
+// release page shows, logs how many it moved (at Warn when it moved any, at
+// Info when it moved none), and returns the repository's error.
+func TestMain_FailLegacyInFlight(t *testing.T) {
+	const reason = "continuo changed its remediation engine while this attempt was in flight; use Try again"
+	for _, tc := range []struct {
+		name      string
+		repo      *inFlightRepo
+		wantLevel string
+		wantCount float64
+		wantErr   bool
+	}{
+		{name: "none moved", repo: &inFlightRepo{}, wantLevel: "INFO"},
+		{name: "some moved", repo: &inFlightRepo{moved: 3}, wantLevel: "WARN", wantCount: 3},
+		{name: "the repository fails", repo: &inFlightRepo{err: errors.New("database is down")}, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+			err := failLegacyInFlight(context.Background(), tc.repo, logger)
+
+			require.Equal(t, []string{reason}, tc.repo.reasons)
+			if tc.wantErr {
+				require.ErrorIs(t, err, tc.repo.err)
+				assert.Empty(t, logLines(t, &buf), "an error is the caller's to log")
+				return
+			}
+			require.NoError(t, err)
+			lines := logLines(t, &buf)
+			require.Len(t, lines, 1, buf.String())
+			assert.Equal(t, tc.wantLevel, lines[0]["level"])
+			assert.Equal(t, tc.wantCount, lines[0]["count"])
+		})
+	}
+}
+
 // TestMain_RunnerLoopsStart: startRunner, which main calls with its
 // lifecycle's Go, starts the worker, the gate poller and the sweeper, and each
 // does its work.

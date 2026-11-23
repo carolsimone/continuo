@@ -134,6 +134,37 @@ func (r *proposalRepository) FailGenerating(_ context.Context, releaseID, reason
 	return n, err
 }
 
+// FailLegacyInFlight fails every generating or verifying row that belongs to
+// no remediation, as the Postgres repository does: a row that was generating
+// takes the reason as its rationale, a row that was verifying takes it as its
+// verify error, and each node outcome still generating or verifying becomes
+// failed with the reason.
+func (r *proposalRepository) FailLegacyInFlight(_ context.Context, reason string) (int, error) {
+	var n int
+	err := r.gate(func(d *data) error {
+		for _, row := range d.proposals {
+			inFlight := row.p.Status == proposal.StatusGenerating || row.p.Status == proposal.StatusVerifying
+			if row.p.RemediationID != "" || !inFlight {
+				continue
+			}
+			if row.p.Status == proposal.StatusGenerating {
+				row.p.Rationale = reason
+			} else {
+				row.verifyError = reason
+			}
+			row.p.Status = proposal.StatusFailed
+			for node, o := range row.p.NodeOutcomes {
+				if o.Status == proposal.StatusGenerating || o.Status == proposal.StatusVerifying {
+					row.p.NodeOutcomes[node] = proposal.NodeOutcome{Status: proposal.StatusFailed, Reason: reason}
+				}
+			}
+			n++
+		}
+		return nil
+	})
+	return n, err
+}
+
 // Upsert inserts the attempt's row or finalizes the row it conflicts with on
 // (release, attempt). The conflict update leaves the identity columns (source,
 // round, node, signature) as the first write set them, and leaves the

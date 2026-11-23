@@ -149,6 +149,25 @@ type ProposalRepository interface {
 	// error-signature match.
 	FailGenerating(ctx context.Context, releaseID, reason string) (int, error)
 
+	// FailLegacyInFlight fails every attempt row in flight that belongs to no
+	// remediation, and returns how many rows it moved. Such a row is
+	// 'generating' or 'verifying' with no remediation id: no code of this
+	// version drives it, since the runner stamps the remediation on every
+	// attempt row it writes, so left alone it would stay in flight for good
+	// and keep the release page from offering "Try again".
+	//
+	// Each row moves to 'failed' with reason on it. A row that was generating
+	// takes reason as its rationale. A row that was verifying takes it as its
+	// verify error and keeps its rationale, edits and verifications. On both,
+	// every node_outcomes entry still 'generating' or 'verifying' is rewritten
+	// to 'failed' with reason, and any other entry is left as it is, so a
+	// reader of a node's own outcome agrees with the row.
+	//
+	// It is idempotent: a row it moved is no longer in flight, so a second call
+	// moves none. A row of a remediation, and a row that is not in flight, are
+	// never touched.
+	FailLegacyInFlight(ctx context.Context, reason string) (int, error)
+
 	// Upsert records the terminal outcome of an attempt on the natural key
 	// (release_id, attempt): it finalizes the in-flight generating row when one
 	// exists (ON CONFLICT … DO UPDATE), or plain-inserts for instant paths that

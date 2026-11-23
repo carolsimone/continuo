@@ -302,6 +302,10 @@ func (r *fakeProposalRepo) InsertGenerating(_ context.Context, p proposal.Propos
 	return nil
 }
 
+func (r *fakeProposalRepo) FailLegacyInFlight(context.Context, string) (int, error) {
+	return 0, nil
+}
+
 func (r *fakeProposalRepo) FailGenerating(_ context.Context, releaseID, reason string) (int, error) {
 	n := 0
 	for i := range r.generating {
