@@ -59,10 +59,10 @@ func withTries(req prompt.ProposeRequest) prompt.ProposeRequest {
 }
 
 type promptCase struct {
-	name       string
-	build      func() step.Prompt
-	wantStep   string
-	nodeType   string
+	name        string
+	build       func() step.Prompt
+	wantStep    string
+	nodeType    string
 	wantRequest func(noReads bool) prompt.ProposeRequest
 }
 
