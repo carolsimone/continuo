@@ -312,6 +312,10 @@ func main() {
 		cfg.OntologyBaseURL,
 		time.Now,
 		logger,
+		// A promotion's rewrite names each node's schema as the promotion's own
+		// topology artifact declares it, whichever of the swap and the contracts
+		// group ran first.
+		handlers.WithDeclaredSchemas(topologyArtifactReader),
 	)
 	releasePromotedContractsHandler := handlers.NewReleasePromotedContractsHandler(
 		graphUnitOfWork, s3infra.NewContractBundleReader(objectStore), liveFolder, contractMetrics,

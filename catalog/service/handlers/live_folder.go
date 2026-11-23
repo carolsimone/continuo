@@ -61,7 +61,13 @@ const (
 // no longer published. The schema reaches the file as its servers entry's
 // schema, which is the node's declared spelling, not the lower-case schema of
 // its contract id; the index keeps it only for a file whose entry names a
-// schema other than the id's (see indexedSchema).
+// schema other than the id's (see indexedSchema). The declared schema of a
+// node is the one the promotion's own topology artifact names, which a rewrite
+// for a promotion reads (see WithDeclaredSchemas), so a node the contracts group
+// created before the topology swap, and one whose schema changes only in case,
+// get their final spelling at once, whichever of the groups runs first. A
+// rewrite with no artifact, the one a settings change or a start-up refresh
+// makes, names the schema the graph holds.
 //
 // Every rewrite of a tenant holds the tenant's live-folder lease, so two
 // rewrites never interleave their writes, and reads the live contracts only
@@ -88,6 +94,23 @@ type LiveFolder struct {
 	leaseTTL        time.Duration
 	leaseRenewEvery time.Duration
 	renewTimeout    time.Duration
+	// artifacts reads a promotion's topology artifact, for the schema each node
+	// is declared in; nil leaves the schema to the graph.
+	artifacts ports.TopologyArtifactReader
+}
+
+// LiveFolderOption sets an optional collaborator of a LiveFolder.
+type LiveFolderOption func(*LiveFolder)
+
+// WithDeclaredSchemas makes a rewrite for a promotion name, in each file, the
+// schema its topology artifact declares the node in, in place of the schema the
+// graph holds, which is empty or stale until the promotion's topology swap has
+// run. A promotion's artifact that cannot be read as one (corrupt, or another
+// tenant's or release's) is ignored, since the swap dead-letters it, and the
+// graph's schemas are used; an artifact that is missing, or storage that fails,
+// fails the rewrite, so the message is retried.
+func WithDeclaredSchemas(artifacts ports.TopologyArtifactReader) LiveFolderOption {
+	return func(l *LiveFolder) { l.artifacts = artifacts }
 }
 
 // NewLiveFolder creates a LiveFolder that publishes with server, the install's
@@ -105,8 +128,9 @@ func NewLiveFolder(
 	ontologyBaseURL string,
 	now func() time.Time,
 	logger *slog.Logger,
+	options ...LiveFolderOption,
 ) *LiveFolder {
-	return &LiveFolder{
+	l := &LiveFolder{
 		contracts: contracts,
 		store:     store,
 		renderer:  renderer,
@@ -124,6 +148,42 @@ func NewLiveFolder(
 		leaseRenewEvery: liveLeaseRenewEvery,
 		renewTimeout:    liveRenewTimeout,
 	}
+	for _, option := range options {
+		option(l)
+	}
+	return l
+}
+
+// declaredSchemas is the schema each node of promotion in is declared in, by
+// unique id, as the promotion's topology artifact names it, or nil when the
+// folder reads none, the promotion names none, or the artifact is not the
+// promoted tenant's and release's (see WithDeclaredSchemas).
+func (l *LiveFolder) declaredSchemas(ctx context.Context, in domainModel.PromoteReleaseInput) (map[string]string, error) {
+	if l.artifacts == nil || in.TopologyURI == "" {
+		return nil, nil
+	}
+	doc, err := l.artifacts.Load(ctx, in.TopologyURI, in.TopologySHA256)
+	if err != nil {
+		if errors.Is(err, ports.ErrTopologyArtifactCorrupt) {
+			l.logger.Warn("the promotion's topology artifact is unreadable, so the live contracts name the schemas the graph holds",
+				"tenant_id", in.TenantID, "release_id", in.ReleaseID, "uri", in.TopologyURI, "error", err)
+			return nil, nil
+		}
+		return nil, fmt.Errorf("load topology artifact %s: %w", in.TopologyURI, err)
+	}
+	if doc.TenantID != in.TenantID || doc.ReleaseID != in.ReleaseID {
+		l.logger.Warn("the promotion's topology artifact belongs to another tenant or release, so the live contracts name the schemas the graph holds",
+			"tenant_id", in.TenantID, "release_id", in.ReleaseID, "artifact_tenant_id", doc.TenantID,
+			"artifact_release_id", doc.ReleaseID, "uri", in.TopologyURI)
+		return nil, nil
+	}
+	schemas := make(map[string]string, len(doc.Nodes))
+	for _, n := range doc.Nodes {
+		if n.SchemaName != "" {
+			schemas[n.UniqueID] = n.SchemaName
+		}
+	}
+	return schemas, nil
 }
 
 // settingsFingerprint is the hex SHA-256 fingerprint of the publishing
@@ -176,7 +236,11 @@ func (l *LiveFolder) Rewrite(ctx context.Context, in domainModel.PromoteReleaseI
 		if newer, err := l.superseded(ctx, in.TenantID, in.PromotionSeq); err != nil || newer {
 			return err
 		}
-		if err := l.write(ctx, in.TenantID, prev, found, false, in.PromotionSeq, in.ReleaseID); err != nil {
+		declared, err := l.declaredSchemas(ctx, in)
+		if err != nil {
+			return err
+		}
+		if err := l.write(ctx, in.TenantID, prev, found, false, in.PromotionSeq, in.ReleaseID, declared); err != nil {
 			return err
 		}
 		settings = l.settings
@@ -257,7 +321,7 @@ func (l *LiveFolder) RewriteAll(ctx context.Context, tenantID string) error {
 		if err != nil {
 			return err
 		}
-		if err := l.write(ctx, tenantID, prev, found, true, mark.PromotionSeq, mark.ReleaseID); err != nil {
+		if err := l.write(ctx, tenantID, prev, found, true, mark.PromotionSeq, mark.ReleaseID, nil); err != nil {
 			return err
 		}
 		if err := l.state.RecordSettings(ctx, tenantID, l.settings); err != nil {
@@ -358,7 +422,9 @@ func (l *LiveFolder) underLease(ctx context.Context, tenantID string, fn func(ct
 // write puts the files of promotionSeq's live contracts that must be written
 // (every one when all is set, or when prev was not found or was written with
 // other settings), deletes the files prev lists that are no longer published,
-// then puts the index naming promotionSeq and releaseID.
+// then puts the index naming promotionSeq and releaseID. declared, when it is
+// not nil, names the schema each node is declared in, by unique id, and takes
+// the place of the schema the graph holds for it.
 //
 // Before its writes it puts an interim index: prev with every file about to be
 // put or deleted listed at version 0 and an empty hash, which match no
@@ -374,6 +440,7 @@ func (l *LiveFolder) write(
 	found, all bool,
 	promotionSeq int64,
 	releaseID string,
+	declared map[string]string,
 ) error {
 	live, err := l.contracts.Live(ctx, tenantID, promotionSeq)
 	if err != nil {
@@ -391,6 +458,9 @@ func (l *LiveFolder) write(
 	for _, c := range live {
 		if contractversion.IsEphemeral(c.Document) {
 			continue
+		}
+		if schema, ok := declared[c.UniqueID]; ok {
+			c.PhysicalSchema = schema
 		}
 		file := ports.LiveIndexFile{
 			UniqueID: c.UniqueID, Version: c.Version, ContractHash: c.ContractHash, PhysicalSchema: l.indexedSchema(c),

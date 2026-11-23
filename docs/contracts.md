@@ -499,12 +499,12 @@ servers:
 - `schema` is the schema the node is declared in, the one dbt and continuo
   build the table in, in the topology's spelling. A schema declared with
   capitals, such as `Analytics`, keeps them here, while the contract's `id` stays
-  in lower case (`analytics.orders`). A node the topology has not reached yet has
+  in lower case (`analytics.orders`). catalog reads it from the topology
+  artifact of the promotion it rewrites the folder for, so a file names it from
+  its first write, and a schema that changes only in case is published with the
+  promotion that changes it. A node that no promotion's topology has reached has
   no declared schema, and its entry takes the part of the id before the table
-  name. When catalog rewrites the folder before the topology swap of the same
-  promotion, the file of a new node names the id's schema, and the file of a node
-  whose schema only changes in case keeps the old spelling, until the next
-  promotion rewrites it. Where the two spellings are the same, as they are for
+  name. Where the two spellings are the same, as they are for
   every node declared in a lower-case schema, the entry reads as it would from
   the id.
 - On Trino, `database` fills the field `catalog` of the entry. Set it
