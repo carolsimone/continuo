@@ -117,7 +117,7 @@ function failedRoutes() {
   };
 }
 
-// REBASE_PREVIEW is the preview the rerun-failed dialog shows before a rebase.
+// REBASE_PREVIEW is the preview the Rebase dialog shows before a rebase.
 const REBASE_PREVIEW = {
   release_id: 'rel-7', promotion_seq: 7, total_nodes: 8, will_run: 4,
   failed_or_skipped: 4, new_nodes: 0, changed_upstream: 0, downstream: 0, inherited: 4,
@@ -152,24 +152,77 @@ function rebaseFetch(
   });
 }
 
-// submitLatest opens the rerun-failed dialog, chooses "Latest snapshot",
-// waits for its preview and confirms.
-async function submitLatest() {
-  fireEvent.click(await screen.findByRole('button', { name: /rerun failed/i }));
-  fireEvent.click(await screen.findByLabelText(/latest snapshot/i));
-  await screen.findByText('Will run');
-  await waitFor(() => expect(screen.getByRole('button', { name: /^Rerun$/ })).toBeEnabled());
-  fireEvent.click(screen.getByRole('button', { name: /^Rerun$/ }));
+// staleRoutes is a failed latest run on release rel-6, one release behind the
+// live release.
+function staleRoutes() {
+  return {
+    ...failedRoutes(),
+    [`/api/runs/${RUN_ID}/graph`]: async () => ({
+      nodes: [{ node_id: SAMPLE_NODE_ID, node_type: 'dbt-model', schedule_name: SCHED, status: 'failed' }],
+      edges: [],
+      run_promotion_seq: 6,
+      latest_promotion_seq: 7,
+    }),
+    [`/api/runs/${RUN_ID}`]: async () => ({
+      run_id: RUN_ID,
+      schedule_name: SCHED,
+      status: 'failed',
+      release_id: 'rel-6',
+      created_at: null,
+      started_at: null,
+      completed_at: null,
+      cancelled_at: null,
+      cancelled_by: '',
+    }),
+  };
 }
 
-describe('DetailPage — run-level Rerun button', () => {
-  it('shows Rerun failed button when latest run is FAILED', async () => {
-    const fetchMock = mockFetchSequence(failedRoutes());
+// withLatestStatus is routes with the latest run in another status.
+function withLatestStatus(routes: ReturnType<typeof failedRoutes>, status: string) {
+  const base = routes[`/api/runs/${RUN_ID}`];
+  return {
+    ...routes,
+    [`/api/runs/${RUN_ID}`]: async () => ({ ...(await base()), status }),
+  };
+}
+
+const actionButtons = () => Array.from(document.querySelectorAll('.page-action-row button'));
+const rerunAction = () => screen.findByRole('button', { name: '↺ Rerun' });
+const rebaseAction = () => screen.findByRole('button', { name: '↪ Rebase onto live release' });
+
+// waitForLatestRun waits until the page has read the latest run's status and
+// graph, which decide the two buttons.
+async function waitForLatestRun(fetchMock: ReturnType<typeof vi.fn>) {
+  await waitFor(() => {
+    const calls = fetchMock.mock.calls.map(c => String(c[0]));
+    expect(calls.some(u => u.endsWith(`/api/runs/${RUN_ID}`))).toBe(true);
+    expect(calls.some(u => u.startsWith(`/api/runs/${RUN_ID}/graph`))).toBe(true);
+  });
+  await flushReads();
+}
+
+// submitRebase opens the Rebase dialog, waits for its preview and confirms.
+async function submitRebase() {
+  fireEvent.click(await rebaseAction());
+  await screen.findByText('Will run');
+  await waitFor(() => expect(screen.getByRole('button', { name: /^Rebase$/ })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: /^Rebase$/ }));
+}
+
+describe('DetailPage — Rerun and Rebase buttons', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('offers Rerun and Rebase onto live release after Trigger run, both enabled for a failed run behind the live release', async () => {
+    const fetchMock = mockFetchSequence(staleRoutes());
     vi.stubGlobal('fetch', fetchMock);
-
     render(withRouter({ last_run_id: RUN_ID }));
+    await waitForLatestRun(fetchMock);
 
-    expect(await screen.findByRole('button', { name: /rerun failed/i })).toBeInTheDocument();
+    expect(actionButtons().map(b => b.textContent)).toEqual(['▶ Trigger run', '↺ Rerun', '↪ Rebase onto live release']);
+    expect(await rerunAction()).toBeEnabled();
+    expect(await rebaseAction()).toBeEnabled();
+    expect(await rerunAction()).toHaveClass('btn', 'btn--secondary');
+    expect(await rebaseAction()).toHaveClass('btn', 'btn--secondary');
   });
 
   it('says why a run that failed without a failed task failed', async () => {
@@ -186,133 +239,104 @@ describe('DetailPage — run-level Rerun button', () => {
     expect(await screen.findByText('failed: stalled')).toBeInTheDocument();
   });
 
-  it('hides Rerun failed button when latest run is SUCCEEDED', async () => {
+  it('greys out both, with the reason as hover title, when every node of the run succeeded', async () => {
+    const fetchMock = mockFetchSequence(withLatestStatus(staleRoutes(), 'succeeded'));
+    vi.stubGlobal('fetch', fetchMock);
+    render(withRouter({ last_run_id: RUN_ID }));
+    await waitForLatestRun(fetchMock);
+
+    expect(await rerunAction()).toBeDisabled();
+    expect(await rerunAction()).toHaveAttribute('title', 'Nothing to rerun: every node of this run succeeded');
+    expect(await rebaseAction()).toBeDisabled();
+    expect(await rebaseAction()).toHaveAttribute('title', 'Nothing to rebase: every node of this run succeeded');
+  });
+
+  it('greys out both while a run is active', async () => {
+    const fetchMock = mockFetchSequence(withLatestStatus(staleRoutes(), 'running'));
+    vi.stubGlobal('fetch', fetchMock);
+    render(withRouter({ last_run_id: RUN_ID }));
+    await waitForLatestRun(fetchMock);
+
+    expect(await rerunAction()).toHaveAttribute('title', 'A run is already active');
+    expect(await rerunAction()).toBeDisabled();
+    expect(await rebaseAction()).toHaveAttribute('title', 'A run is already active');
+    expect(await rebaseAction()).toBeDisabled();
+  });
+
+  it('greys out Rebase only when the run is already on the live release', async () => {
+    const fetchMock = mockFetchSequence(failedRoutes());
+    vi.stubGlobal('fetch', fetchMock);
+    render(withRouter({ last_run_id: RUN_ID }));
+    await waitForLatestRun(fetchMock);
+
+    expect(await rerunAction()).toBeEnabled();
+    expect(await rebaseAction()).toBeDisabled();
+    expect(await rebaseAction()).toHaveAttribute('title', 'This run is already on the live release');
+  });
+
+  it('greys out both for a failed past run that a newer run came after', async () => {
+    const OLDER = 'older-run';
     const routes = {
-      ...freshRoutes(),
-      [`/api/runs/${RUN_ID}`]: async () => ({
-        run_id: RUN_ID,
-        schedule_name: SCHED,
-        status: 'succeeded',
-        created_at: null,
-        started_at: null,
-        completed_at: null,
-        cancelled_at: null,
-        cancelled_by: '',
+      [`/api/runs/${OLDER}/tasks`]: async () => ({ tasks: [], total_count: 0 }),
+      [`/api/runs/${OLDER}/attempts`]: async () => ({ attempts: [], total_count: 0 }),
+      [`/api/runs/${OLDER}/graph`]: async () => ({ nodes: [], edges: [], run_promotion_seq: 5, latest_promotion_seq: 7 }),
+      ...withLatestStatus(staleRoutes(), 'succeeded'),
+      [`/api/schedules/${SCHED}/runs`]: async () => ({
+        runs: [{
+          run_id: OLDER, schedule_name: SCHED, status: 'failed',
+          created_at: '2026-11-01T10:00:00Z', completed_at: '2026-11-01T10:05:00Z',
+        }],
+        total_count: 1,
       }),
     };
     const fetchMock = mockFetchSequence(routes);
     vi.stubGlobal('fetch', fetchMock);
+    const { container } = render(withRouter({ last_run_id: RUN_ID }));
+    await waitForLatestRun(fetchMock);
 
-    render(withRouter({ last_run_id: RUN_ID }));
+    fireEvent.click(await screen.findByRole('tab', { name: /past runs/i }));
+    await waitFor(() => expect(container.querySelectorAll('.run-row')).toHaveLength(1));
+    fireEvent.click(container.querySelectorAll('.run-row')[0]);
+    await screen.findByText(/Viewing the past run from/);
 
-    // Wait for the scheduler fetch to resolve before asserting absence.
-    await waitFor(() => {
-      const calls = fetchMock.mock.calls.map(c => String(c[0]));
-      expect(calls.some(u => u.includes(`/api/runs/${RUN_ID}`))).toBe(true);
-    });
-    expect(screen.queryByRole('button', { name: /rerun failed/i })).toBeNull();
+    expect(await rerunAction()).toBeDisabled();
+    expect(await rerunAction()).toHaveAttribute('title', 'A newer run has ended. Rerun only the latest run');
+    expect(await rebaseAction()).toBeDisabled();
+    expect(await rebaseAction()).toHaveAttribute('title', 'A newer run has ended. Rebase only the latest run');
   });
 
-  it('opens the modal when Rerun failed button is clicked', async () => {
-    const fetchMock = mockFetchSequence(failedRoutes());
+  it('opens the Rerun dialog on the run\'s release, posts the rerun, and turns Rerun green', async () => {
+    const fetchMock = mockFetchSequence(staleRoutes());
     vi.stubGlobal('fetch', fetchMock);
-
     render(withRouter({ last_run_id: RUN_ID }));
+    await waitForLatestRun(fetchMock);
 
-    const rerunBtn = await screen.findByRole('button', { name: /rerun failed/i });
-    fireEvent.click(rerunBtn);
-
-    expect(await screen.findByRole('dialog')).toBeInTheDocument();
-  });
-
-  it('posts the request id to /api/runs/:id/rerun when modal submits with "this snapshot"', async () => {
-    const fetchMock = mockFetchSequence(failedRoutes());
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(withRouter({ last_run_id: RUN_ID }));
-
-    const rerunBtn = await screen.findByRole('button', { name: /rerun failed/i });
-    fireEvent.click(rerunBtn);
-
-    // Modal opens; default is "this snapshot" — click Rerun
-    const submitBtn = await screen.findByRole('button', { name: /^Rerun$/ });
-    fireEvent.click(submitBtn);
+    fireEvent.click(await rerunAction());
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Rerun this run')).toBeInTheDocument();
+    expect(within(dialog).getByText('On release rel-6, the release this run ran on.')).toBeInTheDocument();
+    expect(within(dialog).getByText('public.orders')).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Rerun$/ }));
 
     await waitFor(() => {
       const calls = fetchMock.mock.calls as unknown as [string, RequestInit?][];
-      const rerunCall = calls.find(c => String(c[0]).includes(`/api/runs/${RUN_ID}/rerun`));
+      const rerunCall = calls.find(c => String(c[0]) === `/api/runs/${RUN_ID}/rerun`);
       expect(rerunCall).toBeDefined();
       expect(rerunCall![1]).toMatchObject({ method: 'POST' });
       expect(JSON.parse(String(rerunCall![1]!.body))).toEqual({ request_id: expect.stringMatching(UUID) });
     });
+    const success = await screen.findByRole('button', { name: 'Reran' });
+    expect(success).toHaveClass('is-success');
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('turns the Rerun failed button green and relabels on success', async () => {
-    const fetchMock = mockFetchSequence({
-      ...failedRoutes(),
-      [`/api/runs/${RUN_ID}/rerun`]: async () => ({ ok: true }),
-    });
+  it('opens the Rebase dialog, rebases on the previewed release, and turns Rebase green', async () => {
+    const fetchMock = rebaseFetch(staleRoutes());
     vi.stubGlobal('fetch', fetchMock);
-
     render(withRouter({ last_run_id: RUN_ID }));
+    await waitForLatestRun(fetchMock);
 
-    const rerunBtn = await screen.findByRole('button', { name: /rerun failed/i });
-    fireEvent.click(rerunBtn);
-
-    const submitBtn = await screen.findByRole('button', { name: /^Rerun$/ });
-    fireEvent.click(submitBtn);
-
-    const success = await screen.findByRole('button', { name: /Reran/i });
-    expect(success.className).toContain('is-success');
-  });
-});
-
-describe('DetailPage — run-level Rebase button (via modal)', () => {
-  it('shows the modal with both "This snapshot" and "Latest snapshot" radio options', async () => {
-    const fetchMock = mockFetchSequence(failedRoutes());
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(withRouter({ last_run_id: RUN_ID }));
-
-    const rerunBtn = await screen.findByRole('button', { name: /rerun failed/i });
-    fireEvent.click(rerunBtn);
-
-    expect(await screen.findByLabelText(/this snapshot/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/latest snapshot/i)).toBeInTheDocument();
-  });
-
-  it('hides Rerun failed button when latest run is SUCCEEDED', async () => {
-    const routes = {
-      ...freshRoutes(),
-      [`/api/runs/${RUN_ID}`]: async () => ({
-        run_id: RUN_ID,
-        schedule_name: SCHED,
-        status: 'succeeded',
-        created_at: null,
-        started_at: null,
-        completed_at: null,
-        cancelled_at: null,
-        cancelled_by: '',
-      }),
-    };
-    const fetchMock = mockFetchSequence(routes);
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(withRouter({ last_run_id: RUN_ID }));
-
-    await waitFor(() => {
-      const calls = fetchMock.mock.calls.map(c => String(c[0]));
-      expect(calls.some(u => u.includes(`/api/runs/${RUN_ID}`))).toBe(true);
-    });
-    expect(screen.queryByRole('button', { name: /rerun failed/i })).toBeNull();
-  });
-
-  it('POSTs /api/runs/:id/rebase on the previewed release when "Latest snapshot" is submitted', async () => {
-    const fetchMock = rebaseFetch(failedRoutes());
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(withRouter({ last_run_id: RUN_ID }));
-    await submitLatest();
+    await submitRebase();
 
     await waitFor(() => {
       const calls = fetchMock.mock.calls as unknown as [string, RequestInit?][];
@@ -325,32 +349,24 @@ describe('DetailPage — run-level Rebase button (via modal)', () => {
         expected_release_id: 'rel-7',
       });
     });
-    expect(fetchMock.mock.calls.map(c => String(c[0])))
-      .toContain(`/api/runs/${RUN_ID}/rebase-preview?include_changed_upstream=true`);
-  });
-
-  it('turns the Rerun failed button green and relabels on rebase success', async () => {
-    vi.stubGlobal('fetch', rebaseFetch(failedRoutes()));
-
-    render(withRouter({ last_run_id: RUN_ID }));
-    await submitLatest();
-
-    const success = await screen.findByRole('button', { name: /Reran/i });
-    expect(success.className).toContain('is-success');
+    const success = await screen.findByRole('button', { name: 'Rebased' });
+    expect(success).toHaveClass('is-success');
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('keeps a refused rebase inside the dialog and leaves the page without an error strip', async () => {
-    vi.stubGlobal('fetch', rebaseFetch(failedRoutes(), { status: 409, body: { error: 'schedule already has an active run' } }));
-
+    const fetchMock = rebaseFetch(staleRoutes(), { status: 409, body: { error: 'schedule already has an active run' } });
+    vi.stubGlobal('fetch', fetchMock);
     render(withRouter({ last_run_id: RUN_ID }));
-    await submitLatest();
+    await waitForLatestRun(fetchMock);
+
+    await submitRebase();
 
     const strip = (await screen.findByText('schedule already has an active run')).closest('.info-strip--error');
     expect(strip).toBeTruthy();
     expect(strip!.closest('[role="dialog"]')).toBeTruthy();
     expect(screen.getAllByText('schedule already has an active run')).toHaveLength(1);
-    expect(screen.getByRole('button', { name: /rerun failed/i })).not.toHaveClass('is-success');
+    expect(await rebaseAction()).not.toHaveClass('is-success');
   });
 });
 
@@ -631,85 +647,6 @@ describe('DetailPage — page structure (Task 5 migration)', () => {
     expect(container.querySelector('.page-header')).toBeTruthy();
     expect(container.querySelector('.detail-page')).toBeNull();
     expect(container.querySelector('.detail-topbar')).toBeNull();
-  });
-
-  it('renders exactly ONE Rerun failed button when status is terminal-failed', async () => {
-    const fetchMock = mockFetchSequence(failedRoutes());
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(withRouter({ last_run_id: RUN_ID }));
-
-    // Wait for page to settle
-    await waitFor(() => {
-      const calls = fetchMock.mock.calls.map(c => String(c[0]));
-      expect(calls.some(u => u.includes(`/api/runs/${RUN_ID}`))).toBe(true);
-    });
-
-    const rerunBtns = screen.getAllByRole('button', { name: /rerun failed/i });
-    expect(rerunBtns).toHaveLength(1);
-  });
-
-  it('does not show buttons for "this snapshot" or "latest snapshot" in the topbar', async () => {
-    const fetchMock = mockFetchSequence(failedRoutes());
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(withRouter({ last_run_id: RUN_ID }));
-
-    await waitFor(() => {
-      const calls = fetchMock.mock.calls.map(c => String(c[0]));
-      expect(calls.some(u => u.includes(`/api/runs/${RUN_ID}`))).toBe(true);
-    });
-
-    expect(screen.queryByRole('button', { name: /this snapshot/i })).toBeNull();
-    expect(screen.queryByRole('button', { name: /latest snapshot/i })).toBeNull();
-  });
-
-  it('clicking the Rerun failed button opens a dialog', async () => {
-    const fetchMock = mockFetchSequence(failedRoutes());
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(withRouter({ last_run_id: RUN_ID }));
-
-    const btn = await screen.findByRole('button', { name: /rerun failed/i });
-    fireEvent.click(btn);
-
-    expect(await screen.findByRole('dialog')).toBeInTheDocument();
-    // Modal contains both radio choices
-    expect(screen.getByLabelText(/this snapshot/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/latest snapshot/i)).toBeInTheDocument();
-  });
-
-  it('submitting "this snapshot" (default) POSTs to the rerun endpoint', async () => {
-    const fetchMock = mockFetchSequence(failedRoutes());
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(withRouter({ last_run_id: RUN_ID }));
-
-    fireEvent.click(await screen.findByRole('button', { name: /rerun failed/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /^Rerun$/ }));
-
-    await waitFor(() => {
-      const calls = fetchMock.mock.calls as unknown as [string, RequestInit?][];
-      const hit = calls.find(c => String(c[0]).includes(`/api/runs/${RUN_ID}/rerun`));
-      expect(hit).toBeDefined();
-      expect(hit![1]).toMatchObject({ method: 'POST' });
-      expect(JSON.parse(String(hit![1]!.body))).toEqual({ request_id: expect.stringMatching(UUID) });
-    });
-  });
-
-  it('switching to "latest snapshot" then submitting POSTs to the rebase endpoint', async () => {
-    const fetchMock = rebaseFetch(failedRoutes());
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(withRouter({ last_run_id: RUN_ID }));
-    await submitLatest();
-
-    await waitFor(() => {
-      const calls = fetchMock.mock.calls as unknown as [string, RequestInit?][];
-      const hit = calls.find(c => c[0] === `/api/runs/${RUN_ID}/rebase`);
-      expect(hit).toBeDefined();
-      expect(hit![1]).toMatchObject({ method: 'POST' });
-    });
   });
 
   it('trigger error renders as .info-strip--error, not as an inline sibling of the button', async () => {
@@ -1067,7 +1004,7 @@ describe('DetailPage in latest mode — following a run to its end', () => {
 
     await waitFor(() => expect(container.querySelectorAll('.run-row')).toHaveLength(2));
     fireEvent.click(container.querySelectorAll('.run-row')[1]);
-    await screen.findByText(/Viewing snapshot/);
+    await screen.findByText(/Viewing the past run from/);
     const readsWhileChosen = state.statusReads;
     await nextPoll();
     expect(state.statusReads).toBe(readsWhileChosen);

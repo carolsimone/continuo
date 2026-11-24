@@ -3,7 +3,6 @@ import { useLocation, useNavigate, useParams } from 'react-router';
 import { RunSummary } from './types';
 import {
   DetailMode,
-  isRerunnableStatus,
   isTerminalStatus,
   resolveActiveGraph,
   groupAttemptsByTask,
@@ -14,7 +13,9 @@ import {
   graphCardState as graphCardStateOf,
   runTabState,
   driftLabelOf,
+  runActions,
 } from './detail-page-helpers';
+import { getDriftState } from './drift-helpers';
 import { useActionRequestId, type ActionRequestId } from './request-id';
 import DetailActions from './detail-page/DetailActions';
 import DetailHeader from './detail-page/DetailHeader';
@@ -28,7 +29,8 @@ import { RUNS_PAGE_SIZE, useScheduleRuns } from './detail-page/useScheduleRuns';
 import { useSelectedRunGraph } from './detail-page/useSelectedRunGraph';
 import { useServiceTree } from './detail-page/useServiceTree';
 import { useTriggerRun } from './detail-page/useTriggerRun';
-import RerunFailedModal from './RerunFailedModal';
+import RebaseDialog from './RebaseDialog';
+import RerunDialog from './RerunDialog';
 
 interface DetailPageProps {
   mode?: DetailMode;
@@ -72,8 +74,9 @@ function ScheduleDetail({ name, mode, requestId }: {
   const trigger = useTriggerRun(name, lastRunId, requestId, refreshLastRun);
   // Any read of this page is failing and being retried.
   const readFailed = lastRunReadFailed || graphState === 'error' || runsReadFailed || rowsReadFailed || runGraphReadFailed;
-  const [rerunFailedState, setRerunFailedState] = useState<'idle' | 'success'>('idle');
-  const [rerunModalOpen, setRerunModalOpen] = useState(false);
+  const [rerunState, setRerunState] = useState<'idle' | 'success'>('idle');
+  const [rebaseState, setRebaseState] = useState<'idle' | 'success'>('idle');
+  const [openDialog, setOpenDialog] = useState<'rerun' | 'rebase' | null>(null);
 
   const selectedRun = runs.find((run) => run.run_id === selectedRunId)
     ?? (pinnedRun && pinnedRun.run_id === selectedRunId ? pinnedRun : null);
@@ -83,14 +86,21 @@ function ScheduleDetail({ name, mode, requestId }: {
   const tree = useServiceTree(activeGraph, tasks);
   const attemptsByTask = useMemo(() => groupAttemptsByTask(attempts), [attempts]);
 
-  // The rerun-failed dialog posts the rerun or the rebase itself; once one is
+  // The Rerun and Rebase dialogs post their run themselves; once one is
   // accepted the dialog closes and the page's button shows the success.
-  const handleRerunFailedSubmitted = useCallback(() => {
-    setRerunModalOpen(false);
-    setRerunFailedState('success');
-    setTimeout(() => setRerunFailedState('idle'), 3000);
+  const handleRerunSubmitted = useCallback(() => {
+    setOpenDialog(null);
+    setRerunState('success');
+    setTimeout(() => setRerunState('idle'), 3000);
     void refreshLastRun();
   }, [refreshLastRun]);
+  const handleRebaseSubmitted = useCallback(() => {
+    setOpenDialog(null);
+    setRebaseState('success');
+    setTimeout(() => setRebaseState('idle'), 3000);
+    void refreshLastRun();
+  }, [refreshLastRun]);
+  const closeDialog = useCallback(() => setOpenDialog(null), []);
 
   // The shown run's rows are cleared at once, so the newly chosen run never
   // renders over the previous run's tasks while its own are read.
@@ -116,6 +126,18 @@ function ScheduleDetail({ name, mode, requestId }: {
   // none, else the latest run's.
   const shownReleaseId = selectedRunId ? selectedRun?.release_id : scheduler?.release_id;
   const shouldRenderGraph = !!activeGraph && activeGraph.nodes.length > 0;
+  // The run Rerun and Rebase act on: the chosen past run, else the latest run.
+  // A status still being read is null.
+  const runOnScreen = selectedRunId
+    ? { run_id: selectedRunId, status: selectedRun?.status ?? null }
+    : lastRunId ? { run_id: lastRunId, status: scheduler?.status ?? null } : null;
+  const runOnScreenGraph = selectedRunId ? runGraph : liveRunGraph;
+  const actions = runActions({
+    run: runOnScreen,
+    lastRunId,
+    liveRunExists,
+    driftState: getDriftState(runOnScreenGraph?.run_promotion_seq, runOnScreenGraph?.latest_promotion_seq),
+  });
   const graphBadge = graphBadgeLabelOf({ mode, selectedRun, liveRunExists, activeGraph });
   const driftLabel = driftLabelOf(liveRunGraph);
   const pastRuns = {
@@ -146,10 +168,13 @@ function ScheduleDetail({ name, mode, requestId }: {
         <DetailActions
           name={name}
           liveRunExists={liveRunExists}
-          showRerunFailed={isRerunnableStatus(scheduler?.status) && Boolean(lastRunId)}
           trigger={trigger}
-          rerunState={rerunFailedState}
-          onOpenRerun={() => setRerunModalOpen(true)}
+          rerun={actions.rerun}
+          rebase={actions.rebase}
+          rerunState={rerunState}
+          rebaseState={rebaseState}
+          onOpenRerun={() => setOpenDialog('rerun')}
+          onOpenRebase={() => setOpenDialog('rebase')}
         />
 
         {readFailed && (
@@ -159,13 +184,23 @@ function ScheduleDetail({ name, mode, requestId }: {
           </div>
         )}
 
-        {rerunModalOpen && lastRunId && (
-          <RerunFailedModal
-            runId={lastRunId}
+        {openDialog === 'rerun' && runOnScreen && (
+          <RerunDialog
+            runId={runOnScreen.run_id}
+            releaseId={shownReleaseId}
             driftLabel={driftLabel}
             serviceColors={tree.serviceColors}
-            onClose={() => setRerunModalOpen(false)}
-            onSubmitted={handleRerunFailedSubmitted}
+            onClose={closeDialog}
+            onSubmitted={handleRerunSubmitted}
+          />
+        )}
+        {openDialog === 'rebase' && runOnScreen && (
+          <RebaseDialog
+            runId={runOnScreen.run_id}
+            driftLabel={driftLabel}
+            serviceColors={tree.serviceColors}
+            onClose={closeDialog}
+            onSubmitted={handleRebaseSubmitted}
           />
         )}
 

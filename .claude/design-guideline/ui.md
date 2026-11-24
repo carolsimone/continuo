@@ -158,7 +158,7 @@ Variant rules:
 - **`btn--secondary`** is the default. Use it for almost everything:
   Trigger run, Rerun, Update Graph, Cancel-in-a-dialog.
 - **`btn--primary`** only for the single confirming action inside a
-  modal (e.g. the `Rerun` button in the rerun-failed modal).
+  modal (e.g. the `Rerun` button in the Rerun dialog).
 - **`btn--danger`** for destructive actions (Cancel an active run).
 - Never inline `<button style="…">` or introduce a new `.foo-btn` class.
   If a new use case appears, add it to this file first.
@@ -178,9 +178,9 @@ State rules (apply to every action button without exception):
 
 | State | Label | Class |
 |---|---|---|
-| idle | `▶ Trigger run` / `Update Graph` / `↺ Rerun failed` (`Trigger run`, with no glyph, in a split button) | `.btn .btn--secondary` |
+| idle | `▶ Trigger run` / `Update Graph` / `↺ Rerun` / `↪ Rebase onto live release` (`Trigger run`, with no glyph, in a split button) | `.btn .btn--secondary` |
 | loading | `Triggering…` / `Updating…` | adds `.is-loading`, disabled |
-| success (~3s) | `Triggered` / `Updated` / `Reran` | adds `.is-success` |
+| success (~3s) | `Triggered` / `Updated` / `Reran` / `Rebased` | adds `.is-success` |
 
 - **No checkmarks** in the success label. The green colour IS the cue.
 - **Past-tense single word** for success. Not "✓ Rerun triggered".
@@ -190,6 +190,15 @@ State rules (apply to every action button without exception):
   Update Graph already uses).
 - Errors do NOT live next to the button as inline text. They render
   below the action row as an `.info-strip--error` (see below).
+- **Greyed out, not hidden.** An action of the schedule page's action row
+  (`.page-action-row`) that cannot act on what the page shows stays in the
+  row, disabled, and its hover `title` says why in one sentence: `Nothing to
+  rerun: every node of this run succeeded`, `A newer run has ended. Rerun only
+  the latest run`, `This run is already on the live release`, `A run is
+  already active`. An enabled one's `title` says what the press does. So the
+  operator always sees that the action exists and what it waits for. The
+  schedule card's run control follows its own rule (see "One run control at a
+  time").
 
 ### Split button
 
@@ -272,7 +281,7 @@ hints inside dialogs).
 When in doubt:
 
 - **warning** = something the user should know but the system is still
-  functioning (drift, viewing a past snapshot, fresh image not yet
+  functioning (drift, viewing a past run, fresh image not yet
   rolled out).
 - **error** = a request just failed.
 - **info** = neutral context (e.g. tooltip-ish in-page hint).
@@ -321,7 +330,7 @@ Row 2: actions                                        [Action]  [Action]  [Actio
 - Reuse the existing `.dialog-overlay` + `.dialog` shell. Dialog header
   uses `.dialog-title`. Dialog buttons MUST be `.btn` — no
   `.dialog-btn--*` siblings.
-- Confirmation modals (e.g. rerun-failed-modal) have:
+- Confirmation modals (e.g. the Rerun and Rebase dialogs) have:
   - Optional context info-strip at the top (e.g. drift warning).
   - Option rows — radio choices, or a checkbox for an on/off setting —
     each with a short description (see "Option rows").
@@ -418,8 +427,8 @@ Rules:
 The **read-only** sibling of the snapshot pick list: a list inside a
 modal that names what the confirming verb will touch, so the user can
 judge it before confirming. Rows are facts, not choices — nothing happens
-on click, and the footer keeps its confirming verb. The rerun-failed
-dialog is the reference: under "Latest snapshot" it previews the rebase —
+on click, and the footer keeps its confirming verb. The Rebase dialog is
+the reference: as it opens it previews the rebase —
 how many nodes will run and why — and lists the changed nodes upstream of
 the failure ("Changed upstream").
 
@@ -518,7 +527,7 @@ Rules:
   action, use the snapshot pick list instead.
 - Precede the list with a `.section-header`: its title names what the
   rows are, its count pill is the number of rows, and its sub-line
-  qualifies them when needed (e.g. `Left out of this rerun` when an
+  qualifies them when needed (e.g. `Left out of this rebase` when an
   option leaves them out, so the list never reads as "will run").
 - A totals section ("Will run") states its total in the count pill and
   what it is out of in the sub-line; a breakdown of the same total is one
@@ -609,13 +618,13 @@ Rules:
 
 - Radios for mutually exclusive choices, a checkbox for one setting that
   is on or off. Never a toggle switch or a custom control.
-- The title is a short noun phrase or imperative ("Latest snapshot",
-  "Include changed upstream nodes"); the description is one line and says
+- The title is a short noun phrase or imperative ("Include changed
+  upstream nodes"); the description is one line and says
   what happens, including what is lost when the option is off.
-- A checkbox defaults to the choice most users want (the rerun-failed
+- A checkbox defaults to the choice most users want (the Rebase
   dialog includes changed upstream nodes by default). An option that
   changes what a preview list shows previews again when it changes.
-- Show a checkbox only when it changes something: the rerun-failed
+- Show a checkbox only when it changes something: the Rebase
   dialog hides "Include changed upstream nodes" when nothing upstream
   changed.
 

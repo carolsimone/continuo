@@ -31,12 +31,12 @@ export default function LatestView({
   const navigate = useNavigate();
 
   const graphEmptyMessage = selectedRunId
-    ? 'No DAG snapshot is available for this run.'
+    ? 'No graph is available for this run.'
     : lastRunId
-      ? 'The run is active, but its DAG snapshot is not available yet.'
+      ? 'The run is active, but its graph is not available yet.'
       : 'This schedule does not have a dependency graph yet.';
   const graphErrorMessage = selectedRunId
-    ? 'Failed to load the historical DAG snapshot.'
+    ? 'Failed to load the graph of the past run.'
     : 'Failed to load the dependency graph.';
 
   const legendParentIds = selectedNodeId && activeGraph
@@ -131,7 +131,7 @@ export default function LatestView({
             <div className="graph-empty-state">
               <p className="graph-empty-title">Loading graph</p>
               <p className="graph-empty-copy">
-                {selectedRunId ? 'Fetching the historical run snapshot…' : 'Fetching the dependency graph…'}
+                {selectedRunId ? 'Fetching the past run…' : 'Fetching the dependency graph…'}
               </p>
             </div>
           )}

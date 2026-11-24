@@ -4,26 +4,22 @@ import { formatCount, formatDuration } from './node-helpers';
 import { useActionRequestId } from './request-id';
 import type { ChangedUpstreamNode, RebasePreview } from './types';
 
-// 'this' reruns the failed nodes on the run's own snapshot; 'latest' rebases
-// the run onto the live release, restarting it from its failure.
-export type RerunFailedMode = 'this' | 'latest';
-
 const REQUEST_FAILED = 'Request failed — please try again';
 // The code POST /api/runs/:id/rebase answers with when the live release
 // is no longer the one the dialog previewed.
 const RELEASE_MOVED_CODE = 'release_moved';
-const TITLE_ID = 'rerun-failed-dialog-title';
+const TITLE_ID = 'rebase-dialog-title';
 
 interface Props {
-  // runId is the failed or cancelled run to rerun or rebase.
+  // runId is the failed or cancelled run to rebase.
   runId: string;
   driftLabel: string | null;
   // serviceColors is the page's accent palette, so a service is painted here
   // as everywhere else on the page.
   serviceColors: Map<string, string>;
   onClose: () => void;
-  // onSubmitted runs once the rerun or the rebase has been accepted.
-  onSubmitted: (mode: RerunFailedMode) => void;
+  // onSubmitted runs once the rebase has been accepted.
+  onSubmitted: () => void;
 }
 
 interface PreviewState {
@@ -79,20 +75,17 @@ function changedItem(n: ChangedUpstreamNode): PreviewItem {
   return { key: `${n.service_name}.${id}`, service: n.service_name, label: id, title: `${n.service_name}.${id}`, facts };
 }
 
-// RerunFailedModal asks how to rerun a failed or cancelled run's failed nodes
-// and posts the choice itself. "This snapshot" reruns them on the run's own
-// snapshot; "Latest snapshot" previews what a rebase onto the live release
-// would run — again whenever "Include changed upstream nodes" changes — and
-// rebases on exactly the previewed release. A refusal stays in the dialog; a
-// moved live release previews again and says so.
-export default function RerunFailedModal({ runId, driftLabel, serviceColors, onClose, onSubmitted }: Props) {
-  const [mode, setMode] = useState<RerunFailedMode>('this');
+// RebaseDialog confirms a rebase of a failed or cancelled run onto the live
+// release. It previews what the rebase would run as it opens, and again
+// whenever "Include changed upstream nodes" changes, and rebases on exactly
+// the previewed release. A refusal stays in the dialog; a moved live release
+// previews again and says so.
+export default function RebaseDialog({ runId, driftLabel, serviceColors, onClose, onSubmitted }: Props) {
   const [includeChanged, setIncludeChanged] = useState(true);
   const [preview, setPreview] = useState<PreviewState>({ data: null, changedNodes: [], loading: false, error: null });
   // One request id for the dialog: every submit of the same request sends it,
   // so a submit repeated after a timeout returns the run the first one made.
-  // Asking for something else (the other mode, the other changed-upstream
-  // option) renews it.
+  // Asking for something else (the other changed-upstream option) renews it.
   const { id: requestId, renew: renewRequestId } = useActionRequestId();
   const [reloadKey, setReloadKey] = useState(0);
   const [releaseMoved, setReleaseMoved] = useState(false);
@@ -100,14 +93,12 @@ export default function RerunFailedModal({ runId, driftLabel, serviceColors, onC
   const [submitError, setSubmitError] = useState<string | null>(null);
   const submitting = buttonState === 'loading';
 
-  // The preview loads when "Latest snapshot" is chosen, whenever the
-  // changed-upstream option changes, and after a moved release refused a
-  // rebase. Each load aborts the one before it, and an answer that arrives
+  // The preview loads as the dialog opens, whenever the changed-upstream
+  // option changes, and after a moved release refused a rebase. Each load aborts the one before it, and an answer that arrives
   // after its load was superseded is dropped. The last preview stays on
   // screen until the next one replaces it; a failed load drops it but keeps
   // the changed upstream nodes it named.
   useEffect(() => {
-    if (mode !== 'latest') return;
     const controller = new AbortController();
     const { signal } = controller;
     setPreview(p => ({ ...p, loading: true, error: null }));
@@ -129,7 +120,7 @@ export default function RerunFailedModal({ runId, driftLabel, serviceColors, onC
         if (!signal.aborted) setPreview(p => ({ ...p, data: null, loading: false, error: REQUEST_FAILED }));
       });
     return () => controller.abort();
-  }, [mode, includeChanged, runId, reloadKey]);
+  }, [includeChanged, runId, reloadKey]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -138,13 +129,6 @@ export default function RerunFailedModal({ runId, driftLabel, serviceColors, onC
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [onClose, submitting]);
-
-  const chooseMode = (next: RerunFailedMode) => {
-    if (next !== mode) renewRequestId();
-    setMode(next);
-    setReleaseMoved(false);
-    setSubmitError(null);
-  };
 
   // chooseIncludeChanged previews the other selection, so a moved-release
   // warning shown for the previous one goes.
@@ -155,37 +139,30 @@ export default function RerunFailedModal({ runId, driftLabel, serviceColors, onC
   };
 
   const previewReady = preview.data !== null && !preview.loading && preview.error === null;
-  const canSubmit = buttonState === 'idle' && (mode === 'this' || previewReady);
+  const canSubmit = buttonState === 'idle' && previewReady;
 
   const submit = async () => {
-    const submitted = mode;
     setButtonState('loading');
     setSubmitError(null);
     setReleaseMoved(false);
     try {
-      const res = submitted === 'this'
-        ? await fetch(`/api/runs/${encodeURIComponent(runId)}/rerun`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ request_id: requestId }),
-        })
-        : await fetch(`/api/runs/${encodeURIComponent(runId)}/rebase`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            request_id: requestId,
-            include_changed_upstream: includeChanged,
-            expected_release_id: preview.data?.release_id ?? '',
-          }),
-        });
+      const res = await fetch(`/api/runs/${encodeURIComponent(runId)}/rebase`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          request_id: requestId,
+          include_changed_upstream: includeChanged,
+          expected_release_id: preview.data?.release_id ?? '',
+        }),
+      });
       if (res.ok) {
         setButtonState('success');
-        onSubmitted(submitted);
+        onSubmitted();
         return;
       }
       const body = await res.json().catch(() => ({}));
       setButtonState('idle');
-      if (submitted === 'latest' && res.status === 409 && body?.code === RELEASE_MOVED_CODE) {
+      if (res.status === 409 && body?.code === RELEASE_MOVED_CODE) {
         setReleaseMoved(true);
         setReloadKey(k => k + 1);
         return;
@@ -197,16 +174,16 @@ export default function RerunFailedModal({ runId, driftLabel, serviceColors, onC
     }
   };
 
-  const data = mode === 'latest' ? preview.data : null;
-  const changedItems = mode === 'latest' ? preview.changedNodes.map(changedItem) : [];
+  const data = preview.data;
+  const changedItems = preview.changedNodes.map(changedItem);
   const reasons = data ? reasonFacts(data) : [];
 
-  const rerunClass = [
+  const rebaseClass = [
     'btn', 'btn--primary',
     buttonState === 'loading' ? 'is-loading' : '',
     buttonState === 'success' ? 'is-success' : '',
   ].filter(Boolean).join(' ');
-  const rerunLabel = buttonState === 'loading' ? 'Rerunning…' : buttonState === 'success' ? 'Reran' : 'Rerun';
+  const rebaseLabel = buttonState === 'loading' ? 'Rebasing…' : buttonState === 'success' ? 'Rebased' : 'Rebase';
 
   return (
     <div className="dialog-overlay" onClick={() => { if (!submitting) onClose(); }}>
@@ -217,7 +194,8 @@ export default function RerunFailedModal({ runId, driftLabel, serviceColors, onC
         aria-labelledby={TITLE_ID}
         onClick={e => e.stopPropagation()}
       >
-        <h2 className="dialog-title" id={TITLE_ID}>Rerun failed nodes</h2>
+        <h2 className="dialog-title" id={TITLE_ID}>Rebase onto live release</h2>
+        <p className="dialog-subtitle">Restarts this run from its failure on the live release.</p>
 
         {driftLabel && (
           <div className="info-strip info-strip--warning">
@@ -225,36 +203,6 @@ export default function RerunFailedModal({ runId, driftLabel, serviceColors, onC
             <span>{driftLabel}</span>
           </div>
         )}
-
-        <label className="rerun-mode-option">
-          <input
-            type="radio"
-            name="rerun-mode"
-            value="this"
-            checked={mode === 'this'}
-            disabled={submitting}
-            onChange={() => chooseMode('this')}
-          />
-          <span className="rerun-mode-option__title">This snapshot</span>
-          <span className="rerun-mode-option__desc">
-            Reuse the image + manifest pinned to this run. Reproduces the failure exactly.
-          </span>
-        </label>
-
-        <label className="rerun-mode-option">
-          <input
-            type="radio"
-            name="rerun-mode"
-            value="latest"
-            checked={mode === 'latest'}
-            disabled={submitting}
-            onChange={() => chooseMode('latest')}
-          />
-          <span className="rerun-mode-option__title">Latest snapshot</span>
-          <span className="rerun-mode-option__desc">
-            Use the current image + manifest. Restarts from the failure; new nodes run too.
-          </span>
-        </label>
 
         {data && (
           <section className="preview-section">
@@ -291,25 +239,25 @@ export default function RerunFailedModal({ runId, driftLabel, serviceColors, onC
                   <span className="section-header__title">Changed upstream</span>
                   <span className="section-header__count">{formatCount(changedItems.length)}</span>
                 </div>
-                {!includeChanged && <div className="section-header__sub">Left out of this rerun</div>}
+                {!includeChanged && <div className="section-header__sub">Left out of this rebase</div>}
               </div>
               <PreviewList items={changedItems} colors={serviceColors} />
             </section>
           </>
         )}
 
-        {mode === 'latest' && releaseMoved && (
+        {releaseMoved && (
           <div className="info-strip info-strip--warning">
             <span className="info-strip__icon">⚠</span>
             <span>The live release changed; review the updated selection</span>
           </div>
         )}
-        {mode === 'latest' && preview.loading && (
+        {preview.loading && (
           <div className="info-strip info-strip--neutral">
-            <span>Loading what will run on the latest snapshot…</span>
+            <span>Loading what will run on the live release…</span>
           </div>
         )}
-        {mode === 'latest' && preview.error && (
+        {preview.error && (
           <div className="info-strip info-strip--error">
             <span className="info-strip__icon">⚠</span>
             <span>{preview.error}</span>
@@ -326,8 +274,8 @@ export default function RerunFailedModal({ runId, driftLabel, serviceColors, onC
           <button type="button" className="btn btn--secondary" onClick={onClose} disabled={submitting}>
             Cancel
           </button>
-          <button type="button" className={rerunClass} onClick={submit} disabled={!canSubmit}>
-            {rerunLabel}
+          <button type="button" className={rebaseClass} onClick={submit} disabled={!canSubmit}>
+            {rebaseLabel}
           </button>
         </div>
       </div>
