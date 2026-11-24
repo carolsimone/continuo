@@ -37,7 +37,9 @@ func (*Prompt) Meta() step.Meta {
 func (p *Prompt) Propose(ctx context.Context, in step.PromptInput, m step.Model) (step.PromptOutput, error) {
 	plan, ok := remediation.Get[remediation.ModelRename](in.Evidence, remediation.KeyModelRename)
 	if !ok {
-		return step.PromptOutput{}, fmt.Errorf("duplicate-table: the evidence holds no model rename")
+		// A cluster that finished gathering before its type listed model_rename
+		// has no plan, and a cluster past gathering never gathers again.
+		return step.PromptOutput{Declined: true, Decline: noPlanReason}, nil
 	}
 	files, ok := remediation.Get[remediation.SourceFiles](in.Evidence, remediation.KeySourceFiles)
 	if !ok {
@@ -65,15 +67,21 @@ func request(in step.PromptInput, plan remediation.ModelRename, files remediatio
 		references = append(references, prompt.NamedFile{Path: p, Content: plan.References[p]})
 	}
 	precedents, _ := remediation.Get[[]prompt.Precedent](in.Evidence, remediation.KeyFailurePrecedents)
+	model := prompt.NamedFile{Path: plan.OldPath, Content: files.Files[plan.OldPath]}
 	req := prompt.AssembleModelRename(plan.Relation, plan.OtherService, plan.OtherFilePath, plan.OldName, plan.NewName,
-		prompt.NamedFile{Path: plan.OldPath, Content: files.Files[plan.OldPath]}, plan.NewPath, references, precedents)
+		model, plan.NewPath, references, precedents)
+	if plan.ChangesAlias {
+		req = prompt.AssembleAliasChange(plan.Relation, plan.OtherService, plan.OtherFilePath, plan.OldName, plan.NewName,
+			model, references, precedents)
+	}
 	return step.WithPreviousTries(req, in.Evidence)
 }
 
 // draft reads the model's answer into a draft. The model's file answered at
-// its new path is an edit that moves it from its old path; any other answered
-// file is an edit in place, whose original is the content the plan read, when
-// the plan read it. The draft names the model's old file as its target and
+// its new path is an edit that moves it from its old path, unless the plan
+// changes the alias, where the new path is the old one and the file stays;
+// any other answered file is an edit in place, whose original is the content
+// the plan read, when the plan read it. The draft names the model's old file as its target and
 // opens its rationale with the plan's account of the rename, which the pull
 // request shows.
 func draft(f remediation.Failure, plan remediation.ModelRename, files remediation.SourceFiles, res ports.ProposeResult) remediation.Draft {
@@ -95,7 +103,9 @@ func draft(f remediation.Failure, plan remediation.ModelRename, files remediatio
 		}
 		switch answered.Path {
 		case plan.NewPath:
-			e.RenamedFrom = plan.OldPath
+			if !plan.ChangesAlias {
+				e.RenamedFrom = plan.OldPath
+			}
 			e.Original = files.Files[plan.OldPath]
 		case plan.OldPath:
 			e.Original = files.Files[plan.OldPath]
@@ -107,6 +117,10 @@ func draft(f remediation.Failure, plan remediation.ModelRename, files remediatio
 	d.SourceResolved = len(d.Edits) > 0
 	return d
 }
+
+// noPlanReason is why a cluster with no rename plan is handed over: it was
+// gathered before its type planned renames, and a new round gathers again.
+const noPlanReason = "This fix was gathered before continuo planned the rename of a duplicate model; use Try again to start it afresh."
 
 // editKeys are the keys under which the runner stores the content and diff of
 // the draft's i-th edit.

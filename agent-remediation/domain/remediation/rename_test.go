@@ -22,11 +22,23 @@ func TestNextModelName(t *testing.T) {
 }
 
 func TestRefsModel(t *testing.T) {
-	assert.True(t, RefsModel("select * from {{ ref('table_b') }}", "table_b"))
-	assert.True(t, RefsModel(`select * from {{ ref( "table_b" ) }}`, "table_b"))
-	assert.True(t, RefsModel("select * from {{ ref('marketing', 'table_b') }}", "table_b"))
-	assert.False(t, RefsModel("select * from {{ ref('table_b_v2') }}", "table_b"))
-	assert.False(t, RefsModel("select * from analytics.table_b", "table_b"), "a physical name is not a ref")
+	assert.True(t, RefsModel("select * from {{ ref('table_b') }}", "marketing", "table_b"))
+	assert.True(t, RefsModel(`select * from {{ ref( "table_b" ) }}`, "marketing", "table_b"))
+	assert.True(t, RefsModel("select * from {{ ref('table_b', v=2) }}", "marketing", "table_b"), "a versioned ref")
+	assert.True(t, RefsModel("def model(dbt, session):\n    return dbt.ref('table_b')", "marketing", "table_b"), "a Python model")
+	assert.True(t, RefsModel("tests:\n  - relationships:\n      to: ref('table_b')\n", "marketing", "table_b"), "a relationships test")
+	assert.True(t, RefsModel("select * from {{ ref('marketing', 'table_b') }}", "marketing", "table_b"), "a ref qualified with the own project")
+	assert.False(t, RefsModel("select * from {{ ref('shared', 'table_b') }}", "marketing", "table_b"), "another package's model of that name")
+	assert.False(t, RefsModel("select * from {{ ref('marketing', 'table_b') }}", "", "table_b"), "with no project known, a qualified ref is not this model")
+	assert.False(t, RefsModel("select * from {{ ref('table_b_v2') }}", "marketing", "table_b"))
+	assert.False(t, RefsModel("select * from analytics.table_b", "marketing", "table_b"), "a physical name is not a ref")
+}
+
+func TestRelationTableAndSchema(t *testing.T) {
+	assert.Equal(t, "orders", RelationTable("analytics.orders"))
+	assert.Equal(t, "analytics", RelationSchema("analytics.orders"))
+	assert.Equal(t, "orders", RelationTable("orders"))
+	assert.Equal(t, "", RelationSchema("orders"))
 }
 
 func TestModelRename_Explanation(t *testing.T) {
@@ -37,7 +49,10 @@ func TestModelRename_Explanation(t *testing.T) {
 	}
 	assert.Equal(t,
 		"analytics.table_b is already built by service-1 (services/service-1/models/table_b.sql). "+
-			"This release added a second model with that name in marketing, so continuo refused it. "+
+			"This release added a second model that builds it in marketing, so continuo refused it. "+
 			"The new model is renamed to table_b_v2 so the release can pass; rename it as you prefer before merging.",
 		r.Explanation())
+
+	r.ChangesAlias, r.NewName = true, "orders_v2"
+	assert.Contains(t, r.Explanation(), "The new model's alias is changed to orders_v2 so the release can pass")
 }

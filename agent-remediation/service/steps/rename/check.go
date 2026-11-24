@@ -41,26 +41,26 @@ func (*MatchesPlan) Meta() step.Meta {
 	}
 }
 
-// Check finds, in this order: rename_missing when no edit moves the old path
-// to the new one; edit_outside_rename for each edit at a path that is neither
-// the new path nor one of the plan's references; and reference_left for each
-// file of the project that, with the draft written over a checkout, still
-// names the model by its old name, read by the same finder model_rename used.
-// A draft with a path outside the checkout is not scanned: its
-// edit_outside_rename finding already refuses it.
+// Check finds, in this order: rename_not_planned when the evidence holds no
+// plan (a cluster gathered before its type planned renames); rename_missing
+// when the plan moves the model and no edit moves its old path to the new one;
+// edit_outside_rename for each edit at a path that is neither the model's file
+// (at its new path) nor one of the plan's references; and, when the plan moves
+// the model, reference_left for each file of the project that, with the draft
+// written over a checkout and the moved files gone, still names the model by
+// its old name, read by the same finder model_rename used. A plan that changes
+// the alias keeps the model's name, so no file can be left naming an old one;
+// the verification run judges whether the alias changed. A draft with a path
+// outside the checkout is not scanned: its edit_outside_rename finding already
+// refuses it.
 func (c *MatchesPlan) Check(ctx context.Context, in step.CheckInput) (step.CheckOutput, error) {
+	res := remediation.CheckResult{Check: string(c.Meta().Name)}
 	plan, ok := remediation.Get[remediation.ModelRename](in.Evidence, remediation.KeyModelRename)
 	if !ok {
-		return step.CheckOutput{}, errors.New("rename_matches_plan: the evidence holds no model rename")
+		res.Findings = []remediation.Finding{{Code: "rename_not_planned", Message: noPlanReason}}
+		return step.CheckOutput{Result: res}, nil
 	}
-	res := remediation.CheckResult{Check: string(c.Meta().Name)}
-	moved := false
-	for _, e := range in.Draft.Edits {
-		if e.Path == plan.NewPath && e.RenamedFrom == plan.OldPath {
-			moved = true
-		}
-	}
-	if !moved {
+	if !plan.ChangesAlias && !movesModel(in.Draft, plan) {
 		res.Findings = append(res.Findings, remediation.Finding{
 			Code:    "rename_missing",
 			Message: fmt.Sprintf("the fix must move %s to %s, renaming the model %s to %s", plan.OldPath, plan.NewPath, plan.OldName, plan.NewName),
@@ -79,6 +79,9 @@ func (c *MatchesPlan) Check(ctx context.Context, in step.CheckInput) (step.Check
 			})
 		}
 	}
+	if plan.ChangesAlias {
+		return step.CheckOutput{Result: res}, nil
+	}
 	left, err := c.stillNaming(ctx, in, plan)
 	if err != nil {
 		return step.CheckOutput{}, err
@@ -93,8 +96,20 @@ func (c *MatchesPlan) Check(ctx context.Context, in step.CheckInput) (step.Check
 	return step.CheckOutput{Result: res}, nil
 }
 
+// movesModel reports whether a draft moves the model's file to the planned
+// new path.
+func movesModel(d remediation.Draft, plan remediation.ModelRename) bool {
+	for _, e := range d.Edits {
+		if e.Path == plan.NewPath && e.RenamedFrom == plan.OldPath {
+			return true
+		}
+	}
+	return false
+}
+
 // stillNaming writes the draft over a checkout and returns, sorted, every file
-// of the model's project that still names the model by its old name.
+// of the model's project that still names the model by its old name, leaving
+// out each file the draft moves away.
 func (c *MatchesPlan) stillNaming(ctx context.Context, in step.CheckInput, plan remediation.ModelRename) ([]string, error) {
 	if in.Scratch == nil {
 		return nil, errors.New("rename_matches_plan: the check was given no checkout")
@@ -118,5 +133,19 @@ func (c *MatchesPlan) stillNaming(ctx context.Context, in step.CheckInput, plan 
 	if err != nil {
 		return nil, fmt.Errorf("rename_matches_plan: %w", err)
 	}
-	return refs.Order, nil
+	// The checkout still holds each file the draft moves away; the verification
+	// run and the pull request delete it, so it can leave nothing behind.
+	gone := map[string]bool{}
+	for _, e := range in.Draft.Edits {
+		if e.RenamedFrom != "" {
+			gone[e.RenamedFrom] = true
+		}
+	}
+	left := make([]string, 0, len(refs.Order))
+	for _, p := range refs.Order {
+		if !gone[p] {
+			left = append(left, p)
+		}
+	}
+	return left, nil
 }

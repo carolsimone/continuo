@@ -40,14 +40,22 @@ type propertiesFile struct {
 	} `yaml:"models"`
 }
 
-// Find walks the project at projectDir under rootDir. A .sql or .py file names
-// a model by its base name, and a .sql file that refs model is a reference.
-// A .yml or .yaml file is read as a dbt properties file: each models entry
-// names a model, the one named model is a reference, and its meta, or its
-// config.meta, says whether the model declares continuo.entity or
-// continuo.grain. A file that does not parse as YAML, or whose models is not
-// a list, is not a properties file and is skipped. Hidden directories and
-// dbt's own target, dbt_packages and logs are not walked.
+// Find walks the project at projectDir under rootDir. The project's name is
+// the `name` of its dbt_project.yml, which a two-argument ref must name to
+// ref this project's model. A file names the model when:
+//   - it is a .sql, .py or YAML file whose text refs the model
+//     (remediation.RefsModel): a SQL or Python model, or a properties file
+//     whose test refs it (a relationships test's `to: ref('name')`);
+//   - it is a properties file (a .yml or .yaml file whose `models` is a list)
+//     with a models entry of that name;
+//   - it is the project's dbt_project.yml and its `models` tree holds a key of
+//     that name, the settings dbt applies to that one model.
+//
+// Every .sql and .py base name, and every models entry, is a model name the
+// project uses. A model's entry, in its meta or its config.meta, says whether
+// it declares continuo.entity or continuo.grain. A file that does not parse as
+// YAML is no properties file. Hidden directories and dbt's own target,
+// dbt_packages and logs are not walked.
 func (ModelReferenceFinder) Find(rootDir, projectDir, model string) (ports.ModelReferences, error) {
 	refs := ports.ModelReferences{Files: map[string]string{}, ModelNames: map[string]bool{}}
 	start := filepath.Join(rootDir, filepath.FromSlash(projectDir))
@@ -57,6 +65,10 @@ func (ModelReferenceFinder) Find(rootDir, projectDir, model string) (ports.Model
 	}
 	if !info.IsDir() {
 		return refs, fmt.Errorf("dbt project %s is not a directory", projectDir)
+	}
+	project, err := readProject(start)
+	if err != nil {
+		return refs, fmt.Errorf("dbt project %s: %w", projectDir, err)
 	}
 	err = filepath.WalkDir(start, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -88,13 +100,16 @@ func (ModelReferenceFinder) Find(rootDir, projectDir, model string) (ports.Model
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-		if ext == ".sql" {
-			if remediation.RefsModel(text, model) {
-				refs.Files[rel] = text
-			}
+		if remediation.RefsModel(text, project.Name, model) {
+			refs.Files[rel] = text
+		}
+		if ext == ".sql" || ext == ".py" {
 			return nil
 		}
-		if ext == ".py" {
+		if filepath.Dir(path) == start && strings.TrimSuffix(d.Name(), filepath.Ext(d.Name())) == "dbt_project" {
+			if mapHasKey(project.Models, model) {
+				refs.Files[rel] = text
+			}
 			return nil
 		}
 		var props propertiesFile
@@ -124,6 +139,51 @@ func (ModelReferenceFinder) Find(rootDir, projectDir, model string) (ports.Model
 	}
 	sort.Strings(refs.Order)
 	return refs, nil
+}
+
+// dbtProject is the part of a dbt_project.yml the search reads: the project's
+// name and its `models` settings tree.
+type dbtProject struct {
+	Name   string         `yaml:"name"`
+	Models map[string]any `yaml:"models"`
+}
+
+// readProject reads the dbt_project.yml (or .yaml) at the project's root. A
+// project with neither file reads as no name and no settings; one that does
+// not parse is an error, since dbt could not build it either.
+func readProject(dir string) (dbtProject, error) {
+	for _, name := range []string{"dbt_project.yml", "dbt_project.yaml"} {
+		text, ok, err := readSmall(filepath.Join(dir, name))
+		if err != nil {
+			return dbtProject{}, err
+		}
+		if !ok {
+			continue
+		}
+		var p dbtProject
+		if err := yaml.Unmarshal([]byte(text), &p); err != nil {
+			return dbtProject{}, fmt.Errorf("read %s: %w", name, err)
+		}
+		return p, nil
+	}
+	return dbtProject{}, nil
+}
+
+// mapHasKey reports whether a dbt settings tree holds, at any depth, a key
+// named key whose value is a mapping: the settings of the folder or model of
+// that name. A `+` setting (`+materialized`) is a value, never a folder or a
+// model.
+func mapHasKey(tree map[string]any, key string) bool {
+	for k, v := range tree {
+		sub, ok := v.(map[string]any)
+		if !ok || strings.HasPrefix(k, "+") {
+			continue
+		}
+		if k == key || mapHasKey(sub, key) {
+			return true
+		}
+	}
+	return false
 }
 
 // declaresKind reports whether a meta block's continuo map sets entity or

@@ -240,6 +240,7 @@ func evidenceSamples() map[remediation.EvidenceKey]any {
 			Relation:      "analytics.table_b",
 			OtherService:  "service-1",
 			OtherFilePath: "services/service-1/models/table_b.sql",
+			ChangesAlias:  true,
 			OldName:       "table_b",
 			NewName:       "table_b_v2",
 			OldPath:       "services/marketing/models/table_b.sql",

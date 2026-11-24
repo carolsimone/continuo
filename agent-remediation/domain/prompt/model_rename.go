@@ -39,19 +39,64 @@ func AssembleModelRename(relation, otherService, otherFilePath, oldName, newName
 		User:            u.String(),
 		ToolName:        "propose_fix",
 		ToolDescription: "Return every file of the rename with its complete new content.",
-		ToolParams: []ToolParam{
-			{
-				Name:        "updated_files",
-				Type:        "array",
-				Description: "The model's file at its new path and every other file shown, each with its repository path and its complete new content.",
-				Required:    true,
-				Items: []ToolParam{
-					{Name: "path", Type: "string", Description: "The file's repository path: the new path for the model's file, the path shown for any other file."},
-					{Name: "content", Type: "string", Description: "The complete new content of that file."},
-				},
+		ToolParams: renameToolParams("The model's file at its new path and every other file shown, each with its repository path and its complete new content.",
+			"The file's repository path: the new path for the model's file, the path shown for any other file."),
+	}
+}
+
+// aliasChangeSystemPrompt instructs the model to change the alias continuo has
+// found to be the one that clashes.
+const aliasChangeSystemPrompt = `You are a data-engineering assistant that changes the alias of a dbt model.
+
+Two dbt projects build the same warehouse table, so continuo refused the release. The model that this release added writes that table because of its alias, not its name. Its alias changes to a new table name in the same schema; the new name is chosen for you. The model keeps its name and its file.
+
+Rules:
+- Change the alias wherever it is set: in the model's config(alias=...), in its properties entry (config: alias), or in dbt_project.yml. Use the new name there.
+- Change nothing else: not the model's SQL, its columns, its schema or its file name.
+- Return only the files you changed, each with its path as shown and its complete new content.
+- If a file gives you no safe way to make the change, say why in rationale and give low confidence.
+- Always respond by calling the propose_fix tool.`
+
+// AssembleAliasChange builds the request that changes the alias that makes a
+// dbt model write relation, from oldAlias to newAlias: the model's file and
+// every other file of its project that names it.
+func AssembleAliasChange(relation, otherService, otherFilePath, oldAlias, newAlias string, model NamedFile, references []NamedFile, precedents []Precedent) ProposeRequest {
+	var u strings.Builder
+	fmt.Fprintf(&u, "Relation built twice: %s\n", relation)
+	fmt.Fprintf(&u, "Already built by: %s (%s)\n", otherService, otherFilePath)
+	fmt.Fprintf(&u, "Change the model's alias from %s to %s.\n\n", oldAlias, newAlias)
+	fmt.Fprintf(&u, "The model's file %s:\n```\n%s\n```\n\n", model.Path, model.Content)
+	for _, f := range references {
+		fmt.Fprintf(&u, "File %s names the model:\n```\n%s\n```\n\n", f.Path, f.Content)
+	}
+	renderPrecedents(&u, precedents)
+	fmt.Fprintf(&u, "Return every file you changed, with the alias set to %s.", newAlias)
+
+	return ProposeRequest{
+		System:          aliasChangeSystemPrompt,
+		User:            u.String(),
+		ToolName:        "propose_fix",
+		ToolDescription: "Return every file you changed with its complete new content.",
+		ToolParams: renameToolParams("Every file you changed, each with its repository path and its complete new content.",
+			"The file's repository path, exactly as shown to you."),
+	}
+}
+
+// renameToolParams are the parameters of the propose_fix tool of a rename or
+// an alias change: the files, the one-sentence note and the confidence.
+func renameToolParams(filesDescription, pathDescription string) []ToolParam {
+	return []ToolParam{
+		{
+			Name:        "updated_files",
+			Type:        "array",
+			Description: filesDescription,
+			Required:    true,
+			Items: []ToolParam{
+				{Name: "path", Type: "string", Description: pathDescription},
+				{Name: "content", Type: "string", Description: "The complete new content of that file."},
 			},
-			{Name: "rationale", Type: "string", Description: "One sentence describing the change you made. No warehouse data values.", Required: true},
-			{Name: "confidence", Type: "string", Description: "Your confidence: low, medium, or high.", Required: true},
 		},
+		{Name: "rationale", Type: "string", Description: "One sentence describing the change you made. No warehouse data values.", Required: true},
+		{Name: "confidence", Type: "string", Description: "Your confidence: low, medium, or high.", Required: true},
 	}
 }

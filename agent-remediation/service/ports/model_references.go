@@ -6,9 +6,12 @@ package ports
 // models declare what their table is (continuo.entity or continuo.grain).
 type ModelReferences struct {
 	// Files maps the repository-relative path of each file that names the
-	// model to its content: a properties file whose models list has an entry
-	// of that name, and a SQL file that refs it. The model's own SQL file is
-	// not among them.
+	// model to its content: a SQL or Python model, or a properties file, that
+	// refs it (a two-argument ref only when it names the project's own
+	// package), a properties file whose models list has an entry of that
+	// name, and the project's dbt_project.yml when its models settings hold a
+	// key of that name. The model's own file is not among them unless it refs
+	// itself.
 	Files map[string]string
 	// Order lists the paths of Files, sorted.
 	Order []string

@@ -94,7 +94,7 @@ func NewRegistry(c Collaborators) *Registry {
 	r.register(source.NewDBTCompile())
 	r.register(source.NewDBTParse())
 	r.register(source.NewSeed())
-	r.register(rename.NewModelRename(c.Archive, c.ModelReferences, c.ServiceRepoPaths, c.Logger))
+	r.register(rename.NewModelRename(c.Archive, c.ModelReferences, c.Locator, c.ServiceRepoPaths, c.Logger))
 	r.register(rename.NewPrompt())
 	r.register(rename.NewMatchesPlan(c.ModelReferences, c.ServiceRepoPaths))
 	r.register(source.NewTargetFileWasShown())

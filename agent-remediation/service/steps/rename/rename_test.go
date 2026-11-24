@@ -51,6 +51,21 @@ func (f *fakeFinder) Find(root, dir, model string) (ports.ModelReferences, error
 	return f.refs, nil
 }
 
+// noNodes is a catalog that holds no node.
+type noNodes struct{}
+
+func (noNodes) Locate(context.Context, string) (string, string, error) { return "", "", nil }
+
+// someNodes is a catalog that holds exactly the given unique ids.
+type someNodes map[string]bool
+
+func (n someNodes) Locate(_ context.Context, id string) (string, string, error) {
+	if n[id] {
+		return "models/x.sql", "other-service", nil
+	}
+	return "", "", nil
+}
+
 // fakeModel answers with res and records the request.
 type fakeModel struct {
 	res  ports.ProposeResult
@@ -116,7 +131,7 @@ func TestModelRename_PlansTheMoveToTheNextFreeName(t *testing.T) {
 	refs := references()
 	refs.ModelNames["table_b_v2"] = true
 	finder := &fakeFinder{refs: refs}
-	s := rename.NewModelRename(archive, finder, map[string]string{"marketing": "services/marketing"}, nil)
+	s := rename.NewModelRename(archive, finder, noNodes{}, map[string]string{"marketing": "services/marketing"}, nil)
 
 	out := gather(t, s)
 
@@ -133,7 +148,7 @@ func TestModelRename_PlansTheMoveToTheNextFreeName(t *testing.T) {
 func TestModelRename_DeclinesAModelWithNoMetadataWhenItsProjectDeclaresIt(t *testing.T) {
 	refs := references()
 	refs.DeclaresKind, refs.OthersDeclareKind = false, true
-	s := rename.NewModelRename(&fakeArchive{}, &fakeFinder{refs: refs}, map[string]string{"marketing": "services/marketing"}, nil)
+	s := rename.NewModelRename(&fakeArchive{}, &fakeFinder{refs: refs}, noNodes{}, map[string]string{"marketing": "services/marketing"}, nil)
 
 	out := gather(t, s)
 
@@ -146,7 +161,7 @@ func TestModelRename_DeclinesAModelWithNoMetadataWhenItsProjectDeclaresIt(t *tes
 func TestModelRename_PlansAModelWithNoMetadataWhenItsProjectDeclaresNone(t *testing.T) {
 	refs := references()
 	refs.DeclaresKind, refs.OthersDeclareKind = false, false
-	s := rename.NewModelRename(&fakeArchive{}, &fakeFinder{refs: refs}, map[string]string{"marketing": "services/marketing"}, nil)
+	s := rename.NewModelRename(&fakeArchive{}, &fakeFinder{refs: refs}, noNodes{}, map[string]string{"marketing": "services/marketing"}, nil)
 
 	assert.False(t, gather(t, s).Declined)
 }
@@ -162,7 +177,7 @@ func TestModelRename_Declines(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			out := gather(t, rename.NewModelRename(tc.archive, &fakeFinder{refs: references()}, tc.paths, nil))
+			out := gather(t, rename.NewModelRename(tc.archive, &fakeFinder{refs: references()}, noNodes{}, tc.paths, nil))
 			assert.True(t, out.Declined)
 			assert.Equal(t, tc.want, out.Decline)
 		})
@@ -170,7 +185,7 @@ func TestModelRename_Declines(t *testing.T) {
 }
 
 func TestModelRename_AnotherFetchErrorIsTheStepsError(t *testing.T) {
-	s := rename.NewModelRename(&fakeArchive{err: errors.New("timeout")}, &fakeFinder{}, map[string]string{"marketing": "services/marketing"}, nil)
+	s := rename.NewModelRename(&fakeArchive{err: errors.New("timeout")}, &fakeFinder{}, noNodes{}, map[string]string{"marketing": "services/marketing"}, nil)
 	_, err := s.Gather(context.Background(), step.ContextInput{
 		Failure:  failure(),
 		Evidence: remediation.NewEvidence().With(remediation.KeySourceFiles, sourceFiles()),
@@ -316,4 +331,120 @@ func TestMatchesPlan_ReadsAnyPropertiesFileTheFinderReads(t *testing.T) {
 			assert.Equal(t, []string{"reference_left " + ymlPath}, codes(findings))
 		})
 	}
+}
+
+// TestModelRename_ANameAnotherServiceBuildsIsTaken pins that the new name is
+// free across services: when the live topology already holds
+// analytics.table_b_v2, the plan moves on to table_b_v3.
+func TestModelRename_ANameAnotherServiceBuildsIsTaken(t *testing.T) {
+	s := rename.NewModelRename(&fakeArchive{}, &fakeFinder{refs: references()}, someNodes{"analytics.table_b_v2": true},
+		map[string]string{"marketing": "services/marketing"}, nil)
+
+	out := gather(t, s)
+
+	plan := out.Evidence[remediation.KeyModelRename].(remediation.ModelRename)
+	assert.Equal(t, "table_b_v3", plan.NewName)
+	assert.Equal(t, "services/marketing/models/table_b_v3.sql", plan.NewPath)
+}
+
+// TestModelRename_AnAliasThatClashesIsWhatChanges pins the alias case: the
+// model marketing_orders writes analytics.orders through its alias, so moving
+// its file would leave the clash; the plan changes the alias and keeps the file.
+func TestModelRename_AnAliasThatClashesIsWhatChanges(t *testing.T) {
+	f := failure()
+	f.Target.NodeID, f.Target.RelationID, f.Target.FilePath = "analytics.marketing_orders", "analytics.orders", "models/marketing_orders.sql"
+	files := remediation.SourceFiles{
+		Files:   map[string]string{"services/marketing/models/marketing_orders.sql": "{{ config(alias='orders') }}\nselect 1 as id\n"},
+		Order:   []string{"services/marketing/models/marketing_orders.sql"},
+		Primary: "services/marketing/models/marketing_orders.sql", Service: "marketing",
+	}
+	s := rename.NewModelRename(&fakeArchive{}, &fakeFinder{refs: ports.ModelReferences{ModelNames: map[string]bool{"marketing_orders": true}}},
+		noNodes{}, map[string]string{"marketing": "services/marketing"}, nil)
+
+	out, err := s.Gather(context.Background(), step.ContextInput{Failure: f, Evidence: remediation.NewEvidence().With(remediation.KeySourceFiles, files)})
+	require.NoError(t, err)
+
+	plan := out.Evidence[remediation.KeyModelRename].(remediation.ModelRename)
+	assert.True(t, plan.ChangesAlias)
+	assert.Equal(t, "orders", plan.OldName)
+	assert.Equal(t, "orders_v2", plan.NewName)
+	assert.Equal(t, plan.OldPath, plan.NewPath, "the file stays where it is")
+}
+
+// TestPrompt_AnAliasPlanAsksForTheAliasAndMovesNoFile pins the prompt of the
+// alias case: the request asks to change the alias, and the answered model
+// file is an edit in place.
+func TestPrompt_AnAliasPlanAsksForTheAliasAndMovesNoFile(t *testing.T) {
+	p := plan()
+	p.ChangesAlias, p.OldName, p.NewName, p.NewPath = true, "orders", "orders_v2", oldPath
+	m := &fakeModel{res: ports.ProposeResult{
+		Files:      []ports.ProposedFile{{Path: oldPath, Content: "{{ config(alias='orders_v2') }}\nselect 1 as id\n"}},
+		Confidence: "high",
+	}}
+	ev := remediation.NewEvidence().With(remediation.KeySourceFiles, sourceFiles()).With(remediation.KeyModelRename, p)
+
+	out, err := rename.NewPrompt().Propose(context.Background(), step.PromptInput{Failure: failure(), Evidence: ev}, m)
+	require.NoError(t, err)
+
+	assert.Contains(t, m.reqs[0].User, "Change the model's alias from orders to orders_v2.")
+	require.Len(t, out.Draft.Edits, 1)
+	assert.Empty(t, out.Draft.Edits[0].RenamedFrom, "an alias change moves no file")
+	assert.Equal(t, "select 1 as id\n", out.Draft.Edits[0].Original)
+}
+
+// TestPrompt_AClusterWithNoPlanIsDeclined pins a cluster gathered before its
+// type listed model_rename: the prompt declines with what to do, calling no model.
+func TestPrompt_AClusterWithNoPlanIsDeclined(t *testing.T) {
+	m := &fakeModel{}
+	ev := remediation.NewEvidence().With(remediation.KeySourceFiles, sourceFiles())
+
+	out, err := rename.NewPrompt().Propose(context.Background(), step.PromptInput{Failure: failure(), Evidence: ev}, m)
+	require.NoError(t, err)
+
+	assert.True(t, out.Declined)
+	assert.Contains(t, out.Decline, "use Try again")
+	assert.Empty(t, m.reqs)
+}
+
+// TestMatchesPlan_ADraftWithNoPlanIsRefused pins that a pre-flight pass over a
+// draft drawn before renames were planned refuses it, rather than failing the
+// step on every drive.
+func TestMatchesPlan_ADraftWithNoPlanIsRefused(t *testing.T) {
+	c := rename.NewMatchesPlan(repofs.ModelReferenceFinder{}, map[string]string{"marketing": "services/marketing"})
+	out, err := c.Check(context.Background(), step.CheckInput{
+		Draft:    remediation.Draft{Edits: []remediation.Edit{{Path: oldPath, Content: "select 2"}}},
+		Evidence: remediation.NewEvidence(),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"rename_not_planned "}, codes(out.Result.Findings))
+}
+
+// TestMatchesPlan_TheFileTheMoveDeletesLeavesNothingBehind pins that the old
+// file, gone once the move is applied, is not read as naming the old model:
+// here it mentions ref('table_b') in a comment.
+func TestMatchesPlan_TheFileTheMoveDeletesLeavesNothingBehind(t *testing.T) {
+	files := repoFiles()
+	files[oldPath] = "-- built before ref('table_b') existed\nselect 1 as id\n"
+	assert.Empty(t, checkOver(t, files, remediation.Draft{Edits: []remediation.Edit{
+		{Path: newPath, RenamedFrom: oldPath, Content: "-- built before\nselect 1 as id\n"},
+		{Path: ymlPath, Content: "models:\n  - name: table_b_v2\n"},
+		{Path: refPath, Content: "select * from {{ ref('table_b_v2') }}\n"},
+	}}))
+}
+
+// TestMatchesPlan_AnAliasPlanNeedsNoMoveAndReadsNoReference pins the check of
+// the alias case: no move is required, the model's name is unchanged so no
+// file can be left naming an old one, and an edit outside the plan is refused.
+func TestMatchesPlan_AnAliasPlanNeedsNoMoveAndReadsNoReference(t *testing.T) {
+	p := plan()
+	p.ChangesAlias, p.OldName, p.NewName, p.NewPath = true, "orders", "orders_v2", oldPath
+	c := rename.NewMatchesPlan(repofs.ModelReferenceFinder{}, map[string]string{"marketing": "services/marketing"})
+	run := func(d remediation.Draft) []string {
+		out, err := c.Check(context.Background(), step.CheckInput{Draft: d, Evidence: remediation.NewEvidence().With(remediation.KeyModelRename, p)})
+		require.NoError(t, err)
+		return codes(out.Result.Findings)
+	}
+	assert.Empty(t, run(remediation.Draft{Edits: []remediation.Edit{{Path: oldPath, Content: "{{ config(alias='orders_v2') }}\nselect 1"}}}))
+	assert.Equal(t, []string{"edit_outside_rename services/marketing/models/elsewhere.sql"},
+		run(remediation.Draft{Edits: []remediation.Edit{{Path: "services/marketing/models/elsewhere.sql", Content: "select 2"}}}))
 }

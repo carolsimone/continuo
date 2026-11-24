@@ -493,6 +493,7 @@ func TestEveryPrompt_AsksForANoteNotACause(t *testing.T) {
 		AssembleCompileFix([]NamedFile{{Path: "models/a.sql", Content: "select 1"}}, "log", "svc", nil),
 		AssembleSeedFix("seeds/a.csv", "id\n1", "log", "svc", nil),
 		AssembleModelRename("s.t", "other", "models/b.sql", "a", "a_v2", NamedFile{Path: "models/a.sql", Content: "select 1"}, "models/a_v2.sql", nil, nil),
+		AssembleAliasChange("s.t", "other", "models/b.sql", "t", "t_v2", NamedFile{Path: "models/a.sql", Content: "select 1"}, nil, nil),
 		AssembleUpstreamFix(UpstreamEvidence{TargetNodeID: "u", TargetSource: "select 1"}),
 		AssemblePythonContractFix(PythonEvidence{}),
 		AssembleCsvContractFix(CsvEvidence{}),

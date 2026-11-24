@@ -69,3 +69,41 @@ func TestModelReferenceFinder_AMissingProjectIsAnError(t *testing.T) {
 	_, err := ModelReferenceFinder{}.Find(t.TempDir(), "services/absent", "table_b")
 	assert.ErrorContains(t, err, "services/absent")
 }
+
+// TestModelReferenceFinder_FindsEveryFormThatNamesTheModel pins the forms a
+// rename must carry along besides a SQL ref and the model's own entry: a Python
+// model's dbt.ref, another model's relationships test, a ref qualified with the
+// project's own name, and the model's settings in dbt_project.yml. A ref
+// qualified with another package names that package's model and is left out.
+func TestModelReferenceFinder_FindsEveryFormThatNamesTheModel(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"services/marketing/dbt_project.yml":           "name: marketing\nmodels:\n  marketing:\n    +materialized: table\n    staging:\n      orders:\n        +schema: sales\n",
+		"services/marketing/models/staging/orders.sql": "select 1 as id",
+		"services/marketing/models/forecast.py":        "def model(dbt, session):\n    return dbt.ref('orders')\n",
+		"services/marketing/models/qualified.sql":      "select * from {{ ref('marketing', 'orders') }}",
+		"services/marketing/models/other_pkg.sql":      "select * from {{ ref('shared', 'orders') }}",
+		"services/marketing/models/tests.yml":          "version: 2\nmodels:\n  - name: customers\n    columns:\n      - name: order_id\n        tests:\n          - relationships:\n              to: ref('orders')\n              field: id\n",
+	})
+
+	refs, err := ModelReferenceFinder{}.Find(root, "services/marketing", "orders")
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{
+		"services/marketing/dbt_project.yml",
+		"services/marketing/models/forecast.py",
+		"services/marketing/models/qualified.sql",
+		"services/marketing/models/tests.yml",
+	}, refs.Order)
+}
+
+// TestModelReferenceFinder_AFolderSettingIsNotTheModel pins that dbt_project.yml
+// names the model only by a key of its name, not by a + setting of that value.
+func TestModelReferenceFinder_AFolderSettingIsNotTheModel(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"services/marketing/dbt_project.yml":   "name: marketing\nmodels:\n  marketing:\n    +alias: orders\n",
+		"services/marketing/models/orders.sql": "select 1 as id",
+	})
+	refs, err := ModelReferenceFinder{}.Find(root, "services/marketing", "orders")
+	require.NoError(t, err)
+	assert.Empty(t, refs.Order)
+}
