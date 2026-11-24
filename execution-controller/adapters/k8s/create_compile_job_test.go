@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/testdeps"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -478,12 +479,13 @@ type stageRun struct {
 // an overlay directory holding overlay (each a map from project-relative path
 // to content), writes deleteList as the delete list when it is non-nil, and
 // runs stagePrefix over them, followed by `pwd`, in a shell started in the
-// project directory. It skips the test when no sh is on PATH.
+// project directory. With no sh on PATH it reports the dependency as
+// unavailable (testdeps.Unavailable).
 func runStagePrefix(t *testing.T, project, overlay map[string]string, deleteList *string) stageRun {
 	t.Helper()
 	sh, err := exec.LookPath("sh")
 	if err != nil {
-		t.Skip("no sh on PATH")
+		testdeps.Unavailable(t, "no sh on PATH: %v", err)
 	}
 	root := t.TempDir()
 	projectDir := filepath.Join(root, "image", "project")
