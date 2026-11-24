@@ -1,9 +1,10 @@
 """Unit tests for overlay_fetcher.main.
 
-The fetcher lays a shadow release's proposed source files into OVERLAY_DEST.
-Unlike parse_cache_fetcher it FAILS the Job on any problem: a shadow release
-that compiled the committed source instead of the proposed fix would verify
-the wrong thing.
+The fetcher lays a verification run's proposed source files into OVERLAY_DEST
+and writes the paths the overlay removes to OVERLAY_DELETE_LIST. Unlike
+parse_cache_fetcher it FAILS the Job on any problem: a verification run that
+built the committed source instead of the proposed fix would verify the wrong
+thing.
 """
 import contextlib
 import io
@@ -117,6 +118,114 @@ def test_missing_config_exits_2(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         overlay_fetcher.main()
     assert exc.value.code == 2
+
+
+def _overlay_env(monkeypatch, tmp_path):
+    """Point the fetcher at OVERLAY_DEST and OVERLAY_DELETE_LIST under tmp_path
+    and return both paths."""
+    dest = tmp_path / "overlay"
+    delete_list = tmp_path / "overlay-delete-paths"
+    monkeypatch.setenv("SOURCE_OVERLAY_URI", "s3://continuo/svc/verify-1/source-overlay.tar.gz")
+    monkeypatch.setenv("OVERLAY_DEST", str(dest))
+    monkeypatch.setenv("OVERLAY_DELETE_LIST", str(delete_list))
+    return dest, delete_list
+
+
+def test_writes_the_delete_list_in_order_without_repeats_or_blank_lines(tmp_path, monkeypatch):
+    dest, delete_list = _overlay_env(monkeypatch, tmp_path)
+    _serve(monkeypatch, _tar({
+        "models/table_b_v2.sql": b"select 2",
+        overlay_fetcher.DELETE_LIST_MEMBER:
+            b"models/table_b.sql\n\n   \nseeds/z.csv\n./models/table_b.sql\nmodels/with space.sql",
+    }))
+
+    with _restrictive_umask():
+        overlay_fetcher.main()
+
+    assert delete_list.read_bytes() == b"models/table_b.sql\nseeds/z.csv\nmodels/with space.sql\n"
+    assert stat.S_IMODE(os.stat(delete_list).st_mode) == 0o644
+    assert (dest / "models" / "table_b_v2.sql").read_bytes() == b"select 2"
+
+
+def test_never_extracts_the_delete_list_member(tmp_path, monkeypatch):
+    dest, _delete_list = _overlay_env(monkeypatch, tmp_path)
+    _serve(monkeypatch, _tar({
+        "models/table_b_v2.sql": b"select 2",
+        overlay_fetcher.DELETE_LIST_MEMBER: b"models/table_b.sql\n",
+    }))
+
+    overlay_fetcher.main()
+
+    assert not (dest / ".continuo").exists()
+    assert sorted(p.relative_to(dest).as_posix() for p in dest.rglob("*") if p.is_file()) == [
+        "models/table_b_v2.sql",
+    ]
+
+
+@pytest.mark.parametrize("listed", ["../escape.sql", "/abs/escape.sql", "models/../../escape.sql"])
+def test_rejects_a_delete_path_outside_the_project(tmp_path, monkeypatch, listed):
+    dest, delete_list = _overlay_env(monkeypatch, tmp_path)
+    _serve(monkeypatch, _tar({
+        "models/a.sql": b"select 1",
+        overlay_fetcher.DELETE_LIST_MEMBER: f"models/b.sql\n{listed}\n".encode(),
+    }))
+
+    with pytest.raises(SystemExit) as exc:
+        overlay_fetcher.main()
+    assert exc.value.code == overlay_fetcher.EXIT_UNSAFE
+    assert not delete_list.exists()
+    assert not (dest / "models" / "a.sql").exists(), "nothing is extracted from a refused overlay"
+
+
+@pytest.mark.parametrize("listed", ["models/a.sql", "./models//a.sql", "models", "models/nested"])
+def test_rejects_a_delete_path_the_overlay_also_writes(tmp_path, monkeypatch, listed):
+    """A listed path the overlay writes, as a file or as a directory holding
+    its files, cannot also be absent from the staged project."""
+    dest, delete_list = _overlay_env(monkeypatch, tmp_path)
+    _serve(monkeypatch, _tar({
+        "models/a.sql": b"select 1",
+        "models/nested/b.sql": b"select 2",
+        overlay_fetcher.DELETE_LIST_MEMBER: f"{listed}\n".encode(),
+    }))
+
+    with pytest.raises(SystemExit) as exc:
+        overlay_fetcher.main()
+    assert exc.value.code == overlay_fetcher.EXIT_UNSAFE
+    assert not delete_list.exists()
+    assert not (dest / "models" / "a.sql").exists(), "nothing is extracted from a refused overlay"
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_a_delete_list_without_overlay_delete_list_exits_2(tmp_path, monkeypatch, value):
+    dest, _delete_list = _overlay_env(monkeypatch, tmp_path)
+    if value is None:
+        monkeypatch.delenv("OVERLAY_DELETE_LIST")
+    else:
+        monkeypatch.setenv("OVERLAY_DELETE_LIST", value)
+    _serve(monkeypatch, _tar({
+        "models/table_b_v2.sql": b"select 2",
+        overlay_fetcher.DELETE_LIST_MEMBER: b"models/table_b.sql\n",
+    }))
+
+    with pytest.raises(SystemExit) as exc:
+        overlay_fetcher.main()
+    assert exc.value.code == overlay_fetcher.EXIT_CONFIG
+    assert not (dest / "models" / "table_b_v2.sql").exists(), "nothing is extracted when the list has nowhere to go"
+
+
+@pytest.mark.parametrize("configured", [True, False])
+def test_an_overlay_without_a_delete_list_writes_no_list(tmp_path, monkeypatch, configured):
+    """A tarball without the reserved member needs no OVERLAY_DELETE_LIST and,
+    when one is set, leaves its file unwritten."""
+    dest, delete_list = _overlay_env(monkeypatch, tmp_path)
+    if not configured:
+        monkeypatch.delenv("OVERLAY_DELETE_LIST")
+    _serve(monkeypatch, _tar({"models/a.sql": b"select 1"}))
+
+    overlay_fetcher.main()
+
+    assert (dest / "models" / "a.sql").read_bytes() == b"select 1"
+    assert not delete_list.exists()
 
 
 def test_fetch_failure_exits_3(tmp_path, monkeypatch):

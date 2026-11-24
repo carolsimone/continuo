@@ -74,9 +74,11 @@ func seedOverlayParams() ValidationJobParams {
 
 // TestCreateSeedBuildJob_SourceOverlayStagesProjectInWorkdir verifies the seed
 // leg gets the same overlay treatment as the compile leg: an "overlay"
-// initContainer fetches the proposed source into /shared/overlay, and the team
-// image's seed command stages the project into the writable workdir emptyDir,
-// lays the proposed files over the copy, and runs dbt from there. Without this,
+// initContainer fetches the proposed source into /shared/overlay and the paths
+// the fix removes into /shared/overlay-delete-paths, and the team image's seed
+// command stages the project into the writable workdir emptyDir, lays the
+// proposed files over the copy, removes the listed paths from it, and runs dbt
+// from there. Without this,
 // a proposed fix to a seed CSV is verified against the very file it replaces
 // and can never pass.
 func TestCreateSeedBuildJob_SourceOverlayStagesProjectInWorkdir(t *testing.T) {
@@ -95,6 +97,8 @@ func TestCreateSeedBuildJob_SourceOverlayStagesProjectInWorkdir(t *testing.T) {
 	assert.Equal(t, []string{"python", "/overlay_fetcher.py"}, overlay.Command)
 	assert.Equal(t, p.SourceOverlayURI, envOf(overlay, "SOURCE_OVERLAY_URI"))
 	assert.Equal(t, "/shared/overlay", envOf(overlay, "OVERLAY_DEST"))
+	assert.Equal(t, "/shared/overlay-delete-paths", envOf(overlay, "OVERLAY_DELETE_LIST"),
+		"the delete list lies outside /shared/overlay, so staging never copies it into the project")
 	require.Len(t, overlay.VolumeMounts, 1)
 	assert.Equal(t, "shared", overlay.VolumeMounts[0].Name)
 	for _, e := range s3CredEnvVars() {
@@ -134,11 +138,18 @@ func TestCreateSeedBuildJob_SourceOverlayStagesProjectInWorkdir(t *testing.T) {
 // expectedStagePrefix is the shell prologue every team-image command carries
 // when the Job runs under a source overlay. It stages the image's project
 // directory (the shell's starting directory) into the workdir emptyDir at the
-// same absolute path under /work, lays the proposed files over the copy, and
-// moves the shell there — so the proposed fix is never written into the image's
-// own project directory, whoever owns it.
+// same absolute path under /work, lays the proposed files over the copy,
+// removes from the copy each path /shared/overlay-delete-paths lists (when the
+// overlay initContainer wrote it), and moves the shell there — so the proposed
+// fix is never written into the image's own project directory, whoever owns
+// it.
 const expectedStagePrefix = `mkdir -p "/work${PWD%/*}" && cp -R "$PWD" "/work${PWD%/*}/" && ` +
-	`cp -R /shared/overlay/. "/work$PWD/" && cd "/work$PWD" && `
+	`cp -R /shared/overlay/. "/work$PWD/" && ` +
+	`if [ -f /shared/overlay-delete-paths ]; then while IFS= read -r p || [ -n "$p" ]; do ` +
+	`[ -z "$p" ] || rm -f -- "/work$PWD/$p" ` +
+	`|| { echo "continuo overlay: cannot remove $p from the staged project" >&2; exit 1; }; ` +
+	`done < /shared/overlay-delete-paths; fi && ` +
+	`cd "/work$PWD" && `
 
 // TestBuildSeedBuildPodSpec_OverlayAndParseCacheCoexist verifies that when both
 // the overlay and the parse-cache hydration apply, the overlay fetcher runs
