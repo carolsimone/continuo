@@ -152,6 +152,21 @@ describe('makePullRequestCreator', () => {
       );
       expect(octokit.repos.createOrUpdateFileContents).not.toHaveBeenCalled();
     });
+
+    it('deletes no path for files edited in place', async () => {
+      const octokit = buildFakeOctokit({
+        defaultBranchSha: 'main-head',
+        contents: {
+          'release-sha': { 'models/orders_d.sql': 'blob-d' },
+          'main-head': { 'models/orders_d.sql': 'blob-d' },
+        },
+      });
+      await makePullRequestCreator(octokit).create({ ...baseInput, baseSha: 'release-sha' });
+
+      expect(octokit.repos.getContent).toHaveBeenCalledTimes(2);
+      const tree = octokit.git.createTree.mock.calls[0][0].tree;
+      expect(tree).toEqual([{ path: 'models/orders_d.sql', mode: '100644', type: 'blob', sha: 'blob-1' }]);
+    });
   });
 
   // The head branch is cut from the base branch's head. baseSha is the commit
@@ -322,6 +337,190 @@ describe('makePullRequestCreator', () => {
 
       expect(err).toMatchObject({ status: 500 });
       expect(err).not.toBeInstanceOf(FileChangedOnBaseBranchError);
+      expectNothingWritten(octokit);
+    });
+  });
+
+  // A renamed file is written at its path and deleted at renamed_from, in the
+  // one tree of the commit. Both paths must be as they were at baseSha on the
+  // base branch head: the old one the same blob, the new one absent at both or
+  // the same blob, so the rename neither deletes a file the base branch has
+  // changed nor overwrites one it has added.
+  describe('renamed file — written at its path and deleted at renamed_from', () => {
+    const oldPath = 'services/marketing/models/table_b.sql';
+    const newPath = 'services/marketing/models/table_b_v2.sql';
+    const renamed: CreatePRInput = {
+      ...baseInput,
+      baseSha: 'release-sha',
+      files: [{ path: newPath, content: 'SELECT 2', renamed_from: oldPath }],
+    };
+
+    function expectNothingWritten(octokit: ReturnType<typeof buildFakeOctokit>) {
+      expect(octokit.git.createRef).not.toHaveBeenCalled();
+      expect(octokit.git.createBlob).not.toHaveBeenCalled();
+      expect(octokit.git.createTree).not.toHaveBeenCalled();
+      expect(octokit.git.createCommit).not.toHaveBeenCalled();
+      expect(octokit.git.updateRef).not.toHaveBeenCalled();
+      expect(octokit.pulls.create).not.toHaveBeenCalled();
+    }
+
+    it('writes the new path and deletes the old one in one tree', async () => {
+      const octokit = buildFakeOctokit({
+        defaultBranchSha: 'main-head',
+        contents: {
+          'release-sha': { [oldPath]: 'blob-old' },
+          'main-head': { [oldPath]: 'blob-old' },
+        },
+      });
+      await makePullRequestCreator(octokit).create(renamed);
+
+      expect(octokit.git.createBlob).toHaveBeenCalledTimes(1);
+      expect(octokit.git.createTree).toHaveBeenCalledTimes(1);
+      expect(octokit.git.createTree).toHaveBeenCalledWith(
+        expect.objectContaining({
+          base_tree: 'tree-of-main-head',
+          tree: [
+            { path: newPath, mode: '100644', type: 'blob', sha: 'blob-1' },
+            { path: oldPath, mode: '100644', type: 'blob', sha: null },
+          ],
+        }),
+      );
+      expect(octokit.git.createCommit).toHaveBeenCalledTimes(1);
+    });
+
+    it('reads both paths at baseSha and on the base branch head', async () => {
+      const octokit = buildFakeOctokit({
+        defaultBranchSha: 'main-head',
+        contents: {
+          'release-sha': { [oldPath]: 'blob-old' },
+          'main-head': { [oldPath]: 'blob-old' },
+        },
+      });
+      await makePullRequestCreator(octokit).create(renamed);
+
+      expect(octokit.repos.getContent).toHaveBeenCalledTimes(4);
+      for (const ref of ['release-sha', 'main-head']) {
+        for (const path of [oldPath, newPath]) {
+          expect(octokit.repos.getContent).toHaveBeenCalledWith({ owner: 'o', repo: 'continuo-demo', path, ref });
+        }
+      }
+    });
+
+    it('refuses, writing nothing, when the old path changed on the base branch', async () => {
+      const octokit = buildFakeOctokit({
+        defaultBranchSha: 'main-head',
+        contents: {
+          'release-sha': { [oldPath]: 'blob-old' },
+          'main-head': { [oldPath]: 'blob-old-newer' },
+        },
+      });
+      const err = await makePullRequestCreator(octokit).create(renamed).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(FileChangedOnBaseBranchError);
+      expect((err as FileChangedOnBaseBranchError).paths).toEqual([oldPath]);
+      expectNothingWritten(octokit);
+    });
+
+    it('refuses, writing nothing, when the old path was deleted on the base branch', async () => {
+      const octokit = buildFakeOctokit({
+        defaultBranchSha: 'main-head',
+        contents: { 'release-sha': { [oldPath]: 'blob-old' } },
+      });
+      const err = await makePullRequestCreator(octokit).create(renamed).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(FileChangedOnBaseBranchError);
+      expect((err as FileChangedOnBaseBranchError).paths).toEqual([oldPath]);
+      expectNothingWritten(octokit);
+    });
+
+    it('refuses, writing nothing, when the new path exists on the base branch only', async () => {
+      const octokit = buildFakeOctokit({
+        defaultBranchSha: 'main-head',
+        contents: {
+          'release-sha': { [oldPath]: 'blob-old' },
+          'main-head': { [oldPath]: 'blob-old', [newPath]: 'blob-added-on-main' },
+        },
+      });
+      const err = await makePullRequestCreator(octokit).create(renamed).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(FileChangedOnBaseBranchError);
+      expect((err as FileChangedOnBaseBranchError).paths).toEqual([newPath]);
+      expectNothingWritten(octokit);
+    });
+
+    it('names the old path before the new one when both changed', async () => {
+      const octokit = buildFakeOctokit({
+        defaultBranchSha: 'main-head',
+        contents: {
+          'release-sha': { [oldPath]: 'blob-old' },
+          'main-head': { [oldPath]: 'blob-old-newer', [newPath]: 'blob-added-on-main' },
+        },
+      });
+      const err = await makePullRequestCreator(octokit).create(renamed).catch((e: unknown) => e);
+
+      expect((err as FileChangedOnBaseBranchError).paths).toEqual([oldPath, newPath]);
+      expectNothingWritten(octokit);
+    });
+
+    it('commits a rename beside an edit in place, deleting only the renamed file', async () => {
+      const octokit = buildFakeOctokit({
+        defaultBranchSha: 'main-head',
+        contents: {
+          'release-sha': { [oldPath]: 'blob-old', 'models/orders_d.sql': 'blob-d' },
+          'main-head': { [oldPath]: 'blob-old', 'models/orders_d.sql': 'blob-d' },
+        },
+      });
+      await makePullRequestCreator(octokit).create({
+        ...renamed,
+        files: [
+          { path: 'models/orders_d.sql', content: 'SELECT 1' },
+          { path: newPath, content: 'SELECT 2', renamed_from: oldPath },
+        ],
+      });
+
+      expect(octokit.git.createTree).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tree: [
+            { path: 'models/orders_d.sql', mode: '100644', type: 'blob', sha: 'blob-1' },
+            { path: newPath, mode: '100644', type: 'blob', sha: 'blob-2' },
+            { path: oldPath, mode: '100644', type: 'blob', sha: null },
+          ],
+        }),
+      );
+      expect(octokit.repos.getContent).toHaveBeenCalledTimes(6);
+    });
+
+    it('deletes the old path when baseSha is omitted, comparing no file', async () => {
+      const octokit = buildFakeOctokit({ defaultBranchSha: 'main-head' });
+      const { baseSha: _omitted, ...withoutBaseSha } = renamed;
+      await makePullRequestCreator(octokit).create(withoutBaseSha);
+
+      expect(octokit.repos.getContent).not.toHaveBeenCalled();
+      expect(octokit.git.createTree.mock.calls[0][0].tree).toEqual([
+        { path: newPath, mode: '100644', type: 'blob', sha: 'blob-1' },
+        { path: oldPath, mode: '100644', type: 'blob', sha: null },
+      ]);
+    });
+
+    // A tree that both writes and deletes one path says two things about it.
+    it('refuses, before touching GitHub, a file renamed from a path the pull request also writes', async () => {
+      const octokit = buildFakeOctokit({});
+      const sameFile = makePullRequestCreator(octokit).create({
+        ...renamed,
+        files: [{ path: newPath, content: 'x', renamed_from: newPath }],
+      });
+      await expect(sameFile).rejects.toThrow(`${newPath} is both written and deleted`);
+
+      const otherFile = makePullRequestCreator(octokit).create({
+        ...renamed,
+        files: [
+          { path: oldPath, content: 'x' },
+          { path: newPath, content: 'y', renamed_from: oldPath },
+        ],
+      });
+      await expect(otherFile).rejects.toThrow(`${oldPath} is both written and deleted`);
+
+      expect(octokit.git.getRef).not.toHaveBeenCalled();
       expectNothingWritten(octokit);
     });
   });

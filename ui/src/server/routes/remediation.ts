@@ -246,7 +246,16 @@ export function createRemediationRouter(
     // claim's single-file fields, which describe exactly the one file such a
     // peer proposes. This mirrors the synthesis the repository itself
     // applies to a row stored before the edits list existed.
-    let edits: Array<{ path: string; content_uri: string; diff_uri: string; target_node_id?: string }> = claim.edits ?? [];
+    // An edit with renamed_from moves its file: the pull request deletes that
+    // path and writes path. The loader keeps proto3 defaults, so an edit in
+    // place carries renamed_from ''.
+    let edits: Array<{
+      path: string;
+      content_uri: string;
+      diff_uri: string;
+      target_node_id?: string;
+      renamed_from?: string;
+    }> = claim.edits ?? [];
     if (edits.length === 0 && claim.file_path && claim.proposed_sql_uri) {
       edits = [
         {
@@ -270,12 +279,13 @@ export function createRemediationRouter(
     }
 
     // Fetch the proposed content of every edited file from S3.
-    let files: Array<{ path: string; content: string; target_node_id?: string }>;
+    let files: Array<{ path: string; content: string; target_node_id?: string; renamed_from?: string }>;
     try {
       files = await Promise.all(
         edits.map(async (edit) => ({
           path: edit.path,
           target_node_id: edit.target_node_id,
+          ...(edit.renamed_from ? { renamed_from: edit.renamed_from } : {}),
           content: await getObject(normalizeKey(edit.content_uri)),
         })),
       );
