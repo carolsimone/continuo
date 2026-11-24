@@ -121,9 +121,12 @@ python3 scripts/install-test/assert-port-env.py "${tmp}/defaults.yaml" .
 
 # run-controller's pods all consume one status consumer group and dispatch what
 # a success unblocks, so the previous release's pod must be gone before the new
-# one consumes anything: run-controller rolls with Recreate.
-echo "--- run-controller rolls with Recreate (defaults)"
-python3 scripts/install-test/assert-run-controller-recreate.py "${tmp}/defaults.yaml"
+# one consumes anything. agent-remediation fails, at every start, the attempt
+# rows in flight that have no remediation, so a pod of the previous release
+# must be gone before it starts or could write such a row after that sweep. Both
+# roll with Recreate.
+echo "--- run-controller and agent-remediation roll with Recreate (defaults)"
+python3 scripts/install-test/assert-recreate.py "${tmp}/defaults.yaml" run-controller agent-remediation
 
 # Recreate leaves run-controller's Service with no endpoint until the new pod is
 # Ready, and every read of a run fails meanwhile, so that pod must turn Ready as
