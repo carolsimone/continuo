@@ -178,27 +178,6 @@ func TestAssemble_OmitsEmptySections(t *testing.T) {
 	}
 }
 
-// AssembleDuplicateTableFix must name the contested RELATION on its "Relation:"
-// line, not the target model's own unique_id — the two differ whenever the
-// target already carries an alias, and telling the model to stop producing
-// its own unique_id (rather than the relation it actually writes) points it
-// at the wrong name.
-func TestAssembleDuplicateTableFix_NamesTheRelationNotTheTargetNodeID(t *testing.T) {
-	req := AssembleDuplicateTableFix(
-		NamedFile{Path: "models/orders_v1.sql", Content: "select 1 as id"},
-		"analytics.orders",
-		"marketing",
-		"models/orders_v2.sql",
-		nil,
-	)
-	if !strings.Contains(req.User, "Relation: analytics.orders") {
-		t.Errorf("user content must name the contested relation on the Relation: line:\n%s", req.User)
-	}
-	if !strings.Contains(req.User, "marketing") || !strings.Contains(req.User, "models/orders_v2.sql") {
-		t.Errorf("user content must name the competing producer's service and file path:\n%s", req.User)
-	}
-}
-
 func precedentFixture() []Precedent {
 	return []Precedent{
 		{NodeID: "analytics.other", Stage: "validation", Category: "sql_error",
@@ -473,17 +452,6 @@ func TestAssembleSeedFix_RendersPrecedents(t *testing.T) {
 	}
 }
 
-func TestAssembleDuplicateTableFix_RendersPrecedents(t *testing.T) {
-	req := AssembleDuplicateTableFix(
-		NamedFile{Path: "models/orders_v1.sql", Content: "select 1 as id"},
-		"analytics.orders", "marketing", "models/orders_v2.sql", precedentFixture())
-	for _, want := range []string{"How similar failures were fixed before", "-select a\n+select a, x"} {
-		if !strings.Contains(req.User, want) {
-			t.Fatalf("prompt missing %q\n%s", want, req.User)
-		}
-	}
-}
-
 func TestAssemble_RendersWhatThisReleaseChangedUpstream(t *testing.T) {
 	req := Assemble(Evidence{
 		NodeID: "analytics.report", CandidateSQL: "select amount from analytics.orders", DBTLog: "column amount does not exist",
@@ -524,7 +492,7 @@ func TestEveryPrompt_AsksForANoteNotACause(t *testing.T) {
 		AssembleSourceFix("select 1", "n", "diag"),
 		AssembleCompileFix([]NamedFile{{Path: "models/a.sql", Content: "select 1"}}, "log", "svc", nil),
 		AssembleSeedFix("seeds/a.csv", "id\n1", "log", "svc", nil),
-		AssembleDuplicateTableFix(NamedFile{Path: "models/a.sql", Content: "select 1"}, "s.t", "other", "models/b.sql", nil),
+		AssembleModelRename("s.t", "other", "models/b.sql", "a", "a_v2", NamedFile{Path: "models/a.sql", Content: "select 1"}, "models/a_v2.sql", nil, nil),
 		AssembleUpstreamFix(UpstreamEvidence{TargetNodeID: "u", TargetSource: "select 1"}),
 		AssemblePythonContractFix(PythonEvidence{}),
 		AssembleCsvContractFix(CsvEvidence{}),
