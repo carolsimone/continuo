@@ -111,7 +111,7 @@ func TestPreviousTries_MetaNamesTheStepAndWhatItProvides(t *testing.T) {
 	assert.Equal(t, []remediation.EvidenceKey{remediation.KeyPreviousTries}, m.Provides)
 }
 
-func TestPreviousTries_IncludesEarlierRoundsAndLegacyAttempts(t *testing.T) {
+func TestPreviousTries_IncludesEarlierRoundsAndAttemptsWithNoRemediation(t *testing.T) {
 	broken := remediation.Finding{Code: "verification_failed", Message: "model.a: still broken"}
 	tries := &fakeTries{snaps: []remediation.Snapshot{
 		triedSnapshot(t, 1, 1, 2, "model.a", editOf("select a\n", "select b\n"), broken),
@@ -121,17 +121,17 @@ func TestPreviousTries_IncludesEarlierRoundsAndLegacyAttempts(t *testing.T) {
 	}}
 	attempts := &fakeProposals{views: []proposal.View{
 		{
-			Attempt: 1, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a", "model.b"}, VerifyError: "legacy still broken",
+			Attempt: 1, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a", "model.b"}, VerifyError: "unowned attempt still broken",
 			Edits: []proposal.FileEdit{{Path: "models/a.sql", DiffURI: "s3://diffs/1"}, {Path: "models/b.sql", DiffURI: "s3://diffs/missing"}, {Path: "models/c.sql"}},
 		},
 		// The proposal rows of the runner's own tries, read from the journal instead.
 		{Attempt: 2, RemediationRound: 1, RemediationID: uuid.NewString(), ResolvedNodeIDs: []string{"model.a"}, VerifyError: "x"},
 		{Attempt: 4, RemediationRound: 2, RemediationID: uuid.NewString(), ResolvedNodeIDs: []string{"model.a"}, VerifyError: "x"},
-		// A legacy attempt at another node.
+		// An attempt with no remediation at another node.
 		{Attempt: 3, RemediationRound: 1, ResolvedNodeIDs: []string{"model.z"}, VerifyError: "other"},
 	}}
 
-	got := gatherPreviousTries(t, tries, attempts, diffObjects{"s3://diffs/1": "-a\n+legacy"})
+	got := gatherPreviousTries(t, tries, attempts, diffObjects{"s3://diffs/1": "-a\n+unowned"})
 
 	gate := []remediation.Finding{broken}
 	record := func(round, try, attempt int, content string) remediation.TryRecord {
@@ -150,13 +150,13 @@ func TestPreviousTries_IncludesEarlierRoundsAndLegacyAttempts(t *testing.T) {
 			Round: 1, Attempt: 1,
 			Clusters: []remediation.ClusterRecord{{
 				Members: []string{"model.a", "model.b"},
-				Edits:   []remediation.EditRecord{{Path: "models/a.sql", Diff: "-a\n+legacy"}},
+				Edits:   []remediation.EditRecord{{Path: "models/a.sql", Diff: "-a\n+unowned"}},
 			}},
-			Gate: []remediation.Finding{{Message: "legacy still broken"}},
+			Gate: []remediation.Finding{{Message: "unowned attempt still broken"}},
 		},
 		record(1, 1, 2, "select b\n"),
 		record(2, 1, 4, "select c\n"),
-	}, got, "the legacy attempt and every earlier try at the node, oldest first; the try being made is left out")
+	}, got, "the attempt with no remediation and every earlier try at the node, oldest first; the try being made is left out")
 	assert.Equal(t, [][2]string{{"acme", "rel-1"}}, tries.calls)
 	assert.Equal(t, []repository.ProposalFilter{{ReleaseID: "rel-1", Source: "validation"}}, attempts.filters)
 }
@@ -192,9 +192,9 @@ func TestPreviousTries_NoReadersGiveNoTries(t *testing.T) {
 	assert.Empty(t, got)
 }
 
-func TestPreviousTries_NoEvidenceReaderShowsLegacyAttemptsWithoutDiffs(t *testing.T) {
+func TestPreviousTries_NoEvidenceReaderShowsAttemptsWithNoRemediationWithoutDiffs(t *testing.T) {
 	attempts := &fakeProposals{views: []proposal.View{{
-		Attempt: 1, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, VerifyError: "legacy still broken",
+		Attempt: 1, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, VerifyError: "unowned attempt still broken",
 		Edits: []proposal.FileEdit{{Path: "models/a.sql", DiffURI: "s3://diffs/1"}},
 	}}}
 
@@ -203,6 +203,38 @@ func TestPreviousTries_NoEvidenceReaderShowsLegacyAttemptsWithoutDiffs(t *testin
 	assert.Equal(t, []remediation.TryRecord{{
 		Round: 1, Attempt: 1,
 		Clusters: []remediation.ClusterRecord{{Members: []string{"model.a"}}},
-		Gate:     []remediation.Finding{{Message: "legacy still broken"}},
+		Gate:     []remediation.Finding{{Message: "unowned attempt still broken"}},
 	}}, got)
+}
+
+// TestPreviousTries_LeavesOutAnAttemptTheStartupSweepFailed: an attempt row with
+// no remediation that the startup sweep failed was never judged by a gate, so
+// the model is not told its change failed. A generating row the sweep failed
+// holds the reason as its rationale, a verifying one as its verify error (with
+// its edits and diffs kept); both are left out, and another row with no
+// remediation is still listed.
+func TestPreviousTries_LeavesOutAnAttemptTheStartupSweepFailed(t *testing.T) {
+	attempts := &fakeProposals{views: []proposal.View{
+		{
+			Attempt: 1, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, Status: proposal.StatusFailed,
+			Rationale: "the model's rationale", VerifyError: proposal.NoRemediationInFlightReason,
+			Edits: []proposal.FileEdit{{Path: "models/a.sql", DiffURI: "s3://diffs/swept"}},
+		},
+		{
+			Attempt: 2, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, Status: proposal.StatusFailed,
+			Rationale: proposal.NoRemediationInFlightReason,
+		},
+		{
+			Attempt: 3, RemediationRound: 1, ResolvedNodeIDs: []string{"model.a"}, Status: proposal.StatusFailed,
+			Rationale: "the model's rationale", VerifyError: "judged and still broken",
+		},
+	}}
+
+	got := gatherPreviousTries(t, &fakeTries{}, attempts, diffObjects{"s3://diffs/swept": "-a\n+swept"})
+
+	assert.Equal(t, []remediation.TryRecord{{
+		Round: 1, Attempt: 3,
+		Clusters: []remediation.ClusterRecord{{Members: []string{"model.a"}}},
+		Gate:     []remediation.Finding{{Message: "judged and still broken"}},
+	}}, got, "only the row a gate judged is an earlier try")
 }

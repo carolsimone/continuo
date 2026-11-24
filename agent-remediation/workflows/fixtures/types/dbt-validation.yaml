@@ -1,7 +1,6 @@
 # A dbt model that failed validation: it reads a column the release renamed
 # upstream. The model diagnoses the candidate SQL, then applies the diagnosis
-# to the model's source from the code bundle. Built from the validation lane's
-# tests (service/fixer/validation_test.go).
+# to the model's source from the code bundle.
 kind: fixture
 version: 1
 type: dbt-validation

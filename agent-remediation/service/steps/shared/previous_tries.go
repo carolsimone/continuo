@@ -17,8 +17,8 @@ import (
 // PreviousTries is the context source `previous_tries`: every earlier try at
 // the cluster's failure in its release, in this remediation round and the ones
 // before it, each with what it changed and why it was refused. It reads the
-// runner's own tries from their journal and the legacy engine's attempts from
-// their proposal rows.
+// runner's own tries from their journal and the attempts recorded with no
+// remediation from their proposal rows.
 type PreviousTries struct {
 	tries    repository.TryLister
 	attempts repository.AttemptLister
@@ -29,8 +29,8 @@ type PreviousTries struct {
 var _ step.ContextSource = (*PreviousTries)(nil)
 
 // NewPreviousTries builds the previous_tries step. A nil tries reader gives no
-// runner tries, a nil attempts reader no legacy attempts, and a nil evidence
-// reader legacy attempts with no diffs. It calls no port until Gather.
+// runner tries, a nil attempts reader no attempts with no remediation, and a nil
+// evidence reader such attempts with no diffs. It calls no port until Gather.
 func NewPreviousTries(tries repository.TryLister, attempts repository.AttemptLister, evidence ports.EvidenceReader,
 	logger *slog.Logger) *PreviousTries {
 	return &PreviousTries{tries: tries, attempts: attempts, evidence: evidence, logger: LoggerOrDefault(logger)}
@@ -43,7 +43,8 @@ func (*PreviousTries) Meta() step.Meta {
 		Kind: step.KindContext,
 		Description: "Lists the earlier tries at the cluster's failing nodes in this release, in this round and the rounds before it, oldest first: " +
 			"each try's diffs, what its pre-flight and cross-cluster checks found and why its verification failed. " +
-			"The legacy engine's attempts are listed with their verification error and diffs.",
+			"Attempts recorded with no remediation are listed with their verification error and diffs, " +
+			"except one the startup sweep failed, which no verification judged.",
 		Needs:    []remediation.EvidenceKey{remediation.KeyFailure},
 		Provides: []remediation.EvidenceKey{remediation.KeyPreviousTries},
 	}
@@ -51,25 +52,25 @@ func (*PreviousTries) Meta() step.Meta {
 
 // Gather returns the tries made before the failure's own (its trigger's round
 // and its try) whose clusters held any of its member nodes, oldest first. The
-// runner's tries come from the journal of every
-// remediation of the release; a try whose journal does not decode is left out
-// and logged. The legacy attempts are the release's proposal rows of the
-// trigger's source that belong to no remediation and name a member; a diff of
-// theirs that cannot be read is left out and logged, since the attempt still
-// shows with its error. An error reading the journal or the proposal rows is
-// the step's, so the runner tries the step again rather than show the model a
-// partial history.
+// runner's tries come from the journal of every remediation of the release; a
+// try whose journal does not decode is left out and logged. The attempts with
+// no remediation are the release's proposal rows of the trigger's source that
+// belong to no remediation and name a member, except a row the startup sweep
+// failed (nothing judged it); a diff of theirs that cannot be read is left out
+// and logged, since the attempt still shows with its error. An error reading
+// the journal or the proposal rows is the step's, so the runner tries the step
+// again rather than show the model a partial history.
 func (s *PreviousTries) Gather(ctx context.Context, in step.ContextInput) (step.ContextOutput, error) {
 	f := in.Failure
 	records, err := s.runnerTries(ctx, f)
 	if err != nil {
 		return step.ContextOutput{}, err
 	}
-	legacy, err := s.legacyAttempts(ctx, f)
+	unowned, err := s.attemptsWithNoRemediation(ctx, f)
 	if err != nil {
 		return step.ContextOutput{}, err
 	}
-	earlier := remediation.TryRecords(append(records, legacy...), memberIDs(f), remediation.TryRef{Round: f.Trigger.Round, Try: f.Try})
+	earlier := remediation.TryRecords(append(records, unowned...), memberIDs(f), remediation.TryRef{Round: f.Trigger.Round, Try: f.Try})
 	return step.ContextOutput{Evidence: map[remediation.EvidenceKey]any{remediation.KeyPreviousTries: earlier}}, nil
 }
 
@@ -95,10 +96,11 @@ func (s *PreviousTries) runnerTries(ctx context.Context, f remediation.Failure) 
 	return out, nil
 }
 
-// legacyAttempts reads the legacy engine's attempts at the failure's members
-// from their proposal rows, each as a record of one cluster holding the nodes
-// the attempt addressed, its diffs and its verification error.
-func (s *PreviousTries) legacyAttempts(ctx context.Context, f remediation.Failure) ([]remediation.TryRecord, error) {
+// attemptsWithNoRemediation reads the attempts at the failure's members that
+// belong to no remediation from their proposal rows, each as a record of one
+// cluster holding the nodes the attempt addressed, its diffs and its
+// verification error.
+func (s *PreviousTries) attemptsWithNoRemediation(ctx context.Context, f remediation.Failure) ([]remediation.TryRecord, error) {
 	if s.attempts == nil {
 		return nil, nil
 	}
@@ -109,13 +111,13 @@ func (s *PreviousTries) legacyAttempts(ctx context.Context, f remediation.Failur
 	members := memberIDs(f)
 	var out []remediation.TryRecord
 	for _, v := range views {
-		if v.RemediationID != "" || !namesAny(v.ResolvedNodeIDs, members) {
+		if v.RemediationID != "" || sweptAtStartup(v) || !namesAny(v.ResolvedNodeIDs, members) {
 			continue
 		}
 		rec := remediation.TryRecord{
 			Round:    v.RemediationRound,
 			Attempt:  v.Attempt,
-			Clusters: []remediation.ClusterRecord{{Members: append([]string(nil), v.ResolvedNodeIDs...), Edits: s.legacyDiffs(ctx, v)}},
+			Clusters: []remediation.ClusterRecord{{Members: append([]string(nil), v.ResolvedNodeIDs...), Edits: s.attemptDiffs(ctx, v)}},
 		}
 		if v.VerifyError != "" {
 			rec.Gate = []remediation.Finding{{Message: v.VerifyError}}
@@ -125,9 +127,17 @@ func (s *PreviousTries) legacyAttempts(ctx context.Context, f remediation.Failur
 	return out, nil
 }
 
-// legacyDiffs reads a legacy attempt's stored diffs. An edit with no diff, or
-// whose diff cannot be read, is left out, and a nil evidence reader reads none.
-func (s *PreviousTries) legacyDiffs(ctx context.Context, v proposal.View) []remediation.EditRecord {
+// sweptAtStartup reports whether the startup sweep failed an attempt row with no
+// remediation: the sweep stores its reason as the verify error of a verifying
+// row and as the rationale of a generating one. No gate judged such a row, so it
+// is no evidence that its change fails.
+func sweptAtStartup(v proposal.View) bool {
+	return v.VerifyError == proposal.NoRemediationInFlightReason || v.Rationale == proposal.NoRemediationInFlightReason
+}
+
+// attemptDiffs reads an attempt's stored diffs. An edit with no diff, or whose
+// diff cannot be read, is left out, and a nil evidence reader reads none.
+func (s *PreviousTries) attemptDiffs(ctx context.Context, v proposal.View) []remediation.EditRecord {
 	if s.evidence == nil {
 		return nil
 	}

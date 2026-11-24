@@ -5,7 +5,6 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
-	"os"
 	"path"
 	"path/filepath"
 	"reflect"
@@ -28,22 +27,13 @@ const (
 // layer that may name ports.LLMProvider or ports.VerificationPipeline: the
 // runner and its steps, the ports themselves, the model's cache and prompt log,
 // and the conformance suite, which supplies scripted stand-ins for both.
-// remediationFrozenDirs are the legacy engine's packages, which call the model
-// and the verification pipeline directly. Each entry must name a directory
-// (TestRemediationGuardFrozenPackagesExist).
-var remediationModelAndGateDirs = append([]string{
+var remediationModelAndGateDirs = []string{
 	"agent-remediation/service/runner",
 	"agent-remediation/service/steps",
 	"agent-remediation/service/ports",
 	"agent-remediation/service/llmcache",
 	"agent-remediation/service/promptlog",
 	"agent-remediation/service/conformance",
-}, remediationFrozenDirs...)
-
-var remediationFrozenDirs = []string{
-	"agent-remediation/service/handlers",
-	"agent-remediation/service/fixer",
-	"agent-remediation/service/verification",
 }
 
 // walkRemediationGoFiles parses every non-test .go file under dir (relative to
@@ -204,19 +194,6 @@ func TestOnlyTheRunnerReachesTheModelAndTheGate(t *testing.T) {
 	}
 }
 
-// TestRemediationGuardFrozenPackagesExist fails when a folder of
-// remediationFrozenDirs is not a directory, so removing a frozen package drops
-// it from the list instead of leaving an allowance for a path nothing lives at.
-func TestRemediationGuardFrozenPackagesExist(t *testing.T) {
-	root := repoRootFromTest(t)
-	for _, dir := range remediationFrozenDirs {
-		info, err := os.Stat(filepath.Join(root, filepath.FromSlash(dir)))
-		if err != nil || !info.IsDir() {
-			t.Errorf("remediationFrozenDirs names %q, which is not a directory under the repository root (err: %v)", dir, err)
-		}
-	}
-}
-
 // TestOnlyTheRunnerCreatesCheckedOrVerified fails when a non-test file of
 // agent-remediation outside service/runner calls remediation.NewChecked or
 // remediation.NewVerified. A Checked or a Verified value is proof that the
@@ -320,9 +297,6 @@ func f(ports struct{ LLMProvider int }) int { return ports.LLMProvider }
 		"agent-remediation/service/llmcache/caching_provider.go":   true,
 		"agent-remediation/service/promptlog/promptlog.go":         true,
 		"agent-remediation/service/conformance/world.go":           true,
-		"agent-remediation/service/handlers/propose_fix.go":        true,
-		"agent-remediation/service/fixer/fixer.go":                 true,
-		"agent-remediation/service/verification/reconciler.go":     true,
 		"agent-remediation/service/overlay/overlay.go":             false,
 		"agent-remediation/service/proposals/proposals.go":         false,
 		"agent-remediation/service/runnerx/x.go":                   false,

@@ -1,8 +1,7 @@
 # A finance model and a marketing model fail because the release changed
 # core's orders model, which both read: it dropped the amount column. The fix
 # restores it in core. When it cannot, both members are handed over, since a
-# fix in their own services cannot ship before core's. Built from the upstream
-# lane's tests (service/fixer/upstream_test.go).
+# fix in their own services cannot ship before core's.
 kind: fixture
 version: 1
 type: cross-service-upstream

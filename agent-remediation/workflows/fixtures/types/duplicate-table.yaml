@@ -1,6 +1,5 @@
 # Two services build analytics.orders: the release's marketing model is
-# renamed. Built from the duplicate-table lane's tests
-# (service/fixer/duplicate_table_test.go).
+# renamed.
 kind: fixture
 version: 1
 type: duplicate-table

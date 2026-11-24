@@ -20,8 +20,8 @@ import (
 // The remediation fixture repository: the working tree stub-github serves from
 // GET /repos/{owner}/{repo}/tarball/{ref}, and the source of the ODCS contract
 // each of these tests posts a release for. Both readers take the same files,
-// so the contract a release is rejected on and the contract the fixer finds in
-// the checkout cannot describe different nodes.
+// so the contract a release is rejected on and the contract the python-validation
+// type finds in the checkout cannot describe different nodes.
 //
 // Each scenario has a service of its own, so no two share a contract
 // directory. The packaging step packs a whole directory into one bundle, so a
@@ -103,7 +103,8 @@ const (
 	// submission.
 	pyAttemptStartBudget = 3 * time.Minute
 	// pyAttemptFinalizeBudget covers a terminal verification verdict reaching
-	// the proposal row: one reconciler tick, 5s in this compose stack.
+	// the proposal row: one tick of the runner's gate poller, 5s in this compose
+	// stack.
 	pyAttemptFinalizeBudget = 2 * time.Minute
 	// pyRecordVisibleBudget covers a write becoming readable through another
 	// service's API or stream: a submitted release appearing in the release
@@ -112,21 +113,22 @@ const (
 	pyRecordVisibleBudget = 1 * time.Minute
 )
 
-// TestE2E_PythonValidationFailure_VerifiedFix drives the whole python
-// remediation lane on a single-attempt repair:
+// TestE2E_PythonValidationFailure_VerifiedFix drives the runner's
+// python-validation type end to end on a single-try repair:
 //
 //	POST /releases (kind=python-odcs, one node whose declared read cannot bind)
 //	→ the validation Job's bind check fails → release rejected
 //	→ classifier emits remediation.requested:v3 (one node, node_type=python-node)
-//	→ agent-remediation routes it to the python contract fixer: fetches the
-//	  repository tarball at the failing commit from stub-github, finds the
-//	  .odcs.yaml file declaring the node, has the model correct it, packs the
-//	  directory with continuo-runtime, uploads the bundle and POSTs it back as
-//	  a verification run
+//	→ agent-remediation's runner matches it to the python-validation type: its
+//	  contract_file step fetches the repository tarball at the failing commit
+//	  from stub-github and finds the .odcs.yaml file declaring the node, its
+//	  prompt has the model correct it, its contract_packages check packs the
+//	  directory with continuo-runtime, and its verification_run gate uploads
+//	  the bundle and POSTs it back as a verification run
 //	→ the proposal parks in 'verifying' naming that verification run
 //	→ the run runs the real parse + candidate-schema + validation pipeline and
 //	  stops at 'passed' — it never promotes and is never readable as a release
-//	→ the reconciler finalizes the proposal to 'proposed' and emits
+//	→ the runner's gate poller finalizes the proposal to 'proposed' and emits
 //	  remediation.proposed:v1
 //
 // It is the feature's definition of done: every stage above has to work for it
@@ -173,7 +175,7 @@ func TestE2E_PythonValidationFailure_VerifiedFix(t *testing.T) {
 	clearProd := rejectPythonFixtureRelease(t, ctx, clients, pyBadReadService, releaseID)
 	defer clearProd()
 
-	// 1. The fixer produced an attempt and parked it awaiting its
+	// 1. The runner's try produced an attempt and parked it awaiting its
 	//    verification run. The run id is read off the row rather than
 	//    re-derived here, so the naming rule is asserted as the system's, not
 	//    the test's.
@@ -196,7 +198,7 @@ func TestE2E_PythonValidationFailure_VerifiedFix(t *testing.T) {
 	// 3. It runs the real pipeline and stops at passed.
 	waitForVerificationStatus(t, ctx, clients, runID, "passed", pyVerifyVerdictBudget)
 
-	// 4. The reconciler turns the verified attempt into a reviewable fix.
+	// 4. The gate poller turns the verified attempt into a reviewable fix.
 	proposed := waitForProposal(t, ctx, clients, releaseID, pyBadReadUniqueID, 1, "proposed", pyAttemptFinalizeBudget)
 	require.Empty(t, proposed.VerifyError, "a verified fix records no verification error")
 	require.Equal(t, runID, proposed.VerificationRunID,
@@ -252,9 +254,10 @@ func TestE2E_PythonValidationFailure_VerifiedFix(t *testing.T) {
 }
 
 // TestE2E_PythonValidationFailure_VerificationErrorFeedsNextAttempt drives the
-// same lane when the first repair is wrong, which is the property that makes
-// the python lane a loop rather than a single shot: attempt n+1 is shown what
-// attempt n changed and the error its verification run reported back.
+// same type when the first repair is wrong, which is the property that makes
+// the python-validation type a loop rather than a single shot: the next try is
+// shown, through the previous_tries step, what the earlier try changed and the
+// error its verification run reported back.
 //
 // The canned model answers the first attempt with a read that still cannot
 // bind, and answers a retry with the binding one — recognising a retry by the
@@ -367,8 +370,8 @@ func TestE2E_PythonValidationFailure_VerificationErrorFeedsNextAttempt(t *testin
 // rejectPythonFixtureRelease posts one of the remediation fixture repository's
 // services as a python-odcs release and waits for it to be rejected. The
 // bundle it uploads is built from the same files the served repository
-// checkout holds, so the node the release fails on is the node the fixer will
-// later find in the checkout.
+// checkout holds, so the node the release fails on is the node the
+// python-validation type will later find in the checkout.
 //
 // It clears both python fixture services' production pointers before posting
 // and returns a cleanup that clears them again — a leftover pointer would drag
@@ -646,8 +649,8 @@ func assertPipelineNamedVerification(t *testing.T, ctx context.Context, clients 
 }
 
 // waitForRemediationProposed polls remediation.proposed:v1 for the fix a
-// verified attempt announces. The reconciler writes the row and enqueues this
-// event in one transaction, so its arrival is what proves the announcement was
+// verified attempt announces. The runner's gate poller writes the row and
+// enqueues this event in one transaction, so its arrival is what proves the announcement was
 // not lost between the two.
 func waitForRemediationProposed(
 	t *testing.T, ctx context.Context, proposedTap *streamTap, releaseID, nodeID string, timeout time.Duration,
@@ -674,7 +677,7 @@ func waitForRemediationProposed(
 
 // assertNoRemediationTriggerFor fails if any remediation trigger names the
 // given run. Called with a verification run id: a trigger for one would mean
-// a failed fix attempt had been handed back to the fixer as a fresh failure to
+// a failed fix attempt had been handed back to the runner as a fresh failure to
 // heal, which is a loop with no exit.
 func assertNoRemediationTriggerFor(t *testing.T, requestedTap *streamTap, runID string) {
 	t.Helper()
@@ -704,7 +707,7 @@ func assertNoNodeVersionsFor(t *testing.T, ctx context.Context, clients *testCli
 		"verification run %s must write no :NodeVersion — it never promoted", runID)
 }
 
-// TestE2E_PythonParseFailure_VerifiedFix drives the python remediation lane
+// TestE2E_PythonParseFailure_VerifiedFix drives the runner's python-parse type
 // from the parse stage, the leg that runs before any Job:
 //
 //	POST /releases (kind=python-odcs, one node whose declared read is not schema-qualified)
@@ -714,19 +717,20 @@ func assertNoNodeVersionsFor(t *testing.T, ctx context.Context, clients *testCli
 //	  service, node_type=python-node}]} — the parser's own text is inline;
 //	  there is no dbt log because nothing ran
 //	→ classifier emits remediation.requested:v3 (source=parse, node_type=python-node)
-//	→ agent-remediation routes it to the python parse fixer: the trigger's
-//	  file_path names the node's contract file by its path in the service's
-//	  bundle, not in the repository, so the fixer finds the .odcs.yaml file
-//	  from the node id alone, has the model qualify
-//	  the read's relation, packs the directory and POSTs it as a verification
+//	→ agent-remediation's runner matches it to the python-parse type: the
+//	  trigger's file_path names the node's contract file by its path in the
+//	  service's bundle, not in the repository, so the contract_file step finds
+//	  the .odcs.yaml file from the node id alone, the prompt has the model
+//	  qualify the read's relation, and the contract_packages check and the
+//	  verification_run gate pack the directory and POST it as a verification
 //	  run
 //	→ the run's own parse leg accepts the repaired SQL, its validation leg binds
 //	  the now-qualified read, and it stops at 'passed'
-//	→ the reconciler finalizes the proposal to 'proposed'
+//	→ the runner's gate poller finalizes the proposal to 'proposed'
 //
-// The validation-stage sibling above proves the contract-fix lane; this test
-// proves the parse stage reaches it for a python node, with a rejection that
-// carries no log and no code bundle.
+// The validation-stage sibling above proves the python-validation type; this
+// test proves the parse stage reaches the python-parse type for a python node,
+// with a rejection that carries no log and no code bundle.
 func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -760,10 +764,10 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 
 	// 1. The rejection is a parse-stage rejection naming the python node, with
 	//    the parser's detail inline and the node's kind on the entry — which is
-	//    what routes it to the python parse fixer before any read.
+	//    what matches it to the python-parse type before any read.
 	assertRejectedPythonParseStage(t, ctx, rejectedTap, releaseID)
 
-	// 2. The fixer produced an attempt and parked it on a verification run.
+	// 2. The runner's try produced an attempt and parked it on a verification run.
 	verifying := waitForProposal(t, ctx, clients, releaseID, pyParseUniqueID, 1, "verifying", pyAttemptStartBudget)
 	runID := verifying.VerificationRunID
 	require.NotEmpty(t, runID, "a verifying proposal must name the run that is judging it")
@@ -776,7 +780,7 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 	assertNotListedAsRelease(t, ctx, clients, runID)
 	waitForVerificationStatus(t, ctx, clients, runID, "passed", pyVerifyVerdictBudget)
 
-	// 4. The reconciler turns the verified attempt into a reviewable fix.
+	// 4. The gate poller turns the verified attempt into a reviewable fix.
 	proposed := waitForProposal(t, ctx, clients, releaseID, pyParseUniqueID, 1, "proposed", pyAttemptFinalizeBudget)
 	require.Empty(t, proposed.VerifyError, "a verified fix records no verification error")
 
@@ -808,7 +812,7 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 }
 
 // assertRejectedPythonParseStage reads the release's rejection off
-// release.rejected:v1 and pins the shape the python parse lane depends on:
+// release.rejected:v1 and pins the shape the python-parse type depends on:
 // stage parse, reason unqualified_reference, one per-node entry carrying the
 // parser's detail inline, the contract file as file_path (its path in the
 // service's bundle, where the rejected SQL is declared), the service, and
@@ -843,7 +847,7 @@ func assertRejectedPythonParseStage(t *testing.T, ctx context.Context, rejectedT
 			require.NotEmpty(t, p.Repo)
 			require.Equal(t, releaseID, p.CommitSHA, "the python fixture posts its release id as the commit sha")
 			require.Empty(t, p.CodeBundleURI,
-				"a parse rejection precedes the parse that produces the code bundle, so the fixer must work without one")
+				"a parse rejection precedes the parse that produces the code bundle, so the python-parse type must work without one")
 			require.Len(t, p.PerNode, 1)
 			require.Equal(t, pyParseUniqueID, p.PerNode[0].NodeID)
 			require.Equal(t, "unqualified_reference", p.PerNode[0].Kind)

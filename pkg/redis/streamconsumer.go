@@ -22,20 +22,6 @@ import (
 // MessageHandler is a callback invoked for each message read from a stream
 type MessageHandler func(ctx context.Context, msg goredis.XMessage) error
 
-// DropHandler is an optional callback invoked when the consumer abandons a
-// message it could not process — a permanent handler error, or a transient one
-// that persisted to its last delivery. It fires once a dead-lettered message is
-// acknowledged, carrying the message and the cause, so the owning service can
-// finalize any in-flight state it committed for that message (which the
-// consumer leaves dangling, since dead-lettering leaves the service's own store
-// untouched). The ctx it receives is detached from the service's shutdown
-// cancellation and bounded by the consumer's handler timeout, so a shutdown
-// that begins after the dead letter was written does not cancel the
-// notification, and a slow handler cannot delay shutdown beyond that bound. It is best-effort housekeeping,
-// never on the message-processing critical path: it is invoked with panic
-// recovery and its outcome does not affect the ACK.
-type DropHandler func(ctx context.Context, msg goredis.XMessage, cause error)
-
 // StreamConsumer is a generic Redis Streams consumer that delegates message
 // processing to a MessageHandler callback. It reads the stream's key,
 // Key(streamName), with one read loop and one reclaim loop. It never creates a
@@ -109,13 +95,6 @@ type consumerConfig struct {
 	// same worker lane. An empty/absent value hashes to a stable lane so order
 	// is never violated, only parallelism is forgone for that message.
 	aggregateKeyField string
-
-	// onDrop, when set, is invoked once a dead-lettered message is
-	// acknowledged (see DropHandler). It is a seam for the owning service to
-	// close out in-flight state the abandoned message left behind. When nil, an
-	// abandoned message is dead-lettered and acknowledged with no further
-	// notification.
-	onDrop DropHandler
 
 	// noDeadLetters, set by WithoutDeadLetters, leaves a message the consumer
 	// would dead-letter pending instead, logged, for the next sweep.
@@ -208,15 +187,6 @@ func WithHandlerTimeout(d time.Duration) ConsumerOption {
 // whose failures mean an outage rather than a bad message.
 func WithInfraClassifier(f InfraClassifier) ConsumerOption {
 	return func(c *StreamConsumer) { c.infraClassifiers = append(c.infraClassifiers, f) }
-}
-
-// WithOnDrop registers a DropHandler invoked once a dead-lettered message is
-// acknowledged (see the onDrop field and DropHandler). Pass it when the
-// handler commits in-flight state before it can fail — e.g. an in-flight
-// status row — so that state is not orphaned when the message is abandoned.
-// Without it, abandoned messages are dead-lettered with no notification.
-func WithOnDrop(fn DropHandler) ConsumerOption {
-	return func(c *StreamConsumer) { c.onDrop = fn }
 }
 
 // WithoutDeadLetters makes the consumer never dead-letter: a message whose
@@ -379,25 +349,6 @@ const (
 	logDeadLettered = "Message dead-lettered — ACKing to drop from PEL"
 	logInfraPause   = "Infrastructure error — pausing consumer"
 )
-
-// onDropped notifies the registered DropHandler that a dead-lettered message
-// has been acknowledged, so the owning service can finalize in-flight state the
-// message left behind. It is nil-safe (no handler → no-op) and panic-safe (a
-// panicking handler is recovered and logged rather than unwinding into the
-// consumer loop); the message is already dead-lettered and acknowledged when it
-// runs, so a failing notification changes nothing about either.
-func (c *StreamConsumer) onDropped(ctx context.Context, msg goredis.XMessage, cause error) {
-	if c.onDrop == nil {
-		return
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			c.logger.Error("Drop handler panicked — recovered",
-				"stream", c.streamName, "message_id", msg.ID, "panic", r)
-		}
-	}()
-	c.onDrop(ctx, msg, cause)
-}
 
 // safeInvoke calls the handler once under the handler deadline, with panic
 // recovery: a recovered panic becomes a plain error, so one poison message
@@ -645,11 +596,11 @@ func (c *StreamConsumer) hold(ctx context.Context, ids []string) {
 	}
 }
 
-// settleContext detaches ctx from shutdown for the steps that follow a decided
-// outcome — the ACK of a handled or dead-lettered message and the drop
-// notification — so a shutdown that begins after the decision cannot leave the
-// message pending, to be handled or dead-lettered a second time. The handler
-// timeout bounds those steps, so shutdown still completes.
+// settleContext detaches ctx from shutdown for the step that follows a decided
+// outcome — the ACK of a handled or dead-lettered message — so a shutdown that
+// begins after the decision cannot leave the message pending, to be handled or
+// dead-lettered a second time. The handler timeout bounds that step, so
+// shutdown still completes.
 func (c *StreamConsumer) settleContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	d := c.handlerTimeout
 	if d <= 0 {
@@ -670,10 +621,9 @@ func (c *StreamConsumer) xaddDeadLetter(ctx context.Context, values map[string]a
 // deadLetterAndAck writes msg to consumer.dead_letter:v1 and acknowledges it
 // only after that write succeeded. While the write fails the message stays
 // pending and the consumer pauses, retrying the write (never the handler).
-// logDeadLettered is logged once the write succeeded; the drop handler fires
-// once the acknowledgement succeeded. Both the acknowledgement and the drop
-// handler run on settleContext, so a shutdown after the write neither leaves
-// the message pending to be dead-lettered again nor skips the notification.
+// logDeadLettered is logged once the write succeeded. The acknowledgement runs
+// on settleContext, so a shutdown after the write does not leave the message
+// pending to be dead-lettered again.
 func (c *StreamConsumer) deadLetterAndAck(ctx context.Context, msg goredis.XMessage, kind model.DeadLetterKind, cause error, deliveries int64) {
 	values, err := events.ConsumerDeadLetterFields(events.DeadLetteredMessage{
 		TenantID: tenantOf(msg), Producer: c.service, OccurredAt: c.nowFn(),
@@ -704,10 +654,7 @@ func (c *StreamConsumer) deadLetterAndAck(ctx context.Context, msg goredis.XMess
 	c.observer.DeadLettered(c.streamName, c.consumerGroup, kind)
 	sctx, cancel := c.settleContext(ctx)
 	defer cancel()
-	if err := c.ackFn(sctx, msg.ID); err != nil {
-		return
-	}
-	c.onDropped(sctx, msg, cause)
+	_ = c.ackFn(sctx, msg.ID)
 }
 
 // tenantOf returns the tenant_id a message carries, or the default tenant.
@@ -1301,8 +1248,7 @@ func (c *StreamConsumer) admit(ctx context.Context, msg goredis.XMessage) (gored
 
 // ackOne acknowledges a single message, logging and returning the error on
 // failure. A failed XACK is non-fatal: the message stays in the PEL and the
-// reclaim sweep redelivers it — the returned error lets deadLetterAndAck hold
-// back the drop notification until the ACK is confirmed.
+// reclaim sweep redelivers it.
 func (c *StreamConsumer) ackOne(ctx context.Context, id string) error {
 	if err := c.client.XAck(ctx, c.key, c.consumerGroup, id).Err(); err != nil {
 		c.logger.Error("Failed to ACK message",

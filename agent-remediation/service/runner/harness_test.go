@@ -830,11 +830,11 @@ func (h *harness) accept(trig remediation.Trigger) uuid.UUID {
 	return rems[0].ID
 }
 
-// legacyAttempt records a terminal attempt today's driver wrote for the
-// release.
-func (h *harness) legacyAttempt(attempt int, status proposal.Status) {
+// attemptWithNoRemediation records a terminal attempt row that belongs to no
+// remediation, for the release.
+func (h *harness) attemptWithNoRemediation(attempt int, status proposal.Status) {
 	h.t.Helper()
-	h.legacyAttemptInRound(1, attempt, status)
+	h.attemptWithNoRemediationInRound(1, attempt, status)
 }
 
 // saveStep writes a journal row as it stands.
@@ -846,9 +846,9 @@ func (h *harness) saveStep(row remediation.StepRun) {
 	require.NoError(h.t, u.Commit())
 }
 
-// legacyAttemptInRound records a terminal attempt today's driver wrote for the
-// release in one round.
-func (h *harness) legacyAttemptInRound(round, attempt int, status proposal.Status) {
+// attemptWithNoRemediationInRound records a terminal attempt row that belongs to
+// no remediation, for the release in one round.
+func (h *harness) attemptWithNoRemediationInRound(round, attempt int, status proposal.Status) {
 	h.t.Helper()
 	u := memory.NewUnitOfWork(h.store)
 	require.NoError(h.t, u.Begin(ctx))

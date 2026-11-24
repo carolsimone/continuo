@@ -269,11 +269,11 @@ func TestRunner_ACancelledDriveIsNotAStepFailure(t *testing.T) {
 	}
 }
 
-// A legacy handler that stopped after it recorded the attempt as generating
-// leaves that row behind. The remediation the runner starts for the same
-// trigger finds the attempt number taken, and its own row takes over: no row of
-// the release is left generating.
-func TestRunner_ALegacyRowLeftGeneratingAtTheSwitchIsTakenOver(t *testing.T) {
+// An attempt row left generating with no remediation, by a process that stopped
+// after it recorded the attempt, holds the attempt number. The remediation the
+// runner starts for the same trigger finds the number taken, and its own row
+// takes over: no row of the release is left generating.
+func TestRunner_ARowWithNoRemediationLeftGeneratingIsTakenOver(t *testing.T) {
 	h := newHarness(t)
 	u := memory.NewUnitOfWork(h.store)
 	require.NoError(t, u.Begin(ctx))
@@ -293,16 +293,16 @@ func TestRunner_ALegacyRowLeftGeneratingAtTheSwitchIsTakenOver(t *testing.T) {
 	require.Len(t, h.proposals(), 1, "one row for the attempt")
 	p := h.proposals()[0].Proposal
 	assert.Equal(t, proposal.StatusProposed, p.Status)
-	assert.Equal(t, id.String(), p.RemediationID, "the runner's row took over the legacy row")
+	assert.Equal(t, id.String(), p.RemediationID, "the runner's row took over the row with no remediation")
 	for _, row := range h.proposals() {
 		assert.NotEqual(t, proposal.StatusGenerating, row.Proposal.Status)
 	}
 	assert.Equal(t, remediation.StatusDone, h.remediation(id).Status)
 }
 
-// The same, when the runner's attempt ends without a gate: the legacy row is
-// settled by the runner's row too.
-func TestRunner_ALegacyRowLeftGeneratingIsSettledWhenTheAttemptFails(t *testing.T) {
+// The same, when the runner's attempt ends without a gate: the row with no
+// remediation is settled by the runner's row too.
+func TestRunner_ARowWithNoRemediationLeftGeneratingIsSettledWhenTheAttemptFails(t *testing.T) {
 	h := newHarness(t)
 	u := memory.NewUnitOfWork(h.store)
 	require.NoError(t, u.Begin(ctx))

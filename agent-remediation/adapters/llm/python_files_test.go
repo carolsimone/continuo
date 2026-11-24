@@ -15,7 +15,7 @@ import (
 )
 
 // pythonFixProposeRequest is the multi-file request shape the python contract
-// fixer sends: a differently-named forced tool whose single interesting
+// prompt sends: a differently-named forced tool whose single interesting
 // parameter is an array of {path, content} objects.
 func pythonFixProposeRequest() prompt.ProposeRequest {
 	return prompt.ProposeRequest{
@@ -57,9 +57,9 @@ const anthropicPythonFixResponse = `{
 }`
 
 // TestAnthropic_ParsesUpdatedFiles verifies that the Anthropic adapter reads a
-// multi-file answer back off the wire. Without it the python fixer receives an
-// empty file list and records every attempt as failed, no matter what the model
-// actually proposed.
+// multi-file answer back off the wire. Without it the python contract prompt
+// receives an empty file list and records every attempt as failed, no matter
+// what the model actually proposed.
 func TestAnthropic_ParsesUpdatedFiles(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -173,7 +173,7 @@ const openaiPythonFixResponse = `{
 }`
 
 // TestOpenAI_ParsesUpdatedFiles verifies the same multi-file answer decodes on
-// the OpenAI-compatible adapter, so the python fixer works on either provider.
+// the OpenAI-compatible adapter, so the python contract prompt works on either provider.
 func TestOpenAI_ParsesUpdatedFiles(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

@@ -61,7 +61,7 @@ func stepTwo(source, confidence string) ports.ProposeResult {
 	return ports.ProposeResult{ProposedSQL: source, Rationale: editNote, Confidence: confidence, Model: "model-2"}
 }
 
-// firstRequest is the diagnosis request the validation lane builds from the
+// firstRequest is the diagnosis request the validation prompt builds from the
 // inputs the step is given.
 func firstRequest(ancestorsKnown bool) prompt.ProposeRequest {
 	return prompt.Assemble(prompt.Evidence{
@@ -77,7 +77,7 @@ func firstRequest(ancestorsKnown bool) prompt.ProposeRequest {
 	})
 }
 
-// secondRequest is the source-fix request the lane builds: the source and the
+// secondRequest is the source-fix request the prompt builds: the source and the
 // first answer's rationale.
 func secondRequest() prompt.ProposeRequest {
 	return prompt.AssembleSourceFix(modelSource, "model.svc.a", diagnosisNote)
@@ -107,7 +107,7 @@ func TestDBTValidation_MetaNamesTheStepAndWhatItReads(t *testing.T) {
 	assert.Empty(t, m.Provides)
 }
 
-func TestDBTValidation_MakesTheLanesTwoRequests(t *testing.T) {
+func TestDBTValidation_MakesItsTwoRequests(t *testing.T) {
 	model := answers(stepOne(fixedSQL), stepTwo(fixedSource, "high"))
 
 	proposeValidation(t, &fakeArtifacts{}, failure(nil), validationEvidence(resolvedBundle()), model)

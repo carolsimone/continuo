@@ -1,15 +1,13 @@
 // Package promptlog provides a logging decorator over the LLMProvider port that
 // records the full prompt agent-remediation sends to the model — the system
-// prompt, the user content, the forced tool, and (when the driver stamps it on
+// prompt, the user content, the forced tool, and (when the runner stamps it on
 // the context) the failure it addresses. Nothing else captures this: the
 // caching decorator stores only the completion, and only the corrected source
-// and its diff are persisted as artifacts, so before this there was no record of
+// and its diff are persisted as artifacts, so without this there is no record of
 // what was actually fed to the LLM for a given proposal.
 //
 // The runner cleans every request with its Redactor before it reaches this
-// port, so a runner prompt is logged with placeholders in place of the values.
-// The legacy lanes pass their texts through the LogSanitizer, which returns them
-// unchanged, so their prompts are logged exactly as they are sent.
+// port, so a prompt is logged with placeholders in place of the values.
 //
 // The decorator is wired inside the caching decorator (it wraps the real
 // provider; the cache wraps it), so a prompt is logged exactly when the model is
@@ -28,9 +26,9 @@ import (
 // logMessage is the slog message under which every fed prompt is recorded.
 const logMessage = "llm prompt"
 
-// Failure identifies the failure a prompt was built for. The driver stamps it on
-// the context before dispatching to a Fixer so the logged prompt can be tied
-// back to the release, node, source, and attempt it addresses.
+// Failure identifies the failure a prompt was built for. The runner stamps it on
+// the context before calling the model so the logged prompt can be tied back to
+// the release, node, source, and attempt it addresses.
 type Failure struct {
 	Source    string
 	ReleaseID string
@@ -38,12 +36,12 @@ type Failure struct {
 	Attempt   int
 }
 
-// failureCtxKey is the unexported context key under which the driver stores the
+// failureCtxKey is the unexported context key under which the runner stores the
 // failure identity.
 type failureCtxKey struct{}
 
 // ContextWithFailure returns a context carrying the failure identity for the
-// prompt about to be built. The driver sets it alongside the LLM-cache
+// prompt about to be built. The runner sets it alongside the LLM-cache
 // idempotency key.
 func ContextWithFailure(ctx context.Context, f Failure) context.Context {
 	return context.WithValue(ctx, failureCtxKey{}, f)

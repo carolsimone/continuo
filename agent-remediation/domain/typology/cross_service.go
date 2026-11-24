@@ -47,7 +47,7 @@ func (CrossServiceCause) Claim(remaining []FailingNode, dag DagView) ([]Cluster,
 		// target: a test binds again when the model it guards is fixed, and a test
 		// that is itself wrong is a human's edit. Do not emit that cluster; hand
 		// its members back unclaimed so they flow to the next cause and, failing
-		// that, the independent default where the driver skips a dbt-test target. A
+		// that, the independent default where the runner hands a dbt-test target over. A
 		// mixed cluster (at least one model/seed/snapshot member) still forms, so
 		// the producer is fixed and its tests ride along.
 		if allDbtTest(members, nodeTypeByID) {

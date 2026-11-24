@@ -86,7 +86,7 @@ func TestBuild_EmptyInputIsAnEmptyArchive(t *testing.T) {
 }
 
 // TestBuild_DoesNotReorderTheCallersSlice pins that sorting happens on a copy:
-// the driver keeps the edit order the clusters produced, and a builder that
+// the caller keeps the edit order the clusters produced, and a builder that
 // sorted the caller's own slice would silently reorder the proposal's edits.
 func TestBuild_DoesNotReorderTheCallersSlice(t *testing.T) {
 	files := []File{{Path: "models/b.sql", Content: []byte("b")}, {Path: "models/a.sql", Content: []byte("a")}}

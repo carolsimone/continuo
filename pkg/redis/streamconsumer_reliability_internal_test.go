@@ -408,17 +408,11 @@ func TestDeadLetterAndAck_AcksWhenShutdownFollowsTheWrite(t *testing.T) {
 	c, logs := reliabilityConsumer(t, func(context.Context, goredis.XMessage) error { return events.ErrPermanent }, rec)
 	c.deadLetterFn = func(context.Context, map[string]any) error { rec.record("xadd"); cancel(); return nil }
 	c.ackFn = liveAck(rec)
-	var dropCtxErr error
-	WithOnDrop(func(dctx context.Context, _ goredis.XMessage, _ error) {
-		dropCtxErr = dctx.Err()
-		rec.record("drop")
-	})(c)
 
 	c.processOne(ctx, msg("1-0"))
 
-	assert.Equal(t, []string{"xadd", "ack:1-0", "drop"}, rec.calls,
+	assert.Equal(t, []string{"xadd", "ack:1-0"}, rec.calls,
 		"once the dead letter is written, a shutdown no longer stops its ACK, so no second dead letter follows")
-	assert.NoError(t, dropCtxErr, "the drop handler runs with a live context")
 	assert.Equal(t, 1, strings.Count(logs.String(), logDeadLettered))
 }
 

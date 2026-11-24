@@ -1,5 +1,4 @@
-# A dbt seed whose csv row has one field too many. Built from the seed lane's
-# tests (service/fixer/seed_test.go).
+# A dbt seed whose csv row has one field too many.
 kind: fixture
 version: 1
 type: seed-build

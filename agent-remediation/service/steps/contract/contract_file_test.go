@@ -72,7 +72,7 @@ func TestContractFile_TheSchemaAndTableAreTheLastTwoSegmentsOfTheNodeID(t *testi
 	assert.Equal(t, "rates", l.calls[0].table)
 }
 
-func TestContractFile_DeclinesWithTheLanesTextBeforeFetchingAnything(t *testing.T) {
+func TestContractFile_DeclinesWithAReasonBeforeFetchingAnything(t *testing.T) {
 	cases := []struct {
 		name string
 		mod  func(*remediation.Failure)

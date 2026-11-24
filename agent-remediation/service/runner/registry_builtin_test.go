@@ -75,9 +75,9 @@ func TestBuiltinFlowLetsTheModelSeeCodeAndLogs(t *testing.T) {
 
 // TestBuiltinTypesCheckSiblingsBeforeImagePackages: a python or csv cluster
 // whose sibling also failed and whose release records no image packages
-// qualifies for two declines. The legacy lanes check the sibling first, so
-// every built-in type that runs both steps runs failing_siblings before
-// image_packages, and both engines record the same reason.
+// qualifies for two declines. The sibling is checked first, so every built-in
+// type that runs both steps runs failing_siblings before image_packages, and
+// the reason recorded is the sibling's.
 func TestBuiltinTypesCheckSiblingsBeforeImagePackages(t *testing.T) {
 	set, err := workflowfile.Load(workflows.Builtin)
 	require.NoError(t, err)

@@ -1,6 +1,5 @@
 # A dbt model whose SQL the release's parser rejected: a comma is missing
-# between two columns. Built from the parse lane's tests
-# (service/fixer/parse_test.go).
+# between two columns.
 kind: fixture
 version: 1
 type: dbt-parse

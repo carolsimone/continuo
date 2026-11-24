@@ -41,8 +41,8 @@ type View struct {
 	// RemediationRound is the release's remediation round this attempt belongs to; the attempt cap is counted within a round.
 	RemediationRound int
 	// RemediationID is the id of the runner's remediation the attempt belongs
-	// to, empty for an attempt of the legacy engine or one whose remediation
-	// was deleted.
+	// to, empty for an attempt row that belongs to no remediation or one whose
+	// remediation was deleted.
 	RemediationID string
 	NodeID        string
 	// ResolvedNodeIDs is the failing nodes this attempt addresses, sorted;
@@ -52,13 +52,13 @@ type View struct {
 	Attempt         int
 	Status          Status
 	// NodeOutcomes is, per failing node, how this attempt ended for it — a
-	// cluster whose fixer skipped or failed leaves its members
+	// cluster the runner skipped or failed leaves its members
 	// skipped/failed while other members verify.
 	NodeOutcomes map[string]NodeOutcome
 	// Approvers is who must approve what the attempt did with each node a
 	// remediation settled at its end, fixed or handed over, one entry per node
-	// sorted by node id. It is empty for an attempt of the proposal driver and
-	// for one with no approvers recorded.
+	// sorted by node id. It is empty for an attempt row that belongs to no remediation
+	// and for one with no approvers recorded.
 	Approvers []Approver
 	// Verifications is one fix-verification run per edited service;
 	// VerificationRunID is the view of the first.
@@ -74,13 +74,7 @@ type View struct {
 	Services []string
 	// VerifyError is the verification run's failure reason, recorded by
 	// MarkVerifyFailed; empty unless verification failed.
-	VerifyError string
-	// TriggerPayload is the raw remediation.requested:v1 payload this attempt
-	// was triggered by, written when Status is (or was) 'verifying' so a
-	// reconciler can rebuild the trigger for a retry. It is kept when the
-	// attempt is finalized — the reconciler reads it from a row it has already
-	// moved to 'failed'. Empty for an attempt that never entered verification.
-	TriggerPayload      []byte
+	VerifyError         string
 	Confidence          Confidence
 	Rationale           string
 	ProposedSQLURI      string

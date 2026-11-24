@@ -150,10 +150,10 @@ export function proposalCodeForNode(p: ProposalDTO, nodeId: string): HandoverRea
 }
 
 // proposalApproverForNode reads who must approve what a batched attempt did
-// with one specific node. It reads only that node's own entry: an attempt of
-// the legacy engine records none, and a node the attempt recorded no approver
-// for has none either, which says the owner was not recorded, not that the node
-// has no owner (an entry with an empty owner says that).
+// with one specific node. It reads only that node's own entry: an attempt row
+// with no remediation id records none, and a node the attempt recorded no
+// approver for has none either, which says the owner was not recorded, not that
+// the node has no owner (an entry with an empty owner says that).
 export function proposalApproverForNode(p: ProposalDTO, nodeId: string): ApproverDTO | undefined {
   return p.approvers?.find(a => a.node_id === nodeId);
 }

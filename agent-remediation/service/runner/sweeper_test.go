@@ -63,7 +63,7 @@ func TestSweeper_FiveFailuresIsASystemFailure(t *testing.T) {
 	assert.Empty(t, rem.LeaseOwner, "the sweeper lets go of the lease")
 	assert.Equal(t, remediation.TryDrafting, h.try(id, 1).Status, "the try is left for a redrive to resume")
 	p := h.inFlightRow()
-	assert.Equal(t, proposal.StatusFailed, p.Status, "today's in-flight row is failed with the reason")
+	assert.Equal(t, proposal.StatusFailed, p.Status, "the in-flight row is failed with the reason")
 	assert.Equal(t, deadLetteredReason(rem), p.Rationale)
 	assert.Equal(t, proposal.StatusFailed, p.NodeOutcomes["svc-a"].Status)
 }

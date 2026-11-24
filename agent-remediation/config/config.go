@@ -18,21 +18,8 @@ import (
 // renders.
 const ServiceName = "agent-remediation"
 
-// The fix-proposing engines AGENT_REMEDIATION_ENGINE accepts: the handler that
-// proposes one attempt per heal trigger, or the runner that works each trigger
-// as a remediation of committed steps. Both engines run the worker, the gate
-// poller and the sweeper, so a remediation the runner started always finishes.
-const (
-	EngineLegacy = "legacy"
-	EngineRunner = "runner"
-)
-
 // Config is the full agent-remediation runtime configuration, read once at boot.
 type Config struct {
-	// Engine is AGENT_REMEDIATION_ENGINE: EngineLegacy or EngineRunner. It
-	// decides what the remediation.requested consumer does with a heal trigger.
-	Engine string
-
 	Postgres pkgconfig.PostgresConfig
 	Redis    pkgconfig.RedisConfig
 	S3       pkgconfig.S3Config
@@ -70,7 +57,6 @@ type Config struct {
 
 	HTTPPort    string
 	GRPCPort    string
-	MaxAttempts int
 	CatalogAddr string
 
 	// WorkflowsDir is AGENT_REMEDIATION_WORKFLOWS_DIR: the folder of an
@@ -100,18 +86,18 @@ type Config struct {
 	// their status.
 	ReleaseControllerURL string
 
-	// VerificationTimeout bounds how long a proposal awaits its verification
-	// runs' verdict before the verification reconciler ends the attempt as
-	// failed. It is measured from when a run left the release queue and
-	// started running, so a backlog never spends it; when no status can be
-	// read at all, it is measured from when the attempt was recorded instead.
+	// VerificationTimeout bounds how long a try awaits its verification
+	// runs' verdict before the gate fails the try as timed out. It is measured
+	// from when a run left the release queue and started running, so a backlog
+	// never spends it; when no status can be read at all, it is measured from
+	// when the gate submitted the runs instead.
 	// Non-positive values fall back to the default so a misconfiguration can
 	// never leave a proposal waiting indefinitely; a value that is not a Go
 	// duration at all fails start-up.
 	VerificationTimeout time.Duration
 
-	// VerificationPollInterval is how often the verification reconciler reads
-	// the runs of every proposal awaiting a verdict. Non-positive values fall
+	// VerificationPollInterval is how often the gate poller reads the runs of
+	// every remediation awaiting a verdict. Non-positive values fall
 	// back to the default so a misconfigured interval can never produce a hot
 	// loop; a value that is not a Go duration at all fails start-up.
 	VerificationPollInterval time.Duration
@@ -127,7 +113,8 @@ type Config struct {
 	// MetricsPort is the port the Prometheus /metrics listener binds (METRICS_PORT).
 	MetricsPort int
 
-	// Maintenance is MAINTENANCE_ENABLED (see handlers.Deps.Maintenance).
+	// Maintenance is MAINTENANCE_ENABLED: while it is on, a try that comes due
+	// is recorded skipped for every node instead of calling the model.
 	Maintenance bool
 }
 
@@ -161,13 +148,13 @@ const defaultReleaseControllerURL = "http://release-controller:8088"
 
 // defaultVerificationTimeout bounds how long a verification run is polled for
 // a terminal verdict. It comfortably exceeds the compile+parse+validate
-// pipeline a healthy run completes in, while still failing an attempt whose
-// run wedges rather than polling forever.
+// pipeline a healthy run completes in, while still failing a try whose run
+// wedges rather than polling forever.
 const defaultVerificationTimeout = 20 * time.Minute
 
-// defaultVerificationPollInterval paces the verification reconciler. Fifteen
-// seconds keeps a verified fix at most one tick behind the run that proved
-// it, at the cost of one cheap read per waiting attempt.
+// defaultVerificationPollInterval paces the gate poller. Fifteen seconds keeps
+// a verified fix at most one tick behind the run that proved it, at the cost of
+// one cheap read per waiting remediation.
 const defaultVerificationPollInterval = 15 * time.Second
 
 // engineDialects maps WAREHOUSE_ENGINE (the chart's validation.engine value,
@@ -180,22 +167,6 @@ const defaultVerificationPollInterval = 15 * time.Second
 var engineDialects = map[string]string{
 	"postgres": "postgres",
 	"trino":    "trino",
-}
-
-// resolveEngine reads AGENT_REMEDIATION_ENGINE, defaulting an unset value to
-// the legacy engine. It records a validation failure on v and returns "" for a
-// value that is neither engine, so startup stops rather than running an engine
-// the operator did not choose.
-func resolveEngine(v *pkgconfig.Validator) string {
-	engine := pkgconfig.EnvOrDefault("AGENT_REMEDIATION_ENGINE", "")
-	switch engine {
-	case "":
-		return EngineLegacy
-	case EngineLegacy, EngineRunner:
-		return engine
-	}
-	v.Add(fmt.Sprintf("AGENT_REMEDIATION_ENGINE (unsupported %q: expected one of %s, %s)", engine, EngineLegacy, EngineRunner))
-	return ""
 }
 
 // resolveSQLDialect reads WAREHOUSE_ENGINE and returns the sqlglot dialect
@@ -250,7 +221,6 @@ func Load(v *pkgconfig.Validator) Config {
 		HTTPPort:             pkgconfig.EnvOrDefault("AGENT_REMEDIATION_HTTP_PORT", "8092"),
 		GRPCPort:             pkgconfig.EnvOrDefault("AGENT_REMEDIATION_GRPC_PORT", "50054"),
 		WorkflowsDir:         pkgconfig.EnvOrDefault("AGENT_REMEDIATION_WORKFLOWS_DIR", defaultWorkflowsDir),
-		MaxAttempts:          pkgconfig.EnvIntOrDefault("AGENT_REMEDIATION_MAX_ATTEMPTS", 3),
 		CatalogAddr:          pkgconfig.EnvOrDefault("CONTINUO_CATALOG_ADDR", "catalog:50052"),
 		ServiceRepoMapPath:   pkgconfig.EnvOrDefault("SERVICE_REPO_MAP_PATH", ""),
 		ReleaseControllerURL: pkgconfig.EnvOrDefault("RELEASE_CONTROLLER_URL", defaultReleaseControllerURL),
@@ -266,7 +236,6 @@ func Load(v *pkgconfig.Validator) Config {
 		Maintenance: pkgconfig.LoadMaintenance(v),
 	}
 	cfg.SQLDialect = resolveSQLDialect(v)
-	cfg.Engine = resolveEngine(v)
 	// A non-positive TTL would either disable expiry (Redis treats a zero SET
 	// expiration as "never expire") or make every write error; either defeats the
 	// cache's memory self-bounding, so clamp it back to the default.

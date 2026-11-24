@@ -210,8 +210,9 @@ export default function ReleaseDetailPage() {
   const [fixNote, setFixNote] = useState<Map<string, FixNote>>(new Map());
   // Per (stage, node_id) owner of a node whose fix is ready to review or that
   // was handed to a human, as the attempt that decides the cell recorded it.
-  // A node has no entry when that attempt recorded no approver for it (the
-  // legacy engine records none), so the cell then says nothing about owners.
+  // A node has no entry when that attempt recorded no approver for it (a row
+  // with no remediation id records none), so the cell then says nothing about
+  // owners.
   const [fixOwner, setFixOwner] = useState<Map<string, ApproverDTO>>(new Map());
   // The last polled proposal list for this release, kept alongside fixState so
   // the dead-end check below can recompute in-flight/PR state per remediation

@@ -26,15 +26,6 @@ func pythonEvidence() PythonEvidence {
 				ErrorExcerpt: "column missing", RejectedAt: "2026-08-01T00:00:00Z",
 				Resolved: true, ResolutionDiff: "-old\n+new", PRURL: "https://example.test/pr/1"},
 		},
-		PriorAttempts: []PriorAttempt{
-			{
-				Attempt:     1,
-				VerifyError: "verification failed: revenue_total still missing",
-				Diffs: []AttemptDiff{
-					{Path: "services/service-py/contracts/py_daily_kpis.odcs.yaml", Diff: "-    - name: revenue\n+    - name: revenue_total"},
-				},
-			},
-		},
 	}
 }
 
@@ -64,10 +55,6 @@ func TestAssemblePythonContractFix_RendersEverySection(t *testing.T) {
 	require.Contains(t, u, "+materialized: table")
 	require.Contains(t, u, "How similar failures were fixed before")
 	require.Contains(t, u, "https://example.test/pr/1")
-
-	// Prior attempts: the verification run's error and the diff that attempt made.
-	require.Contains(t, u, "verification failed: revenue_total still missing")
-	require.Contains(t, u, "+    - name: revenue_total")
 }
 
 // TestAssemblePythonContractFix_SectionsOmittedWhenAbsent verifies that an
@@ -83,7 +70,6 @@ func TestAssemblePythonContractFix_SectionsOmittedWhenAbsent(t *testing.T) {
 	})
 	u := req.User
 
-	require.NotContains(t, u, "Previous fix attempts")
 	require.NotContains(t, u, "How similar failures were fixed before")
 	require.NotContains(t, u, "Recent upstream changes")
 	require.NotContains(t, u, "```json")

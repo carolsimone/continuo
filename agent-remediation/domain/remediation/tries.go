@@ -8,9 +8,9 @@ import (
 // TryRecord is one earlier try at a release's failing set, as a later try is
 // shown it: the remediation round and try it was, its proposal attempt, what
 // each of its clusters proposed and why it was refused, what the checks across
-// clusters found, and why the verification gate failed it. An attempt of the
-// legacy engine, which numbers no try, has Try 0, so it orders before every
-// runner try of its round.
+// clusters found, and why the verification gate failed it. An attempt that
+// belongs to no remediation numbers no try, so it has Try 0 and orders before
+// every runner try of its round.
 type TryRecord struct {
 	Round   int
 	Try     int

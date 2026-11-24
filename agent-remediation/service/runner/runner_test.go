@@ -106,8 +106,8 @@ func TestRunner_DriveWithoutTheLeaseWritesNothing(t *testing.T) {
 
 func TestRunner_AttemptNumberContinuesTheReleaseSequence(t *testing.T) {
 	h := newHarness(t)
-	h.legacyAttempt(1, proposal.StatusFailed)
-	h.legacyAttempt(2, proposal.StatusFailed)
+	h.attemptWithNoRemediation(1, proposal.StatusFailed)
+	h.attemptWithNoRemediation(2, proposal.StatusFailed)
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 
 	require.NoError(t, h.runner.NextTry(ctx, id))
@@ -543,7 +543,7 @@ func TestRunner_PreflightFindingHandsTheClusterOver(t *testing.T) {
 func TestRunner_TriesSpentHandsOverOnce(t *testing.T) {
 	h := newHarness(t)
 	for attempt := 1; attempt <= 3; attempt++ {
-		h.legacyAttempt(attempt, proposal.StatusFailed)
+		h.attemptWithNoRemediation(attempt, proposal.StatusFailed)
 	}
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 	h.store.FailNextCommit()
@@ -588,7 +588,7 @@ func TestRunner_NextTryOpensATryOnlyWhenNoneIsOpen(t *testing.T) {
 func TestRunner_ARoundTwoTriggerContinuesTheAttemptsWithItsOwnTries(t *testing.T) {
 	h := newHarness(t)
 	for attempt := 1; attempt <= 3; attempt++ {
-		h.legacyAttemptInRound(1, attempt, proposal.StatusFailed)
+		h.attemptWithNoRemediationInRound(1, attempt, proposal.StatusFailed)
 	}
 	trig := trigger("compile", compileNode("svc-a"))
 	trig.Round = 2

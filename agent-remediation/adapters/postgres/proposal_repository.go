@@ -86,7 +86,7 @@ func textArray(s []string) pq.StringArray {
 }
 
 // remediationIDArg is the remediation_id column value of a proposal: NULL for
-// an attempt the proposal driver made, the remediation's id otherwise.
+// an attempt row that belongs to no remediation, the remediation's id otherwise.
 func remediationIDArg(id string) any {
 	if id == "" {
 		return nil
@@ -135,7 +135,7 @@ func (r *ProposalRepository) InsertGenerating(ctx context.Context, p proposal.Pr
 // entry left at 'generating' would keep the FIX cell spinning and hide the
 // release's "Try again" even though the row itself is failed.
 //
-// One attempt now addresses a release's whole failing set, so at most one row
+// One attempt addresses a release's whole failing set, so at most one row
 // per release can be generating at a time: the release id alone identifies
 // the row unambiguously, with no node or error-signature match needed.
 //
@@ -166,6 +166,50 @@ func (r *ProposalRepository) FailGenerating(ctx context.Context, releaseID, reas
 	return int(n), nil
 }
 
+// FailLegacyInFlight fails, in one UPDATE, every attempt row in flight that
+// belongs to no remediation: status 'generating' or 'verifying' with a NULL
+// remediation_id. A row that was generating takes reason as its rationale, as
+// FailGenerating writes it; a row that was verifying takes reason as its
+// verify_error and keeps its rationale, edits and verifications, as
+// MarkVerifyFailed writes it. The SET expressions read the row as it was, so
+// each of them sees the status the row had. Every node_outcomes entry still
+// 'generating' or 'verifying' becomes {"status": "failed", "reason": reason}
+// and the rest are copied through; the COALESCE keeps the column (NOT NULL)
+// writable for a row with no entries, which aggregates to NULL.
+//
+// The WHERE clause is the whole selection: a row of a remediation, and a row
+// that is not in flight, match nothing, so a second call moves no row.
+//
+// A row whose remediation the retention sweeper deleted also has a NULL
+// remediation_id (the foreign key is ON DELETE SET NULL), so the selection
+// cannot tell it from a row that never had one. That is safe: the sweeper
+// deletes only 'done' and 'system_failure' remediations, whose rows are
+// terminal, never 'generating' or 'verifying', so no row of a deleted
+// remediation is in flight.
+func (r *ProposalRepository) FailLegacyInFlight(ctx context.Context, reason string) (int, error) {
+	res, err := r.q.ExecContext(ctx,
+		`UPDATE proposal
+		   SET status = $2::text,
+		       rationale = CASE WHEN status = $3::text THEN $1::text ELSE rationale END,
+		       verify_error = CASE WHEN status = $4::text THEN $1::text ELSE verify_error END,
+		       node_outcomes = COALESCE((
+		         SELECT jsonb_object_agg(k, CASE WHEN v->>'status' IN ($3::text, $4::text)
+		              THEN jsonb_build_object('status', $2::text, 'reason', $1::text)
+		              ELSE v END)
+		           FROM jsonb_each(node_outcomes) AS e(k, v)),
+		         node_outcomes)
+		 WHERE remediation_id IS NULL AND status IN ($3::text, $4::text)`,
+		reason, proposal.StatusFailed, proposal.StatusGenerating, proposal.StatusVerifying)
+	if err != nil {
+		return 0, fmt.Errorf("fail in-flight proposals of no remediation: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("fail in-flight proposals of no remediation: rows affected: %w", err)
+	}
+	return int(n), nil
+}
+
 // Upsert records the terminal outcome of a proposal attempt on the natural key
 // (release_id, attempt): when an in-flight generating row exists (the common
 // healable path) it is finalized in place via ON CONFLICT … DO UPDATE;
@@ -179,17 +223,16 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 	const stmt = `
 		INSERT INTO proposal
 			(source, release_id, remediation_round, node_id, error_signature, attempt,
-			 status, verification_run_id, trigger_payload,
+			 status, verification_run_id,
 			 confidence, rationale, proposed_sql_uri, diff_uri,
 			 candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
 			 model, created_at,
 			 repo, commit_sha, file_path, file_edits,
 			 resolved_node_ids, node_outcomes, verifications, services, remediation_id, approvers)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
 		ON CONFLICT (release_id, attempt) DO UPDATE SET
 			status                 = EXCLUDED.status,
 			verification_run_id    = EXCLUDED.verification_run_id,
-			trigger_payload        = EXCLUDED.trigger_payload,
 			confidence             = EXCLUDED.confidence,
 			rationale              = EXCLUDED.rationale,
 			proposed_sql_uri       = EXCLUDED.proposed_sql_uri,
@@ -232,7 +275,7 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 	}
 	if _, err := r.q.ExecContext(ctx, stmt,
 		p.Source, p.ReleaseID, roundOrDefault(p.RemediationRound), p.NodeID, p.ErrorSignature, p.Attempt,
-		p.Status, p.VerificationRunID, triggerPayloadOrDefault(p.TriggerPayload),
+		p.Status, p.VerificationRunID,
 		p.Confidence, p.Rationale, p.ProposedSQLURI, p.DiffURI,
 		p.CandidateFixSQLURI, p.CandidateFixDiffURI, p.SourceResolved,
 		p.Model, p.CreatedAt,
@@ -242,17 +285,6 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 		return fmt.Errorf("insert proposal: %w", err)
 	}
 	return nil
-}
-
-// triggerPayloadOrDefault returns the raw trigger_payload bytes to write,
-// defaulting to an empty JSON object when the proposal carries none so the
-// column (NOT NULL) is never written as SQL NULL — the same defaulting
-// marshalFileEdits applies to the file_edits column.
-func triggerPayloadOrDefault(raw []byte) []byte {
-	if len(raw) == 0 {
-		return []byte("{}")
-	}
-	return raw
 }
 
 // proposalRow is the persistence DTO for a full proposal projection. The db
@@ -270,7 +302,6 @@ type proposalRow struct {
 	Status              string         `db:"status"`
 	VerificationRunID   string         `db:"verification_run_id"`
 	VerifyError         string         `db:"verify_error"`
-	TriggerPayload      []byte         `db:"trigger_payload"`
 	Confidence          string         `db:"confidence"`
 	Rationale           string         `db:"rationale"`
 	ProposedSQLURI      string         `db:"proposed_sql_uri"`
@@ -516,7 +547,6 @@ func (row proposalRow) toView() proposal.View {
 		VerificationRunID:   row.VerificationRunID,
 		Services:            []string(row.Services),
 		VerifyError:         row.VerifyError,
-		TriggerPayload:      row.TriggerPayload,
 		Confidence:          proposal.Confidence(row.Confidence),
 		Rationale:           row.Rationale,
 		ProposedSQLURI:      row.ProposedSQLURI,
@@ -540,7 +570,7 @@ func (row proposalRow) toView() proposal.View {
 }
 
 const proposalColumns = `id, source, release_id, remediation_round, node_id, error_signature, attempt,
-		       status, verification_run_id, verify_error, trigger_payload,
+		       status, verification_run_id, verify_error,
 		       confidence, rationale, proposed_sql_uri, diff_uri,
 		       candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
 		       repo, commit_sha, file_path, file_edits, model, created_at,
@@ -749,10 +779,6 @@ func (r *ProposalRepository) List(ctx context.Context, filter repository.Proposa
 		args = append(args, filter.Source)
 		q += fmt.Sprintf(" AND source = $%d", len(args))
 	}
-	if filter.NodeID != "" {
-		args = append(args, filter.NodeID)
-		q += fmt.Sprintf(" AND resolved_node_ids ? $%d", len(args))
-	}
 	if filter.Service != "" {
 		args = append(args, filter.Service)
 		q += fmt.Sprintf(" AND $%d = ANY(services)", len(args))
@@ -784,7 +810,7 @@ func (r *ProposalRepository) List(ctx context.Context, filter repository.Proposa
 }
 
 // beginPRClaimCAS is the atomic claim BeginPR issues: it moves a (proposal,
-// service) child row from '' or 'failed' to 'opening' — stamping pr_claimed_at
+// service) child row from empty or 'failed' to 'opening' — stamping pr_claimed_at
 // — only while the parent proposal is still source-resolved and 'proposed'. The
 // correlated EXISTS re-checks those two preconditions inside the same UPDATE as
 // the pr_state guard, so a status or source_resolved change committed between
@@ -802,7 +828,7 @@ const beginPRClaimCAS = `
 	RETURNING pr_claimed_at`
 
 // BeginPR atomically claims one (proposal, service) pull request for creation:
-// the child proposal_pull_request row's pr_state moves from '' or 'failed' to
+// the child proposal_pull_request row's pr_state moves from empty or 'failed' to
 // 'opening', stamping pr_claimed_at with claimedAt. The child row is created on
 // first claim by an INSERT … ON CONFLICT DO NOTHING; the UPDATE … RETURNING is
 // the single-winner guard, so concurrent callers for the same service see 0
@@ -1056,28 +1082,6 @@ func (r *ProposalRepository) RecordPROutcome(ctx context.Context, id, service st
 	return n > 0, nil
 }
 
-// verifyingBatchLimit caps ListVerifying so a single stuck row can never
-// starve every other in-flight verification: the polling reconciler always
-// makes bounded progress on each tick.
-const verifyingBatchLimit = 20
-
-// ListVerifying returns the proposal driver's proposals awaiting verification
-// (status='verifying'), oldest first, capped at verifyingBatchLimit. A proposal
-// that belongs to a remediation is left out: the runner finalizes those.
-func (r *ProposalRepository) ListVerifying(ctx context.Context) ([]proposal.View, error) {
-	q := `SELECT ` + proposalColumns + ` FROM proposal
-	      WHERE status = $1 AND remediation_id IS NULL ORDER BY created_at ASC LIMIT $2`
-	var rows []proposalRow
-	if err := r.q.SelectContext(ctx, &rows, q, proposal.StatusVerifying, verifyingBatchLimit); err != nil {
-		return nil, fmt.Errorf("list verifying proposals: %w", err)
-	}
-	views := make([]proposal.View, 0, len(rows))
-	for _, row := range rows {
-		views = append(views, row.toView())
-	}
-	return views, nil
-}
-
 // rewriteVerifyingOutcomes is the node_outcomes assignment that carries an
 // attempt's per-node outcomes along with the attempt itself: every node still
 // waiting on verification takes the status the attempt just reached, while
@@ -1095,48 +1099,41 @@ const rewriteVerifyingOutcomes = `
 		FROM jsonb_each(node_outcomes) AS e(k, v)
 	), '{}'::jsonb)`
 
-// MarkVerified finalizes a proposal every verification run validated the fix,
-// transitioning status 'verifying' -> 'proposed', carrying every node that
-// was waiting on those runs to 'proposed' with it, and writing verifications
-// as the final per-run summary. The WHERE status='verifying' guard is the
-// same compare-and-set contract as every other state transition in this
-// file: a row already finalized by a concurrent or repeated reconciler pass
-// leaves 0 rows affected rather than a blind overwrite. hit reports whether
-// the CAS fired.
-func (r *ProposalRepository) MarkVerified(ctx context.Context, id string, verifications []proposal.Verification) (bool, error) {
-	v, err := marshalVerifications(verifications)
+// MarkFixVerified finalizes a proposal the runner verified: every verification
+// run passed, so status 'verifying' becomes 'proposed', every node that was
+// waiting on those runs is carried to 'proposed' with it, and the verifications
+// the Verified carries are written as the final per-run summary. It refuses a
+// zero Verified, which holds no proof that its drafts were checked and
+// verified. The WHERE status='verifying' guard is the same compare-and-set
+// contract as every other state transition in this file: a row already
+// finalized by a concurrent or repeated pass leaves 0 rows affected rather than
+// a blind overwrite. hit reports whether the CAS fired.
+func (r *ProposalRepository) MarkFixVerified(ctx context.Context, v remediation.Verified) (bool, error) {
+	if v.IsZero() {
+		return false, errors.New("mark fix verified: the verified proposal is the zero value")
+	}
+	verifications, err := marshalVerifications(v.Verifications())
 	if err != nil {
 		return false, fmt.Errorf("marshal proposal verifications: %w", err)
 	}
 	res, err := r.q.ExecContext(ctx,
 		`UPDATE proposal SET status=$3, verifications=$4, `+rewriteVerifyingOutcomes+` WHERE id=$1 AND status=$2`,
-		id, proposal.StatusVerifying, proposal.StatusProposed, v)
+		v.ProposalID(), proposal.StatusVerifying, proposal.StatusProposed, verifications)
 	if err != nil {
-		return false, fmt.Errorf("mark verified: %w", err)
+		return false, fmt.Errorf("mark fix verified: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return false, fmt.Errorf("mark verified: rows affected: %w", err)
+		return false, fmt.Errorf("mark fix verified: rows affected: %w", err)
 	}
 	return n > 0, nil
-}
-
-// MarkFixVerified finalizes a proposal the runner verified. It refuses a zero
-// Verified, which holds no proof that its drafts were checked and verified, and
-// otherwise does what MarkVerified does with the proposal id and verifications
-// the Verified carries.
-func (r *ProposalRepository) MarkFixVerified(ctx context.Context, v remediation.Verified) (bool, error) {
-	if v.IsZero() {
-		return false, errors.New("mark fix verified: the verified proposal is the zero value")
-	}
-	return r.MarkVerified(ctx, v.ProposalID(), v.Verifications())
 }
 
 // MarkVerifyFailed finalizes a proposal a verification run rejected,
 // transitioning status 'verifying' -> 'failed', carrying every node that was
 // waiting on those runs to 'failed' with it, recording verifyErr so the next
 // attempt can use it as evidence, and writing verifications as the final
-// per-run summary. The CAS guard and hit semantics mirror MarkVerified.
+// per-run summary. The CAS guard and hit semantics mirror MarkFixVerified.
 func (r *ProposalRepository) MarkVerifyFailed(ctx context.Context, id, verifyErr string, verifications []proposal.Verification) (bool, error) {
 	v, err := marshalVerifications(verifications)
 	if err != nil {

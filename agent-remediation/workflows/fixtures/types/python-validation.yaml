@@ -1,8 +1,7 @@
 # A python node whose declared read names a relation that does not exist.
 # The fix corrects the read in the node's ODCS contract.
 # Built from the e2e fixture tests/e2e/fixtures/py-remediation-repo
-# (services/svc-py-e2e) and the python lane's tests
-# (service/fixer/python_validation_test.go).
+# (services/svc-py-e2e).
 kind: fixture
 version: 1
 type: python-validation

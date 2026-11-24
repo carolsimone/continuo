@@ -1,5 +1,5 @@
 # A dbt project whose model x does not compile: its config block has a stray
-# parenthesis. Built from the compile lane's tests (service/fixer/compile_test.go).
+# parenthesis.
 # For a compile failure the node id names the service.
 kind: fixture
 version: 1

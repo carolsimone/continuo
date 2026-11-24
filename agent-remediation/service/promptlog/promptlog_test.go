@@ -40,7 +40,7 @@ func newBufLogger() (*slog.Logger, *bytes.Buffer) {
 
 func sampleRequest() ports.ProposeRequest {
 	return ports.ProposeRequest{
-		System:   "you are a fixer",
+		System:   "you fix a failing node",
 		User:     "Service: service-1\nFile models/table_aa.sql:\n{{ config(...) }}\ndbt compile error:\nexpected token ','",
 		ToolName: "propose_fix",
 	}
@@ -96,7 +96,7 @@ func TestPropose_LogsFullPrompt(t *testing.T) {
 	}
 }
 
-// When the driver stamps the failure identity on the context, the prompt log
+// When the runner stamps the failure identity on the context, the prompt log
 // carries it, so a logged prompt can be tied to the release/node/attempt it was
 // built for.
 func TestPropose_LogsFailureCorrelation(t *testing.T) {

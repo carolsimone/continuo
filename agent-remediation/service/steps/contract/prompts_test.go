@@ -35,9 +35,9 @@ func promptEvidence() remediation.Evidence {
 		With(remediation.KeyPreviousTries, earlierTries)
 }
 
-// laneEvidence is the evidence the lane's pythonEvidence builds for the same
+// expectedEvidence is the evidence the contract prompt builds for the same
 // inputs.
-func laneEvidence(noReads bool) prompt.PythonEvidence {
+func expectedEvidence(noReads bool) prompt.PythonEvidence {
 	return prompt.PythonEvidence{
 		NodeID:          nodeID,
 		NoReads:         noReads,
@@ -59,11 +59,11 @@ func withTries(req prompt.ProposeRequest) prompt.ProposeRequest {
 }
 
 type promptCase struct {
-	name       string
-	build      func() step.Prompt
-	wantStep   string
-	nodeType   string
-	laneResult func(noReads bool) prompt.ProposeRequest
+	name        string
+	build       func() step.Prompt
+	wantStep    string
+	nodeType    string
+	wantRequest func(noReads bool) prompt.ProposeRequest
 }
 
 func promptCases() []promptCase {
@@ -73,8 +73,8 @@ func promptCases() []promptCase {
 			build:    func() step.Prompt { return contract.NewPythonContract() },
 			wantStep: "python-contract",
 			nodeType: "python-node",
-			laneResult: func(noReads bool) prompt.ProposeRequest {
-				return withTries(prompt.AssemblePythonContractFix(laneEvidence(noReads)))
+			wantRequest: func(noReads bool) prompt.ProposeRequest {
+				return withTries(prompt.AssemblePythonContractFix(expectedEvidence(noReads)))
 			},
 		},
 		{
@@ -82,8 +82,8 @@ func promptCases() []promptCase {
 			build:    func() step.Prompt { return contract.NewPythonParse() },
 			wantStep: "python-parse",
 			nodeType: "python-node",
-			laneResult: func(noReads bool) prompt.ProposeRequest {
-				return withTries(prompt.AssemblePythonParseFix(laneEvidence(noReads)))
+			wantRequest: func(noReads bool) prompt.ProposeRequest {
+				return withTries(prompt.AssemblePythonParseFix(expectedEvidence(noReads)))
 			},
 		},
 		{
@@ -91,8 +91,8 @@ func promptCases() []promptCase {
 			build:    func() step.Prompt { return contract.NewCSVContract() },
 			wantStep: "csv-contract",
 			nodeType: "python-csv",
-			laneResult: func(noReads bool) prompt.ProposeRequest {
-				return withTries(prompt.AssembleCsvContractFix(prompt.CsvEvidence(laneEvidence(noReads))))
+			wantRequest: func(noReads bool) prompt.ProposeRequest {
+				return withTries(prompt.AssembleCsvContractFix(prompt.CsvEvidence(expectedEvidence(noReads))))
 			},
 		},
 	}
@@ -132,7 +132,7 @@ func TestPrompts_MetaNamesTheStepAndWhatItReads(t *testing.T) {
 	}
 }
 
-func TestPrompts_MakeTheLanesRequestWithOneModelCall(t *testing.T) {
+func TestPrompts_AssembleTheirRequestAndMakeOneModelCall(t *testing.T) {
 	for _, tc := range promptCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			f := failure(func(f *remediation.Failure) { f.Target.NodeType = tc.nodeType })
@@ -141,7 +141,7 @@ func TestPrompts_MakeTheLanesRequestWithOneModelCall(t *testing.T) {
 			proposeWith(t, tc.build(), f, promptEvidence(), model)
 
 			require.Len(t, model.reqs, 1)
-			assert.Equal(t, tc.laneResult(false), model.reqs[0])
+			assert.Equal(t, tc.wantRequest(false), model.reqs[0])
 			assert.Contains(t, model.reqs[0].User, "## Earlier tries at this failure\n", "the first round's request shows the earlier tries")
 			assert.Contains(t, model.reqs[0].User, "Why the gate failed: <still bad>")
 			assert.Contains(t, model.reqs[0].User, "Current contract (the node's contract as continuo last promoted it, for reference only: do not copy its version, or its provenance and reads properties, into the file):\n```yaml\n<id: fx.rates",
@@ -157,8 +157,8 @@ func TestPrompts_APythonAPINodeIsToldItDeclaresNoReadsInTheValidationPrompt(t *t
 	proposeWith(t, contract.NewPythonContract(), f, promptEvidence(), model)
 
 	require.Len(t, model.reqs, 1)
-	assert.Equal(t, withTries(prompt.AssemblePythonContractFix(laneEvidence(true))), model.reqs[0])
-	assert.NotEqual(t, withTries(prompt.AssemblePythonContractFix(laneEvidence(false))), model.reqs[0])
+	assert.Equal(t, withTries(prompt.AssemblePythonContractFix(expectedEvidence(true))), model.reqs[0])
+	assert.NotEqual(t, withTries(prompt.AssemblePythonContractFix(expectedEvidence(false))), model.reqs[0])
 }
 
 func TestPrompts_EvidenceOtherThanTheContractFileMayBeAbsent(t *testing.T) {
@@ -168,7 +168,7 @@ func TestPrompts_EvidenceOtherThanTheContractFileMayBeAbsent(t *testing.T) {
 
 			proposeWith(t, tc.build(), failure(nil), contractFileEvidence(), model)
 
-			ev := laneEvidence(false)
+			ev := expectedEvidence(false)
 			ev.RunnerLog, ev.ContractEntry, ev.CurrentContract, ev.UpstreamChanges, ev.Precedents = "", "", "", nil, nil
 			want := map[string]prompt.ProposeRequest{
 				"python-contract": prompt.AssemblePythonContractFix(ev),

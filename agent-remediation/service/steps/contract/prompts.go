@@ -11,7 +11,7 @@ import (
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 )
 
-// assembler turns the python evidence into the lane's request.
+// assembler turns the python evidence into the prompt's request.
 type assembler func(prompt.PythonEvidence) prompt.ProposeRequest
 
 // contractPrompt is a prompt step whose fix is made in the ODCS contract that

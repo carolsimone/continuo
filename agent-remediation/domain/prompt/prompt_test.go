@@ -108,7 +108,7 @@ func TestAssembleParseFix_ToolSchemaAndFiles(t *testing.T) {
 		t.Errorf("user content must name the failing node:\n%s", req.User)
 	}
 	if strings.Contains(req.User, "dbt compile error") {
-		t.Errorf("user content must not carry compile-lane wording:\n%s", req.User)
+		t.Errorf("user content must not carry compile wording:\n%s", req.User)
 	}
 }
 
@@ -512,13 +512,13 @@ func TestAssemble_SaysWhenNothingUpstreamChangedInThisRelease(t *testing.T) {
 func TestAssemble_OmitsTheReleaseUpstreamSectionWhenUnknown(t *testing.T) {
 	req := Assemble(Evidence{NodeID: "analytics.report", CandidateSQL: "select 1", DBTLog: "err"})
 	if strings.Contains(req.User, "changed in this release") {
-		t.Fatalf("a lane that cannot know must not claim nothing changed:\n%s", req.User)
+		t.Fatalf("a prompt that cannot know must not claim nothing changed:\n%s", req.User)
 	}
 }
 
-// Every lane asks the model for one sentence about its edit, not a cause: the
+// Every prompt asks the model for one sentence about its edit, not a cause: the
 // cause is composed by the service from facts it holds.
-func TestEveryLane_AsksForANoteNotACause(t *testing.T) {
+func TestEveryPrompt_AsksForANoteNotACause(t *testing.T) {
 	reqs := []ProposeRequest{
 		Assemble(Evidence{NodeID: "n", CandidateSQL: "select 1", DBTLog: "e"}),
 		AssembleSourceFix("select 1", "n", "diag"),
@@ -537,6 +537,6 @@ func TestEveryLane_AsksForANoteNotACause(t *testing.T) {
 				assert.Equal(t, "One sentence describing the change you made. No warehouse data values.", p.Description, req.ToolName)
 			}
 		}
-		assert.True(t, found, "every lane's tool carries a rationale parameter: %s", req.ToolDescription)
+		assert.True(t, found, "every prompt's tool carries a rationale parameter: %s", req.ToolDescription)
 	}
 }

@@ -111,6 +111,11 @@ streamReaper.enabled=false, delete the drained consumer groups after upgrading:
 
 {{- if .Release.IsUpgrade }}
 
+agent-remediation has one engine. If your values set agentRemediation.engine, remove it: the chart no longer accepts the key. The flow file's tries decides how many times a fix is tried; AGENT_REMEDIATION_MAX_ATTEMPTS is no longer read.
+{{- end }}
+
+{{- if .Release.IsUpgrade }}
+
 BREAKING: release kind "python" (contract.yaml) is no longer accepted.
 If a service is still released as "python", release it as "python-odcs" (docs/contracts.md) on a continuo version that accepts it.
 The upgrade stops while a service is still released as "python".

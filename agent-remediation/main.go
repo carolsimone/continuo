@@ -28,20 +28,18 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/adapters/releasehttp"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/s3"
-	"github.com/carolsimone/continuo/agent-remediation/adapters/sanitizer"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/workflowfile"
 	remediationv1 "github.com/carolsimone/continuo/agent-remediation/api/remediation/v1"
 	"github.com/carolsimone/continuo/agent-remediation/config"
+	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/domain/workflow"
-	"github.com/carolsimone/continuo/agent-remediation/service/handlers"
 	"github.com/carolsimone/continuo/agent-remediation/service/llmcache"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/promptlog"
 	"github.com/carolsimone/continuo/agent-remediation/service/proposals"
 	"github.com/carolsimone/continuo/agent-remediation/service/runner"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
-	"github.com/carolsimone/continuo/agent-remediation/service/verification"
 	"github.com/carolsimone/continuo/agent-remediation/workflows"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	pkgdb "github.com/carolsimone/continuo/pkg/db"
@@ -56,19 +54,15 @@ import (
 	pkgretention "github.com/carolsimone/continuo/pkg/retention"
 )
 
-// llmClientTimeout bounds a single LLM HTTP request. Without it the LLM path
-// uses http.DefaultClient, which has NO timeout, so one hung request could
-// block the handler goroutine forever. The remediation.requested handler makes
-// up to two sequential LLM calls per invocation, so the whole handler is
-// bounded by roughly 2 × this value (plus DB/S3 work), which consumerHandler
-// Timeout below then caps as a hard ceiling.
+// llmClientTimeout bounds a single LLM HTTP request, that is each model request
+// a runner step makes. Without it the LLM path uses http.DefaultClient, which
+// has NO timeout, so one hung request could block the worker's step forever.
 const llmClientTimeout = 120 * time.Second
 
-// consumerHandlerTimeout bounds each message handler invocation with a context
-// deadline, so a genuinely-hung handler eventually returns control to the read
-// loop. It is generous because this handler runs up to two large (~16k-token)
-// LLM requests; 300s comfortably covers 2 × llmClientTimeout plus DB/S3 work
-// while still bounding a true hang.
+// consumerHandlerTimeout bounds each remediation.requested handler invocation
+// with a context deadline, so a genuinely-hung handler eventually returns
+// control to the read loop. The handler only records the trigger as a
+// remediation, one database transaction, so the ceiling is generous.
 const consumerHandlerTimeout = 5 * time.Minute
 
 // dbPool bounds the Postgres pool when DB_MAX_OPEN_CONNS / DB_MAX_IDLE_CONNS
@@ -117,7 +111,7 @@ func main() {
 	metricsReg := pkgmetrics.New(config.ServiceName)
 
 	// runConsumer starts a tracked stream consumer: a bounded handler deadline
-	// so a hung handler (e.g. a stuck LLM request) eventually returns;
+	// so a hung handler (e.g. a stuck database call) eventually returns;
 	// RegisterWorker before launch so a missing worker is observable;
 	// WorkerExited when Start returns (on a permanent consumer-group bootstrap
 	// error as well as on a clean shutdown); and a worker heartbeat probe so a
@@ -149,7 +143,7 @@ func main() {
 	// a pod whose consumer is already retrying, while a dead/wedged consumer does.
 	// The server comes up before any dependency is reachable so /livez keeps
 	// answering while the boot waits for Redis; the startup gate holds /healthz
-	// false until the consumer, gRPC server and reconcilers are running.
+	// false until the consumer, gRPC server and reconciler are running.
 	startup := liveReg.AddStartupGate()
 	mux.HandleFunc("/healthz", liveness.Handler("readiness", liveReg.Check, logger))
 	mux.HandleFunc("/livez", liveness.Handler("liveness", liveReg.LivenessCheck, logger))
@@ -232,10 +226,9 @@ func main() {
 
 	// Bound the LLM HTTP client explicitly: passing nil would fall back to
 	// http.DefaultClient, which has NO request timeout, so a single hung LLM
-	// call could block the handler goroutine indefinitely (and, with the
-	// consumer heartbeat feeding liveness, get the pod restarted underneath
-	// in-flight work). A per-request timeout keeps each call bounded; the
-	// consumer's handler-timeout is the outer ceiling over the whole handler.
+	// call could block the worker's step indefinitely (and, with the worker
+	// heartbeat feeding liveness, get the pod restarted underneath in-flight
+	// work). A per-request timeout keeps each call bounded.
 	llmProvider, err := llm.NewProvider(cfg.LLMProvider, cfg.LLMAPIKey, cfg.LLMModel, cfg.LLMBaseURL,
 		&http.Client{Timeout: llmClientTimeout})
 	if err != nil {
@@ -250,9 +243,10 @@ func main() {
 	loggedLLM := promptlog.New(llmProvider, logger)
 
 	// Wrap the provider in a best-effort, idempotency-keyed Redis cache so a
-	// redelivered remediation.requested trigger reuses the prior completion
-	// instead of re-paying the LLM call. A cache miss or error falls through to
-	// the real provider, so the cache can never break the happy path.
+	// model call a step repeats (a retried step, a redriven trigger) reuses the
+	// prior completion instead of re-paying the LLM call. A cache miss or error
+	// falls through to the real provider, so the cache can never break the happy
+	// path.
 	cachedLLM := llmcache.New(
 		loggedLLM,
 		rredis.NewLLMResponseCache(rc, cfg.LLMCacheTTL),
@@ -261,7 +255,7 @@ func main() {
 	)
 
 	// One GitHub adapter instance serves every read-only port backed by the
-	// GitHub API: source reads and repo-archive fetches for the fixers, and
+	// GitHub API: source reads and repo-archive fetches for the steps, and
 	// PR-status reads for the outcome reconciler. A request deadline keeps a
 	// hung GitHub connection from stalling the callers that share this
 	// adapter.
@@ -289,48 +283,15 @@ func main() {
 	}
 
 	// The proposal repository is bound to the DB rather than to a transaction:
-	// the gRPC read path, the reconciler, and the fixers' prior-attempt reads
+	// the gRPC read path, the reconciler, and the steps' prior-attempt reads
 	// all use it outside any unit of work.
 	proposalRepo := postgres.NewProposalRepository(db, cfg.ServiceRepoPaths)
 	contracts := repofs.NewLocator(logger)
 
-	deps := handlers.Deps{
-		NewUoW:           func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, cfg.ServiceRepoPaths) },
-		LLM:              cachedLLM,
-		Evidence:         evidenceReader,
-		Source:           gh,
-		Sanitizer:        sanitizer.Passthrough{},
-		Artifacts:        artifactWriter,
-		Clock:            ports.SystemClock{},
-		Logger:           logger,
-		MaxAttempts:      cfg.MaxAttempts,
-		ServiceRepoPaths: cfg.ServiceRepoPaths,
-		Locator:          graphClient,
-		Upstream:         graphClient,
-		Versions:         graphClient,
-		Precedents:       graphClient,
-		CandidateSource:  bundleReader,
-		RepoArchive:      gh,
-		ContractLocator:  contracts,
-		// The same adapter answers both: locating the file that declares a node
-		// and reading the declarations a file holds are one yaml shape.
-		ContractInspector: contracts,
-		Packager:          packager,
-		ImagePackages:     imagePackages,
-		CurrentContracts:  graphClient,
-		Pipeline:          releaseGateway,
-		Releases:          releaseGateway,
-		PriorAttempts:     proposalRepo,
-		SQLDialect:        cfg.SQLDialect,
-		Maintenance:       cfg.Maintenance,
-	}
-
 	// The runner works a heal trigger as a remediation of committed steps. Its
-	// worker, gate poller and sweeper run with either engine: the engine only
-	// decides what the remediation.requested consumer does with a new trigger,
-	// and a remediation the runner started must finish whichever engine runs
-	// now. Its built-in files are checked against the steps the registry holds
-	// before anything starts, and a refused file stops startup.
+	// worker, gate poller and sweeper carry each remediation to its end. Its
+	// built-in files are checked against the steps the registry holds before
+	// anything starts, and a refused file stops startup.
 	newUoW := func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, cfg.ServiceRepoPaths) }
 	remediationRepo := postgres.NewRemediationRepository(db)
 	collab := runnerCollaborators(cfg, runnerAdapters{
@@ -351,13 +312,20 @@ func main() {
 		logger.Error("the install's remediation files cannot be read", "error", err)
 		os.Exit(1)
 	}
-	files, changed, err := loadRunnerFiles(workflows.Builtin, install, collab, logger)
+	files, err := loadRunnerFiles(workflows.Builtin, install, collab, logger)
 	if err != nil {
 		logger.Error("the remediation files are refused", "error", err)
 		os.Exit(1)
 	}
-	warnIgnoredMaxAttempts(cfg, files, logger)
-	warnInstallFilesUnusedByLegacy(cfg, changed, logger)
+	// The runner stamps a remediation on every attempt row it writes, so a row
+	// in flight with none is driven by nothing. Until it is failed,
+	// release-controller's retry gate and the release page read its round as
+	// having a fix still open, which keeps "Try again" blocked. The sweep runs
+	// before the runner's loops and the consumer start, so no new work begins
+	// while such a row is open.
+	if stop, code := sweepAtStartup(ctx, proposalRepo, logger); stop {
+		os.Exit(code)
+	}
 	accept := startRunner(ctx, cfg, collab, files, runnerWiring{
 		llm:     cachedLLM,
 		newUoW:  newUoW,
@@ -421,16 +389,9 @@ func main() {
 	lifecycleManager.Go(func() { retentionSweeper.Run(ctx) })
 
 	// Start the remediation.requested consumer in a goroutine; blocks until ctx
-	// is cancelled. The engine decides whether it hands the trigger to the
-	// runner or proposes a fix itself.
-	logger.Info("remediation engine", "engine", cfg.Engine)
-	var requested *pkgredis.StreamConsumer
-	if cfg.Engine == config.EngineRunner {
-		requested = rredis.NewRemediationRequestedRunnerConsumer(rc, accept, logger)
-	} else {
-		requested = rredis.NewRemediationRequestedLegacyConsumer(rc, deps, logger)
-	}
-	runConsumer("remediation_requested", requested)
+	// is cancelled. It hands each trigger to the runner, which records it as a
+	// remediation.
+	runConsumer("remediation_requested", rredis.NewRemediationRequestedConsumer(rc, accept, logger))
 
 	// Start the RemediationProposals gRPC server. The proposal service uses a
 	// DB-bound (non-transactional) repository for reads and the UoW factory for
@@ -482,27 +443,6 @@ func main() {
 	})
 	go reconciler.Run(ctx)
 
-	// Resolve proposals whose fix is being judged by a verification run: read
-	// each waiting attempt's runs, finalize the ones that passed so an
-	// operator can review them, and record why the rest failed before starting
-	// the next attempt. The decoder and the fix proposer are the same ones the
-	// remediation.requested consumer uses, so a retried attempt runs through
-	// exactly the code path the original trigger did.
-	verifyReconciler := verification.New(verification.Deps{
-		Lister:   proposalRepo,
-		Pipeline: releaseGateway,
-		NewUoW:   func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, cfg.ServiceRepoPaths) },
-		Decode:   rredis.TriggerFromPayload,
-		Propose: func(ctx context.Context, t handlers.Trigger) error {
-			return handlers.ProposeFix(ctx, deps, t)
-		},
-		Clock:    ports.SystemClock{},
-		Logger:   logger,
-		Interval: cfg.VerificationPollInterval,
-		Timeout:  cfg.VerificationTimeout,
-	})
-	go verifyReconciler.Run(ctx)
-
 	// Everything is initialised and running: readiness may now turn true.
 	startup.Done()
 
@@ -523,8 +463,7 @@ type loop interface{ Run(ctx context.Context) }
 
 // runnerLoops are the loops that carry a remediation the runner accepted to its
 // end: the worker that drives it, the poller that reads its gate and the
-// sweeper that ends one that can go no further. They run with either engine, so
-// a remediation the runner started finishes whichever engine runs now.
+// sweeper that ends one that can go no further.
 type runnerLoops struct {
 	worker, poller, sweeper loop
 }
@@ -559,11 +498,44 @@ func loopBudgets(cfg config.Config) (worker, poller time.Duration) {
 	return worker, poller
 }
 
+// sweepAtStartup runs failLegacyInFlight and says whether the process must stop
+// and with what exit code. A sweep that fails while ctx is done was cut short by
+// a shutdown, which stops cleanly (code 0) as the other startup waits do,
+// whatever error the driver reported for its cancelled statement. Any other
+// failure of the sweep stops startup with code 1.
+func sweepAtStartup(ctx context.Context, repo repository.ProposalRepository, logger *slog.Logger) (stop bool, code int) {
+	err := failLegacyInFlight(ctx, repo, logger)
+	switch {
+	case err == nil:
+		return false, 0
+	case ctx.Err() != nil:
+		logger.Info("shutdown requested during the startup sweep of attempt rows with no remediation")
+		return true, 0
+	default:
+		logger.Error("failing the attempt rows in flight that belong to no remediation", "error", err)
+		return true, 1
+	}
+}
+
+// failLegacyInFlight fails every attempt row in flight that belongs to no
+// remediation, which nothing drives since the runner stamps a remediation on
+// every row it writes, and logs how many it moved: at Warn when there are any,
+// at Info when there are none. It is idempotent, so every start runs it.
+func failLegacyInFlight(ctx context.Context, repo repository.ProposalRepository, logger *slog.Logger) error {
+	n, err := repo.FailLegacyInFlight(ctx, proposal.NoRemediationInFlightReason)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		logger.Info("no attempt row with no remediation was in flight", "count", n)
+		return nil
+	}
+	logger.Warn("failed in-flight attempt rows that have no remediation", "count", n)
+	return nil
+}
+
 // startRunner builds the runner, starts its three loops with spawn and returns
-// the function that accepts a heal trigger as a remediation. The loops start
-// with either engine: the engine only decides what the consumer does with a new
-// trigger, and a remediation the runner started finishes whichever engine runs
-// now.
+// the function that accepts a heal trigger as a remediation.
 func startRunner(ctx context.Context, cfg config.Config, collab runner.Collaborators, files workflow.Set, w runnerWiring, spawn func(func())) func(context.Context, runner.Accepted) error {
 	loops, accept := buildRunner(cfg, collab, files, w)
 	for _, l := range []loop{loops.worker, loops.poller, loops.sweeper} {
@@ -585,7 +557,7 @@ func buildRunner(cfg config.Config, collab runner.Collaborators, files workflow.
 	workerBudget, pollerBudget := loopBudgets(cfg)
 	worker.SetHeartbeat(registerLoop(w.live, "remediation_worker", workerBudget))
 	poller.SetHeartbeat(registerLoop(w.live, "remediation_gate_poller", pollerBudget))
-	w.logger.Info("remediation runner built", "engine", cfg.Engine, "owner", w.owner)
+	w.logger.Info("remediation runner built", "owner", w.owner)
 	// A trigger the runner accepts wakes the worker, which would otherwise find
 	// it at its next look.
 	accept := func(ctx context.Context, a runner.Accepted) error {
@@ -765,21 +737,19 @@ func installFilesListing(dir string, list func(name string) ([]fs.DirEntry, erro
 // loadRunnerFiles loads the built-in remediation files and, over them, the
 // install's (install is nil when it has none), checks every flow and type of
 // them against the steps collab's registry holds, and checks that they define
-// the flow every heal trigger runs. It returns the set and the flows and types
-// the install's files add or change ("flow <name>", "type <name>"). Every
-// refusal is logged on its own line and the error that joins them is returned;
-// a warning is logged and does not stop startup. What the install's files
-// replace, and the files copied from a built-in that has changed since, are
-// logged at Warn before the files are checked, so a file that check refuses
-// still shows what it was meant to replace. Each flow no heal trigger runs is
-// logged at Warn with the check's warnings. The worker drives the runner's
-// remediations with either engine, so files without the trigger's flow stop
-// startup with either.
-func loadRunnerFiles(builtin, install fs.FS, collab runner.Collaborators, logger *slog.Logger) (workflow.Set, []string, error) {
+// the flow every heal trigger runs. Every refusal is logged on its own line and
+// the error that joins them is returned; a warning is logged and does not stop
+// startup. What the install's files replace, and the files copied from a
+// built-in that has changed since, are logged at Warn before the files are
+// checked, so a file that check refuses still shows what it was meant to
+// replace. Each flow no heal trigger runs is logged at Warn with the check's
+// warnings. Files without the trigger's flow stop startup, since every
+// remediation the runner accepted would follow a flow no file defines.
+func loadRunnerFiles(builtin, install fs.FS, collab runner.Collaborators, logger *slog.Logger) (workflow.Set, error) {
 	set, loaded, err := workflowfile.LoadInstall(builtin, install)
 	if err != nil {
 		logRefusals(logger, err)
-		return workflow.Set{}, nil, err
+		return workflow.Set{}, err
 	}
 	for _, n := range loaded.Notes {
 		logger.Warn("remediation file", "warning", n)
@@ -794,39 +764,9 @@ func loadRunnerFiles(builtin, install fs.FS, collab runner.Collaborators, logger
 	}
 	if err != nil {
 		logRefusals(logger, err)
-		return workflow.Set{}, nil, err
+		return workflow.Set{}, err
 	}
-	return set, loaded.Changed, nil
-}
-
-// warnIgnoredMaxAttempts warns at startup when the engine is the runner and
-// AGENT_REMEDIATION_MAX_ATTEMPTS differs from the tries of the flow every heal
-// trigger runs: the runner gives up after the flow file's tries and never reads
-// the variable, which only the legacy handler reads.
-func warnIgnoredMaxAttempts(cfg config.Config, files workflow.Set, logger *slog.Logger) {
-	if cfg.Engine != config.EngineRunner {
-		return
-	}
-	flow, err := runner.TriggerFlow(files)
-	if err != nil || flow.Tries == cfg.MaxAttempts {
-		return
-	}
-	logger.Warn("AGENT_REMEDIATION_MAX_ATTEMPTS is not read by the runner engine; the flow file's tries govern",
-		"max_attempts", cfg.MaxAttempts, "flow", flow.Name, "tries", flow.Tries)
-}
-
-// warnInstallFilesUnusedByLegacy warns at startup when the engine is legacy and
-// the install's files add or change a flow or type (changed names them): the
-// legacy handler works every new heal trigger without the files, so they run
-// only in a remediation the runner started. A byte for byte copy of a built-in
-// changes nothing and does not warn.
-func warnInstallFilesUnusedByLegacy(cfg config.Config, changed []string, logger *slog.Logger) {
-	if cfg.Engine != config.EngineLegacy || len(changed) == 0 {
-		return
-	}
-	logger.Warn("the install's remediation flows and types run only with AGENT_REMEDIATION_ENGINE=runner; "+
-		"the legacy engine works every new heal trigger without them, and only a remediation the runner started uses them",
-		"engine", cfg.Engine, "changed", changed)
+	return set, nil
 }
 
 // logRefusals logs each error joined in err on a line of its own.

@@ -121,9 +121,12 @@ python3 scripts/install-test/assert-port-env.py "${tmp}/defaults.yaml" .
 
 # run-controller's pods all consume one status consumer group and dispatch what
 # a success unblocks, so the previous release's pod must be gone before the new
-# one consumes anything: run-controller rolls with Recreate.
-echo "--- run-controller rolls with Recreate (defaults)"
-python3 scripts/install-test/assert-run-controller-recreate.py "${tmp}/defaults.yaml"
+# one consumes anything. agent-remediation fails, at every start, the attempt
+# rows in flight that have no remediation, so a pod of the previous release
+# must be gone before it starts or could write such a row after that sweep. Both
+# roll with Recreate.
+echo "--- run-controller and agent-remediation roll with Recreate (defaults)"
+python3 scripts/install-test/assert-recreate.py "${tmp}/defaults.yaml" run-controller agent-remediation
 
 # Recreate leaves run-controller's Service with no endpoint until the new pod is
 # Ready, and every read of a run fails meanwhile, so that pod must turn Ready as
@@ -910,7 +913,7 @@ echo "${builtin_files} built-in remediation files render as install files"
 # the chart, the file's text becomes a named template (`probe.notes`) that a
 # ConfigMap includes, and `helm template --is-upgrade` or without it sets
 # .Release.IsUpgrade to true or false for it.
-echo "--- NOTES.txt: the schedules, validation re-pin, catalog backup, contracts S3, catalog Postgres, ServiceAccount, python kind and remediation streams notes print on upgrade and not on install"
+echo "--- NOTES.txt: the schedules, validation re-pin, catalog backup, contracts S3, catalog Postgres, ServiceAccount, python kind, remediation streams and remediation engine notes print on upgrade and not on install"
 schedules_note='Schedules are no longer read from the chart: every cron stops until it is set again in the ui (Edit cron) or with `continuo schedule set-cron`.'
 notes_chart="${tmp}/notes-chart"
 cp -R "$CHART" "$notes_chart"
@@ -1089,6 +1092,34 @@ done
 if grep -qF "$remediation_streams_note" "${tmp}/notes-install.txt" \
    || grep -qF 'XGROUP DESTROY' "${tmp}/notes-install.txt"; then
   echo "FAIL: the install notes carry the remediation streams upgrade note"; exit 1
+fi
+
+# An upgrading operator is told once that agent-remediation has one engine, that
+# agentRemediation.engine is gone, and that the flow file's tries decides how
+# many times a fix is tried; an installing one is told nothing.
+one_engine_note='agent-remediation has one engine. If your values set agentRemediation.engine, remove it'
+[ "$(grep -cF "$one_engine_note" "${tmp}/notes-upgrade.txt")" = 1 ] \
+  || { echo "FAIL: the upgrade notes do not say exactly once that agent-remediation has one engine"; exit 1; }
+grep -qF "The flow file's tries decides how many times a fix is tried; AGENT_REMEDIATION_MAX_ATTEMPTS is no longer read." "${tmp}/notes-upgrade.txt" \
+  || { echo "FAIL: the one-engine upgrade note does not say the flow file's tries decides how many times a fix is tried"; exit 1; }
+if grep -qF "$one_engine_note" "${tmp}/notes-install.txt"; then
+  echo "FAIL: the install notes carry the one-engine upgrade note"; exit 1
+fi
+
+# agentRemediation.engine is no longer a key: a values file that sets it fails
+# the render, and the error names the key, so an operator who upgrades without
+# reading the notes learns what to remove.
+echo "--- agentRemediation.engine: a values file that sets it fails the render, naming the key"
+for engine in runner legacy; do
+  if helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
+       --set "agentRemediation.engine=${engine}" > /dev/null 2> "${tmp}/engine-key.err"; then
+    echo "FAIL: agentRemediation.engine=${engine} rendered; the key is gone and must fail the render"; exit 1
+  fi
+  grep -qF 'agentRemediation' "${tmp}/engine-key.err" && grep -qF 'engine' "${tmp}/engine-key.err" \
+    || { echo "FAIL: agentRemediation.engine=${engine} failed without naming the key:"; cat "${tmp}/engine-key.err"; exit 1; }
+done
+if grep -qF 'AGENT_REMEDIATION_ENGINE' "${tmp}/defaults.yaml"; then
+  echo "FAIL: the default render still publishes AGENT_REMEDIATION_ENGINE"; exit 1
 fi
 
 # global.logLevel reaches every service as LOG_LEVEL, and a service refuses to

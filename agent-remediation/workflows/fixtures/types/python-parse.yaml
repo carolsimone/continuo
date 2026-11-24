@@ -1,8 +1,8 @@
 # A python node whose declared read names its relation without a schema, which
 # the release's SQL parser rejects. The fix qualifies the relation in the
-# node's ODCS contract. Built from the e2e fixture tests/e2e/fixtures/py-remediation-repo
-# (services/svc-py-e2e-parse) and the python parse lane's tests
-# (service/fixer/python_parse_test.go). A parse rejection has no code bundle.
+# node's ODCS contract. Built from the e2e fixture
+# tests/e2e/fixtures/py-remediation-repo (services/svc-py-e2e-parse). A parse
+# rejection has no code bundle.
 kind: fixture
 version: 1
 type: python-parse

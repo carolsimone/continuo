@@ -1,22 +1,23 @@
 // Package llmcache provides a best-effort, idempotency-keyed caching decorator
-// over the LLMProvider port. agent-remediation consumes remediation.requested at
-// least once; if the terminal DB commit fails the same trigger is redelivered
-// and the whole handler re-runs, re-paying the expensive LLM call. This decorator
-// makes that call effectively-once per trigger: a redelivery of the same trigger
-// reuses the prior completion, while a genuinely new trigger (e.g. a later
-// remediation attempt for the same failure) always gets a fresh provider call.
+// over the LLMProvider port. The runner drives a remediation one step per
+// transaction, so a step whose model call returned but whose transaction did not
+// commit runs again, re-paying the expensive LLM call. This decorator makes the
+// call effectively-once per idempotency key: the runner derives the key from
+// the remediation, try, cluster and round, so a repeat of the same call reuses
+// the prior completion, while a call of a later try or round always gets a
+// fresh provider call.
 //
-// The cache key is therefore scoped to the inbound trigger's idempotency key —
-// supplied by the driver via ContextWithIdempotencyKey — not just the request
-// content. Keying by content alone would let two distinct triggers that happen
-// to build a byte-identical request collide, replaying an earlier (possibly
-// failed) result and burning the attempt cap without asking the model again.
+// The cache key is therefore scoped to the caller's idempotency key — supplied
+// by the runner via ContextWithIdempotencyKey — not just the request content.
+// Keying by content alone would let two distinct calls that happen to build a
+// byte-identical request collide, replaying an earlier (possibly refused)
+// result without asking the model again.
 //
 // The cache is strictly best-effort: any cache Get/Put error is logged and
 // treated as a miss/no-op — it is never surfaced. Only the wrapped provider's
 // error propagates. When no idempotency key is present on the context the
-// decorator cannot tell a redelivery from a new trigger, so it bypasses the
-// cache and calls the provider directly. The decorator depends only on ports, so
+// decorator cannot tell a repeat from a new call, so it bypasses the cache and
+// calls the provider directly. The decorator depends only on ports, so
 // application code keeps calling the LLMProvider port unchanged and imports no
 // adapter.
 package llmcache
@@ -34,14 +35,14 @@ import (
 // keyPrefix namespaces cache keys within the shared Redis instance.
 const keyPrefix = "llmcache:"
 
-// idempotencyKeyCtx is the unexported context key under which the driver stores
-// the inbound trigger's idempotency key.
+// idempotencyKeyCtx is the unexported context key under which the runner stores
+// the model call's idempotency key.
 type idempotencyKeyCtx struct{}
 
-// ContextWithIdempotencyKey returns a context carrying the inbound trigger's
-// idempotency key. The driver sets it before dispatching to a Fixer so the LLM
-// call made by that Fixer is cached per trigger. An empty key is treated as
-// absent (the decorator bypasses the cache).
+// ContextWithIdempotencyKey returns a context carrying the model call's
+// idempotency key. The runner sets it before a prompt step calls the model, so
+// the call is cached per key. An empty key is treated as absent (the decorator
+// bypasses the cache).
 func ContextWithIdempotencyKey(ctx context.Context, key string) context.Context {
 	if key == "" {
 		return ctx
@@ -49,7 +50,7 @@ func ContextWithIdempotencyKey(ctx context.Context, key string) context.Context 
 	return context.WithValue(ctx, idempotencyKeyCtx{}, key)
 }
 
-// idempotencyKeyFromContext returns the inbound trigger's idempotency key and
+// idempotencyKeyFromContext returns the model call's idempotency key and
 // whether one was present. ContextWithIdempotencyKey never stores an empty
 // string, so a present value is always non-empty.
 func idempotencyKeyFromContext(ctx context.Context) (string, bool) {

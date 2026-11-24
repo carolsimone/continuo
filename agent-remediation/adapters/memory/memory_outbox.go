@@ -12,9 +12,8 @@ import (
 	"github.com/carolsimone/continuo/pkg/outbox"
 )
 
-// outboxRepository is the in-memory outbox.Repository. The runner and the
-// proposal driver only write entries; the relay's methods return
-// errors.ErrUnsupported.
+// outboxRepository is the in-memory outbox.Repository. The runner only writes
+// entries; the relay's methods return errors.ErrUnsupported.
 type outboxRepository struct {
 	gate gate
 }

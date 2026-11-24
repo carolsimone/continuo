@@ -124,7 +124,7 @@ func TestTarget_OfTwoCompleteAncestorEntriesTheFirstWins(t *testing.T) {
 	assert.Empty(t, loc.calls)
 }
 
-func TestTarget_DeclinesWithTheLanesTexts(t *testing.T) {
+func TestTarget_DeclinesNamingWhyNoTargetIsFound(t *testing.T) {
 	cases := []struct {
 		name    string
 		bundle  *fakeBundle

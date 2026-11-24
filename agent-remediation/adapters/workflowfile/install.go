@@ -25,11 +25,6 @@ type InstallReport struct {
 	//   - "<file>: based on <name>, which is not a built-in <kind>" for a
 	//     file whose based_on names no built-in of its kind.
 	Notes []string
-	// Changed names each flow and type the install's files add, or replace
-	// with content that differs from the built-in's, as "flow <name>" or
-	// "type <name>", flows first and then types, each by name. A byte for
-	// byte copy of a built-in changes nothing and is not named.
-	Changed []string
 }
 
 // LoadInstall loads the flows and types of builtin, then the ones an install
@@ -74,9 +69,6 @@ func LoadInstall(builtin, install fs.FS) (workflow.Set, InstallReport, error) {
 		if ok && prev.Revision != f.Revision {
 			report.Notes = append(report.Notes, fmt.Sprintf("flow %s: replaced by %s", name, f.File))
 		}
-		if !ok || prev.Revision != f.Revision {
-			report.Changed = append(report.Changed, "flow "+name)
-		}
 		report.Notes = appendBasedOn(report.Notes, f.File, f.BasedOn, "flow", flowRevision)
 		merged.Flows[name] = f
 	}
@@ -89,9 +81,6 @@ func LoadInstall(builtin, install fs.FS) (workflow.Set, InstallReport, error) {
 		prev, ok := base.Types[name]
 		if ok && prev.Revision != t.Revision {
 			report.Notes = append(report.Notes, fmt.Sprintf("type %s: replaced by %s", name, t.File))
-		}
-		if !ok || prev.Revision != t.Revision {
-			report.Changed = append(report.Changed, "type "+name)
 		}
 		report.Notes = appendBasedOn(report.Notes, t.File, t.BasedOn, "type", typeRevision)
 		merged.Types[name] = t

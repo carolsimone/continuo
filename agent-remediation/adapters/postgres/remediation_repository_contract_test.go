@@ -978,33 +978,6 @@ func insertRunnerProposal(t *testing.T, env contractEnv, release string, attempt
 	return added[0]
 }
 
-func TestProposalRepository_ListVerifyingSkipsRunnerRows(t *testing.T) {
-	forEachImpl(t, func(t *testing.T, env contractEnv) {
-		ctx := context.Background()
-		r := mustCreate(t, env, newRemediation("rel-runner", 1, contractBase))
-		verifying := func(release string, remediationID string) proposal.Proposal {
-			return proposal.Proposal{
-				Source: "validation", ReleaseID: release, RemediationID: remediationID, NodeID: "model.a",
-				Attempt: 1, Status: proposal.StatusVerifying, VerificationRunID: "run-" + release,
-				CreatedAt: contractBase,
-			}
-		}
-		require.NoError(t, env.proposals.Upsert(ctx, verifying("rel-driver", "")))
-		require.NoError(t, env.proposals.Upsert(ctx, verifying("rel-runner", r.ID.String())))
-
-		listed, err := env.proposals.ListVerifying(ctx)
-		require.NoError(t, err)
-		require.Len(t, listed, 1, "the runner finalizes its own proposals, so the driver's reconciler must not list them")
-		require.Equal(t, "rel-driver", listed[0].ReleaseID)
-
-		// An upsert that names no remediation leaves the stored one as it was.
-		require.NoError(t, env.proposals.Upsert(ctx, verifying("rel-runner", "")))
-		listed, err = env.proposals.ListVerifying(ctx)
-		require.NoError(t, err)
-		require.Len(t, listed, 1)
-	})
-}
-
 func TestProposalRepository_UpsertAndInsertGeneratingRecordTheRemediation(t *testing.T) {
 	forEachImpl(t, func(t *testing.T, env contractEnv) {
 		ctx := context.Background()
@@ -1024,7 +997,7 @@ func TestProposalRepository_UpsertAndInsertGeneratingRecordTheRemediation(t *tes
 		}))
 		for _, got := range env.proposalIDs(t) {
 			if got != id {
-				require.Empty(t, env.proposalRemediation(t, got), "a driver proposal belongs to no remediation")
+				require.Empty(t, env.proposalRemediation(t, got), "a row written with no remediation belongs to no remediation")
 			}
 		}
 

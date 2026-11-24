@@ -167,7 +167,7 @@ func (p *anthropicProvider) buildRequest(req ports.ProposeRequest) ([]byte, erro
 
 // parseResponse reads the Anthropic response body and extracts the input of
 // the tool_use block for toolName — the tool this request itself forced, so
-// every fixer's differently-named tool parses through the same path.
+// every prompt step's differently-named tool parses through the same path.
 func (p *anthropicProvider) parseResponse(r io.Reader, toolName string) (ports.ProposeResult, error) {
 	var resp anthropicResponse
 	if err := json.NewDecoder(r).Decode(&resp); err != nil {

@@ -41,8 +41,8 @@ func TestEvidenceReader_BareKeyReadsTheDefaultBucket(t *testing.T) {
 	assert.Equal(t, "log", got)
 }
 
-// Evidence that cannot be read for good is ports.ErrNotFound, and the fixer
-// works without it: a URI that names no object (refused before any read), a
+// Evidence that cannot be read for good is ports.ErrNotFound, and the runner's
+// steps work without it: a URI that names no object (refused before any read), a
 // missing object, and an object over the read ceiling.
 func TestEvidenceReader_UnreadableEvidenceIsNotFound(t *testing.T) {
 	for _, tc := range []struct {

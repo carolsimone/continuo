@@ -319,10 +319,10 @@ func TestRunner_UnverifiableEdits(t *testing.T) {
 // escalated with how many times the round was tried alone.
 func TestRunner_TheEscalatedRowContinuesTheReleasesAttempts(t *testing.T) {
 	h := newHarness(t)
-	h.legacyAttemptInRound(1, 1, proposal.StatusFailed)
-	h.legacyAttemptInRound(1, 2, proposal.StatusEscalated)
+	h.attemptWithNoRemediationInRound(1, 1, proposal.StatusFailed)
+	h.attemptWithNoRemediationInRound(1, 2, proposal.StatusEscalated)
 	for attempt := 3; attempt <= 5; attempt++ {
-		h.legacyAttemptInRound(2, attempt, proposal.StatusFailed)
+		h.attemptWithNoRemediationInRound(2, attempt, proposal.StatusFailed)
 	}
 	trig := trigger("compile", compileNode("svc-a"))
 	trig.Round = 2
@@ -345,9 +345,9 @@ func TestRunner_TheEscalatedRowContinuesTheReleasesAttempts(t *testing.T) {
 func TestRunner_TheEscalatedRowFinalizesAnInFlightRowOfItsAttempt(t *testing.T) {
 	h := newHarness(t)
 	for attempt := 1; attempt <= 3; attempt++ {
-		h.legacyAttempt(attempt, proposal.StatusFailed)
+		h.attemptWithNoRemediation(attempt, proposal.StatusFailed)
 	}
-	h.legacyAttempt(4, proposal.StatusGenerating)
+	h.attemptWithNoRemediation(4, proposal.StatusGenerating)
 	id := h.accept(trigger("compile", compileNode("svc-a")))
 
 	require.NoError(t, h.runner.Drive(ctx, id))

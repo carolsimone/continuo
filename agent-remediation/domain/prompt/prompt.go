@@ -262,7 +262,7 @@ Rules:
 - Always respond by calling the propose_fix tool.`
 
 // singleFileProposeRequest is the propose_fix tool scaffold shared by every
-// lane that shows the model several files and asks it to correct exactly one:
+// prompt that shows the model several files and asks it to correct exactly one:
 // the model names the file in target_file and returns its complete corrected
 // content. The caller supplies the system prompt, the rendered user message
 // and the one-line description of what the fix must achieve.

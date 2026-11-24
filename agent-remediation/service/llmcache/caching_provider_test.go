@@ -71,9 +71,8 @@ func sampleResult() ports.ProposeResult {
 	return ports.ProposeResult{ProposedContent: "SELECT 1", Rationale: "r", Confidence: "high", Model: "m"}
 }
 
-// triggerCtx returns a context carrying an inbound trigger idempotency key, as
-// the driver supplies in production. Caching only engages when such a key is
-// present.
+// triggerCtx returns a context carrying an idempotency key, as the runner
+// supplies in production. Caching only engages when such a key is present.
 func triggerCtx(key string) context.Context {
 	return ContextWithIdempotencyKey(context.Background(), key)
 }

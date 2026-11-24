@@ -60,9 +60,9 @@ const (
 // TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest proves that a
 // release is remediated as one unit even when its failures have nothing in
 // common. ftable_e and ftable_k both reference a relation that does not exist,
-// and neither descends from a node this release changed, so the driver forms
-// two independent clusters — yet everything downstream of the grouping stays
-// singular:
+// and neither descends from a node this release changed, so the runner forms
+// two independent clusters, each worked by the dbt-validation type — yet
+// everything downstream of the grouping stays singular:
 //
 //	POST /releases (service-2; ftable_e and ftable_k are both new)
 //	→ validation fails on both nodes → release "rejected"
@@ -70,7 +70,8 @@ const (
 //	→ ONE proposal row for the release (attempt 1) holding TWO file edits,
 //	  each naming the node whose source it repairs
 //	→ ONE dbt verification run (both edits belong to service-2) that passes
-//	→ the reconciler flips the attempt verifying → proposed
+//	→ the runner's gate poller reads the verdict and the attempt moves
+//	  verifying → proposed
 //	→ ONE remediation.proposed:v1
 //	→ ONE pull request, titled for the two nodes it fixes
 //
@@ -136,10 +137,11 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProd(t, ctx, clients, allServices)
 
-	// 2. Place both broken models in the graph. The independent fixers read the
-	//    failing node's location off the trigger, but the agent also asks the
-	//    graph for each node's upstream evidence, so a node the promoted graph
-	//    cannot place degrades the prompt silently.
+	// 2. Place both broken models in the graph. The clusters' steps read the
+	//    failing node's location off the trigger, but the runner's
+	//    upstream_changes and failure_precedents steps also ask the graph for
+	//    each node's evidence, so a node the promoted graph cannot place
+	//    degrades the prompt silently.
 	seedFTableETopologyNode(t, ctx, clients)
 	seedModelTopologyNodes(t, ctx, clients, topologyModel{
 		uniqueID: ftableKUniqueID, schema: "e2e_schema", table: "ftable_k",
@@ -262,7 +264,7 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 //	→ validation fails on ftable_v and ftable_w, identically
 //	→ ONE remediation.requested:v3 whose two entries share one error signature
 //	  and both name ftable_u as their changed ancestor
-//	→ the driver forms ONE shared-upstream cluster targeting ftable_u
+//	→ the runner groups them into ONE shared-upstream cluster targeting ftable_u
 //	→ ONE proposal with ONE edit — to ftable_u's source, a node that never failed
 //	→ ONE dbt verification run that passes for the repaired ancestor and its
 //	  descendants
@@ -336,12 +338,12 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProd(t, ctx, clients, allServices)
 
-	// 2. Place the changed ancestor in the graph. The upstream fixer edits a node
-	//    that never failed; its location now travels on the trigger (each failing
-	//    node's changed_ancestors carry the path THIS candidate declares), and the
-	//    promoted graph is only the fallback for a rejection that carries none.
-	//    The node is still seeded so the graph the fixer's other reads consult
-	//    knows the ancestor at all.
+	// 2. Place the changed ancestor in the graph. The shared-upstream type edits
+	//    a node that never failed; its location travels on the trigger (each
+	//    failing node's changed_ancestors carry the path THIS candidate declares),
+	//    and the promoted graph is only the fallback for a rejection that carries
+	//    none. The node is still seeded so the graph reads of the type's other
+	//    steps know the ancestor at all.
 	seedModelTopologyNodes(t, ctx, clients, topologyModel{
 		uniqueID: ftableUUniqueID, schema: "e2e_schema", table: "ftable_u",
 		service: changedService, filePath: "models/ftable_u.sql",
@@ -513,7 +515,7 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 // same cross-service assembly TestE2E_ReleasePromote_GatedCrossServiceUpstream
 // exercises with a genuine dependency edge, here with none: the two failures
 // share no ancestor and no error signature (they reference different
-// nonexistent relations), so the driver forms two independent clusters, one
+// nonexistent relations), so the runner forms two independent clusters, one
 // edit each, grouped by owning service into two pull requests:
 //
 //	POST /releases (service-2; ftable_e and ftable_g both held back from prod)
@@ -1303,8 +1305,9 @@ func TestE2E_BatchedRemediation_CrossServiceBreakFixedAtProducer(t *testing.T) {
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProd(t, ctx, clients, allServices)
-	// The producer is placed in the graph so the fixer's version read has
-	// something to diff against; its location travels on the trigger.
+	// The producer is placed in the graph so the upstream_target step's diff
+	// against the version that runs now has a stored version to read; its
+	// location travels on the trigger.
 	seedModelTopologyNodes(t, ctx, clients, topologyModel{
 		uniqueID: xbreakUpUniqueID, schema: "e2e_schema", table: "xbreak_up",
 		service: producerService, filePath: "models/xbreak_up.sql",

@@ -145,32 +145,115 @@ func (s *spyRepo) ListPastDeadline(context.Context, time.Time, int) ([]uuid.UUID
 	return nil, nil
 }
 
-// TestMain_RunnerLoopsStartInLegacyMode: startRunner, which main calls with its
-// lifecycle's Go, starts the worker, the gate poller and the sweeper, and each
-// does its work with either engine, so a remediation the runner started
-// finishes whichever engine runs now.
-func TestMain_RunnerLoopsStartInLegacyMode(t *testing.T) {
-	for _, engine := range []string{config.EngineLegacy, config.EngineRunner} {
-		t.Run(engine, func(t *testing.T) {
-			repo := &spyRepo{}
-			cfg := config.Config{Engine: engine, VerificationPollInterval: time.Hour}
-			ctx, cancel := context.WithCancel(context.Background())
-			var wg sync.WaitGroup
-			accept := startRunner(ctx, cfg, runner.Collaborators{}, workflow.Set{}, runnerWiring{
-				newUoW: func() uow.UnitOfWork { return nil },
-				repo:   func() repository.RemediationRepository { return repo },
-				owner:  "host:1",
-				live:   liveness.NewRegistry(),
-				logger: discardLogger(),
-			}, func(f func()) { wg.Add(1); go func() { defer wg.Done(); f() }() })
-			require.NotNil(t, accept)
-			defer func() { cancel(); wg.Wait() }()
+// inFlightRepo is a proposal repository that records the reason
+// FailLegacyInFlight is called with and answers with moved and err.
+type inFlightRepo struct {
+	repository.ProposalRepository
+	reasons []string
+	moved   int
+	err     error
+}
 
-			assert.Eventually(t, func() bool { return repo.claims.Load() > 0 }, 5*time.Second, time.Millisecond, "worker")
-			assert.Eventually(t, func() bool { return repo.verifying.Load() > 0 }, 5*time.Second, time.Millisecond, "gate poller")
-			assert.Eventually(t, func() bool { return repo.failing.Load() > 0 }, 5*time.Second, time.Millisecond, "sweeper")
+func (r *inFlightRepo) FailLegacyInFlight(_ context.Context, reason string) (int, error) {
+	r.reasons = append(r.reasons, reason)
+	return r.moved, r.err
+}
+
+// TestMain_FailLegacyInFlight: the startup step asks the repository to fail
+// the attempt rows in flight that belong to no remediation with the reason the
+// release page shows, logs how many it moved (at Warn when it moved any, at
+// Info when it moved none), and returns the repository's error.
+func TestMain_FailLegacyInFlight(t *testing.T) {
+	const reason = "continuo changed its remediation engine while this attempt was in flight; use Try again"
+	for _, tc := range []struct {
+		name      string
+		repo      *inFlightRepo
+		wantLevel string
+		wantCount float64
+		wantErr   bool
+	}{
+		{name: "none moved", repo: &inFlightRepo{}, wantLevel: "INFO"},
+		{name: "some moved", repo: &inFlightRepo{moved: 3}, wantLevel: "WARN", wantCount: 3},
+		{name: "the repository fails", repo: &inFlightRepo{err: errors.New("database is down")}, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+			err := failLegacyInFlight(context.Background(), tc.repo, logger)
+
+			require.Equal(t, []string{reason}, tc.repo.reasons)
+			if tc.wantErr {
+				require.ErrorIs(t, err, tc.repo.err)
+				assert.Empty(t, logLines(t, &buf), "an error is the caller's to log")
+				return
+			}
+			require.NoError(t, err)
+			lines := logLines(t, &buf)
+			require.Len(t, lines, 1, buf.String())
+			assert.Equal(t, tc.wantLevel, lines[0]["level"])
+			assert.Equal(t, tc.wantCount, lines[0]["count"])
 		})
 	}
+}
+
+// TestMain_SweepAtStartup: a sweep that succeeds lets startup go on, and a
+// failed one stops it. A failure while the context is done is a shutdown that
+// cut the sweep short, whatever error the driver reported for it, so it stops
+// cleanly (exit 0, logged at Info) as the other startup waits do; any other
+// failure stops with exit 1, logged at Error.
+func TestMain_SweepAtStartup(t *testing.T) {
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, tc := range []struct {
+		name      string
+		ctx       context.Context
+		repo      *inFlightRepo
+		wantStop  bool
+		wantCode  int
+		wantLevel string
+	}{
+		{name: "the sweep succeeds", ctx: context.Background(), repo: &inFlightRepo{moved: 2}, wantLevel: "WARN"},
+		{name: "the sweep fails", ctx: context.Background(), repo: &inFlightRepo{err: errors.New("database is down")}, wantStop: true, wantCode: 1, wantLevel: "ERROR"},
+		{name: "a shutdown cuts the sweep short with the driver's own error", ctx: cancelled, repo: &inFlightRepo{err: errors.New("driver: bad connection")}, wantStop: true, wantCode: 0, wantLevel: "INFO"},
+		{name: "a shutdown cuts the sweep short with context.Canceled", ctx: cancelled, repo: &inFlightRepo{err: context.Canceled}, wantStop: true, wantCode: 0, wantLevel: "INFO"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+			stop, code := sweepAtStartup(tc.ctx, tc.repo, logger)
+
+			assert.Equal(t, tc.wantStop, stop)
+			assert.Equal(t, tc.wantCode, code)
+			lines := logLines(t, &buf)
+			require.Len(t, lines, 1, buf.String())
+			assert.Equal(t, tc.wantLevel, lines[0]["level"])
+		})
+	}
+}
+
+// TestMain_RunnerLoopsStart verifies that startRunner, which main calls with
+// its lifecycle's Go, starts the worker, the gate poller and the sweeper, and
+// that each does its work.
+func TestMain_RunnerLoopsStart(t *testing.T) {
+	repo := &spyRepo{}
+	cfg := config.Config{VerificationPollInterval: time.Hour}
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	accept := startRunner(ctx, cfg, runner.Collaborators{}, workflow.Set{}, runnerWiring{
+		newUoW: func() uow.UnitOfWork { return nil },
+		repo:   func() repository.RemediationRepository { return repo },
+		owner:  "host:1",
+		live:   liveness.NewRegistry(),
+		logger: discardLogger(),
+	}, func(f func()) { wg.Add(1); go func() { defer wg.Done(); f() }() })
+	require.NotNil(t, accept)
+	defer func() { cancel(); wg.Wait() }()
+
+	assert.Eventually(t, func() bool { return repo.claims.Load() > 0 }, 5*time.Second, time.Millisecond, "worker")
+	assert.Eventually(t, func() bool { return repo.verifying.Load() > 0 }, 5*time.Second, time.Millisecond, "gate poller")
+	assert.Eventually(t, func() bool { return repo.failing.Load() > 0 }, 5*time.Second, time.Millisecond, "sweeper")
 }
 
 // TestMain_RunnerLoopsAreRegisteredWithLiveness: the worker and the poller are
@@ -178,7 +261,7 @@ func TestMain_RunnerLoopsStartInLegacyMode(t *testing.T) {
 // before shutdown fails the probes.
 func TestMain_RunnerLoopsAreRegisteredWithLiveness(t *testing.T) {
 	live := liveness.NewRegistry()
-	_, _ = buildRunner(config.Config{Engine: config.EngineLegacy}, runner.Collaborators{}, workflow.Set{}, runnerWiring{
+	_, _ = buildRunner(config.Config{}, runner.Collaborators{}, workflow.Set{}, runnerWiring{
 		newUoW: func() uow.UnitOfWork { return nil },
 		repo:   func() repository.RemediationRepository { return &spyRepo{} },
 		owner:  "host:1",
@@ -243,7 +326,7 @@ func TestMain_LeaseOwnerNamesHostAndProcess(t *testing.T) {
 // TestMain_BuiltinFilesLoadAndValidate: the files built into the binary load
 // and every flow and type of them runs against the registry.
 func TestMain_BuiltinFilesLoadAndValidate(t *testing.T) {
-	set, _, err := loadRunnerFiles(workflows.Builtin, nil, runner.Collaborators{}, discardLogger())
+	set, err := loadRunnerFiles(workflows.Builtin, nil, runner.Collaborators{}, discardLogger())
 	require.NoError(t, err)
 	assert.Contains(t, set.Flows, "rejected-release")
 }
@@ -273,116 +356,18 @@ func builtinRenamed(t *testing.T, name string) fstest.MapFS {
 }
 
 // TestMain_FilesWithoutTheTriggerFlowStopStartup: files that validate but do
-// not define the flow every heal trigger runs stop startup, with either engine,
-// since every remediation the runner accepted would follow a flow no file
-// defines.
+// not define the flow every heal trigger runs stop startup, since every
+// remediation the runner accepted would follow a flow no file defines.
 func TestMain_FilesWithoutTheTriggerFlowStopStartup(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 
-	_, _, err := loadRunnerFiles(builtinRenamed(t, "another-flow"), nil, runner.Collaborators{}, logger)
+	_, err := loadRunnerFiles(builtinRenamed(t, "another-flow"), nil, runner.Collaborators{}, logger)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `"rejected-release"`)
 	assert.Contains(t, buf.String(), `"level":"ERROR"`)
 	assert.Contains(t, buf.String(), "rejected-release", "the refusal is logged")
-}
-
-// TestMain_WarnsWhenTheRunnerIgnoresMaxAttempts: under the runner the flow
-// file's tries govern, so a different AGENT_REMEDIATION_MAX_ATTEMPTS is
-// warned about at startup. The legacy engine reads the variable, and an equal
-// value changes nothing, so neither warns.
-func TestMain_WarnsWhenTheRunnerIgnoresMaxAttempts(t *testing.T) {
-	files, _, err := loadRunnerFiles(workflows.Builtin, nil, runner.Collaborators{}, discardLogger())
-	require.NoError(t, err)
-	tries := files.Flows["rejected-release"].Tries
-
-	for _, tc := range []struct {
-		name        string
-		engine      string
-		maxAttempts int
-		warns       bool
-	}{
-		{"runner with a different value", config.EngineRunner, tries + 2, true},
-		{"runner with the flow's tries", config.EngineRunner, tries, false},
-		{"legacy with a different value", config.EngineLegacy, tries + 2, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			logger := slog.New(slog.NewJSONHandler(&buf, nil))
-
-			warnIgnoredMaxAttempts(config.Config{Engine: tc.engine, MaxAttempts: tc.maxAttempts}, files, logger)
-
-			if !tc.warns {
-				assert.Empty(t, buf.String())
-				return
-			}
-			assert.Contains(t, buf.String(), `"level":"WARN"`)
-			assert.Contains(t, buf.String(), "AGENT_REMEDIATION_MAX_ATTEMPTS")
-			assert.Contains(t, buf.String(), `"tries":3`)
-		})
-	}
-}
-
-// TestMain_WarnsWhenTheLegacyEngineDoesNotRunTheInstallsFiles: only the runner
-// works a heal trigger through the remediation files, so under the legacy
-// engine an install whose files add or change a flow or type is warned that
-// they run only for a remediation the runner started. An install that changes
-// nothing, or the runner engine, does not warn.
-func TestMain_WarnsWhenTheLegacyEngineDoesNotRunTheInstallsFiles(t *testing.T) {
-	changed := []string{"flow rejected-release", "type my-validation"}
-	for _, tc := range []struct {
-		name    string
-		engine  string
-		changed []string
-		warns   bool
-	}{
-		{"legacy with changed files", config.EngineLegacy, changed, true},
-		{"legacy with no changed file", config.EngineLegacy, nil, false},
-		{"runner with changed files", config.EngineRunner, changed, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			logger := slog.New(slog.NewJSONHandler(&buf, nil))
-
-			warnInstallFilesUnusedByLegacy(config.Config{Engine: tc.engine}, tc.changed, logger)
-
-			if !tc.warns {
-				assert.Empty(t, buf.String())
-				return
-			}
-			lines := logLines(t, &buf)
-			require.Len(t, lines, 1)
-			assert.Equal(t, "WARN", lines[0]["level"])
-			assert.Contains(t, lines[0]["msg"], "AGENT_REMEDIATION_ENGINE=runner")
-			assert.Equal(t, config.EngineLegacy, lines[0]["engine"])
-			assert.Equal(t, []any{"flow rejected-release", "type my-validation"}, lines[0]["changed"])
-		})
-	}
-}
-
-// TestMain_LoadRunnerFilesNamesWhatTheInstallChanges: loadRunnerFiles returns
-// the flows and types the install's files add or change, which the legacy
-// warning reads. A byte for byte copy of a built-in changes nothing.
-func TestMain_LoadRunnerFilesNamesWhatTheInstallChanges(t *testing.T) {
-	compile := builtinFile(t, "types/dbt-compile.yaml")
-	for name, tc := range map[string]struct {
-		install fs.FS
-		want    []string
-	}{
-		"no install":                 {nil, nil},
-		"a copy of a built-in":       {fstest.MapFS{"dbt-compile.yaml": {Data: []byte(compile)}}, nil},
-		"a changed built-in":         {fstest.MapFS{"dbt-compile.yaml": {Data: []byte(compile + "# tuned\n")}}, []string{"type dbt-compile"}},
-		"a type the install adds":    {fstest.MapFS{"x.yaml": {Data: []byte(strings.Replace(compile, "name: dbt-compile", "name: my-compile", 1))}}, []string{"type my-compile"}},
-		"a flow of another name too": {builtinRenamedInstall(t, "my-flow"), []string{"flow my-flow"}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			_, changed, err := loadRunnerFiles(workflows.Builtin, tc.install, runner.Collaborators{}, discardLogger())
-
-			require.NoError(t, err)
-			assert.Equal(t, tc.want, changed)
-		})
-	}
 }
 
 // builtinRenamedInstall is an install folder holding the built-in flow
@@ -402,7 +387,7 @@ func TestMain_AFlowNoHealTriggerRunsIsLoggedAtWarn(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 
-	set, _, err := loadRunnerFiles(workflows.Builtin, builtinRenamedInstall(t, "my-flow"), runner.Collaborators{}, logger)
+	set, err := loadRunnerFiles(workflows.Builtin, builtinRenamedInstall(t, "my-flow"), runner.Collaborators{}, logger)
 
 	require.NoError(t, err)
 	assert.Contains(t, set.Flows, "my-flow")
@@ -437,7 +422,7 @@ approver: node_owner
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 
-	_, _, err := loadRunnerFiles(fsys, nil, runner.Collaborators{}, logger)
+	_, err := loadRunnerFiles(fsys, nil, runner.Collaborators{}, logger)
 
 	require.Error(t, err)
 	refusals := 0
@@ -646,7 +631,7 @@ func TestMain_InstallFilesCanBeAKubernetesConfigMapMount(t *testing.T) {
 	install, err := installFiles(dir)
 	require.NoError(t, err)
 
-	set, _, err := loadRunnerFiles(workflows.Builtin, install, runner.Collaborators{}, discardLogger())
+	set, err := loadRunnerFiles(workflows.Builtin, install, runner.Collaborators{}, discardLogger())
 
 	require.NoError(t, err)
 	assert.Equal(t, "dbt-compile.yaml", set.Types["dbt-compile"].File)
@@ -656,7 +641,7 @@ func TestMain_InstallFilesCanBeAKubernetesConfigMapMount(t *testing.T) {
 // heal trigger runs with a copy that lists one more type, and adds that type.
 // Both load, and the flow lists the install's type after the built-in ones.
 func TestMain_InstallTypeListedByAReplacedFlow(t *testing.T) {
-	builtin, _, err := loadRunnerFiles(workflows.Builtin, nil, runner.Collaborators{}, discardLogger())
+	builtin, err := loadRunnerFiles(workflows.Builtin, nil, runner.Collaborators{}, discardLogger())
 	require.NoError(t, err)
 	builtinTypes := builtin.Flows["rejected-release"].Types
 	lastBuiltin := builtinTypes[len(builtinTypes)-1]
@@ -674,7 +659,7 @@ func TestMain_InstallTypeListedByAReplacedFlow(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 
-	set, _, err := loadRunnerFiles(workflows.Builtin, install, runner.Collaborators{}, logger)
+	set, err := loadRunnerFiles(workflows.Builtin, install, runner.Collaborators{}, logger)
 
 	require.NoError(t, err)
 	assert.Contains(t, set.Types, "dbt-test-validation")
@@ -702,7 +687,7 @@ func TestMain_AnInstallsReplacementIsLoggedBeforeTheFilesAreChecked(t *testing.T
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 
-	_, _, err := loadRunnerFiles(workflows.Builtin, install, runner.Collaborators{}, logger)
+	_, err := loadRunnerFiles(workflows.Builtin, install, runner.Collaborators{}, logger)
 
 	require.Error(t, err)
 	noteAt, refusalAt := -1, -1
@@ -726,7 +711,7 @@ func TestMain_ARefusedInstallFileStopsStartup(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 
-	set, _, err := loadRunnerFiles(workflows.Builtin, install, runner.Collaborators{}, logger)
+	set, err := loadRunnerFiles(workflows.Builtin, install, runner.Collaborators{}, logger)
 
 	require.Error(t, err)
 	assert.Empty(t, set.Flows)
@@ -743,12 +728,12 @@ func TestMain_ARefusedInstallFileStopsStartup(t *testing.T) {
 // TestMain_NoInstallFilesLoadsTheBuiltIns: with no install, and with an install
 // folder holding nothing, the built-in files load alone and nothing is logged.
 func TestMain_NoInstallFilesLoadsTheBuiltIns(t *testing.T) {
-	want, _, err := loadRunnerFiles(workflows.Builtin, nil, runner.Collaborators{}, discardLogger())
+	want, err := loadRunnerFiles(workflows.Builtin, nil, runner.Collaborators{}, discardLogger())
 	require.NoError(t, err)
 
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
-	got, _, err := loadRunnerFiles(workflows.Builtin, fstest.MapFS{}, runner.Collaborators{}, logger)
+	got, err := loadRunnerFiles(workflows.Builtin, fstest.MapFS{}, runner.Collaborators{}, logger)
 
 	require.NoError(t, err)
 	assert.Equal(t, want, got)

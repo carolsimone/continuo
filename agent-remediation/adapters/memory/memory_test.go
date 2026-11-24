@@ -87,7 +87,11 @@ func TestMemoryProposalRepository_UniqueOnReleaseAndAttemptAndCompareAndSet(t *t
 	hit, err := repo.MarkVerifyFailed(ctx, id, "rejected", nil)
 	require.NoError(t, err)
 	require.True(t, hit)
-	hit, err = repo.MarkVerified(ctx, id, nil)
+	checked, err := remediation.NewChecked(remediation.Draft{}, nil)
+	require.NoError(t, err)
+	verified, err := remediation.NewVerified(id, []remediation.Checked{checked}, nil, nil)
+	require.NoError(t, err)
+	hit, err = repo.MarkFixVerified(ctx, verified)
 	require.NoError(t, err)
 	require.False(t, hit, "the row is no longer verifying")
 	view, err := repo.Get(ctx, id)
@@ -108,12 +112,12 @@ func TestMemoryProposalRepository_FailGeneratingFailsOnlyInFlightRows(t *testing
 		ReleaseID: "rel", Attempt: 1, NodeOutcomes: map[string]proposal.NodeOutcome{"a": {Status: proposal.StatusGenerating}},
 	}))
 	require.NoError(t, repo.Upsert(ctx, proposal.Proposal{ReleaseID: "rel", Attempt: 2, Status: proposal.StatusProposed}))
-	n, err := repo.FailGenerating(ctx, "rel", "driver crashed")
+	n, err := repo.FailGenerating(ctx, "rel", "the worker crashed")
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
 	got := store.Proposals()
 	require.Equal(t, proposal.StatusFailed, got[0].Proposal.Status)
-	require.Equal(t, proposal.NodeOutcome{Status: proposal.StatusFailed, Reason: "driver crashed"}, got[0].Proposal.NodeOutcomes["a"])
+	require.Equal(t, proposal.NodeOutcome{Status: proposal.StatusFailed, Reason: "the worker crashed"}, got[0].Proposal.NodeOutcomes["a"])
 	require.Equal(t, proposal.StatusProposed, got[1].Proposal.Status)
 }
 

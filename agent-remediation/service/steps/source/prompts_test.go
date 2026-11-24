@@ -87,7 +87,7 @@ func TestPrompts_MetaNamesTheStepAndWhatItReads(t *testing.T) {
 	}
 }
 
-func TestDBTCompile_BuildsTheLanesRequestAndOneEditDraft(t *testing.T) {
+func TestDBTCompile_BuildsItsRequestAndOneEditDraft(t *testing.T) {
 	f := failure("compile", remediation.TriggerNode{NodeID: "svc", FilePath: "models/x.sql"})
 	m := &fakeModel{results: []ports.ProposeResult{answer("models/x.sql", "select 2")}}
 
@@ -152,7 +152,7 @@ func TestDBTCompile_AnUnchangedAnswerStillBecomesAnEditForTheChecksToRefuse(t *t
 	assert.Equal(t, out.Draft.Edits[0].Original, out.Draft.Edits[0].Content)
 }
 
-func TestDBTParse_BuildsTheLanesRequest(t *testing.T) {
+func TestDBTParse_BuildsItsRequest(t *testing.T) {
 	f := failure("parse", remediation.TriggerNode{NodeID: "model.svc.x", Service: "svc", FilePath: "models/x.sql", ErrorExcerpt: "parse error near from"})
 	m := &fakeModel{results: []ports.ProposeResult{answer("models/x.sql", "select 2")}}
 
@@ -166,7 +166,7 @@ func TestDBTParse_BuildsTheLanesRequest(t *testing.T) {
 	assert.Equal(t, "model.svc.root", out.Draft.SuspectedRoot)
 }
 
-func TestSeed_BuildsTheLanesRequestAndAlwaysTargetsTheCSV(t *testing.T) {
+func TestSeed_BuildsItsRequestAndAlwaysTargetsTheCSV(t *testing.T) {
 	csv := remediation.SourceFiles{Files: map[string]string{"services/svc/seeds/a.csv": "a,b\n1"}, Order: []string{"services/svc/seeds/a.csv"}, Primary: "services/svc/seeds/a.csv", Service: "svc"}
 	f := failure("seed_build", remediation.TriggerNode{NodeID: "seed.svc.a", Service: "svc", FilePath: "seeds/a.csv"})
 	// The model names some other file, or none: the seed's target is its csv.
@@ -185,11 +185,11 @@ func TestSeed_BuildsTheLanesRequestAndAlwaysTargetsTheCSV(t *testing.T) {
 		assert.Equal(t, "a,b\n1,2", e.Content)
 		assert.Equal(t, "proposed-fix/rel-1/seed.svc.a/attempt-2.source.sql", e.ContentKey)
 		assert.Equal(t, "proposed-fix/rel-1/seed.svc.a/attempt-2.source.diff", e.DiffKey)
-		assert.Empty(t, out.Draft.SuspectedRoot, "the seed lane reads no suspected root")
+		assert.Empty(t, out.Draft.SuspectedRoot, "the seed prompt reads no suspected root")
 	}
 }
 
-func TestDuplicateTable_BuildsTheLanesRequest(t *testing.T) {
+func TestDuplicateTable_BuildsItsRequest(t *testing.T) {
 	one := remediation.SourceFiles{Files: map[string]string{sqlPath: "select 1"}, Order: []string{sqlPath}, Primary: sqlPath, Service: "svc"}
 	f := failure("duplicate_table", remediation.TriggerNode{
 		NodeID: "model.svc.x", RelationID: "analytics.orders", Service: "svc", FilePath: "models/x.sql",
