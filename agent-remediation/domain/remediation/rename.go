@@ -64,18 +64,7 @@ func RefsModel(sql, name string) bool {
 	return refPattern(name).MatchString(sql)
 }
 
-// NamesModelEntry reports whether a properties file's text has a list entry
-// whose name is the model name (`- name: orders`, quoted or not).
-func NamesModelEntry(yamlText, name string) bool {
-	return entryPattern(name).MatchString(yamlText)
-}
-
 func refPattern(name string) *regexp.Regexp {
 	q := regexp.QuoteMeta(name)
 	return regexp.MustCompile(`\bref\(\s*(?:['"][^'"]+['"]\s*,\s*)?['"]` + q + `['"]\s*\)`)
-}
-
-func entryPattern(name string) *regexp.Regexp {
-	q := regexp.QuoteMeta(name)
-	return regexp.MustCompile(`(?m)^\s*-\s*name:\s*['"]?` + q + `['"]?\s*(#.*)?$`)
 }

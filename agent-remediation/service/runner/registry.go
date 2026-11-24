@@ -96,7 +96,7 @@ func NewRegistry(c Collaborators) *Registry {
 	r.register(source.NewSeed())
 	r.register(rename.NewModelRename(c.Archive, c.ModelReferences, c.ServiceRepoPaths, c.Logger))
 	r.register(rename.NewPrompt())
-	r.register(rename.NewMatchesPlan())
+	r.register(rename.NewMatchesPlan(c.ModelReferences, c.ServiceRepoPaths))
 	r.register(source.NewTargetFileWasShown())
 	r.register(validation.NewCandidateSQL(c.Evidence, c.Logger))
 	r.register(validation.NewCodeBundleSource(c.CandidateSource, c.Source, c.Locator, c.ServiceRepoPaths, c.Logger))

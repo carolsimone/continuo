@@ -237,3 +237,15 @@ def test_fetch_failure_exits_3(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as exc:
         overlay_fetcher.main()
     assert exc.value.code == 3
+
+
+def test_delete_list_member_matches_the_shared_contract():
+    """The reserved member's name is pinned to the shared fixture agent-remediation's
+    overlay builder is tested against, so the writer and the reader of the delete
+    list agree on it."""
+    import json
+    import pathlib
+
+    fixture = pathlib.Path(__file__).parent / "fixtures" / "overlay_contract_v1.json"
+    contract = json.loads(fixture.read_text(encoding="utf-8"))
+    assert overlay_fetcher.DELETE_LIST_MEMBER == contract["delete_list_member"]

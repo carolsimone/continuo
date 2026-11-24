@@ -7,7 +7,8 @@ import (
 )
 
 // sharedFixtures pairs each golden fixture the Go tests read with the copy
-// topology-controller's tests read. A Go and a Python implementation of one
+// the Python tests read (topology-controller's, or s3-sidecar's for the
+// verification overlay). A Go and a Python implementation of one
 // contract are pinned to each other only while the two copies are identical.
 var sharedFixtures = []struct{ goPath, pyPath string }{
 	{"pkg/events/testdata/consumer_dead_letter_v1.json", "topology-controller/tests/fixtures/consumer_dead_letter_v1.json"},
@@ -22,6 +23,7 @@ var sharedFixtures = []struct{ goPath, pyPath string }{
 	{"pkg/events/testdata/release_requested_v1.json", "topology-controller/tests/fixtures/release_requested_v1.json"},
 	{"pkg/events/testdata/release_requested_v1_empty.json", "topology-controller/tests/fixtures/release_requested_v1_empty.json"},
 	{"pkg/domain/model/testdata/dormant_cases.json", "topology-controller/tests/fixtures/dormant_cases.json"},
+	{"agent-remediation/service/overlay/testdata/overlay_contract_v1.json", "s3-sidecar/tests/fixtures/overlay_contract_v1.json"},
 }
 
 // The test reads both copies from the repository checkout, so it runs where

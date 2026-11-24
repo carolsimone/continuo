@@ -91,7 +91,7 @@ func clusterRecord(c remediation.Cluster, rows []remediation.StepRun) (remediati
 		return cr, fmt.Errorf("decode the pre-flight draft of cluster %d in round %d: %w", c.Cluster, last.Round, err)
 	}
 	for _, e := range pass.Draft.Edits {
-		if diff := proposal.ComputeUnifiedDiff(e.Original, e.Content, e.Path); diff != "" {
+		if diff := proposal.EditDiff(e.Original, e.Content, e.Path, e.RenamedFrom); diff != "" {
 			cr.Edits = append(cr.Edits, remediation.EditRecord{Path: e.Path, Diff: diff})
 		}
 	}

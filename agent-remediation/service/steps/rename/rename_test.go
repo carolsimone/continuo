@@ -3,11 +3,14 @@ package rename_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/remediation"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
@@ -210,14 +213,58 @@ func TestPrompt_ShowsThePlanAndReadsTheMoveAndTheReferences(t *testing.T) {
 	assert.Equal(t, references().Files[refPath], d.Edits[2].Original)
 }
 
-func check(t *testing.T, d remediation.Draft) []remediation.Finding {
+// checkoutArchive hands out a fresh temporary checkout holding files.
+type checkoutArchive struct {
+	t     *testing.T
+	files map[string]string
+}
+
+func (a checkoutArchive) Fetch(context.Context, string, string) (string, func(), error) {
+	root := a.t.TempDir()
+	for p, content := range a.files {
+		full := filepath.Join(root, filepath.FromSlash(p))
+		require.NoError(a.t, os.MkdirAll(filepath.Dir(full), 0o750))
+		require.NoError(a.t, os.WriteFile(full, []byte(content), 0o600))
+	}
+	return root, func() {}, nil
+}
+
+// repoFiles is the repository the plan was made from.
+func repoFiles() map[string]string {
+	return map[string]string{
+		oldPath: "select 1 as id\n",
+		ymlPath: references().Files[ymlPath],
+		refPath: references().Files[refPath],
+	}
+}
+
+// checkOver runs rename_matches_plan on d over a checkout of files, with the
+// real patcher and finder.
+func checkOver(t *testing.T, files map[string]string, d remediation.Draft) []remediation.Finding {
 	t.Helper()
-	out, err := rename.NewMatchesPlan().Check(context.Background(), step.CheckInput{
+	scratch := step.NewScratch(checkoutArchive{t: t, files: files}, repofs.CheckoutPatcher{}, "owner/demo", "abc")
+	defer scratch.Close()
+	c := rename.NewMatchesPlan(repofs.ModelReferenceFinder{}, map[string]string{"marketing": "services/marketing"})
+	out, err := c.Check(context.Background(), step.CheckInput{
 		Draft:    d,
 		Evidence: remediation.NewEvidence().With(remediation.KeyModelRename, plan()),
+		Scratch:  scratch,
 	})
 	require.NoError(t, err)
 	return out.Result.Findings
+}
+
+func check(t *testing.T, d remediation.Draft) []remediation.Finding {
+	t.Helper()
+	return checkOver(t, repoFiles(), d)
+}
+
+func codes(findings []remediation.Finding) []string {
+	out := make([]string, 0, len(findings))
+	for _, f := range findings {
+		out = append(out, f.Code+" "+f.File)
+	}
+	return out
 }
 
 func TestMatchesPlan_PassesTheWholeRename(t *testing.T) {
@@ -232,16 +279,12 @@ func TestMatchesPlan_RefusesAnAliasInPlace(t *testing.T) {
 	findings := check(t, remediation.Draft{Edits: []remediation.Edit{
 		{Path: oldPath, Content: "{{ config(alias='marketing_table_b') }}\nselect 1 as id\n"},
 	}})
-	codes := make([]string, 0, len(findings))
-	for _, f := range findings {
-		codes = append(codes, f.Code+" "+f.File)
-	}
 	assert.Equal(t, []string{
 		"rename_missing " + oldPath,
 		"edit_outside_rename " + oldPath,
 		"reference_left " + ymlPath,
 		"reference_left " + refPath,
-	}, codes)
+	}, codes(findings))
 }
 
 func TestMatchesPlan_RefusesAReferenceEditedButStillNamingTheOldModel(t *testing.T) {
@@ -253,4 +296,24 @@ func TestMatchesPlan_RefusesAReferenceEditedButStillNamingTheOldModel(t *testing
 	require.Len(t, findings, 1)
 	assert.Equal(t, "reference_left", findings[0].Code)
 	assert.Equal(t, refPath+" still names the model table_b, which the fix renames to table_b_v2", findings[0].Message)
+}
+
+// TestMatchesPlan_ReadsAnyPropertiesFileTheFinderReads pins that the check and
+// model_rename share one rule for "names the model": an entry whose name is
+// not its first key, or written in flow style, still counts.
+func TestMatchesPlan_ReadsAnyPropertiesFileTheFinderReads(t *testing.T) {
+	cases := map[string]string{
+		"name not the first key": "models:\n  - description: the old one\n    name: table_b\n",
+		"flow style":             "models: [{name: table_b, description: the old one}]\n",
+	}
+	for name, leftover := range cases {
+		t.Run(name, func(t *testing.T) {
+			findings := check(t, remediation.Draft{Edits: []remediation.Edit{
+				{Path: newPath, RenamedFrom: oldPath, Content: "select 1 as id\n"},
+				{Path: ymlPath, Content: leftover},
+				{Path: refPath, Content: "select * from {{ ref('table_b_v2') }}\n"},
+			}})
+			assert.Equal(t, []string{"reference_left " + ymlPath}, codes(findings))
+		})
+	}
 }

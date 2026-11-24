@@ -4,7 +4,9 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"io"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -147,4 +149,17 @@ func TestBuild_RefusesAContradictoryOrUnsafeDelete(t *testing.T) {
 	assert.ErrorContains(t, err, "relative to the project")
 	_, err = Build([]File{{Path: DeleteListName, Content: []byte("x")}}, nil)
 	assert.ErrorContains(t, err, "reserved")
+}
+
+// TestDeleteListName_MatchesTheSharedContract pins the reserved member's name
+// to the shared fixture s3-sidecar's overlay fetcher is tested against, so the
+// writer and the reader of the delete list agree on it.
+func TestDeleteListName_MatchesTheSharedContract(t *testing.T) {
+	raw, err := os.ReadFile("testdata/overlay_contract_v1.json")
+	require.NoError(t, err)
+	var contract struct {
+		DeleteListMember string `json:"delete_list_member"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &contract))
+	assert.Equal(t, contract.DeleteListMember, DeleteListName)
 }

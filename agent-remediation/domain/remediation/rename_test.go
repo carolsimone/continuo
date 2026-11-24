@@ -29,14 +29,6 @@ func TestRefsModel(t *testing.T) {
 	assert.False(t, RefsModel("select * from analytics.table_b", "table_b"), "a physical name is not a ref")
 }
 
-func TestNamesModelEntry(t *testing.T) {
-	yml := "version: 2\nmodels:\n  - name: table_b\n    meta: {continuo: {grain: [id]}}\n  - name: other\n"
-	assert.True(t, NamesModelEntry(yml, "table_b"))
-	assert.True(t, NamesModelEntry("models:\n  - name: 'table_b'  # the new one\n", "table_b"))
-	assert.False(t, NamesModelEntry(yml, "table"))
-	assert.False(t, NamesModelEntry("models:\n  - name: table_b_v2\n", "table_b"))
-}
-
 func TestModelRename_Explanation(t *testing.T) {
 	r := ModelRename{
 		Service: "marketing", Relation: "analytics.table_b",

@@ -39,3 +39,9 @@ func TestComputeRenameDiff(t *testing.T) {
 			"--- a/models/table_b.sql\n+++ b/models/table_b_v2.sql\n-select 1\n+select 2\n", got)
 	})
 }
+
+func TestEditDiff(t *testing.T) {
+	assert.Equal(t, ComputeUnifiedDiff("a\n", "b\n", "m.sql"), EditDiff("a\n", "b\n", "m.sql", ""))
+	assert.Equal(t, ComputeRenameDiff("a\n", "a\n", "old.sql", "m.sql"), EditDiff("a\n", "a\n", "m.sql", "old.sql"),
+		"a move with unchanged content still has a diff, so an earlier try that moved a file is shown")
+}
