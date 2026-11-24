@@ -8,11 +8,13 @@ export interface CreatePRInput {
   /** Branch to merge into */
   baseBranch: string;
   /**
-   * Commit the head branch is cut from. When set (the proposal's commit_sha),
-   * the branch is created from this exact commit so the PR diff is precisely the
-   * proposed change and GitHub surfaces a conflict if the file drifted on the
-   * base branch since the proposal was generated. When omitted, the base branch
-   * HEAD is used.
+   * The commit the files were written against (the proposal's commit_sha).
+   * The head branch is always cut from the base branch's head; when this is
+   * set and is not that head, every file in `files` must be the same at both
+   * commits (the same blob, or absent from both), or create throws
+   * FileChangedOnBaseBranchError and writes nothing, since the commit would
+   * replace the base branch's newer version of the file. When omitted, no
+   * file is compared.
    */
   baseSha?: string;
   /** Branch to create for the PR */
@@ -65,6 +67,26 @@ export interface PullRequestCreator {
 }
 
 /**
+ * Thrown by create, before it writes anything to the repository, when files
+ * the pull request would change differ between the commit they were written
+ * against (CreatePRInput.baseSha) and the base branch's head: committing them
+ * on the base branch's head would replace its newer version of each.
+ */
+export class FileChangedOnBaseBranchError extends Error {
+  /** The branch the pull request would merge into. */
+  readonly baseBranch: string;
+  /** The changed files, as repository-relative paths in the order of CreatePRInput.files. */
+  readonly paths: string[];
+
+  constructor(baseBranch: string, paths: string[], baseSha: string, baseBranchHead: string) {
+    super(`${paths.join(', ')} changed on ${baseBranch} between ${baseSha} and ${baseBranchHead}`);
+    this.name = 'FileChangedOnBaseBranchError';
+    this.baseBranch = baseBranch;
+    this.paths = paths;
+  }
+}
+
+/**
  * Minimal structural type covering only the Octokit methods used by makePullRequestCreator.
  * Allows tests to inject a hand-written fake without depending on real Octokit types.
  */
@@ -103,6 +125,13 @@ export interface OctokitLike {
       sha: string;
       force: boolean;
     }): Promise<unknown>;
+  };
+  repos: {
+    // A file answers one object carrying its blob sha; a directory answers a
+    // list of its entries. A path the commit does not hold is a 404.
+    getContent(params: { owner: string; repo: string; path: string; ref: string }): Promise<{
+      data: { sha: string } | unknown[];
+    }>;
   };
   pulls: {
     create(params: {
@@ -192,15 +221,61 @@ async function requestReviews(
   return { refused, refusals };
 }
 
+// blobAt names what commit `ref` holds at `path`: the blob sha of a file,
+// 'directory' for a directory, and null when the commit has no such path
+// (GitHub answers 404). Any other failure is thrown.
+async function blobAt(
+  octokit: OctokitLike,
+  owner: string,
+  repo: string,
+  path: string,
+  ref: string,
+): Promise<string | null> {
+  try {
+    const res = await octokit.repos.getContent({ owner, repo, path, ref });
+    return Array.isArray(res.data) ? 'directory' : res.data.sha;
+  } catch (err: unknown) {
+    if ((err as { status?: number } | undefined)?.status === 404) return null;
+    throw err;
+  }
+}
+
+// changedPaths lists, in the order given, the paths whose content differs
+// between commits `from` and `to`: another blob at each, or a file at one and
+// none at the other. A path neither commit holds is unchanged.
+async function changedPaths(
+  octokit: OctokitLike,
+  owner: string,
+  repo: string,
+  paths: string[],
+  from: string,
+  to: string,
+): Promise<string[]> {
+  const changed = await Promise.all(
+    paths.map(async (path) => {
+      const [before, after] = await Promise.all([
+        blobAt(octokit, owner, repo, path, from),
+        blobAt(octokit, owner, repo, path, to),
+      ]);
+      return before === after ? undefined : path;
+    }),
+  );
+  return changed.filter((path): path is string => path !== undefined);
+}
+
 /**
  * Returns a PullRequestCreator backed by the provided octokit-compatible client.
  *
  * Sequence for each `create` call:
- *   1. Resolve the commit to branch from — input.baseSha when set (the proposal's
- *      commit), otherwise the base branch HEAD via git.getRef.
- *   2. Create the head branch via git.createRef — on 422 (already exists) continue.
+ *   1. Resolve the base branch head via git.getRef. When input.baseSha is set
+ *      and is another commit, check that it exists (git.getCommit) and compare
+ *      every input file at both commits (repos.getContent): when any differs,
+ *      throw FileChangedOnBaseBranchError before anything is written.
+ *   2. Create the head branch at the base branch head via git.createRef — on
+ *      422 (already exists) continue.
  *   3. Write every input file as a blob, assemble them into one tree layered on
- *      the base commit's tree, and commit that tree with the base commit as parent.
+ *      the base branch head's tree, and commit that tree with the base branch
+ *      head as parent.
  *   4. Point the head branch at the new commit via git.updateRef.
  *   5. Open the PR via pulls.create — on 422 (PR already exists) resolve the existing PR via pulls.list.
  *   6. For a PR just opened, ask the reviewers and teams of the input to review it
@@ -224,16 +299,36 @@ export function makePullRequestCreator(octokit: OctokitLike): PullRequestCreator
 
       const [owner, repoName] = input.repo.split('/');
 
-      // Step 1: resolve the commit to branch from — the proposal's commit when
-      // provided, otherwise the base branch HEAD.
-      let baseSha = input.baseSha;
-      if (!baseSha) {
-        const refData = await octokit.git.getRef({
+      // Step 1: the head branch is cut from the base branch head, so the pull
+      // request is never behind its base and carries no older copy of a file
+      // the base branch has changed since (GitHub refuses a branch that would
+      // carry an older workflow file to an App without the workflows
+      // permission). The files were written against input.baseSha, so each of
+      // them must still be the same on the base branch head: committing one
+      // that changed there would replace the newer version. Nothing is written
+      // to the repository before this check passes.
+      const refData = await octokit.git.getRef({
+        owner,
+        repo: repoName,
+        ref: `heads/${input.baseBranch}`,
+      });
+      const headSha = refData.data.object.sha;
+      if (input.baseSha && input.baseSha !== headSha) {
+        // getContent answers 404 both for a path the commit lacks and for a
+        // commit that does not exist; reading the commit first makes the
+        // second fail here rather than read as files it never had.
+        await octokit.git.getCommit({ owner, repo: repoName, commit_sha: input.baseSha });
+        const changed = await changedPaths(
+          octokit,
           owner,
-          repo: repoName,
-          ref: `heads/${input.baseBranch}`,
-        });
-        baseSha = refData.data.object.sha;
+          repoName,
+          input.files.map((file) => file.path),
+          input.baseSha,
+          headSha,
+        );
+        if (changed.length > 0) {
+          throw new FileChangedOnBaseBranchError(input.baseBranch, changed, input.baseSha, headSha);
+        }
       }
 
       // Step 2: create the head branch — ignore 422 (branch already exists)
@@ -242,7 +337,7 @@ export function makePullRequestCreator(octokit: OctokitLike): PullRequestCreator
           owner,
           repo: repoName,
           ref: `refs/heads/${input.headBranch}`,
-          sha: baseSha,
+          sha: headSha,
         });
       } catch (err: unknown) {
         const e = err as { status?: number };
@@ -251,14 +346,14 @@ export function makePullRequestCreator(octokit: OctokitLike): PullRequestCreator
       }
 
       // Step 3: commit every file at once. Each file becomes a blob; the blobs
-      // are layered onto the base commit's tree so untouched paths are carried
-      // over unchanged, and the resulting tree is committed in one go. Writing
-      // the files individually would produce one commit per file, and a diff
-      // that is only correct once the last of them lands.
-      const baseCommit = await octokit.git.getCommit({
+      // are layered onto the base branch head's tree so untouched paths are
+      // carried over unchanged, and the resulting tree is committed in one go.
+      // Writing the files individually would produce one commit per file, and
+      // a diff that is only correct once the last of them lands.
+      const headCommit = await octokit.git.getCommit({
         owner,
         repo: repoName,
-        commit_sha: baseSha,
+        commit_sha: headSha,
       });
 
       const blobShas: string[] = [];
@@ -279,7 +374,7 @@ export function makePullRequestCreator(octokit: OctokitLike): PullRequestCreator
       const tree = await octokit.git.createTree({
         owner,
         repo: repoName,
-        base_tree: baseCommit.data.tree.sha,
+        base_tree: headCommit.data.tree.sha,
         tree: input.files.map((file, i) => ({
           path: file.path,
           mode: '100644' as const,
@@ -293,7 +388,7 @@ export function makePullRequestCreator(octokit: OctokitLike): PullRequestCreator
         repo: repoName,
         message: input.commitMessage,
         tree: tree.data.sha,
-        parents: [baseSha],
+        parents: [headSha],
       });
 
       // Step 4: move the head branch onto the new commit. The branch name is
