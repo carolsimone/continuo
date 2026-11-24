@@ -290,6 +290,11 @@ func promptRecord(out step.PromptOutput, m *model) serialization.PromptRecord {
 // row and the cluster's end commit together, so a pass interrupted before its
 // commit runs again whole.
 //
+// Each edit's content is written the way its original is, line endings and
+// final newline (remediation.KeepFileConventions), once the draft is restored
+// and again once every edit has its original, so the checks, the stored fix
+// and its diff see only the lines the fix changes.
+//
 // When every check passed, each edit with no original gets the one the pass's
 // checkout read, the edits' content and diff are stored, and the cluster is
 // checked. A draft that passed every check with no edit is a decline: the
@@ -306,6 +311,7 @@ func (r *Runner) runPreflight(ctx context.Context, run tryRun, c remediation.Clu
 		return r.recordFailure(ctx, pass, err)
 	}
 	draft, placeholders := restoreDraft(draft, red.redactor, codeTexts(ev, r.d.Registry.EvidenceClass))
+	draft = draft.KeepingFileConventions()
 	ev = ev.With(remediation.KeyDraft, draft)
 	if pass.InputDigest, err = serialization.InputDigest(ev, c.Round); err != nil {
 		return r.recordFailure(ctx, pass, err)
@@ -329,7 +335,7 @@ func (r *Runner) runPreflight(ctx context.Context, run tryRun, c remediation.Clu
 		findings = append(findings, result.Findings...)
 	}
 	scratch.Close()
-	draft = withOriginals(draft, scratch.Originals())
+	draft = withOriginals(draft, scratch.Originals()).KeepingFileConventions()
 	placeholders = append(placeholders, markerFindings(draft, red.redactor)...)
 	results = append([]remediation.CheckResult{{Check: findingUnknownPlaceholder, Findings: placeholders}}, results...)
 	findings = append(slices.Clone(placeholders), findings...)
