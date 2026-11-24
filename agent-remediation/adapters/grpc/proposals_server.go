@@ -94,8 +94,9 @@ func (s *ProposalsServer) GetProposal(ctx context.Context, req *remediationv1.Ge
 // BeginPullRequest atomically claims a proposal's (or one owning-service
 // group's) pull request for creation and returns the data needed to open the
 // GitHub pull-request, including claimed_at — the persisted pr_claimed_at for
-// this claim, which the caller must present back to FailPullRequest to
-// release this exact claim. req.Service selects the owning-service group to
+// this claim in RFC 3339 with its fraction of a second (pr_claimed_at is stored
+// to the microsecond), which the caller must present back to FailPullRequest
+// to release this exact claim. req.Service selects the owning-service group to
 // claim; "" is the legacy whole-proposal group. Returns INVALID_ARGUMENT when
 // req.Service is not one of the proposal's PRServices. Returns
 // FAILED_PRECONDITION when the proposal is already claimed (carrying the
@@ -167,7 +168,8 @@ func (s *ProposalsServer) RecordPullRequest(ctx context.Context, req *remediatio
 // from resetting a claim someone else (a re-claim, or the reconciler's
 // opening sweep) has already taken over since. req.Service is "" for the
 // legacy whole-proposal claim. req.ClaimedAt must be the value
-// BeginPullRequest returned for this same claim. Returns INVALID_ARGUMENT
+// BeginPullRequest returned for this same claim, fraction of a second
+// included, or the compare-and-set never matches. Returns INVALID_ARGUMENT
 // when claimed_at is missing or not RFC3339. The response's released field is
 // false, not an error, when the CAS did not fire because the claim had
 // already moved on.
@@ -392,7 +394,7 @@ func claimToProto(c proposal.PRClaim) *remediationv1.BeginPullRequestResponse {
 		Confidence:      string(c.Confidence),
 		Model:           c.Model,
 		Branch:          c.Branch,
-		ClaimedAt:       c.ClaimedAt.Format(time.RFC3339),
+		ClaimedAt:       c.ClaimedAt.Format(time.RFC3339Nano),
 		Edits:           editsToProto(c.Edits),
 		ResolvedNodeIds: c.ResolvedNodeIDs,
 		Service:         c.Service,

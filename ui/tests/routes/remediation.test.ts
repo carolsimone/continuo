@@ -3,7 +3,7 @@ import express from 'express';
 import request from 'supertest';
 import { createRemediationRouter } from '../../src/server/routes/remediation';
 import type { RemediationClient } from '../../src/server/clients/remediation-client';
-import type { PullRequestCreator } from '../../src/server/github/pull-request-creator';
+import { FileChangedOnBaseBranchError, type PullRequestCreator } from '../../src/server/github/pull-request-creator';
 
 // Constructs a gRPC-style error with the given code and message, mirroring what
 // @grpc/grpc-js rejects with.
@@ -586,6 +586,73 @@ describe('remediation router', () => {
       id: 'p1',
       claimed_at: '2026-06-24T00:00:00Z',
       service: '',
+    });
+  });
+
+  // ── POST — a fixed file changed on main since the release → refused ───────
+
+  describe('when a file the fix edits changed on main since the release', () => {
+    it('releases the claim and names the changed file and what to do', async () => {
+      const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const remediation = makeRemediation();
+      const prCreator = makePrCreator({
+        create: vi
+          .fn()
+          .mockRejectedValue(new FileChangedOnBaseBranchError('main', ['models/mymodel.sql'], 'abc123', 'def456')),
+      });
+      const app = appWith({ remediation, prCreator, getObject: makeGetObject() });
+
+      const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
+      expect(res.status).toBe(502);
+      expect(res.body.pull_requests).toEqual([]);
+      expect(res.body.errors).toEqual([
+        {
+          service: '',
+          error:
+            'models/mymodel.sql changed on main since the release this fix was made for, so the pull request would overwrite that change. ' +
+            'Check main: the failure may already be fixed; if it still fails, the next release of the service is remediated again.',
+        },
+      ]);
+      expect(remediation.failPullRequest).toHaveBeenCalledWith({ id: 'p1', claimed_at: '2026-06-24T00:00:00Z', service: '' });
+      expect(remediation.recordPullRequest).not.toHaveBeenCalled();
+
+      const logged = consoleWarn.mock.calls.map((call) => call.join(' ')).join('\n');
+      expect(logged).toContain('p1');
+      expect(logged).toContain('models/mymodel.sql');
+      consoleWarn.mockRestore();
+    });
+
+    it('names every changed file', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const remediation = makeRemediation();
+      const changed = ['models/a.sql', 'models/b.sql', 'contracts/c.odcs.yaml'];
+      const prCreator = makePrCreator({
+        create: vi.fn().mockRejectedValue(new FileChangedOnBaseBranchError('main', changed, 'abc123', 'def456')),
+      });
+      const app = appWith({ remediation, prCreator, getObject: makeGetObject() });
+
+      const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
+      expect(res.body.errors[0].error).toMatch(
+        /^models\/a\.sql, models\/b\.sql and contracts\/c\.odcs\.yaml changed on main since the release this fix was made for, so the pull request would overwrite those changes\. /,
+      );
+      vi.restoreAllMocks();
+    });
+
+    it('still reports any other GitHub refusal as failed to open pull request', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const remediation = makeRemediation();
+      const prCreator = makePrCreator({
+        create: vi
+          .fn()
+          .mockRejectedValue(Object.assign(new Error('Resource not accessible by integration'), { status: 403 })),
+      });
+      const app = appWith({ remediation, prCreator, getObject: makeGetObject() });
+
+      const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
+      expect(res.status).toBe(502);
+      expect(res.body.errors).toEqual([{ service: '', error: 'failed to open pull request' }]);
+      expect(remediation.failPullRequest).toHaveBeenCalledWith({ id: 'p1', claimed_at: '2026-06-24T00:00:00Z', service: '' });
+      vi.restoreAllMocks();
     });
   });
 

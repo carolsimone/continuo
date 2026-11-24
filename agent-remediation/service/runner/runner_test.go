@@ -470,6 +470,30 @@ func TestRunner_PassedPreflightWritesTheArtifacts(t *testing.T) {
 	assert.Equal(t, "s3://artifacts/proposed-fix/rel-1/svc-a/attempt-1.source.diff", e.DiffURI)
 }
 
+// TestRunner_AnEditIsStoredWithItsFilesLineEndings pins that the stored fix,
+// which the verification run builds and the pull request writes, keeps the
+// file's CRLF line endings and final newline: a model answers with LF, and a
+// diff of that answer against a CRLF file marks every line as changed.
+func TestRunner_AnEditIsStoredWithItsFilesLineEndings(t *testing.T) {
+	h := newHarness(t, func(h *harness) {
+		h.source.files["services/svc-a/models/orders.sql"] = "select 1\r\nfrom a\r\n"
+		h.llm = &scriptedLLM{answer: func(prompt.ProposeRequest) ports.ProposeResult {
+			return ports.ProposeResult{ProposedContent: "select 2\nfrom a", Rationale: "fixed the select", Confidence: "high", Model: "claude-test"}
+		}}
+	})
+	id := h.accept(trigger("compile", compileNode("svc-a")))
+
+	require.NoError(t, h.runner.Drive(ctx, id))
+
+	assert.Equal(t, remediation.ClusterChecked, h.cluster(id, 1, 1).Status)
+	content, ok := h.artifacts.get("proposed-fix/rel-1/svc-a/attempt-1.source.sql")
+	require.True(t, ok)
+	assert.Equal(t, "select 2\r\nfrom a\r\n", content)
+	diff, ok := h.artifacts.get("proposed-fix/rel-1/svc-a/attempt-1.source.diff")
+	require.True(t, ok)
+	assert.Equal(t, proposal.ComputeUnifiedDiff("select 1\r\nfrom a\r\n", "select 2\r\nfrom a\r\n", "services/svc-a/models/orders.sql"), diff)
+}
+
 func TestRunner_PreflightFindingHandsTheClusterOver(t *testing.T) {
 	cases := []struct {
 		name     string

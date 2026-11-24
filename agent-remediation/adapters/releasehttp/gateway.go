@@ -107,6 +107,7 @@ type runResponse struct {
 	ActivatedAt    string          `json:"activated_at"`
 	FailReason     string          `json:"fail_reason"`
 	FailDetail     string          `json:"fail_detail"`
+	FailingNodes   []string        `json:"failing_nodes"`
 	PerNodeResults []runNodeResult `json:"per_node_results"`
 }
 
@@ -125,7 +126,8 @@ func phaseOf(status string) proposal.Phase {
 }
 
 // Status reads a verification run and reports its phase, when it started,
-// and — for a failed run — each failing validation node's error text.
+// and — for a failed run — the error text of each node the failure names and
+// the run's own reason and detail.
 func (g *Gateway) Status(ctx context.Context, runID string) (ports.VerificationStatus, error) {
 	var run runResponse
 	if err := g.getJSON(ctx, "/verification-runs/"+runID, &run); err != nil {
@@ -141,12 +143,14 @@ func (g *Gateway) Status(ctx context.Context, runID string) (ports.VerificationS
 	}
 	if st.Phase == proposal.PhaseFailed {
 		st.NodeErrors = g.nodeErrors(ctx, run)
+		st.RunError = failFallback(run)
 	}
 	return st, nil
 }
 
-// failFallback is the "reason — detail" text a failing node reports when its
-// own structured result cannot be read.
+// failFallback is the run's own "reason — detail" text: the error of a node
+// the failure names without a text of its own, and the run error of a failure
+// that names no node.
 func failFallback(run runResponse) string {
 	switch {
 	case run.FailDetail == "":
@@ -159,21 +163,30 @@ func failFallback(run runResponse) string {
 
 // nodeErrors builds the failing-node -> error-text map for a failed run, so a
 // rejected attempt records why each node it addressed failed and the next
-// attempt is shown it. It reads the two stages whose failure carries a
-// per-node error text:
+// attempt is shown it. Every node release-controller names in failing_nodes
+// starts out with the run-level fail reason and detail: a rejection that
+// release-controller decides itself (duplicate_table) names its nodes there
+// and records no failing per-node result at all. Each per-node result that did
+// not pass then sets its node's text from its own stage:
 //   - validation: the error is the sentinel JSON's message, read from the
 //     entry's run_results_uri through the EvidenceReader.
 //   - parse: the parser rejected the node before any Job ran, so there is no
 //     run_results_uri; the error is the entry's inline detail.
+//   - compile and seed_build carry their error only in a raw dbt log, which is
+//     not a per-node text, so the node keeps the run-level reason and detail.
 //
-// Either source falls back to the run-level fail reason and detail when it
-// yields no text (an empty/missing URI or an unreadable body for validation, an
-// empty detail for parse). A compile- or seed_build-stage failure carries its
-// error only in a raw dbt log, which is not a per-node text this map can carry,
-// so those entries are left out and the attempt records the run-level fallback.
+// Either source falls back to the run-level reason and detail when it yields
+// no text (an empty or missing URI, an unreadable body, an empty detail).
 func (g *Gateway) nodeErrors(ctx context.Context, run runResponse) map[string]string {
 	fallback := failFallback(run)
 	out := make(map[string]string)
+	if fallback != "" {
+		for _, id := range run.FailingNodes {
+			if id != "" {
+				out[id] = fallback
+			}
+		}
+	}
 	for _, n := range run.PerNodeResults {
 		if n.Status == "ok" {
 			continue
@@ -184,8 +197,6 @@ func (g *Gateway) nodeErrors(ctx context.Context, run runResponse) map[string]st
 			msg = g.fetchMessage(ctx, n.RunResultsURI)
 		case "parse":
 			msg = n.Detail
-		default:
-			continue
 		}
 		if msg == "" {
 			msg = fallback

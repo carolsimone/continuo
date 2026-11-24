@@ -559,17 +559,36 @@ func TestPoll_WhenEveryOwnNodePassedEveryFailingNodeIsNamed(t *testing.T) {
 	assert.Equal(t, "model.alpha.a: a broke; model.zeta.b: b broke", v.VerifyError)
 }
 
-func TestPoll_AFailureWithNoNodeErrorNamesTheFirstRun(t *testing.T) {
+func TestPoll_AFailureWithNoErrorAtAllNamesTheFailedRun(t *testing.T) {
 	r := newRig()
 	r.pipeline.statuses[ledgerRun] = status(proposal.PhasePassed, t0, nil)
 	r.pipeline.statuses[salesRun] = status(proposal.PhaseFailed, t0, nil)
 	v := poll(t, r, gateInput(dbtCluster(), pythonCluster()))
 
-	assert.Equal(t, "verification run "+ledgerRun+" failed without a per-node error", v.VerifyError)
+	assert.Equal(t, "verification run "+salesRun+" failed without a per-node error", v.VerifyError)
 	require.Len(t, v.Result.Findings, 1)
 	assert.Equal(t, "verification_failed", v.Result.Findings[0].Code)
 	assert.Equal(t, v.VerifyError, v.Result.Findings[0].Message)
 	assert.False(t, v.Result.Passed(), "a failure with no node error must not read as a pass")
+}
+
+// TestPoll_AFailureThatNamesNoNodeCarriesTheRunsOwnError pins the text the next
+// try is shown when a run fails without naming a node: the run's own reason
+// and detail, not a sentence that only says it failed.
+func TestPoll_AFailureThatNamesNoNodeCarriesTheRunsOwnError(t *testing.T) {
+	r := newRig()
+	r.pipeline.statuses[ledgerRun] = status(proposal.PhasePassed, t0, nil)
+	r.pipeline.statuses[salesRun] = ports.VerificationStatus{
+		Phase: proposal.PhaseFailed, ActivatedAt: t0,
+		RunError: "nothing_to_validate — the release changes no node",
+	}
+	v := poll(t, r, gateInput(dbtCluster(), pythonCluster()))
+
+	want := "verification run " + salesRun + " failed: nothing_to_validate — the release changes no node"
+	assert.Equal(t, want, v.VerifyError)
+	assert.Equal(t, []remediation.Finding{{Code: "verification_failed", Message: want}}, v.Result.Findings)
+	require.Len(t, v.Verifications, 2)
+	assert.Equal(t, "nothing_to_validate — the release changes no node", v.Verifications[1].Error)
 }
 
 func TestPoll_AFailedRunWinsOverARunStillRunning(t *testing.T) {

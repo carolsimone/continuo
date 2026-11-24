@@ -4,6 +4,7 @@
 package proposal
 
 import (
+	"fmt"
 	"sort"
 	"time"
 
@@ -130,9 +131,30 @@ type Verification struct {
 	// not yet read since the run was recorded.
 	Phase       Phase
 	ActivatedAt *time.Time
-	// Error is the named per-node errors the run reported; empty unless the
-	// run failed.
+	// Error is the named per-node errors the run reported, or the run's own
+	// reason and detail when it named no node; empty unless the run failed.
 	Error string
+}
+
+// FailedRunReason is the reason recorded for a verification that failed
+// without naming a node: the first failed run and the error it reported, or,
+// when it reported none, that it failed without a per-node error. A list with
+// no failed run names its first run.
+func FailedRunReason(runs []Verification) string {
+	if len(runs) == 0 {
+		return "verification failed without a per-node error"
+	}
+	failed := runs[0]
+	for _, r := range runs {
+		if r.Phase == PhaseFailed {
+			failed = r
+			break
+		}
+	}
+	if failed.Error != "" {
+		return fmt.Sprintf("verification run %s failed: %s", failed.RunID, failed.Error)
+	}
+	return fmt.Sprintf("verification run %s failed without a per-node error", failed.RunID)
 }
 
 // UnionServices merges service-name sets into one sorted, de-duplicated

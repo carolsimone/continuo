@@ -1,7 +1,12 @@
 import { Router } from 'express';
 import * as grpc from '@grpc/grpc-js';
 import type { RemediationClient } from '../clients/remediation-client';
-import type { CreatedPullRequest, PullRequestCreator, RefusedReviewers } from '../github/pull-request-creator';
+import {
+  FileChangedOnBaseBranchError,
+  type CreatedPullRequest,
+  type PullRequestCreator,
+  type RefusedReviewers,
+} from '../github/pull-request-creator';
 import { classifyOwner, splitOwners } from '../github/reviewers';
 import { buildPullRequestBody, type OwnerReview, type PullRequestOwner } from './pr-body';
 
@@ -24,6 +29,19 @@ function extractPrNumber(url: string | undefined): number {
   if (!url) return 0;
   const m = url.match(/\/pull\/(\d+)/);
   return m ? Number(m[1]) : 0;
+}
+
+// changedOnBaseBranchText tells the operator why no pull request was opened
+// for a fix whose files changed on the base branch since the release it was
+// made for, and what to do: "a", "a and b", "a, b and c" changed.
+function changedOnBaseBranchText(err: FileChangedOnBaseBranchError): string {
+  const { paths, baseBranch } = err;
+  const named = paths.length === 1 ? paths[0] : `${paths.slice(0, -1).join(', ')} and ${paths[paths.length - 1]}`;
+  const change = paths.length === 1 ? 'that change' : 'those changes';
+  return (
+    `${named} changed on ${baseBranch} since the release this fix was made for, so the pull request would overwrite ${change}. ` +
+    `Check ${baseBranch}: the failure may already be fixed; if it still fails, the next release of the service is remediated again.`
+  );
 }
 
 // safeFailPullRequest releases a stuck 'opening' claim for one service back
@@ -341,9 +359,10 @@ export function createRemediationRouter(
       pr = await creator.create({
         repo: claim.repo,
         baseBranch: 'main',
-        // Branch from the commit the proposal was generated against, so the diff
-        // is exactly the proposed change and GitHub flags a conflict if the file
-        // drifted on main since — rather than silently reverting that drift.
+        // The commit the proposal was generated against. The branch is cut
+        // from main's head, and the creator refuses (FileChangedOnBaseBranchError)
+        // when a file the fix edits is no longer the same on main, rather
+        // than overwrite main's newer version of it.
         baseSha: claim.commit_sha,
         headBranch: claim.branch,
         files,
@@ -355,6 +374,19 @@ export function createRemediationRouter(
         bodyWithRefused: bodyFor,
       });
     } catch (err) {
+      // A file the fix edits changed on main since the release: nothing was
+      // written to the repository. The claim is released like any other
+      // failure, and the operator is told which files changed and what to do.
+      if (err instanceof FileChangedOnBaseBranchError) {
+        console.warn(
+          '[remediation] pull request not opened for proposal %s service %s: %s',
+          id,
+          service,
+          err.message,
+        );
+        await safeFailPullRequest(remediation, id, claimedAt, service);
+        return { ok: false, error: { service, error: changedOnBaseBranchText(err) } };
+      }
       // Log the proposal id plus the error's status/message (Octokit errors
       // carry both) so a GitHub-side rejection is diagnosable without a
       // repro. Never log the full error object here: an Octokit

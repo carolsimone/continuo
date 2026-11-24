@@ -1,7 +1,6 @@
 package gate
 
 import (
-	"fmt"
 	"slices"
 	"sort"
 	"strings"
@@ -185,8 +184,9 @@ func draftedNodes(drafts []step.ClusterDraft) []string {
 // in a stable order; when every one of them passed and other nodes did not (a
 // fix that broke something downstream of itself, or a handed-over node that
 // still fails) every failing node is named instead, so the reason describes
-// what actually failed. A failure carrying no per-node error at all still
-// records which run failed it, so the try never ends with a blank reason.
+// what actually failed. A failure that names no node records the failed run
+// and its own reason and detail (proposal.FailedRunReason), so the try never
+// ends with a blank reason and the next try is told what the run reported.
 func verifyError(own []string, nodeErrors map[string]string, runs []proposal.Verification) string {
 	if named := namedErrors(nodeErrors, stillFailing(own, nodeErrors)); named != "" {
 		return named
@@ -194,7 +194,7 @@ func verifyError(own []string, nodeErrors map[string]string, runs []proposal.Ver
 	if all := namedErrors(nodeErrors, sortedNodes(nodeErrors)); all != "" {
 		return all
 	}
-	return fmt.Sprintf("verification run %s failed without a per-node error", runs[0].RunID)
+	return proposal.FailedRunReason(runs)
 }
 
 // stillFailing is the nodes of own that the failure still reports an error
@@ -240,6 +240,9 @@ func applyStatus(r proposal.Verification, st ports.VerificationStatus) proposal.
 	}
 	if st.Phase == proposal.PhaseFailed {
 		r.Error = namedErrors(st.NodeErrors, sortedNodes(st.NodeErrors))
+		if r.Error == "" {
+			r.Error = st.RunError
+		}
 	}
 	return r
 }
