@@ -37,13 +37,15 @@ const ODCSBundleName = "odcs-bundle.json"
 
 // VerificationStatus is one read of a verification run. Phase is derived
 // from the run's status; ActivatedAt is when it left the pipeline's queue
-// (zero while queued); NodeErrors is populated only when Phase is failed —
-// one entry per failing validation node carrying the error text the next
-// attempt is shown.
+// (zero while queued). NodeErrors and RunError are set only when Phase is
+// failed: NodeErrors holds one entry per node the failure names, carrying the
+// error text the next attempt is shown, and RunError is the run's own reason
+// and detail ("reason — detail"), the text of a failure that names no node.
 type VerificationStatus struct {
 	Phase       proposal.Phase
 	ActivatedAt time.Time
 	NodeErrors  map[string]string
+	RunError    string
 }
 
 // VerificationPipeline is this service's client of the release pipeline for

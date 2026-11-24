@@ -737,6 +737,24 @@ func TestReconcileOnce_FailedVerificationWithNoNodeErrorsStillRecordsAReason(t *
 		h.repo.row("p1").VerifyError)
 }
 
+// TestReconcileOnce_FailedVerificationThatNamesNoNodeRecordsTheRunsError covers
+// a run that fails without naming a node: the attempt records the run's own
+// reason and detail, which is what the next attempt is shown.
+func TestReconcileOnce_FailedVerificationThatNamesNoNodeRecordsTheRunsError(t *testing.T) {
+	row := verifyingRow("p1", 1, time.Minute)
+	h := newHarness(t, row)
+	h.pipeline.statuses[row.VerificationRunID] = ports.VerificationStatus{
+		Phase:    proposal.PhaseFailed,
+		RunError: "duplicate_table — an alias rename cannot fix this, the declared model itself must be renamed",
+	}
+
+	h.reconciler.ReconcileOnce(context.Background())
+
+	assert.Equal(t,
+		"verification run "+row.VerificationRunID+" failed: duplicate_table — an alias rename cannot fix this, the declared model itself must be renamed",
+		h.repo.row("p1").VerifyError)
+}
+
 // TestReconcileOnce_FailedVerificationRetriesTheWholeBatch covers the partial
 // failure, which is the common shape once one attempt addresses a whole
 // failing set: the verification run accepted the fix for some of the
