@@ -315,8 +315,12 @@ describe('DetailPage — Rerun and Rebase buttons', () => {
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText('Rerun this run')).toBeInTheDocument();
     expect(within(dialog).getByText('On release rel-6, the release this run ran on.')).toBeInTheDocument();
-    expect(within(dialog).getByText('public.orders')).toBeInTheDocument();
-    fireEvent.click(within(dialog).getByRole('button', { name: /^Rerun$/ }));
+    // The dialog lists the run's tasks once its read of them answers, and
+    // keeps Rerun disabled until then.
+    expect(await within(dialog).findByText('public.orders')).toBeInTheDocument();
+    const rerun = within(dialog).getByRole('button', { name: /^Rerun$/ });
+    await waitFor(() => expect(rerun).toBeEnabled());
+    fireEvent.click(rerun);
 
     await waitFor(() => {
       const calls = fetchMock.mock.calls as unknown as [string, RequestInit?][];
