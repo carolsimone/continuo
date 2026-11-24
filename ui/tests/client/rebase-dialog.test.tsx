@@ -2,7 +2,7 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import RerunFailedModal from '../../src/client/RerunFailedModal';
+import RebaseDialog from '../../src/client/RebaseDialog';
 import type { ChangedUpstreamNode, RebasePreview } from '../../src/client/types';
 
 const RUN_ID = 'run-1';
@@ -62,7 +62,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function renderModal(over: Partial<Parameters<typeof RerunFailedModal>[0]> = {}) {
+function renderModal(over: Partial<Parameters<typeof RebaseDialog>[0]> = {}) {
   const props = {
     runId: RUN_ID,
     driftLabel: null,
@@ -71,12 +71,12 @@ function renderModal(over: Partial<Parameters<typeof RerunFailedModal>[0]> = {})
     onSubmitted: vi.fn(),
     ...over,
   };
-  render(<RerunFailedModal {...props} />);
+  render(<RebaseDialog {...props} />);
   return props;
 }
 
-function rerunButton() {
-  return screen.getByRole('button', { name: /^Rerun/ });
+function rebaseButton() {
+  return screen.getByRole('button', { name: /^Rebas/ });
 }
 
 function cancelButton() {
@@ -95,8 +95,8 @@ function postCalls(fetchMock: ReturnType<typeof apiFetch>) {
   return fetchMock.mock.calls.filter(c => (c[1] as RequestInit | undefined)?.method === 'POST');
 }
 
-async function chooseLatest(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByLabelText(/latest snapshot/i));
+// previewed waits for the preview the dialog loads as it opens.
+async function previewed() {
   await screen.findByText('Will run');
 }
 
@@ -112,8 +112,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('RerunFailedModal — shell', () => {
-  it('is a labelled wide modal dialog offering both snapshots, "This snapshot" first and chosen', () => {
+describe('RebaseDialog — shell', () => {
+  it('is a labelled wide modal dialog titled Rebase onto live release, previewing as it opens', async () => {
     const fetchMock = apiFetch(previewing());
     vi.stubGlobal('fetch', fetchMock);
     renderModal();
@@ -124,42 +124,43 @@ describe('RerunFailedModal — shell', () => {
     expect(dialog.parentElement).toHaveClass('dialog-overlay');
     const titleId = dialog.getAttribute('aria-labelledby');
     expect(titleId).toBeTruthy();
-    expect(document.getElementById(titleId as string)).toHaveTextContent('Rerun failed nodes');
+    expect(document.getElementById(titleId as string)).toHaveTextContent('Rebase onto live release');
     expect(document.getElementById(titleId as string)).toHaveClass('dialog-title');
+    expect(screen.getByText('Restarts this run from its failure on the live release.')).toHaveClass('dialog-subtitle');
+    expect(screen.queryByRole('radio')).toBeNull();
+    expect(screen.queryByText(/snapshot/i)).toBeNull();
 
-    expect(screen.getByLabelText(/this snapshot/i)).toBeChecked();
-    expect(screen.getByLabelText(/latest snapshot/i)).not.toBeChecked();
-    expect(screen.getByLabelText(/this snapshot/i).closest('.rerun-mode-option')).toBeTruthy();
-    expect(screen.getByText(/reuse the image \+ manifest pinned/i)).toHaveClass('rerun-mode-option__desc');
-    expect(screen.getByText(/use the current image \+ manifest/i)).toHaveClass('rerun-mode-option__desc');
-    expect(fetchMock).not.toHaveBeenCalled();
+    await previewed();
+    expect(previewCalls(fetchMock)).toEqual([`${PREVIEW_PATH}?include_changed_upstream=true`]);
   });
 
-  it('shows the drift strip at the top only when driftLabel is set', () => {
+  it('shows the drift strip under the title only when driftLabel is set', () => {
     vi.stubGlobal('fetch', apiFetch(previewing()));
     renderModal({ driftLabel: 'source 1 release behind latest' });
 
     const strip = screen.getByText('source 1 release behind latest').closest('.info-strip') as HTMLElement;
     expect(strip).toHaveClass('info-strip--warning');
-    expect(strip.compareDocumentPosition(screen.getByLabelText(/this snapshot/i)) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const subtitle = screen.getByText('Restarts this run from its failure on the live release.');
+    expect(subtitle.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('has no drift strip without driftLabel', () => {
     vi.stubGlobal('fetch', apiFetch(previewing()));
     renderModal();
 
-    expect(document.querySelector('.info-strip')).toBeNull();
+    expect(document.querySelector('.info-strip--warning')).toBeNull();
   });
 
-  it('puts Cancel (.btn--secondary) before Rerun (.btn--primary) in the footer', () => {
+  it('puts Cancel (.btn--secondary) before Rebase (.btn--primary) in the footer, Rebase enabled once previewed', async () => {
     vi.stubGlobal('fetch', apiFetch(previewing()));
     renderModal();
 
     const footer = document.querySelector('.dialog-actions') as HTMLElement;
-    expect(Array.from(footer.querySelectorAll('button')).map(b => b.textContent)).toEqual(['Cancel', 'Rerun']);
+    expect(Array.from(footer.querySelectorAll('button')).map(b => b.textContent)).toEqual(['Cancel', 'Rebase']);
     expect(cancelButton()).toHaveClass('btn', 'btn--secondary');
-    expect(rerunButton()).toHaveClass('btn', 'btn--primary');
-    expect(rerunButton()).toBeEnabled();
+    expect(rebaseButton()).toHaveClass('btn', 'btn--primary');
+    await previewed();
+    expect(rebaseButton()).toBeEnabled();
   });
 
   it('closes on Cancel, Escape and an overlay click, but not on a click inside the dialog', async () => {
@@ -177,75 +178,15 @@ describe('RerunFailedModal — shell', () => {
   });
 });
 
-describe('RerunFailedModal — This snapshot', () => {
-  it('RerunFailedModal rerun: posts the rerun with a request id and reports the submitted mode', async () => {
-    const fetchMock = apiFetch(previewing());
-    vi.stubGlobal('fetch', fetchMock);
-    const user = userEvent.setup();
-    const props = renderModal();
-
-    await user.click(rerunButton());
-
-    await waitFor(() => expect(props.onSubmitted).toHaveBeenCalledWith('this'));
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe(`/api/runs/${RUN_ID}/rerun`);
-    expect(init).toMatchObject({ method: 'POST', headers: { 'Content-Type': 'application/json' } });
-    expect(JSON.parse(String(init.body))).toEqual({ request_id: expect.stringMatching(UUID) });
-  });
-
-  it('keeps a refusal inside the dialog as an error strip and lets the user try again', async () => {
-    vi.stubGlobal('fetch', apiFetch(() => ({ status: 409, body: { error: 'schedule already has an active run' } })));
-    const user = userEvent.setup();
-    const props = renderModal();
-
-    await user.click(rerunButton());
-
-    const strip = (await screen.findByText('schedule already has an active run')).closest('.info-strip') as HTMLElement;
-    expect(strip).toHaveClass('info-strip--error');
-    expect(strip.closest('.dialog')).toBeTruthy();
-    expect(props.onSubmitted).not.toHaveBeenCalled();
-    expect(rerunButton()).toBeEnabled();
-    expect(rerunButton()).not.toHaveClass('is-loading');
-  });
-
-  it('says the request failed when the network does', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline'); }));
-    const user = userEvent.setup();
-    renderModal();
-
-    await user.click(rerunButton());
-
-    expect((await screen.findByText('Request failed — please try again')).closest('.info-strip--error')).toBeTruthy();
-  });
-
-  it('marks Rerun loading, disables both buttons, and ignores Escape and the overlay while in flight', async () => {
-    vi.stubGlobal('fetch', apiFetch(method => (method === 'POST' ? 'pending' : { body: {} })));
-    const user = userEvent.setup();
-    const props = renderModal();
-
-    await user.click(rerunButton());
-
-    expect(rerunButton()).toHaveTextContent('Rerunning…');
-    expect(rerunButton()).toHaveClass('is-loading');
-    expect(rerunButton()).toBeDisabled();
-    expect(cancelButton()).toBeDisabled();
-    fireEvent.keyDown(document, { key: 'Escape' });
-    fireEvent.click(document.querySelector('.dialog-overlay') as HTMLElement);
-    expect(props.onClose).not.toHaveBeenCalled();
-  });
-});
-
-describe('RerunFailedModal — Latest snapshot preview', () => {
-  it('says the preview is loading in a neutral strip and keeps Rerun disabled meanwhile', async () => {
+describe('RebaseDialog — preview', () => {
+  it('says the preview is loading in a neutral strip and keeps Rebase disabled meanwhile', async () => {
     vi.stubGlobal('fetch', apiFetch((method, url) => (method === 'GET' && url.startsWith(PREVIEW_PATH) ? 'pending' : { body: {} })));
     const user = userEvent.setup();
     renderModal();
 
-    await user.click(screen.getByLabelText(/latest snapshot/i));
 
     expect(screen.getByText(/loading what will run/i).closest('.info-strip')).toHaveClass('info-strip--neutral');
-    expect(rerunButton()).toBeDisabled();
+    expect(rebaseButton()).toBeDisabled();
     expect(screen.queryByText('Will run')).toBeNull();
   });
 
@@ -255,7 +196,7 @@ describe('RerunFailedModal — Latest snapshot preview', () => {
     const user = userEvent.setup();
     renderModal();
 
-    await chooseLatest(user);
+    await previewed();
 
     expect(previewCalls(fetchMock)).toEqual([`${PREVIEW_PATH}?include_changed_upstream=true`]);
     expect(includeToggle()).toBeChecked();
@@ -263,7 +204,7 @@ describe('RerunFailedModal — Latest snapshot preview', () => {
     expect(screen.getByText(/^Unchecked, only the failed part re-runs; a failure caused by one of these changes fails again$/))
       .toHaveClass('rerun-mode-option__desc');
     expect(screen.queryByText(/loading what will run/i)).toBeNull();
-    expect(rerunButton()).toBeEnabled();
+    expect(rebaseButton()).toBeEnabled();
   });
 
   it('counts how many nodes will run out of how many, with thousands separators, and why', async () => {
@@ -271,7 +212,7 @@ describe('RerunFailedModal — Latest snapshot preview', () => {
     const user = userEvent.setup();
     renderModal();
 
-    await chooseLatest(user);
+    await previewed();
 
     expect(within(willRunHeader()).getByText('41')).toHaveClass('section-header__count');
     expect(within(willRunHeader()).getByText('of 2,000 nodes · 1,959 inherited')).toHaveClass('section-header__sub');
@@ -286,7 +227,7 @@ describe('RerunFailedModal — Latest snapshot preview', () => {
     const user = userEvent.setup();
     renderModal();
 
-    await chooseLatest(user);
+    await previewed();
 
     const reasons = document.querySelector('.preview-facts--summary') as HTMLElement;
     expect(reasons.textContent).toBe('3 failed or skipped·2 changed upstream·35 downstream');
@@ -297,7 +238,7 @@ describe('RerunFailedModal — Latest snapshot preview', () => {
     const user = userEvent.setup();
     renderModal();
 
-    await chooseLatest(user);
+    await previewed();
 
     expect(within(changedHeader()).getByText('2')).toHaveClass('section-header__count');
     expect(changedHeader().querySelector('.section-header__sub')).toBeNull();
@@ -320,7 +261,7 @@ describe('RerunFailedModal — Latest snapshot preview', () => {
     const user = userEvent.setup();
     renderModal();
 
-    await chooseLatest(user);
+    await previewed();
 
     const row = document.querySelector('.preview-row') as HTMLElement;
     expect(row.querySelector('.preview-facts')?.textContent).toBe('+1,200 downstream·last run <1s');
@@ -332,7 +273,7 @@ describe('RerunFailedModal — Latest snapshot preview', () => {
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
     renderModal();
-    await chooseLatest(user);
+    await previewed();
 
     await user.click(includeToggle());
 
@@ -343,7 +284,7 @@ describe('RerunFailedModal — Latest snapshot preview', () => {
       `${PREVIEW_PATH}?include_changed_upstream=false`,
     ]);
     expect(includeToggle()).not.toBeChecked();
-    expect(within(changedHeader()).getByText(/left out of this rerun/i)).toHaveClass('section-header__sub');
+    expect(within(changedHeader()).getByText(/left out of this rebase/i)).toHaveClass('section-header__sub');
     expect(document.querySelectorAll('.preview-row')).toHaveLength(2);
 
     await user.click(includeToggle());
@@ -361,19 +302,19 @@ describe('RerunFailedModal — Latest snapshot preview', () => {
     }));
     const user = userEvent.setup();
     renderModal();
-    await chooseLatest(user);
+    await previewed();
 
     await user.click(includeToggle());
 
     expect(screen.getByText(/loading what will run/i).closest('.info-strip')).toHaveClass('info-strip--neutral');
     expect(within(willRunHeader()).getByText('41')).toBeInTheDocument();
     expect(includeToggle()).not.toBeChecked();
-    expect(rerunButton()).toBeDisabled();
+    expect(rebaseButton()).toBeDisabled();
 
     next.resolve({ body: WITHOUT_CHANGED });
 
     await waitFor(() => expect(within(willRunHeader()).getByText('21')).toBeInTheDocument());
-    expect(rerunButton()).toBeEnabled();
+    expect(rebaseButton()).toBeEnabled();
   });
 
   it('discards a preview that answers after a newer one', async () => {
@@ -387,7 +328,7 @@ describe('RerunFailedModal — Latest snapshot preview', () => {
     }));
     const user = userEvent.setup();
     renderModal();
-    await chooseLatest(user);
+    await previewed();
 
     await user.click(includeToggle());
     await user.click(includeToggle());
@@ -399,7 +340,7 @@ describe('RerunFailedModal — Latest snapshot preview', () => {
     expect(within(willRunHeader()).getByText('50')).toBeInTheDocument();
     expect(includeToggle()).toBeChecked();
     expect(changedHeader().querySelector('.section-header__sub')).toBeNull();
-    expect(rerunButton()).toBeEnabled();
+    expect(rebaseButton()).toBeEnabled();
   });
 
   it('hides the toggle and the changed list when nothing upstream changed', async () => {
@@ -407,7 +348,7 @@ describe('RerunFailedModal — Latest snapshot preview', () => {
     const user = userEvent.setup();
     renderModal();
 
-    await chooseLatest(user);
+    await previewed();
 
     expect(screen.queryByRole('checkbox')).toBeNull();
     expect(screen.queryByText('Changed upstream')).toBeNull();
@@ -422,7 +363,7 @@ describe('RerunFailedModal — Latest snapshot preview', () => {
     vi.stubGlobal('fetch', apiFetch(previewing({ ...PREVIEW, changed_upstream: 13, changed_nodes: many })));
     const user = userEvent.setup();
     renderModal();
-    await chooseLatest(user);
+    await previewed();
 
     const headers = Array.from(document.querySelectorAll<HTMLElement>('.preview-group__header'));
     expect(headers.map(h => h.querySelector('.nodes-group-name')?.textContent)).toEqual(['billing', 'core']);
@@ -434,7 +375,7 @@ describe('RerunFailedModal — Latest snapshot preview', () => {
     expect(document.querySelectorAll('.preview-row')).toHaveLength(4);
   });
 
-  it('shows a failed preview as an error strip and keeps Rerun disabled', async () => {
+  it('shows a failed preview as an error strip and keeps Rebase disabled', async () => {
     vi.stubGlobal('fetch', apiFetch((method, url) => (
       method === 'GET' && url.startsWith(PREVIEW_PATH)
         ? { status: 409, body: { error: 'a test run cannot be rebased' } }
@@ -442,11 +383,10 @@ describe('RerunFailedModal — Latest snapshot preview', () => {
     const user = userEvent.setup();
     renderModal();
 
-    await user.click(screen.getByLabelText(/latest snapshot/i));
 
     const strip = (await screen.findByText('a test run cannot be rebased')).closest('.info-strip') as HTMLElement;
     expect(strip).toHaveClass('info-strip--error');
-    expect(rerunButton()).toBeDisabled();
+    expect(rebaseButton()).toBeDisabled();
     expect(screen.queryByText('Will run')).toBeNull();
     expect(screen.queryByText(/loading what will run/i)).toBeNull();
   });
@@ -457,11 +397,10 @@ describe('RerunFailedModal — Latest snapshot preview', () => {
     const user = userEvent.setup();
     renderModal();
 
-    await user.click(screen.getByLabelText(/latest snapshot/i));
 
     expect((await screen.findByText('Request failed — please try again')).closest('.info-strip--error')).toBeTruthy();
     expect(screen.queryByText('Will run')).toBeNull();
-    expect(rerunButton()).toBeDisabled();
+    expect(rebaseButton()).toBeDisabled();
   });
 
   it('says the preview failed when the network does', async () => {
@@ -469,10 +408,9 @@ describe('RerunFailedModal — Latest snapshot preview', () => {
     const user = userEvent.setup();
     renderModal();
 
-    await user.click(screen.getByLabelText(/latest snapshot/i));
 
     expect((await screen.findByText('Request failed — please try again')).closest('.info-strip--error')).toBeTruthy();
-    expect(rerunButton()).toBeDisabled();
+    expect(rebaseButton()).toBeDisabled();
   });
 
   it('keeps the toggle, as last set, after a preview fails, and previews again when it is re-checked', async () => {
@@ -483,7 +421,7 @@ describe('RerunFailedModal — Latest snapshot preview', () => {
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
     renderModal();
-    await chooseLatest(user);
+    await previewed();
 
     await user.click(includeToggle());
 
@@ -491,8 +429,8 @@ describe('RerunFailedModal — Latest snapshot preview', () => {
     expect(screen.queryByText('Will run')).toBeNull();
     expect(includeToggle()).not.toBeChecked();
     expect(includeToggle()).toBeEnabled();
-    expect(within(changedHeader()).getByText(/left out of this rerun/i)).toBeInTheDocument();
-    expect(rerunButton()).toBeDisabled();
+    expect(within(changedHeader()).getByText(/left out of this rebase/i)).toBeInTheDocument();
+    expect(rebaseButton()).toBeDisabled();
 
     await user.click(includeToggle());
 
@@ -504,56 +442,21 @@ describe('RerunFailedModal — Latest snapshot preview', () => {
       `${PREVIEW_PATH}?include_changed_upstream=false`,
       `${PREVIEW_PATH}?include_changed_upstream=true`,
     ]);
-    expect(rerunButton()).toBeEnabled();
-  });
-
-  it('still offers the unchecked toggle when "Latest snapshot" is chosen again after a failed preview', async () => {
-    vi.stubGlobal('fetch', apiFetch((method, url) => {
-      if (method !== 'GET') return { body: {} };
-      return url.endsWith('=true') ? { body: PREVIEW } : { status: 500, body: { error: 'boom' } };
-    }));
-    const user = userEvent.setup();
-    renderModal();
-    await chooseLatest(user);
-    await user.click(includeToggle());
-    await screen.findByText('boom');
-
-    await user.click(screen.getByLabelText(/this snapshot/i));
-    expect(screen.queryByRole('checkbox')).toBeNull();
-    await user.click(screen.getByLabelText(/latest snapshot/i));
-
-    await screen.findByText('boom');
-    expect(includeToggle()).not.toBeChecked();
-    await user.click(includeToggle());
-    await waitFor(() => expect(within(willRunHeader()).getByText('41')).toBeInTheDocument());
-  });
-
-  it('drops the preview and enables Rerun when "This snapshot" is chosen again', async () => {
-    vi.stubGlobal('fetch', apiFetch((method, url) => (
-      method === 'GET' && url.startsWith(PREVIEW_PATH) ? { status: 500, body: { error: 'boom' } } : { body: {} })));
-    const user = userEvent.setup();
-    renderModal();
-    await user.click(screen.getByLabelText(/latest snapshot/i));
-    await screen.findByText('boom');
-
-    await user.click(screen.getByLabelText(/this snapshot/i));
-
-    expect(screen.queryByText('boom')).toBeNull();
-    expect(rerunButton()).toBeEnabled();
+    expect(rebaseButton()).toBeEnabled();
   });
 });
 
-describe('RerunFailedModal — Latest snapshot rebase', () => {
-  it('RerunFailedModal rebase: rebases on the previewed release with changed upstream nodes and a request id', async () => {
+describe('RebaseDialog — rebase', () => {
+  it('RebaseDialog rebase: rebases on the previewed release with changed upstream nodes and a request id', async () => {
     const fetchMock = apiFetch(previewing());
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
     const props = renderModal();
-    await chooseLatest(user);
+    await previewed();
 
-    await user.click(rerunButton());
+    await user.click(rebaseButton());
 
-    await waitFor(() => expect(props.onSubmitted).toHaveBeenCalledWith('latest'));
+    await waitFor(() => expect(props.onSubmitted).toHaveBeenCalledTimes(1));
     const [[url, init]] = postCalls(fetchMock) as [string, RequestInit][];
     expect(url).toBe(`/api/runs/${RUN_ID}/rebase`);
     expect(init.headers).toEqual({ 'Content-Type': 'application/json' });
@@ -569,12 +472,12 @@ describe('RerunFailedModal — Latest snapshot rebase', () => {
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
     const props = renderModal();
-    await chooseLatest(user);
+    await previewed();
     await user.click(includeToggle());
-    await waitFor(() => expect(rerunButton()).toBeEnabled());
+    await waitFor(() => expect(rebaseButton()).toBeEnabled());
     await screen.findByText('of 2,000 nodes · 1,979 inherited');
 
-    await user.click(rerunButton());
+    await user.click(rebaseButton());
 
     await waitFor(() => expect(props.onSubmitted).toHaveBeenCalledTimes(1));
     const [[, init]] = postCalls(fetchMock) as [string, RequestInit][];
@@ -601,9 +504,9 @@ describe('RerunFailedModal — Latest snapshot rebase', () => {
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
     const props = renderModal();
-    await chooseLatest(user);
+    await previewed();
 
-    await user.click(rerunButton());
+    await user.click(rebaseButton());
 
     const strip = (await screen.findByText('The live release changed; review the updated selection')).closest('.info-strip') as HTMLElement;
     expect(strip).toHaveClass('info-strip--warning');
@@ -612,11 +515,11 @@ describe('RerunFailedModal — Latest snapshot rebase', () => {
     expect(previewCalls(fetchMock)[1]).toBe(`${PREVIEW_PATH}?include_changed_upstream=true`);
     expect(props.onSubmitted).not.toHaveBeenCalled();
     expect(document.querySelector('.info-strip--error')).toBeNull();
-    await waitFor(() => expect(rerunButton()).toBeEnabled());
+    await waitFor(() => expect(rebaseButton()).toBeEnabled());
 
-    await user.click(rerunButton());
+    await user.click(rebaseButton());
 
-    await waitFor(() => expect(props.onSubmitted).toHaveBeenCalledWith('latest'));
+    await waitFor(() => expect(props.onSubmitted).toHaveBeenCalledTimes(1));
     const last = postCalls(fetchMock).at(-1) as [string, RequestInit];
     expect(JSON.parse(String(last[1].body)).expected_release_id).toBe('rel-8');
   });
@@ -634,10 +537,10 @@ describe('RerunFailedModal — Latest snapshot rebase', () => {
     }));
     const user = userEvent.setup();
     renderModal();
-    await chooseLatest(user);
-    await user.click(rerunButton());
+    await previewed();
+    await user.click(rebaseButton());
     await screen.findByText('The live release changed; review the updated selection');
-    await waitFor(() => expect(rerunButton()).toBeEnabled());
+    await waitFor(() => expect(rebaseButton()).toBeEnabled());
 
     await user.click(includeToggle());
 
@@ -653,16 +556,16 @@ describe('RerunFailedModal — Latest snapshot rebase', () => {
         : { status: 409, body: { error: 'schedule already has an active run' } })));
     const user = userEvent.setup();
     const props = renderModal();
-    await chooseLatest(user);
+    await previewed();
 
-    await user.click(rerunButton());
+    await user.click(rebaseButton());
 
     const strip = (await screen.findByText('schedule already has an active run')).closest('.info-strip') as HTMLElement;
     expect(strip).toHaveClass('info-strip--error');
     expect(strip.closest('.dialog')).toBeTruthy();
     expect(screen.queryByText(/the live release changed/i)).toBeNull();
     expect(props.onSubmitted).not.toHaveBeenCalled();
-    expect(rerunButton()).toBeEnabled();
+    expect(rebaseButton()).toBeEnabled();
   });
 
   it('ignores Escape and the overlay while the rebase is in flight', async () => {
@@ -670,11 +573,11 @@ describe('RerunFailedModal — Latest snapshot rebase', () => {
       method === 'GET' && url.startsWith(PREVIEW_PATH) ? { body: PREVIEW } : 'pending')));
     const user = userEvent.setup();
     const props = renderModal();
-    await chooseLatest(user);
+    await previewed();
 
-    await user.click(rerunButton());
+    await user.click(rebaseButton());
 
-    expect(rerunButton()).toHaveClass('is-loading');
+    expect(rebaseButton()).toHaveClass('is-loading');
     expect(cancelButton()).toBeDisabled();
     fireEvent.keyDown(document, { key: 'Escape' });
     fireEvent.click(document.querySelector('.dialog-overlay') as HTMLElement);
@@ -682,14 +585,15 @@ describe('RerunFailedModal — Latest snapshot rebase', () => {
   });
 });
 
-describe('RerunFailedModal — request id', () => {
+describe('RebaseDialog — request id', () => {
   function requestIdsOf(fetchMock: ReturnType<typeof apiFetch>): string[] {
     return postCalls(fetchMock).map(c => JSON.parse(String((c[1] as RequestInit).body)).request_id);
   }
 
   it('requestId: a retry after a timeout inside the same dialog sends the id the first try sent', async () => {
     let posts = 0;
-    const fetchMock = apiFetch(() => {
+    const fetchMock = apiFetch((method, url) => {
+      if (method === 'GET' && url.startsWith(PREVIEW_PATH)) return { body: PREVIEW };
       posts += 1;
       if (posts === 1) throw new Error('timeout');
       return { body: {} };
@@ -697,12 +601,13 @@ describe('RerunFailedModal — request id', () => {
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
     const props = renderModal();
+    await previewed();
 
-    await user.click(rerunButton());
+    await user.click(rebaseButton());
     await screen.findByText('Request failed — please try again');
-    await user.click(rerunButton());
+    await user.click(rebaseButton());
 
-    await waitFor(() => expect(props.onSubmitted).toHaveBeenCalledWith('this'));
+    await waitFor(() => expect(props.onSubmitted).toHaveBeenCalledTimes(1));
     const ids = requestIdsOf(fetchMock);
     expect(ids).toHaveLength(2);
     expect(ids[0]).toMatch(UUID);
@@ -711,17 +616,19 @@ describe('RerunFailedModal — request id', () => {
 
   it('requestId: a retry after a refusal keeps the id too, because a refused call stores nothing', async () => {
     let posts = 0;
-    const fetchMock = apiFetch(() => {
+    const fetchMock = apiFetch((method, url) => {
+      if (method === 'GET' && url.startsWith(PREVIEW_PATH)) return { body: PREVIEW };
       posts += 1;
       return posts === 1 ? { status: 409, body: { error: 'schedule already has an active run' } } : { body: {} };
     });
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
     renderModal();
+    await previewed();
 
-    await user.click(rerunButton());
+    await user.click(rebaseButton());
     await screen.findByText('schedule already has an active run');
-    await user.click(rerunButton());
+    await user.click(rebaseButton());
 
     await waitFor(() => expect(requestIdsOf(fetchMock)).toHaveLength(2));
     const ids = requestIdsOf(fetchMock);
@@ -741,14 +648,14 @@ describe('RerunFailedModal — request id', () => {
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
     renderModal();
-    await chooseLatest(user);
+    await previewed();
 
-    await user.click(rerunButton());
+    await user.click(rebaseButton());
     await screen.findByText('Request failed — please try again');
     await user.click(includeToggle());
     await screen.findByText('of 2,000 nodes · 1,979 inherited');
-    await waitFor(() => expect(rerunButton()).toBeEnabled());
-    await user.click(rerunButton());
+    await waitFor(() => expect(rebaseButton()).toBeEnabled());
+    await user.click(rebaseButton());
 
     await waitFor(() => expect(requestIdsOf(fetchMock)).toHaveLength(2));
     const ids = requestIdsOf(fetchMock);
@@ -760,13 +667,15 @@ describe('RerunFailedModal — request id', () => {
     const fetchMock = apiFetch(previewing());
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
-    const first = render(<RerunFailedModal runId={RUN_ID} driftLabel={null} serviceColors={SERVICE_COLORS} onClose={vi.fn()} onSubmitted={vi.fn()} />);
-    await user.click(rerunButton());
+    const first = render(<RebaseDialog runId={RUN_ID} driftLabel={null} serviceColors={SERVICE_COLORS} onClose={vi.fn()} onSubmitted={vi.fn()} />);
+    await previewed();
+    await user.click(rebaseButton());
     await waitFor(() => expect(postCalls(fetchMock)).toHaveLength(1));
     first.unmount();
 
-    render(<RerunFailedModal runId={RUN_ID} driftLabel={null} serviceColors={SERVICE_COLORS} onClose={vi.fn()} onSubmitted={vi.fn()} />);
-    await user.click(rerunButton());
+    render(<RebaseDialog runId={RUN_ID} driftLabel={null} serviceColors={SERVICE_COLORS} onClose={vi.fn()} onSubmitted={vi.fn()} />);
+    await previewed();
+    await user.click(rebaseButton());
     await waitFor(() => expect(postCalls(fetchMock)).toHaveLength(2));
 
     const ids = requestIdsOf(fetchMock);

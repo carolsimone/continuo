@@ -59,7 +59,7 @@ export default function RunView({
             <div className="graph-empty-state">
               <p className="graph-empty-title">Loading run…</p>
               <p className="graph-empty-copy">
-                {selectedRunId ? 'Fetching the historical run snapshot…' : 'Fetching the latest run…'}
+                {selectedRunId ? 'Fetching the past run…' : 'Fetching the latest run…'}
               </p>
             </div>
           ) : state === 'unavailable' ? (

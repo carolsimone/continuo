@@ -1,6 +1,6 @@
 import { GraphNode, RunGraph, RunSummary, ScheduleGraph, Task, TaskAttempt } from './types';
 import { formatDuration } from './node-helpers';
-import { getDriftBadge, getDriftState } from './drift-helpers';
+import { getDriftBadge, getDriftState, type DriftState } from './drift-helpers';
 import type { RunStatus } from '../server/generated/vocabulary.gen';
 
 // Which of the detail page's two layouts is shown: one run's rows, or the
@@ -358,6 +358,56 @@ export function isTerminalStatus(status: RunStatus | null | undefined): boolean 
 // A failed or cancelled run can be rerun; a cancelling one has not ended.
 export function isRerunnableStatus(status: RunStatus | null | undefined): boolean {
   return status === 'failed' || status === 'cancelled';
+}
+
+// Whether a run action can be pressed, and when it cannot, the sentence its
+// greyed-out button gives as its hover title. reason is null on an enabled
+// action and on one greyed out while the run is still being read.
+export interface RunAction {
+  enabled: boolean;
+  reason: string | null;
+}
+
+// runActions decides the Rerun and Rebase buttons for the run on screen (the
+// latest run, or the past run the operator chose). Both act only on the
+// latest run, once it failed or was cancelled and no run is active: a rerun
+// of an older run would load its older release over what a newer run built.
+// Rebase is also greyed out for a run already on the live release, where it
+// would run the same nodes as Rerun. lastRunId is undefined while the latest
+// run is being found and null for a schedule that never ran; status is null
+// while the run is being read; driftState compares the run's release with the
+// live release.
+export function runActions({ run, lastRunId, liveRunExists, driftState }: {
+  run: { run_id: string; status: RunStatus | null } | null;
+  lastRunId: string | null | undefined;
+  liveRunExists: boolean;
+  driftState: DriftState;
+}): { rerun: RunAction; rebase: RunAction } {
+  const both = (reason: string | null) => ({
+    rerun: { enabled: false, reason },
+    rebase: { enabled: false, reason },
+  });
+  const each = (reason: (verb: string) => string) => ({
+    rerun: { enabled: false, reason: reason('rerun') },
+    rebase: { enabled: false, reason: reason('rebase') },
+  });
+  const capitalised = (verb: string) => verb[0].toUpperCase() + verb.slice(1);
+
+  if (run === null) return both(lastRunId === null ? 'This schedule has not run yet' : null);
+  if (liveRunExists) return both('A run is already active');
+  if (run.status === null) return both(null);
+  if (run.status === 'succeeded') return each((verb) => `Nothing to ${verb}: every node of this run succeeded`);
+  if (run.status === 'skipped') return each((verb) => `Nothing to ${verb}: this run was skipped`);
+  if (!isRerunnableStatus(run.status)) return both(null);
+  if (run.run_id !== lastRunId) {
+    return each((verb) => `A newer run has ended. ${capitalised(verb)} only the latest run`);
+  }
+  return {
+    rerun: { enabled: true, reason: null },
+    rebase: driftState === 'fresh'
+      ? { enabled: false, reason: 'This run is already on the live release' }
+      : { enabled: true, reason: null },
+  };
 }
 
 // The classes of the graph card's badge: a snapshot takes its run's status

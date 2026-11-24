@@ -48,7 +48,7 @@ describe('RunView', () => {
     unmount();
 
     renderRunView({ state: 'loading', tasks: [], selectedRunId: 'old' });
-    expect(screen.getByText('Fetching the historical run snapshot…')).toBeInTheDocument();
+    expect(screen.getByText('Fetching the past run…')).toBeInTheDocument();
   });
 
   it('says the run cannot be read for state unavailable, without a loading message', () => {
