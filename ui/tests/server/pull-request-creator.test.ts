@@ -1,11 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import crypto from 'crypto';
-import { makePullRequestCreator, resolveGithubAppPullRequestCreator } from '../../src/server/github/pull-request-creator';
+import {
+  FileChangedOnBaseBranchError,
+  makePullRequestCreator,
+  resolveGithubAppPullRequestCreator,
+} from '../../src/server/github/pull-request-creator';
 import type { CreatePRInput } from '../../src/server/github/pull-request-creator';
 
 // Minimal octokit-like fake covering only the methods used
 function buildFakeOctokit(opts: {
   defaultBranchSha?: string;
+  // The blob sha of each file at each commit: contents[ref][path]. A path a
+  // ref does not list answers 404, as GitHub does for a file the commit lacks.
+  contents?: Record<string, Record<string, string>>;
+  // Thrown by every repos.getContent call instead of answering.
+  getContentError?: { status?: number; message?: string };
   prCreate422?: boolean;
   createRefStatus?: number;
   existingPR?: { html_url: string; number: number };
@@ -17,6 +26,8 @@ function buildFakeOctokit(opts: {
 }) {
   const {
     defaultBranchSha = 'sha-base',
+    contents = {},
+    getContentError,
     prCreate422 = false,
     createRefStatus = undefined,
     existingPR = { html_url: 'https://github.com/o/r/pull/7', number: 7 },
@@ -41,6 +52,16 @@ function buildFakeOctokit(opts: {
   // The tree flow is content-addressed and never upserts a file directly.
   // Kept only so tests can assert it stays untouched.
   const createOrUpdateFileContents = vi.fn().mockResolvedValue({});
+
+  const getContent = vi.fn().mockImplementation(async (params: { path: string; ref: string }) => {
+    if (getContentError) throw getContentError;
+    const sha = contents[params.ref]?.[params.path];
+    if (sha === undefined) {
+      const err = { status: 404, message: 'Not Found' };
+      throw err;
+    }
+    return { data: { type: 'file', path: params.path, sha } };
+  });
 
   let blobCounter = 0;
 
@@ -67,7 +88,9 @@ function buildFakeOctokit(opts: {
     return {};
   });
 
-  const getCommit = vi.fn().mockResolvedValue({ data: { tree: { sha: 'base-tree-sha' } } });
+  const getCommit = vi.fn().mockImplementation(async (params: { commit_sha: string }) => ({
+    data: { tree: { sha: `tree-of-${params.commit_sha}` } },
+  }));
   const createBlob = vi.fn().mockImplementation(async () => ({ data: { sha: `blob-${++blobCounter}` } }));
   const createTree = vi.fn().mockResolvedValue({ data: { sha: 'new-tree-sha' } });
   const createCommit = vi.fn().mockResolvedValue({ data: { sha: 'new-commit-sha' } });
@@ -75,7 +98,7 @@ function buildFakeOctokit(opts: {
 
   return {
     git: { getRef, createRef, getCommit, createBlob, createTree, createCommit, updateRef },
-    repos: { createOrUpdateFileContents },
+    repos: { createOrUpdateFileContents, getContent },
     pulls: { create: prCreate, list: prList, requestReviewers, update },
   };
 }
@@ -131,21 +154,175 @@ describe('makePullRequestCreator', () => {
     });
   });
 
-  describe('baseSha provided — branches from the proposal commit, not base HEAD', () => {
-    it('creates the branch from baseSha and does not resolve base branch HEAD', async () => {
-      const octokit = buildFakeOctokit({ defaultBranchSha: 'base1' });
-      const creator = makePullRequestCreator(octokit);
-      await creator.create({ ...baseInput, baseSha: 'commit-abc' });
+  // The head branch is cut from the base branch's head. baseSha is the commit
+  // the fix was made against: every file the fix edits must be the same there
+  // as on the base branch's head, or the commit would overwrite a newer version.
+  describe('branch point — the base branch head, once the edited files are unchanged since baseSha', () => {
+    const twoFiles: CreatePRInput = {
+      ...baseInput,
+      baseSha: 'release-sha',
+      files: [
+        { path: 'models/orders_d.sql', content: 'SELECT 1' },
+        { path: 'models/orders_e.sql', content: 'SELECT 2' },
+      ],
+    };
 
-      // Branch is cut from the proposal's commit, not the (different) base HEAD.
+    function expectNothingWritten(octokit: ReturnType<typeof buildFakeOctokit>) {
+      expect(octokit.git.createRef).not.toHaveBeenCalled();
+      expect(octokit.git.createBlob).not.toHaveBeenCalled();
+      expect(octokit.git.createTree).not.toHaveBeenCalled();
+      expect(octokit.git.createCommit).not.toHaveBeenCalled();
+      expect(octokit.git.updateRef).not.toHaveBeenCalled();
+      expect(octokit.pulls.create).not.toHaveBeenCalled();
+    }
+
+    it('cuts the branch from the base branch head when every edited file is unchanged since baseSha', async () => {
+      const octokit = buildFakeOctokit({
+        defaultBranchSha: 'main-head',
+        contents: {
+          'release-sha': { 'models/orders_d.sql': 'blob-d', 'models/orders_e.sql': 'blob-e' },
+          'main-head': { 'models/orders_d.sql': 'blob-d', 'models/orders_e.sql': 'blob-e' },
+        },
+      });
+      await makePullRequestCreator(octokit).create(twoFiles);
+
+      expect(octokit.git.getRef).toHaveBeenCalledWith({ owner: 'o', repo: 'continuo-demo', ref: 'heads/main' });
+      for (const ref of ['release-sha', 'main-head']) {
+        for (const path of ['models/orders_d.sql', 'models/orders_e.sql']) {
+          expect(octokit.repos.getContent).toHaveBeenCalledWith({ owner: 'o', repo: 'continuo-demo', path, ref });
+        }
+      }
       expect(octokit.git.createRef).toHaveBeenCalledWith(
-        expect.objectContaining({
-          ref: 'refs/heads/remediation/r-1/orders_d-attempt1',
-          sha: 'commit-abc',
-        })
+        expect.objectContaining({ ref: 'refs/heads/remediation/r-1/orders_d-attempt1', sha: 'main-head' }),
       );
-      // No need to look up the base branch HEAD when the commit is known.
-      expect(octokit.git.getRef).not.toHaveBeenCalled();
+      expect(octokit.git.getCommit).toHaveBeenCalledWith(expect.objectContaining({ commit_sha: 'main-head' }));
+      expect(octokit.git.createTree).toHaveBeenCalledWith(
+        expect.objectContaining({ base_tree: 'tree-of-main-head' }),
+      );
+      expect(octokit.git.createCommit).toHaveBeenCalledWith(
+        expect.objectContaining({ parents: ['main-head'] }),
+      );
+    });
+
+    it('refuses with FileChangedOnBaseBranchError naming the changed file, before writing anything', async () => {
+      const octokit = buildFakeOctokit({
+        defaultBranchSha: 'main-head',
+        contents: {
+          'release-sha': { 'models/orders_d.sql': 'blob-d', 'models/orders_e.sql': 'blob-e' },
+          'main-head': { 'models/orders_d.sql': 'blob-d', 'models/orders_e.sql': 'blob-e-newer' },
+        },
+      });
+      const err = await makePullRequestCreator(octokit).create(twoFiles).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(FileChangedOnBaseBranchError);
+      expect((err as FileChangedOnBaseBranchError).paths).toEqual(['models/orders_e.sql']);
+      expect((err as FileChangedOnBaseBranchError).baseBranch).toBe('main');
+      expect((err as Error).message).toMatch(/models\/orders_e\.sql/);
+      expect((err as Error).message).not.toMatch(/orders_d/);
+      expectNothingWritten(octokit);
+    });
+
+    it('names every changed file, in the order of the edits', async () => {
+      const octokit = buildFakeOctokit({
+        defaultBranchSha: 'main-head',
+        contents: {
+          'release-sha': { 'models/orders_d.sql': 'blob-d', 'models/orders_e.sql': 'blob-e' },
+          'main-head': { 'models/orders_d.sql': 'blob-d-newer', 'models/orders_e.sql': 'blob-e-newer' },
+        },
+      });
+      const err = await makePullRequestCreator(octokit).create(twoFiles).catch((e: unknown) => e);
+
+      expect((err as FileChangedOnBaseBranchError).paths).toEqual(['models/orders_d.sql', 'models/orders_e.sql']);
+      expectNothingWritten(octokit);
+    });
+
+    it('counts a file absent at both commits as unchanged', async () => {
+      const octokit = buildFakeOctokit({ defaultBranchSha: 'main-head', contents: {} });
+      await makePullRequestCreator(octokit).create({ ...baseInput, baseSha: 'release-sha' });
+
+      expect(octokit.repos.getContent).toHaveBeenCalledTimes(2);
+      expect(octokit.git.createRef).toHaveBeenCalledWith(expect.objectContaining({ sha: 'main-head' }));
+      expect(octokit.git.createCommit).toHaveBeenCalledWith(expect.objectContaining({ parents: ['main-head'] }));
+    });
+
+    it('counts a file present at baseSha and deleted on the base branch as changed', async () => {
+      const octokit = buildFakeOctokit({
+        defaultBranchSha: 'main-head',
+        contents: { 'release-sha': { 'models/orders_d.sql': 'blob-d' } },
+      });
+      const err = await makePullRequestCreator(octokit)
+        .create({ ...baseInput, baseSha: 'release-sha' })
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(FileChangedOnBaseBranchError);
+      expect((err as FileChangedOnBaseBranchError).paths).toEqual(['models/orders_d.sql']);
+      expectNothingWritten(octokit);
+    });
+
+    it('counts a file absent at baseSha and added on the base branch as changed', async () => {
+      const octokit = buildFakeOctokit({
+        defaultBranchSha: 'main-head',
+        contents: { 'main-head': { 'models/orders_d.sql': 'blob-d' } },
+      });
+      const err = await makePullRequestCreator(octokit)
+        .create({ ...baseInput, baseSha: 'release-sha' })
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(FileChangedOnBaseBranchError);
+      expect((err as FileChangedOnBaseBranchError).paths).toEqual(['models/orders_d.sql']);
+      expectNothingWritten(octokit);
+    });
+
+    it('cuts the branch from the base branch head, comparing no file, when baseSha is omitted', async () => {
+      const octokit = buildFakeOctokit({ defaultBranchSha: 'main-head' });
+      await makePullRequestCreator(octokit).create(baseInput);
+
+      expect(octokit.repos.getContent).not.toHaveBeenCalled();
+      expect(octokit.git.createRef).toHaveBeenCalledWith(expect.objectContaining({ sha: 'main-head' }));
+      expect(octokit.git.createTree).toHaveBeenCalledWith(expect.objectContaining({ base_tree: 'tree-of-main-head' }));
+      expect(octokit.git.createCommit).toHaveBeenCalledWith(expect.objectContaining({ parents: ['main-head'] }));
+    });
+
+    it('compares no file when baseSha is the base branch head', async () => {
+      const octokit = buildFakeOctokit({ defaultBranchSha: 'main-head' });
+      await makePullRequestCreator(octokit).create({ ...baseInput, baseSha: 'main-head' });
+
+      expect(octokit.repos.getContent).not.toHaveBeenCalled();
+      expect(octokit.git.createRef).toHaveBeenCalledWith(expect.objectContaining({ sha: 'main-head' }));
+      expect(octokit.git.createCommit).toHaveBeenCalledWith(expect.objectContaining({ parents: ['main-head'] }));
+    });
+
+    // GitHub answers 404 for a file read at a commit it does not know, which
+    // would otherwise read as every file absent at baseSha.
+    it('rethrows when baseSha names no commit, comparing no file and writing nothing', async () => {
+      const octokit = buildFakeOctokit({
+        defaultBranchSha: 'main-head',
+        contents: { 'main-head': { 'models/orders_d.sql': 'blob-d' } },
+      });
+      octokit.git.getCommit.mockRejectedValueOnce({ status: 404, message: 'Not Found' });
+      const err = await makePullRequestCreator(octokit)
+        .create({ ...baseInput, baseSha: 'no-such-commit' })
+        .catch((e: unknown) => e);
+
+      expect(octokit.git.getCommit).toHaveBeenCalledWith(expect.objectContaining({ commit_sha: 'no-such-commit' }));
+      expect(err).toMatchObject({ status: 404 });
+      expect(err).not.toBeInstanceOf(FileChangedOnBaseBranchError);
+      expect(octokit.repos.getContent).not.toHaveBeenCalled();
+      expectNothingWritten(octokit);
+    });
+
+    it('rethrows a file read that fails with another status than 404, before writing anything', async () => {
+      const octokit = buildFakeOctokit({
+        defaultBranchSha: 'main-head',
+        getContentError: { status: 500, message: 'server error' },
+      });
+      const err = await makePullRequestCreator(octokit)
+        .create({ ...baseInput, baseSha: 'release-sha' })
+        .catch((e: unknown) => e);
+
+      expect(err).toMatchObject({ status: 500 });
+      expect(err).not.toBeInstanceOf(FileChangedOnBaseBranchError);
+      expectNothingWritten(octokit);
     });
   });
 
@@ -249,7 +426,7 @@ describe('makePullRequestCreator', () => {
       );
       expect(octokit.git.createTree).toHaveBeenCalledWith(
         expect.objectContaining({
-          base_tree: 'base-tree-sha',
+          base_tree: 'tree-of-sha-base',
           tree: [
             { path: 'contracts/a.yml', mode: '100644', type: 'blob', sha: 'blob-1' },
             { path: 'scripts/a.py', mode: '100644', type: 'blob', sha: 'blob-2' },
@@ -257,7 +434,7 @@ describe('makePullRequestCreator', () => {
         })
       );
       expect(octokit.git.createCommit).toHaveBeenCalledWith(
-        expect.objectContaining({ message: 'm', tree: 'new-tree-sha', parents: ['base'] })
+        expect.objectContaining({ message: 'm', tree: 'new-tree-sha', parents: ['sha-base'] })
       );
       expect(octokit.git.updateRef).toHaveBeenCalledWith(
         expect.objectContaining({ ref: 'heads/b', sha: 'new-commit-sha', force: true })

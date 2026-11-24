@@ -679,6 +679,31 @@ func TestProposalsServer_FailPullRequest_HappyPath(t *testing.T) {
 		"the handler must parse claimed_at and forward the exact instant to FailStuckClaim")
 }
 
+// TestProposalsServer_ClaimedAtRoundTripsExactly pins the claim's compare-and-set
+// across the wire: pr_claimed_at is stored to the microsecond, and the
+// claimed_at BeginPullRequest hands out is what the ui sends back on
+// FailPullRequest. A claimed_at that dropped the fraction would never equal
+// the stored value, so a failed Create PR could not release its claim and
+// every retry would be refused until the opening sweep ran.
+func TestProposalsServer_ClaimedAtRoundTripsExactly(t *testing.T) {
+	claimedAt := time.Date(2026, 11, 23, 22, 35, 24, 277067000, time.UTC)
+	svc := &fakeSvc{
+		beginClaim: proposal.PRClaim{ID: "p7", Repo: "owner/repo", ClaimedAt: claimedAt, Branch: "remediation/rel-7/attempt1/core"},
+		failHit:    true,
+	}
+	s := grpcadapter.NewProposalsServer(svc)
+
+	claim, err := s.BeginPullRequest(context.Background(), &remediationv1.BeginPullRequestRequest{Id: "p7", Service: "core"})
+	require.NoError(t, err)
+	_, err = s.FailPullRequest(context.Background(), &remediationv1.FailPullRequestRequest{
+		Id: "p7", ClaimedAt: claim.ClaimedAt, Service: "core",
+	})
+	require.NoError(t, err)
+	assert.True(t, claimedAt.Equal(svc.lastFailObserved),
+		"FailPullRequest must forward the very instant BeginPullRequest persisted; got %s, want %s",
+		svc.lastFailObserved.Format(time.RFC3339Nano), claimedAt.Format(time.RFC3339Nano))
+}
+
 // TestProposalsServer_FailPullRequest_ThreadsServiceThrough verifies that
 // FailPullRequest's service field reaches Service.FailStuckClaim unchanged,
 // and that an empty service (the legacy path) stays empty.

@@ -29,7 +29,6 @@ package verification
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
@@ -210,7 +209,11 @@ func (r *Reconciler) resolve(ctx context.Context, v proposal.View) {
 		switch st.Phase {
 		case proposal.PhaseFailed:
 			anyFailed = true
-			ver.Error = proposal.CleanedReason(namedErrors(st.NodeErrors, sortedNodes(st.NodeErrors)))
+			named := namedErrors(st.NodeErrors, sortedNodes(st.NodeErrors))
+			if named == "" {
+				named = st.RunError
+			}
+			ver.Error = proposal.CleanedReason(named)
 			for node, msg := range st.NodeErrors {
 				nodeErrors[node] = msg
 			}
@@ -225,7 +228,7 @@ func (r *Reconciler) resolve(ctx context.Context, v proposal.View) {
 	}
 	switch {
 	case anyFailed:
-		r.rejected(ctx, v, verifyError(v, nodeErrors), final)
+		r.rejected(ctx, v, verifyError(v, nodeErrors, final), final)
 	case allTerminal:
 		r.verified(ctx, v, final)
 	default:
@@ -562,17 +565,17 @@ func proposedOutcomes(outcomes map[string]proposal.NodeOutcome) map[string]propo
 // named and in a stable order; when every one of them passed and other nodes
 // did not — a fix that broke something downstream of itself — every failing
 // node is named instead, so the reason describes what actually failed. A
-// failure carrying no per-node error at all still records which run failed it,
-// so the attempt never ends with a blank reason.
-func verifyError(v proposal.View, nodeErrors map[string]string) string {
+// failure that names no node records the failed run and its own reason and
+// detail (proposal.FailedRunReason), so the attempt never ends with a blank
+// reason and the next attempt is told what the run reported.
+func verifyError(v proposal.View, nodeErrors map[string]string, runs []proposal.Verification) string {
 	if own := namedErrors(nodeErrors, stillFailing(v.ResolvedNodeIDs, nodeErrors)); own != "" {
 		return own
 	}
 	if all := namedErrors(nodeErrors, sortedNodes(nodeErrors)); all != "" {
 		return all
 	}
-	return fmt.Sprintf("verification run %s failed without a per-node error",
-		verificationsOf(v)[0].RunID)
+	return proposal.FailedRunReason(runs)
 }
 
 // namedErrors renders the errors of the given nodes as "node: message" joined

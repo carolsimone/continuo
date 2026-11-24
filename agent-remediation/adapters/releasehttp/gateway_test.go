@@ -254,6 +254,86 @@ func TestFailingNodes_NodeWithNoPerNodeResultFallsBackByID(t *testing.T) {
 	}, nodes)
 }
 
+// TestStatus_FailedDuplicateTableNamesTheFailingNodeWithTheRunsReason pins a
+// rejection release-controller decides itself, after the parse: the run names
+// the node in failing_nodes and records no failing per-node result, so the
+// node's error is the run's own reason and detail — the text that tells the
+// next try what its fix got wrong.
+func TestStatus_FailedDuplicateTableNamesTheFailingNodeWithTheRunsReason(t *testing.T) {
+	const detail = "unique_id analytics.table_b is declared by marketing (models/table_b.sql) and service-1 (models/table_b.sql); " +
+		"a unique_id must be declared by exactly one node — an alias rename cannot fix this, the declared model itself must be renamed"
+	body := `{"run_id":"verify-x","status":"failed","fail_reason":"duplicate_table","fail_detail":` + strconv.Quote(detail) + `,
+		  "failing_nodes":["analytics.table_b"],
+		  "per_node_results":[{"stage":"compile","node_id":"marketing","status":"ok"}]}`
+	srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK, body)
+	defer srv.Close()
+	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
+	st, err := g.Status(context.Background(), "verify-x")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"analytics.table_b": "duplicate_table — " + detail}, st.NodeErrors)
+	assert.Equal(t, "duplicate_table — "+detail, st.RunError)
+}
+
+// TestStatus_FailedCompileStageCarriesTheRunsReason pins a failing per-node
+// result of a stage that carries no text of its own (compile, seed build): the
+// node is still named, with the run's reason and detail.
+func TestStatus_FailedCompileStageCarriesTheRunsReason(t *testing.T) {
+	srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK,
+		`{"run_id":"verify-x","status":"failed","fail_reason":"compile_failed","fail_detail":"Compilation Error in model table_kv2",
+		  "failing_nodes":["service-3"],
+		  "per_node_results":[{"stage":"compile","node_id":"service-3","status":"failed"}]}`)
+	defer srv.Close()
+	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
+	st, err := g.Status(context.Background(), "verify-x")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"service-3": "compile_failed — Compilation Error in model table_kv2"}, st.NodeErrors)
+}
+
+// TestStatus_AFailingNodesOwnResultWinsOverTheRunsReason pins the order: a node
+// named in failing_nodes whose own validation result carries a message is
+// shown that message, not the run-level text.
+func TestStatus_AFailingNodesOwnResultWinsOverTheRunsReason(t *testing.T) {
+	ev := &fakeEvidence{byURI: map[string]string{"s3://r/orders.json": `{"status":"error","message":"column x does not exist"}`}}
+	srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK,
+		`{"run_id":"verify-x","status":"failed","fail_reason":"validation_failed","fail_detail":"1 node failed",
+		  "failing_nodes":["model.core.orders"],
+		  "per_node_results":[{"stage":"validation","node_id":"model.core.orders","status":"failed","run_results_uri":"s3://r/orders.json"}]}`)
+	defer srv.Close()
+	g := NewGateway(srv.URL, ev, nil)
+	st, err := g.Status(context.Background(), "verify-x")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"model.core.orders": "column x does not exist"}, st.NodeErrors)
+}
+
+// TestStatus_AFailureThatNamesNoNodeCarriesTheRunError pins a run that fails
+// with no node to blame (nothing to validate, an unbuildable upstream): no node
+// error, and the run's reason and detail as its run error.
+func TestStatus_AFailureThatNamesNoNodeCarriesTheRunError(t *testing.T) {
+	srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK,
+		`{"run_id":"verify-x","status":"failed","fail_reason":"nothing_to_validate","fail_detail":"the release changes no node",
+		  "failing_nodes":[],
+		  "per_node_results":[{"stage":"compile","node_id":"marketing","status":"ok"}]}`)
+	defer srv.Close()
+	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
+	st, err := g.Status(context.Background(), "verify-x")
+	require.NoError(t, err)
+	assert.Empty(t, st.NodeErrors)
+	assert.Equal(t, "nothing_to_validate — the release changes no node", st.RunError)
+}
+
+// TestStatus_APassedRunHasNoRunError pins that the run error belongs to a
+// failed run only.
+func TestStatus_APassedRunHasNoRunError(t *testing.T) {
+	srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK,
+		`{"run_id":"verify-x","status":"passed","fail_reason":"","fail_detail":"","failing_nodes":[]}`)
+	defer srv.Close()
+	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
+	st, err := g.Status(context.Background(), "verify-x")
+	require.NoError(t, err)
+	assert.Empty(t, st.RunError)
+	assert.Empty(t, st.NodeErrors)
+}
+
 // TestStatus_FailedParseStageCarriesInlineDetail pins the retry-loop evidence
 // for a parse-stage verification failure: a python (or dbt) parse repair that
 // still does not parse fails its verification run before any Job, so the
