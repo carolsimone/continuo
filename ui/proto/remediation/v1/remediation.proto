@@ -209,6 +209,9 @@ message FileEdit {
   // target_node_id is the node whose source this edit changes; for a
   // shared-upstream fix it is the changed ancestor, which may not have failed.
   string target_node_id = 4;
+  // renamed_from is the path the file is moved from: the pull request deletes
+  // it and writes path. Empty for an edit that changes path in place.
+  string renamed_from = 5;
 }
 
 // NodeOutcome is how one failing node's attempt ended: verifying, proposed,

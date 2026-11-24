@@ -80,23 +80,6 @@ func NewSeed() step.Prompt {
 	}
 }
 
-// NewDuplicateTable builds the duplicate-table prompt: two models that produce
-// the same warehouse relation, where the model renames the changed claimant.
-func NewDuplicateTable() step.Prompt {
-	return &sourcePrompt{
-		name:         "duplicate-table",
-		description:  "Shows the model the changed claimant of a relation two models produce, names the other producer, and reads back the corrected content of the claimant's file. The first-round request carries the earlier tries at the failure, when there are any.",
-		suspectsRoot: true,
-		pick:         pickNamed,
-		build: func(f remediation.Failure, files remediation.SourceFiles, _ string, precedents []prompt.Precedent) prompt.ProposeRequest {
-			n := f.Target
-			return prompt.AssembleDuplicateTableFix(
-				prompt.NamedFile{Path: files.Primary, Content: files.Files[files.Primary]},
-				n.RelationID, n.OtherService, n.OtherFilePath, precedents)
-		},
-	}
-}
-
 // Meta describes the step.
 func (p *sourcePrompt) Meta() step.Meta {
 	needs := []remediation.EvidenceKey{remediation.KeyFailure, remediation.KeySourceFiles}

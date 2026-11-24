@@ -59,7 +59,8 @@ func (u hookedUoW) Commit() error {
 }
 
 // start builds the world of a scenario and a runner over it, as the service
-// wires one: the suite's contract locator and inspector, the world's other
+// wires one: the suite's contract locator, inspector and model reference
+// finder, the world's other
 // ports, and the suite's files. Every remediation the runner accepts follows
 // the flow named flow.
 func (s Suite) start(f Fixture, flow string, script Script, maintenance bool) (*scenarioRun, error) {
@@ -73,6 +74,7 @@ func (s Suite) start(f Fixture, flow string, script Script, maintenance bool) (*
 	collab := w.Collaborators()
 	collab.ContractLocator = s.Locator
 	collab.ContractInspector = s.Inspector
+	collab.ModelReferences = s.ModelReferences
 	collab.VerificationTimeout = verificationTimeout
 	sr := &scenarioRun{w: w, script: script}
 	sr.deps = runner.Deps{

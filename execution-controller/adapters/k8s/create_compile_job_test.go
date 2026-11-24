@@ -2,11 +2,14 @@ package k8s
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/testdeps"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -181,7 +184,9 @@ func TestBuildCompilePodSpec_NoParseLegWhenCandidateSchemaEmpty(t *testing.T) {
 
 // TestCreateCompileJob_SourceOverlayStagesProjectInWorkdir verifies a
 // verification run's compile Job fetches the proposed source into
-// /shared/overlay and then runs dbt from a staged copy of the team project
+// /shared/overlay (and the paths the fix removes into
+// /shared/overlay-delete-paths) and then runs dbt from a staged copy of the
+// team project
 // under /work — never writing the proposed files into the image's own
 // project directory — and that the manifest it hands to the upload container
 // is the one dbt wrote in that copy, not the configured path inside the
@@ -207,6 +212,8 @@ func TestCreateCompileJob_SourceOverlayStagesProjectInWorkdir(t *testing.T) {
 	assert.Equal(t, []string{"python", "/overlay_fetcher.py"}, overlay.Command)
 	assert.Equal(t, "s3://continuo/core/verify-rel-1-svc-a1/source-overlay.tar.gz", envOf(overlay, "SOURCE_OVERLAY_URI"))
 	assert.Equal(t, "/shared/overlay", envOf(overlay, "OVERLAY_DEST"))
+	assert.Equal(t, "/shared/overlay-delete-paths", envOf(overlay, "OVERLAY_DELETE_LIST"),
+		"the delete list lies outside /shared/overlay, so staging never copies it into the project")
 	assert.Equal(t, "shared", overlay.VolumeMounts[0].Name)
 
 	extras := spec.InitContainers[1]
@@ -457,6 +464,114 @@ func TestExtrasProjectDirWord_ExpandsAsDbtResolvesTheProjectDir(t *testing.T) {
 		out, err := cmd.Output()
 		require.NoError(t, err)
 		assert.Equal(t, tc.want, string(out), "argv %v", tc.argv)
+	}
+}
+
+// stageRun is the outcome of running the staging prologue in a real shell.
+type stageRun struct {
+	project string // the team image's project directory, where the shell started
+	staged  string // the staged copy of the project under the workdir
+	out     string // the shell's combined output
+	err     error
+}
+
+// runStagePrefix lays out, under a temp dir, a team project holding project and
+// an overlay directory holding overlay (each a map from project-relative path
+// to content), writes deleteList as the delete list when it is non-nil, and
+// runs stagePrefix over them, followed by `pwd`, in a shell started in the
+// project directory. With no sh on PATH it reports the dependency as
+// unavailable (testdeps.Unavailable).
+func runStagePrefix(t *testing.T, project, overlay map[string]string, deleteList *string) stageRun {
+	t.Helper()
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		testdeps.Unavailable(t, "no sh on PATH: %v", err)
+	}
+	root := t.TempDir()
+	projectDir := filepath.Join(root, "image", "project")
+	overlayPath := filepath.Join(root, "shared", "overlay")
+	writeTree(t, projectDir, project)
+	writeTree(t, overlayPath, overlay)
+	listPath := filepath.Join(root, "shared", "overlay-delete-paths")
+	if deleteList != nil {
+		require.NoError(t, os.WriteFile(listPath, []byte(*deleteList), 0o600))
+	}
+	work := filepath.Join(root, "work")
+	cmd := exec.Command(sh, "-c", stagePrefix(work, overlayPath, listPath)+"pwd") //nolint:gosec // G204: the shell runs the staging text under test over this test's own temp dirs
+	cmd.Dir = projectDir
+	out, err := cmd.CombinedOutput()
+	return stageRun{project: projectDir, staged: work + projectDir, out: string(out), err: err}
+}
+
+// writeTree creates dir and writes each file of files (project-relative path
+// to content) under it.
+func writeTree(t *testing.T, dir string, files map[string]string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(dir, 0o750))
+	for rel, content := range files {
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o750))
+		require.NoError(t, os.WriteFile(p, []byte(content), 0o600))
+	}
+}
+
+// The staging prologue, run in a shell, removes from the staged copy every
+// path the delete list names (a space in a name, a blank line and a last line
+// without a line end included), keeps every other file, lays the overlay's
+// files over the copy, skips a listed path the project does not hold, leaves
+// the image's own project untouched and moves the shell into the copy.
+func TestStagePrefix_RemovesTheListedFilesFromTheStagedCopy(t *testing.T) {
+	list := "models/table_b.sql\n\nmodels/with space.sql\nmodels/never_existed.sql\nseeds/old.csv"
+	run := runStagePrefix(t,
+		map[string]string{
+			"models/table_b.sql":    "select 1",
+			"models/with space.sql": "select 2",
+			"models/keep.sql":       "select 3",
+			"seeds/old.csv":         "id\n1\n",
+			"seeds/keep.csv":        "id\n2\n",
+		},
+		map[string]string{"models/table_b_v2.sql": "select 1"},
+		&list)
+	require.NoError(t, run.err, run.out)
+	assert.Equal(t, run.staged, strings.TrimSpace(run.out), "the shell runs on in the staged copy")
+
+	for _, gone := range []string{"models/table_b.sql", "models/with space.sql", "seeds/old.csv"} {
+		assert.NoFileExists(t, filepath.Join(run.staged, gone), "listed path %s stays in the staged copy", gone)
+		assert.FileExists(t, filepath.Join(run.project, gone), "the image's own project must stay untouched")
+	}
+	for _, kept := range []string{"models/keep.sql", "seeds/keep.csv", "models/table_b_v2.sql"} {
+		assert.FileExists(t, filepath.Join(run.staged, kept))
+	}
+}
+
+// Without a delete list the staging prologue removes nothing: an overlay that
+// only adds or replaces files stages exactly the project plus the overlay.
+func TestStagePrefix_WithoutADeleteListRemovesNothing(t *testing.T) {
+	run := runStagePrefix(t,
+		map[string]string{"models/table_b.sql": "select 1"},
+		map[string]string{"models/table_b.sql": "select 2"},
+		nil)
+	require.NoError(t, run.err, run.out)
+	assert.Equal(t, run.staged, strings.TrimSpace(run.out))
+	staged, err := os.ReadFile(filepath.Join(run.staged, "models", "table_b.sql"))
+	require.NoError(t, err)
+	assert.Equal(t, "select 2", string(staged), "the overlay's file replaces the project's")
+}
+
+// A listed path the staged copy holds as a directory cannot be removed as a
+// file, so the prologue fails the command rather than building a project that
+// still holds it, whichever line of the list names it.
+func TestStagePrefix_FailsWhenAListedPathCannotBeRemoved(t *testing.T) {
+	for _, list := range []string{"models/legacy\nmodels/a.sql\n", "models/a.sql\nmodels/legacy\n"} {
+		run := runStagePrefix(t,
+			map[string]string{"models/legacy/x.sql": "select 1", "models/a.sql": "select 2"},
+			map[string]string{},
+			&list)
+		var exitErr *exec.ExitError
+		require.ErrorAs(t, run.err, &exitErr, run.out)
+		assert.Equal(t, 1, exitErr.ExitCode())
+		assert.Contains(t, run.out, "continuo overlay: cannot remove models/legacy from the staged project")
+		assert.NotContains(t, run.out, run.staged+"\n", "the command after the prologue must not run")
 	}
 }
 

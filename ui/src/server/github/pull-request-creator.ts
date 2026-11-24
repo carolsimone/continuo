@@ -10,20 +10,23 @@ export interface CreatePRInput {
   /**
    * The commit the files were written against (the proposal's commit_sha).
    * The head branch is always cut from the base branch's head; when this is
-   * set and is not that head, every file in `files` must be the same at both
-   * commits (the same blob, or absent from both), or create throws
-   * FileChangedOnBaseBranchError and writes nothing, since the commit would
-   * replace the base branch's newer version of the file. When omitted, no
-   * file is compared.
+   * set and is not that head, every path the pull request writes or deletes
+   * (each file's path and, for a renamed file, its renamed_from) must be the
+   * same at both commits (the same blob, or absent from both), or create
+   * throws FileChangedOnBaseBranchError and writes nothing, since the commit
+   * would replace or delete the base branch's newer version of the file. When
+   * omitted, no file is compared.
    */
   baseSha?: string;
   /** Branch to create for the PR */
   headBranch: string;
   /**
    * Every file the pull request changes, as repository-relative path plus the
-   * full replacement content. All of them land in a single commit.
+   * full replacement content. A file with renamed_from is moved: the commit
+   * writes it at path and deletes renamed_from. All of them land in a single
+   * commit.
    */
-  files: Array<{ path: string; content: string }>;
+  files: Array<{ path: string; content: string; renamed_from?: string }>;
   /** Git commit message for the commit carrying the files */
   commitMessage: string;
   /** PR title */
@@ -75,7 +78,10 @@ export interface PullRequestCreator {
 export class FileChangedOnBaseBranchError extends Error {
   /** The branch the pull request would merge into. */
   readonly baseBranch: string;
-  /** The changed files, as repository-relative paths in the order of CreatePRInput.files. */
+  /**
+   * The changed files, as repository-relative paths in the order of
+   * CreatePRInput.files, a renamed file's renamed_from before its path.
+   */
   readonly paths: string[];
 
   constructor(baseBranch: string, paths: string[], baseSha: string, baseBranchHead: string) {
@@ -105,11 +111,12 @@ export interface OctokitLike {
       content: string;
       encoding: string;
     }): Promise<{ data: { sha: string } }>;
+    // An entry whose sha is null deletes its path from the base tree.
     createTree(params: {
       owner: string;
       repo: string;
       base_tree: string;
-      tree: Array<{ path: string; mode: '100644'; type: 'blob'; sha: string }>;
+      tree: Array<{ path: string; mode: '100644'; type: 'blob'; sha: string | null }>;
     }): Promise<{ data: { sha: string } }>;
     createCommit(params: {
       owner: string;
@@ -269,13 +276,14 @@ async function changedPaths(
  * Sequence for each `create` call:
  *   1. Resolve the base branch head via git.getRef. When input.baseSha is set
  *      and is another commit, check that it exists (git.getCommit) and compare
- *      every input file at both commits (repos.getContent): when any differs,
- *      throw FileChangedOnBaseBranchError before anything is written.
+ *      every path the commit writes or deletes at both commits
+ *      (repos.getContent): when any differs, throw FileChangedOnBaseBranchError
+ *      before anything is written.
  *   2. Create the head branch at the base branch head via git.createRef — on
  *      422 (already exists) continue.
- *   3. Write every input file as a blob, assemble them into one tree layered on
- *      the base branch head's tree, and commit that tree with the base branch
- *      head as parent.
+ *   3. Write every input file as a blob, assemble them, with a deletion of each
+ *      renamed file's old path, into one tree layered on the base branch head's
+ *      tree, and commit that tree with the base branch head as parent.
  *   4. Point the head branch at the new commit via git.updateRef.
  *   5. Open the PR via pulls.create — on 422 (PR already exists) resolve the existing PR via pulls.list.
  *   6. For a PR just opened, ask the reviewers and teams of the input to review it
@@ -296,6 +304,14 @@ export function makePullRequestCreator(octokit: OctokitLike): PullRequestCreator
       if (input.files.length === 0) {
         throw new Error('cannot open a pull request: no files to commit');
       }
+      // A renamed file's old path is deleted from the tree, so it must not be
+      // a path the same commit writes: the tree would both write and delete it.
+      const written = new Set(input.files.map((file) => file.path));
+      for (const file of input.files) {
+        if (file.renamed_from && written.has(file.renamed_from)) {
+          throw new Error(`cannot open a pull request: ${file.renamed_from} is both written and deleted`);
+        }
+      }
 
       const [owner, repoName] = input.repo.split('/');
 
@@ -305,8 +321,10 @@ export function makePullRequestCreator(octokit: OctokitLike): PullRequestCreator
       // carry an older workflow file to an App without the workflows
       // permission). The files were written against input.baseSha, so each of
       // them must still be the same on the base branch head: committing one
-      // that changed there would replace the newer version. Nothing is written
-      // to the repository before this check passes.
+      // that changed there would replace the newer version. A renamed file is
+      // checked at both paths: its old path, which the commit deletes, and its
+      // new path, which must not hold a file the base branch has added since.
+      // Nothing is written to the repository before this check passes.
       const refData = await octokit.git.getRef({
         owner,
         repo: repoName,
@@ -322,7 +340,7 @@ export function makePullRequestCreator(octokit: OctokitLike): PullRequestCreator
           octokit,
           owner,
           repoName,
-          input.files.map((file) => file.path),
+          input.files.flatMap((file) => (file.renamed_from ? [file.renamed_from, file.path] : [file.path])),
           input.baseSha,
           headSha,
         );
@@ -370,17 +388,17 @@ export function makePullRequestCreator(octokit: OctokitLike): PullRequestCreator
       // Every entry is written as a regular non-executable file. A tree entry
       // states the mode outright rather than inheriting the path's existing
       // one, so remediating a file that is executable in the repository drops
-      // its executable bit.
+      // its executable bit. A renamed file's entry is followed by one for its
+      // old path with a null sha, which deletes that path from the base tree.
       const tree = await octokit.git.createTree({
         owner,
         repo: repoName,
         base_tree: headCommit.data.tree.sha,
-        tree: input.files.map((file, i) => ({
-          path: file.path,
-          mode: '100644' as const,
-          type: 'blob' as const,
-          sha: blobShas[i],
-        })),
+        tree: input.files.flatMap((file, i) => {
+          const write = { path: file.path, mode: '100644' as const, type: 'blob' as const, sha: blobShas[i] };
+          if (!file.renamed_from) return [write];
+          return [write, { path: file.renamed_from, mode: '100644' as const, type: 'blob' as const, sha: null }];
+        }),
       });
 
       const commit = await octokit.git.createCommit({

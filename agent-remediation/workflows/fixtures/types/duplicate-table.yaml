@@ -1,5 +1,5 @@
-# Two services build analytics.orders: the release's marketing model is
-# renamed.
+# Two services build analytics.orders: the release's marketing model moves to
+# orders_v2, and its properties entry and the model that refs it follow.
 kind: fixture
 version: 1
 type: duplicate-table
@@ -10,7 +10,7 @@ trigger:
   commit_sha: abc123
   code_bundle_uri: s3://continuo/code-bundles/rel-dup-1/bundle.json
   nodes:
-    - node_id: analytics.orders_v2
+    - node_id: analytics.orders
       relation_id: analytics.orders
       category: duplicate_table
       error_signature: sig-duplicate-orders
@@ -26,30 +26,43 @@ service_repo_paths:
   finance: services/finance
 repo_files:
   services/marketing/models/orders.sql: "select 1 as id\n"
+  services/marketing/models/orders_by_day.sql: "select id from {{ ref('orders') }}\n"
+  services/marketing/models/schema.yml: "version: 2\nmodels:\n  - name: orders\n    description: Marketing's orders.\n"
   services/finance/models/orders.sql: "select 1 as id\n"
 release:
   image_tag: sha-dup
 answers:
   pass:
-    - target_file: services/marketing/models/orders.sql
-      proposed_content: "{{ config(alias='marketing_orders') }}\nselect 1 as id\n"
-      rationale: renamed to avoid the collision with finance
+    - files:
+        - path: services/marketing/models/orders_v2.sql
+          content: "select 1 as id\n"
+        - path: services/marketing/models/orders_by_day.sql
+          content: "select id from {{ ref('orders_v2') }}\n"
+        - path: services/marketing/models/schema.yml
+          content: "version: 2\nmodels:\n  - name: orders_v2\n    description: Marketing's orders.\n"
+      rationale: moved the model to orders_v2 and renamed its entry and its ref
       confidence: high
       model: claude-test
   fail:
-    # The other producer's file, which the model was not shown.
-    - target_file: services/finance/models/orders.sql
-      proposed_content: "{{ config(alias='finance_orders') }}\nselect 1 as id\n"
-      rationale: renamed the finance model instead
+    # An alias in place: the model keeps its name, so it is still a duplicate.
+    - files:
+        - path: services/marketing/models/orders.sql
+          content: "{{ config(alias='marketing_orders') }}\nselect 1 as id\n"
+      rationale: aliased the model to avoid the collision with finance
       confidence: high
       model: claude-test
   decline:
-    - target_file: services/marketing/models/orders.sql
-      proposed_content: "{{ config(alias='marketing_orders') }}\nselect 1 as id\n"
+    - files:
+        - path: services/marketing/models/orders_v2.sql
+          content: "select 1 as id\n"
+        - path: services/marketing/models/orders_by_day.sql
+          content: "select id from {{ ref('orders_v2') }}\n"
+        - path: services/marketing/models/schema.yml
+          content: "version: 2\nmodels:\n  - name: orders_v2\n    description: Marketing's orders.\n"
       rationale: either model could keep the name
       confidence: low
       model: claude-test
 decline_before_model:
   node: { file_path: "" }
 gate_errors:
-  analytics.orders_v2: "relation analytics.orders is produced by finance and marketing"
+  analytics.orders: "duplicate_table — unique_id analytics.orders is declared by marketing and finance"

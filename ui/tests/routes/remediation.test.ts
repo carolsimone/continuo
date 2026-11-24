@@ -400,6 +400,61 @@ describe('remediation router', () => {
     );
   });
 
+  // A claim edit that moves a file names the old path in renamed_from. The
+  // loader keeps proto3 defaults, so an edit in place carries renamed_from ''.
+  it('hands the creator the path a renamed file moves from, and none for an edit in place', async () => {
+    const remediation = makeRemediation({
+      beginPullRequest: vi.fn().mockResolvedValue({
+        branch: 'remediation/p1',
+        repo: 'owner/repo',
+        commit_sha: 'abc123',
+        claimed_at: '2026-06-24T00:00:00Z',
+        node_id: 'analytics.table_b',
+        release_id: 'rel-1',
+        resolved_node_ids: ['analytics.table_b'],
+        edits: [
+          {
+            path: 'services/marketing/models/table_b_v2.sql',
+            content_uri: 's3://continuo/proposals/p1/table_b_v2.sql',
+            diff_uri: 's3://continuo/proposals/p1/table_b_v2.diff',
+            target_node_id: 'analytics.table_b',
+            renamed_from: 'services/marketing/models/table_b.sql',
+          },
+          {
+            path: 'services/marketing/models/table_c.sql',
+            content_uri: 's3://continuo/proposals/p1/table_c.sql',
+            diff_uri: '',
+            target_node_id: '',
+            renamed_from: '',
+          },
+        ],
+      }),
+    });
+    const prCreator = makePrCreator();
+    const getObject = vi.fn().mockImplementation(async (key: string) => `content of ${key}`);
+    const app = appWith({ remediation, prCreator, getObject });
+
+    const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
+    expect(res.status).toBe(200);
+
+    const call = (prCreator.create as any).mock.calls[0][0];
+    expect(call.files[0]).toEqual({
+      path: 'services/marketing/models/table_b_v2.sql',
+      content: 'content of proposals/p1/table_b_v2.sql',
+      target_node_id: 'analytics.table_b',
+      renamed_from: 'services/marketing/models/table_b.sql',
+    });
+    expect(call.files[1]).not.toHaveProperty('renamed_from');
+    expect(call.files[1]).toMatchObject({
+      path: 'services/marketing/models/table_c.sql',
+      content: 'content of proposals/p1/table_c.sql',
+    });
+    expect(call.body).toContain(
+      '- `services/marketing/models/table_b_v2.sql` (renamed from `services/marketing/models/table_b.sql`; fixes `analytics.table_b`)',
+    );
+    expect(call.body).toContain('- `services/marketing/models/table_c.sql`\n');
+  });
+
   it('lists every edited path in the PR body and inlines only the first edit diff', async () => {
     const remediation = multiEditRemediation();
     const prCreator = makePrCreator();

@@ -41,6 +41,8 @@ const (
 	KeyUpstreamTarget EvidenceKey = "upstream_target"
 	// KeyPackagedContract holds Bytes.
 	KeyPackagedContract EvidenceKey = "packaged_contract"
+	// KeyModelRename holds ModelRename.
+	KeyModelRename EvidenceKey = "model_rename"
 )
 
 // Text is a block of text evidence.

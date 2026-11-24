@@ -1,9 +1,10 @@
-# Two nodes that claim one relation: the model renames the claimant the
-# release changed.
+# Two nodes that claim one relation: the model the release added moves, in the
+# same schema, to <name>_v2 (the next free version), and every file of its
+# project that names it follows.
 kind: type
 version: 1
 name: duplicate-table
 match: { cluster: single, source: duplicate_table }
-context: [failing_node_source, failure_precedents]
+context: [failing_node_source, model_rename, failure_precedents]
 agent: { prompt: duplicate-table, tools: [], rounds: 3 }
-preflight: [target_file_was_shown, content_changed, confidence_not_low]
+preflight: [target_file_was_shown, content_changed, confidence_not_low, rename_matches_plan]

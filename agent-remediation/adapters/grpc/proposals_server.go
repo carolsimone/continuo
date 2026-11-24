@@ -226,6 +226,7 @@ func editsToProto(edits []proposal.FileEdit) []*remediationv1.FileEdit {
 			ContentUri:   e.ContentURI,
 			DiffUri:      e.DiffURI,
 			TargetNodeId: e.TargetNodeID,
+			RenamedFrom:  e.RenamedFrom,
 		})
 	}
 	return out

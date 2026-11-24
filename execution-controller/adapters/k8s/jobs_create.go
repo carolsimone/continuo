@@ -456,11 +456,14 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 // ImageTag must be non-empty — the team image must be explicitly versioned.
 // When p.SourceOverlayURI is non-empty (a verification run verifying a
 // proposed fix), an "overlay" initContainer using the s3-sidecar image fetches
-// the proposed source files into /shared/overlay, the pod gets a writable
-// workdir emptyDir, and the team container's command is wrapped in `sh -c` and
-// prefixed with overlayStagePrefix, so `dbt seed` loads the proposed CSV from
-// a staged copy of the project rather than the checked-in one — the same
-// treatment buildCompilePodSpec gives its team-image containers.
+// the proposed source files into /shared/overlay and writes the paths the fix
+// removes, when it removes any, to /shared/overlay-delete-paths
+// (OVERLAY_DELETE_LIST); the pod gets a writable workdir emptyDir, and the team
+// container's command is wrapped in `sh -c` and prefixed with
+// overlayStagePrefix, so `dbt seed` loads the proposed CSV from a staged copy
+// of the project, with the listed paths removed, rather than the checked-in
+// one — the same treatment buildCompilePodSpec gives its team-image
+// containers.
 // When S3_BUCKET is set, the pod also gets a hydrate-parse-cache initContainer
 // that pre-seeds the candidate-context partial-parse artifact (see
 // parseCacheInitContainer); partialParsePath is the service's resolved
@@ -513,9 +516,11 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 
 	if p.SourceOverlayURI != "" {
 		// A verification run verifies a proposed fix: the overlay fetcher lays
-		// the proposed files into /shared/overlay and the team container
-		// stages the project into its workdir, lays them over the copy, and
-		// seeds from there, so a proposed seed CSV is what gets loaded.
+		// the proposed files into /shared/overlay and writes the paths the fix
+		// removes to /shared/overlay-delete-paths, and the team container
+		// stages the project into its workdir, lays the files over the copy,
+		// removes the listed paths from it, and seeds from there, so a
+		// proposed seed CSV is what gets loaded.
 		mount := sharedVolumeMount()
 		teamContainer := spec.Containers[0].Name
 		spec.InitContainers = append(spec.InitContainers, corev1.Container{
@@ -525,7 +530,8 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 			Command:         []string{"python", "/overlay_fetcher.py"},
 			Env: append([]corev1.EnvVar{
 				{Name: "SOURCE_OVERLAY_URI", Value: p.SourceOverlayURI},
-				{Name: "OVERLAY_DEST", Value: "/shared/overlay"},
+				{Name: "OVERLAY_DEST", Value: overlayDir},
+				{Name: "OVERLAY_DELETE_LIST", Value: overlayDeleteList},
 			}, s3CredEnvVars()...),
 			VolumeMounts:    []corev1.VolumeMount{mount},
 			SecurityContext: continuoImageSecurityContext(),
@@ -566,16 +572,19 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 // /shared in every container:
 //   - when params.SourceOverlayURI is set, initContainer "overlay": the
 //     s3-sidecar image fetches a verification run's proposed source files
-//     into /shared/overlay before any other team-image init container runs.
+//     into /shared/overlay, and writes the paths the fix removes to
+//     /shared/overlay-delete-paths, before any other team-image init container
+//     runs.
 //   - initContainer "extras-script": the s3-sidecar image copies
 //     /compile_extras.py into /shared for the team image to run.
 //   - initContainer "compile": team image runs the service's resolved compile
 //     command and copies the manifest from its declared path into
 //     /shared/manifest.json, with the warehouse-Secret envFrom attached; when
 //     the overlay ran, the command first stages the project into its own
-//     workdir emptyDir with /shared/overlay laid over it and compiles there,
-//     reading the manifest back from that copy. It then runs the extras script
-//     against that manifest, writing /shared/compile-extras.json.
+//     workdir emptyDir with /shared/overlay laid over it and the listed paths
+//     removed, and compiles there, reading the manifest back from that copy.
+//     It then runs the extras script against that manifest, writing
+//     /shared/compile-extras.json.
 //   - when params.CandidateSchema is set, two more team-image initContainers,
 //     "parse-prod" and "parse-candidate", export and rehearse the service's
 //     partial-parse cache (see buildParseExportCommand) into
@@ -652,23 +661,27 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 //   - a shared emptyDir volume "shared" mounted at /shared in every container;
 //   - when p.SourceOverlayURI is non-empty, an initContainer "overlay" using
 //     the shared s3-sidecar image that runs `python /overlay_fetcher.py` with
-//     SOURCE_OVERLAY_URI, OVERLAY_DEST=/shared/overlay, and the S3 credential
+//     SOURCE_OVERLAY_URI, OVERLAY_DEST=/shared/overlay,
+//     OVERLAY_DELETE_LIST=/shared/overlay-delete-paths and the S3 credential
 //     envs, laying a verification run's proposed source files into
-//     /shared/overlay before any other team-image init container runs. Every
-//     team-image init container's shell command (compile and both parse legs
-//     below) is then prefixed with overlayStagePrefix and gets a workdir
-//     emptyDir of its own at /work, so the overlay is the project under test
-//     throughout the pod, not just in compile, and no container ever writes
-//     into the team image's own project directory;
+//     /shared/overlay, and writing the paths the fix removes (when it removes
+//     any) to /shared/overlay-delete-paths, before any other team-image init
+//     container runs. Every team-image init container's shell command
+//     (compile and both parse legs below) is then prefixed with
+//     overlayStagePrefix and gets a workdir emptyDir of its own at /work, so
+//     the overlay is the project under test throughout the pod, not just in
+//     compile, and no container ever writes into the team image's own project
+//     directory;
 //   - an initContainer "extras-script" using the shared s3-sidecar image that
 //     copies /compile_extras.py into /shared/compile_extras.py, so the team
 //     image runs the script with its own Python (the interpreter that runs
 //     dbt) without containing it;
 //   - an initContainer "compile" using the team image (ImageTag must be
 //     non-empty) that, when the overlay ran, first stages the project into its
-//     workdir with /shared/overlay laid over it, then runs the service's
-//     resolved compile command there, copies the manifest dbt wrote in that
-//     copy into /shared/manifest.json, and chmods it 644 so it is
+//     workdir with /shared/overlay laid over it and the listed paths removed
+//     (see overlayStagePrefix), then runs the service's resolved compile
+//     command there, copies the manifest dbt wrote in that copy into
+//     /shared/manifest.json, and chmods it 644 so it is
 //     world-readable regardless of the team image's uid/umask (the upload
 //     container below runs as a fixed, different uid). The same command then
 //     runs /shared/compile_extras.py against that manifest and the dbt
@@ -749,7 +762,8 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 		compileExtrasCommand(extrasProjectDirWord(compileArgv), p.ServiceName, p.ReleaseID)
 	var initContainers []corev1.Container
 	if staged {
-		// The overlay fetcher lays the proposed files into /shared/overlay,
+		// The overlay fetcher lays the proposed files into /shared/overlay and
+		// writes the paths the fix removes to /shared/overlay-delete-paths,
 		// where every team-image init container reads them from.
 		initContainers = append(initContainers, corev1.Container{
 			Name:            "overlay",
@@ -758,7 +772,8 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 			Command:         []string{"python", "/overlay_fetcher.py"},
 			Env: append([]corev1.EnvVar{
 				{Name: "SOURCE_OVERLAY_URI", Value: p.SourceOverlayURI},
-				{Name: "OVERLAY_DEST", Value: "/shared/overlay"},
+				{Name: "OVERLAY_DEST", Value: overlayDir},
+				{Name: "OVERLAY_DELETE_LIST", Value: overlayDeleteList},
 			}, s3CredEnvVars()...),
 			VolumeMounts:    []corev1.VolumeMount{mount},
 			SecurityContext: continuoImageSecurityContext(),
@@ -1326,12 +1341,29 @@ func buildParseExportCommand(parseArgv []string, partialParsePath, ctx string, s
 // stages a writable copy of the team project and runs dbt from.
 const overlayWorkDir = "/work"
 
+// overlayDir is where the overlay initContainer extracts a verification run's
+// proposed files (its OVERLAY_DEST), for the team-image containers to lay over
+// their staged project.
+const overlayDir = "/shared/overlay"
+
+// overlayDeleteList is the file the overlay initContainer writes (its
+// OVERLAY_DELETE_LIST) when the overlay removes files: one project-relative
+// path per line, each a file that must not exist in the staged project. It
+// lies outside overlayDir, so laying the overlay over the staged project never
+// copies the list into it. An overlay that removes nothing leaves it unwritten.
+const overlayDeleteList = "/shared/overlay-delete-paths"
+
 // overlayStagePrefix is prepended to the shell command of every team-image
 // container of a Job that carries a source overlay. It copies the image's
 // project directory — the directory the container's shell starts in — into the
 // workdir emptyDir at the same absolute path underneath it, lays the proposed
-// files over that copy, and moves the shell there, so everything after it runs
-// against the copy.
+// files over that copy, removes from the copy each path the overlay's delete
+// list names (when the overlay initContainer wrote one), and moves the shell
+// there, so everything after it runs against the copy. A listed path the copy
+// does not hold is skipped; one that cannot be removed (a directory) fails the
+// command, since the run would otherwise build a project that still holds a
+// path the fix removes. The fetcher has already refused every listed path that
+// is absolute or climbs out of the project.
 //
 // The overlay is never applied in place. A team image's project files may be
 // owned by a user the container does not run as (a plain Dockerfile `COPY`
@@ -1342,10 +1374,24 @@ const overlayWorkDir = "/work"
 // lets overlayWorkdirPath re-point a configured artifact path at the copy
 // without execution-controller having to know where the team's project lives.
 func overlayStagePrefix() string {
-	work := overlayWorkDir
+	return stagePrefix(overlayWorkDir, overlayDir, overlayDeleteList)
+}
+
+// stagePrefix returns the shell text of overlayStagePrefix for a workdir, an
+// overlay directory and a delete list. Each is an absolute path the shell
+// reads literally: the workdir is written inside double quotes, so it holds no
+// `"`, `$`, backquote or backslash. A listed path is read whole, spaces
+// included, and is expanded only inside double quotes.
+func stagePrefix(work, overlay, deleteList string) string {
+	list := shellQuote(deleteList)
 	return "mkdir -p \"" + work + "${PWD%/*}\"" +
 		" && cp -R \"$PWD\" \"" + work + "${PWD%/*}/\"" +
-		" && cp -R /shared/overlay/. \"" + work + "$PWD/\"" +
+		" && cp -R " + shellQuote(overlay+"/.") + " \"" + work + "$PWD/\"" +
+		" && if [ -f " + list + " ]; then" +
+		" while IFS= read -r p || [ -n \"$p\" ]; do" +
+		" [ -z \"$p\" ] || rm -f -- \"" + work + "$PWD/$p\"" +
+		" || { echo \"continuo overlay: cannot remove $p from the staged project\" >&2; exit 1; };" +
+		" done < " + list + "; fi" +
 		" && cd \"" + work + "$PWD\" && "
 }
 

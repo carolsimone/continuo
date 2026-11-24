@@ -119,3 +119,32 @@ func TestTryRecordOf_RefusesASnapshotWithNoTryOrAnUnreadableRow(t *testing.T) {
 	_, err = serialization.TryRecordOf(snap)
 	require.Error(t, err)
 }
+
+// TestTryRecordOf_AMovedFileIsShownAsARename pins that an earlier try which
+// moved a file without changing its content is shown with the move, not left
+// out as an edit with no diff.
+func TestTryRecordOf_AMovedFileIsShownAsARename(t *testing.T) {
+	moved := remediation.Draft{Edits: []remediation.Edit{{
+		Path: "models/table_b_v2.sql", RenamedFrom: "models/table_b.sql", Original: "select 1\n", Content: "select 1\n",
+	}}}
+	snap := remediation.Snapshot{
+		Remediation: remediation.Remediation{ID: uuid.New(), Round: 1, CurrentTry: 1},
+		Try:         &remediation.Try{Try: 1, Attempt: 1, Status: remediation.TryFailed},
+		Clusters: []remediation.Cluster{{
+			Cluster: 1, Kind: workflow.ClusterSingle, TargetNodeID: "analytics.table_b", Members: []string{"analytics.table_b"},
+			TypeName: "duplicate-table", Status: remediation.ClusterChecked, Round: 1,
+		}},
+		Steps: []remediation.StepRun{
+			journalRow(t, 1, remediation.StepPreflight, remediation.KindRunner, 1, serialization.PreflightRecord{Draft: moved}),
+		},
+	}
+	snap.Steps[0].ID = 1
+
+	got, err := serialization.TryRecordOf(snap)
+	require.NoError(t, err)
+	require.Len(t, got.Clusters, 1)
+	assert.Equal(t, []remediation.EditRecord{{
+		Path: "models/table_b_v2.sql",
+		Diff: "rename from models/table_b.sql\nrename to models/table_b_v2.sql\n",
+	}}, got.Clusters[0].Edits)
+}

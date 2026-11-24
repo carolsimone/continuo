@@ -135,6 +135,7 @@ func sampleDraft() remediation.Draft {
 	return remediation.Draft{
 		Edits: []remediation.Edit{{
 			Path:         "services/orders/models/orders_daily.sql",
+			RenamedFrom:  "services/orders/models/orders_daily_old.sql",
 			Original:     "select 1",
 			Content:      "select 2",
 			TargetNodeID: "orders.model.orders_daily",
@@ -234,6 +235,19 @@ func evidenceSamples() map[remediation.EvidenceKey]any {
 		remediation.KeyChangedAncestorDiffs: []prompt.ReleaseUpstreamChange{{
 			NodeID: "orders.model.stg_orders", Service: "orders", Depth: 1, Diff: "-a\n+b",
 		}},
+		remediation.KeyModelRename: remediation.ModelRename{
+			Service:       "marketing",
+			Relation:      "analytics.table_b",
+			OtherService:  "service-1",
+			OtherFilePath: "services/service-1/models/table_b.sql",
+			ChangesAlias:  true,
+			OldName:       "table_b",
+			NewName:       "table_b_v2",
+			OldPath:       "services/marketing/models/table_b.sql",
+			NewPath:       "services/marketing/models/table_b_v2.sql",
+			References:    map[string]string{"services/marketing/models/schema.yml": "models:\n  - name: table_b\n"},
+			Order:         []string{"services/marketing/models/schema.yml"},
+		},
 		remediation.KeyContractFile: remediation.ContractFile{
 			Schema: "analytics", Table: "fx", RepoRoot: "svc", ContractDir: "svc/contracts",
 			YAMLPath: "svc/contracts/fx.yaml", YAMLText: "nodes: []",

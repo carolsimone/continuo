@@ -35,6 +35,9 @@ type Collaborators struct {
 	// ContractLocator finds which ODCS contract file in that checkout declares the
 	// python node being fixed.
 	ContractLocator ports.ContractLocator
+	// ModelReferences reads a dbt project in that checkout for a fix that
+	// renames a model: the files that name it and the names already taken.
+	ModelReferences ports.ModelReferenceFinder
 	// ContractInspector reads the node declarations out of an ODCS contract file
 	// document, so the answer's effect on them can be compared against what
 	// the repository held before it was applied.

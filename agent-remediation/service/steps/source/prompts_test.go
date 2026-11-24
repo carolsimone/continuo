@@ -75,7 +75,6 @@ func TestPrompts_MetaNamesTheStepAndWhatItReads(t *testing.T) {
 		{source.NewDBTCompile(), "dbt-compile", []remediation.EvidenceKey{remediation.KeyFailure, remediation.KeySourceFiles, remediation.KeyDBTLog, remediation.KeyFailurePrecedents}},
 		{source.NewDBTParse(), "dbt-parse", []remediation.EvidenceKey{remediation.KeyFailure, remediation.KeySourceFiles, remediation.KeyFailurePrecedents}},
 		{source.NewSeed(), "seed", []remediation.EvidenceKey{remediation.KeyFailure, remediation.KeySourceFiles, remediation.KeyDBTLog, remediation.KeyFailurePrecedents}},
-		{source.NewDuplicateTable(), "duplicate-table", []remediation.EvidenceKey{remediation.KeyFailure, remediation.KeySourceFiles, remediation.KeyFailurePrecedents}},
 	}
 	for _, c := range cases {
 		m := c.p.Meta()
@@ -189,25 +188,6 @@ func TestSeed_BuildsItsRequestAndAlwaysTargetsTheCSV(t *testing.T) {
 	}
 }
 
-func TestDuplicateTable_BuildsItsRequest(t *testing.T) {
-	one := remediation.SourceFiles{Files: map[string]string{sqlPath: "select 1"}, Order: []string{sqlPath}, Primary: sqlPath, Service: "svc"}
-	f := failure("duplicate_table", remediation.TriggerNode{
-		NodeID: "model.svc.x", RelationID: "analytics.orders", Service: "svc", FilePath: "models/x.sql",
-		OtherService: "billing", OtherFilePath: "models/orders.sql",
-	})
-	m := &fakeModel{results: []ports.ProposeResult{answer("", "select 1 as renamed")}}
-
-	out := propose(t, source.NewDuplicateTable(), f, evidenceFor(one), m)
-
-	want := prompt.AssembleDuplicateTableFix(prompt.NamedFile{Path: sqlPath, Content: "select 1"},
-		"analytics.orders", "billing", "models/orders.sql", precedents)
-	assert.Equal(t, want, m.reqs[0])
-	assert.True(t, out.Draft.TargetShown)
-	require.Len(t, out.Draft.Edits, 1)
-	assert.Equal(t, "select 1 as renamed", out.Draft.Edits[0].Content)
-	assert.Equal(t, "model.svc.root", out.Draft.SuspectedRoot)
-}
-
 func TestPrompts_ReadMissingLogAndPrecedentsAsNone(t *testing.T) {
 	ev := remediation.NewEvidence().With(remediation.KeySourceFiles, shownFiles)
 	f := failure("compile", remediation.TriggerNode{NodeID: "svc", FilePath: "models/x.sql"})
@@ -283,17 +263,6 @@ func TestSeed_RevisesTheLastCallWithTheFindings(t *testing.T) {
 		answer("", "a,b\n1"), answer("", "a,b\n1,2"))
 }
 
-func TestDuplicateTable_RevisesTheLastCallWithTheFindings(t *testing.T) {
-	one := remediation.SourceFiles{Files: map[string]string{sqlPath: "select 1"}, Order: []string{sqlPath}, Primary: sqlPath, Service: "svc"}
-	f := failure("duplicate_table", remediation.TriggerNode{
-		NodeID: "model.svc.x", RelationID: "analytics.orders", Service: "svc", FilePath: "models/x.sql",
-		OtherService: "billing", OtherFilePath: "models/orders.sql",
-	})
-
-	revisesTheLastCall(t, source.NewDuplicateTable(), f, evidenceFor(one),
-		answer("", "select 1"), answer("", "select 1 as renamed"))
-}
-
 func TestPrompts_ALaterRoundWithoutThePreviousCallIsAnErrorAndCallsNoModel(t *testing.T) {
 	f := failure("compile", remediation.TriggerNode{NodeID: "svc", FilePath: "models/x.sql"})
 	req, res := prompt.ProposeRequest{User: "u"}, answer("models/x.sql", "select 2")
@@ -303,10 +272,9 @@ func TestPrompts_ALaterRoundWithoutThePreviousCallIsAnErrorAndCallsNoModel(t *te
 		"no previous answer":  {Round: 1, PreviousRequest: &req},
 	}
 	steps := map[string]step.Prompt{
-		"dbt-compile":     source.NewDBTCompile(),
-		"dbt-parse":       source.NewDBTParse(),
-		"seed":            source.NewSeed(),
-		"duplicate-table": source.NewDuplicateTable(),
+		"dbt-compile": source.NewDBTCompile(),
+		"dbt-parse":   source.NewDBTParse(),
+		"seed":        source.NewSeed(),
 	}
 	for stepName, p := range steps {
 		for name, in := range cases {

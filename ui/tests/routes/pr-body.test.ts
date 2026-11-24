@@ -19,6 +19,30 @@ describe('buildPullRequestBody', () => {
     expect(body).toContain('- `services/core/models/orders.sql` (fixes `analytics.orders`)');
   });
 
+  it('names the path a renamed file moves from, and keeps the line of every other file', () => {
+    const body = buildPullRequestBody({
+      nodeIds: ['analytics.table_b'],
+      releaseId: 'rel-1',
+      files: [
+        {
+          path: 'services/marketing/models/table_b_v2.sql',
+          renamed_from: 'services/marketing/models/table_b.sql',
+          target_node_id: 'analytics.table_b',
+        },
+        { path: 'services/marketing/models/table_c_v2.sql', renamed_from: 'services/marketing/models/table_c.sql' },
+        { path: 'services/core/models/orders.sql', target_node_id: 'analytics.orders' },
+        { path: 'services/core/models/shared.sql' },
+      ],
+    });
+    expect(body).toContain(
+      '### Files changed\n' +
+        '- `services/marketing/models/table_b_v2.sql` (renamed from `services/marketing/models/table_b.sql`; fixes `analytics.table_b`)\n' +
+        '- `services/marketing/models/table_c_v2.sql` (renamed from `services/marketing/models/table_c.sql`)\n' +
+        '- `services/core/models/orders.sql` (fixes `analytics.orders`)\n' +
+        '- `services/core/models/shared.sql`\n',
+    );
+  });
+
   it('omits the sections it has nothing for', () => {
     const body = buildPullRequestBody({ nodeIds: ['a'], releaseId: 'r', files: [{ path: 'p' }] });
     expect(body).not.toContain('### Changes');

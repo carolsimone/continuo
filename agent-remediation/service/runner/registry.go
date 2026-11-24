@@ -14,6 +14,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/cross"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/gate"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/outputs"
+	"github.com/carolsimone/continuo/agent-remediation/service/steps/rename"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/shared"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/source"
 	"github.com/carolsimone/continuo/agent-remediation/service/steps/upstream"
@@ -60,6 +61,7 @@ func builtinEvidence() map[remediation.EvidenceKey]evidenceSpec {
 		remediation.KeyImagePackages:        {func() any { return remediation.ImagePackages{} }, workflow.ClassCode},
 		remediation.KeyPackagedContract:     {func() any { return remediation.Bytes{} }, workflow.ClassCode},
 		remediation.KeyUpstreamTarget:       {func() any { return remediation.UpstreamTarget{} }, workflow.ClassCode},
+		remediation.KeyModelRename:          {func() any { return remediation.ModelRename{} }, workflow.ClassCode},
 		// The earlier tries at the failure, including the diffs of the model's
 		// own drafts. It records what happened in those tries, so it is classed
 		// logs, whatever the diffs hold.
@@ -92,7 +94,9 @@ func NewRegistry(c Collaborators) *Registry {
 	r.register(source.NewDBTCompile())
 	r.register(source.NewDBTParse())
 	r.register(source.NewSeed())
-	r.register(source.NewDuplicateTable())
+	r.register(rename.NewModelRename(c.Archive, c.ModelReferences, c.Locator, c.ServiceRepoPaths, c.Logger))
+	r.register(rename.NewPrompt())
+	r.register(rename.NewMatchesPlan(c.ModelReferences, c.ServiceRepoPaths))
 	r.register(source.NewTargetFileWasShown())
 	r.register(validation.NewCandidateSQL(c.Evidence, c.Logger))
 	r.register(validation.NewCodeBundleSource(c.CandidateSource, c.Source, c.Locator, c.ServiceRepoPaths, c.Logger))

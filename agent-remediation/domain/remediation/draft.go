@@ -24,9 +24,13 @@ type Draft struct {
 
 // Edit is one file change of a draft. Original is the file as read, Content the
 // file after the edit. ContentKey and DiffKey name the stored content and diff
-// of the edit, ContentURI and DiffURI locate them.
+// of the edit, ContentURI and DiffURI locate them. RenamedFrom is set on an edit
+// that moves a file: the file at RenamedFrom (whose content is Original) is
+// deleted and Content is written at Path; it is empty for an edit that changes
+// Path in place.
 type Edit struct {
 	Path         string
+	RenamedFrom  string
 	Original     string
 	Content      string
 	TargetNodeID string

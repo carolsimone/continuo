@@ -56,11 +56,15 @@ const (
 )
 
 // FileEdit is one proposed change to a single file: its repository-relative
-// path and the S3 URIs of the proposed content and unified diff.
+// path and the S3 URIs of the proposed content and unified diff. RenamedFrom
+// is the repository-relative path the file is moved from: the pull request
+// deletes it and writes Path. It is empty for an edit that changes Path in
+// place.
 type FileEdit struct {
-	Path       string
-	ContentURI string
-	DiffURI    string
+	Path        string
+	RenamedFrom string
+	ContentURI  string
+	DiffURI     string
 	// TargetNodeID is the node whose source this edit changes; for a
 	// shared-upstream fix it is the changed ancestor, which may not itself
 	// have failed.
