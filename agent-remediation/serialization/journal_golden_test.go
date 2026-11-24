@@ -135,6 +135,7 @@ func sampleDraft() remediation.Draft {
 	return remediation.Draft{
 		Edits: []remediation.Edit{{
 			Path:         "services/orders/models/orders_daily.sql",
+			RenamedFrom:  "services/orders/models/orders_daily_old.sql",
 			Original:     "select 1",
 			Content:      "select 2",
 			TargetNodeID: "orders.model.orders_daily",

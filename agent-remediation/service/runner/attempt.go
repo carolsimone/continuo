@@ -157,6 +157,7 @@ func verifyingAttempt(run tryRun, checked []checkedCluster, verifications []prop
 			}
 			p.Edits = append(p.Edits, proposal.FileEdit{
 				Path:          e.Path,
+				RenamedFrom:   e.RenamedFrom,
 				ContentURI:    e.ContentURI,
 				DiffURI:       e.DiffURI,
 				TargetNodeID:  target,

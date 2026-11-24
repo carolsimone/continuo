@@ -1043,7 +1043,10 @@ type FileEdit struct {
 	DiffUri    string                 `protobuf:"bytes,3,opt,name=diff_uri,json=diffUri,proto3" json:"diff_uri,omitempty"`
 	// target_node_id is the node whose source this edit changes; for a
 	// shared-upstream fix it is the changed ancestor, which may not have failed.
-	TargetNodeId  string `protobuf:"bytes,4,opt,name=target_node_id,json=targetNodeId,proto3" json:"target_node_id,omitempty"`
+	TargetNodeId string `protobuf:"bytes,4,opt,name=target_node_id,json=targetNodeId,proto3" json:"target_node_id,omitempty"`
+	// renamed_from is the path the file is moved from: the pull request deletes
+	// it and writes path. Empty for an edit that changes path in place.
+	RenamedFrom   string `protobuf:"bytes,5,opt,name=renamed_from,json=renamedFrom,proto3" json:"renamed_from,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1102,6 +1105,13 @@ func (x *FileEdit) GetDiffUri() string {
 func (x *FileEdit) GetTargetNodeId() string {
 	if x != nil {
 		return x.TargetNodeId
+	}
+	return ""
+}
+
+func (x *FileEdit) GetRenamedFrom() string {
+	if x != nil {
+		return x.RenamedFrom
 	}
 	return ""
 }
@@ -1548,13 +1558,14 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"claimed_at\x18\x02 \x01(\tR\tclaimedAt\x12\x18\n" +
 	"\aservice\x18\x03 \x01(\tR\aservice\"5\n" +
 	"\x17FailPullRequestResponse\x12\x1a\n" +
-	"\breleased\x18\x01 \x01(\bR\breleased\"\x80\x01\n" +
+	"\breleased\x18\x01 \x01(\bR\breleased\"\xa3\x01\n" +
 	"\bFileEdit\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x1f\n" +
 	"\vcontent_uri\x18\x02 \x01(\tR\n" +
 	"contentUri\x12\x19\n" +
 	"\bdiff_uri\x18\x03 \x01(\tR\adiffUri\x12$\n" +
-	"\x0etarget_node_id\x18\x04 \x01(\tR\ftargetNodeId\"Q\n" +
+	"\x0etarget_node_id\x18\x04 \x01(\tR\ftargetNodeId\x12!\n" +
+	"\frenamed_from\x18\x05 \x01(\tR\vrenamedFrom\"Q\n" +
 	"\vNodeOutcome\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x12\x12\n" +

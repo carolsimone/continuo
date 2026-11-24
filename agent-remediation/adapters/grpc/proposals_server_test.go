@@ -397,7 +397,7 @@ func TestProposalsServer_BeginPullRequest_HappyPath(t *testing.T) {
 		Branch:          "remediation/rel-3/node-3-attempt2",
 		Edits: []proposal.FileEdit{
 			{Path: "models/bar.sql", ContentURI: "s3://bucket/bar.sql", DiffURI: "s3://bucket/bar.diff"},
-			{Path: "models/baz.sql", ContentURI: "s3://bucket/baz.sql", DiffURI: "s3://bucket/baz.diff"},
+			{Path: "models/baz_v2.sql", RenamedFrom: "models/baz.sql", ContentURI: "s3://bucket/baz.sql", DiffURI: "s3://bucket/baz.diff"},
 		},
 	}
 	svc := &fakeSvc{beginClaim: claim}
@@ -426,7 +426,9 @@ func TestProposalsServer_BeginPullRequest_HappyPath(t *testing.T) {
 	assert.Equal(t, "models/bar.sql", resp.Edits[0].Path)
 	assert.Equal(t, "s3://bucket/bar.sql", resp.Edits[0].ContentUri)
 	assert.Equal(t, "s3://bucket/bar.diff", resp.Edits[0].DiffUri)
-	assert.Equal(t, "models/baz.sql", resp.Edits[1].Path)
+	assert.Empty(t, resp.Edits[0].RenamedFrom, "an edit in place moves no file")
+	assert.Equal(t, "models/baz_v2.sql", resp.Edits[1].Path)
+	assert.Equal(t, "models/baz.sql", resp.Edits[1].RenamedFrom, "a moved file names the path it moves from")
 	assert.Equal(t, "s3://bucket/baz.sql", resp.Edits[1].ContentUri)
 	assert.Equal(t, "s3://bucket/baz.diff", resp.Edits[1].DiffUri)
 }

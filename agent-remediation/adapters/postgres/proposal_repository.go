@@ -332,12 +332,14 @@ type proposalRow struct {
 // column. The json tags — a storage concern — live here in the adapter so the
 // domain proposal.FileEdit carries no serialization annotations. The stored
 // shape is
-// [{"path","content_uri","diff_uri","target_node_id","member_node_ids"}, ...].
+// [{"path","renamed_from","content_uri","diff_uri","target_node_id","member_node_ids"}, ...],
+// renamed_from present only on an edit that moves a file.
 // member_node_ids records the failing nodes an edit's cluster resolves, so a
 // per-service pull request claimed later from this row can narrow itself to the
 // members its own edits address.
 type fileEditRow struct {
 	Path          string   `json:"path"`
+	RenamedFrom   string   `json:"renamed_from,omitempty"`
 	ContentURI    string   `json:"content_uri"`
 	DiffURI       string   `json:"diff_uri"`
 	TargetNodeID  string   `json:"target_node_id,omitempty"`
@@ -352,6 +354,7 @@ func marshalFileEdits(edits []proposal.FileEdit) ([]byte, error) {
 	for _, e := range edits {
 		rows = append(rows, fileEditRow{
 			Path:          e.Path,
+			RenamedFrom:   e.RenamedFrom,
 			ContentURI:    e.ContentURI,
 			DiffURI:       e.DiffURI,
 			TargetNodeID:  e.TargetNodeID,
@@ -379,6 +382,7 @@ func editsOrLegacy(raw []byte, filePath, contentURI, diffURI string) []proposal.
 	for _, r := range rows {
 		edits = append(edits, proposal.FileEdit{
 			Path:          r.Path,
+			RenamedFrom:   r.RenamedFrom,
 			ContentURI:    r.ContentURI,
 			DiffURI:       r.DiffURI,
 			TargetNodeID:  r.TargetNodeID,

@@ -12,9 +12,9 @@ import (
 )
 
 func TestBuild_DeterministicSortedTarWithReadableModes(t *testing.T) {
-	a, err := Build([]File{{Path: "models/b.sql", Content: []byte("b")}, {Path: "models/a.sql", Content: []byte("a")}})
+	a, err := Build([]File{{Path: "models/b.sql", Content: []byte("b")}, {Path: "models/a.sql", Content: []byte("a")}}, nil)
 	require.NoError(t, err)
-	b, err := Build([]File{{Path: "models/a.sql", Content: []byte("a")}, {Path: "models/b.sql", Content: []byte("b")}})
+	b, err := Build([]File{{Path: "models/a.sql", Content: []byte("a")}, {Path: "models/b.sql", Content: []byte("b")}}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, a, b, "same files in any order must build byte-identical tarballs")
 
@@ -36,7 +36,7 @@ func TestBuild_DeterministicSortedTarWithReadableModes(t *testing.T) {
 
 func TestBuild_RejectsUnsafePaths(t *testing.T) {
 	for _, p := range []string{"/abs.sql", "../up.sql", "models/../../up.sql", ""} {
-		_, err := Build([]File{{Path: p, Content: []byte("x")}})
+		_, err := Build([]File{{Path: p, Content: []byte("x")}}, nil)
 		assert.Error(t, err, p)
 	}
 }
@@ -48,7 +48,7 @@ func TestBuild_CarriesEachFileContent(t *testing.T) {
 	tarball, err := Build([]File{
 		{Path: "models/a.sql", Content: []byte("select 1")},
 		{Path: "seeds/nested/dir/c.csv", Content: []byte("id,name\n1,a\n")},
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	gz, err := gzip.NewReader(bytes.NewReader(tarball))
@@ -76,7 +76,7 @@ func TestBuild_CarriesEachFileContent(t *testing.T) {
 // case "nothing to overlay": an empty set builds a valid, readable archive with
 // no members rather than an error or a corrupt stream.
 func TestBuild_EmptyInputIsAnEmptyArchive(t *testing.T) {
-	tarball, err := Build(nil)
+	tarball, err := Build(nil, nil)
 	require.NoError(t, err)
 
 	gz, err := gzip.NewReader(bytes.NewReader(tarball))
@@ -90,7 +90,61 @@ func TestBuild_EmptyInputIsAnEmptyArchive(t *testing.T) {
 // sorted the caller's own slice would silently reorder the proposal's edits.
 func TestBuild_DoesNotReorderTheCallersSlice(t *testing.T) {
 	files := []File{{Path: "models/b.sql", Content: []byte("b")}, {Path: "models/a.sql", Content: []byte("a")}}
-	_, err := Build(files)
+	_, err := Build(files, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "models/b.sql", files[0].Path)
+}
+
+// members reads a built archive back as member name -> content.
+func members(t *testing.T, tarball []byte) map[string]string {
+	t.Helper()
+	gz, err := gzip.NewReader(bytes.NewReader(tarball))
+	require.NoError(t, err)
+	tr := tar.NewReader(gz)
+	got := map[string]string{}
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			return got
+		}
+		require.NoError(t, err)
+		b, err := io.ReadAll(tr)
+		require.NoError(t, err)
+		got[h.Name] = string(b)
+	}
+}
+
+// TestBuild_ListsTheDeletesInTheReservedMember proves a moved file's old path
+// reaches the run: cleaned, sorted and without repeats, one per line.
+func TestBuild_ListsTheDeletesInTheReservedMember(t *testing.T) {
+	tarball, err := Build(
+		[]File{{Path: "models/table_b_v2.sql", Content: []byte("select 1")}},
+		[]string{"models/table_b.sql", "./models/old.sql", "models/table_b.sql"},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{
+		"models/table_b_v2.sql": "select 1",
+		DeleteListName:          "models/old.sql\nmodels/table_b.sql\n",
+	}, members(t, tarball))
+}
+
+// TestBuild_WithNoDeletesWritesNoDeleteList keeps every overlay that moves no
+// file exactly the files it carries.
+func TestBuild_WithNoDeletesWritesNoDeleteList(t *testing.T) {
+	tarball, err := Build([]File{{Path: "models/a.sql", Content: []byte("a")}}, []string{})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"models/a.sql": "a"}, members(t, tarball))
+}
+
+// TestBuild_RefusesAContradictoryOrUnsafeDelete pins the refusals: a path both
+// written and deleted, an unsafe path, and a file at the reserved name.
+func TestBuild_RefusesAContradictoryOrUnsafeDelete(t *testing.T) {
+	_, err := Build([]File{{Path: "models/a.sql", Content: []byte("a")}}, []string{"models/./a.sql"})
+	assert.ErrorContains(t, err, "both written and deleted")
+	_, err = Build(nil, []string{"../outside.sql"})
+	assert.ErrorContains(t, err, "escapes the project")
+	_, err = Build(nil, []string{"/abs.sql"})
+	assert.ErrorContains(t, err, "relative to the project")
+	_, err = Build([]File{{Path: DeleteListName, Content: []byte("x")}}, nil)
+	assert.ErrorContains(t, err, "reserved")
 }

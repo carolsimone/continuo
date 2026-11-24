@@ -457,7 +457,11 @@ func (r *Runner) writeArtifacts(ctx context.Context, d remediation.Draft) (remed
 		if err != nil {
 			return d, fmt.Errorf("write the content of %s: %w", e.Path, err)
 		}
-		diffURI, err := r.d.Collab.Artifacts.Write(ctx, e.DiffKey, proposal.ComputeUnifiedDiff(e.Original, e.Content, e.Path), artifactContentType)
+		diff := proposal.ComputeUnifiedDiff(e.Original, e.Content, e.Path)
+		if e.RenamedFrom != "" {
+			diff = proposal.ComputeRenameDiff(e.Original, e.Content, e.RenamedFrom, e.Path)
+		}
+		diffURI, err := r.d.Collab.Artifacts.Write(ctx, e.DiffKey, diff, artifactContentType)
 		if err != nil {
 			return d, fmt.Errorf("write the diff of %s: %w", e.Path, err)
 		}

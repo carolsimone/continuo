@@ -245,9 +245,32 @@ func TestSubmit_DbtServiceSubmitsAnOverlayOfTheEditsContent(t *testing.T) {
 	want, err := overlay.Build([]overlay.File{
 		{Path: "models/marts/margins.sql", Content: []byte("select 2 as margins")},
 		{Path: "models/orders.sql", Content: []byte("select 1 as orders")},
-	})
+	}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, string(want), w.body)
+}
+
+// TestVerificationRun_AMovedFileIsListedForDeletion pins that a renamed file is
+// absent from the run's project as it is from the pull request's tree: the
+// overlay writes the new path and lists the old one, both relative to the
+// service's project.
+func TestVerificationRun_AMovedFileIsListedForDeletion(t *testing.T) {
+	r := newRig()
+	c := dbtCluster()
+	c.Draft.Edits = []remediation.Edit{{
+		Path:         "dbt/services/sales/models/orders_v2.sql",
+		RenamedFrom:  "dbt/services/sales/models/orders.sql",
+		ContentURI:   "s3://c/orders",
+		TargetNodeID: "model.sales.orders",
+	}}
+	_, err := r.step.Submit(context.Background(), gateInput(c))
+	require.NoError(t, err)
+
+	require.Len(t, r.artifacts.writes, 1)
+	assert.Equal(t, map[string]string{
+		"models/orders_v2.sql":  "select 1 as orders",
+		overlay.DeleteListName: "models/orders.sql\n",
+	}, untar(t, r.artifacts.writes[0].body))
 }
 
 func TestVerificationRun_UploadsAnODCSBundle(t *testing.T) {

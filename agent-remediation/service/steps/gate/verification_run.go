@@ -175,6 +175,7 @@ func (g *VerificationRun) Submit(ctx context.Context, in step.GateInput) (step.G
 			}
 		} else {
 			files := make([]overlay.File, 0, len(r.edits.Edits))
+			var deletes []string
 			for _, e := range r.edits.Edits {
 				content, err := g.evidence.Fetch(ctx, e.ContentURI)
 				if err != nil {
@@ -184,8 +185,13 @@ func (g *VerificationRun) Submit(ctx context.Context, in step.GateInput) (step.G
 					Path:    strings.TrimPrefix(e.Path, r.edits.Prefix+"/"),
 					Content: []byte(content),
 				})
+				// A moved file must be absent from the run's project, as it is
+				// from the pull request's tree.
+				if e.RenamedFrom != "" {
+					deletes = append(deletes, strings.TrimPrefix(e.RenamedFrom, r.edits.Prefix+"/"))
+				}
 			}
-			tarball, err := overlay.Build(files)
+			tarball, err := overlay.Build(files, deletes)
 			if err != nil {
 				return step.GateVerdict{}, fmt.Errorf("build source overlay for %s: %w", service, err)
 			}

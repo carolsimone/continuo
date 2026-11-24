@@ -1385,6 +1385,7 @@ func TestBeginPR_ClaimCarriesFileEdits(t *testing.T) {
 	edits := []proposal.FileEdit{
 		{Path: "contracts/a.yml", ContentURI: "s3://b/1.content", DiffURI: "s3://b/1.diff"},
 		{Path: "scripts/a.py", ContentURI: "s3://b/2.content", DiffURI: "s3://b/2.diff"},
+		{Path: "models/table_b_v2.sql", RenamedFrom: "models/table_b.sql", ContentURI: "s3://b/3.content", DiffURI: "s3://b/3.diff"},
 	}
 	multiID := seedProposal(t, repo, db, proposal.Proposal{
 		Source: "validation", ReleaseID: "rel-claim-edits", NodeID: "model.p.multi",
@@ -1395,7 +1396,7 @@ func TestBeginPR_ClaimCarriesFileEdits(t *testing.T) {
 
 	claim, err := repo.BeginPR(ctx, multiID, "", "remediation/rel-claim-edits/multi-attempt1", time.Now().UTC())
 	require.NoError(t, err)
-	require.Equal(t, edits, claim.Edits, "every edit must reach the claim, in order")
+	require.Equal(t, edits, claim.Edits, "every edit must reach the claim, in order, a moved file with the path it moves from")
 
 	legacyID := seedProposal(t, repo, db, proposal.Proposal{
 		Source: "validation", ReleaseID: "rel-claim-edits", NodeID: "model.p.single",
