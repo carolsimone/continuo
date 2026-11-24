@@ -66,6 +66,7 @@ func TestRegistry_EvidenceClassesAreTheDeclaredOnes(t *testing.T) {
 		remediation.KeyImagePackages:        workflow.ClassCode,
 		remediation.KeyUpstreamTarget:       workflow.ClassCode,
 		remediation.KeyPackagedContract:     workflow.ClassCode,
+		remediation.KeyModelRename:          workflow.ClassCode,
 		remediation.KeyDraft:                workflow.ClassCode,
 		remediation.KeyFailure:              workflow.ClassLogs,
 		remediation.KeyDBTLog:               workflow.ClassLogs,

@@ -44,11 +44,12 @@ func builtinSuite(t *testing.T) conformance.Suite {
 	require.NoError(t, err)
 	locator := repofs.NewLocator(slog.New(slog.DiscardHandler))
 	return conformance.Suite{
-		Files:     files,
-		Fixtures:  fixtures,
-		Locator:   locator,
-		Inspector: locator,
-		NewWorld:  scripted.Worlds(memory.NewStore),
+		Files:           files,
+		Fixtures:        fixtures,
+		Locator:         locator,
+		Inspector:       locator,
+		ModelReferences: repofs.ModelReferenceFinder{},
+		NewWorld:        scripted.Worlds(memory.NewStore),
 	}
 }
 

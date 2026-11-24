@@ -96,6 +96,9 @@ type Suite struct {
 	// python types' steps read the repository checkout with.
 	Locator   ports.ContractLocator
 	Inspector ports.ContractInspector
+	// ModelReferences reads a dbt project in that checkout for the rename of
+	// a model.
+	ModelReferences ports.ModelReferenceFinder
 	// NewWorld builds the world each scenario runs in.
 	NewWorld NewWorld
 	// Mutate, when set, changes a copy of every fixture before its scenarios

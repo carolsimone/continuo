@@ -349,11 +349,12 @@ func checkFiles(ctx context.Context, dir string) report {
 	rep.Warnings = append(rep.Warnings, skipped...)
 	locator := repofs.NewLocator(slog.New(slog.DiscardHandler))
 	suite := conformance.Suite{
-		Files:     set,
-		Fixtures:  append(fixtures, installFixtures...),
-		Locator:   locator,
-		Inspector: locator,
-		NewWorld:  scripted.Worlds(memory.NewStore),
+		Files:           set,
+		Fixtures:        append(fixtures, installFixtures...),
+		Locator:         locator,
+		Inspector:       locator,
+		ModelReferences: repofs.ModelReferenceFinder{},
+		NewWorld:        scripted.Worlds(memory.NewStore),
 	}
 	results := suite.Run(ctx)
 	flows := make([]string, 0, len(set.Flows))

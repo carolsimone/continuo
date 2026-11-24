@@ -668,6 +668,7 @@ func runnerCollaborators(cfg config.Config, a runnerAdapters, logger *slog.Logge
 		Archive:             a.github,
 		Patcher:             repofs.CheckoutPatcher{},
 		ContractLocator:     a.contracts,
+		ModelReferences:     repofs.ModelReferenceFinder{},
 		ContractInspector:   a.contracts,
 		Packager:            a.packager,
 		ImagePackages:       a.images,

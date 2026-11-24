@@ -24,14 +24,15 @@ func (ContentChanged) Meta() step.Meta {
 	return step.Meta{
 		Name:        "content_changed",
 		Kind:        step.KindCheck,
-		Description: "Fails a draft that has no edit, or whose edit is empty or equal to the file it was read from.",
+		Description: "Fails a draft that has no edit, or whose edit is empty or, for an edit that moves no file, equal to the file it was read from.",
 		Needs:       []remediation.EvidenceKey{remediation.KeyDraft},
 		Stages:      []workflow.Stage{workflow.StagePreflight},
 	}
 }
 
 // Check finds one content_unchanged finding when the draft has no edit, or when
-// an edit's content is empty or equals its original. The finding names the
+// an edit's content is empty, or equals its original for an edit in place (an
+// edit that moves a file changes it even when its content stays the same). The finding names the
 // first such edit's file, and says nothing of the others: one unchanged file is
 // one refusal, as it is for a single-file fix.
 func (ContentChanged) Check(_ context.Context, in step.CheckInput) (step.CheckOutput, error) {
@@ -42,7 +43,7 @@ func (ContentChanged) Check(_ context.Context, in step.CheckInput) (step.CheckOu
 		return step.CheckOutput{Result: res}, nil
 	}
 	for _, e := range in.Draft.Edits {
-		if e.Content == "" || e.Content == e.Original {
+		if e.Content == "" || (e.RenamedFrom == "" && e.Content == e.Original) {
 			finding.File = e.Path
 			res.Findings = []remediation.Finding{finding}
 			break

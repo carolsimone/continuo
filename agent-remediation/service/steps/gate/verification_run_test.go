@@ -268,7 +268,7 @@ func TestVerificationRun_AMovedFileIsListedForDeletion(t *testing.T) {
 
 	require.Len(t, r.artifacts.writes, 1)
 	assert.Equal(t, map[string]string{
-		"models/orders_v2.sql":  "select 1 as orders",
+		"models/orders_v2.sql": "select 1 as orders",
 		overlay.DeleteListName: "models/orders.sql\n",
 	}, untar(t, r.artifacts.writes[0].body))
 }
