@@ -4,7 +4,7 @@ continuo has one glossary for the words its components share and one per compone
 
 | Context | Glossary | Covers |
 |---|---|---|
-| Shared | [`GLOSSARY.md`](GLOSSARY.md) | Words more than one component uses: node, project, schedule, release, release check, run, task, fix |
+| Shared | [`GLOSSARY.md`](GLOSSARY.md) | Words more than one component uses: node, project, data contract, schedule, release, release check, run, task, attempt, heal trigger, round, fix |
 | run-controller | [`run-controller/GLOSSARY.md`](run-controller/GLOSSARY.md) | Run lifecycle, tasks, attempts, schedules, write leases |
 | catalog | [`catalog/GLOSSARY.md`](catalog/GLOSSARY.md) | The topology graph, code versions, contracts, exports |
 | execution-controller | [`execution-controller/GLOSSARY.md`](execution-controller/GLOSSARY.md) | Kubernetes Jobs for attempts and release legs |
@@ -15,7 +15,7 @@ continuo has one glossary for the words its components share and one per compone
 | agent-chat | [`agent-chat/GLOSSARY.md`](agent-chat/GLOSSARY.md) | The chat and its tool calls |
 | dead-letter-controller | [`dead-letter-controller/GLOSSARY.md`](dead-letter-controller/GLOSSARY.md) | Dead letters and redrives |
 | egress-proxy | [`egress-proxy/GLOSSARY.md`](egress-proxy/GLOSSARY.md) | Outbound traffic allowlist |
-| ui | [`ui/GLOSSARY.md`](ui/GLOSSARY.md) | The operator dashboard |
-| cli | [`cli/GLOSSARY.md`](cli/GLOSSARY.md) | The `continuo` command line |
 
 A term used by two or more components goes in the shared glossary, never in two component glossaries.
+
+The ui and the `continuo` command line have no glossary of their own: they show the domain in the words of the glossaries above.
