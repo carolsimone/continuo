@@ -11,8 +11,8 @@ The file is YAML and follows the
 [a live folder](#the-live-folder) in your bucket hands them every contract that
 is in production.
 
-This page is for the team that writes a Python service. A team that writes a
-dbt service reads [dbt nodes](#dbt-nodes) at the end. It covers:
+This page is for the team that writes a Python project. A team that writes a
+dbt project reads [dbt nodes](#dbt-nodes) at the end. It covers:
 
 - [the file and its name](#the-file-and-its-name)
 - [a full example](#a-full-example)
@@ -34,13 +34,13 @@ each part.
 
 ## The file and its name
 
-Put one file per node in the `contracts/` folder of your service:
+Put one file per node in the `contracts/` folder of your project:
 
 ```
 contracts/<table>.odcs.yaml
 ```
 
-When two nodes of one service have the same table name in two schemas, use the
+When two nodes of one project have the same table name in two schemas, use the
 longer name for both:
 
 ```
@@ -99,7 +99,7 @@ What each part says:
 | `properties` | The columns. There is at least one. `physicalType` is the column's type. `required: true` means the column never holds NULL. |
 
 A path in `script`, and in `assets` below, is relative to the folder you give
-`pack` as `--repo-root`. That folder is the service's directory, such as
+`pack` as `--repo-root`. That folder is the project's directory, such as
 `services/service-py`.
 
 The same file may also carry these, when the node needs them:
@@ -123,7 +123,7 @@ stored contract holds them:
 
 | Added | Value |
 |---|---|
-| `service` | The service of the release. |
+| `project` | The project of the release. |
 | `kind` | `python-node`, when you write none. |
 | `status` | `active`. |
 | `version` | `"0"`. The published files carry the number continuo counted. |
@@ -131,7 +131,7 @@ stored contract holds them:
 | `logicalType` on each column | Derived from its `physicalType`: `date`, `integer`, `number`, `string` and so on. |
 | `reads` | The tables your read queries name, each as `<schema>.<table>`. |
 
-With the install's ontology switch on, the stored contract of a service the
+With the install's ontology switch on, the stored contract of a project the
 ontology declares holds more: its `domain`, a link to each thing it is bound to
 and what the ontology knows of each bound column. [The company
 ontology](ontology.md#what-continuo-fills-in) says what. With the switch off,
@@ -142,7 +142,7 @@ For `py_daily_kpis`, the stored contract holds this on top of what you wrote:
 ```yaml
 customProperties:
   - {vendor: continuo, property: kind, value: python-node}
-  - {vendor: continuo, property: service, value: service-py}
+  - {vendor: continuo, property: project, value: service-py}
 status: active
 schema:
   - name: py_daily_kpis
@@ -163,7 +163,7 @@ the field. The last row is the one exception: it rejects the release as
 |---|---|
 | `servers`, `tenant`, `contractCreatedTs` | These are facts about the install and the clock. continuo writes `servers` itself, when the operator sets it. |
 | A `provenance` property | continuo writes it into the published file. Inside your file it would freeze at the first release. |
-| A `service` other than the release's | A contract belongs to one service. |
+| A `project` other than the release's | A contract belongs to one project. |
 | A `name`, a `physicalName` or a column `physicalName` other than the real one | A table must not have two names. |
 | An `id` with an upper case letter, a non-ASCII one (`Ö`) included | Table names in continuo are lower case. The contract library refuses an ASCII capital. continuo refuses any other, and the message names the file and the id continuo keys the node by. |
 | `partitioned: true`, a `partitionKeyPosition` that is not the default | The runtime cannot honour them. |
@@ -182,8 +182,8 @@ Two details of the last rule:
   of the query where that `WITH` is in scope. Outside it, the name is a real
   table again, and it needs its schema.
 
-Two services that each declare the same `id` are not refused here: the release
-is rejected as `duplicate_table`, which names both services, and the contract
+Two projects that each declare the same `id` are not refused here: the release
+is rejected as `duplicate_table`, which names both projects, and the contract
 bundle of that parse holds neither contract.
 
 Everything else that ODCS allows, for example `description.usage`, `domain`,
@@ -263,15 +263,15 @@ Your pipeline does these steps, in this order.
    is not valid and prints every problem of that file. Fix the file, then run
    the step again to check the next one. A mistake fails the pull request and
    never reaches a release. A contract that binds to the company ontology is
-   checked against it with `--service <name> --ontology <file>` (see
+   checked against it with `--project <name> --ontology <file>` (see
    [the company ontology](ontology.md#checking-bindings-in-ci)).
 2. **Build the image** and push it. The image base is
-   `ghcr.io/carolsimone/continuo-python-runtime-<engine>:v0.14.0`.
+   `ghcr.io/carolsimone/continuo-python-runtime-<engine>:v0.15.0`.
 3. **Pack the contracts.** `pack` checks the files again, lints the scripts and
    writes one bundle:
 
    ```bash
-   continuo-runtime pack contracts/ --service service-py --repo-root . \
+   continuo-runtime pack contracts/ --project service-py --repo-root . \
      --image "$IMAGE" --dialect postgres --out odcs-bundle.json
    ```
 
@@ -279,7 +279,7 @@ Your pipeline does these steps, in this order.
    list from the image with `docker run`, so the image must exist on the
    machine. `--image-packages <file>` takes a list you saved for that image
    before. Give one of the two, not both.
-4. **Upload the bundle** to `s3://<bucket>/<service>/<release_id>/odcs-bundle.json`.
+4. **Upload the bundle** to `s3://<bucket>/<project>/<release_id>/odcs-bundle.json`.
 5. **Post the release** with the kind `python-odcs`. The `image_tag` is the
    full image reference, used exactly as written.
 
@@ -289,7 +289,7 @@ Your pipeline does these steps, in this order.
      -H 'content-type: application/json' \
      -d '{
        "release_id": "rel-py-v1",
-       "service": "service-py",
+       "project": "service-py",
        "image_tag": "service-py:v1",
        "kind": "python-odcs",
        "repo": "<your-username>/continuo-demo-docs",
@@ -328,7 +328,7 @@ install's. Three places tell you the version:
   another version. continuo's own CI fails a change of that version that has
   no such line.
 - The runtime's own CHANGELOG names the library version each runtime release
-  carries. `continuo-python-runtime` 0.14.0 carries `continuo-contracts` 0.4.1.
+  carries. `continuo-python-runtime` 0.15.0 carries `continuo-contracts` 0.5.0.
 - `GET /api/v1/releases/<id>` has the field `continuo_contracts`: the version
   that read this release's contracts. It is `""` until the parse ends. It is set
   for a rejected release too, so a rejection tells you which version said no.
@@ -337,10 +337,10 @@ A part of such an answer, with the other fields left out:
 
 ```json
 {"release_id": "rel-py-v2", "status": "rejected", "terminal": true,
- "reject_reason": "invalid_contract", "continuo_contracts": "0.4.1"}
+ "reject_reason": "invalid_contract", "continuo_contracts": "0.5.0"}
 ```
 
-A dbt service has no bundle from its CI: continuo generates its contracts. Its
+A dbt project has no bundle from its CI: continuo generates its contracts. Its
 CI uses the same library through `continuo-contracts dbt check` (see
 [how to check a dbt project in CI](#check-a-dbt-project-in-ci)). Install the
 version that the chart's CHANGELOG names for your install.
@@ -429,7 +429,7 @@ customProperties:
     property: provenance
     value: {contractHash: "sha256:3f1c...", contentHash: "sha256:91d4...",
             releaseId: rel-77aa0bc-230, promotionSeq: 52,
-            promotedAt: "2026-11-27T16:40:12Z", continuoContracts: 0.4.1,
+            promotedAt: "2026-11-27T16:40:12Z", continuoContracts: 0.5.0,
             sourcePath: contracts/py_daily_kpis.odcs.yaml}
 ```
 
@@ -582,24 +582,24 @@ tool may rely on.
 
 ## Moving from `contract.yaml`
 
-A Python service releases as `python-odcs`. The kind `python`, one
-`contract.yaml` for the whole service, is not accepted: `POST /api/v1/releases`
+A Python project releases as `python-odcs`. The kind `python`, one
+`contract.yaml` for the whole project, is not accepted: `POST /api/v1/releases`
 answers `400` with a message that says `kind "python" is no longer accepted`
 and names `python-odcs`.
 
-An upgrade of continuo stops while a service in production is still released
+An upgrade of continuo stops while a project in production is still released
 as the kind `python`, in one of two ways. With your own database the migration
 Job fails and `helm upgrade` fails before any pod changes. With the bundled
 Postgres `helm upgrade` can report success while the pods roll, and
 release-controller refuses to start; `helm rollback` recovers. Either way the
-message names the services. Release each of them as `python-odcs`, on a
+message names the projects. Release each of them as `python-odcs`, on a
 continuo version that accepts it, then upgrade.
 
 A release of the kind `python` that is still queued or in flight when the new
 version starts is rejected `invalid_artifact`, with the refusal above as its
 detail, and promotes nothing. Upgrade with no release in flight.
 
-To move a service, convert the files, change the CI steps above, and post with
+To move a project, convert the files, change the CI steps above, and post with
 the kind `python-odcs`. Every field of a `contract.yaml` has a place in the
 `.odcs.yaml` file:
 
@@ -652,7 +652,7 @@ continuo uses what it reads in two ways:
   the graph in the compiled SQL.
 
 The topology of a release says what the contracts say. A node's name, table,
-relation, kind, service, schedule, task timeout, materialization and file come
+relation, kind, project, schedule, task timeout, materialization and file come
 from its contract, and so do the owner and the criticality it carries. Its SQL,
 config, hashes and edges come from the manifest and the SQL.
 
@@ -686,7 +686,7 @@ the main ones:
 | `tags`, in the order dbt lists them | `tags`. The first tag is also the property `schedule`, which a dormant node does not have |
 | `meta.criticality`, `meta.timeout_minutes` | the properties `criticality` and `timeoutMinutes` |
 | `config.materialized`, with `unique_key` and `incremental_strategy` when set and `on_schema_change` when it is not `ignore` | the property `materialization`. The schema object's `physicalType` is `view` for a view, `ephemeral` for an ephemeral model and `table` for any other node |
-| The service, `original_file_path` and the resource type | the properties `service`, `filePath` and `kind` (`dbt-model`, `dbt-seed` or `dbt-snapshot`) |
+| The project, `original_file_path` and the resource type | the properties `project`, `filePath` and `kind` (`dbt-model`, `dbt-seed` or `dbt-snapshot`) |
 | `description` | `description.purpose` |
 | `meta.continuo.readers` and `config.grants` | `roles` |
 | `config.contract.enforced`, `access`, `group`, `deprecation_date` and `freshness.build_after` | the properties `contractEnforced`, `access`, `group`, `deprecationDate` and `freshnessBuildAfter` |
@@ -731,13 +731,13 @@ A node left out does not fail the release, and it has no contract. continuo logs
 it and counts it in `continuo_topology_release_skipped_nodes`, with the reason
 `no_owner`, `local_stub` or `installed_package`.
 
-Which service a node belongs to is the first part of its dbt `fqn`, with `_`
-written as `-`. Your project is the manifest's `metadata.project_name`, written
-the same way, or the service the release names when the manifest has none.
+Which project a node belongs to is the first part of its dbt `fqn`, with `_`
+written as `-`. The release's project is the manifest's `metadata.project_name`,
+written the same way, or the project the release names when the manifest has none.
 
 A node of an installed package that has an owner and a tag is not left out.
-It rejects the release as `invalid_artifact`, because a release of a service
-holds only the nodes of its own project. A manifest where no node is kept
+It rejects the release as `invalid_artifact`, because a project's release
+holds only its own nodes. A manifest where no node is kept
 rejects the release as `invalid_artifact` too.
 
 A model or snapshot with an owner and no tag is a dormant node. It has no
@@ -779,7 +779,7 @@ Rename the schema or the table. The check you run in CI does not find it.
 The table the node writes is its `alias` when it has one, and the contract keeps
 it as the `physicalName`. Another node's SQL reaches it through that table. Two
 nodes that write the same table are rejected as `duplicate_table`. So are two
-nodes with one contract id, in one service or in two: the release is published
+nodes with one contract id, in one project or in two: the release is published
 with neither contract in the bundle, and release-controller rejects it.
 
 ### Owner, schedule and the other `meta` keys
@@ -804,7 +804,7 @@ is an invalid contract that names the node.
 
 - `ephemeral`: dbt writes no table. It pastes the model into each reader as a
   `WITH` part named `__dbt__cte__<name>`. continuo sees that part and makes the
-  ephemeral model an upstream of the reader, when both are in the same service.
+  ephemeral model an upstream of the reader, when both are in the same project.
 - `view` and `materialized_view`: when a seed load drops the seed's table,
   continuo rebuilds the views and materialized views below that seed in the
   same run. It walks through ephemeral models on the way.
@@ -835,7 +835,7 @@ projects, where `ref()` cannot. The rules:
 - SQL that the parser cannot read rejects the release as `invalid_sql`.
 
 A table that a node reads and no node builds becomes a node of type
-`unknown-external`: `<schema>.<table>`, with no service, no schedule and no
+`unknown-external`: `<schema>.<table>`, with no project, no schedule and no
 code. A table you read with `source()` usually ends up as one. continuo never
 runs it. The warehouse's own tables never become nodes: `information_schema`
 and every `pg_` schema on Postgres, and `information_schema` and the `system`
@@ -892,7 +892,7 @@ seed.shop.countries: name is in the CSV header but not declared; code is declare
   release does not compare it. That happens when the compile wrote no
   `compile-extras.json`, or when it leaves the seed out. continuo keeps the seed
   and logs one warning per release, with the number of such seeds in each
-  service.
+  project.
 
 ### The code version of a dbt node
 
@@ -956,7 +956,7 @@ entry for the seed, continuo uses dbt's own checksum instead. For a seed over
 change the code version. continuo logs a warning for each such seed.
 
 `compile-extras.json` must be valid. A file that is not JSON, has another
-`version`, names another service, or holds a value of the wrong type rejects
+`version`, names another project, or holds a value of the wrong type rejects
 the release as `invalid_artifact`.
 
 The code bundle of each release (`code-bundles/<release>/bundle.json`) holds
@@ -1056,7 +1056,7 @@ With the manifest that `dbt parse` wrote, it does what the release does with eac
 model, seed and snapshot:
 
 1. It leaves out the nodes that continuo leaves out.
-2. It checks that each node it keeps belongs to the service (see `--service`
+2. It checks that each node it keeps belongs to the project (see `--project`
    below).
 3. It generates the contract of each node it keeps, and checks it.
 4. It compares each seed's declared columns with the first row of the seed's CSV
@@ -1072,45 +1072,45 @@ left out, for a dormant node and for a seed of an installed package, and `ERROR`
 for a problem. A node with several problems gets one line for each, and a node
 with nothing to say gets no line. The lines go to the error output. Each starts
 with its level and then reads `<manifest node id>: <message>` (the message alone
-for a line about the whole service):
+for a line about the whole project):
 
 ```text
-INFO LITE CHECK. Passing it does not guarantee that continuo will create this service's contracts at release time.
+INFO LITE CHECK. Passing it does not guarantee that continuo will create this project's contracts at release time.
 ERROR seed.finance.seed_operational_costs: cost_date is in the CSV header but not declared
 INFO What only the release does:
 INFO   dbt runs in the team's image: continuo compiles the project in the team's own image, and CI can run another dbt version.
 ...
-INFO LITE CHECK. Passing it does not guarantee that continuo will create this service's contracts at release time.
+INFO LITE CHECK. Passing it does not guarantee that continuo will create this project's contracts at release time.
 ```
 
 The command exits with 0 when no line is an error. It exits with 1 when a line is
 an error or `dbt parse` fails, and with 2 when it cannot run, for example when no
 `dbt` program is found. With `--json`, the standard output holds one document:
-`lite`, `ok`, `service`, `lines` and `contracts`, the `contract_hash` of each
+`lite`, `ok`, `project`, `lines` and `contracts`, the `contract_hash` of each
 valid contract by contract id. With `--manifest <file>`, it reads a
 `manifest.json` you built already and runs no dbt, and it still reads the seeds'
 CSV files from the project folder.
 
-`--service` is the name of the service you deploy the project under. Without
-it, the check takes the folder's name, with `_` written `-`. The check compares
-the service of each node it keeps with it, as the release does, and a node of
-another service is an error line: the release rejects such a manifest as
-`invalid_artifact`. So when the folder is not named after the service, pass
-`--service`:
+`--project` is the name of the project the release names. Without it, the
+check takes the folder's name, with `_` written `-`. The check compares the
+project of each node it keeps with it, as the release does, and a node of
+another project is an error line: the release rejects such a manifest as
+`invalid_artifact`. So when the folder is not named after the project, pass
+`--project`:
 
 ```bash
-continuo-contracts dbt check dbt/finance_project --service finance --dbt .venv-dbt/bin/dbt
+continuo-contracts dbt check dbt/finance_project --project finance --dbt .venv-dbt/bin/dbt
 ```
 
-`--service` is also the project's service when the manifest names no project.
+`--project` is also the release's project when the manifest names no project.
 
 The check is lite: a run with no error does not promise that the release
-creates the service's contracts. It prints that sentence first and last, and it
+creates the project's contracts. It prints that sentence first and last, and it
 lists what only the release does between them:
 
 - dbt runs in your image at release time, and CI can run another dbt version.
-- The release parses every service of the estate. The checks that need the
-  contracts of other services, such as duplicate relations, are not in the lite
+- The release parses every project of the estate. The checks that need the
+  contracts of other projects, such as duplicate relations, are not in the lite
   check.
 - The release adds the tables that a node's compiled SQL names to the reads the
   node declares. `dbt parse` compiles nothing, so the contract of the lite check
@@ -1129,13 +1129,13 @@ release reads the header from `compile-extras.json`. The lite check does not
 compare the header of a seed of an installed package. The release compares it
 when `compile-extras.json` names the seed.
 
-Run the check on every pull request of a dbt service, and fix every error line,
+Run the check on every pull request of a dbt project, and fix every error line,
 seed headers included, before you release.
 
 Before you upgrade continuo, run the check with the version the new chart's
 CHANGELOG names, and release and promote each fix on the version you run now.
-A release parses the production manifest of every service, not only the one it
-changes. So after the upgrade, one service with an invalid contract rejects the
-release of every other service, and two such services block each other's fix.
+A release parses the production manifest of every project, not only the one it
+changes. So after the upgrade, one project with an invalid contract rejects the
+release of every other project, and two such projects block each other's fix.
 If you upgraded first, go back to the chart version you ran before, release and
 promote the fixes, then upgrade again.

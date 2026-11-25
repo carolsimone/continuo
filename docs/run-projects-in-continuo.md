@@ -28,22 +28,22 @@ cd continuo-demo-docs
 **Fork rather than clone the original, because the code you release has to be
 code you can change — and, in chapter 8, push.**
 
-The repository holds seven services under `services/`. Three of them —
+The repository holds seven projects under `services/`. Three of them —
 `service-1`, `service-2`, `service-3` — are test scaffolding lifted from
 continuo's own end-to-end suite.
 
 Four matter here. `core`, `finance`, and `marketing` are ordinary,
 self-contained dbt projects: each with its own `dbt_project.yml`,
 `profiles.yml`, models, seeds, and `Dockerfile`. `service-py` is different — it
-is a **python-node service**, declaring `contracts/*.odcs.yaml` and `scripts/*.py`
+is a **python-node project**, declaring `contracts/*.odcs.yaml` and `scripts/*.py`
 instead of dbt models. Each contract file describes one table: who owns it, when
 it runs, what it reads and which columns it has.
-[Python contracts](contracts.md) explains every line. The service onboards
+[Python contracts](contracts.md) explains every line. The project onboards
 through the same `POST /api/v1/releases` call but a different artifact, which
 chapter 4 covers.
 
 You need all four. A dbt model in `core` reads a table `service-py` produces, so
-releasing only the dbt services leaves the graph with a node that cannot build.
+releasing only the dbt projects leaves the graph with a node that cannot build.
 
 ### The dependency that makes this interesting
 
@@ -124,19 +124,19 @@ in it, deliberately:
    it runs only when triggered.
 
    A model, seed or snapshot of an installed dbt package (one your
-   `packages.yml` names) is never a node of your service. dbt gives it the
+   `packages.yml` names) is never a node of your project. dbt gives it the
    top-level `+meta` of your `dbt_project.yml`, so it has an owner when you set
    the owner there. continuo leaves out a package node that has no owner or is
    tagged `local_stub`. For any other package node, continuo looks at its tag.
    With no tag, continuo leaves it out. With a tag, continuo rejects the
-   release as `invalid_artifact`, because a service's release may hold only the
-   nodes of its own project.
+   release as `invalid_artifact`, because a project's release may hold only its
+   own nodes.
 
    A model that stands in for a table it does not really build (a stub with
-   the same schema and name as another service's table, or as a table another
+   the same schema and name as another project's table, or as a table another
    system loads) needs the tag `local_stub`, or no owner, so that continuo
    leaves it out. With an owner and no tag it is a dormant node that claims
-   the table: a stub of another service's table makes every release fail with
+   the table: a stub of another project's table makes every release fail with
    `duplicate_table`, and a run of a stub of a loaded table replaces that
    table.
 
@@ -191,9 +191,9 @@ it; the other `meta` keys, such as `owner`, still come from the project.
 A python node declares it as the continuo property `timeoutMinutes` of its
 contract. This needs `continuo-python-runtime` 0.13.0 or later, the first
 release that reads `.odcs.yaml` files, in two places: the CLI that checks and
-packs the contracts, and the image base the service's nodes run in
+packs the contracts, and the image base the project's nodes run in
 (`FROM ghcr.io/carolsimone/continuo-python-runtime-<engine>:v0.13.0` or later).
-With an older image base, every run of every node of that service fails when it
+With an older image base, every run of every node of that project fails when it
 loads its contracts.
 
 ```yaml
@@ -298,7 +298,7 @@ objects. Nothing is dropped. You have two ways forward:
    object:
 
    ```bash
-   continuo node full-refresh <service> <schema> <seed> \
+   continuo node full-refresh <project> <schema> <seed> \
      --acknowledge <schema>.<name> --acknowledge <schema>.<other-name>
    ```
 
@@ -346,8 +346,8 @@ collide.
 ## 2. Build the images and load them into the cluster
 
 continuo runs your project by running *your image* as a Kubernetes Job, so each
-service needs to be built and made visible to the cluster. That is true of the
-python service too — it ships as an image exactly like the dbt ones:
+project needs to be built and made visible to the cluster. That is true of the
+python project too — it ships as an image exactly like the dbt ones:
 
 ```bash
 for svc in core finance marketing service-py; do
@@ -372,7 +372,7 @@ docker.io/library/service-py                        v1                   cca6848
 
 **Why a bare `core:v1` works.** The chart value `global.teamImagePrefix` is empty
 by default, which tells continuo's execution-controller to resolve dbt job images as a
-bare `<service>:<image_tag>`, and it launches them with
+bare `<project>:<image_tag>`, and it launches them with
 `imagePullPolicy: IfNotPresent`. So the image you already loaded onto the node
 with `kind load` is the one it runs, and nothing is ever pulled from a registry.
 Set `teamImagePrefix` to
@@ -380,7 +380,7 @@ your Docker Hub or registry namespace when you move to a real cluster, and the
 same mechanism resolves `yourteam/core:v1` instead.
 
 The tag `v1` is arbitrary — it just has to match what you send in the next
-chapter. Real CD systems use the commit SHA. (The python service's release
+chapter. Real CD systems use the commit SHA. (The python project's release
 body needs the *full* `service-py:v1` reference rather than the bare tag —
 chapter 4 explains why.)
 
@@ -443,7 +443,7 @@ curl -s -H "Authorization: Bearer $TOKEN" $API/current-prod | jq
 
 An empty `current_prod_release_id` means production has never been seeded, and
 this first release must **bootstrap**: promote without validation. That is not a
-shortcut — against an empty production, every cross-service dependency looks
+shortcut — against an empty production, every cross-project dependency looks
 like a new one, so normal validation would reject everything. Real CD detects
 this the same way, by reading this endpoint.
 
@@ -453,7 +453,7 @@ curl -s -X POST $API/releases \
   -H 'content-type: application/json' \
   -d '{
     "release_id": "rel-core-v1",
-    "service": "core",
+    "project": "core",
     "image_tag": "v1",
     "bootstrap": true,
     "repo": "<your-username>/continuo-demo-docs",
@@ -466,7 +466,7 @@ curl -s -X POST $API/releases \
 ```
 
 💡 Note what you did *not* send: no manifest, no list of models, no DAG, no S3
-upload. One service, one image tag. continuo derives the rest. The `repo` and
+upload. One project, one image tag. continuo derives the rest. The `repo` and
 `commit_sha` fields say where the release came from; with your own token you
 supply them, while a GitHub Actions token carries them itself.
 
@@ -517,7 +517,7 @@ continuo reads the edge from the SQL whether or not you use `ref()`.
 
 Every edge is inside `core`. The cross-project half of the chain is not there
 yet, because `finance` doesn't exist yet, and `dbt_daily_kpis` and `read_order`
-read tables from services you have not released. Nothing is broken; the graph
+read tables from projects you have not released. Nothing is broken; the graph
 simply reflects what has been released.
 
 ---
@@ -536,21 +536,21 @@ rules collide on a first install:
   executes them (chapter 5), not at promotion.
 
 You have promoted `core`, but nothing has run: core's *models* do not exist as
-tables yet. Validate any service that reads them and the clone step fails with
+tables yet. Validate any project that reads them and the clone step fails with
 `relation "analytics.daily_transactions" does not exist` — continuo refusing to
 prove a change against tables that are not there. No release order escapes
-this, because the demo's services read from each other in both directions
-(core ↔ finance, core ↔ service-py): whichever service you validate first needs
+this, because the demo's projects read from each other in both directions
+(core ↔ finance, core ↔ service-py): whichever project you validate first needs
 another one's models materialised, and that needs a run.
 
-So a cold install is seeded the way production was born: **every service's
+So a cold install is seeded the way production was born: **every project's
 first release is a bootstrap.** Promote all four without validation, run the
 graph once so every model physically exists, and from then on validation has a
 production to clone from. This chapter is the last time you will pass
 `"bootstrap": true`; every release after it is validated for real.
 
 💡 Order among the remaining three does not matter. Every release reparses the
-*full* set of promoted manifests plus its own, so the edge between two services
+*full* set of promoted manifests plus its own, so the edge between two projects
 appears as soon as both have been released — whichever release comes last
 completes the DAG.
 
@@ -566,7 +566,7 @@ curl -s -X POST $API/releases \
   -H 'content-type: application/json' \
   -d '{
     "release_id": "rel-marketing-v1",
-    "service": "marketing",
+    "project": "marketing",
     "image_tag": "v1",
     "bootstrap": true,
     "repo": "<your-username>/continuo-demo-docs",
@@ -583,7 +583,7 @@ curl -s -X POST $API/releases \
   -H 'content-type: application/json' \
   -d '{
     "release_id": "rel-finance-v1",
-    "service": "finance",
+    "project": "finance",
     "image_tag": "v1",
     "bootstrap": true,
     "repo": "<your-username>/continuo-demo-docs",
@@ -594,13 +594,13 @@ curl -s -X POST $API/releases \
 Once it promotes, all three dbt projects are live — and the UI now shows the
 cross-project edges from chapter 1, discovered from the SQL alone.
 
-### The fourth service is a python runtime (no dbt)
+### The fourth project is a python runtime (no dbt)
 
 `service-py` onboards differently in one way: **you upload its artifact
 yourself.** In production, your CD pipeline does this.
 
-A dbt service has a compile leg — the `compiling` stage above ran `dbt compile`
-and produced the manifest for you. A python service has none. So you pack its
+A dbt project has a compile leg — the `compiling` stage above ran `dbt compile`
+and produced the manifest for you. A python project has none. So you pack its
 contracts into one bundle and upload it to object storage before you post the
 release.
 
@@ -645,7 +645,7 @@ aws --endpoint-url http://localhost:9000 \
   s3 cp /tmp/orders.csv s3://continuo/static-files/demo/orders.csv
 ```
 
-Now check and pack the contracts of the service's `contracts/` directory, using
+Now check and pack the contracts of the project's `contracts/` directory, using
 the runtime CLI the release gate uses. The image base and the CLI are the same
 runtime release: the harness checks the image against the released hash when a
 node starts, and a node whose image does not hash to it fails with
@@ -653,7 +653,7 @@ node starts, and a node whose image does not hash to it fails with
 
 A node's `assets` lists the files its script reads besides its own code, such
 as a lookup table or a trained model, as paths relative to the folder you give
-`pack` as `--repo-root`: the service's directory, `services/service-py` below.
+`pack` as `--repo-root`: the project's directory, `services/service-py` below.
 Their bytes are part of the node's fingerprint, so editing one changes its
 `content_hash`. Your Dockerfile must copy every listed file into the image, at
 the same path under the app directory as under that folder: the harness hashes
@@ -664,12 +664,12 @@ with `image_contract_mismatch`.
 or the [uv install guide](https://docs.astral.sh/uv/getting-started/installation/).
 
 ```bash
-uv tool install continuo-python-runtime==0.14.0
+uv tool install continuo-python-runtime==0.15.0
 
 continuo-runtime validate services/service-py/contracts --dialect postgres
 
 continuo-runtime pack services/service-py/contracts \
-  --service service-py \
+  --project service-py \
   --repo-root services/service-py \
   --image service-py:v1 \
   --dialect postgres \
@@ -682,7 +682,7 @@ with the text of each contract and the list of packages the image holds.
 with `docker run`. The [Python contracts](contracts.md#the-ci-steps) page
 explains each step.
 
-Then upload it to the canonical key, `<service>/<release_id>/odcs-bundle.json` —
+Then upload it to the canonical key, `<project>/<release_id>/odcs-bundle.json` —
 the same `aws s3 cp` your CD runs, aimed at the MinIO you forwarded a moment
 ago:
 
@@ -705,7 +705,7 @@ curl -s -X POST $API/releases \
   -H 'content-type: application/json' \
   -d '{
     "release_id": "rel-py-v1",
-    "service": "service-py",
+    "project": "service-py",
     "image_tag": "service-py:v1",
     "bootstrap": true,
     "kind": "python-odcs",
@@ -771,8 +771,8 @@ API Secret.
 
 ### The graph you have built
 
-Four services, stitched into one graph, from four API calls that each named a
-single service — and the chain crosses both project *and* runtime boundaries:
+Four projects, stitched into one graph, from four API calls that each named a
+single project — and the chain crosses both project *and* runtime boundaries:
 
 ```
 core.seed_fx_transactions   →  finance.fx_transactions_eur   (dbt → dbt)
@@ -791,10 +791,10 @@ the other. continuo derived the ordering from the SQL and the contract.
 
 Open the UI, pick the `daily` schedule, and press **Trigger run**.
 
-![The daily schedule run in the continuo UI: every node green across all four services after a successful run](img/daily-run-view.png)
+![The daily schedule run in the continuo UI: every node green across all four projects after a successful run](img/daily-run-view.png)
 
 You will see nodes move through the graph as continuo dispatches each one as its
-own Kubernetes Job, in dependency order, across all four services — including the
+own Kubernetes Job, in dependency order, across all four projects — including the
 hop through the python one. Watch it
 from the cluster side too if you like:
 
@@ -876,7 +876,7 @@ curl -s -X POST $API/releases \
   -H 'content-type: application/json' \
   -d '{
     "release_id": "rel-marketing-v2",
-    "service": "marketing",
+    "project": "marketing",
     "image_tag": "v2",
     "bootstrap": false,
     "repo": "<your-username>/continuo-demo-docs",
@@ -974,7 +974,7 @@ kind load docker-image finance:v2 --name continuo
 curl -s -X POST $API/releases \
   -H "Authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
-  -d '{"release_id":"rel-finance-v2","service":"finance","image_tag":"v2",
+  -d '{"release_id":"rel-finance-v2","project":"finance","image_tag":"v2",
        "bootstrap":false,"repo":"<your-username>/continuo-demo-docs",
        "commit_sha":"'"$(git rev-parse HEAD)"'"}' | jq
 ```
@@ -1095,7 +1095,7 @@ just pushed:
 curl -s -X POST $API/releases \
   -H "Authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
-  -d '{"release_id":"rel-finance-v3","service":"finance","image_tag":"v2",
+  -d '{"release_id":"rel-finance-v3","project":"finance","image_tag":"v2",
        "bootstrap":false,"repo":"<your-username>/continuo-demo-docs",
        "commit_sha":"'"$(git rev-parse HEAD)"'"}' | jq
 ```
@@ -1168,7 +1168,7 @@ graph as it stands now — new node included, broken release excluded.
 Open the UI, pick the `daily` schedule, and press **Trigger run** again.
 
 The run picks up `channel_roi` as just another node: downstream of finance's
-`ltv_per_user`, so it is dispatched after it, across the same four services.
+`ltv_per_user`, so it is dispatched after it, across the same four projects.
 The rejected `finance:v2` is nowhere in it — production still runs the finance
 that passed.
 
@@ -1219,7 +1219,7 @@ marketing:v1 marketing:v2 service-py:v1` clears.
 match anything loaded onto the node. Check with:
 
 ```bash
-docker exec continuo-control-plane crictl images | grep <service>
+docker exec continuo-control-plane crictl images | grep <project>
 ```
 
 Remember that `kind load` copies the image at that moment — rebuilding an image
@@ -1240,18 +1240,18 @@ and the run never finishes.** The python release was posted with a bare
 `image_tag` like `"v1"`. A python release's `image_tag` is used exactly as
 written as the full image reference (`service-py:v1`); with a bare tag execution-controller
 cannot build the pod spec and the node fails without ever creating a Job.
-Cancel the run, re-release the python service with the full reference (a new
+Cancel the run, re-release the python project with the full reference (a new
 `release_id`, and re-upload its bundle under that id), and run again.
 
 **A python release sits in `parsing` and never moves.** Its `odcs-bundle.json` is
-not where continuo expects it. Unlike a dbt service — whose manifest continuo
-compiles itself — a python service's bundle is uploaded by the *caller*, and
+not where continuo expects it. Unlike a dbt project — whose manifest continuo
+compiles itself — a python project's bundle is uploaded by the *caller*, and
 a missing object leaves the parse retrying against a 404. Confirm the object
 exists at the canonical key:
 
 ```bash
 aws --endpoint-url http://localhost:9000 s3 ls \
-  s3://continuo/<service>/<release_id>/odcs-bundle.json
+  s3://continuo/<project>/<release_id>/odcs-bundle.json
 ```
 
 **A python release is rejected with `invalid_contract`.** At least one contract
@@ -1281,20 +1281,20 @@ Pin an older `continuo-python-runtime` in CI, or upgrade continuo. See
 
 **A python release is refused with a `400` that says `kind "python" is no longer
 accepted`.** The post names the kind `python`, which stands for one
-`contract.yaml` per service. Post the release with `"kind": "python-odcs"` and
-the bundle that `continuo-runtime pack` writes from the service's
+`contract.yaml` per project. Post the release with `"kind": "python-odcs"` and
+the bundle that `continuo-runtime pack` writes from the project's
 `contracts/*.odcs.yaml` files. [Moving from
 `contract.yaml`](contracts.md#moving-from-contractyaml) maps each field of the
 old file to the new one.
 
 **A release sits in `compiling` and then rejects with `compile_failed`.** Your
 dbt project does not compile. The most common cause is a `{{ ref() }}` pointing
-at a model in a *different* service — see the cross-project rule in chapter 1.
+at a model in a *different* project — see the cross-project rule in chapter 1.
 
 **A validated release is rejected with `relation "analytics.…" does not
 exist`.** The release was validated before the tables it reads physically
-existed — usually a cold install where a service was released with
-`"bootstrap": false` before the first full run. Bootstrap every service first
+existed — usually a cold install where a project was released with
+`"bootstrap": false` before the first full run. Bootstrap every project first
 (chapter 4), run the DAG once (chapter 5), then re-release with a new
 `release_id`.
 
@@ -1314,5 +1314,5 @@ warehouse is your warehouse rather than the bundled Postgres, which is the
 projects must satisfy is in
 [deploy/dbt-image-contract.md](../deploy/dbt-image-contract.md).
 
-To write the contracts of a Python service, and to read them from another tool,
+To write the contracts of a Python project, and to read them from another tool,
 see [Python contracts](contracts.md).

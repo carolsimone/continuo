@@ -18,10 +18,10 @@ For dbt nodes, whose images are resolved and configured differently, see
 
 ## Image resolution
 
-Unlike dbt images, a python node's image is **not** composed from the service
+Unlike dbt images, a python node's image is **not** composed from the project
 name. The `image_tag` you send on `POST /api/v1/releases` is a complete registry
 reference (`<registry>/<image>:<tag>`), and execution-controller runs it verbatim: no
-prefix is prepended, and the service name is not used. `global.teamImagePrefix`
+prefix is prepended, and the project name is not used. `global.teamImagePrefix`
 does not apply.
 
 The reference must carry an explicit tag or digest. An untagged reference is
@@ -31,7 +31,7 @@ unidentifiable from the release that promoted it.
 Build your image `FROM` the engine-matched runtime base
 (`ghcr.io/carolsimone/continuo-python-runtime-<engine>:<version>`), which sets
 the entrypoint, the contract directory, and the import root. One image serves
-all of the service's nodes — the harness selects the right one at run time.
+all of the project's nodes — the harness selects the right one at run time.
 The engine is part of the image **name**, not the tag, so the tag position
 stays free for an immutable `<version>@sha256:<digest>` pin.
 

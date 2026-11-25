@@ -253,7 +253,7 @@ the manifest is one step of shipping a change into continuo's blue/green
 pipeline; it does not, by itself, promote anything. To register the change,
 build and push the project image, upload the manifest, then `POST /api/v1/releases`
 on continuo's public API. Only one object is uploaded per release — the
-filtered `manifest.json`. There is no `service_metadata.json` sidecar, and the
+filtered `manifest.json`. There is no metadata sidecar file, and the
 image tag travels in the HTTP request body, not in object storage.
 
 The public release API (`GET /api/v1/current-prod`, `POST /api/v1/releases`,

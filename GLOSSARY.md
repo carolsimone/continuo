@@ -26,7 +26,7 @@ _Avoid_: child, dependent, below
 
 **Project**:
 The code a team releases as one unit. Its kind is dbt (a dbt project of nodes), Python (a package of Python nodes, one data contract each) or ontology (the company's ontology file, with no nodes; an install has at most one). One repository can hold several projects.
-_Avoid_: service (the name code, API and storage use for it), repo, team repo, job
+_Avoid_: service, repo, team repo, job
 
 **Relation**:
 The name a node's table has in the warehouse, as schema and table: `analytics.orders`.

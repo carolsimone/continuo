@@ -1,7 +1,7 @@
 # The company ontology
 
 An ontology is one YAML file that says what your company's data is about. It
-names the domains of the company, the services that belong to each domain, and
+names the domains of the company, the projects that belong to each domain, and
 the things the data describes, such as an order or a user. For each thing it
 names the key and the properties.
 
@@ -17,7 +17,7 @@ Three groups of people take part:
 
 - The operator of the install turns the switch on.
 - The owner of the ontology releases the ontology file.
-- Each service team writes bindings in its contracts and adds the check to its CI.
+- Each project team writes bindings in its contracts and adds the check to its CI.
 
 This page starts with an example. The rest says how each part works:
 
@@ -31,8 +31,8 @@ This page starts with an example. The rest says how each part works:
 
 ## An example
 
-A shop has two services: `shop-dbt`, a dbt project, and `shop-py`, a Python
-service. Both belong to the domain `shop`. Both build a table of orders.
+A shop has two projects: `shop-dbt`, a dbt project, and `shop-py`, a Python
+project. Both belong to the domain `shop`. Both build a table of orders.
 
 ### The ontology file
 
@@ -41,7 +41,7 @@ service. Both belong to the domain `shop`. Both build a table of orders.
 principals:
   domains:
     shop: {owner_team: shop-data}
-  services:
+  projects:
     shop-dbt: {domain: shop, kind: dbt}
     shop-py:  {domain: shop, kind: python}
   teams:
@@ -56,8 +56,8 @@ entities:
 ```
 
 `principals` says who acts on data. Here that is one domain with its owner team,
-and two services that name their domain. The `kind` of a service in this file is
-the ontology's own word (`dbt` or `python`). The release kind of a Python service
+and two projects that name their domain. The `kind` of a project in this file is
+the ontology's own word (`dbt` or `python`). The release kind of a Python project
 in continuo is `python-odcs`, and `python` is refused. `entities` says what the data is
 about. Here that is one thing, `Order`. It belongs to the domain `shop`, it is
 identified by `order_id`, and it has one property, `amount_eur`.
@@ -125,7 +125,7 @@ schema:
 ### What continuo fills in
 
 You do not write these. With the switch on and the ontology released, continuo
-adds them to the stored contract of a service the ontology declares. For the
+adds them to the stored contract of a project the ontology declares. For the
 `orders` model:
 
 ```yaml
@@ -151,7 +151,7 @@ schema:
         customProperties: [{vendor: continuo, property: local, value: true}]
 ```
 
-- `domain` is the domain of the service, from the ontology.
+- `domain` is the domain of the project, from the ontology.
 - Each bound table and column gets a link to its thing. The link reads
   `continuo-ontology:<Thing>` or `continuo-ontology:<Thing>.<field>`.
   The published file turns it into a web address when you set
@@ -214,9 +214,9 @@ The ontology has two values in the chart. Both are in `values.yaml`, under
 **With the switch on:**
 
 - continuo reads the ontology of production on every release. It fills in the
-  contracts of the services the ontology declares and checks them. An error
+  contracts of the projects the ontology declares and checks them. An error
   rejects the release.
-- A service the ontology does not declare keeps its contracts as written and gets
+- A project the ontology does not declare keeps its contracts as written and gets
   no check. Each contract of it that writes a binding is a warning in the bundle.
 - With no ontology released yet, every binding is kept as written and nothing
   checks it. The bundle says so with one warning:
@@ -238,19 +238,19 @@ restarts every service.
 
 ## Releasing the ontology
 
-An install has one ontology. It is released like a service, with the kind
+An install has one ontology. It is released like any other project, with the kind
 `ontology`, from a repository of its own. The repository holds one file,
-`ontology.yaml`. The ontology service has no image, no node and no code, so
+`ontology.yaml`. The ontology project has no image, no node and no code, so
 continuo does not compile or validate anything for it.
 
 1. **Check the file.** In the ontology repository's CI run
    `continuo-contracts ontology check ontology.yaml`. It checks the file alone:
-   each service names a declared domain, each thing an owner that is a declared
+   each project names a declared domain, each thing an owner that is a declared
    domain, each reference a thing and a property that exist. It exits with 1
    when the file has an error.
 2. **Upload the file** to
-   `s3://<bucket>/<service>/<release_id>/ontology.yaml`, with the name of the
-   ontology service, such as `company-ontology`, as `<service>`.
+   `s3://<bucket>/<project>/<release_id>/ontology.yaml`, with the name of the
+   ontology project, such as `company-ontology`, as `<project>`.
 3. **Post the release** with the kind `ontology`. The `image_tag` is required
    and not used: write any value.
 
@@ -260,7 +260,7 @@ continuo does not compile or validate anything for it.
      -H 'content-type: application/json' \
      -d '{
        "release_id": "rel-onto-1",
-       "service": "company-ontology",
+       "project": "company-ontology",
        "image_tag": "ontology",
        "kind": "ontology"
      }'
@@ -272,19 +272,19 @@ The ontology repository needs a binding in `ciAuth.bindings`, like any other
 repository ([deploy/AUTH.md](../deploy/AUTH.md)).
 
 When the ontology is released, topology-controller reads it before any manifest.
-It fills in and checks the contracts of every service in production against it,
-as a release of one of those services does. So a new ontology can break a
-binding of a service that did not change. Then:
+It fills in and checks the contracts of every project in production against it,
+as a release of one of those projects does. So a new ontology can break a
+binding of a project that did not change. Then:
 
 - the release of the ontology is rejected as `invalid_contract`;
-- each failed node is a node of another service whose binding the new ontology
+- each failed node is a node of another project whose binding the new ontology
   breaks, and the detail says which rule found the problem;
 - production keeps the old ontology, and no fix is proposed, because
   `invalid_contract` is not healable. The owners of those nodes change their
   bindings, or the ontology changes.
 
 A file that does not load is rejected as `invalid_artifact` and names the
-ontology service. So is a file whose own rules find an error.
+ontology project. So is a file whose own rules find an error.
 
 When the release passes, catalog records a new contract version for each node
 whose stored contract changed, and names the ontology that made it: the id of
@@ -296,12 +296,12 @@ These answers can come back from the release routes:
 | Answer | When |
 |---|---|
 | 400 `kind "ontology" is accepted only when the install's ontology switch is on (contracts.ontology.enabled)` | The switch is off. |
-| 409 `service "<other>" is the install's ontology: an install has one ontology service` | Another service already has the kind `ontology`, in production or in a release that has not ended. A CI token reads `an install has one ontology service`, without the other service's name. |
-| 409 `service "<name>" is released as kind "<kind>": a service cannot change between kind "ontology" and a node kind` | The service's production release has another kind, or the ontology service is released as a node kind. |
+| 409 `project "<other>" is the install's ontology: an install has one ontology project` | Another project already has the kind `ontology`, in production or in a release that has not ended. A CI token reads `an install has one ontology project`, without the other project's name. |
+| 409 `project "<name>" is released as kind "<kind>": a project cannot change between kind "ontology" and a node kind` | The project's production release has another kind, or the ontology project is released as a node kind. |
 | 400 `a verification run cannot have kind "ontology"` | A verification run names the kind `ontology`. |
 
 The kind-change 409 is given when a release is received. Two queued releases of one
-service, one `ontology` and one of a node kind, both pass that check. When the
+project, one `ontology` and one of a node kind, both pass that check. When the
 second of them comes up to run, it is rejected `invalid_artifact` with the same
 text, is never promoted and writes no production pointer.
 
@@ -309,7 +309,7 @@ text, is never promoted and writes no production pointer.
 
 A binding is a key in `meta.continuo` of a dbt node, or a custom property of the
 `continuo` vendor in a Python contract. A key is optional. A contract of a
-service the ontology declares must say what it is, with `entity` or with
+project the ontology declares must say what it is, with `entity` or with
 `grain`.
 
 On the table:
@@ -359,37 +359,37 @@ release. A warning or information does not.
 
 ## Checking bindings in CI
 
-Add the check to the CI of each service that writes bindings. It runs four of the
+Add the check to the CI of each project that writes bindings. It runs four of the
 release's rules (`contract`, `coverage`, `quality` and `privacy`) over the
-contracts of the service, and prints what a release would say about each
+contracts of the project, and prints what a release would say about each
 binding. Do it before you release: a mistake then
 fails the pull request.
 
 The check needs the ontology file. Take it from your company's ontology
 repository, at a commit you pin. It never comes from continuo.
 
-**A dbt service.** Install `continuo-contracts` in a Python 3.14 environment of
+**A dbt project.** Install `continuo-contracts` in a Python 3.14 environment of
 its own, at the version your install's chart pins (see the
 [CHANGELOG](../deploy/continuo/CHANGELOG.md)), and add `--ontology` to the check
 of [the dbt project](contracts.md#check-a-dbt-project-in-ci):
 
 ```bash
-continuo-contracts dbt check services/shop --service shop-dbt \
+continuo-contracts dbt check services/shop --project shop-dbt \
   --ontology <ontology file> --dbt .venv-dbt/bin/dbt
 ```
 
-**A Python service.** Install `continuo-python-runtime`, at the version your
+**A Python project.** Install `continuo-python-runtime`, at the version your
 install uses (see [the CI steps](contracts.md#the-ci-steps)), and add
-`--service` and `--ontology` to `validate`:
+`--project` and `--ontology` to `validate`:
 
 ```bash
 continuo-runtime validate contracts --dialect postgres \
-  --service shop-py --ontology <ontology file>
+  --project shop-py --ontology <ontology file>
 ```
 
-`continuo-runtime validate` needs `--service` whenever it gets `--ontology`: it is
-the name your service has in the ontology. The dbt check takes the name of the
-project folder, with `_` written `-`, unless you pass `--service`.
+`continuo-runtime validate` needs `--project` whenever it gets `--ontology`: it is
+the name your project has in the ontology. The dbt check takes the name of the
+project folder, with `_` written `-`, unless you pass `--project`.
 
 The two commands print each finding at its level, and exit with 1 when one is an
 error. A warning does not fail them. A file with an error of its own stops the
@@ -403,9 +403,9 @@ check: they print one error line and read no contract. Check the file itself wit
 - **The contract bundle.** The bundle of a release,
   `tenants/<tenant>/topologies/<release_id>/contracts.json.gz`, holds the
   `ontology` value. It is `null` with the switch off. Otherwise it names the
-  ontology the release used (`service`, `release_id` and `sha256`, which are
-  `null` when none is released), lists the services the ontology declares
-  (`declared_services`), and lists every warning and information finding of the
+  ontology the release used (`project`, `release_id` and `sha256`, which are
+  `null` when none is released), lists the projects the ontology declares
+  (`declared_projects`), and lists every warning and information finding of the
   check as `findings`. Each finding has a `severity`, a `rule`, a `subject`, a
   `message` and a `contract_id`.
 - **The release log.** The line of a release that passed has `ontology_warnings`

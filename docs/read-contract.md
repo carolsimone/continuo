@@ -70,7 +70,7 @@ are `kind` (string), `owner` (string) and `reads` (object: each read's name to
 the `SELECT` text it runs). A node of `kind` `python-csv` has one read, `csv`,
 which is a file location, not SQL. Every other key of the entry may change.
 
-A Python node's entry comes from its ODCS file (a service is released as
+A Python node's entry comes from its ODCS file (a project is released as
 `python-odcs`, one ODCS file per node): `owner` is the contract's `team.name`
 and `reads` holds its `readQueries`, or its `csvSource` as the read `csv`.
 
@@ -83,7 +83,7 @@ and `reads` holds its `readQueries`, or its `csvSource` as the read `csv`.
 | `nodes` | array | One entry per node. |
 | `nodes[].unique_id` | string | The key the bundle uses for the same node. |
 | `nodes[].resolved_relation_id` | string | The warehouse relation the node writes, `<schema>.<relation>`. For a dbt model with an alias it differs from `unique_id`. |
-| `nodes[].service_name` | string | The service that owns the node. |
+| `nodes[].project_name` | string | The project that owns the node. |
 
 **Contract bundle, `schema_version` 1**
 
@@ -94,10 +94,10 @@ and `reads` holds its `readQueries`, or its `csvSource` as the read `csv`.
 | `continuo_contracts` | string | The version of the `continuo-contracts` library that read the release's contracts. |
 | `contracts` | object | One entry per node that has a contract, keyed by the node's unique id: `<schema>.<table>`, lowercase. |
 | `contracts.<id>.family` | string | `dbt` or `python`. A reader skips a family it does not know: a new family is an added value, not a new version. |
-| `contracts.<id>.service` | string | The service that owns the node. |
+| `contracts.<id>.project` | string | The project that owns the node. |
 | `contracts.<id>.contract_hash` | string | `sha256:` and 64 hex characters. A reader compares this value. How it is computed is below the table. |
 | `contracts.<id>.content_hash` | string | The node's code fingerprint, `sha256:` and 64 hex characters. |
-| `contracts.<id>.source.path` | string | The file the contract stands for, as a path in the service's repository: a `python` contract's file, or the file of the `dbt` node. |
+| `contracts.<id>.source.path` | string | The file the contract stands for, as a path in the project's repository: a `python` contract's file, or the file of the `dbt` node. |
 | `contracts.<id>.source.sha256` | string | A `python` contract: the SHA-256 of its file's text. A `dbt` contract: the SHA-256 of the manifest fields it was generated from. |
 | `contracts.<id>.document` | object | The stored form of the contract, as a whole ODCS document with every root key. Its `status` is `active` and its `version` is `"0"`. The version number a node's contract has is in catalog and in the [live folder](contracts.md#the-live-folder). |
 
@@ -118,12 +118,12 @@ read set, so this shape is just as unstable: it may change in any release.
 | Key | Type | Meaning |
 |---|---|---|
 | `enabled` | boolean | `true`. |
-| `service`, `release_id`, `sha256` | string or `null` | The ontology the release used: the service that released the file, the release that wrote it and the SHA-256 of its text. Each is `null` when no ontology is released. |
-| `declared_services` | array of strings | The services the ontology declares, sorted. Empty when no ontology is released. |
+| `project`, `release_id`, `sha256` | string or `null` | The ontology the release used: the project that released the file, the release that wrote it and the SHA-256 of its text. Each is `null` when no ontology is released. |
+| `declared_projects` | array of strings | The projects the ontology declares, sorted. Empty when no ontology is released. |
 | `findings` | array of objects | Every warning and information finding of the ontology check, sorted by severity, rule, subject and message. Each has `severity`, `rule`, `subject`, `message` and `contract_id` (`null` when the finding is not about one contract). An error is not here: it rejects the release. |
 
 With the switch on and an ontology released, the `document` of a contract of a
-service the ontology declares is filled in from it, so its `contract_hash` is not
+project the ontology declares is filled in from it, so its `contract_hash` is not
 the hash the same contract has with the switch off. [The company
 ontology](ontology.md) says what is filled in.
 
@@ -144,7 +144,7 @@ ontology](ontology.md) says what is filled in.
 
 - The bundle, the topology artifact and the contract bundle of the release
   `current_prod_release_id` names are never deleted while it is the production
-  release. The same holds for a release that is still a service's production
+  release. The same holds for a release that is still a project's production
   release.
 - release-controller deletes the bundle of any other release when its retention
   prunes the release: 90 days after the release was submitted
