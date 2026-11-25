@@ -34,7 +34,7 @@ def _node(unique_id, **overrides):
         "schema_name": unique_id.split(".")[0],
         "table_name": unique_id.split(".")[-1],
         "resolved_relation_id": unique_id,
-        "service_name": "service-1",
+        "project_name": "service-1",
         "node_type": "dbt-model",
         "test_count": 0,
         "content_hash": "sha256:aa",
@@ -97,7 +97,7 @@ def test_a_node_keeps_exactly_the_artifact_fields_with_go_zero_value_defaults():
 
     assert node == {
         "unique_id": "a.x", "schema_name": "", "table_name": "", "resolved_relation_id": "",
-        "service_name": "", "node_type": "", "test_count": 0, "content_hash": "",
+        "project_name": "", "node_type": "", "test_count": 0, "content_hash": "",
         "image_tag": "", "original_file_path": "", "upstream_unique_ids": [], "schedule": "",
     }
 
@@ -273,7 +273,7 @@ def test_every_candidate_object_lands_at_the_key_release_controller_derives():
             continue
         s3 = MagicMock()
         node = ManifestNode(
-            table_name="t", schema_name="s", service_name="svc", owner="team",
+            table_name="t", schema_name="s", project_name="svc", owner="team",
             schedule_name="daily", criticality="CORE",
             candidate_sql="" if node_type is NodeType.DBT_SEED else "select 1",
             node_type=node_type, runtime=NODE_TYPE_RUNTIME[node_type],

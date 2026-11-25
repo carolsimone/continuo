@@ -35,7 +35,7 @@ def test_manifest_node_defaults_criticality():
     node = ManifestNode(
         table_name="orders",
         schema_name="public",
-        service_name="service-1",
+        project_name="service-1",
         owner="data-platform",
         schedule_name="daily",
         criticality="SECONDARY",
@@ -48,7 +48,7 @@ def test_manifest_node_defaults_criticality():
 
 def test_manifest_node_carries_dependency_sqls_and_candidate_sql():
     node = ManifestNode(
-        table_name="t", schema_name="s", service_name="svc", owner="o",
+        table_name="t", schema_name="s", project_name="svc", owner="o",
         schedule_name="daily", criticality="SECONDARY",
         dependency_sqls=["select * from s.up"],
         candidate_sql="select * from s.up",
@@ -62,7 +62,7 @@ def test_node_registry_entry():
     entry = NodeRegistryEntry(
         table_name="orders",
         schema_name="public",
-        service_name="service-1",
+        project_name="service-1",
         owner="data-platform",
         relation="orders",
     )
@@ -77,13 +77,13 @@ def test_node_registry_to_lookup():
     registry = NodeRegistry(entries=entries)
     lookup = registry.to_lookup()
     assert ("public", "orders") in lookup
-    assert lookup[("public", "users")].service_name == "service-2"
+    assert lookup[("public", "users")].project_name == "service-2"
 
 
 def test_upstream_dep():
-    dep = UpstreamDep(table_name="users", schema_name="public", service_name="user_service")
+    dep = UpstreamDep(table_name="users", schema_name="public", project_name="user_service")
     assert dep.table_name == "users"
-    assert dep.service_name == "user_service"
+    assert dep.project_name == "user_service"
 
 
 def test_node_type_and_runtime_enums_serialize_as_plain_strings():
@@ -96,7 +96,7 @@ def test_node_type_and_runtime_enums_serialize_as_plain_strings():
 
 def _node(**over):
     fields = dict(
-        table_name="orders", schema_name="analytics", service_name="finance",
+        table_name="orders", schema_name="analytics", project_name="finance",
         owner="data-platform", schedule_name="daily", criticality="SECONDARY",
     )
     fields.update(over)
@@ -133,7 +133,7 @@ def test_resolved_relation_id_is_lowercased():
 
 
 def test_relation_name_is_empty_for_a_test_and_a_python_node():
-    common = dict(service_name="s", owner="o", schedule_name="daily", criticality="CORE")
+    common = dict(project_name="s", owner="o", schedule_name="daily", criticality="CORE")
     test = ManifestNode(table_name="not_null_x", schema_name="", node_type=NodeType.DBT_TEST, identity="test.s.not_null_x.1", **common)
     py = ManifestNode(table_name="t", schema_name="analytics", node_type=NodeType.PYTHON_NODE, resolved_relation="t",
                       runtime=Runtime.PYTHON, **common)
@@ -141,7 +141,7 @@ def test_relation_name_is_empty_for_a_test_and_a_python_node():
 
 
 def test_relation_falls_back_to_the_table_name_and_keeps_the_declared_spelling():
-    common = dict(schema_name="analytics", service_name="s", owner="o", schedule_name="daily", criticality="CORE")
+    common = dict(schema_name="analytics", project_name="s", owner="o", schedule_name="daily", criticality="CORE")
     assert ManifestNode(table_name="orders", **common).relation == "orders"
     aliased = ManifestNode(table_name="orders", resolved_relation="Orders_Tbl", **common)
     assert (aliased.relation, aliased.relation_name) == ("Orders_Tbl", "Orders_Tbl")
@@ -156,14 +156,14 @@ def test_the_lookup_keys_each_entry_by_its_relation():
     assert lookup[("analytics", "orders_tbl")].table_name == "orders"
 
 
-def test_ephemeral_ctes_key_each_ephemeral_entry_by_its_service_and_cte_name():
+def test_ephemeral_ctes_key_each_ephemeral_entry_by_its_project_and_cte_name():
     eph = NodeRegistryEntry("eph", "analytics", "svc", "o", relation="Eph", ephemeral=True)
     registry = NodeRegistry(entries=[eph, NodeRegistryEntry("orders", "analytics", "svc", "o", relation="orders")])
     assert registry.ephemeral_ctes() == {("svc", "__dbt__cte__eph"): eph}
 
 
 def test_the_registry_of_nodes_leaves_tests_out_and_marks_ephemeral_models():
-    common = dict(schema_name="analytics", service_name="s", owner="o", schedule_name="daily", criticality="CORE")
+    common = dict(schema_name="analytics", project_name="s", owner="o", schedule_name="daily", criticality="CORE")
     registry = NodeRegistry.of_nodes([
         ManifestNode(table_name="orders", resolved_relation="orders_tbl", **common),
         ManifestNode(table_name="eph", materialized="ephemeral", **common),

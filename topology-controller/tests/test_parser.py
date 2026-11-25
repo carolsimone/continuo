@@ -56,9 +56,9 @@ def test_parse_sets_schedule_from_first_tag():
     assert all(n.schedule_name == "daily" for n in nodes)
 
 
-def test_parse_sets_service_from_fqn():
+def test_parse_sets_project_from_fqn():
     nodes = parse_manifest(str(FIXTURES / "manifest_valid.json")).nodes
-    assert all(n.service_name == "service-1" for n in nodes)
+    assert all(n.project_name == "service-1" for n in nodes)
 
 
 def test_parse_skips_node_missing_owner():
@@ -580,7 +580,7 @@ def test_a_bad_timeout_is_an_invalid_contract_naming_the_node(tmp_path, value):
     assert parsed.failed == (FailedNode(
         node_id="analytics.revenue",
         kind=ParseFailureKind.INVALID_CONTRACT,
-        service="service-a",
+        project="service-a",
         file_path="models/revenue.sql",
         node_type=NodeType.DBT_MODEL,
         detail=f"customProperties[4].value: `timeoutMinutes` is {value!r}, it must be an integer number"
@@ -708,7 +708,7 @@ def test_the_gates_report_each_skipped_node_and_its_reason_without_a_warning(tmp
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
-def test_a_skipped_node_with_no_fqn_is_reported_with_an_empty_service(tmp_path):
+def test_a_skipped_node_with_no_fqn_is_reported_with_an_empty_project(tmp_path):
     bare = _svc_a_model("bare", owner=None)
     del bare["fqn"]
     skipped: list[SkippedNode] = []
@@ -758,19 +758,19 @@ def test_an_untagged_node_of_an_installed_package_is_skipped():
 def test_an_untagged_node_of_the_project_is_kept_beside_an_installed_package():
     nodes, _ = _parse_package_fixture()
     report, countries = nodes["monthly_report"], nodes["countries"]
-    assert (report.service_name, report.schedule_name) == ("shop-core", "")
+    assert (report.project_name, report.schedule_name) == ("shop-core", "")
     assert is_dormant(report.node_type, report.schedule_name)
-    assert (countries.service_name, countries.schedule_name) == ("shop-core", "seed")
+    assert (countries.project_name, countries.schedule_name) == ("shop-core", "seed")
 
 
-def test_a_tagged_node_of_an_installed_package_is_kept_for_the_service_check(tmp_path):
+def test_a_tagged_node_of_an_installed_package_is_kept_for_the_project_check(tmp_path):
     """A tag on a package's node is a choice to schedule it, so the parse keeps
-    it under the package's service and the handler's service check refuses it."""
+    it under the package's project and the handler's project check refuses it."""
     path = _write_manifest(tmp_path, {"model.evalpkg.pkg_daily": _package_node("pkg_daily", tags=["daily"])},
                            metadata={"project_name": "shop_core"})
     skipped: list[SkippedNode] = []
     (node,) = parse_manifest(path, skipped=skipped).nodes
-    assert (node.service_name, node.schedule_name) == ("evalpkg", "daily")
+    assert (node.project_name, node.schedule_name) == ("evalpkg", "daily")
     assert skipped == []
 
 
@@ -791,35 +791,35 @@ def test_the_owner_and_local_stub_gates_run_before_the_package_gate(tmp_path):
     {}, {"metadata": None}, {"metadata": {}}, {"metadata": {"project_name": ""}}, {"metadata": {"project_name": None}},
 ])
 def test_with_no_project_known_no_node_is_skipped_as_a_package_node(tmp_path, top_level):
-    """Without the manifest's project name or a declared service the parse cannot
-    tell the project from a package, so it keeps the node and no service check
+    """Without the manifest's project name or a declared project the parse cannot
+    tell the project from a package, so it keeps the node and no project check
     follows. A release never parses this way: its manifest_keys entry requires a
-    service for every manifest, so the project is always known there."""
+    project for every manifest, so the project is always known there."""
     manifest = {"macros": {}, "nodes": {"model.evalpkg.pkg_model": _package_node("pkg_model")}, **top_level}
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(manifest))
     skipped: list[SkippedNode] = []
     (node,) = parse_manifest(str(path), skipped=skipped).nodes
-    assert (node.service_name, node.schedule_name) == ("evalpkg", "")
+    assert (node.project_name, node.schedule_name) == ("evalpkg", "")
     assert skipped == []
 
 
-def test_the_declared_service_names_the_project_when_the_manifest_does_not(tmp_path):
+def test_the_declared_project_names_the_project_when_the_manifest_does_not(tmp_path):
     path = _write_manifest(tmp_path, {
         "model.shop_core.report": _package_node("report", package="shop_core"),
         "model.evalpkg.pkg_model": _package_node("pkg_model"),
     })
     skipped: list[SkippedNode] = []
-    nodes = parse_manifest(path, skipped=skipped, declared_service="shop-core").nodes
+    nodes = parse_manifest(path, skipped=skipped, declared_project="shop-core").nodes
     assert [(n.table_name, n.schedule_name) for n in nodes] == [("report", "")]
     assert skipped == [SkippedNode("model.evalpkg.pkg_model", "evalpkg", SkipReason.INSTALLED_PACKAGE)]
 
 
-def test_the_manifests_own_project_name_wins_over_the_declared_service():
-    """A declared service that differs from the manifest's project (a misnamed
-    service, which the handler's service check refuses) does not turn the
+def test_the_manifests_own_project_name_wins_over_the_declared_project():
+    """A declared project that differs from the manifest's project (a misnamed
+    project, which the handler's project check refuses) does not turn the
     project's own untagged nodes into package nodes."""
-    nodes, skipped = _parse_package_fixture(declared_service="billing")
+    nodes, skipped = _parse_package_fixture(declared_project="billing")
     assert sorted(nodes) == ["countries", "monthly_report", "orders"]
     assert [s.reason for s in skipped] == [
         SkipReason.INSTALLED_PACKAGE, SkipReason.INSTALLED_PACKAGE, SkipReason.NO_OWNER]
@@ -910,8 +910,8 @@ def test_the_parser_skips_exactly_what_the_library_skips(tmp_path, node):
         assert skipped == []
         (parsed,) = kept
         library_node = json.loads(json.dumps(node))
-        assert (parsed.service_name, parsed.schedule_name, parsed.table_name) == (
-            dbt.node_service(library_node), dbt.schedule(library_node), dbt.table_name(library_node))
+        assert (parsed.project_name, parsed.schedule_name, parsed.table_name) == (
+            dbt.node_project(library_node), dbt.schedule(library_node), dbt.table_name(library_node))
     else:
         assert kept == []
         assert [(s.node_id, s.reason.value) for s in skipped] == [(node_id, reason)]
@@ -926,7 +926,7 @@ def test_a_versioned_model_is_a_node_named_with_its_version(tmp_path, version, t
     assert parsed.table_name == table
 
 
-@pytest.mark.parametrize("changes, name, service, message", [
+@pytest.mark.parametrize("changes, name, project, message", [
     ({"tags": "daily"}, "analytics.bad", "svc-a", "model.svc_a.bad: tags must be a list of strings, got str"),
     ({"tags": ["daily", 3]}, "analytics.bad", "svc-a", "model.svc_a.bad: tags[1] must be a string, got int"),
     ({"fqn": "svc_a"}, "analytics.bad", "", "model.svc_a.bad: fqn must be a list, got str"),
@@ -936,7 +936,7 @@ def test_a_versioned_model_is_a_node_named_with_its_version(tmp_path, version, t
     ({"version": True}, "model.svc_a.bad", "svc-a",
      "model.svc_a.bad: version must be a string or a number, got bool"),
 ])
-def test_a_node_field_the_library_cannot_read_is_an_invalid_contract(tmp_path, changes, name, service, message):
+def test_a_node_field_the_library_cannot_read_is_an_invalid_contract(tmp_path, changes, name, project, message):
     """A node the no-owner gate lets through, whose `tags`, `fqn`, `name` or `version` is
     not the shape dbt writes, has no contract: it is one failed node of the parse, named by
     its unique_id when that can be read (else by its manifest id), with the library's
@@ -946,7 +946,7 @@ def test_a_node_field_the_library_cannot_read_is_an_invalid_contract(tmp_path, c
     parsed = parse_manifest(_write_nodes(tmp_path, **{"model.svc_a.bad": node}))
     assert parsed.nodes == []
     assert parsed.failed == (FailedNode(
-        node_id=name, kind=ParseFailureKind.INVALID_CONTRACT, service=service,
+        node_id=name, kind=ParseFailureKind.INVALID_CONTRACT, project=project,
         file_path="models/bad.sql", node_type=NodeType.DBT_MODEL, detail=message,
     ),)
 
@@ -954,7 +954,7 @@ def test_a_node_field_the_library_cannot_read_is_an_invalid_contract(tmp_path, c
 @pytest.mark.parametrize("fqn", [None, []])
 def test_a_kept_node_with_no_fqn_entry_is_an_invalid_artifact(tmp_path, fqn):
     """dbt writes an fqn for every node. A node the gates keep with none does not say
-    which service it belongs to, so the parse refuses the artifact."""
+    which project it belongs to, so the parse refuses the artifact."""
     node = _without(_svc_a_model("bad"), "fqn")
     if fqn is not None:
         node["fqn"] = fqn

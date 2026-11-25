@@ -195,7 +195,7 @@ def _project(macros: list[dict], *, nodes: dict | None = None, unit_tests: dict 
                 "unit_tests": unit_tests or {}, "functions": functions or {}}
     extras = None
     if flags is not None:
-        extras = CompileExtras(service="fpshop", release_id="r", seeds={}, project_flags=flags, packages={})
+        extras = CompileExtras(project="fpshop", release_id="r", seeds={}, project_flags=flags, packages={})
     return ManifestContext.from_manifest(manifest, extras)
 
 
@@ -297,7 +297,7 @@ _HOOK = {"unique_id": "operation.fpshop.fpshop-on-run-start-0", "resource_type":
          "name": "fpshop-on-run-start-0", "tags": ["on-run-start"], "raw_code": "select 1 as hook_start"}
 
 
-def test_a_test_folds_no_service_unit():
+def test_a_test_folds_no_project_unit():
     ctx = _project([_macro("macro.fpshop.generate_schema_name"), _macro("macro.fpshop.generate_alias_name")],
                    nodes={_HOOK["unique_id"]: _HOOK}, flags={"some_flag": True})
     model_units = shared_units(_node(), ctx)
@@ -463,7 +463,7 @@ def test_an_on_run_hook_folds_the_root_macros_it_calls():
                         nodes={hook["unique_id"]: hook})
     assert _moved_nodes(ctx("grant a"), ctx("grant b")) == {"model", "seed", "snapshot"}
     assert _moved_nodes(ctx("grant a"), ctx("grant a", helper="changed")) == {"model", "seed", "snapshot"}
-    units = ctx("grant a").service_units
+    units = ctx("grant a").project_units
     assert units["macro.fpshop.grant_usage"].input_name == "macros"
     assert units["macro.fpshop.statement"].input_name == "macros"
 
@@ -473,9 +473,9 @@ def test_a_hook_is_classified_by_the_suffix_of_its_id():
     end = _hook("on-run-start-tools", "end")
     untagged = {**_hook("on-run-end-tools", "start"), "tags": []}
     ctx = _project([], nodes={start["unique_id"]: start, end["unique_id"]: end})
-    assert ctx.service_units[start["unique_id"]].input_name == "on_run_start"
-    assert ctx.service_units[end["unique_id"]].input_name == "on_run_end"
-    assert _project([], nodes={untagged["unique_id"]: untagged}).service_units[untagged["unique_id"]].input_name == "on_run_start"
+    assert ctx.project_units[start["unique_id"]].input_name == "on_run_start"
+    assert ctx.project_units[end["unique_id"]].input_name == "on_run_end"
+    assert _project([], nodes={untagged["unique_id"]: untagged}).project_units[untagged["unique_id"]].input_name == "on_run_start"
 
 
 def _function(**over) -> dict:
@@ -654,7 +654,7 @@ def test_a_seed_columns_hash_canonical_json_refuses_rejects_the_artifact(tmp_pat
         "checksum": {"name": "sha256", "checksum": "ab" * 32}}}}
     (tmp_path / "manifest.json").write_text(json.dumps(manifest))
     seed = SeedExtras(sha256="cd" * 32, header=header, column_types=column_types)
-    extras = CompileExtras(service="svc", release_id="r", seeds={"seed.svc.users": seed}, project_flags={}, packages={})
+    extras = CompileExtras(project="svc", release_id="r", seeds={"seed.svc.users": seed}, project_flags={}, packages={})
     with pytest.raises(InvalidNodeSettingError, match="analytics.users") as raised:
         parse_manifest(str(tmp_path / "manifest.json"), extras=extras)
     assert "lone surrogate" in str(raised.value)

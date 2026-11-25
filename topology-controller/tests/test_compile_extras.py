@@ -8,33 +8,33 @@ from domain.exceptions import InvalidCompileExtrasError
 from domain.model import SeedExtras
 from service.compile_extras import load_compile_extras, seed_columns_hash
 
-EXTRAS = {"version": 1, "service": "core", "release_id": "rel-1",
+EXTRAS = {"version": 1, "project": "core", "release_id": "rel-1",
           "seeds": {"seed.core.seed_users": {"sha256": "4a" * 32, "header": ["id", "name"], "column_types": {"id": "integer"}}},
           "project_flags": {}, "packages": {"dbt-core": "1.12.0b1"}}
 
 
-def _load(tmp_path, document, expected_service="core"):
+def _load(tmp_path, document, expected_project="core"):
     path = tmp_path / "x.json"
     path.write_text(document if isinstance(document, str) else json.dumps(document))
-    return load_compile_extras(str(path), expected_service)
+    return load_compile_extras(str(path), expected_project)
 
 
 def test_load_compile_extras_reads_version_1(tmp_path):
     extras = _load(tmp_path, EXTRAS)
     assert extras.seeds["seed.core.seed_users"] == SeedExtras(sha256="4a" * 32, header=("id", "name"), column_types={"id": "integer"})
-    assert (extras.service, extras.release_id, extras.project_flags, extras.packages) == (
+    assert (extras.project, extras.release_id, extras.project_flags, extras.packages) == (
         "core", "rel-1", {}, {"dbt-core": "1.12.0b1"})
 
 
-def test_load_compile_extras_skips_the_service_check_when_none_is_expected(tmp_path):
-    assert _load(tmp_path, {**EXTRAS, "service": "other"}, expected_service="").service == "other"
+def test_load_compile_extras_skips_the_project_check_when_none_is_expected(tmp_path):
+    assert _load(tmp_path, {**EXTRAS, "project": "other"}, expected_project="").project == "other"
 
 
 @pytest.mark.parametrize("change", [
     {"version": 2},
     {"version": True},
-    {"service": "other"},
-    {"service": 3},
+    {"project": "other"},
+    {"project": 3},
     {"release_id": None},
     {"seeds": []},
     {"seeds": {"seed.core.seed_users": {"header": [], "column_types": {}}}},

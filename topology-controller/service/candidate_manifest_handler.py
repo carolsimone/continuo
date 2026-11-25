@@ -19,7 +19,7 @@ from domain.model import (
     ManifestNode,
     NodeRegistry,
     NodeType,
-    ServiceProvenance,
+    ProjectProvenance,
     SkippedNode,
     TableRef,
 )
@@ -85,7 +85,7 @@ def _failed_node_order(node: FailedNode) -> tuple[str, ...]:
     """The place of a failed node in the publish: by node id, file path and kind,
     then by every other field so that two nodes agreeing on those three still
     have one order, whatever order the manifests came in."""
-    return (node.node_id, node.file_path, str(node.kind), node.service, str(node.node_type), node.detail)
+    return (node.node_id, node.file_path, str(node.kind), node.project, str(node.node_type), node.detail)
 
 
 def _encodable(text: str) -> bool:
@@ -103,23 +103,23 @@ def _unencodable_text(detail: str, failed_nodes: Sequence[FailedNode]) -> str | 
     a text cannot be published."""
     texts = [detail]
     for node in failed_nodes:
-        texts.extend((node.node_id, node.service, node.file_path, node.detail))
+        texts.extend((node.node_id, node.project, node.file_path, node.detail))
     return next((text for text in texts if not _encodable(text)), None)
 
 
 def _unreadable_manifest_detail(mf: ManifestFile, exc: Exception) -> str:
     """The detail of a release whose manifest cannot be read as a whole. A bundle
     error carries a message written for the operator, so it is the detail as it
-    is, led by the service it belongs to; any other parse error is named by its
+    is, led by the project it belongs to; any other parse error is named by its
     type and arguments, which is all a KeyError or a JSON error says."""
     if isinstance(exc, InvalidOdcsBundleError):
-        return f"{mf.declared_service or mf.path}: {exc.detail}"
+        return f"{mf.declared_project or mf.path}: {exc.detail}"
     return f"{mf.path}: {exc!r}"
 
 
 def _artifact_entry(node: ManifestNode) -> dict:
     """The topology artifact's entry for one node: its identity, the relation it
-    stands for, the service and image that run it, its schedule and the
+    stands for, the project and image that run it, its schedule and the
     unique_ids it reads. An optional key is present only when the node sets
     it: `materialized` (every dbt node but a test), `full_refresh` (a seed that
     configures one) and `seed_columns` (a seed whose compile extras list its
@@ -129,7 +129,7 @@ def _artifact_entry(node: ManifestNode) -> dict:
         "schema_name":         node.schema_name,
         "table_name":          node.table_name,
         "resolved_relation_id": node.resolved_relation_id,
-        "service_name":        node.service_name,
+        "project_name":        node.project_name,
         "node_type":           node.node_type,
         "test_count":          node.test_count,
         "content_hash":        node.content_hash,
@@ -163,9 +163,9 @@ class CandidateManifestHandler:
     topology to S3 as the release's topology artifact, and publishes a
     reference to it back to release-controller.
 
-    Every node carries its service's image tag from the release request
+    Every node carries its project's image tag from the release request
     (image_tags), the map release-controller assembled when it activated the
-    release; a service the map names no tag for keeps an empty tag. A request
+    release; a project the map names no tag for keeps an empty tag. A request
     with no image_tags at all fails the release as internal before anything is
     fetched. The registry is built in-memory solely for dependency resolution
     and is not persisted anywhere.
@@ -178,12 +178,12 @@ class CandidateManifestHandler:
 
     A single code-bundle document (one per release, covering every published
     node plus the shared-code units they depend on, the tracked dbt tests, and
-    each dbt service's provenance with the image tag the request names for it)
+    each dbt project's provenance with the image tag the request names for it)
     is uploaded via bundle_uploader, then the release's contract bundle via
     contract_bundle_writer (the stored form and hash of each dbt and
     python-odcs contract, with the tables its node's SQL or read queries name
     and, for a dbt contract, the reads it declares, and the provenance of each
-    python-odcs service), then the topology artifact via artifact_writer, and
+    python-odcs project), then the topology artifact via artifact_writer, and
     only then is the outcome published, so a published reference never
     dangles. Every release that publishes ok writes a contract bundle, one with
     no contract included. An empty release (no manifests) writes an empty
@@ -212,7 +212,7 @@ class CandidateManifestHandler:
     then one publish_failed carries the whole failed set of every manifest
     (failure_kind by contract precedence) so the operator sees every broken
     node at once, in node id order whatever the order of the manifests. An
-    unreadable, empty, or wrong-service artifact (and a manifest of an
+    unreadable, empty, or wrong-project artifact (and a manifest of an
     unknown kind) is invalid_artifact; a missing builder, missing image tags,
     a refused S3 write or a defect of the contracts library is internal.
     Neither carries failed nodes. Such an artifact-level error fails the
@@ -227,7 +227,7 @@ class CandidateManifestHandler:
     no node, so it is taken out of the set before the manifests are parsed. With
     ontology_enabled it is read first (see service.ontology_binding): a file the
     library cannot read, or one its own rules find an error in, is an
-    invalid_artifact naming the service that released it, and each of those
+    invalid_artifact naming the project that released it, and each of those
     errors is counted as a contract failure of stage ontology. With the switch
     off the file is ignored and one line at INFO says so. Two ontology manifests
     in one release are an invalid_artifact whatever the switch says.
@@ -236,7 +236,7 @@ class CandidateManifestHandler:
     the switch off its ontology part (bindings and links) is taken away, so a
     contract that writes bindings hashes as one that writes none; with the switch
     on and no ontology it is kept as written; with an ontology a contract of a
-    service the ontology declares is filled in from it. The contract bundle's
+    project the ontology declares is filled in from it. The contract bundle's
     ontology value is null with the switch off and otherwise names the ontology
     the release used.
 
@@ -245,7 +245,7 @@ class CandidateManifestHandler:
     stored (the check never runs for a release that has a failed node). An
     error of the check is the failure of the contract's node (invalid_contract,
     naming the rule and what it found), or, when it names no contract, an
-    invalid_artifact naming the ontology's service. A warning or an information
+    invalid_artifact naming the ontology's project. A warning or an information
     line never rejects the release: it goes into the ontology value of the
     contract bundle.
 
@@ -272,15 +272,15 @@ class CandidateManifestHandler:
     A dbt node a parse leaves out (no owner, a local stub, an untagged node of
     an installed dbt package) is never a failure: it is logged at INFO as it is
     skipped and counted on the release's line, and release-controller is told
-    nothing of it. A model or snapshot of the service's own project with an
+    nothing of it. A model or snapshot of the manifest's own project with an
     owner and no schedule tag is not left out: it is a dormant node with an
     empty schedule, in the topology, the code bundle and the candidate schema
-    like any node, and the release's line counts the dormant nodes per service.
+    like any node, and the release's line counts the dormant nodes per project.
     An untagged seed of the project with an owner is not left out either: it
     takes the schedule `seed`, so it is not dormant.
 
     A dbt seed whose source part is still dbt's `path` checksum (a seed over
-    1 MiB that its service's compile extras do not name) is logged at WARNING,
+    1 MiB that its project's compile extras do not name) is logged at WARNING,
     one line per seed, after its manifest's parse. A seed node whose extras
     give it a column fingerprint carries it on its topology entry as
     seed_columns_hash; any other node's entry has no such key.
@@ -289,16 +289,16 @@ class CandidateManifestHandler:
     parse, which rejects a difference as an invalid contract. A seed the compile
     extras do not name has no known header and is not compared: one line at
     WARNING, after the last manifest's parse, counts such seeds in the release
-    and per service. A relationships test whose target its manifest does not
+    and per project. A relationships test whose target its manifest does not
     hold (a `local_stub` model the baseline uploader left out) is a `custom` rule
     of the contract it tests: one more line at WARNING counts such tests in the
-    release and per service.
+    release and per project.
 
     A node whose build writes a relation named other than its table_name (an
     alias, or a versioned model's "<name>_v<version>") carries that relation on
     its topology entry as relation_name; any other node's entry has no such key.
     Every node's upstreams resolve through the relation each node writes, and a
-    reader of an ephemeral dbt model of its own service depends on that model.
+    reader of an ephemeral dbt model of its own project depends on that model.
 
     handle() times each stage of the parse (see service.release_timings) with
     clock and memory and returns the record, whether the release was published,
@@ -320,7 +320,7 @@ class CandidateManifestHandler:
     and node, a dbt node's contract, checks, hashes and node), one manifest's
     work around its contracts (before the first: the manifest's reading and the
     join of its tests, after the bookkeeping of the manifest before it: skip
-    logging, shared-code namespacing, service checks; after the last: the hashes
+    logging, shared-code namespacing, project checks; after the last: the hashes
     of its tests), one node's resolve or one node's build, except in these
     stretches, each of which must end within the caller's staleness budget:
     - from the start through the first contract of the first manifest's parse:
@@ -329,7 +329,7 @@ class CandidateManifestHandler:
       that contract;
     - from the last manifest's parse through the first node's resolve: that
       manifest's own bookkeeping (skip logging, shared-code namespacing,
-      service checks), the node registry and its lookup and the rewrite context
+      project checks), the node registry and its lookup and the rewrite context
       (in-memory work linear in the number of nodes), then that resolve;
     - from the last node's resolve through the first node's build: the
       unknown-external step (in-memory work linear in the number of table references),
@@ -437,7 +437,7 @@ class CandidateManifestHandler:
                 self._fail(
                     release_id,
                     ParseFailureKind.INVALID_ARTIFACT,
-                    f"{mf.declared_service or mf.path}: unknown manifest kind {mf.kind!r}",
+                    f"{mf.declared_project or mf.path}: unknown manifest kind {mf.kind!r}",
                 )
                 return
 
@@ -457,9 +457,9 @@ class CandidateManifestHandler:
                 logger.error(
                     "candidate: the contracts library failed on a manifest",
                     exc_info=exc,
-                    extra={"release_id": release_id, "service": mf.declared_service, "path": mf.path},
+                    extra={"release_id": release_id, "project": mf.declared_project, "path": mf.path},
                 )
-                self._fail(release_id, ParseFailureKind.INTERNAL, f"{mf.declared_service or mf.path}: {exc}")
+                self._fail(release_id, ParseFailureKind.INTERNAL, f"{mf.declared_project or mf.path}: {exc}")
                 return
             except parser.permanent_errors as exc:
                 # Invalid JSON or yaml, a missing required key, or a malformed
@@ -476,29 +476,29 @@ class CandidateManifestHandler:
             # failures of the valid nodes.
             contract_failures.extend(parsed.failed)
             if parsed.unchecked_seeds:
-                service = mf.declared_service or mf.path
-                unchecked_seeds[service] = unchecked_seeds.get(service, 0) + len(parsed.unchecked_seeds)
+                project = mf.declared_project or mf.path
+                unchecked_seeds[project] = unchecked_seeds.get(project, 0) + len(parsed.unchecked_seeds)
             if parsed.relationship_tests_without_target:
-                service = mf.declared_service or mf.path
-                relationships_without_target[service] = (
-                    relationships_without_target.get(service, 0) + parsed.relationship_tests_without_target)
+                project = mf.declared_project or mf.path
+                relationships_without_target[project] = (
+                    relationships_without_target.get(project, 0) + parsed.relationship_tests_without_target)
 
-            # Reported before the declared-service checks below: a manifest
+            # Reported before the declared-project checks below: a manifest
             # whose every node was skipped fails as empty, and its skips are
             # then the only trace of why.
             self._record_parse(release_id, nodes, manifest_skips)
 
-            # Namespace this manifest's shared-code units by service so two
+            # Namespace this manifest's shared-code units by project so two
             # manifests pinning different versions of the same dbt package
-            # never collide on a bare macro id — each service's copy of a
+            # never collide on a bare macro id — each project's copy of a
             # same-named macro gets its own bundle entry, and every node keeps
             # pointing at the copy its own manifest actually hashed against.
             # Per-node hashes fold each manifest's own copy of a unit already
             # (see dbt_hashing.shared_units), so this never changes a hash —
             # it only disambiguates which copy the bundle records for a unit id.
-            namespace = mf.declared_service or (nodes[0].service_name if nodes else "")
+            namespace = mf.declared_project or (nodes[0].project_name if nodes else "")
             if parsed.provenance is not None and namespace:
-                provenance[namespace] = self._service_provenance(release_id, namespace, parsed.provenance)
+                provenance[namespace] = self._project_provenance(release_id, namespace, parsed.provenance)
             if parsed.python_provenance is not None and namespace:
                 python_provenance[namespace] = parsed.python_provenance
 
@@ -523,12 +523,12 @@ class CandidateManifestHandler:
 
             for node in nodes:
                 node.code_unit_ids = [f"{namespace}:{uid}" for uid in node.code_unit_ids]
-                node.image_tag = self._image_tags.get(node.service_name, "")
+                node.image_tag = self._image_tags.get(node.project_name, "")
 
-            if mf.declared_service:
-                # Validate that the manifest actually belongs to the declared service.
+            if mf.declared_project:
+                # Validate that the manifest actually belongs to the declared project.
                 # An empty manifest would silently retire all nodes for the declared
-                # service; a wrong-service manifest would pollute the topology with
+                # project; a wrong-project manifest would pollute the topology with
                 # foreign nodes. Both are permanent failures (a re-upload is required).
                 # A manifest whose every contract is invalid has no node and is not
                 # empty: its failed contracts are reported after the resolve.
@@ -536,16 +536,16 @@ class CandidateManifestHandler:
                     self._fail(
                         release_id,
                         ParseFailureKind.INVALID_ARTIFACT,
-                        f"{mf.declared_service}: {parser.empty_detail}",
+                        f"{mf.declared_project}: {parser.empty_detail}",
                     )
                     return
 
-                offending = {n.service_name for n in nodes if n.service_name != mf.declared_service}
+                offending = {n.project_name for n in nodes if n.project_name != mf.declared_project}
                 if offending:
                     self._fail(
                         release_id,
                         ParseFailureKind.INVALID_ARTIFACT,
-                        f"{mf.declared_service}: manifest contains nodes for {sorted(offending)}",
+                        f"{mf.declared_project}: manifest contains nodes for {sorted(offending)}",
                     )
                     return
 
@@ -557,7 +557,7 @@ class CandidateManifestHandler:
                 extra={
                     "release_id": release_id,
                     "seeds": sum(unchecked_seeds.values()),
-                    "services": unchecked_seeds,
+                    "projects": unchecked_seeds,
                 },
             )
 
@@ -567,7 +567,7 @@ class CandidateManifestHandler:
                 extra={
                     "release_id": release_id,
                     "tests": sum(relationships_without_target.values()),
-                    "services": relationships_without_target,
+                    "projects": relationships_without_target,
                 },
             )
 
@@ -606,7 +606,7 @@ class CandidateManifestHandler:
                     # with the same schema and name.
                     node.upstream_deps = resolve_upstream_deps(
                         [ref for ref in refs if not self._system_relations.matches(ref)], lookup,
-                        service_name=node.service_name, ctes=ctes, ephemeral_ctes=ephemeral_ctes,
+                        project_name=node.project_name, ctes=ctes, ephemeral_ctes=ephemeral_ctes,
                     )
                     if node.node_type != NodeType.DBT_TEST:
                         reads[node.node_key] = refs
@@ -619,7 +619,7 @@ class CandidateManifestHandler:
                     failed.append(FailedNode(
                         node_id=node.unique_id,
                         kind=exc.kind,
-                        service=node.service_name,
+                        project=node.project_name,
                         # A python-odcs node's SQL is in its contract file, not its script.
                         file_path=node.contract.path if node.contract is not None else node.original_file_path,
                         node_type=node.node_type,
@@ -639,17 +639,17 @@ class CandidateManifestHandler:
             )
             return
 
-        # An id two services declare is release-controller's duplicate_table to
+        # An id two projects declare is release-controller's duplicate_table to
         # reject, naming both: the release publishes, and the bundle, which keys a
         # contract by id, holds no contract of that id.
         shared = shared_unique_ids(all_nodes)
         with_contract = {node.unique_id for node in all_nodes if node.contract is not None}
-        for unique_id, services in shared.items():
+        for unique_id, projects in shared.items():
             if unique_id not in with_contract:
                 continue
             logger.warning(
                 "candidate: a unique id more than one node declares has no contract in the bundle",
-                extra={"release_id": release_id, "unique_id": unique_id, "services": services},
+                extra={"release_id": release_id, "unique_id": unique_id, "projects": projects},
             )
         contracts: list[StoredContract] = []
         try:
@@ -747,7 +747,7 @@ class CandidateManifestHandler:
         ontology, under the rule that found it. An error that names a contract is that
         contract's node failing as an invalid contract, the errors of one node joined in
         one detail. An error that names none is an invalid artifact that names the
-        ontology's service, and fails the release at once with no failed node. A finding
+        ontology's project, and fails the release at once with no failed node. A finding
         that names a contract the release does not hold is a defect of the library."""
         try:
             with self._timings.stage(Stage.ONTOLOGY, contracts=len(contracts)):
@@ -768,7 +768,7 @@ class CandidateManifestHandler:
             self._fail(
                 release_id,
                 ParseFailureKind.INVALID_ARTIFACT,
-                f"{release_ontology.service}: "
+                f"{release_ontology.project}: "
                 + "; ".join(f"ontology {error.rule}: {error.subject}: {error.message}" for error in unnamed),
             )
             return None
@@ -790,7 +790,7 @@ class CandidateManifestHandler:
             failed.append(FailedNode(
                 node_id=stored.unique_id,
                 kind=ParseFailureKind.INVALID_CONTRACT,
-                service=stored.service,
+                project=stored.project,
                 file_path=stored.source_path,
                 node_type=node_types[stored.unique_id],
                 detail="; ".join(messages),
@@ -811,7 +811,7 @@ class CandidateManifestHandler:
         if not files:
             return None, False
         if len(files) > 1:
-            carried = sorted(f"one from {mf.declared_service or mf.path}" for mf in files)
+            carried = sorted(f"one from {mf.declared_project or mf.path}" for mf in files)
             self._fail(
                 release_id,
                 ParseFailureKind.INVALID_ARTIFACT,
@@ -822,7 +822,7 @@ class CandidateManifestHandler:
         if not self._ontology_enabled:
             logger.info(
                 "candidate: the ontology switch is off, so the ontology is ignored",
-                extra={"release_id": release_id, "service": mf.declared_service or mf.path},
+                extra={"release_id": release_id, "project": mf.declared_project or mf.path},
             )
             return None, False
         try:
@@ -838,10 +838,10 @@ class CandidateManifestHandler:
             "candidate: the release's ontology is loaded",
             extra={
                 "release_id": release_id,
-                "service": loaded.service,
+                "project": loaded.project,
                 "ontology_release_id": loaded.release_id,
                 "sha256": loaded.sha256,
-                "declared_services": list(loaded.ontology.services()),
+                "declared_projects": list(loaded.ontology.projects()),
             },
         )
         return loaded, False
@@ -908,18 +908,18 @@ class CandidateManifestHandler:
         self._timings.mark_published()
         return {"parse_ms": self._timings.parse_ms(), "contracts_ms": self._timings.contracts_ms()}
 
-    def _service_provenance(self, release_id: str, service: str, parsed: ServiceProvenance) -> dict:
-        """Log each of a dbt service's seeds that keeps dbt's path checksum and
-        return the service's bundle provenance entry, with the image tag the
-        release request names for the service."""
+    def _project_provenance(self, release_id: str, project: str, parsed: ProjectProvenance) -> dict:
+        """Log each of a dbt project's seeds that keeps dbt's path checksum and
+        return the project's bundle provenance entry, with the image tag the
+        release request names for the project."""
         for seed in parsed.path_checksum_seeds:
             logger.warning(
-                "candidate: seed keeps dbt's path checksum until its service's rebaseline release",
-                extra={"release_id": release_id, "service": service, "seed": seed},
+                "candidate: seed keeps dbt's path checksum until its project's rebaseline release",
+                extra={"release_id": release_id, "project": project, "seed": seed},
             )
         return {
             "dbt_version": parsed.dbt_version,
-            "image_tag": self._image_tags.get(service, ""),
+            "image_tag": self._image_tags.get(project, ""),
             "packages": dict(parsed.packages),
             "path_checksum_seeds": list(parsed.path_checksum_seeds),
         }
@@ -932,7 +932,7 @@ class CandidateManifestHandler:
                 "candidate: node skipped",
                 extra={
                     "release_id": release_id,
-                    "service": skip.service,
+                    "project": skip.project,
                     "node_id": skip.node_id,
                     "reason": skip.reason.value,
                 },

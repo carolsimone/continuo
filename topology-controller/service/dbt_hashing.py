@@ -7,7 +7,7 @@ A dbt node's content_hash is `fold4(source, shared, config, compiled)`:
   SHA-256 the compile extras recorded, else dbt's own checksum as written.
 - shared: `shared_fold` of the code units the node runs that its team writes
   (see `shared_units`): the non-built-in macros its build reaches, the functions
-  it calls, a model's unit tests and, for a model, seed or snapshot, the service
+  it calls, a model's unit tests and, for a model, seed or snapshot, the project
   units every build of the project runs (on-run hooks, the root project's
   `generate_schema_name` / `generate_alias_name`, a non-empty flags block).
 - compiled: a model's or snapshot's compiled SQL, masked; `""` for every other node.
@@ -38,7 +38,7 @@ _RUN_STARTED = "__CONTINUO_RUN_STARTED_AT__"
 _DATABASE = "__CONTINUO_DATABASE__"
 
 _SOURCE_FROM_RAW_CODE = frozenset({"model", "snapshot"})
-_FOLDS_SERVICE_UNITS = frozenset({"model", "seed", "snapshot"})
+_FOLDS_PROJECT_UNITS = frozenset({"model", "seed", "snapshot"})
 _MATERIALIZED_BY_TYPE = {"seed": "seed", "snapshot": "snapshot", "test": "test"}
 _EXPLICIT_OVERRIDES_FLAG = "require_explicit_package_overrides_for_builtin_materializations"
 
@@ -89,7 +89,7 @@ class ManifestContext:
     whose package dbt also loads as internal (dbt-postgres and dbt-trino have
     none); an adapter built on another one would have that package's macros
     folded. `unit_tests_by_node` maps a node id to the unit tests that name it;
-    `service_units` are the units every model, seed and snapshot folds. The context memoizes each macro's closure, since every node
+    `project_units` are the units every model, seed and snapshot folds. The context memoizes each macro's closure, since every node
     of a manifest walks the same macros.
     """
     run: RunMask
@@ -102,7 +102,7 @@ class ManifestContext:
     macros_by_name: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     functions: Mapping[str, dict] = field(default_factory=dict)
     unit_tests_by_node: Mapping[str, tuple[CodeUnit, ...]] = field(default_factory=dict)
-    service_units: Mapping[str, CodeUnit] = field(default_factory=dict)
+    project_units: Mapping[str, CodeUnit] = field(default_factory=dict)
     explicit_package_overrides_required: bool = True
     _closures: dict[str, frozenset[str]] = field(default_factory=dict, init=False, compare=False, repr=False)
     _macro_units: dict[str, CodeUnit] = field(default_factory=dict, init=False, compare=False, repr=False)
@@ -131,7 +131,7 @@ class ManifestContext:
             unit_tests_by_node=_unit_tests_by_node(manifest.get("unit_tests") or {}),
             explicit_package_overrides_required=flags.get(_EXPLICIT_OVERRIDES_FLAG, True) is not False,
         )
-        return replace(ctx, service_units=_service_units(manifest, flags, ctx))
+        return replace(ctx, project_units=_project_units(manifest, flags, ctx))
 
 
 def mask_text(text: str, run: RunMask, database: str) -> str:
@@ -331,7 +331,7 @@ def shared_units(node: Mapping, ctx: ManifestContext) -> dict[str, CodeUnit]:
     """The units the node's shared part folds, by unit id: its macro closure, the
     functions it calls (`functions_reached`) with the macro closure of each
     function's `depends_on.macros`, a model's unit tests and, for a model, seed or
-    snapshot, the service units. A test folds no service unit."""
+    snapshot, the project units. A test folds no project unit."""
     units = _macro_units(macro_closure(node, ctx), ctx)
     for function_id in functions_reached(node, ctx):
         function = ctx.functions[function_id]
@@ -340,8 +340,8 @@ def shared_units(node: Mapping, ctx: ManifestContext) -> dict[str, CodeUnit]:
     resource_type = node.get("resource_type")
     if resource_type == "model":
         units.update({u.unit_id: u for u in ctx.unit_tests_by_node.get(node.get("unique_id") or "", ())})
-    if resource_type in _FOLDS_SERVICE_UNITS:
-        units.update(ctx.service_units)
+    if resource_type in _FOLDS_PROJECT_UNITS:
+        units.update(ctx.project_units)
     return units
 
 
@@ -593,7 +593,7 @@ def _unit_tests_by_node(unit_tests: Mapping[str, dict]) -> dict[str, tuple[CodeU
     return {node_id: tuple(units) for node_id, units in by_node.items()}
 
 
-def _service_units(manifest: Mapping, flags: Mapping, ctx: ManifestContext) -> dict[str, CodeUnit]:
+def _project_units(manifest: Mapping, flags: Mapping, ctx: ManifestContext) -> dict[str, CodeUnit]:
     """The units every model, seed and snapshot of the project folds: each on-run
     hook (an operation node) with the macros it reaches (its `depends_on.macros`
     and the static calls of its raw code), the root project's

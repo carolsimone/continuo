@@ -90,9 +90,9 @@ def _fields(**over) -> PythonNodeFields:
     return PythonNodeFields(**base)
 
 
-def _build(fields: PythonNodeFields, *, service: str = "marketing-py", image_tag: str = "img:1"):
+def _build(fields: PythonNodeFields, *, project: str = "marketing-py", image_tag: str = "img:1"):
     return build_python_node(
-        fields, service=service, image_tag=image_tag,
+        fields, project=project, image_tag=image_tag,
         source_hash=_SOURCE_HASH, shared_code_hash=_SHARED_CODE_HASH,
     )
 
@@ -127,7 +127,7 @@ def test_python_node_builder_builds_the_demo_node():
     assert _build(_fields()) == ManifestNode(
         table_name="table_test",
         schema_name="analytics",
-        service_name="marketing-py",
+        project_name="marketing-py",
         owner="marketing",
         schedule_name="daily",
         criticality="SECONDARY",
@@ -167,9 +167,9 @@ def test_the_content_hash_folds_the_two_producer_parts_with_the_projection_hash(
     assert (node.source_hash, node.shared_code_hash) == (_SOURCE_HASH, _SHARED_CODE_HASH)
 
 
-def test_the_node_is_a_python_node_of_the_given_service_and_image():
-    node = _build(_fields(), service="other-svc", image_tag="img:9")
-    assert (node.runtime, node.service_name, node.image_tag) == (Runtime.PYTHON, "other-svc", "img:9")
+def test_the_node_is_a_python_node_of_the_given_project_and_image():
+    node = _build(_fields(), project="other-svc", image_tag="img:9")
+    assert (node.runtime, node.project_name, node.image_tag) == (Runtime.PYTHON, "other-svc", "img:9")
     assert (node.resolved_relation, node.candidate_sql, node.code_unit_ids) == ("table_test", "", [])
     assert node.original_file_path == "scripts/table_test.py"
     assert node.declared_columns == 2

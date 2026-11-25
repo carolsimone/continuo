@@ -1,13 +1,13 @@
 """The check of a contract: the ODCS schema check, cached, then continuo's rules.
 
 The JSON schema check of continuo-contracts is the costly part of checking a contract, and
-a release re-checks every contract of every service, nearly all of them unchanged since the
+a release re-checks every contract of every project, nearly all of them unchanged since the
 release before. `ContractValidator` runs it once per distinct document and keeps the answer
 for the next release, keyed by the SHA-256 of the document's canonical JSON. A Python
 contract (`check`) and a dbt contract (`check_dbt`) are checked against the same ODCS
 schema, so the two families share one memory and a document is checked once whichever
 family asks. continuo's rules differ by family, and the Python rules read the contract's
-file name and the release's service, which the document does not carry, so the rules run
+file name and the release's project, which the document does not carry, so the rules run
 on every check.
 """
 from collections.abc import Callable, Mapping
@@ -39,10 +39,10 @@ class ContractValidator:
         self._schema_issues: dict[str, tuple[Issue, ...]] = {}
 
     def check(
-        self, doc: object, *, path: str, service: str, on_cache: Callable[[bool], None]
+        self, doc: object, *, path: str, project: str, on_cache: Callable[[bool], None]
     ) -> list[Issue]:
         """Return every issue of `doc`, the Python contract of the file at `path` in the
-        release of `service`, or an empty list when it is valid.
+        release of `project`, or an empty list when it is valid.
 
         `doc` is what `yaml_strict.load` returned. The result is its schema issues
         when it has any, else the issues of continuo's Python rules. The schema check is
@@ -53,7 +53,7 @@ class ContractValidator:
         if known:
             return list(known)
         # The schema accepts only an object, so a document without schema issues is a mapping.
-        return rule_issues(cast(Mapping[str, Any], doc), path=path, service=service)
+        return rule_issues(cast(Mapping[str, Any], doc), path=path, project=project)
 
     def check_dbt(self, doc: object, *, on_cache: Callable[[bool], None]) -> list[Issue]:
         """Return every issue of `doc`, the contract of a dbt node, or an empty list when

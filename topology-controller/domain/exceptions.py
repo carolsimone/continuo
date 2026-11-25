@@ -33,7 +33,7 @@ class MalformedContractError(ValueError):
 class InvalidOdcsBundleError(ValueError):
     """A `python-odcs` producer bundle (`odcs-bundle.json`) that cannot be read
     as a whole: it is not the JSON document of a version this install reads, it
-    names another service, one of its keys is missing or mistyped, two of its
+    names another project, one of its keys is missing or mistyped, two of its
     nodes share a path or resolve to one node, or its producer's
     continuo-contracts is newer than the install's. A re-delivery cannot fix
     it. A contract that is invalid on its own is not this error: it is one
@@ -67,7 +67,7 @@ class InvalidOntologyError(ValueError):
     """The install's ontology file cannot be used as a whole: it is not UTF-8 text, it is
     not an ontology file the library reads, one of its own rules finds an error in it, or
     the release it belongs to cannot be read from its key. A re-delivery cannot fix it.
-    The message leads with the service that released the file.
+    The message leads with the project that released the file.
 
     rule_errors holds the rule of each error the file's own rules found, one entry per
     error, so the release can count them; it is empty when the file did not load."""

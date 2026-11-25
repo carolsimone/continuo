@@ -36,7 +36,7 @@ def _published(redis) -> dict:
 
 
 def _failed(**over) -> FailedNode:
-    fields = {"node_id": "analytics.orders", "kind": ParseFailureKind.INVALID_CONTRACT, "service": "service-1",
+    fields = {"node_id": "analytics.orders", "kind": ParseFailureKind.INVALID_CONTRACT, "project": "service-1",
               "file_path": "models/orders.sql", "node_type": NodeType.DBT_MODEL, "detail": "a problem"}
     return FailedNode(**(fields | over))
 
@@ -54,7 +54,7 @@ def _release_whose_parse_finds(tmp_path, monkeypatch, *failed: FailedNode):
         candidate_manifest_handler, "parser_for",
         lambda kind: ManifestParser(parse=parse, permanent_errors=(), empty_detail="empty"))
     redis = MagicMock()
-    source = source_of(ManifestFile(path=str(manifest), image_tag="", declared_service="service-1"))
+    source = source_of(ManifestFile(path=str(manifest), image_tag="", declared_project="service-1"))
 
     build_handler(source, _publishing(redis), make_uploader()).handle(release_id="rel-1")
 
@@ -63,13 +63,13 @@ def _release_whose_parse_finds(tmp_path, monkeypatch, *failed: FailedNode):
 
 @pytest.mark.parametrize("field, text", [
     ("node id", "analytics.orders" + _LONE_SURROGATE),
-    ("service", "service" + _LONE_SURROGATE),
+    ("project", "project" + _LONE_SURROGATE),
     ("file path", "models/orders" + _LONE_SURROGATE + ".sql"),
     ("detail", "the column " + _LONE_SURROGATE + " is missing"),
 ])
 def test_a_failed_node_holding_unencodable_text_is_published_as_an_invalid_artifact(
         tmp_path, monkeypatch, field, text):
-    name = {"node id": "node_id", "service": "service", "file path": "file_path", "detail": "detail"}[field]
+    name = {"node id": "node_id", "project": "project", "file path": "file_path", "detail": "detail"}[field]
     unencodable = {"node_id": "analytics.customers"} | {name: text}
 
     payload = _release_whose_parse_finds(tmp_path, monkeypatch, _failed(), _failed(**unencodable))
@@ -93,29 +93,29 @@ def test_a_rejection_that_could_be_published_keeps_its_failed_nodes(tmp_path, mo
     """Text that UTF-8 can encode, however far from ASCII, is published as it is."""
     payload = _release_whose_parse_finds(
         tmp_path, monkeypatch,
-        _failed(kind=kind, node_id="analytics.commandes_é", service="service-é", file_path="models/日本語.sql",
+        _failed(kind=kind, node_id="analytics.commandes_é", project="service-é", file_path="models/日本語.sql",
                 detail="colonne manquante 🚫"))
 
     assert payload["failure_kind"] == kind.value
-    assert [(n["node_id"], n["service"], n["file_path"], n["detail"]) for n in payload["failed_nodes"]] == [
+    assert [(n["node_id"], n["project"], n["file_path"], n["detail"]) for n in payload["failed_nodes"]] == [
         ("analytics.commandes_é", "service-é", "models/日本語.sql", "colonne manquante 🚫")]
 
 
-def test_a_declared_service_holding_unencodable_text_gets_a_rejection_not_a_retry(tmp_path):
-    """The service name comes from the release request. A manifest with no node is rejected with a detail
-    that names the service, which here cannot be encoded."""
+def test_a_declared_project_holding_unencodable_text_gets_a_rejection_not_a_retry(tmp_path):
+    """The project name comes from the release request. A manifest with no node is rejected with a detail
+    that names the project, which here cannot be encoded."""
     manifest = tmp_path / "manifest.json"
     manifest.write_text(json.dumps({"nodes": {}}))
     redis = MagicMock()
     source = source_of(ManifestFile(
-        path=str(manifest), image_tag="", declared_service="service" + _LONE_SURROGATE))
+        path=str(manifest), image_tag="", declared_project="project" + _LONE_SURROGATE))
 
     build_handler(source, _publishing(redis), make_uploader()).handle(release_id="rel-1")
 
     payload = _published(redis)
     assert (payload["status"], payload["failure_kind"], payload["failed_nodes"]) == ("failed", "invalid_artifact", [])
     assert payload["detail"] == (
-        r"release rel-1: the failure holds text UTF-8 cannot encode (service\ud800: manifest contains no model/seed nodes)")
+        r"release rel-1: the failure holds text UTF-8 cannot encode (project\ud800: manifest contains no model/seed nodes)")
 
 
 def test_the_quoted_part_of_an_unencodable_detail_is_capped(tmp_path):
@@ -123,7 +123,7 @@ def test_the_quoted_part_of_an_unencodable_detail_is_capped(tmp_path):
     manifest.write_text(json.dumps({"nodes": {}}))
     redis = MagicMock()
     source = source_of(ManifestFile(
-        path=str(manifest), image_tag="", declared_service=_LONE_SURROGATE + "s" * 5000))
+        path=str(manifest), image_tag="", declared_project=_LONE_SURROGATE + "s" * 5000))
 
     build_handler(source, _publishing(redis), make_uploader()).handle(release_id="rel-1")
 

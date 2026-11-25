@@ -119,7 +119,7 @@ func TestDecode_ReadsTheOntologyVersion(t *testing.T) {
 	doc, err := contractbundle.Decode(obj, sha(obj))
 	require.NoError(t, err)
 
-	assert.Equal(t, "rel-9f8e7d6-14@sha256:bd4d098b4e54cd2181b7c553c13827313c3638a1a145104d51d127733f9a0da0", doc.OntologyVersion())
+	assert.Equal(t, "rel-9f8e7d6-14@sha256:7fbc2f43bfb6483c0ac8996f21c72df341c9579998d6acdb79f8c7143dcf2c46", doc.OntologyVersion())
 	assert.Equal(t, contractbundle.Summary{Contracts: 2, ByFamily: map[model.ContractFamily]int{"dbt": 1, "python": 1}}, doc.Summary)
 }
 

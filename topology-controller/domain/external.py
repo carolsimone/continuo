@@ -49,7 +49,7 @@ def unknown_external_nodes(
 
     The only state it changes is the readers' upstream_deps, which gain one
     edge to each unknown-external table they read, once. The returned nodes have no
-    service, schedule, owner, content or image, and no builder: nothing in the
+    project, schedule, owner, content or image, and no builder: nothing in the
     release produces them.
     """
     built: set[str] = set()
@@ -72,12 +72,12 @@ def unknown_external_nodes(
                 found[ref.key] = ManifestNode(
                     table_name=ref.table,
                     schema_name=ref.schema,
-                    service_name="",
+                    project_name="",
                     owner="",
                     schedule_name="",
                     criticality="",
                     node_type=NodeType.UNKNOWN_EXTERNAL,
                     runtime=NodeRuntime.EXTERNAL,
                 )
-            node.upstream_deps.append(UpstreamDep(table_name=ref.table, schema_name=ref.schema, service_name=""))
+            node.upstream_deps.append(UpstreamDep(table_name=ref.table, schema_name=ref.schema, project_name=""))
     return [found[key] for key in sorted(found)]

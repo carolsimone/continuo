@@ -13,7 +13,7 @@ def _ctx(**overrides):
     registry = {
         ("test_schema", "users"): NodeRegistryEntry(
             table_name="users", schema_name="test_schema",
-            service_name="service-1", owner="team-a", relation="users",
+            project_name="service-1", owner="team-a", relation="users",
         ),
     }
     base = dict(
@@ -33,7 +33,7 @@ def test_dbt_builder_rewrites_the_compiled_sql_and_uploads_it():
     uploader = MagicMock()
     uploader.upload.return_value = "s3://continuo/candidate-sql/rel-1/candidate_test_schema.orders.sql"
     node = ManifestNode(
-        table_name="orders", schema_name="test_schema", service_name="service-2",
+        table_name="orders", schema_name="test_schema", project_name="service-2",
         owner="team-b", schedule_name="daily", criticality="SECONDARY",
         dependency_sqls=["SELECT * FROM test_schema.users"],
         candidate_sql="SELECT * FROM test_schema.users",
@@ -56,7 +56,7 @@ def test_dbt_builder_leaves_a_self_reference_on_the_production_schema():
     uploader = MagicMock()
     uploader.upload.return_value = "s3://x"
     node = ManifestNode(
-        table_name="users", schema_name="test_schema", service_name="service-1",
+        table_name="users", schema_name="test_schema", project_name="service-1",
         owner="team-a", schedule_name="daily", criticality="SECONDARY",
         candidate_sql="SELECT * FROM test_schema.users",
         node_type=NodeType.DBT_MODEL, runtime=Runtime.DBT,
@@ -74,7 +74,7 @@ def _trino_runtime_nodes_ctx():
         registry={
             ("runtime", "nodes"): NodeRegistryEntry(
                 table_name="nodes", schema_name="runtime",
-                service_name="service-1", owner="team-a", relation="nodes",
+                project_name="service-1", owner="team-a", relation="nodes",
             ),
         },
         dialect="trino", system_relations=_SYSTEM_RELATIONS["trino"],
@@ -88,7 +88,7 @@ def test_dbt_builder_leaves_a_system_relation_of_the_contexts_engine_alone():
     uploader = MagicMock()
     uploader.upload.return_value = "s3://x"
     node = ManifestNode(
-        table_name="reader", schema_name="test_schema", service_name="service-2",
+        table_name="reader", schema_name="test_schema", project_name="service-2",
         owner="team-b", schedule_name="daily", criticality="SECONDARY",
         candidate_sql="SELECT * FROM system.runtime.nodes s, warehouse.runtime.nodes w",
         node_type=NodeType.DBT_MODEL, runtime=Runtime.DBT,
@@ -105,7 +105,7 @@ def test_python_builder_leaves_a_system_relation_of_the_contexts_engine_alone():
     uploader = MagicMock()
     uploader.upload.return_value = "s3://x"
     node = ManifestNode(
-        table_name="py_metrics", schema_name="test_schema", service_name="service-py",
+        table_name="py_metrics", schema_name="test_schema", project_name="service-py",
         owner="team-py", schedule_name="daily", criticality="SECONDARY",
         dependency_sqls=[
             "select * from system.runtime.nodes",
@@ -131,11 +131,11 @@ def test_dbt_builder_leaves_a_self_reference_to_its_alias_on_the_production_sche
     registry = {
         ("test_schema", "users_tbl"): NodeRegistryEntry(
             table_name="users", schema_name="test_schema",
-            service_name="service-1", owner="team-a", relation="users_tbl",
+            project_name="service-1", owner="team-a", relation="users_tbl",
         ),
     }
     node = ManifestNode(
-        table_name="users", schema_name="test_schema", service_name="service-1",
+        table_name="users", schema_name="test_schema", project_name="service-1",
         owner="team-a", schedule_name="daily", criticality="SECONDARY",
         candidate_sql="SELECT * FROM test_schema.users_tbl", resolved_relation="users_tbl",
         node_type=NodeType.DBT_MODEL, runtime=Runtime.DBT,
@@ -153,7 +153,7 @@ def test_python_builder_uploads_rewritten_reads_columns_and_config():
     uploader = MagicMock()
     uploader.upload.return_value = "s3://continuo/candidate-sql/rel-1/candidate_test_schema.py_metrics.json"
     node = ManifestNode(
-        table_name="py_metrics", schema_name="test_schema", service_name="service-py",
+        table_name="py_metrics", schema_name="test_schema", project_name="service-py",
         owner="team-py", schedule_name="daily", criticality="SECONDARY",
         dependency_sqls=[
             "select id from test_schema.users",
@@ -170,7 +170,7 @@ def test_python_builder_uploads_rewritten_reads_columns_and_config():
     called = uploader.upload.call_args.kwargs
     assert called["unique_id"] == "test_schema.py_metrics"
     spec = called["spec"]
-    # A read on a registered node is redirected; a table no service owns is not.
+    # A read on a registered node is redirected; a table no project owns is not.
     # rewrite_to_candidate_schema force-quotes only the schema identifier, not
     # the table, so the rewritten form is "_candidate_rel_1".users.
     assert '"_candidate_rel_1".users' in spec["reads"][0]
@@ -185,7 +185,7 @@ def test_python_builder_preserves_read_order():
     uploader = MagicMock()
     uploader.upload.return_value = "s3://x"
     node = ManifestNode(
-        table_name="py_metrics", schema_name="test_schema", service_name="service-py",
+        table_name="py_metrics", schema_name="test_schema", project_name="service-py",
         owner="team-py", schedule_name="daily", criticality="SECONDARY",
         dependency_sqls=["select 1 as a", "select 2 as b", "select 3 as c"],
         output_columns=[{"name": "a", "type": "INTEGER", "nullable": True}],
@@ -204,7 +204,7 @@ def test_python_builder_includes_csv_source_for_csv_nodes():
     uploader = MagicMock()
     uploader.upload.return_value = "s3://continuo/candidate-sql/rel-1/candidate_test_schema.orders_csv.json"
     node = ManifestNode(
-        table_name="orders_csv", schema_name="test_schema", service_name="service-py",
+        table_name="orders_csv", schema_name="test_schema", project_name="service-py",
         owner="team-py", schedule_name="daily", criticality="SECONDARY",
         dependency_sqls=[],
         output_columns=[{"name": "order_id", "type": "INTEGER", "nullable": False}],
@@ -225,7 +225,7 @@ def test_python_builder_omits_csv_source_for_model_nodes():
     uploader = MagicMock()
     uploader.upload.return_value = "s3://x"
     node = ManifestNode(
-        table_name="py_metrics", schema_name="test_schema", service_name="service-py",
+        table_name="py_metrics", schema_name="test_schema", project_name="service-py",
         owner="team-py", schedule_name="daily", criticality="SECONDARY",
         dependency_sqls=["select 1"],
         output_columns=[{"name": "a", "type": "INTEGER", "nullable": True}],
@@ -247,11 +247,11 @@ def test_python_builder_leaves_a_self_reference_on_the_production_schema():
     registry = {
         ("test_schema", "py_metrics"): NodeRegistryEntry(
             table_name="py_metrics", schema_name="test_schema",
-            service_name="service-py", owner="team-py", relation="py_metrics",
+            project_name="service-py", owner="team-py", relation="py_metrics",
         ),
     }
     node = ManifestNode(
-        table_name="py_metrics", schema_name="test_schema", service_name="service-py",
+        table_name="py_metrics", schema_name="test_schema", project_name="service-py",
         owner="team-py", schedule_name="daily", criticality="SECONDARY",
         dependency_sqls=["select id from test_schema.py_metrics"],
         output_columns=[{"name": "id", "type": "INTEGER", "nullable": True}],
@@ -266,7 +266,7 @@ def test_python_builder_leaves_a_self_reference_on_the_production_schema():
 def test_the_dbt_builder_times_the_rewrite_and_the_upload_apart_without_reading_memory():
     memory = ScriptedMemoryProbe(0)
     timings = ReleaseTimings("rel-1", FakeClock(step=1.0), memory)
-    node = ManifestNode(table_name="orders", schema_name="test_schema", service_name="service-2",
+    node = ManifestNode(table_name="orders", schema_name="test_schema", project_name="service-2",
                         owner="team-b", schedule_name="daily", criticality="CORE",
                         candidate_sql="select * from test_schema.users")
     DbtSqlArtifactBuilder(MagicMock()).build(node, _ctx(timings=timings))

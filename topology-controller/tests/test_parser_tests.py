@@ -39,7 +39,7 @@ def test_generic_test_becomes_a_dbt_test_node(tmp_path):
     assert t.node_type == NodeType.DBT_TEST
     assert t.table_name == "not_null_orders_id"
     assert t.schema_name == "analytics_dbt_test__audit"
-    assert t.service_name == "svc-a"
+    assert t.project_name == "svc-a"
     assert t.candidate_sql == "select id from analytics.orders where id is null"
     assert t.dependency_sqls == ["select id from analytics.orders where id is null"]
     assert t.original_file_path == "models/schema.yml"

@@ -10,12 +10,12 @@ PG = _SYSTEM_RELATIONS["postgres"]
 TRINO = _SYSTEM_RELATIONS["trino"]
 
 
-def _model(table, schema="analytics", *, alias="", node_type=NodeType.DBT_MODEL, service="service-1", sql="",
+def _model(table, schema="analytics", *, alias="", node_type=NodeType.DBT_MODEL, project="service-1", sql="",
            schedule="daily"):
     """A node that builds schema.table (under alias when it has one), and when
     sql is given, one that reads what the sql names."""
     return ManifestNode(
-        table_name=table, schema_name=schema, service_name=service, owner="team-a",
+        table_name=table, schema_name=schema, project_name=project, owner="team-a",
         schedule_name=schedule, criticality="CORE", node_type=node_type,
         resolved_relation=alias, dependency_sqls=[sql] if sql else [],
     )
@@ -67,7 +67,7 @@ def test_a_table_no_node_builds_becomes_one_unknown_external_node_with_an_edge_p
     assert [n.unique_id for n in out] == ["raw.ingest_probe"]
     n = out[0]
     assert (
-        n.node_type, n.runtime, n.service_name, n.schedule_name, n.content_hash,
+        n.node_type, n.runtime, n.project_name, n.schedule_name, n.content_hash,
         n.image_tag, n.original_file_path, n.test_count, n.upstream_deps,
     ) == (NodeType.UNKNOWN_EXTERNAL, NodeRuntime.EXTERNAL, "", "", "", "", "", 0, [])
     assert n.resolved_relation_id == "raw.ingest_probe"
@@ -90,11 +90,11 @@ def test_an_unknown_external_node_carries_no_owner_criticality_or_sql():
     assert (n.table_name, n.schema_name) == ("ext", "raw")
 
 
-def test_the_edge_an_unknown_external_table_gives_its_reader_names_no_service():
+def test_the_edge_an_unknown_external_table_gives_its_reader_names_no_project():
     a = _model("reader")
     unknown_external_nodes([a], {a.node_key: [_ref("raw.ext")]}, system=PG)
     (dep,) = a.upstream_deps
-    assert (dep.schema_name, dep.table_name, dep.service_name) == ("raw", "ext", "")
+    assert (dep.schema_name, dep.table_name, dep.project_name) == ("raw", "ext", "")
 
 
 def test_one_node_for_every_spelling_of_a_table():
@@ -181,7 +181,7 @@ def test_the_real_table_is_one_unknown_external_node_beside_a_system_read_howeve
 
 def test_a_reader_keeps_the_edges_it_already_has():
     reader = _model("reader")
-    reader.upstream_deps = [UpstreamDep(table_name="orders", schema_name="analytics", service_name="service-1")]
+    reader.upstream_deps = [UpstreamDep(table_name="orders", schema_name="analytics", project_name="service-1")]
     unknown_external_nodes([reader], {reader.node_key: [_ref("raw.ext")]}, system=PG)
     assert [d.unique_id for d in reader.upstream_deps] == ["analytics.orders", "raw.ext"]
 
@@ -248,8 +248,8 @@ def test_a_test_with_reads_still_gets_no_edge_and_makes_no_node():
     assert test.upstream_deps == []
 
 
-def test_two_services_reading_one_table_share_one_node():
-    a, b = _model("reader_a", service="service-1"), _model("reader_b", service="service-2")
+def test_two_projects_reading_one_table_share_one_node():
+    a, b = _model("reader_a", project="service-1"), _model("reader_b", project="service-2")
     out = unknown_external_nodes([a, b], {a.node_key: [_ref("raw.ext")], b.node_key: [_ref("raw.ext")]}, system=PG)
     assert [n.unique_id for n in out] == ["raw.ext"]
     assert [d.unique_id for d in a.upstream_deps] == ["raw.ext"] == [d.unique_id for d in b.upstream_deps]

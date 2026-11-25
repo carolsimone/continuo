@@ -87,8 +87,8 @@ def test_stages_ms_names_every_stage_in_pipeline_order_and_zero_for_one_that_did
 
 
 def _node(runtime: Runtime, declared_columns: int, *, schedule: str = "daily",
-          node_type: NodeType = NodeType.DBT_MODEL, service: str = "svc-a") -> ManifestNode:
-    return ManifestNode(table_name="t", schema_name="s", service_name=service, owner="o",
+          node_type: NodeType = NodeType.DBT_MODEL, project: str = "svc-a") -> ManifestNode:
+    return ManifestNode(table_name="t", schema_name="s", project_name=project, owner="o",
                         schedule_name=schedule, criticality="SECONDARY", runtime=runtime,
                         node_type=node_type, declared_columns=declared_columns)
 
@@ -162,17 +162,17 @@ def test_a_release_with_no_nodes_counts_every_runtime_and_reason_at_zero():
     assert fields["dormant"] == {}
 
 
-def test_add_nodes_counts_a_dormant_node_under_its_service_and_nothing_else_as_dormant():
+def test_add_nodes_counts_a_dormant_node_under_its_project_and_nothing_else_as_dormant():
     """A dormant node is a dbt or python node with no schedule that is not a test.
     A test node and an unknown-external node carry no schedule either and are not."""
     timings = _timings()
     timings.add_nodes([
-        _node(Runtime.DBT, 0, schedule="", service="svc-b"),
-        _node(Runtime.DBT, 0, schedule="", service="svc-a"),
-        _node(Runtime.DBT, 0, schedule="", service="svc-b"),
-        _node(Runtime.DBT, 0, schedule="daily", service="svc-a"),
+        _node(Runtime.DBT, 0, schedule="", project="svc-b"),
+        _node(Runtime.DBT, 0, schedule="", project="svc-a"),
+        _node(Runtime.DBT, 0, schedule="", project="svc-b"),
+        _node(Runtime.DBT, 0, schedule="daily", project="svc-a"),
         _node(Runtime.DBT, 0, schedule="", node_type=NodeType.DBT_TEST),
-        _node(Runtime.EXTERNAL, 0, schedule="", node_type=NodeType.UNKNOWN_EXTERNAL, service=""),
+        _node(Runtime.EXTERNAL, 0, schedule="", node_type=NodeType.UNKNOWN_EXTERNAL, project=""),
     ])
     assert timings.dormant == {"svc-b": 2, "svc-a": 1}
     assert list(timings.log_fields()["dormant"]) == ["svc-a", "svc-b"]

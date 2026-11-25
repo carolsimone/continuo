@@ -34,7 +34,7 @@ _CHANGED = (
 
 def _dbt_node() -> ManifestNode:
     return ManifestNode(
-        table_name="revenue", schema_name="analytics", service_name="service-a",
+        table_name="revenue", schema_name="analytics", project_name="service-a",
         owner="team-a", schedule_name="daily", criticality="SECONDARY",
         candidate_sql="select 1 as id from analytics.orders", node_type="dbt-model",
         raw_code="select 1 as id from {{ ref('orders') }}",
@@ -60,7 +60,7 @@ def _python_node() -> ManifestNode:
             extra_columns="raise", config={}, secret_ref="", mode_type="replace",
             primary_key=[], assets=[], timeout_seconds=None,
         ),
-        service="marketing-py", image_tag="img:1", source_hash="aaa111", shared_code_hash="bbb222",
+        project="marketing-py", image_tag="img:1", source_hash="aaa111", shared_code_hash="bbb222",
     )
 
 

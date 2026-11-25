@@ -42,7 +42,7 @@ def ontology_manifest(tmp_path, text: str) -> ManifestFile:
     path = Path(tmp_path) / "ontology.yaml"
     path.write_text(text, encoding="utf-8")
     return ManifestFile(
-        path=str(path), declared_service="company-ontology", kind=ManifestKind.ONTOLOGY, release_id="rel-onto-4")
+        path=str(path), declared_project="company-ontology", kind=ManifestKind.ONTOLOGY, release_id="rel-onto-4")
 
 
 def release(tmp_path, *, ontology_text: str | None, tables=("py_daily_kpis",), extra=(), enabled=True,
@@ -87,7 +87,7 @@ def test_a_checker_error_rejects_naming_the_node(tmp_path):
     assert kwargs["failure_kind"] is ParseFailureKind.INVALID_CONTRACT
     assert kwargs["detail"] == "1 node failed to parse: analytics.py_daily_kpis"
     assert kwargs["failed_nodes"] == [FailedNode(
-        node_id="analytics.py_daily_kpis", kind=ParseFailureKind.INVALID_CONTRACT, service="service-py",
+        node_id="analytics.py_daily_kpis", kind=ParseFailureKind.INVALID_CONTRACT, project="service-py",
         file_path=PATH, node_type=NodeType.PYTHON_NODE, detail=BROKEN_BINDING,
     )]
     assert timings.contract_failures == {("ontology", "contract"): 1}
@@ -96,18 +96,18 @@ def test_a_checker_error_rejects_naming_the_node(tmp_path):
 
 def test_an_ontology_that_breaks_a_binding_rejects_naming_the_nodes(tmp_path):
     """The release that carries the ontology is the rejected one, and each failed node is a node of
-    the other service whose binding the new ontology breaks: no node names the ontology service."""
+    the other project whose binding the new ontology breaks: no node names the ontology project."""
     publisher, _, timings = release(
         tmp_path, ontology_text=ontology_without_amount(), tables=("py_weekly_kpis", "py_daily_kpis"))
 
     kwargs = failed_kwargs(publisher)
     assert kwargs["failure_kind"] is ParseFailureKind.INVALID_CONTRACT
     assert kwargs["detail"] == "2 nodes failed to parse: analytics.py_daily_kpis, analytics.py_weekly_kpis"
-    assert [(n.node_id, n.service, n.kind) for n in kwargs["failed_nodes"]] == [
+    assert [(n.node_id, n.project, n.kind) for n in kwargs["failed_nodes"]] == [
         ("analytics.py_daily_kpis", "service-py", ParseFailureKind.INVALID_CONTRACT),
         ("analytics.py_weekly_kpis", "service-py", ParseFailureKind.INVALID_CONTRACT),
     ]
-    assert {n.service for n in kwargs["failed_nodes"]}.isdisjoint({"company-ontology"})
+    assert {n.project for n in kwargs["failed_nodes"]}.isdisjoint({"company-ontology"})
     assert timings.contract_failures == {("ontology", "contract"): 2}
 
 
@@ -125,7 +125,7 @@ def test_the_errors_of_one_node_are_joined_and_each_is_counted_by_its_rule(tmp_p
     assert timings.contract_failures == {("ontology", "contract"): 1, ("ontology", "coverage"): 1}
 
 
-def test_an_error_that_names_no_contract_is_an_invalid_artifact_naming_the_ontology_service(tmp_path, monkeypatch):
+def test_an_error_that_names_no_contract_is_an_invalid_artifact_naming_the_ontology_project(tmp_path, monkeypatch):
     monkeypatch.setattr(ontology_check, "check", failing_check([
         Finding("error", "order", "copy graph", "a cycle", None),
         Finding("error", "contract", "analytics.py_daily_kpis", "a node's own", "analytics.py_daily_kpis"),
@@ -155,7 +155,7 @@ def test_the_checker_runs_the_release_rules_over_every_stored_contract(tmp_path,
     seen = {}
 
     def check(ontology, contracts, *, rules, progress):
-        seen.update(rules=tuple(rules), ids=[c["id"] for c in contracts], services=ontology.services())
+        seen.update(rules=tuple(rules), ids=[c["id"] for c in contracts], projects=ontology.projects())
         return []
 
     monkeypatch.setattr(ontology_check, "check", check)
@@ -164,7 +164,7 @@ def test_the_checker_runs_the_release_rules_over_every_stored_contract(tmp_path,
 
     assert seen == {
         "rules": RELEASE_RULES, "ids": ["analytics.py_daily_kpis", "analytics.py_weekly_kpis"],
-        "services": ("core", "finance", "service-py"),
+        "projects": ("core", "finance", "service-py"),
     }
 
 
@@ -184,10 +184,10 @@ def test_warnings_never_reject_and_reach_the_bundle(tmp_path):
     ]
 
 
-def test_the_findings_about_an_undeclared_service_are_written_by_the_checker_and_kept(tmp_path):
-    """The checker writes one information line for a service the ontology does not declare and a
+def test_the_findings_about_an_undeclared_project_are_written_by_the_checker_and_kept(tmp_path):
+    """The checker writes one information line for a project the ontology does not declare and a
     warning for each of its contracts that binds: continuo adds none of its own."""
-    undeclared = ontology_vector("service_not_declared")["ontology"]
+    undeclared = ontology_vector("project_not_declared")["ontology"]
 
     publisher, writer, _ = release(tmp_path, ontology_text=undeclared)
 
@@ -223,12 +223,12 @@ def test_the_check_runs_only_when_every_node_resolved(tmp_path, monkeypatch):
     dbt_path = Path(tmp_path) / "service-1.json"
     dbt_path.parent.mkdir(parents=True, exist_ok=True)
     dbt_path.write_text(json.dumps({"nodes": {"model.service-1.broken": dbt_node("broken")}}))
-    dbt_manifest = ManifestFile(path=str(dbt_path), declared_service="service-1")
+    dbt_manifest = ManifestFile(path=str(dbt_path), declared_project="service-1")
     monkeypatch.setattr(ontology_check, "check", failing_check(
         [Finding("error", "contract", "analytics.py_daily_kpis", "never run", "analytics.py_daily_kpis")]))
 
     def unreadable(node, *, dialect, **kwargs):
-        if node.service_name == "service-1":
+        if node.project_name == "service-1":
             raise InvalidCompiledSqlError(node_table_name=node.table_name, detail="broken")
         return []
 
@@ -350,7 +350,7 @@ def _logged_release(tmp_path, caplog, **kwargs):
 
 
 def test_the_release_line_counts_the_warnings_and_information_the_check_found(tmp_path, caplog, monkeypatch):
-    """A line per finding would be one per contract of an undeclared service: the release line
+    """A line per finding would be one per contract of an undeclared project: the release line
     carries one count per severity, and the findings themselves are in the contract bundle."""
     monkeypatch.setattr(ontology_check, "check", failing_check([
         Finding("warning", "contract", "analytics.a", "one", "analytics.a"),

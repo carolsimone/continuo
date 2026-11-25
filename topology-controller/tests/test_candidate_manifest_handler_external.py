@@ -44,7 +44,7 @@ def test_the_probe_release_writes_one_unknown_external_node_and_two_edges(tmp_pa
     by_id = _topology(_probe_release(tmp_path))
     assert by_id["raw.ingest_probe"] == {
         "unique_id": "raw.ingest_probe", "schema_name": "raw", "table_name": "ingest_probe",
-        "resolved_relation_id": "raw.ingest_probe", "service_name": "", "node_type": "unknown-external",
+        "resolved_relation_id": "raw.ingest_probe", "project_name": "", "node_type": "unknown-external",
         "test_count": 0, "content_hash": "", "image_tag": "", "original_file_path": "",
         "upstream_unique_ids": [], "schedule": "",
     }

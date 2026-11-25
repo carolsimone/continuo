@@ -10,7 +10,7 @@ for a seed and a python node. A dbt node also carries `hashed_config`, the
 config its config part hashes, and a python node whose code projection is set
 carries it as `projection`, beside its `raw_code` contract entry. The top-level
 `tests` map holds each tracked dbt test, keyed by its dbt unique id, with its
-compiled SQL and hash parts, and `provenance` holds, per dbt service, the dbt
+compiled SQL and hash parts, and `provenance` holds, per dbt project, the dbt
 version, image tag and package versions its compile ran with and the seeds
 whose source part is still dbt's `path` checksum.
 """
@@ -59,7 +59,7 @@ def build_code_bundle(
     provenance: dict[str, dict],
 ) -> dict:
     """The bundle document of a release: its published nodes, the shared-code
-    units they fold, its tracked dbt tests and each dbt service's provenance."""
+    units they fold, its tracked dbt tests and each dbt project's provenance."""
     return {
         "contract_version": CONTRACT_VERSION,
         "release_id": release_id,

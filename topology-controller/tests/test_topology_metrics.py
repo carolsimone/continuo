@@ -189,7 +189,7 @@ def test_a_finished_release_moves_every_release_series():
 
 
 def test_a_finished_release_sets_the_dormant_gauge():
-    """The gauge holds the release's dormant nodes over every service."""
+    """The gauge holds the release's dormant nodes over every project."""
     metrics = TopologyMetrics("topology-controller")
     metrics.release_finished(_finished({"dbt": 2}, dormant={"shop": 1}))
     assert _value(metrics, "continuo_topology_release_dormant_nodes") == 1.0

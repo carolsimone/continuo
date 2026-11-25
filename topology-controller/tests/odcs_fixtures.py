@@ -18,7 +18,7 @@ from service.release_timings import ReleaseTimings
 from tests.fakes import FakeClock, ScriptedMemoryProbe
 
 DEMO_DIR = Path(__file__).parent / "fixtures" / "odcs_demo"
-SERVICE = "service-py"
+PROJECT = "service-py"
 DEMO_NAMES = ("demo_orders_csv", "fx_eur_usd_rates", "py_daily_kpis")
 IMAGE_TAG = "img:1"
 
@@ -153,7 +153,7 @@ def demo_nodes() -> list[dict]:
 def bundle_doc(
     nodes: list[dict],
     *,
-    service: str = SERVICE,
+    project: str = PROJECT,
     producer_runtime: str = "0.13.0",
     producer_contracts: str = "0.2.0",
     image_packages: dict | None = None,
@@ -161,24 +161,24 @@ def bundle_doc(
     """A producer bundle, as `continuo-runtime pack` builds it."""
     return {
         "bundle_version": 1,
-        "service": service,
+        "project": project,
         "producer": {"continuo_python_runtime": producer_runtime, "continuo_contracts": producer_contracts},
         "image_packages": {"pyarrow": "26.0.0"} if image_packages is None else image_packages,
         "nodes": nodes,
     }
 
 
-def write_bundle(tmp_path: Path, doc: object, *, declared_service: str = SERVICE, name: str = "odcs-bundle.json") -> ManifestFile:
+def write_bundle(tmp_path: Path, doc: object, *, declared_project: str = PROJECT, name: str = "odcs-bundle.json") -> ManifestFile:
     """Write `doc` as a bundle file and return the ManifestFile that names it."""
     path = tmp_path / name
     path.write_bytes((json.dumps(doc, sort_keys=True, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
-    return ManifestFile(path=str(path), image_tag=IMAGE_TAG, declared_service=declared_service, kind=ManifestKind.PYTHON_ODCS)
+    return ManifestFile(path=str(path), image_tag=IMAGE_TAG, declared_project=declared_project, kind=ManifestKind.PYTHON_ODCS)
 
 
-def bundle_file(tmp_path: Path, nodes: list[dict], *, declared_service: str = SERVICE, **producer) -> ManifestFile:
+def bundle_file(tmp_path: Path, nodes: list[dict], *, declared_project: str = PROJECT, **producer) -> ManifestFile:
     """Write a bundle of `nodes` and return the ManifestFile that names it. `producer` takes
-    `service`, `producer_runtime`, `producer_contracts` and `image_packages`."""
-    return write_bundle(tmp_path, bundle_doc(nodes, **producer), declared_service=declared_service)
+    `project`, `producer_runtime`, `producer_contracts` and `image_packages`."""
+    return write_bundle(tmp_path, bundle_doc(nodes, **producer), declared_project=declared_project)
 
 
 def release_timings() -> ReleaseTimings:

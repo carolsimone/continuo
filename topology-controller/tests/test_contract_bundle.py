@@ -40,14 +40,14 @@ def _vector(name: str) -> dict:
     return next(v for v in _VECTORS if v["name"] == name)
 
 
-def _node(name: str, text: str, *, path: str | None = None, service: str = "service-py") -> ManifestNode:
+def _node(name: str, text: str, *, path: str | None = None, project: str = "service-py") -> ManifestNode:
     """The node the python-odcs parse builds from `text`, with the fields the stored form reads."""
     document = yaml_strict.load(text)
     schema, table = document["id"].split(".")
     return ManifestNode(
         table_name=table,
         schema_name=schema,
-        service_name=service,
+        project_name=project,
         owner="team-py",
         schedule_name="daily",
         criticality="SECONDARY",
@@ -80,7 +80,7 @@ def _dbt_node(name: str, *, edit=None) -> ManifestNode:
     return ManifestNode(
         table_name=facts.table,
         schema_name=facts.schema,
-        service_name=facts.service,
+        project_name=facts.project,
         owner=facts.owner,
         schedule_name=facts.schedule,
         criticality=facts.criticality,
@@ -210,19 +210,19 @@ def test_only_system_relations_read_means_no_reads_property():
     assert _reads(kpis.document) == []
 
 
-def test_a_stored_contract_names_its_node_service_source_and_content_hash():
+def test_a_stored_contract_names_its_node_project_source_and_content_hash():
     node = _kpis_node()
 
     [kpis] = store_contracts([node], {}, POSTGRES_SYSTEM)
 
-    assert (kpis.unique_id, kpis.service, kpis.content_hash) == ("analytics.py_daily_kpis", "service-py", node.content_hash)
+    assert (kpis.unique_id, kpis.project, kpis.content_hash) == ("analytics.py_daily_kpis", "service-py", node.content_hash)
     assert (kpis.source_path, kpis.source_sha256) == (
         "contracts/py_daily_kpis.odcs.yaml", sha256_hex(demo_text("py_daily_kpis").encode("utf-8")))
 
 
 def test_a_node_with_no_contract_stores_nothing():
     dbt_like = ManifestNode(
-        table_name="users", schema_name="test_schema", service_name="service-1", owner="t", schedule_name="daily",
+        table_name="users", schema_name="test_schema", project_name="service-1", owner="t", schedule_name="daily",
         criticality="CORE")
 
     assert store_contracts([dbt_like], {}, POSTGRES_SYSTEM) == []
@@ -264,7 +264,7 @@ def test_a_contract_stored_twice_is_refused():
              "full_python_api", "messy_python_api", "messy_column_types"])
 def test_every_valid_library_vector_stores_to_its_stored_form_and_hash(name):
     vector = _vector(name)
-    node = _node(name, vector["text"], path=vector["path"], service=vector["service"])
+    node = _node(name, vector["text"], path=vector["path"], project=vector["project"])
     schema, table = node.schema_name, node.table_name
     refs = [TableRef(*ref.lower().split("."), "") for ref in vector["reads"]]
 
@@ -278,7 +278,7 @@ def test_every_valid_library_vector_stores_to_its_stored_form_and_hash(name):
 
 def test_a_normalise_the_library_refuses_is_counted_and_raised(monkeypatch):
     def refuse(*_args, **_kwargs):
-        raise HashInputError("service '': blank")
+        raise HashInputError("project '': blank")
 
     monkeypatch.setattr(contract_bundle_module, "normalise_python", refuse)
     timings = release_timings()
@@ -343,7 +343,7 @@ def test_every_table_the_library_lists_passes_the_check_and_every_one_it_refuses
     node = _kpis_node()
     for schema, table in _TABLE_CASES:
         library_accepts = _library_lists(
-            lambda tables: normalise_python(document, service="service-py", reads=tables), [f"{schema}.{table}"])
+            lambda tables: normalise_python(document, project="service-py", reads=tables), [f"{schema}.{table}"])
         failure = invalid_contract_reads(node, [TableRef(schema, table, "")], POSTGRES_SYSTEM)
         assert (failure is None) == library_accepts, (schema, table)
 
@@ -356,7 +356,7 @@ def test_the_failed_node_of_an_unlistable_table_is_named_like_any_invalid_contra
         POSTGRES_SYSTEM, timings=timings)
 
     assert failure == FailedNode(
-        node_id=_KPIS_ID, kind=ParseFailureKind.INVALID_CONTRACT, service="service-py",
+        node_id=_KPIS_ID, kind=ParseFailureKind.INVALID_CONTRACT, project="service-py",
         file_path="contracts/py_daily_kpis.odcs.yaml", node_type=NodeType.PYTHON_NODE,
         detail='readQueries: table analytics."a b" cannot be listed as <schema>.<table>: a name holds whitespace')
     assert timings.contract_failures == {("normalise", "value"): 1}
@@ -392,7 +392,7 @@ def test_a_table_read_through_two_catalogs_is_one_problem():
 def test_a_system_relation_is_not_checked_and_a_node_without_a_contract_has_nothing_to_list():
     timings = release_timings()
     dbt_like = ManifestNode(
-        table_name="users", schema_name="test_schema", service_name="service-1", owner="t", schedule_name="daily",
+        table_name="users", schema_name="test_schema", project_name="service-1", owner="t", schedule_name="daily",
         criticality="CORE")
 
     assert invalid_contract_reads(_kpis_node(), [TableRef("pg_catalog", "a b", "")], POSTGRES_SYSTEM, timings=timings) is None
@@ -423,7 +423,7 @@ def test_a_dbt_contract_lists_the_tables_its_sql_names():
     assert _reads(stored.document) == [["analytics.orders", "analytics.raw_events", "raw.events"]]
     assert stored.document == vector["stored"]
     assert stored.contract_hash == vector["contract_hash"]
-    assert (stored.family, stored.unique_id, stored.service, stored.content_hash) == (
+    assert (stored.family, stored.unique_id, stored.project, stored.content_hash) == (
         "dbt", "analytics.governed", "cases", node.content_hash)
     assert (stored.source_path, stored.source_sha256) == ("models/tagged/governed.sql", vector["source_sha256"])
 
@@ -493,7 +493,7 @@ def test_a_dbt_table_that_cannot_be_listed_is_an_invalid_contract():
         POSTGRES_SYSTEM, timings=timings)
 
     assert failure == FailedNode(
-        node_id="analytics.governed", kind=ParseFailureKind.INVALID_CONTRACT, service="cases",
+        node_id="analytics.governed", kind=ParseFailureKind.INVALID_CONTRACT, project="cases",
         file_path="models/tagged/governed.sql", node_type=NodeType.DBT_MODEL,
         detail='compiled SQL: table analytics."a b" cannot be listed as <schema>.<table>: a name holds whitespace')
     assert timings.contract_failures == {("normalise", "value"): 1}
@@ -544,7 +544,7 @@ def test_a_declared_read_that_cannot_be_listed_is_an_invalid_contract():
     failure = invalid_contract_reads(node, [], POSTGRES_SYSTEM, timings=timings)
 
     assert failure == FailedNode(
-        node_id="analytics.governed", kind=ParseFailureKind.INVALID_CONTRACT, service="cases",
+        node_id="analytics.governed", kind=ParseFailureKind.INVALID_CONTRACT, project="cases",
         file_path="models/tagged/governed.sql", node_type=NodeType.DBT_MODEL,
         detail=(
             'reads: "a.b.c" cannot be listed as <schema>.<table>: a name holds a dot; '
@@ -600,10 +600,10 @@ def test_a_declared_read_passes_the_check_exactly_when_the_library_lists_it(entr
 
 # --- the bundle -----------------------------------------------------------------
 
-def _stored(unique_id: str, *, service: str = "service-py", family: str = "python") -> StoredContract:
+def _stored(unique_id: str, *, project: str = "service-py", family: str = "python") -> StoredContract:
     """A stored contract of `family`, a value of the contract_family vocabulary (any other value raises ValueError)."""
     return StoredContract(
-        unique_id=unique_id, family=ContractFamily(family), service=service, contract_hash="sha256:" + "a" * 64, content_hash="sha256:" + "b" * 64,
+        unique_id=unique_id, family=ContractFamily(family), project=project, contract_hash="sha256:" + "a" * 64, content_hash="sha256:" + "b" * 64,
         source_path=f"contracts/{unique_id.split('.')[1]}.odcs.yaml", source_sha256="c" * 64,
         document={"id": unique_id})
 
@@ -648,7 +648,7 @@ def test_the_bundle_keys_its_contracts_by_unique_id_and_counts_them():
     assert sorted(doc["contracts"]) == ["analytics.a", "analytics.b"]
     assert doc["summary"] == {"contracts": 2, "by_family": {"python": 2}, "invalid": 0, "skipped": 0}
     assert doc["contracts"]["analytics.a"] == {
-        "family": "python", "service": "service-py", "contract_hash": "sha256:" + "a" * 64,
+        "family": "python", "project": "service-py", "contract_hash": "sha256:" + "a" * 64,
         "content_hash": "sha256:" + "b" * 64,
         "source": {"path": "contracts/a.odcs.yaml", "sha256": "c" * 64}, "document": {"id": "analytics.a"}}
 
@@ -672,7 +672,7 @@ def test_two_contracts_of_one_unique_id_reaching_the_builder_are_a_bug_not_an_ov
     """The handler leaves out every contract of an id shared_unique_ids names, so two
     contracts of one id never reach the builder; if they did, it refuses them."""
     with pytest.raises(ValueError, match="analytics.a"):
-        _bundle([_stored("analytics.a", service="s1"), _stored("analytics.a", service="s2")])
+        _bundle([_stored("analytics.a", project="s1"), _stored("analytics.a", project="s2")])
 
 
 def test_the_bundle_counts_both_families():
@@ -685,7 +685,7 @@ def test_the_bundle_counts_both_families():
     assert doc["summary"] == {"contracts": 2, "by_family": {"dbt": 1, "python": 1}, "invalid": 0, "skipped": 0}
     [dbt_contract] = [c for c in contracts if c.family == "dbt"]
     assert doc["contracts"]["analytics.governed"] == {
-        "family": "dbt", "service": "cases", "contract_hash": dbt_contract.contract_hash,
+        "family": "dbt", "project": "cases", "contract_hash": dbt_contract.contract_hash,
         "content_hash": governed.content_hash,
         "source": {"path": "models/tagged/governed.sql", "sha256": governed.contract.source_sha256},
         "document": dbt_contract.document}
@@ -706,19 +706,19 @@ def test_a_contract_of_an_unknown_family_does_not_reach_the_bundle():
         _bundle([_stored("analytics.a", family="plsql")])
 
 
-@pytest.mark.parametrize("other_service", ["cases", "billing"], ids=["one-service", "two-services"])
-def test_two_dbt_nodes_with_one_contract_id_leave_the_bundle(other_service):
-    """An id two dbt nodes declare, in one service or two, is release-controller's duplicate_table to
+@pytest.mark.parametrize("other_project", ["cases", "billing"], ids=["one-project", "two-projects"])
+def test_two_dbt_nodes_with_one_contract_id_leave_the_bundle(other_project):
+    """An id two dbt nodes declare, in one project or two, is release-controller's duplicate_table to
     reject: shared_unique_ids names it, the caller leaves both contracts out and the bundle holds only
     the other nodes'. A builder given both contracts refuses them."""
     first = _dbt_node("governed")
-    second = _dbt_node("governed", edit=lambda node: node.__setitem__("fqn", [other_service, "tagged", "governed"]))
+    second = _dbt_node("governed", edit=lambda node: node.__setitem__("fqn", [other_project, "tagged", "governed"]))
     unrelated = _dbt_node("dormant_model")
     nodes = [first, second, unrelated]
 
     shared = shared_unique_ids(nodes)
 
-    assert shared == {"analytics.governed": sorted(["cases", other_service])}
+    assert shared == {"analytics.governed": sorted(["cases", other_project])}
     bundle = _bundle(store_contracts([node for node in nodes if node.unique_id not in shared], {}, POSTGRES_SYSTEM))
     assert sorted(bundle["contracts"]) == ["analytics.dormant"]
     assert bundle["summary"] == {"contracts": 1, "by_family": {"dbt": 1}, "invalid": 0, "skipped": 0}
@@ -726,10 +726,10 @@ def test_two_dbt_nodes_with_one_contract_id_leave_the_bundle(other_service):
         _bundle(store_contracts([first, second], {}, POSTGRES_SYSTEM))
 
 
-def test_shared_unique_ids_names_each_id_two_services_declare_with_its_services_in_order():
-    def node(service, table, node_type=NodeType.PYTHON_NODE):
+def test_shared_unique_ids_names_each_id_two_projects_declare_with_its_projects_in_order():
+    def node(project, table, node_type=NodeType.PYTHON_NODE):
         return ManifestNode(
-            table_name=table, schema_name="analytics", service_name=service, owner="t", schedule_name="daily",
+            table_name=table, schema_name="analytics", project_name=project, owner="t", schedule_name="daily",
             criticality="CORE", node_type=node_type)
 
     nodes = [node("s2", "a"), node("s1", "a"), node("s1", "b"), node("s3", "A")]

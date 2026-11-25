@@ -21,7 +21,7 @@ principals:
   domains:
     sales:
       owner_team: sales-team
-  services:
+  projects:
     company-reports:
       domain: sales
       kind: dbt
@@ -44,14 +44,14 @@ TWO_RULE_ERRORS = ONTOLOGY_TEXT.replace(
 ).replace("  Order:\n    owner: sales\n", "  Order:\n    owner: finance\n")
 
 
-def ontology_file(tmp_path, text=ONTOLOGY_TEXT, *, service="company-ontology", release_id="rel-onto-4", name="ontology.yaml"):
+def ontology_file(tmp_path, text=ONTOLOGY_TEXT, *, project="company-ontology", release_id="rel-onto-4", name="ontology.yaml"):
     path = tmp_path / name
     if isinstance(text, bytes):
         path.write_bytes(text)
     else:
         path.write_text(text, encoding="utf-8")
     return ManifestFile(
-        path=str(path), declared_service=service, kind=ManifestKind.ONTOLOGY, release_id=release_id,
+        path=str(path), declared_project=project, kind=ManifestKind.ONTOLOGY, release_id=release_id,
     )
 
 
@@ -82,16 +82,16 @@ def test_a_valid_ontology_is_loaded_with_the_identity_of_its_release(tmp_path):
     loaded = load_release_ontology(ontology_file(tmp_path))
 
     assert isinstance(loaded, ReleaseOntology)
-    assert loaded.service == "company-ontology"
+    assert loaded.project == "company-ontology"
     assert loaded.release_id == "rel-onto-4"
     assert isinstance(loaded.ontology, Ontology)
-    assert loaded.ontology.services() == ("company-reports",)
+    assert loaded.ontology.projects() == ("company-reports",)
     assert loaded.sha256 == loaded.ontology.sha256
     assert len(loaded.sha256) == 64
     assert loaded.findings == ()
 
 
-def test_an_ontology_that_does_not_load_names_its_service_and_the_librarys_reason(tmp_path):
+def test_an_ontology_that_does_not_load_names_its_project_and_the_librarys_reason(tmp_path):
     with pytest.raises(InvalidOntologyError) as raised:
         load_release_ontology(ontology_file(tmp_path, "principals: 1\n"))
 
@@ -155,7 +155,7 @@ def test_with_the_switch_off_an_ontology_is_logged_and_ignored(tmp_path, caplog)
     publisher.publish_ok.assert_called_once()
     (record,) = [r for r in caplog.records if r.getMessage() == "candidate: the ontology switch is off, so the ontology is ignored"]
     assert record.levelno == logging.INFO
-    assert (record.release_id, record.service) == ("rel-1", "company-ontology")
+    assert (record.release_id, record.project) == ("rel-1", "company-ontology")
     assert timings.stages[Stage.ONTOLOGY].runs == 0
     # A release that ran no ontology stage leaves the stage out of the bundle's timings.
     assert "ontology" not in writer.document["timings"]["stages_ms"]
@@ -168,7 +168,7 @@ def test_with_the_switch_off_and_no_ontology_nothing_is_logged(tmp_path, caplog)
     assert not [r for r in caplog.records if "ontology" in r.getMessage()]
 
 
-def test_an_ontology_that_does_not_load_is_an_invalid_artifact_naming_its_service(tmp_path):
+def test_an_ontology_that_does_not_load_is_an_invalid_artifact_naming_its_project(tmp_path):
     publisher, timings, _ = handle([dbt_file(), ontology_file(tmp_path, "principals: 1\n")], enabled=True)
 
     kwargs = failed_kwargs(publisher)
@@ -195,8 +195,8 @@ def test_an_ontology_rule_error_is_an_invalid_artifact(tmp_path):
 
 @pytest.mark.parametrize("enabled", [True, False])
 def test_two_ontology_manifests_are_an_invalid_artifact(tmp_path, enabled):
-    first = ontology_file(tmp_path, service="ontology-a", name="a.yaml")
-    second = ontology_file(tmp_path, service="ontology-b", name="b.yaml")
+    first = ontology_file(tmp_path, project="ontology-a", name="a.yaml")
+    second = ontology_file(tmp_path, project="ontology-b", name="b.yaml")
 
     publisher, _, _ = handle([dbt_file(), first, second], enabled=enabled)
 

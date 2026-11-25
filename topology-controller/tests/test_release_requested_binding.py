@@ -26,8 +26,8 @@ def test_a_well_formed_payload_parses_into_a_release_requested():
         _fields({
             "release_id": "rel-77",
             "manifest_keys": [
-                {"service": "service-1", "s3_uri": "s3://continuo/service-1/rel-77/manifest.json"},
-                {"service": "service-2", "s3_uri": "s3://continuo/service-2/rel-77/manifest.json"},
+                {"project": "service-1", "s3_uri": "s3://continuo/service-1/rel-77/manifest.json"},
+                {"project": "service-2", "s3_uri": "s3://continuo/service-2/rel-77/manifest.json"},
             ],
         }),
         _DEFAULT_BUCKET,
@@ -36,8 +36,8 @@ def test_a_well_formed_payload_parses_into_a_release_requested():
     assert got == ReleaseRequested(
         release_id="rel-77",
         requests=[
-            ManifestRequest(service="service-1", key="service-1/rel-77/manifest.json"),
-            ManifestRequest(service="service-2", key="service-2/rel-77/manifest.json"),
+            ManifestRequest(project="service-1", key="service-1/rel-77/manifest.json"),
+            ManifestRequest(project="service-2", key="service-2/rel-77/manifest.json"),
         ],
         bucket="continuo",
     )
@@ -47,7 +47,7 @@ def test_the_payload_field_is_read_under_a_str_key_too():
     got = parse_release_requested(
         {"payload": json.dumps({
             "release_id": "r",
-            "manifest_keys": [{"service": "s", "s3_uri": "s3://b/s/r/manifest.json"}],
+            "manifest_keys": [{"project": "s", "s3_uri": "s3://b/s/r/manifest.json"}],
         })},
         _DEFAULT_BUCKET,
     )
@@ -66,7 +66,7 @@ def test_the_object_key_loses_the_trailing_slash_a_prefix_uri_gains():
     got = parse_release_requested(
         _fields({
             "release_id": "r",
-            "manifest_keys": [{"service": "s", "s3_uri": "s3://b/s/r/dir"}],
+            "manifest_keys": [{"project": "s", "s3_uri": "s3://b/s/r/dir"}],
         }),
         _DEFAULT_BUCKET,
     )
@@ -81,15 +81,15 @@ def test_kind_defaults_to_dbt_and_is_threaded_when_present():
         _fields({
             "release_id": "rel-1",
             "manifest_keys": [
-                {"service": "service-1", "s3_uri": "s3://continuo/service-1/rel-1/manifest.json"},
-                {"service": "marketing-py", "kind": "python-odcs",
+                {"project": "service-1", "s3_uri": "s3://continuo/service-1/rel-1/manifest.json"},
+                {"project": "marketing-py", "kind": "python-odcs",
                  "s3_uri": "s3://continuo/marketing-py/rel-1/odcs-bundle.json"},
             ],
         }),
         _DEFAULT_BUCKET,
     )
 
-    assert [(r.service, r.kind) for r in got.requests] == [
+    assert [(r.project, r.kind) for r in got.requests] == [
         ("service-1", ManifestKind.DBT), ("marketing-py", ManifestKind.PYTHON_ODCS),
     ]
 
@@ -99,14 +99,14 @@ def test_the_ontology_kind_reaches_the_source_verbatim():
         _fields({
             "release_id": "rel-1",
             "manifest_keys": [
-                {"service": "company-ontology", "kind": "ontology",
+                {"project": "company-ontology", "kind": "ontology",
                  "s3_uri": "s3://continuo/company-ontology/rel-1/ontology.yaml"},
             ],
         }),
         _DEFAULT_BUCKET,
     )
 
-    assert [(r.service, r.key, r.kind) for r in got.requests] == [
+    assert [(r.project, r.key, r.kind) for r in got.requests] == [
         ("company-ontology", "company-ontology/rel-1/ontology.yaml", ManifestKind.ONTOLOGY),
     ]
 
@@ -121,7 +121,7 @@ def test_an_explicitly_empty_kind_is_not_defaulted_to_dbt():
         _fields({
             "release_id": "rel-1",
             "manifest_keys": [
-                {"service": "service-1", "kind": "",
+                {"project": "service-1", "kind": "",
                  "s3_uri": "s3://continuo/service-1/rel-1/manifest.json"},
             ],
         }),
@@ -132,7 +132,7 @@ def test_an_explicitly_empty_kind_is_not_defaulted_to_dbt():
 
 
 def test_image_tags_are_parsed_when_present():
-    """release-controller assembles one image tag per service when it activates
+    """release-controller assembles one image tag per project when it activates
     the release; the handler joins them onto the nodes."""
     got = parse_release_requested(
         _fields({
@@ -169,25 +169,25 @@ _MALFORMED_PAYLOADS = {
     "invalid json": {b"payload": b"not json {{{"},
     "missing release_id": {b"payload": json.dumps({"manifest_keys": []}).encode()},
     "missing manifest_keys": {b"payload": json.dumps({"release_id": "x"}).encode()},
-    "entry without service": {b"payload": json.dumps({
+    "entry without project": {b"payload": json.dumps({
         "release_id": "x",
         "manifest_keys": [{"s3_uri": "s3://continuo/s1/x/manifest.json"}],
     }).encode()},
     "entry with an invalid s3_uri": {b"payload": json.dumps({
         "release_id": "x",
-        "manifest_keys": [{"service": "s1", "s3_uri": "http://continuo/s1/x/manifest.json"}],
+        "manifest_keys": [{"project": "s1", "s3_uri": "http://continuo/s1/x/manifest.json"}],
     }).encode()},
     "entry without s3_uri": {b"payload": json.dumps({
         "release_id": "x",
-        "manifest_keys": [{"service": "s1"}],
+        "manifest_keys": [{"project": "s1"}],
     }).encode()},
     "entry with a non-string s3_uri": {b"payload": json.dumps({
         "release_id": "x",
-        "manifest_keys": [{"service": "s1", "s3_uri": 42}],
+        "manifest_keys": [{"project": "s1", "s3_uri": 42}],
     }).encode()},
-    "entry with a non-string service": {b"payload": json.dumps({
+    "entry with a non-string project": {b"payload": json.dumps({
         "release_id": "x",
-        "manifest_keys": [{"service": ["s1"], "s3_uri": "s3://continuo/s1/x/manifest.json"}],
+        "manifest_keys": [{"project": ["s1"], "s3_uri": "s3://continuo/s1/x/manifest.json"}],
     }).encode()},
     "entry that is not an object": {b"payload": json.dumps({
         "release_id": "x",
@@ -200,7 +200,7 @@ _MALFORMED_PAYLOADS = {
         "release_id": "x", "manifest_keys": 5,
     }).encode()},
     "manifest_keys that is an object": {b"payload": json.dumps({
-        "release_id": "x", "manifest_keys": {"service": "s1"},
+        "release_id": "x", "manifest_keys": {"project": "s1"},
     }).encode()},
     "release_id that is not a string": {b"payload": json.dumps({
         "release_id": 7, "manifest_keys": [],
@@ -215,8 +215,8 @@ _MALFORMED_PAYLOADS = {
     "entries spanning buckets": {b"payload": json.dumps({
         "release_id": "x",
         "manifest_keys": [
-            {"service": "s1", "s3_uri": "s3://bucket-a/s1/x/manifest.json"},
-            {"service": "s2", "s3_uri": "s3://bucket-b/s2/x/manifest.json"},
+            {"project": "s1", "s3_uri": "s3://bucket-a/s1/x/manifest.json"},
+            {"project": "s2", "s3_uri": "s3://bucket-b/s2/x/manifest.json"},
         ],
     }).encode()},
 }
@@ -248,7 +248,7 @@ def test_every_error_message_names_the_stream_through_the_contract_constant(fiel
     ({b"payload": json.dumps({
         "release_id": "x",
         "manifest_keys": [{"s3_uri": "s3://continuo/s1/x/manifest.json"}],
-    }).encode()}, "missing or empty 'service' field"),
+    }).encode()}, "missing or empty 'project' field"),
     ({b"payload": b"\xff\xfe{}"}, "not valid UTF-8"),
 ])
 def test_the_message_says_what_is_wrong_with_the_payload(fields, fragment):
@@ -273,9 +273,9 @@ def test_the_payload_release_controller_writes_parses_into_a_release_requested()
     assert got == ReleaseRequested(
         release_id=payload["release_id"],
         requests=[
-            ManifestRequest(service="service-1", key="service-1/rel-2026-10-28-0001/manifest.json", kind=ManifestKind.DBT),
+            ManifestRequest(project="service-1", key="service-1/rel-2026-10-28-0001/manifest.json", kind=ManifestKind.DBT),
             ManifestRequest(
-                service="service-py", key="service-py/rel-2026-10-28-0001/odcs-bundle.json",
+                project="service-py", key="service-py/rel-2026-10-28-0001/odcs-bundle.json",
                 kind=ManifestKind.PYTHON_ODCS),
         ],
         bucket="continuo",

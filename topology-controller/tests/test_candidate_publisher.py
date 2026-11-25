@@ -103,7 +103,7 @@ def test_publish_failed_matches_the_shared_failed_fixture():
         detail=payload["detail"],
         failed_nodes=[
             FailedNode(
-                node_id=n["node_id"], kind=ParseFailureKind(n["kind"]), service=n["service"],
+                node_id=n["node_id"], kind=ParseFailureKind(n["kind"]), project=n["project"],
                 file_path=n["file_path"], node_type=n["node_type"], detail=n["detail"],
             )
             for n in payload["failed_nodes"]
@@ -163,7 +163,7 @@ def test_publish_failed_serialises_kind_and_failed_nodes():
             FailedNode(
                 node_id="analytics.fx",
                 kind=ParseFailureKind.INVALID_SQL,
-                service="fx",
+                project="fx",
                 file_path="models/fx.sql",
                 node_type=NodeType.DBT_MODEL,
                 detail="Expecting ). Line 3, Col: 12.",
@@ -184,7 +184,7 @@ def test_publish_failed_serialises_kind_and_failed_nodes():
             {
                 "node_id": "analytics.fx",
                 "kind": "invalid_sql",
-                "service": "fx",
+                "project": "fx",
                 "file_path": "models/fx.sql",
                 "node_type": "dbt-model",
                 "detail": "Expecting ). Line 3, Col: 12.",
@@ -266,7 +266,7 @@ def test_publish_failed_strips_ansi_escapes_from_every_detail():
         detail="summary \x1b[1mbold\x1b[0m",
         failed_nodes=[
             FailedNode(
-                node_id="a.b", kind=ParseFailureKind.INVALID_SQL, service="s",
+                node_id="a.b", kind=ParseFailureKind.INVALID_SQL, project="s",
                 file_path="models/b.sql", node_type=NodeType.DBT_MODEL, detail=sqlglot_text,
             )
         ],

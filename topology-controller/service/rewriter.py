@@ -7,7 +7,7 @@ against them — touching nothing in production. The models are never edited: ev
 schema-qualified reference that resolves to a known graph node (the same registry
 the dependency resolver uses) is redirected here, at parse time, to the candidate
 schema. Unqualified references (a CTE reference is one), tables owned by no
-service, and the warehouse engine's own system relations (information_schema,
+project, and the warehouse engine's own system relations (information_schema,
 pg_catalog, Trino's system catalog) are left untouched: a system relation is
 never a node, so it has no copy in the candidate schema.
 """

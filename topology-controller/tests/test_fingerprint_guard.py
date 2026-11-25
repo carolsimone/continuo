@@ -86,8 +86,8 @@ _FREE_FORM = frozenset(
     {"examples", "implementation", "arguments", "mustBe", "mustNotBe", "value", "valueExt", "logicalTypeOptions"}
 )
 
-# The service the fpshop variants declare, which their compile extras name too.
-_FPSHOP_SERVICE = "fpshop"
+# The project the fpshop variants declare, which their compile extras name too.
+_FPSHOP_PROJECT = "fpshop"
 
 _DBT_FAMILIES = ("dbt-model", "dbt-seed", "dbt-snapshot")
 
@@ -135,7 +135,7 @@ def _stored_dbt_contracts(variant: str) -> tuple[tuple[str, str, dict], ...]:
     with tempfile.TemporaryDirectory() as tmp_dir:
         manifest_path, extras_path = variant_paths(variant, tmp_dir)
         manifest = ManifestFile(
-            path=manifest_path, image_tag="", declared_service=_FPSHOP_SERVICE, extras_path=extras_path
+            path=manifest_path, image_tag="", declared_project=_FPSHOP_PROJECT, extras_path=extras_path
         )
         publisher, bundle_writer = MagicMock(), RecordingContractBundleWriter()
         build_handler(
@@ -196,7 +196,7 @@ def test_the_stored_dbt_contracts_cover_every_dbt_family_and_the_fields_a_dbt_no
         names[family] |= _odcs_inputs(stored)
     every_family = {
         "odcs.id", "odcs.name", "odcs.schema.name", "odcs.schema.physicalName", "odcs.schema.physicalType",
-        "odcs.team.name", "odcs.tags", "odcs.custom.kind", "odcs.custom.service", "odcs.custom.schedule",
+        "odcs.team.name", "odcs.tags", "odcs.custom.kind", "odcs.custom.project", "odcs.custom.schedule",
         "odcs.custom.filePath", "odcs.custom.materialization", "odcs.custom.criticality",
     }
     only = {
@@ -262,7 +262,7 @@ def test_every_field_of_a_seed_and_a_snapshot_with_declared_columns_is_classifie
     assert not missing, (family, missing)
 
 
-# The library's vectors whose ontology fills something in: the one of a service the ontology does
+# The library's vectors whose ontology fills something in: the one of a project the ontology does
 # not declare resolves to its stored form.
 _ONTOLOGY_VECTORS = [
     vector
@@ -280,7 +280,7 @@ def test_every_field_of_a_resolved_contract_is_classified(vector):
     seed's or a python node's."""
     loaded = ontology.load(vector["ontology"])
     release_ontology = ReleaseOntology(
-        service="company-ontology", release_id="rel-1", sha256=loaded.sha256, ontology=loaded, findings=())
+        project="company-ontology", release_id="rel-1", sha256=loaded.sha256, ontology=loaded, findings=())
     resolved = bind_contract(vector["stored"], enabled=True, release_ontology=release_ontology)
     family = continuo_values(resolved["customProperties"])["kind"]
     assert family in ("python-node", "dbt-model", "dbt-seed")
