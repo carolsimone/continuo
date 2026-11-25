@@ -25,7 +25,7 @@ The nodes that read a node, directly or through other nodes.
 _Avoid_: child, dependent, below
 
 **Project**:
-The code a team releases as one unit. Its kind is dbt (a dbt project of nodes), Python (a package of Python nodes, one contract each) or ontology (the company's ontology file, with no nodes; an install has at most one). One repository can hold several projects.
+The code a team releases as one unit. Its kind is dbt (a dbt project of nodes), Python (a package of Python nodes, one data contract each) or ontology (the company's ontology file, with no nodes; an install has at most one). One repository can hold several projects.
 _Avoid_: service (the name code, API and storage use for it), repo, team repo, job
 
 **Relation**:
@@ -56,16 +56,16 @@ _Avoid_: maintainer, domain team
 A named set of nodes that run together, with an optional cron that starts a run of it.
 _Avoid_: DAG, pipeline, job, tag
 
-**Contract**:
-The published description of what a node's table holds: its columns, types, keys and owner.
-_Avoid_: schema file, data contract spec
+**Data contract**:
+The published description of what a node's table holds: its columns, types, keys and owner, in the Open Data Contract Standard.
+_Avoid_: contract (alone), schema file, table spec
 
 **Ontology**:
-The company's one file naming the things its data is about and which team owns each, which contracts can bind their tables to.
+The company's one file naming the things its data is about and which team owns each, which data contracts can bind their tables to.
 _Avoid_: taxonomy, business glossary
 
 **Binding**:
-A contract's statement of which ontology thing its table holds, and which columns hold which of the thing's facts.
+A data contract's statement of which ontology thing its table holds, and which columns hold which of the thing's facts.
 _Avoid_: mapping, link, annotation
 
 **Ontology switch**:
@@ -122,6 +122,10 @@ _Avoid_: command, mode, action
 The operation that rebuilds a node's table from nothing instead of adding to it. For a seed it drops and reloads the table.
 _Avoid_: rebuild, reset, reload
 
+**Task timeout**:
+How long one attempt at a node may run, set by the node's owning team.
+_Avoid_: job timeout, max duration
+
 **Dispatch**:
 Handing one attempt of a task to the component that runs it.
 _Avoid_: send, enqueue, schedule
@@ -155,6 +159,10 @@ _Avoid_: node trigger, ad-hoc run
 **Fix**:
 A change to a rejected release's code that continuo proposes and that has passed a release check, offered to the owner as a pull request.
 _Avoid_: proposal, patch, heal
+
+**Overlay**:
+The files a fix changes, laid over the release's code so the release check builds the code as the fix would leave it.
+_Avoid_: patch, diff, source override
 
 **Hand-over**:
 A failure continuo leaves to a person, with the reason it could not fix it.

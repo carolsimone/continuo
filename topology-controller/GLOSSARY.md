@@ -1,13 +1,13 @@
 # topology-controller
 
-topology-controller reads a candidate release's projects into its topology and contracts: which nodes it holds, which tables each node reads, and which node builds each of them. The shared words (node, project, topology, contract, relation, ontology, unknown-external node, dormant node) are in the root `GLOSSARY.md`.
+topology-controller reads a candidate release's projects into its topology and data contracts: which nodes it holds, which tables each node reads, and which node builds each of them. The shared words (node, project, topology, data contract, relation, ontology, unknown-external node, dormant node) are in the root `GLOSSARY.md`.
 
 ## Language
 
 ### Reading a release
 
 **Parse**:
-Reading every project of a candidate release into one topology, with a contract for each node. It is the release check's parse leg.
+Reading every project of a candidate release into one topology, with a data contract for each node. It is the release check's parse leg.
 _Avoid_: load, ingest, compile
 
 **Cross-project read**:
@@ -30,11 +30,11 @@ _Avoid_: dependency package, vendored model
 A table the warehouse itself provides, such as its catalog of tables. A node may read it, and it never becomes an unknown-external node.
 _Avoid_: system table, built-in table
 
-### Contracts
+### Data contracts
 
-**Generated contract**:
-The contract the parse writes for a dbt node from the node and its tests. A Python node's contract is the one its team wrote.
-_Avoid_: derived contract, auto contract
+**Generated data contract**:
+The data contract the parse writes for a dbt node from the node and its tests. A Python node's data contract is the one its team wrote.
+_Avoid_: generated contract, derived contract, auto contract
 
 **Ontology finding**:
 A warning or a note from checking a release's bindings against the ontology. It never rejects the release; an error does.

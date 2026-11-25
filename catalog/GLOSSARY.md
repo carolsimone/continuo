@@ -1,6 +1,6 @@
 # catalog
 
-catalog keeps the graph of the live release's nodes and edges, every version of each node's code and contract, and the failures seen at each node, so other components can read them. The shared words (node, release, live release, topology, contract, project) are in the root `GLOSSARY.md`.
+catalog keeps the graph of the live release's nodes and edges, every version of each node's code and data contract, and the failures seen at each node, so other components can read them. The shared words (node, release, live release, topology, data contract, project). Inside catalog, contract always means a data contract are in the root `GLOSSARY.md`.
 
 ## Language
 
@@ -25,15 +25,15 @@ _Avoid_: case, rejection record, incident
 ### Contracts over time
 
 **Contract version**:
-One version of a node's contract, recorded at the promotion that published it. Going back to an earlier contract is a new version that is the same as the old one.
+One version of a node's data contract, recorded at the promotion that published it. Going back to an earlier data contract is a new version that is the same as the old one.
 _Avoid_: contract revision, contract snapshot
 
 **Live contracts**:
-The published contract of every node the live release builds, one file per node with an index, for readers outside continuo.
+The published data contract of every node the live release builds, one file per node with an index, for readers outside continuo.
 _Avoid_: contract registry, contract export
 
 **Declared schema**:
-The warehouse schema a node says it writes to, spelled as its project wrote it. Published contracts name it as the place to read the table.
+The warehouse schema a node says it writes to, spelled as its project wrote it. Published data contracts name it as the place to read the table.
 _Avoid_: target schema, physical schema
 
 ### Keeping the graph safe
