@@ -32,14 +32,14 @@ describe('fetchProposals — query string', () => {
     expect(mockFetch).toHaveBeenCalledWith('/api/remediation/proposals?status=proposed');
   });
 
-  it('adds service to the query string', async () => {
-    await fetchProposals({ service: 'billing' });
-    expect(mockFetch).toHaveBeenCalledWith('/api/remediation/proposals?service=billing');
+  it('adds project to the query string', async () => {
+    await fetchProposals({ project: 'billing' });
+    expect(mockFetch).toHaveBeenCalledWith('/api/remediation/proposals?project=billing');
   });
 
-  it('combines service with other filters', async () => {
-    await fetchProposals({ status: 'proposed', service: 'ledger' });
-    expect(mockFetch).toHaveBeenCalledWith('/api/remediation/proposals?status=proposed&service=ledger');
+  it('combines project with other filters', async () => {
+    await fetchProposals({ status: 'proposed', project: 'ledger' });
+    expect(mockFetch).toHaveBeenCalledWith('/api/remediation/proposals?status=proposed&project=ledger');
   });
 
   it('resolves to the proposals array', async () => {

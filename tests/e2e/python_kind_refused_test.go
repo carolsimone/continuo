@@ -15,7 +15,7 @@ import (
 // python kind with. The body of the 400 carries it behind the prefix
 // `invalid candidate: ` that release-controller's candidate handler adds, and
 // the ui relays that body trimmed.
-const pythonKindRefusal = `kind "python" is no longer accepted: release the service as "python-odcs", one ODCS contract per node (docs/contracts.md)`
+const pythonKindRefusal = `kind "python" is no longer accepted: release the project as "python-odcs", one ODCS contract per node (docs/contracts.md)`
 
 // TestE2E_PythonKindIsRefused proves the refusal of the python kind is
 // reachable through the public release route: the body below is the one a
@@ -36,7 +36,7 @@ func TestE2E_PythonKindIsRefused(t *testing.T) {
 	releaseID := "e2e-pykind-" + uuid.NewString()[:8]
 	token := mintCIToken(t, e2ePyRepositoryID, "carolsimone/continuo-py-demo", releaseID)
 	status, body := submitPublicRelease(t, clients, token, map[string]any{
-		"service":    pyE2EService,
+		"project":    pyE2EProject,
 		"release_id": releaseID,
 		"image_tag":  pyFixtureImage,
 		"kind":       "python",

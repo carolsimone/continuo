@@ -51,7 +51,7 @@ func TestSeedReconcile_LoadsAChangedSeedOnce(t *testing.T) {
 			seedImageTag = nodes[i].ImageTag
 		}
 	}
-	require.NotEmpty(t, seedImageTag, "seed_table_1 is pinned to its service's image")
+	require.NotEmpty(t, seedImageTag, "seed_table_1 is pinned to its project's image")
 
 	first := announceTopology(t, ctx, "e2e-seedrec-"+uuid.NewString()[:8], nodes)
 	waitForAnnouncedTopology(t, ctx, clients, first, schedules)

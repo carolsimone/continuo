@@ -21,23 +21,23 @@ const allow = { allow: true };
 const cases: Array<[string, Principal, Action, boolean, string?]> = [
   ['viewer api.read', viewer, { kind: 'api.read' }, true],
   ['viewer api.mutate', viewer, { kind: 'api.mutate' }, false, 'forbidden'],
-  ['viewer release.read', viewer, { kind: 'release.read', service: 'core' }, true],
+  ['viewer release.read', viewer, { kind: 'release.read', project: 'core' }, true],
   ['viewer prod.read', viewer, { kind: 'prod.read' }, true],
-  ['viewer submit', viewer, { kind: 'release.submit', service: 'core', bootstrap: false }, false, 'forbidden'],
+  ['viewer submit', viewer, { kind: 'release.submit', project: 'core', bootstrap: false }, false, 'forbidden'],
   ['operator api.mutate', operator, { kind: 'api.mutate' }, true],
-  ['operator submit bootstrap any service', operator, { kind: 'release.submit', service: 'anything', bootstrap: true }, true],
+  ['operator submit bootstrap any project', operator, { kind: 'release.submit', project: 'anything', bootstrap: true }, true],
   ['ci api.read', ci, { kind: 'api.read' }, false, 'forbidden'],
   ['ci api.mutate', ci, { kind: 'api.mutate' }, false, 'forbidden'],
-  ['ci release.read bound', ci, { kind: 'release.read', service: 'core' }, true],
-  ['ci release.read unbound', ci, { kind: 'release.read', service: 'marketing' }, false, 'forbidden'],
+  ['ci release.read bound', ci, { kind: 'release.read', project: 'core' }, true],
+  ['ci release.read unbound', ci, { kind: 'release.read', project: 'marketing' }, false, 'forbidden'],
   ['ci prod.read', ci, { kind: 'prod.read' }, true],
-  ['ci submit bound', ci, { kind: 'release.submit', service: 'core', bootstrap: false }, true],
-  ['ci submit unbound', ci, { kind: 'release.submit', service: 'marketing', bootstrap: false }, false, 'forbidden'],
-  ['ci bootstrap without flag', ci, { kind: 'release.submit', service: 'core', bootstrap: true }, false, 'bootstrap_not_allowed'],
-  ['ci bootstrap with flag', ci, { kind: 'release.submit', service: 'finance', bootstrap: true }, true],
+  ['ci submit bound', ci, { kind: 'release.submit', project: 'core', bootstrap: false }, true],
+  ['ci submit unbound', ci, { kind: 'release.submit', project: 'marketing', bootstrap: false }, false, 'forbidden'],
+  ['ci bootstrap without flag', ci, { kind: 'release.submit', project: 'core', bootstrap: true }, false, 'bootstrap_not_allowed'],
+  ['ci bootstrap with flag', ci, { kind: 'release.submit', project: 'finance', bootstrap: true }, true],
   ['zero-grant ci prod.read', unboundCi, { kind: 'prod.read' }, false, 'forbidden'],
-  ['zero-grant ci release.read', unboundCi, { kind: 'release.read', service: 'core' }, false, 'forbidden'],
-  ['zero-grant ci submit', unboundCi, { kind: 'release.submit', service: 'core', bootstrap: false }, false, 'forbidden'],
+  ['zero-grant ci release.read', unboundCi, { kind: 'release.read', project: 'core' }, false, 'forbidden'],
+  ['zero-grant ci submit', unboundCi, { kind: 'release.submit', project: 'core', bootstrap: false }, false, 'forbidden'],
   ['zero-grant ci api.read', unboundCi, { kind: 'api.read' }, false, 'forbidden'],
 ];
 
@@ -66,7 +66,7 @@ describe('binding match', () => {
     expect(bindingMatches(b({ environment: ['prod'] }), githubClaimsFrom(githubClaims({ environment: 'prod' })))).toBe(true);
     expect(bindingMatches(b({ workflowRef: ['other@refs/heads/main'] }), claims)).toBe(false);
   });
-  it('resolveGrants: a service is granted when any binding matches; bootstrap if any matching binding allows it', () => {
+  it('resolveGrants: a project is granted when any binding matches; bootstrap if any matching binding allows it', () => {
     const grants = resolveGrants(claims, new Map([
       ['core', [b({ ref: ['refs/heads/x'], allowBootstrap: true }), b({})]],
       ['finance', [b({ allowBootstrap: true })]],

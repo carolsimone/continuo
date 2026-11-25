@@ -440,7 +440,7 @@ describe('NodeDetailPage — foundations', () => {
 
 describe('NodeDetailPage — task timeout', () => {
   const mkSummary = (over: Partial<{ schema_name: string; timeout_seconds: number; timeout_declared: boolean }>) => ({
-    service_name: 'svc', schema_name: 'schema', table_name: 'tbl',
+    project_name: 'svc', schema_name: 'schema', table_name: 'tbl',
     task_count: 1, success_rate_pct: null, avg_duration_sec: null, p95_duration_sec: null,
     last_status: null, last_run_at: null, operation: 'run', timeout_seconds: 86400, timeout_declared: false,
     ...over,
@@ -470,7 +470,7 @@ describe('NodeDetailPage — task timeout', () => {
     renderPage();
     expect(await screen.findByText('task timeout 8 h · declared')).toBeInTheDocument();
     const calls = mockFetch.mock.calls as unknown as [string][];
-    expect(calls.some(c => c[0] === '/api/nodes?service=svc&search=tbl&operation=run')).toBe(true);
+    expect(calls.some(c => c[0] === '/api/nodes?project=svc&search=tbl&operation=run')).toBe(true);
   });
 
   it('shows a declared timeout below one hour in minutes', async () => {
@@ -525,7 +525,7 @@ describe('NodeDetailPage — task timeout', () => {
 
 describe('NodeDetailPage — dormant node', () => {
   const summaryRow = (over: Record<string, unknown>) => ({
-    service_name: 'svc', schema_name: 'schema', table_name: 'tbl',
+    project_name: 'svc', schema_name: 'schema', table_name: 'tbl',
     task_count: 0, success_rate_pct: null, avg_duration_sec: null, p95_duration_sec: null,
     last_status: null, last_run_at: null, operation: 'run', timeout_seconds: 3600, timeout_declared: false,
     node_type: 'dbt-model', ...over,

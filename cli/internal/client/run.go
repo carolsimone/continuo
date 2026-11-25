@@ -35,10 +35,10 @@ type RunClient interface {
 	// CancelRun cancels a run by id. It takes no request id: cancelling a run
 	// that is already cancelling or cancelled changes nothing.
 	CancelRun(ctx context.Context, runID, reason, by string) (*runv1.RunResponse, error)
-	TriggerNodeRun(ctx context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error)
-	TriggerNodeTest(ctx context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error)
-	TriggerNodeBuild(ctx context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error)
-	TriggerNodeFullRefresh(ctx context.Context, requestID, service, schema, table, sourceRunID, actor string, acknowledged []string) (*runv1.TriggerSingleNodeRunResponse, error)
+	TriggerNodeRun(ctx context.Context, requestID, project, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error)
+	TriggerNodeTest(ctx context.Context, requestID, project, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error)
+	TriggerNodeBuild(ctx context.Context, requestID, project, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error)
+	TriggerNodeFullRefresh(ctx context.Context, requestID, project, schema, table, sourceRunID, actor string, acknowledged []string) (*runv1.TriggerSingleNodeRunResponse, error)
 
 	ListAllSchedules(ctx context.Context) (*runv1.ListSchedulesResponse, error)
 	GetScheduleGraph(ctx context.Context, scheduleName string) (*runv1.GetScheduleGraphResponse, error)
@@ -47,11 +47,11 @@ type RunClient interface {
 	ListRuns(ctx context.Context, scheduleName string, pageSize, pageOffset int32) (*runv1.ListRunsResponse, error)
 	ListTasks(ctx context.Context, runID, status string, pageSize, pageOffset int32) (*runv1.ListTasksResponse, error)
 	ListRunAttempts(ctx context.Context, runID, taskID string, pageSize, pageOffset int32) (*runv1.ListRunAttemptsResponse, error)
-	ListNodeRuns(ctx context.Context, service, schema, table, operation string, limit int32) (*runv1.ListNodeTasksResponse, error)
+	ListNodeRuns(ctx context.Context, project, schema, table, operation string, limit int32) (*runv1.ListNodeTasksResponse, error)
 	// ListNodes lists the nodes of the live release. With dormantOnly it keeps
 	// only the dormant ones, the nodes continuo builds that belong to no
 	// schedule.
-	ListNodes(ctx context.Context, search, service, operation string, dormantOnly bool, limit, offset int32) (*runv1.ListNodesResponse, error)
+	ListNodes(ctx context.Context, search, project, operation string, dormantOnly bool, limit, offset int32) (*runv1.ListNodesResponse, error)
 
 	// Schedule crons. An edit takes no request id, so the server cannot answer
 	// a repeat with the result of the first call: each save raises the
@@ -289,10 +289,10 @@ func (c *runGRPCClient) ListRunAttempts(ctx context.Context, runID, taskID strin
 	})
 }
 
-func (c *runGRPCClient) ListNodes(ctx context.Context, search, service, operation string, dormantOnly bool, limit, offset int32) (*runv1.ListNodesResponse, error) {
+func (c *runGRPCClient) ListNodes(ctx context.Context, search, project, operation string, dormantOnly bool, limit, offset int32) (*runv1.ListNodesResponse, error) {
 	return c.api.ListNodes(ctx, &runv1.ListNodesRequest{
 		Search:      search,
-		ServiceName: service,
+		ProjectName: project,
 		Operation:   operation,
 		DormantOnly: dormantOnly,
 		Limit:       limit,
@@ -300,9 +300,9 @@ func (c *runGRPCClient) ListNodes(ctx context.Context, search, service, operatio
 	})
 }
 
-func (c *runGRPCClient) ListNodeRuns(ctx context.Context, service, schema, table, operation string, limit int32) (*runv1.ListNodeTasksResponse, error) {
+func (c *runGRPCClient) ListNodeRuns(ctx context.Context, project, schema, table, operation string, limit int32) (*runv1.ListNodeTasksResponse, error) {
 	return c.api.ListNodeTasks(ctx, &runv1.ListNodeTasksRequest{
-		ServiceName: service,
+		ProjectName: project,
 		SchemaName:  schema,
 		TableName:   table,
 		Operation:   operation,
@@ -314,10 +314,10 @@ func (c *runGRPCClient) ListNodeRuns(ctx context.Context, service, schema, table
 // sourceRunID selects the "latest" metadata mode; a non-empty one selects
 // "snapshot_of_run", pinning the run to the metadata the given past run used.
 // The run-controller service rejects any other combination, so the CLI never sends one.
-func singleNodeRequest(requestID, service, schema, table, sourceRunID, operation string) *runv1.TriggerSingleNodeRunRequest {
+func singleNodeRequest(requestID, project, schema, table, sourceRunID, operation string) *runv1.TriggerSingleNodeRunRequest {
 	req := &runv1.TriggerSingleNodeRunRequest{
 		RequestId:      requestID,
-		ServiceName:    service,
+		ProjectName:    project,
 		SchemaName:     schema,
 		TableName:      table,
 		MetadataSource: metadataSourceLatest,
@@ -342,20 +342,20 @@ func (c *runGRPCClient) triggerSingleNode(ctx context.Context, req *runv1.Trigge
 	return c.api.TriggerSingleNodeRun(withActor(ctx, actor), req)
 }
 
-func (c *runGRPCClient) TriggerNodeRun(ctx context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
-	return c.triggerSingleNode(ctx, singleNodeRequest(requestID, service, schema, table, sourceRunID, ""), actor)
+func (c *runGRPCClient) TriggerNodeRun(ctx context.Context, requestID, project, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
+	return c.triggerSingleNode(ctx, singleNodeRequest(requestID, project, schema, table, sourceRunID, ""), actor)
 }
 
-func (c *runGRPCClient) TriggerNodeTest(ctx context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
-	return c.triggerSingleNode(ctx, singleNodeRequest(requestID, service, schema, table, sourceRunID, "test"), actor)
+func (c *runGRPCClient) TriggerNodeTest(ctx context.Context, requestID, project, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
+	return c.triggerSingleNode(ctx, singleNodeRequest(requestID, project, schema, table, sourceRunID, "test"), actor)
 }
 
-func (c *runGRPCClient) TriggerNodeBuild(ctx context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
-	return c.triggerSingleNode(ctx, singleNodeRequest(requestID, service, schema, table, sourceRunID, "build"), actor)
+func (c *runGRPCClient) TriggerNodeBuild(ctx context.Context, requestID, project, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
+	return c.triggerSingleNode(ctx, singleNodeRequest(requestID, project, schema, table, sourceRunID, "build"), actor)
 }
 
-func (c *runGRPCClient) TriggerNodeFullRefresh(ctx context.Context, requestID, service, schema, table, sourceRunID, actor string, acknowledged []string) (*runv1.TriggerSingleNodeRunResponse, error) {
-	req := singleNodeRequest(requestID, service, schema, table, sourceRunID, "full_refresh")
+func (c *runGRPCClient) TriggerNodeFullRefresh(ctx context.Context, requestID, project, schema, table, sourceRunID, actor string, acknowledged []string) (*runv1.TriggerSingleNodeRunResponse, error) {
+	req := singleNodeRequest(requestID, project, schema, table, sourceRunID, "full_refresh")
 	req.AcknowledgedDependents = acknowledged
 	return c.triggerSingleNode(ctx, req, actor)
 }

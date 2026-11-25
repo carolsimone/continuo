@@ -29,8 +29,8 @@ function grpcFailedPrecondition(msg: string): Error {
 function makeRemediation(overrides: Partial<RemediationClient> = {}): RemediationClient {
   return {
     listProposals: vi.fn().mockResolvedValue({ proposals: [] }),
-    // The default proposal carries no pr_services, so the route falls back
-    // to the single legacy group (service '').
+    // The default proposal carries no pr_projects, so the route falls back
+    // to the single legacy group (project '').
     getProposal: vi.fn().mockResolvedValue({}),
     beginPullRequest: vi.fn().mockResolvedValue({
       proposed_sql_uri: 's3://continuo/proposals/p1/fix.sql',
@@ -40,7 +40,7 @@ function makeRemediation(overrides: Partial<RemediationClient> = {}): Remediatio
       repo: 'owner/repo',
       commit_sha: 'abc123',
       claimed_at: '2026-06-24T00:00:00Z',
-      service: '',
+      project: '',
       edits: [
         {
           path: 'models/mymodel.sql',
@@ -119,27 +119,27 @@ describe('remediation router', () => {
     expect(res.body.proposals).toEqual([]);
   });
 
-  it('forwards the service filter to ListProposals', async () => {
+  it('forwards the project filter to ListProposals', async () => {
     const remediation = makeRemediation({
       listProposals: vi.fn().mockResolvedValue({ proposals: [] }),
     });
     const app = appWith({ remediation, getObject: makeGetObject() });
 
-    await request(app).get('/api/remediation/proposals?service=billing');
+    await request(app).get('/api/remediation/proposals?project=billing');
     expect(remediation.listProposals).toHaveBeenCalledWith(
-      expect.objectContaining({ service: 'billing' }),
+      expect.objectContaining({ project: 'billing' }),
     );
   });
 
-  it('omits an empty service filter', async () => {
+  it('omits an empty project filter', async () => {
     const remediation = makeRemediation({
       listProposals: vi.fn().mockResolvedValue({ proposals: [] }),
     });
     const app = appWith({ remediation, getObject: makeGetObject() });
 
-    await request(app).get('/api/remediation/proposals?service=');
+    await request(app).get('/api/remediation/proposals?project=');
     expect(remediation.listProposals).toHaveBeenCalledWith(
-      expect.not.objectContaining({ service: expect.anything() }),
+      expect.not.objectContaining({ project: expect.anything() }),
     );
   });
 
@@ -195,9 +195,9 @@ describe('remediation router', () => {
     expect(prCreator.create).not.toHaveBeenCalled();
   });
 
-  // ── POST — a service that already has an open PR is skipped, not errored ─
+  // ── POST — a project that already has an open PR is skipped, not errored ─
 
-  it('skips a service whose PR is already open (FAILED_PRECONDITION) and lists its existing URL', async () => {
+  it('skips a project whose PR is already open (FAILED_PRECONDITION) and lists its existing URL', async () => {
     const remediation = makeRemediation({
       beginPullRequest: vi.fn().mockRejectedValue(
         grpcFailedPrecondition('https://github.com/owner/repo/pull/7'),
@@ -209,7 +209,7 @@ describe('remediation router', () => {
     const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
     expect(res.status).toBe(200);
     expect(res.body.pull_requests).toEqual([
-      { service: '', pr_url: 'https://github.com/owner/repo/pull/7', pr_number: 7 },
+      { project: '', pr_url: 'https://github.com/owner/repo/pull/7', pr_number: 7 },
     ]);
     expect(res.body.errors).toEqual([]);
     expect(prCreator.create).not.toHaveBeenCalled();
@@ -218,7 +218,7 @@ describe('remediation router', () => {
   // ── POST — a FAILED_PRECONDITION with no embedded URL is a genuine failure,
   //    not an already-open PR (ErrNotSourceResolved / ErrNotProposed) ────────
 
-  it('reports a URL-less FAILED_PRECONDITION as a per-service failure, not a fabricated success', async () => {
+  it('reports a URL-less FAILED_PRECONDITION as a per-project failure, not a fabricated success', async () => {
     const remediation = makeRemediation({
       beginPullRequest: vi.fn().mockRejectedValue(
         grpcFailedPrecondition('proposal is not in status proposed'),
@@ -231,10 +231,10 @@ describe('remediation router', () => {
     expect(res.status).toBe(502);
     expect(res.body.pull_requests).toEqual([]);
     expect(res.body.errors).toEqual([
-      { service: '', error: 'proposal is not in status proposed' },
+      { project: '', error: 'proposal is not in status proposed' },
     ]);
     expect(prCreator.create).not.toHaveBeenCalled();
-    // No dead link should ever be assembled for this service.
+    // No dead link should ever be assembled for this project.
     expect(res.body.pull_requests.some((pr: any) => pr.pr_url === '')).toBe(false);
   });
 
@@ -249,12 +249,12 @@ describe('remediation router', () => {
     const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
     expect(res.status).toBe(200);
     expect(res.body.pull_requests).toEqual([
-      { service: '', pr_url: 'https://github.com/owner/repo/pull/42', pr_number: 42 },
+      { project: '', pr_url: 'https://github.com/owner/repo/pull/42', pr_number: 42 },
     ]);
     expect(res.body.errors).toEqual([]);
 
     expect(remediation.getProposal).toHaveBeenCalledWith({ id: 'p1' });
-    expect(remediation.beginPullRequest).toHaveBeenCalledWith({ id: 'p1', service: '' });
+    expect(remediation.beginPullRequest).toHaveBeenCalledWith({ id: 'p1', project: '' });
     // getObject called at least once for the proposed SQL
     expect(getObject).toHaveBeenCalled();
     expect(prCreator.create).toHaveBeenCalledWith(
@@ -269,7 +269,7 @@ describe('remediation router', () => {
     expect(remediation.recordPullRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 'p1',
-        service: '',
+        project: '',
         pr_url: 'https://github.com/owner/repo/pull/42',
         pr_number: 42,
       }),
@@ -346,7 +346,7 @@ describe('remediation router', () => {
     expect(getObject).toHaveBeenCalledWith(expect.not.stringContaining('s3://'));
   });
 
-  // ── POST — multi-file claims (a single service group with several edits) ─
+  // ── POST — multi-file claims (a single project group with several edits) ─
 
   function multiEditRemediation() {
     return makeRemediation({
@@ -489,7 +489,7 @@ describe('remediation router', () => {
     expect(call.body).toContain('`scripts/a.py` (fixes `s.b`)');
   });
 
-  it('fails the claim and reports a per-service error when a single edit content fetch rejects', async () => {
+  it('fails the claim and reports a per-project error when a single edit content fetch rejects', async () => {
     const remediation = multiEditRemediation();
     const prCreator = makePrCreator();
     const getObject = vi.fn().mockImplementation(async (key: string) => {
@@ -501,12 +501,12 @@ describe('remediation router', () => {
     const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
     expect(res.status).toBe(502);
     expect(res.body.pull_requests).toEqual([]);
-    expect(res.body.errors).toEqual([{ service: '', error: 'failed to fetch proposed file content from S3' }]);
+    expect(res.body.errors).toEqual([{ project: '', error: 'failed to fetch proposed file content from S3' }]);
     expect(prCreator.create).not.toHaveBeenCalled();
     expect(remediation.failPullRequest).toHaveBeenCalledWith({
       id: 'p1',
       claimed_at: '2026-06-24T00:00:00Z',
-      service: '',
+      project: '',
     });
   });
 
@@ -535,7 +535,7 @@ describe('remediation router', () => {
     const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
     expect(res.status).toBe(200);
     expect(res.body.pull_requests).toEqual([
-      { service: '', pr_url: 'https://github.com/owner/repo/pull/42', pr_number: 42 },
+      { project: '', pr_url: 'https://github.com/owner/repo/pull/42', pr_number: 42 },
     ]);
     expect(prCreator.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -567,7 +567,7 @@ describe('remediation router', () => {
     const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
     expect(res.status).toBe(502);
     expect(res.body.pull_requests).toEqual([]);
-    expect(res.body.errors).toEqual([{ service: '', error: 'proposal carries no file edits' }]);
+    expect(res.body.errors).toEqual([{ project: '', error: 'proposal carries no file edits' }]);
     // Nothing to commit, so no empty-tree PR and no S3 read.
     expect(getObject).not.toHaveBeenCalled();
     expect(prCreator.create).not.toHaveBeenCalled();
@@ -575,7 +575,7 @@ describe('remediation router', () => {
     expect(remediation.failPullRequest).toHaveBeenCalledWith({
       id: 'p1',
       claimed_at: '2026-06-24T00:00:00Z',
-      service: '',
+      project: '',
     });
 
     const logged = consoleError.mock.calls.map((call) => call.join(' ')).join('\n');
@@ -584,9 +584,9 @@ describe('remediation router', () => {
     consoleError.mockRestore();
   });
 
-  // ── POST — GitHub failure → failPullRequest + per-service error ──────────
+  // ── POST — GitHub failure → failPullRequest + per-project error ──────────
 
-  it('fails the claim and reports a per-service error when prCreator.create throws', async () => {
+  it('fails the claim and reports a per-project error when prCreator.create throws', async () => {
     const remediation = makeRemediation();
     const prCreator = makePrCreator({
       create: vi.fn().mockRejectedValue(new Error('GitHub API error')),
@@ -596,8 +596,8 @@ describe('remediation router', () => {
     const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
     expect(res.status).toBe(502);
     expect(res.body.pull_requests).toEqual([]);
-    expect(res.body.errors).toEqual([{ service: '', error: 'failed to open pull request' }]);
-    expect(remediation.failPullRequest).toHaveBeenCalledWith({ id: 'p1', claimed_at: '2026-06-24T00:00:00Z', service: '' });
+    expect(res.body.errors).toEqual([{ project: '', error: 'failed to open pull request' }]);
+    expect(remediation.failPullRequest).toHaveBeenCalledWith({ id: 'p1', claimed_at: '2026-06-24T00:00:00Z', project: '' });
     expect(remediation.recordPullRequest).not.toHaveBeenCalled();
   });
 
@@ -640,7 +640,7 @@ describe('remediation router', () => {
     expect(remediation.failPullRequest).toHaveBeenCalledWith({
       id: 'p1',
       claimed_at: '2026-06-24T00:00:00Z',
-      service: '',
+      project: '',
     });
   });
 
@@ -662,13 +662,13 @@ describe('remediation router', () => {
       expect(res.body.pull_requests).toEqual([]);
       expect(res.body.errors).toEqual([
         {
-          service: '',
+          project: '',
           error:
             'models/mymodel.sql changed on main since the release this fix was made for, so the pull request would overwrite that change. ' +
-            'Check main: the failure may already be fixed; if it still fails, the next release of the service is remediated again.',
+            'Check main: the failure may already be fixed; if it still fails, the next release of the project is remediated again.',
         },
       ]);
-      expect(remediation.failPullRequest).toHaveBeenCalledWith({ id: 'p1', claimed_at: '2026-06-24T00:00:00Z', service: '' });
+      expect(remediation.failPullRequest).toHaveBeenCalledWith({ id: 'p1', claimed_at: '2026-06-24T00:00:00Z', project: '' });
       expect(remediation.recordPullRequest).not.toHaveBeenCalled();
 
       const logged = consoleWarn.mock.calls.map((call) => call.join(' ')).join('\n');
@@ -705,8 +705,8 @@ describe('remediation router', () => {
 
       const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
       expect(res.status).toBe(502);
-      expect(res.body.errors).toEqual([{ service: '', error: 'failed to open pull request' }]);
-      expect(remediation.failPullRequest).toHaveBeenCalledWith({ id: 'p1', claimed_at: '2026-06-24T00:00:00Z', service: '' });
+      expect(res.body.errors).toEqual([{ project: '', error: 'failed to open pull request' }]);
+      expect(remediation.failPullRequest).toHaveBeenCalledWith({ id: 'p1', claimed_at: '2026-06-24T00:00:00Z', project: '' });
       vi.restoreAllMocks();
     });
   });
@@ -745,15 +745,15 @@ describe('remediation router', () => {
     const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
     expect(res.status).toBe(200);
     expect(res.body.pull_requests).toEqual([
-      { service: '', pr_url: 'https://github.com/owner/repo/pull/42', pr_number: 42 },
+      { project: '', pr_url: 'https://github.com/owner/repo/pull/42', pr_number: 42 },
     ]);
     // The PR was opened — failPullRequest must NOT be called.
     expect(remediation.failPullRequest).not.toHaveBeenCalled();
   });
 
-  // ── POST — S3 fetch failure → failPullRequest + per-service error ────────
+  // ── POST — S3 fetch failure → failPullRequest + per-project error ────────
 
-  it('fails the claim and reports a per-service error when the proposed SQL fetch from S3 rejects', async () => {
+  it('fails the claim and reports a per-project error when the proposed SQL fetch from S3 rejects', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     const remediation = makeRemediation();
     const prCreator = makePrCreator();
@@ -763,8 +763,8 @@ describe('remediation router', () => {
 
     const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
     expect(res.status).toBe(502);
-    expect(res.body.errors).toEqual([{ service: '', error: 'failed to fetch proposed file content from S3' }]);
-    expect(remediation.failPullRequest).toHaveBeenCalledWith({ id: 'p1', claimed_at: '2026-06-24T00:00:00Z', service: '' });
+    expect(res.body.errors).toEqual([{ project: '', error: 'failed to fetch proposed file content from S3' }]);
+    expect(remediation.failPullRequest).toHaveBeenCalledWith({ id: 'p1', claimed_at: '2026-06-24T00:00:00Z', project: '' });
     expect(prCreator.create).not.toHaveBeenCalled();
     expect(remediation.recordPullRequest).not.toHaveBeenCalled();
     // The cause must be logged, not just swallowed into a generic response.
@@ -889,15 +889,15 @@ describe('remediation router', () => {
     expect(remediation.failPullRequest).toHaveBeenCalledWith({
       id: 'p1',
       claimed_at: '2026-07-01T12:34:56Z',
-      service: '',
+      project: '',
     });
   });
 
-  // ── POST — legacy proposal (pr_services: ['']) ────────────────────────────
+  // ── POST — legacy proposal (pr_projects: ['']) ────────────────────────────
 
-  it('legacy proposal (pr_services=[""]) opens exactly one PR with no service suffix', async () => {
+  it('legacy proposal (pr_projects=[""]) opens exactly one PR with no project suffix', async () => {
     const remediation = makeRemediation({
-      getProposal: vi.fn().mockResolvedValue({ pr_services: [''] }),
+      getProposal: vi.fn().mockResolvedValue({ pr_projects: [''] }),
     });
     const prCreator = makePrCreator();
     const getObject = makeGetObject('SELECT 1 -- fixed');
@@ -906,23 +906,23 @@ describe('remediation router', () => {
     const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
     expect(res.status).toBe(200);
     expect(res.body.pull_requests).toEqual([
-      { service: '', pr_url: 'https://github.com/owner/repo/pull/42', pr_number: 42 },
+      { project: '', pr_url: 'https://github.com/owner/repo/pull/42', pr_number: 42 },
     ]);
     expect(res.body.errors).toEqual([]);
     expect(remediation.beginPullRequest).toHaveBeenCalledTimes(1);
-    expect(remediation.beginPullRequest).toHaveBeenCalledWith({ id: 'p1', service: '' });
+    expect(remediation.beginPullRequest).toHaveBeenCalledWith({ id: 'p1', project: '' });
 
     const call = (prCreator.create as any).mock.calls[0][0];
     expect(call.headBranch).toBe('remediation/p1');
-    // No " (service)" suffix at all for the legacy group — exactly today's title shape.
+    // No " (project)" suffix at all for the legacy group — exactly today's title shape.
     expect(call.title).toBe('[remediation] fix p1 (release )');
   });
 
-  // ── POST — per-service split across two owning services ──────────────────
+  // ── POST — per-project split across two owning projects ──────────────────
 
-  describe('a proposal split across several owning services', () => {
-    function multiServiceRemediation() {
-      const claimsByService: Record<string, any> = {
+  describe('a proposal split across several owning projects', () => {
+    function multiProjectRemediation() {
+      const claimsByProject: Record<string, any> = {
         core: {
           repo: 'org/core-repo',
           commit_sha: 'core-sha',
@@ -930,7 +930,7 @@ describe('remediation router', () => {
           claimed_at: '2026-06-24T00:00:00Z',
           release_id: 'rel-1',
           resolved_node_ids: ['core.schema.a'],
-          service: 'core',
+          project: 'core',
           edits: [
             { path: 'models/a.sql', content_uri: 's3://bucket/core/a.sql', diff_uri: 's3://bucket/core/a.diff' },
           ],
@@ -942,23 +942,23 @@ describe('remediation router', () => {
           claimed_at: '2026-06-24T00:00:01Z',
           release_id: 'rel-1',
           resolved_node_ids: ['finance.schema.b'],
-          service: 'finance',
+          project: 'finance',
           edits: [
             { path: 'models/b.sql', content_uri: 's3://bucket/finance/b.sql', diff_uri: 's3://bucket/finance/b.diff' },
           ],
         },
       };
       return {
-        claimsByService,
+        claimsByProject,
         remediation: makeRemediation({
-          getProposal: vi.fn().mockResolvedValue({ pr_services: ['finance', 'core'] }),
-          beginPullRequest: vi.fn().mockImplementation(async ({ service }: { service: string }) => claimsByService[service]),
+          getProposal: vi.fn().mockResolvedValue({ pr_projects: ['finance', 'core'] }),
+          beginPullRequest: vi.fn().mockImplementation(async ({ project }: { project: string }) => claimsByProject[project]),
         }),
       };
     }
 
-    it('claims and opens one PR per service in sorted order, with per-service branch/repo/title', async () => {
-      const { remediation } = multiServiceRemediation();
+    it('claims and opens one PR per project in sorted order, with per-project branch/repo/title', async () => {
+      const { remediation } = multiProjectRemediation();
       const prCreator = makePrCreator({
         create: vi.fn()
           .mockResolvedValueOnce({ url: 'https://github.com/org/core-repo/pull/10', number: 10 })
@@ -970,15 +970,15 @@ describe('remediation router', () => {
       const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
       expect(res.status).toBe(200);
       expect(res.body.pull_requests).toEqual([
-        { service: 'core', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10 },
-        { service: 'finance', pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11 },
+        { project: 'core', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10 },
+        { project: 'finance', pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11 },
       ]);
       expect(res.body.errors).toEqual([]);
 
-      // Sorted order: core before finance, even though pr_services arrived as ['finance', 'core'].
+      // Sorted order: core before finance, even though pr_projects arrived as ['finance', 'core'].
       const beginCalls = (remediation.beginPullRequest as any).mock.calls;
-      expect(beginCalls[0][0]).toEqual({ id: 'p1', service: 'core' });
-      expect(beginCalls[1][0]).toEqual({ id: 'p1', service: 'finance' });
+      expect(beginCalls[0][0]).toEqual({ id: 'p1', project: 'core' });
+      expect(beginCalls[1][0]).toEqual({ id: 'p1', project: 'finance' });
 
       const createCalls = (prCreator.create as any).mock.calls;
       expect(createCalls[0][0]).toEqual(expect.objectContaining({
@@ -996,20 +996,20 @@ describe('remediation router', () => {
       expect(createCalls[1][0].title).toBe('[remediation] fix finance.schema.b (release rel-1) (finance)');
 
       expect(remediation.recordPullRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 'p1', service: 'core', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10 }),
+        expect.objectContaining({ id: 'p1', project: 'core', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10 }),
       );
       expect(remediation.recordPullRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 'p1', service: 'finance', pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11 }),
+        expect.objectContaining({ id: 'p1', project: 'finance', pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11 }),
       );
     });
 
-    it('skips a service already open and still opens the other, listing both', async () => {
-      const { remediation, claimsByService } = multiServiceRemediation();
-      (remediation.beginPullRequest as any).mockImplementation(async ({ service }: { service: string }) => {
-        if (service === 'core') {
+    it('skips a project already open and still opens the other, listing both', async () => {
+      const { remediation, claimsByProject } = multiProjectRemediation();
+      (remediation.beginPullRequest as any).mockImplementation(async ({ project }: { project: string }) => {
+        if (project === 'core') {
           throw grpcFailedPrecondition('https://github.com/owner/repo/pull/7');
         }
-        return claimsByService.finance;
+        return claimsByProject.finance;
       });
       const prCreator = makePrCreator({
         create: vi.fn().mockResolvedValue({ url: 'https://github.com/org/finance-repo/pull/11', number: 11 }),
@@ -1020,8 +1020,8 @@ describe('remediation router', () => {
       const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
       expect(res.status).toBe(200);
       expect(res.body.pull_requests).toEqual([
-        { service: 'core', pr_url: 'https://github.com/owner/repo/pull/7', pr_number: 7 },
-        { service: 'finance', pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11 },
+        { project: 'core', pr_url: 'https://github.com/owner/repo/pull/7', pr_number: 7 },
+        { project: 'finance', pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11 },
       ]);
       expect(res.body.errors).toEqual([]);
       // Only finance actually went through GitHub — core was skipped.
@@ -1029,8 +1029,8 @@ describe('remediation router', () => {
       expect((prCreator.create as any).mock.calls[0][0].repo).toBe('org/finance-repo');
     });
 
-    it('keeps the successfully created PR and reports 207 when a later service fails mid-loop', async () => {
-      const { remediation } = multiServiceRemediation();
+    it('keeps the successfully created PR and reports 207 when a later project fails mid-loop', async () => {
+      const { remediation } = multiProjectRemediation();
       const prCreator = makePrCreator({
         create: vi.fn().mockResolvedValueOnce({ url: 'https://github.com/org/core-repo/pull/10', number: 10 }),
       });
@@ -1043,24 +1043,24 @@ describe('remediation router', () => {
       const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
       expect(res.status).toBe(207);
       expect(res.body.pull_requests).toEqual([
-        { service: 'core', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10 },
+        { project: 'core', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10 },
       ]);
       expect(res.body.errors).toEqual([
-        { service: 'finance', error: 'failed to fetch proposed file content from S3' },
+        { project: 'finance', error: 'failed to fetch proposed file content from S3' },
       ]);
       // The core PR must not be lost because finance failed afterwards.
       expect(remediation.recordPullRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 'p1', service: 'core', pr_url: 'https://github.com/org/core-repo/pull/10' }),
+        expect.objectContaining({ id: 'p1', project: 'core', pr_url: 'https://github.com/org/core-repo/pull/10' }),
       );
       expect(remediation.failPullRequest).toHaveBeenCalledWith({
         id: 'p1',
         claimed_at: '2026-06-24T00:00:01Z',
-        service: 'finance',
+        project: 'finance',
       });
     });
 
-    it('returns 502 with no successes when every service fails', async () => {
-      const { remediation } = multiServiceRemediation();
+    it('returns 502 with no successes when every project fails', async () => {
+      const { remediation } = multiProjectRemediation();
       const prCreator = makePrCreator({
         create: vi.fn().mockRejectedValue(new Error('GitHub API error')),
       });
@@ -1071,20 +1071,20 @@ describe('remediation router', () => {
       expect(res.status).toBe(502);
       expect(res.body.pull_requests).toEqual([]);
       expect(res.body.errors).toEqual([
-        { service: 'core', error: 'failed to open pull request' },
-        { service: 'finance', error: 'failed to open pull request' },
+        { project: 'core', error: 'failed to open pull request' },
+        { project: 'finance', error: 'failed to open pull request' },
       ]);
     });
 
-    it('reports 207 when one service is refused with a URL-less FAILED_PRECONDITION and the other succeeds', async () => {
-      const { remediation, claimsByService } = multiServiceRemediation();
-      (remediation.beginPullRequest as any).mockImplementation(async ({ service }: { service: string }) => {
-        if (service === 'core') {
+    it('reports 207 when one project is refused with a URL-less FAILED_PRECONDITION and the other succeeds', async () => {
+      const { remediation, claimsByProject } = multiProjectRemediation();
+      (remediation.beginPullRequest as any).mockImplementation(async ({ project }: { project: string }) => {
+        if (project === 'core') {
           // No URL embedded: a genuine refusal (e.g. ErrNotSourceResolved /
           // ErrNotProposed), not an already-open PR.
           throw grpcFailedPrecondition('proposal is not in status proposed');
         }
-        return claimsByService.finance;
+        return claimsByProject.finance;
       });
       const prCreator = makePrCreator({
         create: vi.fn().mockResolvedValue({ url: 'https://github.com/org/finance-repo/pull/11', number: 11 }),
@@ -1094,13 +1094,13 @@ describe('remediation router', () => {
 
       const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
       expect(res.status).toBe(207);
-      // Only the succeeding service lands in pull_requests — no fabricated
+      // Only the succeeding project lands in pull_requests — no fabricated
       // empty-url entry for the refused one.
       expect(res.body.pull_requests).toEqual([
-        { service: 'finance', pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11 },
+        { project: 'finance', pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11 },
       ]);
       expect(res.body.errors).toEqual([
-        { service: 'core', error: 'proposal is not in status proposed' },
+        { project: 'core', error: 'proposal is not in status proposed' },
       ]);
       // core never reached GitHub at all.
       expect(prCreator.create).toHaveBeenCalledTimes(1);
@@ -1120,7 +1120,7 @@ describe('remediation router', () => {
         repo: 'acme/repo',
         commit_sha: 'abc123',
         claimed_at: '2026-06-24T00:00:00Z',
-        service: '',
+        project: '',
         release_id: 'rel-1',
         resolved_node_ids: resolved,
         edits: [
@@ -1239,12 +1239,12 @@ describe('remediation router', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.pull_requests).toEqual([
-        { service: '', pr_url: 'https://github.com/owner/repo/pull/42', pr_number: 42 },
+        { project: '', pr_url: 'https://github.com/owner/repo/pull/42', pr_number: 42 },
       ]);
       expect(res.body.errors).toEqual([]);
       expect(res.body.warnings).toEqual([
-        { service: '', warning: 'GitHub refused the review request for alice (status 422): not a collaborator' },
-        { service: '', warning: 'The pull request body could not be updated (status 403): forbidden' },
+        { project: '', warning: 'GitHub refused the review request for alice (status 422): not a collaborator' },
+        { project: '', warning: 'The pull request body could not be updated (status 403): forbidden' },
       ]);
       expect(remediation.recordPullRequest).toHaveBeenCalledWith(
         expect.objectContaining({ id: 'p1', pr_url: 'https://github.com/owner/repo/pull/42', pr_number: 42 }),
@@ -1284,11 +1284,11 @@ describe('remediation router', () => {
       expect(userRefused.replace('(review request refused)', '(review requested)')).toBe(input.body);
     });
 
-    it('asks each service only the owners its own claim names', async () => {
-      const claimFor = (service: string, approvers: Array<{ node_id: string; owner: string; source: string }>, nodes: string[]) => ({
+    it('asks each project only the owners its own claim names', async () => {
+      const claimFor = (project: string, approvers: Array<{ node_id: string; owner: string; source: string }>, nodes: string[]) => ({
         ...claimWith(approvers, nodes),
-        service,
-        repo: `acme/${service}-repo`,
+        project,
+        repo: `acme/${project}-repo`,
       });
       const claims: Record<string, any> = {
         core: claimFor('core', [{ node_id: 'core.a', owner: 'alice', source: 'bundle' }], ['core.a']),
@@ -1302,8 +1302,8 @@ describe('remediation router', () => {
         ),
       };
       const remediation = makeRemediation({
-        getProposal: vi.fn().mockResolvedValue({ pr_services: ['core', 'finance'] }),
-        beginPullRequest: vi.fn().mockImplementation(async ({ service }: { service: string }) => claims[service]),
+        getProposal: vi.fn().mockResolvedValue({ pr_projects: ['core', 'finance'] }),
+        beginPullRequest: vi.fn().mockImplementation(async ({ project }: { project: string }) => claims[project]),
       });
       const prCreator = makePrCreator({
         create: vi.fn().mockImplementation(async (input: { repo: string }) => ({
@@ -1344,11 +1344,11 @@ describe('remediation router', () => {
       expect(res.body.warnings).toEqual([]);
     });
 
-    it('names the service in each warning when several services open their pull requests', async () => {
-      const claimFor = (service: string) => ({ ...claimWith(mixedOwners), service, repo: `org/${service}-repo` });
+    it('names the project in each warning when several projects open their pull requests', async () => {
+      const claimFor = (project: string) => ({ ...claimWith(mixedOwners), project, repo: `org/${project}-repo` });
       const remediation = makeRemediation({
-        getProposal: vi.fn().mockResolvedValue({ pr_services: ['core', 'finance'] }),
-        beginPullRequest: vi.fn().mockImplementation(async ({ service }: { service: string }) => claimFor(service)),
+        getProposal: vi.fn().mockResolvedValue({ pr_projects: ['core', 'finance'] }),
+        beginPullRequest: vi.fn().mockImplementation(async ({ project }: { project: string }) => claimFor(project)),
       });
       const prCreator = makePrCreator({
         create: vi.fn().mockImplementation(async (input: { repo: string }) =>
@@ -1361,7 +1361,7 @@ describe('remediation router', () => {
 
       const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
       expect(res.status).toBe(200);
-      expect(res.body.warnings).toEqual([{ service: 'finance', warning: 'refused' }]);
+      expect(res.body.warnings).toEqual([{ project: 'finance', warning: 'refused' }]);
     });
   });
 });

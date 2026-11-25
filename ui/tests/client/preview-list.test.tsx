@@ -4,12 +4,12 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import PreviewList, { PREVIEW_GROUP_ABOVE, PreviewFacts, PreviewItem } from '../../src/client/PreviewList';
 
-// items builds n rows alternating between two services, in the order a
+// items builds n rows alternating between two projects, in the order a
 // caller hands them over.
 function items(n: number): PreviewItem[] {
   return Array.from({ length: n }, (_, i) => ({
     key: `k${i}`,
-    service: i % 2 === 0 ? 'core' : 'billing',
+    project: i % 2 === 0 ? 'core' : 'billing',
     label: `stg.t${String(i).padStart(2, '0')}`,
     title: `${i % 2 === 0 ? 'core' : 'billing'}.stg.t${String(i).padStart(2, '0')}`,
     facts: [],
@@ -35,7 +35,7 @@ describe('PreviewList', () => {
     expect(screen.queryByRole('button')).toBeNull();
   });
 
-  it('shows the monospace id with the full id as its title, and the accent dot of its service', () => {
+  it('shows the monospace id with the full id as its title, and the accent dot of its project', () => {
     render(<PreviewList items={items(2)} colors={colors} />);
 
     const [first, second] = Array.from(document.querySelectorAll<HTMLElement>('.preview-row'));
@@ -46,8 +46,8 @@ describe('PreviewList', () => {
     expect((second.querySelector('.nodes-group-dot') as HTMLElement).style.background).toBe('rgb(14, 165, 233)');
   });
 
-  it('paints a service the palette lacks in neutral slate', () => {
-    render(<PreviewList items={[{ key: 'a', service: 'ops', label: 'stg.a', facts: [] }]} colors={colors} />);
+  it('paints a project the palette lacks in neutral slate', () => {
+    render(<PreviewList items={[{ key: 'a', project: 'ops', label: 'stg.a', facts: [] }]} colors={colors} />);
 
     expect((document.querySelector('.nodes-group-dot') as HTMLElement).style.background).toBe('rgb(148, 163, 184)');
   });
@@ -56,8 +56,8 @@ describe('PreviewList', () => {
     render(
       <PreviewList
         items={[
-          { key: 'a', service: 'core', label: 'stg.a', facts: ['+2 downstream', 'last run 9s'] },
-          { key: 'b', service: 'core', label: 'stg.b', facts: [] },
+          { key: 'a', project: 'core', label: 'stg.a', facts: ['+2 downstream', 'last run 9s'] },
+          { key: 'b', project: 'core', label: 'stg.b', facts: [] },
         ]}
         colors={colors}
       />,
@@ -70,7 +70,7 @@ describe('PreviewList', () => {
     expect(rows[1].querySelector('.preview-facts')).toBeNull();
   });
 
-  it('groups thirteen rows by service, sorted by name and collapsed, with a count pill', () => {
+  it('groups thirteen rows by project, sorted by name and collapsed, with a count pill', () => {
     render(<PreviewList items={items(13)} colors={colors} />);
 
     const headers = screen.getAllByRole('button');

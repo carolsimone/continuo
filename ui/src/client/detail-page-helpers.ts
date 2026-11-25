@@ -10,7 +10,7 @@ export type DetailMode = 'run' | 'latest';
 export type GraphState = 'loading' | 'ready' | 'empty' | 'error';
 
 export function taskNodeId(task: Task): string {
-  return `${task.service_name}.${task.schema_name}.${task.table_name}`;
+  return `${task.project_name}.${task.schema_name}.${task.table_name}`;
 }
 
 export function toScheduleGraph(runGraph: RunGraph | null): ScheduleGraph | null {
@@ -137,12 +137,12 @@ export function headerDriftLabel({ mode, driftLabel }: HeaderDriftLabelArgs): st
 }
 
 export function parseNodeId(nodeId: string): {
-  service_name: string;
+  project_name: string;
   schema_name: string;
   table_name: string;
 } {
-  const [service_name = '', schema_name = '', ...rest] = nodeId.split('.');
-  return { service_name, schema_name, table_name: rest.join('.') };
+  const [project_name = '', schema_name = '', ...rest] = nodeId.split('.');
+  return { project_name, schema_name, table_name: rest.join('.') };
 }
 
 // externalNodeName is how the graph and its focus legend name an unknown-external

@@ -24,9 +24,9 @@ UPGRADE NOTES
   rendering/validation error before retrying for real.
 
   From continuo 0.21.x or earlier: this version computes every node's content_hash
-  anew. Freeze producer merges, then release each service once with
+  anew. Freeze producer merges, then release each project once with
   "bootstrap": true and "rebaseline": true, so nothing is validated or
-  reloaded; a Python service is released as "python-odcs", built on
+  reloaded; a Python project is released as "python-odcs", built on
   continuo-python-runtime 0.13.0 or later. The steps are in deploy/README.md,
   "Re-baseline after a fingerprint change".
   The default validation image is now v0.14.0.
@@ -118,7 +118,7 @@ agent-remediation has one engine. If your values set agentRemediation.engine, re
 
 BREAKING: upgrade with empty databases. The migrations of continuo_run_controller, continuo_execution, continuo_release, continuo_remediation and continuo_agent_remediation are now one baseline each, so Flyway refuses one of those databases that the earlier migrations built ("Migration checksum mismatch for migration version 1") and the db-init-migrate Job fails.
 Before the upgrade, drop those five databases. Keep your warehouse. continuo_agent_chat and continuo_dead_letter can stay too: their migrations did not change. With databaseInit.enabled the Job creates the five again; otherwise create each one empty, owned by the migration login (deploy/CREDENTIALS.md).
-After the upgrade, release every service again as a bootstrap release. Release kind "python" (contract.yaml) is not accepted: release each Python service as "python-odcs" (docs/contracts.md).
+After the upgrade, release every project again as a bootstrap release. Release kind "python" (contract.yaml) is not accepted: release each Python project as "python-odcs" (docs/contracts.md).
 {{- end }}
 
 {{- if .Release.IsUpgrade }}
@@ -152,9 +152,9 @@ With your own bucket (s3.*), three grants change:
   * agent-remediation reads the package list of a Python fix's image from the
     rejected release's contract bundle (tenants/<tenant>/topologies/<release>/
     contracts.json.gz) or, for a release with none, from
-    <service>/<release>/odcs-bundle.json. Grant its role s3:GetObject on both
+    <project>/<release>/odcs-bundle.json. Grant its role s3:GetObject on both
     and s3:ListBucket on the bucket for the prefixes tenants/ and each Python
-    service's own, so a missing bundle reads as 404 (no fix is proposed for the
+    project's own, so a missing bundle reads as 404 (no fix is proposed for the
     node) and not 403 (the remediation retries and ends as a system failure).
 The chart's shared key already covers tenants/, so an install on the key the
 chart configures needs nothing. deploy/continuo/README.md, "S3 access", has

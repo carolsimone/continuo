@@ -8,11 +8,11 @@ import type { TaskStatus } from '../../src/server/generated/vocabulary.gen';
 
 const RUN_ID = 'run-1';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const SERVICE_COLORS = new Map([['billing', '#0ea5e9'], ['core', '#f59e0b']]);
+const PROJECT_COLORS = new Map([['billing', '#0ea5e9'], ['core', '#f59e0b']]);
 
-function task(service: string, table: string, status: TaskStatus): Task {
+function task(project: string, table: string, status: TaskStatus): Task {
   return {
-    task_id: `t-${table}`, service_name: service, schema_name: 'stg', table_name: table,
+    task_id: `t-${table}`, project_name: project, schema_name: 'stg', table_name: table,
     job_name: table, status, attempt: 0, max_retries: 0, created_at: null,
   };
 }
@@ -60,7 +60,7 @@ function renderDialog(over: Partial<Parameters<typeof RerunDialog>[0]> = {}) {
     runId: RUN_ID,
     releaseId: 'rel-6' as string | null | undefined,
     driftLabel: null as string | null,
-    serviceColors: SERVICE_COLORS,
+    projectColors: PROJECT_COLORS,
     onClose: vi.fn(),
     onSubmitted: vi.fn(),
     ...over,

@@ -12,7 +12,7 @@ import (
 )
 
 type graphNode struct {
-	ServiceName  string `json:"service_name"`
+	ProjectName  string `json:"project_name"`
 	SchemaName   string `json:"schema_name"`
 	TableName    string `json:"table_name"`
 	ScheduleName string `json:"schedule_name,omitempty"`
@@ -52,13 +52,13 @@ Arguments:
   <run-id>  The UUID of the run.
 
 Output (stdout, JSON):
-  {"nodes":[{"service_name":string,"schema_name":string,"table_name":string,
+  {"nodes":[{"project_name":string,"schema_name":string,"table_name":string,
              "schedule_name":string,"node_type":string,"status":string,"task_id":string,
              "wait_reason":string,"waiting_on_run_id":string,"waiting_since":string}],
    "edges":[{"from_node_id":string,"to_node_id":string}],
    "run_promotion_seq":number,"latest_promotion_seq":number}
   An edge points from the dependent node to its dependency; node ids are
-  "<service>.<schema>.<table>". schedule_name and node_type are omitted when
+  "<project>.<schema>.<table>". schedule_name and node_type are omitted when
   unknown (node_type is empty for a run that names no release).
   status is the task status: pending|dispatched|queued|running|stopping|succeeded|failed|cancelled|skipped.
   wait_reason is node_lease while the task waits for another run to release its node,
@@ -75,7 +75,7 @@ Errors:
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo run graph 0b6f4a52-3c1d-4d7e-9a0b-1f2e3d4c5b6a",
 		Annotations: map[string]string{
-			"output_schema": `{"nodes":[{"service_name":"string","schema_name":"string","table_name":"string","schedule_name":"string","node_type":"string","status":"string","task_id":"string","wait_reason":"string","waiting_on_run_id":"string","waiting_since":"string"}],"edges":[{"from_node_id":"string","to_node_id":"string"}],"run_promotion_seq":"number","latest_promotion_seq":"number"}`,
+			"output_schema": `{"nodes":[{"project_name":"string","schema_name":"string","table_name":"string","schedule_name":"string","node_type":"string","status":"string","task_id":"string","wait_reason":"string","waiting_on_run_id":"string","waiting_since":"string"}],"edges":[{"from_node_id":"string","to_node_id":"string"}],"run_promotion_seq":"number","latest_promotion_seq":"number"}`,
 			"exit_codes":    `[0,2,5,6]`,
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
@@ -121,7 +121,7 @@ func toGraphPayload(resp *runv1.GetRunGraphResponse) graphPayload {
 	}
 	for _, n := range resp.GetNodes() {
 		p.Nodes = append(p.Nodes, graphNode{
-			ServiceName:    n.GetServiceName(),
+			ProjectName:    n.GetProjectName(),
 			SchemaName:     n.GetSchemaName(),
 			TableName:      n.GetTableName(),
 			ScheduleName:   n.GetScheduleName(),
@@ -146,7 +146,7 @@ func humanGraph(w io.Writer, p graphPayload) error {
 		return err
 	}
 	for _, n := range p.Nodes {
-		if _, err := fmt.Fprintf(w, "  %s.%s.%s  %s\n", n.ServiceName, n.SchemaName, n.TableName, n.Status); err != nil {
+		if _, err := fmt.Fprintf(w, "  %s.%s.%s  %s\n", n.ProjectName, n.SchemaName, n.TableName, n.Status); err != nil {
 			return err
 		}
 	}

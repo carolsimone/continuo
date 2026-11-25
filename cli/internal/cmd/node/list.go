@@ -19,7 +19,7 @@ import (
 // the node's type in the live release, such as dbt-model; Dormant is true for a
 // node continuo builds that belongs to no schedule. Both are always present.
 type nodeSummary struct {
-	ServiceName    string `json:"service_name"`
+	ProjectName    string `json:"project_name"`
 	SchemaName     string `json:"schema_name"`
 	TableName      string `json:"table_name"`
 	NodeType       string `json:"node_type"`
@@ -64,9 +64,9 @@ func NewListCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr
 		Short: "List the nodes with per-node run statistics",
 		Long: `List the nodes with per-node run statistics, one page at a time.
 
-Use when the user names a model but not its service or schema, wants to know
-which nodes exist in a service, or asks how reliable or slow a model has been.
-Each row carries the (service, schema, table) triple every other node
+Use when the user names a model but not its project or schema, wants to know
+which nodes exist in a project, or asks how reliable or slow a model has been.
+Each row carries the (project, schema, table) triple every other node
 subcommand takes as arguments, so this is the command that resolves a bare
 table name into an addressable node.
 
@@ -81,10 +81,10 @@ Flags:
   --search     Table name to look up. Case-insensitive EXACT match on the
                table name, not a substring: "orders" matches "orders" and
                "Orders", never "orders_daily". Default "" (no filter).
-  --service    Exact service name. Default "" (all services).
+  --project    Exact project name. Default "" (all projects).
   --dormant    List only dormant nodes, the ones that belong to no schedule. A
                run started by hand executes them
-               ("continuo node trigger <service> <schema> <table>"). Default
+               ("continuo node trigger <project> <schema> <table>"). Default
                false (every node of the live release).
   --operation  Which operation's tasks feed the statistics: run | test |
                build. Default "run". An unrecognized value is a usage error.
@@ -94,7 +94,7 @@ Flags:
 
 Output (stdout, JSON):
   {"total_count":number,
-   "nodes":[{"service_name":string,"schema_name":string,"table_name":string,
+   "nodes":[{"project_name":string,"schema_name":string,"table_name":string,
    "node_type":string,"dormant":bool,
    "task_count":number,"success_rate_pct":number,"avg_duration_sec":number,
    "p95_duration_sec":number,"flaky_rate_pct":number,"last_status":string,
@@ -126,10 +126,10 @@ Errors:
   unavailable(exit 5)  the run-controller service is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: `  continuo node list --search orders
-  continuo node list --service finance --operation test --limit 20 --offset 20
+  continuo node list --project finance --operation test --limit 20 --offset 20
   continuo node list --dormant`,
 		Annotations: map[string]string{
-			"output_schema": `{"total_count":"number","nodes":[{"service_name":"string","schema_name":"string","table_name":"string","node_type":"string","dormant":"boolean","task_count":"number","success_rate_pct":"number","avg_duration_sec":"number","p95_duration_sec":"number","flaky_rate_pct":"number","last_status":"string","last_run_at":"string","operation":"string","timeout_seconds":"number","timeout_declared":"boolean"}]}`,
+			"output_schema": `{"total_count":"number","nodes":[{"project_name":"string","schema_name":"string","table_name":"string","node_type":"string","dormant":"boolean","task_count":"number","success_rate_pct":"number","avg_duration_sec":"number","p95_duration_sec":"number","flaky_rate_pct":"number","last_status":"string","last_run_at":"string","operation":"string","timeout_seconds":"number","timeout_declared":"boolean"}]}`,
 			"exit_codes":    `[0,2,5,6]`,
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
@@ -152,7 +152,7 @@ Errors:
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			search, _ := cmd.Flags().GetString("search")
-			service, _ := cmd.Flags().GetString("service")
+			project, _ := cmd.Flags().GetString("project")
 			operation, _ := cmd.Flags().GetString("operation")
 			dormantOnly, _ := cmd.Flags().GetBool("dormant")
 			limit, _ := cmd.Flags().GetInt32("limit")
@@ -167,7 +167,7 @@ Errors:
 			}
 			defer func() { _ = c.Close() }()
 
-			resp, err := c.ListNodes(ctx, search, service, operation, dormantOnly, limit, offset)
+			resp, err := c.ListNodes(ctx, search, project, operation, dormantOnly, limit, offset)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
@@ -179,7 +179,7 @@ Errors:
 		},
 	}
 	cmd.Flags().String("search", "", "Table name to look up (case-insensitive exact match; default \"\" = all)")
-	cmd.Flags().String("service", "", "Exact service name filter (default \"\" = all services)")
+	cmd.Flags().String("project", "", "Exact project name filter (default \"\" = all projects)")
 	cmd.Flags().Bool("dormant", false, "List only dormant nodes, the ones that belong to no schedule; a run started by hand executes them (default false = every node)")
 	cmd.Flags().String("operation", "run", "Operation whose tasks feed the statistics: run | test | build (default \"run\")")
 	cmd.Flags().Int32("limit", defaultListLimit, "Page size, 1..200 (default 50)")
@@ -202,7 +202,7 @@ func toListPayload(resp *runv1.ListNodesResponse) listPayload {
 	out := make([]nodeSummary, 0, len(resp.GetNodes()))
 	for _, n := range resp.GetNodes() {
 		out = append(out, nodeSummary{
-			ServiceName:     n.GetServiceName(),
+			ProjectName:     n.GetProjectName(),
 			SchemaName:      n.GetSchemaName(),
 			TableName:       n.GetTableName(),
 			NodeType:        n.GetNodeType(),
@@ -225,7 +225,7 @@ func toListPayload(resp *runv1.ListNodesResponse) listPayload {
 // humanList writes a header, one line per node, and a page summary to stderr:
 //
 //	NODE  OPERATION  TASKS  SUCCESS_PCT  AVG_SEC  P95_SEC  LAST_STATUS  LAST_RUN_AT  DORMANT
-//	<service.schema.table>  <operation>  <tasks>  <pct>  <avg>  <p95>  <status>  <at>  <yes|->
+//	<project.schema.table>  <operation>  <tasks>  <pct>  <avg>  <p95>  <status>  <at>  <yes|->
 //	showing <first>-<last> of <total>
 //
 // A statistic the server could not measure, a last_status and last_run_at for
@@ -239,7 +239,7 @@ func humanList(stderr io.Writer, resp *runv1.ListNodesResponse, offset int32) er
 	}
 	for _, n := range resp.GetNodes() {
 		if _, err := fmt.Fprintf(stderr, "%s.%s.%s  %s  %d  %s  %s  %s  %s  %s  %s\n",
-			n.GetServiceName(), n.GetSchemaName(), n.GetTableName(), n.GetOperation(), n.GetTaskCount(),
+			n.GetProjectName(), n.GetSchemaName(), n.GetTableName(), n.GetOperation(), n.GetTaskCount(),
 			dashIfNegative(n.GetSuccessRatePct()), dashIfNegative(n.GetAvgDurationSec()), dashIfNegative(n.GetP95DurationSec()),
 			dashIfEmpty(n.GetLastStatus()), dashIfEmpty(n.GetLastRunAt()), yesOrDash(n.GetDormant())); err != nil {
 			return err

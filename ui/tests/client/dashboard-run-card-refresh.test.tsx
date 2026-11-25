@@ -20,7 +20,7 @@ function tasksFor(phase: Phase) {
   if (phase === 'cancelling') { add('succeeded', 20); add('stopping', 6); add('cancelled', 15); }
   if (phase === 'cancelled') { add('succeeded', 20); add('cancelled', 21); }
   return statuses.map((status, i) => ({
-    task_id: `t${i}`, run_id: RUN_ID, service_name: 's', schema_name: 'a', table_name: `t${i}`,
+    task_id: `t${i}`, run_id: RUN_ID, project_name: 's', schema_name: 'a', table_name: `t${i}`,
     job_name: '', status, attempt: 0, max_retries: 0, created_at: null,
   }));
 }

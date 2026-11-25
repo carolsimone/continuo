@@ -7,7 +7,7 @@ type SingleNodeRunState = 'idle' | 'loading' | 'success' | 'error';
 const REQUEST_FAILED = 'Request failed — please try again';
 
 interface NodeRef {
-  service: string;
+  project: string;
   schema: string;
   table: string;
 }
@@ -32,7 +32,7 @@ interface Options {
 }
 
 // useSingleNodeRun asks for a run of one node alone, through
-// POST /api/nodes/:service/:schema/:table/run, and holds the state of the
+// POST /api/nodes/:project/:schema/:table/run, and holds the state of the
 // press: loading while the request is in flight, success for 3 s once the run
 // started, error with the message to show when it did not.
 //
@@ -54,7 +54,7 @@ interface Options {
 // does not call onStarted, whose reads are those of the node shown. An answer
 // renews only the request id its own press sent, so it never closes the
 // request of a press made since for another node.
-export function useSingleNodeRun({ service, schema, table }: NodeRef, { operation, observed, onStarted }: Options) {
+export function useSingleNodeRun({ project, schema, table }: NodeRef, { operation, observed, onStarted }: Options) {
   const [presses, setPresses] = useState<Readonly<Record<string, Press>>>({});
   const nextToken = useRef(0);
   const { take: takeRequestId, renew: renewRunRequestId } = useActionRequestId();
@@ -62,7 +62,7 @@ export function useSingleNodeRun({ service, schema, table }: NodeRef, { operatio
   // The node the component shows now, which an answer compares with the node
   // its press was made for. Until a change of node commits, the component still
   // shows the node left, and an answer then belongs to it.
-  const shownNode = `${service}.${schema}.${table}`;
+  const shownNode = `${project}.${schema}.${table}`;
   const shownNodeRef = useRef(shownNode);
   useLayoutEffect(() => {
     shownNodeRef.current = shownNode;
@@ -88,9 +88,9 @@ export function useSingleNodeRun({ service, schema, table }: NodeRef, { operatio
     try {
       const op = opOverride ?? operation;
       const asked = { ...body, operation: op === 'run' ? '' : op };
-      const requestId = takeRequestId(`${service}.${schema}.${table}|${JSON.stringify(asked)}`, observed);
+      const requestId = takeRequestId(`${project}.${schema}.${table}|${JSON.stringify(asked)}`, observed);
       const res = await fetch(
-        `/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/run`,
+        `/api/nodes/${encodeURIComponent(project)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/run`,
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...asked, request_id: requestId }) },
       );
       if (settlesRequest(res)) renewRunRequestId(requestId);
@@ -108,7 +108,7 @@ export function useSingleNodeRun({ service, schema, table }: NodeRef, { operatio
       settle('error', REQUEST_FAILED);
       return REQUEST_FAILED;
     }
-  }, [shownNode, service, schema, table, onStarted, operation, observed, takeRequestId, renewRunRequestId]);
+  }, [shownNode, project, schema, table, onStarted, operation, observed, takeRequestId, renewRunRequestId]);
 
   return { runState, runError, postRun };
 }

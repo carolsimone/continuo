@@ -142,7 +142,7 @@ export function createSchedulesRouter(client: GrpcClient) {
     client.getScheduleGraph({ schedule_name: req.params.name }, (err: any, graphResp: any) => {
       if (err) return sendGrpcError(res, err, grpcDetails(err));
       const nodes = (graphResp.nodes || []).map((n: any) => ({
-        node_id: `${n.service_name}.${n.schema_name}.${n.table_name}`,
+        node_id: `${n.project_name}.${n.schema_name}.${n.table_name}`,
         node_type: n.node_type,
         schedule_name: n.schedule_name,
         dormant: Boolean(n.dormant),

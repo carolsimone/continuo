@@ -148,20 +148,20 @@ func verifyFullDAGExecution(
 }
 
 // verifyDialectRouting asserts that production dbt Jobs are actually routed
-// through the per-service command dialect configured via the dbt-commands
+// through the per-project command dialect configured via the dbt-commands
 // ConfigMap, rather than silently falling back to the built-in dialect. The
 // e2e cluster maps service-1 to the "customname-dbt" alias (tests/e2e/k8s/
 // execution-controller-deployment.yaml) while service-2/3 have no override and
 // use built-in plain dbt. Without this assertion, a broken env var, volume
 // mount, or ConfigMap wiring would silently fall back to the built-in dialect
-// for every service and the suite would stay green.
+// for every project and the suite would stay green.
 func verifyDialectRouting(t *testing.T, ctx context.Context) {
 	t.Helper()
 
 	// "!mode" excludes seed_build/compile/validation Jobs (which carry a mode
 	// label) so only plain production query/seed Jobs — the ones this test's
 	// DAG actually deploys — are inspected.
-	service1Jobs, err := getK8sJobs(ctx, "app=dbt-job,service_name=service-1,!mode")
+	service1Jobs, err := getK8sJobs(ctx, "app=dbt-job,project_name=service-1,!mode")
 	require.NoError(t, err, "Failed to query K8s jobs for service-1")
 	require.NotEmpty(t, service1Jobs.Items, "Expected at least one service-1 job to assert dialect routing on")
 	for _, job := range service1Jobs.Items {
@@ -173,7 +173,7 @@ func verifyDialectRouting(t *testing.T, ctx context.Context) {
 			job.Metadata.Name, command)
 	}
 
-	builtinJobs, err := getK8sJobs(ctx, "app=dbt-job,service_name in (service-2,service-3),!mode")
+	builtinJobs, err := getK8sJobs(ctx, "app=dbt-job,project_name in (service-2,service-3),!mode")
 	require.NoError(t, err, "Failed to query K8s jobs for service-2/3")
 	require.NotEmpty(t, builtinJobs.Items, "Expected at least one service-2/3 job to assert built-in dialect fallback on")
 	for _, job := range builtinJobs.Items {

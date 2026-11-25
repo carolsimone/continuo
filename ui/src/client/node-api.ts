@@ -1,10 +1,10 @@
-import type { ServicesResponse } from './types';
+import type { ProjectsResponse } from './types';
 
-// fetchNodeServices returns the services of the nodes the Nodes tab lists,
-// the live release's nodes continuo builds, a service whose nodes never ran
-// included. It feeds the Service filters of the Nodes and Remediation tabs.
-export function fetchNodeServices(): Promise<string[]> {
-  return fetch('/api/nodes/services')
+// fetchNodeProjects returns the projects of the nodes the Nodes tab lists,
+// the live release's nodes continuo builds, a project whose nodes never ran
+// included. It feeds the Project filters of the Nodes and Remediation tabs.
+export function fetchNodeProjects(): Promise<string[]> {
+  return fetch('/api/nodes/projects')
     .then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-    .then((data: ServicesResponse) => data.services ?? []);
+    .then((data: ProjectsResponse) => data.projects ?? []);
 }

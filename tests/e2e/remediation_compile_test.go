@@ -18,16 +18,16 @@ import (
 // The malformed-Jinja defect this scenario stages is the real
 // daily_transactions.sql failure: the config() call is closed too early and
 // tags is hoisted outside it, so dbt cannot parse the model and `dbt compile`
-// aborts for the whole service project:
+// aborts for the whole project:
 //
 //	{{ config(materialized='table'), tags=[...])}}
 //	select 1 as id
 //
 // This is documentation of the fixture a cold-stack harness must bake into
-// the COMPILE_FIXTURE_SERVICE image. It is NOT compiled by anything in this
+// the COMPILE_FIXTURE_PROJECT image. It is NOT compiled by anything in this
 // package (tests/e2e is a Go module; *.sql files here are inert), and it is
-// deliberately NOT placed under dbt/services/* — setup.sh compiles every
-// manifest under dbt/services via `dbt_upload load --services-dir /app/services`,
+// deliberately NOT placed under dbt/projects/* — setup.sh compiles every
+// manifest under dbt/projects via `dbt_upload load --projects-dir /app/projects`,
 // so a malformed model there would break the baseline manifest build and every
 // other e2e test. See task-7.1-report.md for the full enablement recipe.
 
@@ -35,17 +35,17 @@ import (
 // to end and proves it (a) rejects the release with per-node compile detail and
 // (b) produces a remediation proposal:
 //
-//	POST /releases (COMPILE_FIXTURE_SERVICE, malformed-Jinja model baked in image)
+//	POST /releases (COMPILE_FIXTURE_PROJECT, malformed-Jinja model baked in image)
 //	→ release.requested → AdvanceQueue: Received → Compiling → compile.requested:v1
 //	→ execution-controller runs `dbt compile` in the fixture image → dbt parse aborts
 //	→ execution-controller records the outcome in-process (outcome=failed, dbt_log_uri) → compile.completed:v1 (status=failed)
 //	→ release-controller TransitionToRejected("compile_failed"), RecordStageResults("compile")
-//	→ release.rejected:v1 {stage:"compile", per_node:[{node_id:<service>, status:"failed", dbt_log_uri}]}
+//	→ release.rejected:v1 {stage:"compile", per_node:[{node_id:<project>, status:"failed", dbt_log_uri}]}
 //	→ remediation classifier maps stage→SourceCompile, ExtractDbtFilePath(log)→file_path,
 //	  classifies the parse/compilation error as healable → remediation.requested:v3 (source="compile")
 //	→ agent-remediation proposeFromSource: reads model source from GitHub (stub-github),
 //	  asks stub-llm to fix it → proposal row (source="compile", file_path)
-//	→ a verification run lays the corrected file over the fixture service's dbt
+//	→ a verification run lays the corrected file over the fixture project's dbt
 //	  project and compiles and validates it; when it reports passed the
 //	  proposal is finalized → remediation.proposed:v1.
 //
@@ -55,31 +55,31 @@ import (
 // baked source and fails on the malformed model alone.
 //
 // Harness prerequisite (skip-gated). A clean `dbt compile` is required for the
-// three real e2e services (setup.sh compiles their manifests), so the failing
+// three real e2e projects (setup.sh compiles their manifests), so the failing
 // model cannot live in service-1/2/3. The scenario needs a DEDICATED fixture
-// service whose image is built with the malformed-Jinja model source documented
+// project whose image is built with the malformed-Jinja model source documented
 // above and loaded into kind,
 // whose image tag is reachable, and whose name is mapped in
-// tests/e2e/config/service_repos.yaml (so the agent resolves the repo
+// tests/e2e/config/project_repos.yaml (so the agent resolves the repo
 // prefix). Until a cold-stack harness provisions that fixture and exports
-// COMPILE_FIXTURE_SERVICE / COMPILE_FIXTURE_IMAGE_TAG, this test skips so it
+// COMPILE_FIXTURE_PROJECT / COMPILE_FIXTURE_IMAGE_TAG, this test skips so it
 // never destabilises the green suite. See task-7.1-report.md.
 func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
 
-	fixtureService := os.Getenv("COMPILE_FIXTURE_SERVICE")
-	if fixtureService == "" {
-		t.Skip("COMPILE_FIXTURE_SERVICE not set — compile-failure fixture not provisioned " +
+	fixtureProject := os.Getenv("COMPILE_FIXTURE_PROJECT")
+	if fixtureProject == "" {
+		t.Skip("COMPILE_FIXTURE_PROJECT not set — compile-failure fixture not provisioned " +
 			"in this harness; see .superpowers/sdd/task-7.1-report.md for the cold-stack " +
-			"enablement recipe (fixture dbt image + kind load + service_repos.yaml mapping); " +
-			"the fixture service must also be bound in tests/e2e/ci-auth.json under repository id " +
+			"enablement recipe (fixture dbt image + kind load + project_repos.yaml mapping); " +
+			"the fixture project must also be bound in tests/e2e/ci-auth.json under repository id " +
 			e2eDbtRepositoryID + " so postRelease can submit it through the public API")
 	}
 	fixtureImageTag := os.Getenv("COMPILE_FIXTURE_IMAGE_TAG")
 	require.NotEmpty(t, fixtureImageTag,
-		"COMPILE_FIXTURE_IMAGE_TAG must be set alongside COMPILE_FIXTURE_SERVICE")
+		"COMPILE_FIXTURE_IMAGE_TAG must be set alongside COMPILE_FIXTURE_PROJECT")
 
 	// 35 minutes: strictly greater than the 34 this test's stage budgets sum to
 	// (rejection 12 + rejected event 2 + trigger 4 + decision 0.5 + proposal 15
@@ -95,7 +95,7 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 	requireReleaseControllerHealthy(t, clients)
 
 	releaseID := "e2e-cmp-" + uuid.NewString()[:8]
-	t.Logf("release_id=%s fixture_service=%s image_tag=%s", releaseID, fixtureService, fixtureImageTag)
+	t.Logf("release_id=%s fixture_project=%s image_tag=%s", releaseID, fixtureProject, fixtureImageTag)
 
 	// Clear any mid-flight release so AdvanceQueue can activate this one.
 	// Tap the remediation streams before the release is posted: the trim loop
@@ -106,19 +106,19 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 
-	// POST /releases for the fixture service. AdvanceQueue moves it
+	// POST /releases for the fixture project. AdvanceQueue moves it
 	// Received → Compiling and emits compile.requested:v1; the compile job runs
 	// `dbt compile` in the fixture image and aborts on the malformed model.
-	postRelease(t, clients, fixtureService, releaseID, fixtureImageTag, false)
+	postRelease(t, clients, fixtureProject, releaseID, fixtureImageTag, false)
 
 	// 1. The release must reach "rejected" with at least one failing node (the
-	//    compile node, whose node_id is the service name).
+	//    compile node, whose node_id is the project name).
 	waitForReleaseRejected(t, ctx, clients, releaseID, 12*time.Minute)
 
 	// 2. GET /releases/{id}: reject_reason == "compile_failed", and per_node_results
-	//    carries a stage=="compile" entry for the service with a non-empty
+	//    carries a stage=="compile" entry for the project with a non-empty
 	//    dbt_log_uri (the per-node compile detail the UI surfaces).
-	assertCompileRejection(t, ctx, clients, releaseID, fixtureService)
+	assertCompileRejection(t, ctx, clients, releaseID, fixtureProject)
 
 	// 3. release.rejected:v1 must carry stage=="compile" for this release — the
 	//    discriminator the remediation classifier maps to SourceCompile.
@@ -127,12 +127,12 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 	// 4. remediation.requested:v3 must be emitted with source=="compile" and an
 	//    entry carrying a non-empty file_path (derived by the classifier via
 	//    ExtractDbtFilePath on the dbt compile log). The compile node_id is the
-	//    service name.
-	trigger := waitForBatchedTrigger(t, ctx, requestedTap, releaseID, []string{fixtureService}, 4*time.Minute)
+	//    project name.
+	trigger := waitForBatchedTrigger(t, ctx, requestedTap, releaseID, []string{fixtureProject}, 4*time.Minute)
 	require.Equal(t, string(model.RemediationSourceCompile), trigger.Source, "compile trigger source")
-	node, _ := trigger.findNode(fixtureService)
+	node, _ := trigger.findNode(fixtureProject)
 
-	require.Equal(t, fixtureService, node.NodeID, "compile trigger node_id is the service name")
+	require.Equal(t, fixtureProject, node.NodeID, "compile trigger node_id is the project name")
 	require.Nil(t, node.Unfixable, "a compilation error is one a fix can reach, so the trigger must not mark it unfixable")
 	require.NotEmpty(t, node.FilePath,
 		"compile trigger must carry a file_path extracted from the dbt compile log")
@@ -141,7 +141,7 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 	// base records as precedent. On a real dbt log it must be the compilation
 	// message naming the broken model — not dbt's `Encountered an error:`
 	// lead-in, which precedes every error and would give every compile failure
-	// of a service the same signature.
+	// of a project the same signature.
 	require.Contains(t, node.ErrorExcerpt, "Compilation Error in model daily_transactions",
 		"compile trigger error_excerpt must carry the compilation message, got %q", node.ErrorExcerpt)
 	t.Logf("✅ %s (compile): file_path=%s signature=%s excerpt=%q", streams.RemediationRequestedV3, node.FilePath, node.ErrorSignature, node.ErrorExcerpt)
@@ -154,7 +154,7 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 			   FROM classification_decision
 			  WHERE source = 'compile' AND release_id = $1 AND node_id = $2
 			  LIMIT 1`,
-			releaseID, fixtureService)
+			releaseID, fixtureProject)
 		return err == nil, nil
 	}, fmt.Sprintf("timeout waiting for compile classification_decision for release %s", releaseID))
 	require.Equal(t, "compile", decision.Source, "decision source must be 'compile'")
@@ -162,7 +162,7 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 
 	// 6. remediation.proposed:v1 must be emitted for the compile failure with
 	//    source=="compile". The agent posts a verification run that lays the
-	//    corrected file over the fixture service's dbt project and compiles it;
+	//    corrected file over the fixture project's dbt project and compiles it;
 	//    the event follows only once that run reports passed, so this budget
 	//    covers a whole second pipeline run.
 	var proposed remediationProposedPayload
@@ -177,7 +177,7 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 			if json.Unmarshal([]byte(raw), &p) != nil {
 				continue
 			}
-			if p.ReleaseID == releaseID && p.NodeID == fixtureService {
+			if p.ReleaseID == releaseID && p.NodeID == fixtureProject {
 				proposed = p
 				return true, nil
 			}
@@ -186,7 +186,7 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 	}, fmt.Sprintf("timeout waiting for %s (compile) for release %s", streams.RemediationProposedV1, releaseID))
 
 	require.Equal(t, "compile", proposed.Source, "proposed event source must be 'compile'")
-	require.Equal(t, fixtureService, proposed.NodeID, "proposed node_id is the service name")
+	require.Equal(t, fixtureProject, proposed.NodeID, "proposed node_id is the project name")
 	require.NotEmpty(t, proposed.ProposedSQLURI, "compile proposal must carry a proposed_sql_uri")
 	require.NotEmpty(t, proposed.DiffURI, "compile proposal must carry a diff_uri")
 	require.True(t, proposed.SourceResolved,
@@ -201,7 +201,7 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 			   FROM proposal
 			  WHERE release_id = $1 AND node_id = $2
 			  LIMIT 1`,
-			releaseID, fixtureService)
+			releaseID, fixtureProject)
 		return err == nil, nil
 	}, fmt.Sprintf("timeout waiting for compile proposal row for release %s", releaseID))
 
@@ -215,8 +215,8 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 
 // assertCompileRejection asserts GET /releases/{id} reports reject_reason
 // "compile_failed" and carries a stage=="compile" per-node result for the
-// service with a non-empty dbt_log_uri.
-func assertCompileRejection(t *testing.T, ctx context.Context, clients *testClients, releaseID, service string) {
+// project with a non-empty dbt_log_uri.
+func assertCompileRejection(t *testing.T, ctx context.Context, clients *testClients, releaseID, project string) {
 	t.Helper()
 	resp, err := http.Get(fmt.Sprintf("%s/releases/%s", clients.releaseBase, releaseID))
 	require.NoError(t, err, "GET /releases/{id}")
@@ -240,7 +240,7 @@ func assertCompileRejection(t *testing.T, ctx context.Context, clients *testClie
 
 	var found bool
 	for _, n := range detail.PerNodeResults {
-		if n.Stage == "compile" && n.NodeID == service {
+		if n.Stage == "compile" && n.NodeID == project {
 			found = true
 			require.Equal(t, "failed", n.Status, "compile per-node status must be 'failed'")
 			require.NotEmpty(t, n.DBTLogURI,
@@ -248,7 +248,7 @@ func assertCompileRejection(t *testing.T, ctx context.Context, clients *testClie
 		}
 	}
 	require.True(t, found,
-		"per_node_results must contain a stage=='compile' entry for service %s", service)
+		"per_node_results must contain a stage=='compile' entry for project %s", project)
 	t.Logf("✅ release %s rejected: reject_reason=compile_failed with a stage=compile per-node result", releaseID)
 }
 

@@ -114,7 +114,7 @@ function toRebasePreview(response: any) {
     changed_nodes: (response.changed_nodes ?? []).map((n: any) => {
       const lastSuccess = Number(n.last_success_seconds ?? 0);
       return {
-        service_name: n.service_name,
+        project_name: n.project_name,
         schema_name: n.schema_name,
         table_name: n.table_name,
         downstream: n.downstream ?? 0,
@@ -177,7 +177,7 @@ export function createRunsRouter(client: GrpcClient) {
         const tasks = (response.tasks || []).map((t: any) => ({
           task_id: t.task_id,
           run_id: t.run_id,
-          service_name: t.service_name,
+          project_name: t.project_name,
           schema_name: t.schema_name,
           table_name: t.table_name,
           job_name: t.job_name,
@@ -241,7 +241,7 @@ export function createRunsRouter(client: GrpcClient) {
     client.getRunGraph({ run_id: req.params.id }, (err: any, resp: any) => {
       if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
       const nodes = (resp.nodes || []).map((n: any) => ({
-        node_id: `${n.service_name}.${n.schema_name}.${n.table_name}`,
+        node_id: `${n.project_name}.${n.schema_name}.${n.table_name}`,
         node_type: n.node_type,
         schedule_name: n.schedule_name,
         status: n.status || null,

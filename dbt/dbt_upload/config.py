@@ -1,4 +1,4 @@
-"""Target configuration loading and service directory resolution."""
+"""Target configuration loading and project directory resolution."""
 import os
 
 import yaml
@@ -40,18 +40,18 @@ def load_target(targets_path: str, name: str) -> dict:
     return target
 
 
-def resolve_service_dirs(
-    paths: list[str] | None, services_dir: str | None
+def resolve_project_dirs(
+    paths: list[str] | None, projects_dir: str | None
 ) -> list[str]:
-    """Resolve CLI arguments into a sorted list of absolute service directories.
+    """Resolve CLI arguments into a sorted list of absolute project directories.
 
-    Either explicit paths or --services-dir must be provided, not both.
+    Either explicit paths or --projects-dir must be provided, not both.
     """
     if paths:
         return [os.path.abspath(p) for p in paths]
 
-    if services_dir:
-        base = os.path.abspath(services_dir)
+    if projects_dir:
+        base = os.path.abspath(projects_dir)
         return sorted(
             os.path.join(base, d)
             for d in os.listdir(base)
@@ -59,5 +59,5 @@ def resolve_service_dirs(
         )
 
     raise ValueError(
-        "Provide either service paths as positional arguments or --services-dir"
+        "Provide either project paths as positional arguments or --projects-dir"
     )

@@ -28,7 +28,7 @@ type rebasePreview struct {
 
 // changedNode is a changed node upstream of what a rebase re-executes.
 type changedNode struct {
-	ServiceName        string  `json:"service_name"`
+	ProjectName        string  `json:"project_name"`
 	SchemaName         string  `json:"schema_name"`
 	TableName          string  `json:"table_name"`
 	Downstream         int32   `json:"downstream"`
@@ -50,7 +50,7 @@ func toRebasePreview(r *runv1.PreviewRebaseResponse) rebasePreview {
 	}
 	for _, n := range r.GetChangedNodes() {
 		p.ChangedNodes = append(p.ChangedNodes, changedNode{
-			ServiceName:        n.GetServiceName(),
+			ProjectName:        n.GetProjectName(),
 			SchemaName:         n.GetSchemaName(),
 			TableName:          n.GetTableName(),
 			Downstream:         n.GetDownstream(),
@@ -67,7 +67,7 @@ func (p rebasePreview) writeHuman(w io.Writer) error {
 	}
 	for _, n := range p.ChangedNodes {
 		if _, err := fmt.Fprintf(w, "  changed upstream: %s  feeds %d, last success %.1fs\n",
-			runview.Node(n.ServiceName, n.SchemaName, n.TableName), n.Downstream, n.LastSuccessSeconds); err != nil {
+			runview.Node(n.ProjectName, n.SchemaName, n.TableName), n.Downstream, n.LastSuccessSeconds); err != nil {
 			return err
 		}
 	}
@@ -103,13 +103,13 @@ Output (stdout, JSON):
   {"release_id":string,"promotion_seq":number,"total_nodes":number,"will_run":number,
    "failed_or_skipped":number,"new_nodes":number,"changed_upstream":number,
    "downstream":number,"inherited":number,
-   "changed_nodes":[{"service_name":string,"schema_name":string,"table_name":string,
+   "changed_nodes":[{"project_name":string,"schema_name":string,"table_name":string,
                      "downstream":number,"last_success_seconds":number}]}
   release_id is the live release the preview compared; pass it to "run rebase".
   total_nodes is re-executed plus inherited; will_run is the sum of
   failed_or_skipped, new_nodes, changed_upstream and downstream. changed_upstream
   is 0 without with-changed-upstream. changed_nodes lists every changed upstream
-  node the option would add, whether or not it is set, ordered by service, schema
+  node the option would add, whether or not it is set, ordered by project, schema
   and table; downstream counts the nodes below it, and last_success_seconds is the
   execution time of its latest successful task (0 when it has none).
   Maintenance mode does not refuse a preview.
@@ -122,7 +122,7 @@ Errors:
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo run rebase-preview 0b6f4a52-3c1d-4d7e-9a0b-1f2e3d4c5b6a true",
 		Annotations: map[string]string{
-			"output_schema": `{"release_id":"string","promotion_seq":"number","total_nodes":"number","will_run":"number","failed_or_skipped":"number","new_nodes":"number","changed_upstream":"number","downstream":"number","inherited":"number","changed_nodes":[{"service_name":"string","schema_name":"string","table_name":"string","downstream":"number","last_success_seconds":"number"}]}`,
+			"output_schema": `{"release_id":"string","promotion_seq":"number","total_nodes":"number","will_run":"number","failed_or_skipped":"number","new_nodes":"number","changed_upstream":"number","downstream":"number","inherited":"number","changed_nodes":[{"project_name":"string","schema_name":"string","table_name":"string","downstream":"number","last_success_seconds":"number"}]}`,
 			"exit_codes":    `[0,2,3,4,5,6]`,
 		},
 		Args: func(cmd *cobra.Command, args []string) error {

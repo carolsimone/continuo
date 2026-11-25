@@ -150,8 +150,8 @@ func TestMaintenanceMode(t *testing.T) {
 	cleanupTestData(t, ctx, clients, "maintenance-mode")
 	seedTopology(t, ctx, clients)
 
-	const service, schema, table = "service-1", "e2e_schema", "seed_table_1"
-	nodeRunURL := fmt.Sprintf("%s/api/nodes/%s/%s/%s/run", clients.uiBase, service, schema, table)
+	const project, schema, table = "service-1", "e2e_schema", "seed_table_1"
+	nodeRunURL := fmt.Sprintf("%s/api/nodes/%s/%s/%s/run", clients.uiBase, project, schema, table)
 
 	// Maintenance must be off again whatever happens below, or every later
 	// test in the suite would be refused.
@@ -159,7 +159,7 @@ func TestMaintenanceMode(t *testing.T) {
 
 	// 1. A run in flight before maintenance begins.
 	resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
-		ServiceName: service, SchemaName: schema, TableName: table, MetadataSource: "latest",
+		ProjectName: project, SchemaName: schema, TableName: table, MetadataSource: "latest",
 	})
 	require.NoError(t, err)
 	inFlight := uuid.MustParse(resp.RunId)
@@ -180,7 +180,7 @@ func TestMaintenanceMode(t *testing.T) {
 	token := mintCIToken(t, e2eDbtRepositoryID, "carolsimone/continuo-demo", "maintenance")
 	status, out := afterRestart(t, ctx, func() (int, map[string]any) {
 		return submitPublicRelease(t, clients, token, map[string]any{
-			"service": "service-1", "release_id": "e2e-maintenance-refused", "image_tag": "unused",
+			"project": "service-1", "release_id": "e2e-maintenance-refused", "image_tag": "unused",
 		})
 	})
 	require.Equal(t, http.StatusServiceUnavailable, status, "%v", out)

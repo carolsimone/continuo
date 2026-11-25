@@ -41,7 +41,7 @@ function appAs(p: Principal, client: ReleaseClient, publicUrl = 'https://continu
   return app;
 }
 
-const body = { release_id: 'rel-1', service: 'core', image_tag: 'abc' };
+const body = { release_id: 'rel-1', project: 'core', image_tag: 'abc' };
 
 // Runs fn against one listening server, so a test that sends hundreds of
 // requests opens one listener rather than one per request.
@@ -78,7 +78,22 @@ describe('POST /api/v1/releases', () => {
   it('forwards only the submission fields that were sent', async () => {
     const client = fakeClient();
     await request(appAs(operator, client)).post('/api/v1/releases').send(body);
-    expect(Object.keys((client.submitRelease as ReturnType<typeof vi.fn>).mock.calls[0][0]).sort()).toEqual(['image_tag', 'release_id', 'service']);
+    expect(Object.keys((client.submitRelease as ReturnType<typeof vi.fn>).mock.calls[0][0]).sort()).toEqual(['image_tag', 'project', 'release_id']);
+  });
+
+  it('refuses a body that names the project as service, naming project, and forwards the same body with project', async () => {
+    const client = fakeClient();
+    const app = appAs(operator, client);
+    const named = { release_id: 'rel-1', service: 'core', image_tag: 'abc' };
+    const refused = await request(app).post('/api/v1/releases').send(named);
+    expect(refused.status).toBe(400);
+    expect(refused.body.error).toMatch(/\bproject\b/);
+    expect(client.submitRelease).not.toHaveBeenCalled();
+
+    const { service, ...rest } = named;
+    const accepted = await request(app).post('/api/v1/releases').send({ ...rest, project: service });
+    expect(accepted.status).toBe(202);
+    expect(client.submitRelease).toHaveBeenCalledWith({ release_id: 'rel-1', project: 'core', image_tag: 'abc' });
   });
 
   it('claim_mismatch when the body contradicts the token', async () => {
@@ -94,14 +109,14 @@ describe('POST /api/v1/releases', () => {
     expect(res.status).toBe(202);
   });
 
-  it('unbound service is forbidden; bootstrap without allowBootstrap is bootstrap_not_allowed', async () => {
+  it('unbound project is forbidden; bootstrap without allowBootstrap is bootstrap_not_allowed', async () => {
     const client = fakeClient();
     const app = appAs(ci({ core: false }), client);
-    expect((await request(app).post('/api/v1/releases').send({ ...body, service: 'marketing' })).body.code).toBe('forbidden');
-    // The kind ontology of an unbound service is refused the same way: the
+    expect((await request(app).post('/api/v1/releases').send({ ...body, project: 'marketing' })).body.code).toBe('forbidden');
+    // The kind ontology of an unbound project is refused the same way: the
     // kind-change 409 of release-controller reaches a caller only after the
     // route has checked the identity's bindings.
-    expect((await request(app).post('/api/v1/releases').send({ ...body, service: 'marketing', kind: 'ontology' })).body.code).toBe('forbidden');
+    expect((await request(app).post('/api/v1/releases').send({ ...body, project: 'marketing', kind: 'ontology' })).body.code).toBe('forbidden');
     expect((await request(app).post('/api/v1/releases').send({ ...body, bootstrap: true })).body.code).toBe('bootstrap_not_allowed');
     // A repository that matches no binding at all.
     const noneClient = fakeClient();
@@ -139,7 +154,7 @@ describe('POST /api/v1/releases', () => {
 
   it.each([
     ['unknown field', { ...body, verifies_release_id: 'x' }, /unknown field/],
-    ['missing service', { release_id: 'r', image_tag: 't' }, /service/],
+    ['missing project', { release_id: 'r', image_tag: 't' }, /project/],
     ['string bootstrap', { ...body, bootstrap: 'true' }, /bootstrap must be a boolean/],
     ['array body', [body], /JSON object/],
   ])('400 on %s', async (_n, b, msg) => {
@@ -173,7 +188,7 @@ describe('POST /api/v1/releases', () => {
   });
 
   it("passes release-controller's 409 through with its message to a person, and asks it nothing else", async () => {
-    const msg = 'release id already names a different candidate: "rel-1" has a different service, image tag, kind, bootstrap or rebaseline flag, or source change\n';
+    const msg = 'release id already names a different candidate: "rel-1" has a different project, image tag, kind, bootstrap or rebaseline flag, or source change\n';
     const client = fakeClient({ submitRelease: vi.fn(async () => ({ status: 409, text: msg })) });
     const res = await request(appAs(operator, client)).post('/api/v1/releases').send(body);
     expect(res.status).toBe(409);
@@ -182,7 +197,7 @@ describe('POST /api/v1/releases', () => {
   });
 
   it('answers a CI identity 409 with a generic message that names no other release or run kind', async () => {
-    for (const msg of ['run id already names a run of another kind: rel-1 is a verification\n', 'release id already names a different candidate: "rel-1" has a different service\n']) {
+    for (const msg of ['run id already names a run of another kind: rel-1 is a verification\n', 'release id already names a different candidate: "rel-1" has a different project\n']) {
       const client = fakeClient({ submitRelease: vi.fn(async () => ({ status: 409, text: msg })) });
       const res = await request(appAs(ci(), client)).post('/api/v1/releases').send(body);
       expect(res.status).toBe(409);
@@ -197,13 +212,13 @@ describe('POST /api/v1/releases', () => {
     };
     const GENERIC = 'release id already exists with different content';
 
-    // A kind change names the caller's own service, which the route has
+    // A kind change names the caller's own project, which the route has
     // already checked against the identity's bindings, so it reaches both.
     it.each([
-      ['a dbt service released as an ontology', 'service "core" is released as kind "dbt": a service cannot change between kind "ontology" and a node kind\n'],
-      ['the ontology released as a node kind', 'service "company-ontology" is released as kind "ontology": a service cannot change between kind "ontology" and a node kind\n'],
-      ['a python-odcs service', 'service "core" is released as kind "python-odcs": a service cannot change between kind "ontology" and a node kind\n'],
-      ['a name Go has to escape', 'service "co\\"re\\\\x" is released as kind "dbt": a service cannot change between kind "ontology" and a node kind\n'],
+      ['a dbt project released as an ontology', 'project "core" is released as kind "dbt": a project cannot change between kind "ontology" and a node kind\n'],
+      ['the ontology released as a node kind', 'project "company-ontology" is released as kind "ontology": a project cannot change between kind "ontology" and a node kind\n'],
+      ['a python-odcs project', 'project "core" is released as kind "python-odcs": a project cannot change between kind "ontology" and a node kind\n'],
+      ['a name Go has to escape', 'project "co\\"re\\\\x" is released as kind "dbt": a project cannot change between kind "ontology" and a node kind\n'],
     ])('passes the kind-change 409 of %s to a person and to a CI identity as it is', async (_n, text) => {
       for (const p of [operator, ci()]) {
         const res = await post(p, text, 409);
@@ -212,27 +227,27 @@ describe('POST /api/v1/releases', () => {
       }
     });
 
-    // The second ontology service is another service's name: a person reads it,
+    // The second ontology project is another project's name: a person reads it,
     // a CI identity learns only the rule.
-    it('gives a person the second-ontology 409 as it is, and a CI identity the rule without the other service name', async () => {
-      const text = 'service "company-ontology" is the install\'s ontology: an install has one ontology service\n';
+    it('gives a person the second-ontology 409 as it is, and a CI identity the rule without the other project name', async () => {
+      const text = 'project "company-ontology" is the install\'s ontology: an install has one ontology project\n';
       const person = await post(operator, text, 409);
       expect(person.status).toBe(409);
       expect(person.body).toEqual({ error: text.trim(), code: 'release_kind_conflict' });
       const pipeline = await post(ci(), text, 409, { ...body, kind: 'ontology' });
       expect(pipeline.status).toBe(409);
-      expect(pipeline.body).toEqual({ error: 'an install has one ontology service', code: 'release_kind_conflict' });
+      expect(pipeline.body).toEqual({ error: 'an install has one ontology project', code: 'release_kind_conflict' });
       expect(JSON.stringify(pipeline.body)).not.toContain('company-ontology');
     });
 
     it('a name Go has to escape does not stop the second-ontology text from being recognised', async () => {
-      const res = await post(ci(), 'service "o\\"x\\\\" is the install\'s ontology: an install has one ontology service\n', 409);
-      expect(res.body.error).toBe('an install has one ontology service');
+      const res = await post(ci(), 'project "o\\"x\\\\" is the install\'s ontology: an install has one ontology project\n', 409);
+      expect(res.body.error).toBe('an install has one ontology project');
     });
 
     it('keeps every other 409 as it was: the generic text for a CI identity and the upstream text for a person', async () => {
       for (const text of [
-        'release id already names a different candidate: "rel-1" has a different service, image tag, kind, bootstrap or rebaseline flag, or source change\n',
+        'release id already names a different candidate: "rel-1" has a different project, image tag, kind, bootstrap or rebaseline flag, or source change\n',
         'run id already names a run of another kind: rel-1 is a verification\n',
         'conflict',
       ]) {
@@ -247,18 +262,18 @@ describe('POST /api/v1/releases', () => {
     // after it, another wording, or a name that does not read as one Go-quoted
     // string leaves it the generic conflict for a CI identity.
     it.each([
-      ['a line before the second-ontology text', 'release id already names a different candidate\nservice "o" is the install\'s ontology: an install has one ontology service'],
-      ['a line after the second-ontology text', 'service "o" is the install\'s ontology: an install has one ontology service\nrelease id already names a different candidate'],
-      ['text after the second-ontology text', 'service "o" is the install\'s ontology: an install has one ontology service, and "rel-2" is queued'],
-      ['text before the second-ontology text', 'conflict: service "o" is the install\'s ontology: an install has one ontology service'],
-      ['an unquoted service name', 'service o is the install\'s ontology: an install has one ontology service'],
-      ['a quote inside the name', 'service "o"x" is the install\'s ontology: an install has one ontology service'],
-      ['another wording of the second-ontology text', 'service "o" is the ontology: an install has one ontology service'],
-      ['a line before the kind-change text', 'x\nservice "core" is released as kind "dbt": a service cannot change between kind "ontology" and a node kind'],
-      ['text after the kind-change text', 'service "core" is released as kind "dbt": a service cannot change between kind "ontology" and a node kind (rel-9)'],
-      ['an unquoted kind', 'service "core" is released as kind dbt: a service cannot change between kind "ontology" and a node kind'],
-      ['a kind that names another service', 'service "core" is released as kind "dbt" by "other": a service cannot change between kind "ontology" and a node kind'],
-      ['a kind-change text of another rule', 'service "core" is released as kind "dbt": a service cannot change between kind "python" and a node kind'],
+      ['a line before the second-ontology text', 'release id already names a different candidate\nproject "o" is the install\'s ontology: an install has one ontology project'],
+      ['a line after the second-ontology text', 'project "o" is the install\'s ontology: an install has one ontology project\nrelease id already names a different candidate'],
+      ['text after the second-ontology text', 'project "o" is the install\'s ontology: an install has one ontology project, and "rel-2" is queued'],
+      ['text before the second-ontology text', 'conflict: project "o" is the install\'s ontology: an install has one ontology project'],
+      ['an unquoted project name', 'project o is the install\'s ontology: an install has one ontology project'],
+      ['a quote inside the name', 'project "o"x" is the install\'s ontology: an install has one ontology project'],
+      ['another wording of the second-ontology text', 'project "o" is the ontology: an install has one ontology project'],
+      ['a line before the kind-change text', 'x\nproject "core" is released as kind "dbt": a project cannot change between kind "ontology" and a node kind'],
+      ['text after the kind-change text', 'project "core" is released as kind "dbt": a project cannot change between kind "ontology" and a node kind (rel-9)'],
+      ['an unquoted kind', 'project "core" is released as kind dbt: a project cannot change between kind "ontology" and a node kind'],
+      ['a kind that names another project', 'project "core" is released as kind "dbt" by "other": a project cannot change between kind "ontology" and a node kind'],
+      ['a kind-change text of another rule', 'project "core" is released as kind "dbt": a project cannot change between kind "python" and a node kind'],
     ])('answers a CI identity the generic 409 for %s, and a person the text', async (_n, text) => {
       const ciRes = await post(ci(), text, 409);
       expect(ciRes.body).toEqual({ error: GENERIC, code: 'release_kind_conflict' });
@@ -316,7 +331,7 @@ describe('POST /api/v1/releases', () => {
 });
 
 describe('release_submit audit', () => {
-  it('audits a 202 CI submit with the repository identity, service and bootstrap', async () => {
+  it('audits a 202 CI submit with the repository identity, project and bootstrap', async () => {
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
       await request(appAs(ci(), fakeClient())).post('/api/v1/releases').send(body);
@@ -324,18 +339,18 @@ describe('release_submit audit', () => {
       expect(lines).toHaveLength(1);
       expect(lines[0]).toMatchObject({
         principal: 'ci', repository: 'carolsimone/continuo-demo', repository_id: expect.any(String),
-        service: 'core', release_id: 'rel-1', bootstrap: false, rebaseline: false, outcome: 202,
+        project: 'core', release_id: 'rel-1', bootstrap: false, rebaseline: false, outcome: 202,
       });
     } finally { spy.mockRestore(); }
   });
 
-  it('audits a 400 submit, recording only string service and release_id', async () => {
+  it('audits a 400 submit, recording only string project and release_id', async () => {
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      await request(appAs(operator, fakeClient())).post('/api/v1/releases').send({ ...body, service: 'core', release_id: 7, bootstrap: 'true' });
+      await request(appAs(operator, fakeClient())).post('/api/v1/releases').send({ ...body, project: 'core', release_id: 7, bootstrap: 'true' });
       const lines = auditLines(spy);
       expect(lines).toHaveLength(1);
-      expect(lines[0]).toMatchObject({ principal: 'human', user_id: 'i|o', service: 'core', bootstrap: false, outcome: 400 });
+      expect(lines[0]).toMatchObject({ principal: 'human', user_id: 'i|o', project: 'core', bootstrap: false, outcome: 400 });
       expect(lines[0].release_id).toBeUndefined();
     } finally { spy.mockRestore(); }
   });
@@ -351,7 +366,7 @@ describe('release_submit audit', () => {
       });
       const lines = auditLines(spy);
       expect(lines).toHaveLength(SUBMIT_RATE_LIMIT_PER_MINUTE + 1);
-      expect(lines[lines.length - 1]).toMatchObject({ principal: 'ci', repository: 'carolsimone/continuo-demo', service: 'core', outcome: 429 });
+      expect(lines[lines.length - 1]).toMatchObject({ principal: 'ci', repository: 'carolsimone/continuo-demo', project: 'core', outcome: 429 });
     } finally { spy.mockRestore(); }
   });
 
@@ -366,7 +381,7 @@ describe('release_submit audit', () => {
 });
 
 describe('GET /api/v1/releases/:id', () => {
-  const rel = { release_id: 'r.1', status: 'rejected', changed_service: 'core', bootstrap: false, repo: 'carolsimone/continuo-demo', commit_sha: 'abc', reject_reason: 'validation_failed', reject_detail: 'x', per_node_results: [{}], failing_nodes: ['a'] };
+  const rel = { release_id: 'r.1', status: 'rejected', changed_project: 'core', bootstrap: false, repo: 'carolsimone/continuo-demo', commit_sha: 'abc', reject_reason: 'validation_failed', reject_detail: 'x', per_node_results: [{}], failing_nodes: ['a'] };
 
   it('returns the v1 projection only, with terminal and ui_url', async () => {
     const client = fakeClient({ getRelease: vi.fn(async () => rel) });
@@ -374,7 +389,7 @@ describe('GET /api/v1/releases/:id', () => {
     expect(res.status).toBe(200);
     expect(client.getRelease).toHaveBeenCalledWith('r.1');
     expect(res.body).toEqual({
-      release_id: 'r.1', service: 'core', status: 'rejected', terminal: true, bootstrap: false, rebaseline: false,
+      release_id: 'r.1', project: 'core', status: 'rejected', terminal: true, bootstrap: false, rebaseline: false,
       repo: 'carolsimone/continuo-demo', commit_sha: 'abc', reject_reason: 'validation_failed', reject_detail: 'x',
       ui_url: 'https://continuo.example.com/releases/r.1', notices: [], continuo_contracts: '',
     });
@@ -382,7 +397,7 @@ describe('GET /api/v1/releases/:id', () => {
 
   it('returns continuo_contracts for a rejected release', async () => {
     const rejected = {
-      release_id: 'rel-4e5f6a7-213', changed_service: 'service-py', status: 'rejected', bootstrap: false,
+      release_id: 'rel-4e5f6a7-213', changed_project: 'service-py', status: 'rejected', bootstrap: false,
       repo: 'carolsimone/continuo-demo', commit_sha: '4e5f6a7', reject_reason: 'invalid_contract',
       reject_detail: '1 node failed to parse: analytics.py_daily_kpis', continuo_contracts: '0.2.0',
     };
@@ -390,7 +405,7 @@ describe('GET /api/v1/releases/:id', () => {
     const res = await request(appAs(ci({ 'service-py': false }), client)).get('/api/v1/releases/rel-4e5f6a7-213');
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
-      release_id: 'rel-4e5f6a7-213', service: 'service-py', status: 'rejected', terminal: true, bootstrap: false, rebaseline: false,
+      release_id: 'rel-4e5f6a7-213', project: 'service-py', status: 'rejected', terminal: true, bootstrap: false, rebaseline: false,
       repo: 'carolsimone/continuo-demo', commit_sha: '4e5f6a7', reject_reason: 'invalid_contract',
       reject_detail: '1 node failed to parse: analytics.py_daily_kpis',
       ui_url: 'https://continuo.example.com/releases/rel-4e5f6a7-213', notices: [], continuo_contracts: '0.2.0',
@@ -436,7 +451,7 @@ describe('GET /api/v1/releases/:id', () => {
 
   it('projects the seed reload notices of a release, field by field', async () => {
     const notice = {
-      kind: 'seed_reload', node_id: 'analytics.seed_users', service: 'analytics', engine_family: 'schema_bound',
+      kind: 'seed_reload', node_id: 'analytics.seed_users', project: 'analytics', engine_family: 'schema_bound',
       change: 'columns_changed', columns: { added: ['plan'], removed: [], retyped: ['age'] },
       load: { operation: 'full_refresh', drops_table: true, reason: 'columns changed' },
       rebuilds: [{ node_id: 'analytics.v_users', materialized: 'view', operation: 'run', schedule: 'daily' }],
@@ -447,7 +462,7 @@ describe('GET /api/v1/releases/:id', () => {
     const client = fakeClient({ getRelease: vi.fn(async () => ({ ...rel, notices: [notice] })) });
     const res = await request(appAs(ci(), client)).get('/api/v1/releases/r.1');
     expect(res.body.notices).toEqual([{
-      kind: 'seed_reload', node_id: 'analytics.seed_users', service: 'analytics', change: 'columns_changed',
+      kind: 'seed_reload', node_id: 'analytics.seed_users', project: 'analytics', change: 'columns_changed',
       load: 'full_refresh', columns: { added: ['plan'], removed: [], retyped: ['age'] },
       rebuilds: [{ node_id: 'analytics.v_users', operation: 'run' }],
       stops_on: ['e2e_bi.seed_reader'],
@@ -456,11 +471,11 @@ describe('GET /api/v1/releases/:id', () => {
 
   it('a notice that reloads has no stops_on, whatever the warehouse holds outside continuo', () => {
     const notice = {
-      kind: 'seed_reload', node_id: 'a.s', service: 'a', change: 'rows_changed',
+      kind: 'seed_reload', node_id: 'a.s', project: 'a', change: 'rows_changed',
       load: { operation: 'run' }, warehouse: { outside_continuo: [{ object: 'x.y' }] }, prediction: 'reloads',
     };
     expect(projectRelease({ ...rel, notices: [notice] }).notices).toEqual([{
-      kind: 'seed_reload', node_id: 'a.s', service: 'a', change: 'rows_changed', load: 'run',
+      kind: 'seed_reload', node_id: 'a.s', project: 'a', change: 'rows_changed', load: 'run',
       columns: { added: [], removed: [], retyped: [] }, rebuilds: [], stops_on: [],
     }]);
   });
@@ -477,13 +492,13 @@ describe('GET /api/v1/releases/:id', () => {
   it('a notice of the wrong shape is dropped, a field of the wrong type is its empty value', () => {
     const odd = [1, null, 'x', { kind: 7, node_id: [], load: { operation: 3 }, columns: { added: 'a', removed: [1, 'b'] }, rebuilds: [{ node_id: 2 }, 'z'] }];
     expect(projectRelease({ ...rel, notices: odd }).notices).toEqual([{
-      kind: '', node_id: '', service: '', change: '', load: '',
+      kind: '', node_id: '', project: '', change: '', load: '',
       columns: { added: [], removed: ['b'], retyped: [] }, rebuilds: [{ node_id: '', operation: '' }], stops_on: [],
     }]);
   });
 
-  it('a release of a service the CI identity is not bound to reads as not found, without naming the service', async () => {
-    const other = fakeClient({ getRelease: vi.fn(async () => ({ ...rel, changed_service: 'marketing' })) });
+  it('a release of a project the CI identity is not bound to reads as not found, without naming the project', async () => {
+    const other = fakeClient({ getRelease: vi.fn(async () => ({ ...rel, changed_project: 'marketing' })) });
     const res = await request(appAs(ci(), other)).get('/api/v1/releases/x');
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: 'release not found', code: 'not_found' });
@@ -508,8 +523,8 @@ describe('GET /api/v1/releases/:id', () => {
   });
 
   it('projectRelease carries rebaseline', () => {
-    expect(projectRelease({ release_id: 'r', status: 'promoted', changed_service: 'core', bootstrap: true, rebaseline: true }).rebaseline).toBe(true);
-    expect(projectRelease({ release_id: 'r', status: 'promoted', changed_service: 'core' }).rebaseline).toBe(false);
+    expect(projectRelease({ release_id: 'r', status: 'promoted', changed_project: 'core', bootstrap: true, rebaseline: true }).rebaseline).toBe(true);
+    expect(projectRelease({ release_id: 'r', status: 'promoted', changed_project: 'core' }).rebaseline).toBe(false);
   });
 
   it('projectRelease: non-terminal status and no publicUrl gives ui_url null', () => {
@@ -517,9 +532,9 @@ describe('GET /api/v1/releases/:id', () => {
   });
 
   it('projectRelease: a field of the wrong type becomes its empty value, never a different shape', () => {
-    const odd = { release_id: 7, status: null, changed_service: ['core'], bootstrap: 'true', repo: 1, commit_sha: {}, reject_reason: false, reject_detail: { msg: 'x' } };
+    const odd = { release_id: 7, status: null, changed_project: ['core'], bootstrap: 'true', repo: 1, commit_sha: {}, reject_reason: false, reject_detail: { msg: 'x' } };
     expect(projectRelease(odd)).toEqual({
-      release_id: '', service: '', status: '', terminal: false, bootstrap: false, rebaseline: false,
+      release_id: '', project: '', status: '', terminal: false, bootstrap: false, rebaseline: false,
       repo: '', commit_sha: '', reject_reason: '', reject_detail: '', ui_url: null, notices: [], continuo_contracts: '',
     });
   });
@@ -558,7 +573,7 @@ describe('GET /api/v1/current-prod', () => {
     expect([res.status, res.body.code]).toEqual([503, 'upstream_unavailable']);
   });
 
-  it('a CI identity bound to no service is forbidden', async () => {
+  it('a CI identity bound to no project is forbidden', async () => {
     const client = cp();
     const res = await request(appAs(ci({}), client)).get('/api/v1/current-prod');
     expect(res.status).toBe(403);
@@ -589,7 +604,7 @@ describe('read rate limit', () => {
 
   it('caps release and current-prod reads per principal, on a counter separate from submissions', async () => {
     const c = fakeClient({
-      getRelease: vi.fn(async () => ({ release_id: 'r1', status: 'validating', changed_service: 'core' })),
+      getRelease: vi.fn(async () => ({ release_id: 'r1', status: 'validating', changed_project: 'core' })),
       getCurrentProd: vi.fn(async () => ({ current_prod_release_id: 'r', node_count: 1, updated_at: 't' })),
     });
     const app = express();

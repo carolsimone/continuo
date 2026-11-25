@@ -21,20 +21,20 @@ import { dormantTitle } from './node-helpers';
 import { useSingleNodeRun } from './useSingleNodeRun';
 import {
   DisplayEdge,
-  ServiceVertex,
-  buildServiceDisplayGraph,
-  isServiceVertexId,
-  serviceFromVertexId,
-  serviceOfNode,
-  serviceVertexId,
-} from './service-helpers';
+  ProjectVertex,
+  buildProjectDisplayGraph,
+  isProjectVertexId,
+  projectFromVertexId,
+  projectOfNode,
+  projectVertexId,
+} from './project-helpers';
 
 const NODE_WIDTH = 160;
 const NODE_HEIGHT = 44;
-const SERVICE_WIDTH = 200;
-const SERVICE_HEIGHT = 56;
+const PROJECT_WIDTH = 200;
+const PROJECT_HEIGHT = 56;
 
-const EMPTY_SERVICES = new Set<string>();
+const EMPTY_PROJECTS = new Set<string>();
 
 type FocusRole = 'selected' | 'parent' | 'child' | 'dim' | null;
 
@@ -76,7 +76,7 @@ interface FixedLook {
 }
 
 // An unknown-external node (a table another system loads, which no node builds) has no
-// run status and no service: grey.
+// run status and no project: grey.
 const UNKNOWN_EXTERNAL_BG = '#e2e8f0';
 const UNKNOWN_EXTERNAL_LOOK: FixedLook = { background: UNKNOWN_EXTERNAL_BG, borderColor: '#94a3b8' };
 const UNKNOWN_EXTERNAL_TITLE = 'A table continuo reads and does not build. continuo does not know who builds it.';
@@ -88,7 +88,7 @@ const DORMANT_LOOK: FixedLook = { background: DORMANT_BG, borderColor: '#94a3b8'
 
 // Borders are expressed with longhand properties only. Mixing the `border`
 // shorthand with a `borderLeft*` accent breaks on re-render: React re-applies
-// the changed shorthand, which resets the left border and drops the service
+// the changed shorthand, which resets the left border and drops the project
 // accent (and warns about the shorthand/longhand mix).
 function borderProps(
   width: string,
@@ -172,14 +172,14 @@ function nodeStyle(
   };
 }
 
-function serviceVertexStyle(
+function projectVertexStyle(
   status: string,
   accent: string,
   role: FocusRole,
 ): React.CSSProperties {
   const base: React.CSSProperties = {
     borderRadius: 10,
-    width: SERVICE_WIDTH,
+    width: PROJECT_WIDTH,
     fontSize: 12,
     cursor: 'pointer',
     transition: 'opacity 0.15s, box-shadow 0.15s',
@@ -262,9 +262,9 @@ function DormantRunButton({
   nodeId: string;
   onRunError: RunErrorHandler;
 }) {
-  const { service_name, schema_name, table_name } = parseNodeId(nodeId);
+  const { project_name, schema_name, table_name } = parseNodeId(nodeId);
   const { runState, postRun } = useSingleNodeRun(
-    { service: service_name, schema: schema_name, table: table_name },
+    { project: project_name, schema: schema_name, table: table_name },
     { operation: 'run' },
   );
   const className = [
@@ -315,27 +315,27 @@ function buildLayout(
   tasks: Task[],
   selectedNodeId: string | null,
   colorByStatus: boolean,
-  serviceView: boolean,
-  expandedServices: Set<string>,
-  serviceColors: Map<string, string>,
+  projectView: boolean,
+  expandedProjects: Set<string>,
+  projectColors: Map<string, string>,
   onRunError: RunErrorHandler,
 ): { nodes: Node[]; edges: Edge[] } {
   let modelNodes: GraphNode[];
-  let serviceVertices: ServiceVertex[];
+  let projectVertices: ProjectVertex[];
   let displayEdges: DisplayEdge[];
 
-  if (serviceView) {
-    const view = buildServiceDisplayGraph(graphNodes, graphEdges, tasks, expandedServices, colorByStatus);
+  if (projectView) {
+    const view = buildProjectDisplayGraph(graphNodes, graphEdges, tasks, expandedProjects, colorByStatus);
     modelNodes = view.modelNodes;
-    serviceVertices = view.serviceVertices;
+    projectVertices = view.projectVertices;
     displayEdges = view.edges;
   } else {
     modelNodes = graphNodes;
-    serviceVertices = [];
+    projectVertices = [];
     displayEdges = graphEdges.map((e) => ({ from: e.from_node_id, to: e.to_node_id }));
   }
 
-  // The service-level projection may be cyclic even though the model graph is
+  // The project-level projection may be cyclic even though the model graph is
   // a DAG; dagre's layout breaks cycles internally by reversing back-edges, so
   // a cyclic display graph lays out without special handling.
   const g = new dagre.graphlib.Graph();
@@ -343,8 +343,8 @@ function buildLayout(
   g.setGraph({ rankdir: 'TB', nodesep: 40, ranksep: 60 });
 
   modelNodes.forEach((n) => g.setNode(n.node_id, { width: NODE_WIDTH, height: NODE_HEIGHT }));
-  serviceVertices.forEach((v) =>
-    g.setNode(serviceVertexId(v.service), { width: SERVICE_WIDTH, height: SERVICE_HEIGHT }),
+  projectVertices.forEach((v) =>
+    g.setNode(projectVertexId(v.project), { width: PROJECT_WIDTH, height: PROJECT_HEIGHT }),
   );
   displayEdges.forEach((e) => g.setEdge(e.from, e.to));
   dagre.layout(g);
@@ -358,8 +358,8 @@ function buildLayout(
 
   const nodes: Node[] = modelNodes.map((n) => {
     const pos = g.node(n.node_id);
-    // The type decides first: an unknown-external node's id has an empty service
-    // (".raw.ingest_probe"), so no service accent or lookup may be derived
+    // The type decides first: an unknown-external node's id has an empty project
+    // (".raw.ingest_probe"), so no project accent or lookup may be derived
     // from it.
     const unknownExternal = isExternalNodeType(n.node_type);
     const dormant = !unknownExternal && n.dormant;
@@ -367,7 +367,7 @@ function buildLayout(
     const status = colorByStatus ? resolveNodeStatus(n, tasks) : 'pending';
     const isExternal = colorByStatus ? !task && !n.status : false;
     const role = focusRole(n.node_id, selectedNodeId, parentIds, childIds);
-    const accent = !unknownExternal && serviceView ? serviceColors.get(serviceOfNode(n.node_id)) : undefined;
+    const accent = !unknownExternal && projectView ? projectColors.get(projectOfNode(n.node_id)) : undefined;
     const look = unknownExternal ? UNKNOWN_EXTERNAL_LOOK : dormant ? DORMANT_LOOK : null;
 
     let label: React.ReactNode;
@@ -396,23 +396,23 @@ function buildLayout(
     };
   });
 
-  serviceVertices.forEach((v) => {
-    const id = serviceVertexId(v.service);
+  projectVertices.forEach((v) => {
+    const id = projectVertexId(v.project);
     const pos = g.node(id);
-    const accent = serviceColors.get(v.service) ?? '#94a3b8';
+    const accent = projectColors.get(v.project) ?? '#94a3b8';
     nodes.push({
       id,
-      position: { x: pos.x - SERVICE_WIDTH / 2, y: pos.y - SERVICE_HEIGHT / 2 },
+      position: { x: pos.x - PROJECT_WIDTH / 2, y: pos.y - PROJECT_HEIGHT / 2 },
       data: {
         label: (
-          <div className="dag-service-vertex">
-            <span className="dag-service-vertex-dot" style={{ background: accent }} />
-            <span className="dag-service-vertex-name">{v.service}</span>
-            <span className="dag-service-vertex-count">{v.nodeCount}</span>
+          <div className="dag-project-vertex">
+            <span className="dag-project-vertex-dot" style={{ background: accent }} />
+            <span className="dag-project-vertex-name">{v.project}</span>
+            <span className="dag-project-vertex-count">{v.nodeCount}</span>
           </div>
         ),
       },
-      style: serviceVertexStyle(v.status, accent, focusRole(id, selectedNodeId, parentIds, childIds)),
+      style: projectVertexStyle(v.status, accent, focusRole(id, selectedNodeId, parentIds, childIds)),
     });
   });
 
@@ -461,12 +461,12 @@ interface Props {
   selectedNodeId: string | null;
   onNodeClick: (nodeId: string | null) => void;
   colorByStatus?: boolean;
-  // Service-level abstraction: collapsed services render as single vertices
-  // with a rolled-up status; clicking one calls onServiceClick to toggle it.
-  serviceView?: boolean;
-  expandedServices?: Set<string>;
-  onServiceClick?: (service: string) => void;
-  serviceColors?: Map<string, string>;
+  // Project-level abstraction: collapsed projects render as single vertices
+  // with a rolled-up status; clicking one calls onProjectClick to toggle it.
+  projectView?: boolean;
+  expandedProjects?: Set<string>;
+  onProjectClick?: (project: string) => void;
+  projectColors?: Map<string, string>;
 }
 
 export default function DAGPanel({
@@ -476,14 +476,14 @@ export default function DAGPanel({
   selectedNodeId,
   onNodeClick,
   colorByStatus = true,
-  serviceView = false,
-  expandedServices = EMPTY_SERVICES,
-  onServiceClick,
-  serviceColors,
+  projectView = false,
+  expandedProjects = EMPTY_PROJECTS,
+  onProjectClick,
+  projectColors,
 }: Props) {
   const colors = useMemo(
-    () => serviceColors ?? new Map<string, string>(),
-    [serviceColors],
+    () => projectColors ?? new Map<string, string>(),
+    [projectColors],
   );
   // Why the run the latest ▶ press asked for did not start, named by its node;
   // null while no press has failed, and once another press is made.
@@ -499,17 +499,17 @@ export default function DAGPanel({
         tasks,
         selectedNodeId,
         colorByStatus,
-        serviceView,
-        expandedServices,
+        projectView,
+        expandedProjects,
         colors,
         handleRunError,
       ),
-    [graphEdges, graphNodes, selectedNodeId, tasks, colorByStatus, serviceView, expandedServices, colors, handleRunError],
+    [graphEdges, graphNodes, selectedNodeId, tasks, colorByStatus, projectView, expandedProjects, colors, handleRunError],
   );
   // Positions the operator has dragged nodes to, keyed by canvas node id (a
-  // model node id, or a service vertex id in service view). They live for as
+  // model node id, or a project vertex id in project view). They live for as
   // long as the panel is mounted, so an arrangement built to isolate a few
-  // services survives the graph poll, status updates and selection changes.
+  // projects survives the graph poll, status updates and selection changes.
   const [manualPositions, setManualPositions] = useState<Map<string, XYPosition>>(
     () => new Map(),
   );
@@ -642,8 +642,8 @@ export default function DAGPanel({
     }
 
     if (lastSearchMatchRef.current === match.node_id) return;
-    // Selecting the match also expands its service (handled by the parent), so
-    // a node hidden inside a collapsed service becomes visible. Until it is in
+    // Selecting the match also expands its project (handled by the parent), so
+    // a node hidden inside a collapsed project becomes visible. Until it is in
     // the layout, skip fitView; the layout change re-runs this effect.
     onNodeClick(match.node_id);
     const matchInLayout = layout.nodes.filter((n) => n.id === match.node_id);
@@ -659,13 +659,13 @@ export default function DAGPanel({
 
   const handleNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
-      if (isServiceVertexId(node.id)) {
-        onServiceClick?.(serviceFromVertexId(node.id));
+      if (isProjectVertexId(node.id)) {
+        onProjectClick?.(projectFromVertexId(node.id));
         return;
       }
       onNodeClick(node.id === selectedNodeId ? null : node.id);
     },
-    [onNodeClick, onServiceClick, selectedNodeId],
+    [onNodeClick, onProjectClick, selectedNodeId],
   );
 
   return (

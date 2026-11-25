@@ -60,7 +60,7 @@ describe('proto wire: run.proto', () => {
     for (const rpc of [
       'StartRun', 'TriggerRerun', 'TriggerSingleNodeRun', 'TriggerRebase', 'PreviewRebase',
       'CancelRun', 'GetRun', 'ListRuns', 'ListTasks', 'ListRunAttempts', 'GetRunGraph',
-      'ListNodeTasks', 'ListNodes', 'ListNodeNames', 'ListNodeServices',
+      'ListNodeTasks', 'ListNodes', 'ListNodeNames', 'ListNodeProjects',
       'ListSchedules', 'GetScheduleGraph', 'ListScheduleTopologies',
       'UpsertSchedule', 'DeleteSchedule', 'PreviewSchedule',
     ]) {
@@ -97,7 +97,7 @@ describe('proto wire: run.proto', () => {
 
   it('TriggerSingleNodeRun request round-trips request_id and the node identity', () => {
     const sent = {
-      request_id: '5d21c0de-0000-4000-8000-000000000001', service_name: 'svc', schema_name: 'sch',
+      request_id: '5d21c0de-0000-4000-8000-000000000001', project_name: 'svc', schema_name: 'sch',
       table_name: 'tbl', metadata_source: 'snapshot_of_run', source_run_id: 'run-1', operation: 'full_refresh',
       acknowledged_dependents: ['bi.fx_rates_report', 'bi.daily_totals'],
     };
@@ -106,7 +106,7 @@ describe('proto wire: run.proto', () => {
 
   it('TriggerSingleNodeRun request decodes no acknowledged_dependents as an empty list', () => {
     const sent = {
-      request_id: '5d21c0de-0000-4000-8000-000000000001', service_name: 'svc', schema_name: 'sch',
+      request_id: '5d21c0de-0000-4000-8000-000000000001', project_name: 'svc', schema_name: 'sch',
       table_name: 'tbl', metadata_source: 'latest', source_run_id: '', operation: '',
     };
     expect(requestRoundTrip('TriggerSingleNodeRun', sent)).toEqual({ ...sent, acknowledged_dependents: [] });
@@ -149,9 +149,9 @@ describe('proto wire: run.proto', () => {
   it('ListNodes request carries dormant_only as field 6', () => {
     const method = runMethod('ListNodes');
     expect([...method.requestSerialize({ dormant_only: true })]).toEqual([0x30, 1]);
-    expect(requestRoundTrip('ListNodes', { service_name: 'core', dormant_only: true }))
-      .toMatchObject({ service_name: 'core', dormant_only: true });
-    expect(requestRoundTrip('ListNodes', { service_name: 'core' })).toMatchObject({ dormant_only: false });
+    expect(requestRoundTrip('ListNodes', { project_name: 'core', dormant_only: true }))
+      .toMatchObject({ project_name: 'core', dormant_only: true });
+    expect(requestRoundTrip('ListNodes', { project_name: 'core' })).toMatchObject({ dormant_only: false });
   });
 
   it('ListNodes response decodes a node\'s node_type as field 14 and dormant as field 15', () => {
@@ -198,7 +198,7 @@ describe('proto wire: run.proto', () => {
     const lastSuccess = Buffer.alloc(8);
     lastSuccess.writeDoubleLE(252.5);
     const changedNode = [
-      0x0a, 1, 0x63, // service_name = "c"
+      0x0a, 1, 0x63, // project_name = "c"
       0x12, 1, 0x73, // schema_name = "s"
       0x1a, 1, 0x74, // table_name = "t"
       0x20, 18, // downstream = 18
@@ -219,7 +219,7 @@ describe('proto wire: run.proto', () => {
     expect(resp).toEqual({
       release_id: 'r7', promotion_seq: '7', total_nodes: 9, will_run: 4,
       failed_or_skipped: 1, new_nodes: 1, changed_upstream: 1, downstream: 1, inherited: 5,
-      changed_nodes: [{ service_name: 'c', schema_name: 's', table_name: 't', downstream: 18, last_success_seconds: 252.5 }],
+      changed_nodes: [{ project_name: 'c', schema_name: 's', table_name: 't', downstream: 18, last_success_seconds: 252.5 }],
     });
   });
 
@@ -241,7 +241,7 @@ describe('proto wire: run.proto', () => {
         cb(null, preview.responseDeserialize(preview.responseSerialize({
           release_id: 'rel-7', promotion_seq: 7, total_nodes: 2000, will_run: 41,
           failed_or_skipped: 3, new_nodes: 1, changed_upstream: 2, downstream: 35, inherited: 1959,
-          changed_nodes: [{ service_name: 'core', schema_name: 'stg', table_name: 'orders', downstream: 18, last_success_seconds: 252.5 }],
+          changed_nodes: [{ project_name: 'core', schema_name: 'stg', table_name: 'orders', downstream: 18, last_success_seconds: 252.5 }],
         })));
       },
     };
@@ -257,7 +257,7 @@ describe('proto wire: run.proto', () => {
     expect(got.body).toEqual({
       release_id: 'rel-7', promotion_seq: 7, total_nodes: 2000, will_run: 41,
       failed_or_skipped: 3, new_nodes: 1, changed_upstream: 2, downstream: 35, inherited: 1959,
-      changed_nodes: [{ service_name: 'core', schema_name: 'stg', table_name: 'orders', downstream: 18, last_success_seconds: 252.5 }],
+      changed_nodes: [{ project_name: 'core', schema_name: 'stg', table_name: 'orders', downstream: 18, last_success_seconds: 252.5 }],
     });
     expect(posted.status).toBe(200);
     expect(posted.body).toEqual({ run_id: 'run-2', schedule_name: 'daily' });
@@ -291,7 +291,7 @@ describe('proto wire: run.proto', () => {
         schedules: [{ schedule_name: 'daily', has_active_run: true, last_run_status: 'running', last_run_id: 'run-1' }],
       })),
       getScheduleGraph: (req: any, cb: any) => cb(null, through('GetScheduleGraph', req, {
-        nodes: [{ service_name: 's', schema_name: 'a', table_name: 'b', node_type: 'dbt-model', schedule_name: 'daily' }],
+        nodes: [{ project_name: 's', schema_name: 'a', table_name: 'b', node_type: 'dbt-model', schedule_name: 'daily' }],
         edges: [{ from_node_id: 's.a.b', to_node_id: 's.a.c' }], promotion_seq: 4,
       })),
     };

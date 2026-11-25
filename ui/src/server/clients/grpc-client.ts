@@ -64,7 +64,7 @@ export interface GrpcClient {
   listNodeTasks: (request: any, callback: Callback) => void;
   listNodes: (request: any, callback: Callback) => void;
   listNodeNames: (request: any, callback: Callback) => void;
-  listNodeServices: (request: any, callback: Callback) => void;
+  listNodeProjects: (request: any, callback: Callback) => void;
   listSchedules: (request: any, callback: Callback) => void;
   getScheduleGraph: (request: any, callback: Callback) => void;
   listScheduleTopologies: (request: any, callback: Callback) => void;

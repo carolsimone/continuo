@@ -23,7 +23,7 @@ of that render: the chart fails the render when agentRemediation.workflows.files
 is set and the remediation-workflows volume names any ConfigMap, since an
 operator-owned one leaves the files out of the pod and a named one carries no
 digest. They run once more against a render where
-only agent-remediation's service-repos volume names an operator-owned
+only agent-remediation's project-repos volume names an operator-owned
 ConfigMap: its other volume, the remediation workflows, keeps its digest, so
 each volume of a service decides its own.
 
@@ -75,10 +75,10 @@ CASES = [
      "args": ["--set", "global.logLevel=DEBUG"]},
     {"name": "files/dbt-commands.yaml", "configmap": "dbt-commands",
      "file": "files/dbt-commands.yaml", "edit": append_yaml_comment},
-    {"name": "files/service_repos.yaml", "configmap": "service-repos",
-     "file": "files/service_repos.yaml", "edit": append_yaml_comment},
-    {"name": "serviceRepos value", "configmap": "service-repos",
-     "args": ["--set", "serviceRepos.config-rollout-probe=probe"]},
+    {"name": "files/project_repos.yaml", "configmap": "project-repos",
+     "file": "files/project_repos.yaml", "edit": append_yaml_comment},
+    {"name": "projectRepos value", "configmap": "project-repos",
+     "args": ["--set", "projectRepos.config-rollout-probe=probe"]},
     {"name": "egress.allowedDomains value", "configmap": "egress-proxy",
      "args": ["--set", "egress.allowedDomains={config-rollout-probe.example.com}"]},
     {"name": "ciAuth.bindings value", "configmap": "ci-auth",
@@ -236,16 +236,16 @@ def check(source_chart: pathlib.Path, kube_version: str, failures: list) -> None
                                 f"the values override did not take effect")
 
         # agent-remediation mounts two chart ConfigMaps. With only its
-        # service-repos volume operator-owned, a workflows change still rolls
-        # it and a service-repos change rolls nothing: each volume decides its
+        # project-repos volume operator-owned, a workflows change still rolls
+        # it and a project-repos change rolls nothing: each volume decides its
         # own digest.
-        mixed_values, mixed_volumes = operator_owned_values(source_chart, workdir, only={"service-repos"})
-        mixed_users = check_topology("operator-owned service-repos only", renderer, ["-f", str(mixed_values)], failures,
+        mixed_values, mixed_volumes = operator_owned_values(source_chart, workdir, only={"project-repos"})
+        mixed_users = check_topology("operator-owned project-repos only", renderer, ["-f", str(mixed_values)], failures,
                                      mixed_volumes)
-        if f"{RELEASE}-service-repos" in mixed_users:
-            failures.append(f"the render with an operator-owned service-repos volume still mounts {RELEASE}-service-repos")
+        if f"{RELEASE}-project-repos" in mixed_users:
+            failures.append(f"the render with an operator-owned project-repos volume still mounts {RELEASE}-project-repos")
         if "agent-remediation" not in mixed_users.get(f"{RELEASE}-agent-remediation-workflows", {}):
-            failures.append(f"the render with an operator-owned service-repos volume no longer mounts "
+            failures.append(f"the render with an operator-owned project-repos volume no longer mounts "
                             f"{RELEASE}-agent-remediation-workflows into agent-remediation")
 
 

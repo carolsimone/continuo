@@ -16,7 +16,7 @@ func TestPublicAPI_Authorization(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	clients := setupClients(t, ctx)
-	body := map[string]any{"service": "service-1", "release_id": "e2e-public-api-refused", "image_tag": "unused"}
+	body := map[string]any{"project": "service-1", "release_id": "e2e-public-api-refused", "image_tag": "unused"}
 
 	t.Run("an unbound repository is forbidden", func(t *testing.T) {
 		token := mintCIToken(t, "999999999", "someone/unbound", "abc")
@@ -28,7 +28,7 @@ func TestPublicAPI_Authorization(t *testing.T) {
 	t.Run("bootstrap needs allowBootstrap on the binding", func(t *testing.T) {
 		token := mintCIToken(t, e2eNoBootstrapRepositoryID, "carolsimone/no-bootstrap", "abc")
 		status, out := submitPublicRelease(t, clients, token, map[string]any{
-			"service": "e2e-ci-no-bootstrap", "release_id": "e2e-public-api-boot", "image_tag": "x", "bootstrap": true,
+			"project": "e2e-ci-no-bootstrap", "release_id": "e2e-public-api-boot", "image_tag": "x", "bootstrap": true,
 		})
 		require.Equal(t, http.StatusForbidden, status)
 		require.Equal(t, "bootstrap_not_allowed", out["code"])

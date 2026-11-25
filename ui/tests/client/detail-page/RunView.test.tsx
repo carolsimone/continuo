@@ -7,7 +7,7 @@ import { resolveActiveGraph } from '../../../src/client/detail-page-helpers';
 import type { RunGraph, ScheduleGraph, Task } from '../../../src/client/types';
 
 const task = {
-  task_id: 't1', service_name: 'svc1', schema_name: 'public', table_name: 'orders',
+  task_id: 't1', project_name: 'svc1', schema_name: 'public', table_name: 'orders',
   job_name: 'orders', status: 'running', attempt: 0, max_retries: 0, created_at: null,
 } as unknown as Task;
 const graph: ScheduleGraph = {
@@ -22,9 +22,9 @@ function renderRunView(overrides: Partial<React.ComponentProps<typeof RunView>> 
     tasks: [task],
     attemptsByTask: new Map(),
     activeGraph: graph,
-    services: ['svc1'],
-    expandedServices: new Set(['svc1']),
-    onServiceToggle: vi.fn(),
+    projects: ['svc1'],
+    expandedProjects: new Set(['svc1']),
+    onProjectToggle: vi.fn(),
     pastRuns: {
       runs: [], liveRunId: null, liveStatus: null, selectedRunId: null,
       onSelectRun: vi.fn(), page: 0, pageSize: 10, total: 0, onPageChange: vi.fn(),

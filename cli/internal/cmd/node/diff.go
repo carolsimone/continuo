@@ -25,10 +25,10 @@ type versionDiffPayload struct {
 	Truncated         bool         `json:"truncated"`
 }
 
-// NewDiffCommand builds `continuo node diff <service> <schema> <table> --from <seq> --to <seq>`.
+// NewDiffCommand builds `continuo node diff <project> <schema> <table> --from <seq> --to <seq>`.
 func NewDiffCommand(factory CatalogClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "diff <service> <schema> <table>",
+		Use:   "diff <project> <schema> <table>",
 		Short: "Render the diff between two recorded versions of one model node",
 		Long: `Render the diff between two recorded versions of one model node.
 
@@ -37,11 +37,11 @@ of a dbt model: the raw source diff, the config diff, and which of source,
 shared code, and config actually changed.
 
 Arguments:
-  <service>  The owning service name.
+  <project>  The owning project name.
   <schema>   The schema name.
   <table>    The table (model) name.
 
-The node is addressed by its unique_id, "<schema>.<table>"; <service> is
+The node is addressed by its unique_id, "<schema>.<table>"; <project> is
 accepted for consistency with the other node subcommands but does not appear
 in the unique_id.
 
@@ -73,7 +73,7 @@ Errors:
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 3 {
-				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("diff requires exactly three arguments: <service> <schema> <table>"))
+				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("diff requires exactly three arguments: <project> <schema> <table>"))
 			}
 			if !cmd.Flags().Changed("from") || !cmd.Flags().Changed("to") {
 				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("diff requires both --from and --to"))

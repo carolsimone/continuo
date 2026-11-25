@@ -57,7 +57,7 @@ func TestUIWholeDAGTestOperation(t *testing.T) {
 }
 
 // TestUISingleNodeBuildOperation drives a single-node `build` run through the
-// ui HTTP API — POST /api/nodes/:service/:schema/:table/run with a
+// ui HTTP API — POST /api/nodes/:project/:schema/:table/run with a
 // JSON {"operation":"build"} body — the exact wire path NodeDetailPage's
 // operation selector uses. It runs against the seed_table_1 node and asserts
 // the dispatched Job's command carries `dbt build`, proving the operation
@@ -73,7 +73,7 @@ func TestUISingleNodeBuildOperation(t *testing.T) {
 	clients := setupClients(t, ctx)
 
 	const (
-		targetService = "service-1"
+		targetProject = "service-1"
 		targetSchema  = "e2e_schema"
 		targetTable   = "seed_table_1"
 	)
@@ -84,8 +84,8 @@ func TestUISingleNodeBuildOperation(t *testing.T) {
 	cleanupTestData(t, ctx, clients, "single-node-build-op-ui")
 	seedTopology(t, ctx, clients)
 
-	t.Logf("POST /api/nodes/%s/%s/%s/run {operation:build} via ui HTTP", targetService, targetSchema, targetTable)
-	runIDStr, scheduleName := triggerNodeRunOperationHTTP(t, clients.uiBase, targetService, targetSchema, targetTable, "build")
+	t.Logf("POST /api/nodes/%s/%s/%s/run {operation:build} via ui HTTP", targetProject, targetSchema, targetTable)
+	runIDStr, scheduleName := triggerNodeRunOperationHTTP(t, clients.uiBase, targetProject, targetSchema, targetTable, "build")
 
 	runID, err := uuid.Parse(runIDStr)
 	require.NoError(t, err, "run_id must be a valid UUID")
@@ -148,26 +148,26 @@ func triggerScheduleOperationHTTP(t *testing.T, base, scheduleName, operation st
 
 // triggerNodeRunOperationHTTP triggers a single-node run with an explicit run
 // operation via the ui HTTP endpoint (POST
-// /api/nodes/:service/:schema/:table/run {"request_id": id, "operation": op})
+// /api/nodes/:project/:schema/:table/run {"request_id": id, "operation": op})
 // and returns (run_id, schedule_name).
-func triggerNodeRunOperationHTTP(t *testing.T, base, service, schema, table, operation string) (string, string) {
+func triggerNodeRunOperationHTTP(t *testing.T, base, project, schema, table, operation string) (string, string) {
 	t.Helper()
 
 	body, err := json.Marshal(map[string]string{"request_id": uuid.NewString(), "operation": operation})
 	require.NoError(t, err)
 
 	resp, err := http.Post(
-		fmt.Sprintf("%s/api/nodes/%s/%s/%s/run", base, service, schema, table),
+		fmt.Sprintf("%s/api/nodes/%s/%s/%s/run", base, project, schema, table),
 		"application/json", bytes.NewReader(body),
 	)
-	require.NoError(t, err, "POST /api/nodes/%s/%s/%s/run: request failed", service, schema, table)
+	require.NoError(t, err, "POST /api/nodes/%s/%s/%s/run: request failed", project, schema, table)
 	defer resp.Body.Close()
 
 	raw, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 
 	require.Equal(t, http.StatusOK, resp.StatusCode,
-		"POST /api/nodes/%s/%s/%s/run: expected 200, got %d: %s", service, schema, table, resp.StatusCode, string(raw))
+		"POST /api/nodes/%s/%s/%s/run: expected 200, got %d: %s", project, schema, table, resp.StatusCode, string(raw))
 
 	var result map[string]interface{}
 	require.NoError(t, json.Unmarshal(raw, &result))

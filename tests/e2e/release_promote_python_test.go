@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	pyE2EService       = "svc-py-e2e"
+	pyE2EProject       = "svc-py-e2e"
 	pyProbeUniqueID    = "e2e_schema.py_probe"
 	pyBadShapeUniqueID = "e2e_schema.py_bad_shape"
 	pyCsvUniqueID      = "e2e_schema.py_csv"
@@ -71,8 +71,8 @@ var pyFixtureRepo embed.FS
 var pyCsvFixtureData []byte
 
 const (
-	// odcsBundleName is the object a python-odcs service's CI uploads for a
-	// release, at <service>/<release_id>/odcs-bundle.json.
+	// odcsBundleName is the object a python-odcs project's CI uploads for a
+	// release, at <project>/<release_id>/odcs-bundle.json.
 	odcsBundleName = "odcs-bundle.json"
 	// pyBundleRuntime and pyBundleContracts are the producer versions a
 	// hand-built bundle names: continuo-python-runtime 0.14.0, the runtime the
@@ -81,11 +81,11 @@ const (
 	pyBundleContracts = "0.4.1"
 )
 
-// odcsBundle is the document a python-odcs service's CI uploads, as
+// odcsBundle is the document a python-odcs project's CI uploads, as
 // `continuo-runtime pack` writes it.
 type odcsBundle struct {
 	BundleVersion int               `json:"bundle_version"`
-	Service       string            `json:"service"`
+	Project       string            `json:"project"`
 	Producer      map[string]string `json:"producer"`
 	ImagePackages map[string]string `json:"image_packages"`
 	Nodes         []odcsBundleNode  `json:"nodes"`
@@ -118,7 +118,7 @@ func odcsContracts(t *testing.T, repo fs.FS, root string) map[string]string {
 	return contracts
 }
 
-// buildODCSBundle builds the odcs-bundle.json of service from contracts (path
+// buildODCSBundle builds the odcs-bundle.json of project from contracts (path
 // relative to root → text as written), the bundle `continuo-runtime pack`
 // writes for the same files, without running the runtime's checks: a test
 // that releases a contract the runtime refuses builds its bundle here.
@@ -130,7 +130,7 @@ func odcsContracts(t *testing.T, repo fs.FS, root string) map[string]string {
 // fixture script imports code of its repository or declares an asset.
 // topology-controller computes the third part, the config hash, from the
 // contract itself.
-func buildODCSBundle(t *testing.T, repo fs.FS, root, service string, imagePackages map[string]string, contracts map[string]string) []byte {
+func buildODCSBundle(t *testing.T, repo fs.FS, root, project string, imagePackages map[string]string, contracts map[string]string) []byte {
 	t.Helper()
 	nodes := make([]odcsBundleNode, 0, len(contracts))
 	for p, text := range contracts {
@@ -150,7 +150,7 @@ func buildODCSBundle(t *testing.T, repo fs.FS, root, service string, imagePackag
 		}
 		nodes = append(nodes, odcsBundleNode{Path: p, Text: text, SourceHash: sourceHash})
 	}
-	return encodeODCSBundle(t, service, imagePackages, nodes)
+	return encodeODCSBundle(t, project, imagePackages, nodes)
 }
 
 // continuoProperties returns the continuo custom properties the ODCS contract
@@ -174,19 +174,19 @@ func continuoProperties(t *testing.T, contractPath, text string) map[string]any 
 	return props
 }
 
-// encodeODCSBundle writes the bundle of service holding nodes, in path order,
+// encodeODCSBundle writes the bundle of project holding nodes, in path order,
 // with the producer versions of a bundle runtime 0.14.0 packs.
-func encodeODCSBundle(t *testing.T, service string, imagePackages map[string]string, nodes []odcsBundleNode) []byte {
+func encodeODCSBundle(t *testing.T, project string, imagePackages map[string]string, nodes []odcsBundleNode) []byte {
 	t.Helper()
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Path < nodes[j].Path })
 	raw, err := json.Marshal(odcsBundle{
 		BundleVersion: 1,
-		Service:       service,
+		Project:       project,
 		Producer:      map[string]string{"continuo_python_runtime": pyBundleRuntime, "continuo_contracts": pyBundleContracts},
 		ImagePackages: imagePackages,
 		Nodes:         nodes,
 	})
-	require.NoError(t, err, "encode the bundle of %s", service)
+	require.NoError(t, err, "encode the bundle of %s", project)
 	return raw
 }
 
@@ -205,7 +205,7 @@ func imagePackages(t *testing.T, ctx context.Context, image string) map[string]s
 	return packages
 }
 
-// pyFixtureBundle is the odcs-bundle.json of the python e2e service, built
+// pyFixtureBundle is the odcs-bundle.json of the python e2e project, built
 // from the fixture image's own contract files with contracts' text replaced
 // where the caller names a path, and the package list of the fixture image.
 func pyFixtureBundle(t *testing.T, ctx context.Context, replace map[string]string) []byte {
@@ -215,7 +215,7 @@ func pyFixtureBundle(t *testing.T, ctx context.Context, replace map[string]strin
 		require.Contains(t, contracts, p, "the fixture has no contract %s to replace", p)
 		contracts[p] = text
 	}
-	return buildODCSBundle(t, pyFixtureRepo, pyFixtureRoot, pyE2EService, imagePackages(t, ctx, pyFixtureImage), contracts)
+	return buildODCSBundle(t, pyFixtureRepo, pyFixtureRoot, pyE2EProject, imagePackages(t, ctx, pyFixtureImage), contracts)
 }
 
 // TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes proves the
@@ -262,11 +262,11 @@ func TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes(t *testing.T) 
 	// The promoted pointer records the python-odcs kind and the bundle.
 	var kind, s3Key string
 	require.NoError(t, clients.releaseDB.QueryRowContext(ctx,
-		`SELECT manifest_kind, manifest_s3_key FROM service_prod WHERE service_name = $1`,
-		pyE2EService).Scan(&kind, &s3Key))
+		`SELECT manifest_kind, manifest_s3_key FROM service_prod WHERE project_name = $1`,
+		pyE2EProject).Scan(&kind, &s3Key))
 	assert.Equal(t, "python-odcs", kind)
 	assert.True(t, strings.HasSuffix(s3Key, "/"+odcsBundleName),
-		"pointer must be the service's bundle, got %s", s3Key)
+		"pointer must be the project's bundle, got %s", s3Key)
 	t.Log("✅ python release skipped compile, validated via build_from_columns, promoted, and swapped topology")
 }
 
@@ -285,7 +285,7 @@ var defaultPythonReleaseBudget = pythonReleaseBudget{
 	swapped:             2 * time.Minute,
 }
 
-// promotePythonFixtureRelease promotes the python fixture service's bundle
+// promotePythonFixtureRelease promotes the python fixture project's bundle
 // (see pyFixtureBundle): it seeds the csv object the py_csv node reads, then
 // drives the release through promotePythonContractRelease within budget. The
 // caller MUST defer the returned cleanup.
@@ -301,7 +301,7 @@ func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *tes
 		[]string{pyProbeUniqueID, pyBadShapeUniqueID, pyCsvUniqueID, pyAPIUniqueID}, pyProbeUniqueID)
 }
 
-// promotePythonContractRelease drives pyE2EService through a full release of
+// promotePythonContractRelease drives pyE2EProject through a full release of
 // the given odcs-bundle.json: it seeds the baseline pointers, uploads the
 // bundle to S3 before the POST (the ordering a domain repository's CI must
 // honour), posts a python-odcs release naming the side-loaded fixture image, checks the
@@ -313,7 +313,7 @@ func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *tes
 // The cleanup is returned for the caller to defer, so it runs when the test
 // function returns, while releaseDB is still open: the cleanup setupClients
 // registered closes the pools only after every deferred call. A leftover
-// service_prod pointer would drag this service's contract into every later
+// service_prod pointer would drag this project's contract into every later
 // test's assembled manifest set.
 func promotePythonContractRelease(t *testing.T, ctx context.Context, clients *testClients, validationTap *streamTap,
 	budget pythonReleaseBudget, bundle []byte, validationNodes []string, swapNode string) (string, func()) {
@@ -321,31 +321,31 @@ func promotePythonContractRelease(t *testing.T, ctx context.Context, clients *te
 
 	releaseID := "e2e-py-" + uuid.NewString()[:8]
 
-	// Baseline: every dbt service keeps its live pointer; the python service is
+	// Baseline: every dbt project keeps its live pointer; the python project is
 	// brand new, so every one of its nodes is a changed node.
-	allServices := baselineServices(t, ctx, clients)
-	require.NotEmpty(t, allServices)
+	allProjects := baselineProjects(t, ctx, clients)
+	require.NotEmpty(t, allProjects)
 	var prodNodes []map[string]string
-	for svc, si := range allServices {
+	for svc, si := range allProjects {
 		for _, n := range si.nodes {
 			prodNodes = append(prodNodes, map[string]string{
-				"unique_id": n.uniqueID, "service": svc, "content_hash": n.contentHash,
+				"unique_id": n.uniqueID, "project": svc, "content_hash": n.contentHash,
 			})
 		}
 	}
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allServices)
+	seedServiceProd(t, ctx, clients, allProjects)
 	cleanup := func() {
 		if _, err := clients.releaseDB.ExecContext(context.Background(),
-			`DELETE FROM service_prod WHERE service_name = $1`, pyE2EService); err != nil {
-			t.Errorf("cleanup: delete %s service_prod row: %v", pyE2EService, err)
+			`DELETE FROM service_prod WHERE project_name = $1`, pyE2EProject); err != nil {
+			t.Errorf("cleanup: delete %s service_prod row: %v", pyE2EProject, err)
 		}
 	}
 
-	putODCSBundle(t, ctx, clients, pyE2EService, releaseID, bundle)
-	postPythonRelease(t, clients, pyE2EService, releaseID, pyFixtureImage, false)
+	putODCSBundle(t, ctx, clients, pyE2EProject, releaseID, bundle)
+	postPythonRelease(t, clients, pyE2EProject, releaseID, pyFixtureImage, false)
 
 	assertValidationRequestedNodesWithin(t, ctx, validationTap, releaseID, validationNodes, budget.validationRequested)
 
@@ -358,7 +358,7 @@ func promotePythonContractRelease(t *testing.T, ctx context.Context, clients *te
 }
 
 // TestE2E_PythonNodeRun_MaterializesAndReportsFailures proves execution-controller's
-// python runtime dispatch end to end. It promotes the python fixture service,
+// python runtime dispatch end to end. It promotes the python fixture project,
 // then runs each of its nodes: the conforming script node materializes real
 // rows in the warehouse through the harness, the non-conforming one fails
 // with the harness's deterministic error class reaching the control plane as
@@ -530,7 +530,7 @@ func deleteAPISecret(t *testing.T, ctx context.Context) {
 func triggerPythonNodeRun(t *testing.T, ctx context.Context, clients *testClients, table string) (uuid.UUID, string) {
 	t.Helper()
 	resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
-		ServiceName:    pyE2EService,
+		ProjectName:    pyE2EProject,
 		SchemaName:     "e2e_schema",
 		TableName:      table,
 		MetadataSource: "latest",
@@ -546,11 +546,11 @@ func triggerPythonNodeRun(t *testing.T, ctx context.Context, clients *testClient
 // postPythonRelease submits a python-odcs release through the public API as
 // the CI pipeline of the python fixture repository. When bootstrap is true the
 // release promotes without validation.
-func postPythonRelease(t *testing.T, clients *testClients, service, releaseID, imageTag string, bootstrap bool) {
+func postPythonRelease(t *testing.T, clients *testClients, project, releaseID, imageTag string, bootstrap bool) {
 	t.Helper()
 	token := mintCIToken(t, e2ePyRepositoryID, "carolsimone/continuo-py-demo", releaseID)
 	status, body := submitPublicRelease(t, clients, token, map[string]any{
-		"service":    service,
+		"project":    project,
 		"release_id": releaseID,
 		"image_tag":  imageTag,
 		"kind":       "python-odcs",
@@ -559,11 +559,11 @@ func postPythonRelease(t *testing.T, clients *testClients, service, releaseID, i
 	require.Equal(t, http.StatusAccepted, status, "POST /api/v1/releases: expected 202, got %d: %v", status, body)
 }
 
-// putODCSBundle uploads bundle as service's odcs-bundle.json for releaseID,
+// putODCSBundle uploads bundle as project's odcs-bundle.json for releaseID,
 // the object a python-odcs release reads, and returns its key.
-func putODCSBundle(t *testing.T, ctx context.Context, clients *testClients, service, releaseID string, bundle []byte) string {
+func putODCSBundle(t *testing.T, ctx context.Context, clients *testClients, project, releaseID string, bundle []byte) string {
 	t.Helper()
-	key := fmt.Sprintf("%s/%s/%s", service, releaseID, odcsBundleName)
+	key := fmt.Sprintf("%s/%s/%s", project, releaseID, odcsBundleName)
 	putS3Object(t, ctx, clients, key, bundle)
 	return key
 }

@@ -1,7 +1,7 @@
 # dbt command dialect for execution-controller-created Kubernetes Jobs.
 #
 # Every configured block must be COMPLETE: the `default` block is required and
-# must define all eight command keys, and every `services.<name>` override must
+# must define all eight command keys, and every `projects.<name>` override must
 # define all eight too. There is no per-key fallback — a team that overrides its
 # CLI declares the full set so no job can fall through to a command its image
 # cannot run. An incomplete block is a fatal boot error.

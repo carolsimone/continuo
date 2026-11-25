@@ -45,10 +45,10 @@ type versionsPayload struct {
 // output rather than leave the flag looking unbounded.
 const defaultVersionsLimit int32 = 20
 
-// NewVersionsCommand builds `continuo node versions <service> <schema> <table>`.
+// NewVersionsCommand builds `continuo node versions <project> <schema> <table>`.
 func NewVersionsCommand(factory CatalogClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "versions <service> <schema> <table>",
+		Use:   "versions <project> <schema> <table>",
 		Short: "List a model node's recorded code-version history",
 		Long: `List a model node's recorded code-version history, newest first.
 
@@ -63,11 +63,11 @@ this list. is_current marks the version that actually runs now — after a
 revert, that can be a version further down this list, not the first row.
 
 Arguments:
-  <service>  The owning service name.
+  <project>  The owning project name.
   <schema>   The schema name.
   <table>    The table (model) name.
 
-The node is addressed by its unique_id, "<schema>.<table>"; <service> is
+The node is addressed by its unique_id, "<schema>.<table>"; <project> is
 accepted for consistency with the other node subcommands but does not appear
 in the unique_id, matching how the catalog service tracks version history.
 
@@ -106,7 +106,7 @@ Errors:
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 3 {
-				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("versions requires exactly three arguments: <service> <schema> <table>"))
+				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("versions requires exactly three arguments: <project> <schema> <table>"))
 			}
 			return nil
 		},

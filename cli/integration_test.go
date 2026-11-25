@@ -143,7 +143,7 @@ func (s *stubRunServer) GetRun(_ context.Context, req *runv1.GetRunRequest) (*ru
 
 func (s *stubRunServer) ListTasks(context.Context, *runv1.ListTasksRequest) (*runv1.ListTasksResponse, error) {
 	return &runv1.ListTasksResponse{TotalCount: 1, Tasks: []*runv1.Task{
-		{TaskId: "t1", ServiceName: "svc", SchemaName: "raw", TableName: "orders", Status: "failed", Attempt: 1},
+		{TaskId: "t1", ProjectName: "svc", SchemaName: "raw", TableName: "orders", Status: "failed", Attempt: 1},
 	}}, nil
 }
 
@@ -251,7 +251,7 @@ func TestCLI_ScheduleGraphAgainstInProcessServer(t *testing.T) {
 				{
 					TableName:    "orders",
 					SchemaName:   "public",
-					ServiceName:  "analytics",
+					ProjectName:  "analytics",
 					NodeType:     "model",
 					ScheduleName: "test_schedule",
 				},

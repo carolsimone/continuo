@@ -12,13 +12,13 @@ vi.mock('./remediation-api', () => ({
 }));
 
 vi.mock('./node-api', () => ({
-  fetchNodeServices: vi.fn(),
+  fetchNodeProjects: vi.fn(),
 }));
 
 import { fetchProposals } from './remediation-api';
-import { fetchNodeServices } from './node-api';
+import { fetchNodeProjects } from './node-api';
 const mockFetchProposals = fetchProposals as ReturnType<typeof vi.fn>;
-const mockFetchNodeServices = fetchNodeServices as ReturnType<typeof vi.fn>;
+const mockFetchNodeProjects = fetchNodeProjects as ReturnType<typeof vi.fn>;
 
 const makeProposal = (overrides: Partial<ProposalDTO> = {}): ProposalDTO => ({
   id: 'prop-1',
@@ -95,7 +95,7 @@ function mockFetch(pattern: RegExp, body: string) {
 describe('RemediationPanel — group list', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockFetchNodeServices.mockResolvedValue([]);
+    mockFetchNodeProjects.mockResolvedValue([]);
   });
 
   it('renders one group row per (release, round), newest group first', async () => {
@@ -135,32 +135,32 @@ describe('RemediationPanel — group list', () => {
     expect(groupRow).toHaveTextContent('2'); // attempts count
   });
 
-  it('shows the union of services and nodes for a group', async () => {
+  it('shows the union of projects and nodes for a group', async () => {
     const proposal = makeProposal({
       status: 'skipped',
       node_id: 'core_schema.a',
       resolved_node_ids: ['core_schema.a', 'finance_schema.b'],
-      services: ['finance', 'core'],
+      projects: ['finance', 'core'],
     });
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
 
     await waitFor(() => screen.getByText('core_schema.a, finance_schema.b'));
-    // Services union is sorted.
+    // Projects union is sorted.
     expect(screen.getByText('core, finance')).toBeInTheDocument();
   });
 
-  it('reads the Services column from the services the proposal carries, never from its node ids', async () => {
-    // A remediation node id is "<schema>.<table>" — it names no service —
-    // so the column shows the services agent-remediation recorded for the
-    // attempt (the same set the Service filter matches on), and a schema
+  it('reads the Projects column from the projects the proposal carries, never from its node ids', async () => {
+    // A remediation node id is "<schema>.<table>" — it names no project —
+    // so the column shows the projects agent-remediation recorded for the
+    // attempt (the same set the Project filter matches on), and a schema
     // never leaks into it.
     const proposal = makeProposal({
       status: 'skipped',
       node_id: 'e2e_schema.table_a',
       resolved_node_ids: ['e2e_schema.table_a', 'e2e_schema.table_b'],
-      services: ['service-1'],
+      projects: ['service-1'],
     });
     mockFetchProposals.mockResolvedValue([proposal]);
 
@@ -205,7 +205,7 @@ describe('RemediationPanel — group list', () => {
 describe('RemediationPanel — status pills', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockFetchNodeServices.mockResolvedValue([]);
+    mockFetchNodeProjects.mockResolvedValue([]);
   });
 
   it.each([
@@ -238,7 +238,7 @@ describe('RemediationPanel — status pills', () => {
 describe('RemediationPanel — attempts are nested inside their group', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockFetchNodeServices.mockResolvedValue([]);
+    mockFetchNodeProjects.mockResolvedValue([]);
   });
 
   it('renders the attempt rows and their column labels inside the group\'s contained block, not as a peer table', async () => {
@@ -276,7 +276,7 @@ describe('RemediationPanel — attempts are nested inside their group', () => {
 describe('RemediationPanel — expanding a group and its attempts', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockFetchNodeServices.mockResolvedValue([]);
+    mockFetchNodeProjects.mockResolvedValue([]);
   });
 
   it('reveals attempt rows on group click, then the rationale on attempt click', async () => {
@@ -448,7 +448,7 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
 describe('RemediationPanel — an actionable proposal', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockFetchNodeServices.mockResolvedValue([]);
+    mockFetchNodeProjects.mockResolvedValue([]);
   });
 
   it('auto-expands the group and its card with no click', async () => {
@@ -532,7 +532,7 @@ describe('RemediationPanel — an actionable proposal', () => {
 describe('RemediationPanel — verification runs on an attempt', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockFetchNodeServices.mockResolvedValue([]);
+    mockFetchNodeProjects.mockResolvedValue([]);
   });
 
   it('lists each verification run beneath its attempt with a link to the run', async () => {
@@ -540,8 +540,8 @@ describe('RemediationPanel — verification runs on an attempt', () => {
       status: 'verifying',
       resolved_node_ids: ['s.a', 's.b'],
       verifications: [
-        { service: 'core', kind: 'dbt', run_id: 'verify-rel-1-core-a1', phase: 'running', activated_at: '2026-09-02T10:01:00Z', error: '' },
-        { service: 'ops', kind: 'python', run_id: 'verify-rel-1-ops-a1', phase: 'queued', activated_at: '', error: '' },
+        { project: 'core', kind: 'dbt', run_id: 'verify-rel-1-core-a1', phase: 'running', activated_at: '2026-09-02T10:01:00Z', error: '' },
+        { project: 'ops', kind: 'python', run_id: 'verify-rel-1-ops-a1', phase: 'queued', activated_at: '', error: '' },
       ],
     });
     mockFetchProposals.mockResolvedValue([proposal]);
@@ -592,10 +592,10 @@ describe('RemediationPanel — verification runs on an attempt', () => {
   });
 });
 
-describe('RemediationPanel — pull requests split across owning services', () => {
+describe('RemediationPanel — pull requests split across owning projects', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockFetchNodeServices.mockResolvedValue([]);
+    mockFetchNodeProjects.mockResolvedValue([]);
   });
 
   it('renders one labeled open PR link per pull_requests entry in the actionable card', async () => {
@@ -604,10 +604,10 @@ describe('RemediationPanel — pull requests split across owning services', () =
       source_resolved: true,
       node_id: 'core.a',
       resolved_node_ids: ['core.a', 'finance.b'],
-      pr_services: ['core', 'finance'],
+      pr_projects: ['core', 'finance'],
       pull_requests: [
-        { service: 'core', repo: 'org/core-repo', branch: 'b', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10, pr_state: 'open', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '' },
-        { service: 'finance', repo: 'org/finance-repo', branch: 'b', pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11, pr_state: '', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '' },
+        { project: 'core', repo: 'org/core-repo', branch: 'b', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10, pr_state: 'open', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '' },
+        { project: 'finance', repo: 'org/finance-repo', branch: 'b', pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11, pr_state: '', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '' },
       ],
     });
     mockFetchProposals.mockResolvedValue([proposal]);
@@ -620,13 +620,13 @@ describe('RemediationPanel — pull requests split across owning services', () =
     expect(screen.queryByRole('link', { name: /^open PR ↗$/i })).toBeNull();
   });
 
-  it('shows a per-service state chip labeled by service in the group PR column', async () => {
+  it('shows a per-project state chip labeled by project in the group PR column', async () => {
     const proposal = makeProposal({
       status: 'skipped',
-      pr_services: ['core', 'finance'],
+      pr_projects: ['core', 'finance'],
       pull_requests: [
-        { service: 'core', repo: '', branch: '', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10, pr_state: 'merged', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '' },
-        { service: 'finance', repo: '', branch: '', pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11, pr_state: 'rejected', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '' },
+        { project: 'core', repo: '', branch: '', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10, pr_state: 'merged', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '' },
+        { project: 'finance', repo: '', branch: '', pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11, pr_state: 'rejected', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '' },
       ],
     });
     mockFetchProposals.mockResolvedValue([proposal]);
@@ -641,7 +641,7 @@ describe('RemediationPanel — pull requests split across owning services', () =
     expect(rejectedChip.closest('.pr-chip-labeled')).toHaveTextContent('finance rejected');
 
     // Both labelled chips share one wrapping row in the PR cell, so a
-    // proposal split across many services stays one compact cell.
+    // proposal split across many projects stays one compact cell.
     const row = mergedChip.closest('.remediation-prs')!;
     expect(row).not.toBeNull();
     expect(rejectedChip.closest('.remediation-prs')).toBe(row);
@@ -658,17 +658,17 @@ describe('RemediationPanel — pull requests split across owning services', () =
     renderPanel();
     const chip = await screen.findByText(pr_state);
     expect(chip).toHaveClass('pr-chip', cls);
-    // A legacy (unsplit) proposal's chip carries no service prefix.
+    // A legacy (unsplit) proposal's chip carries no project prefix.
     expect(chip.closest('.pr-chip-labeled')).toBeNull();
   });
 
-  it('stays actionable (auto-expanded) while one service still needs a PR', async () => {
+  it('stays actionable (auto-expanded) while one project still needs a PR', async () => {
     const proposal = makeProposal({
       status: 'proposed',
       source_resolved: true,
-      pr_services: ['core', 'finance'],
+      pr_projects: ['core', 'finance'],
       pull_requests: [
-        { service: 'core', repo: '', branch: '', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10, pr_state: 'merged', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '2026-07-01T00:00:00Z' },
+        { project: 'core', repo: '', branch: '', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10, pr_state: 'merged', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '2026-07-01T00:00:00Z' },
       ],
     });
     mockFetchProposals.mockResolvedValue([proposal]);
@@ -677,15 +677,15 @@ describe('RemediationPanel — pull requests split across owning services', () =
     await waitFor(() => expect(screen.getAllByText('svc.schema.my_model').length).toBeGreaterThan(1));
   });
 
-  it('is not actionable once every owning service has a settled PR', async () => {
+  it('is not actionable once every owning project has a settled PR', async () => {
     const proposal = makeProposal({
       status: 'proposed',
       source_resolved: true,
       rationale: 'Adds the missing GROUP BY column.',
-      pr_services: ['core', 'finance'],
+      pr_projects: ['core', 'finance'],
       pull_requests: [
-        { service: 'core', repo: '', branch: '', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10, pr_state: 'open', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '' },
-        { service: 'finance', repo: '', branch: '', pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11, pr_state: 'merged', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '2026-07-01T00:00:00Z' },
+        { project: 'core', repo: '', branch: '', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10, pr_state: 'open', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '' },
+        { project: 'finance', repo: '', branch: '', pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11, pr_state: 'merged', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '2026-07-01T00:00:00Z' },
       ],
     });
     mockFetchProposals.mockResolvedValue([proposal]);
@@ -697,34 +697,34 @@ describe('RemediationPanel — pull requests split across owning services', () =
   });
 });
 
-describe('RemediationPanel — service filter', () => {
+describe('RemediationPanel — project filter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFetchProposals.mockResolvedValue([makeProposal({ status: 'skipped' })]);
   });
 
-  it('populates the Service select from fetchNodeServices and filters the fetch on change', async () => {
-    mockFetchNodeServices.mockResolvedValue(['billing', 'ledger']);
+  it('populates the Project select from fetchNodeProjects and filters the fetch on change', async () => {
+    mockFetchNodeProjects.mockResolvedValue(['billing', 'ledger']);
 
     renderPanel();
 
-    const select = await screen.findByLabelText('Service');
+    const select = await screen.findByLabelText('Project');
     await waitFor(() => expect(screen.getByRole('option', { name: 'billing' })).toBeInTheDocument());
     expect(mockFetchProposals).toHaveBeenLastCalledWith({}); // initial fetch, no filter
 
     fireEvent.change(select, { target: { value: 'billing' } });
-    await waitFor(() => expect(mockFetchProposals).toHaveBeenLastCalledWith({ service: 'billing' }));
+    await waitFor(() => expect(mockFetchProposals).toHaveBeenLastCalledWith({ project: 'billing' }));
   });
 
-  it('renders the Service filter as a .form-field above the Proposals section header', async () => {
-    mockFetchNodeServices.mockResolvedValue(['billing']);
+  it('renders the Project filter as a .form-field above the Proposals section header', async () => {
+    mockFetchNodeProjects.mockResolvedValue(['billing']);
 
     const { container } = renderPanel();
 
-    const select = await screen.findByLabelText('Service');
+    const select = await screen.findByLabelText('Project');
     const field = select.closest('.form-field');
     expect(field).not.toBeNull();
-    expect(field!.querySelector('label')).toHaveTextContent('Service');
+    expect(field!.querySelector('label')).toHaveTextContent('Project');
 
     // The filter drives the list, so it sits above the list's header — never
     // inside the header's sub-line, which carries metadata only.
@@ -735,7 +735,7 @@ describe('RemediationPanel — service filter', () => {
   });
 
   it('ignores a superseded (slower, earlier) proposals response so it cannot overwrite the current filter', async () => {
-    mockFetchNodeServices.mockResolvedValue(['billing', 'ledger']);
+    mockFetchNodeProjects.mockResolvedValue(['billing', 'ledger']);
 
     // The initial unfiltered request is held open and resolves LAST; the
     // filtered request resolves first. The stale unfiltered result must not
@@ -745,11 +745,11 @@ describe('RemediationPanel — service filter', () => {
     const filtered = [makeProposal({ id: 'f1', node_id: 'billing.only', status: 'skipped' })];
     const stale = [makeProposal({ id: 's1', node_id: 'stale.everything', status: 'skipped' })];
     mockFetchProposals
-      .mockReturnValueOnce(initial)                 // mount (service='')
+      .mockReturnValueOnce(initial)                 // mount (project='')
       .mockResolvedValueOnce(filtered);             // after selecting billing
 
     renderPanel();
-    const select = await screen.findByLabelText('Service');
+    const select = await screen.findByLabelText('Project');
     fireEvent.change(select, { target: { value: 'billing' } });
 
     // Filtered result lands first.
@@ -762,8 +762,8 @@ describe('RemediationPanel — service filter', () => {
     expect(screen.getByText('billing.only')).toBeInTheDocument();
   });
 
-  it('leaves the list working with only an All services option when the services fetch fails', async () => {
-    mockFetchNodeServices.mockRejectedValue(new Error('nope'));
+  it('leaves the list working with only an All projects option when the projects fetch fails', async () => {
+    mockFetchNodeProjects.mockRejectedValue(new Error('nope'));
 
     renderPanel();
 
@@ -771,6 +771,6 @@ describe('RemediationPanel — service filter', () => {
     await waitFor(() => screen.getByText('svc.schema.my_model'));
     // Only the default option exists.
     const options = screen.getAllByRole('option').map(o => o.textContent);
-    expect(options).toEqual(['All services']);
+    expect(options).toEqual(['All projects']);
   });
 });

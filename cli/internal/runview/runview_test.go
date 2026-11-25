@@ -38,7 +38,7 @@ func (s stubReader) ListRunAttempts(context.Context, string, string, int32, int3
 func TestLoad_TakesTheFailureOfTheHighestNumberedAttempt(t *testing.T) {
 	r := stubReader{
 		run:        &runv1.Run{RunId: "r", Status: "failed"},
-		tasks:      []*runv1.Task{{TaskId: "t", ServiceName: "s", SchemaName: "x", TableName: "a", Status: "failed", Attempt: 2}},
+		tasks:      []*runv1.Task{{TaskId: "t", ProjectName: "s", SchemaName: "x", TableName: "a", Status: "failed", Attempt: 2}},
 		tasksTotal: 1, attemptsTotal: 3,
 		attempts: []*runv1.TaskAttempt{
 			{TaskId: "t", Attempt: 2, FailureClass: "timeout", FailureReason: "deadline_exceeded"},
@@ -94,8 +94,8 @@ func TestWriteHuman_NamesAnOperationOtherThanRunAndThePlanReason(t *testing.T) {
 
 func TestLoad_CarriesEachTasksOperationAndPlanReason(t *testing.T) {
 	r := stubReader{run: &runv1.Run{RunId: "r", Status: "running"}, tasksTotal: 2, tasks: []*runv1.Task{
-		{TaskId: "t1", ServiceName: "service-1", SchemaName: "e2e_schema", TableName: "seed_table_1", Status: "succeeded", Operation: "full_refresh", PlanReason: "columns changed"},
-		{TaskId: "t2", ServiceName: "service-1", SchemaName: "e2e_schema", TableName: "seed_table_1_view", Status: "running", Operation: "run", PlanReason: "rebuild: dropped by the load of e2e_schema.seed_table_1"}}}
+		{TaskId: "t1", ProjectName: "service-1", SchemaName: "e2e_schema", TableName: "seed_table_1", Status: "succeeded", Operation: "full_refresh", PlanReason: "columns changed"},
+		{TaskId: "t2", ProjectName: "service-1", SchemaName: "e2e_schema", TableName: "seed_table_1_view", Status: "running", Operation: "run", PlanReason: "rebuild: dropped by the load of e2e_schema.seed_table_1"}}}
 
 	v, err := Load(context.Background(), r, time.Second, "r")
 

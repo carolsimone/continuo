@@ -36,12 +36,9 @@ profile.cov
 */manifest_*.json
 
 # dbt generated files
-dbt/services/*/.user.yml
-dbt/services/*/logs/
-dbt/services/*/target/
-dbt/services-fixed/*/.user.yml
-dbt/services-fixed/*/logs/
-dbt/services-fixed/*/target/
+dbt/projects/*/.user.yml
+dbt/projects/*/logs/
+dbt/projects/*/target/
 
 # SKILLS
 *.archmcp/

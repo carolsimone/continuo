@@ -12,7 +12,7 @@ from dbt_upload.paths import build_dir
 logger = logging.getLogger(__name__)
 
 
-def filter_manifest(service_dir: str) -> None:
+def filter_manifest(project_dir: str) -> None:
     """Keep only the node kinds topology-controller reads.
 
     Retains model, seed, snapshot, test and operation nodes and drops
@@ -27,10 +27,10 @@ def filter_manifest(service_dir: str) -> None:
     fine-grained tracking (a test only counts when its model is tracked, a node
     needs an owner, and a model or snapshot with no schedule tag becomes a
     dormant node) still happens downstream in the parser; this is only the
-    coarse resource-type gate. The manifest is the one in the service's build
+    coarse resource-type gate. The manifest is the one in the project's build
     directory.
     """
-    manifest_path = os.path.join(build_dir(service_dir), "manifest.json")
+    manifest_path = os.path.join(build_dir(project_dir), "manifest.json")
     with open(manifest_path) as f:
         manifest = json.load(f)
 
@@ -47,15 +47,15 @@ def filter_manifest(service_dir: str) -> None:
 
 def upload_manifest(
     s3_client,
-    service_dir: str,
+    project_dir: str,
     env: str,
     bucket: str,
     release_id: str = "",
 ) -> bool:
-    """Upload the manifest in the service's build directory to S3 at the
+    """Upload the manifest in the project's build directory to S3 at the
     canonical key. Returns True on success.
 
-    Writes to <service_name>/<release_id>/manifest.json — the same path that
+    Writes to <project_name>/<release_id>/manifest.json — the same path that
     release-controller's Go CanonicalManifestKey function constructs. The
     release_id already namespaces the path, so no version suffix is needed.
 
@@ -64,28 +64,28 @@ def upload_manifest(
     if not release_id:
         raise ValueError("release_id is required")
 
-    service_name = os.path.basename(service_dir)
-    manifest_path = os.path.join(build_dir(service_dir), "manifest.json")
+    project_name = os.path.basename(project_dir)
+    manifest_path = os.path.join(build_dir(project_dir), "manifest.json")
 
     if not os.path.exists(manifest_path):
         logger.error("manifest.json not found at %s", manifest_path)
         return False
 
-    key = f"{service_name}/{release_id}/manifest.json"
+    key = f"{project_name}/{release_id}/manifest.json"
     try:
         s3_client.upload_file(manifest_path, bucket, key)
     except Exception:
-        logger.exception("S3 upload failed for %s", service_name)
+        logger.exception("S3 upload failed for %s", project_name)
         return False
-    logger.info("Uploaded %s -> s3://%s/%s", service_name, bucket, key)
+    logger.info("Uploaded %s -> s3://%s/%s", project_name, bucket, key)
     return True
 
 
 COMPILE_EXTRAS_SCRIPT = "/compile_extras.py"
 
-# How long compile_extras.py may run for one service. It reads the manifest and
-# hashes the service's seed files, which takes seconds; a script still running
-# after this is stuck, and the service is failed instead of waited on.
+# How long compile_extras.py may run for one project. It reads the manifest and
+# hashes the project's seed files, which takes seconds; a script still running
+# after this is stuck, and the project is failed instead of waited on.
 COMPILE_EXTRAS_TIMEOUT_SECONDS = 600
 
 # The options of env that take the next word as their argument.
@@ -125,25 +125,25 @@ def dbt_interpreter() -> str:
     return words[0]
 
 
-def write_compile_extras(service_dir: str, release_id: str) -> str:
-    """Write compile-extras.json into a compiled service's build directory and
+def write_compile_extras(project_dir: str, release_id: str) -> str:
+    """Write compile-extras.json into a compiled project's build directory and
     return its path.
 
     Runs compile_extras.py with the interpreter that runs dbt, over the
-    manifest in the service's build directory and its dbt project directory, for at most
+    manifest in the project's build directory and its dbt project directory, for at most
     COMPILE_EXTRAS_TIMEOUT_SECONDS, and logs what it wrote to stderr at INFO.
     Raises subprocess.CalledProcessError when the script fails and
     subprocess.TimeoutExpired when it runs past its timeout.
     """
-    service_name = os.path.basename(service_dir)
-    target_dir = build_dir(service_dir)
+    project_name = os.path.basename(project_dir)
+    target_dir = build_dir(project_dir)
     out = os.path.join(target_dir, "compile-extras.json")
     result = subprocess.run(
         [
             dbt_interpreter(), COMPILE_EXTRAS_SCRIPT,
             "--manifest", os.path.join(target_dir, "manifest.json"),
-            "--project-dir", service_dir,
-            "--service", service_name,
+            "--project-dir", project_dir,
+            "--project", project_name,
             "--release-id", release_id,
             "--out", out,
         ],
@@ -153,35 +153,35 @@ def write_compile_extras(service_dir: str, release_id: str) -> str:
         timeout=COMPILE_EXTRAS_TIMEOUT_SECONDS,
     )
     if result.stderr and result.stderr.strip():
-        logger.info("compile_extras.py for %s: %s", service_name, result.stderr.strip())
+        logger.info("compile_extras.py for %s: %s", project_name, result.stderr.strip())
     return out
 
 
-def upload_compile_extras(s3_client, service_dir: str, bucket: str, release_id: str) -> bool:
-    """Upload the compile-extras.json in the service's build directory to
-    <service_name>/<release_id>/compile-extras.json, beside the manifest, where
+def upload_compile_extras(s3_client, project_dir: str, bucket: str, release_id: str) -> bool:
+    """Upload the compile-extras.json in the project's build directory to
+    <project_name>/<release_id>/compile-extras.json, beside the manifest, where
     topology-controller reads it. Returns True on success."""
-    service_name = os.path.basename(service_dir)
-    extras_path = os.path.join(build_dir(service_dir), "compile-extras.json")
-    key = f"{service_name}/{release_id}/compile-extras.json"
+    project_name = os.path.basename(project_dir)
+    extras_path = os.path.join(build_dir(project_dir), "compile-extras.json")
+    key = f"{project_name}/{release_id}/compile-extras.json"
     try:
         s3_client.upload_file(extras_path, bucket, key)
     except Exception:
-        logger.exception("S3 upload of compile extras failed for %s", service_name)
+        logger.exception("S3 upload of compile extras failed for %s", project_name)
         return False
-    logger.info("Uploaded %s compile extras -> s3://%s/%s", service_name, bucket, key)
+    logger.info("Uploaded %s compile extras -> s3://%s/%s", project_name, bucket, key)
     return True
 
 
-def upload_services(
-    service_dirs: list[str], target_config: dict, release_id: str = ""
+def upload_projects(
+    project_dirs: list[str], target_config: dict, release_id: str = ""
 ) -> tuple[list[str], list[str]]:
-    """Filter and upload manifests for each service directory, each with its
+    """Filter and upload manifests for each project directory, each with its
     compile extras.
 
     Manifests are uploaded to the canonical per-release key
-    <service_name>/<release_id>/manifest.json, and the compile-extras.json
-    written from each one beside it. A service whose manifest or compile
+    <project_name>/<release_id>/manifest.json, and the compile-extras.json
+    written from each one beside it. A project whose manifest or compile
     extras cannot be written or uploaded is failed. release_id must be
     non-empty; upload_manifest raises ValueError otherwise.
 
@@ -200,39 +200,39 @@ def upload_services(
     succeeded: list[str] = []
     failed: list[str] = []
 
-    for service_dir in service_dirs:
-        service_name = os.path.basename(service_dir)
-        logger.info("Uploading %s", service_name)
+    for project_dir in project_dirs:
+        project_name = os.path.basename(project_dir)
+        logger.info("Uploading %s", project_name)
 
         try:
-            filter_manifest(service_dir)
+            filter_manifest(project_dir)
         except FileNotFoundError:
-            logger.error("No compiled manifest for %s", service_name)
-            failed.append(service_dir)
+            logger.error("No compiled manifest for %s", project_name)
+            failed.append(project_dir)
             continue
 
         if not upload_manifest(
-            s3_client, service_dir, target_config.get("env", ""), bucket,
+            s3_client, project_dir, target_config.get("env", ""), bucket,
             release_id=release_id,
         ):
-            failed.append(service_dir)
+            failed.append(project_dir)
             continue
 
         try:
-            write_compile_extras(service_dir, release_id)
+            write_compile_extras(project_dir, release_id)
         except subprocess.TimeoutExpired as exc:
-            logger.error("Writing compile extras for %s timed out after %ss", service_name, exc.timeout)
-            failed.append(service_dir)
+            logger.error("Writing compile extras for %s timed out after %ss", project_name, exc.timeout)
+            failed.append(project_dir)
             continue
         except (OSError, RuntimeError, subprocess.CalledProcessError) as exc:
             stderr = getattr(exc, "stderr", None) or ""
-            logger.error("Writing compile extras failed for %s: %s %s", service_name, exc, stderr.strip())
-            failed.append(service_dir)
+            logger.error("Writing compile extras failed for %s: %s %s", project_name, exc, stderr.strip())
+            failed.append(project_dir)
             continue
 
-        if upload_compile_extras(s3_client, service_dir, bucket, release_id):
-            succeeded.append(service_dir)
+        if upload_compile_extras(s3_client, project_dir, bucket, release_id):
+            succeeded.append(project_dir)
         else:
-            failed.append(service_dir)
+            failed.append(project_dir)
 
     return succeeded, failed

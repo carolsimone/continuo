@@ -18,7 +18,7 @@ data:
       compile:
         command:       ["dbt", "compile", "--profiles-dir", "/project"]
         manifest_path: "/project/target/manifest.json"
-    services:
+    projects:
       service-1:
         run:               ["customname-dbt", "run", "--select", "{{ node }}"]
         seed:              ["customname-dbt", "seed", "--select", "{{ node }}"]

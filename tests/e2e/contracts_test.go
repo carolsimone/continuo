@@ -45,38 +45,38 @@ const (
 	topologyContractsVersion = "0.4.1"
 
 	// dbtProbeTeam and dbtProbeSchedule are what service-1's dbt project
-	// (dbt/services/service-1/dbt_project.yml) gives the rel_probe model: its
+	// (dbt/projects/service-1/dbt_project.yml) gives the rel_probe model: its
 	// +meta owner, which its contract carries as team.name, and its schedule
 	// tag, which its contract carries as the schedule property.
 	dbtProbeTeam     = "test"
 	dbtProbeSchedule = "rel-probe"
 
-	// dbtContractsReleaseService is the service the invalid-contract test
+	// dbtContractsReleaseProject is the project the invalid-contract test
 	// releases. Its compile Job uploads the freshly compiled manifest to
-	// <service>/<release_id>/manifest.json, which would overwrite a manifest
+	// <project>/<release_id>/manifest.json, which would overwrite a manifest
 	// doctored under that key, so the invalid contract is staged in
-	// dbtContractsPinnedService's production-pinned manifest, which nothing in
-	// the release rewrites (see parseFixReleaseService).
-	dbtContractsReleaseService = parseFixReleaseService
-	dbtContractsPinnedService  = parseFixBrokenService
+	// dbtContractsPinnedProject's production-pinned manifest, which nothing in
+	// the release rewrites (see parseFixReleaseProject).
+	dbtContractsReleaseProject = parseFixReleaseProject
+	dbtContractsPinnedProject  = parseFixBrokenProject
 
-	// dbtInvalidContractNodeID is the model of dbtContractsPinnedService whose
+	// dbtInvalidContractNodeID is the model of dbtContractsPinnedProject whose
 	// criticality the invalid-contract test sets to dbtInvalidCriticality, a
 	// value outside REGULATORY, CORE and SECONDARY. The model reads no table
 	// and no model reads it, so the edit makes no failure but its own contract.
 	dbtInvalidContractNodeID = unfixableInfraUniqueID
 	dbtInvalidCriticality    = "high"
 
-	// dbtSeedHeaderReleaseService is the service the seed-header test
-	// releases, and dbtSeedHeaderPinnedService the service whose
+	// dbtSeedHeaderReleaseProject is the project the seed-header test
+	// releases, and dbtSeedHeaderPinnedProject the project whose
 	// production-pinned manifest carries the doctored seed: service-1 is the
-	// only service with seeds, and the compile Job of a released service
-	// overwrites the manifest under its own key (see dbtContractsReleaseService).
-	dbtSeedHeaderReleaseService = "service-2"
-	dbtSeedHeaderPinnedService  = "service-1"
+	// only project with seeds, and the compile Job of a released project
+	// overwrites the manifest under its own key (see dbtContractsReleaseProject).
+	dbtSeedHeaderReleaseProject = "service-2"
+	dbtSeedHeaderPinnedProject  = "service-1"
 
-	// dbtSeedHeaderNodeID is the seed of dbtSeedHeaderPinnedService
-	// (dbt/services/service-1/seeds) whose id column the seed-header test drops
+	// dbtSeedHeaderNodeID is the seed of dbtSeedHeaderPinnedProject
+	// (dbt/projects/service-1/seeds) whose id column the seed-header test drops
 	// from the declared columns, dbtSeedHeaderColumn, while the CSV header
 	// that the compile extras record keeps it. The seed declares no test, so
 	// the edit makes no failure but its own contract.
@@ -87,7 +87,7 @@ const (
 // TestE2E_PythonODCSRelease_IsPromotedAndPublished proves a Python contract's
 // way from an odcs-bundle.json to the readers of continuo:
 //
-//  1. the py-probe service is released as python-odcs, validated and
+//  1. the py-probe project is released as python-odcs, validated and
 //     promoted;
 //  2. catalog records the py_probe contract as version 1 (on a stack where an
 //     earlier run already promoted it, the version after the highest one it
@@ -118,7 +118,7 @@ func TestE2E_PythonODCSRelease_IsPromotedAndPublished(t *testing.T) {
 	bin, env := contractsCLI(t, ctx)
 	before := highestContractVersion(t, ctx, clients, pyProbeUniqueID)
 
-	// ── 1. the py-probe service is promoted as python-odcs ──────────────────
+	// ── 1. the py-probe project is promoted as python-odcs ──────────────────
 	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
 	firstID, cleanup := promotePythonFixtureRelease(t, ctx, clients, validationTap, defaultPythonReleaseBudget)
 	defer cleanup()
@@ -150,8 +150,8 @@ func TestE2E_PythonODCSRelease_IsPromotedAndPublished(t *testing.T) {
 	require.NotEqual(t, pyProbeContractText(t), ownerChanged, "the py_probe contract declares team.name %q", pyProbeTeam)
 	secondID := "e2e-py-" + uuid.NewString()[:8]
 	resetReleaseControllerQueue(t, ctx, clients)
-	putODCSBundle(t, ctx, clients, pyE2EService, secondID, pyFixtureBundle(t, ctx, map[string]string{pyProbeContract: ownerChanged}))
-	postPythonRelease(t, clients, pyE2EService, secondID, pyFixtureImage, false)
+	putODCSBundle(t, ctx, clients, pyE2EProject, secondID, pyFixtureBundle(t, ctx, map[string]string{pyProbeContract: ownerChanged}))
+	postPythonRelease(t, clients, pyE2EProject, secondID, pyFixtureImage, false)
 	waitForReleasePromoted(t, ctx, clients, secondID, 10*time.Minute)
 
 	detail := getReleaseJSON(t, clients, secondID)
@@ -188,27 +188,27 @@ func TestE2E_PythonODCSRelease_AnInvalidContractIsRejected(t *testing.T) {
 	verifyServicesHealthy(t)
 	requireReleaseControllerHealthy(t, clients)
 
-	allServices := baselineServices(t, ctx, clients)
-	require.NotEmpty(t, allServices)
+	allProjects := baselineProjects(t, ctx, clients)
+	require.NotEmpty(t, allProjects)
 	var prodNodes []map[string]string
-	for svc, si := range allServices {
+	for svc, si := range allProjects {
 		for _, n := range si.nodes {
 			prodNodes = append(prodNodes, map[string]string{
-				"unique_id": n.uniqueID, "service": svc, "content_hash": n.contentHash,
+				"unique_id": n.uniqueID, "project": svc, "content_hash": n.contentHash,
 			})
 		}
 	}
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allServices)
+	seedServiceProd(t, ctx, clients, allProjects)
 
 	invalid := strings.Replace(pyProbeContractText(t),
 		"{name: id, physicalType: INTEGER, required: true,", `{name: id, physicalType: "NUMERIC(12)", required: true,`, 1)
 	require.NotEqual(t, pyProbeContractText(t), invalid, "the py_probe contract declares an INTEGER id")
 
 	releaseID := "e2e-pyinv-" + uuid.NewString()[:8]
-	putODCSBundle(t, ctx, clients, pyE2EService, releaseID, pyFixtureBundle(t, ctx, map[string]string{pyProbeContract: invalid}))
-	postPythonRelease(t, clients, pyE2EService, releaseID, pyFixtureImage, false)
+	putODCSBundle(t, ctx, clients, pyE2EProject, releaseID, pyFixtureBundle(t, ctx, map[string]string{pyProbeContract: invalid}))
+	postPythonRelease(t, clients, pyE2EProject, releaseID, pyFixtureImage, false)
 	waitForReleaseRejected(t, ctx, clients, releaseID, 3*time.Minute)
 
 	detail := getReleaseJSON(t, clients, releaseID)
@@ -262,51 +262,51 @@ func TestE2E_DbtContracts_AnInvalidContractIsRejected(t *testing.T) {
 	requireReleaseControllerHealthy(t, clients)
 
 	releaseID := "e2e-dbtinv-" + uuid.NewString()[:8]
-	t.Logf("release_id=%s released_service=%s invalid_node=%s (service %s)",
-		releaseID, dbtContractsReleaseService, dbtInvalidContractNodeID, dbtContractsPinnedService)
+	t.Logf("release_id=%s released_project=%s invalid_node=%s (project %s)",
+		releaseID, dbtContractsReleaseProject, dbtInvalidContractNodeID, dbtContractsPinnedProject)
 
-	allServices := baselineServices(t, ctx, clients)
-	require.NotEmpty(t, allServices, "no baseline manifests in S3 — setup.sh must run before the e2e suite")
-	released, ok := allServices[dbtContractsReleaseService]
-	require.True(t, ok, "%s has no baseline manifest", dbtContractsReleaseService)
+	allProjects := baselineProjects(t, ctx, clients)
+	require.NotEmpty(t, allProjects, "no baseline manifests in S3 — setup.sh must run before the e2e suite")
+	released, ok := allProjects[dbtContractsReleaseProject]
+	require.True(t, ok, "%s has no baseline manifest", dbtContractsReleaseProject)
 	require.NotEmpty(t, released.imageTag)
-	pinned, ok := allServices[dbtContractsPinnedService]
-	require.True(t, ok, "%s has no baseline manifest", dbtContractsPinnedService)
+	pinned, ok := allProjects[dbtContractsPinnedProject]
+	require.True(t, ok, "%s has no baseline manifest", dbtContractsPinnedProject)
 
 	// Production holds every baseline node, so the release changes nothing
 	// the parse does not reject.
 	var prodNodes []map[string]string
-	for svc, si := range allServices {
+	for svc, si := range allProjects {
 		for _, n := range si.nodes {
-			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "service": svc, "content_hash": n.contentHash})
+			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "project": svc, "content_hash": n.contentHash})
 		}
 	}
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allServices)
+	seedServiceProd(t, ctx, clients, allProjects)
 
 	// Set the criticality of one model in a copy of service-2's baseline
 	// manifest, copy the baseline's compile extras beside it, and pin
 	// service-2's production pointer at it, so the assembled set the parse leg
 	// reads carries the invalid contract.
 	pinnedReleaseID := releaseID + "-src"
-	baselineKey := fmt.Sprintf("%s/%s/manifest.json", dbtContractsPinnedService, e2eBaselineReleaseID)
+	baselineKey := fmt.Sprintf("%s/%s/manifest.json", dbtContractsPinnedProject, e2eBaselineReleaseID)
 	doc, err := decodeJSONDoc(getS3Object(t, ctx, clients, baselineKey))
 	require.NoError(t, err)
 	filePath := setModelCriticality(t, doc, dbtInvalidContractNodeID, dbtInvalidCriticality)
 	body, err := json.Marshal(doc)
 	require.NoError(t, err)
 	putS3Object(t, ctx, clients,
-		fmt.Sprintf("%s/%s/manifest.json", dbtContractsPinnedService, pinnedReleaseID), body)
-	copyBaselineExtras(t, ctx, clients, dbtContractsPinnedService, pinnedReleaseID)
-	pinServiceProd(t, ctx, clients, dbtContractsPinnedService, pinnedReleaseID, pinned.imageTag)
+		fmt.Sprintf("%s/%s/manifest.json", dbtContractsPinnedProject, pinnedReleaseID), body)
+	copyBaselineExtras(t, ctx, clients, dbtContractsPinnedProject, pinnedReleaseID)
+	pinServiceProd(t, ctx, clients, dbtContractsPinnedProject, pinnedReleaseID, pinned.imageTag)
 	// Put the pointer back so no later test parses the doctored manifest.
 	// Deferred, so it runs when the test function returns, while the pool is
 	// open.
 	defer pinServiceProd(t, context.Background(), clients,
-		dbtContractsPinnedService, e2eBaselineReleaseID, pinned.imageTag)
+		dbtContractsPinnedProject, e2eBaselineReleaseID, pinned.imageTag)
 
-	postRelease(t, clients, dbtContractsReleaseService, releaseID, released.imageTag, false)
+	postRelease(t, clients, dbtContractsReleaseProject, releaseID, released.imageTag, false)
 	waitForReleaseRejected(t, ctx, clients, releaseID, 10*time.Minute)
 
 	detail := getReleaseJSON(t, clients, releaseID)
@@ -357,53 +357,53 @@ func TestE2E_DbtContracts_ASeedWithAnUndeclaredHeaderColumnIsRejected(t *testing
 	requireReleaseControllerHealthy(t, clients)
 
 	releaseID := "e2e-seedhdr-" + uuid.NewString()[:8]
-	t.Logf("release_id=%s released_service=%s invalid_seed=%s (service %s)",
-		releaseID, dbtSeedHeaderReleaseService, dbtSeedHeaderNodeID, dbtSeedHeaderPinnedService)
+	t.Logf("release_id=%s released_project=%s invalid_seed=%s (project %s)",
+		releaseID, dbtSeedHeaderReleaseProject, dbtSeedHeaderNodeID, dbtSeedHeaderPinnedProject)
 
-	allServices := baselineServices(t, ctx, clients)
-	require.NotEmpty(t, allServices, "no baseline manifests in S3 — setup.sh must run before the e2e suite")
-	released, ok := allServices[dbtSeedHeaderReleaseService]
-	require.True(t, ok, "%s has no baseline manifest", dbtSeedHeaderReleaseService)
+	allProjects := baselineProjects(t, ctx, clients)
+	require.NotEmpty(t, allProjects, "no baseline manifests in S3 — setup.sh must run before the e2e suite")
+	released, ok := allProjects[dbtSeedHeaderReleaseProject]
+	require.True(t, ok, "%s has no baseline manifest", dbtSeedHeaderReleaseProject)
 	require.NotEmpty(t, released.imageTag)
-	pinned, ok := allServices[dbtSeedHeaderPinnedService]
-	require.True(t, ok, "%s has no baseline manifest", dbtSeedHeaderPinnedService)
+	pinned, ok := allProjects[dbtSeedHeaderPinnedProject]
+	require.True(t, ok, "%s has no baseline manifest", dbtSeedHeaderPinnedProject)
 
 	// Production holds every baseline node, so the release changes nothing
 	// the parse does not reject.
 	var prodNodes []map[string]string
-	for svc, si := range allServices {
+	for svc, si := range allProjects {
 		for _, n := range si.nodes {
-			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "service": svc, "content_hash": n.contentHash})
+			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "project": svc, "content_hash": n.contentHash})
 		}
 	}
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allServices)
+	seedServiceProd(t, ctx, clients, allProjects)
 
 	// Drop the declared id column of seed_table_2 in a copy of service-1's
 	// baseline manifest, copy the baseline's compile extras beside it, and pin
 	// service-1's production pointer at it, so the assembled set the parse leg
 	// reads holds a seed whose header and declared columns differ.
 	pinnedReleaseID := releaseID + "-src"
-	baselineKey := fmt.Sprintf("%s/%s/manifest.json", dbtSeedHeaderPinnedService, e2eBaselineReleaseID)
+	baselineKey := fmt.Sprintf("%s/%s/manifest.json", dbtSeedHeaderPinnedProject, e2eBaselineReleaseID)
 	doc, err := decodeJSONDoc(getS3Object(t, ctx, clients, baselineKey))
 	require.NoError(t, err)
 	seedManifestID, filePath := dropDeclaredColumn(t, doc, dbtSeedHeaderNodeID, dbtSeedHeaderColumn)
 	requireSeedHeaderHolds(t,
-		getS3ObjectIfPresent(t, ctx, clients, baselineExtrasKey(dbtSeedHeaderPinnedService)), seedManifestID, dbtSeedHeaderColumn)
+		getS3ObjectIfPresent(t, ctx, clients, baselineExtrasKey(dbtSeedHeaderPinnedProject)), seedManifestID, dbtSeedHeaderColumn)
 	body, err := json.Marshal(doc)
 	require.NoError(t, err)
 	putS3Object(t, ctx, clients,
-		fmt.Sprintf("%s/%s/manifest.json", dbtSeedHeaderPinnedService, pinnedReleaseID), body)
-	copyBaselineExtras(t, ctx, clients, dbtSeedHeaderPinnedService, pinnedReleaseID)
-	pinServiceProd(t, ctx, clients, dbtSeedHeaderPinnedService, pinnedReleaseID, pinned.imageTag)
+		fmt.Sprintf("%s/%s/manifest.json", dbtSeedHeaderPinnedProject, pinnedReleaseID), body)
+	copyBaselineExtras(t, ctx, clients, dbtSeedHeaderPinnedProject, pinnedReleaseID)
+	pinServiceProd(t, ctx, clients, dbtSeedHeaderPinnedProject, pinnedReleaseID, pinned.imageTag)
 	// Put the pointer back so no later test parses the doctored manifest.
 	// Deferred, so it runs when the test function returns, while the pool is
 	// open.
 	defer pinServiceProd(t, context.Background(), clients,
-		dbtSeedHeaderPinnedService, e2eBaselineReleaseID, pinned.imageTag)
+		dbtSeedHeaderPinnedProject, e2eBaselineReleaseID, pinned.imageTag)
 
-	postRelease(t, clients, dbtSeedHeaderReleaseService, releaseID, released.imageTag, false)
+	postRelease(t, clients, dbtSeedHeaderReleaseProject, releaseID, released.imageTag, false)
 	waitForReleaseRejected(t, ctx, clients, releaseID, 10*time.Minute)
 
 	detail := getReleaseJSON(t, clients, releaseID)
@@ -550,7 +550,7 @@ func contractsCLI(t *testing.T, ctx context.Context) (string, []string) {
 // keeps, node being its entry in the release's topology artifact:
 //
 //   - the release's contract bundle holds a contract of the dbt family for it,
-//     of its service, with its content_hash, whose team.name is the node's
+//     of its project, with its content_hash, whose team.name is the node's
 //     owner and whose schedule property is the schedule of the topology node;
 //   - catalog publishes it: once the live folder names the release,
 //     `continuo node contract` prints the bundle's contract (the same
@@ -563,7 +563,7 @@ func assertDbtNodeContract(t *testing.T, ctx context.Context, clients *testClien
 	stored, ok := bundle.Contracts[node.UniqueID]
 	require.True(t, ok, "the contract bundle of %s holds a contract for %s", releaseID, node.UniqueID)
 	assert.Equal(t, model.ContractFamilyDbt, stored.Family)
-	assert.Equal(t, node.ServiceName, stored.Service)
+	assert.Equal(t, node.ProjectName, stored.Project)
 	assert.Equal(t, node.ContentHash, stored.ContentHash, "the contract carries its node's code fingerprint")
 	assert.NotEmpty(t, stored.ContractHash)
 

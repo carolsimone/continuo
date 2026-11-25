@@ -13,10 +13,10 @@ see [`python-image-contract.md`](python-image-contract.md).
 ## Image resolution
 
 execution-controller composes your image reference as
-`<teamImagePrefix>/<service-name>:<IMAGE_TAG>` — e.g. Docker Hub user +
-repository named after the service. `global.teamImagePrefix` in the chart
+`<teamImagePrefix>/<project-name>:<IMAGE_TAG>` — e.g. Docker Hub user +
+repository named after the project. `global.teamImagePrefix` in the chart
 feeds the prefix; with an empty prefix the reference is the bare
-`<service-name>:<tag>` (side-loaded images). The tag is always explicit;
+`<project-name>:<tag>` (side-loaded images). The tag is always explicit;
 there is no `:latest` fallback.
 
 ## What your container must do
@@ -45,7 +45,7 @@ command, e.g. `dbt run --full-refresh --select <node>`) and a seed-rebuild verb
 (backs the `seed_full_refresh` command, e.g. `dbt seed --full-refresh --select
 <node>`). Unlike the required operations above, `full_refresh` and
 `seed_full_refresh` are both optional — a block that omits either still boots —
-but a service missing the one an operation needs fails that task with
+but a project missing the one an operation needs fails that task with
 `full_refresh_undefined` or `seed_full_refresh_undefined` before any container
 starts, with no fallback to another block's command. continuo runs them for an
 operator's single-node full refresh, for a Postgres seed whose columns change
@@ -77,9 +77,9 @@ On a non-postgres deployment the Secret carries that engine's keys instead
 `TRINO_HTTP_SCHEME`/`TRINO_PASSWORD`).
 
 Run context (scheduled runs only): `TASK_ID`, `SCHEDULE_ID`,
-`SCHEDULE_NAME`, `SERVICE_NAME`, `SCHEMA`, `TABLE_NAME`, `JOB_NAME`.
+`SCHEDULE_NAME`, `PROJECT_NAME`, `SCHEMA`, `TABLE_NAME`, `JOB_NAME`.
 
-Release legs (seed-build) receive `SERVICE_NAME`, `SCHEMA`, `TABLE_NAME`,
+Release legs (seed-build) receive `PROJECT_NAME`, `SCHEMA`, `TABLE_NAME`,
 `JOB_NAME` — not `TASK_ID`/`SCHEDULE_ID`/`SCHEDULE_NAME` — plus
 `RELEASE_ID`, `NODE_ID`, and `DBT_TARGET_SCHEMA` (the candidate schema for
 blue/green validation).
@@ -87,7 +87,7 @@ blue/green validation).
 Your image never receives S3 credentials. Compile-time manifest upload is
 performed by a continuo-owned sidecar container in the same Job (it reads
 the `manifest.json` your compile command produces and uploads it to
-`s3://<bucket>/<service>/<release-id>/manifest.json`); your only obligation
+`s3://<bucket>/<project>/<release-id>/manifest.json`); your only obligation
 is that the `compile` command writes the manifest to the path declared as
 `compile.manifest_path` in `dbt-commands.yaml`.
 

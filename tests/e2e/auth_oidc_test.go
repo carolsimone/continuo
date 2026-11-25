@@ -113,7 +113,7 @@ func TestAuthOIDC(t *testing.T) {
 	// kind, and one that is not allowed gets the ui's 403 first. A human
 	// principal carries no token provenance, so repo and commit_sha are in the
 	// body.
-	submitBody := `{"release_id":"auth-e2e-submit","service":"service-1","image_tag":"t","kind":"bogus","repo":"carolsimone/continuo-demo","commit_sha":"abc"}`
+	submitBody := `{"release_id":"auth-e2e-submit","project":"service-1","image_tag":"t","kind":"bogus","repo":"carolsimone/continuo-demo","commit_sha":"abc"}`
 
 	t.Run("operator Dex bearer is authorized to submit", func(t *testing.T) {
 		tok := dexToken(t, "operator@example.com")

@@ -262,17 +262,17 @@ func TestRebaseAllInheritedFinalizes(t *testing.T) {
 
 // dumpRebaseRowsForDebug logs every tasks row attached to a rebase
 // run so an unexpected row count on CI surfaces the offending row's identity
-// (table_name + service + schema + image_tag). Called only
+// (table_name + project + schema + image_tag). Called only
 // on assertion mismatch — no-op when counts match.
 func dumpRebaseRowsForDebug(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID) {
 	t.Helper()
 	rows, err := clients.runControllerDB.QueryContext(ctx, `
-		SELECT table_name, service_name, schema_name, status,
+		SELECT table_name, project_name, schema_name, status,
 		       inherited_from_task_id IS NULL AS is_real,
 		       COALESCE(image_tag, '') AS image_tag
 		  FROM tasks
 		 WHERE run_id = $1
-		 ORDER BY table_name, service_name`, runID)
+		 ORDER BY table_name, project_name`, runID)
 	if err != nil {
 		t.Logf("dumpRebaseRowsForDebug: query failed: %v", err)
 		return

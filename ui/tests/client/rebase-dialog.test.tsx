@@ -10,10 +10,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PREVIEW_PATH = `/api/runs/${RUN_ID}/rebase-preview`;
 
 const changedInvoices: ChangedUpstreamNode = {
-  service_name: 'billing', schema_name: 'stg', table_name: 'invoices', downstream: 3, last_success_seconds: null,
+  project_name: 'billing', schema_name: 'stg', table_name: 'invoices', downstream: 3, last_success_seconds: null,
 };
 const changedOrders: ChangedUpstreamNode = {
-  service_name: 'core', schema_name: 'stg', table_name: 'orders', downstream: 18, last_success_seconds: 252.4,
+  project_name: 'core', schema_name: 'stg', table_name: 'orders', downstream: 18, last_success_seconds: 252.4,
 };
 
 // PREVIEW is the rebase with its changed upstream nodes included.
@@ -29,7 +29,7 @@ const WITHOUT_CHANGED: RebasePreview = {
   ...PREVIEW, will_run: 21, changed_upstream: 0, downstream: 17, inherited: 1979,
 };
 
-const SERVICE_COLORS = new Map([['billing', '#0ea5e9'], ['core', '#f59e0b']]);
+const PROJECT_COLORS = new Map([['billing', '#0ea5e9'], ['core', '#f59e0b']]);
 
 type Reply = { status?: number; body: unknown };
 type Handler = (method: string, url: string, body: string | undefined) => Reply | Promise<Reply> | 'pending';
@@ -66,7 +66,7 @@ function renderModal(over: Partial<Parameters<typeof RebaseDialog>[0]> = {}) {
   const props = {
     runId: RUN_ID,
     driftLabel: null,
-    serviceColors: SERVICE_COLORS,
+    projectColors: PROJECT_COLORS,
     onClose: vi.fn(),
     onSubmitted: vi.fn(),
     ...over,
@@ -253,9 +253,9 @@ describe('RebaseDialog — preview', () => {
     expect(rows.every(r => r.querySelector('button') === null)).toBe(true);
   });
 
-  it('paints a service the page does not show in slate and reads a sub-second run as <1s', async () => {
+  it('paints a project the page does not show in slate and reads a sub-second run as <1s', async () => {
     const quick: ChangedUpstreamNode = {
-      service_name: 'ops', schema_name: 'raw', table_name: 'events', downstream: 1200, last_success_seconds: 0.4,
+      project_name: 'ops', schema_name: 'raw', table_name: 'events', downstream: 1200, last_success_seconds: 0.4,
     };
     vi.stubGlobal('fetch', apiFetch(previewing({ ...PREVIEW, changed_upstream: 1, changed_nodes: [quick] })));
     const user = userEvent.setup();
@@ -355,9 +355,9 @@ describe('RebaseDialog — preview', () => {
     expect(document.querySelector('.preview-list')).toBeNull();
   });
 
-  it('groups more than twelve changed nodes by service, collapsed', async () => {
+  it('groups more than twelve changed nodes by project, collapsed', async () => {
     const many: ChangedUpstreamNode[] = Array.from({ length: 13 }, (_, i) => ({
-      service_name: i < 4 ? 'billing' : 'core', schema_name: 'stg', table_name: `t${String(i).padStart(2, '0')}`,
+      project_name: i < 4 ? 'billing' : 'core', schema_name: 'stg', table_name: `t${String(i).padStart(2, '0')}`,
       downstream: 1, last_success_seconds: null,
     }));
     vi.stubGlobal('fetch', apiFetch(previewing({ ...PREVIEW, changed_upstream: 13, changed_nodes: many })));
@@ -667,13 +667,13 @@ describe('RebaseDialog — request id', () => {
     const fetchMock = apiFetch(previewing());
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
-    const first = render(<RebaseDialog runId={RUN_ID} driftLabel={null} serviceColors={SERVICE_COLORS} onClose={vi.fn()} onSubmitted={vi.fn()} />);
+    const first = render(<RebaseDialog runId={RUN_ID} driftLabel={null} projectColors={PROJECT_COLORS} onClose={vi.fn()} onSubmitted={vi.fn()} />);
     await previewed();
     await user.click(rebaseButton());
     await waitFor(() => expect(postCalls(fetchMock)).toHaveLength(1));
     first.unmount();
 
-    render(<RebaseDialog runId={RUN_ID} driftLabel={null} serviceColors={SERVICE_COLORS} onClose={vi.fn()} onSubmitted={vi.fn()} />);
+    render(<RebaseDialog runId={RUN_ID} driftLabel={null} projectColors={PROJECT_COLORS} onClose={vi.fn()} onSubmitted={vi.fn()} />);
     await previewed();
     await user.click(rebaseButton());
     await waitFor(() => expect(postCalls(fetchMock)).toHaveLength(2));

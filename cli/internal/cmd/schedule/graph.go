@@ -15,7 +15,7 @@ import (
 type nodeEntry struct {
 	TableName   string `json:"table_name"`
 	SchemaName  string `json:"schema_name"`
-	ServiceName string `json:"service_name"`
+	ProjectName string `json:"project_name"`
 	NodeType    string `json:"node_type"`
 	// Dormant is true for a node continuo builds that belongs to no schedule,
 	// and false for every other node, an unknown-external one included. It is
@@ -59,19 +59,19 @@ Arguments:
 
 Output (stdout, JSON):
   {"schedule_name":string,
-   "nodes":[{"table_name":string,"schema_name":string,"service_name":string,
+   "nodes":[{"table_name":string,"schema_name":string,"project_name":string,
              "node_type":string,"dormant":boolean}],
    "edges":[{"from_node_id":string,"to_node_id":string}]}
-  A node id is "service.schema.table"; an edge runs from the dependent node to
+  A node id is "project.schema.table"; an edge runs from the dependent node to
   its dependency.
   A node of type "unknown-external" is a table continuo reads and does not build:
-  its "service_name" is empty, so its node id starts with a dot
+  its "project_name" is empty, so its node id starts with a dot
   (".raw.ingest_probe"), nothing runs it, and "continuo node" commands cannot
   address it.
   "dormant" is true for a node continuo builds that belongs to no schedule: it
   is in this graph as an upstream of a node that reads it, and a run started by
   hand executes it
-  ("continuo node trigger <service> <schema> <table>"). No cron or schedule run
+  ("continuo node trigger <project> <schema> <table>"). No cron or schedule run
   includes it, except to rebuild a dormant view or materialized view below a
   seed: a run whose load of that seed drops the seed's table rebuilds it, and a
   rerun or rebase of that run rebuilds it again if the rebuild did not finish.
@@ -86,7 +86,7 @@ Errors:
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo schedule graph daily-revenue",
 		Annotations: map[string]string{
-			"output_schema": `{"schedule_name":"string","nodes":[{"table_name":"string","schema_name":"string","service_name":"string","node_type":"string","dormant":"boolean"}],"edges":[{"from_node_id":"string","to_node_id":"string"}]}`,
+			"output_schema": `{"schedule_name":"string","nodes":[{"table_name":"string","schema_name":"string","project_name":"string","node_type":"string","dormant":"boolean"}],"edges":[{"from_node_id":"string","to_node_id":"string"}]}`,
 			"exit_codes":    `[0,2,5,6]`,
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
@@ -131,7 +131,7 @@ func toGraphPayload(scheduleName string, resp *runv1.GetScheduleGraphResponse) g
 		nodes = append(nodes, nodeEntry{
 			TableName:   n.GetTableName(),
 			SchemaName:  n.GetSchemaName(),
-			ServiceName: n.GetServiceName(),
+			ProjectName: n.GetProjectName(),
 			NodeType:    n.GetNodeType(),
 			Dormant:     n.GetDormant(),
 		})

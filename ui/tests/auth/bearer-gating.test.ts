@@ -41,7 +41,7 @@ async function oidcApp() {
 }
 
 describe('bearer authentication', () => {
-  it('a valid CI token becomes a ci principal with its granted services', async () => {
+  it('a valid CI token becomes a ci principal with its granted projects', async () => {
     const { app } = await oidcApp();
     const t = await ciIssuer!.sign(githubClaims());
     const res = await request(app).get('/api/v1/current-prod').set('Authorization', `Bearer ${t}`);

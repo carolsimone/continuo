@@ -44,9 +44,9 @@ func TestTopologyByReference_LatePromotionMovesNothing(t *testing.T) {
 		SchemaName:         seedSchemaName,
 		TableName:          "stale_probe",
 		ResolvedRelationID: seedSchemaName + ".stale_probe",
-		ServiceName:        "service-1",
+		ProjectName:        "service-1",
 		NodeType:           "dbt-model",
-		ImageTag:           readServiceImageTag(t, ctx, clients, "service-1"),
+		ImageTag:           readProjectImageTag(t, ctx, clients, "service-1"),
 		Schedule:           staleSchedule,
 		UpstreamUniqueIDs:  []string{},
 	}
@@ -147,7 +147,7 @@ func TestTopologyByReference_CorruptArtifactIsDeadLettered(t *testing.T) {
 		SchemaVersion: topologyartifact.SchemaVersion, TenantID: events.DefaultTenantID, ReleaseID: releaseID,
 		Nodes: append(append([]topologyartifact.Node{}, nodes...), topologyartifact.Node{
 			UniqueID: seedSchemaName + ".corrupt_probe", SchemaName: seedSchemaName, TableName: "corrupt_probe",
-			ServiceName: "service-1", NodeType: "dbt-model", Schedule: "e2e-corrupt-probe", UpstreamUniqueIDs: []string{},
+			ProjectName: "service-1", NodeType: "dbt-model", Schedule: "e2e-corrupt-probe", UpstreamUniqueIDs: []string{},
 		}),
 	})
 	require.NoError(t, err)

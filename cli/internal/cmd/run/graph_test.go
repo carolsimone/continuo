@@ -16,10 +16,10 @@ import (
 func graphFake() *fakeRunClient {
 	return &fakeRunClient{graph: &runv1.GetRunGraphResponse{
 		Nodes: []*runv1.RunGraphNode{
-			{ServiceName: "svc", SchemaName: "raw", TableName: "a", ScheduleName: "daily", NodeType: "model",
+			{ProjectName: "svc", SchemaName: "raw", TableName: "a", ScheduleName: "daily", NodeType: "model",
 				Status: "pending", TaskId: "t-a", WaitReason: "node_lease", WaitingOnRunId: "run-other",
 				WaitingSince: "2026-10-27T09:00:00Z"},
-			{ServiceName: "svc", SchemaName: "raw", TableName: "b", Status: "succeeded", TaskId: "t-b"},
+			{ProjectName: "svc", SchemaName: "raw", TableName: "b", Status: "succeeded", TaskId: "t-b"},
 		},
 		Edges:              []*runv1.RunGraphEdge{{FromNodeId: "svc.raw.a", ToNodeId: "svc.raw.b"}},
 		RunPromotionSeq:    4,
@@ -42,7 +42,7 @@ func TestRunGraph_PrintsNodesEdgesAndPromotionSeqs(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(stdout), &p))
 	require.Len(t, p.Nodes, 2)
-	assert.Equal(t, "svc", p.Nodes[0]["service_name"])
+	assert.Equal(t, "svc", p.Nodes[0]["project_name"])
 	assert.Equal(t, "node_lease", p.Nodes[0]["wait_reason"])
 	assert.Equal(t, "2026-10-27T09:00:00Z", p.Nodes[0]["waiting_since"])
 	assert.NotContains(t, p.Nodes[1], "wait_reason", "a task that waits for nothing omits the wait fields")

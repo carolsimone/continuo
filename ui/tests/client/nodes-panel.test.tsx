@@ -6,9 +6,9 @@ import { groupAttemptsByTask } from '../../src/client/detail-page-helpers';
 import type { Task, TaskAttempt } from '../../src/client/types';
 
 function task(nodeId: string, status: string): Task {
-  const [service_name, schema_name, table_name] = nodeId.split('.');
+  const [project_name, schema_name, table_name] = nodeId.split('.');
   return {
-    task_id: nodeId, service_name, schema_name, table_name,
+    task_id: nodeId, project_name, schema_name, table_name,
     job_name: '', status, attempt: 0, max_retries: 0, created_at: null,
   };
 }
@@ -32,8 +32,8 @@ function attempt(task_id: string, overrides: Partial<TaskAttempt>): TaskAttempt 
 }
 
 function setup(overrides: {
-  expandedServices?: Set<string>;
-  onServiceToggle?: (svc: string) => void;
+  expandedProjects?: Set<string>;
+  onProjectToggle?: (svc: string) => void;
   onNodeSelect?: (id: string | null) => void;
   attempts?: TaskAttempt[];
   selectedNodeId?: string | null;
@@ -44,15 +44,15 @@ function setup(overrides: {
       attemptsByTask={groupAttemptsByTask(overrides.attempts ?? [])}
       selectedNodeId={overrides.selectedNodeId ?? null}
       onNodeSelect={overrides.onNodeSelect ?? (() => {})}
-      expandedServices={overrides.expandedServices ?? new Set()}
-      onServiceToggle={overrides.onServiceToggle ?? (() => {})}
-      serviceColors={COLORS}
+      expandedProjects={overrides.expandedProjects ?? new Set()}
+      onProjectToggle={overrides.onProjectToggle ?? (() => {})}
+      projectColors={COLORS}
     />,
   );
 }
 
-describe('NodesPanel service grouping', () => {
-  it('renders one collapsed group header per service and hides node rows by default', () => {
+describe('NodesPanel project grouping', () => {
+  it('renders one collapsed group header per project and hides node rows by default', () => {
     const { container } = setup();
     expect(screen.getByText('svc-a')).toBeInTheDocument();
     expect(screen.getByText('svc-b')).toBeInTheDocument();
@@ -68,7 +68,7 @@ describe('NodesPanel service grouping', () => {
     expect(names).toEqual(['svc-b', 'svc-a']);
   });
 
-  it('shows a rolled-up status pill and the service color dot on the header', () => {
+  it('shows a rolled-up status pill and the project color dot on the header', () => {
     const { container } = setup();
     const headers = [...container.querySelectorAll('.nodes-group-row')];
     const svcB = headers.find(h => h.textContent?.includes('svc-b'))!;
@@ -77,28 +77,28 @@ describe('NodesPanel service grouping', () => {
     expect(dot.style.background).toBe('rgb(245, 158, 11)'); // #f59e0b
   });
 
-  it('reveals the node rows of an expanded service with columns unchanged', () => {
-    setup({ expandedServices: new Set(['svc-a']) });
+  it('reveals the node rows of an expanded project with columns unchanged', () => {
+    setup({ expandedProjects: new Set(['svc-a']) });
     expect(screen.getByText('n1')).toBeInTheDocument();
     expect(screen.getByText('n2')).toBeInTheDocument();
     expect(screen.queryByText('m1')).toBeNull(); // svc-b stays collapsed
-    // Node subtitle (service · schema) preserved inside the expanded group.
+    // Node subtitle (project · schema) preserved inside the expanded group.
     expect(screen.getAllByText('svc-a · sch')).toHaveLength(2);
   });
 
-  it('invokes onServiceToggle when a group header is clicked or activated by keyboard', () => {
-    const onServiceToggle = vi.fn();
-    const { container } = setup({ onServiceToggle });
+  it('invokes onProjectToggle when a group header is clicked or activated by keyboard', () => {
+    const onProjectToggle = vi.fn();
+    const { container } = setup({ onProjectToggle });
     const header = [...container.querySelectorAll('.nodes-group-row')]
       .find(h => h.textContent?.includes('svc-a'))!;
     fireEvent.click(header);
-    expect(onServiceToggle).toHaveBeenCalledWith('svc-a');
+    expect(onProjectToggle).toHaveBeenCalledWith('svc-a');
     fireEvent.keyDown(header, { key: 'Enter' });
-    expect(onServiceToggle).toHaveBeenCalledTimes(2);
+    expect(onProjectToggle).toHaveBeenCalledTimes(2);
   });
 
   it('marks group headers with aria-expanded reflecting their state', () => {
-    const { container } = setup({ expandedServices: new Set(['svc-a']) });
+    const { container } = setup({ expandedProjects: new Set(['svc-a']) });
     const headers = [...container.querySelectorAll('.nodes-group-row')];
     const svcA = headers.find(h => h.textContent?.includes('svc-a'))!;
     const svcB = headers.find(h => h.textContent?.includes('svc-b'))!;
@@ -113,7 +113,7 @@ describe('NodesPanel service grouping', () => {
       started_at: '2026-01-01T00:00:00Z', finished_at: '2026-01-01T00:01:00Z',
       log_s3_key: 'logs/m1.log',
     })];
-    setup({ expandedServices: new Set(['svc-b']), attempts, onNodeSelect });
+    setup({ expandedProjects: new Set(['svc-b']), attempts, onNodeSelect });
 
     fireEvent.click(screen.getByText('m1'));
     expect(onNodeSelect).toHaveBeenCalledWith('svc-b.sch.m1');
@@ -130,7 +130,7 @@ describe('NodesPanel service grouping', () => {
       attempt('svc-b.sch.m1', { attempt: 0, status: 'failed' }),
       attempt('svc-b.sch.m1', { attempt: 1, status: 'failed' }),
     ];
-    const { container } = setup({ expandedServices: new Set(['svc-b']), attempts, onNodeSelect });
+    const { container } = setup({ expandedProjects: new Set(['svc-b']), attempts, onNodeSelect });
     const row = screen.getByText('m1').closest('tr')!;
     expect(row.querySelector('.remediation-chevron')).toBeNull();
     fireEvent.click(row);
@@ -144,7 +144,7 @@ describe('NodesPanel service grouping', () => {
       attempt('svc-a.sch.n1', { started_at: '2026-01-01T00:00:00Z', finished_at: '2026-01-01T00:01:00Z' }),
       attempt('svc-a.sch.n2', { started_at: '2026-01-01T00:02:00Z', finished_at: '2026-01-01T00:03:00Z' }),
     ];
-    const { container } = setup({ expandedServices: new Set(['svc-a']), attempts });
+    const { container } = setup({ expandedProjects: new Set(['svc-a']), attempts });
     const names = [...container.querySelectorAll('.nodes-node-name')].map(el => el.textContent);
     expect(names).toEqual(['n2', 'n1']);
   });
@@ -156,7 +156,7 @@ describe('NodesPanel service grouping', () => {
       attempt('svc-a.sch.n1', { attempt: 0, started_at: '2025-12-31T23:00:00Z', finished_at: '2025-12-31T23:01:00Z' }),
       attempt('svc-a.sch.n1', { attempt: 1, started_at: '2026-01-01T00:00:00Z', finished_at: '2026-01-01T00:01:00Z' }),
     ];
-    const { container } = setup({ expandedServices: new Set(['svc-a']), attempts });
+    const { container } = setup({ expandedProjects: new Set(['svc-a']), attempts });
     expect(screen.getByText('Completed')).toBeInTheDocument();
     const rows = [...container.querySelectorAll('.nodes-table tbody tr')]
       .filter(r => !r.classList.contains('nodes-group-row'));

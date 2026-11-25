@@ -23,7 +23,7 @@ function toggleSet(set: Set<string>, key: string): Set<string> {
 // loading, its reads failing, or a run with no tasks. The Past runs tab lists
 // the schedule's runs.
 export default function RunView({
-  state, selectedRunId, releaseId, tasks, attemptsByTask, activeGraph, services, expandedServices, onServiceToggle, pastRuns,
+  state, selectedRunId, releaseId, tasks, attemptsByTask, activeGraph, projects, expandedProjects, onProjectToggle, pastRuns,
 }: {
   state: ReturnType<typeof runTabState>;
   selectedRunId: string | null;
@@ -32,9 +32,9 @@ export default function RunView({
   tasks: Task[];
   attemptsByTask: Map<string, TaskAttempt[]>;
   activeGraph: ScheduleGraph | null;
-  services: string[];
-  expandedServices: Set<string>;
-  onServiceToggle: (service: string) => void;
+  projects: string[];
+  expandedProjects: Set<string>;
+  onProjectToggle: (project: string) => void;
   pastRuns: ComponentProps<typeof PastRunsPanel>;
 }) {
   const [runView, setRunView] = useState<'list' | 'graph'>('list');
@@ -84,14 +84,14 @@ export default function RunView({
                   tasks={tasks}
                   attemptsByTask={attemptsByTask}
                   edges={activeGraph?.edges ?? []}
-                  expandedServices={expandedServices}
-                  onServiceToggle={onServiceToggle}
+                  expandedProjects={expandedProjects}
+                  onProjectToggle={onProjectToggle}
                 />
               ) : (
                 <RunSwimlane
                   graph={activeGraph ?? { nodes: [], edges: [] }}
                   tasks={tasks}
-                  serviceOrder={services}
+                  projectOrder={projects}
                   collapsed={laneCollapsed}
                   onLaneToggle={(s) => setLaneCollapsed((prev) => toggleSet(prev, s))}
                 />

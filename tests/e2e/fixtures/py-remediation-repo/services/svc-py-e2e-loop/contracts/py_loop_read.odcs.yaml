@@ -1,5 +1,5 @@
 # Same unbindable-read failure as svc-py-e2e's py_bad_read, declared under a
-# second service so the two remediation scenarios never share a contract
+# second project so the two remediation scenarios never share a contract
 # directory: the packaging step packs a whole directory, so one still-broken
 # node beside the node under repair would sink the other scenario's
 # verification run.

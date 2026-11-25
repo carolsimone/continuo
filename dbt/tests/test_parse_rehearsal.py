@@ -55,12 +55,12 @@ PARTIAL_PARSE_MARKER = "Unable to do partial parsing"
 DISABLED_PARSE_MARKER = "Partial parsing not enabled"
 CLEAN_HIT_MARKER = "skipping partial parsing"
 
-SERVICE_FIXTURE_DIR = "/app/services/service-1"
+PROJECT_FIXTURE_DIR = "/app/projects/service-1"
 # Baked into every dbt project image (dbt-base's Dockerfile COPYs macros/ here);
 # dbt-compile-and-load inherits FROM dbt-base so this path exists even though
 # its own WORKDIR is /app. Copying from here (not from a live-mounted
 # dbt/base/macros path) means the fixture project picks up the exact macro
-# content the real service images ship, including generate_schema_name's
+# content the real project images ship, including generate_schema_name's
 # DBT_TARGET_SCHEMA env_var() read.
 BASE_MACROS_DIR = "/project/macros"
 
@@ -71,11 +71,11 @@ S3_BUCKET = os.getenv("S3_BUCKET", "continuo")
 def _fixture_project(tmp_path):
     """Copy the service-1 fixture project + the real generate_schema_name
     macro into an isolated tmp dir, replicating the production project layout
-    (dbt_project.yml/profiles.yml/models/seeds from the service image, macros/
+    (dbt_project.yml/profiles.yml/models/seeds from the project image, macros/
     from the base image) without mutating the shared fixture under
-    /app/services."""
+    /app/projects."""
     project_dir = tmp_path / "project"
-    shutil.copytree(SERVICE_FIXTURE_DIR, project_dir, ignore=shutil.ignore_patterns("target"))
+    shutil.copytree(PROJECT_FIXTURE_DIR, project_dir, ignore=shutil.ignore_patterns("target"))
     shutil.copytree(BASE_MACROS_DIR, project_dir / "macros")
     return project_dir
 

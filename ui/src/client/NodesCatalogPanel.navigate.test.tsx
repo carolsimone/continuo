@@ -7,7 +7,7 @@ import type { NodeSummary } from './types';
 
 function node(over: Partial<NodeSummary> = {}): NodeSummary {
   return {
-    service_name: 'svc',
+    project_name: 'svc',
     schema_name: 'schema',
     table_name: 'customers',
     task_count: 3,

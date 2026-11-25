@@ -59,23 +59,23 @@ func TestE2E_Remediation_ValidationRejectionEmitsTrigger(t *testing.T) {
 	requireReleaseControllerHealthy(t, clients)
 
 	releaseID := "e2e-rem-" + uuid.NewString()[:8]
-	changedService := "service-2"
-	t.Logf("release_id=%s changed_service=%s changed_node=%s", releaseID, changedService, ftableEUniqueID)
+	changedProject := "service-2"
+	t.Logf("release_id=%s changed_project=%s changed_node=%s", releaseID, changedProject, ftableEUniqueID)
 
 	// 1. Read baseline manifests from S3 (uploaded by setup.sh). Build the prod
 	//    snapshot of every node EXCEPT ftable_e, so the derived changed set is
 	//    exactly {ftable_e} — the one deliberately-broken node.
-	allServices := baselineServices(t, ctx, clients)
-	require.NotEmpty(t, allServices,
-		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
+	allProjects := baselineProjects(t, ctx, clients)
+	require.NotEmpty(t, allProjects,
+		"no baseline manifests under s3://%s/<project>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
 
-	changedImageTag := allServices[changedService].imageTag
+	changedImageTag := allProjects[changedProject].imageTag
 	require.NotEmpty(t, changedImageTag,
-		"image_tag missing for %s — setup.sh must seed service_prod", changedService)
+		"image_tag missing for %s — setup.sh must seed service_prod", changedProject)
 
 	var prodNodes []map[string]string
 	ftableFound := false
-	for svc, si := range allServices {
+	for svc, si := range allProjects {
 		for _, n := range si.nodes {
 			if n.uniqueID == ftableEUniqueID {
 				ftableFound = true
@@ -83,7 +83,7 @@ func TestE2E_Remediation_ValidationRejectionEmitsTrigger(t *testing.T) {
 			}
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
-				"service":      svc,
+				"project":      svc,
 				"content_hash": n.contentHash,
 			})
 		}
@@ -93,7 +93,7 @@ func TestE2E_Remediation_ValidationRejectionEmitsTrigger(t *testing.T) {
 	t.Logf("seeded prod snapshot with %d nodes (ftable_e excluded)", len(prodNodes))
 
 	// 2. Reset the queue, seed current_prod (all nodes except ftable_e), and seed
-	//    service_prod for every baseline service so assembly can reconstruct
+	//    service_prod for every baseline project so assembly can reconstruct
 	//    the full topology.
 	// Tap the remediation streams before the release is posted: the trim loop
 	// removes consumed entries, so the polls below read what the taps recorded.
@@ -102,10 +102,10 @@ func TestE2E_Remediation_ValidationRejectionEmitsTrigger(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allServices)
+	seedServiceProd(t, ctx, clients, allProjects)
 
 	// 4. POST /releases for service-2 with the new release ID.
-	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
+	postRelease(t, clients, changedProject, releaseID, changedImageTag, false)
 
 	// 5. Wait for the release to reach "rejected" status. ftable_e's SQL
 	//    references public.wrong_name (does not exist), so validation fails.

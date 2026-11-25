@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeDepth, intraServiceOrder, buildSwimlaneLayout, laneLabelColumnWidth } from '../../src/client/run-graph-helpers';
+import { computeDepth, intraProjectOrder, buildSwimlaneLayout, laneLabelColumnWidth } from '../../src/client/run-graph-helpers';
 import type { GraphEdge } from '../../src/client/types';
 
 const e = (from: string, to: string): GraphEdge => ({ from_node_id: from, to_node_id: to });
@@ -10,7 +10,7 @@ describe('computeDepth', () => {
     expect(d).toEqual({ a: 0, b: 1, c: 2 });
   });
 
-  it('a service that depends on downstream output lands at the deeper depth', () => {
+  it('a project that depends on downstream output lands at the deeper depth', () => {
     // core.seed (0) -> fin.rev (1) -> core.rollup (2): "core" spans depths 0 and 2
     const ids = ['core.a.seed', 'fin.a.rev', 'core.a.rollup'];
     const d = computeDepth(ids, [e('core.a.seed', 'fin.a.rev'), e('fin.a.rev', 'core.a.rollup')]);
@@ -35,22 +35,22 @@ describe('computeDepth', () => {
   });
 });
 
-describe('intraServiceOrder', () => {
+describe('intraProjectOrder', () => {
   it('orders by dependency depth', () => {
     const ids = ['s.a.c', 's.a.b', 's.a.a'];
-    const order = intraServiceOrder(ids, [e('s.a.a', 's.a.b'), e('s.a.b', 's.a.c')], {});
+    const order = intraProjectOrder(ids, [e('s.a.a', 's.a.b'), e('s.a.b', 's.a.c')], {});
     expect(order).toEqual(['s.a.a', 's.a.b', 's.a.c']);
   });
 
   it('breaks ties (same depth) by started_at then id', () => {
     const ids = ['s.a.y', 's.a.x'];
-    const order = intraServiceOrder(ids, [], { 's.a.x': '2026-01-01T00:00:02Z', 's.a.y': '2026-01-01T00:00:01Z' });
+    const order = intraProjectOrder(ids, [], { 's.a.x': '2026-01-01T00:00:02Z', 's.a.y': '2026-01-01T00:00:01Z' });
     expect(order).toEqual(['s.a.y', 's.a.x']); // y started first
   });
 
   it('places not-yet-started (null started_at) after started ones at the same depth', () => {
     const ids = ['s.a.p', 's.a.q'];
-    const order = intraServiceOrder(ids, [], { 's.a.p': null, 's.a.q': '2026-01-01T00:00:01Z' });
+    const order = intraProjectOrder(ids, [], { 's.a.p': null, 's.a.q': '2026-01-01T00:00:01Z' });
     expect(order).toEqual(['s.a.q', 's.a.p']);
   });
 });
@@ -61,21 +61,21 @@ describe('buildSwimlaneLayout', () => {
   const ids = ['core.a.seed', 'finance.a.rev', 'core.a.rollup'];
   const edges = [e('core.a.seed', 'finance.a.rev'), e('finance.a.rev', 'core.a.rollup')];
 
-  it('places a node at column = its depth in its service lane', () => {
+  it('places a node at column = its depth in its project lane', () => {
     const L = buildSwimlaneLayout(ids, edges, order, new Set(), { col: 100, laneLeft: 100 });
     const rollup = L.nodes.find((n) => n.nodeId === 'core.a.rollup')!;
-    expect(rollup.service).toBe('core');
+    expect(rollup.project).toBe('core');
     expect(rollup.depth).toBe(2);
     expect(rollup.x).toBe(100 + 2 * 100); // laneLeft + depth*col
   });
 
-  it('a service spanning depths occupies multiple columns in one lane', () => {
+  it('a project spanning depths occupies multiple columns in one lane', () => {
     const L = buildSwimlaneLayout(ids, edges, order, new Set());
-    const coreDepths = L.nodes.filter((n) => n.service === 'core').map((n) => n.depth).sort();
+    const coreDepths = L.nodes.filter((n) => n.project === 'core').map((n) => n.depth).sort();
     expect(coreDepths).toEqual([0, 2]);
   });
 
-  it('stacks two nodes in the same (service, depth) cell on different rows', () => {
+  it('stacks two nodes in the same (project, depth) cell on different rows', () => {
     const twoIds = ['core.a.s1', 'core.a.s2'];
     const L = buildSwimlaneLayout(twoIds, [], order, new Set(), { row: 40 });
     const ys = L.nodes.map((n) => n.y);
@@ -85,37 +85,37 @@ describe('buildSwimlaneLayout', () => {
   it('a collapsed lane is shorter than an expanded one', () => {
     const expanded = buildSwimlaneLayout(ids, edges, order, new Set());
     const collapsed = buildSwimlaneLayout(ids, edges, order, new Set(['core']));
-    const hExpanded = expanded.bands.find((b) => b.service === 'core')!.height;
-    const hCollapsed = collapsed.bands.find((b) => b.service === 'core')!.height;
+    const hExpanded = expanded.bands.find((b) => b.project === 'core')!.height;
+    const hCollapsed = collapsed.bands.find((b) => b.project === 'core')!.height;
     expect(hCollapsed).toBeLessThan(hExpanded);
   });
 
   it('gives collapsed same-cell nodes distinct x positions so they do not overlap', () => {
-    const twoIds = ['core.a.s1', 'core.a.s2']; // same service, same depth 0, no edges
+    const twoIds = ['core.a.s1', 'core.a.s2']; // same project, same depth 0, no edges
     const L = buildSwimlaneLayout(twoIds, [], order, new Set(['core']));
-    const coreNodes = L.nodes.filter((n) => n.service === 'core');
+    const coreNodes = L.nodes.filter((n) => n.project === 'core');
     expect(new Set(coreNodes.map((n) => n.y)).size).toBe(1); // collapsed → single row
     expect(new Set(coreNodes.map((n) => n.x)).size).toBe(2); // but distinct x, not stacked at one point
   });
 });
 
 describe('laneLabelColumnWidth', () => {
-  it('grows with the longest service name so nodes never start under a label', () => {
-    const short = laneLabelColumnWidth([{ service: 'core', done: 8, total: 8 }]);
-    const long = laneLabelColumnWidth([{ service: 'service-py', done: 2, total: 2 }]);
+  it('grows with the longest project name so nodes never start under a label', () => {
+    const short = laneLabelColumnWidth([{ project: 'core', done: 8, total: 8 }]);
+    const long = laneLabelColumnWidth([{ project: 'service-py', done: 2, total: 2 }]);
     expect(long).toBeGreaterThan(short);
   });
 
   it('never shrinks below the default lane-left offset', () => {
-    expect(laneLabelColumnWidth([{ service: 'a', done: 0, total: 1 }])).toBeGreaterThanOrEqual(104);
+    expect(laneLabelColumnWidth([{ project: 'a', done: 0, total: 1 }])).toBeGreaterThanOrEqual(104);
     expect(laneLabelColumnWidth([])).toBeGreaterThanOrEqual(104);
   });
 
   it('is driven by the widest label, not the first', () => {
     const w = laneLabelColumnWidth([
-      { service: 'core', done: 8, total: 8 },
-      { service: 'a-much-longer-service-name', done: 10, total: 12 },
+      { project: 'core', done: 8, total: 8 },
+      { project: 'a-much-longer-service-name', done: 10, total: 12 },
     ]);
-    expect(w).toBe(laneLabelColumnWidth([{ service: 'a-much-longer-service-name', done: 10, total: 12 }]));
+    expect(w).toBe(laneLabelColumnWidth([{ project: 'a-much-longer-service-name', done: 10, total: 12 }]));
   });
 });

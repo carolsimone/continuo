@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewFullRefreshCommand builds `continuo node full-refresh <service> <schema>
+// NewFullRefreshCommand builds `continuo node full-refresh <project> <schema>
 // <table> [source-run-id]`. It rebuilds one dbt model or seed from scratch:
 // the node's production table is dropped and recreated. Only that node runs;
 // nothing upstream or downstream is triggered. With three arguments the run
@@ -28,7 +28,7 @@ import (
 func NewFullRefreshCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	var acknowledged []string
 	cmd := &cobra.Command{
-		Use:   "full-refresh <service> <schema> <table> [source-run-id]",
+		Use:   "full-refresh <project> <schema> <table> [source-run-id]",
 		Short: "Rebuild one dbt model or seed from scratch (dbt --full-refresh)",
 		Long: `Rebuild one dbt model or seed from scratch (dbt --full-refresh).
 
@@ -47,7 +47,7 @@ objects) when an object continuo does not own reads the seed, unless each such
 object is named with --acknowledge <schema>.<name>; repeat the flag for every
 object the stopped load listed. "node history" lists them in blocking_objects
 on the seed task that stopped. A seed set to +full_refresh: false on Postgres
-is refused (usage, exit 2) and no run is created. A service whose governing
+is refused (usage, exit 2) and no run is created. A project whose governing
 command block has no seed_full_refresh (seed) or full_refresh (model) makes the
 task fail with failure_reason seed_full_refresh_undefined or
 full_refresh_undefined before any container starts.
@@ -55,7 +55,7 @@ By default the run uses the node's current (latest) image and manifest version.
 Pass a past run id to rebuild the node exactly as that run saw it.
 
 Arguments:
-  <service>  The owning service name.
+  <project>  The owning project name.
   <schema>   The schema name.
   <table>    The table (model or seed) name.
 ` + sourceRunArgDoc + `
@@ -77,7 +77,7 @@ release does not hold is refused (not_found), and a node that is not a dbt
 model or seed is refused (usage); neither creates a run. A seed whose table the
 refresh would not rebuild (+full_refresh: false on Postgres) is refused too
 (usage, exit 2, "seed_full_refresh_disabled"), and so is --acknowledge on
-anything but a seed's full refresh. If the node's service governing command
+anything but a seed's full refresh. If the node's project governing command
 block defines no full_refresh (model) or seed_full_refresh (seed) command, the
 run is accepted and fails when it executes.
 A task whose node another run is writing waits for that run to finish
@@ -119,13 +119,13 @@ Errors:
 			}
 			defer func() { _ = c.Close() }()
 
-			resp, err := c.TriggerNodeFullRefresh(ctx, client.RequestID(), target.service, target.schema, target.table, target.sourceRunID, cfg.Actor, acknowledged)
+			resp, err := c.TriggerNodeFullRefresh(ctx, client.RequestID(), target.project, target.schema, target.table, target.sourceRunID, cfg.Actor, acknowledged)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
 
 			if cfg.Human {
-				return output.HumanSuccess(stderr, "Triggered single-node full refresh run "+resp.GetRunId()+" for "+target.service+"."+target.schema+"."+target.table)
+				return output.HumanSuccess(stderr, "Triggered single-node full refresh run "+resp.GetRunId()+" for "+target.project+"."+target.schema+"."+target.table)
 			}
 			return output.EmitSuccess(stdout, map[string]string{
 				"run_id":        resp.GetRunId(),

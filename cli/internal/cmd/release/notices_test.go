@@ -35,7 +35,7 @@ func (f *fakeReleaseClient) Close() error { return nil }
 
 func designNotice() *releasev1.ReleaseNotice {
 	return &releasev1.ReleaseNotice{
-		Kind: "seed_reload", NodeId: "finance.analytics.fx_rates", Service: "finance", EngineFamily: "schema_bound",
+		Kind: "seed_reload", NodeId: "finance.analytics.fx_rates", Project: "finance", EngineFamily: "schema_bound",
 		Change:  "columns",
 		Columns: &releasev1.ColumnChanges{Added: []string{"source"}},
 		Load:    &releasev1.SeedLoad{Operation: "run", DropsTable: true, Reason: "a column was added"},

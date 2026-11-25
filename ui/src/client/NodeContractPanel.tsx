@@ -10,7 +10,7 @@ import type {
 } from './types';
 
 type Props = {
-  service: string;
+  project: string;
   schema: string;
   table: string;
 };
@@ -172,9 +172,9 @@ function CompareVersions({ base, versions }: { base: string; versions: ContractV
 // The Contract tab of a node page: the contract the node has now as the YAML
 // continuo publishes, every version catalog kept, and the fields two versions
 // differ at.
-export default function NodeContractPanel({ service, schema, table }: Props) {
+export default function NodeContractPanel({ project, schema, table }: Props) {
   const [read, setRead] = useState<ContractRead>({ state: 'loading' });
-  const base = `/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/contract`;
+  const base = `/api/nodes/${encodeURIComponent(project)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/contract`;
 
   useEffect(() => {
     setRead({ state: 'loading' });

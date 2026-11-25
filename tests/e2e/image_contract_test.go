@@ -22,9 +22,9 @@ import (
 )
 
 const (
-	// pyMismatchService is the python service whose release names the mismatch
+	// pyMismatchProject is the python project whose release names the mismatch
 	// image. tests/e2e/ci-auth.json binds it to the python fixture repository.
-	pyMismatchService = "svc-py-mismatch-e2e"
+	pyMismatchProject = "svc-py-mismatch-e2e"
 	// pyMismatchImage is the py-probe fixture's mismatch target, which
 	// scripts/setup.sh builds and side-loads into kind under this exact tag.
 	pyMismatchImage = "continuo-e2e-py-probe:mismatch"
@@ -85,39 +85,39 @@ func TestE2E_PythonImageContractMismatch_FailsInvalid(t *testing.T) {
 		pyMismatchContract: {Data: pyMismatchReleasedContract},
 		pyMismatchScript:   {Data: script},
 	}
-	bundle := packBundleWithRuntime(t, ctx, pyMismatchImage, pyMismatchService, repo, ".")
+	bundle := packBundleWithRuntime(t, ctx, pyMismatchImage, pyMismatchProject, repo, ".")
 	requireImageReproducesAnotherHash(t, ctx, repo)
 
 	releaseID := "e2e-pymm-" + uuid.NewString()[:8]
-	t.Logf("release_id=%s service=%s image=%s", releaseID, pyMismatchService, pyMismatchImage)
+	t.Logf("release_id=%s project=%s image=%s", releaseID, pyMismatchProject, pyMismatchImage)
 
 	// ── 2. a bootstrap release names the mismatch image and promotes ─────────
-	// Production keeps every dbt service live, so the release's topology holds
+	// Production keeps every dbt project live, so the release's topology holds
 	// them beside the python node.
-	allServices := baselineServices(t, ctx, clients)
-	require.NotEmpty(t, allServices)
+	allProjects := baselineProjects(t, ctx, clients)
+	require.NotEmpty(t, allProjects)
 	var prodNodes []map[string]string
-	for svc, si := range allServices {
+	for svc, si := range allProjects {
 		for _, n := range si.nodes {
 			prodNodes = append(prodNodes, map[string]string{
-				"unique_id": n.uniqueID, "service": svc, "content_hash": n.contentHash,
+				"unique_id": n.uniqueID, "project": svc, "content_hash": n.contentHash,
 			})
 		}
 	}
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allServices)
-	// A service_prod pointer left behind would put this service's contracts
+	seedServiceProd(t, ctx, clients, allProjects)
+	// A service_prod pointer left behind would put this project's contracts
 	// into every later release's topology. Deferred, so it runs while the
 	// pools are open.
 	defer func() {
 		if _, err := clients.releaseDB.ExecContext(context.Background(),
-			`DELETE FROM service_prod WHERE service_name = $1`, pyMismatchService); err != nil {
-			t.Errorf("cleanup: delete %s service_prod row: %v", pyMismatchService, err)
+			`DELETE FROM service_prod WHERE project_name = $1`, pyMismatchProject); err != nil {
+			t.Errorf("cleanup: delete %s service_prod row: %v", pyMismatchProject, err)
 		}
 	}()
 
-	bundleKey := putODCSBundle(t, ctx, clients, pyMismatchService, releaseID, bundle)
+	bundleKey := putODCSBundle(t, ctx, clients, pyMismatchProject, releaseID, bundle)
 	defer func() {
 		if _, err := clients.s3Client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
 			Bucket: aws.String(e2eS3Bucket), Key: aws.String(bundleKey),
@@ -125,7 +125,7 @@ func TestE2E_PythonImageContractMismatch_FailsInvalid(t *testing.T) {
 			t.Logf("delete s3://%s/%s: %v", e2eS3Bucket, bundleKey, err)
 		}
 	}()
-	postPythonRelease(t, clients, pyMismatchService, releaseID, pyMismatchImage, true)
+	postPythonRelease(t, clients, pyMismatchProject, releaseID, pyMismatchImage, true)
 
 	waitForReleasePromoted(t, ctx, clients, releaseID, 10*time.Minute)
 	waitForTopologySwap(t, ctx, clients, releaseID, pyMismatchUniqueID, 2*time.Minute)

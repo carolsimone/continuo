@@ -130,7 +130,7 @@ Every series also carries a `service` label.
 
 `continuo_remediation_*` count what the remediation runner of `agent-remediation` does, by the `flow` and the `type` its remediation files name. `type` is the type of the cluster a node is fixed in, and `none` for a node whose cluster no type matched. A node settled in an earlier try keeps the type of the cluster that settled it. A node the classifier marked unfixable was never worked by a cluster, so it is `none`. The steps of a cluster, the flow's own context steps (such as `previous_tries`) among them, count under the cluster's type. The `cross_cluster`, `gate` and `output` stages belong to no cluster, so their `type` is empty. A series exists once its first sample is counted. Every sample is counted once the transaction that stores it has committed, so a step that rolls back and runs again counts once.
 
-`continuo_remediation_tries_total` counts each cluster a try worked, once, when the try ends. `passed` is a try whose verification runs passed, `gate_failed` one whose run failed or never answered, `checks_failed` one whose drafts a cross-cluster check or the gate refused at submit, `preflight_spent` a cluster whose every pre-flight round was refused, and `declined` a cluster a step declined or whose draft made no edit. A cluster no type matched and one handed over when the try opened count nothing. A shared-upstream cluster that fell back to its members counts nothing itself, and its members count their own result. A cross-service cluster that fell back creates no cluster for its members, so it counts `declined` or `preflight_spent`, the result of its own failure. `continuo_remediation_rounds_total` counts each pre-flight pass of a draft: `passed` when no check found anything, `revised` when one did and the model gets another round, `spent` when one did in the type's last round.
+`continuo_remediation_tries_total` counts each cluster a try worked, once, when the try ends. `passed` is a try whose verification runs passed, `gate_failed` one whose run failed or never answered, `checks_failed` one whose drafts a cross-cluster check or the gate refused at submit, `preflight_spent` a cluster whose every pre-flight round was refused, and `declined` a cluster a step declined or whose draft made no edit. A cluster no type matched and one handed over when the try opened count nothing. A shared-upstream cluster that fell back to its members counts nothing itself, and its members count their own result. A cross-project cluster that fell back creates no cluster for its members, so it counts `declined` or `preflight_spent`, the result of its own failure. `continuo_remediation_rounds_total` counts each pre-flight pass of a draft: `passed` when no check found anything, `revised` when one did and the model gets another round, `spent` when one did in the type's last round.
 
 `continuo_remediation_outcomes_total` counts each failing node once, when its remediation ends. `fixed` is a node a verified fix covers, with an empty `reason`. `handed_over` is a node left to a human, and its `reason` is the code it was handed over with, from the `handover_reason` vocabulary. A remediation whose attempt row was changed by someone else while its try was verifying ends too, and counts its nodes from that row: each node that row holds with a code counts as `handed_over`, though no `remediation.handed_over:v1` is written for it. A node skipped because maintenance mode was on is neither, and is not counted. `continuo_remediation_system_failures_total` counts a remediation the runner stops because it can go no further: `step_failures` is a step that failed five times, `remediation_failures` a remediation that failed five times in a row before a step could run, and `deadline` a drafting or checking try past its deadline. A stopped remediation counts no outcome and waits for a redrive of its dead-lettered trigger (`continuo dlq`). It counts again if it stops again, and its nodes count when it finally ends.
 
@@ -147,7 +147,7 @@ continuo runs each task and each release check as a Kubernetes Job, and these la
 | Label | Task | Validation | Seed-build | Compile |
 |---|---|---|---|---|
 | `app` (always `dbt-job`) | yes | yes | yes | yes |
-| `service_name` | yes | yes | yes | yes |
+| `project_name` | yes | yes | yes | yes |
 | `schema_name` | yes | yes | yes | |
 | `table_name` | yes | yes | yes | |
 | `run-id` | yes | | | |
@@ -166,7 +166,7 @@ Kubernetes limits a label value to 63 characters, so continuo shortens longer `t
 A Job's pods carry the same labels. kube-state-metrics skips these labels unless you list them, and without a list it emits no `kube_job_labels` or `kube_pod_labels` series at all. Start it with:
 
 ```text
---metric-labels-allowlist=jobs=[app,service_name,schema_name,table_name,run-id,task-id,attempt,schedule,runtime,mode,release-id,node-id],pods=[app,service_name,schema_name,table_name,run-id,task-id,attempt,schedule,runtime,mode,release-id,node-id]
+--metric-labels-allowlist=jobs=[app,project_name,schema_name,table_name,run-id,task-id,attempt,schedule,runtime,mode,release-id,node-id],pods=[app,project_name,schema_name,table_name,run-id,task-id,attempt,schedule,runtime,mode,release-id,node-id]
 ```
 
 With the `kube-prometheus-stack` chart, set the same lists in its values:
@@ -174,8 +174,8 @@ With the `kube-prometheus-stack` chart, set the same lists in its values:
 ```yaml
 kube-state-metrics:
   metricLabelsAllowlist:
-    - jobs=[app,service_name,schema_name,table_name,run-id,task-id,attempt,schedule,runtime,mode,release-id,node-id]
-    - pods=[app,service_name,schema_name,table_name,run-id,task-id,attempt,schedule,runtime,mode,release-id,node-id]
+    - jobs=[app,project_name,schema_name,table_name,run-id,task-id,attempt,schedule,runtime,mode,release-id,node-id]
+    - pods=[app,project_name,schema_name,table_name,run-id,task-id,attempt,schedule,runtime,mode,release-id,node-id]
 ```
 
 Dashes become underscores in Prometheus, so `run-id` becomes `label_run_id`.
@@ -235,7 +235,7 @@ groups:
       - alert: ContinuoJobFailed
         expr: |
           (kube_job_failed{job="kube-state-metrics", job_name!~"validate-.*"} > 0)
-            * on (namespace, job_name) group_left (label_service_name, label_schema_name, label_table_name, label_schedule, label_run_id, label_attempt)
+            * on (namespace, job_name) group_left (label_project_name, label_schema_name, label_table_name, label_schedule, label_run_id, label_attempt)
             kube_job_labels
           or on (namespace, job_name)
           (kube_job_failed{job="kube-state-metrics", job_name!~"validate-.*"} > 0)
@@ -243,7 +243,7 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "{{ if $labels.label_table_name }}{{ $labels.label_schema_name }}.{{ $labels.label_table_name }} failed (service {{ $labels.label_service_name }}{{ if $labels.label_schedule }}, schedule {{ $labels.label_schedule }}{{ end }}{{ if $labels.label_run_id }}, run {{ $labels.label_run_id }}, attempt {{ $labels.label_attempt }}{{ end }}){{ else }}Job {{ $labels.namespace }}/{{ $labels.job_name }} failed{{ end }}"
+          summary: "{{ if $labels.label_table_name }}{{ $labels.label_schema_name }}.{{ $labels.label_table_name }} failed (project {{ $labels.label_project_name }}{{ if $labels.label_schedule }}, schedule {{ $labels.label_schedule }}{{ end }}{{ if $labels.label_run_id }}, run {{ $labels.label_run_id }}, attempt {{ $labels.label_attempt }}{{ end }}){{ else }}Job {{ $labels.namespace }}/{{ $labels.job_name }} failed{{ end }}"
       - alert: OutboxStuck
         expr: continuo_outbox_oldest_open_age_seconds > 300
         for: 10m

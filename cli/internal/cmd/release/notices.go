@@ -16,7 +16,7 @@ import (
 type noticeJSON struct {
 	Kind              string                 `json:"kind"`
 	NodeID            string                 `json:"node_id"`
-	Service           string                 `json:"service"`
+	Project           string                 `json:"project"`
 	EngineFamily      string                 `json:"engine_family"`
 	Change            string                 `json:"change"`
 	Columns           columnsJSON            `json:"columns"`
@@ -76,7 +76,7 @@ func strs(s []string) []string {
 
 func noticeToJSON(n *releasev1.ReleaseNotice) noticeJSON {
 	out := noticeJSON{
-		Kind: n.GetKind(), NodeID: n.GetNodeId(), Service: n.GetService(), EngineFamily: n.GetEngineFamily(), Change: n.GetChange(),
+		Kind: n.GetKind(), NodeID: n.GetNodeId(), Project: n.GetProject(), EngineFamily: n.GetEngineFamily(), Change: n.GetChange(),
 		Columns: columnsJSON{
 			Added: strs(n.GetColumns().GetAdded()), Removed: strs(n.GetColumns().GetRemoved()), Retyped: strs(n.GetColumns().GetRetyped()),
 		},
@@ -133,7 +133,7 @@ Arguments:
 
 Output (stdout, JSON):
   {"release_id":string,"status":string,"notices":[{"kind":string,"node_id":string,
-   "service":string,"engine_family":string,"change":string,
+   "project":string,"engine_family":string,"change":string,
    "columns":{"added":[string],"removed":[string],"retyped":[string]},
    "load":{"operation":string,"drops_table":boolean,"reason":string},
    "rebuilds":[{"node_id":string,"materialized":string,"operation":string,"schedule":string}],

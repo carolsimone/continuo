@@ -72,7 +72,7 @@ var (
 )
 
 // contentHashesOf returns the content_hash topology-controller computes for
-// every node it yields from service's dbt manifest and that compile's
+// every node it yields from project's dbt manifest and that compile's
 // compile-extras.json (nil when the compile wrote none), keyed by unique_id.
 // A manifest it yields no node from fails the test.
 // topology-controller's parser is the one implementation of the formula, so
@@ -83,7 +83,7 @@ var (
 // Results are kept for the life of the process,
 // keyed by the SHA-256 of both inputs, since every test seeds production from
 // the same baseline manifests.
-func contentHashesOf(t *testing.T, ctx context.Context, service string, manifest, extras []byte) map[string]string {
+func contentHashesOf(t *testing.T, ctx context.Context, project string, manifest, extras []byte) map[string]string {
 	t.Helper()
 	cacheKey := sha256Hex(string(manifest)) + ":"
 	if extras != nil {
@@ -129,7 +129,7 @@ func contentHashesOf(t *testing.T, ctx context.Context, service string, manifest
 	var hashes map[string]string
 	require.NoError(t, json.Unmarshal(bytes.TrimSpace(out), &hashes),
 		"topology-controller's hash script must print one JSON object, got %q", out)
-	require.NotEmpty(t, hashes, "topology-controller's parser yields no node from the manifest of service %s", service)
+	require.NotEmpty(t, hashes, "topology-controller's parser yields no node from the manifest of project %s", project)
 	contentHashCache[cacheKey] = hashes
 	return copyHashes(hashes)
 }

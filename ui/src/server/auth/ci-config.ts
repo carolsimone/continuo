@@ -1,6 +1,6 @@
 import { readFileSync } from 'fs';
 
-// One GitHub identity allowed to release a service. Every set field must match
+// One GitHub identity allowed to release a project. Every set field must match
 // the token's claim; repositoryId is mandatory so a binding never trusts a name.
 export interface CiBinding {
   repositoryId: string;
@@ -14,7 +14,7 @@ export interface CiBinding {
 export interface CiAuthConfig {
   issuer: string; // no trailing slash; compared to the token's iss exactly
   audience: string;
-  bindings: Map<string, CiBinding[]>; // service -> allowed identities
+  bindings: Map<string, CiBinding[]>; // project -> allowed identities
 }
 
 export const BINDING_FIELDS = ['repositoryId', 'ref', 'refProtected', 'environment', 'workflowRef', 'allowBootstrap'] as const;
@@ -25,8 +25,8 @@ function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
-function parseBinding(service: string, i: number, raw: unknown): CiBinding {
-  const where = `ciAuth.bindings.${service}[${i}]`;
+function parseBinding(project: string, i: number, raw: unknown): CiBinding {
+  const where = `ciAuth.bindings.${project}[${i}]`;
   if (!isObject(raw)) throw new Error(`${where}: expected an object`);
   for (const key of Object.keys(raw)) {
     if (!(BINDING_FIELDS as readonly string[]).includes(key)) throw new Error(`${where}: unknown field "${key}"`);
@@ -71,11 +71,11 @@ export function parseCiAuthConfig(raw: unknown, opts: { allowInsecureIssuer: boo
   }
   if (typeof raw.audience !== 'string' || raw.audience.trim() === '') throw new Error('ciAuth.audience must be a non-empty string');
   const rawBindings = raw.bindings ?? {};
-  if (!isObject(rawBindings)) throw new Error('ciAuth.bindings must be an object of service -> list');
+  if (!isObject(rawBindings)) throw new Error('ciAuth.bindings must be an object of project -> list');
   const bindings = new Map<string, CiBinding[]>();
-  for (const [service, list] of Object.entries(rawBindings)) {
-    if (service === '' || !Array.isArray(list)) throw new Error(`ciAuth.bindings.${service}: expected a list of bindings`);
-    bindings.set(service, list.map((b, i) => parseBinding(service, i, b)));
+  for (const [project, list] of Object.entries(rawBindings)) {
+    if (project === '' || !Array.isArray(list)) throw new Error(`ciAuth.bindings.${project}: expected a list of bindings`);
+    bindings.set(project, list.map((b, i) => parseBinding(project, i, b)));
   }
   // Trailing slashes are dropped because GitHub Actions' iss never ends in "/",
   // so an issuer value written with one would otherwise match no token.

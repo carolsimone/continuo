@@ -64,26 +64,26 @@ func TestDroppedNodeKeepsItsHistory(t *testing.T) {
 	requireReleaseControllerHealthy(t, clients)
 
 	releaseID := "e2e-history-" + uuid.NewString()[:8]
-	const changedService = "service-1"
-	t.Logf("release_id=%s changed_service=%s node=%s", releaseID, changedService, probeUniqueID)
+	const changedProject = "service-1"
+	t.Logf("release_id=%s changed_project=%s node=%s", releaseID, changedProject, probeUniqueID)
 
-	allServices := baselineServices(t, ctx, clients)
-	require.NotEmpty(t, allServices,
-		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
-	changedImageTag := allServices[changedService].imageTag
-	require.NotEmpty(t, changedImageTag, "image_tag missing for %s — setup.sh must seed service_prod", changedService)
+	allProjects := baselineProjects(t, ctx, clients)
+	require.NotEmpty(t, allProjects,
+		"no baseline manifests under s3://%s/<project>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
+	changedImageTag := allProjects[changedProject].imageTag
+	require.NotEmpty(t, changedImageTag, "image_tag missing for %s — setup.sh must seed service_prod", changedProject)
 
 	// Production holds the baseline's own hash for every node, rel_probe
 	// included, so no node is changed and the release promotes with nothing to
 	// validate.
 	var prodNodes []map[string]string
 	probeFound := false
-	for svc, si := range allServices {
+	for svc, si := range allProjects {
 		for _, n := range si.nodes {
 			probeFound = probeFound || n.uniqueID == probeUniqueID
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
-				"service":      svc,
+				"project":      svc,
 				"content_hash": n.contentHash,
 			})
 		}
@@ -96,8 +96,8 @@ func TestDroppedNodeKeepsItsHistory(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allServices)
-	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
+	seedServiceProd(t, ctx, clients, allProjects)
+	postRelease(t, clients, changedProject, releaseID, changedImageTag, false)
 	waitForReleasePromoted(t, ctx, clients, releaseID, 10*time.Minute)
 
 	// 1. rel_probe is live and has a current version. The topology group's swap
@@ -227,11 +227,11 @@ func waitForVersionsOfPromotion(t *testing.T, ctx context.Context, clients *test
 	})
 }
 
-// probeNodeRequest addresses rel_probe by its (service, schema, table)
+// probeNodeRequest addresses rel_probe by its (project, schema, table)
 // identity, as GetNode reads it.
 func probeNodeRequest(includeInactive bool) *catalogv1.GetNodeRequest {
 	return &catalogv1.GetNodeRequest{
-		ServiceName:     "service-1",
+		ProjectName:     "service-1",
 		SchemaName:      seedSchemaName,
 		TableName:       "rel_probe",
 		IncludeInactive: includeInactive,

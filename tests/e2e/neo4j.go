@@ -74,7 +74,7 @@ func queryNeo4jRows(t *testing.T, ctx context.Context, clients *testClients, cyp
 	return rows
 }
 
-// pollNeo4jPRState polls a (proposal, service) :PullRequest node's pr_state
+// pollNeo4jPRState polls a (proposal, project) :PullRequest node's pr_state
 // until it reaches want. Catalog's pr_closed provenance handler
 // (catalog/adapters/neo4j/case_base_repository.go RecordPullRequestOutcome)
 // writes this state change and every case-base provenance edge it draws
@@ -85,24 +85,24 @@ func queryNeo4jRows(t *testing.T, ctx context.Context, clients *testClients, cyp
 // remediation.pr_closed:v1.
 func pollNeo4jPRState(
 	t *testing.T, ctx context.Context, clients *testClients,
-	proposalID, service, want string, timeout time.Duration,
+	proposalID, project, want string, timeout time.Duration,
 ) {
 	t.Helper()
 	var last string
 	pollUntil(t, ctx, timeout, 2*time.Second, func() (bool, error) {
 		rows := queryNeo4jRows(t, ctx, clients, `
-			MATCH (:Proposal {tenant_id: 'default', proposal_id: $proposal_id})-[:HAS_PR]->(pl:PullRequest {tenant_id: 'default', service: $service})
+			MATCH (:Proposal {tenant_id: 'default', proposal_id: $proposal_id})-[:HAS_PR]->(pl:PullRequest {tenant_id: 'default', project: $project})
 			RETURN pl.pr_state AS pr_state`,
-			map[string]any{"proposal_id": proposalID, "service": service})
+			map[string]any{"proposal_id": proposalID, "project": project})
 		if len(rows) != 1 {
 			return false, nil
 		}
 		state, _ := rows[0]["pr_state"].(string)
 		if state != last {
-			t.Logf("neo4j :PullRequest proposal=%s service=%q pr_state=%s", proposalID, service, state)
+			t.Logf("neo4j :PullRequest proposal=%s project=%q pr_state=%s", proposalID, project, state)
 			last = state
 		}
 		return state == want, nil
-	}, fmt.Sprintf("timeout waiting for neo4j :PullRequest proposal=%s service=%q to reach pr_state=%q",
-		proposalID, service, want))
+	}, fmt.Sprintf("timeout waiting for neo4j :PullRequest proposal=%s project=%q to reach pr_state=%q",
+		proposalID, project, want))
 }

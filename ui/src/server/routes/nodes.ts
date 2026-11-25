@@ -52,7 +52,7 @@ function parseContractVersion(raw: unknown): number | null {
 export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphClient) {
   const router = Router();
 
-  // GET /api/nodes?search=&service=&operation=&dormant=&limit=&offset= — every
+  // GET /api/nodes?search=&project=&operation=&dormant=&limit=&offset= — every
   // node of the live release, paged, with the stats of its recent runs; a node
   // that never ran has none. dormant=1 lists only dormant nodes (the ones that
   // belong to no schedule).
@@ -65,7 +65,7 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
     if (operation === null) return res.status(400).json({ error: 'invalid operation' });
     const q = {
       search: typeof req.query.search === 'string' ? req.query.search : '',
-      service_name: typeof req.query.service === 'string' ? req.query.service : '',
+      project_name: typeof req.query.project === 'string' ? req.query.project : '',
       operation,
       limit: parseLimit(req.query.limit, { def: 50, max: 500 }),
       offset: parseOffset(req.query.offset),
@@ -76,7 +76,7 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
       res.json({
         total_count: Number(response.total_count ?? 0),
         nodes: (response.nodes || []).map((r: any) => ({
-          service_name:     r.service_name,
+          project_name:     r.project_name,
           schema_name:      r.schema_name,
           table_name:       r.table_name,
           task_count:       Number(r.task_count ?? 0),
@@ -95,35 +95,35 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
     });
   });
 
-  // GET /api/nodes/names?service= — the distinct table names of the nodes the
+  // GET /api/nodes/names?project= — the distinct table names of the nodes the
   // node list lists (the live release's nodes continuo builds), for the search
   // autocomplete
   router.get('/names', (req, res) => {
-    const service = typeof req.query.service === 'string' ? req.query.service : '';
-    runClient.listNodeNames({ service_name: service }, (err: any, response: any) => {
+    const project = typeof req.query.project === 'string' ? req.query.project : '';
+    runClient.listNodeNames({ project_name: project }, (err: any, response: any) => {
       if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
       res.json({ names: response.table_names || [] });
     });
   });
 
-  // GET /api/nodes/services — the distinct service names of the nodes the node
-  // list lists, for the Nodes-tab and Remediation-tab service filters. Backed
-  // by the ListNodeServices run-controller read (a single DISTINCT query),
+  // GET /api/nodes/projects — the distinct project names of the nodes the node
+  // list lists, for the Nodes-tab and Remediation-tab project filters. Backed
+  // by the ListNodeProjects run-controller read (a single DISTINCT query),
   // independent of the paginated node list.
-  router.get('/services', (_req, res) => {
-    runClient.listNodeServices({}, (err: any, response: any) => {
+  router.get('/projects', (_req, res) => {
+    runClient.listNodeProjects({}, (err: any, response: any) => {
       if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
-      res.json({ services: response.service_names || [] });
+      res.json({ projects: response.project_names || [] });
     });
   });
 
-  // GET /api/nodes/:service/:schema/:table/runs — last 50 raw runs on this node
-  router.get('/:service/:schema/:table/runs', (req, res) => {
+  // GET /api/nodes/:project/:schema/:table/runs — last 50 raw runs on this node
+  router.get('/:project/:schema/:table/runs', (req, res) => {
     const operation = parseNodeOperation(req.query.operation);
     if (operation === null) return res.status(400).json({ error: 'invalid operation' });
     runClient.listNodeTasks(
       {
-        service_name: req.params.service,
+        project_name: req.params.project,
         schema_name:  req.params.schema,
         table_name:   req.params.table,
         limit:        50,
@@ -164,13 +164,13 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
     );
   });
 
-  // POST /api/nodes/:service/:schema/:table/run
+  // POST /api/nodes/:project/:schema/:table/run
   // Body: { request_id } → latest mode; { request_id, source_run_id } →
   // snapshot_of_run mode. request_id is the browser-minted UUID run-controller uses to
   // start one run for a repeated action. acknowledged_dependents (an array of
   // "<schema>.<name>") names the warehouse objects an operator accepts a seed's
   // full refresh dropping or leaving stale.
-  router.post('/:service/:schema/:table/run', (req, res) => {
+  router.post('/:project/:schema/:table/run', (req, res) => {
     const requestId = requireRequestId(req, res);
     if (requestId === null) return;
     const operation = parseNodeRunOperation(req.body?.operation);
@@ -186,7 +186,7 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
     runClient.triggerSingleNodeRun(
       {
         request_id:      requestId,
-        service_name:    req.params.service,
+        project_name:    req.params.project,
         schema_name:     req.params.schema,
         table_name:      req.params.table,
         metadata_source: metadataSource,
@@ -202,7 +202,7 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
     );
   });
 
-  // GET /:service/:schema/:table/meta — per-node topology metadata (node_type,
+  // GET /:project/:schema/:table/meta — per-node topology metadata (node_type,
   // test_count) used by the UI to gate single-node operations: "test" on a
   // zero-test node, and "full refresh" on a node type that cannot be rebuilt.
   // The lookup includes nodes no longer active in the topology (reported with
@@ -212,10 +212,10 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
   // raw_code (a csv node has no script). The lookup is best-effort — the test
   // gate must keep working even when the version query fails — so errors
   // degrade to an empty source_uri.
-  router.get('/:service/:schema/:table/meta', (req, res) => {
+  router.get('/:project/:schema/:table/meta', (req, res) => {
     graphClient.getNode(
       {
-        service_name:     req.params.service,
+        project_name:     req.params.project,
         schema_name:      req.params.schema,
         table_name:       req.params.table,
         include_inactive: true,
@@ -248,13 +248,13 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
     );
   });
 
-  // GET /:service/:schema/:table/contract — the contract the node has now (with
+  // GET /:project/:schema/:table/contract — the contract the node has now (with
   // its published YAML) and its version history, newest first. A node with no
   // current contract answers contract: null: a node that never had one has an
   // empty history, a retired node keeps the versions it had. The node is
   // addressed by its unique id, "<schema>.<table>" in lower case, as catalog
   // stores it.
-  router.get('/:service/:schema/:table/contract', (req, res) => {
+  router.get('/:project/:schema/:table/contract', (req, res) => {
     const uniqueId = `${req.params.schema}.${req.params.table}`.toLowerCase();
     graphClient.getNodeContract({ unique_id: uniqueId, include_document: true }, (err: any, current: any) => {
       if (err && err.code !== grpc.status.NOT_FOUND) {
@@ -270,11 +270,11 @@ export function createNodesRouter(runClient: GrpcClient, graphClient: GrpcGraphC
     });
   });
 
-  // GET /:service/:schema/:table/contract/diff?from=<n>&to=<n> — the contract
+  // GET /:project/:schema/:table/contract/diff?from=<n>&to=<n> — the contract
   // fields that differ between two versions of the node, one row per changed
   // path; two equal versions have none. before_json and after_json are the
   // value at the path as JSON text, empty where the version lacks the path.
-  router.get('/:service/:schema/:table/contract/diff', (req, res) => {
+  router.get('/:project/:schema/:table/contract/diff', (req, res) => {
     const from = parseContractVersion(req.query.from);
     const to = parseContractVersion(req.query.to);
     if (from === null || to === null) {

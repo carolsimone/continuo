@@ -12,7 +12,7 @@ import type { ScheduleGraph } from '../types';
 // live run status to summarise.
 export default function LatestView({
   name, activeGraph, graphCardState, graphBadge, graphBadgeClass, selectedNodeId, selectedRunId, lastRunId,
-  expandedServices, serviceColors, onNodeSelect, onServiceToggle, pastRuns,
+  expandedProjects, projectColors, onNodeSelect, onProjectToggle, pastRuns,
 }: {
   name: string | undefined;
   activeGraph: ScheduleGraph | null;
@@ -22,10 +22,10 @@ export default function LatestView({
   selectedNodeId: string | null;
   selectedRunId: string | null;
   lastRunId: string | null | undefined;
-  expandedServices: Set<string>;
-  serviceColors: ComponentProps<typeof DAGPanel>['serviceColors'];
+  expandedProjects: Set<string>;
+  projectColors: ComponentProps<typeof DAGPanel>['projectColors'];
   onNodeSelect: (nodeId: string | null) => void;
-  onServiceToggle: (service: string) => void;
+  onProjectToggle: (project: string) => void;
   pastRuns: ComponentProps<typeof PastRunsPanel>;
 }) {
   const navigate = useNavigate();
@@ -69,10 +69,10 @@ export default function LatestView({
                   selectedNodeId={selectedNodeId}
                   onNodeClick={onNodeSelect}
                   colorByStatus={false}
-                  serviceView={false}
-                  expandedServices={expandedServices}
-                  onServiceClick={onServiceToggle}
-                  serviceColors={serviceColors}
+                  projectView={false}
+                  expandedProjects={expandedProjects}
+                  onProjectClick={onProjectToggle}
+                  projectColors={projectColors}
                 />
               </ReactFlowProvider>
               {selectedNodeId && !selectedRunId && lastRunId && (

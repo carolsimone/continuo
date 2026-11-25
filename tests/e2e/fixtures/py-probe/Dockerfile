@@ -1,6 +1,6 @@
 # The e2e fixture domain image, built exactly the way the runtime repository's
-# template prescribes: the engine-matched runtime base plus this service's
-# contracts and scripts. One image serves every one of the service's nodes — the
+# template prescribes: the engine-matched runtime base plus this project's
+# contracts and scripts. One image serves every one of the project's nodes — the
 # harness selects between them from NODE_ID at run time.
 #
 # Two targets. `probe` is the fixture image every python e2e test releases

@@ -33,8 +33,8 @@ import (
 //	→ calls stub-llm (propose_fix tool call → deterministic SQL fix)
 //	→ writes proposed SQL and diff to S3
 //	→ inserts proposal row (status=verifying, attempt=1) and posts one
-//	  verification run per edited service, which lays the proposed source over
-//	  the service's dbt project and runs the real compile + validation pipeline
+//	  verification run per edited project, which lays the proposed source over
+//	  the project's dbt project and runs the real compile + validation pipeline
 //	→ the verification run stops at "passed"
 //	→ the runner's gate poller reads the verdict and the proposal moves to
 //	  status=proposed
@@ -61,23 +61,23 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	requireReleaseControllerHealthy(t, clients)
 
 	releaseID := "e2e-rem-agent-" + uuid.NewString()[:8]
-	changedService := "service-2"
-	t.Logf("release_id=%s changed_service=%s changed_node=%s", releaseID, changedService, ftableEUniqueID)
+	changedProject := "service-2"
+	t.Logf("release_id=%s changed_project=%s changed_node=%s", releaseID, changedProject, ftableEUniqueID)
 
 	// 1. Read baseline manifests from S3 (uploaded by setup.sh). Build the prod
 	//    snapshot of every node except ftable_e so the derived changed set is
 	//    exactly {ftable_e} — the deliberately-broken node.
-	allServices := baselineServices(t, ctx, clients)
-	require.NotEmpty(t, allServices,
-		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
+	allProjects := baselineProjects(t, ctx, clients)
+	require.NotEmpty(t, allProjects,
+		"no baseline manifests under s3://%s/<project>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
 
-	changedImageTag := allServices[changedService].imageTag
+	changedImageTag := allProjects[changedProject].imageTag
 	require.NotEmpty(t, changedImageTag,
-		"image_tag missing for %s — setup.sh must seed service_prod", changedService)
+		"image_tag missing for %s — setup.sh must seed service_prod", changedProject)
 
 	var prodNodes []map[string]string
 	ftableFound := false
-	for svc, si := range allServices {
+	for svc, si := range allProjects {
 		for _, n := range si.nodes {
 			if n.uniqueID == ftableEUniqueID {
 				ftableFound = true
@@ -85,7 +85,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 			}
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
-				"service":      svc,
+				"project":      svc,
 				"content_hash": n.contentHash,
 			})
 		}
@@ -95,7 +95,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	t.Logf("seeded prod snapshot with %d nodes (ftable_e excluded)", len(prodNodes))
 
 	// 2. Reset the queue, seed current_prod (all nodes except ftable_e), and seed
-	//    service_prod for every baseline service.
+	//    service_prod for every baseline project.
 	// Tap the remediation streams before the release is posted: the trim loop
 	// removes consumed entries, so the polls below read what the taps recorded.
 	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV3)
@@ -103,11 +103,11 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allServices)
+	seedServiceProd(t, ctx, clients, allProjects)
 
 	// 3b. Seed the ftable_e topology :Node in Neo4j, under the default tenant,
 	//     so that the agent-remediation's Locator (GetNodeLocation gRPC) can
-	//     resolve the node's file path and service name. In a cold e2e no
+	//     resolve the node's file path and project name. In a cold e2e no
 	//     release has been promoted yet, so Neo4j is empty; without this seed,
 	//     GetNodeLocation returns NOT_FOUND and Step-2 source resolution
 	//     degrades silently to source_resolved=false.
@@ -115,7 +115,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 
 	// 4. POST /releases for service-2. ftable_e's SQL references
 	//    public.wrong_name (a relation that does not exist), so validation fails.
-	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
+	postRelease(t, clients, changedProject, releaseID, changedImageTag, false)
 
 	// 5. Wait for the release to reach "rejected" status.
 	waitForReleaseRejected(t, ctx, clients, releaseID, 10*time.Minute)
@@ -236,7 +236,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 		releaseID, ftableEUniqueID))
 	verifications := decodeVerifications(t, verificationsJSON)
 	require.Len(t, verifications, 1,
-		"the fix edits one service, so exactly one verification run judged it")
+		"the fix edits one project, so exactly one verification run judged it")
 	require.Equal(t, "dbt", verifications[0].Kind,
 		"a dbt model's fix must be verified under a dbt manifest, not a python contract")
 	require.NotEmpty(t, verifications[0].RunID,
@@ -244,8 +244,8 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	assertPipelineNamedVerification(t, ctx, clients, verifications[0].RunID, 2*time.Minute)
 	waitForVerificationStatus(t, ctx, clients, verifications[0].RunID, "passed", 2*time.Minute)
 	assertNotListedAsRelease(t, ctx, clients, verifications[0].RunID)
-	t.Logf("verification confirmed: service=%s kind=%s run=%s",
-		verifications[0].Service, verifications[0].Kind, verifications[0].RunID)
+	t.Logf("verification confirmed: project=%s kind=%s run=%s",
+		verifications[0].Project, verifications[0].Kind, verifications[0].RunID)
 
 	// (f) SELECT the proposal's id from the DB so we can call the PR-creation endpoint.
 	var proposalID string
@@ -259,21 +259,21 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 
 	// (g) POST /api/remediation/proposals/{id}/pull-request — expect 200 with
 	//     one pull_requests entry from stub-github. ftable_e's fix touches one
-	//     service (service-2), and every edit now carries its cluster's member
-	//     node ids, so PRServices never falls back to the whole-proposal group [""] —
+	//     project (service-2), and every edit now carries its cluster's member
+	//     node ids, so PRProjects never falls back to the whole-proposal group [""] —
 	//     the route opens exactly one pull request, attributed to service-2.
 	createPRResp := callCreatePREndpoint(t, ctx, clients.uiBase, proposalID, http.StatusOK)
-	require.Empty(t, createPRResp.Errors, "no per-service group should fail to open a pull request; got %+v", createPRResp.Errors)
+	require.Empty(t, createPRResp.Errors, "no per-project group should fail to open a pull request; got %+v", createPRResp.Errors)
 	require.Len(t, createPRResp.PullRequests, 1,
-		"a single-service proposal must open exactly one pull request; got %+v", createPRResp.PullRequests)
+		"a single-project proposal must open exactly one pull request; got %+v", createPRResp.PullRequests)
 	pr := createPRResp.PullRequests[0]
-	require.Equal(t, changedService, pr.Service, "the pull request must be attributed to ftable_e's owning service")
+	require.Equal(t, changedProject, pr.Project, "the pull request must be attributed to ftable_e's owning project")
 	require.NotEmpty(t, pr.PRUrl, "pr_url must be non-empty on first create")
 	// stub-github assigns PR numbers on an auto-incrementing, shared-process
 	// counter (see tests/e2e/stub-github/main.go), so only positivity is
 	// guaranteed here, not a specific value.
 	require.Greater(t, pr.PRNumber, 0, "pr_number must be a positive stub-github PR number")
-	t.Logf("PR created: service=%s pr_url=%s pr_number=%d", pr.Service, pr.PRUrl, pr.PRNumber)
+	t.Logf("PR created: project=%s pr_url=%s pr_number=%d", pr.Project, pr.PRUrl, pr.PRNumber)
 
 	// (g2) The pull request body shows the diff before the prose: stub-github
 	//      keeps the body posted at creation, and buildPullRequestBody (ui)
@@ -303,57 +303,57 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 		"the body lists the owner against the node it fixes")
 
 	// (h) Idempotency: a second POST to the same endpoint must not create a
-	//     second PR. The service's claim is now 'open', so beginPullRequest CAS
+	//     second PR. The project's claim is now 'open', so beginPullRequest CAS
 	//     conflicts with FAILED_PRECONDITION; the route recognizes the embedded
 	//     pr_url in that error and reports the existing pull request as a
 	//     success rather than an error — so the whole route still answers 200
 	//     with the SAME pull_requests set, not a 409.
 	dupResp := callCreatePREndpoint(t, ctx, clients.uiBase, proposalID, http.StatusOK)
-	require.Empty(t, dupResp.Errors, "a duplicate POST must not report any per-service failure; got %+v", dupResp.Errors)
+	require.Empty(t, dupResp.Errors, "a duplicate POST must not report any per-project failure; got %+v", dupResp.Errors)
 	require.Equal(t, createPRResp.PullRequests, dupResp.PullRequests,
 		"a second POST must return the SAME pull request set, opening nothing new")
 	t.Logf("idempotency confirmed: second POST returned the same set: %+v", dupResp.PullRequests)
 
-	// (i) Assert the (proposal, service) child row now reflects pr_state='open',
+	// (i) Assert the (proposal, project) child row now reflects pr_state='open',
 	//     a non-empty pr_url, the same pr_number the create call returned, and a
-	//     branch carrying the /<service> suffix BuildBranch appends for an
-	//     owning-service group (not the whole-proposal group ""). The parent
+	//     branch carrying the /<project> suffix BuildBranch appends for an
+	//     owning-project group (not the whole-proposal group ""). The parent
 	//     proposal's singular pr_state/pr_url/pr_number columns are not written
-	//     once a proposal enters the per-service split: every PR-lifecycle read
-	//     goes through proposal_pull_request, keyed by (proposal_id, service).
-	finalRow := pollChildPRState(t, ctx, clients, proposalID, changedService, "open", 30*time.Second)
+	//     once a proposal enters the per-project split: every PR-lifecycle read
+	//     goes through proposal_pull_request, keyed by (proposal_id, project).
+	finalRow := pollChildPRState(t, ctx, clients, proposalID, changedProject, "open", 30*time.Second)
 	require.NotEmpty(t, finalRow.PRUrl, "proposal_pull_request.pr_url must be non-empty")
 	require.Equal(t, pr.PRNumber, finalRow.PRNumber, "the row must record the number the create call returned")
-	require.True(t, strings.HasSuffix(finalRow.Branch, "/"+changedService),
-		"a per-service pull request's branch must carry the /<service> suffix; got %q", finalRow.Branch)
-	t.Logf("proposal_pull_request state confirmed: service=%s pr_state=%s pr_url=%s pr_number=%d branch=%s",
-		changedService, finalRow.PRState, finalRow.PRUrl, finalRow.PRNumber, finalRow.Branch)
+	require.True(t, strings.HasSuffix(finalRow.Branch, "/"+changedProject),
+		"a per-project pull request's branch must carry the /<project> suffix; got %q", finalRow.Branch)
+	t.Logf("proposal_pull_request state confirmed: project=%s pr_state=%s pr_url=%s pr_number=%d branch=%s",
+		changedProject, finalRow.PRState, finalRow.PRUrl, finalRow.PRNumber, finalRow.Branch)
 
 	// (j) Merge the PR in stub-github; the reconciler must observe the merge
-	//     and flip the (proposal, service) child row to the terminal
+	//     and flip the (proposal, project) child row to the terminal
 	//     pr_state='merged' with pr_closed_at set. repo is still a column on
-	//     the parent proposal row — it names the single monorepo every service
+	//     the parent proposal row — it names the single monorepo every project
 	//     fixture shares, and is written once when the attempt is created,
-	//     independent of the per-service PR split.
+	//     independent of the per-project PR split.
 	var repoName string
 	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &repoName,
 		`SELECT repo FROM proposal WHERE id = $1`, proposalID))
 	mergeCommitSHA := mergePullRequestViaStub(t, ctx, repoName, finalRow.PRNumber)
 	t.Logf("merged PR #%d via stub-github: merge_commit_sha=%s", finalRow.PRNumber, mergeCommitSHA)
 
-	closedRow := pollChildPRState(t, ctx, clients, proposalID, changedService, "merged", 60*time.Second)
+	closedRow := pollChildPRState(t, ctx, clients, proposalID, changedProject, "merged", 60*time.Second)
 	require.NotNil(t, closedRow.PRClosedAt, "pr_closed_at must be set on merge")
 
 	// (k) The terminal outcome was emitted atomically: a remediation_pr_closed
-	//     outbox row exists for this proposal and service, and its payload
-	//     carries the service the PR belongs to and the non-empty edits it
+	//     outbox row exists for this proposal and project, and its payload
+	//     carries the project the PR belongs to and the non-empty edits it
 	//     closed with.
-	closedPayload := latestPRClosedPayload(t, ctx, clients, proposalID, changedService)
+	closedPayload := latestPRClosedPayload(t, ctx, clients, proposalID, changedProject)
 	require.Equal(t, "merged", closedPayload.Outcome, "pr_closed payload outcome")
-	require.Equal(t, changedService, closedPayload.Service, "pr_closed payload must carry the service this PR belongs to")
+	require.Equal(t, changedProject, closedPayload.Project, "pr_closed payload must carry the project this PR belongs to")
 	require.NotEmpty(t, closedPayload.Edits, "pr_closed payload must carry the merged PR's edits")
-	t.Logf("close-loop confirmed: pr_state=merged pr_closed_at=%s service=%s edits=%d",
-		closedRow.PRClosedAt, closedPayload.Service, len(closedPayload.Edits))
+	t.Logf("close-loop confirmed: pr_state=merged pr_closed_at=%s project=%s edits=%d",
+		closedRow.PRClosedAt, closedPayload.Project, len(closedPayload.Edits))
 }
 
 // TestE2E_AgentRemediation_OpeningSweepRecoversStrandedPR drives the
@@ -426,7 +426,7 @@ func TestE2E_AgentRemediation_OpeningSweepRecoversStrandedPR(t *testing.T) {
 	// 3. Create the PR directly on stub-github for that SAME branch — the
 	//    "create succeeded" half of the scenario. The e2e suite runs inside
 	//    the catalog container, so stub-github is reached by its compose
-	//    service name, same as the agent-remediation's own GITHUB_BASE_URL.
+	//    project name, same as the agent-remediation's own GITHUB_BASE_URL.
 	prBody, err := json.Marshal(map[string]string{
 		"title": "e2e opening sweep recovery", "head": branch, "base": "main",
 	})
@@ -462,7 +462,7 @@ func TestE2E_AgentRemediation_OpeningSweepRecoversStrandedPR(t *testing.T) {
 	//    proving recovery, not the fail path.
 	//
 	//    This proposal was seeded directly (no edits/member node ids), so
-	//    PRServices reads it as the whole-proposal group — service "" — and
+	//    PRProjects reads it as the whole-proposal group — project "" — and
 	//    every write BeginPullRequest/the opening sweep make lands on the
 	//    (proposal, "") child row in proposal_pull_request, not on the parent
 	//    proposal's own (unwritten, post-split) pr_* columns.
@@ -511,7 +511,7 @@ func TestE2E_AgentRemediation_OpeningSweepFailsClaimWithoutRepo(t *testing.T) {
 		RETURNING id`,
 		releaseID, nodeID, attempt))
 	_, err := clients.agentRemediationDB.ExecContext(ctx, `
-		INSERT INTO proposal_pull_request (proposal_id, service, repo, branch, pr_state, pr_claimed_at)
+		INSERT INTO proposal_pull_request (proposal_id, project, repo, branch, pr_state, pr_claimed_at)
 		VALUES ($1, '', '', $2, 'opening', NOW())`,
 		proposalID, "remediation/"+releaseID+"/attempt1")
 	require.NoError(t, err)
@@ -573,10 +573,10 @@ type proposalRow struct {
 }
 
 // prRow captures the PR-lifecycle fields asserted after calling the
-// create-PR endpoint, read from the (proposal, service) child row —
+// create-PR endpoint, read from the (proposal, project) child row —
 // proposal_pull_request — the table every pull request's lifecycle lives on.
 // The parent proposal's singular pr_* columns are not written once a proposal
-// enters the per-service split; only the whole-proposal group "" reads its pull
+// enters the per-project split; only the whole-proposal group "" reads its pull
 // request URL from them, for a proposal with no child row.
 type prRow struct {
 	PRState     string     `db:"pr_state"`
@@ -588,13 +588,13 @@ type prRow struct {
 	PROpenedAt  *time.Time `db:"pr_opened_at"`
 }
 
-// pollChildPRState polls the (proposal, service) pull-request child row until
+// pollChildPRState polls the (proposal, project) pull-request child row until
 // pr_state reaches want, and returns it. Every status change is logged, so a
 // row stuck in 'opening' or 'open' is distinguishable from one that was never
 // claimed at all.
 func pollChildPRState(
 	t *testing.T, ctx context.Context, clients *testClients,
-	proposalID, service, want string, timeout time.Duration,
+	proposalID, project, want string, timeout time.Duration,
 ) prRow {
 	t.Helper()
 	var row prRow
@@ -603,18 +603,18 @@ func pollChildPRState(
 		err := clients.agentRemediationDB.GetContext(ctx, &row, `
 			SELECT pr_state, pr_url, pr_number, branch, pr_closed_at, pr_claimed_at, pr_opened_at
 			  FROM proposal_pull_request
-			 WHERE proposal_id = $1 AND service = $2`,
-			proposalID, service)
+			 WHERE proposal_id = $1 AND project = $2`,
+			proposalID, project)
 		if err != nil {
 			return false, nil
 		}
 		if row.PRState != last {
-			t.Logf("proposal_pull_request %s/%s: pr_state=%s", proposalID, service, row.PRState)
+			t.Logf("proposal_pull_request %s/%s: pr_state=%s", proposalID, project, row.PRState)
 			last = row.PRState
 		}
 		return row.PRState == want, nil
-	}, fmt.Sprintf("timeout waiting for proposal %s service %q to reach pr_state=%q (see the logged status changes above)",
-		proposalID, service, want))
+	}, fmt.Sprintf("timeout waiting for proposal %s project %q to reach pr_state=%q (see the logged status changes above)",
+		proposalID, project, want))
 	return row
 }
 
@@ -622,23 +622,23 @@ func pollChildPRState(
 // array: a pull request that exists after the request completes, either just
 // opened or already open from an earlier attempt.
 type pullRequestResult struct {
-	Service  string `json:"service"`
+	Project  string `json:"project"`
 	PRUrl    string `json:"pr_url"`
 	PRNumber int    `json:"pr_number"`
 }
 
 // pullRequestRouteError mirrors one entry of the create-PR route's errors
-// array: an owning-service group that failed to produce a pull request.
+// array: an owning-project group that failed to produce a pull request.
 type pullRequestRouteError struct {
-	Service string `json:"service"`
+	Project string `json:"project"`
 	Error   string `json:"error"`
 }
 
 // createPRRouteResponse captures the JSON body returned by POST
-// /api/remediation/proposals/:id/pull-request: 200 when every owning-service
+// /api/remediation/proposals/:id/pull-request: 200 when every owning-project
 // group succeeded, 207 when some but not all did, 502 when none did. There is
 // no longer a singular pr_url/pr_number at the top level — a proposal can
-// open more than one pull request, one per owning service.
+// open more than one pull request, one per owning project.
 type createPRRouteResponse struct {
 	PullRequests []pullRequestResult     `json:"pull_requests"`
 	Errors       []pullRequestRouteError `json:"errors"`
@@ -728,31 +728,31 @@ type closedEdit struct {
 }
 
 // prClosedPayload mirrors the remediation.pr_closed:v1 wire shape emitted
-// when one (proposal, service) pull request reaches a terminal outcome.
+// when one (proposal, project) pull request reaches a terminal outcome.
 type prClosedPayload struct {
 	ProposalID      string       `json:"proposal_id"`
 	ReleaseID       string       `json:"release_id"`
 	ResolvedNodeIDs []string     `json:"resolved_node_ids"`
-	Service         string       `json:"service"`
+	Project         string       `json:"project"`
 	Outcome         string       `json:"outcome"`
 	Edits           []closedEdit `json:"edits"`
 }
 
 // latestPRClosedPayload reads the most recent remediation_pr_closed outbox row
-// for (proposalID, service) and decodes its payload. It is keyed on both
-// columns because a multi-service proposal's PRs close independently, each
-// with its own outbox row naming only its own service.
-func latestPRClosedPayload(t *testing.T, ctx context.Context, clients *testClients, proposalID, service string) prClosedPayload {
+// for (proposalID, project) and decodes its payload. It is keyed on both
+// columns because a multi-project proposal's PRs close independently, each
+// with its own outbox row naming only its own project.
+func latestPRClosedPayload(t *testing.T, ctx context.Context, clients *testClients, proposalID, project string) prClosedPayload {
 	t.Helper()
 	var raw []byte
 	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &raw,
 		`SELECT payload FROM agent_remediation_outbox
 		  WHERE event_type = 'remediation_pr_closed'
 		    AND payload->>'proposal_id' = $1
-		    AND payload->>'service' = $2
+		    AND payload->>'project' = $2
 		  ORDER BY created_at DESC LIMIT 1`,
-		proposalID, service),
-		"expected a remediation.pr_closed:v1 outbox row for proposal %s service %s", proposalID, service)
+		proposalID, project),
+		"expected a remediation.pr_closed:v1 outbox row for proposal %s project %s", proposalID, project)
 	var payload prClosedPayload
 	require.NoError(t, json.Unmarshal(raw, &payload), "decode pr_closed payload: %s", raw)
 	return payload
@@ -890,7 +890,7 @@ func stripS3Prefix(uri string) string {
 // seedFTableETopologyNode inserts a minimal :Node for e2e_schema.ftable_e under
 // the default tenant into Neo4j. In a cold e2e no release has been promoted, so
 // Neo4j is empty. The agent-remediation's Step-2 source resolution calls
-// GetNodeLocation to obtain the node's original_file_path and service_name
+// GetNodeLocation to obtain the node's original_file_path and project_name
 // (the candidate source itself is read from the release's code bundle first,
 // falling back to a GitHub repo read only when the bundle misses); without this
 // seed, GetNodeLocation returns NOT_FOUND and source_resolved stays false.
@@ -898,7 +898,7 @@ func stripS3Prefix(uri string) string {
 // The node uses the same unique_id key format that the release-promotion handler
 // writes: "{schema_name}.{table_name}" (e.g. "e2e_schema.ftable_e"). The
 // original_file_path matches the dbt manifest value ("models/ftable_e.sql"),
-// which the agent-remediation joins with the service_repos.yaml prefix
+// which the agent-remediation joins with the project_repos.yaml prefix
 // ("services/service-2") to form the full path passed to stub-github.
 //
 // The node is cleaned up via t.Cleanup so it does not leak into other tests.
@@ -913,7 +913,7 @@ func seedFTableETopologyNode(t *testing.T, ctx context.Context, clients *testCli
 		MERGE (t:Node {tenant_id: 'default', unique_id: $uid})
 		SET t.schema_name        = $schema_name,
 		    t.table_name         = $table_name,
-		    t.service_name       = $service_name,
+		    t.project_name       = $project_name,
 		    t.original_file_path = $file_path,
 		    t.node_type          = 'model',
 		    t.active             = true
@@ -921,7 +921,7 @@ func seedFTableETopologyNode(t *testing.T, ctx context.Context, clients *testCli
 		"uid":          "e2e_schema.ftable_e",
 		"schema_name":  "e2e_schema",
 		"table_name":   "ftable_e",
-		"service_name": "service-2",
+		"project_name": "service-2",
 		"file_path":    "models/ftable_e.sql",
 	})
 	require.NoError(t, err, "seed ftable_e topology node in Neo4j")
@@ -940,7 +940,7 @@ func seedFTableETopologyNode(t *testing.T, ctx context.Context, clients *testCli
 		MERGE (up:Node {tenant_id: 'default', unique_id: $up_uid})
 		SET up.schema_name        = $up_schema,
 		    up.table_name         = $up_table,
-		    up.service_name       = $up_service,
+		    up.project_name       = $up_project,
 		    up.original_file_path = $up_file,
 		    up.node_type          = 'model',
 		    up.active             = true
@@ -951,7 +951,7 @@ func seedFTableETopologyNode(t *testing.T, ctx context.Context, clients *testCli
 		"up_uid":     "e2e_schema.ftable_upstream_diff",
 		"up_schema":  "e2e_schema",
 		"up_table":   "ftable_upstream_diff",
-		"up_service": "service-2",
+		"up_project": "service-2",
 		"up_file":    "models/ftable_upstream_diff.sql",
 		"uid":        "e2e_schema.ftable_e",
 	})

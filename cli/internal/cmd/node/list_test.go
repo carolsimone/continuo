@@ -45,19 +45,19 @@ func TestList_SuccessMapsAllFieldsAndTotalCount(t *testing.T) {
 	fake := &fakeNodeRunController{listResp: &runv1.ListNodesResponse{
 		TotalCount: 7,
 		Nodes: []*runv1.NodeSummary{{
-			ServiceName: "finance", SchemaName: "analytics", TableName: "orders",
+			ProjectName: "finance", SchemaName: "analytics", TableName: "orders",
 			TaskCount: 12, SuccessRatePct: 92, AvgDurationSec: 34, P95DurationSec: 80,
 			FlakyRatePct: 8, LastStatus: "succeeded", LastRunAt: "2026-09-18T10:00:00Z",
 			Operation: "run", TimeoutSeconds: 7200, TimeoutDeclared: true,
 		}, {
-			ServiceName: "finance", SchemaName: "analytics", TableName: "customers",
+			ProjectName: "finance", SchemaName: "analytics", TableName: "customers",
 			TaskCount: 3, SuccessRatePct: 100, AvgDurationSec: 5, P95DurationSec: 6,
 			LastStatus: "succeeded", LastRunAt: "2026-09-18T09:00:00Z", Operation: "run",
 			TimeoutSeconds: 86400,
 		}},
 	}}
 
-	stdout, stderr, exit := runList(t, fake, []string{"--search", "orders", "--service", "finance", "--operation", "run", "--limit", "10", "--offset", "20"}, false)
+	stdout, stderr, exit := runList(t, fake, []string{"--search", "orders", "--project", "finance", "--operation", "run", "--limit", "10", "--offset", "20"}, false)
 
 	require.Equal(t, 0, exit, "stderr: %s", stderr)
 	assert.Empty(t, stderr)
@@ -65,7 +65,7 @@ func TestList_SuccessMapsAllFieldsAndTotalCount(t *testing.T) {
 	var payload struct {
 		TotalCount int `json:"total_count"`
 		Nodes      []struct {
-			ServiceName     string `json:"service_name"`
+			ProjectName     string `json:"project_name"`
 			SchemaName      string `json:"schema_name"`
 			TableName       string `json:"table_name"`
 			TaskCount       int    `json:"task_count"`
@@ -84,7 +84,7 @@ func TestList_SuccessMapsAllFieldsAndTotalCount(t *testing.T) {
 	assert.Equal(t, 7, payload.TotalCount)
 	require.Len(t, payload.Nodes, 2)
 	n := payload.Nodes[0]
-	assert.Equal(t, "finance", n.ServiceName)
+	assert.Equal(t, "finance", n.ProjectName)
 	assert.Equal(t, "analytics", n.SchemaName)
 	assert.Equal(t, "orders", n.TableName)
 	assert.Equal(t, 12, n.TaskCount)
@@ -105,7 +105,7 @@ func TestList_SuccessMapsAllFieldsAndTotalCount(t *testing.T) {
 
 	// Every flag is forwarded to the RPC verbatim.
 	assert.Equal(t, "orders", fake.gotListSearch)
-	assert.Equal(t, "finance", fake.gotListService)
+	assert.Equal(t, "finance", fake.gotListProject)
 	assert.Equal(t, "run", fake.gotListOperation)
 	assert.Equal(t, int32(10), fake.gotListLimit)
 	assert.Equal(t, int32(20), fake.gotListOffset)
@@ -120,13 +120,13 @@ func TestList_DormantFlagAndNeverRunNode(t *testing.T) {
 	fake := &fakeNodeRunController{listResp: &runv1.ListNodesResponse{
 		TotalCount: 2,
 		Nodes: []*runv1.NodeSummary{{
-			ServiceName: "finance", SchemaName: "analytics", TableName: "orders",
+			ProjectName: "finance", SchemaName: "analytics", TableName: "orders",
 			TaskCount: 12, SuccessRatePct: 92, AvgDurationSec: 34, P95DurationSec: 80,
 			FlakyRatePct: 8, LastStatus: "succeeded", LastRunAt: "2026-09-18T10:00:00Z",
 			Operation: "run", TimeoutSeconds: 7200, TimeoutDeclared: true,
 			NodeType: "dbt-model", Dormant: false,
 		}, {
-			ServiceName: "finance", SchemaName: "analytics", TableName: "scratch_rates",
+			ProjectName: "finance", SchemaName: "analytics", TableName: "scratch_rates",
 			TaskCount: 0, SuccessRatePct: -1, AvgDurationSec: -1, P95DurationSec: -1,
 			Operation: "run", TimeoutSeconds: 86400,
 			NodeType: "dbt-model", Dormant: true,
@@ -162,7 +162,7 @@ func TestList_DormantFlagAndNeverRunNode(t *testing.T) {
 		"the help says what a dormant node is, and which run includes one only to rebuild it")
 	assert.Contains(t, long, "dormant is true for a node continuo builds that belongs to no schedule", "the help says what dormant means")
 	assert.NotContains(t, long, "schedule tag", "an untagged seed takes the seed schedule and is not dormant, so the help never defines dormant by a missing tag")
-	assert.Contains(t, long, `"continuo node trigger <service> <schema> <table>"`, "the help names the command that runs a dormant node")
+	assert.Contains(t, long, `"continuo node trigger <project> <schema> <table>"`, "the help names the command that runs a dormant node")
 	assert.Contains(t, long, "node that never ran has task_count 0 and no last_run_at", "the help says how a never-run node reads")
 }
 
@@ -185,7 +185,7 @@ func TestList_OutputSchemaDeclaresEveryNodeField(t *testing.T) {
 	fake := &fakeNodeRunController{listResp: &runv1.ListNodesResponse{
 		TotalCount: 1,
 		Nodes: []*runv1.NodeSummary{{
-			ServiceName: "finance", SchemaName: "analytics", TableName: "orders",
+			ProjectName: "finance", SchemaName: "analytics", TableName: "orders",
 			TaskCount: 12, SuccessRatePct: 92, AvgDurationSec: 34, P95DurationSec: 80,
 			FlakyRatePct: 8, LastStatus: "succeeded", LastRunAt: "2026-09-18T10:00:00Z",
 			Operation: "run", TimeoutSeconds: 7200, TimeoutDeclared: true,
@@ -236,7 +236,7 @@ func TestList_DefaultsForwardEmptyFiltersRunAndFirstPage(t *testing.T) {
 
 	require.Equal(t, 0, exit)
 	assert.Equal(t, "", fake.gotListSearch)
-	assert.Equal(t, "", fake.gotListService)
+	assert.Equal(t, "", fake.gotListProject)
 	assert.Equal(t, "run", fake.gotListOperation)
 	assert.False(t, fake.gotListDormantOnly, "every node is listed unless --dormant is given")
 	assert.Equal(t, defaultListLimit, fake.gotListLimit)
@@ -249,7 +249,7 @@ func TestList_NegativeSentinelsAreOmitted(t *testing.T) {
 	fake := &fakeNodeRunController{listResp: &runv1.ListNodesResponse{
 		TotalCount: 1,
 		Nodes: []*runv1.NodeSummary{{
-			ServiceName: "finance", SchemaName: "analytics", TableName: "never_ran",
+			ProjectName: "finance", SchemaName: "analytics", TableName: "never_ran",
 			TaskCount: 0, SuccessRatePct: -1, AvgDurationSec: -1, P95DurationSec: -1,
 			LastStatus: "pending", Operation: "run",
 		}},
@@ -333,8 +333,8 @@ func TestList_HumanModeRendersRowsAndPageSummary(t *testing.T) {
 	fake := &fakeNodeRunController{listResp: &runv1.ListNodesResponse{
 		TotalCount: 42,
 		Nodes: []*runv1.NodeSummary{
-			{ServiceName: "finance", SchemaName: "analytics", TableName: "orders", TaskCount: 12, SuccessRatePct: 92, AvgDurationSec: 34, P95DurationSec: 80, LastStatus: "succeeded", LastRunAt: "2026-09-18T10:00:00Z", Operation: "run", NodeType: "dbt-model"},
-			{ServiceName: "finance", SchemaName: "analytics", TableName: "never_ran", TaskCount: 0, SuccessRatePct: -1, AvgDurationSec: -1, P95DurationSec: -1, Operation: "run", NodeType: "dbt-model", Dormant: true},
+			{ProjectName: "finance", SchemaName: "analytics", TableName: "orders", TaskCount: 12, SuccessRatePct: 92, AvgDurationSec: 34, P95DurationSec: 80, LastStatus: "succeeded", LastRunAt: "2026-09-18T10:00:00Z", Operation: "run", NodeType: "dbt-model"},
+			{ProjectName: "finance", SchemaName: "analytics", TableName: "never_ran", TaskCount: 0, SuccessRatePct: -1, AvgDurationSec: -1, P95DurationSec: -1, Operation: "run", NodeType: "dbt-model", Dormant: true},
 		},
 	}}
 

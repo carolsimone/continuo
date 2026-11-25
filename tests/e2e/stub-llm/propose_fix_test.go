@@ -92,12 +92,12 @@ func TestProposeFix_SingleFileToolRoutesOnThePromptHeading(t *testing.T) {
 		wantContent string
 	}{
 		"parse prompt": {
-			userContent: singleFilePrompt("Service: service-2\nNode: e2e_schema.ftable_e",
+			userContent: singleFilePrompt("Project: service-2\nNode: e2e_schema.ftable_e",
 				parseFixMarker, "Required keyword: 'this' missing for Where. Line 1, Col: 44."),
 			wantContent: parseFixContent,
 		},
 		"compile prompt": {
-			userContent: singleFilePrompt("Service: service-2",
+			userContent: singleFilePrompt("Project: service-2",
 				"dbt compile error:", "Compilation Error in model daily_transactions"),
 			wantContent: compileFixContent,
 		},

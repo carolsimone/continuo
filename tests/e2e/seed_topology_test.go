@@ -13,7 +13,7 @@ import (
 // topoNode is one node of the fixed e2e DAG seeded into the topology.
 type topoNode struct {
 	table    string   // table_name; unique_id is "e2e_schema."+table
-	service  string   // service-1|2|3
+	project  string   // service-1|2|3
 	schedule string   // schedule_name (tag)
 	upstream []string // upstream table names (same schema)
 }
@@ -69,19 +69,19 @@ var e2eTestCounts = map[string]int{
 }
 
 // e2eTopology returns the fixed e2e DAG as topology artifact nodes, plus the
-// schedules it declares, sorted. Per-service image_tag is read from the
+// schedules it declares, sorted. Per-project image_tag is read from the
 // release-controller service_prod table so the nodes carry the
 // content-addressed tag the kind images actually have.
 func e2eTopology(t *testing.T, ctx context.Context, clients *testClients) ([]topologyartifact.Node, []string) {
 	t.Helper()
 
 	// A prior blue/green test may have mutated service_prod; re-establish the
-	// baseline pointers before reading each service's image tag.
+	// baseline pointers before reading each project's image tag.
 	seedBaselineServiceProd(t, ctx, clients)
 
 	imageTags := map[string]string{}
 	for _, svc := range []string{"service-1", "service-2", "service-3"} {
-		imageTags[svc] = readServiceImageTag(t, ctx, clients, svc)
+		imageTags[svc] = readProjectImageTag(t, ctx, clients, svc)
 	}
 
 	scheduleSet := map[string]bool{}
@@ -104,9 +104,9 @@ func e2eTopology(t *testing.T, ctx context.Context, clients *testClients) ([]top
 			SchemaName:         seedSchemaName,
 			TableName:          n.table,
 			ResolvedRelationID: seedSchemaName + "." + n.table,
-			ServiceName:        n.service,
+			ProjectName:        n.project,
 			NodeType:           nodeType,
-			ImageTag:           imageTags[n.service],
+			ImageTag:           imageTags[n.project],
 			Schedule:           n.schedule,
 			UpstreamUniqueIDs:  ups,
 			TestCount:          e2eTestCounts[n.table],

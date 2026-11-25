@@ -17,18 +17,18 @@ export const SUBMIT_RATE_LIMIT_PER_MINUTE = 30;
 export const READ_RATE_LIMIT_PER_MINUTE = 300;
 const CI_CONFLICT_MESSAGE = 'release id already exists with different content';
 // The two ontology conflicts release-controller answers with 409, matched whole:
-// one quoted service name (Go's %q, so a quote or backslash in it is escaped)
-// and nothing else on the line. A kind change names the service the caller
-// submitted. A second ontology service names another service.
+// one quoted project name (Go's %q, so a quote or backslash in it is escaped)
+// and nothing else on the line. A kind change names the project the caller
+// submitted. A second ontology project names another project.
 const GO_QUOTED = String.raw`"(?:[^"\\]|\\.)*"`;
 const ONTOLOGY_KIND_CHANGE_CONFLICT = new RegExp(
-  `^service ${GO_QUOTED} is released as kind "[a-z][a-z0-9-]*": a service cannot change between kind "ontology" and a node kind$`,
+  `^project ${GO_QUOTED} is released as kind "[a-z][a-z0-9-]*": a project cannot change between kind "ontology" and a node kind$`,
 );
 const SECOND_ONTOLOGY_CONFLICT = new RegExp(
-  `^service ${GO_QUOTED} is the install's ontology: an install has one ontology service$`,
+  `^project ${GO_QUOTED} is the install's ontology: an install has one ontology project$`,
 );
-const SECOND_ONTOLOGY_CI_MESSAGE = 'an install has one ontology service';
-const SUBMIT_FIELDS = new Set(['release_id', 'service', 'image_tag', 'bootstrap', 'rebaseline', 'kind', 'repo', 'commit_sha']);
+const SECOND_ONTOLOGY_CI_MESSAGE = 'an install has one ontology project';
+const SUBMIT_FIELDS = new Set(['release_id', 'project', 'image_tag', 'bootstrap', 'rebaseline', 'kind', 'repo', 'commit_sha']);
 const TERMINAL = new Set(['promoted', 'rejected', 'superseded']);
 // A release id is a single URL path segment and an object-key component
 // downstream, so the public API admits only this shape.
@@ -39,7 +39,7 @@ export const RELEASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 // empty until the parse ends. The contract bundle's location stays internal.
 export interface PublicRelease {
   release_id: string;
-  service: string;
+  project: string;
   status: string;
   terminal: boolean;
   bootstrap: boolean;
@@ -61,7 +61,7 @@ export interface PublicRelease {
 interface PublicNotice {
   kind: string;
   node_id: string;
-  service: string;
+  project: string;
   change: string;
   load: string;
   columns: { added: string[]; removed: string[]; retyped: string[] };
@@ -101,7 +101,7 @@ function projectNotice(n: Record<string, unknown>): PublicNotice {
   return {
     kind: str(n.kind),
     node_id: str(n.node_id),
-    service: str(n.service),
+    project: str(n.project),
     change: str(n.change),
     load: str(objectOrEmpty(n.load).operation),
     columns: { added: strings(columns.added), removed: strings(columns.removed), retyped: strings(columns.retyped) },
@@ -128,11 +128,13 @@ function fail(res: Response, status: number, code: string, error: string): void 
 function parseSubmit(raw: unknown): { body: ReleaseSubmission } | { error: string } {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { error: 'body must be a JSON object' };
   const o = raw as Record<string, unknown>;
-  const unknown = Object.keys(o).filter((k) => !SUBMIT_FIELDS.has(k));
-  if (unknown.length > 0) return { error: `unknown field(s): ${unknown.join(', ')}` };
-  for (const k of ['release_id', 'service', 'image_tag']) {
+  // The required fields are checked first, so a body that names one of them
+  // under another key is told which field it lacks.
+  for (const k of ['release_id', 'project', 'image_tag']) {
     if (typeof o[k] !== 'string' || o[k] === '') return { error: `${k} is required and must be a non-empty string` };
   }
+  const unknown = Object.keys(o).filter((k) => !SUBMIT_FIELDS.has(k));
+  if (unknown.length > 0) return { error: `unknown field(s): ${unknown.join(', ')}` };
   if (!RELEASE_ID_PATTERN.test(o.release_id as string)) {
     return { error: `release_id must match ${RELEASE_ID_PATTERN.source}` };
   }
@@ -141,7 +143,7 @@ function parseSubmit(raw: unknown): { body: ReleaseSubmission } | { error: strin
   for (const k of ['kind', 'repo', 'commit_sha']) {
     if (o[k] !== undefined && typeof o[k] !== 'string') return { error: `${k} must be a string` };
   }
-  const body: ReleaseSubmission = { release_id: o.release_id as string, service: o.service as string, image_tag: o.image_tag as string };
+  const body: ReleaseSubmission = { release_id: o.release_id as string, project: o.project as string, image_tag: o.image_tag as string };
   if (o.bootstrap !== undefined) body.bootstrap = o.bootstrap as boolean;
   if (o.rebaseline !== undefined) body.rebaseline = o.rebaseline as boolean;
   for (const k of ['kind', 'repo', 'commit_sha'] as const) {
@@ -155,7 +157,7 @@ export function projectRelease(rel: Record<string, unknown>, publicUrl?: string)
   const status = str(rel.status);
   return {
     release_id: id,
-    service: str(rel.changed_service),
+    project: str(rel.changed_project),
     status,
     terminal: TERMINAL.has(status),
     bootstrap: rel.bootstrap === true,
@@ -198,7 +200,7 @@ function auditSubmit(p: Principal, raw: unknown, outcome: number): void {
   const o = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
   audit('release_submit', {
     ...principalAuditFields(p),
-    service: typeof o.service === 'string' ? o.service : undefined,
+    project: typeof o.project === 'string' ? o.project : undefined,
     release_id: typeof o.release_id === 'string' ? o.release_id : undefined,
     bootstrap: o.bootstrap === true,
     rebaseline: o.rebaseline === true,
@@ -208,7 +210,7 @@ function auditSubmit(p: Principal, raw: unknown, outcome: number): void {
 
 // conflictMessage is what a caller reads of release-controller's 409 text: a
 // person reads it as it is, and a CI identity reads the generic message, except
-// for a kind change, which it reads as it is, and a second ontology service,
+// for a kind change, which it reads as it is, and a second ontology project,
 // which it reads as the rule alone.
 function conflictMessage(p: Principal, text: string): string {
   if (p.kind !== 'ci') return text;
@@ -262,7 +264,7 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
     }
     const body = parsed.body;
 
-    const decision = authorize(p, { kind: 'release.submit', service: body.service, bootstrap: body.bootstrap === true });
+    const decision = authorize(p, { kind: 'release.submit', project: body.project, bootstrap: body.bootstrap === true });
     if (!decision.allow) {
       auditSubmit(p, body, 403);
       return fail(res, 403, decision.code, decision.reason);
@@ -292,13 +294,13 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
     }
     auditSubmit(p, body, upstream.status);
     // release-controller answers 409 when the release id already names a run
-    // of another kind or a candidate with a different service, image tag,
+    // of another kind or a candidate with a different project, image tag,
     // kind, bootstrap or rebaseline flag, or source change. A person gets its message; a CI
     // identity gets a generic one, because the id may belong to a release of a
-    // service its repository is not bound to, and the message names the run's
+    // project its repository is not bound to, and the message names the run's
     // kind. The two ontology conflicts reach a CI identity too, because one
-    // names only the service it is bound to and the other has the other
-    // service's name removed (see conflictMessage).
+    // names only the project it is bound to and the other has the other
+    // project's name removed (see conflictMessage).
     if (upstream.status === 409) {
       return fail(res, 409, 'release_kind_conflict', conflictMessage(p, upstream.text.trim()));
     }
@@ -309,9 +311,9 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
     return fail(res, 503, 'upstream_unavailable', 'release service unavailable');
   });
 
-  // A CI identity reading a release of a service it is not bound to gets the
+  // A CI identity reading a release of a project it is not bound to gets the
   // same 404 as a missing release, so the route never confirms that a release
-  // id exists or names the service it belongs to.
+  // id exists or names the project it belongs to.
   router.get('/releases/:id', readLimiter, async (req, res) => {
     const p = principalOf(req)!;
     if (!RELEASE_ID_PATTERN.test(req.params.id)) return fail(res, 404, 'not_found', 'release not found');
@@ -323,7 +325,7 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
       return fail(res, 503, 'upstream_unavailable', 'release service unavailable');
     }
     if (!isObject(rel)) return fail(res, 503, 'upstream_unavailable', 'release service unavailable');
-    const d = authorize(p, { kind: 'release.read', service: str(rel.changed_service) });
+    const d = authorize(p, { kind: 'release.read', project: str(rel.changed_project) });
     if (!d.allow) {
       if (p.kind === 'ci') return fail(res, 404, 'not_found', 'release not found');
       return fail(res, 403, d.code, d.reason);

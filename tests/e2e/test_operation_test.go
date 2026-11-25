@@ -33,7 +33,7 @@ func TestSingleNodeTestOperation(t *testing.T) {
 	clients := setupClients(t, ctx)
 
 	const (
-		targetService = "service-1"
+		targetProject = "service-1"
 		targetSchema  = "e2e_schema"
 		targetTable   = "seed_table_1" // seeded test_count=2, real dbt tests not_null+unique
 	)
@@ -44,9 +44,9 @@ func TestSingleNodeTestOperation(t *testing.T) {
 	cleanupTestData(t, ctx, clients, "single-node-test-op")
 	seedTopology(t, ctx, clients)
 
-	t.Logf("TriggerSingleNodeRun operation=test: %s.%s.%s", targetService, targetSchema, targetTable)
+	t.Logf("TriggerSingleNodeRun operation=test: %s.%s.%s", targetProject, targetSchema, targetTable)
 	resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
-		ServiceName:    targetService,
+		ProjectName:    targetProject,
 		SchemaName:     targetSchema,
 		TableName:      targetTable,
 		MetadataSource: "latest",
@@ -90,7 +90,7 @@ func TestSingleNodeTestOperationNoTests(t *testing.T) {
 	clients := setupClients(t, ctx)
 
 	const (
-		targetService = "service-1"
+		targetProject = "service-1"
 		targetSchema  = "e2e_schema"
 		targetTable   = "seed_table_2" // seeded with no tests (test_count=0)
 	)
@@ -100,7 +100,7 @@ func TestSingleNodeTestOperationNoTests(t *testing.T) {
 	cleanupTestData(t, ctx, clients, "single-node-test-no-tests")
 	seedTopology(t, ctx, clients)
 
-	requireTestOfNodeRefused(t, ctx, clients, targetService, targetSchema, targetTable)
+	requireTestOfNodeRefused(t, ctx, clients, targetProject, targetSchema, targetTable)
 
 	t.Log("TestSingleNodeTestOperationNoTests passed")
 }
@@ -125,7 +125,7 @@ func TestSingleNodeTestOperationUnsetTestCountIsGated(t *testing.T) {
 	clients := setupClients(t, ctx)
 
 	const (
-		targetService = "service-1"
+		targetProject = "service-1"
 		targetSchema  = "e2e_schema"
 		targetTable   = "seed_table_2" // no dbt tests
 	)
@@ -139,19 +139,19 @@ func TestSingleNodeTestOperationUnsetTestCountIsGated(t *testing.T) {
 	// the live release, so run-controller reads it as unknown.
 	unsetTestCount(t, ctx, clients, targetSchema+"."+targetTable)
 
-	requireTestOfNodeRefused(t, ctx, clients, targetService, targetSchema, targetTable)
+	requireTestOfNodeRefused(t, ctx, clients, targetProject, targetSchema, targetTable)
 
 	t.Log("TestSingleNodeTestOperationUnsetTestCountIsGated passed")
 }
 
 // requireTestOfNodeRefused triggers a single-node test of the node and asserts
 // the trigger is refused with FailedPrecondition and creates no run.
-func requireTestOfNodeRefused(t *testing.T, ctx context.Context, clients *testClients, service, schema, table string) {
+func requireTestOfNodeRefused(t *testing.T, ctx context.Context, clients *testClients, project, schema, table string) {
 	t.Helper()
 	before := countRunsOfKind(t, clients, "single_node_run")
-	t.Logf("TriggerSingleNodeRun operation=test on a node without known tests: %s.%s.%s", service, schema, table)
+	t.Logf("TriggerSingleNodeRun operation=test on a node without known tests: %s.%s.%s", project, schema, table)
 	_, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
-		ServiceName:    service,
+		ProjectName:    project,
 		SchemaName:     schema,
 		TableName:      table,
 		MetadataSource: "latest",
@@ -298,7 +298,7 @@ func TestNodeCatalogOperationScoping(t *testing.T) {
 	clients := setupClients(t, ctx)
 
 	const (
-		targetService = "service-1"
+		targetProject = "service-1"
 		targetSchema  = "e2e_schema"
 		targetTable   = "seed_table_1" // test_count=2: runnable under both run and test
 		noTestsTable  = "seed_table_2" // test_count=0: never dispatched under operation=test
@@ -310,9 +310,9 @@ func TestNodeCatalogOperationScoping(t *testing.T) {
 	cleanupTestData(t, ctx, clients, "node-catalog-op-scoping")
 	seedTopology(t, ctx, clients)
 
-	t.Logf("TriggerSingleNodeRun operation=run: %s.%s.%s", targetService, targetSchema, targetTable)
+	t.Logf("TriggerSingleNodeRun operation=run: %s.%s.%s", targetProject, targetSchema, targetTable)
 	runResp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
-		ServiceName:    targetService,
+		ProjectName:    targetProject,
 		SchemaName:     targetSchema,
 		TableName:      targetTable,
 		MetadataSource: "latest",
@@ -328,9 +328,9 @@ func TestNodeCatalogOperationScoping(t *testing.T) {
 	t.Log("Waiting for the model run to reach 'succeeded'...")
 	verifySchedulerSucceeded(t, ctx, clients, modelRunID)
 
-	t.Logf("TriggerSingleNodeRun operation=test: %s.%s.%s", targetService, targetSchema, targetTable)
+	t.Logf("TriggerSingleNodeRun operation=test: %s.%s.%s", targetProject, targetSchema, targetTable)
 	testResp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
-		ServiceName:    targetService,
+		ProjectName:    targetProject,
 		SchemaName:     targetSchema,
 		TableName:      targetTable,
 		MetadataSource: "latest",

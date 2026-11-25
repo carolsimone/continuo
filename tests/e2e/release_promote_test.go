@@ -35,11 +35,11 @@ import (
 const e2eS3Bucket = "continuo"
 
 // e2eBaselineReleaseID is the fixed release-id under which setup.sh uploads
-// all services' manifests. The canonical S3 key for each service is:
+// all projects' manifests. The canonical S3 key for each project is:
 //
-//	<service>/e2e-baseline/manifest.json
+//	<project>/e2e-baseline/manifest.json
 //
-// Tests seed service_prod rows pointing at these keys for every baseline service
+// Tests seed service_prod rows pointing at these keys for every baseline project
 // so that release-controller assembly can reconstruct the full topology.
 const e2eBaselineReleaseID = "e2e-baseline"
 
@@ -58,10 +58,10 @@ const probeUniqueID = "e2e_schema.rel_probe"
 //	validation.result:v1 terminal (kind=complete) → release-controller promotes
 //	→ release.promoted:v2 → catalog loads the artifact and swaps the Neo4j topology.
 //
-// The changed service is service-1 (which contains rel_probe). current_prod is
+// The changed project is service-1 (which contains rel_probe). current_prod is
 // seeded with every node EXCEPT rel_probe, so the derived changed set is exactly
 // {rel_probe}: one known-good node that validates without touching any
-// production table. service_prod is seeded for every baseline service so that
+// production table. service_prod is seeded for every baseline project so that
 // assembly can reconstruct the full manifest list at advance-time.
 //
 // After promotion, the test also drives two real production runs of rel_probe
@@ -88,23 +88,23 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	requireReleaseControllerHealthy(t, clients)
 
 	releaseID := "e2e-rel-" + uuid.NewString()[:8]
-	changedService := "service-1"
-	t.Logf("release_id=%s changed_service=%s", releaseID, changedService)
+	changedProject := "service-1"
+	t.Logf("release_id=%s changed_project=%s", releaseID, changedProject)
 
 	// 1. Read the baseline manifests from S3 (uploaded by setup.sh with
 	//    --release-id e2e-baseline). Build the prod snapshot of every node except
 	//    rel_probe so the derived changed set is exactly {rel_probe}.
-	allServices := baselineServices(t, ctx, clients)
-	require.NotEmpty(t, allServices,
-		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
+	allProjects := baselineProjects(t, ctx, clients)
+	require.NotEmpty(t, allProjects,
+		"no baseline manifests under s3://%s/<project>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
 
-	changedImageTag := allServices[changedService].imageTag
+	changedImageTag := allProjects[changedProject].imageTag
 	require.NotEmpty(t, changedImageTag,
-		"image_tag missing for %s — setup.sh must seed service_prod", changedService)
+		"image_tag missing for %s — setup.sh must seed service_prod", changedProject)
 
 	var prodNodes []map[string]string
 	probeFound := false
-	for svc, si := range allServices {
+	for svc, si := range allProjects {
 		for _, n := range si.nodes {
 			if n.uniqueID == probeUniqueID {
 				probeFound = true
@@ -112,7 +112,7 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 			}
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
-				"service":      svc,
+				"project":      svc,
 				"content_hash": n.contentHash,
 			})
 		}
@@ -129,10 +129,10 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allServices)
+	seedServiceProd(t, ctx, clients, allProjects)
 
-	// 4. POST /releases with the single-service per-service body.
-	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
+	// 4. POST /releases with the single-project per-project body.
+	postRelease(t, clients, changedProject, releaseID, changedImageTag, false)
 
 	// 5. The derived validation set must be exactly the one changed node.
 	assertValidationRequestedNodes(t, ctx, validationTap, releaseID, []string{probeUniqueID})
@@ -236,7 +236,7 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	// 10. Deleting the prod artifact must degrade gracefully: the hydrate
 	//     initContainer's fetch fails, but the run still succeeds (exit 0) and
 	//     records parse_cache='degraded' rather than failing the Job.
-	deleteParseCacheProdArtifact(t, ctx, clients, changedService, changedImageTag)
+	deleteParseCacheProdArtifact(t, ctx, clients, changedProject, changedImageTag)
 	secondRunID, secondScheduleName := triggerRelProbeRun(t, ctx, clients)
 	defer cleanupSingleNodeRun(t, ctx, clients, secondRunID, secondScheduleName)
 	verifySchedulerSucceeded(t, ctx, clients, secondRunID)
@@ -251,7 +251,7 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 func triggerRelProbeRun(t *testing.T, ctx context.Context, clients *testClients) (uuid.UUID, string) {
 	t.Helper()
 	resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
-		ServiceName:    "service-1",
+		ProjectName:    "service-1",
 		SchemaName:     "e2e_schema",
 		TableName:      "rel_probe",
 		MetadataSource: "latest",
@@ -267,15 +267,15 @@ func triggerRelProbeRun(t *testing.T, ctx context.Context, clients *testClients)
 }
 
 // deleteParseCacheProdArtifact removes the prod-context partial-parse artifact
-// for (service, imageTag) from MinIO, mirroring the canonical key the
+// for (project, imageTag) from MinIO, mirroring the canonical key the
 // execution-controller's compile leg writes to and the hydrate-parse-cache initContainer
-// reads from: s3://<bucket>/<service>/parse-cache/<image_tag>/partial_parse.msgpack
+// reads from: s3://<bucket>/<project>/parse-cache/<image_tag>/partial_parse.msgpack
 // (see execution-controller/service/artifacts.ParseCacheProdURI). Deleting it proves
 // the degrade path end-to-end: a run Job that can no longer fetch the artifact
 // must still succeed, recording parse_cache='degraded'.
-func deleteParseCacheProdArtifact(t *testing.T, ctx context.Context, clients *testClients, service, imageTag string) {
+func deleteParseCacheProdArtifact(t *testing.T, ctx context.Context, clients *testClients, project, imageTag string) {
 	t.Helper()
-	key := fmt.Sprintf("%s/parse-cache/%s/partial_parse.msgpack", service, imageTag)
+	key := fmt.Sprintf("%s/parse-cache/%s/partial_parse.msgpack", project, imageTag)
 	_, err := clients.s3Client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(e2eS3Bucket),
 		Key:    aws.String(key),
@@ -287,36 +287,36 @@ func deleteParseCacheProdArtifact(t *testing.T, ctx context.Context, clients *te
 // probeUpUniqueID and probeDownUniqueID are the unique_ids topology-controller
 // derives for the rel_probe_up / rel_probe_down models. rel_probe_up is a
 // self-contained leaf (`SELECT 1`); rel_probe_down is `SELECT id FROM
-// {{ ref('rel_probe_up') }}` — an intra-service ref, so topology-controller
+// {{ ref('rel_probe_up') }}` — an intra-project ref, so topology-controller
 // derives rel_probe_down's upstream = rel_probe_up (same service-1). The pair
-// exercises the gated intra-service path: rel_probe_up builds into the candidate
+// exercises the gated intra-project path: rel_probe_up builds into the candidate
 // schema first, then rel_probe_down validates against it.
 const (
 	probeUpUniqueID   = "e2e_schema.rel_probe_up"
 	probeDownUniqueID = "e2e_schema.rel_probe_down"
 )
 
-// xprobeUp / xprobeDown are a CLEAN cross-service chain used by the self-contained
+// xprobeUp / xprobeDown are a CLEAN cross-project chain used by the self-contained
 // validation test: xprobe_down (service-2) reads `FROM {{ env_var('DBT_UPSTREAM_SCHEMA', target.schema) }}.xprobe_up`,
 // and xprobe_up lives in service-3 — so topology-controller resolves xprobe_down's
-// upstream to a different-service node. Neither has any broken or downstream model,
+// upstream to a different-project node. Neither has any broken or downstream model,
 // so the full closure is exactly the pair.
 const (
 	xprobeUpUniqueID   = "e2e_schema.xprobe_up"
 	xprobeDownUniqueID = "e2e_schema.xprobe_down"
 )
 
-// TestE2E_ReleasePromote_GatedIntraServiceUpstream proves that when a changed
-// node depends on a CHANGED intra-service upstream, the upstream builds into the
+// TestE2E_ReleasePromote_GatedIntraProjectUpstream proves that when a changed
+// node depends on a CHANGED intra-project upstream, the upstream builds into the
 // candidate schema first (topologically gated) and the dependent validates
 // against it; the release then promotes and the candidate schema is torn down.
 //
 // Both rel_probe_up and rel_probe_down live in service-1. The test posts a
-// per-service release for service-1. current_prod is seeded with every candidate
+// per-project release for service-1. current_prod is seeded with every candidate
 // node EXCEPT rel_probe_up and rel_probe_down. The derived changed set is
-// therefore exactly {rel_probe_up, rel_probe_down} with the intra-service
+// therefore exactly {rel_probe_up, rel_probe_down} with the intra-project
 // gating edge rel_probe_down → rel_probe_up.
-func TestE2E_ReleasePromote_GatedIntraServiceUpstream(t *testing.T) {
+func TestE2E_ReleasePromote_GatedIntraProjectUpstream(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
@@ -331,24 +331,24 @@ func TestE2E_ReleasePromote_GatedIntraServiceUpstream(t *testing.T) {
 	requireReleaseControllerHealthy(t, clients)
 
 	releaseID := "e2e-rel-" + uuid.NewString()[:8]
-	changedService := "service-1"
-	t.Logf("release_id=%s changed_service=%s", releaseID, changedService)
+	changedProject := "service-1"
+	t.Logf("release_id=%s changed_project=%s", releaseID, changedProject)
 
 	excluded := map[string]bool{
 		probeUpUniqueID:   true,
 		probeDownUniqueID: true,
 	}
-	allServices := baselineServices(t, ctx, clients)
-	require.NotEmpty(t, allServices,
-		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
+	allProjects := baselineProjects(t, ctx, clients)
+	require.NotEmpty(t, allProjects,
+		"no baseline manifests under s3://%s/<project>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
 
-	changedImageTag := allServices[changedService].imageTag
+	changedImageTag := allProjects[changedProject].imageTag
 	require.NotEmpty(t, changedImageTag,
-		"image_tag missing for %s — setup.sh must seed service_prod", changedService)
+		"image_tag missing for %s — setup.sh must seed service_prod", changedProject)
 
 	var prodNodes []map[string]string
 	var upFound, downFound bool
-	for svc, si := range allServices {
+	for svc, si := range allProjects {
 		for _, n := range si.nodes {
 			switch n.uniqueID {
 			case probeUpUniqueID:
@@ -361,7 +361,7 @@ func TestE2E_ReleasePromote_GatedIntraServiceUpstream(t *testing.T) {
 			}
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
-				"service":      svc,
+				"project":      svc,
 				"content_hash": n.contentHash,
 			})
 		}
@@ -378,11 +378,11 @@ func TestE2E_ReleasePromote_GatedIntraServiceUpstream(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allServices)
+	seedServiceProd(t, ctx, clients, allProjects)
 
-	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
+	postRelease(t, clients, changedProject, releaseID, changedImageTag, false)
 
-	// The derived validation set must be exactly the intra-service chain, in
+	// The derived validation set must be exactly the intra-project chain, in
 	// topological order (upstream first).
 	assertValidationRequestedNodes(t, ctx, validationTap, releaseID,
 		[]string{probeUpUniqueID, probeDownUniqueID})
@@ -390,25 +390,25 @@ func TestE2E_ReleasePromote_GatedIntraServiceUpstream(t *testing.T) {
 	waitForReleasePromoted(t, ctx, clients, releaseID, 12*time.Minute)
 	waitForTopologySwap(t, ctx, clients, releaseID, probeDownUniqueID, 2*time.Minute)
 	assertCandidateSchemaDropped(t, ctx, clients, releaseID, 3*time.Minute)
-	t.Log("✅ gated intra-service upstream validated, release promoted, topology swapped, candidate schema dropped")
+	t.Log("✅ gated intra-project upstream validated, release promoted, topology swapped, candidate schema dropped")
 }
 
-// TestE2E_ReleasePromote_GatedCrossServiceUpstream proves self-contained
-// validation: a changed node whose upstream lives in ANOTHER service and is NOT
+// TestE2E_ReleasePromote_GatedCrossProjectUpstream proves self-contained
+// validation: a changed node whose upstream lives in ANOTHER project and is NOT
 // materialized in prod still validates, because the upstream is built into the
-// candidate schema first (cross-service topological gating) and the dependent's
+// candidate schema first (cross-project topological gating) and the dependent's
 // {{ env_var('DBT_UPSTREAM_SCHEMA', target.schema) }} ref is redirected there
 // via DBT_UPSTREAM_SCHEMA. The release then promotes and the candidate schema is
 // torn down.
 //
 // xprobe_down lives in service-2, xprobe_up lives in service-3. The test posts
-// a per-service release for service-2. Assembly attaches service-3's current
+// a per-project release for service-2. Assembly attaches service-3's current
 // baseline manifest (via service_prod), so topology-controller sees xprobe_up
 // as part of the candidate topology. current_prod is seeded with every node
 // EXCEPT the xprobe pair, so the derived changed set is exactly
-// {xprobe_up, xprobe_down} with the cross-service gating edge
+// {xprobe_up, xprobe_down} with the cross-project gating edge
 // xprobe_down -> xprobe_up.
-func TestE2E_ReleasePromote_GatedCrossServiceUpstream(t *testing.T) {
+func TestE2E_ReleasePromote_GatedCrossProjectUpstream(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
@@ -425,25 +425,25 @@ func TestE2E_ReleasePromote_GatedCrossServiceUpstream(t *testing.T) {
 	releaseID := "e2e-rel-" + uuid.NewString()[:8]
 	// xprobe_down is in service-2; posting a release for service-2 causes
 	// assembly to attach service-3's manifest (which contains xprobe_up) from
-	// service_prod, exposing the cross-service gating edge.
-	changedService := "service-2"
-	t.Logf("release_id=%s changed_service=%s", releaseID, changedService)
+	// service_prod, exposing the cross-project gating edge.
+	changedProject := "service-2"
+	t.Logf("release_id=%s changed_project=%s", releaseID, changedProject)
 
 	excluded := map[string]bool{
 		xprobeUpUniqueID:   true,
 		xprobeDownUniqueID: true,
 	}
-	allServices := baselineServices(t, ctx, clients)
-	require.NotEmpty(t, allServices,
-		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
+	allProjects := baselineProjects(t, ctx, clients)
+	require.NotEmpty(t, allProjects,
+		"no baseline manifests under s3://%s/<project>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
 
-	changedImageTag := allServices[changedService].imageTag
+	changedImageTag := allProjects[changedProject].imageTag
 	require.NotEmpty(t, changedImageTag,
-		"image_tag missing for %s — setup.sh must seed service_prod", changedService)
+		"image_tag missing for %s — setup.sh must seed service_prod", changedProject)
 
 	var prodNodes []map[string]string
 	var upFound, downFound bool
-	for svc, si := range allServices {
+	for svc, si := range allProjects {
 		for _, n := range si.nodes {
 			switch n.uniqueID {
 			case xprobeUpUniqueID:
@@ -456,7 +456,7 @@ func TestE2E_ReleasePromote_GatedCrossServiceUpstream(t *testing.T) {
 			}
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
-				"service":      svc,
+				"project":      svc,
 				"content_hash": n.contentHash,
 			})
 		}
@@ -473,9 +473,9 @@ func TestE2E_ReleasePromote_GatedCrossServiceUpstream(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allServices)
+	seedServiceProd(t, ctx, clients, allProjects)
 
-	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
+	postRelease(t, clients, changedProject, releaseID, changedImageTag, false)
 
 	assertValidationRequestedNodes(t, ctx, validationTap, releaseID,
 		[]string{xprobeUpUniqueID, xprobeDownUniqueID})
@@ -483,7 +483,7 @@ func TestE2E_ReleasePromote_GatedCrossServiceUpstream(t *testing.T) {
 	waitForReleasePromoted(t, ctx, clients, releaseID, 12*time.Minute)
 	waitForTopologySwap(t, ctx, clients, releaseID, xprobeDownUniqueID, 2*time.Minute)
 	assertCandidateSchemaDropped(t, ctx, clients, releaseID, 3*time.Minute)
-	t.Log("✅ gated CROSS-service upstream validated self-contained, promoted, candidate schema dropped")
+	t.Log("✅ gated CROSS-project upstream validated self-contained, promoted, candidate schema dropped")
 }
 
 // TestE2E_ReleasePromote_BootstrapSkipsValidation proves that a release posted
@@ -492,7 +492,7 @@ func TestE2E_ReleasePromote_GatedCrossServiceUpstream(t *testing.T) {
 // where there is no production baseline to diff against.
 //
 // Both current_prod and service_prod are cleared to simulate a fresh environment.
-// A per-service bootstrap release is posted for service-1; it promotes immediately
+// A per-project bootstrap release is posted for service-1; it promotes immediately
 // and swaps the Neo4j topology.
 func TestE2E_ReleasePromote_BootstrapSkipsValidation(t *testing.T) {
 	if testing.Short() {
@@ -508,15 +508,15 @@ func TestE2E_ReleasePromote_BootstrapSkipsValidation(t *testing.T) {
 	requireReleaseControllerHealthy(t, clients)
 
 	releaseID := "e2e-boot-" + uuid.NewString()[:8]
-	changedService := "service-1"
-	t.Logf("release_id=%s changed_service=%s", releaseID, changedService)
+	changedProject := "service-1"
+	t.Logf("release_id=%s changed_project=%s", releaseID, changedProject)
 
-	allServices := baselineServices(t, ctx, clients)
-	require.NotEmpty(t, allServices,
-		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
+	allProjects := baselineProjects(t, ctx, clients)
+	require.NotEmpty(t, allProjects,
+		"no baseline manifests under s3://%s/<project>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
 
-	changedImageTag := allServices[changedService].imageTag
-	require.NotEmpty(t, changedImageTag, "image_tag missing for %s", changedService)
+	changedImageTag := allProjects[changedProject].imageTag
+	require.NotEmpty(t, changedImageTag, "image_tag missing for %s", changedProject)
 
 	// Empty current_prod and service_prod: a non-bootstrap release against an
 	// empty baseline would treat every node as changed and could not promote.
@@ -527,7 +527,7 @@ func TestE2E_ReleasePromote_BootstrapSkipsValidation(t *testing.T) {
 	_, err = clients.releaseDB.ExecContext(ctx, "DELETE FROM service_prod")
 	require.NoError(t, err, "clear service_prod")
 
-	postRelease(t, clients, changedService, releaseID, changedImageTag, true)
+	postRelease(t, clients, changedProject, releaseID, changedImageTag, true)
 
 	// The bootstrap release must promote (no validation) and swap Neo4j topology.
 	pollUntil(t, ctx, 5*time.Minute, 2*time.Second, func() (bool, error) {
@@ -540,16 +540,16 @@ func TestE2E_ReleasePromote_BootstrapSkipsValidation(t *testing.T) {
 	t.Log("✅ bootstrap release promoted without validation; topology swapped")
 }
 
-// TestE2E_ReleasePromote_PerServiceLeavesOthersIntact verifies the anti-amputation
-// guarantee: promoting a release for ONE service must not retire the other services'
+// TestE2E_ReleasePromote_PerProjectLeavesOthersIntact verifies the anti-amputation
+// guarantee: promoting a release for ONE project must not retire the other projects'
 // nodes from the Neo4j topology. A node a release does not carry stays in the graph as
 // an inactive :Node, so presence alone proves nothing: after promotion the topology
-// must contain active nodes from both the changed service and the unchanged services.
+// must contain active nodes from both the changed project and the unchanged projects.
 //
-// service_prod is seeded for all three services at the baseline; then a release is
+// service_prod is seeded for all three projects at the baseline; then a release is
 // posted for service-1 only (using rel_probe as the changed node). After promotion
 // the topology must still contain nodes that belong to service-2 and service-3.
-func TestE2E_ReleasePromote_PerServiceLeavesOthersIntact(t *testing.T) {
+func TestE2E_ReleasePromote_PerProjectLeavesOthersIntact(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
@@ -564,15 +564,15 @@ func TestE2E_ReleasePromote_PerServiceLeavesOthersIntact(t *testing.T) {
 	requireReleaseControllerHealthy(t, clients)
 
 	releaseID := "e2e-rel-" + uuid.NewString()[:8]
-	changedService := "service-1"
-	t.Logf("release_id=%s changed_service=%s", releaseID, changedService)
+	changedProject := "service-1"
+	t.Logf("release_id=%s changed_project=%s", releaseID, changedProject)
 
-	allServices := baselineServices(t, ctx, clients)
-	require.NotEmpty(t, allServices,
-		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
+	allProjects := baselineProjects(t, ctx, clients)
+	require.NotEmpty(t, allProjects,
+		"no baseline manifests under s3://%s/<project>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
 
-	changedImageTag := allServices[changedService].imageTag
-	require.NotEmpty(t, changedImageTag, "image_tag missing for %s", changedService)
+	changedImageTag := allProjects[changedProject].imageTag
+	require.NotEmpty(t, changedImageTag, "image_tag missing for %s", changedProject)
 
 	// Collect the service-2 and service-3 node IDs we expect to stay active in the
 	// Neo4j graph. dbt-test nodes are excluded: they are validation-only and
@@ -580,10 +580,10 @@ func TestE2E_ReleasePromote_PerServiceLeavesOthersIntact(t *testing.T) {
 	// check cannot look for them. current_prod retention of an unchanged test is covered by the
 	// bind-check e2e. A dbt-test's manifest id is "test.<project>.<name>[.<hash>]";
 	// a relation node's id is "<schema>.<table>".
-	survivingServices := []string{"service-2", "service-3"}
+	survivingProjects := []string{"service-2", "service-3"}
 	var expectedSurvivingNodes []string
-	for _, svc := range survivingServices {
-		for _, n := range allServices[svc].nodes {
+	for _, svc := range survivingProjects {
+		for _, n := range allProjects[svc].nodes {
 			if strings.HasPrefix(n.uniqueID, "test.") {
 				continue
 			}
@@ -596,7 +596,7 @@ func TestE2E_ReleasePromote_PerServiceLeavesOthersIntact(t *testing.T) {
 	// Seed current_prod with ALL nodes except rel_probe (changed node for service-1).
 	var prodNodes []map[string]string
 	probeFound := false
-	for svc, si := range allServices {
+	for svc, si := range allProjects {
 		for _, n := range si.nodes {
 			if n.uniqueID == probeUniqueID {
 				probeFound = true
@@ -604,7 +604,7 @@ func TestE2E_ReleasePromote_PerServiceLeavesOthersIntact(t *testing.T) {
 			}
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
-				"service":      svc,
+				"project":      svc,
 				"content_hash": n.contentHash,
 			})
 		}
@@ -618,9 +618,9 @@ func TestE2E_ReleasePromote_PerServiceLeavesOthersIntact(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allServices)
+	seedServiceProd(t, ctx, clients, allProjects)
 
-	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
+	postRelease(t, clients, changedProject, releaseID, changedImageTag, false)
 
 	// rel_probe is the only changed node — validate + promote.
 	assertValidationRequestedNodes(t, ctx, validationTap, releaseID, []string{probeUniqueID})
@@ -638,10 +638,10 @@ func TestE2E_ReleasePromote_PerServiceLeavesOthersIntact(t *testing.T) {
 			map[string]any{"uid": uid})
 		require.NoError(t, err, "Neo4j query for node %s", uid)
 		require.True(t, res.Next(ctx),
-			"node %s from non-changed service must stay active after a service-1-only release (anti-amputation)", uid)
+			"node %s from non-changed project must stay active after a service-1-only release (anti-amputation)", uid)
 	}
-	t.Logf("✅ per-service release for %s left %d service-2/3 nodes active in Neo4j",
-		changedService, len(expectedSurvivingNodes))
+	t.Logf("✅ per-project release for %s left %d service-2/3 nodes active in Neo4j",
+		changedProject, len(expectedSurvivingNodes))
 }
 
 // requireReleaseControllerHealthy verifies the release-controller HTTP API is
@@ -661,35 +661,35 @@ type manifestNode struct {
 	contentHash string
 }
 
-// serviceInfo bundles the parsed nodes and image tag for a single dbt service's
+// projectInfo bundles the parsed nodes and image tag for a single dbt project's
 // baseline manifest, as uploaded by setup.sh.
-type serviceInfo struct {
+type projectInfo struct {
 	imageTag string
 	nodes    []manifestNode
 }
 
 // canonicalManifestS3URI returns the full s3:// URI for a per-release manifest,
 // mirroring the CanonicalManifestKey convention in release-controller.
-func canonicalManifestS3URI(service, releaseID string) string {
-	return fmt.Sprintf("s3://%s/%s/%s/manifest.json", e2eS3Bucket, service, releaseID)
+func canonicalManifestS3URI(project, releaseID string) string {
+	return fmt.Sprintf("s3://%s/%s/%s/manifest.json", e2eS3Bucket, project, releaseID)
 }
 
-// baselineServices loads every service's baseline manifest from S3 (written by
+// baselineProjects loads every project's baseline manifest from S3 (written by
 // setup.sh with --release-id e2e-baseline), with the compile-extras.json beside
 // it when the baseline has one, and its current image tag from the
-// release-controller service_prod table, returning a map keyed by service name.
+// release-controller service_prod table, returning a map keyed by project name.
 // The map is used to seed current_prod topology snapshots and service_prod rows.
-func baselineServices(t *testing.T, ctx context.Context, clients *testClients) map[string]serviceInfo {
+func baselineProjects(t *testing.T, ctx context.Context, clients *testClients) map[string]projectInfo {
 	t.Helper()
-	// Re-establish the per-service image pointers a prior blue/green test may
-	// have mutated, so readServiceImageTag below sees the full baseline.
+	// Re-establish the per-project image pointers a prior blue/green test may
+	// have mutated, so readProjectImageTag below sees the full baseline.
 	seedBaselineServiceProd(t, ctx, clients)
-	// Discover all services by listing objects under their baseline prefix.
+	// Discover all projects by listing objects under their baseline prefix.
 	// The bucket also accumulates candidate-sql/* and code-bundles/* artifacts
 	// across e2e runs, which sort lexicographically before service-*/... keys,
 	// so a single unpaginated call can silently miss the baseline manifests
 	// once the bucket crosses the 1000-key page size. Paginate fully.
-	services := map[string]serviceInfo{}
+	projects := map[string]projectInfo{}
 	paginator := s3.NewListObjectsV2Paginator(clients.s3Client, &s3.ListObjectsV2Input{
 		Bucket: aws.String(e2eS3Bucket),
 	})
@@ -698,40 +698,40 @@ func baselineServices(t *testing.T, ctx context.Context, clients *testClients) m
 		require.NoError(t, err, "list S3 objects for baseline discovery")
 		for _, obj := range page.Contents {
 			key := aws.ToString(obj.Key)
-			// Match <service>/e2e-baseline/manifest.json
+			// Match <project>/e2e-baseline/manifest.json
 			suffix := "/" + e2eBaselineReleaseID + "/manifest.json"
 			if !strings.HasSuffix(key, suffix) {
 				continue
 			}
-			service := strings.TrimSuffix(key, suffix)
-			if strings.Contains(service, "/") {
+			project := strings.TrimSuffix(key, suffix)
+			if strings.Contains(project, "/") {
 				continue // skip keys with extra path segments
 			}
-			extras := getS3ObjectIfPresent(t, ctx, clients, baselineExtrasKey(service))
-			nodes := parseManifestNodes(t, ctx, service, getS3Object(t, ctx, clients, key), extras)
-			imageTag := readServiceImageTag(t, ctx, clients, service)
-			services[service] = serviceInfo{imageTag: imageTag, nodes: nodes}
+			extras := getS3ObjectIfPresent(t, ctx, clients, baselineExtrasKey(project))
+			nodes := parseManifestNodes(t, ctx, project, getS3Object(t, ctx, clients, key), extras)
+			imageTag := readProjectImageTag(t, ctx, clients, project)
+			projects[project] = projectInfo{imageTag: imageTag, nodes: nodes}
 		}
 	}
-	return services
+	return projects
 }
 
-// readServiceImageTag resolves a dbt service's image tag from the
+// readProjectImageTag resolves a dbt project's image tag from the
 // release-controller's service_prod pointer table (DB continuo_release) — the
-// production source of truth for each service's current image. setup.sh /
-// provision-k8s-test-env.sh seed one service_prod row per service with the real
+// production source of truth for each project's current image. setup.sh /
+// provision-k8s-test-env.sh seed one service_prod row per project with the real
 // content-addressed tag the kind dbt images are loaded under. execution-controller
 // composes the dbt job image as service-<n>:<image_tag>, so this tag must match
 // the kind image exactly.
-func readServiceImageTag(t *testing.T, ctx context.Context, clients *testClients, service string) string {
+func readProjectImageTag(t *testing.T, ctx context.Context, clients *testClients, project string) string {
 	t.Helper()
 	var tag string
 	err := clients.releaseDB.QueryRowContext(ctx,
-		`SELECT image_tag FROM service_prod WHERE service_name = $1`, service).Scan(&tag)
+		`SELECT image_tag FROM service_prod WHERE project_name = $1`, project).Scan(&tag)
 	require.NoError(t, err,
-		"read service_prod.image_tag for %s — setup.sh must seed service_prod before e2e", service)
+		"read service_prod.image_tag for %s — setup.sh must seed service_prod before e2e", project)
 	require.NotEmpty(t, tag,
-		"service_prod.image_tag is empty for %s — setup.sh seeded an empty tag", service)
+		"service_prod.image_tag is empty for %s — setup.sh seeded an empty tag", project)
 	return tag
 }
 
@@ -768,22 +768,22 @@ func getS3ObjectIfPresent(t *testing.T, ctx context.Context, clients *testClient
 	return body
 }
 
-// baselineExtrasKey is the key of a service's baseline compile-extras.json.
-func baselineExtrasKey(service string) string {
-	return service + "/" + e2eBaselineReleaseID + "/compile-extras.json"
+// baselineExtrasKey is the key of a project's baseline compile-extras.json.
+func baselineExtrasKey(project string) string {
+	return project + "/" + e2eBaselineReleaseID + "/compile-extras.json"
 }
 
-// copyBaselineExtras copies a service's baseline compile-extras.json beside
+// copyBaselineExtras copies a project's baseline compile-extras.json beside
 // the manifest a test writes under releaseID, when the baseline has one, so
 // topology-controller reads that manifest with the same seed hashes it reads
 // the baseline with. The copy is deleted when the test ends.
-func copyBaselineExtras(t *testing.T, ctx context.Context, clients *testClients, service, releaseID string) {
+func copyBaselineExtras(t *testing.T, ctx context.Context, clients *testClients, project, releaseID string) {
 	t.Helper()
-	extras := getS3ObjectIfPresent(t, ctx, clients, baselineExtrasKey(service))
+	extras := getS3ObjectIfPresent(t, ctx, clients, baselineExtrasKey(project))
 	if extras == nil {
 		return
 	}
-	key := service + "/" + releaseID + "/compile-extras.json"
+	key := project + "/" + releaseID + "/compile-extras.json"
 	putS3Object(t, ctx, clients, key, extras)
 	t.Cleanup(func() {
 		_, err := clients.s3Client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
@@ -797,13 +797,13 @@ func copyBaselineExtras(t *testing.T, ctx context.Context, clients *testClients,
 }
 
 // parseManifestNodes returns one manifestNode per node topology-controller's
-// parser yields from service's dbt manifest and its compile extras (nil when
+// parser yields from project's dbt manifest and its compile extras (nil when
 // the compile wrote none), with the unique_id and content_hash the live parser
 // gives it (see contentHashesOf), sorted by unique_id. Seeding current_prod
 // with these makes a node the release leaves unchanged read as unchanged.
-func parseManifestNodes(t *testing.T, ctx context.Context, service string, manifest, extras []byte) []manifestNode {
+func parseManifestNodes(t *testing.T, ctx context.Context, project string, manifest, extras []byte) []manifestNode {
 	t.Helper()
-	hashes := contentHashesOf(t, ctx, service, manifest, extras)
+	hashes := contentHashesOf(t, ctx, project, manifest, extras)
 	nodes := make([]manifestNode, 0, len(hashes))
 	for uniqueID, contentHash := range hashes {
 		nodes = append(nodes, manifestNode{uniqueID: uniqueID, contentHash: contentHash})
@@ -827,9 +827,9 @@ func resetReleaseControllerQueue(t *testing.T, ctx context.Context, clients *tes
 
 // seedCurrentProd points current_prod at a fresh topology artifact holding
 // nodes. The change detector reads unique_id and content_hash, and the
-// activation guard reads service_name (every service live in the prod topology
-// must carry a service_prod pointer or be the release's changed service), so
-// each node map must carry unique_id, content_hash, and service. The seed
+// activation guard reads project_name (every project live in the prod topology
+// must carry a service_prod pointer or be the release's changed project), so
+// each node map must carry unique_id, content_hash, and project. The seed
 // reload rules read a seed's declared columns, so a node map may also carry
 // seed_columns (a JSON array of {"name","type"}), seed_columns_hash,
 // materialized and full_refresh ("true" or "false"), which are copied when
@@ -842,10 +842,10 @@ func seedCurrentProd(t *testing.T, ctx context.Context, clients *testClients, no
 	releaseID := "e2e-prod-" + uuid.NewString()[:8]
 	artifactNodes := make([]topologyartifact.Node, 0, len(nodes))
 	for _, n := range nodes {
-		require.NotEmpty(t, n["service"], "current_prod node %s must identify its service", n["unique_id"])
+		require.NotEmpty(t, n["project"], "current_prod node %s must identify its project", n["unique_id"])
 		node := topologyartifact.Node{
 			UniqueID:          n["unique_id"],
-			ServiceName:       n["service"],
+			ProjectName:       n["project"],
 			ContentHash:       n["content_hash"],
 			UpstreamUniqueIDs: []string{},
 			SeedColumnsHash:   n["seed_columns_hash"],
@@ -885,17 +885,17 @@ func seedCurrentProd(t *testing.T, ctx context.Context, clients *testClients, no
 }
 
 // seedServiceProd seeds the baseline manifest key and image tag for every
-// service. Assembly replaces the changed service's pointer with its candidate;
-// a verification editing another service still needs that baseline pointer to
-// cover every service live in current_prod at activation.
-func seedServiceProd(t *testing.T, ctx context.Context, clients *testClients, allServices map[string]serviceInfo) {
+// project. Assembly replaces the changed project's pointer with its candidate;
+// a verification editing another project still needs that baseline pointer to
+// cover every project live in current_prod at activation.
+func seedServiceProd(t *testing.T, ctx context.Context, clients *testClients, allProjects map[string]projectInfo) {
 	t.Helper()
-	for svc, si := range allServices {
+	for svc, si := range allProjects {
 		s3URI := canonicalManifestS3URI(svc, e2eBaselineReleaseID)
 		_, err := clients.releaseDB.ExecContext(ctx,
-			`INSERT INTO service_prod (service_name, release_id, manifest_s3_key, image_tag, manifest_kind, updated_at)
+			`INSERT INTO service_prod (project_name, release_id, manifest_s3_key, image_tag, manifest_kind, updated_at)
 			 VALUES ($1, $2, $3, $4, 'dbt', now())
-			 ON CONFLICT (service_name) DO UPDATE SET
+			 ON CONFLICT (project_name) DO UPDATE SET
 			   release_id = EXCLUDED.release_id,
 			   manifest_s3_key = EXCLUDED.manifest_s3_key,
 			   image_tag = EXCLUDED.image_tag,
@@ -909,11 +909,11 @@ func seedServiceProd(t *testing.T, ctx context.Context, clients *testClients, al
 // postRelease submits a dbt release through the public API as the CI pipeline
 // of the dbt fixture repository. When bootstrap is true the release promotes
 // without validation, covering the first-ever deploy scenario.
-func postRelease(t *testing.T, clients *testClients, service, releaseID, imageTag string, bootstrap bool) {
+func postRelease(t *testing.T, clients *testClients, project, releaseID, imageTag string, bootstrap bool) {
 	t.Helper()
 	token := mintCIToken(t, e2eDbtRepositoryID, "carolsimone/continuo-demo", imageTag)
 	status, body := submitPublicRelease(t, clients, token, map[string]any{
-		"service":    service,
+		"project":    project,
 		"release_id": releaseID,
 		"image_tag":  imageTag,
 		"bootstrap":  bootstrap,

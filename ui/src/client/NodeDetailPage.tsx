@@ -139,7 +139,7 @@ export default function NodeDetailPage() {
   const activeTab = useActiveTab('tab', 'history', TAB_SLUGS);
 
   const parts = (fqn ?? '').split('.');
-  const service = parts[0] ?? '';
+  const project = parts[0] ?? '';
   const schema  = parts[1] ?? '';
   const table   = parts.slice(2).join('.');
 
@@ -150,10 +150,10 @@ export default function NodeDetailPage() {
   // A poll leaves what the page holds in place until its answer lands, and when
   // the read fails, so the next poll can try again.
   const fetchRuns = useCallback((poll = false) => {
-    if (!service || !schema || !table) return;
+    if (!project || !schema || !table) return;
     const myGen = ++genRef.current;
     if (!poll) setRunsKnown(false);
-    fetch(`/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/runs?operation=${encodeURIComponent(historyOperation)}`)
+    fetch(`/api/nodes/${encodeURIComponent(project)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/runs?operation=${encodeURIComponent(historyOperation)}`)
       .then(r => {
         if (!r.ok) throw new Error(`node history answered ${r.status}`);
         return r.json();
@@ -170,7 +170,7 @@ export default function NodeDetailPage() {
         setRunsKnown(false);
         setOutage(null);
       });
-  }, [service, schema, table, historyOperation]);
+  }, [project, schema, table, historyOperation]);
 
   useEffect(() => { fetchRuns(); }, [fetchRuns]);
 
@@ -187,9 +187,9 @@ export default function NodeDetailPage() {
     setNodeType('');
     setSourceUri('');
     setInactive(false);
-    if (!service || !schema || !table) return;
+    if (!project || !schema || !table) return;
     let current = true;
-    fetch(`/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/meta`)
+    fetch(`/api/nodes/${encodeURIComponent(project)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/meta`)
       .then(r => (r.ok ? r.json() : null))
       .then((m: NodeMetaResponse | null) => {
         if (!current) return;
@@ -208,11 +208,11 @@ export default function NodeDetailPage() {
         setInactive(false);
       });
     return () => { current = false; };
-  }, [service, schema, table]);
+  }, [project, schema, table]);
 
   // The node's row of the node list: its task timeout and whether it is
   // dormant, with its last run. The search filters on the table name only (an
-  // exact match within the service), so rows of other schemas sharing the table
+  // exact match within the project), so rows of other schemas sharing the table
   // name can come back: the schema is matched client-side.
   //
   // Each read takes the next number, and an answer replaces what the page holds
@@ -224,9 +224,9 @@ export default function NodeDetailPage() {
   const summaryStartedRef = useRef(0);
   const summaryAppliedRef = useRef(0);
   const fetchNodeSummary = useCallback(() => {
-    if (!service || !schema || !table) return;
+    if (!project || !schema || !table) return;
     const myRead = ++summaryStartedRef.current;
-    fetch(`/api/nodes?service=${encodeURIComponent(service)}&search=${encodeURIComponent(table)}&operation=run`)
+    fetch(`/api/nodes?project=${encodeURIComponent(project)}&search=${encodeURIComponent(table)}&operation=run`)
       .then(r => {
         if (!r.ok) throw new Error(`node list answered ${r.status}`);
         return r.json();
@@ -241,7 +241,7 @@ export default function NodeDetailPage() {
         setDormant(row?.dormant ? { lastRunAt: row.last_run_at ?? null } : null);
       })
       .catch(() => { /* the page keeps what it holds */ });
-  }, [service, schema, table]);
+  }, [project, schema, table]);
 
   // A new node starts with nothing known about it.
   useEffect(() => {
@@ -258,7 +258,7 @@ export default function NodeDetailPage() {
     setPickerOpen(false);
     setConfirmOpen(false);
     setPendingSource(null);
-  }, [service, schema, table]);
+  }, [project, schema, table]);
 
   const canFullRefresh = FULL_REFRESH_NODE_TYPES.has(nodeType);
 
@@ -296,7 +296,7 @@ export default function NodeDetailPage() {
   // A press is one action while the history shows no node run newer than the
   // one the press saw.
   const { runState, runError, postRun } = useSingleNodeRun(
-    { service, schema, table },
+    { project, schema, table },
     { operation, observed: newestNodeRunId, onStarted: handleStarted },
   );
 
@@ -492,7 +492,7 @@ export default function NodeDetailPage() {
       )}
 
       <main className="page-content">
-        {activeTab === 'contract' && <NodeContractPanel service={service} schema={schema} table={table} />}
+        {activeTab === 'contract' && <NodeContractPanel project={project} schema={schema} table={table} />}
         {activeTab === 'history' && (
           <section className="detail-card">
             <div className="section-header">

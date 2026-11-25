@@ -1,15 +1,15 @@
 import { useState } from 'react';
 import type { Task, TaskAttempt, GraphEdge } from './types';
-import { groupTasksByService, type ServiceGroup } from './NodesPanel';
+import { groupTasksByProject, type ProjectGroup } from './NodesPanel';
 import { latestAttempt, taskNodeId } from './detail-page-helpers';
 import NodeTableBody from './NodeTableBody';
 
 interface Props {
   tasks: Task[];
   attemptsByTask: Map<string, TaskAttempt[]>; // each task's attempts in attempt order
-  edges: GraphEdge[]; // run graph edges, for intra-service order
-  expandedServices: Set<string>;
-  onServiceToggle: (service: string) => void;
+  edges: GraphEdge[]; // run graph edges, for intra-project order
+  expandedProjects: Set<string>;
+  onProjectToggle: (project: string) => void;
 }
 
 type Filter = 'all' | 'running' | 'failed';
@@ -28,8 +28,8 @@ export default function RunNodeTable({
   tasks,
   attemptsByTask,
   edges,
-  expandedServices,
-  onServiceToggle,
+  expandedProjects,
+  onProjectToggle,
 }: Props) {
   const [filter, setFilter] = useState<Filter>('all');
   const [query, setQuery] = useState('');
@@ -44,7 +44,7 @@ export default function RunNodeTable({
     (t) => matchesFilter(t.status, filter)
       && (!normalizedQuery || t.table_name.toLowerCase().includes(normalizedQuery)),
   );
-  const groups: ServiceGroup[] = groupTasksByService(filteredTasks, attemptsByTask);
+  const groups: ProjectGroup[] = groupTasksByProject(filteredTasks, attemptsByTask);
   const isFiltering = filter !== 'all' || normalizedQuery !== '';
 
   const runningCount = tasks.filter((t) => t.status === 'running' || t.status === 'stopping').length;
@@ -86,8 +86,8 @@ export default function RunNodeTable({
         edges={edges}
         startedAt={startedAt}
         forceExpanded={isFiltering}
-        expandedServices={expandedServices}
-        onServiceToggle={onServiceToggle}
+        expandedProjects={expandedProjects}
+        onProjectToggle={onProjectToggle}
       />
     </div>
   );

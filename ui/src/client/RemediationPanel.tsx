@@ -2,10 +2,10 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { ProposalDTO, PullRequestDTO } from './types';
 import { fetchProposals } from './remediation-api';
-import { fetchNodeServices } from './node-api';
+import { fetchNodeProjects } from './node-api';
 import type { CreatePullRequestResponse } from './remediation-api';
 import {
-  proposalNodeIds, proposalPrServices, proposalPullRequests, proposalPillClass,
+  proposalNodeIds, proposalPrProjects, proposalPullRequests, proposalPillClass,
   effectiveRound, groupProposals, ProposalGroup,
 } from './release-helpers';
 import { useCurrentUser } from './auth/AuthContext';
@@ -88,16 +88,16 @@ function StatusPill({ status }: { status: string }) {
 }
 
 // VerificationRuns lists one attempt's verification runs — one per edited
-// service — as compact labelled lines, "<service> · <kind> · <phase> · since
+// project — as compact labelled lines, "<project> · <kind> · <phase> · since
 // <activated_at>", each linking to that run's page. A legacy attempt with
 // only the singular verification_run_id shows the one link; an attempt
 // judged without a run renders nothing.
 function VerificationRuns({ proposal }: { proposal: ProposalDTO }) {
   const runs = proposal.verifications && proposal.verifications.length > 0
     ? proposal.verifications.map((v) => ({
-        key: v.run_id || v.service,
+        key: v.run_id || v.project,
         runId: v.run_id,
-        text: `${v.service} · ${v.kind} · ${verificationPhaseLabel(v.phase)}${v.activated_at ? ` · since ${v.activated_at}` : ''}`,
+        text: `${v.project} · ${v.kind} · ${verificationPhaseLabel(v.phase)}${v.activated_at ? ` · since ${v.activated_at}` : ''}`,
       }))
     : proposal.verification_run_id
       ? [{ key: proposal.verification_run_id, runId: proposal.verification_run_id, text: `verification run ${proposal.verification_run_id}` }]
@@ -132,34 +132,34 @@ function prStateBadge(prState: string) {
 }
 
 // prStateBadgeLabeled renders one pull request's state chip, prefixed by
-// its owning service in small muted type when the proposal is split across
-// several — the legacy (service '') group keeps the bare chip, unwrapped so
+// its owning project in small muted type when the proposal is split across
+// several — the legacy (project '') group keeps the bare chip, unwrapped so
 // its own text content is still just the state word.
 function prStateBadgeLabeled(pr: PullRequestDTO) {
   const badge = prStateBadge(pr.pr_state);
-  if (!pr.service) return badge;
+  if (!pr.project) return badge;
   return (
     <span className="pr-chip-labeled">
-      <span className="pr-chip-labeled__service">{pr.service}</span> {badge}
+      <span className="pr-chip-labeled__project">{pr.project}</span> {badge}
     </span>
   );
 }
 
-// prStateChips renders every recorded per-service pull-request state for one
+// prStateChips renders every recorded per-project pull-request state for one
 // proposal as a run of chips, laid out by the .remediation-prs row they
 // sit in.
 function prStateChips(proposal: ProposalDTO) {
   return proposalPullRequests(proposal)
     .filter((pr) => pr.pr_state)
     .map((pr) => (
-      <Fragment key={pr.service || 'legacy'}> {prStateBadgeLabeled(pr)}</Fragment>
+      <Fragment key={pr.project || 'legacy'}> {prStateBadgeLabeled(pr)}</Fragment>
     ));
 }
 
 // isActionable is the predicate for a proposal that still needs a human
-// decision: it has a source to fix, and at least one of its owning-service
+// decision: it has a source to fix, and at least one of its owning-project
 // groups is in a retryable claim state — the same precondition the server's
-// BeginPullRequest CAS enforces per service ('' or 'failed'). A service
+// BeginPullRequest CAS enforces per project ('' or 'failed'). A project
 // group whose pr_state is 'opening' already has an in-flight or
 // previously-recorded claim, and 'open'/'merged'/'rejected' are settled —
 // offering another Create PR for those would just fail the claim. Such a
@@ -168,8 +168,8 @@ function prStateChips(proposal: ProposalDTO) {
 function isActionable(p: ProposalDTO): boolean {
   if (!(p.status === 'proposed' && p.source_resolved)) return false;
   const pullRequests = proposalPullRequests(p);
-  return proposalPrServices(p).some((service) => {
-    const state = pullRequests.find((pr) => pr.service === service)?.pr_state ?? '';
+  return proposalPrProjects(p).some((project) => {
+    const state = pullRequests.find((pr) => pr.project === project)?.pr_state ?? '';
     return state === '' || state === 'failed';
   });
 }
@@ -233,13 +233,13 @@ function ProposalDetailCard({
           .filter((pr) => pr.pr_url)
           .map((pr) => (
             <a
-              key={pr.service || 'legacy'}
+              key={pr.project || 'legacy'}
               className="btn btn--secondary"
               href={pr.pr_url}
               target="_blank"
               rel="noreferrer"
             >
-              {pr.service ? `open PR (${pr.service}) ↗` : 'open PR ↗'}
+              {pr.project ? `open PR (${pr.project}) ↗` : 'open PR ↗'}
             </a>
           ))}
 
@@ -364,15 +364,15 @@ function AttemptRows({
 export default function RemediationPanel() {
   const currentUser = useCurrentUser();
   const [proposals, setProposals] = useState<ProposalDTO[]>([]);
-  const [services, setServices] = useState<string[]>([]);
-  const [service, setService] = useState('');
+  const [projects, setProjects] = useState<string[]>([]);
+  const [project, setProject] = useState('');
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<ProposalDTO | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [createPrProposalId, setCreatePrProposalId] = useState<string | null>(null);
   const detailRef = useRef<HTMLTableRowElement | null>(null);
   // Monotonic id of the most recently issued proposals fetch. Changing the
-  // Service filter fires a new fetch before earlier ones settle; only the
+  // Project filter fires a new fetch before earlier ones settle; only the
   // latest request may write state, so a slower earlier response (or a stale
   // failure) can never overwrite the current filter's results.
   const proposalsReqSeq = useRef(0);
@@ -380,11 +380,11 @@ export default function RemediationPanel() {
   // loadProposals is the single path that populates the list from the
   // server, used both on filter change and to refresh authoritative state
   // after an action (e.g. creating a PR) — never a bespoke fetch. It honours
-  // the current service filter and ignores any response that a newer request
+  // the current project filter and ignores any response that a newer request
   // has superseded.
   const loadProposals = useCallback(() => {
     const seq = ++proposalsReqSeq.current;
-    fetchProposals(service ? { service } : {})
+    fetchProposals(project ? { project } : {})
       .then(data => {
         if (seq !== proposalsReqSeq.current) return;
         setProposals(data);
@@ -394,16 +394,16 @@ export default function RemediationPanel() {
         if (seq !== proposalsReqSeq.current) return;
         setError(e.message);
       });
-  }, [service]);
+  }, [project]);
 
   useEffect(() => { loadProposals(); }, [loadProposals]);
 
-  // The Service filter's options are the services of the live release's
-  // nodes (fetchNodeServices), fetched once on mount. A failure leaves the
-  // list working with only the "All services" option rather than surfacing
+  // The Project filter's options are the projects of the live release's
+  // nodes (fetchNodeProjects), fetched once on mount. A failure leaves the
+  // list working with only the "All projects" option rather than surfacing
   // as the panel error.
   useEffect(() => {
-    fetchNodeServices().then(setServices).catch(() => setServices([]));
+    fetchNodeProjects().then(setProjects).catch(() => setProjects([]));
   }, []);
 
   // Scroll a manually-opened attempt card into view — an auto-expanded card
@@ -429,14 +429,14 @@ export default function RemediationPanel() {
   return (
     <>
       <div className="form-field">
-        <label htmlFor="remediation-service">Service</label>
+        <label htmlFor="remediation-project">Project</label>
         <select
-          id="remediation-service"
-          value={service}
-          onChange={e => setService(e.target.value)}
+          id="remediation-project"
+          value={project}
+          onChange={e => setProject(e.target.value)}
         >
-          <option value="">All services</option>
-          {services.map(s => <option key={s} value={s}>{s}</option>)}
+          <option value="">All projects</option>
+          {projects.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
       </div>
 
@@ -466,7 +466,7 @@ export default function RemediationPanel() {
               <th aria-hidden="true"></th>
               <th>Release</th>
               <th>Round</th>
-              <th>Services</th>
+              <th>Projects</th>
               <th>Nodes</th>
               <th>Latest status</th>
               <th>Attempts</th>
@@ -504,8 +504,8 @@ export default function RemediationPanel() {
                     </td>
                     <td className="nodes-node-name">{g.releaseId}</td>
                     <td>{g.round}</td>
-                    <td className="remediation-group__services">
-                      {g.services.length > 0 ? g.services.join(', ') : <span className="nodes-dash">—</span>}
+                    <td className="remediation-group__projects">
+                      {g.projects.length > 0 ? g.projects.join(', ') : <span className="nodes-dash">—</span>}
                     </td>
                     <td className="remediation-group__nodes">{g.nodeIds.join(', ')}</td>
                     <td><StatusPill status={g.latest.status} /></td>
@@ -548,20 +548,20 @@ export default function RemediationPanel() {
             // link right away. Recording it against the proposal is
             // best-effort server side, so 'open' is not guaranteed yet;
             // 'opening' is the one state the claim step already guarantees.
-            // A service the server didn't touch this call (already settled,
+            // A project the server didn't touch this call (already settled,
             // or one that failed and is still listed as an error) keeps its
             // prior entry untouched. A refetch right after replaces all of
             // this with whatever the server actually recorded.
             const priorPRs = proposalPullRequests(createPrProposal);
-            const newByService = new Map(result.pull_requests.map(r => [r.service, r]));
+            const newByProject = new Map(result.pull_requests.map(r => [r.project, r]));
             const mergedPRs: PullRequestDTO[] = priorPRs.map(pr => {
-              const created = newByService.get(pr.service);
+              const created = newByProject.get(pr.project);
               return created ? { ...pr, pr_url: created.pr_url, pr_number: created.pr_number, pr_state: 'opening' } : pr;
             });
             for (const created of result.pull_requests) {
-              if (!mergedPRs.some(pr => pr.service === created.service)) {
+              if (!mergedPRs.some(pr => pr.project === created.project)) {
                 mergedPRs.push({
-                  service: created.service,
+                  project: created.project,
                   repo: '',
                   branch: '',
                   pr_url: created.pr_url,
@@ -583,7 +583,7 @@ export default function RemediationPanel() {
             };
             setProposals(prev => prev.map(p => (p.id === updated.id ? updated : p)));
             // The proposal may have just left the retryable-claim state
-            // (isActionable goes false when every service settled), so its
+            // (isActionable goes false when every project settled), so its
             // group might no longer auto-expand. Pin the group open and
             // select the attempt so its row stays open and shows the new
             // link(s) instead of collapsing.

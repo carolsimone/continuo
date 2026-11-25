@@ -391,10 +391,10 @@
       }
     },
 
-    "serviceRepos": {
+    "projectRepos": {
       "type": "object",
       "additionalProperties": {"type": "string"},
-      "description": "service_name -> project root within that service's repo, for agent-remediation source resolution. When non-empty it REPLACES the chart's shipped demo map (files/service_repos.yaml) so a production install maps only the services it runs; empty/unset uses the demo map. An explicit empty-string value maps a service whose dbt project is the repository root. Optional and not in 'required': a --reuse-values upgrade from before this key omits it, and the demo map applies."
+      "description": "project_name -> project root within that project's repo, for agent-remediation source resolution. When non-empty it REPLACES the chart's shipped demo map (files/project_repos.yaml) so a production install maps only the projects it runs; empty/unset uses the demo map. An explicit empty-string value maps a project whose dbt project is the repository root. Optional and not in 'required': a --reuse-values upgrade from before this key omits it, and the demo map applies."
     },
 
     "validation": {
@@ -556,7 +556,7 @@
           "properties": {
             "enabled": {
               "type": "boolean",
-              "description": "The install's ontology switch (ONTOLOGY_ENABLED), read by topology-controller and release-controller. false: a release of kind ontology is refused and contracts are stored without their ontology part. true: a release that carries the ontology resolves and checks the contracts of the services it declares."
+              "description": "The install's ontology switch (ONTOLOGY_ENABLED), read by topology-controller and release-controller. false: a release of kind ontology is refused and contracts are stored without their ontology part. true: a release that carries the ontology resolves and checks the contracts of the projects it declares."
             },
             "baseUrl": {
               "type": "string",
@@ -821,7 +821,7 @@
           },
           "volumes": {
             "type": "array",
-            "description": "Pod volumes of any Kubernetes volume type, mounted through volumeMounts. A configMap volume with an empty name mounts the chart's own ConfigMap for the services that have one; on agent-remediation, which has two, the one of the volume's name (service-repos or remediation-workflows), and service-repos for a volume of any other name.",
+            "description": "Pod volumes of any Kubernetes volume type, mounted through volumeMounts. A configMap volume with an empty name mounts the chart's own ConfigMap for the services that have one; on agent-remediation, which has two, the one of the volume's name (project-repos or remediation-workflows), and project-repos for a volume of any other name.",
             "items": {
               "type": "object",
               "additionalProperties": {"type": "object"},

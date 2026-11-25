@@ -35,13 +35,13 @@ export function bindingMatches(b: CiBinding, c: GithubClaims): boolean {
   return true;
 }
 
-// The services this CI identity may release: those with at least one matching
+// The projects this CI identity may release: those with at least one matching
 // binding. Bootstrap is allowed when any matching binding allows it.
 export function resolveGrants(c: GithubClaims, bindings: Map<string, CiBinding[]>): Map<string, CiGrant> {
   const grants = new Map<string, CiGrant>();
-  for (const [service, list] of bindings) {
+  for (const [project, list] of bindings) {
     const matching = list.filter((b) => bindingMatches(b, c));
-    if (matching.length > 0) grants.set(service, { allowBootstrap: matching.some((b) => b.allowBootstrap) });
+    if (matching.length > 0) grants.set(project, { allowBootstrap: matching.some((b) => b.allowBootstrap) });
   }
   return grants;
 }
