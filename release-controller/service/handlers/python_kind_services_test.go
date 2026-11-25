@@ -30,7 +30,7 @@ func seedServiceProd(t *testing.T, repo *fakeServiceProdRepo, name string, kind 
 }
 
 // A service still released as kind python stops release-controller from
-// starting: the error names it, in the words the release migration uses.
+// starting: the error names it.
 func TestStartup_RefusesWhileAServiceIsStillPython(t *testing.T) {
 	repo := &fakeServiceProdRepo{store: newFakeStore()}
 	seedServiceProd(t, repo, "service-py", release.ManifestKindPython)

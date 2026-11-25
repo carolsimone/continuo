@@ -77,7 +77,7 @@ CREATE UNIQUE INDEX idx_message_processing_outbox_entry_id_stream ON message_pro
 
 CREATE INDEX idx_message_processing_state ON message_processing (state);
 
-COMMENT ON TABLE message_processing IS 'Tracks consumed Redis messages for exactly-once processing (state service).';
+COMMENT ON TABLE message_processing IS 'Tracks consumed Redis messages for exactly-once processing.';
 
 -- node_materializations
 
@@ -99,7 +99,7 @@ CREATE TABLE node_materializations (
     CONSTRAINT node_materializations_source_check CHECK ((source IN ('build', 'adopted')))
 );
 
-COMMENT ON COLUMN node_materializations.source IS 'build: a run loaded this version; adopted: recorded as already loaded when state applied its first promotion; NULL: no version recorded yet.';
+COMMENT ON COLUMN node_materializations.source IS 'build: a run loaded this version; adopted: recorded as already loaded when run-controller applied its first promotion; NULL: no version recorded yet.';
 
 -- runs
 
@@ -150,7 +150,7 @@ COMMENT ON TABLE runs IS 'One run of a schedule: its lifecycle from pending thro
 
 COMMENT ON COLUMN runs.run_id IS 'Unique identifier of the run';
 
-COMMENT ON COLUMN runs.last_progress_at IS 'The run''s progress clock: stamped when a task of the run is dispatched or moves; state fails an active run with nothing in flight whose clock is more than five minutes old as stalled';
+COMMENT ON COLUMN runs.last_progress_at IS 'The run''s progress clock: stamped when a task of the run is dispatched or moves; run-controller fails an active run with nothing in flight whose clock is more than five minutes old as stalled';
 
 COMMENT ON COLUMN runs.kind IS 'Run discriminator. Allowed: cron, trigger, rerun, rebase, single_node_run, promote_seed. Written once at activation time and immutable thereafter; a rerun/rebase mints a new row with its own kind rather than mutating the source.';
 
@@ -193,7 +193,7 @@ CREATE TABLE schedules (
 
 CREATE TRIGGER schedules_changed AFTER INSERT OR DELETE OR UPDATE ON schedules FOR EACH STATEMENT EXECUTE FUNCTION notify_schedules_changed();
 
-COMMENT ON TABLE schedules IS 'The cron schedules state fires, one row per tenant and schedule name';
+COMMENT ON TABLE schedules IS 'The cron schedules run-controller fires, one row per tenant and schedule name';
 
 COMMENT ON COLUMN schedules.tenant_id IS 'Tenant that owns the schedule; leads the key, so another tenant may use the same name';
 
@@ -380,7 +380,7 @@ COMMENT ON COLUMN tasks.job_name IS 'Kubernetes job name (max 63 chars)';
 
 COMMENT ON COLUMN tasks.attempt IS 'Number of the task''s current attempt, 0-based';
 
-COMMENT ON COLUMN tasks.image_tag IS 'The image_tag snapshotted on the EXECUTES edge at SnapshotGraph time. Pinned at task creation and never mutated. Peer to manifest_version (V13).';
+COMMENT ON COLUMN tasks.image_tag IS 'The image tag of the task''s node in the release its run builds, copied when the task is planned and never changed.';
 
 COMMENT ON COLUMN tasks.inherited_from_task_id IS 'Lineage marker for inherited tasks in rebase runs. NULL = task was actually executed in this run. Non-NULL = task projected as SUCCEEDED from a rebase parent; points to the ROOT executed task_id (resolve-to-root semantics — chain depth ≤ 1 even across rebase-of-rebase). Not a foreign key — orphaned pointers are fine.';
 
@@ -496,9 +496,9 @@ COMMENT ON TABLE task_attempts IS 'One row per attempt of a task: its job, statu
 
 COMMENT ON COLUMN task_attempts.attempt IS '0-based attempt number; tasks.attempt names the current one';
 
-COMMENT ON COLUMN task_attempts.next_check_at IS 'When state next asks execution-controller about the attempt: set when the attempt is dispatched, moved by each non-final report state records for the attempt and each time state asks; NULL once the attempt has ended or was cancelled';
+COMMENT ON COLUMN task_attempts.next_check_at IS 'When run-controller next asks execution-controller about the attempt: set when the attempt is dispatched, moved by each non-final report run-controller records for the attempt and each time run-controller asks; NULL once the attempt has ended or was cancelled';
 
-COMMENT ON COLUMN task_attempts.stop_requested_at IS 'When state requested a stop of the attempt because its run was cancelled; NULL until then';
+COMMENT ON COLUMN task_attempts.stop_requested_at IS 'When run-controller requested a stop of the attempt because its run was cancelled; NULL until then';
 
 COMMENT ON COLUMN task_attempts.tenant_id IS 'Tenant of the attempt, the tenant of its task; leads the attempt''s key';
 

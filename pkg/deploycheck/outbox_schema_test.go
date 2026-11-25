@@ -22,22 +22,52 @@ import (
 // an index or a trigger a later migration renames or drops is checked under
 // the name it ends with.
 func TestEveryOutboxTableHasClaimIndexesAndNotifyTrigger(t *testing.T) {
-	dirs, err := filepath.Glob(filepath.Join(repoRoot(t), "db", "migration", "*"))
-	require.NoError(t, err)
 	tables := 0
-	for _, dir := range dirs {
-		info, err := os.Stat(dir)
-		require.NoError(t, err)
-		if !info.IsDir() {
-			continue
-		}
+	for _, dir := range migrationDirs(t) {
 		cat := catalogOf(readMigrations(t, dir))
 		tables += len(cat.tables)
 		for _, problem := range cat.problems() {
 			t.Errorf("%s: %s", filepath.Base(dir), problem)
 		}
 	}
-	assert.Equal(t, 6, tables, "outbox tables found under db/migration")
+	assert.Equal(t, outboxTables, tables, "outbox tables found under db/migration")
+}
+
+// outboxTables is how many outbox tables the databases under db/migration
+// have: one per service that keeps Postgres and publishes events.
+const outboxTables = 6
+
+// Deleting the statement that creates an outbox table leaves no table for the
+// per-table checks to look at, so the count of outbox tables must catch it.
+func TestOutboxCheckFailsWhenATableCreateIsDeleted(t *testing.T) {
+	create := regexp.MustCompile(`^CREATE TABLE run_controller_outbox \(`)
+	tables := 0
+	for _, dir := range migrationDirs(t) {
+		migrations := readMigrations(t, dir)
+		if filepath.Base(dir) == "run_controller" {
+			var removed int
+			migrations, removed = withoutStatements(migrations, create)
+			require.Equal(t, 1, removed, "exactly one migration statement matches %s: update this test with the migration", create)
+		}
+		tables += len(catalogOf(migrations).tables)
+	}
+	assert.NotEqual(t, outboxTables, tables, "the check counted every outbox table without run_controller_outbox")
+}
+
+// migrationDirs lists the per-database directories under db/migration.
+func migrationDirs(t *testing.T) []string {
+	t.Helper()
+	entries, err := filepath.Glob(filepath.Join(repoRoot(t), "db", "migration", "*"))
+	require.NoError(t, err)
+	var dirs []string
+	for _, e := range entries {
+		info, err := os.Stat(e)
+		require.NoError(t, err)
+		if info.IsDir() {
+			dirs = append(dirs, e)
+		}
+	}
+	return dirs
 }
 
 // The check reads the migrations as committed, so deleting, from
@@ -75,13 +105,7 @@ func TestOutboxCheckFailsWhenACreateIsDeleted(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var edited []migration
-			removed := 0
-			for _, m := range readMigrations(t, dir) {
-				without, n := dropStatements(m.sql, tc.create)
-				removed += n
-				edited = append(edited, migration{m.version, m.name, without})
-			}
+			edited, removed := withoutStatements(readMigrations(t, dir), tc.create)
 			require.Equal(t, 1, removed, "exactly one migration statement matches %s: update this test with the migration", tc.create)
 
 			problems := catalogOf(edited).problems()
@@ -163,6 +187,19 @@ func readMigrations(t *testing.T, dir string) []migration {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].version < out[j].version })
 	return out
+}
+
+// withoutStatements returns migrations without the statements that match drop,
+// and how many it removed.
+func withoutStatements(migrations []migration, drop *regexp.Regexp) ([]migration, int) {
+	var edited []migration
+	removed := 0
+	for _, m := range migrations {
+		without, n := dropStatements(m.sql, drop)
+		removed += n
+		edited = append(edited, migration{m.version, m.name, without})
+	}
+	return edited, removed
 }
 
 // dropStatements returns sql without the statements that match drop, and how

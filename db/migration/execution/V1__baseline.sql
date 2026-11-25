@@ -43,7 +43,7 @@ CREATE TABLE cancelled_runs (
     CONSTRAINT cancelled_schedules_pkey PRIMARY KEY (run_id)
 );
 
-COMMENT ON TABLE cancelled_runs IS 'a run cancelled by state: no attempt of it starts, and every Job of it is deleted; kept for the replay horizon';
+COMMENT ON TABLE cancelled_runs IS 'a run cancelled by run-controller: no attempt of it starts, and every Job of it is deleted; kept for the replay horizon';
 
 -- message_processing
 

@@ -163,11 +163,16 @@ func main() {
 	})
 	metricsReg.WatchDB(db.DB, cfg.Postgres.DB)
 
+	// release-controller refuses to run on a database the release migrations
+	// have not built. Nothing but the health routes has started yet.
+	if err := handlers.CheckReleaseSchemaInitialized(ctx, postgres.NewReleaseSchema(db)); err != nil {
+		logger.Error("Refusing to start: the release database is not migrated", "error", err)
+		os.Exit(1)
+	}
+
 	// topology-controller reads no contract.yaml, so a service still released
 	// as kind python could not be released again: this check keeps
-	// release-controller from starting and names the services. It reads
-	// service_prod, so it also stops release-controller on a database the
-	// migrations have not built. Nothing but the health routes has started yet.
+	// release-controller from starting and names the services.
 	if err := handlers.CheckNoServiceOnPythonKind(ctx, postgres.NewServiceProdRepository(db)); err != nil {
 		os.Exit(pythonKindCheckExitCode(ctx, logger, err))
 	}

@@ -26,8 +26,7 @@ func (e *PythonKindServicesError) Error() string {
 // CheckNoServiceOnPythonKind refuses a release database whose service_prod
 // still holds a service released as kind python, with an error that names every
 // such service. release-controller runs it at startup, so it does not start on
-// such a database even when the migration that raises the same error did not
-// stop the rollout, as with the bundled Postgres.
+// such a database.
 func CheckNoServiceOnPythonKind(ctx context.Context, services repository.ServiceProdRepository) error {
 	names, err := services.ServicesWithKind(ctx, release.ManifestKindPython)
 	if err != nil {
