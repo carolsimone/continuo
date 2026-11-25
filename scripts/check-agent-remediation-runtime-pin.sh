@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Fails unless the agent-remediation Dockerfiles' continuo-python-runtime PyPI
-# pin equals the runtime version continuo targets everywhere else.
+# Fails unless the agent-remediation Dockerfiles pin one continuo-python-runtime
+# PyPI version, at or above the runtime version continuo targets everywhere else.
 #
 # agent-remediation packages a proposed fix by shelling out to the
 # `continuo-runtime` CLI (ContractPackager). That CLI comes from the
@@ -21,11 +21,10 @@
 # extraction never sees it) to that X.Y.Z: the PyPI pin may be newer than the
 # validation image, never older. The two Dockerfiles pin one version.
 #
-# The PyPI pin may run ahead because continuo-python-runtime 0.15.0 renamed the
-# project field `pack` writes (agent-remediation needs it) together with the
-# validation image's op names (the validation image cannot move until
-# execution-controller speaks them, carolsimone/continuo#918). Once both pin one
-# version again, this check goes back to requiring them equal.
+# The PyPI pin may run ahead of the image: a runtime release can change what
+# `pack` writes, which agent-remediation needs at once, together with the
+# validation image's op names, which the image pin can take only once
+# execution-controller sends them.
 set -uo pipefail
 
 REPO_ROOT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"

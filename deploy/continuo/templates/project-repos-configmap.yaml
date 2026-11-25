@@ -1,11 +1,11 @@
 {{- /*
-  agent-remediation's project_name -> project-root map. .Values.projectRepos,
+  agent-remediation's project_name -> dbt-project-folder map. .Values.projectRepos,
   when non-empty, REPLACES the shipped demo map (files/project_repos.yaml) so a
   production install maps only the projects it runs — a demo entry can never
   linger to mis-own a path. Empty/unset keeps the demo file verbatim (comments
   and all) so the tutorials work out of the box. Building the override map with
   `dict`/`toYaml` (not `merge`) preserves an explicit empty value, which maps a
-  project whose dbt project is the repository root.
+  project whose dbt project folder is the repository root.
 */ -}}
 {{- $override := default (dict) .Values.projectRepos -}}
 {{- $rendered := .Files.Get "files/project_repos.yaml" -}}

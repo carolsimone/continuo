@@ -400,7 +400,7 @@ credentials:
       agent-remediation: {username: continuo_agent_remediation, existingSecret: "", key: password}
       dead-letter-controller: {username: continuo_dead_letter_controller, existingSecret: "", key: password}
 
-# project_name -> project root within that project's repo, read by
+# project_name -> the dbt project folder within that project's repository, read by
 # agent-remediation to locate a changed model's source before it proposes a fix.
 # Leave empty to use the chart's shipped demo map (files/project_repos.yaml),
 # which covers continuo's own tutorial projects so the walkthroughs work out of
@@ -408,7 +408,7 @@ credentials:
 # a production install maps only the projects it runs, so a demo entry can never
 # linger to mis-own a path. A project with no entry has its fix recorded as
 # unverifiable and its proposal skipped; an explicit empty value ("") maps a
-# project whose dbt project is the repository root. Restart agent-remediation
+# project whose dbt project folder is the repository root. Restart agent-remediation
 # after changing this. Example:
 #   projectRepos:
 #     analytics: analytics          # dbt project at the repo root

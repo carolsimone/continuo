@@ -15,7 +15,7 @@ def test_consume_once_dispatches_payload_and_acks():
         [(b"1700000000-0", {b"payload": json.dumps({
             "release_id": "rel-int",
             "manifest_keys": [
-                {"service": "service-1", "s3_uri": "s3://continuo/service-1/rel-int/manifest.json"},
+                {"project": "service-1", "s3_uri": "s3://continuo/service-1/rel-int/manifest.json"},
             ],
         }).encode()})],
     )]

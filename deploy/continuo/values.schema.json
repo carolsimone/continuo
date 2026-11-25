@@ -394,7 +394,7 @@
     "projectRepos": {
       "type": "object",
       "additionalProperties": {"type": "string"},
-      "description": "project_name -> project root within that project's repo, for agent-remediation source resolution. When non-empty it REPLACES the chart's shipped demo map (files/project_repos.yaml) so a production install maps only the projects it runs; empty/unset uses the demo map. An explicit empty-string value maps a project whose dbt project is the repository root. Optional and not in 'required': a --reuse-values upgrade from before this key omits it, and the demo map applies."
+      "description": "project_name -> the dbt project folder within that project's repository, for agent-remediation source resolution. When non-empty it REPLACES the chart's shipped demo map (files/project_repos.yaml) so a production install maps only the projects it runs; empty/unset uses the demo map. An explicit empty-string value maps a project whose dbt project folder is the repository root. Optional and not in 'required': a --reuse-values upgrade from before this key omits it, and the demo map applies."
     },
 
     "validation": {

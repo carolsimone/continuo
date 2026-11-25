@@ -189,10 +189,11 @@ a model inherits the project value and a model-level `timeout_minutes` replaces
 it; the other `meta` keys, such as `owner`, still come from the project.
 
 A python node declares it as the continuo property `timeoutMinutes` of its
-contract. This needs `continuo-python-runtime` 0.13.0 or later, the first
-release that reads `.odcs.yaml` files, in two places: the CLI that checks and
-packs the contracts, and the image base the project's nodes run in
-(`FROM ghcr.io/carolsimone/continuo-python-runtime-<engine>:v0.13.0` or later).
+contract. The image base the project's nodes run in reads it from
+`continuo-python-runtime` 0.13.0 on
+(`FROM ghcr.io/carolsimone/continuo-python-runtime-<engine>:v0.13.0` or later),
+and the CLI that checks and packs the contracts must be 0.15.0 or later, the
+first release whose contracts name their `project`.
 With an older image base, every run of every node of that project fails when it
 loads its contracts.
 
