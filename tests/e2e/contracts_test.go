@@ -42,7 +42,7 @@ const (
 	// topology-controller pins (topology-controller/pyproject.toml). That
 	// library reads and checks every contract of a release, and the release's
 	// parse result and contract bundle name it.
-	topologyContractsVersion = "0.4.1"
+	topologyContractsVersion = "0.5.0"
 
 	// dbtProbeTeam and dbtProbeSchedule are what service-1's dbt project
 	// (dbt/projects/service-1/dbt_project.yml) gives the rel_probe model: its

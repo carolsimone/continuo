@@ -22,7 +22,8 @@
 # the OLD runner instead of failing at all.
 #
 # This check extracts the full image ref from every location above and fails
-# unless they are all one identical string.
+# unless they are all one identical string. The python-node e2e fixture's base
+# image is checked apart: same image, at or above that string.
 #
 # Scope note: every hand-maintained location here only ever pins the
 # postgres engine (the default/e2e engine) as a bare `repo:tag` ref. The only
@@ -119,15 +120,6 @@ record "tests/e2e/provision-k8s-test-env.sh (kind load)" "${prov_refs[1]:-}"
 record "tests/e2e/k8s/execution-controller-deployment.yaml" \
   "$(extract_all_refs "${REPO_ROOT}/tests/e2e/k8s/execution-controller-deployment.yaml" | head -1)"
 
-# The python-node e2e fixture builds FROM the same merged runtime image the
-# validation Jobs run — one image serves both roles. It is a hand-maintained
-# pin like the rest, and it is the one that decides which base the python-node
-# path is actually exercised against: left behind, the e2e proves the harness
-# works on an older base while every other location moved on, and this guard
-# would still pass.
-record "tests/e2e/fixtures/py-probe/Dockerfile (FROM)" \
-  "$(extract_all_refs "${REPO_ROOT}/tests/e2e/fixtures/py-probe/Dockerfile" | head -1)"
-
 record "docker-compose.yml" \
   "$(extract_all_refs "${REPO_ROOT}/docker-compose.yml" | head -1)"
 
@@ -196,5 +188,30 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "Validation image pin OK: ${canonical} (${#refs[@]} locations)"
+# The python-node e2e fixture is a project's image: it builds FROM a runtime
+# image of the same repository and packs its contracts with that image's
+# runtime, which may be newer than the validation image (a runtime release can
+# change what `pack` writes before execution-controller sends the validation
+# image's new op names). Left behind, the e2e proves the harness on an older
+# base than every other location, so it may run ahead, never lag.
+probe_name="tests/e2e/fixtures/py-probe/Dockerfile (FROM)"
+probe_ref="$(extract_all_refs "${REPO_ROOT}/tests/e2e/fixtures/py-probe/Dockerfile" | head -1)"
+if [ -z "$probe_ref" ]; then
+  echo "check-validation-image-pin: no image ref found for ${probe_name}" >&2
+  exit 1
+fi
+probe_repo="${probe_ref%:*}"; probe_tag="${probe_ref##*:v}"
+canonical_repo="${canonical%:*}"; canonical_tag="${canonical##*:v}"
+canonical_tag="${canonical_tag%%@*}"
+if [ "$probe_repo" != "$canonical_repo" ]; then
+  echo "check-validation-image-pin: ${probe_name} builds FROM ${probe_ref}, another image than ${canonical}" >&2
+  exit 1
+fi
+if [ "$probe_tag" != "$canonical_tag" ] && \
+   [ "$(printf '%s\n%s\n' "$probe_tag" "$canonical_tag" | sort -V | head -1)" = "$probe_tag" ]; then
+  echo "check-validation-image-pin: ${probe_name} builds FROM ${probe_ref}, older than ${canonical}" >&2
+  exit 1
+fi
+
+echo "Validation image pin OK: ${canonical} (${#refs[@]} locations; py-probe fixture ${probe_ref})"
 exit 0

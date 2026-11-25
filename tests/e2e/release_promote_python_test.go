@@ -75,10 +75,10 @@ const (
 	// release, at <project>/<release_id>/odcs-bundle.json.
 	odcsBundleName = "odcs-bundle.json"
 	// pyBundleRuntime and pyBundleContracts are the producer versions a
-	// hand-built bundle names: continuo-python-runtime 0.14.0, the runtime the
-	// fixture image is built on, and the continuo-contracts 0.4.1 it carries.
-	pyBundleRuntime   = "0.14.0"
-	pyBundleContracts = "0.4.1"
+	// hand-built bundle names: continuo-python-runtime 0.15.0, the runtime the
+	// fixture image is built on, and the continuo-contracts 0.5.0 it carries.
+	pyBundleRuntime   = "0.15.0"
+	pyBundleContracts = "0.5.0"
 )
 
 // odcsBundle is the document a python-odcs project's CI uploads, as
@@ -175,7 +175,7 @@ func continuoProperties(t *testing.T, contractPath, text string) map[string]any 
 }
 
 // encodeODCSBundle writes the bundle of project holding nodes, in path order,
-// with the producer versions of a bundle runtime 0.14.0 packs.
+// with the producer versions of a bundle runtime 0.15.0 packs.
 func encodeODCSBundle(t *testing.T, project string, imagePackages map[string]string, nodes []odcsBundleNode) []byte {
 	t.Helper()
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Path < nodes[j].Path })
