@@ -25,11 +25,11 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 )
 
-// ErrUnknownService is returned by Begin when the requested owning-service group
+// ErrUnknownProject is returned by Begin when the requested owning-project group
 // is not one of the proposal's — a split proposal can only be claimed on a
-// service its edits actually attribute members to, and a legacy (unsplit)
+// project its edits actually attribute members to, and a legacy (unsplit)
 // proposal only on the "" whole-proposal group.
-var ErrUnknownService = errors.New("no edits for that service")
+var ErrUnknownProject = errors.New("no edits for that project")
 
 // ErrNoRepository is returned by Begin when the proposal records no
 // owner/name repository: there is nowhere to open a pull request, and a claim
@@ -39,9 +39,9 @@ var ErrNoRepository = errors.New("no repository recorded for this proposal")
 // RecordInput carries the data required to record a successfully opened PR.
 type RecordInput struct {
 	ProposalID string
-	// Service is the owning-service group this PR covers; "" is the legacy
+	// Project is the owning-project group this PR covers; "" is the legacy
 	// whole-proposal PR.
-	Service  string
+	Project  string
 	PrURL    string
 	PrNumber int
 	OpenedBy string
@@ -60,12 +60,12 @@ type Deps struct {
 	Repo   repository.ProposalRepository
 	NewUoW func() uow.UnitOfWork
 	Clock  ports.Clock
-	// ServiceRepoPaths maps a dbt service_name to its project root within the
+	// ProjectRepoPaths maps a dbt project_name to its project root within the
 	// repository. It is how the service splits a proposal's edits by owning
-	// service (PRServices) and narrows a per-service PR's resolved node set
-	// (resolvedForService). An empty map means every edit lands under the
+	// project (PRProjects) and narrows a per-project PR's resolved node set
+	// (resolvedForProject). An empty map means every edit lands under the
 	// legacy "" group — one PR for the whole proposal.
-	ServiceRepoPaths map[string]string
+	ProjectRepoPaths map[string]string
 }
 
 // Service is the PR-lifecycle application service. It coordinates proposal
@@ -74,7 +74,7 @@ type Service struct {
 	repo             repository.ProposalRepository
 	newUoW           func() uow.UnitOfWork
 	clock            ports.Clock
-	serviceRepoPaths map[string]string
+	projectRepoPaths map[string]string
 }
 
 // New constructs a Service from the provided Deps.
@@ -83,7 +83,7 @@ func New(d Deps) *Service {
 		repo:             d.Repo,
 		newUoW:           d.NewUoW,
 		clock:            d.Clock,
-		serviceRepoPaths: d.ServiceRepoPaths,
+		projectRepoPaths: d.ProjectRepoPaths,
 	}
 }
 
@@ -97,16 +97,16 @@ func (s *Service) Get(ctx context.Context, id string) (proposal.View, error) {
 	return s.repo.Get(ctx, id)
 }
 
-// PRServices returns the owning-service groups a proposal's pull requests split
+// PRProjects returns the owning-project groups a proposal's pull requests split
 // into, sorted. A proposal whose edits carry NO cluster members — one written
-// before the per-service split — is never split: it returns the single legacy
-// [""] group, so its per-service claim path is never entered and it keeps one
+// before the per-project split — is never split: it returns the single legacy
+// [""] group, so its per-project claim path is never entered and it keeps one
 // pull request for the whole proposal. Once at least one edit attributes
-// members, the groups are the sorted keys of GroupEditsByService, so each
-// owning service gets its own pull request — unless ServiceRepoPaths does not
+// members, the groups are the sorted keys of GroupEditsByProject, so each
+// owning project gets its own pull request — unless ProjectRepoPaths does not
 // cover every edit's path, in which case the whole proposal collapses back to
 // the single legacy group (see below).
-func (s *Service) PRServices(v proposal.View) []string {
+func (s *Service) PRProjects(v proposal.View) []string {
 	hasMembers := false
 	for _, e := range v.Edits {
 		if len(e.MemberNodeIDs) > 0 {
@@ -117,13 +117,13 @@ func (s *Service) PRServices(v proposal.View) []string {
 	if !hasMembers {
 		return []string{""}
 	}
-	groups := proposal.GroupEditsByService(s.serviceRepoPaths, v.Edits)
+	groups := proposal.GroupEditsByProject(s.projectRepoPaths, v.Edits)
 	if _, unmapped := groups[""]; unmapped && len(groups) > 1 {
 		// The "" key is overloaded: it means both "this proposal was never
 		// split" (handled above) and "this edit's path matched no configured
-		// service" (here). An unmapped edit alongside a mapped one would open
+		// project" (here). An unmapped edit alongside a mapped one would open
 		// a "" pull request — which the repository's claim path treats as the
-		// whole-proposal group, every edit included — next to a named-service
+		// whole-proposal group, every edit included — next to a named-project
 		// pull request holding only the mapped edit, so that edit would be
 		// claimed by both. Collapse to the single legacy group instead: one
 		// pull request, carrying every edit, is the safe degradation for an
@@ -138,51 +138,51 @@ func (s *Service) PRServices(v proposal.View) []string {
 	return keys
 }
 
-// resolvedForService is the failing-node set a per-service pull request names:
-// for a legacy "" claim it is the attempt's whole fixed set; for a real service
-// it is the members that service's edits attribute, intersected with the
+// resolvedForProject is the failing-node set a per-project pull request names:
+// for a legacy "" claim it is the attempt's whole fixed set; for a real project
+// it is the members that project's edits attribute, intersected with the
 // attempt's fixed set (nil fallback, so an edit written before the member codec
-// never lets one service claim nodes it did not touch). Both enqueuePROpened
+// never lets one project claim nodes it did not touch). Both enqueuePROpened
 // and enqueuePRClosed derive the resolved set through here, so pr_opened and
 // pr_closed name the same nodes as the claim the repository handed the caller.
-func (s *Service) resolvedForService(v proposal.View, service string) []string {
-	return resolvedNodesForService(s.serviceRepoPaths, v, service)
+func (s *Service) resolvedForProject(v proposal.View, project string) []string {
+	return resolvedNodesForProject(s.projectRepoPaths, v, project)
 }
 
-// resolvedNodesForService is the single implementation of the per-service
+// resolvedNodesForProject is the single implementation of the per-project
 // resolved-node subset, shared by the Service (pr_opened / pr_closed emission)
 // and the reconciler (which computes it directly from the View it loads when
 // mirroring a terminal outcome). Keeping one implementation guarantees
 // pr_opened and pr_closed name the same nodes however the outcome is recorded.
-func resolvedNodesForService(serviceRepoPaths map[string]string, v proposal.View, service string) []string {
-	if service == "" {
+func resolvedNodesForProject(projectRepoPaths map[string]string, v proposal.View, project string) []string {
+	if project == "" {
 		return v.FixedNodeIDs()
 	}
-	edits := proposal.GroupEditsByService(serviceRepoPaths, v.Edits)[service]
+	edits := proposal.GroupEditsByProject(projectRepoPaths, v.Edits)[project]
 	return proposal.IntersectSorted(proposal.MembersOfEdits(edits, nil), v.FixedNodeIDs())
 }
 
-// Begin atomically claims a proposal's per-service pull request for creation and
-// returns the data needed to open the GitHub pull-request. service selects which
-// owning-service group to claim ("" is the legacy whole-proposal group); it must
-// be one of PRServices(v), else ErrUnknownService. A proposal whose Repo is
+// Begin atomically claims a proposal's per-project pull request for creation and
+// returns the data needed to open the GitHub pull-request. project selects which
+// owning-project group to claim ("" is the legacy whole-proposal group); it must
+// be one of PRProjects(v), else ErrUnknownProject. A proposal whose Repo is
 // not owner/name is refused with ErrNoRepository before any write. It builds
-// the deterministic branch remediation/<release_id>/attempt<n>(/<service>
+// the deterministic branch remediation/<release_id>/attempt<n>(/<project>
 // when non-empty) before delegating to repo.BeginPR. The returned PRClaim
 // carries the computed Branch.
-func (s *Service) Begin(ctx context.Context, id, service string) (proposal.PRClaim, error) {
+func (s *Service) Begin(ctx context.Context, id, project string) (proposal.PRClaim, error) {
 	v, err := s.repo.Get(ctx, id)
 	if err != nil {
 		return proposal.PRClaim{}, fmt.Errorf("get proposal: %w", err)
 	}
-	if !slices.Contains(s.PRServices(v), service) {
-		return proposal.PRClaim{}, fmt.Errorf("%w: %q", ErrUnknownService, service)
+	if !slices.Contains(s.PRProjects(v), project) {
+		return proposal.PRClaim{}, fmt.Errorf("%w: %q", ErrUnknownProject, project)
 	}
 	if !strings.Contains(v.Repo, "/") {
 		return proposal.PRClaim{}, fmt.Errorf("%w: %q", ErrNoRepository, v.Repo)
 	}
-	branch := BuildBranch(v.ReleaseID, v.Attempt, service)
-	claim, err := s.repo.BeginPR(ctx, id, service, branch, s.clock.Now())
+	branch := BuildBranch(v.ReleaseID, v.Attempt, project)
+	claim, err := s.repo.BeginPR(ctx, id, project, branch, s.clock.Now())
 	if err != nil {
 		return proposal.PRClaim{}, fmt.Errorf("begin pr: %w", err)
 	}
@@ -191,7 +191,7 @@ func (s *Service) Begin(ctx context.Context, id, service string) (proposal.PRCla
 }
 
 // Record records a successfully opened PR inside a single transaction: it
-// calls RecordPR on the (proposal, service) child row and creates a
+// calls RecordPR on the (proposal, project) child row and creates a
 // remediation.pr_opened:v1 outbox entry atomically. The outbox entry ID is
 // deterministic so a re-emission of the same PR-opened fact dedups to one
 // downstream event. RecordPR's CAS guard makes this method itself idempotent:
@@ -220,7 +220,7 @@ func (s *Service) Record(ctx context.Context, in RecordInput) error {
 	}
 	defer func() { _ = u.Rollback() }()
 
-	hit, err := u.ProposalRepo().RecordPR(ctx, in.ProposalID, in.Service, in.PrURL, in.PrNumber, in.OpenedBy, openedAt)
+	hit, err := u.ProposalRepo().RecordPR(ctx, in.ProposalID, in.Project, in.PrURL, in.PrNumber, in.OpenedBy, openedAt)
 	if err != nil {
 		return fmt.Errorf("record pr: %w", err)
 	}
@@ -241,8 +241,8 @@ func (s *Service) Record(ctx context.Context, in RecordInput) error {
 // FailStuckClaim releases a stuck 'opening' claim back to 'failed', but only
 // if the row's pr_claimed_at still matches observedClaimedAt — the compare-
 // and-set guard that lets a caller release exactly the claim it itself
-// acquired or observed, never a fresher one taken by someone else since. service
-// selects which per-service child row to release. Two callers use this: the ui
+// acquired or observed, never a fresher one taken by someone else since. project
+// selects which per-project child row to release. Two callers use this: the ui
 // PR-creation route, immediately after its own Begin call in the same request,
 // when a downstream S3 or GitHub step fails — passing the ClaimedAt that Begin
 // returned; and the reconciler's opening sweep, passing the ClaimedAt it read
@@ -250,21 +250,21 @@ func (s *Service) Record(ctx context.Context, in RecordInput) error {
 // released and re-claimed between the caller's own claim/observation and this
 // call) is reported via hit=false rather than an error: neither caller may ever
 // overwrite a claim it does not currently hold.
-func (s *Service) FailStuckClaim(ctx context.Context, id, service string, observedClaimedAt time.Time) (bool, error) {
-	return s.repo.FailStuckOpeningPR(ctx, id, service, observedClaimedAt)
+func (s *Service) FailStuckClaim(ctx context.Context, id, project string, observedClaimedAt time.Time) (bool, error) {
+	return s.repo.FailStuckOpeningPR(ctx, id, project, observedClaimedAt)
 }
 
 // RecordOutcome mirrors a terminal PR outcome observed on GitHub onto the
-// (proposal, service) child row inside a single transaction: the pr_state CAS
+// (proposal, project) child row inside a single transaction: the pr_state CAS
 // 'open' -> outcome and the remediation.pr_closed:v1 outbox entry commit
 // together. A CAS miss (the row is no longer 'open') is an idempotent no-op:
 // nothing is written and no event is emitted, so repeated observers of the same
 // fact converge safely. edits carries this PR's per-file close detail (which
 // edits a human amended before merge) and resolved the failing-node subset the
 // PR fixes; both are threaded verbatim into the pr_closed payload. An empty
-// resolved falls back to the same per-service set pr_opened named, so the two
+// resolved falls back to the same per-project set pr_opened named, so the two
 // events always agree on which nodes the PR fixed.
-func (s *Service) RecordOutcome(ctx context.Context, id, service string, outcome proposal.PROutcome, closedAt time.Time, edits []event.ClosedEdit, resolved []string) error {
+func (s *Service) RecordOutcome(ctx context.Context, id, project string, outcome proposal.PROutcome, closedAt time.Time, edits []event.ClosedEdit, resolved []string) error {
 	v, err := s.repo.Get(ctx, id)
 	if err != nil {
 		return fmt.Errorf("get proposal: %w", err)
@@ -276,7 +276,7 @@ func (s *Service) RecordOutcome(ctx context.Context, id, service string, outcome
 	}
 	defer func() { _ = u.Rollback() }()
 
-	transitioned, err := u.ProposalRepo().RecordPROutcome(ctx, id, service, outcome, closedAt)
+	transitioned, err := u.ProposalRepo().RecordPROutcome(ctx, id, project, outcome, closedAt)
 	if err != nil {
 		return fmt.Errorf("record pr outcome: %w", err)
 	}
@@ -284,7 +284,7 @@ func (s *Service) RecordOutcome(ctx context.Context, id, service string, outcome
 		return nil
 	}
 
-	if err := s.enqueuePRClosed(ctx, u, v, service, outcome, closedAt, edits, resolved); err != nil {
+	if err := s.enqueuePRClosed(ctx, u, v, project, outcome, closedAt, edits, resolved); err != nil {
 		return err
 	}
 
@@ -299,20 +299,20 @@ func (s *Service) RecordOutcome(ctx context.Context, id, service string, outcome
 // names the nodes the PR actually fixed, not every node the attempt addressed:
 // a node the attempt skipped or failed carries no fix, so the pull request's
 // outcome says nothing about its rejection. The resolved subset the caller
-// passes is used verbatim; an empty one falls back to the per-service set,
+// passes is used verbatim; an empty one falls back to the per-project set,
 // matching pr_opened exactly.
-func (s *Service) enqueuePRClosed(ctx context.Context, u uow.UnitOfWork, v proposal.View, service string, outcome proposal.PROutcome, closedAt time.Time, edits []event.ClosedEdit, resolved []string) error {
+func (s *Service) enqueuePRClosed(ctx context.Context, u uow.UnitOfWork, v proposal.View, project string, outcome proposal.PROutcome, closedAt time.Time, edits []event.ClosedEdit, resolved []string) error {
 	if len(resolved) == 0 {
-		resolved = s.resolvedForService(v, service)
+		resolved = s.resolvedForProject(v, project)
 	}
-	prURL, prNumber := closingServicePR(v, service)
-	eventID := event.PRClosedEventID(v.ReleaseID, v.Attempt, service)
+	prURL, prNumber := closingProjectPR(v, project)
+	eventID := event.PRClosedEventID(v.ReleaseID, v.Attempt, project)
 	payload := event.PRClosed{
 		ProposalID:      v.ID,
 		ReleaseID:       v.ReleaseID,
 		NodeID:          v.NodeID,
 		ResolvedNodeIDs: resolved,
-		Service:         service,
+		Project:         project,
 		PrURL:           prURL,
 		PrNumber:        prNumber,
 		Outcome:         string(outcome),
@@ -335,14 +335,14 @@ func (s *Service) enqueuePRClosed(ctx context.Context, u uow.UnitOfWork, v propo
 	return u.OutboxRepo().Create(ctx, entry)
 }
 
-// closingServicePR is the URL and number of the pull request closing service
+// closingProjectPR is the URL and number of the pull request closing project
 // actually owns, read off v.PullRequests; it falls back to the View's
-// singular Pr* fields (the first child row — see applyChildPRs) when service
+// singular Pr* fields (the first child row — see applyChildPRs) when project
 // has no entry of its own, which is always true for a legacy (unsplit)
 // proposal.
-func closingServicePR(v proposal.View, service string) (string, int) {
+func closingProjectPR(v proposal.View, project string) (string, int) {
 	for _, pr := range v.PullRequests {
-		if pr.Service == service {
+		if pr.Project == project {
 			return pr.PrURL, pr.PrNumber
 		}
 	}
@@ -351,18 +351,18 @@ func closingServicePR(v proposal.View, service string) (string, int) {
 
 // enqueuePROpened builds the deterministic remediation.pr_opened:v1 outbox
 // entry and creates it on the repository bound to the caller's transaction. As
-// with pr_closed, it names only the nodes this per-service PR fixed.
+// with pr_closed, it names only the nodes this per-project PR fixed.
 // openedAt is the PR's actual creation time, which can be long before this
 // call: recovering a stranded PR through the opening sweep resolves it long
 // after GitHub created it.
 func (s *Service) enqueuePROpened(ctx context.Context, u uow.UnitOfWork, v proposal.View, in RecordInput, openedAt time.Time) error {
-	eventID := event.PROpenedEventID(v.ReleaseID, v.Attempt, in.Service)
+	eventID := event.PROpenedEventID(v.ReleaseID, v.Attempt, in.Project)
 	payload := event.PROpened{
 		ProposalID:      in.ProposalID,
 		ReleaseID:       v.ReleaseID,
 		NodeID:          v.NodeID,
-		ResolvedNodeIDs: s.resolvedForService(v, in.Service),
-		Service:         in.Service,
+		ResolvedNodeIDs: s.resolvedForProject(v, in.Project),
+		Project:         in.Project,
 		PrURL:           in.PrURL,
 		PrNumber:        in.PrNumber,
 		OpenedBy:        in.OpenedBy,
@@ -385,17 +385,17 @@ func (s *Service) enqueuePROpened(ctx context.Context, u uow.UnitOfWork, v propo
 }
 
 // BuildBranch returns the deterministic remediation branch name for a
-// proposal's release/attempt/service:
-// remediation/<release_id>/attempt<n>, with "/<service>" appended when service
-// is non-empty (a per-service PR of a split proposal). The legacy "" service —
-// one PR for the whole proposal — carries no service segment, so its branch is
+// proposal's release/attempt/project:
+// remediation/<release_id>/attempt<n>, with "/<project>" appended when project
+// is non-empty (a per-project PR of a split proposal). The legacy "" project —
+// one PR for the whole proposal — carries no project segment, so its branch is
 // exactly the pre-split name. Both Begin (computing the branch to claim) and the
 // reconciler's opening sweep (recomputing the same branch to look a stuck claim
 // up on GitHub) call this so the two never drift apart.
-func BuildBranch(releaseID string, attempt int, service string) string {
+func BuildBranch(releaseID string, attempt int, project string) string {
 	branch := fmt.Sprintf("remediation/%s/attempt%d", releaseID, attempt)
-	if service != "" {
-		branch += "/" + service
+	if project != "" {
+		branch += "/" + project
 	}
 	return branch
 }

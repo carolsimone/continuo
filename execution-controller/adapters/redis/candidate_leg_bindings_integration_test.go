@@ -40,7 +40,7 @@ func TestSeedBuildRequestedBinding_MarksDedupRowCompleted(t *testing.T) {
 		"release_id": releaseID,
 		"mode":       "seed_build",
 		"seeds": []map[string]any{{
-			"unique_id": "seed.shop.country_codes", "service_name": "shop", "node_type": "dbt-seed",
+			"unique_id": "seed.shop.country_codes", "project_name": "shop", "node_type": "dbt-seed",
 			"schema_name": "public", "table_name": "country_codes", "image_tag": "sha-seed",
 		}},
 		"seed_ids_in_order": []string{"seed.shop.country_codes"},
@@ -61,7 +61,7 @@ func TestCompileRequestedBinding_MarksDedupRowCompleted(t *testing.T) {
 		handlers.NewCompileRequestedHandler(logger), logger)
 	releaseID := "rel-compile-completed-1"
 	require.NoError(t, binding(context.Background(), payloadXMessage(t, "500-0", map[string]any{
-		"release_id": releaseID, "service": "finance", "image_tag": "sha-compile", "bucket": "continuo",
+		"release_id": releaseID, "project": "finance", "image_tag": "sha-compile", "bucket": "continuo",
 	})))
 	assert.Equal(t, 1, countRows(t, db,
 		`SELECT COUNT(*) FROM deployments WHERE mode = 'compile' AND release_id = $1`, releaseID))

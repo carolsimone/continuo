@@ -38,7 +38,7 @@ func NewGraphClient(addr string) (*GraphClient, error) {
 	return &GraphClient{client: catalogv1.NewCatalogQueryClient(conn)}, nil
 }
 
-// Locate returns the node's project-relative source path and owning service.
+// Locate returns the node's project-relative source path and owning project.
 // A NOT_FOUND response degrades to ("", "", nil); other gRPC errors are
 // returned to the caller.
 func (c *GraphClient) Locate(ctx context.Context, uniqueID string) (string, string, error) {
@@ -49,7 +49,7 @@ func (c *GraphClient) Locate(ctx context.Context, uniqueID string) (string, stri
 		}
 		return "", "", err
 	}
-	return resp.FilePath, resp.ServiceName, nil
+	return resp.FilePath, resp.ProjectName, nil
 }
 
 // UpstreamChanges returns the node's most-recently-changed ancestors with

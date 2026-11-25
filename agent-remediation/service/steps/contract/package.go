@@ -38,7 +38,7 @@ func (*ContractPackages) Meta() step.Meta {
 		Name: nameContractPackages,
 		Kind: step.KindCheck,
 		Description: "Packs the contract directory of the patched checkout into an odcs-bundle.json with the tool the team's own release CI runs, " +
-			"recording the package list of the rejected release's image of the service that image_packages read, and fails a draft the tool refuses. " +
+			"recording the package list of the rejected release's image of the project that image_packages read, and fails a draft the tool refuses. " +
 			"Provides the bundle a verification run is submitted with.",
 		Needs:    []remediation.EvidenceKey{remediation.KeyDraft, remediation.KeyContractFile, remediation.KeyImagePackages},
 		Provides: []remediation.EvidenceKey{remediation.KeyPackagedContract},
@@ -47,12 +47,12 @@ func (*ContractPackages) Meta() step.Meta {
 }
 
 // Check packs the contract directory of the patched checkout, resolving
-// scripts against the service's own directory, for the failing node's service,
-// with the package list of the rejected release's image of that service, which
+// scripts against the project's own directory, for the failing node's project,
+// with the package list of the rejected release's image of that project, which
 // the image_packages context step read once for the cluster. A cluster whose
 // context steps ran before image_packages was one of its type's steps has no
 // list in its evidence, so the check reads it itself; a release that records
-// none for the service is the check's error, saying why. The order is the
+// none for the project is the check's error, saying why. The order is the
 // whole point: packing the checkout before the answer is written to it would
 // produce, and verify, the contract that already failed.
 //
@@ -74,7 +74,7 @@ func (c *ContractPackages) Check(ctx context.Context, in step.CheckInput) (step.
 	f := in.Failure
 	packages, ok := remediation.Get[remediation.ImagePackages](in.Evidence, remediation.KeyImagePackages)
 	if !ok {
-		read, err := c.images.ImagePackages(ctx, f.Trigger.ReleaseID, f.Target.Service)
+		read, err := c.images.ImagePackages(ctx, f.Trigger.ReleaseID, f.Target.Project)
 		if err != nil {
 			return step.CheckOutput{}, fmt.Errorf("%s: read the image packages to pack %s with: %w", nameContractPackages, f.Target.NodeID, err)
 		}
@@ -83,7 +83,7 @@ func (c *ContractPackages) Check(ctx context.Context, in step.CheckInput) (step.
 	bundle, err := c.packager.Pack(ctx,
 		filepath.Join(root, filepath.FromSlash(file.ContractDir)),
 		filepath.Join(root, filepath.FromSlash(file.RepoRoot)),
-		f.Target.Service, c.dialect, packages)
+		f.Target.Project, c.dialect, packages)
 	if errors.Is(err, ports.ErrContractRejected) {
 		return result(nameContractPackages, []remediation.Finding{{
 			Code: "contract_rejected",

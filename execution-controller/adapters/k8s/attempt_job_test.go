@@ -27,7 +27,7 @@ func attemptSpec(nodeType pkg_model.NodeType, image string) deploy.JobSpec {
 	return deploy.JobSpec{
 		JobName: "service-1-e2e-schema-ftable-e-7f3e1a2b-r1", TaskID: "3e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a",
 		RunID: "7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b", ScheduleName: "e2e-schedule-failure",
-		ServiceName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_e",
+		ProjectName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_e",
 		NodeType: string(nodeType), ImageTag: image, Attempt: 1, TimeoutSeconds: 3600,
 	}
 }
@@ -192,7 +192,7 @@ func TestDeploy_AnUnknownExternalNodeIsInvalid(t *testing.T) {
 func TestDeployLegs_TheJobGetsTheInstallsTaskTimeout(t *testing.T) {
 	ctx := context.Background()
 	leg := deploy.ValidationJobSpec{
-		JobName: "validate-rel1-node", ReleaseID: "rel1", NodeID: "svc.sch.tbl", ServiceName: "svc", SchemaName: "sch",
+		JobName: "validate-rel1-node", ReleaseID: "rel1", NodeID: "svc.sch.tbl", ProjectName: "svc", SchemaName: "sch",
 		TableName: "tbl", NodeType: string(pkg_model.NodeTypeDbtModel), ImageTag: "img", CandidateSchema: "candidate_rel1",
 		CandidateArtifactURI: "s3://continuo/candidate-sql/rel1/svc.sch.tbl.sql", ManifestS3URI: "s3://continuo/manifests/svc/rel1/manifest.json",
 	}
@@ -225,7 +225,7 @@ func TestDeployLegs_TheJobGetsTheInstallsTaskTimeout(t *testing.T) {
 func seedJobParams() JobParams {
 	return JobParams{
 		JobName: "finance-analytics-seed-fx-rates-eur-5b2e8f10", TaskID: "a1c3e5f7-2b4d-4f60-8a1c-3e5f7b9d1a2c",
-		RunID: "5b2e8f10-3a4c-4d7e-9b61-0f8a2c4e6d13", ScheduleName: "seed", ServiceName: "finance",
+		RunID: "5b2e8f10-3a4c-4d7e-9b61-0f8a2c4e6d13", ScheduleName: "seed", ProjectName: "finance",
 		SchemaName: "analytics", TableName: "seed_fx_rates_eur", Namespace: "default",
 		NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "v42", Operation: pkg_model.OperationRun,
 	}

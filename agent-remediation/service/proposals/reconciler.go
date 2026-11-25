@@ -13,13 +13,13 @@ import (
 )
 
 // OutcomeRecorder is the Service slice the reconciler drives; the concrete
-// *Service satisfies it. service selects which per-service child PR the outcome
+// *Service satisfies it. project selects which per-project child PR the outcome
 // belongs to. edits and resolved carry the terminal-outcome detail the pr_closed
 // event names; the outcome-mirror pass leaves them empty (the amend compare that
 // fills them lands with the full close loop), and RecordOutcome falls back to
-// the per-service resolved set so pr_closed still matches pr_opened.
+// the per-project resolved set so pr_closed still matches pr_opened.
 type OutcomeRecorder interface {
-	RecordOutcome(ctx context.Context, id, service string, outcome proposal.PROutcome, closedAt time.Time, edits []event.ClosedEdit, resolved []string) error
+	RecordOutcome(ctx context.Context, id, project string, outcome proposal.PROutcome, closedAt time.Time, edits []event.ClosedEdit, resolved []string) error
 }
 
 // OpeningRecorder is the Service slice the opening sweep drives to record a
@@ -41,7 +41,7 @@ type Getter interface {
 // listed earlier in the same pass, never a fresher one taken by a re-claim in
 // between; hit reports whether the CAS fired.
 type PRFailer interface {
-	FailStuckClaim(ctx context.Context, id, service string, observedClaimedAt time.Time) (hit bool, err error)
+	FailStuckClaim(ctx context.Context, id, project string, observedClaimedAt time.Time) (hit bool, err error)
 }
 
 // defaultOpeningGracePeriod bounds how long a pr_state='opening' claim can go
@@ -64,13 +64,13 @@ type ReconcilerDeps struct {
 	// Getter loads the proposal View whose edits a closing PR's outcome names.
 	// Sources reads the merged file content at a merged PR's merge commit, and
 	// Evidence the proposal's stored proposed content and diff — together they
-	// drive the amend byte-compare that stamps each edit. ServiceRepoPaths splits
-	// a split proposal's edits by owning service, so a per-service PR compares
+	// drive the amend byte-compare that stamps each edit. ProjectRepoPaths splits
+	// a split proposal's edits by owning project, so a per-project PR compares
 	// and resolves only the files and nodes it owns.
 	Getter           Getter
 	Sources          ports.SourceReader
 	Evidence         ports.EvidenceReader
-	ServiceRepoPaths map[string]string
+	ProjectRepoPaths map[string]string
 	// Interval between reconcile passes; <=0 falls back to one minute.
 	Interval time.Duration
 	// BatchLimit caps the open-PR rows (and, for the opening sweep, the stuck
@@ -108,7 +108,7 @@ type Reconciler struct {
 	getter           Getter
 	sources          ports.SourceReader
 	evidence         ports.EvidenceReader
-	serviceRepoPaths map[string]string
+	projectRepoPaths map[string]string
 
 	openingLister      repository.OpeningLister
 	branchFinder       ports.PullRequestBranchFinder
@@ -153,7 +153,7 @@ func NewReconciler(d ReconcilerDeps) *Reconciler {
 		getter:             d.Getter,
 		sources:            d.Sources,
 		evidence:           d.Evidence,
-		serviceRepoPaths:   d.ServiceRepoPaths,
+		projectRepoPaths:   d.ProjectRepoPaths,
 		openingLister:      d.OpeningLister,
 		branchFinder:       d.BranchFinder,
 		openingRecorder:    d.OpeningRecorder,
@@ -230,21 +230,21 @@ func (r *Reconciler) reconcileOpen(ctx context.Context) (permissionDenied, clean
 		}
 
 		// Load the proposal so the pr_closed event names this PR's own edits and
-		// the exact per-service node subset it fixes — the same subset pr_opened
+		// the exact per-project node subset it fixes — the same subset pr_opened
 		// named. A read failure leaves the row 'open' for the next pass.
 		v, err := r.getter.Get(ctx, pr.ID)
 		if err != nil {
 			r.logger.Warn("pr reconciler: get proposal for close detail",
-				"proposal_id", pr.ID, "service", pr.Service, "error", err)
+				"proposal_id", pr.ID, "project", pr.Project, "error", err)
 			continue
 		}
-		// A split proposal's PR carries only its owning service's edits; the
+		// A split proposal's PR carries only its owning project's edits; the
 		// legacy "" PR carries the whole proposal's.
-		serviceEdits := v.Edits
-		if pr.Service != "" {
-			serviceEdits = proposal.GroupEditsByService(r.serviceRepoPaths, v.Edits)[pr.Service]
+		projectEdits := v.Edits
+		if pr.Project != "" {
+			projectEdits = proposal.GroupEditsByProject(r.projectRepoPaths, v.Edits)[pr.Project]
 		}
-		resolved := resolvedNodesForService(r.serviceRepoPaths, v, pr.Service)
+		resolved := resolvedNodesForProject(r.projectRepoPaths, v, pr.Project)
 
 		var closedEdits []event.ClosedEdit
 		if st.Merged {
@@ -253,23 +253,23 @@ func (r *Reconciler) reconcileOpen(ctx context.Context) (permissionDenied, clean
 			// error (other than a merged file that is simply gone, which IS an
 			// amendment) aborts the compare: leave the row 'open' and retry next
 			// pass rather than record an amend verdict computed from partial reads.
-			closedEdits, err = resolveClosedEdits(ctx, r.sources, r.evidence, pr.Repo, st.MergeCommitSHA, serviceEdits)
+			closedEdits, err = resolveClosedEdits(ctx, r.sources, r.evidence, pr.Repo, st.MergeCommitSHA, projectEdits)
 			if err != nil {
 				r.logger.Warn("pr reconciler: resolve amend detail",
-					"proposal_id", pr.ID, "service", pr.Service, "pr_number", pr.PRNumber, "error", err)
+					"proposal_id", pr.ID, "project", pr.Project, "pr_number", pr.PRNumber, "error", err)
 				continue
 			}
 		}
 		// A rejected PR skips the compare entirely: its edits never merged, so
 		// there is nothing to compare against — closedEdits stays empty while
 		// resolved still names the nodes the PR would have fixed.
-		if err := r.recorder.RecordOutcome(ctx, pr.ID, pr.Service, outcome, closedAt, closedEdits, resolved); err != nil {
+		if err := r.recorder.RecordOutcome(ctx, pr.ID, pr.Project, outcome, closedAt, closedEdits, resolved); err != nil {
 			r.logger.Warn("pr reconciler: record outcome",
-				"proposal_id", pr.ID, "service", pr.Service, "outcome", string(outcome), "error", err)
+				"proposal_id", pr.ID, "project", pr.Project, "outcome", string(outcome), "error", err)
 			continue
 		}
 		r.logger.Info("pr reconciler: proposal PR reached terminal outcome",
-			"proposal_id", pr.ID, "service", pr.Service, "repo", pr.Repo, "pr_number", pr.PRNumber, "outcome", string(outcome))
+			"proposal_id", pr.ID, "project", pr.Project, "repo", pr.Repo, "pr_number", pr.PRNumber, "outcome", string(outcome))
 	}
 	return permissionDenied, cleanRead
 }
@@ -314,7 +314,7 @@ func (r *Reconciler) sweepOpening(ctx context.Context) (permissionDenied, cleanR
 
 	now := r.clock.Now()
 	for _, o := range stuck {
-		branch := BuildBranch(o.ReleaseID, o.Attempt, o.Service)
+		branch := BuildBranch(o.ReleaseID, o.Attempt, o.Project)
 		ref, found, err := r.branchFinder.FindByBranch(ctx, o.Repo, branch)
 		if err != nil {
 			if errors.Is(err, ports.ErrInvalidRepo) {
@@ -335,7 +335,7 @@ func (r *Reconciler) sweepOpening(ctx context.Context) (permissionDenied, cleanR
 		if found {
 			if err := r.openingRecorder.Record(ctx, RecordInput{
 				ProposalID: o.ID,
-				Service:    o.Service,
+				Project:    o.Project,
 				PrURL:      ref.URL,
 				PrNumber:   ref.Number,
 				OpenedAt:   ref.CreatedAt,
@@ -362,7 +362,7 @@ func (r *Reconciler) sweepOpening(ctx context.Context) (permissionDenied, cleanR
 		if age < r.openingGracePeriod {
 			continue
 		}
-		hit, err := r.failer.FailStuckClaim(ctx, o.ID, o.Service, *o.ClaimedAt)
+		hit, err := r.failer.FailStuckClaim(ctx, o.ID, o.Project, *o.ClaimedAt)
 		if err != nil {
 			r.logger.Warn("pr reconciler: fail stuck opening claim",
 				"proposal_id", o.ID, "repo", o.Repo, "branch", branch, "error", err)
@@ -389,19 +389,19 @@ func (r *Reconciler) failInvalidRepoClaim(ctx context.Context, o proposal.Openin
 			"proposal_id", o.ID, "branch", branch)
 		return
 	}
-	hit, err := r.failer.FailStuckClaim(ctx, o.ID, o.Service, *o.ClaimedAt)
+	hit, err := r.failer.FailStuckClaim(ctx, o.ID, o.Project, *o.ClaimedAt)
 	if err != nil {
 		r.logger.Warn("pr reconciler: fail opening claim without repository",
-			"proposal_id", o.ID, "service", o.Service, "branch", branch, "error", err)
+			"proposal_id", o.ID, "project", o.Project, "branch", branch, "error", err)
 		return
 	}
 	if !hit {
 		r.logger.Info("pr reconciler: opening claim without repository was re-claimed before it could be failed; leaving the fresh claim untouched",
-			"proposal_id", o.ID, "service", o.Service, "branch", branch)
+			"proposal_id", o.ID, "project", o.Project, "branch", branch)
 		return
 	}
 	r.logger.Warn("pr reconciler: no repository recorded for this proposal's pull request; failed the claim",
-		"proposal_id", o.ID, "service", o.Service, "branch", branch)
+		"proposal_id", o.ID, "project", o.Project, "branch", branch)
 }
 
 // updateHealth reconciles the degraded flag from one pass. A permission error

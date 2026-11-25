@@ -27,7 +27,7 @@ type fixtureFile struct {
 	Flow               string                 `yaml:"flow"`
 	Scenario           string                 `yaml:"scenario"`
 	Trigger            triggerFile            `yaml:"trigger"`
-	ServiceRepoPaths   map[string]string      `yaml:"service_repo_paths"`
+	ProjectRepoPaths   map[string]string      `yaml:"project_repo_paths"`
 	RepoFiles          map[string]string      `yaml:"repo_files"`
 	Objects            map[string]string      `yaml:"objects"`
 	Bundle             map[string]bundleFile  `yaml:"bundle"`
@@ -60,9 +60,9 @@ type nodeFile struct {
 	DBTLogURI            string         `yaml:"dbt_log_uri"`
 	CandidateArtifactURI string         `yaml:"candidate_artifact_uri"`
 	FilePath             string         `yaml:"file_path"`
-	Service              string         `yaml:"service"`
+	Project              string         `yaml:"project"`
 	NodeType             string         `yaml:"node_type"`
-	OtherService         string         `yaml:"other_service"`
+	OtherProject         string         `yaml:"other_project"`
 	OtherFilePath        string         `yaml:"other_file_path"`
 	ChangedAncestors     []ancestorFile `yaml:"changed_ancestors"`
 	Unfixable            *unfixableFile `yaml:"unfixable"`
@@ -78,7 +78,7 @@ type unfixableFile struct {
 type ancestorFile struct {
 	NodeID   string `yaml:"node_id"`
 	FilePath string `yaml:"file_path"`
-	Service  string `yaml:"service"`
+	Project  string `yaml:"project"`
 	Depth    int    `yaml:"depth"`
 }
 
@@ -97,7 +97,7 @@ type catalogFile struct {
 
 type locationFile struct {
 	FilePath string `yaml:"file_path"`
-	Service  string `yaml:"service"`
+	Project  string `yaml:"project"`
 }
 
 type versionFile struct {
@@ -274,7 +274,7 @@ func (l *loader) loadFixture(file string, root *yaml.Node) (conformance.Fixture,
 		Flow:             f.Flow,
 		Scenario:         conformance.Scenario(f.Scenario),
 		Trigger:          f.Trigger.toDomain(),
-		ServiceRepoPaths: f.ServiceRepoPaths,
+		ProjectRepoPaths: f.ProjectRepoPaths,
 		RepoFiles:        f.RepoFiles,
 		Objects:          f.Objects,
 		Bundle:           bundleOf(f.Bundle),
@@ -491,9 +491,9 @@ func (t triggerFile) toDomain() remediation.Trigger {
 			DBTLogURI:            n.DBTLogURI,
 			CandidateArtifactURI: n.CandidateArtifactURI,
 			FilePath:             n.FilePath,
-			Service:              n.Service,
+			Project:              n.Project,
 			NodeType:             n.NodeType,
-			OtherService:         n.OtherService,
+			OtherProject:         n.OtherProject,
 			OtherFilePath:        n.OtherFilePath,
 		}
 		for _, a := range n.ChangedAncestors {

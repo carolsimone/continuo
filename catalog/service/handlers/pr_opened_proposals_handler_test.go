@@ -28,7 +28,7 @@ func prOpenedInput() domainEvent.PROpened {
 		PrNumber:   42,
 		OpenedBy:   "agent-remediation",
 		OpenedAt:   "2026-08-12T09:05:00Z",
-		Service:    "core",
+		Project:    "core",
 	}
 }
 
@@ -61,7 +61,7 @@ func TestProposalsHandler_RecordsProposal(t *testing.T) {
 	require.Len(t, repo.recordProposalPRs, 1)
 	pr := repo.recordProposalPRs[0]
 	assert.Equal(t, "prop-1", pr.ProposalID)
-	assert.Equal(t, "core", pr.Service)
+	assert.Equal(t, "core", pr.Project)
 	assert.Equal(t, "https://github.com/org/repo/pull/42", pr.PrURL)
 	assert.Equal(t, 42, pr.PrNumber)
 	assert.Equal(t, "open", pr.State)
@@ -152,7 +152,7 @@ func TestProposalsHandler_RecordsOneProposalPerResolvedNode(t *testing.T) {
 	require.Len(t, repo.recordProposalPRs, 2)
 	for _, pr := range repo.recordProposalPRs {
 		assert.Equal(t, "prop-1", pr.ProposalID)
-		assert.Equal(t, "core", pr.Service, "every resolved node shares the one PR's service")
+		assert.Equal(t, "core", pr.Project, "every resolved node shares the one PR's project")
 		assert.Equal(t, "https://github.com/org/repo/pull/42", pr.PrURL)
 		assert.Equal(t, 42, pr.PrNumber)
 		assert.Equal(t, "open", pr.State)

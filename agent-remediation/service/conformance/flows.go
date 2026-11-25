@@ -18,17 +18,17 @@ import (
 
 // The scenarios a flow runs through, each played by a flow fixture.
 const (
-	// FlowTwoTypesOneService: two clusters of two types fix one service.
-	FlowTwoTypesOneService Scenario = "two_types_one_service"
-	// FlowTwoServices: the try's edits change two services.
-	FlowTwoServices Scenario = "two_services"
+	// FlowTwoTypesOneProject: two clusters of two types fix one project.
+	FlowTwoTypesOneProject Scenario = "two_types_one_project"
+	// FlowTwoProjects: the try's edits change two projects.
+	FlowTwoProjects Scenario = "two_projects"
 	// FlowCrossClusterFails: two clusters edit one path in every try, so every
 	// try fails before the gate and the flow's tries are spent.
 	FlowCrossClusterFails Scenario = "cross_cluster_fails"
 	// FlowSharedUpstreamDeclines: a shared-upstream cluster declines.
 	FlowSharedUpstreamDeclines Scenario = "shared_upstream_declines"
-	// FlowCrossServiceDeclines: a cross-service cluster declines.
-	FlowCrossServiceDeclines Scenario = "cross_service_declines"
+	// FlowCrossProjectDeclines: a cross-project cluster declines.
+	FlowCrossProjectDeclines Scenario = "cross_project_declines"
 	// FlowNoType: a failure no type handles.
 	FlowNoType Scenario = "no_type"
 	// FlowUnfixable: the classifier marked the failing node unfixable.
@@ -39,8 +39,8 @@ const (
 
 // FlowScenarios is every scenario a flow runs through, in run order.
 func FlowScenarios() []Scenario {
-	return []Scenario{FlowTwoTypesOneService, FlowTwoServices, FlowCrossClusterFails, FlowSharedUpstreamDeclines,
-		FlowCrossServiceDeclines, FlowNoType, FlowUnfixable, FlowMaintenance}
+	return []Scenario{FlowTwoTypesOneProject, FlowTwoProjects, FlowCrossClusterFails, FlowSharedUpstreamDeclines,
+		FlowCrossProjectDeclines, FlowNoType, FlowUnfixable, FlowMaintenance}
 }
 
 // RunFlowScenarios runs the named flow through every flow scenario, each in a
@@ -121,7 +121,7 @@ func (sr *scenarioRun) expectFlow(files workflow.Set, f Fixture, sc Scenario) er
 	e := sr.expect(f.Trigger)
 	e.ended()
 	switch sc {
-	case FlowTwoTypesOneService:
+	case FlowTwoTypesOneProject:
 		as := e.attempts(proposal.StatusProposed)
 		var types []string
 		for _, c := range e.clustersOfTry1() {
@@ -133,14 +133,14 @@ func (sr *scenarioRun) expectFlow(files workflow.Set, f Fixture, sc Scenario) er
 		if len(as) == 1 {
 			e.that(len(as[0].Proposal.Edits) >= 2, "the verifying attempt carries %d edits, want one of each cluster", len(as[0].Proposal.Edits))
 			e.nodes(as[0], proposal.StatusProposed)
-			e.runsPerEditedService(as[0], f.ServiceRepoPaths)
+			e.runsPerEditedProject(as[0], f.ProjectRepoPaths)
 		}
 		e.runs(1)
 		e.noHandedOver()
-	case FlowTwoServices:
+	case FlowTwoProjects:
 		if as := e.attempts(proposal.StatusProposed); len(as) == 1 {
 			e.nodes(as[0], proposal.StatusProposed)
-			e.runsPerEditedService(as[0], f.ServiceRepoPaths)
+			e.runsPerEditedProject(as[0], f.ProjectRepoPaths)
 		}
 		e.runs(2)
 		e.noHandedOver()
@@ -158,8 +158,8 @@ func (sr *scenarioRun) expectFlow(files workflow.Set, f Fixture, sc Scenario) er
 		if c, ok := e.firstOfKind(workflow.ClusterSharedUpstream); ok {
 			e.membersRanTheirTypes(files, c)
 		}
-	case FlowCrossServiceDeclines:
-		c, ok := e.firstOfKind(workflow.ClusterCrossService)
+	case FlowCrossProjectDeclines:
+		c, ok := e.firstOfKind(workflow.ClusterCrossProject)
 		if as := e.attempts(proposal.StatusSkipped); ok && len(as) == 1 {
 			e.membersSkipped(c, as[0], model.HandoverReasonDeclined)
 		}

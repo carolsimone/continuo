@@ -475,7 +475,7 @@ func (r *Runner) recordAttempt(ctx context.Context, u uow.UnitOfWork, run tryRun
 	if len(p.ResolvedNodeIDs) == 0 {
 		p.ResolvedNodeIDs = t.NodeIDs()
 	}
-	p.Services = proposal.UnionServices(t.Services(), verificationServices(p.Verifications))
+	p.Projects = proposal.UnionProjects(t.Projects(), verificationProjects(p.Verifications))
 	p.NormalizeRepresentativeViews()
 	p.ErrorSignature = signatureFor(t, p.NodeID)
 	if err := u.ProposalRepo().Upsert(ctx, p); err != nil {
@@ -711,7 +711,7 @@ func generatingProposal(id uuid.UUID, t remediation.Trigger, attempt int, now ti
 		NodeOutcomes:     proposal.CleanedOutcomes(outcomes),
 		Attempt:          attempt,
 		Status:           proposal.StatusGenerating,
-		Services:         t.Services(),
+		Projects:         t.Projects(),
 		CreatedAt:        now,
 	}
 	p.NormalizeRepresentativeViews()
@@ -801,8 +801,8 @@ func fileName(file, name string) string {
 }
 
 // groupClusters partitions failing nodes of the trigger into fix targets. A
-// node broken by a change in another service is fixed at that changed
-// ancestor; nodes that fail the same way below one ancestor their own service
+// node broken by a change in another project is fixed at that changed
+// ancestor; nodes that fail the same way below one ancestor their own project
 // changed are fixed at that ancestor once; every other node is its own
 // cluster.
 func groupClusters(failing []remediation.TriggerNode) []typology.Cluster {
@@ -814,19 +814,19 @@ func groupClusters(failing []remediation.TriggerNode) []typology.Cluster {
 			ErrorSignature: n.ErrorSignature,
 			Category:       n.Category,
 			Reason:         n.Reason,
-			Service:        n.Service,
+			Project:        n.Project,
 			NodeType:       n.NodeType,
 		})
 		ancestors := make([]typology.ChangedAncestor, 0, len(n.ChangedAncestors))
 		for _, a := range n.ChangedAncestors {
-			ancestors = append(ancestors, typology.ChangedAncestor{NodeID: a.NodeID, Service: a.Service, Depth: a.Depth})
+			ancestors = append(ancestors, typology.ChangedAncestor{NodeID: a.NodeID, Project: a.Project, Depth: a.Depth})
 		}
 		dag.ChangedAncestorsByNode[n.NodeID] = ancestors
 	}
-	return coalesceUpstream(typology.Group(nodes, dag, typology.CrossServiceCause{}, typology.SharedUpstreamCause{}))
+	return coalesceUpstream(typology.Group(nodes, dag, typology.CrossProjectCause{}, typology.SharedUpstreamCause{}))
 }
 
-// coalesceUpstream merges upstream clusters (shared or cross-service) that name
+// coalesceUpstream merges upstream clusters (shared or cross-project) that name
 // the same fix target. Grouping partitions the failing set per error signature,
 // so one changed ancestor that broke its descendants in two different ways
 // yields one cluster per signature, both targeting that ancestor. Fixing them
@@ -856,11 +856,11 @@ func coalesceUpstream(clusters []typology.Cluster) []typology.Cluster {
 		merged := append(append([]string(nil), out[i].Members...), c.Members...)
 		sort.Strings(merged)
 		out[i].Members = merged
-		// A target reached across a service boundary by any member keeps the
-		// cross-service kind: its decline must never fall back to fixes in the
-		// members' own services.
-		if c.Kind == typology.KindCrossServiceUpstream {
-			out[i].Kind = typology.KindCrossServiceUpstream
+		// A target reached across a project boundary by any member keeps the
+		// cross-project kind: its decline must never fall back to fixes in the
+		// members' own projects.
+		if c.Kind == typology.KindCrossProjectUpstream {
+			out[i].Kind = typology.KindCrossProjectUpstream
 		}
 	}
 	return out
@@ -869,7 +869,7 @@ func coalesceUpstream(clusters []typology.Cluster) []typology.Cluster {
 // isUpstreamKind reports whether a cluster repairs a changed ancestor rather
 // than the failing node itself.
 func isUpstreamKind(k typology.Kind) bool {
-	return k == typology.KindSharedUpstream || k == typology.KindCrossServiceUpstream
+	return k == typology.KindSharedUpstream || k == typology.KindCrossProjectUpstream
 }
 
 // clusterKind is the flow's name for a grouping's cluster shape.
@@ -877,8 +877,8 @@ func clusterKind(k typology.Kind) workflow.ClusterKind {
 	switch k {
 	case typology.KindSharedUpstream:
 		return workflow.ClusterSharedUpstream
-	case typology.KindCrossServiceUpstream:
-		return workflow.ClusterCrossService
+	case typology.KindCrossProjectUpstream:
+		return workflow.ClusterCrossProject
 	default:
 		return workflow.ClusterSingle
 	}
@@ -912,11 +912,11 @@ func signatureFor(t remediation.Trigger, nodeID string) string {
 	return ""
 }
 
-// verificationServices is the services an attempt's verification runs cover.
-func verificationServices(vs []proposal.Verification) []string {
+// verificationProjects is the projects an attempt's verification runs cover.
+func verificationProjects(vs []proposal.Verification) []string {
 	out := make([]string, 0, len(vs))
 	for _, v := range vs {
-		out = append(out, v.Service)
+		out = append(out, v.Project)
 	}
 	return out
 }

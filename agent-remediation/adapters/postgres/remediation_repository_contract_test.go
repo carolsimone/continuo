@@ -1017,7 +1017,7 @@ func TestProposalRepository_MarkFixVerifiedRefusesAZeroVerified(t *testing.T) {
 			Source: "validation", ReleaseID: "rel-fix", RemediationID: r.ID.String(), NodeID: "model.a",
 			ResolvedNodeIDs: []string{"model.a"}, Attempt: 1, Status: proposal.StatusVerifying,
 			NodeOutcomes:  map[string]proposal.NodeOutcome{"model.a": {Status: proposal.StatusVerifying}},
-			Verifications: []proposal.Verification{{Service: "svc", Kind: "dbt", RunID: "run-1"}},
+			Verifications: []proposal.Verification{{Project: "svc", Kind: "dbt", RunID: "run-1"}},
 			CreatedAt:     contractBase,
 		}))
 		ids := env.proposalIDs(t)
@@ -1033,7 +1033,7 @@ func TestProposalRepository_MarkFixVerifiedRefusesAZeroVerified(t *testing.T) {
 
 		checked, err := remediation.NewChecked(remediation.Draft{}, nil)
 		require.NoError(t, err)
-		final := []proposal.Verification{{Service: "svc", Kind: "dbt", RunID: "run-1", Phase: proposal.PhasePassed}}
+		final := []proposal.Verification{{Project: "svc", Kind: "dbt", RunID: "run-1", Phase: proposal.PhasePassed}}
 		verified, err := remediation.NewVerified(id, []remediation.Checked{checked}, nil, final)
 		require.NoError(t, err)
 

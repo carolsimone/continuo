@@ -221,7 +221,7 @@ func TestRunner_PollGateEndsAStuckRemediationBeforeItReadsTheGate(t *testing.T) 
 			h.requireEndedAsStuck(id, tc.want, remediation.TryVerifying)
 			assert.Zero(t, h.pipeline.statusReads(), "the gate is not read")
 			assert.Empty(t, h.proposedEvents())
-			assert.Equal(t, []proposal.Verification{{Service: "svc-a", Kind: "dbt", RunID: svcARun1, Phase: proposal.PhaseQueued}},
+			assert.Equal(t, []proposal.Verification{{Project: "svc-a", Kind: "dbt", RunID: svcARun1, Phase: proposal.PhaseQueued}},
 				h.attempt(1).Proposal.Verifications, "the attempt row keeps the runs it recorded")
 		})
 	}

@@ -32,7 +32,7 @@ func validationNode(h *harness) remediation.TriggerNode {
 		ErrorSignature:       "sig-v",
 		Category:             "validation",
 		NodeType:             "dbt-model",
-		Service:              "svc-a",
+		Project:              "svc-a",
 		FilePath:             "models/orders.sql",
 		CandidateArtifactURI: candidateURI,
 	}

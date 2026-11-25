@@ -18,15 +18,15 @@
         "DBTLogURI": "s3://logs/dbt.log",
         "CandidateArtifactURI": "s3://candidate/orders_daily.sql",
         "FilePath": "models/orders_daily.sql",
-        "Service": "orders",
+        "Project": "orders",
         "NodeType": "model",
-        "OtherService": "billing",
+        "OtherProject": "billing",
         "OtherFilePath": "models/other.sql",
         "ChangedAncestors": [
           {
             "NodeID": "orders.model.stg_orders",
             "FilePath": "models/stg_orders.sql",
-            "Service": "orders",
+            "Project": "orders",
             "Depth": 1
           }
         ],
@@ -49,15 +49,15 @@
     "DBTLogURI": "s3://logs/dbt.log",
     "CandidateArtifactURI": "s3://candidate/orders_daily.sql",
     "FilePath": "models/orders_daily.sql",
-    "Service": "orders",
+    "Project": "orders",
     "NodeType": "model",
-    "OtherService": "billing",
+    "OtherProject": "billing",
     "OtherFilePath": "models/other.sql",
     "ChangedAncestors": [
       {
         "NodeID": "orders.model.stg_orders",
         "FilePath": "models/stg_orders.sql",
-        "Service": "orders",
+        "Project": "orders",
         "Depth": 1
       }
     ],
@@ -77,15 +77,15 @@
       "DBTLogURI": "s3://logs/dbt.log",
       "CandidateArtifactURI": "s3://candidate/orders_daily.sql",
       "FilePath": "models/orders_daily.sql",
-      "Service": "orders",
+      "Project": "orders",
       "NodeType": "model",
-      "OtherService": "billing",
+      "OtherProject": "billing",
       "OtherFilePath": "models/other.sql",
       "ChangedAncestors": [
         {
           "NodeID": "orders.model.stg_orders",
           "FilePath": "models/stg_orders.sql",
-          "Service": "orders",
+          "Project": "orders",
           "Depth": 1
         }
       ],

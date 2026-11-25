@@ -16,9 +16,9 @@ trigger:
       error_excerpt: "Error parsing seeds/ref.csv: expected 2 fields in line 2, saw 3"
       dbt_log_uri: s3://logs/rel-seed-1/analytics.ref.log
       file_path: seeds/ref.csv
-      service: svc
+      project: svc
       node_type: dbt-seed
-service_repo_paths:
+project_repo_paths:
   svc: services/svc
 repo_files:
   services/svc/seeds/ref.csv: "id,name\n1,a,b\n"
@@ -44,6 +44,6 @@ answers:
       model: claude-test
 # Neither the trigger nor the graph names the seed's csv file.
 decline_before_model:
-  node: { file_path: "", service: "" }
+  node: { file_path: "", project: "" }
 gate_errors:
   analytics.ref: "expected 2 fields in line 2, saw 3"

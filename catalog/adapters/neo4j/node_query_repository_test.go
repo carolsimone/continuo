@@ -37,7 +37,7 @@ func newTestQueryRepo(t *testing.T) (*neo4jinfra.NodeQueryRepository, neo4jinfra
 	return repo, client, cleanup
 }
 
-func TestGetNodeLocation_ReturnsPathAndService(t *testing.T) {
+func TestGetNodeLocation_ReturnsPathAndProject(t *testing.T) {
 	if testing.Short() {
 		t.Skip("requires Neo4j")
 	}
@@ -47,7 +47,7 @@ func TestGetNodeLocation_ReturnsPathAndService(t *testing.T) {
 
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
 	_, err := s.Run(ctx, `
-        CREATE (:Node {tenant_id: $tenant_id, unique_id:'analytics.loc_target', service_name:'service-1',
+        CREATE (:Node {tenant_id: $tenant_id, unique_id:'analytics.loc_target', project_name:'service-1',
                        schema_name:'analytics', table_name:'loc_target',
                        original_file_path:'models/loc_target.sql', active:true})
     `, map[string]any{"tenant_id": nodeQueryTenant})
@@ -57,7 +57,7 @@ func TestGetNodeLocation_ReturnsPathAndService(t *testing.T) {
 	loc, err := repo.GetNodeLocation(ctx, nodeQueryTenant, "analytics.loc_target")
 	require.NoError(t, err)
 	assert.Equal(t, "models/loc_target.sql", loc.FilePath)
-	assert.Equal(t, "service-1", loc.ServiceName)
+	assert.Equal(t, "service-1", loc.ProjectName)
 }
 
 func TestGetNodeLocation_UnknownNode_ErrNodeNotFound(t *testing.T) {

@@ -78,7 +78,7 @@ type CaseBaseRepository interface {
 	// already recorded.
 	RecordRejection(ctx context.Context, tenantID string, r casebase.Rejection) error
 	// RecordProposal upserts the proposal, its [:PROPOSED] edge, and the PR
-	// facts on the linked :PullRequest node (keyed by proposal_id + service).
+	// facts on the linked :PullRequest node (keyed by proposal_id + project).
 	RecordProposal(ctx context.Context, tenantID string, p casebase.Proposal, pr casebase.PullRequest) error
 	// RecordPullRequestOutcome stamps a fix PR's terminal state on its
 	// :PullRequest node and, on a merged outcome, draws the case-base

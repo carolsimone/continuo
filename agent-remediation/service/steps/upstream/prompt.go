@@ -14,15 +14,15 @@ import (
 // Prompt is the prompt step `upstream`: it asks the model for the corrected
 // source of the changed ancestor of an upstream cluster.
 type Prompt struct {
-	serviceRepoPaths map[string]string
+	projectRepoPaths map[string]string
 }
 
 var _ step.Prompt = (*Prompt)(nil)
 
-// NewPrompt builds the upstream step. serviceRepoPaths maps a service name to
+// NewPrompt builds the upstream step. projectRepoPaths maps a project name to
 // its path inside the repository. It calls no port until Propose.
-func NewPrompt(serviceRepoPaths map[string]string) *Prompt {
-	return &Prompt{serviceRepoPaths: serviceRepoPaths}
+func NewPrompt(projectRepoPaths map[string]string) *Prompt {
+	return &Prompt{projectRepoPaths: projectRepoPaths}
 }
 
 // Meta describes the step.
@@ -44,7 +44,7 @@ func (*Prompt) Meta() step.Meta {
 // Propose builds the request from the cluster's evidence, calls the model once
 // and reads its answer into a draft of one edit of the ancestor's file. The
 // edit's original is the ancestor's source as the evidence holds it. The edit's content may be empty
-// or equal to the original, for the checks to refuse. A cross-service cluster
+// or equal to the original, for the checks to refuse. A cross-project cluster
 // asks the model to keep what the members read. In a round after the first the
 // request is the revision of the last round's request with its answer and the
 // findings (step.RevisionRequest), and the answer is read the same way.
@@ -53,9 +53,9 @@ func (p *Prompt) Propose(ctx context.Context, in step.PromptInput, m step.Model)
 	if !ok {
 		return step.PromptOutput{}, fmt.Errorf("upstream: the evidence holds no upstream target")
 	}
-	fullPath, ok := repoPath(p.serviceRepoPaths, target)
+	fullPath, ok := repoPath(p.projectRepoPaths, target)
 	if !ok {
-		return step.PromptOutput{}, fmt.Errorf("upstream: service %q has no repository path mapping", target.Service)
+		return step.PromptOutput{}, fmt.Errorf("upstream: project %q has no repository path mapping", target.Project)
 	}
 	req, revising, err := step.RevisionRequest(in)
 	if err != nil {
@@ -95,7 +95,7 @@ func (p *Prompt) request(in step.PromptInput, target remediation.UpstreamTarget)
 	f := in.Failure
 	members := make([]prompt.MemberFailure, 0, len(f.Members))
 	for _, n := range f.Members {
-		members = append(members, prompt.MemberFailure{NodeID: n.NodeID, Service: n.Service, ErrorExcerpt: n.ErrorExcerpt})
+		members = append(members, prompt.MemberFailure{NodeID: n.NodeID, Project: n.Project, ErrorExcerpt: n.ErrorExcerpt})
 	}
 	return step.WithPreviousTries(prompt.AssembleUpstreamFix(prompt.UpstreamEvidence{
 		TargetNodeID:  target.NodeID,
@@ -103,13 +103,13 @@ func (p *Prompt) request(in step.PromptInput, target remediation.UpstreamTarget)
 		OwnChangeDiff: target.OwnChangeDiff,
 		Members:       members,
 		Precedents:    precedents,
-		CrossService:  f.Kind == workflow.ClusterCrossService,
+		CrossProject:  f.Kind == workflow.ClusterCrossProject,
 	}), in.Evidence)
 }
 
 // repoPath is where the ancestor's file lives in the repository.
-func repoPath(serviceRepoPaths map[string]string, t remediation.UpstreamTarget) (string, bool) {
-	prefix, ok := serviceRepoPaths[t.Service]
+func repoPath(projectRepoPaths map[string]string, t remediation.UpstreamTarget) (string, bool) {
+	prefix, ok := projectRepoPaths[t.Project]
 	if !ok {
 		return "", false
 	}

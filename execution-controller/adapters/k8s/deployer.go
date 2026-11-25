@@ -67,7 +67,7 @@ func jobParamsFromSpec(spec deploy.JobSpec, nodeType pkg_model.NodeType, namespa
 		TaskID:        spec.TaskID,
 		RunID:         spec.RunID,
 		ScheduleName:  spec.ScheduleName,
-		ServiceName:   spec.ServiceName,
+		ProjectName:   spec.ProjectName,
 		SchemaName:    spec.SchemaName,
 		TableName:     spec.TableName,
 		Namespace:     namespace,
@@ -93,7 +93,7 @@ func (d *Deployer) DeployValidation(ctx context.Context, spec deploy.ValidationJ
 		JobName:               spec.JobName,
 		ReleaseID:             spec.ReleaseID,
 		NodeID:                spec.NodeID,
-		ServiceName:           spec.ServiceName,
+		ProjectName:           spec.ProjectName,
 		SchemaName:            spec.SchemaName,
 		TableName:             spec.TableName,
 		NodeType:              nodeType,
@@ -122,7 +122,7 @@ func (d *Deployer) DeploySeedBuild(ctx context.Context, spec deploy.ValidationJo
 		JobName:               spec.JobName,
 		ReleaseID:             spec.ReleaseID,
 		NodeID:                spec.NodeID,
-		ServiceName:           spec.ServiceName,
+		ProjectName:           spec.ProjectName,
 		SchemaName:            spec.SchemaName,
 		TableName:             spec.TableName,
 		NodeType:              nodeType,
@@ -151,7 +151,7 @@ func (d *Deployer) DeployCompile(ctx context.Context, spec deploy.ValidationJobS
 // compileParamsFromSpec maps the domain ValidationJobSpec to K8s
 // ValidationJobParams for a compile Job. An unparseable node type is NOT an
 // error here — compile Jobs do not use NodeType (they compile the full
-// service manifest, not a single dbt node). We still forward the field for
+// project manifest, not a single dbt node). We still forward the field for
 // symmetry. Extracted from DeployCompile so the field-by-field mapping is
 // directly unit-testable without a K8s client.
 func compileParamsFromSpec(spec deploy.ValidationJobSpec, namespace string) (ValidationJobParams, error) {
@@ -167,7 +167,7 @@ func compileParamsFromSpec(spec deploy.ValidationJobSpec, namespace string) (Val
 		JobName:             spec.JobName,
 		ReleaseID:           spec.ReleaseID,
 		NodeID:              spec.NodeID,
-		ServiceName:         spec.ServiceName,
+		ProjectName:         spec.ProjectName,
 		NodeType:            nodeType,
 		ImageTag:            spec.ImageTag,
 		ManifestS3URI:       spec.ManifestS3URI,

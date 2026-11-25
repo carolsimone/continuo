@@ -14,9 +14,9 @@ type PROpened struct {
 	PrNumber        int
 	OpenedBy        string
 	OpenedAt        string // RFC3339
-	// Service is the service whose fix this PR carries. One PR always targets
-	// exactly one service, shared by every node in ResolvedNodeIDs.
-	Service string
+	// Project is the project whose fix this PR carries. One PR always targets
+	// exactly one project, shared by every node in ResolvedNodeIDs.
+	Project string
 }
 
 // ResolvedNodes returns the nodes the PR fixes: the resolved set when the

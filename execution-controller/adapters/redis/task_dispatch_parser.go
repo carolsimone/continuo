@@ -26,7 +26,7 @@ func ParseTaskDispatch(msg goredis.XMessage) (events.TaskDispatch, error) {
 	return events.TaskDispatch{
 		TenantID: env.TenantID, RunID: uuid.MustParse(p.RunID), TaskID: uuid.MustParse(p.TaskID), Attempt: int(p.Attempt),
 		KnownStatus: p.KnownStatus, ScheduleName: p.ScheduleName,
-		ServiceName: p.ServiceName, SchemaName: p.SchemaName, TableName: p.TableName,
+		ProjectName: p.ProjectName, SchemaName: p.SchemaName, TableName: p.TableName,
 		NodeType: p.NodeType, Operation: p.Operation, ImageTag: p.ImageTag, SecretRef: p.SecretRef,
 		JobName: p.JobName, TimeoutSeconds: p.TimeoutSeconds, ContentHash: p.ContentHash,
 		SeedPreflight: p.SeedPreflight.ToDomain(),

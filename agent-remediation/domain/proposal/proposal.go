@@ -71,7 +71,7 @@ type FileEdit struct {
 	TargetNodeID string
 	// MemberNodeIDs are the failing nodes this edit's cluster resolves; the
 	// pull-request split attributes a node to the PR that carries its fixing
-	// edit, so a per-service PR's resolved set is the union of its edits'
+	// edit, so a per-project PR's resolved set is the union of its edits'
 	// members. Empty on rows written before the split. Persistence is owned by
 	// the adapter's fileEditRow DTO, so this aggregate carries no wire tags.
 	MemberNodeIDs []string
@@ -123,12 +123,12 @@ func CleanedReason(reason string) string {
 }
 
 // Verification is one fix-verification run posted to judge the edits made to
-// a single service, and the durable summary of how it went. The summary
+// a single project, and the durable summary of how it went. The summary
 // outlives the run itself: release-controller prunes finished runs on its
 // retention window, and this is what still explains an old attempt after
 // that.
 type Verification struct {
-	Service string
+	Project string
 	Kind    string
 	RunID   string
 	// Phase is the run's last-read phase; "" on a row the gate poller has
@@ -161,9 +161,9 @@ func FailedRunReason(runs []Verification) string {
 	return fmt.Sprintf("verification run %s failed without a per-node error", failed.RunID)
 }
 
-// UnionServices merges service-name sets into one sorted, de-duplicated
+// UnionProjects merges project-name sets into one sorted, de-duplicated
 // slice with empty names dropped.
-func UnionServices(sets ...[]string) []string {
+func UnionProjects(sets ...[]string) []string {
 	seen := map[string]bool{}
 	for _, set := range sets {
 		for _, s := range set {
@@ -214,7 +214,7 @@ type Proposal struct {
 	// remediation settled at its end, fixed or handed over, one entry per node
 	// sorted by node id. It is empty for an attempt row that belongs to no remediation.
 	Approvers []Approver
-	// Verifications is one fix-verification run per edited service;
+	// Verifications is one fix-verification run per edited project;
 	// VerificationRunID is the view of the first.
 	Verifications []Verification
 	// VerificationRunID is the run id of the first verification — the
@@ -223,9 +223,9 @@ type Proposal struct {
 	// resolved row still names the run that judged it. Empty for an attempt
 	// that never entered verification.
 	VerificationRunID string
-	// Services is every service this attempt touched: the failing nodes'
-	// services plus the edited ones.
-	Services       []string
+	// Projects is every project this attempt touched: the failing nodes'
+	// projects plus the edited ones.
+	Projects       []string
 	Confidence     Confidence
 	Rationale      string
 	ProposedSQLURI string

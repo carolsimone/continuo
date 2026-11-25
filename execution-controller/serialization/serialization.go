@@ -20,7 +20,7 @@ type DeployTaskDTO struct {
 	TaskID         string `json:"task_id"`
 	RunID          string `json:"run_id"`
 	ScheduleName   string `json:"schedule_name"`
-	ServiceName    string `json:"service_name"`
+	ProjectName    string `json:"project_name"`
 	SchemaName     string `json:"schema_name"`
 	TableName      string `json:"table_name"`
 	JobName        string `json:"job_name"`
@@ -42,7 +42,7 @@ func DeployTaskFromDomain(c command.DeployTask) DeployTaskDTO {
 		TaskID:         c.TaskID,
 		RunID:          c.RunID,
 		ScheduleName:   c.ScheduleName,
-		ServiceName:    c.ServiceName,
+		ProjectName:    c.ProjectName,
 		SchemaName:     c.SchemaName,
 		TableName:      c.TableName,
 		JobName:        c.JobName,
@@ -63,7 +63,7 @@ func (d DeployTaskDTO) ToDomain() command.DeployTask {
 		TaskID:         d.TaskID,
 		RunID:          d.RunID,
 		ScheduleName:   d.ScheduleName,
-		ServiceName:    d.ServiceName,
+		ProjectName:    d.ProjectName,
 		SchemaName:     d.SchemaName,
 		TableName:      d.TableName,
 		JobName:        d.JobName,
@@ -84,7 +84,7 @@ func (d DeployTaskDTO) ToDomain() command.DeployTask {
 type ValidationDeployTaskDTO struct {
 	ReleaseID            string   `json:"release_id"`
 	NodeID               string   `json:"node_id"`
-	ServiceName          string   `json:"service_name"`
+	ProjectName          string   `json:"project_name"`
 	SchemaName           string   `json:"schema_name"`
 	TableName            string   `json:"table_name"`
 	NodeType             string   `json:"node_type"`
@@ -109,7 +109,7 @@ func ValidationDeployTaskFromDomain(c command.ValidationDeployTask) ValidationDe
 	return ValidationDeployTaskDTO{
 		ReleaseID:            c.ReleaseID,
 		NodeID:               c.NodeID,
-		ServiceName:          c.ServiceName,
+		ProjectName:          c.ProjectName,
 		SchemaName:           c.SchemaName,
 		TableName:            c.TableName,
 		NodeType:             c.NodeType,
@@ -133,7 +133,7 @@ func (d ValidationDeployTaskDTO) ToDomain() command.ValidationDeployTask {
 	return command.ValidationDeployTask{
 		ReleaseID:            d.ReleaseID,
 		NodeID:               d.NodeID,
-		ServiceName:          d.ServiceName,
+		ProjectName:          d.ProjectName,
 		SchemaName:           d.SchemaName,
 		TableName:            d.TableName,
 		NodeType:             d.NodeType,

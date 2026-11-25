@@ -52,16 +52,16 @@ type Text string
 type Bytes []byte
 
 // ImagePackages is the package list (package name to version) of the image a
-// service runs in the rejected release.
+// project runs in the rejected release.
 type ImagePackages map[string]string
 
-// SourceFiles is the source of the failing node's service: its files by name,
-// the order to show them in, the primary file and the owning service.
+// SourceFiles is the source of the failing node's project: its files by name,
+// the order to show them in, the primary file and the owning project.
 type SourceFiles struct {
 	Files   map[string]string
 	Order   []string
 	Primary string
-	Service string
+	Project string
 }
 
 // CandidateSource is a node's source read from the release's code bundle, with
@@ -70,7 +70,7 @@ type CandidateSource struct {
 	Source   string
 	Origin   string
 	FilePath string
-	Service  string
+	Project  string
 }
 
 // ContractFile is the ODCS contract file that declares a python node.
@@ -88,7 +88,7 @@ type UpstreamTarget struct {
 	NodeID        string
 	Source        string
 	FilePath      string
-	Service       string
+	Project       string
 	OwnChangeDiff string
 }
 

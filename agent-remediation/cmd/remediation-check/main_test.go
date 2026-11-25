@@ -416,7 +416,7 @@ preflight: [content_changed, confidence_not_low]
 // installedType added to the types it lists.
 func flowListingTheInstalledType(t *testing.T) string {
 	t.Helper()
-	const last = "  - cross-service-upstream\n"
+	const last = "  - cross-project-upstream\n"
 	flow := builtinText(t, "flows/rejected-release.yaml")
 	require.Contains(t, flow, last)
 	return strings.Replace(flow, last, last+"  - my-validation\n", 1)
@@ -561,7 +561,7 @@ func failedScenarios(r wireReport) []string {
 // the same flow and scenario, which replaces the built-in one.
 func TestFiles_AnInstallFlowThatDropsABuiltInTypeSkipsItsBuiltInFixture(t *testing.T) {
 	const skipped = "fixtures/types/dbt-validation.yaml: skipped, no loaded flow lists type dbt-validation"
-	flowFixtures := []string{"two-types-one-service.yaml", "two-services.yaml", "shared-upstream-declines.yaml"}
+	flowFixtures := []string{"two-types-one-project.yaml", "two-projects.yaml", "shared-upstream-declines.yaml"}
 
 	for name, tc := range map[string]struct {
 		fixtures []string
@@ -573,8 +573,8 @@ func TestFiles_AnInstallFlowThatDropsABuiltInTypeSkipsItsBuiltInFixture(t *testi
 		"without the install's flow fixtures the built-in flow fixtures fail": {
 			fixtures: []string{"shared-upstream.yaml"},
 			failed: []string{
-				"rejected-release two_types_one_service",
-				"rejected-release two_services",
+				"rejected-release two_types_one_project",
+				"rejected-release two_projects",
 				"rejected-release shared_upstream_declines",
 			},
 		},
@@ -718,7 +718,7 @@ func TestFiles_ASecondFlowIsPlayedAsItself(t *testing.T) {
 		assert.Empty(t, r.Errors)
 		assert.Equal(t, []string{"flow second-flow: no heal trigger runs it"}, r.Warnings)
 		failed := failedScenarios(r)
-		assert.Contains(t, failed, "second-flow two_types_one_service")
+		assert.Contains(t, failed, "second-flow two_types_one_project")
 		for _, f := range failed {
 			assert.True(t, strings.HasPrefix(f, "second-flow "), "only second-flow's scenarios fail: %s", f)
 		}

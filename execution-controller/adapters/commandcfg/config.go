@@ -51,7 +51,7 @@ type opSet struct {
 // fileConfig is the root dbt-commands.yaml document.
 type fileConfig struct {
 	Default  *opSet            `yaml:"default"`
-	Services map[string]*opSet `yaml:"services"`
+	Projects map[string]*opSet `yaml:"projects"`
 }
 
 // placeholderRe matches {{ name }} tokens inside argv elements, tolerating
@@ -60,7 +60,7 @@ var placeholderRe = regexp.MustCompile(`\{\{\s*([a-zA-Z_]+)\s*\}\}`)
 
 // missingKeys returns the required command keys this opSet does not define.
 // An empty result means the opSet is complete. Every configured block (the
-// default and each service override) must be complete so no dispatched job can
+// default and each project override) must be complete so no dispatched job can
 // fall through to a command the team's image cannot run. full_refresh and
 // seed_full_refresh are both optional and never reported.
 func (o *opSet) missingKeys() []string {

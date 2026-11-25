@@ -27,7 +27,7 @@ type validationRequestedDTO struct {
 
 type validationRequestedNode struct {
 	UniqueID             string   `json:"unique_id"`
-	ServiceName          string   `json:"service_name"`
+	ProjectName          string   `json:"project_name"`
 	NodeType             string   `json:"node_type"`
 	SchemaName           string   `json:"schema_name"`
 	TableName            string   `json:"table_name"`
@@ -78,8 +78,8 @@ func ParseValidationRequested(msg goredis.XMessage) (events.ValidationRequested,
 		case pkg_model.NodeType(n.NodeType).IsExternal():
 			return events.ValidationRequested{},
 				fmt.Errorf("node[%d] (%s) is an unknown-external node: nothing builds it", i, n.UniqueID)
-		case n.ServiceName == "":
-			return events.ValidationRequested{}, fmt.Errorf("node[%d] (%s) missing service_name", i, n.UniqueID)
+		case n.ProjectName == "":
+			return events.ValidationRequested{}, fmt.Errorf("node[%d] (%s) missing project_name", i, n.UniqueID)
 		case n.SchemaName == "":
 			return events.ValidationRequested{}, fmt.Errorf("node[%d] (%s) missing schema_name", i, n.UniqueID)
 		case n.TableName == "":
@@ -94,7 +94,7 @@ func ParseValidationRequested(msg goredis.XMessage) (events.ValidationRequested,
 		}
 		nodes = append(nodes, events.ValidationNode{
 			NodeID:      n.UniqueID,
-			ServiceName: n.ServiceName,
+			ProjectName: n.ProjectName,
 			SchemaName:  n.SchemaName,
 			// The validation Job builds or clones the relation dbt writes,
 			// while the seed-build Job and production tasks keep

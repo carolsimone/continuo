@@ -52,7 +52,7 @@ func versionedModel(uniqueID, hash string, upstreams ...string) topologyartifact
 		upstreams = []string{}
 	}
 	return topologyartifact.Node{
-		UniqueID: uniqueID, SchemaName: "analytics", TableName: uniqueID, ServiceName: "svc",
+		UniqueID: uniqueID, SchemaName: "analytics", TableName: uniqueID, ProjectName: "svc",
 		NodeType: "dbt-model", ContentHash: hash, ImageTag: "img", Schedule: "daily", UpstreamUniqueIDs: upstreams,
 	}
 }
@@ -192,7 +192,7 @@ func TestVersionsGroup_OutOfOrder(t *testing.T) {
 	require.NoError(t, g.versions.Handle(ctx, "r7-versions", nil, r7))
 	require.Equal(t, "sha256:a7", g.current(a))
 	r8 := g.release("r8", 8, versionedModel(a, "sha256:a8"), versionedModel(e, "sha256:e8", a),
-		topologyartifact.Node{UniqueID: "test.table_e_not_null", ServiceName: "svc", NodeType: "dbt-test", UpstreamUniqueIDs: []string{e}})
+		topologyartifact.Node{UniqueID: "test.table_e_not_null", ProjectName: "svc", NodeType: "dbt-test", UpstreamUniqueIDs: []string{e}})
 
 	// 1. The versions of r8 land before its swap.
 	require.NoError(t, g.versions.Handle(ctx, "r8-versions", nil, r8))

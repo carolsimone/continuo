@@ -22,7 +22,7 @@ type DeployTask struct {
 	TaskID       string
 	RunID        string
 	ScheduleName string
-	ServiceName  string
+	ProjectName  string
 	SchemaName   string
 	TableName    string
 	JobName      string
@@ -58,7 +58,7 @@ func (DeployTask) isCommand() {}
 // live here. The dispatcher branches on which command sits behind the
 // deployments row's mode column.
 //
-// UpstreamNodeIDs lists the dbt unique_ids of intra-service nodes that gate
+// UpstreamNodeIDs lists the dbt unique_ids of intra-project nodes that gate
 // dispatch of this node. It is persisted in job_params and read back by the
 // dispatcher to evaluate whether all upstreams have completed successfully.
 //
@@ -69,7 +69,7 @@ func (DeployTask) isCommand() {}
 type ValidationDeployTask struct {
 	ReleaseID            string
 	NodeID               string
-	ServiceName          string
+	ProjectName          string
 	SchemaName           string
 	TableName            string
 	NodeType             string
@@ -109,7 +109,7 @@ func (c DeployTask) ToJobSpec() deploy.JobSpec {
 		TaskID:         c.TaskID,
 		RunID:          c.RunID,
 		ScheduleName:   c.ScheduleName,
-		ServiceName:    c.ServiceName,
+		ProjectName:    c.ProjectName,
 		SchemaName:     c.SchemaName,
 		TableName:      c.TableName,
 		NodeType:       c.NodeType,
@@ -133,7 +133,7 @@ func (c ValidationDeployTask) ToValidationJobSpec() deploy.ValidationJobSpec {
 		JobName:              c.JobName,
 		ReleaseID:            c.ReleaseID,
 		NodeID:               c.NodeID,
-		ServiceName:          c.ServiceName,
+		ProjectName:          c.ProjectName,
 		SchemaName:           c.SchemaName,
 		TableName:            c.TableName,
 		NodeType:             c.NodeType,

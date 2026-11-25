@@ -22,10 +22,10 @@ Rules:
 // AssembleModelRename builds the request that renames one dbt model from
 // oldName to newName: the model's file, now at oldPath and moving to newPath,
 // and every other file of its project that names it.
-func AssembleModelRename(relation, otherService, otherFilePath, oldName, newName string, model NamedFile, newPath string, references []NamedFile, precedents []Precedent) ProposeRequest {
+func AssembleModelRename(relation, otherProject, otherFilePath, oldName, newName string, model NamedFile, newPath string, references []NamedFile, precedents []Precedent) ProposeRequest {
 	var u strings.Builder
 	fmt.Fprintf(&u, "Relation built twice: %s\n", relation)
-	fmt.Fprintf(&u, "Already built by: %s (%s)\n", otherService, otherFilePath)
+	fmt.Fprintf(&u, "Already built by: %s (%s)\n", otherProject, otherFilePath)
 	fmt.Fprintf(&u, "Rename the model %s to %s.\n\n", oldName, newName)
 	fmt.Fprintf(&u, "The model's file %s moves to %s:\n```\n%s\n```\n\n", model.Path, newPath, model.Content)
 	for _, f := range references {
@@ -60,10 +60,10 @@ Rules:
 // AssembleAliasChange builds the request that changes the alias that makes a
 // dbt model write relation, from oldAlias to newAlias: the model's file and
 // every other file of its project that names it.
-func AssembleAliasChange(relation, otherService, otherFilePath, oldAlias, newAlias string, model NamedFile, references []NamedFile, precedents []Precedent) ProposeRequest {
+func AssembleAliasChange(relation, otherProject, otherFilePath, oldAlias, newAlias string, model NamedFile, references []NamedFile, precedents []Precedent) ProposeRequest {
 	var u strings.Builder
 	fmt.Fprintf(&u, "Relation built twice: %s\n", relation)
-	fmt.Fprintf(&u, "Already built by: %s (%s)\n", otherService, otherFilePath)
+	fmt.Fprintf(&u, "Already built by: %s (%s)\n", otherProject, otherFilePath)
 	fmt.Fprintf(&u, "Change the model's alias from %s to %s.\n\n", oldAlias, newAlias)
 	fmt.Fprintf(&u, "The model's file %s:\n```\n%s\n```\n\n", model.Path, model.Content)
 	for _, f := range references {

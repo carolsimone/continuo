@@ -26,7 +26,7 @@ UNWIND $topology AS t
 MERGE (n:Node {tenant_id: $tenant_id, unique_id: t.unique_id})
 ON CREATE SET n.schema_name        = t.schema_name,
               n.table_name         = t.table_name,
-              n.service_name       = t.service_name,
+              n.project_name       = t.project_name,
               n.node_type          = t.node_type,
               n.content_hash       = t.content_hash,
               n.test_count         = t.test_count,

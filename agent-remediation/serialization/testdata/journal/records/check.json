@@ -24,7 +24,7 @@
         "models/orders_daily.sql"
       ],
       "Primary": "models/orders_daily.sql",
-      "Service": "orders"
+      "Project": "orders"
     }
   }
 }

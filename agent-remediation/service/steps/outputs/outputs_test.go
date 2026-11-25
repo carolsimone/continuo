@@ -36,8 +36,8 @@ func trigger() remediation.Trigger {
 		TenantID: "default", Source: "validation", ReleaseID: "rel-1", Round: 1,
 		Repo: "acme/dbt", CommitSHA: "abc123",
 		Nodes: []remediation.TriggerNode{
-			{NodeID: "model.b", ErrorSignature: "sig-b", Service: "sales"},
-			{NodeID: "model.a", ErrorSignature: "sig-a", Service: "finance"},
+			{NodeID: "model.b", ErrorSignature: "sig-b", Project: "sales"},
+			{NodeID: "model.a", ErrorSignature: "sig-a", Project: "finance"},
 		},
 	}
 }
@@ -60,12 +60,12 @@ func verifying(rem remediation.Remediation) proposal.Proposal {
 		NodeID: "model.a", ResolvedNodeIDs: []string{"model.a", "model.b"}, ErrorSignature: "sig-a",
 		Attempt: 1, Status: proposal.StatusVerifying,
 		NodeOutcomes:  map[string]proposal.NodeOutcome{"model.a": {Status: proposal.StatusVerifying}, "model.b": {Status: proposal.StatusVerifying}},
-		Verifications: []proposal.Verification{{Service: "sales", Kind: "dbt", RunID: "verify-rel-1-sales-a1", Phase: proposal.PhaseQueued}},
+		Verifications: []proposal.Verification{{Project: "sales", Kind: "dbt", RunID: "verify-rel-1-sales-a1", Phase: proposal.PhaseQueued}},
 		Confidence:    proposal.ConfidenceHigh, Rationale: "the column was renamed", Model: "model-x",
 		ProposedSQLURI: "s3://b/a.sql", DiffURI: "s3://b/a.diff", SourceResolved: true,
 		Edits: []proposal.FileEdit{
-			{Path: "dbt/services/sales/models/a.sql", ContentURI: "s3://b/a.sql", DiffURI: "s3://b/a.diff", TargetNodeID: "model.a"},
-			{Path: "dbt/services/finance/models/b.sql", ContentURI: "s3://b/b.sql", DiffURI: "s3://b/b.diff", TargetNodeID: "model.b"},
+			{Path: "dbt/projects/sales/models/a.sql", ContentURI: "s3://b/a.sql", DiffURI: "s3://b/a.diff", TargetNodeID: "model.a"},
+			{Path: "dbt/projects/finance/models/b.sql", ContentURI: "s3://b/b.sql", DiffURI: "s3://b/b.diff", TargetNodeID: "model.b"},
 		},
 		CreatedAt: now,
 	}
@@ -83,7 +83,7 @@ func verified(t *testing.T, proposalID string) remediation.Verified {
 	checked, err := remediation.NewChecked(remediation.Draft{}, nil)
 	require.NoError(t, err)
 	v, err := remediation.NewVerified(proposalID, []remediation.Checked{checked}, nil,
-		[]proposal.Verification{{Service: "sales", Kind: "dbt", RunID: "verify-rel-1-sales-a1", Phase: proposal.PhasePassed}})
+		[]proposal.Verification{{Project: "sales", Kind: "dbt", RunID: "verify-rel-1-sales-a1", Phase: proposal.PhasePassed}})
 	require.NoError(t, err)
 	return v
 }
@@ -165,8 +165,8 @@ func TestPullRequest_MarksTheFixVerifiedAndEnqueuesTheProposedEvent(t *testing.T
 		"proposed_sql_uri":  "s3://b/a.sql",
 		"diff_uri":          "s3://b/a.diff",
 		"edits": []any{
-			map[string]any{"path": "dbt/services/sales/models/a.sql", "content_uri": "s3://b/a.sql", "diff_uri": "s3://b/a.diff", "target_node_id": "model.a"},
-			map[string]any{"path": "dbt/services/finance/models/b.sql", "content_uri": "s3://b/b.sql", "diff_uri": "s3://b/b.diff", "target_node_id": "model.b"},
+			map[string]any{"path": "dbt/projects/sales/models/a.sql", "content_uri": "s3://b/a.sql", "diff_uri": "s3://b/a.diff", "target_node_id": "model.a"},
+			map[string]any{"path": "dbt/projects/finance/models/b.sql", "content_uri": "s3://b/b.sql", "diff_uri": "s3://b/b.diff", "target_node_id": "model.b"},
 		},
 		"rationale":       "the column was renamed",
 		"confidence":      "high",

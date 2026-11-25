@@ -232,9 +232,9 @@ func (v *validator) typ(t workflow.Type) {
 		v.refuse(t.Pos, "type %q has version %d, and only version %d is supported", t.Name, t.Version, workflow.SupportedVersion)
 	}
 	switch t.Match.Cluster {
-	case workflow.ClusterSingle, workflow.ClusterSharedUpstream, workflow.ClusterCrossService:
+	case workflow.ClusterSingle, workflow.ClusterSharedUpstream, workflow.ClusterCrossProject:
 	default:
-		v.refuse(t.Match.Pos, "type %q has match.cluster %q (single, shared_upstream or cross_service)", t.Name, t.Match.Cluster)
+		v.refuse(t.Match.Pos, "type %q has match.cluster %q (single, shared_upstream or cross_project)", t.Name, t.Match.Cluster)
 	}
 	if t.Match.NodeTypes != nil && len(t.Match.NodeTypes) == 0 {
 		v.refuse(t.Match.Pos, "type %q has an empty match.node_types, so it matches no node type", t.Name)

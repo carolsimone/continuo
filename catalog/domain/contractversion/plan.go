@@ -40,7 +40,7 @@ func Plan(p Promotion, in []Incoming, states map[string]NodeState) WritePlan {
 			UniqueID:       c.UniqueID,
 			ContractHash:   c.ContractHash,
 			Family:         c.Family,
-			Service:        c.Service,
+			Project:        c.Project,
 			FirstReleaseID: p.ReleaseID,
 			Document:       c.Document,
 		})

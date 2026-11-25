@@ -28,7 +28,7 @@ type JobParams struct {
 	TaskID       string
 	RunID        string
 	ScheduleName string // used for the schedule label
-	ServiceName  string
+	ProjectName  string
 	SchemaName   string
 	TableName    string
 	Namespace    string
@@ -91,7 +91,7 @@ func (l RateLimit) apply(rc *rest.Config) {
 // NewK8sClient creates a new K8sClient limited to limit.
 // Uses KUBECONFIG when set (local/docker-compose), otherwise falls back to
 // in-cluster config (K8s pod with a ServiceAccount). commands resolves the
-// per-service dbt command dialect for every Job this client builds, and every
+// per-project dbt command dialect for every Job this client builds, and every
 // task, validation, seed-build and compile Job it creates is deleted by
 // Kubernetes jobTTL after it finishes.
 func NewK8sClient(logger *slog.Logger, commands ports.CommandResolver, limit RateLimit, jobTTL time.Duration) (*K8sClient, error) {
@@ -124,7 +124,7 @@ func NewK8sClient(logger *slog.Logger, commands ports.CommandResolver, limit Rat
 }
 
 // NewK8sClientFor creates a K8sClient over clientset; commands resolves the
-// per-service dbt command dialect for every Job it builds, and every task,
+// per-project dbt command dialect for every Job it builds, and every task,
 // validation, seed-build and compile Job it creates carries jobTTL, in whole
 // seconds, as its TTLSecondsAfterFinished.
 func NewK8sClientFor(clientset kubernetes.Interface, logger *slog.Logger, commands ports.CommandResolver, jobTTL time.Duration) *K8sClient {

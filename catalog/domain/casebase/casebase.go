@@ -42,13 +42,13 @@ type Proposal struct {
 	NodeID     string
 }
 
-// PullRequest is the PR facts for one proposal's fix, scoped to the service
+// PullRequest is the PR facts for one proposal's fix, scoped to the project
 // the PR targets. A batched proposal resolves many nodes with one PR, so the
 // PR's facts are recorded once on this node — [:HAS_PR] from the shared
 // :Proposal — rather than duplicated per resolved node.
 type PullRequest struct {
 	ProposalID string
-	Service    string
+	Project    string
 	PrURL      string
 	PrNumber   int
 	State      string
@@ -69,7 +69,7 @@ type EditOutcome struct {
 }
 
 // PullRequestOutcome is one fix PR's terminal state, scoped to the owning
-// service. Outcome is "merged" or "rejected". On a merged outcome the case
+// project. Outcome is "merged" or "rejected". On a merged outcome the case
 // base draws provenance edges: [:RESOLVED_BY] from each resolved rejection to
 // the shared :Proposal, and [:EDITED] from that :Proposal to each edit's
 // :Node. A rejected outcome only stamps the :PullRequest's terminal state and
@@ -82,7 +82,7 @@ type EditOutcome struct {
 type PullRequestOutcome struct {
 	ProposalID      string
 	ReleaseID       string
-	Service         string
+	Project         string
 	Outcome         string
 	ClosedAt        time.Time
 	PrURL           string

@@ -31,7 +31,7 @@ func storedKPIs() map[string]any {
 		"description": map[string]any{"purpose": "Daily transaction count and total amount in EUR, rolled up from analytics.daily_transactions."},
 		"team":        map[string]any{"name": "service-py"},
 		"customProperties": []any{
-			customProperty("service", "service-py"),
+			customProperty("project", "service-py"),
 			customProperty("kind", "python-node"),
 			customProperty("schedule", "daily"),
 			customProperty("criticality", "SECONDARY"),

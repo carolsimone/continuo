@@ -5,46 +5,46 @@ import (
 	"strings"
 )
 
-// ServiceForPath resolves which configured service owns a repository path, and
-// returns that service's project root within the repo. The owner is the service
-// whose root is the longest prefix of the path, so a repo where one service's
-// root nests inside another's still resolves to the nearest one. A service
-// mapped to the repository root itself ("") owns any path no other service
-// claims. Ties between equally specific roots go to the smaller service name, so
+// ProjectForPath resolves which configured project owns a repository path, and
+// returns that project's root within the repo. The owner is the project
+// whose root is the longest prefix of the path, so a repo where one project's
+// root nests inside another's still resolves to the nearest one. A project
+// mapped to the repository root itself ("") owns any path no other project
+// claims. Ties between equally specific roots go to the smaller project name, so
 // the answer does not depend on map iteration order.
-func ServiceForPath(serviceRepoPaths map[string]string, filePath string) (service, prefix string, ok bool) {
+func ProjectForPath(projectRepoPaths map[string]string, filePath string) (project, prefix string, ok bool) {
 	best := -1
-	for name, root := range serviceRepoPaths {
+	for name, root := range projectRepoPaths {
 		if root != "" && !strings.HasPrefix(filePath, root+"/") {
 			continue
 		}
-		if len(root) < best || (len(root) == best && name >= service) {
+		if len(root) < best || (len(root) == best && name >= project) {
 			continue
 		}
-		service, prefix, best = name, root, len(root)
+		project, prefix, best = name, root, len(root)
 	}
-	return service, prefix, best >= 0
+	return project, prefix, best >= 0
 }
 
-// GroupEditsByService buckets edits by the service owning each path per
-// ServiceForPath. A path no service claims — or every path when the map is
+// GroupEditsByProject buckets edits by the project owning each path per
+// ProjectForPath. A path no project claims — or every path when the map is
 // empty — lands under the legacy "" key, which downstream code treats as
 // "one PR for the whole proposal".
-func GroupEditsByService(serviceRepoPaths map[string]string, edits []FileEdit) map[string][]FileEdit {
+func GroupEditsByProject(projectRepoPaths map[string]string, edits []FileEdit) map[string][]FileEdit {
 	groups := make(map[string][]FileEdit)
 	for _, e := range edits {
-		service, _, ok := ServiceForPath(serviceRepoPaths, e.Path)
+		project, _, ok := ProjectForPath(projectRepoPaths, e.Path)
 		if !ok {
-			service = ""
+			project = ""
 		}
-		groups[service] = append(groups[service], e)
+		groups[project] = append(groups[project], e)
 	}
 	return groups
 }
 
 // IntersectSorted returns the sorted intersection of members and fixed: the
-// members an attempt actually repaired. A per-service PR claims only the nodes
-// that service's edits address AND the attempt fixed, so a member the attempt
+// members an attempt actually repaired. A per-project PR claims only the nodes
+// that project's edits address AND the attempt fixed, so a member the attempt
 // skipped or failed is never claimed by a PR. Both inputs are treated as sets;
 // the result is sorted and free of duplicates.
 func IntersectSorted(members, fixed []string) []string {

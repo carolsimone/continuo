@@ -243,7 +243,7 @@ func (f *graphFixture) seedEveryLabel(tenantID, mark string) {
 	f.t.Helper()
 	utc := time.Date(2026, 10, 20, 9, 0, 0, 123456789, time.UTC)
 	f.exec(tenantID, `
-CREATE (a:Node {tenant_id: $tenant_id, unique_id: 'analytics.table_a', service_name: 'svc', schema_name: 'analytics',
+CREATE (a:Node {tenant_id: $tenant_id, unique_id: 'analytics.table_a', project_name: 'svc', schema_name: 'analytics',
   table_name: 'table_a', node_type: 'model', active: true, release_id: 'r7', code_version_promotion_seq: 7,
   tags: ['nightly', $mark], test_count: 2, mark: $mark})
 CREATE (b:Node {tenant_id: $tenant_id, unique_id: 'analytics.table_b', active: true, release_id: 'r7', code_version_promotion_seq: 7, mark: $mark})
@@ -264,8 +264,8 @@ CREATE (rej:Rejection {tenant_id: $tenant_id, release_id: 'r6', node_id: 'analyt
   category: 'compile', reason: 'syntax', at: $utc, error_excerpt: 'line 1\nline 2 – ünïcode', mark: $mark})
 CREATE (sig:ErrorSignature {tenant_id: $tenant_id, signature: 'sig-1', category: 'compile', reason: 'syntax', mark: $mark})
 CREATE (p:Proposal {tenant_id: $tenant_id, proposal_id: 'p1', status: 'opened', mark: $mark})
-CREATE (pra:PullRequest {tenant_id: $tenant_id, proposal_id: 'p1', service: 'svc-a', pr_number: 12, mark: $mark})
-CREATE (prb:PullRequest {tenant_id: $tenant_id, proposal_id: 'p1', service: 'svc-b', pr_number: 13, merged: false, mark: $mark})
+CREATE (pra:PullRequest {tenant_id: $tenant_id, proposal_id: 'p1', project: 'svc-a', pr_number: 12, mark: $mark})
+CREATE (prb:PullRequest {tenant_id: $tenant_id, proposal_id: 'p1', project: 'svc-b', pr_number: 13, merged: false, mark: $mark})
 CREATE (pm:ProcessedMessage {tenant_id: $tenant_id, group: $group, message_id: '1762077600000-0',
   outbox_entry_id: $outbox_entry_id, processed_at: datetime(), mark: $mark})
 CREATE (a)-[:CURRENT {promoted_at: $utc, release_id: 'r7'}]->(va2)
@@ -278,22 +278,22 @@ CREATE (x)-[:DEPENDS_ON]->(b)
 CREATE (va1)-[:USES_CODE]->(cuv)
 CREATE (va2)-[:USES_CODE]->(cuv)
 CREATE (rej)-[:RESOLVED_BY]->(va2)
-CREATE (rej)-[:RESOLVED_BY {service: 'svc-a'}]->(p)
+CREATE (rej)-[:RESOLVED_BY {project: 'svc-a'}]->(p)
 CREATE (rej)-[:HAS_SIGNATURE]->(sig)
 CREATE (d)-[:FAILED {at: $utc}]->(rej)
 CREATE (rej)-[:PROPOSED]->(p)
 CREATE (p)-[:HAS_PR]->(pra)
 CREATE (p)-[:HAS_PR]->(prb)
-CREATE (p)-[:EDITED {service: 'svc-a', merged_at: $utc}]->(a)
-CREATE (p)-[:EDITED {service: 'svc-b'}]->(a)
-CREATE (p)-[:EDITED {service: 'svc-a'}]->(d)
+CREATE (p)-[:EDITED {project: 'svc-a', merged_at: $utc}]->(a)
+CREATE (p)-[:EDITED {project: 'svc-b'}]->(a)
+CREATE (p)-[:EDITED {project: 'svc-a'}]->(d)
 CREATE (p)-[:EDITED]->(x)
 CREATE (ka:ContractVersion {tenant_id: $tenant_id, unique_id: 'analytics.table_a', contract_hash: 'k1', family: 'python',
-  service: 'svc', first_release_id: 'r5', document: '{"id":"analytics.table_a","team":{"name":"ü"}}', mark: $mark})
+  project: 'svc', first_release_id: 'r5', document: '{"id":"analytics.table_a","team":{"name":"ü"}}', mark: $mark})
 CREATE (kb:ContractVersion {tenant_id: $tenant_id, unique_id: 'analytics.table_a', contract_hash: 'k2', family: 'python',
-  service: 'svc', first_release_id: 'r6', document: '{"id":"analytics.table_a"}', mark: $mark})
+  project: 'svc', first_release_id: 'r6', document: '{"id":"analytics.table_a"}', mark: $mark})
 CREATE (kd:ContractVersion {tenant_id: $tenant_id, unique_id: 'analytics.table_d', contract_hash: 'k1', family: 'python',
-  service: 'svc', first_release_id: 'r6', document: '{"id":"analytics.table_d"}', mark: $mark})
+  project: 'svc', first_release_id: 'r6', document: '{"id":"analytics.table_d"}', mark: $mark})
 CREATE (a)-[:CONTRACT_PROMOTED {version: 1, promotion_seq: 5, release_id: 'r5', promoted_at: $utc, content_hash: 'h1',
   continuo_contracts: '0.2.0', source_path: 'contracts/a.odcs.yaml'}]->(ka)
 CREATE (a)-[:CONTRACT_PROMOTED {version: 2, promotion_seq: 6, release_id: 'r6', promoted_at: $utc, content_hash: 'h2',

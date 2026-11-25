@@ -41,7 +41,7 @@ func TestFailLegacyInFlight_FailsRowsWithNoRemediation(t *testing.T) {
 		}
 
 		edits := []proposal.FileEdit{{Path: "models/a.sql", ContentURI: "s3://c", DiffURI: "s3://d", TargetNodeID: "model.a", MemberNodeIDs: []string{"model.a"}}}
-		runs := []proposal.Verification{{Service: "svc", Kind: "dbt", RunID: "run-1", Phase: proposal.PhaseQueued}}
+		runs := []proposal.Verification{{Project: "svc", Kind: "dbt", RunID: "run-1", Phase: proposal.PhaseQueued}}
 
 		// A row with no remediation in verification: a fix under check.
 		require.NoError(t, env.proposals.Upsert(ctx, proposal.Proposal{

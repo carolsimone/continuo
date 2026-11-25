@@ -195,7 +195,7 @@ func main() {
 	liveReg.AddProbe("redis", 5*time.Second, func(ctx context.Context) error { return redisClient.Ping(ctx).Err() })
 	metricsReg.WatchRedis(redisClient)
 
-	// dbt command dialect, resolved per service at Job-build time. A missing
+	// dbt command dialect, resolved per project at Job-build time. A missing
 	// file means built-in plain-dbt commands; an invalid file is fatal.
 	cmdResolver, err := commandcfg.Load(os.Getenv("DBT_COMMANDS_CONFIG_PATH"), logger)
 	if err != nil {

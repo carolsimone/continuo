@@ -72,7 +72,7 @@ func (r *recordingOutbox) Create(_ context.Context, e *outbox.Entry) error {
 // own, so the dispatcher requests no second Job.
 func TestTaskDispatch_ALostInsertRaceResendsTheStoredReport(t *testing.T) {
 	evt := events.TaskDispatch{TenantID: "default", RunID: uuid.New(), TaskID: uuid.New(), Attempt: 0,
-		KnownStatus: pkgmodel.AttemptStatusDispatched, ScheduleName: "daily", ServiceName: "svc", SchemaName: "sch",
+		KnownStatus: pkgmodel.AttemptStatusDispatched, ScheduleName: "daily", ProjectName: "svc", SchemaName: "sch",
 		TableName: "tbl", NodeType: "dbt-model", Operation: "run", ImageTag: "svc:1",
 		JobName: "svc-sch-tbl-7f3e1a2b", TimeoutSeconds: 3600}
 	cmd := evt.Command()
@@ -119,7 +119,7 @@ func (l *liveJobs) ObserveLive(context.Context, string) (model.JobObservation, e
 // knows as running.
 func acknowledgedDispatch() events.TaskDispatch {
 	return events.TaskDispatch{TenantID: "default", RunID: uuid.New(), TaskID: uuid.New(), Attempt: 1,
-		KnownStatus: pkgmodel.AttemptStatusRunning, ScheduleName: "daily", ServiceName: "svc", SchemaName: "sch",
+		KnownStatus: pkgmodel.AttemptStatusRunning, ScheduleName: "daily", ProjectName: "svc", SchemaName: "sch",
 		TableName: "tbl", NodeType: "dbt-model", Operation: "run", ImageTag: "svc:1",
 		JobName: "svc-sch-tbl-7f3e1a2b-r1", TimeoutSeconds: 3600}
 }
@@ -293,11 +293,11 @@ func TestTaskDispatch_StoresTheDispatchsTenant(t *testing.T) {
 }
 
 // fullRefreshDispatch is a new dispatch of a full refresh of a node of
-// nodeType in the finance service.
+// nodeType in the finance project.
 func fullRefreshDispatch(nodeType pkgmodel.NodeType) events.TaskDispatch {
 	evt := acknowledgedDispatch()
 	evt.KnownStatus = pkgmodel.AttemptStatusDispatched
-	evt.ServiceName, evt.NodeType, evt.Operation = "finance", string(nodeType), string(pkgmodel.OperationFullRefresh)
+	evt.ProjectName, evt.NodeType, evt.Operation = "finance", string(nodeType), string(pkgmodel.OperationFullRefresh)
 	return evt
 }
 
@@ -311,8 +311,8 @@ func TestTaskDispatchHandler_RefusesAFullRefreshWhoseBlockLacksTheCommand(t *tes
 		reason  pkgmodel.FailureReason
 		message string
 	}{
-		pkgmodel.NodeTypeDbtSeed:  {pkgmodel.FailureReasonSeedFullRefreshUndefined, "dbt-commands services.finance defines no seed_full_refresh command"},
-		pkgmodel.NodeTypeDbtModel: {pkgmodel.FailureReasonFullRefreshUndefined, "dbt-commands services.finance defines no full_refresh command"},
+		pkgmodel.NodeTypeDbtSeed:  {pkgmodel.FailureReasonSeedFullRefreshUndefined, "dbt-commands projects.finance defines no seed_full_refresh command"},
+		pkgmodel.NodeTypeDbtModel: {pkgmodel.FailureReasonFullRefreshUndefined, "dbt-commands projects.finance defines no full_refresh command"},
 	} {
 		t.Run(string(nodeType), func(t *testing.T) {
 			evt := fullRefreshDispatch(nodeType)

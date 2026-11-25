@@ -88,7 +88,7 @@ func TestNormalizeSingleFileView_EmptyFirstEditPathLeavesScalarsAlone(t *testing
 func TestNormalizeRepresentativeViews_FillsNodeIDAndVerificationRunIDFromBatchFields(t *testing.T) {
 	p := Proposal{
 		ResolvedNodeIDs: []string{"s.b", "s.a"},
-		Verifications:   []Verification{{Service: "svc", Kind: "dbt", RunID: "verify-r-svc-a1"}},
+		Verifications:   []Verification{{Project: "svc", Kind: "dbt", RunID: "verify-r-svc-a1"}},
 		Edits:           []FileEdit{{Path: "services/svc/models/u.sql", ContentURI: "s3://c", DiffURI: "s3://d", TargetNodeID: "s.u"}},
 	}
 	p.NormalizeRepresentativeViews()
@@ -106,18 +106,18 @@ func TestNormalizeRepresentativeViews_FillsNodeIDAndVerificationRunIDFromBatchFi
 	}
 }
 
-// TestUnionServices_SortsDedupesAndDropsEmpty verifies that UnionServices
-// merges several service-name sets into one sorted, de-duplicated slice, with
-// empty names dropped rather than merged in as a service.
-func TestUnionServices_SortsDedupesAndDropsEmpty(t *testing.T) {
-	got := UnionServices([]string{"ops", ""}, []string{"core"}, nil, []string{"core", "ops"})
+// TestUnionProjects_SortsDedupesAndDropsEmpty verifies that UnionProjects
+// merges several project-name sets into one sorted, de-duplicated slice, with
+// empty names dropped rather than merged in as a project.
+func TestUnionProjects_SortsDedupesAndDropsEmpty(t *testing.T) {
+	got := UnionProjects([]string{"ops", ""}, []string{"core"}, nil, []string{"core", "ops"})
 	want := []string{"core", "ops"}
 	if len(got) != len(want) {
-		t.Fatalf("UnionServices = %v, want %v", got, want)
+		t.Fatalf("UnionProjects = %v, want %v", got, want)
 	}
 	for i := range want {
 		if got[i] != want[i] {
-			t.Fatalf("UnionServices = %v, want %v", got, want)
+			t.Fatalf("UnionProjects = %v, want %v", got, want)
 		}
 	}
 }

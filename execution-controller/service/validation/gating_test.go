@@ -130,7 +130,7 @@ func validationNode(t *testing.T, releaseID, nodeID string, status model.Status,
 	cmd := command.ValidationDeployTask{
 		ReleaseID:       releaseID,
 		NodeID:          nodeID,
-		ServiceName:     "dbt",
+		ProjectName:     "dbt",
 		SchemaName:      "public",
 		TableName:       nodeID,
 		NodeType:        "dbt-model",

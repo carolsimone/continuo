@@ -103,8 +103,8 @@ func TestRunner_ClassifierInfra(t *testing.T) {
 func TestRunner_ClassifierUnhealableParse(t *testing.T) {
 	const detail = "the parser refuses a construct no edit of the source avoids"
 	h := newHarness(t, withMaintenance())
-	broken := remediation.TriggerNode{NodeID: "model.sales.orders", ErrorSignature: "sig-o", NodeType: "dbt-model", Service: "svc-a", FilePath: "models/orders.sql"}
-	other := remediation.TriggerNode{NodeID: "model.sales.items", ErrorSignature: "sig-i", NodeType: "dbt-model", Service: "svc-a", FilePath: "models/items.sql"}
+	broken := remediation.TriggerNode{NodeID: "model.sales.orders", ErrorSignature: "sig-o", NodeType: "dbt-model", Project: "svc-a", FilePath: "models/orders.sql"}
+	other := remediation.TriggerNode{NodeID: "model.sales.items", ErrorSignature: "sig-i", NodeType: "dbt-model", Project: "svc-a", FilePath: "models/items.sql"}
 	id := h.accept(trigger("parse", unfixable(broken, model.HandoverReasonClassifierUnhealableParse, detail), other))
 
 	require.NoError(t, h.runner.Drive(ctx, id))
@@ -121,8 +121,8 @@ func TestRunner_ClassifierUnhealableParse(t *testing.T) {
 
 func TestRunner_NoType(t *testing.T) {
 	h := newHarness(t)
-	test := remediation.TriggerNode{NodeID: "test.sales.not_null", ErrorSignature: "sig-t", NodeType: "dbt-test", Service: "svc-a"}
-	python := remediation.TriggerNode{NodeID: "python.sales.loader", ErrorSignature: "sig-p", NodeType: "python-node", Service: "svc-a"}
+	test := remediation.TriggerNode{NodeID: "test.sales.not_null", ErrorSignature: "sig-t", NodeType: "dbt-test", Project: "svc-a"}
+	python := remediation.TriggerNode{NodeID: "python.sales.loader", ErrorSignature: "sig-p", NodeType: "python-node", Project: "svc-a"}
 	id := h.accept(trigger("validation", test, python))
 
 	require.NoError(t, h.runner.Drive(ctx, id))
@@ -152,7 +152,7 @@ func TestRunner_APythonParseFailureNoTypeMatchesIsHandedOverWithoutAModelCall(t 
 			h := newHarness(t, withBuiltinFiles())
 			node := remediation.TriggerNode{
 				NodeID: "python.sales.fx", ErrorSignature: "sig-p", Category: "parse", Reason: "parse_error",
-				NodeType: nodeType, Service: "svc-a", FilePath: "contracts/fx.yaml",
+				NodeType: nodeType, Project: "svc-a", FilePath: "contracts/fx.yaml",
 			}
 			id := h.accept(trigger("parse", node))
 
@@ -210,13 +210,13 @@ func TestRunner_Declined(t *testing.T) {
 		assert.Equal(t, map[string]proposal.NodeOutcome{"svc-a": want}, h.attempt(1).Proposal.NodeOutcomes)
 	})
 
-	t.Run("a cross-service cluster falls back", func(t *testing.T) {
+	t.Run("a cross-project cluster falls back", func(t *testing.T) {
 		h := newHarness(t)
-		id := h.accept(trigger("compile", crossServiceNode()))
+		id := h.accept(trigger("compile", crossProjectNode()))
 
 		require.NoError(t, h.runner.Drive(ctx, id))
 
-		want := crossServiceDeclined()
+		want := crossProjectDeclined()
 		c := h.cluster(id, 1, 1)
 		assert.Equal(t, remediation.ClusterFellBack, c.Status)
 		assert.Equal(t, &want, c.Outcome)
@@ -273,7 +273,7 @@ func TestRunner_AStepThatDeclinesWithNoReasonIsNamed(t *testing.T) {
 
 	t.Run("a context step gives no reason", func(t *testing.T) {
 		h := newHarness(t)
-		node := remediation.TriggerNode{NodeID: "model.sales.orders", ErrorSignature: "sig-v", NodeType: "dbt-model", Service: "svc-a"}
+		node := remediation.TriggerNode{NodeID: "model.sales.orders", ErrorSignature: "sig-v", NodeType: "dbt-model", Project: "svc-a"}
 		id := h.accept(trigger("validation", node))
 
 		require.NoError(t, h.runner.Drive(ctx, id))
@@ -283,13 +283,13 @@ func TestRunner_AStepThatDeclinesWithNoReasonIsNamed(t *testing.T) {
 		assert.Equal(t, handedOverOf(id, 1, 1, handedOverNode(node.NodeID, want)), h.handedOverEvent())
 	})
 
-	t.Run("a cross-service cluster whose step gives no reason", func(t *testing.T) {
+	t.Run("a cross-project cluster whose step gives no reason", func(t *testing.T) {
 		h := newHarness(t)
 		orig, _, ok := h.registry().Lookup("upstream")
 		require.True(t, ok)
 		h.replaceStep(decliningPrompt{Prompt: orig.(step.Prompt), reason: ""})
 		h.bundle.nodes = map[string]ports.CandidateSource{"model.core.base": {RawCode: "select 1", Runtime: "dbt"}}
-		trig := trigger("compile", crossServiceNode())
+		trig := trigger("compile", crossProjectNode())
 		trig.CodeBundleURI = "s3://bundles/rel-1.tar.gz"
 		id := h.accept(trig)
 
@@ -298,7 +298,7 @@ func TestRunner_AStepThatDeclinesWithNoReasonIsNamed(t *testing.T) {
 		o := h.cluster(id, 1, 1).Outcome
 		require.NotNil(t, o)
 		assert.Equal(t, model.HandoverReasonDeclined, o.Code)
-		assert.Equal(t, "the change that broke this node lives in service core; a fix in this node's own service cannot ship before it: "+
+		assert.Equal(t, "the change that broke this node lives in project core; a fix in this node's own project cannot ship before it: "+
 			"step upstream declined the fix", o.Reason)
 	})
 }
@@ -366,21 +366,21 @@ func TestRunner_ADraftWithNoEditIsDeclinedAndNotTriedAgain(t *testing.T) {
 	}, h.attempt(2).Proposal.NodeOutcomes)
 }
 
-// crossServiceNode is svc-a, broken by a change to model.core.base in core,
+// crossProjectNode is svc-a, broken by a change to model.core.base in core,
 // whose source the release's code bundle does not hold.
-func crossServiceNode() remediation.TriggerNode {
+func crossProjectNode() remediation.TriggerNode {
 	n := compileNode("svc-a")
-	n.Service = "svc-a"
-	n.ChangedAncestors = []remediation.ChangedAncestor{{NodeID: "model.core.base", FilePath: "models/base.sql", Service: "core", Depth: 1}}
+	n.Project = "svc-a"
+	n.ChangedAncestors = []remediation.ChangedAncestor{{NodeID: "model.core.base", FilePath: "models/base.sql", Project: "core", Depth: 1}}
 	return n
 }
 
-// crossServiceDeclined is the outcome of crossServiceNode once its
-// cross-service cluster fell back.
-func crossServiceDeclined() proposal.NodeOutcome {
+// crossProjectDeclined is the outcome of crossProjectNode once its
+// cross-project cluster fell back.
+func crossProjectDeclined() proposal.NodeOutcome {
 	return proposal.NodeOutcome{
 		Status: proposal.StatusSkipped,
-		Reason: "the change that broke this node lives in service core; a fix in this node's own service cannot ship before it: " +
+		Reason: "the change that broke this node lives in project core; a fix in this node's own project cannot ship before it: " +
 			"the changed ancestor's source is not in the release's code bundle",
 		Code: model.HandoverReasonDeclined,
 	}
@@ -477,10 +477,10 @@ func TestRunner_ADeclinedNodeIsNotTriedAgain(t *testing.T) {
 			typeName: "dbt-compile",
 		},
 		{
-			name:     "its cross-service cluster fell back",
-			node:     crossServiceNode(),
-			outcome:  crossServiceDeclined(),
-			typeName: "cross-service-upstream",
+			name:     "its cross-project cluster fell back",
+			node:     crossProjectNode(),
+			outcome:  crossProjectDeclined(),
+			typeName: "cross-project-upstream",
 		},
 	}
 	for _, tc := range cases {
@@ -559,11 +559,11 @@ func TestRunner_ARoundsSpentNodeIsTriedAgain(t *testing.T) {
 	assert.Equal(t, remediation.ClusterHandedOver, h.clusterFor(id, 2, "svc-a").Status)
 }
 
-// A cross-service cluster that fell back hands its members over with the code
+// A cross-project cluster that fell back hands its members over with the code
 // of the cause: declined when a step declined it, which settles them for good,
 // and preflight_rounds_spent when pre-flight refused every round, which leaves
 // them to be grouped again in the next try.
-func TestRunner_ACrossServiceFallbackKeepsTheCodeOfItsCause(t *testing.T) {
+func TestRunner_ACrossProjectFallbackKeepsTheCodeOfItsCause(t *testing.T) {
 	const bundleURI = "s3://bundles/rel-1.tar.gz"
 	upstreamSource := map[string]ports.CandidateSource{"model.core.base": {RawCode: "select 1", Runtime: "dbt"}}
 	// clusterOf is the cluster of try that holds node as a member.
@@ -580,7 +580,7 @@ func TestRunner_ACrossServiceFallbackKeepsTheCodeOfItsCause(t *testing.T) {
 
 	t.Run("a step declined the upstream fix", func(t *testing.T) {
 		h := newHarness(t)
-		trig := trigger("compile", crossServiceNode(), compileNode("svc-b"))
+		trig := trigger("compile", crossProjectNode(), compileNode("svc-b"))
 		trig.CodeBundleURI = bundleURI
 		id := h.accept(trig)
 		require.NoError(t, h.runner.Drive(ctx, id))
@@ -588,7 +588,7 @@ func TestRunner_ACrossServiceFallbackKeepsTheCodeOfItsCause(t *testing.T) {
 		require.Equal(t, remediation.ClusterFellBack, fellBack.Status)
 		require.Equal(t, &proposal.NodeOutcome{
 			Status: proposal.StatusSkipped,
-			Reason: "the change that broke this node lives in service core; a fix in this node's own service cannot ship before it: " +
+			Reason: "the change that broke this node lives in project core; a fix in this node's own project cannot ship before it: " +
 				"the changed ancestor's source is not in the release's code bundle",
 			Code: model.HandoverReasonDeclined,
 		}, fellBack.Outcome)
@@ -597,7 +597,7 @@ func TestRunner_ACrossServiceFallbackKeepsTheCodeOfItsCause(t *testing.T) {
 
 		carried := clusterOf(h, id, 2, "svc-a")
 		assert.Equal(t, remediation.ClusterHandedOver, carried.Status, "the members are settled, so the next try carries them handed over")
-		assert.Equal(t, "cross-service-upstream", carried.TypeName, "the carried cluster keeps the type of the cluster that settled the node")
+		assert.Equal(t, "cross-project-upstream", carried.TypeName, "the carried cluster keeps the type of the cluster that settled the node")
 		assert.Equal(t, fellBack.Outcome, carried.Outcome)
 		assert.Equal(t, proposal.NodeOutcome{Status: proposal.StatusSkipped, Reason: fellBack.Outcome.Reason, Code: model.HandoverReasonDeclined},
 			h.attempt(2).Proposal.NodeOutcomes["svc-a"])
@@ -613,18 +613,18 @@ func TestRunner_ACrossServiceFallbackKeepsTheCodeOfItsCause(t *testing.T) {
 			}
 			return r
 		}
-		trig := trigger("compile", crossServiceNode(), compileNode("svc-b"))
+		trig := trigger("compile", crossProjectNode(), compileNode("svc-b"))
 		trig.CodeBundleURI = bundleURI
 		id := h.accept(trig)
 		require.NoError(t, h.runner.Drive(ctx, id))
 		fellBack := clusterOf(h, id, 1, "svc-a")
-		require.Equal(t, workflow.ClusterCrossService, fellBack.Kind)
+		require.Equal(t, workflow.ClusterCrossProject, fellBack.Kind)
 		require.Equal(t, remediation.ClusterFellBack, fellBack.Status)
 		require.NotNil(t, fellBack.Outcome)
 		require.Equal(t, model.HandoverReasonPreflightRoundsSpent, fellBack.Outcome.Code)
 		require.Equal(t, proposal.StatusSkipped, fellBack.Outcome.Status)
-		require.Contains(t, fellBack.Outcome.Reason, "the change that broke this node lives in service core; "+
-			"a fix in this node's own service cannot ship before it: "+lowConfidenceReason)
+		require.Contains(t, fellBack.Outcome.Reason, "the change that broke this node lives in project core; "+
+			"a fix in this node's own project cannot ship before it: "+lowConfidenceReason)
 		assert.Equal(t, map[string]proposal.NodeOutcome{"svc-a": *fellBack.Outcome, "svc-b": {Status: proposal.StatusVerifying}},
 			h.attempt(1).Proposal.NodeOutcomes)
 		calls := h.llm.calls()
@@ -632,8 +632,8 @@ func TestRunner_ACrossServiceFallbackKeepsTheCodeOfItsCause(t *testing.T) {
 		h.failGate(id, "svc-b")
 
 		again := clusterOf(h, id, 2, "svc-a")
-		assert.Equal(t, workflow.ClusterCrossService, again.Kind, "the members are grouped again")
-		assert.Equal(t, "cross-service-upstream", again.TypeName)
+		assert.Equal(t, workflow.ClusterCrossProject, again.Kind, "the members are grouped again")
+		assert.Equal(t, "cross-project-upstream", again.TypeName)
 		assert.Equal(t, remediation.ClusterGathering, again.Status)
 		assert.Nil(t, again.Outcome)
 		assert.Equal(t, proposal.NodeOutcome{Status: proposal.StatusGenerating}, h.attempt(2).Proposal.NodeOutcomes["svc-a"])
@@ -654,8 +654,8 @@ func TestRunner_AllUnfixableWritesOneSkippedAttempt(t *testing.T) {
 		parseDetail = "the parser refuses a construct no edit of the source avoids"
 	)
 	h := newHarness(t)
-	orders := remediation.TriggerNode{NodeID: "model.sales.orders", ErrorSignature: "sig-o", NodeType: "dbt-model", Service: "svc-a", FilePath: "models/orders.sql"}
-	items := remediation.TriggerNode{NodeID: "model.sales.items", ErrorSignature: "sig-i", NodeType: "dbt-model", Service: "svc-a", FilePath: "models/items.sql"}
+	orders := remediation.TriggerNode{NodeID: "model.sales.orders", ErrorSignature: "sig-o", NodeType: "dbt-model", Project: "svc-a", FilePath: "models/orders.sql"}
+	items := remediation.TriggerNode{NodeID: "model.sales.items", ErrorSignature: "sig-i", NodeType: "dbt-model", Project: "svc-a", FilePath: "models/items.sql"}
 	id := h.accept(trigger("parse",
 		unfixable(orders, model.HandoverReasonClassifierInfra, infraDetail),
 		unfixable(items, model.HandoverReasonClassifierUnhealableParse, parseDetail)))

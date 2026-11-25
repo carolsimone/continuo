@@ -31,7 +31,7 @@ var wantConstraints = map[string]schemaEntry{
 	"rejection_unique":                {"Rejection", []string{"tenant_id", "release_id", "node_id"}},
 	"error_signature_unique":          {"ErrorSignature", []string{"tenant_id", "signature"}},
 	"proposal_unique":                 {"Proposal", []string{"tenant_id", "proposal_id"}},
-	"pull_request_unique":             {"PullRequest", []string{"tenant_id", "proposal_id", "service"}},
+	"pull_request_project_unique":     {"PullRequest", []string{"tenant_id", "proposal_id", "project"}},
 	"processed_message_unique":        {"ProcessedMessage", []string{"tenant_id", "group", "message_id"}},
 	"processed_message_outbox_unique": {"ProcessedMessage", []string{"tenant_id", "group", "outbox_entry_id"}},
 	"contract_version_unique":         {"ContractVersion", []string{"tenant_id", "unique_id", "contract_hash"}},
@@ -39,7 +39,7 @@ var wantConstraints = map[string]schemaEntry{
 
 // wantIndexes is the graph's range indexes that back no constraint, by name.
 var wantIndexes = map[string]schemaEntry{
-	"node_fqn":                        {"Node", []string{"tenant_id", "service_name", "schema_name", "table_name"}},
+	"node_project_fqn":                {"Node", []string{"tenant_id", "project_name", "schema_name", "table_name"}},
 	"node_version_uid":                {"NodeVersion", []string{"tenant_id", "unique_id"}},
 	"code_unit_version_unit_id":       {"CodeUnitVersion", []string{"tenant_id", "unit_id"}},
 	"rejection_node_id":               {"Rejection", []string{"tenant_id", "node_id"}},

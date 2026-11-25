@@ -262,15 +262,15 @@ func main() {
 	gh := ragithub.NewSourceReader(cfg.GitHubBaseURL, cfg.GitHubToken, &http.Client{Timeout: 30 * time.Second})
 
 	// Fix verification: a proposed fix's edits are packaged (an odcs-bundle.json
-	// for a python service, a source overlay for a dbt one) and submitted to
+	// for a python project, a source overlay for a dbt one) and submitted to
 	// release-controller as a verification run that carries the full
 	// parse -> candidate-schema -> validation pipeline through to a terminal
 	// passed/failed verdict without ever promoting.
 	releaseGateway := releasehttp.NewGateway(cfg.ReleaseControllerURL, evidenceReader,
 		&http.Client{Timeout: 30 * time.Second})
 	// A python fix is packed with the package list of the rejected release's
-	// image of its service, read from the release's contract bundle or from
-	// the odcs-bundle.json the service's CI uploaded to the bucket.
+	// image of its project, read from the release's contract bundle or from
+	// the odcs-bundle.json the project's CI uploaded to the bucket.
 	imagePackages := s3.NewImagePackagesSource(objectStore, releaseGateway, cfg.S3.Bucket)
 
 	// The packager is resolved here rather than at first use: an image built
@@ -285,14 +285,14 @@ func main() {
 	// The proposal repository is bound to the DB rather than to a transaction:
 	// the gRPC read path, the reconciler, and the steps' prior-attempt reads
 	// all use it outside any unit of work.
-	proposalRepo := postgres.NewProposalRepository(db, cfg.ServiceRepoPaths)
+	proposalRepo := postgres.NewProposalRepository(db, cfg.ProjectRepoPaths)
 	contracts := repofs.NewLocator(logger)
 
 	// The runner works a heal trigger as a remediation of committed steps. Its
 	// worker, gate poller and sweeper carry each remediation to its end. Its
 	// built-in files are checked against the steps the registry holds before
 	// anything starts, and a refused file stops startup.
-	newUoW := func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, cfg.ServiceRepoPaths) }
+	newUoW := func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, cfg.ProjectRepoPaths) }
 	remediationRepo := postgres.NewRemediationRepository(db)
 	collab := runnerCollaborators(cfg, runnerAdapters{
 		github:    gh,
@@ -398,9 +398,9 @@ func main() {
 	// write operations, matching the consumer's wiring above.
 	proposalSvc := proposals.New(proposals.Deps{
 		Repo:             proposalRepo,
-		NewUoW:           func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, cfg.ServiceRepoPaths) },
+		NewUoW:           func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, cfg.ProjectRepoPaths) },
 		Clock:            ports.SystemClock{},
-		ServiceRepoPaths: cfg.ServiceRepoPaths,
+		ProjectRepoPaths: cfg.ProjectRepoPaths,
 	})
 	lis, err := net.Listen("tcp", ":"+cfg.GRPCPort)
 	if err != nil {
@@ -435,11 +435,11 @@ func main() {
 		// merge commit against the proposal to stamp per-edit amend flags on
 		// pr_closed: the source reader reads the merged file from GitHub, the S3
 		// store the proposed content and diff, the getter loads the proposal's
-		// edits, and ServiceRepoPaths splits them by owning service.
+		// edits, and ProjectRepoPaths splits them by owning project.
 		Getter:           proposalRepo,
 		Sources:          gh,
 		Evidence:         evidenceReader,
-		ServiceRepoPaths: cfg.ServiceRepoPaths,
+		ProjectRepoPaths: cfg.ProjectRepoPaths,
 	})
 	go reconciler.Run(ctx)
 
@@ -652,14 +652,14 @@ type runnerAdapters struct {
 // runnerCollaborators is the ports the steps are built from: the adapters main
 // built, the patcher that writes a draft over a checkout, the
 // system clock, and what the install configures (the repository paths of the
-// services, the warehouse's SQL dialect and how long a verification may run).
+// projects, the warehouse's SQL dialect and how long a verification may run).
 func runnerCollaborators(cfg config.Config, a runnerAdapters, logger *slog.Logger) runner.Collaborators {
 	return runner.Collaborators{
 		Source:              a.github,
 		Evidence:            a.evidence,
 		Artifacts:           a.artifacts,
 		Logger:              logger,
-		ServiceRepoPaths:    cfg.ServiceRepoPaths,
+		ProjectRepoPaths:    cfg.ProjectRepoPaths,
 		Locator:             a.graph,
 		Upstream:            a.graph,
 		Versions:            a.graph,

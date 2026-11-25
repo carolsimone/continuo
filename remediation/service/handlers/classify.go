@@ -82,9 +82,9 @@ func classify(ctx context.Context, deps Deps, ev *failure.FailureEvidence) (fail
 
 	// For compile-stage failures, extract the offending source file path from
 	// the log text so the remediation agent can read the file directly. Compile
-	// failures have a synthetic service-name NodeID (not a real dbt node), so
+	// failures have a synthetic project-name NodeID (not a real dbt node), so
 	// the log is the only source of the file path. Seed_build failures carry
-	// FilePath and Service from the candidate topology via the rejection
+	// FilePath and Project from the candidate topology via the rejection
 	// payload, so no extraction is needed.
 	if ev.Source == model.RemediationSourceCompile && ev.FilePath == "" {
 		ev.FilePath = failure.ExtractDbtFilePath(logText)

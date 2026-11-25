@@ -134,7 +134,7 @@ func TestLocate_OnlyContractsDirectoriesHoldContracts(t *testing.T) {
 	for name, rel := range map[string]string{
 		"a test fixture copy":    "svc/tests/fixtures/py_daily_kpis.odcs.yaml",
 		"nested below contracts": "svc/contracts/old/py_daily_kpis.odcs.yaml",
-		"a service root":         "svc/py_daily_kpis.odcs.yaml",
+		"a project root":         "svc/py_daily_kpis.odcs.yaml",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()

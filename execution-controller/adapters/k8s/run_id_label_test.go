@@ -18,7 +18,7 @@ func TestJobsCreate_LabelsTheJobAndItsPodsWithRunID(t *testing.T) {
 	ctx := context.Background()
 	params := JobParams{
 		JobName: "prod-svc-analytics-orders-abc456", TaskID: "task-1", RunID: "run-1",
-		ScheduleName: "daily", ServiceName: "svc", SchemaName: "analytics", TableName: "orders",
+		ScheduleName: "daily", ProjectName: "svc", SchemaName: "analytics", TableName: "orders",
 		Namespace: "default", NodeType: pkg_model.NodeTypeDbtModel, ImageTag: "v1",
 	}
 

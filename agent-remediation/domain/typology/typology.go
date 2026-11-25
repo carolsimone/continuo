@@ -8,24 +8,24 @@ package typology
 import "sort"
 
 // FailingNode is one classified failure in the release under remediation.
-// Service is the node's owning service, as the trigger carries it.
+// Project is the node's owning project, as the trigger carries it.
 type FailingNode struct {
 	NodeID         string
 	ErrorSignature string
 	Category       string
 	Reason         string
-	Service        string
+	Project        string
 	// NodeType is the node's kind, so clustering can tell a test's dead-end from
 	// a model's ride-along: a cluster of only dbt-test nodes is never a fix target.
 	NodeType string
 }
 
 // ChangedAncestor is one upstream node of a failing node that changed in this
-// release: its id, its owning service, and its minimum upstream hop distance
+// release: its id, its owning project, and its minimum upstream hop distance
 // from the failing node (1 = direct upstream; 0 when the trigger carried none).
 type ChangedAncestor struct {
 	NodeID  string
-	Service string
+	Project string
 	Depth   int
 }
 
@@ -45,11 +45,11 @@ const (
 	// KindSharedUpstream is several same-signature failing nodes fixed by one
 	// edit to a common changed ancestor that may not itself have failed.
 	KindSharedUpstream Kind = "shared_upstream"
-	// KindCrossServiceUpstream is one or more failing nodes fixed by one edit to
-	// a changed ancestor that lives in ANOTHER service: under one service per
-	// release the failing nodes did not change, and a fix in their own service
+	// KindCrossProjectUpstream is one or more failing nodes fixed by one edit to
+	// a changed ancestor that lives in ANOTHER project: under one project per
+	// release the failing nodes did not change, and a fix in their own project
 	// could never ship before the change that broke them.
-	KindCrossServiceUpstream Kind = "cross_service_upstream"
+	KindCrossProjectUpstream Kind = "cross_project_upstream"
 )
 
 // Cluster is one fix target: the node to edit (TargetNodeID, which may be an

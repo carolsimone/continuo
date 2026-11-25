@@ -22,7 +22,7 @@ const prOpenedPayload = `{
 	"pr_number": 42,
 	"opened_by": "agent-remediation",
 	"opened_at": "2026-08-12T09:05:00Z",
-	"service": "core"
+	"project": "core"
 }`
 
 func TestParsePROpened_HappyPath(t *testing.T) {
@@ -40,7 +40,7 @@ func TestParsePROpened_HappyPath(t *testing.T) {
 	assert.Equal(t, 42, evt.PrNumber)
 	assert.Equal(t, "agent-remediation", evt.OpenedBy)
 	assert.Equal(t, "2026-08-12T09:05:00Z", evt.OpenedAt)
-	assert.Equal(t, "core", evt.Service)
+	assert.Equal(t, "core", evt.Project)
 }
 
 // An entry its producer published without a tenant has nowhere to be

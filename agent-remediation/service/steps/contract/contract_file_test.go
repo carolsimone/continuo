@@ -89,9 +89,9 @@ func TestContractFile_DeclinesWithAReasonBeforeFetchingAnything(t *testing.T) {
 			want: `node id "fx." does not name a schema and a table, so the contract file declaring it cannot be found`,
 		},
 		{
-			name: "no service",
-			mod:  func(f *remediation.Failure) { f.Target.Service = "" },
-			want: "the trigger names no service, so the fix has no release to be verified under",
+			name: "no project",
+			mod:  func(f *remediation.Failure) { f.Target.Project = "" },
+			want: "the trigger names no project, so the fix has no release to be verified under",
 		},
 	}
 	for _, tc := range cases {
@@ -158,7 +158,7 @@ func TestContractFile_ReturnsAnyOtherLocateErrorAndRemovesTheCheckout(t *testing
 
 // TestContractFileStep_DeclinesANodeNoFileOfARealCheckoutDeclares runs the
 // step over a real checkout searched by the repofs locator: the failing node is
-// declared by no ODCS contract while another service of the checkout has one,
+// declared by no ODCS contract while another project of the checkout has one,
 // and the cluster is declined with the locator's reason.
 func TestContractFileStep_DeclinesANodeNoFileOfARealCheckoutDeclares(t *testing.T) {
 	a := &fakeArchive{t: t, files: map[string]string{

@@ -35,7 +35,7 @@ func contractOf(uniqueID, contractHash, owner string) contractversion.Incoming {
 		ContractHash: contractHash,
 		ContentHash:  kpisContent,
 		Family:       "python",
-		Service:      "service-py",
+		Project:      "service-py",
 		SourcePath:   "contracts/py_daily_kpis.odcs.yaml",
 		Document:     contractDocument(uniqueID, owner),
 	}
@@ -214,7 +214,7 @@ func TestContractRepository_AFirstVersion(t *testing.T) {
 	require.Len(t, versions, 1)
 	v := versions[contractA]
 	assert.Equal(t, "python", v["family"])
-	assert.Equal(t, "service-py", v["service"])
+	assert.Equal(t, "service-py", v["project"])
 	assert.Equal(t, "rel-4e5f6a7-212", v["first_release_id"])
 	assert.Equal(t,
 		`{"description":{"purpose":"count & sum <EUR>"},"id":"analytics.py_daily_kpis","schema":[{"name":"py_daily_kpis","properties":[{"name":"total_amount","physicalType":"NUMERIC(12,2)","required":true}]}],"team":{"name":"service-py"},"version":"0"}`,
@@ -290,7 +290,7 @@ func TestContractRepository_AVersionIsWrittenOnce(t *testing.T) {
 	// The same hash arrives again with every other fact changed: the stored
 	// version is immutable.
 	changed := contractOf(kpisNode, contractA, "someone-else")
-	changed.Family, changed.Service = "dbt", "service-other"
+	changed.Family, changed.Project = "dbt", "service-other"
 	plan, res := f.writeContracts(contractPromotion("rel-47", 47), changed)
 	assert.Equal(t, 1, plan.Unchanged)
 	assert.Equal(t, contractversion.WriteResult{}, res)
@@ -317,7 +317,7 @@ func TestContractRepository_ANodeTheGraphDoesNotHoldIsCreatedInactive(t *testing
 	n := f.node(kpisNode)
 	require.NotNil(t, n, "the contract's node is created")
 	for key, want := range map[string]any{
-		"active": false, "release_id": "rel-41", "service_name": "service-py", "contract_promotion_seq": int64(41),
+		"active": false, "release_id": "rel-41", "project_name": "service-py", "contract_promotion_seq": int64(41),
 	} {
 		assert.Equal(t, want, n[key], "the created node's %s", key)
 	}
@@ -365,7 +365,7 @@ func TestContractRepository_TheWatermarkGuardIsEnforcedInTheWrite(t *testing.T) 
 	b := contractOf(kpisNode, contractB, "analytics-eng")
 	res := f.writePlan(older, contractversion.WritePlan{
 		Versions: []contractversion.Version{{UniqueID: kpisNode, ContractHash: contractB, Family: "python",
-			Service: "service-py", FirstReleaseID: "rel-47", Document: b.Document}},
+			Project: "service-py", FirstReleaseID: "rel-47", Document: b.Document}},
 		Edges: []contractversion.Edge{{UniqueID: kpisNode, ContractHash: contractB, ContentHash: kpisContent,
 			SourcePath: b.SourcePath, Version: 2}},
 	})

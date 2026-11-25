@@ -89,7 +89,7 @@ func (f *dispatchFlow) dispatch(n int32, known pkgmodel.AttemptStatus, edit func
 	f.t.Helper()
 	f.seq++
 	p := pkgevents.TaskDispatch{RunID: f.runID.String(), TaskID: f.taskID.String(), Attempt: n, KnownStatus: known,
-		ScheduleName: "daily", NodeKey: "public.orders", ServiceName: "dbt", SchemaName: "public", TableName: "orders",
+		ScheduleName: "daily", NodeKey: "public.orders", ProjectName: "dbt", SchemaName: "public", TableName: "orders",
 		NodeType: "dbt-model", Operation: "run", ImageTag: "sha-abc", JobName: jobNameOf(f.runID, n), TimeoutSeconds: 3600}
 	if edit != nil {
 		edit(&p)
@@ -237,7 +237,7 @@ func TestTaskDispatch_ARefusedDispatchOfARunningJobsNameLeavesTheJobToItsOwner(t
 	name := jobNameOf(f.runID, 0)
 	repo := postgres.NewDeploymentsRepository(db, testDispatchLogger())
 	owner := model.NewDeployment(command.DeployTask{TenantID: "default", TaskID: uuid.NewString(), RunID: uuid.NewString(),
-		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public", TableName: "orders", JobName: name,
+		ScheduleName: "daily", ProjectName: "dbt", SchemaName: "public", TableName: "orders", JobName: name,
 		NodeType: "dbt-model", Operation: "run", ImageTag: "sha-abc", TimeoutSeconds: 3600}, nil, time.Now().Add(-time.Minute))
 	require.NoError(t, repo.Add(ctx, owner))
 	require.NoError(t, owner.Reserve())

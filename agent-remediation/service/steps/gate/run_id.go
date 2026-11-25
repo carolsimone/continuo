@@ -13,7 +13,7 @@ import (
 // character outside [A-Za-z0-9_] replaced one-for-one, so the schema is exactly
 // 11 bytes longer than the id. PostgreSQL truncates an identifier past 63 bytes
 // rather than rejecting it, and what it cuts is the tail: the attempt suffix,
-// then the service name. Two attempts at one service would then share a schema
+// then the project name. Two attempts at one project would then share a schema
 // and each would validate against the other's leftovers, so the id is bounded
 // here instead.
 const maxRunIDLen = 63 - len("_candidate_")
@@ -23,18 +23,18 @@ const maxRunIDLen = 63 - len("_candidate_")
 const runIDPrefix = "verify-"
 
 // RunID mints the id of the run that verifies one attempt's edits to one
-// service. It embeds the failing release, the edited service, and the attempt,
-// so it is unique per (service, attempt) and legible in log lines and the
+// project. It embeds the failing release, the edited project, and the attempt,
+// so it is unique per (project, attempt) and legible in log lines and the
 // verification page, and so a redelivery of the same attempt reuses the same id
 // (release-controller's submission is idempotent on it).
 //
-// Past maxRunIDLen the middle, the failing release and service, is shortened
+// Past maxRunIDLen the middle, the failing release and project, is shortened
 // and given a digest of what it held. The prefix and the attempt number are
 // kept whole because they are what a reader identifies the run by, and the
-// digest is what keeps two services whose names diverge only past the cut on
+// digest is what keeps two projects whose names diverge only past the cut on
 // separate candidate schemas.
-func RunID(releaseID, service string, attempt int) string {
-	middle := sanitizeIDSegment(releaseID) + "-" + sanitizeIDSegment(service)
+func RunID(releaseID, project string, attempt int) string {
+	middle := sanitizeIDSegment(releaseID) + "-" + sanitizeIDSegment(project)
 	suffix := fmt.Sprintf("-a%d", attempt)
 	if len(runIDPrefix)+len(middle)+len(suffix) <= maxRunIDLen {
 		return runIDPrefix + middle + suffix
@@ -49,7 +49,7 @@ func RunID(releaseID, service string, attempt int) string {
 
 // sanitizeIDSegment reduces a value to the characters a run id and the S3 key
 // derived from it can safely carry, replacing every other character with a
-// dash. Dots, dashes, and underscores survive, so a service name reads
+// dash. Dots, dashes, and underscores survive, so a project name reads
 // unchanged.
 func sanitizeIDSegment(s string) string {
 	return strings.Map(func(r rune) rune {

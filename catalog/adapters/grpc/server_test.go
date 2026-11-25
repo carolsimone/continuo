@@ -101,7 +101,7 @@ func everyRPC(client catalogv1.CatalogQueryClient) []struct {
 		call func() error
 	}{
 		{"GetNode", func() error {
-			_, err := client.GetNode(ctx, &catalogv1.GetNodeRequest{ServiceName: "svc", SchemaName: "an", TableName: "fct"})
+			_, err := client.GetNode(ctx, &catalogv1.GetNodeRequest{ProjectName: "svc", SchemaName: "an", TableName: "fct"})
 			return err
 		}},
 		{"GetNodeLocation", func() error {

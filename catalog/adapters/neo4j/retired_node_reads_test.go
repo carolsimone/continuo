@@ -152,13 +152,13 @@ func TestGetNode_IncludeInactiveReturnsDroppedNode(t *testing.T) {
 	f.retire()
 
 	resp, err := f.handler.GetNode(f.ctx, &catalogv1.GetNodeRequest{
-		ServiceName: "svc", SchemaName: "analytics", TableName: retiredX, IncludeInactive: true,
+		ProjectName: "svc", SchemaName: "analytics", TableName: retiredX, IncludeInactive: true,
 	})
 	require.NoError(t, err)
 	assert.True(t, resp.Inactive)
 	assert.Equal(t, "dbt-model", resp.NodeType)
 
-	_, err = f.handler.GetNode(f.ctx, &catalogv1.GetNodeRequest{ServiceName: "svc", SchemaName: "analytics", TableName: retiredX})
+	_, err = f.handler.GetNode(f.ctx, &catalogv1.GetNodeRequest{ProjectName: "svc", SchemaName: "analytics", TableName: retiredX})
 	assert.Equal(t, codes.NotFound, status.Code(err), "without include_inactive a dropped node is NOT_FOUND")
 }
 

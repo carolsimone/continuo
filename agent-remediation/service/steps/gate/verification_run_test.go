@@ -29,7 +29,7 @@ import (
 var errBoom = errors.New("boom")
 
 var repoPaths = map[string]string{
-	"sales":     "dbt/services/sales",
+	"sales":     "dbt/projects/sales",
 	"ledger":    "python/ledger",
 	"zz-ledger": "python/zz-ledger",
 }
@@ -67,11 +67,11 @@ func (f *fakeEvidence) Fetch(_ context.Context, uri string) (string, error) {
 
 type fakeReleases struct{ err error }
 
-func (f fakeReleases) ImageTag(_ context.Context, releaseID, service string) (string, error) {
+func (f fakeReleases) ImageTag(_ context.Context, releaseID, project string) (string, error) {
 	if f.err != nil {
 		return "", f.err
 	}
-	return "tag-" + releaseID + "-" + service, nil
+	return "tag-" + releaseID + "-" + project, nil
 }
 
 func (fakeReleases) FailingNodes(context.Context, string) (map[string]string, error) {
@@ -146,9 +146,9 @@ func triggerOf() remediation.Trigger {
 	return remediation.Trigger{
 		ReleaseID: "rel-1",
 		Nodes: []remediation.TriggerNode{
-			{NodeID: "model.sales.orders", NodeType: "dbt-model", Service: "sales"},
-			{NodeID: "model.sales.margins", NodeType: "dbt-model", Service: "sales"},
-			{NodeID: "python.ledger.postings", NodeType: "python-node", Service: "ledger"},
+			{NodeID: "model.sales.orders", NodeType: "dbt-model", Project: "sales"},
+			{NodeID: "model.sales.margins", NodeType: "dbt-model", Project: "sales"},
+			{NodeID: "python.ledger.postings", NodeType: "python-node", Project: "ledger"},
 		},
 	}
 }
@@ -157,14 +157,14 @@ func dbtCluster() step.ClusterDraft {
 	return step.ClusterDraft{
 		Cluster: remediation.Cluster{Cluster: 1, Members: []string{"model.sales.orders", "model.sales.margins"}},
 		Draft: remediation.Draft{Edits: []remediation.Edit{
-			{Path: "dbt/services/sales/models/orders.sql", ContentURI: "s3://c/orders", TargetNodeID: "model.sales.orders"},
-			{Path: "dbt/services/sales/models/marts/margins.sql", ContentURI: "s3://c/margins", TargetNodeID: "model.sales.margins"},
+			{Path: "dbt/projects/sales/models/orders.sql", ContentURI: "s3://c/orders", TargetNodeID: "model.sales.orders"},
+			{Path: "dbt/projects/sales/models/marts/margins.sql", ContentURI: "s3://c/margins", TargetNodeID: "model.sales.margins"},
 		}},
 		Evidence: remediation.NewEvidence(),
 	}
 }
 
-const pythonContract = `{"bundle_version": 1, "service": "ledger", "image_packages": {"pyarrow": "26.0.0"}, "nodes": []}`
+const pythonContract = `{"bundle_version": 1, "project": "ledger", "image_packages": {"pyarrow": "26.0.0"}, "nodes": []}`
 
 func pythonCluster() step.ClusterDraft {
 	return step.ClusterDraft{
@@ -212,19 +212,19 @@ func TestMeta(t *testing.T) {
 	assert.Empty(t, m.Needs)
 }
 
-func TestSubmit_DbtServiceSubmitsAnOverlayOfTheEditsContent(t *testing.T) {
+func TestSubmit_DbtProjectSubmitsAnOverlayOfTheEditsContent(t *testing.T) {
 	r := newRig()
 	res, err := r.step.Submit(context.Background(), gateInput(dbtCluster()))
 	require.NoError(t, err)
 
 	assert.Equal(t, remediation.CheckResult{Check: "verification_run", Waiting: true, RunIDs: []string{"verify-rel-1-sales-a2"}}, res.Result)
 	assert.Equal(t, []proposal.Verification{
-		{Service: "sales", Kind: "dbt", RunID: "verify-rel-1-sales-a2", Phase: proposal.PhaseQueued},
+		{Project: "sales", Kind: "dbt", RunID: "verify-rel-1-sales-a2", Phase: proposal.PhaseQueued},
 	}, res.Verifications, "the runner records the runs with the proposal as submitVerifications returned them")
 	require.Len(t, r.pipeline.submitted, 1)
 	assert.Equal(t, ports.VerificationRequest{
 		RunID:             "verify-rel-1-sales-a2",
-		Service:           "sales",
+		Project:           "sales",
 		ImageTag:          "tag-rel-1-sales",
 		Kind:              "dbt",
 		VerifiesReleaseID: "rel-1",
@@ -237,7 +237,7 @@ func TestSubmit_DbtServiceSubmitsAnOverlayOfTheEditsContent(t *testing.T) {
 	assert.Equal(t, "sales/verify-rel-1-sales-a2/source-overlay.tar.gz", w.key)
 	assert.Equal(t, "application/gzip", w.contentType)
 	// The overlay holds each edit's content as the artifact stored it, at its
-	// path within the service's project.
+	// path within the project's directory.
 	assert.Equal(t, map[string]string{
 		"models/orders.sql":        "select 1 as orders",
 		"models/marts/margins.sql": "select 2 as margins",
@@ -253,13 +253,13 @@ func TestSubmit_DbtServiceSubmitsAnOverlayOfTheEditsContent(t *testing.T) {
 // TestVerificationRun_AMovedFileIsListedForDeletion pins that a renamed file is
 // absent from the run's project as it is from the pull request's tree: the
 // overlay writes the new path and lists the old one, both relative to the
-// service's project.
+// project's directory.
 func TestVerificationRun_AMovedFileIsListedForDeletion(t *testing.T) {
 	r := newRig()
 	c := dbtCluster()
 	c.Draft.Edits = []remediation.Edit{{
-		Path:         "dbt/services/sales/models/orders_v2.sql",
-		RenamedFrom:  "dbt/services/sales/models/orders.sql",
+		Path:         "dbt/projects/sales/models/orders_v2.sql",
+		RenamedFrom:  "dbt/projects/sales/models/orders.sql",
 		ContentURI:   "s3://c/orders",
 		TargetNodeID: "model.sales.orders",
 	}}
@@ -281,11 +281,11 @@ func TestVerificationRun_UploadsAnODCSBundle(t *testing.T) {
 	assert.Equal(t, []string{"verify-rel-1-ledger-a2"}, res.Result.RunIDs)
 	assert.True(t, res.Result.Waiting)
 	assert.Equal(t, []proposal.Verification{
-		{Service: "ledger", Kind: "python-odcs", RunID: "verify-rel-1-ledger-a2", Phase: proposal.PhaseQueued},
+		{Project: "ledger", Kind: "python-odcs", RunID: "verify-rel-1-ledger-a2", Phase: proposal.PhaseQueued},
 	}, res.Verifications)
 	assert.Equal(t, []ports.VerificationRequest{{
 		RunID:             "verify-rel-1-ledger-a2",
-		Service:           "ledger",
+		Project:           "ledger",
 		ImageTag:          "tag-rel-1-ledger",
 		Kind:              "python-odcs",
 		VerifiesReleaseID: "rel-1",
@@ -323,8 +323,8 @@ func TestVerificationRun_VerifiesAnODCSBundleAsKindPythonODCS(t *testing.T) {
 	}
 }
 
-// zzLedgerCluster is a python cluster of the service zz-ledger, whose name
-// sorts after the dbt service sales, packaging contract.
+// zzLedgerCluster is a python cluster of the project zz-ledger, whose name
+// sorts after the dbt project sales, packaging contract.
 func zzLedgerCluster(contract string) step.ClusterDraft {
 	return step.ClusterDraft{
 		Cluster: remediation.Cluster{Cluster: 3, Members: []string{"python.zz-ledger.postings"}},
@@ -337,11 +337,11 @@ func zzLedgerCluster(contract string) step.ClusterDraft {
 
 // Any other packaged contract is no run the release pipeline can judge: the
 // gate refuses the try with a finding before it writes or submits anything, so
-// the try fails and the next one starts. The refusing service sorts after the
-// dbt service, so a check made while the runs are written would already have
+// the try fails and the next one starts. The refusing project sorts after the
+// dbt project, so a check made while the runs are written would already have
 // written the dbt run's overlay.
 func TestSubmit_RefusesAPackagedContractThatIsNotAnODCSBundle(t *testing.T) {
-	const msg = "the packaged contract is not an ODCS producer bundle: service zz-ledger"
+	const msg = "the packaged contract is not an ODCS producer bundle: project zz-ledger"
 	for name, contract := range map[string]string{
 		"a yaml document":                      "version: 1\nnodes:\n  - id: python.ledger.postings\n    script: scripts/postings.py\n",
 		"a JSON object with no bundle_version": `{"version": 1, "nodes": []}`,
@@ -353,7 +353,7 @@ func TestSubmit_RefusesAPackagedContractThatIsNotAnODCSBundle(t *testing.T) {
 			r := newRig()
 			in := gateInput(dbtCluster(), zzLedgerCluster(contract))
 			in.Trigger.Nodes = append(in.Trigger.Nodes,
-				remediation.TriggerNode{NodeID: "python.zz-ledger.postings", NodeType: "python-node", Service: "zz-ledger"})
+				remediation.TriggerNode{NodeID: "python.zz-ledger.postings", NodeType: "python-node", Project: "zz-ledger"})
 
 			v, err := r.step.Submit(context.Background(), in)
 			require.NoError(t, err)
@@ -364,7 +364,7 @@ func TestSubmit_RefusesAPackagedContractThatIsNotAnODCSBundle(t *testing.T) {
 			assert.Equal(t, []remediation.Finding{{Code: "packaged_contract_not_a_bundle", Message: msg}}, v.Result.Findings)
 			assert.Equal(t, msg, v.VerifyError)
 			assert.Empty(t, v.Verifications)
-			assert.Empty(t, r.artifacts.writes, "a try one service cannot verify spends no run on the others")
+			assert.Empty(t, r.artifacts.writes, "a try one project cannot verify spends no run on the others")
 			assert.Empty(t, r.pipeline.submitted, "nothing reaches the release pipeline")
 
 			_, err = r.step.Poll(context.Background(), in, remediation.CheckResult{Check: "verification_run", Waiting: true, RunIDs: idsOf(in)})
@@ -385,14 +385,14 @@ func TestPoll_ReportsTheKindTheRunWasSubmittedAs(t *testing.T) {
 	assert.Equal(t, "python-odcs", res.Verifications[0].Kind, "Poll rebuilds the runs with the kind Submit gave them")
 }
 
-func TestSubmit_TwoServicesSubmitOneRunEachInServiceOrder(t *testing.T) {
+func TestSubmit_TwoProjectsSubmitOneRunEachInProjectOrder(t *testing.T) {
 	r := newRig()
 	res, err := r.step.Submit(context.Background(), gateInput(dbtCluster(), pythonCluster()))
 	require.NoError(t, err)
 	assert.Equal(t, []string{"verify-rel-1-ledger-a2", "verify-rel-1-sales-a2"}, res.Result.RunIDs)
 	assert.Equal(t, []proposal.Verification{
-		{Service: "ledger", Kind: "python-odcs", RunID: "verify-rel-1-ledger-a2", Phase: proposal.PhaseQueued},
-		{Service: "sales", Kind: "dbt", RunID: "verify-rel-1-sales-a2", Phase: proposal.PhaseQueued},
+		{Project: "ledger", Kind: "python-odcs", RunID: "verify-rel-1-ledger-a2", Phase: proposal.PhaseQueued},
+		{Project: "sales", Kind: "dbt", RunID: "verify-rel-1-sales-a2", Phase: proposal.PhaseQueued},
 	}, res.Verifications)
 	require.Len(t, r.pipeline.submitted, 2)
 	assert.Equal(t, "python-odcs", r.pipeline.submitted[0].Kind)
@@ -411,10 +411,10 @@ func TestSubmit_RefusesWhatNoRunCouldJudgeBeforeWritingAnything(t *testing.T) {
 		code string
 		msg  string
 	}{
-		"unmapped":  {gateInput(dbtCluster(), outside), "edit_outside_services", "edit belongs to no configured service: docs/x.md"},
-		"duplicate": {gateInput(twice), "path_edited_twice", "two edits change the same file: dbt/services/sales/models/orders.sql"},
+		"unmapped":  {gateInput(dbtCluster(), outside), "edit_outside_projects", "edit belongs to no configured project: docs/x.md"},
+		"duplicate": {gateInput(twice), "path_edited_twice", "two edits change the same file: dbt/projects/sales/models/orders.sql"},
 		"mixed": {gateInput(dbtCluster(), mixed), "mixed_manifest_kinds",
-			"service ledger mixes a python contract with dbt edits in one attempt; a release verifies one manifest kind"},
+			"project ledger mixes a python contract with dbt edits in one attempt; a release verifies one manifest kind"},
 	}
 	for name, c := range cases {
 		v, err := r.step.Submit(context.Background(), c.in)
@@ -426,7 +426,7 @@ func TestSubmit_RefusesWhatNoRunCouldJudgeBeforeWritingAnything(t *testing.T) {
 		assert.Equal(t, c.msg, v.VerifyError, name)
 		assert.Empty(t, v.Verifications, name)
 	}
-	assert.Empty(t, r.artifacts.writes, "a try one service cannot verify spends no run on the others")
+	assert.Empty(t, r.artifacts.writes, "a try one project cannot verify spends no run on the others")
 	assert.Empty(t, r.pipeline.submitted)
 
 	_, err := r.step.Submit(context.Background(), gateInput())
@@ -475,7 +475,7 @@ func status(phase proposal.Phase, activated time.Time, nodeErrors map[string]str
 }
 
 // idsOf are the run ids Submit would have named for the input's drafts: a
-// python run for the ledger service and a dbt run for sales, in service order.
+// python run for the ledger project and a dbt run for sales, in project order.
 func idsOf(in step.GateInput) []string {
 	var ids []string
 	for _, d := range in.Drafts {
@@ -513,8 +513,8 @@ func TestPoll_QueuedAndRunningRunsKeepTheGateWaiting(t *testing.T) {
 	assert.Empty(t, v.VerifyError)
 	act := t0.Add(30 * time.Second)
 	want := []proposal.Verification{
-		{Service: "ledger", Kind: "python-odcs", RunID: ledgerRun, Phase: proposal.PhaseRunning, ActivatedAt: &act},
-		{Service: "sales", Kind: "dbt", RunID: salesRun, Phase: proposal.PhaseQueued},
+		{Project: "ledger", Kind: "python-odcs", RunID: ledgerRun, Phase: proposal.PhaseRunning, ActivatedAt: &act},
+		{Project: "sales", Kind: "dbt", RunID: salesRun, Phase: proposal.PhaseQueued},
 	}
 	assert.Equal(t, want, v.Verifications)
 	assert.Equal(t, want, v.Phases, "every run seen queued or running is reported for the proposal row")
@@ -716,7 +716,7 @@ func TestPoll_AnUnreadableRunStopsTheReadAndKeepsWhatWasRead(t *testing.T) {
 	// Only the run that was read is reported: writing the unread one as queued
 	// would reset the phase and activation time recorded for it.
 	act := t0
-	want := []proposal.Verification{{Service: "ledger", Kind: "python-odcs", RunID: ledgerRun, Phase: proposal.PhaseRunning, ActivatedAt: &act}}
+	want := []proposal.Verification{{Project: "ledger", Kind: "python-odcs", RunID: ledgerRun, Phase: proposal.PhaseRunning, ActivatedAt: &act}}
 	assert.Equal(t, want, v.Verifications)
 	assert.Equal(t, want, v.Phases)
 }

@@ -14,7 +14,7 @@ import (
 // goldenRemediationRequested has every tagged field set, an unfixable node
 // among them, so the payload reproduces each tag, name, casing and order of
 // remediation.requested:v3.
-const goldenRemediationRequested = `{"source":"validation","release_id":"r","remediation_round":2,"repo":"acme/demo","commit_sha":"abc","code_bundle_uri":"s3://b","classified_at":"2026-01-02T03:04:05Z","nodes":[{"node_id":"n","relation_id":"sch.rel","category":"logic","error_signature":"sig","reason":"why","error_excerpt":"exc","dbt_log_uri":"s3://l","candidate_artifact_uri":"s3://c","file_path":"models/m.sql","service":"svc","node_type":"dbt-model","other_service":"svc2","other_file_path":"models/o.sql","changed_ancestors":[{"node_id":"a","file_path":"models/a.sql","service":"svc","depth":1}]},{"node_id":"m","category":"infra_transient","error_signature":"sig2","reason":"infra:connection_refused","dbt_log_uri":"s3://l2","unfixable":{"reason":"classifier_infra","detail":"could not connect to server: connection refused"}}]}`
+const goldenRemediationRequested = `{"source":"validation","release_id":"r","remediation_round":2,"repo":"acme/demo","commit_sha":"abc","code_bundle_uri":"s3://b","classified_at":"2026-01-02T03:04:05Z","nodes":[{"node_id":"n","relation_id":"sch.rel","category":"logic","error_signature":"sig","reason":"why","error_excerpt":"exc","dbt_log_uri":"s3://l","candidate_artifact_uri":"s3://c","file_path":"models/m.sql","project":"svc","node_type":"dbt-model","other_project":"svc2","other_file_path":"models/o.sql","changed_ancestors":[{"node_id":"a","file_path":"models/a.sql","project":"svc","depth":1}]},{"node_id":"m","category":"infra_transient","error_signature":"sig2","reason":"infra:connection_refused","dbt_log_uri":"s3://l2","unfixable":{"reason":"classifier_infra","detail":"could not connect to server: connection refused"}}]}`
 
 func TestRemediationRequestedMapsEveryField(t *testing.T) {
 	got := RemediationRequestedFromDomain(event.RemediationRequested{
@@ -24,8 +24,8 @@ func TestRemediationRequestedMapsEveryField(t *testing.T) {
 			{
 				NodeID: "n", RelationID: "sch.rel", Category: "logic", ErrorSignature: "sig", Reason: "why",
 				ErrorExcerpt: "exc", DBTLogURI: "s3://l", CandidateArtifactURI: "s3://c", FilePath: "models/m.sql",
-				Service: "svc", NodeType: "dbt-model", OtherService: "svc2", OtherFilePath: "models/o.sql",
-				ChangedAncestors: []event.ChangedAncestor{{NodeID: "a", FilePath: "models/a.sql", Service: "svc", Depth: 1}},
+				Project: "svc", NodeType: "dbt-model", OtherProject: "svc2", OtherFilePath: "models/o.sql",
+				ChangedAncestors: []event.ChangedAncestor{{NodeID: "a", FilePath: "models/a.sql", Project: "svc", Depth: 1}},
 			},
 			{
 				NodeID: "m", Category: "infra_transient", ErrorSignature: "sig2", Reason: "infra:connection_refused", DBTLogURI: "s3://l2",

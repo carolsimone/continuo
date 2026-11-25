@@ -69,14 +69,14 @@ func (f *fakeVersions) CurrentVersion(_ context.Context, id string) (ports.Curre
 var _ ports.VersionReader = (*fakeVersions)(nil)
 
 type fakeLocator struct {
-	filePath, service string
+	filePath, project string
 	err               error
 	calls             []string
 }
 
 func (f *fakeLocator) Locate(_ context.Context, id string) (string, string, error) {
 	f.calls = append(f.calls, id)
-	return f.filePath, f.service, f.err
+	return f.filePath, f.project, f.err
 }
 
 var _ ports.NodeLocator = (*fakeLocator)(nil)
@@ -106,9 +106,9 @@ const (
 // ancestor and two failing descendants, each naming where the candidate
 // topology declares the ancestor.
 func failure(mod func(*remediation.Failure)) remediation.Failure {
-	ancestor := remediation.ChangedAncestor{NodeID: targetID, FilePath: targetFile, Service: targetSvc, Depth: 1}
+	ancestor := remediation.ChangedAncestor{NodeID: targetID, FilePath: targetFile, Project: targetSvc, Depth: 1}
 	members := []remediation.TriggerNode{
-		{NodeID: "model.up-svc.m1", ErrorSignature: "sig-1", Category: "validation", Reason: "missing_column", ErrorExcerpt: "column old_name missing", Service: targetSvc, ChangedAncestors: []remediation.ChangedAncestor{ancestor}},
+		{NodeID: "model.up-svc.m1", ErrorSignature: "sig-1", Category: "validation", Reason: "missing_column", ErrorExcerpt: "column old_name missing", Project: targetSvc, ChangedAncestors: []remediation.ChangedAncestor{ancestor}},
 		{NodeID: "model.up-svc.m2", ErrorSignature: "sig-1", ErrorExcerpt: "column old_name missing too", ChangedAncestors: []remediation.ChangedAncestor{ancestor}},
 	}
 	f := remediation.Failure{

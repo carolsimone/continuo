@@ -30,7 +30,7 @@ type Located struct {
 
 // ContractLocator finds which ODCS contract file in a repository checkout
 // declares a given python node. Each python node has one contract file,
-// directly inside its service's contracts/ directory
+// directly inside its project's contracts/ directory
 // (contracts/<table>.odcs.yaml), matched by the id it declares
 // ("<schema>.<table>") rather than by its name. The control plane records no
 // path for that file, so the tree is searched.

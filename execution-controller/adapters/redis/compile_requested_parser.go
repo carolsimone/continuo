@@ -14,7 +14,7 @@ import (
 // the "payload" field of a compile.requested:v1 message.
 type compileRequestedDTO struct {
 	ReleaseID        string `json:"release_id"`
-	Service          string `json:"service"`
+	Project          string `json:"project"`
 	ImageTag         string `json:"image_tag"`
 	Bucket           string `json:"bucket"`
 	CandidateSchema  string `json:"candidate_schema"`
@@ -22,7 +22,7 @@ type compileRequestedDTO struct {
 }
 
 // ParseCompileRequested translates a compile.requested:v1 XMessage into a
-// typed domain event. All required fields (release_id, service, image_tag,
+// typed domain event. All required fields (release_id, project, image_tag,
 // bucket) must be present; any absence is a permanent parse error.
 //
 // All errors are permanent (malformed input never becomes valid on retry); the
@@ -42,8 +42,8 @@ func ParseCompileRequested(msg goredis.XMessage) (events.CompileRequested, error
 	switch {
 	case dto.ReleaseID == "":
 		return events.CompileRequested{}, fmt.Errorf("missing release_id")
-	case dto.Service == "":
-		return events.CompileRequested{}, fmt.Errorf("missing service")
+	case dto.Project == "":
+		return events.CompileRequested{}, fmt.Errorf("missing project")
 	case dto.ImageTag == "":
 		return events.CompileRequested{}, fmt.Errorf("missing image_tag")
 	case dto.Bucket == "":
@@ -62,7 +62,7 @@ func ParseCompileRequested(msg goredis.XMessage) (events.CompileRequested, error
 	return events.CompileRequested{
 		OutboxEntryID:    outboxEntryID,
 		ReleaseID:        dto.ReleaseID,
-		Service:          dto.Service,
+		Project:          dto.Project,
 		ImageTag:         dto.ImageTag,
 		Bucket:           dto.Bucket,
 		CandidateSchema:  dto.CandidateSchema,

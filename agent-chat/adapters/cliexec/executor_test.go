@@ -242,7 +242,7 @@ func TestNewExecutor_DefaultsMaxBytes(t *testing.T) {
 func TestExecutor_OmitsAbsentOptionalPositional(t *testing.T) {
 	e := newExecutor(t)
 	res := e.Execute(context.Background(), "alice", uuid.New(),
-		call("node_trigger", map[string]string{"service": "finance", "schema": "analytics", "table": "orders"}))
+		call("node_trigger", map[string]string{"project": "finance", "schema": "analytics", "table": "orders"}))
 	assert.False(t, res.IsError)
 	assert.Contains(t, res.Output, `"argv":"node trigger finance analytics orders"`)
 }
@@ -253,7 +253,7 @@ func TestExecutor_AppendsPresentOptionalPositional(t *testing.T) {
 		slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	res := e.Execute(context.Background(), "alice", uuid.New(),
 		call("node_trigger", map[string]string{
-			"service": "finance", "schema": "analytics", "table": "orders",
+			"project": "finance", "schema": "analytics", "table": "orders",
 			"source-run-id": "3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b",
 		}))
 	assert.False(t, res.IsError)
@@ -319,7 +319,7 @@ func TestExecute_AReadCarriesNoRequestID(t *testing.T) {
 }
 
 func fullRefreshCall(args map[string]string) ports.ToolCall {
-	base := map[string]string{"service": "finance", "schema": "raw", "table": "customers"}
+	base := map[string]string{"project": "finance", "schema": "raw", "table": "customers"}
 	for k, v := range args {
 		base[k] = v
 	}

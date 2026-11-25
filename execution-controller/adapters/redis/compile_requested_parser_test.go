@@ -15,7 +15,7 @@ import (
 func compileRequestedPayload() map[string]any {
 	return map[string]any{
 		"release_id": "rel-compile-789",
-		"service":    "finance",
+		"project":    "finance",
 		"image_tag":  "sha-compile-abc",
 		"bucket":     "my-artifacts-bucket",
 	}
@@ -43,7 +43,7 @@ func TestParseCompileRequested_HappyPath(t *testing.T) {
 
 	assert.Equal(t, outboxEntryID, evt.OutboxEntryID)
 	assert.Equal(t, "rel-compile-789", evt.ReleaseID)
-	assert.Equal(t, "finance", evt.Service)
+	assert.Equal(t, "finance", evt.Project)
 	assert.Equal(t, "sha-compile-abc", evt.ImageTag)
 	assert.Equal(t, "my-artifacts-bucket", evt.Bucket)
 }
@@ -80,9 +80,9 @@ func TestParseCompileRequested_MissingReleaseID(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestParseCompileRequested_MissingService(t *testing.T) {
+func TestParseCompileRequested_MissingProject(t *testing.T) {
 	p := compileRequestedPayload()
-	delete(p, "service")
+	delete(p, "project")
 	_, err := ParseCompileRequested(compileRequestedMsg(t, p, ""))
 	require.Error(t, err)
 }
@@ -118,7 +118,7 @@ func TestParseCompileRequested_CandidateSchemaAbsentIsEmpty(t *testing.T) {
 
 func TestParseCompileRequested_SourceOverlayURI(t *testing.T) {
 	msg := goredis.XMessage{ID: "1-0", Values: map[string]any{
-		"payload": `{"release_id":"r","service":"svc","image_tag":"t","bucket":"b","candidate_schema":"c","source_overlay_uri":"s3://b/svc/r/source-overlay.tar.gz"}`,
+		"payload": `{"release_id":"r","project":"svc","image_tag":"t","bucket":"b","candidate_schema":"c","source_overlay_uri":"s3://b/svc/r/source-overlay.tar.gz"}`,
 	}}
 	evt, err := ParseCompileRequested(msg)
 	require.NoError(t, err)

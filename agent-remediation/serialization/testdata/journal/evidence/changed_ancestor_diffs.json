@@ -1,7 +1,7 @@
 [
   {
     "NodeID": "orders.model.stg_orders",
-    "Service": "orders",
+    "Project": "orders",
     "Depth": 1,
     "Diff": "-a\n+b"
   }

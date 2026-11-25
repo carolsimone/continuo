@@ -28,8 +28,8 @@ const maxContractYAMLBytes = 1 << 20 // 1 MiB
 // contract is one such file, and the packager reads only these.
 const odcsSuffix = ".odcs.yaml"
 
-// contractsDir is the name of the directory a service keeps its ODCS
-// contracts in, directly: <service>/contracts/<table>.odcs.yaml.
+// contractsDir is the name of the directory a project keeps its ODCS
+// contracts in, directly: <project>/contracts/<table>.odcs.yaml.
 const contractsDir = "contracts"
 
 // continuoVendor is the vendor of the customProperties items continuo reads.

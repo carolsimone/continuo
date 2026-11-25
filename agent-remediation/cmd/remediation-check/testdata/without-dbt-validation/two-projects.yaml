@@ -1,15 +1,15 @@
-# An install's fixture of the flow scenario two_services, for a
+# An install's fixture of the flow scenario two_projects, for a
 # rejected-release flow that lists no dbt-validation: two dbt-parse fixes in
-# two services, sales and finance, each with a verification run of its own.
+# two projects, sales and finance, each with a verification run of its own.
 kind: fixture
 version: 1
 flow: rejected-release
-scenario: two_services
+scenario: two_projects
 trigger:
   source: parse
-  release_id: rel-lint-two-services
+  release_id: rel-lint-two-projects
   repo: o/repo
-  commit_sha: sha-lint-two-services
+  commit_sha: sha-lint-two-projects
   nodes:
     - node_id: model.sales.orders
       category: parse
@@ -17,7 +17,7 @@ trigger:
       reason: parse_error
       error_excerpt: "Expecting ). Line 1, Col: 12.\n  select id total"
       file_path: models/orders.sql
-      service: sales
+      project: sales
       node_type: dbt-model
     - node_id: model.finance.revenue
       category: parse
@@ -25,9 +25,9 @@ trigger:
       reason: parse_error
       error_excerpt: "Expecting ). Line 1, Col: 14.\n  select id net"
       file_path: models/revenue.sql
-      service: finance
+      project: finance
       node_type: dbt-model
-service_repo_paths:
+project_repo_paths:
   sales: services/sales
   finance: services/finance
 repo_files:
@@ -36,7 +36,7 @@ repo_files:
   services/finance/models/revenue.sql: "select id net from invoices\n"
   services/finance/dbt_project.yml: "name: finance\n"
 release:
-  image_tag: sha-lint-two-services
+  image_tag: sha-lint-two-projects
 answers:
   pass:
     - target_file: services/sales/models/orders.sql

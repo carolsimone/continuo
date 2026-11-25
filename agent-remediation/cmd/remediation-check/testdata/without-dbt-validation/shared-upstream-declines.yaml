@@ -20,21 +20,21 @@ trigger:
       reason: parse_error
       error_excerpt: 'base_orders.amount is not declared'
       file_path: models/daily_orders.sql
-      service: sales
+      project: sales
       node_type: dbt-model
       changed_ancestors:
-        - { node_id: model.sales.base_orders, file_path: models/base_orders.sql, service: sales, depth: 1 }
+        - { node_id: model.sales.base_orders, file_path: models/base_orders.sql, project: sales, depth: 1 }
     - node_id: model.sales.weekly_orders
       category: parse
       error_signature: sig-base-orders-amount
       reason: parse_error
       error_excerpt: 'base_orders.amount is not declared'
       file_path: models/weekly_orders.sql
-      service: sales
+      project: sales
       node_type: dbt-model
       changed_ancestors:
-        - { node_id: model.sales.base_orders, file_path: models/base_orders.sql, service: sales, depth: 1 }
-service_repo_paths:
+        - { node_id: model.sales.base_orders, file_path: models/base_orders.sql, project: sales, depth: 1 }
+project_repo_paths:
   sales: services/sales
 repo_files:
   services/sales/models/daily_orders.sql: "select id, amount from base_orders\n"

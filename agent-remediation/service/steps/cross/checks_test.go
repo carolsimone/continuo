@@ -14,8 +14,8 @@ import (
 )
 
 var repoPaths = map[string]string{
-	"sales":   "dbt/services/sales",
-	"finance": "dbt/services/finance",
+	"sales":   "dbt/projects/sales",
+	"finance": "dbt/projects/finance",
 	"ledger":  "python/ledger",
 }
 
@@ -23,9 +23,9 @@ func trigger() remediation.Trigger {
 	return remediation.Trigger{
 		ReleaseID: "rel-1",
 		Nodes: []remediation.TriggerNode{
-			{NodeID: "model.sales.orders", NodeType: "dbt-model", Service: "sales"},
-			{NodeID: "python.ledger.postings", NodeType: "python-node", Service: "ledger"},
-			{NodeID: "python.ledger.rates", NodeType: "python-csv", Service: "ledger"},
+			{NodeID: "model.sales.orders", NodeType: "dbt-model", Project: "sales"},
+			{NodeID: "python.ledger.postings", NodeType: "python-node", Project: "ledger"},
+			{NodeID: "python.ledger.rates", NodeType: "python-csv", Project: "ledger"},
 		},
 	}
 }
@@ -55,7 +55,7 @@ func run(t *testing.T, c step.CrossCheck, drafts ...step.ClusterDraft) remediati
 
 func TestMeta_PlacesTheThreeChecksAtTheCrossClusterStage(t *testing.T) {
 	for name, c := range map[string]step.CrossCheck{
-		"edits_map_to_a_service": cross.NewEditsMapToAService(repoPaths, nil),
+		"edits_map_to_a_project": cross.NewEditsMapToAProject(repoPaths, nil),
 		"no_path_edited_twice":   cross.NewNoPathEditedTwice(repoPaths, nil),
 		"one_manifest_kind":      cross.NewOneManifestKind(repoPaths, nil),
 	} {
@@ -69,29 +69,29 @@ func TestMeta_PlacesTheThreeChecksAtTheCrossClusterStage(t *testing.T) {
 	}
 }
 
-func TestEditsMapToAService(t *testing.T) {
-	c := cross.NewEditsMapToAService(repoPaths, nil)
+func TestEditsMapToAProject(t *testing.T) {
+	c := cross.NewEditsMapToAProject(repoPaths, nil)
 
 	ok := run(t, c,
-		clusterDraft(1, nil, edit("dbt/services/sales/models/orders.sql", "model.sales.orders")),
-		clusterDraft(2, nil, edit("dbt/services/finance/models/p.sql", "model.sales.orders")))
+		clusterDraft(1, nil, edit("dbt/projects/sales/models/orders.sql", "model.sales.orders")),
+		clusterDraft(2, nil, edit("dbt/projects/finance/models/p.sql", "model.sales.orders")))
 	assert.True(t, ok.Passed())
-	assert.Equal(t, "edits_map_to_a_service", ok.Check)
+	assert.Equal(t, "edits_map_to_a_project", ok.Check)
 
 	// The first refused edit, in cluster order, is the one reported.
 	bad := run(t, c,
-		clusterDraft(1, nil, edit("dbt/services/sales/models/orders.sql", "model.sales.orders")),
+		clusterDraft(1, nil, edit("dbt/projects/sales/models/orders.sql", "model.sales.orders")),
 		clusterDraft(2, nil, edit("docs/readme.md", "model.sales.orders"), edit("other/file.sql", "model.sales.orders")))
 	require.Len(t, bad.Findings, 1)
-	assert.Equal(t, "edit_outside_services", bad.Findings[0].Code)
-	assert.Equal(t, "edit belongs to no configured service: docs/readme.md", bad.Findings[0].Message)
+	assert.Equal(t, "edit_outside_projects", bad.Findings[0].Code)
+	assert.Equal(t, "edit belongs to no configured project: docs/readme.md", bad.Findings[0].Message)
 	assert.Equal(t, "docs/readme.md", bad.Findings[0].File)
 	assert.False(t, bad.Passed())
 }
 
 func TestNoPathEditedTwice(t *testing.T) {
 	c := cross.NewNoPathEditedTwice(repoPaths, nil)
-	p := "dbt/services/sales/models/orders.sql"
+	p := "dbt/projects/sales/models/orders.sql"
 
 	assert.True(t, run(t, c, clusterDraft(1, nil, edit(p, "a")), clusterDraft(2, nil, edit(p+"2", "a"))).Passed())
 
@@ -107,7 +107,7 @@ func TestNoPathEditedTwice(t *testing.T) {
 		assert.Equal(t, "no_path_edited_twice", res.Check)
 	}
 
-	// An edit no service owns is not a duplicate: it is refused as unmapped.
+	// An edit no project owns is not a duplicate: it is refused as unmapped.
 	assert.True(t, run(t, c, clusterDraft(1, nil, edit("x/y.sql", "a"), edit("x/y.sql", "a"))).Passed())
 }
 
@@ -118,20 +118,20 @@ func TestOneManifestKind(t *testing.T) {
 
 	// A python contract with an edit to a failing python node's contract: fine.
 	assert.True(t, run(t, c, clusterDraft(1, contract, edit(yml, "python.ledger.postings"))).Passed())
-	// A dbt service never has a packaged contract, so dbt edits alone pass.
-	assert.True(t, run(t, c, clusterDraft(1, nil, edit("dbt/services/sales/models/a.sql", "model.sales.orders"))).Passed())
-	// A python contract in one service and dbt edits in another: fine.
+	// A dbt project never has a packaged contract, so dbt edits alone pass.
+	assert.True(t, run(t, c, clusterDraft(1, nil, edit("dbt/projects/sales/models/a.sql", "model.sales.orders"))).Passed())
+	// A python contract in one project and dbt edits in another: fine.
 	assert.True(t, run(t, c,
 		clusterDraft(1, contract, edit(yml, "python.ledger.postings")),
-		clusterDraft(2, nil, edit("dbt/services/sales/models/a.sql", "model.sales.orders"))).Passed())
+		clusterDraft(2, nil, edit("dbt/projects/sales/models/a.sql", "model.sales.orders"))).Passed())
 
-	// Edits to a dbt model in the python service next to its contract: mixed.
+	// Edits to a dbt model in the python project next to its contract: mixed.
 	mixed := run(t, c,
 		clusterDraft(1, contract, edit(yml, "python.ledger.postings")),
 		clusterDraft(2, nil, edit("python/ledger/models/m.sql", "model.sales.orders")))
 	require.Len(t, mixed.Findings, 1)
 	assert.Equal(t, "mixed_manifest_kinds", mixed.Findings[0].Code)
-	assert.Equal(t, "service ledger mixes a python contract with dbt edits in one attempt; a release verifies one manifest kind", mixed.Findings[0].Message)
+	assert.Equal(t, "project ledger mixes a python contract with dbt edits in one attempt; a release verifies one manifest kind", mixed.Findings[0].Message)
 	assert.Equal(t, "one_manifest_kind", mixed.Check)
 
 	// An edit whose target the trigger does not name is not a python contract.
@@ -139,18 +139,18 @@ func TestOneManifestKind(t *testing.T) {
 	require.Len(t, unnamed.Findings, 1)
 	assert.Equal(t, "mixed_manifest_kinds", unnamed.Findings[0].Code)
 
-	// An edit to a python node of a non-script kind in a contract service counts as a contract edit.
+	// An edit to a python node of a non-script kind in a contract project counts as a contract edit.
 	assert.True(t, run(t, c, clusterDraft(1, contract, edit(yml, "python.ledger.rates"))).Passed())
 }
 
-func TestOneManifestKind_ContractBelongsToTheServiceOfTheClustersFirstEdit(t *testing.T) {
+func TestOneManifestKind_ContractBelongsToTheProjectOfTheClustersFirstEdit(t *testing.T) {
 	c := cross.NewOneManifestKind(repoPaths, nil)
 	contract := []byte("nodes: []\n")
 	// The cluster's first edit is in ledger, so its contract is ledger's; a later
-	// edit of the same cluster in sales is a dbt edit of a service with no contract.
+	// edit of the same cluster in sales is a dbt edit of a project with no contract.
 	res := run(t, c, clusterDraft(1, contract,
 		edit("python/ledger/contracts/postings.yaml", "python.ledger.postings"),
-		edit("dbt/services/sales/models/a.sql", "model.sales.orders")))
+		edit("dbt/projects/sales/models/a.sql", "model.sales.orders")))
 	assert.True(t, res.Passed())
 
 	// A cluster with a contract and no edit sets none.

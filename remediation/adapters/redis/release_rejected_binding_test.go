@@ -134,8 +134,8 @@ func TestEvidenceFromRejected_ParseStage(t *testing.T) {
 	raw := []byte(`{"release_id":"rel-9","stage":"parse","reason":"invalid_sql",
 	  "repo":"o/r","commit_sha":"sha","failing_nodes":["a.b","a.c"],
 	  "per_node":[
-	    {"node_id":"a.b","status":"failed","kind":"invalid_sql","detail":"Expecting )","file_path":"models/b.sql","service":"s","node_type":"dbt-model"},
-	    {"node_id":"a.c","status":"failed","kind":"unqualified_reference","detail":"Unqualified table reference 'orders'","file_path":"models/c.sql","service":"s","node_type":"dbt-model"}
+	    {"node_id":"a.b","status":"failed","kind":"invalid_sql","detail":"Expecting )","file_path":"models/b.sql","project":"s","node_type":"dbt-model"},
+	    {"node_id":"a.c","status":"failed","kind":"unqualified_reference","detail":"Unqualified table reference 'orders'","file_path":"models/c.sql","project":"s","node_type":"dbt-model"}
 	  ]}`)
 	evs, err := evidenceFromRejected(raw)
 	if err != nil {
@@ -147,7 +147,7 @@ func TestEvidenceFromRejected_ParseStage(t *testing.T) {
 	if evs[0].Source != pkg_model.RemediationSourceParse || evs[0].ParseKind != pkg_model.ParseFailureKindInvalidSQL || evs[0].Detail != "Expecting )" {
 		t.Errorf("first evidence: %+v", evs[0])
 	}
-	if evs[0].FilePath != "models/b.sql" || evs[0].Service != "s" || evs[0].NodeType != "dbt-model" || evs[0].Repo != "o/r" {
+	if evs[0].FilePath != "models/b.sql" || evs[0].Project != "s" || evs[0].NodeType != "dbt-model" || evs[0].Repo != "o/r" {
 		t.Errorf("location not threaded: %+v", evs[0])
 	}
 	if evs[1].ParseKind != pkg_model.ParseFailureKindUnqualifiedReference {
@@ -206,18 +206,18 @@ func TestEvidenceFromRejected_ParseExportLegRejections(t *testing.T) {
 	})
 }
 
-// TestEvidenceFromRejected_SeedFilePathAndService verifies that when the
-// release.rejected:v1 payload carries file_path and service on a seed_build
+// TestEvidenceFromRejected_SeedFilePathAndProject verifies that when the
+// release.rejected:v1 payload carries file_path and project on a seed_build
 // per-node entry, evidenceFromRejected threads them into FailureEvidence so
 // the classifier can forward them to the remediation trigger — allowing the
 // agent to locate the source file without querying GetNodeLocation.
-func TestEvidenceFromRejected_SeedFilePathAndService(t *testing.T) {
+func TestEvidenceFromRejected_SeedFilePathAndProject(t *testing.T) {
 	raw := []byte(`{
 		"release_id":"rel-seed","stage":"seed_build","reason":"seed_build_failed",
 		"repo":"o/r","commit_sha":"sha1",
 		"per_node":[
 			{"node_id":"seed.svc.customers","status":"failed","dbt_log_uri":"s3://b/c.log",
-			 "file_path":"seeds/customers.csv","service":"svc-data"},
+			 "file_path":"seeds/customers.csv","project":"svc-data"},
 			{"node_id":"seed.svc.products","status":"ok","dbt_log_uri":"s3://b/p.log"}
 		]}`)
 	got, err := evidenceFromRejected(raw)
@@ -234,15 +234,15 @@ func TestEvidenceFromRejected_SeedFilePathAndService(t *testing.T) {
 	if e.FilePath != "seeds/customers.csv" {
 		t.Errorf("FilePath = %q, want seeds/customers.csv", e.FilePath)
 	}
-	if e.Service != "svc-data" {
-		t.Errorf("Service = %q, want svc-data", e.Service)
+	if e.Project != "svc-data" {
+		t.Errorf("Project = %q, want svc-data", e.Project)
 	}
 }
 
 // TestEvidenceFromRejected_DuplicateTable verifies that a duplicate_table
 // rejection — a parse-time gate rejection with no stage field and no dbt log —
-// is routed to SourceDuplicateTable and carries the claimant service/file_path
-// plus the competing other_service through to FailureEvidence.
+// is routed to SourceDuplicateTable and carries the claimant project/file_path
+// plus the competing other_project through to FailureEvidence.
 func TestEvidenceFromRejected_DuplicateTable(t *testing.T) {
 	raw := []byte(`{
 	  "release_id": "rel-1",
@@ -253,9 +253,9 @@ func TestEvidenceFromRejected_DuplicateTable(t *testing.T) {
 	    "node_id": "analytics.orders_v2",
 	    "relation_id": "analytics.orders",
 	    "status": "failed",
-	    "service": "marketing",
+	    "project": "marketing",
 	    "file_path": "models/orders.sql",
-	    "other_service": "finance"
+	    "other_project": "finance"
 	  }]
 	}`)
 
@@ -276,14 +276,14 @@ func TestEvidenceFromRejected_DuplicateTable(t *testing.T) {
 	if e.RelationID != "analytics.orders" {
 		t.Errorf("RelationID = %q, want analytics.orders", e.RelationID)
 	}
-	if e.Service != "marketing" {
-		t.Errorf("Service = %q, want marketing", e.Service)
+	if e.Project != "marketing" {
+		t.Errorf("Project = %q, want marketing", e.Project)
 	}
 	if e.FilePath != "models/orders.sql" {
 		t.Errorf("FilePath = %q, want models/orders.sql", e.FilePath)
 	}
-	if e.OtherService != "finance" {
-		t.Errorf("OtherService = %q, want finance", e.OtherService)
+	if e.OtherProject != "finance" {
+		t.Errorf("OtherProject = %q, want finance", e.OtherProject)
 	}
 	if e.DBTLogURI != "" {
 		t.Errorf("DBTLogURI = %q, want empty — a parse-time rejection has no dbt log", e.DBTLogURI)
@@ -291,13 +291,13 @@ func TestEvidenceFromRejected_DuplicateTable(t *testing.T) {
 }
 
 // TestEvidenceFromRejected_ParsePhaseReasonsStillDropped verifies that
-// unbuildable_cross_service_upstream — a parse-phase reason that is not
+// unbuildable_cross_project_upstream — a parse-phase reason that is not
 // fixable by a model rename — yields no evidence. It is a declared reason the
 // contract marks not healable, so the drop of such reasons removes it, and the
 // stage-less branch of sourceFromPayload, which also matches duplicate_table,
 // does not route it.
 func TestEvidenceFromRejected_ParsePhaseReasonsStillDropped(t *testing.T) {
-	for _, reason := range []string{"unbuildable_cross_service_upstream"} {
+	for _, reason := range []string{"unbuildable_cross_project_upstream"} {
 		raw := []byte(`{"release_id":"rel-1","reason":"` + reason +
 			`","per_node":[{"node_id":"n1","status":"failed"}]}`)
 
@@ -350,7 +350,7 @@ func TestEvidenceFromRejected_DropsNonHealableParseRejections(t *testing.T) {
 	rejection := func(reason, kind string) []byte {
 		return []byte(`{"release_id":"rel-9","stage":"parse","reason":"` + reason + `",
 		  "repo":"o/r","commit_sha":"sha","failing_nodes":["a.b"],
-		  "per_node":[{"node_id":"a.b","status":"failed","kind":"` + kind + `","detail":"cannot read","file_path":"models/b.sql","service":"s","node_type":"dbt-model"}]}`)
+		  "per_node":[{"node_id":"a.b","status":"failed","kind":"` + kind + `","detail":"cannot read","file_path":"models/b.sql","project":"s","node_type":"dbt-model"}]}`)
 	}
 
 	t.Run("invalid_artifact", func(t *testing.T) {
@@ -516,7 +516,7 @@ func TestEvidenceFromRejected_CarriesCodeBundleURI(t *testing.T) {
 // object shape of changed_ancestors. An id alone would send an upstream fix to
 // wherever the PROMOTED graph places the ancestor, which for a node this
 // release renamed or moved is not where the candidate declares it; the payload
-// therefore carries the candidate's own path and service alongside each id.
+// therefore carries the candidate's own path and project alongside each id.
 func TestEvidenceFromRejected_CarriesChangedAncestorsWithTheirLocation(t *testing.T) {
 	raw := []byte(`{
 		"release_id":"r1","stage":"validation","reason":"validation_failed",
@@ -524,8 +524,8 @@ func TestEvidenceFromRejected_CarriesChangedAncestorsWithTheirLocation(t *testin
 		"per_node":[
 			{"node_id":"s.a","status":"failed","dbt_log_uri":"s3://b/a.log",
 			 "changed_ancestors":[
-				{"node_id":"s.u","file_path":"models/marts/u_renamed.sql","service":"svc-b","depth":1},
-				{"node_id":"s.v","file_path":"models/v.sql","service":"svc-b","depth":2}]},
+				{"node_id":"s.u","file_path":"models/marts/u_renamed.sql","project":"svc-b","depth":1},
+				{"node_id":"s.v","file_path":"models/v.sql","project":"svc-b","depth":2}]},
 			{"node_id":"s.ok","status":"ok"}
 		]}`)
 
@@ -534,7 +534,7 @@ func TestEvidenceFromRejected_CarriesChangedAncestorsWithTheirLocation(t *testin
 
 	require.Len(t, got, 1)
 	assert.Equal(t, []failure.ChangedAncestor{
-		{NodeID: "s.u", FilePath: "models/marts/u_renamed.sql", Service: "svc-b", Depth: 1},
-		{NodeID: "s.v", FilePath: "models/v.sql", Service: "svc-b", Depth: 2},
+		{NodeID: "s.u", FilePath: "models/marts/u_renamed.sql", Project: "svc-b", Depth: 1},
+		{NodeID: "s.v", FilePath: "models/v.sql", Project: "svc-b", Depth: 2},
 	}, got[0].ChangedAncestors)
 }

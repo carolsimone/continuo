@@ -110,7 +110,7 @@ def run(ctx):
 
 // TestCLIPackager_RunsPackWithTheImagePackages runs the image's real
 // continuo-runtime pack over one ODCS contract and its script, and checks the
-// odcs-bundle.json it returns: the service, the package list it was given, the
+// odcs-bundle.json it returns: the project, the package list it was given, the
 // producer versions and the contract with its source hash. A wrong argument
 // order, a wrong --out path or a CLI that never ran fails here as a missing
 // field or a parse failure, which is how topology-controller would refuse it.
@@ -134,7 +134,7 @@ func TestCLIPackager_RunsPackWithTheImagePackages(t *testing.T) {
 
 	var bundle struct {
 		BundleVersion int               `json:"bundle_version"`
-		Service       string            `json:"service"`
+		Project       string            `json:"project"`
 		ImagePackages map[string]string `json:"image_packages"`
 		Producer      struct {
 			ContinuoPythonRuntime string `json:"continuo_python_runtime"`
@@ -152,8 +152,8 @@ func TestCLIPackager_RunsPackWithTheImagePackages(t *testing.T) {
 	if bundle.BundleVersion != 1 {
 		t.Errorf("bundle_version = %d, want 1", bundle.BundleVersion)
 	}
-	if bundle.Service != "py-probe-test" {
-		t.Errorf("service = %q, want py-probe-test", bundle.Service)
+	if bundle.Project != "py-probe-test" {
+		t.Errorf("project = %q, want py-probe-test", bundle.Project)
 	}
 	if len(bundle.ImagePackages) != 2 || bundle.ImagePackages["pyarrow"] != "26.0.0" || bundle.ImagePackages["duckdb"] != "1.4.0" {
 		t.Errorf("image_packages = %v, want the list Pack was given, %v", bundle.ImagePackages, packages)

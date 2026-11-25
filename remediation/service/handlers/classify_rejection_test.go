@@ -314,7 +314,7 @@ func TestClassifyFailure_InfraIsForwardedUnfixable(t *testing.T) {
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
 	ev := failure.FailureEvidence{
 		Source: pkg_model.RemediationSourceValidation, ReleaseID: "r1", NodeID: "s.n",
-		Repo: "o/r", CommitSHA: "abc", DBTLogURI: "s3://b/k", FilePath: "models/n.sql", Service: "svc", NodeType: "dbt-model",
+		Repo: "o/r", CommitSHA: "abc", DBTLogURI: "s3://b/k", FilePath: "models/n.sql", Project: "svc", NodeType: "dbt-model",
 	}
 	err := ClassifyRejection(context.Background(), depsWith(u, "could not connect to database: connection refused", nil), testTenant, []failure.FailureEvidence{ev})
 	if err != nil {
@@ -334,7 +334,7 @@ func TestClassifyFailure_InfraIsForwardedUnfixable(t *testing.T) {
 	assert.NotEmpty(t, n.ErrorSignature)
 	assert.Equal(t, "s3://b/k", n.DBTLogURI)
 	assert.Equal(t, "models/n.sql", n.FilePath)
-	assert.Equal(t, "svc", n.Service)
+	assert.Equal(t, "svc", n.Project)
 	require.NotNil(t, n.Unfixable)
 	assert.Equal(t, pkgevents.Unfixable{Reason: string(pkg_model.HandoverReasonClassifierInfra), Detail: "could not connect to database: connection refused"}, *n.Unfixable)
 	assert.True(t, u.committed)
@@ -416,8 +416,8 @@ func TestClassifyFailure_SeedSourceFilePathIsEmpty(t *testing.T) {
 	// have file_path populated in the RemediationRequested trigger. Seed
 	// failures carry a real dbt node unique_id, so the remediation agent
 	// resolves the source file via catalog's GetNodeLocation.
-	// Populating file_path for seeds would send a service-name-like NodeID
-	// as serviceName in the agent, causing a miss on ServiceRepoPaths.
+	// Populating file_path for seeds would send a project-name-like NodeID
+	// as projectName in the agent, causing a miss on ProjectRepoPaths.
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
 	logText := `Runtime Error in seed fx_rates_eur (seeds/customers.csv)
   Could not find file seeds/customers.csv`
@@ -500,18 +500,18 @@ func TestClassifyFailure_DuplicateTableReadsNoLog(t *testing.T) {
 		Clock:     fakeClock{},
 		Logger:    slog.Default(),
 	}
-	// Both claimants are in the SAME service with different file paths — the
-	// case OtherFilePath exists for, since OtherService alone cannot
+	// Both claimants are in the SAME project with different file paths — the
+	// case OtherFilePath exists for, since OtherProject alone cannot
 	// discriminate the competing node here.
 	ev := failure.FailureEvidence{
 		Source:        pkg_model.RemediationSourceDuplicateTable,
 		ReleaseID:     "rel-1",
 		NodeID:        "analytics.orders_v2",
 		RelationID:    "analytics.orders",
-		Service:       "marketing",
+		Project:       "marketing",
 		FilePath:      "models/orders.sql",
 		NodeType:      "dbt-model",
-		OtherService:  "marketing",
+		OtherProject:  "marketing",
 		OtherFilePath: "models/orders_legacy.sql",
 		Repo:          "owner/repo",
 		CommitSHA:     "abc123",
@@ -548,8 +548,8 @@ func TestClassifyFailure_DuplicateTableReadsNoLog(t *testing.T) {
 	if n.RelationID != "analytics.orders" {
 		t.Fatalf("trigger relation_id = %q, want analytics.orders", n.RelationID)
 	}
-	if n.Service != "marketing" {
-		t.Fatalf("trigger service = %q, want marketing", n.Service)
+	if n.Project != "marketing" {
+		t.Fatalf("trigger project = %q, want marketing", n.Project)
 	}
 	if n.FilePath != "models/orders.sql" {
 		t.Fatalf("trigger file_path = %q, want models/orders.sql", n.FilePath)
@@ -557,8 +557,8 @@ func TestClassifyFailure_DuplicateTableReadsNoLog(t *testing.T) {
 	if n.NodeType != "dbt-model" {
 		t.Fatalf("trigger node_type = %q, want dbt-model", n.NodeType)
 	}
-	if n.OtherService != "marketing" {
-		t.Fatalf("trigger other_service = %q, want marketing", n.OtherService)
+	if n.OtherProject != "marketing" {
+		t.Fatalf("trigger other_project = %q, want marketing", n.OtherProject)
 	}
 	if n.OtherFilePath != "models/orders_legacy.sql" {
 		t.Fatalf("trigger other_file_path = %q, want models/orders_legacy.sql", n.OtherFilePath)
@@ -572,7 +572,7 @@ func TestClassifyRejection_TwoNodesEmitOneBatchedTrigger(t *testing.T) {
 		DBTLogURI: "s3://b/k", CodeBundleURI: "s3://b/code-bundles/r1/bundle.json",
 	}
 	a, b := base, base
-	anc := []failure.ChangedAncestor{{NodeID: "s.u", FilePath: "models/u.sql", Service: "svc", Depth: 1}}
+	anc := []failure.ChangedAncestor{{NodeID: "s.u", FilePath: "models/u.sql", Project: "svc", Depth: 1}}
 	a.NodeID, a.ChangedAncestors = "s.a", anc
 	b.NodeID, b.ChangedAncestors = "s.b", anc
 
@@ -597,7 +597,7 @@ func TestClassifyRejection_TwoNodesEmitOneBatchedTrigger(t *testing.T) {
 		t.Fatalf("nodes must be carried in evidence order: %+v", p.Nodes)
 	}
 	if len(p.Nodes[0].ChangedAncestors) != 1 || p.Nodes[0].ChangedAncestors[0].NodeID != "s.u" ||
-		p.Nodes[0].ChangedAncestors[0].FilePath != "models/u.sql" || p.Nodes[0].ChangedAncestors[0].Service != "svc" ||
+		p.Nodes[0].ChangedAncestors[0].FilePath != "models/u.sql" || p.Nodes[0].ChangedAncestors[0].Project != "svc" ||
 		p.Nodes[0].ChangedAncestors[0].Depth != 1 {
 		t.Fatalf("changed ancestors must travel onto the trigger with their candidate location: %+v", p.Nodes[0])
 	}
@@ -713,7 +713,7 @@ func TestClassifyRejection_ParseNotHealableIsForwardedUnfixable(t *testing.T) {
 	ev := failure.FailureEvidence{
 		Source: pkg_model.RemediationSourceParse, ReleaseID: "rel-1", NodeID: "a.b",
 		ParseKind: pkg_model.ParseFailureKindInternal, Detail: "parser crashed",
-		FilePath: "models/b.sql", Service: "s", Repo: "o/r", CommitSHA: "sha",
+		FilePath: "models/b.sql", Project: "s", Repo: "o/r", CommitSHA: "sha",
 	}
 
 	require.NoError(t, ClassifyRejection(context.Background(), deps, testTenant, []failure.FailureEvidence{ev}))
@@ -864,7 +864,7 @@ func TestClassifyRejection_ParseEvidenceReadsNoLog(t *testing.T) {
 	ev := failure.FailureEvidence{
 		Source: pkg_model.RemediationSourceParse, ReleaseID: "rel-1", NodeID: "a.b",
 		ParseKind: pkg_model.ParseFailureKindInvalidSQL, Detail: "Expecting )",
-		FilePath: "models/b.sql", Service: "s", Repo: "o/r", CommitSHA: "sha",
+		FilePath: "models/b.sql", Project: "s", Repo: "o/r", CommitSHA: "sha",
 	}
 	require.NoError(t, ClassifyRejection(context.Background(), deps, testTenant, []failure.FailureEvidence{ev}))
 	require.Equal(t, 0, fetches, "a parse failure has no log to fetch")

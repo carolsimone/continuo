@@ -1,4 +1,4 @@
-# Two services build analytics.orders: the release's marketing model moves to
+# Two projects build analytics.orders: the release's marketing model moves to
 # orders_v2, and its properties entry and the model that refs it follow.
 kind: fixture
 version: 1
@@ -17,11 +17,11 @@ trigger:
       reason: duplicate_relation
       error_excerpt: "relation analytics.orders is produced by finance and marketing"
       file_path: models/orders.sql
-      service: marketing
+      project: marketing
       node_type: dbt-model
-      other_service: finance
+      other_project: finance
       other_file_path: services/finance/models/orders.sql
-service_repo_paths:
+project_repo_paths:
   marketing: services/marketing
   finance: services/finance
 repo_files:

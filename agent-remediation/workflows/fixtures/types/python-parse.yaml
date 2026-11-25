@@ -17,9 +17,9 @@ trigger:
       error_signature: sig-unqualified-reference
       reason: unqualified_reference
       error_excerpt: "read orders references right_name, which names no schema"
-      service: svc-py-e2e-parse
+      project: svc-py-e2e-parse
       node_type: python-node
-service_repo_paths:
+project_repo_paths:
   svc-py-e2e-parse: services/svc-py-e2e-parse
 repo_files:
   services/svc-py-e2e-parse/contracts/py_unqualified_read.odcs.yaml: |
@@ -71,7 +71,7 @@ release:
 packager:
   # The odcs-bundle.json continuo-runtime pack writes for the patched contract
   # directory, with the release's image packages.
-  packed: '{"bundle_version": 1, "service": "svc-py-e2e", "producer": {"continuo_python_runtime": "0.13.0", "continuo_contracts": "0.2.0"}, "image_packages": {"pyarrow": "26.0.0"}, "nodes": [{"path": "contracts/py_unqualified_read.odcs.yaml", "text": "id: e2e_schema.py_unqualified_read\n", "source_hash": "", "shared_code_hash": ""}]}'
+  packed: '{"bundle_version": 1, "project": "svc-py-e2e", "producer": {"continuo_python_runtime": "0.13.0", "continuo_contracts": "0.2.0"}, "image_packages": {"pyarrow": "26.0.0"}, "nodes": [{"path": "contracts/py_unqualified_read.odcs.yaml", "text": "id: e2e_schema.py_unqualified_read\n", "source_hash": "", "shared_code_hash": ""}]}'
 answers:
   pass:
     - files:
@@ -138,6 +138,6 @@ answers:
       confidence: low
       model: claude-test
 decline_before_model:
-  node: { service: "" }
+  node: { project: "" }
 gate_errors:
   e2e_schema.py_unqualified_read: 'relation "public.right_name" does not exist'

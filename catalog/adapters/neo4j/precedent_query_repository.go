@@ -51,11 +51,11 @@ RETURN rej.release_id AS release_id, rej.node_id AS node_id, signature`
 // resolving version is the current version of its live :Node, and its fix
 // PRs. It ends with the failing code's column, which the caller appends.
 //
-// A proposal spanning several services is shared by their rejections, and
+// A proposal spanning several projects is shared by their rejections, and
 // each carries its own :PullRequest. The [:PROPOSED] edge stamps the
-// proposing service, so the PR join is scoped to it: a rejection surfaces
-// only its own service's PR facts, never a sibling service's. An edge with
-// no service falls back to matching any of the proposal's PRs.
+// proposing project, so the PR join is scoped to it: a rejection surfaces
+// only its own project's PR facts, never a sibling project's. An edge with
+// no project falls back to matching any of the proposal's PRs.
 const precedentDetailsCypher = `
 UNWIND $keys AS k
 MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: k.release_id, node_id: k.node_id})
@@ -74,7 +74,7 @@ WITH rej, signature, res, prior,
 WITH rej, signature, res, res_is_current, head(collect(prior)) AS prior
 OPTIONAL MATCH (rej)-[prop:PROPOSED]->(p:Proposal {tenant_id: $tenant_id})
 OPTIONAL MATCH (p)-[:HAS_PR]->(pl:PullRequest {tenant_id: $tenant_id})
-  WHERE pl.service = prop.service OR prop.service IS NULL
+  WHERE pl.project = prop.project OR prop.project IS NULL
 WITH rej, signature, res, prior, res_is_current,
      collect(DISTINCT p {
        .proposal_id,
@@ -103,19 +103,19 @@ RETURN rej.release_id AS release_id, rej.node_id AS node_id,
 // (merged) and the newest before it (prior) — so the service can render the
 // merged-truth diff.
 //
-// A proposal spanning several services is shared by their rejections, but
-// each RESOLVED_BY edge carries the resolving service, so the walk is scoped
-// to it: a rejection resolved by one service's PR surfaces only that
-// service's edits and reads only that service's :PullRequest closed_at. An
-// edge with no service falls back to the whole-proposal walk.
+// A proposal spanning several projects is shared by their rejections, but
+// each RESOLVED_BY edge carries the resolving project, so the walk is scoped
+// to it: a rejection resolved by one project's PR surfaces only that
+// project's edits and reads only that project's :PullRequest closed_at. An
+// edge with no project falls back to the whole-proposal walk.
 const precedentEditsCypher = `
 UNWIND $keys AS k
 MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: k.release_id, node_id: k.node_id})
       -[rb:RESOLVED_BY]->(rp:Proposal {tenant_id: $tenant_id})
 MATCH (rp)-[ed:EDITED]->(t:Node {tenant_id: $tenant_id})
-  WHERE ed.service = rb.service OR rb.service IS NULL
+  WHERE ed.project = rb.project OR rb.project IS NULL
 OPTIONAL MATCH (rp)-[:HAS_PR]->(pl:PullRequest {tenant_id: $tenant_id})
-  WHERE pl.pr_state = 'merged' AND (pl.service = rb.service OR rb.service IS NULL)
+  WHERE pl.pr_state = 'merged' AND (pl.project = rb.project OR rb.project IS NULL)
 OPTIONAL MATCH (mv:NodeVersion {tenant_id: $tenant_id, unique_id: t.unique_id})
   WHERE ed.amended AND pl.closed_at IS NOT NULL AND mv.promoted_at > pl.closed_at
 WITH rej, ed, t, pl, mv ORDER BY mv.promoted_at ASC

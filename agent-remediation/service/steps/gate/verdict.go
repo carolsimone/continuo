@@ -52,7 +52,7 @@ type read struct {
 // pipeline's queue. Runs share one global queue and go one after another, so
 // measuring from the try's start would fail a try whose run never ran, and
 // sharing one budget across the try's runs would grow it with the number of
-// services edited. A run still queued has not started, so it has spent nothing.
+// projects edited. A run still queued has not started, so it has spent nothing.
 func (g *VerificationRun) decide(in step.GateInput, got read) step.GateVerdict {
 	name := string(nameVerificationRun)
 	now := g.clock.Now()

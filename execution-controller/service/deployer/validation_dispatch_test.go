@@ -167,7 +167,7 @@ func silentDispatcher(dep deploy.Deployer) *Dispatcher {
 
 func deployableValidation() command.ValidationDeployTask {
 	return command.ValidationDeployTask{
-		ReleaseID: "rel_1", NodeID: "node_1", ServiceName: "dbt",
+		ReleaseID: "rel_1", NodeID: "node_1", ProjectName: "dbt",
 		SchemaName: "public", TableName: "orders", NodeType: "dbt-model",
 		ImageTag: "sha-abc", JobName: "validate-public-orders",
 		CandidateSchema: "_cand_rel_1",
@@ -348,7 +348,7 @@ func validationNodeFor(releaseID, nodeID string, ups ...string) *model.Deploymen
 	cmd := command.ValidationDeployTask{
 		ReleaseID:       releaseID,
 		NodeID:          nodeID,
-		ServiceName:     "dbt",
+		ProjectName:     "dbt",
 		SchemaName:      "public",
 		TableName:       nodeID,
 		NodeType:        "dbt-model",
@@ -547,7 +547,7 @@ func TestMaybeEmit_LockErrorAbortsBeforeClaim(t *testing.T) {
 
 func deployableSeedBuild() command.ValidationDeployTask {
 	return command.ValidationDeployTask{
-		ReleaseID: "rel_sb_1", NodeID: "seed_node_1", ServiceName: "dbt",
+		ReleaseID: "rel_sb_1", NodeID: "seed_node_1", ProjectName: "dbt",
 		SchemaName: "public", TableName: "my_seed", NodeType: "dbt-seed",
 		ImageTag: "sha-sb1", JobName: "seed-build-public-my-seed",
 		CandidateSchema: "_cand_rel_sb_1",
@@ -641,7 +641,7 @@ func TestDispatcher_DispatchOne_SeedBuildMode_NotDeployable_SavesFailedBeforeGat
 
 func deployableCompile() command.ValidationDeployTask {
 	return command.ValidationDeployTask{
-		ReleaseID: "rel_c_1", NodeID: "compile_node_1", ServiceName: "dbt",
+		ReleaseID: "rel_c_1", NodeID: "compile_node_1", ProjectName: "dbt",
 		ImageTag: "sha-c1", JobName: "compile-dbt-rel-c-1",
 		ManifestS3URI: "s3://continuo/dbt/rel_c_1/manifest.json",
 	}

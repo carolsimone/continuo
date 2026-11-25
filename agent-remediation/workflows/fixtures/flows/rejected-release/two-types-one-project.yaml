@@ -1,11 +1,11 @@
-# Two clusters of two types fix the sales service: orders is a dbt-validation
+# Two clusters of two types fix the sales project: orders is a dbt-validation
 # fix of its own, and daily_orders and weekly_orders share one fix at
 # base_orders. One verification run checks both edits, and one attempt
 # carries them.
 kind: fixture
 version: 1
 flow: rejected-release
-scenario: two_types_one_service
+scenario: two_types_one_project
 trigger:
   source: validation
   release_id: rel-flow-two-types
@@ -21,7 +21,7 @@ trigger:
       dbt_log_uri: s3://logs/rel-flow-two-types/model.sales.orders.log
       candidate_artifact_uri: s3://candidates/rel-flow-two-types/model.sales.orders.sql
       file_path: models/orders.sql
-      service: sales
+      project: sales
       node_type: dbt-model
     - node_id: model.sales.daily_orders
       category: validation
@@ -29,21 +29,21 @@ trigger:
       reason: missing_column
       error_excerpt: 'column base_orders.amount does not exist'
       file_path: models/daily_orders.sql
-      service: sales
+      project: sales
       node_type: dbt-model
       changed_ancestors:
-        - { node_id: model.sales.base_orders, file_path: models/base_orders.sql, service: sales, depth: 1 }
+        - { node_id: model.sales.base_orders, file_path: models/base_orders.sql, project: sales, depth: 1 }
     - node_id: model.sales.weekly_orders
       category: validation
       error_signature: sig-base-orders-amount
       reason: missing_column
       error_excerpt: 'column base_orders.amount does not exist'
       file_path: models/weekly_orders.sql
-      service: sales
+      project: sales
       node_type: dbt-model
       changed_ancestors:
-        - { node_id: model.sales.base_orders, file_path: models/base_orders.sql, service: sales, depth: 1 }
-service_repo_paths:
+        - { node_id: model.sales.base_orders, file_path: models/base_orders.sql, project: sales, depth: 1 }
+project_repo_paths:
   sales: services/sales
 objects:
   s3://logs/rel-flow-two-types/model.sales.orders.log: "Database Error in model orders\n  column \"total\" does not exist\n"

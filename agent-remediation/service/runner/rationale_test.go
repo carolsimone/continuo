@@ -12,7 +12,7 @@ import (
 
 func TestRationaleFactsFor_CleansEachMembersErrorLine(t *testing.T) {
 	trig := remediation.Trigger{Source: "compile", Nodes: []remediation.TriggerNode{{
-		NodeID: "model.a", Service: "svc-a", ErrorExcerpt: "connect failed: password=hunter2 for user 'bob'",
+		NodeID: "model.a", Project: "svc-a", ErrorExcerpt: "connect failed: password=hunter2 for user 'bob'",
 	}}}
 	c := remediation.Cluster{Kind: workflow.ClusterSingle, TargetNodeID: "model.a", Members: []string{"model.a"}}
 

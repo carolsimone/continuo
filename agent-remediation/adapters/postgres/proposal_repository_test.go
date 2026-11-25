@@ -42,7 +42,7 @@ func newTestDB(t *testing.T) *sqlx.DB {
 
 	// Probe the current schema before any writes; missing tables or columns
 	// require external Flyway migration, never DDL from the test.
-	_, err = db.ExecContext(ctx, `SELECT verification_run_id, services FROM proposal LIMIT 0`)
+	_, err = db.ExecContext(ctx, `SELECT verification_run_id, projects FROM proposal LIMIT 0`)
 	require.NoError(t, err, "run the agent_remediation Flyway migrations before integration tests")
 	for _, table := range []string{"proposal", "proposal_pull_request", "message_processing", OutboxTable} {
 		var count int
@@ -603,7 +603,7 @@ func TestBeginPR_ListsAsStuckOpening(t *testing.T) {
 
 	var stillClaimed *time.Time
 	require.NoError(t, db.GetContext(ctx, &stillClaimed,
-		`SELECT pr_claimed_at FROM proposal_pull_request WHERE proposal_id=$1 AND service=''`, id))
+		`SELECT pr_claimed_at FROM proposal_pull_request WHERE proposal_id=$1 AND project=''`, id))
 	require.Nil(t, stillClaimed, "RecordPR must clear pr_claimed_at back to NULL")
 }
 
@@ -791,7 +791,7 @@ func TestFailStuckOpeningPR_RemovesFromStuckOpeningAndAllowsReclaim(t *testing.T
 
 	var clearedClaim *time.Time
 	require.NoError(t, db.GetContext(ctx, &clearedClaim,
-		`SELECT pr_claimed_at FROM proposal_pull_request WHERE proposal_id=$1 AND service=''`, id))
+		`SELECT pr_claimed_at FROM proposal_pull_request WHERE proposal_id=$1 AND project=''`, id))
 	require.Nil(t, clearedClaim, "FailStuckOpeningPR must clear pr_claimed_at back to NULL")
 
 	// The proposal is re-claimable after FailPR, and ages from the SECOND
@@ -877,7 +877,7 @@ func TestFailStuckOpeningPR_CASGuardsAgainstReClaim(t *testing.T) {
 	require.Equal(t, "failed", v.PrState)
 	var clearedClaim *time.Time
 	require.NoError(t, db.GetContext(ctx, &clearedClaim,
-		`SELECT pr_claimed_at FROM proposal_pull_request WHERE proposal_id=$1 AND service=''`, id))
+		`SELECT pr_claimed_at FROM proposal_pull_request WHERE proposal_id=$1 AND project=''`, id))
 	require.Nil(t, clearedClaim, "a successful CAS must clear pr_claimed_at back to NULL")
 }
 
@@ -938,19 +938,19 @@ func TestListStuckOpening_CursorRotatesAcrossPages(t *testing.T) {
 	require.NotNil(t, next3)
 }
 
-// TestListStuckOpening_MultipleServicesSameProposalPaginateDistinctly is the
-// regression test for the F5 cursor fix: one proposal split across two services
+// TestListStuckOpening_MultipleProjectsSameProposalPaginateDistinctly is the
+// regression test for the F5 cursor fix: one proposal split across two projects
 // has two 'opening' children that share the parent's (created_at, id). With a
 // page size of 1 the two siblings land on different pages, so resuming from the
 // first page's cursor must reach the second child, not skip past it. A
 // (created_at, id)-only cursor stranded the second sibling forever, because its
-// strict `>` excluded a row sharing that exact key; the service tiebreak fixes it.
-func TestListStuckOpening_MultipleServicesSameProposalPaginateDistinctly(t *testing.T) {
+// strict `>` excluded a row sharing that exact key; the project tiebreak fixes it.
+func TestListStuckOpening_MultipleProjectsSameProposalPaginateDistinctly(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	repo := NewProposalRepository(db, perServiceRepoPaths)
+	repo := NewProposalRepository(db, perProjectRepoPaths)
 
-	id := seedTwoServiceProposal(t, repo, db, "r-per-svc-cursor")
+	id := seedTwoProjectProposal(t, repo, db, "r-per-svc-cursor")
 	_, err := repo.BeginPR(ctx, id, "core", "remediation/r-per-svc-cursor/attempt1/core", time.Now().UTC())
 	require.NoError(t, err)
 	_, err = repo.BeginPR(ctx, id, "finance", "remediation/r-per-svc-cursor/attempt1/finance", time.Now().UTC())
@@ -969,8 +969,8 @@ func TestListStuckOpening_MultipleServicesSameProposalPaginateDistinctly(t *test
 	require.Nil(t, next2, "the second sibling is the last row, so no further cursor")
 
 	require.ElementsMatch(t, []string{"core", "finance"},
-		[]string{page1[0].Service, page2[0].Service},
-		"both per-service children of one proposal must be visited across the pages")
+		[]string{page1[0].Project, page2[0].Project},
+		"both per-project children of one proposal must be visited across the pages")
 }
 
 // TestBeginPR_RejectsUnresolvedSource verifies that BeginPR returns
@@ -1232,7 +1232,7 @@ func TestProposalRepository_FileEditsRoundTripAndLegacySynthesis(t *testing.T) {
 		"model.p.ancestor":   {Status: proposal.StatusSkipped, Reason: "no source"},
 	}
 	verifications := []proposal.Verification{
-		{Service: "service-1", Kind: "dbt", RunID: "verify-r-service-1-a1"},
+		{Project: "service-1", Kind: "dbt", RunID: "verify-r-service-1-a1"},
 	}
 	p := proposal.Proposal{
 		Source:          "validation",
@@ -1446,7 +1446,7 @@ func TestProposalRepositoryVerifyingLifecycle(t *testing.T) {
 	require.Equal(t, string(proposal.StatusVerifying), string(stored.Status))
 	require.Equal(t, "verify-rel-abc", stored.VerificationRunID, "verification_run_id must round-trip")
 
-	final := []proposal.Verification{{Service: "svc", Kind: "dbt", RunID: "verify-rel-abc", Phase: proposal.PhasePassed}}
+	final := []proposal.Verification{{Project: "svc", Kind: "dbt", RunID: "verify-rel-abc", Phase: proposal.PhasePassed}}
 	verified := verifiedFix(t, id, final)
 	hit, err := repo.MarkFixVerified(ctx, verified)
 	require.NoError(t, err)
@@ -1892,16 +1892,16 @@ func TestProposalRepositoryFailGenerating_LeavesAnotherReleasesAttemptAlone(t *t
 		"the other release's attempt is still in flight and its budget untouched")
 }
 
-// perServiceRepoPaths maps the two services the per-(proposal, service) PR
+// perProjectRepoPaths maps the two projects the per-(proposal, project) PR
 // tests split a proposal across to their project roots within the repo.
-var perServiceRepoPaths = map[string]string{"core": "services/core", "finance": "services/finance"}
+var perProjectRepoPaths = map[string]string{"core": "services/core", "finance": "services/finance"}
 
-// seedTwoServiceProposal inserts the fixture those tests share: a proposed,
-// source-resolved proposal whose file_edits span two services — services/core
+// seedTwoProjectProposal inserts the fixture those tests share: a proposed,
+// source-resolved proposal whose file_edits span two projects — services/core
 // (member "na") and services/finance (member "nb") — with both nodes fixed, so
-// BeginPR can claim each service independently and each claim narrows to its
+// BeginPR can claim each project independently and each claim narrows to its
 // own edit and member.
-func seedTwoServiceProposal(t *testing.T, repo *ProposalRepository, db *sqlx.DB, releaseID string) string {
+func seedTwoProjectProposal(t *testing.T, repo *ProposalRepository, db *sqlx.DB, releaseID string) string {
 	t.Helper()
 	return seedProposal(t, repo, db, proposal.Proposal{
 		Source:          "validation",
@@ -1927,53 +1927,53 @@ func seedTwoServiceProposal(t *testing.T, repo *ProposalRepository, db *sqlx.DB,
 	})
 }
 
-// prStatesByService returns each child pull request's pr_state keyed by service,
-// so a test can assert one service's CAS moved without disturbing another's.
-func prStatesByService(t *testing.T, db *sqlx.DB, id string) map[string]string {
+// prStatesByProject returns each child pull request's pr_state keyed by project,
+// so a test can assert one project's CAS moved without disturbing another's.
+func prStatesByProject(t *testing.T, db *sqlx.DB, id string) map[string]string {
 	t.Helper()
 	var rows []struct {
-		Service string `db:"service"`
+		Project string `db:"project"`
 		PrState string `db:"pr_state"`
 	}
 	require.NoError(t, db.SelectContext(context.Background(), &rows,
-		`SELECT service, pr_state FROM proposal_pull_request WHERE proposal_id=$1`, id))
+		`SELECT project, pr_state FROM proposal_pull_request WHERE proposal_id=$1`, id))
 	out := make(map[string]string, len(rows))
 	for _, r := range rows {
-		out[r.Service] = r.PrState
+		out[r.Project] = r.PrState
 	}
 	return out
 }
 
-// TestBeginPR_ClaimsPerService verifies that BeginPR claims one (proposal,
-// service) pull request at a time: the child row is created on first claim, a
-// second claim of the same service conflicts, and a different service on the
+// TestBeginPR_ClaimsPerProject verifies that BeginPR claims one (proposal,
+// project) pull request at a time: the child row is created on first claim, a
+// second claim of the same project conflicts, and a different project on the
 // same proposal is an independent claim that still succeeds. Each claim is
-// narrowed to exactly its service's edit and the member that edit resolves.
-func TestBeginPR_ClaimsPerService(t *testing.T) {
+// narrowed to exactly its project's edit and the member that edit resolves.
+func TestBeginPR_ClaimsPerProject(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	repo := NewProposalRepository(db, perServiceRepoPaths)
+	repo := NewProposalRepository(db, perProjectRepoPaths)
 
-	id := seedTwoServiceProposal(t, repo, db, "r-per-svc-1")
+	id := seedTwoProjectProposal(t, repo, db, "r-per-svc-1")
 
 	coreClaim, err := repo.BeginPR(ctx, id, "core", "remediation/r-per-svc-1/core", time.Now().UTC())
 	require.NoError(t, err)
-	require.Equal(t, "core", coreClaim.Service)
+	require.Equal(t, "core", coreClaim.Project)
 	require.Equal(t, []string{"na"}, coreClaim.ResolvedNodeIDs, "a core claim resolves only core's member")
 	require.Len(t, coreClaim.Edits, 1, "a core claim carries only core's edit")
 	require.Equal(t, "services/core/models/a.sql", coreClaim.Edits[0].Path)
 
 	_, err = repo.BeginPR(ctx, id, "core", "remediation/r-per-svc-1/core", time.Now().UTC())
-	require.ErrorIs(t, err, repository.ErrPRConflict, "a second claim of the same service must conflict")
+	require.ErrorIs(t, err, repository.ErrPRConflict, "a second claim of the same project must conflict")
 
 	finClaim, err := repo.BeginPR(ctx, id, "finance", "remediation/r-per-svc-1/finance", time.Now().UTC())
-	require.NoError(t, err, "a different service on the same proposal is an independent claim")
-	require.Equal(t, "finance", finClaim.Service)
+	require.NoError(t, err, "a different project on the same proposal is an independent claim")
+	require.Equal(t, "finance", finClaim.Project)
 	require.Equal(t, []string{"nb"}, finClaim.ResolvedNodeIDs)
 	require.Len(t, finClaim.Edits, 1)
 	require.Equal(t, "services/finance/models/b.sql", finClaim.Edits[0].Path)
 
-	states := prStatesByService(t, db, id)
+	states := prStatesByProject(t, db, id)
 	require.Equal(t, "opening", states["core"])
 	require.Equal(t, "opening", states["finance"])
 }
@@ -1981,12 +1981,12 @@ func TestBeginPR_ClaimsPerService(t *testing.T) {
 // TestBeginPR_ReturnsTheClaimNodesApprovers verifies that a claim carries the
 // approvers of the nodes it fixes and no others: the whole-proposal claim names
 // the fixed nodes' approvers (a handed-over node's approver stays on the row), a
-// per-service claim only its own members', and a node the row records no
+// per-project claim only its own members', and a node the row records no
 // approver for has no entry.
 func TestBeginPR_ReturnsTheClaimNodesApprovers(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	repo := NewProposalRepository(db, perServiceRepoPaths)
+	repo := NewProposalRepository(db, perProjectRepoPaths)
 
 	approvers := []proposal.Approver{
 		{NodeID: "na", Owner: "core-team", Source: model.ApproverSourceBundle},
@@ -2065,45 +2065,45 @@ func TestBeginPR_ReturnsTheClaimNodesApprovers(t *testing.T) {
 	require.Empty(t, legacyClaim.Approvers, "a row recorded without approvers claims with none")
 }
 
-// TestBeginPR_LegacyServiceReclaimsWholeProposal verifies that the "" service
+// TestBeginPR_LegacyProjectReclaimsWholeProposal verifies that the "" project
 // re-claims a legacy child row (the shape the V17 backfill writes) left in
 // 'failed' by an earlier whole-proposal attempt, and that its claim carries
-// every edit and the full fixed set rather than any per-service narrowing.
-func TestBeginPR_LegacyServiceReclaimsWholeProposal(t *testing.T) {
+// every edit and the full fixed set rather than any per-project narrowing.
+func TestBeginPR_LegacyProjectReclaimsWholeProposal(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	repo := NewProposalRepository(db, perServiceRepoPaths)
+	repo := NewProposalRepository(db, perProjectRepoPaths)
 
-	id := seedTwoServiceProposal(t, repo, db, "r-per-svc-legacy")
+	id := seedTwoProjectProposal(t, repo, db, "r-per-svc-legacy")
 
-	// A legacy child row as the V17 backfill writes it: service='' left in
+	// A legacy child row as the V17 backfill writes it: project='' left in
 	// 'failed' by an earlier attempt to open the whole-proposal PR.
 	_, err := db.ExecContext(ctx,
-		`INSERT INTO proposal_pull_request (proposal_id, service, repo, branch, pr_state)
+		`INSERT INTO proposal_pull_request (proposal_id, project, repo, branch, pr_state)
 		 VALUES ($1, '', 'owner/continuo-demo', 'remediation/r-per-svc-legacy/attempt1', 'failed')`, id)
 	require.NoError(t, err)
 
 	claim, err := repo.BeginPR(ctx, id, "", "remediation/r-per-svc-legacy/attempt1", time.Now().UTC())
 	require.NoError(t, err, "a 'failed' legacy child row must be re-claimable")
-	require.Equal(t, "", claim.Service)
-	require.Equal(t, []string{"na", "nb"}, claim.ResolvedNodeIDs, "the legacy service claims the whole fixed set")
-	require.Len(t, claim.Edits, 2, "the legacy service claims every edit")
+	require.Equal(t, "", claim.Project)
+	require.Equal(t, []string{"na", "nb"}, claim.ResolvedNodeIDs, "the legacy project claims the whole fixed set")
+	require.Len(t, claim.Edits, 2, "the legacy project claims every edit")
 
 	var state string
 	require.NoError(t, db.GetContext(ctx, &state,
-		`SELECT pr_state FROM proposal_pull_request WHERE proposal_id=$1 AND service=''`, id))
+		`SELECT pr_state FROM proposal_pull_request WHERE proposal_id=$1 AND project=''`, id))
 	require.Equal(t, "opening", state, "the re-claim moves the legacy row 'failed' -> 'opening'")
 }
 
-// TestRecordPR_TargetsOneService verifies that RecordPR's CAS moves only the
-// named service's child row 'opening' -> 'open', leaving another service's
+// TestRecordPR_TargetsOneProject verifies that RecordPR's CAS moves only the
+// named project's child row 'opening' -> 'open', leaving another project's
 // concurrent 'opening' claim on the same proposal untouched.
-func TestRecordPR_TargetsOneService(t *testing.T) {
+func TestRecordPR_TargetsOneProject(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	repo := NewProposalRepository(db, perServiceRepoPaths)
+	repo := NewProposalRepository(db, perProjectRepoPaths)
 
-	id := seedTwoServiceProposal(t, repo, db, "r-per-svc-record")
+	id := seedTwoProjectProposal(t, repo, db, "r-per-svc-record")
 	_, err := repo.BeginPR(ctx, id, "core", "remediation/r-per-svc-record/core", time.Now().UTC())
 	require.NoError(t, err)
 	_, err = repo.BeginPR(ctx, id, "finance", "remediation/r-per-svc-record/finance", time.Now().UTC())
@@ -2113,20 +2113,20 @@ func TestRecordPR_TargetsOneService(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, hit)
 
-	states := prStatesByService(t, db, id)
+	states := prStatesByProject(t, db, id)
 	require.Equal(t, "open", states["core"])
 	require.Equal(t, "opening", states["finance"], "recording core must not touch finance")
 }
 
-// TestRecordPROutcome_TargetsOneService verifies that RecordPROutcome's CAS
-// moves only the named service's child row 'open' -> outcome, fires exactly
-// once, and leaves another open service on the same proposal untouched.
-func TestRecordPROutcome_TargetsOneService(t *testing.T) {
+// TestRecordPROutcome_TargetsOneProject verifies that RecordPROutcome's CAS
+// moves only the named project's child row 'open' -> outcome, fires exactly
+// once, and leaves another open project on the same proposal untouched.
+func TestRecordPROutcome_TargetsOneProject(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	repo := NewProposalRepository(db, perServiceRepoPaths)
+	repo := NewProposalRepository(db, perProjectRepoPaths)
 
-	id := seedTwoServiceProposal(t, repo, db, "r-per-svc-outcome")
+	id := seedTwoProjectProposal(t, repo, db, "r-per-svc-outcome")
 	_, err := repo.BeginPR(ctx, id, "core", "remediation/r-per-svc-outcome/core", time.Now().UTC())
 	require.NoError(t, err)
 	_, err = repo.BeginPR(ctx, id, "finance", "remediation/r-per-svc-outcome/finance", time.Now().UTC())
@@ -2144,20 +2144,20 @@ func TestRecordPROutcome_TargetsOneService(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, hit, "a second RecordPROutcome for core is a no-op")
 
-	states := prStatesByService(t, db, id)
+	states := prStatesByProject(t, db, id)
 	require.Equal(t, "merged", states["core"])
 	require.Equal(t, "open", states["finance"], "merging core must not touch finance")
 }
 
-// TestListOpenPullRequests_OneEntryPerOpenService verifies that a proposal
-// split into two open per-service PRs yields one ListOpenPullRequests entry per
-// open child row, each carrying its Service and that service's pr_number.
-func TestListOpenPullRequests_OneEntryPerOpenService(t *testing.T) {
+// TestListOpenPullRequests_OneEntryPerOpenProject verifies that a proposal
+// split into two open per-project PRs yields one ListOpenPullRequests entry per
+// open child row, each carrying its Project and that project's pr_number.
+func TestListOpenPullRequests_OneEntryPerOpenProject(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	repo := NewProposalRepository(db, perServiceRepoPaths)
+	repo := NewProposalRepository(db, perProjectRepoPaths)
 
-	id := seedTwoServiceProposal(t, repo, db, "r-per-svc-listopen")
+	id := seedTwoProjectProposal(t, repo, db, "r-per-svc-listopen")
 	_, err := repo.BeginPR(ctx, id, "core", "remediation/r-per-svc-listopen/core", time.Now().UTC())
 	require.NoError(t, err)
 	_, err = repo.BeginPR(ctx, id, "finance", "remediation/r-per-svc-listopen/finance", time.Now().UTC())
@@ -2171,28 +2171,28 @@ func TestListOpenPullRequests_OneEntryPerOpenService(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, open, 2, "two open child rows on one proposal must yield two entries")
 
-	byService := make(map[string]proposal.OpenPR, len(open))
+	byProject := make(map[string]proposal.OpenPR, len(open))
 	for _, o := range open {
-		byService[o.Service] = o
+		byProject[o.Project] = o
 	}
-	require.Contains(t, byService, "core")
-	require.Contains(t, byService, "finance")
-	require.Equal(t, id, byService["core"].ID)
-	require.Equal(t, 10, byService["core"].PRNumber)
-	require.Equal(t, id, byService["finance"].ID)
-	require.Equal(t, 11, byService["finance"].PRNumber)
+	require.Contains(t, byProject, "core")
+	require.Contains(t, byProject, "finance")
+	require.Equal(t, id, byProject["core"].ID)
+	require.Equal(t, 10, byProject["core"].PRNumber)
+	require.Equal(t, id, byProject["finance"].ID)
+	require.Equal(t, 11, byProject["finance"].PRNumber)
 }
 
-// TestGet_CarriesPerServicePullRequests verifies that Get returns every child
+// TestGet_CarriesPerProjectPullRequests verifies that Get returns every child
 // pull request on the proposal in View.PullRequests with its own state, and
 // derives the singular Pr* view fields from the first child (ordered by
-// service) so existing readers still render a live PR.
-func TestGet_CarriesPerServicePullRequests(t *testing.T) {
+// project) so existing readers still render a live PR.
+func TestGet_CarriesPerProjectPullRequests(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	repo := NewProposalRepository(db, perServiceRepoPaths)
+	repo := NewProposalRepository(db, perProjectRepoPaths)
 
-	id := seedTwoServiceProposal(t, repo, db, "r-per-svc-get")
+	id := seedTwoProjectProposal(t, repo, db, "r-per-svc-get")
 	_, err := repo.BeginPR(ctx, id, "core", "remediation/r-per-svc-get/core", time.Now().UTC())
 	require.NoError(t, err)
 	_, err = repo.BeginPR(ctx, id, "finance", "remediation/r-per-svc-get/finance", time.Now().UTC())
@@ -2204,16 +2204,16 @@ func TestGet_CarriesPerServicePullRequests(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, v.PullRequests, 2, "the view must carry both child pull requests")
 
-	byService := make(map[string]proposal.PullRequest, len(v.PullRequests))
+	byProject := make(map[string]proposal.PullRequest, len(v.PullRequests))
 	for _, pr := range v.PullRequests {
-		byService[pr.Service] = pr
+		byProject[pr.Project] = pr
 	}
-	require.Equal(t, "open", byService["core"].PrState)
-	require.Equal(t, "https://gh/pr/20", byService["core"].PrURL)
-	require.Equal(t, 20, byService["core"].PrNumber)
-	require.Equal(t, "opening", byService["finance"].PrState)
+	require.Equal(t, "open", byProject["core"].PrState)
+	require.Equal(t, "https://gh/pr/20", byProject["core"].PrURL)
+	require.Equal(t, 20, byProject["core"].PrNumber)
+	require.Equal(t, "opening", byProject["finance"].PrState)
 
-	// Singular fields derive from the first child ordered by service ("core").
+	// Singular fields derive from the first child ordered by project ("core").
 	require.Equal(t, "open", v.PrState)
 	require.Equal(t, "https://gh/pr/20", v.PrURL)
 	require.Equal(t, 20, v.PrNumber)
@@ -2232,13 +2232,13 @@ func TestGet_CarriesPerServicePullRequests(t *testing.T) {
 func TestBeginPR_ClaimCASReChecksParentPreconditionsAtomically(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	repo := NewProposalRepository(db, perServiceRepoPaths)
+	repo := NewProposalRepository(db, perProjectRepoPaths)
 
-	id := seedTwoServiceProposal(t, repo, db, "r-cas-guard")
+	id := seedTwoProjectProposal(t, repo, db, "r-cas-guard")
 
-	// A claimable child row (pr_state='' default) for the service.
+	// A claimable child row (pr_state='' default) for the project.
 	_, err := db.ExecContext(ctx,
-		`INSERT INTO proposal_pull_request (proposal_id, service, repo) VALUES ($1, 'core', 'owner/continuo-demo')`, id)
+		`INSERT INTO proposal_pull_request (proposal_id, project, repo) VALUES ($1, 'core', 'owner/continuo-demo')`, id)
 	require.NoError(t, err)
 
 	// While the parent is proposed + source_resolved, the CAS claims the row.
@@ -2252,7 +2252,7 @@ func TestBeginPR_ClaimCASReChecksParentPreconditionsAtomically(t *testing.T) {
 	resetChild := func() {
 		t.Helper()
 		_, e := db.ExecContext(ctx,
-			`UPDATE proposal_pull_request SET pr_state='', pr_claimed_at=NULL WHERE proposal_id=$1 AND service='core'`, id)
+			`UPDATE proposal_pull_request SET pr_state='', pr_claimed_at=NULL WHERE proposal_id=$1 AND project='core'`, id)
 		require.NoError(t, e)
 	}
 	resetChild()
@@ -2272,7 +2272,7 @@ func TestBeginPR_ClaimCASReChecksParentPreconditionsAtomically(t *testing.T) {
 	// The child row was never moved out of the claimable state by the refused CASes.
 	var state string
 	require.NoError(t, db.GetContext(ctx, &state,
-		`SELECT pr_state FROM proposal_pull_request WHERE proposal_id=$1 AND service='core'`, id))
+		`SELECT pr_state FROM proposal_pull_request WHERE proposal_id=$1 AND project='core'`, id))
 	require.Equal(t, "", state, "a refused CAS must leave the child row claimable")
 }
 
@@ -2283,10 +2283,10 @@ func TestBeginPR_ClaimCASReChecksParentPreconditionsAtomically(t *testing.T) {
 func TestList_FilterPRStateMatchesChildRows(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	repo := NewProposalRepository(db, perServiceRepoPaths)
+	repo := NewProposalRepository(db, perProjectRepoPaths)
 
 	// A proposal with a merged child PR.
-	id := seedTwoServiceProposal(t, repo, db, "r-list-prstate")
+	id := seedTwoProjectProposal(t, repo, db, "r-list-prstate")
 	_, err := repo.BeginPR(ctx, id, "core", "remediation/r-list-prstate/core", time.Now().UTC())
 	require.NoError(t, err)
 	_, err = repo.RecordPR(ctx, id, "core", "https://gh/pr/1", 1, "dev", time.Now().UTC())
@@ -2319,16 +2319,16 @@ func TestList_FilterPRStateMatchesChildRows(t *testing.T) {
 	require.Equal(t, legacyID, openLegacy[0].ID)
 }
 
-// TestBeginPR_PerServiceClaimOverMemberlessEditsResolvesNoMembers pins F3: a
-// per-service claim whose filtered edits carry no member_node_ids (a proposal
+// TestBeginPR_PerProjectClaimOverMemberlessEditsResolvesNoMembers pins F3: a
+// per-project claim whose filtered edits carry no member_node_ids (a proposal
 // generated before the codec fix) resolves NO members — never the whole fixed
-// set — so a service's PR can only claim nodes its edits explicitly attribute.
+// set — so a project's PR can only claim nodes its edits explicitly attribute.
 // The legacy "" whole-proposal claim over the same row still resolves the full
 // fixed set.
-func TestBeginPR_PerServiceClaimOverMemberlessEditsResolvesNoMembers(t *testing.T) {
+func TestBeginPR_PerProjectClaimOverMemberlessEditsResolvesNoMembers(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	repo := NewProposalRepository(db, perServiceRepoPaths)
+	repo := NewProposalRepository(db, perProjectRepoPaths)
 
 	id := seedProposal(t, repo, db, proposal.Proposal{
 		Source:          "validation",
@@ -2347,7 +2347,7 @@ func TestBeginPR_PerServiceClaimOverMemberlessEditsResolvesNoMembers(t *testing.
 		CommitSHA:      "sha",
 		Model:          "m",
 		CreatedAt:      time.Now().UTC(),
-		// Edits carry NO MemberNodeIDs (pre-codec-fix shape) but map to services.
+		// Edits carry NO MemberNodeIDs (pre-codec-fix shape) but map to projects.
 		Edits: []proposal.FileEdit{
 			{Path: "services/core/models/a.sql", ContentURI: "s3://b/core.content", DiffURI: "s3://b/core.diff"},
 			{Path: "services/finance/models/b.sql", ContentURI: "s3://b/fin.content", DiffURI: "s3://b/fin.diff"},
@@ -2356,14 +2356,14 @@ func TestBeginPR_PerServiceClaimOverMemberlessEditsResolvesNoMembers(t *testing.
 
 	coreClaim, err := repo.BeginPR(ctx, id, "core", "remediation/r-memberless-edits/core", time.Now().UTC())
 	require.NoError(t, err)
-	require.Equal(t, "core", coreClaim.Service)
-	require.Empty(t, coreClaim.ResolvedNodeIDs, "a per-service claim over memberless edits resolves no members")
-	require.Len(t, coreClaim.Edits, 1, "the claim still carries only its service's edit")
+	require.Equal(t, "core", coreClaim.Project)
+	require.Empty(t, coreClaim.ResolvedNodeIDs, "a per-project claim over memberless edits resolves no members")
+	require.Len(t, coreClaim.Edits, 1, "the claim still carries only its project's edit")
 	require.Equal(t, "services/core/models/a.sql", coreClaim.Edits[0].Path)
 
 	legacyClaim, err := repo.BeginPR(ctx, id, "", "remediation/r-memberless-edits/all", time.Now().UTC())
 	require.NoError(t, err)
-	require.Equal(t, "", legacyClaim.Service)
+	require.Equal(t, "", legacyClaim.Project)
 	require.Equal(t, []string{"na", "nb"}, legacyClaim.ResolvedNodeIDs,
 		"the whole-proposal claim still resolves the full fixed set")
 	require.Len(t, legacyClaim.Edits, 2)
@@ -2430,8 +2430,8 @@ func TestUpdateVerificationPhase_TouchesOnlyThatRun(t *testing.T) {
 	repo := NewProposalRepository(db, nil)
 	ctx := context.Background()
 	id := seedVerifying(t, db, "rel-1", []proposal.Verification{
-		{Service: "core", Kind: "dbt", RunID: "verify-rel-1-core-a1", Phase: proposal.PhaseQueued},
-		{Service: "ops", Kind: "dbt", RunID: "verify-rel-1-ops-a1", Phase: proposal.PhaseQueued},
+		{Project: "core", Kind: "dbt", RunID: "verify-rel-1-core-a1", Phase: proposal.PhaseQueued},
+		{Project: "ops", Kind: "dbt", RunID: "verify-rel-1-ops-a1", Phase: proposal.PhaseQueued},
 	})
 	at := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
 	require.NoError(t, repo.UpdateVerificationPhase(ctx, id, "verify-rel-1-ops-a1", proposal.PhaseRunning, &at))
@@ -2453,8 +2453,8 @@ func TestMarkVerifyFailed_StoresTheFinalVerifications(t *testing.T) {
 	db := newTestDB(t)
 	repo := NewProposalRepository(db, nil)
 	ctx := context.Background()
-	id := seedVerifying(t, db, "rel-1", []proposal.Verification{{Service: "core", Kind: "dbt", RunID: "verify-rel-1-core-a1", Phase: proposal.PhaseRunning}})
-	final := []proposal.Verification{{Service: "core", Kind: "dbt", RunID: "verify-rel-1-core-a1", Phase: proposal.PhaseFailed, Error: "model.core.orders: column x does not exist"}}
+	id := seedVerifying(t, db, "rel-1", []proposal.Verification{{Project: "core", Kind: "dbt", RunID: "verify-rel-1-core-a1", Phase: proposal.PhaseRunning}})
+	final := []proposal.Verification{{Project: "core", Kind: "dbt", RunID: "verify-rel-1-core-a1", Phase: proposal.PhaseFailed, Error: "model.core.orders: column x does not exist"}}
 	hit, err := repo.MarkVerifyFailed(ctx, id, "model.core.orders: column x does not exist", final)
 	require.NoError(t, err)
 	require.True(t, hit)
@@ -2465,17 +2465,17 @@ func TestMarkVerifyFailed_StoresTheFinalVerifications(t *testing.T) {
 	assert.Equal(t, "model.core.orders: column x does not exist", v.Verifications[0].Error)
 }
 
-// TestList_FiltersByService verifies that ProposalFilter.Service matches
-// proposals whose services array contains it, narrowing a listing to one
+// TestList_FiltersByProject verifies that ProposalFilter.Project matches
+// proposals whose projects array contains it, narrowing a listing to one
 // team's work.
-func TestList_FiltersByService(t *testing.T) {
+func TestList_FiltersByProject(t *testing.T) {
 	db := newTestDB(t)
 	repo := NewProposalRepository(db, nil)
 	ctx := context.Background()
 	seedTerminal(t, db, "rel-1", []string{"core"})
 	seedTerminal(t, db, "rel-2", []string{"ops", "core"})
 	seedTerminal(t, db, "rel-3", []string{"ops"})
-	rows, err := repo.List(ctx, repository.ProposalFilter{Service: "core"})
+	rows, err := repo.List(ctx, repository.ProposalFilter{Project: "core"})
 	require.NoError(t, err)
 	ids := map[string]bool{}
 	for _, r := range rows {
@@ -2485,20 +2485,20 @@ func TestList_FiltersByService(t *testing.T) {
 }
 
 // TestProposalSchemaVerificationContract checks the externally migrated schema
-// exposes current verification fields and the services GIN index.
+// exposes current verification fields and the projects GIN index.
 func TestProposalSchemaVerificationContract(t *testing.T) {
 	db := newTestDB(t)
 	var columns []string
 	require.NoError(t, db.Select(&columns, `SELECT column_name FROM information_schema.columns
 		WHERE table_schema=current_schema() AND table_name=$1
 		AND column_name IN ($2,$3,$4) ORDER BY column_name`,
-		"proposal", "verification_run_id", "shadow_release_id", "services"))
-	require.Equal(t, []string{"services", "verification_run_id"}, columns)
+		"proposal", "verification_run_id", "shadow_release_id", "projects"))
+	require.Equal(t, []string{"projects", "verification_run_id"}, columns)
 	var indexDefinition string
 	require.NoError(t, db.Get(&indexDefinition, `SELECT indexdef FROM pg_indexes
 		WHERE schemaname=current_schema() AND tablename=$1 AND indexname=$2`,
-		"proposal", "idx_proposal_services"))
-	require.Contains(t, indexDefinition, "USING gin (services)")
+		"proposal", "idx_proposal_projects"))
+	require.Contains(t, indexDefinition, "USING gin (projects)")
 }
 
 // seedVerifying records one attempt for releaseID parked in 'verifying' with
@@ -2510,7 +2510,7 @@ func seedVerifying(t *testing.T, db *sqlx.DB, releaseID string, vs []proposal.Ve
 	p := proposal.Proposal{
 		Source: "validation", ReleaseID: releaseID, RemediationRound: 1, NodeID: "model.core.orders",
 		ResolvedNodeIDs: []string{"model.core.orders"}, ErrorSignature: "sig", Attempt: 1,
-		Status: proposal.StatusVerifying, Verifications: vs, Services: proposal.UnionServices(verificationServiceNames(vs)),
+		Status: proposal.StatusVerifying, Verifications: vs, Projects: proposal.UnionProjects(verificationProjectNames(vs)),
 		CreatedAt: time.Now().UTC(),
 	}
 	p.NormalizeRepresentativeViews()
@@ -2522,23 +2522,23 @@ func seedVerifying(t *testing.T, db *sqlx.DB, releaseID string, vs []proposal.Ve
 }
 
 // seedTerminal records one 'proposed' attempt for releaseID touching the
-// given services.
-func seedTerminal(t *testing.T, db *sqlx.DB, releaseID string, services []string) {
+// given projects.
+func seedTerminal(t *testing.T, db *sqlx.DB, releaseID string, projects []string) {
 	t.Helper()
 	repo := NewProposalRepository(db, nil)
 	p := proposal.Proposal{
 		Source: "validation", ReleaseID: releaseID, RemediationRound: 1, NodeID: "model.core.orders",
 		ResolvedNodeIDs: []string{"model.core.orders"}, ErrorSignature: "sig", Attempt: 1,
-		Status: proposal.StatusProposed, Services: services, CreatedAt: time.Now().UTC(),
+		Status: proposal.StatusProposed, Projects: projects, CreatedAt: time.Now().UTC(),
 	}
 	p.NormalizeRepresentativeViews()
 	require.NoError(t, repo.Upsert(context.Background(), p))
 }
 
-func verificationServiceNames(vs []proposal.Verification) []string {
+func verificationProjectNames(vs []proposal.Verification) []string {
 	out := make([]string, 0, len(vs))
 	for _, v := range vs {
-		out = append(out, v.Service)
+		out = append(out, v.Project)
 	}
 	return out
 }

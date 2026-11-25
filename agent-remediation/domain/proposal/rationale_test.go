@@ -10,23 +10,23 @@ import (
 
 func TestComposeRationale_IndependentFixNamesFailureUpstreamEditAndNote(t *testing.T) {
 	got := proposal.ComposeRationale(proposal.RationaleFacts{
-		Members:       []proposal.RationaleMember{{NodeID: "analytics.report", Service: "finance", ErrorLine: `column "amount" does not exist`}},
-		Upstream:      []proposal.RationaleUpstream{{NodeID: "analytics.orders", Service: "core", Depth: 1}},
+		Members:       []proposal.RationaleMember{{NodeID: "analytics.report", Project: "finance", ErrorLine: `column "amount" does not exist`}},
+		Upstream:      []proposal.RationaleUpstream{{NodeID: "analytics.orders", Project: "core", Depth: 1}},
 		UpstreamKnown: true,
 		Edits:         []string{"services/finance/models/report.sql"},
 		TargetNodeID:  "analytics.report",
 		ModelNote:     "read amount_eur instead of amount",
 	})
 
-	assert.Equal(t, "Failed: `analytics.report` (service finance): column \"amount\" does not exist\n"+
-		"This release changed upstream: `analytics.orders` (service core, 1 hop up)\n"+
+	assert.Equal(t, "Failed: `analytics.report` (project finance): column \"amount\" does not exist\n"+
+		"This release changed upstream: `analytics.orders` (project core, 1 hop up)\n"+
 		"Edited: `services/finance/models/report.sql` (repairs `analytics.report`)\n"+
 		"Model's note: read amount_eur instead of amount", got)
 }
 
 func TestComposeRationale_SaysWhenNothingUpstreamChanged(t *testing.T) {
 	got := proposal.ComposeRationale(proposal.RationaleFacts{
-		Members:       []proposal.RationaleMember{{NodeID: "e2e_schema.ftable_e", Service: "service-2", ErrorLine: "relation public.wrong_name does not exist"}},
+		Members:       []proposal.RationaleMember{{NodeID: "e2e_schema.ftable_e", Project: "service-2", ErrorLine: "relation public.wrong_name does not exist"}},
 		UpstreamKnown: true,
 		Edits:         []string{"services/service-2/models/ftable_e.sql"},
 		TargetNodeID:  "e2e_schema.ftable_e",
@@ -50,46 +50,46 @@ func TestComposeRationale_OmitsTheUpstreamLineWhenUnknown(t *testing.T) {
 	assert.Equal(t, "Failed: `svc-a`\nEdited: `services/svc-a/models/x.sql` (repairs `svc-a`)\nModel's note: closed the config() call", got)
 }
 
-func TestComposeRationale_CrossServiceNamesEveryConsumerAndItsFollowUp(t *testing.T) {
+func TestComposeRationale_CrossProjectNamesEveryConsumerAndItsFollowUp(t *testing.T) {
 	got := proposal.ComposeRationale(proposal.RationaleFacts{
 		Members: []proposal.RationaleMember{
-			{NodeID: "analytics.report", Service: "finance", ErrorLine: `column "amount" does not exist`},
-			{NodeID: "analytics.spend", Service: "marketing", ErrorLine: `column "amount" does not exist`},
+			{NodeID: "analytics.report", Project: "finance", ErrorLine: `column "amount" does not exist`},
+			{NodeID: "analytics.spend", Project: "marketing", ErrorLine: `column "amount" does not exist`},
 		},
-		Upstream:      []proposal.RationaleUpstream{{NodeID: "analytics.orders", Service: "core", Depth: 1}},
+		Upstream:      []proposal.RationaleUpstream{{NodeID: "analytics.orders", Project: "core", Depth: 1}},
 		UpstreamKnown: true,
 		Edits:         []string{"services/core/models/orders.sql"},
 		TargetNodeID:  "analytics.orders",
-		TargetService: "core",
-		CrossService:  true,
+		TargetProject: "core",
+		CrossProject:  true,
 		ModelNote:     "kept amount alongside amount_eur",
 	})
 
-	assert.Contains(t, got, "Failed: `analytics.report` (service finance): column \"amount\" does not exist\n")
-	assert.Contains(t, got, "Failed: `analytics.spend` (service marketing): column \"amount\" does not exist\n")
-	assert.Contains(t, got, "`analytics.report` lives in service finance and cannot change in this release; this edit keeps the contract it reads. Moving it to the new shape is a follow-up for service finance.\n")
-	assert.Contains(t, got, "`analytics.spend` lives in service marketing and cannot change in this release; this edit keeps the contract it reads. Moving it to the new shape is a follow-up for service marketing.\n")
+	assert.Contains(t, got, "Failed: `analytics.report` (project finance): column \"amount\" does not exist\n")
+	assert.Contains(t, got, "Failed: `analytics.spend` (project marketing): column \"amount\" does not exist\n")
+	assert.Contains(t, got, "`analytics.report` lives in project finance and cannot change in this release; this edit keeps the contract it reads. Moving it to the new shape is a follow-up for project finance.\n")
+	assert.Contains(t, got, "`analytics.spend` lives in project marketing and cannot change in this release; this edit keeps the contract it reads. Moving it to the new shape is a follow-up for project marketing.\n")
 	assert.Contains(t, got, "Edited: `services/core/models/orders.sql` (repairs `analytics.orders`)\n")
 }
 
-// TestComposeRationale_CrossServiceSkipsSameServiceMembers verifies P2b: a
-// coalesced cross-service cluster can carry a member in the same service as
+// TestComposeRationale_CrossProjectSkipsSameProjectMembers verifies P2b: a
+// coalesced cross-project cluster can carry a member in the same project as
 // the target (a same-signature member merged in by coalesceUpstream); the
 // composer must not tell that member it "cannot change in this release" —
-// only members whose service differs from the target's get the follow-up line.
-func TestComposeRationale_CrossServiceSkipsSameServiceMembers(t *testing.T) {
+// only members whose project differs from the target's get the follow-up line.
+func TestComposeRationale_CrossProjectSkipsSameProjectMembers(t *testing.T) {
 	got := proposal.ComposeRationale(proposal.RationaleFacts{
 		Members: []proposal.RationaleMember{
-			{NodeID: "analytics.local", Service: "core"},
-			{NodeID: "analytics.report", Service: "finance"},
+			{NodeID: "analytics.local", Project: "core"},
+			{NodeID: "analytics.report", Project: "finance"},
 		},
 		TargetNodeID:  "analytics.orders",
-		TargetService: "core",
-		CrossService:  true,
+		TargetProject: "core",
+		CrossProject:  true,
 	})
 
-	assert.Contains(t, got, "`analytics.report` lives in service finance and cannot change in this release; this edit keeps the contract it reads. Moving it to the new shape is a follow-up for service finance.")
-	assert.NotContains(t, got, "`analytics.local` lives in service core and cannot change")
+	assert.Contains(t, got, "`analytics.report` lives in project finance and cannot change in this release; this edit keeps the contract it reads. Moving it to the new shape is a follow-up for project finance.")
+	assert.NotContains(t, got, "`analytics.local` lives in project core and cannot change")
 }
 
 func TestComposeRationale_NoNoteEndsOnTheLastFact(t *testing.T) {

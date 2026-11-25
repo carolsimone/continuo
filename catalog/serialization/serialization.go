@@ -18,7 +18,7 @@ type PROpenedDTO struct {
 	PrNumber        int      `json:"pr_number"`
 	OpenedBy        string   `json:"opened_by"`
 	OpenedAt        string   `json:"opened_at"`
-	Service         string   `json:"service"`
+	Project         string   `json:"project"`
 }
 
 // ToDomain maps a decoded DTO back to the domain event.
@@ -32,7 +32,7 @@ func (d PROpenedDTO) ToDomain() event.PROpened {
 		PrNumber:        d.PrNumber,
 		OpenedBy:        d.OpenedBy,
 		OpenedAt:        d.OpenedAt,
-		Service:         d.Service,
+		Project:         d.Project,
 	}
 }
 
@@ -50,7 +50,7 @@ type PRClosedDTO struct {
 	ReleaseID       string            `json:"release_id"`
 	NodeID          string            `json:"node_id"`
 	ResolvedNodeIDs []string          `json:"resolved_node_ids"`
-	Service         string            `json:"service,omitempty"`
+	Project         string            `json:"project,omitempty"`
 	PrURL           string            `json:"pr_url"`
 	PrNumber        int               `json:"pr_number"`
 	Outcome         string            `json:"outcome"`
@@ -72,7 +72,7 @@ func (d PRClosedDTO) ToDomain() event.PRClosed {
 		ReleaseID:       d.ReleaseID,
 		NodeID:          d.NodeID,
 		ResolvedNodeIDs: d.ResolvedNodeIDs,
-		Service:         d.Service,
+		Project:         d.Project,
 		PrURL:           d.PrURL,
 		PrNumber:        d.PrNumber,
 		Outcome:         d.Outcome,

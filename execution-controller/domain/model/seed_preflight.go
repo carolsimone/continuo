@@ -40,8 +40,8 @@ func seedPreflightProblem(nodeType pkgmodel.NodeType, p *seedreload.Preflight) s
 }
 
 // FullRefreshUndefined is the reason and message of a full refresh of a node
-// of type nodeType whose service is governed by the dbt-commands block block
-// ("default" or "services.<name>"), which defines no command for it: a seed
+// of type nodeType whose project is governed by the dbt-commands block block
+// ("default" or "projects.<name>"), which defines no command for it: a seed
 // lacks seed_full_refresh, a model full_refresh.
 func FullRefreshUndefined(nodeType pkgmodel.NodeType, block string) (pkgmodel.FailureReason, string) {
 	if nodeType == pkgmodel.NodeTypeDbtSeed {

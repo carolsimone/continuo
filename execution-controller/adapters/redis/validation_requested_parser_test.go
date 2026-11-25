@@ -25,7 +25,7 @@ func validationPayload() map[string]any {
 		"nodes": []map[string]any{
 			{
 				"unique_id":              "model.shop.orders",
-				"service_name":           "shop",
+				"project_name":           "shop",
 				"node_type":              "dbt-model",
 				"schema_name":            "public",
 				"table_name":             "orders",
@@ -34,7 +34,7 @@ func validationPayload() map[string]any {
 			},
 			{
 				"unique_id":    "model.shop.customers",
-				"service_name": "shop",
+				"project_name": "shop",
 				"node_type":    "dbt-seed",
 				"schema_name":  "public",
 				"table_name":   "customers",
@@ -78,7 +78,7 @@ func TestParseValidationRequested_HappyPath(t *testing.T) {
 
 	require.Len(t, evt.Nodes, 2)
 	assert.Equal(t, "model.shop.orders", evt.Nodes[0].NodeID)
-	assert.Equal(t, "shop", evt.Nodes[0].ServiceName)
+	assert.Equal(t, "shop", evt.Nodes[0].ProjectName)
 	assert.Equal(t, "public", evt.Nodes[0].SchemaName)
 	assert.Equal(t, "orders", evt.Nodes[0].TableName)
 	assert.Equal(t, pkg_model.NodeTypeDbtModel, evt.Nodes[0].NodeType)
@@ -169,9 +169,9 @@ func TestParseValidationRequested_InvalidNodeType(t *testing.T) {
 func TestParseValidationRequested_RefusesAnUnknownExternalNode(t *testing.T) {
 	for name, edit := range map[string]func(map[string]any){
 		"a complete node": func(n map[string]any) { n["node_type"] = "unknown-external" },
-		"a node with no service name": func(n map[string]any) {
+		"a node with no project name": func(n map[string]any) {
 			n["node_type"] = "unknown-external"
-			delete(n, "service_name")
+			delete(n, "project_name")
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -221,10 +221,10 @@ func TestParseValidationRequested_CarriesValidationOpAndProdSchema(t *testing.T)
 	  "release_id":"rel-1","mode":"validation",
 	  "node_ids_in_order":["model.core.dim","model.shop.orders"],
 	  "nodes":[
-	    {"unique_id":"model.core.dim","service_name":"core","node_type":"dbt-model",
+	    {"unique_id":"model.core.dim","project_name":"core","node_type":"dbt-model",
 	     "schema_name":"analytics","table_name":"dim","image_tag":"t1",
 	     "validation_op":"clone_from_prod","prod_schema":"analytics"},
-	    {"unique_id":"model.shop.orders","service_name":"shop","node_type":"dbt-model",
+	    {"unique_id":"model.shop.orders","project_name":"shop","node_type":"dbt-model",
 	     "schema_name":"shop","table_name":"orders","image_tag":"t2",
 	     "candidate_artifact_uri":"s3://b/o.sql","validation_op":"build_from_sql","prod_schema":""}
 	  ]}`
@@ -245,7 +245,7 @@ func TestParseValidationRequested_CarriesValidationOpAndProdSchema(t *testing.T)
 // Missing op/prod_schema keys must parse cleanly (back-compat / default path).
 func TestParseValidationRequested_AbsentOpDefaultsEmpty(t *testing.T) {
 	payload := `{"release_id":"r","mode":"validation","node_ids_in_order":["model.a"],
-	  "nodes":[{"unique_id":"model.a","service_name":"s","node_type":"dbt-model",
+	  "nodes":[{"unique_id":"model.a","project_name":"s","node_type":"dbt-model",
 	  "schema_name":"sc","table_name":"a","image_tag":"t"}]}`
 	evt, err := ParseValidationRequested(goredis.XMessage{Values: map[string]any{"payload": payload}})
 	require.NoError(t, err)
@@ -259,7 +259,7 @@ func TestParseValidationRequested_AbsentOpDefaultsEmpty(t *testing.T) {
 // CandidateArtifactURI, not silently populate it.
 func TestParseValidationRequested_LegacyKeyNotDecoded(t *testing.T) {
 	payload := `{"release_id":"r","mode":"validation","node_ids_in_order":["model.a"],
-	  "nodes":[{"unique_id":"model.a","service_name":"s","node_type":"dbt-model",
+	  "nodes":[{"unique_id":"model.a","project_name":"s","node_type":"dbt-model",
 	  "schema_name":"sc","table_name":"a","image_tag":"t",
 	  "candidate_sql_uri":"s3://b/o.sql"}]}`
 	evt, err := ParseValidationRequested(goredis.XMessage{Values: map[string]any{"payload": payload}})

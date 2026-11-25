@@ -47,19 +47,19 @@ func TestBuildPodSpec_CommandPerNodeType(t *testing.T) {
 }
 
 func TestBuildPodSpec_ImageRef(t *testing.T) {
-	t.Run("no DOCKERHUB_USERNAME uses service name directly", func(t *testing.T) {
+	t.Run("no DOCKERHUB_USERNAME uses project name directly", func(t *testing.T) {
 		t.Setenv("DOCKERHUB_USERNAME", "")
-		spec, err := buildPodSpec(JobParams{ServiceName: "service-1", ImageTag: "some-tag", NodeType: pkg_model.NodeTypeDbtModel, TableName: "t"}, pkg_model.NodeTypeDbtModel.Command("t"), "")
+		spec, err := buildPodSpec(JobParams{ProjectName: "service-1", ImageTag: "some-tag", NodeType: pkg_model.NodeTypeDbtModel, TableName: "t"}, pkg_model.NodeTypeDbtModel.Command("t"), "")
 		require.NoError(t, err)
 		require.Len(t, spec.Containers, 1)
 		assert.Equal(t, "service-1:some-tag", spec.Containers[0].Image)
 	})
 
-	t.Run("with DOCKERHUB_USERNAME each service gets its own image", func(t *testing.T) {
+	t.Run("with DOCKERHUB_USERNAME each project gets its own image", func(t *testing.T) {
 		t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
-		specA, err := buildPodSpec(JobParams{ServiceName: "service-1", ImageTag: "latest", NodeType: pkg_model.NodeTypeDbtModel, TableName: "t"}, pkg_model.NodeTypeDbtModel.Command("t"), "")
+		specA, err := buildPodSpec(JobParams{ProjectName: "service-1", ImageTag: "latest", NodeType: pkg_model.NodeTypeDbtModel, TableName: "t"}, pkg_model.NodeTypeDbtModel.Command("t"), "")
 		require.NoError(t, err)
-		specB, err := buildPodSpec(JobParams{ServiceName: "service-2", ImageTag: "latest", NodeType: pkg_model.NodeTypeDbtModel, TableName: "t"}, pkg_model.NodeTypeDbtModel.Command("t"), "")
+		specB, err := buildPodSpec(JobParams{ProjectName: "service-2", ImageTag: "latest", NodeType: pkg_model.NodeTypeDbtModel, TableName: "t"}, pkg_model.NodeTypeDbtModel.Command("t"), "")
 		require.NoError(t, err)
 		require.Len(t, specA.Containers, 1)
 		require.Len(t, specB.Containers, 1)
@@ -69,7 +69,7 @@ func TestBuildPodSpec_ImageRef(t *testing.T) {
 
 	t.Run("with DOCKERHUB_USERNAME uses params.ImageTag", func(t *testing.T) {
 		t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
-		spec, err := buildPodSpec(JobParams{ServiceName: "service-1", ImageTag: "v1.2.3", NodeType: pkg_model.NodeTypeDbtModel, TableName: "t"}, pkg_model.NodeTypeDbtModel.Command("t"), "")
+		spec, err := buildPodSpec(JobParams{ProjectName: "service-1", ImageTag: "v1.2.3", NodeType: pkg_model.NodeTypeDbtModel, TableName: "t"}, pkg_model.NodeTypeDbtModel.Command("t"), "")
 		require.NoError(t, err)
 		require.Len(t, spec.Containers, 1)
 		assert.Equal(t, "carolsimone/service-1:v1.2.3", spec.Containers[0].Image)
@@ -79,7 +79,7 @@ func TestBuildPodSpec_ImageRef(t *testing.T) {
 func TestBuildPodSpec_UsesImageTagFromParams(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "")
 	params := JobParams{
-		ServiceName: "service-1",
+		ProjectName: "service-1",
 		ImageTag:    "abc123-1714300000",
 		NodeType:    pkg_model.NodeTypeDbtModel,
 		TableName:   "users",
@@ -92,7 +92,7 @@ func TestBuildPodSpec_UsesImageTagFromParams(t *testing.T) {
 
 func TestBuildPodSpec_RefusesEmptyImageTag(t *testing.T) {
 	params := JobParams{
-		ServiceName: "service-1",
+		ProjectName: "service-1",
 		ImageTag:    "",
 		NodeType:    pkg_model.NodeTypeDbtModel,
 		TableName:   "users",
@@ -114,7 +114,7 @@ func TestBuildPodSpec_RefusesEmptyImageTag(t *testing.T) {
 // resolves to the production schema, leaving prod materialization byte-identical.
 func TestBuildPodSpec_NoCandidateSchemaEnv(t *testing.T) {
 	spec, err := buildPodSpec(JobParams{
-		ServiceName: "service-1",
+		ProjectName: "service-1",
 		ImageTag:    "tag",
 		NodeType:    pkg_model.NodeTypeDbtModel,
 		TableName:   "users",
@@ -160,7 +160,7 @@ func TestCreateQueryJob_NormalProduction_HasNoModeLabel(t *testing.T) {
 		TaskID:       "task-2",
 		RunID:        "sched-2",
 		ScheduleName: "daily",
-		ServiceName:  "svc",
+		ProjectName:  "svc",
 		SchemaName:   "analytics",
 		TableName:    "orders",
 		Namespace:    "default",
@@ -195,7 +195,7 @@ func TestCreateQueryJob_SetsTTLSecondsAfterFinished(t *testing.T) {
 		TaskID:       "task-3",
 		RunID:        "sched-3",
 		ScheduleName: "daily",
-		ServiceName:  "svc",
+		ProjectName:  "svc",
 		SchemaName:   "analytics",
 		TableName:    "orders",
 		Namespace:    "default",
@@ -222,10 +222,10 @@ func TestEveryJobKindCarriesTheClientsJobTTL(t *testing.T) {
 	cs := fake.NewSimpleClientset()
 	c := NewK8sClientFor(cs, slog.New(slog.NewTextHandler(io.Discard, nil)), commandcfg.Defaults(), 45*time.Minute)
 	ctx := context.Background()
-	cand := ValidationJobParams{ReleaseID: "r1", NodeID: "public.orders", ServiceName: "svc", SchemaName: "public",
+	cand := ValidationJobParams{ReleaseID: "r1", NodeID: "public.orders", ProjectName: "svc", SchemaName: "public",
 		TableName: "orders", NodeType: "dbt-model", ImageTag: "v1", CandidateSchema: "_cand_r1",
 		CandidateArtifactURI: "s3://b/sql", ManifestS3URI: "s3://b/manifest.json", Namespace: "ns"}
-	require.NoError(t, c.CreateQueryJob(ctx, JobParams{JobName: "task", TaskID: "t", RunID: "s", ServiceName: "svc",
+	require.NoError(t, c.CreateQueryJob(ctx, JobParams{JobName: "task", TaskID: "t", RunID: "s", ProjectName: "svc",
 		SchemaName: "public", TableName: "orders", NodeType: "dbt-model", ImageTag: "v1", Namespace: "ns"}))
 	v := cand
 	v.JobName = "validate"
@@ -258,10 +258,10 @@ func TestEveryJobKindCarriesTheLabelTheWatchSelects(t *testing.T) {
 	c := &K8sClient{logger: slog.New(slog.NewTextHandler(io.Discard, nil)), commands: commandcfg.Defaults()}
 	c.setClientsetForTest(cs)
 	ctx := context.Background()
-	cand := ValidationJobParams{ReleaseID: "r1", NodeID: "public.orders", ServiceName: "svc", SchemaName: "public",
+	cand := ValidationJobParams{ReleaseID: "r1", NodeID: "public.orders", ProjectName: "svc", SchemaName: "public",
 		TableName: "orders", NodeType: "dbt-model", ImageTag: "v1", CandidateSchema: "_cand_r1",
 		CandidateArtifactURI: "s3://b/sql", ManifestS3URI: "s3://b/manifest.json", Namespace: "ns"}
-	require.NoError(t, c.CreateQueryJob(ctx, JobParams{JobName: "task", TaskID: "t", RunID: "s", ServiceName: "svc",
+	require.NoError(t, c.CreateQueryJob(ctx, JobParams{JobName: "task", TaskID: "t", RunID: "s", ProjectName: "svc",
 		SchemaName: "public", TableName: "orders", NodeType: "dbt-model", ImageTag: "v1", Namespace: "ns"}))
 	v := cand
 	v.JobName = "validate"

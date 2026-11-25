@@ -148,16 +148,16 @@ func TestFailingNodeSource_Declines(t *testing.T) {
 	}{
 		{"compile with no file", "compile", remediation.TriggerNode{NodeID: "svc"},
 			"the compile error names no source file, so there is no file to fix"},
-		{"compile with an unmapped service", "compile", remediation.TriggerNode{NodeID: "ghost", FilePath: "models/x.sql"},
-			`service "ghost" has no repository path mapping, so its source cannot be read`},
+		{"compile with an unmapped project", "compile", remediation.TriggerNode{NodeID: "ghost", FilePath: "models/x.sql"},
+			`project "ghost" has no repository path mapping, so its source cannot be read`},
 		{"compile with a missing file", "compile", remediation.TriggerNode{NodeID: "svc", FilePath: "models/x.sql"},
 			"the offending file services/svc/models/x.sql does not exist at commit abc123"},
-		{"parse with no file", "parse", remediation.TriggerNode{NodeID: "n1", Service: "svc"},
+		{"parse with no file", "parse", remediation.TriggerNode{NodeID: "n1", Project: "svc"},
 			"the parse rejection names no source file, so there is no file to fix"},
-		{"parse with no service", "parse", remediation.TriggerNode{NodeID: "n1", FilePath: "models/x.sql"},
-			"the parse rejection names no service, so the source cannot be located"},
+		{"parse with no project", "parse", remediation.TriggerNode{NodeID: "n1", FilePath: "models/x.sql"},
+			"the parse rejection names no project, so the source cannot be located"},
 		{"seed the graph cannot place", "seed_build", remediation.TriggerNode{NodeID: "n1"},
-			"neither the trigger nor the graph names the seed's csv file and service, so there is no file to fix"},
+			"neither the trigger nor the graph names the seed's csv file and project, so there is no file to fix"},
 		{"duplicate_table of a python node", "duplicate_table", remediation.TriggerNode{NodeID: "n1", NodeType: string(pkg_model.NodeTypePythonNode)},
 			"the claimant is a python node, whose relation is declared in its contract file (the ODCS file under " +
 				"contracts/) rather than in the file the trigger names; rename it in the contract by hand"},
@@ -165,10 +165,10 @@ func TestFailingNodeSource_Declines(t *testing.T) {
 			"the claimant is a dbt seed, whose relation name comes from the csv filename or " +
 				"project config, never from the csv's contents; an edited csv would alter the seed's data, " +
 				"not its name, so rename the seed by hand"},
-		{"duplicate_table with no file", "duplicate_table", remediation.TriggerNode{NodeID: "n1", Service: "svc"},
-			"the trigger names no source file or service for the claimant, so there is no file to fix"},
-		{"duplicate_table with no service", "duplicate_table", remediation.TriggerNode{NodeID: "n1", FilePath: "models/x.sql"},
-			"the trigger names no source file or service for the claimant, so there is no file to fix"},
+		{"duplicate_table with no file", "duplicate_table", remediation.TriggerNode{NodeID: "n1", Project: "svc"},
+			"the trigger names no source file or project for the claimant, so there is no file to fix"},
+		{"duplicate_table with no project", "duplicate_table", remediation.TriggerNode{NodeID: "n1", FilePath: "models/x.sql"},
+			"the trigger names no source file or project for the claimant, so there is no file to fix"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -181,19 +181,19 @@ func TestFailingNodeSource_Declines(t *testing.T) {
 	}
 }
 
-func TestFailingNodeSource_ParseReadsTheFileUnderTheTriggersService(t *testing.T) {
+func TestFailingNodeSource_ParseReadsTheFileUnderTheTriggersProject(t *testing.T) {
 	src := &fakeSource{files: map[string]string{
 		"services/svc/models/x.sql":    "select 1 from raw",
 		"services/svc/dbt_project.yml": "name: svc",
 	}}
 	s := source.NewFailingNodeSource(src, nil, repoPaths, discardLogger())
 
-	out := gather(t, s, failure("parse", remediation.TriggerNode{NodeID: "model.svc.x", Service: "svc", FilePath: "models/x.sql", NodeType: "dbt-model"}))
+	out := gather(t, s, failure("parse", remediation.TriggerNode{NodeID: "model.svc.x", Project: "svc", FilePath: "models/x.sql", NodeType: "dbt-model"}))
 
 	sf := sourceFiles(t, out)
 	assert.Equal(t, "services/svc/models/x.sql", sf.Primary)
 	assert.Equal(t, []string{"services/svc/models/x.sql", "services/svc/dbt_project.yml"}, sf.Order)
-	assert.Equal(t, "svc", sf.Service)
+	assert.Equal(t, "svc", sf.Project)
 }
 
 func TestFailingNodeSource_SeedReadsOnlyTheCSVWithoutContext(t *testing.T) {
@@ -203,14 +203,14 @@ func TestFailingNodeSource_SeedReadsOnlyTheCSVWithoutContext(t *testing.T) {
 	}}
 	s := source.NewFailingNodeSource(src, &fakeLocator{}, repoPaths, discardLogger())
 
-	out := gather(t, s, failure("seed_build", remediation.TriggerNode{NodeID: "seed.svc.a", Service: "svc", FilePath: "seeds/a.csv"}))
+	out := gather(t, s, failure("seed_build", remediation.TriggerNode{NodeID: "seed.svc.a", Project: "svc", FilePath: "seeds/a.csv"}))
 
 	assert.Equal(t, []string{"services/svc/seeds/a.csv"}, sourceFiles(t, out).Order)
 }
 
 func TestFailingNodeSource_SeedLocatesWhatTheTriggerLeavesOut(t *testing.T) {
 	src := &fakeSource{files: map[string]string{"services/svc/seeds/a.csv": "a,b"}}
-	loc := &fakeLocator{filePath: "seeds/a.csv", service: "svc"}
+	loc := &fakeLocator{filePath: "seeds/a.csv", project: "svc"}
 	s := source.NewFailingNodeSource(src, loc, repoPaths, discardLogger())
 
 	out := gather(t, s, failure("seed_build", remediation.TriggerNode{NodeID: "seed.svc.a"}))
@@ -219,7 +219,7 @@ func TestFailingNodeSource_SeedLocatesWhatTheTriggerLeavesOut(t *testing.T) {
 	assert.Equal(t, []string{"seed.svc.a"}, loc.calls)
 
 	loc.calls = nil
-	gather(t, s, failure("seed_build", remediation.TriggerNode{NodeID: "seed.svc.a", Service: "svc", FilePath: "seeds/a.csv"}))
+	gather(t, s, failure("seed_build", remediation.TriggerNode{NodeID: "seed.svc.a", Project: "svc", FilePath: "seeds/a.csv"}))
 	assert.Empty(t, loc.calls, "a trigger that names both is not located")
 }
 
@@ -246,7 +246,7 @@ func TestFailingNodeSource_DuplicateTableReadsOnlyTheClaimant(t *testing.T) {
 	}}
 	s := source.NewFailingNodeSource(src, nil, repoPaths, discardLogger())
 
-	out := gather(t, s, failure("duplicate_table", remediation.TriggerNode{NodeID: "model.svc.x", Service: "svc", FilePath: "models/x.sql", NodeType: "dbt-model"}))
+	out := gather(t, s, failure("duplicate_table", remediation.TriggerNode{NodeID: "model.svc.x", Project: "svc", FilePath: "models/x.sql", NodeType: "dbt-model"}))
 
 	assert.Equal(t, []string{"services/svc/models/x.sql"}, sourceFiles(t, out).Order)
 	assert.Equal(t, []string{"services/svc/models/x.sql"}, src.reads)
@@ -317,9 +317,9 @@ func TestFailingNodeSource_AnOversizedTargetFileDeclines(t *testing.T) {
 		file string
 	}{
 		{"compile", "compile", remediation.TriggerNode{NodeID: "svc", FilePath: "models/x.sql"}, "services/svc/models/x.sql"},
-		{"parse", "parse", remediation.TriggerNode{NodeID: "n1", Service: "svc", FilePath: "models/x.sql"}, "services/svc/models/x.sql"},
-		{"seed_build", "seed_build", remediation.TriggerNode{NodeID: "n1", Service: "svc", FilePath: "seeds/a.csv"}, "services/svc/seeds/a.csv"},
-		{"duplicate_table", "duplicate_table", remediation.TriggerNode{NodeID: "n1", Service: "svc", FilePath: "models/x.sql", NodeType: "dbt-model"}, "services/svc/models/x.sql"},
+		{"parse", "parse", remediation.TriggerNode{NodeID: "n1", Project: "svc", FilePath: "models/x.sql"}, "services/svc/models/x.sql"},
+		{"seed_build", "seed_build", remediation.TriggerNode{NodeID: "n1", Project: "svc", FilePath: "seeds/a.csv"}, "services/svc/seeds/a.csv"},
+		{"duplicate_table", "duplicate_table", remediation.TriggerNode{NodeID: "n1", Project: "svc", FilePath: "models/x.sql", NodeType: "dbt-model"}, "services/svc/models/x.sql"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

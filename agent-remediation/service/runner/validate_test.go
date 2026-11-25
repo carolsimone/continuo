@@ -92,7 +92,7 @@ func stubRegistry() *Registry {
 		{Name: "dbt-parse", Kind: step.KindPrompt},
 		{Name: "target_file_was_shown", Kind: step.KindCheck, Stages: []workflow.Stage{workflow.StagePreflight}, Needs: []remediation.EvidenceKey{remediation.KeyDraft}},
 		{Name: "needs_a_precedent", Kind: step.KindCheck, Stages: []workflow.Stage{workflow.StagePreflight}, Needs: []remediation.EvidenceKey{remediation.KeyFailurePrecedents}},
-		{Name: "edits_map_to_a_service", Kind: step.KindCheck, Stages: []workflow.Stage{workflow.StageCrossCluster}},
+		{Name: "edits_map_to_a_project", Kind: step.KindCheck, Stages: []workflow.Stage{workflow.StageCrossCluster}},
 		{Name: "verification_run", Kind: step.KindCheck, Stages: []workflow.Stage{workflow.StageGate}, MayStandAsGateRun: true},
 		{Name: "a_gate_without_a_run", Kind: step.KindCheck, Stages: []workflow.Stage{workflow.StageGate}},
 		{Name: "open_pr", Kind: step.KindOutput, Stages: []workflow.Stage{workflow.StageOutput}},
@@ -118,7 +118,7 @@ func validFlow() workflow.Flow {
 		Types:          []string{"t"},
 		TypesPos:       pos(flowFile, 5),
 		Context:        []workflow.StepRef{ref(flowFile, 6, "failing_node_source")},
-		AcrossClusters: []workflow.StepRef{ref(flowFile, 7, "edits_map_to_a_service")},
+		AcrossClusters: []workflow.StepRef{ref(flowFile, 7, "edits_map_to_a_project")},
 		Gate:           []workflow.StepRef{ref(flowFile, 8, "verification_run")},
 		Tries:          3,
 		OnPass:         workflow.Output{Action: workflow.OutputPullRequest, Emits: "remediation.proposed", Pos: pos(flowFile, 11)},
@@ -200,8 +200,8 @@ func TestValidate_RefusesAStepInAStageItIsNotAllowedIn(t *testing.T) {
 	})
 	t.Run("a cross-cluster check in preflight", func(t *testing.T) {
 		refuses(t, func(_ *workflow.Flow, ty *workflow.Type) {
-			ty.Preflight = append(ty.Preflight, ref(typeFile, 8, "edits_map_to_a_service"))
-		}, `types/t.yaml:8`, `edits_map_to_a_service`)
+			ty.Preflight = append(ty.Preflight, ref(typeFile, 8, "edits_map_to_a_project"))
+		}, `types/t.yaml:8`, `edits_map_to_a_project`)
 	})
 }
 

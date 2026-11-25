@@ -8,15 +8,15 @@ const PROpenedEventType = "remediation_pr_opened"
 
 var prOpenedNamespace = uuid.MustParse("7e5a1b8f-9c34-4d7a-b2f5-8e1c6a9d3f2b")
 
-// PROpenedEventID derives a stable id from (releaseID, attempt, service) so a
+// PROpenedEventID derives a stable id from (releaseID, attempt, project) so a
 // re-emission of the same PR-opened fact dedups to one downstream event. Each
-// owning-service PR of a split proposal gets its own id; the legacy service ""
+// owning-project PR of a split proposal gets its own id; the legacy project ""
 // (a whole-proposal PR) reproduces the pre-split (releaseID, attempt) id
 // byte-for-byte, so an unsplit proposal's dedup key never shifts.
-func PROpenedEventID(releaseID string, attempt int, service string) uuid.UUID {
+func PROpenedEventID(releaseID string, attempt int, project string) uuid.UUID {
 	name := releaseID + "|" + itoa(attempt)
-	if service != "" {
-		name += "|" + service
+	if project != "" {
+		name += "|" + project
 	}
 	return uuid.NewSHA1(prOpenedNamespace, []byte(name))
 }
@@ -27,11 +27,11 @@ type PROpened struct {
 	ReleaseID  string
 	NodeID     string
 	// ResolvedNodeIDs is the failing nodes this PR fixes, sorted — the subset
-	// of the attempt's fixed nodes this owning service's edits address.
+	// of the attempt's fixed nodes this owning project's edits address.
 	ResolvedNodeIDs []string
-	// Service is the owning-service group this PR covers; omitted (its DTO field
+	// Project is the owning-project group this PR covers; omitted (its DTO field
 	// is omitempty) for a legacy whole-proposal PR.
-	Service  string
+	Project  string
 	PrURL    string
 	PrNumber int
 	OpenedBy string

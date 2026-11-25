@@ -64,7 +64,7 @@ func TestLoad_MissingFileUsesDefaults(t *testing.T) {
 
 func TestLoad_ValidCompleteFile(t *testing.T) {
 	path := writeConfig(t, completeDefault+`
-services:
+projects:
   customname:
     run:        ["customname-dbt", "run", "--select", "{{ node }}"]
     seed:       ["customname-dbt", "seed", "--select", "{{ node }}"]
@@ -85,7 +85,7 @@ services:
 
 func TestLoad_FileWithoutDefaultIsError(t *testing.T) {
 	path := writeConfig(t, `
-services:
+projects:
   customname:
     run:        ["customname-dbt", "run", "--select", "{{ node }}"]
     seed:       ["customname-dbt", "seed", "--select", "{{ node }}"]
@@ -112,17 +112,17 @@ default:
 	assert.Contains(t, err.Error(), "default: incomplete command set, missing")
 }
 
-// A partial service override — the original finance bug — is now a boot error.
-func TestLoad_PartialServiceOverrideIsError(t *testing.T) {
+// A partial project override — the original finance bug — is now a boot error.
+func TestLoad_PartialProjectOverrideIsError(t *testing.T) {
 	path := writeConfig(t, completeDefault+`
-services:
+projects:
   customname:
     run:  ["customname-dbt", "run", "--select", "{{ node }}"]
     seed: ["customname-dbt", "seed", "--select", "{{ node }}"]
 `)
 	_, err := Load(path, testLogger())
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "services.customname: incomplete command set, missing")
+	assert.Contains(t, err.Error(), "projects.customname: incomplete command set, missing")
 	assert.Contains(t, err.Error(), "test")
 	assert.Contains(t, err.Error(), "build")
 	assert.Contains(t, err.Error(), "compile")
@@ -301,9 +301,9 @@ func TestLoad_ValidationErrors(t *testing.T) {
 			wantErr: "default: incomplete command set, missing",
 		},
 		{
-			name:    "empty service is incomplete",
-			yaml:    completeDefault + "services:\n  customname: {}",
-			wantErr: "services.customname: incomplete command set, missing",
+			name:    "empty project is incomplete",
+			yaml:    completeDefault + "projects:\n  customname: {}",
+			wantErr: "projects.customname: incomplete command set, missing",
 		},
 	}
 	for _, tt := range tests {
@@ -589,10 +589,10 @@ func TestParseContextFlags_ReadsTheShortTargetFlagAsDbtDoes(t *testing.T) {
 	}
 }
 
-// The refusal covers every service block, not only the default one.
-func TestLoad_RefusesAServiceRunOpWhoseParseFlagsDifferFromCompile(t *testing.T) {
+// The refusal covers every project block, not only the default one.
+func TestLoad_RefusesAProjectRunOpWhoseParseFlagsDifferFromCompile(t *testing.T) {
 	path := writeConfig(t, completeDefault+`
-services:
+projects:
   service-1:
     run:        ["dbt", "run", "--select", "{{ node }}", "--target", "prod"]
     seed:       ["dbt", "seed", "--select", "{{ node }}", "--target", "prod"]
@@ -607,8 +607,8 @@ services:
 `)
 	_, err := Load(path, testLogger())
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "services.service-1.run")
-	assert.Contains(t, err.Error(), "does not match services.service-1.compile.command")
+	assert.Contains(t, err.Error(), "projects.service-1.run")
+	assert.Contains(t, err.Error(), "does not match projects.service-1.compile.command")
 }
 
 // Regression: builtinDefault() and both shipped dbt-commands.yaml files must
@@ -682,7 +682,7 @@ default:
 	require.NoError(t, err)
 	require.NotNil(t, r)
 	assert.Equal(t, []string{"dbt", "run", "--select", "orders"},
-		mustNodeCommand(t, r, "any-service", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders"))
+		mustNodeCommand(t, r, "any-project", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders"))
 	assert.Contains(t, buf.String(), "future_key", "warning must name the unknown field")
 }
 

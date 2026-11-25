@@ -95,7 +95,7 @@ func NewDeployment(cmd command.DeployTask, msgProcID *uuid.UUID, now time.Time) 
 
 // NewValidationDeployment starts a fresh validation Deployment. When
 // hasUpstreams is true the deployment begins in StatusBlocked, waiting for all
-// in-set intra-service upstreams to succeed before the dispatcher can pick it
+// in-set intra-project upstreams to succeed before the dispatcher can pick it
 // up. When false (root node in the build set) it starts StatusPending and is
 // eligible for dispatch immediately.
 func NewValidationDeployment(cmd command.ValidationDeployTask, msgProcID *uuid.UUID, now time.Time, hasUpstreams bool) *Deployment {
@@ -132,9 +132,9 @@ func NewSeedBuildDeployment(cmd command.ValidationDeployTask, msgProcID *uuid.UU
 	}
 }
 
-// NewCompileDeployment creates a compile deployment: the changed service's dbt
+// NewCompileDeployment creates a compile deployment: the changed project's dbt
 // manifest is compiled into S3 before validation runs. Compile is a single root
-// node (no intra-service upstreams), so the deployment always starts pending.
+// node (no intra-project upstreams), so the deployment always starts pending.
 // It reuses the ValidationDeployTask command shape and the outcome columns.
 func NewCompileDeployment(cmd command.ValidationDeployTask, msgProcID *uuid.UUID, now time.Time) *Deployment {
 	return &Deployment{
@@ -322,7 +322,7 @@ func (d *Deployment) IsDeployable() bool {
 	}
 	if d.mode == ModeCompile {
 		// Compile jobs have no NodeType — they compile the full manifest for a
-		// service, not a single dbt node. Only identity + image are required.
+		// project, not a single dbt node. Only identity + image are required.
 		return d.validationCmd.JobName != "" &&
 			d.validationCmd.NodeID != "" &&
 			d.validationCmd.ReleaseID != "" &&
@@ -591,7 +591,7 @@ func (d *Deployment) JobName() string {
 
 // NodeType is the type of the node the deployment runs: the production
 // command's for a production attempt, the release leg's for any other. A
-// compile leg compiles a whole service rather than one node and has none.
+// compile leg compiles a whole project rather than one node and has none.
 func (d *Deployment) NodeType() pkgmodel.NodeType {
 	if d.mode == ModeProduction {
 		return pkgmodel.NodeType(d.command.NodeType)

@@ -24,7 +24,7 @@ var shownFiles = remediation.SourceFiles{
 	Files:   map[string]string{sqlPath: "select 1", ymlPath: "version: 2", projPath: "name: svc"},
 	Order:   []string{sqlPath, ymlPath, projPath},
 	Primary: sqlPath,
-	Service: "svc",
+	Project: "svc",
 }
 
 var precedents = []prompt.Precedent{{ReleaseID: "old", NodeID: "n0", ErrorExcerpt: "same error"}}
@@ -152,7 +152,7 @@ func TestDBTCompile_AnUnchangedAnswerStillBecomesAnEditForTheChecksToRefuse(t *t
 }
 
 func TestDBTParse_BuildsItsRequest(t *testing.T) {
-	f := failure("parse", remediation.TriggerNode{NodeID: "model.svc.x", Service: "svc", FilePath: "models/x.sql", ErrorExcerpt: "parse error near from"})
+	f := failure("parse", remediation.TriggerNode{NodeID: "model.svc.x", Project: "svc", FilePath: "models/x.sql", ErrorExcerpt: "parse error near from"})
 	m := &fakeModel{results: []ports.ProposeResult{answer("models/x.sql", "select 2")}}
 
 	out := propose(t, source.NewDBTParse(), f, evidenceFor(shownFiles), m)
@@ -166,8 +166,8 @@ func TestDBTParse_BuildsItsRequest(t *testing.T) {
 }
 
 func TestSeed_BuildsItsRequestAndAlwaysTargetsTheCSV(t *testing.T) {
-	csv := remediation.SourceFiles{Files: map[string]string{"services/svc/seeds/a.csv": "a,b\n1"}, Order: []string{"services/svc/seeds/a.csv"}, Primary: "services/svc/seeds/a.csv", Service: "svc"}
-	f := failure("seed_build", remediation.TriggerNode{NodeID: "seed.svc.a", Service: "svc", FilePath: "seeds/a.csv"})
+	csv := remediation.SourceFiles{Files: map[string]string{"services/svc/seeds/a.csv": "a,b\n1"}, Order: []string{"services/svc/seeds/a.csv"}, Primary: "services/svc/seeds/a.csv", Project: "svc"}
+	f := failure("seed_build", remediation.TriggerNode{NodeID: "seed.svc.a", Project: "svc", FilePath: "seeds/a.csv"})
 	// The model names some other file, or none: the seed's target is its csv.
 	for _, target := range []string{"", "seeds/a.csv", "elsewhere.csv"} {
 		m := &fakeModel{results: []ports.ProposeResult{answer(target, "a,b\n1,2")}}
@@ -249,15 +249,15 @@ func TestDBTCompile_RevisesTheLastCallWithTheFindings(t *testing.T) {
 }
 
 func TestDBTParse_RevisesTheLastCallWithTheFindings(t *testing.T) {
-	f := failure("parse", remediation.TriggerNode{NodeID: "model.svc.x", Service: "svc", FilePath: "models/x.sql", ErrorExcerpt: "parse error near from"})
+	f := failure("parse", remediation.TriggerNode{NodeID: "model.svc.x", Project: "svc", FilePath: "models/x.sql", ErrorExcerpt: "parse error near from"})
 
 	revisesTheLastCall(t, source.NewDBTParse(), f, evidenceFor(shownFiles),
 		answer("models/x.sql", "select from"), answer("models/x.sql", "select 3"))
 }
 
 func TestSeed_RevisesTheLastCallWithTheFindings(t *testing.T) {
-	csv := remediation.SourceFiles{Files: map[string]string{"services/svc/seeds/a.csv": "a,b\n1"}, Order: []string{"services/svc/seeds/a.csv"}, Primary: "services/svc/seeds/a.csv", Service: "svc"}
-	f := failure("seed_build", remediation.TriggerNode{NodeID: "seed.svc.a", Service: "svc", FilePath: "seeds/a.csv"})
+	csv := remediation.SourceFiles{Files: map[string]string{"services/svc/seeds/a.csv": "a,b\n1"}, Order: []string{"services/svc/seeds/a.csv"}, Primary: "services/svc/seeds/a.csv", Project: "svc"}
+	f := failure("seed_build", remediation.TriggerNode{NodeID: "seed.svc.a", Project: "svc", FilePath: "seeds/a.csv"})
 
 	revisesTheLastCall(t, source.NewSeed(), f, evidenceFor(csv),
 		answer("", "a,b\n1"), answer("", "a,b\n1,2"))

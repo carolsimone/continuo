@@ -9,7 +9,7 @@ import (
 
 // The shipped Helm config is the source of truth for the Hetzner ConfigMap.
 // This pins that it always loads and that finance resolves to the customname-dbt
-// dialect for every operation while other services fall back to the default; it
+// dialect for every operation while other projects fall back to the default; it
 // also pins that both the default and finance blocks load a seed as a plain
 // dbt seed and define full_refresh (model) and seed_full_refresh (seed) for
 // the full-refresh operations.
@@ -51,7 +51,7 @@ func TestDeployedConfigResolvesFinanceDialect(t *testing.T) {
 	gotFR := mustNodeCommand(t, r, "finance", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtModel, "fx_transactions_eur")
 	assertArgv(t, "finance full_refresh", gotFR, []string{"customname-dbt", "rebuild-model", "fx_transactions_eur"})
 
-	// A service with no override falls back to the default block (plain dbt).
+	// A project with no override falls back to the default block (plain dbt).
 	gotOther := mustNodeCommand(t, r, "service-3", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "some_model")
 	assertArgv(t, "service-3 run fallback", gotOther, []string{"dbt", "run", "--select", "some_model"})
 

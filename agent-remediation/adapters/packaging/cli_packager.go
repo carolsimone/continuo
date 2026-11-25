@@ -45,7 +45,7 @@ func NewCLIPackager() (*CLIPackager, error) {
 
 // Pack runs:
 //
-//	continuo-runtime pack <contractDir> --service <service> \
+//	continuo-runtime pack <contractDir> --project <project> \
 //	  --repo-root <repoRoot> --image-packages <tmp>/image-packages.json \
 //	  --dialect <dialect> --out <tmp>/odcs-bundle.json
 //
@@ -53,9 +53,9 @@ func NewCLIPackager() (*CLIPackager, error) {
 // written there as one JSON object of package name to version, and the bytes
 // the CLI wrote to --out are returned. A nil imagePackages is refused before
 // the CLI runs: a bundle always records the package list of the image.
-func (p *CLIPackager) Pack(ctx context.Context, contractDir, repoRoot, service, dialect string, imagePackages map[string]string) ([]byte, error) {
+func (p *CLIPackager) Pack(ctx context.Context, contractDir, repoRoot, project, dialect string, imagePackages map[string]string) ([]byte, error) {
 	if imagePackages == nil {
-		return nil, fmt.Errorf("pack %s for %s: no package list of the service's image was given", contractDir, service)
+		return nil, fmt.Errorf("pack %s for %s: no package list of the project's image was given", contractDir, project)
 	}
 	tmpDir, err := os.MkdirTemp("", "contract-pack-*")
 	if err != nil {
@@ -73,11 +73,11 @@ func (p *CLIPackager) Pack(ctx context.Context, contractDir, repoRoot, service, 
 	}
 	outPath := filepath.Join(tmpDir, ports.ODCSBundleName)
 	// G204: exec.CommandContext runs the path resolved at construction directly
-	// (no shell), so none of contractDir/service/repoRoot/dialect can be
+	// (no shell), so none of contractDir/project/repoRoot/dialect can be
 	// interpreted as shell metacharacters. They land as literal argv entries
 	// under a fixed, hardcoded flag set the caller cannot alter.
 	cmd := exec.CommandContext(ctx, p.binPath, "pack", contractDir, //nolint:gosec // G204: direct execve, no shell, hardcoded flags.
-		"--service", service,
+		"--project", project,
 		"--repo-root", repoRoot,
 		"--image-packages", packagesPath,
 		"--dialect", dialect,

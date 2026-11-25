@@ -81,7 +81,7 @@ func TestCatalog_BracketedPositionalIsOptional(t *testing.T) {
 	}
 	assert.Equal(t, "source-run-id", trigger.Params[3].Name)
 	assert.False(t, trigger.Params[3].Required)
-	assert.Equal(t, []string{"service", "schema", "table", "source-run-id"}, trigger.ParamOrder)
+	assert.Equal(t, []string{"project", "schema", "table", "source-run-id"}, trigger.ParamOrder)
 }
 
 // The dlq commands drive dead-letter-controller: redrive mutates and takes the
@@ -192,7 +192,7 @@ func TestCatalog_OnlyChatMarkedFlagsBecomeParameters(t *testing.T) {
 	refresh, ok := c.Lookup("node_full-refresh")
 	require.True(t, ok)
 	assert.True(t, refresh.Mutating)
-	assert.Equal(t, []string{"service", "schema", "table", "source-run-id"}, refresh.ParamOrder)
+	assert.Equal(t, []string{"project", "schema", "table", "source-run-id"}, refresh.ParamOrder)
 	require.Len(t, refresh.Params, 5)
 	ack := refresh.Params[4]
 	assert.Equal(t, "acknowledge", ack.Name)

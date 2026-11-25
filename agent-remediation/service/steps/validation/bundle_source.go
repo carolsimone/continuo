@@ -46,21 +46,21 @@ type CodeBundleSource struct {
 	candidates       ports.CandidateSourceReader
 	source           ports.SourceReader
 	locator          ports.NodeLocator
-	serviceRepoPaths map[string]string
+	projectRepoPaths map[string]string
 	logger           *slog.Logger
 }
 
 var _ step.ContextSource = (*CodeBundleSource)(nil)
 
-// NewCodeBundleSource builds the code_bundle_source step. serviceRepoPaths maps
-// a service name to its path inside the repository. It calls no port until
+// NewCodeBundleSource builds the code_bundle_source step. projectRepoPaths maps
+// a project name to its path inside the repository. It calls no port until
 // Gather.
-func NewCodeBundleSource(candidates ports.CandidateSourceReader, source ports.SourceReader, locator ports.NodeLocator, serviceRepoPaths map[string]string, logger *slog.Logger) *CodeBundleSource {
+func NewCodeBundleSource(candidates ports.CandidateSourceReader, source ports.SourceReader, locator ports.NodeLocator, projectRepoPaths map[string]string, logger *slog.Logger) *CodeBundleSource {
 	return &CodeBundleSource{
 		candidates:       candidates,
 		source:           source,
 		locator:          locator,
-		serviceRepoPaths: serviceRepoPaths,
+		projectRepoPaths: projectRepoPaths,
 		logger:           shared.LoggerOrDefault(logger),
 	}
 }
@@ -71,8 +71,8 @@ func (*CodeBundleSource) Meta() step.Meta {
 		Name: "code_bundle_source",
 		Kind: step.KindContext,
 		Description: "Reads the failing dbt node's source from the release's code bundle, falling back to the repository at the trigger's commit, " +
-			"with the file path and service it was found for. Declines a node whose source is not a dbt model, one whose repository " +
-			"file is over the read limit, and one whose source, file path, service or the service's repository path is unknown, " +
+			"with the file path and project it was found for. Declines a node whose source is not a dbt model, one whose repository " +
+			"file is over the read limit, and one whose source, file path, project or the project's repository path is unknown, " +
 			"since no fix can edit it.",
 		Needs:    []remediation.EvidenceKey{remediation.KeyFailure},
 		Provides: []remediation.EvidenceKey{remediation.KeyCodeBundleSource},
@@ -91,22 +91,22 @@ func (*CodeBundleSource) Meta() step.Meta {
 // A source that is not a dbt model declines the cluster, and so does a
 // repository fallback file over the read limit, and a node whose location or
 // source stayed unknown: a fix edits the file the node's
-// source lives in, so with no source, file path, service or repository path
-// for the service there is no edit to make, and no model call is worth making.
+// source lives in, so with no source, file path, project or repository path
+// for the project there is no edit to make, and no model call is worth making.
 // Each decline carries its reason.
 func (s *CodeBundleSource) Gather(ctx context.Context, in step.ContextInput) (step.ContextOutput, error) {
 	f := in.Failure
 	n := f.Target
-	filePath, serviceName := n.FilePath, n.Service
+	filePath, projectName := n.FilePath, n.Project
 	if filePath == "" {
 		var err error
-		filePath, serviceName, err = s.locator.Locate(ctx, n.NodeID)
+		filePath, projectName, err = s.locator.Locate(ctx, n.NodeID)
 		if err != nil {
 			return step.ContextOutput{}, fmt.Errorf("locate %s: %w", n.NodeID, err)
 		}
 	}
 
-	source, origin, err := s.resolve(ctx, f, filePath, serviceName)
+	source, origin, err := s.resolve(ctx, f, filePath, projectName)
 	if errors.Is(err, errNonDbtCandidate) {
 		s.logger.Info("validation fix: failing node's candidate source is not a dbt model; skipping",
 			"node", n.NodeID, "error", err)
@@ -119,7 +119,7 @@ func (s *CodeBundleSource) Gather(ctx context.Context, in step.ContextInput) (st
 	if err != nil {
 		return step.ContextOutput{}, err
 	}
-	if reason := s.unreachable(n.NodeID, filePath, serviceName, source); reason != "" {
+	if reason := s.unreachable(n.NodeID, filePath, projectName, source); reason != "" {
 		s.logger.Info("validation fix: failing node's source cannot be edited; skipping", "node", n.NodeID, "reason", reason)
 		return step.ContextOutput{Declined: true, Decline: reason}, nil
 	}
@@ -129,24 +129,24 @@ func (s *CodeBundleSource) Gather(ctx context.Context, in step.ContextInput) (st
 			Source:   source,
 			Origin:   origin,
 			FilePath: filePath,
-			Service:  serviceName,
+			Project:  projectName,
 		},
 	}}, nil
 }
 
 // unreachable is why no fix can edit the node's source, or "" when it can: the
-// node has no file path or service, the service has no repository path, or the
+// node has no file path or project, the project has no repository path, or the
 // source was found nowhere. The location is judged first, because with none the
 // source could only have come from the bundle.
-func (s *CodeBundleSource) unreachable(nodeID, filePath, serviceName, source string) string {
+func (s *CodeBundleSource) unreachable(nodeID, filePath, projectName, source string) string {
 	switch {
 	case filePath == "":
 		return fmt.Sprintf("the failing node %s has no file path, so there is no source file to edit", nodeID)
-	case serviceName == "":
-		return fmt.Sprintf("the failing node %s names no service, so there is no source file to edit", nodeID)
+	case projectName == "":
+		return fmt.Sprintf("the failing node %s names no project, so there is no source file to edit", nodeID)
 	}
-	if _, ok := s.serviceRepoPaths[serviceName]; !ok {
-		return fmt.Sprintf("service %q has no repository path mapping", serviceName)
+	if _, ok := s.projectRepoPaths[projectName]; !ok {
+		return fmt.Sprintf("project %q has no repository path mapping", projectName)
 	}
 	if source == "" {
 		return fmt.Sprintf("the failing node %s's source is in neither the release's code bundle nor the repository at the trigger's commit", nodeID)
@@ -160,7 +160,7 @@ func (s *CodeBundleSource) unreachable(nodeID, filePath, serviceName, source str
 // not a dbt node returns errNonDbtCandidate immediately; every permanent bundle
 // miss, including a bundle for a different release and a dbt entry with no
 // source text, walks down to the repo fallback instead. There, an empty file
-// path, an empty service name, or a service with no entry in serviceRepoPaths
+// path, an empty project name, or a project with no entry in projectRepoPaths
 // leaves the source unresolved, since these are location gaps and say nothing
 // about the node's kind. Only when the trigger carries no node type does a
 // resolved path that does not end in ".sql" also return errNonDbtCandidate: a
@@ -168,7 +168,7 @@ func (s *CodeBundleSource) unreachable(nodeID, filePath, serviceName, source str
 // proceeds to the read, where a missing file leaves the source unresolved, a
 // file over the reader's size cap returns a *sourceTooLargeError naming it,
 // and any other read error is returned.
-func (s *CodeBundleSource) resolve(ctx context.Context, f remediation.Failure, filePath, serviceName string) (source, origin string, err error) {
+func (s *CodeBundleSource) resolve(ctx context.Context, f remediation.Failure, filePath, projectName string) (source, origin string, err error) {
 	n := f.Target
 	src, berr := s.candidates.NodeSource(ctx, f.Trigger.CodeBundleURI, n.NodeID, f.Trigger.ReleaseID)
 	if berr == nil {
@@ -186,10 +186,10 @@ func (s *CodeBundleSource) resolve(ctx context.Context, f remediation.Failure, f
 		s.logger.Warn("candidate source not in bundle; falling back to repo read",
 			"node", n.NodeID, "bundle_uri", f.Trigger.CodeBundleURI)
 	}
-	if filePath == "" || serviceName == "" {
+	if filePath == "" || projectName == "" {
 		return "", "", nil
 	}
-	prefix, ok := s.serviceRepoPaths[serviceName]
+	prefix, ok := s.projectRepoPaths[projectName]
 	if !ok {
 		return "", "", nil
 	}

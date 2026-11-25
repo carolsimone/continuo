@@ -118,7 +118,7 @@ func seedJobNamed(t *testing.T, db *sqlx.DB, name string, maxRetries, retryCount
 	id := uuid.New()
 	payload, err := json.Marshal(serialization.DeployTaskFromDomain(command.DeployTask{
 		TaskID: uuid.New().String(), RunID: uuid.New().String(),
-		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public",
+		ScheduleName: "daily", ProjectName: "dbt", SchemaName: "public",
 		TableName: "orders", JobName: name, NodeType: "dbt-model",
 		ImageTag: "sha-abc", Attempt: 0,
 	}))
@@ -352,7 +352,7 @@ func seedDeployableAt(t *testing.T, db *sqlx.DB, nextAttempt time.Time) uuid.UUI
 	id := uuid.New()
 	payload, err := json.Marshal(serialization.DeployTaskFromDomain(command.DeployTask{
 		TaskID: uuid.New().String(), RunID: uuid.New().String(),
-		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public",
+		ScheduleName: "daily", ProjectName: "dbt", SchemaName: "public",
 		TableName: "orders", JobName: "dbt-public-orders", NodeType: "dbt-model",
 		ImageTag: "sha-abc",
 	}))
@@ -676,7 +676,7 @@ func seedAttempt(t *testing.T, db *sqlx.DB, retryCount int) (uuid.UUID, command.
 	id := uuid.New()
 	cmd := command.DeployTask{TenantID: "default",
 		TaskID: uuid.NewString(), RunID: uuid.NewString(),
-		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public",
+		ScheduleName: "daily", ProjectName: "dbt", SchemaName: "public",
 		TableName: "orders", JobName: "dbt-public-orders-" + uuid.NewString()[:8] + "-r1", NodeType: "dbt-model",
 		ImageTag: "sha-abc", Operation: "run", Attempt: 1, TimeoutSeconds: 3600,
 	}
@@ -872,7 +872,7 @@ func TestLaunch_AFencedReservedRowEndsStoppedWithoutAJob(t *testing.T) {
 	ctx := context.Background()
 	runID := uuid.New()
 	cmd := command.DeployTask{TenantID: "default", TaskID: uuid.NewString(), RunID: runID.String(), ScheduleName: "daily",
-		ServiceName: "dbt", SchemaName: "public", TableName: "orders", JobName: "dbt-public-orders-" + runID.String()[:8],
+		ProjectName: "dbt", SchemaName: "public", TableName: "orders", JobName: "dbt-public-orders-" + runID.String()[:8],
 		NodeType: "dbt-model", ImageTag: "sha-abc", Operation: "run", TimeoutSeconds: 3600}
 	dep := model.NewDeployment(cmd, nil, time.Now().Add(-time.Minute))
 	added, err := repoFactory(db).AddAttempt(ctx, dep)
@@ -952,7 +952,7 @@ func newFencedLaunch(t *testing.T) *fencedLaunch {
 	t.Cleanup(cleanup)
 	runID := uuid.New()
 	cmd := command.DeployTask{TenantID: "default", TaskID: uuid.NewString(), RunID: runID.String(), ScheduleName: "daily",
-		ServiceName: "dbt", SchemaName: "public", TableName: "orders", JobName: "dbt-public-orders-" + runID.String()[:8],
+		ProjectName: "dbt", SchemaName: "public", TableName: "orders", JobName: "dbt-public-orders-" + runID.String()[:8],
 		NodeType: "dbt-model", ImageTag: "sha-abc", Operation: "run", TimeoutSeconds: 3600}
 	added, err := repoFactory(db).AddAttempt(context.Background(), model.NewDeployment(cmd, nil, time.Now().Add(-time.Minute)))
 	require.NoError(t, err)

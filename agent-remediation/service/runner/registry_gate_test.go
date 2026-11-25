@@ -12,7 +12,7 @@ import (
 
 func TestRegistry_RegistersTheCrossClusterChecksAndTheGate(t *testing.T) {
 	r := NewRegistry(Collaborators{})
-	for _, name := range []string{"edits_map_to_a_service", "no_path_edited_twice", "one_manifest_kind"} {
+	for _, name := range []string{"edits_map_to_a_project", "no_path_edited_twice", "one_manifest_kind"} {
 		s, m, ok := r.Lookup(workflow.StepName(name))
 		require.True(t, ok, name)
 		assert.Equal(t, step.KindCheck, m.Kind, name)

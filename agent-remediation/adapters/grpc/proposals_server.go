@@ -25,20 +25,20 @@ import (
 type ProposalService interface {
 	List(ctx context.Context, filter repository.ProposalFilter) ([]proposal.View, error)
 	Get(ctx context.Context, id string) (proposal.View, error)
-	// Begin claims the (proposal, service) pull request for creation; service
-	// selects the owning-service group ("" is the legacy whole-proposal group).
-	Begin(ctx context.Context, id, service string) (proposal.PRClaim, error)
+	// Begin claims the (proposal, project) pull request for creation; project
+	// selects the owning-project group ("" is the legacy whole-proposal group).
+	Begin(ctx context.Context, id, project string) (proposal.PRClaim, error)
 	Record(ctx context.Context, in proposals.RecordInput) error
-	// FailStuckClaim releases the 'opening' claim identified by (id, service)
+	// FailStuckClaim releases the 'opening' claim identified by (id, project)
 	// back to 'failed', but only if the row's current pr_claimed_at still equals
 	// observedClaimedAt — the compare-and-set guard that keeps this call from
 	// resetting a claim someone else already took over. hit reports whether
 	// the CAS fired; false is not an error.
-	FailStuckClaim(ctx context.Context, id, service string, observedClaimedAt time.Time) (hit bool, err error)
-	// PRServices returns the owning-service groups v's pull requests split
+	FailStuckClaim(ctx context.Context, id, project string, observedClaimedAt time.Time) (hit bool, err error)
+	// PRProjects returns the owning-project groups v's pull requests split
 	// into, sorted; [""] for a legacy (unsplit) proposal. It is a pure
 	// passthrough over v, requiring no context or lookup.
-	PRServices(v proposal.View) []string
+	PRProjects(v proposal.View) []string
 }
 
 // Compile-time assertion: *proposals.Service satisfies ProposalService.
@@ -60,14 +60,14 @@ func NewProposalsServer(svc ProposalService) *ProposalsServer {
 }
 
 // ListProposals returns proposals matching the request filter — status,
-// pr_state, release_id, and service — ordered by created_at DESC. An empty
+// pr_state, release_id, and project — ordered by created_at DESC. An empty
 // filter returns all stored proposals up to Limit.
 func (s *ProposalsServer) ListProposals(ctx context.Context, req *remediationv1.ListProposalsRequest) (*remediationv1.ListProposalsResponse, error) {
 	filter := repository.ProposalFilter{
 		Status:    req.Status,
 		PRState:   req.PrState,
 		ReleaseID: req.ReleaseId,
-		Service:   req.Service,
+		Project:   req.Project,
 		Limit:     int(req.Limit),
 	}
 	views, err := s.svc.List(ctx, filter)
@@ -76,7 +76,7 @@ func (s *ProposalsServer) ListProposals(ctx context.Context, req *remediationv1.
 	}
 	proto := make([]*remediationv1.Proposal, 0, len(views))
 	for i := range views {
-		proto = append(proto, viewToProto(views[i], s.svc.PRServices(views[i])))
+		proto = append(proto, viewToProto(views[i], s.svc.PRProjects(views[i])))
 	}
 	return &remediationv1.ListProposalsResponse{Proposals: proto}, nil
 }
@@ -88,17 +88,17 @@ func (s *ProposalsServer) GetProposal(ctx context.Context, req *remediationv1.Ge
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
-	return viewToProto(v, s.svc.PRServices(v)), nil
+	return viewToProto(v, s.svc.PRProjects(v)), nil
 }
 
-// BeginPullRequest atomically claims a proposal's (or one owning-service
+// BeginPullRequest atomically claims a proposal's (or one owning-project
 // group's) pull request for creation and returns the data needed to open the
 // GitHub pull-request, including claimed_at — the persisted pr_claimed_at for
 // this claim in RFC 3339 with its fraction of a second (pr_claimed_at is stored
 // to the microsecond), which the caller must present back to FailPullRequest
-// to release this exact claim. req.Service selects the owning-service group to
+// to release this exact claim. req.Project selects the owning-project group to
 // claim; "" is the legacy whole-proposal group. Returns INVALID_ARGUMENT when
-// req.Service is not one of the proposal's PRServices. Returns
+// req.Project is not one of the proposal's PRProjects. Returns
 // FAILED_PRECONDITION when the proposal is already claimed (carrying the
 // existing pr_url in the message), when source resolution has not completed,
 // when the attempt has not reached 'proposed' — a fix still being generated
@@ -106,17 +106,17 @@ func (s *ProposalsServer) GetProposal(ctx context.Context, req *remediationv1.Ge
 // may be opened for — or when the proposal records no repository. Returns
 // NOT_FOUND when the proposal does not exist.
 func (s *ProposalsServer) BeginPullRequest(ctx context.Context, req *remediationv1.BeginPullRequestRequest) (*remediationv1.BeginPullRequestResponse, error) {
-	claim, err := s.svc.Begin(ctx, req.Id, req.Service)
+	claim, err := s.svc.Begin(ctx, req.Id, req.Project)
 	if err != nil {
 		if errors.Is(err, repository.ErrPRConflict) {
 			// Attempt a best-effort fetch of the current pr_url so the caller
 			// can surface it in the UI without an extra round-trip. It must be
-			// req.Service's own PR: a split proposal's other services can be at
-			// any state, so the conflicting service is not necessarily the one
+			// req.Project's own PR: a split proposal's other projects can be at
+			// any state, so the conflicting project is not necessarily the one
 			// whose row the singular fields mirror.
 			msg := "proposal PR already claimed"
 			if v, getErr := s.svc.Get(ctx, req.Id); getErr == nil {
-				if url := prURLForService(v, req.Service); url != "" {
+				if url := prURLForProject(v, req.Project); url != "" {
 					msg = fmt.Sprintf("proposal PR already claimed: existing pr_url=%s", url)
 				}
 			}
@@ -127,17 +127,17 @@ func (s *ProposalsServer) BeginPullRequest(ctx context.Context, req *remediation
 	return claimToProto(claim), nil
 }
 
-// prURLForService returns the pr_url of the pull request v records for
-// service. "" is the legacy whole-proposal group, whose URL is v's singular
+// prURLForProject returns the pr_url of the pull request v records for
+// project. "" is the legacy whole-proposal group, whose URL is v's singular
 // PrURL field (kept for a row with no child PullRequests at all). A named
-// service looks up its own entry in v.PullRequests, so a conflict on one
-// service can never surface a different service's URL.
-func prURLForService(v proposal.View, service string) string {
-	if service == "" {
+// project looks up its own entry in v.PullRequests, so a conflict on one
+// project can never surface a different project's URL.
+func prURLForProject(v proposal.View, project string) string {
+	if project == "" {
 		return v.PrURL
 	}
 	for _, pr := range v.PullRequests {
-		if pr.Service == service {
+		if pr.Project == project {
 			return pr.PrURL
 		}
 	}
@@ -145,13 +145,13 @@ func prURLForService(v proposal.View, service string) string {
 }
 
 // RecordPullRequest stores the PR URL, number, and opener after a PR is
-// opened. req.Service identifies which owning-service group's PR this is;
+// opened. req.Project identifies which owning-project group's PR this is;
 // "" is the legacy whole-proposal group. Returns NOT_FOUND when the proposal
 // does not exist.
 func (s *ProposalsServer) RecordPullRequest(ctx context.Context, req *remediationv1.RecordPullRequestRequest) (*remediationv1.RecordPullRequestResponse, error) {
 	in := proposals.RecordInput{
 		ProposalID: req.Id,
-		Service:    req.Service,
+		Project:    req.Project,
 		PrURL:      req.PrUrl,
 		PrNumber:   int(req.PrNumber),
 		OpenedBy:   req.OpenedBy,
@@ -162,11 +162,11 @@ func (s *ProposalsServer) RecordPullRequest(ctx context.Context, req *remediatio
 	return &remediationv1.RecordPullRequestResponse{}, nil
 }
 
-// FailPullRequest releases the (req.Id, req.Service) 'opening' claim back to
+// FailPullRequest releases the (req.Id, req.Project) 'opening' claim back to
 // 'failed' so it can be retried, but only if the row's current pr_claimed_at
 // still equals req.ClaimedAt — the compare-and-set guard that keeps a caller
 // from resetting a claim someone else (a re-claim, or the reconciler's
-// opening sweep) has already taken over since. req.Service is "" for the
+// opening sweep) has already taken over since. req.Project is "" for the
 // legacy whole-proposal claim. req.ClaimedAt must be the value
 // BeginPullRequest returned for this same claim, fraction of a second
 // included, or the compare-and-set never matches. Returns INVALID_ARGUMENT
@@ -181,7 +181,7 @@ func (s *ProposalsServer) FailPullRequest(ctx context.Context, req *remediationv
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid claimed_at: %v", err)
 	}
-	hit, err := s.svc.FailStuckClaim(ctx, req.Id, req.Service, claimedAt)
+	hit, err := s.svc.FailStuckClaim(ctx, req.Id, req.Project, claimedAt)
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -202,9 +202,9 @@ func toGRPCError(err error) error {
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, proposals.ErrNoRepository):
 		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, proposals.ErrUnknownService):
-		// The caller passed a service argument that names none of this
-		// proposal's PRServices — a malformed request, not a missing
+	case errors.Is(err, proposals.ErrUnknownProject):
+		// The caller passed a project argument that names none of this
+		// proposal's PRProjects — a malformed request, not a missing
 		// resource or a state conflict.
 		return status.Error(codes.InvalidArgument, err.Error())
 	default:
@@ -279,7 +279,7 @@ func verificationsToProto(verifications []proposal.Verification) []*remediationv
 			activatedAt = v.ActivatedAt.Format(time.RFC3339)
 		}
 		out = append(out, &remediationv1.Verification{
-			Service:     v.Service,
+			Project:     v.Project,
 			Kind:        v.Kind,
 			RunId:       v.RunID,
 			Phase:       string(v.Phase),
@@ -309,7 +309,7 @@ func pullRequestsToProto(prs []proposal.PullRequest) []*remediationv1.PullReques
 			closedAt = p.PrClosedAt.Format(time.RFC3339)
 		}
 		out = append(out, &remediationv1.PullRequest{
-			Service:    p.Service,
+			Project:    p.Project,
 			Repo:       p.Repo,
 			Branch:     p.Branch,
 			PrUrl:      p.PrURL,
@@ -325,12 +325,12 @@ func pullRequestsToProto(prs []proposal.PullRequest) []*remediationv1.PullReques
 
 // viewToProto converts a domain proposal.View to the proto Proposal message.
 // Timestamps are formatted as RFC3339 strings; a nil PrOpenedAt produces an
-// empty string. pull_requests is mapped from v.PullRequests; prServices — the
-// caller's s.svc.PRServices(v) result — becomes pr_services verbatim. The
+// empty string. pull_requests is mapped from v.PullRequests; prProjects — the
+// caller's s.svc.PRProjects(v) result — becomes pr_projects verbatim. The
 // singular pr_* fields above are already the first child row's view (the
 // repository's applyChildPRs overrides them from PullRequests[0], ordered by
-// service), so they need no extra mapping here.
-func viewToProto(v proposal.View, prServices []string) *remediationv1.Proposal {
+// project), so they need no extra mapping here.
+func viewToProto(v proposal.View, prProjects []string) *remediationv1.Proposal {
 	var prOpenedAt string
 	if v.PrOpenedAt != nil {
 		prOpenedAt = v.PrOpenedAt.Format(time.RFC3339)
@@ -373,8 +373,8 @@ func viewToProto(v proposal.View, prServices []string) *remediationv1.Proposal {
 		NodeOutcomes:        nodeOutcomesToProto(v.NodeOutcomes),
 		Verifications:       verificationsToProto(v.Verifications),
 		PullRequests:        pullRequestsToProto(v.PullRequests),
-		PrServices:          prServices,
-		Services:            v.Services,
+		PrProjects:          prProjects,
+		Projects:            v.Projects,
 		Approvers:           approversToProto(v.Approvers),
 	}
 }
@@ -398,7 +398,7 @@ func claimToProto(c proposal.PRClaim) *remediationv1.BeginPullRequestResponse {
 		ClaimedAt:       c.ClaimedAt.Format(time.RFC3339Nano),
 		Edits:           editsToProto(c.Edits),
 		ResolvedNodeIds: c.ResolvedNodeIDs,
-		Service:         c.Service,
+		Project:         c.Project,
 		Approvers:       approversToProto(c.Approvers),
 	}
 }

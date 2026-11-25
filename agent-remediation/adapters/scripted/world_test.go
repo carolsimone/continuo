@@ -241,18 +241,18 @@ func TestPackager_PackagesAContractDirectoryAndRefusesAsTheFixtureSays(t *testin
 
 func TestCatalog_AnswersFromTheFixture(t *testing.T) {
 	c := catalog{c: conformance.Catalog{
-		Locations:       map[string]conformance.Location{"model.a": {FilePath: "models/a.sql", Service: "svc"}},
+		Locations:       map[string]conformance.Location{"model.a": {FilePath: "models/a.sql", Project: "svc"}},
 		CurrentVersions: map[string]ports.CurrentVersion{"model.a": {RawCode: "select 1"}},
 	}}
 
-	file, service, err := c.Locate(ctx, "model.a")
+	file, project, err := c.Locate(ctx, "model.a")
 	require.NoError(t, err)
 	assert.Equal(t, "models/a.sql", file)
-	assert.Equal(t, "svc", service)
-	file, service, err = c.Locate(ctx, "model.b")
+	assert.Equal(t, "svc", project)
+	file, project, err = c.Locate(ctx, "model.b")
 	require.NoError(t, err, "a node the fixture does not place has no location, which is no error")
 	assert.Empty(t, file)
-	assert.Empty(t, service)
+	assert.Empty(t, project)
 	v, ok, err := c.CurrentVersion(ctx, "model.a")
 	require.NoError(t, err)
 	assert.True(t, ok)

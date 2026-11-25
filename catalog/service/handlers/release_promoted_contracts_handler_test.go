@@ -178,10 +178,10 @@ func contractsBundle() ports.ContractBundle {
 		ContinuoContracts: "0.2.0",
 		Contracts: []contractversion.Incoming{
 			{UniqueID: "analytics.py_daily_kpis", ContractHash: "sha256:3f1c", ContentHash: "sha256:91d4",
-				Family: "python", Service: "service-py", SourcePath: "contracts/py_daily_kpis.odcs.yaml",
+				Family: "python", Project: "service-py", SourcePath: "contracts/py_daily_kpis.odcs.yaml",
 				Document: map[string]any{"id": "analytics.py_daily_kpis"}},
 			{UniqueID: "analytics.py_weekly", ContractHash: "sha256:a0b1", ContentHash: "sha256:77aa",
-				Family: "python", Service: "service-py", SourcePath: "contracts/py_weekly.odcs.yaml",
+				Family: "python", Project: "service-py", SourcePath: "contracts/py_weekly.odcs.yaml",
 				Document: map[string]any{"id": "analytics.py_weekly"}},
 		},
 	}

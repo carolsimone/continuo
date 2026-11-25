@@ -32,12 +32,12 @@ func TestValidationRequestedHandler_EnqueuesOneRowPerNode(t *testing.T) {
 		Nodes: []events.ValidationNode{
 			{
 				NodeID:      "model.shop.orders",
-				ServiceName: "dbt", SchemaName: "public", TableName: "orders",
+				ProjectName: "dbt", SchemaName: "public", TableName: "orders",
 				NodeType: pkg_model.NodeTypeDbtModel, ImageTag: "sha-orders",
 			},
 			{
 				NodeID:      "model.shop.customers",
-				ServiceName: "dbt", SchemaName: "public", TableName: "customers",
+				ProjectName: "dbt", SchemaName: "public", TableName: "customers",
 				NodeType: pkg_model.NodeTypeDbtModel, ImageTag: "sha-customers",
 			},
 		},
@@ -97,7 +97,7 @@ func TestValidationRequestedHandler_RootNodeEnqueuesPending(t *testing.T) {
 }
 
 // TestValidationRequestedHandler_BlocksGatedNodes verifies that a node with
-// intra-service upstreams starts blocked while a root node starts pending.
+// intra-project upstreams starts blocked while a root node starts pending.
 // This is the core gating invariant: hasUpstreams drives NewValidationDeployment
 // and determines whether dispatch is immediate (pending) or held (blocked).
 func TestValidationRequestedHandler_BlocksGatedNodes(t *testing.T) {
@@ -108,9 +108,9 @@ func TestValidationRequestedHandler_BlocksGatedNodes(t *testing.T) {
 	evt := events.ValidationRequested{
 		ReleaseID: "rel", Mode: "validation", CandidateSchema: "_candidate_rel",
 		Nodes: []events.ValidationNode{
-			{NodeID: "a1", ServiceName: "s", SchemaName: "sc", TableName: "a1",
+			{NodeID: "a1", ProjectName: "s", SchemaName: "sc", TableName: "a1",
 				NodeType: pkg_model.NodeTypeDbtModel, ImageTag: "t"},
-			{NodeID: "a2", ServiceName: "s", SchemaName: "sc", TableName: "a2",
+			{NodeID: "a2", ProjectName: "s", SchemaName: "sc", TableName: "a2",
 				NodeType: pkg_model.NodeTypeDbtModel, ImageTag: "t",
 				UpstreamNodeIDs: []string{"a1"}},
 		},
@@ -148,7 +148,7 @@ func TestValidationRequestedHandler_ThreadsOp(t *testing.T) {
 		CandidateSchema: "_candidate_rel",
 		Nodes: []events.ValidationNode{
 			{
-				NodeID: "model.core.dim", ServiceName: "s", SchemaName: "sc",
+				NodeID: "model.core.dim", ProjectName: "s", SchemaName: "sc",
 				TableName: "dim", NodeType: pkg_model.NodeTypeDbtModel, ImageTag: "t",
 				ValidationOp: string(pkg_model.ValidationOpCloneFromProd), ProdSchema: "analytics",
 			},

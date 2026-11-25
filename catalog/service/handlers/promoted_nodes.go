@@ -19,7 +19,7 @@ func promotedNodes(doc topologyartifact.Document) []topology.ReleasePromotedTopo
 			UniqueID:          n.UniqueID,
 			SchemaName:        n.SchemaName,
 			TableName:         n.TableName,
-			ServiceName:       n.ServiceName,
+			ProjectName:       n.ProjectName,
 			NodeType:          n.NodeType,
 			ContentHash:       n.ContentHash,
 			TestCount:         n.TestCount,

@@ -4,13 +4,13 @@
 The init container (the team image) runs `dbt compile` and copies
 target/manifest.json into a shared emptyDir; this main container reads that file
 (COMPILE_MANIFEST_PATH) and put_objects it to MANIFEST_S3_URI (s3://bucket/key,
-continuo's canonical <service>/<release_id>/manifest.json). The team image has no
+continuo's canonical <project>/<release_id>/manifest.json). The team image has no
 S3 access; this continuo-owned container does the upload. A nonzero exit fails
 the compile Job, which release-controller treats as compile_failed.
 
 After the manifest upload, it also uploads up to two partial-parse msgpack
 artifacts produced by the same compile: PARSE_PROD_LOCAL_PATH/PARSE_PROD_S3_URI
-(the release-proven parse cache, published under the service's parse-cache
+(the release-proven parse cache, published under the project's parse-cache
 prefix for later per-node hydration) and PARSE_CANDIDATE_LOCAL_PATH/
 PARSE_CANDIDATE_S3_URI (the candidate release's own parse artifact, stored
 alongside its manifest). Each pair is independent and optional: an absent URI

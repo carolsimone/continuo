@@ -202,7 +202,7 @@ func (noVersions) CurrentVersion(context.Context, string) (ports.CurrentVersion,
 // harnessPackages is the package list fakeImages answers.
 var harnessPackages = map[string]string{"pyarrow": "26.0.0"}
 
-// fakeImages answers harnessPackages, or err, for every release and service,
+// fakeImages answers harnessPackages, or err, for every release and project,
 // and counts the reads.
 type fakeImages struct {
 	mu    sync.Mutex
@@ -231,12 +231,12 @@ type noContracts struct{}
 
 func (noContracts) CurrentContract(context.Context, string) (string, error) { return "", nil }
 
-// fakeReleases reads the failing release's image tag of a service as
-// "tag-<service>".
+// fakeReleases reads the failing release's image tag of a project as
+// "tag-<project>".
 type fakeReleases struct{}
 
-func (fakeReleases) ImageTag(_ context.Context, _, service string) (string, error) {
-	return "tag-" + service, nil
+func (fakeReleases) ImageTag(_ context.Context, _, project string) (string, error) {
+	return "tag-" + project, nil
 }
 
 func (fakeReleases) FailingNodes(context.Context, string) (map[string]string, error) {
@@ -449,8 +449,8 @@ func testFiles(tries int) workflow.Set {
 		Version:        workflow.SupportedVersion,
 		Name:           "rejected-release",
 		Trigger:        baseName(streams.RemediationRequestedV3),
-		Types:          []string{"dbt-compile", "dbt-validation", "shared-upstream", "cross-service-upstream"},
-		AcrossClusters: refs("edits_map_to_a_service", "no_path_edited_twice", "one_manifest_kind"),
+		Types:          []string{"dbt-compile", "dbt-validation", "shared-upstream", "cross-project-upstream"},
+		AcrossClusters: refs("edits_map_to_a_project", "no_path_edited_twice", "one_manifest_kind"),
 		Gate:           refs("verification_run"),
 		Tries:          tries,
 		OnPass:         workflow.Output{Action: workflow.OutputPullRequest, Emits: baseName(streams.RemediationProposedV1)},
@@ -481,7 +481,7 @@ func testFiles(tries int) workflow.Set {
 			"dbt-validation", []string{"content_changed", "confidence_not_low"}),
 		typ("shared-upstream", workflow.Match{Cluster: workflow.ClusterSharedUpstream},
 			[]string{"upstream_target", "failure_precedents"}, "upstream", []string{"content_changed", "confidence_not_low"}),
-		typ("cross-service-upstream", workflow.Match{Cluster: workflow.ClusterCrossService},
+		typ("cross-project-upstream", workflow.Match{Cluster: workflow.ClusterCrossProject},
 			[]string{"upstream_target", "failure_precedents"}, "upstream", []string{"content_changed", "confidence_not_low"}),
 	}
 	set := workflow.Set{Flows: map[string]workflow.Flow{flow.Name: flow}, Types: map[string]workflow.Type{}}
@@ -511,7 +511,7 @@ type harness struct {
 	// packaging tool the contract steps read, nil unless a test sets them.
 	archive  ports.RepoArchive
 	packager ports.ContractPackager
-	// images answers the image package list of every release and service.
+	// images answers the image package list of every release and project.
 	images *fakeImages
 	collab runner.Collaborators
 	runner *runner.Runner
@@ -675,7 +675,7 @@ func newHarness(t *testing.T, opts ...option) *harness {
 		Evidence:  h.evidence,
 		Artifacts: h.artifacts,
 		Logger:    discard,
-		ServiceRepoPaths: map[string]string{
+		ProjectRepoPaths: map[string]string{
 			"svc-a": "services/svc-a",
 			"svc-b": "services/svc-b",
 			"core":  "services/core",
@@ -784,8 +784,8 @@ func payloadOf(t *testing.T, trig remediation.Trigger) []byte {
 			"node_id": n.NodeID, "relation_id": n.RelationID, "category": n.Category,
 			"error_signature": n.ErrorSignature, "reason": n.Reason, "error_excerpt": n.ErrorExcerpt,
 			"dbt_log_uri": n.DBTLogURI, "candidate_artifact_uri": n.CandidateArtifactURI,
-			"file_path": n.FilePath, "service": n.Service, "node_type": n.NodeType,
-			"other_service": n.OtherService, "other_file_path": n.OtherFilePath,
+			"file_path": n.FilePath, "project": n.Project, "node_type": n.NodeType,
+			"other_project": n.OtherProject, "other_file_path": n.OtherFilePath,
 		}
 		if n.Unfixable != nil {
 			node["unfixable"] = map[string]any{"reason": string(n.Unfixable.Reason), "detail": n.Unfixable.Detail}
@@ -793,7 +793,7 @@ func payloadOf(t *testing.T, trig remediation.Trigger) []byte {
 		if len(n.ChangedAncestors) > 0 {
 			ancestors := make([]map[string]any, 0, len(n.ChangedAncestors))
 			for _, a := range n.ChangedAncestors {
-				ancestors = append(ancestors, map[string]any{"node_id": a.NodeID, "file_path": a.FilePath, "service": a.Service, "depth": a.Depth})
+				ancestors = append(ancestors, map[string]any{"node_id": a.NodeID, "file_path": a.FilePath, "project": a.Project, "depth": a.Depth})
 			}
 			node["changed_ancestors"] = ancestors
 		}

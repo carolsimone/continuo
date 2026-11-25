@@ -214,8 +214,8 @@ func TestSuite_AFlowScenarioRunsTheNamedFlow(t *testing.T) {
 		second[r.Scenario] = r.Err
 	}
 	require.Len(t, second, len(conformance.FlowScenarios()))
-	require.Error(t, second[conformance.FlowTwoTypesOneService], "a flow that lists only dbt-compile cannot fix with two types")
-	assert.Contains(t, second[conformance.FlowTwoTypesOneService].Error(), "want two")
+	require.Error(t, second[conformance.FlowTwoTypesOneProject], "a flow that lists only dbt-compile cannot fix with two types")
+	assert.Contains(t, second[conformance.FlowTwoTypesOneProject].Error(), "want two")
 	require.NotEmpty(t, *worlds)
 	for _, w := range *worlds {
 		for _, rem := range w.Remediations() {
@@ -411,47 +411,47 @@ func TestSuite_AScenarioWhoseRoundHasNoAnswersFails(t *testing.T) {
 	}
 }
 
-// extraRuns is a world that also reports verification runs of services no
+// extraRuns is a world that also reports verification runs of projects no
 // edit touches, in the order given.
 type extraRuns struct {
 	conformance.World
-	services []string
+	projects []string
 }
 
 func (w extraRuns) Runs() []ports.VerificationRequest {
 	runs := w.World.Runs()
-	for _, s := range w.services {
-		runs = append(runs, ports.VerificationRequest{RunID: "extra-" + s, Service: s})
+	for _, s := range w.projects {
+		runs = append(runs, ports.VerificationRequest{RunID: "extra-" + s, Project: s})
 	}
 	return runs
 }
 
-// withExtraRuns makes every world of the suite report a run of each service.
-func withExtraRuns(s conformance.Suite, services ...string) conformance.Suite {
+// withExtraRuns makes every world of the suite report a run of each project.
+func withExtraRuns(s conformance.Suite, projects ...string) conformance.Suite {
 	base := s.NewWorld
 	s.NewWorld = func(f conformance.Fixture, sc conformance.Script) (conformance.World, error) {
 		w, err := base(f, sc)
 		if err != nil {
 			return nil, err
 		}
-		return extraRuns{World: w, services: services}, nil
+		return extraRuns{World: w, projects: projects}, nil
 	}
 	return s
 }
 
-// A failure names the services and the nodes it is about in sorted order, so
+// A failure names the projects and the nodes it is about in sorted order, so
 // remediation-check prints the same text on every run whatever order a map or
 // the world hands them over in.
-func TestSuite_AFailureNamesItsServicesAndNodesInSortedOrder(t *testing.T) {
+func TestSuite_AFailureNamesItsProjectsAndNodesInSortedOrder(t *testing.T) {
 	base := onlyTypes(builtinSuite(t), "dbt-compile")
 	const (
-		runsText = "service alpha had 1 verification runs and no edit; service zeta had 1 verification runs and no edit"
+		runsText = "project alpha had 1 verification runs and no edit; project zeta had 1 verification runs and no edit"
 		gateText = `does not name alpha.node's error "alpha broke"; attempt 1's verify error`
 	)
 
 	var texts []string
 	for i := range 10 {
-		// Each pass hands the services and the gate errors over in the other
+		// Each pass hands the projects and the gate errors over in the other
 		// order: as runs, and as the order the map was filled in.
 		order := []string{"zeta", "alpha"}
 		if i%2 == 1 {
@@ -462,8 +462,8 @@ func TestSuite_AFailureNamesItsServicesAndNodesInSortedOrder(t *testing.T) {
 		for j, f := range s.Fixtures {
 			if f.Type == "dbt-compile" {
 				s.Fixtures[j].GateErrors = maps.Clone(f.GateErrors)
-				for _, service := range order {
-					s.Fixtures[j].GateErrors[service+".node"] = service + " broke"
+				for _, project := range order {
+					s.Fixtures[j].GateErrors[project+".node"] = project + " broke"
 				}
 			}
 		}

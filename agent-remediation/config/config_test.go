@@ -105,49 +105,49 @@ func TestLoad_GitHubBaseURLRead(t *testing.T) {
 	assert.Equal(t, "https://github.example.com/api/v3", cfg.GitHubBaseURL)
 }
 
-// TestLoad_ServiceRepoMapPath_Empty verifies that when SERVICE_REPO_MAP_PATH
-// is unset, ServiceRepoPaths is an empty (non-nil) map and no error is raised.
-func TestLoad_ServiceRepoMapPath_Empty(t *testing.T) {
+// TestLoad_ProjectRepoMapPath_Empty verifies that when PROJECT_REPO_MAP_PATH
+// is unset, ProjectRepoPaths is an empty (non-nil) map and no error is raised.
+func TestLoad_ProjectRepoMapPath_Empty(t *testing.T) {
 	setBaseEnv(t)
-	t.Setenv("SERVICE_REPO_MAP_PATH", "")
+	t.Setenv("PROJECT_REPO_MAP_PATH", "")
 	v := &pkgconfig.Validator{}
 	cfg := Load(v)
 	require.Empty(t, v.Missing())
-	assert.NotNil(t, cfg.ServiceRepoPaths)
-	assert.Empty(t, cfg.ServiceRepoPaths)
+	assert.NotNil(t, cfg.ProjectRepoPaths)
+	assert.Empty(t, cfg.ProjectRepoPaths)
 }
 
-// TestLoad_ServiceRepoMapPath_LoadsYAML verifies that when SERVICE_REPO_MAP_PATH
-// points to a valid YAML file, ServiceRepoPaths is populated correctly.
-func TestLoad_ServiceRepoMapPath_LoadsYAML(t *testing.T) {
+// TestLoad_ProjectRepoMapPath_LoadsYAML verifies that when PROJECT_REPO_MAP_PATH
+// points to a valid YAML file, ProjectRepoPaths is populated correctly.
+func TestLoad_ProjectRepoMapPath_LoadsYAML(t *testing.T) {
 	setBaseEnv(t)
 
 	tmp := t.TempDir()
-	yamlPath := tmp + "/service_repos.yaml"
-	content := `services:
+	yamlPath := tmp + "/project_repos.yaml"
+	content := `projects:
   svc-a: services/svc-a
   svc-b: services/svc-b
 `
 	require.NoError(t, os.WriteFile(yamlPath, []byte(content), 0o600))
-	t.Setenv("SERVICE_REPO_MAP_PATH", yamlPath)
+	t.Setenv("PROJECT_REPO_MAP_PATH", yamlPath)
 
 	v := &pkgconfig.Validator{}
 	cfg := Load(v)
 	require.Empty(t, v.Missing())
-	assert.Equal(t, "services/svc-a", cfg.ServiceRepoPaths["svc-a"])
-	assert.Equal(t, "services/svc-b", cfg.ServiceRepoPaths["svc-b"])
+	assert.Equal(t, "services/svc-a", cfg.ProjectRepoPaths["svc-a"])
+	assert.Equal(t, "services/svc-b", cfg.ProjectRepoPaths["svc-b"])
 }
 
-// TestLoad_ServiceRepoMapPath_MissingFile verifies that a non-existent file
+// TestLoad_ProjectRepoMapPath_MissingFile verifies that a non-existent file
 // produces an empty map without causing a startup failure.
-func TestLoad_ServiceRepoMapPath_MissingFile(t *testing.T) {
+func TestLoad_ProjectRepoMapPath_MissingFile(t *testing.T) {
 	setBaseEnv(t)
-	t.Setenv("SERVICE_REPO_MAP_PATH", "/nonexistent/path/service_repos.yaml")
+	t.Setenv("PROJECT_REPO_MAP_PATH", "/nonexistent/path/project_repos.yaml")
 	v := &pkgconfig.Validator{}
 	cfg := Load(v)
 	require.Empty(t, v.Missing())
-	assert.NotNil(t, cfg.ServiceRepoPaths)
-	assert.Empty(t, cfg.ServiceRepoPaths)
+	assert.NotNil(t, cfg.ProjectRepoPaths)
+	assert.Empty(t, cfg.ProjectRepoPaths)
 }
 
 // TestLoad_SQLDialectDefaultsToPostgres verifies that an install which never

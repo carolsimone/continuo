@@ -122,7 +122,7 @@ func contractNode() remediation.TriggerNode {
 		Category:       "validation",
 		Reason:         "relation_not_found",
 		ErrorExcerpt:   "relation public.wrong_name does not exist",
-		Service:        "svc-a",
+		Project:        "svc-a",
 		NodeType:       "python-node",
 	}
 }
@@ -193,7 +193,7 @@ func TestContractPackages_ARefusalInTheLastRoundHandsTheClusterOver(t *testing.T
 	assert.Empty(t, h.pipeline.runs())
 }
 
-// A release that records no package list of the service's image is known
+// A release that records no package list of the project's image is known
 // before any draft: the image_packages context step declines the cluster with
 // the reason, no model is called and nothing is packed. The node is handed
 // over with the code declined, on the attempt row and on the
@@ -201,7 +201,7 @@ func TestContractPackages_ARefusalInTheLastRoundHandsTheClusterOver(t *testing.T
 func TestImagePackages_AReleaseWithNoListDeclinesBeforeTheModel(t *testing.T) {
 	packager := &refusingPackager{}
 	h := newHarness(t, withContractType(2, packager))
-	noPackages := fmt.Errorf("release rel-1, service svc-a: %w (the release has no contract bundle)", ports.ErrNoImagePackages)
+	noPackages := fmt.Errorf("release rel-1, project svc-a: %w (the release has no contract bundle)", ports.ErrNoImagePackages)
 	h.images.err = noPackages
 	h.llm.answer = contractAnswer
 	id := h.accept(trigger("validation", contractNode()))
@@ -281,7 +281,7 @@ func TestGate_ACheckedClusterHoldingANonBundleContractFailsTheTry(t *testing.T) 
 	written := h.artifacts.objects
 	h.artifacts.mu.Unlock()
 	assert.Empty(t, written, "no artifact is written for bytes that are not a bundle")
-	const reason = "the packaged contract is not an ODCS producer bundle: service svc-a"
+	const reason = "the packaged contract is not an ODCS producer bundle: project svc-a"
 	p := h.attempt(1).Proposal
 	assert.Equal(t, proposal.StatusFailed, p.Status)
 	assert.Equal(t, reason, p.Rationale)

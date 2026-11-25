@@ -47,7 +47,7 @@ default:
   compile:
     command:       ["dbt", "compile", "--profiles-dir", "/project"]
     manifest_path: "/project/target/manifest.json"
-services:
+projects:
   customname:
     run:        ["customname-dbt", "run", "--select", "{{ node }}"]
     seed:       ["customname-dbt", "seed", "--select", "{{ node }}"]
@@ -61,11 +61,11 @@ services:
       manifest_path: "/project/out dir/manifest.json"
 `
 
-func TestCreateQueryJob_UsesServiceDialect(t *testing.T) {
+func TestCreateQueryJob_UsesProjectDialect(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "")
 	c := newDialectTestClient(t, customNameDialectYAML)
 	require.NoError(t, c.CreateQueryJob(context.Background(), JobParams{
-		JobName: "j1", ServiceName: "customname", TableName: "orders",
+		JobName: "j1", ProjectName: "customname", TableName: "orders",
 		NodeType: pkg_model.NodeTypeDbtModel, ImageTag: "v1", Namespace: "default",
 	}))
 	job := fetchJob(t, c, "default", "j1")
@@ -73,11 +73,11 @@ func TestCreateQueryJob_UsesServiceDialect(t *testing.T) {
 		job.Spec.Template.Spec.Containers[0].Command)
 }
 
-func TestCreateQueryJob_UnknownServiceUsesBuiltin(t *testing.T) {
+func TestCreateQueryJob_UnknownProjectUsesBuiltin(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "")
 	c := newDialectTestClient(t, customNameDialectYAML)
 	require.NoError(t, c.CreateQueryJob(context.Background(), JobParams{
-		JobName: "j2", ServiceName: "service-1", TableName: "orders",
+		JobName: "j2", ProjectName: "service-1", TableName: "orders",
 		NodeType: pkg_model.NodeTypeDbtModel, ImageTag: "v1", Namespace: "default",
 	}))
 	job := fetchJob(t, c, "default", "j2")
@@ -89,7 +89,7 @@ func TestCreateSeedBuildJob_UsesSeedBuildTemplate_AndKeepsEnv(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "")
 	c := newDialectTestClient(t, customNameDialectYAML)
 	require.NoError(t, c.CreateSeedBuildJob(context.Background(), ValidationJobParams{
-		JobName: "j3", ReleaseID: "rel1", NodeID: "customname.fx", ServiceName: "customname",
+		JobName: "j3", ReleaseID: "rel1", NodeID: "customname.fx", ProjectName: "customname",
 		TableName: "fx", NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "v1",
 		CandidateSchema: "_candidate_rel1", Namespace: "default",
 	}))
@@ -106,7 +106,7 @@ func TestCreateCompileJob_UsesDialectAndQuotesManifestPath(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "")
 	c := newDialectTestClient(t, customNameDialectYAML)
 	require.NoError(t, c.CreateCompileJob(context.Background(), ValidationJobParams{
-		JobName: "j4", ReleaseID: "rel1", NodeID: "customname", ServiceName: "customname",
+		JobName: "j4", ReleaseID: "rel1", NodeID: "customname", ProjectName: "customname",
 		ImageTag: "v1", ManifestS3URI: "s3://b/customname/rel1/manifest.json", Namespace: "default",
 	}))
 	job := fetchJob(t, c, "default", "j4")
@@ -121,7 +121,7 @@ func TestCreateQueryJob_TestOperation_RunsDbtTest(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "")
 	c := newDialectTestClient(t, "")
 	require.NoError(t, c.CreateQueryJob(context.Background(), JobParams{
-		JobName: "j6", ServiceName: "service-1", TableName: "orders",
+		JobName: "j6", ProjectName: "service-1", TableName: "orders",
 		NodeType: pkg_model.NodeTypeDbtModel, ImageTag: "t1", Namespace: "default",
 		Operation: pkg_model.OperationTest,
 	}))
@@ -134,7 +134,7 @@ func TestCreateCompileJob_DefaultLineByteIdentical(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "")
 	c := newDialectTestClient(t, "")
 	require.NoError(t, c.CreateCompileJob(context.Background(), ValidationJobParams{
-		JobName: "j5", ReleaseID: "rel1", NodeID: "svc", ServiceName: "svc",
+		JobName: "j5", ReleaseID: "rel1", NodeID: "svc", ProjectName: "svc",
 		ImageTag: "v1", ManifestS3URI: "s3://b/svc/rel1/manifest.json", Namespace: "default",
 	}))
 	job := fetchJob(t, c, "default", "j5")
@@ -145,11 +145,11 @@ func TestCreateCompileJob_DefaultLineByteIdentical(t *testing.T) {
 		"no config: compile line must be byte-identical to the plain-dbt form")
 }
 
-func TestCreateQueryJob_FullRefresh_UsesServiceTemplate(t *testing.T) {
+func TestCreateQueryJob_FullRefresh_UsesProjectTemplate(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "")
 	c := newDialectTestClient(t, "")
 	require.NoError(t, c.CreateQueryJob(context.Background(), JobParams{
-		JobName: "j7", ServiceName: "service-1", TableName: "orders",
+		JobName: "j7", ProjectName: "service-1", TableName: "orders",
 		NodeType: pkg_model.NodeTypeDbtModel, ImageTag: "t1", Namespace: "default",
 		Operation: pkg_model.OperationFullRefresh,
 	}))
@@ -168,13 +168,13 @@ func TestCreateQueryJob_FullRefresh_MissingKeyIsPermanentAndCreatesNoJob(t *test
 	t.Setenv("DOCKERHUB_USERNAME", "")
 	c := newDialectTestClient(t, customNameDialectYAML) // its customname block has no seed_full_refresh
 	err := c.CreateQueryJob(context.Background(), JobParams{
-		JobName: "j8", ServiceName: "customname", TableName: "fx",
+		JobName: "j8", ProjectName: "customname", TableName: "fx",
 		NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "t1", Namespace: "default",
 		Operation: pkg_model.OperationFullRefresh,
 	})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, events.ErrPermanent)
-	assert.Contains(t, err.Error(), "services.customname defines no seed_full_refresh command")
+	assert.Contains(t, err.Error(), "projects.customname defines no seed_full_refresh command")
 	exists, existsErr := c.JobExists(context.Background(), "default", "j8")
 	require.NoError(t, existsErr)
 	assert.False(t, exists)

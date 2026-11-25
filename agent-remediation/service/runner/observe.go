@@ -96,7 +96,7 @@ func (run tryRun) countTries(checked string) {
 // clusterResult is how a cluster of the type it was matched to ended in its
 // try. A cluster with no type was never worked, whatever it was handed over
 // with. A cluster that fell back ends with the code that made it fall back, when
-// it carries one: a cross-service cluster, whose members get no cluster of their
+// it carries one: a cross-project cluster, whose members get no cluster of their
 // own. A shared-upstream cluster that fell back carries none.
 func clusterResult(c remediation.Cluster, checked string) (string, bool) {
 	if c.TypeName == "" {

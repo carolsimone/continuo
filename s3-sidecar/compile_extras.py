@@ -4,16 +4,16 @@
 Runs with the team image's own Python, the one that runs dbt, so it depends only on
 the standard library and PyYAML (a dbt-core dependency) and keeps Python 3.9 syntax.
 
-For one compiled service it records what the manifest does not carry about its seeds
+For one compiled project it records what the manifest does not carry about its seeds
 and its dbt install: for each seed the SHA-256 of the raw file bytes, the CSV header
 and the configured column types, plus the dbt_project.yml flags and the versions of
 the installed dbt distributions. The output is deterministic JSON (sorted keys):
 
-    {"version": 1, "service": str, "release_id": str,
+    {"version": 1, "project": str, "release_id": str,
      "seeds": {<seed unique_id>: {"sha256": hex, "header": [str], "column_types": {str: str}}},
      "project_flags": {...}, "packages": {<distribution>: <version>}}
 
-Usage: compile_extras.py --manifest PATH --project-dir DIR --service NAME
+Usage: compile_extras.py --manifest PATH --project-dir DIR --project NAME
                          --release-id ID --out PATH
 Exit status: 0 on success, 1 (with one logged line) otherwise.
 """
@@ -79,7 +79,7 @@ def _seed_root(node: dict, project: dict, project_dir: str) -> str:
     return project_dir
 
 
-def build_extras(manifest: dict, project_dir: str, service: str, release_id: str) -> dict:
+def build_extras(manifest: dict, project_dir: str, project_name: str, release_id: str) -> dict:
     """The compile-extras document for a parsed manifest and its dbt project directory."""
     with open(os.path.join(project_dir, "dbt_project.yml"), "rb") as f:
         project = yaml.safe_load(f) or {}
@@ -101,7 +101,7 @@ def build_extras(manifest: dict, project_dir: str, service: str, release_id: str
     adapter_type = (manifest.get("metadata") or {}).get("adapter_type") or ""
     return {
         "version": SCHEMA_VERSION,
-        "service": service,
+        "project": project_name,
         "release_id": release_id,
         "seeds": seeds,
         "project_flags": dict(project.get("flags") or {}),
@@ -114,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Write compile-extras.json for a dbt compile.")
     parser.add_argument("--manifest", required=True, help="path of the compiled manifest.json")
     parser.add_argument("--project-dir", required=True, help="the dbt project directory")
-    parser.add_argument("--service", required=True, help="the service the project belongs to")
+    parser.add_argument("--project", required=True, help="the project being compiled")
     parser.add_argument("--release-id", required=True, help="the release being compiled")
     parser.add_argument("--out", required=True, help="path of the compile-extras.json to write")
     args = parser.parse_args(argv)
@@ -132,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with open(args.manifest, "rb") as f:
             manifest = json.load(f)
-        doc = build_extras(manifest, args.project_dir, args.service, args.release_id)
+        doc = build_extras(manifest, args.project_dir, args.project, args.release_id)
     except (OSError, ValueError, KeyError, TypeError, csv.Error, yaml.YAMLError) as exc:
         logger.error("cannot build the compile extras from %s: %s: %s", args.manifest, type(exc).__name__, exc)
         return 1

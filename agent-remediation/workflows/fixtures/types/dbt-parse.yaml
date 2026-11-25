@@ -15,9 +15,9 @@ trigger:
       reason: parse_error
       error_excerpt: "Expecting ). Line 3, Col: 12.\n  select a b"
       file_path: models/fx.sql
-      service: svc
+      project: svc
       node_type: dbt-model
-service_repo_paths:
+project_repo_paths:
   svc: services/svc
 repo_files:
   services/svc/models/fx.sql: "select a b, c from t\n"

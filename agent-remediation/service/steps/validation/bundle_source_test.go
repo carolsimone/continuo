@@ -46,25 +46,25 @@ func TestCodeBundleSource_MetaNamesWhatItNeedsAndProvides(t *testing.T) {
 
 func TestCodeBundleSource_ReadsTheBundleAtTheTriggersLocation(t *testing.T) {
 	bundle := &fakeBundle{nodes: map[string]ports.CandidateSource{"model.svc.a": dbtEntry("select 1")}}
-	loc := &fakeLocator{filePath: "graph/x.sql", service: "graph-svc"}
+	loc := &fakeLocator{filePath: "graph/x.sql", project: "graph-svc"}
 
 	out := gather(t, newBundleSource(bundle, &fakeSource{}, loc), failure(nil), remediation.NewEvidence())
 
-	assert.Equal(t, remediation.CandidateSource{Source: "select 1", Origin: "bundle", FilePath: "models/a.sql", Service: "svc"}, candidateSource(t, out))
+	assert.Equal(t, remediation.CandidateSource{Source: "select 1", Origin: "bundle", FilePath: "models/a.sql", Project: "svc"}, candidateSource(t, out))
 	assert.Equal(t, []bundleCall{{"s3://bundle/rel-1", "model.svc.a", "rel-1"}}, bundle.calls)
 	assert.Empty(t, loc.calls, "a trigger that names the location is not located")
 }
 
 func TestCodeBundleSource_LocatesANodeTheTriggerDoesNotPlace(t *testing.T) {
 	bundle := &fakeBundle{nodes: map[string]ports.CandidateSource{"model.svc.a": dbtEntry("select 1")}}
-	loc := &fakeLocator{filePath: "graph/x.sql", service: "svc"}
+	loc := &fakeLocator{filePath: "graph/x.sql", project: "svc"}
 
 	out := gather(t, newBundleSource(bundle, &fakeSource{}, loc),
-		failure(func(f *remediation.Failure) { f.Target.FilePath = ""; f.Target.Service = "" }), remediation.NewEvidence())
+		failure(func(f *remediation.Failure) { f.Target.FilePath = ""; f.Target.Project = "" }), remediation.NewEvidence())
 
 	cs := candidateSource(t, out)
 	assert.Equal(t, "graph/x.sql", cs.FilePath)
-	assert.Equal(t, "svc", cs.Service)
+	assert.Equal(t, "svc", cs.Project)
 	assert.Equal(t, []string{"model.svc.a"}, loc.calls)
 }
 
@@ -114,7 +114,7 @@ func TestCodeBundleSource_FallsBackToTheRepositoryOnAPermanentBundleMiss(t *test
 
 			out := gather(t, newBundleSource(c.bundle, src, &fakeLocator{}), failure(nil), remediation.NewEvidence())
 
-			assert.Equal(t, remediation.CandidateSource{Source: "select from repo", Origin: "github", FilePath: "models/a.sql", Service: "svc"}, candidateSource(t, out))
+			assert.Equal(t, remediation.CandidateSource{Source: "select from repo", Origin: "github", FilePath: "models/a.sql", Project: "svc"}, candidateSource(t, out))
 			assert.Equal(t, []string{"services/svc/models/a.sql"}, src.reads)
 		})
 	}
@@ -130,7 +130,7 @@ func TestCodeBundleSource_ABundleReadErrorIsReturned(t *testing.T) {
 	assert.Contains(t, err.Error(), "fetch code bundle")
 }
 
-// A node whose source, file path, service or service repository path is
+// A node whose source, file path, project or project repository path is
 // unknown has no edit a fix could make, so the step declines it with the reason
 // instead of handing the model a call that cannot end in an edit.
 func TestCodeBundleSource_DeclinesWithoutALocation(t *testing.T) {
@@ -146,10 +146,10 @@ func TestCodeBundleSource_DeclinesWithoutALocation(t *testing.T) {
 		{"no file path although the bundle holds the source", func(f *remediation.Failure) { f.Target.FilePath = "" },
 			&fakeBundle{nodes: map[string]ports.CandidateSource{"model.svc.a": dbtEntry("select 1")}}, &fakeSource{},
 			"the failing node model.svc.a has no file path, so there is no source file to edit"},
-		{"no service", func(f *remediation.Failure) { f.Target.Service = "" }, &fakeBundle{}, &fakeSource{},
-			"the failing node model.svc.a names no service, so there is no source file to edit"},
-		{"a service with no repository path", func(f *remediation.Failure) { f.Target.Service = "ghost" }, &fakeBundle{}, &fakeSource{},
-			`service "ghost" has no repository path mapping`},
+		{"no project", func(f *remediation.Failure) { f.Target.Project = "" }, &fakeBundle{}, &fakeSource{},
+			"the failing node model.svc.a names no project, so there is no source file to edit"},
+		{"a project with no repository path", func(f *remediation.Failure) { f.Target.Project = "ghost" }, &fakeBundle{}, &fakeSource{},
+			`project "ghost" has no repository path mapping`},
 		{"a source in neither the bundle nor the repository", nil, &fakeBundle{}, &fakeSource{},
 			"the failing node model.svc.a's source is in neither the release's code bundle nor the repository at the trigger's commit"},
 		{"a file the repository does not have", nil, &fakeBundle{}, &fakeSource{err: ports.ErrSourceNotFound},
@@ -198,7 +198,7 @@ func TestCodeBundleSource_ALocatedSourceIsOffered(t *testing.T) {
 	out := gather(t, newBundleSource(&fakeBundle{nodes: map[string]ports.CandidateSource{"model.svc.a": dbtEntry("select 1")}}, &fakeSource{}, &fakeLocator{}),
 		failure(nil), remediation.NewEvidence())
 
-	assert.Equal(t, remediation.CandidateSource{Source: "select 1", Origin: "bundle", FilePath: "models/a.sql", Service: "svc"}, candidateSource(t, out))
+	assert.Equal(t, remediation.CandidateSource{Source: "select 1", Origin: "bundle", FilePath: "models/a.sql", Project: "svc"}, candidateSource(t, out))
 }
 
 func TestCodeBundleSource_NoNodeTypeAndANonSQLPathDeclines(t *testing.T) {

@@ -88,7 +88,7 @@ func NewWorld(store *memory.Store, f conformance.Fixture, s conformance.Script) 
 		Evidence:         objects,
 		Artifacts:        objects,
 		Logger:           logger,
-		ServiceRepoPaths: f.ServiceRepoPaths,
+		ProjectRepoPaths: f.ProjectRepoPaths,
 		Locator:          cat,
 		Upstream:         cat,
 		Versions:         cat,

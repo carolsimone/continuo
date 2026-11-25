@@ -112,14 +112,14 @@ func (f *fakeSource) ListDir(context.Context, string, string, string) ([]string,
 var _ ports.SourceReader = (*fakeSource)(nil)
 
 type fakeLocator struct {
-	filePath, service string
+	filePath, project string
 	err               error
 	calls             []string
 }
 
 func (f *fakeLocator) Locate(_ context.Context, id string) (string, string, error) {
 	f.calls = append(f.calls, id)
-	return f.filePath, f.service, f.err
+	return f.filePath, f.project, f.err
 }
 
 var _ ports.NodeLocator = (*fakeLocator)(nil)
@@ -187,7 +187,7 @@ func failure(mod func(*remediation.Failure)) remediation.Failure {
 			ErrorSignature:       "sig-1",
 			CandidateArtifactURI: "s3://candidate/a.sql",
 			FilePath:             "models/a.sql",
-			Service:              "svc",
+			Project:              "svc",
 		},
 		Attempt: 2,
 	}

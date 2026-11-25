@@ -29,7 +29,7 @@ func upstreamEvidence() remediation.Evidence {
 			NodeID:        targetID,
 			Source:        targetSource,
 			FilePath:      targetFile,
-			Service:       targetSvc,
+			Project:       targetSvc,
 			OwnChangeDiff: diffText,
 		}).
 		With(remediation.KeyFailurePrecedents, precedentList)
@@ -52,17 +52,17 @@ func proposeUpstream(t *testing.T, f remediation.Failure, ev remediation.Evidenc
 // expectedRequest is the request the upstream prompt builds from the inputs the
 // step is given: the ancestor's source, the members' excerpts, the diff and the
 // precedents as gathered.
-func expectedRequest(crossService bool) prompt.ProposeRequest {
+func expectedRequest(crossProject bool) prompt.ProposeRequest {
 	return prompt.AssembleUpstreamFix(prompt.UpstreamEvidence{
 		TargetNodeID:  targetID,
 		TargetSource:  targetSource,
 		OwnChangeDiff: diffText,
 		Members: []prompt.MemberFailure{
-			{NodeID: "model.up-svc.m1", Service: targetSvc, ErrorExcerpt: "column old_name missing"},
+			{NodeID: "model.up-svc.m1", Project: targetSvc, ErrorExcerpt: "column old_name missing"},
 			{NodeID: "model.up-svc.m2", ErrorExcerpt: "column old_name missing too"},
 		},
 		Precedents:   precedentList,
-		CrossService: crossService,
+		CrossProject: crossProject,
 	})
 }
 
@@ -84,10 +84,10 @@ func TestPrompt_MakesItsRequestWithOneModelCall(t *testing.T) {
 	assert.Equal(t, expectedRequest(false), model.reqs[0])
 }
 
-func TestPrompt_ACrossServiceClusterGetsTheCrossServiceClause(t *testing.T) {
+func TestPrompt_ACrossProjectClusterGetsTheCrossProjectClause(t *testing.T) {
 	model := &fakeModel{res: answer(fixedSource, "high")}
 
-	proposeUpstream(t, failure(func(f *remediation.Failure) { f.Kind = workflow.ClusterCrossService }), upstreamEvidence(), model)
+	proposeUpstream(t, failure(func(f *remediation.Failure) { f.Kind = workflow.ClusterCrossProject }), upstreamEvidence(), model)
 
 	assert.Equal(t, expectedRequest(true), model.reqs[0])
 	assert.NotEqual(t, expectedRequest(false).System, model.reqs[0].System)
@@ -105,7 +105,7 @@ func TestPrompt_NoPrecedentsLeavesThePrecedentSectionOut(t *testing.T) {
 		TargetSource:  targetSource,
 		OwnChangeDiff: diffText,
 		Members: []prompt.MemberFailure{
-			{NodeID: "model.up-svc.m1", Service: targetSvc, ErrorExcerpt: "column old_name missing"},
+			{NodeID: "model.up-svc.m1", Project: targetSvc, ErrorExcerpt: "column old_name missing"},
 			{NodeID: "model.up-svc.m2", ErrorExcerpt: "column old_name missing too"},
 		},
 	})
@@ -187,9 +187,9 @@ func TestPrompt_RefusesEvidenceWithNoUpstreamTarget(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestPrompt_RefusesAServiceWithNoRepositoryPath(t *testing.T) {
+func TestPrompt_RefusesAProjectWithNoRepositoryPath(t *testing.T) {
 	ev := remediation.NewEvidence().With(remediation.KeyUpstreamTarget, remediation.UpstreamTarget{
-		NodeID: targetID, Source: targetSource, FilePath: targetFile, Service: "ghost",
+		NodeID: targetID, Source: targetSource, FilePath: targetFile, Project: "ghost",
 	})
 	model := &fakeModel{res: answer(fixedSource, "high")}
 

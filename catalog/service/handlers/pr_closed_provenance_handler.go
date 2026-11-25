@@ -87,7 +87,7 @@ func (h *PrClosedProvenanceHandler) Handle(
 	outcome := casebase.PullRequestOutcome{
 		ProposalID:      in.ProposalID,
 		ReleaseID:       in.ReleaseID,
-		Service:         in.Service,
+		Project:         in.Project,
 		Outcome:         in.Outcome,
 		ClosedAt:        closedAt,
 		PrURL:           in.PrURL,
@@ -112,7 +112,7 @@ func (h *PrClosedProvenanceHandler) Handle(
 	}
 
 	h.logger.Info("pull request outcome recorded in case base",
-		"tenant_id", tenantID, "release_id", in.ReleaseID, "proposal_id", in.ProposalID, "service", in.Service,
+		"tenant_id", tenantID, "release_id", in.ReleaseID, "proposal_id", in.ProposalID, "project", in.Project,
 		"outcome", in.Outcome, "resolved_nodes", in.ResolvedNodeIDs, "edits", len(edits))
 	return nil
 }

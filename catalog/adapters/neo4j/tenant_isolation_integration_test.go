@@ -265,7 +265,7 @@ func seedIsolationTenant(f *swapFixture, mark string, testCount int, withOnlyB b
 	pr.PrURL = "https://github.com/org/repo/pull/" + mark
 	f.recordProposal(casebase.Proposal{ProposalID: isoProposal, ReleaseID: "r-failed", NodeID: isoDown}, pr)
 	f.recordOutcome(casebase.PullRequestOutcome{
-		ProposalID: isoProposal, ReleaseID: "r-failed", Service: "svc", Outcome: "merged",
+		ProposalID: isoProposal, ReleaseID: "r-failed", Project: "svc", Outcome: "merged",
 		ClosedAt: promotedAtOf(2), ResolvedNodeIDs: []string{isoDown},
 		Edits: []casebase.EditOutcome{{Path: "models/up-" + mark + ".sql", TargetNodeID: isoUp, Diff: "diff-" + mark}},
 	})
@@ -276,7 +276,7 @@ func seedIsolationTenant(f *swapFixture, mark string, testCount int, withOnlyB b
 func isoContract(uniqueID string, seq int64, mark string) contractversion.Incoming {
 	return contractversion.Incoming{
 		UniqueID: uniqueID, ContractHash: fmt.Sprintf("k%d-%s", seq, mark), ContentHash: "content-" + mark,
-		Family: "python", Service: "svc", SourcePath: "contracts/" + mark + ".odcs.yaml",
+		Family: "python", Project: "svc", SourcePath: "contracts/" + mark + ".odcs.yaml",
 		Document: map[string]any{"id": uniqueID, "team": map[string]any{"name": mark}},
 	}
 }
@@ -514,7 +514,7 @@ func (f *isolationFixture) rows() []isolationRow {
 		}},
 		{"caseBaseRepository.RecordPullRequestOutcome", func(t *testing.T) {
 			f.a.recordOutcome(casebase.PullRequestOutcome{
-				ProposalID: isoProposal, ReleaseID: "r-failed-again", Service: "svc", Outcome: "merged",
+				ProposalID: isoProposal, ReleaseID: "r-failed-again", Project: "svc", Outcome: "merged",
 				ClosedAt: promotedAtOf(3), ResolvedNodeIDs: []string{isoOnlyB},
 				Edits: []casebase.EditOutcome{{Path: "models/only_b.sql", TargetNodeID: isoOnlyB, Diff: "d"}},
 			})

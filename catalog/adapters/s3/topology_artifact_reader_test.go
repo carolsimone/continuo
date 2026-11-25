@@ -26,7 +26,7 @@ func artifactDoc(releaseID string) topologyartifact.Document {
 		ReleaseID:     releaseID,
 		Nodes: []topologyartifact.Node{{
 			UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders",
-			ServiceName: "svc", NodeType: "dbt-model", ContentHash: "sha256:o",
+			ProjectName: "svc", NodeType: "dbt-model", ContentHash: "sha256:o",
 			ImageTag: "img:1", Schedule: "daily", UpstreamUniqueIDs: []string{},
 		}},
 	}

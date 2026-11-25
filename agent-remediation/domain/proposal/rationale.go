@@ -9,7 +9,7 @@ import (
 // its validation recorded (empty when the failure carried none).
 type RationaleMember struct {
 	NodeID    string
-	Service   string
+	Project   string
 	ErrorLine string
 }
 
@@ -18,7 +18,7 @@ type RationaleMember struct {
 // distance from the failing node.
 type RationaleUpstream struct {
 	NodeID  string
-	Service string
+	Project string
 	Depth   int
 }
 
@@ -39,30 +39,30 @@ type RationaleFacts struct {
 	// repair TargetNodeID, which for an upstream fix is not a member.
 	Edits        []string
 	TargetNodeID string
-	// TargetService is the service that owns TargetNodeID — the cluster's
-	// edited node. A member living in this same service can still change in
-	// this release; only a member in a different service cannot.
-	TargetService string
-	// CrossService marks the cluster as reaching at least one member in a
-	// service other than the target's, where that member cannot change in
-	// this release. A coalesced cluster can still carry same-service members
+	// TargetProject is the project that owns TargetNodeID — the cluster's
+	// edited node. A member living in this same project can still change in
+	// this release; only a member in a different project cannot.
+	TargetProject string
+	// CrossProject marks the cluster as reaching at least one member in a
+	// project other than the target's, where that member cannot change in
+	// this release. A coalesced cluster can still carry same-project members
 	// alongside them; ComposeRationale emits the follow-up line only for the
-	// members whose service actually differs from TargetService.
-	CrossService bool
+	// members whose project actually differs from TargetProject.
+	CrossProject bool
 	ModelNote    string
 }
 
 // ComposeRationale renders one cluster's rationale, one fact per line, in a
 // fixed order: what failed, what this release changed upstream (or that
 // nothing did), what was edited, why the edit is where it is for each member
-// whose service differs from TargetService, and last the model's own note
+// whose project differs from TargetProject, and last the model's own note
 // under its label.
 func ComposeRationale(f RationaleFacts) string {
 	var b strings.Builder
 	for _, m := range f.Members {
 		fmt.Fprintf(&b, "Failed: `%s`", m.NodeID)
-		if m.Service != "" {
-			fmt.Fprintf(&b, " (service %s)", m.Service)
+		if m.Project != "" {
+			fmt.Fprintf(&b, " (project %s)", m.Project)
 		}
 		if m.ErrorLine != "" {
 			fmt.Fprintf(&b, ": %s", m.ErrorLine)
@@ -74,22 +74,22 @@ func ComposeRationale(f RationaleFacts) string {
 			fmt.Fprintf(&b, "No upstream of %s changed in this release.\n", quotedNodeIDs(f.Members))
 		}
 		for _, u := range f.Upstream {
-			fmt.Fprintf(&b, "This release changed upstream: `%s` (service %s, %s up)\n", u.NodeID, u.Service, hops(u.Depth))
+			fmt.Fprintf(&b, "This release changed upstream: `%s` (project %s, %s up)\n", u.NodeID, u.Project, hops(u.Depth))
 		}
 	}
 	for _, e := range f.Edits {
 		fmt.Fprintf(&b, "Edited: `%s` (repairs `%s`)\n", e, f.TargetNodeID)
 	}
-	if f.CrossService {
+	if f.CrossProject {
 		for _, m := range f.Members {
-			// An unresolved TargetService ("") never equals a member's
-			// non-empty Service, so this guard degrades to the old
-			// per-cluster behavior — every member with a service gets the
-			// line — when the target's own service could not be determined.
-			if m.Service == "" || m.Service == f.TargetService {
+			// An unresolved TargetProject ("") never equals a member's
+			// non-empty Project, so this guard degrades to the old
+			// per-cluster behavior — every member with a project gets the
+			// line — when the target's own project could not be determined.
+			if m.Project == "" || m.Project == f.TargetProject {
 				continue
 			}
-			fmt.Fprintf(&b, "`%s` lives in service %s and cannot change in this release; this edit keeps the contract it reads. Moving it to the new shape is a follow-up for service %s.\n", m.NodeID, m.Service, m.Service)
+			fmt.Fprintf(&b, "`%s` lives in project %s and cannot change in this release; this edit keeps the contract it reads. Moving it to the new shape is a follow-up for project %s.\n", m.NodeID, m.Project, m.Project)
 		}
 	}
 	if f.ModelNote != "" {

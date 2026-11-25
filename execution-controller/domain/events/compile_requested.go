@@ -5,7 +5,7 @@ import "github.com/google/uuid"
 
 // CompileRequested is the parsed compile.requested:v1 stream payload — a typed,
 // in-process representation of the compile request emitted by release-controller.
-// execution-controller enqueues exactly one compile Deployment for the named service.
+// execution-controller enqueues exactly one compile Deployment for the named project.
 //
 // OutboxEntryID is the release-controller outbox row ID, carried through as
 // provenance. Zero value (uuid.Nil) means the inbound message did not carry
@@ -13,7 +13,7 @@ import "github.com/google/uuid"
 type CompileRequested struct {
 	OutboxEntryID uuid.UUID
 	ReleaseID     string
-	Service       string
+	Project       string
 	ImageTag      string
 	Bucket        string
 	// CandidateSchema is the release's candidate schema, echoed by

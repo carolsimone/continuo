@@ -36,7 +36,7 @@ func assertPodHardening(t *testing.T, spec corev1.PodSpec) {
 
 func TestBuildPodSpecHardening(t *testing.T) {
 	spec, err := buildPodSpec(JobParams{
-		JobName: "j", TaskID: "t", ServiceName: "svc", SchemaName: "s",
+		JobName: "j", TaskID: "t", ProjectName: "svc", SchemaName: "s",
 		TableName: "tbl", Namespace: "default", ImageTag: "abc",
 	}, []string{"dbt", "run"}, "")
 	require.NoError(t, err)

@@ -1,12 +1,12 @@
-# An install's fixture of the flow scenario two_types_one_service, for a
+# An install's fixture of the flow scenario two_types_one_project, for a
 # rejected-release flow that lists no dbt-validation. Two clusters of two types
-# fix the sales service: orders is a dbt-parse fix of its own, and
+# fix the sales project: orders is a dbt-parse fix of its own, and
 # daily_orders and weekly_orders share one fix at base_orders. One
 # verification run checks both edits, and one attempt carries them.
 kind: fixture
 version: 1
 flow: rejected-release
-scenario: two_types_one_service
+scenario: two_types_one_project
 trigger:
   source: parse
   release_id: rel-lint-two-types
@@ -20,7 +20,7 @@ trigger:
       reason: parse_error
       error_excerpt: "Expecting ). Line 1, Col: 12.\n  select id total"
       file_path: models/orders.sql
-      service: sales
+      project: sales
       node_type: dbt-model
     - node_id: model.sales.daily_orders
       category: parse
@@ -28,21 +28,21 @@ trigger:
       reason: parse_error
       error_excerpt: 'base_orders.amount is not declared'
       file_path: models/daily_orders.sql
-      service: sales
+      project: sales
       node_type: dbt-model
       changed_ancestors:
-        - { node_id: model.sales.base_orders, file_path: models/base_orders.sql, service: sales, depth: 1 }
+        - { node_id: model.sales.base_orders, file_path: models/base_orders.sql, project: sales, depth: 1 }
     - node_id: model.sales.weekly_orders
       category: parse
       error_signature: sig-base-orders-amount
       reason: parse_error
       error_excerpt: 'base_orders.amount is not declared'
       file_path: models/weekly_orders.sql
-      service: sales
+      project: sales
       node_type: dbt-model
       changed_ancestors:
-        - { node_id: model.sales.base_orders, file_path: models/base_orders.sql, service: sales, depth: 1 }
-service_repo_paths:
+        - { node_id: model.sales.base_orders, file_path: models/base_orders.sql, project: sales, depth: 1 }
+project_repo_paths:
   sales: services/sales
 repo_files:
   services/sales/models/orders.sql: "select id total from raw_orders\n"

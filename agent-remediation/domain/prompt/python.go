@@ -192,7 +192,7 @@ func renderReleaseUpstreamChanges(b *strings.Builder, nodeID string, cs []Releas
 	}
 	b.WriteString("What this release changed upstream of the failing model (nearest first; last promoted -> candidate):\n")
 	for _, c := range cs {
-		fmt.Fprintf(b, "Upstream %s (service %s, depth=%d):\n", c.NodeID, c.Service, c.Depth)
+		fmt.Fprintf(b, "Upstream %s (project %s, depth=%d):\n", c.NodeID, c.Project, c.Depth)
 		if c.Diff == "" {
 			b.WriteString("(diff unavailable)\n")
 			continue

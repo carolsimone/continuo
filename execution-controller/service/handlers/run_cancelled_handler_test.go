@@ -120,7 +120,7 @@ func newFenceFlow(t *testing.T) *fenceFlow {
 func (f *fenceFlow) command(attempt int) command.DeployTask {
 	taskID := uuid.NewString()
 	return command.DeployTask{TenantID: "default", TaskID: taskID, RunID: f.runID.String(), ScheduleName: "daily",
-		ServiceName: "dbt", SchemaName: "public", TableName: "t" + taskID[:8],
+		ProjectName: "dbt", SchemaName: "public", TableName: "t" + taskID[:8],
 		JobName: "dbt-public-t" + taskID[:8] + "-" + f.runID.String()[:8], NodeType: "dbt-model",
 		ImageTag: "sha-abc", Operation: "run", Attempt: attempt, TimeoutSeconds: 3600}
 }
@@ -540,7 +540,7 @@ func TestRunCancelled_IsIdempotent(t *testing.T) {
 func (f *fenceFlow) dispatchOf() events.TaskDispatch {
 	cmd := f.command(0)
 	return events.TaskDispatch{TenantID: "default", RunID: f.runID, TaskID: uuid.MustParse(cmd.TaskID), Attempt: 0,
-		KnownStatus: pkgmodel.AttemptStatusDispatched, ScheduleName: cmd.ScheduleName, ServiceName: cmd.ServiceName,
+		KnownStatus: pkgmodel.AttemptStatusDispatched, ScheduleName: cmd.ScheduleName, ProjectName: cmd.ProjectName,
 		SchemaName: cmd.SchemaName, TableName: cmd.TableName, NodeType: cmd.NodeType, Operation: cmd.Operation,
 		ImageTag: cmd.ImageTag, JobName: cmd.JobName, TimeoutSeconds: cmd.TimeoutSeconds}
 }

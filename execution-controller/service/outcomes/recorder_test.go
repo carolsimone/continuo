@@ -100,7 +100,7 @@ func (r *stubAggRepo) ClaimEmission(context.Context, string, model.Mode, time.Ti
 func newBlockedValidationDeployment(t *testing.T, releaseID, nodeID string) *model.Deployment {
 	t.Helper()
 	cmd := command.ValidationDeployTask{
-		ReleaseID: releaseID, NodeID: nodeID, ServiceName: "dbt",
+		ReleaseID: releaseID, NodeID: nodeID, ProjectName: "dbt",
 		SchemaName: "public", TableName: "tbl", NodeType: "dbt-model",
 		ImageTag: "sha-test", JobName: "validate-" + nodeID,
 	}
@@ -159,7 +159,7 @@ func TestRecord_UnknownReleaseNodeIsNoOp(t *testing.T) {
 func newDeployedSeedBuild(t *testing.T, releaseID, nodeID string) *model.Deployment {
 	t.Helper()
 	cmd := command.ValidationDeployTask{
-		ReleaseID: releaseID, NodeID: nodeID, ServiceName: "dbt",
+		ReleaseID: releaseID, NodeID: nodeID, ProjectName: "dbt",
 		SchemaName: "public", TableName: nodeID, NodeType: "dbt-seed",
 		ImageTag: "sha-seed", JobName: "seed-" + nodeID,
 	}
@@ -192,7 +192,7 @@ func TestRecord_SeedBuildOutcomeSettlesAggregateWhenComplete(t *testing.T) {
 func newDeployedCompile(t *testing.T, releaseID, nodeID string) *model.Deployment {
 	t.Helper()
 	cmd := command.ValidationDeployTask{
-		ReleaseID: releaseID, NodeID: nodeID, ServiceName: "dbt",
+		ReleaseID: releaseID, NodeID: nodeID, ProjectName: "dbt",
 		SchemaName: "public", TableName: nodeID, NodeType: "dbt-model",
 		ImageTag: "sha-compile", JobName: "compile-" + nodeID,
 	}

@@ -238,7 +238,7 @@ func modelNode(uniqueID string, upstreams ...string) topology.ReleasePromotedTop
 		upstreams = []string{}
 	}
 	return topology.ReleasePromotedTopologyNode{
-		UniqueID: uniqueID, SchemaName: "analytics", TableName: uniqueID, ServiceName: "svc",
+		UniqueID: uniqueID, SchemaName: "analytics", TableName: uniqueID, ProjectName: "svc",
 		NodeType: "dbt-model", ContentHash: "sha256:" + uniqueID, ImageTag: "img", Schedule: "daily",
 		UpstreamUniqueIDs: upstreams,
 	}
@@ -303,7 +303,7 @@ func TestPromoteRelease_KeepsDroppedNode(t *testing.T) {
 		CREATE (rej:Rejection {tenant_id: $tenant_id, release_id: 'r6', node_id: $d, category: 'compile', reason: 'syntax'})
 		CREATE (d)-[:FAILED {release_id: 'r6'}]->(rej)
 		CREATE (p:Proposal {tenant_id: $tenant_id, proposal_id: 'prop-d'})
-		CREATE (rej)-[:PROPOSED {service: 'svc'}]->(p)
+		CREATE (rej)-[:PROPOSED {project: 'svc'}]->(p)
 		CREATE (p)-[:EDITED {path: 'models/table_d.sql'}]->(d)`, map[string]any{"d": d})
 	nodesBefore := f.count(`MATCH (n {tenant_id: $tenant_id}) WHERE NOT n:ProcessedMessage RETURN count(n) AS n`, nil)
 	propsBefore := f.node(d)
@@ -521,7 +521,7 @@ func TestPromoteRelease_RefreshesContentHash(t *testing.T) {
 }
 
 // unknownExternalNode is a table that the release's models read and no model builds,
-// as the topology artifact carries it: no service, no content hash, no image,
+// as the topology artifact carries it: no project, no content hash, no image,
 // no schedule.
 func unknownExternalNode(uniqueID, schema, table string) topology.ReleasePromotedTopologyNode {
 	return topology.ReleasePromotedTopologyNode{
@@ -531,7 +531,7 @@ func unknownExternalNode(uniqueID, schema, table string) topology.ReleasePromote
 }
 
 // An unknown-external node is stored as a live :Node with its type and an empty
-// service, and each reader draws its :DEPENDS_ON to it.
+// project, and each reader draws its :DEPENDS_ON to it.
 func TestPromoteRelease_StoresAnUnknownExternalNodeWithItsEdges(t *testing.T) {
 	f := newSwapFixture(t)
 	const probe = "raw.ingest_probe"
@@ -547,7 +547,7 @@ func TestPromoteRelease_StoresAnUnknownExternalNodeWithItsEdges(t *testing.T) {
 	require.NotNil(t, n)
 	assert.Equal(t, true, n["active"])
 	assert.Equal(t, "unknown-external", n["node_type"])
-	assert.Equal(t, "", n["service_name"])
+	assert.Equal(t, "", n["project_name"])
 	assert.Equal(t, "raw", n["schema_name"])
 	assert.Equal(t, "ingest_probe", n["table_name"])
 	assert.NotContains(t, n, "retired_at")
@@ -574,7 +574,7 @@ func TestPromoteRelease_TurnsAnUnknownExternalNodeIntoTheModelThatBuildsIt(t *te
 	require.Equal(t, "unknown-external", f.node(probe)["node_type"])
 
 	built := topology.ReleasePromotedTopologyNode{
-		UniqueID: probe, SchemaName: "raw", TableName: "ingest_probe", ServiceName: "service-1",
+		UniqueID: probe, SchemaName: "raw", TableName: "ingest_probe", ProjectName: "service-1",
 		NodeType: "dbt-model", ContentHash: "sha256:probe", ImageTag: "img", Schedule: "daily",
 		UpstreamUniqueIDs: []string{},
 	}
@@ -589,7 +589,7 @@ func TestPromoteRelease_TurnsAnUnknownExternalNodeIntoTheModelThatBuildsIt(t *te
 		"one :Node holds the id")
 	n := f.node(probe)
 	assert.Equal(t, "dbt-model", n["node_type"])
-	assert.Equal(t, "service-1", n["service_name"])
+	assert.Equal(t, "service-1", n["project_name"])
 	assert.Equal(t, "sha256:probe", n["content_hash"])
 	assert.Equal(t, "rel-2", n["release_id"])
 	assert.Equal(t, true, n["active"])

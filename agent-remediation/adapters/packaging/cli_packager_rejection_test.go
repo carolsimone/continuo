@@ -102,7 +102,7 @@ exit 0
 }
 
 // TestPack_RunsPackWithTheImagePackagesFile pins the command line: pack of the
-// contract directory, for the service, under the repository root, with the
+// contract directory, for the project, under the repository root, with the
 // package list written as one JSON object to the file --image-packages names,
 // the dialect, and --out an odcs-bundle.json the packager returns.
 func TestPack_RunsPackWithTheImagePackagesFile(t *testing.T) {
@@ -144,7 +144,7 @@ printf '{"bundle_version": 1}' > "$out"
 		t.Fatalf("argv record = %q, want the arguments, the packages file and the out name", raw)
 	}
 	argv := lines[:10]
-	want := []string{"pack", contractDir, "--service", "svc-py", "--repo-root", repoRoot, "--image-packages", argv[7], "--dialect", "trino"}
+	want := []string{"pack", contractDir, "--project", "svc-py", "--repo-root", repoRoot, "--image-packages", argv[7], "--dialect", "trino"}
 	for i := range want {
 		if argv[i] != want[i] {
 			t.Fatalf("argv = %q, want %q (then --out)", argv, want)

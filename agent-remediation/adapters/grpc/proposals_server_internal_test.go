@@ -21,42 +21,42 @@ func TestViewToProto_PRCloseFields(t *testing.T) {
 	require.Equal(t, "", p.PrClosedAt)
 }
 
-// TestViewToProto_PrServicesPassesThroughVerbatim verifies that viewToProto's
-// prServices argument — the caller's s.svc.PRServices(v) result — becomes the
-// wire's pr_services field unchanged, and that pull_requests maps from
+// TestViewToProto_PrProjectsPassesThroughVerbatim verifies that viewToProto's
+// prProjects argument — the caller's s.svc.PRProjects(v) result — becomes the
+// wire's pr_projects field unchanged, and that pull_requests maps from
 // v.PullRequests.
-func TestViewToProto_PrServicesPassesThroughVerbatim(t *testing.T) {
+func TestViewToProto_PrProjectsPassesThroughVerbatim(t *testing.T) {
 	p := viewToProto(proposal.View{
 		ID: "p1",
 		PullRequests: []proposal.PullRequest{
-			{Service: "core", Repo: "org/core", PrURL: "https://gh/pr/1", PrNumber: 1, PrState: "open"},
+			{Project: "core", Repo: "org/core", PrURL: "https://gh/pr/1", PrNumber: 1, PrState: "open"},
 		},
 	}, []string{"billing", "core"})
-	require.Equal(t, []string{"billing", "core"}, p.PrServices)
+	require.Equal(t, []string{"billing", "core"}, p.PrProjects)
 	require.Len(t, p.PullRequests, 1)
-	require.Equal(t, "core", p.PullRequests[0].Service)
+	require.Equal(t, "core", p.PullRequests[0].Project)
 	require.Equal(t, "org/core", p.PullRequests[0].Repo)
 	require.Equal(t, "https://gh/pr/1", p.PullRequests[0].PrUrl)
 	require.Equal(t, int32(1), p.PullRequests[0].PrNumber)
 	require.Equal(t, "open", p.PullRequests[0].PrState)
 
-	// Legacy: no service groups at all still produces a nil pull_requests
+	// Legacy: no project groups at all still produces a nil pull_requests
 	// slice, never a one-element list of zero values.
 	p = viewToProto(proposal.View{ID: "p2"}, []string{""})
-	require.Equal(t, []string{""}, p.PrServices)
+	require.Equal(t, []string{""}, p.PrProjects)
 	require.Empty(t, p.PullRequests)
 }
 
-// TestViewToProto_ServicesPassesThroughVerbatim verifies that the row's
-// services — every service the attempt touched, the set ListProposals'
-// service filter matches on — reach the wire unchanged, so a listing can
-// show the same services the filter selected by.
-func TestViewToProto_ServicesPassesThroughVerbatim(t *testing.T) {
-	p := viewToProto(proposal.View{ID: "p1", Services: []string{"analytics", "billing"}}, []string{""})
-	require.Equal(t, []string{"analytics", "billing"}, p.Services)
+// TestViewToProto_ProjectsPassesThroughVerbatim verifies that the row's
+// projects — every project the attempt touched, the set ListProposals'
+// project filter matches on — reach the wire unchanged, so a listing can
+// show the same projects the filter selected by.
+func TestViewToProto_ProjectsPassesThroughVerbatim(t *testing.T) {
+	p := viewToProto(proposal.View{ID: "p1", Projects: []string{"analytics", "billing"}}, []string{""})
+	require.Equal(t, []string{"analytics", "billing"}, p.Projects)
 
 	p = viewToProto(proposal.View{ID: "p2"}, []string{""})
-	require.Empty(t, p.Services)
+	require.Empty(t, p.Projects)
 }
 
 // TestEditsToProto_EmptyInputYieldsNoElements verifies that a nil or empty

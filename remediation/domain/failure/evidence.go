@@ -48,10 +48,10 @@ type FailureEvidence struct {
 	Repo                 string
 	CommitSHA            string
 	FilePath             string // optional; offending source path — extracted from the dbt log for compile; threaded from the candidate topology for validation, seed_build, and duplicate_table
-	Service              string // optional; owning dbt service for source resolution; set for validation, seed_build, and duplicate_table failures; empty for compile (NodeID is the service)
+	Project              string // optional; owning dbt project for source resolution; set for validation, seed_build, and duplicate_table failures; empty for compile (NodeID is the project)
 	NodeType             string // optional; the failing node's kind (dbt-model, dbt-seed, dbt-snapshot, python-node, python-csv, python-api); set for validation, duplicate_table and parse failures — this is what selects the agent's fixer lane for a python node without a topology lookup of its own; empty for compile and seed_build
-	OtherService         string // optional; for a duplicate-relation failure, the competing service that also produces the contested relation (RelationID)
-	OtherFilePath        string // optional; source path of that competing node — the only discriminator when both claimants are in one service
+	OtherProject         string // optional; for a duplicate-relation failure, the competing project that also produces the contested relation (RelationID)
+	OtherFilePath        string // optional; source path of that competing node — the only discriminator when both claimants are in one project
 	// CodeBundleURI locates the rejected release's code-bundle document;
 	// empty when parse never completed. Forwarded onto the trigger event for
 	// catalog's case base.
@@ -80,6 +80,6 @@ type FailureEvidence struct {
 type ChangedAncestor struct {
 	NodeID   string
 	FilePath string
-	Service  string
+	Project  string
 	Depth    int
 }

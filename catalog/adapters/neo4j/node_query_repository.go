@@ -20,11 +20,11 @@ func NewNodeQueryRepository(client Neo4jClient, logger *slog.Logger) *NodeQueryR
 	return &NodeQueryRepository{client: client, logger: logger}
 }
 
-// getNodeCypher reads the tenant's :Node with one (service, schema, table)
+// getNodeCypher reads the tenant's :Node with one (project, schema, table)
 // identity: a live node first, then the most recently retired, ties broken by
 // the smallest unique_id. $include_inactive false matches live nodes only.
 const getNodeCypher = `
-MATCH (n:Node {tenant_id: $tenant_id, service_name: $service, schema_name: $schema, table_name: $table})
+MATCH (n:Node {tenant_id: $tenant_id, project_name: $project, schema_name: $schema, table_name: $table})
 WHERE $include_inactive OR coalesce(n.active, true)
 WITH n, NOT coalesce(n.active, true) AS inactive
 RETURN n.node_type AS node_type, n.test_count AS test_count, inactive
@@ -32,7 +32,7 @@ ORDER BY inactive ASC, n.retired_at DESC, n.unique_id ASC
 LIMIT 1`
 
 // GetNode returns per-node topology metadata for one of the tenant's nodes,
-// addressed by its (service, schema, table) identity. With
+// addressed by its (project, schema, table) identity. With
 // domain.ActiveNodesOnly only a live node matches; with
 // domain.IncludeInactiveNodes a retired node also matches (reported with
 // Inactive = true) and a live match is preferred when both exist; among
@@ -43,10 +43,10 @@ LIMIT 1`
 // capture reports TestCountKnown = false rather than a misleading zero.
 // NodeType is the stored type read through model.CanonicalNodeType, so a node
 // stored under the legacy name of unknown-external reports unknown-external.
-func (r *NodeQueryRepository) GetNode(ctx context.Context, tenantID, service, schema, table string, scope domain.NodeScope) (*domain.NodeMeta, error) {
+func (r *NodeQueryRepository) GetNode(ctx context.Context, tenantID, project, schema, table string, scope domain.NodeScope) (*domain.NodeMeta, error) {
 	meta, err := inReadTx(ctx, r.client, tenantID, func(run TenantRunner) (*domain.NodeMeta, error) {
 		result, err := run.Run(ctx, getNodeCypher, map[string]any{
-			"service":          service,
+			"project":          project,
 			"schema":           schema,
 			"table":            table,
 			"include_inactive": scope == domain.IncludeInactiveNodes,
@@ -76,14 +76,14 @@ func (r *NodeQueryRepository) GetNode(ctx context.Context, tenantID, service, sc
 	return meta, nil
 }
 
-// getNodeLocationCypher reads the source path and owning service of the
+// getNodeLocationCypher reads the source path and owning project of the
 // tenant's live :Node.
 const getNodeLocationCypher = `
 MATCH (n:Node {tenant_id: $tenant_id, unique_id: $uid})
 WHERE coalesce(n.active, true)
-RETURN coalesce(n.original_file_path, '') AS file_path, n.service_name AS service_name`
+RETURN coalesce(n.original_file_path, '') AS file_path, n.project_name AS project_name`
 
-// GetNodeLocation returns the project-relative source path and owning service
+// GetNodeLocation returns the project-relative source path and owning project
 // of the tenant's node. An unknown or retired unique_id yields
 // domain.ErrNodeNotFound: a retired node runs no source.
 func (r *NodeQueryRepository) GetNodeLocation(ctx context.Context, tenantID, uniqueID string) (*domain.NodeLocation, error) {
@@ -97,8 +97,8 @@ func (r *NodeQueryRepository) GetNodeLocation(ctx context.Context, tenantID, uni
 		}
 		rec := result.Record()
 		fp, _ := recordString(rec, "file_path")
-		svc, _ := recordString(rec, "service_name")
-		return &domain.NodeLocation{FilePath: fp, ServiceName: svc}, nil
+		project, _ := recordString(rec, "project_name")
+		return &domain.NodeLocation{FilePath: fp, ProjectName: project}, nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("GetNodeLocation: %w", err)

@@ -37,7 +37,7 @@ func testLogger() *slog.Logger {
 func validCmd() command.DeployTask {
 	return command.DeployTask{TenantID: "default",
 		TaskID: uuid.New().String(), RunID: uuid.New().String(),
-		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public", TableName: "orders",
+		ScheduleName: "daily", ProjectName: "dbt", SchemaName: "public", TableName: "orders",
 		JobName: "dbt-public-orders", NodeType: "dbt-model", ImageTag: "sha-abc",
 		Attempt: 0,
 	}
@@ -46,7 +46,7 @@ func validCmd() command.DeployTask {
 func validValidationCmd(releaseID, nodeID string) command.ValidationDeployTask {
 	return command.ValidationDeployTask{
 		ReleaseID: releaseID, NodeID: nodeID,
-		ServiceName: "dbt", SchemaName: "public", TableName: "orders",
+		ProjectName: "dbt", SchemaName: "public", TableName: "orders",
 		NodeType: "dbt-model", ImageTag: "sha-cand",
 		JobName: "dbt-validate-public-orders", CandidateSchema: "candidate_rel1",
 	}
@@ -429,12 +429,12 @@ func TestDeploymentsRepository_ListValidationByRelease_And_BlockedPending(t *tes
 	const releaseID = "rel-listval"
 	root := command.ValidationDeployTask{
 		ReleaseID: releaseID, NodeID: "a1", JobName: "ja1",
-		ServiceName: "s", SchemaName: "sc", TableName: "a1",
+		ProjectName: "s", SchemaName: "sc", TableName: "a1",
 		NodeType: "dbt-model", ImageTag: "t", CandidateSchema: "_candidate_rel",
 	}
 	child := command.ValidationDeployTask{
 		ReleaseID: releaseID, NodeID: "a2", JobName: "ja2",
-		ServiceName: "s", SchemaName: "sc", TableName: "a2",
+		ProjectName: "s", SchemaName: "sc", TableName: "a2",
 		NodeType: "dbt-model", ImageTag: "t", CandidateSchema: "_candidate_rel",
 		UpstreamNodeIDs: []string{"a1"},
 	}
@@ -461,7 +461,7 @@ func TestDeploymentsRepository_ListValidationByRelease_And_BlockedPending(t *tes
 func validSeedBuildCmd(releaseID, nodeID string) command.ValidationDeployTask {
 	return command.ValidationDeployTask{
 		ReleaseID: releaseID, NodeID: nodeID,
-		ServiceName: "dbt", SchemaName: "public", TableName: nodeID,
+		ProjectName: "dbt", SchemaName: "public", TableName: nodeID,
 		NodeType: "dbt-seed", ImageTag: "sha-seed",
 		JobName: "dbt-seed-" + nodeID, CandidateSchema: "_candidate_" + releaseID,
 	}
@@ -681,7 +681,7 @@ func TestMigration_DeploymentsHasFailedContainerColumn(t *testing.T) {
 func validCompileCmd(releaseID, nodeID string) command.ValidationDeployTask {
 	return command.ValidationDeployTask{
 		ReleaseID: releaseID, NodeID: nodeID,
-		ServiceName: "dbt", ImageTag: "sha-compile",
+		ProjectName: "dbt", ImageTag: "sha-compile",
 		JobName: "compile-" + nodeID, ManifestS3URI: "s3://bucket/" + releaseID + "/manifest.json",
 	}
 }

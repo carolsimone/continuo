@@ -27,7 +27,7 @@ var oldSchemaStatements = []string{
 	"CREATE CONSTRAINT run_id_unique FOR (r:Run) REQUIRE r.run_id IS UNIQUE",
 	"CREATE CONSTRAINT table_uid_unique FOR (t:Table) REQUIRE t.unique_id IS UNIQUE",
 	"CREATE CONSTRAINT meta_key_unique FOR (m:Meta) REQUIRE m.key IS UNIQUE",
-	"CREATE INDEX table_fqn FOR (t:Table) ON (t.service_name, t.schema_name, t.table_name)",
+	"CREATE INDEX table_fqn FOR (t:Table) ON (t.project_name, t.schema_name, t.table_name)",
 	"CREATE INDEX table_schedule FOR (t:Table) ON (t.schedule_name)",
 	"CREATE INDEX run_schedule FOR (r:Run) ON (r.schedule_name)",
 	"CREATE CONSTRAINT node_version_unique FOR (v:NodeVersion) REQUIRE (v.unique_id, v.content_hash) IS UNIQUE",
@@ -41,7 +41,7 @@ var oldSchemaStatements = []string{
 	"CREATE CONSTRAINT error_signature_unique FOR (s:ErrorSignature) REQUIRE s.signature IS UNIQUE",
 	"CREATE INDEX error_signature_category_reason FOR (s:ErrorSignature) ON (s.category, s.reason)",
 	"CREATE CONSTRAINT proposal_unique FOR (p:Proposal) REQUIRE p.proposal_id IS UNIQUE",
-	"CREATE CONSTRAINT pull_request_unique FOR (p:PullRequest) REQUIRE (p.proposal_id, p.service) IS UNIQUE",
+	"CREATE CONSTRAINT pull_request_unique FOR (p:PullRequest) REQUIRE (p.proposal_id, p.project) IS UNIQUE",
 	"CREATE CONSTRAINT node_unique FOR (n:Node) REQUIRE n.unique_id IS UNIQUE",
 }
 
@@ -55,12 +55,12 @@ const bulkTables = 1001
 // :Meta at promotion_seq 7, versions on the code_version_promoted_at
 // watermark, and the case base. Every node carries the test's marker.
 const seedOldShapeCypher = `
-CREATE (a:Table {unique_id: $m + '.table_a', schema_name: 'analytics', table_name: 'table_a', service_name: 'svc',
+CREATE (a:Table {unique_id: $m + '.table_a', schema_name: 'analytics', table_name: 'table_a', project_name: 'svc',
                  schedule_name: 'daily', active: true, release_id: 'r7',
                  code_version_promoted_at: datetime('2026-10-20T09:00:00Z'), test_marker: $m})
-CREATE (b:Table {unique_id: $m + '.table_b', schema_name: 'analytics', table_name: 'table_b', service_name: 'svc',
+CREATE (b:Table {unique_id: $m + '.table_b', schema_name: 'analytics', table_name: 'table_b', project_name: 'svc',
                  schedule_name: 'daily', active: true, release_id: 'r7', test_marker: $m})
-CREATE (d:Table {unique_id: $m + '.table_d', schema_name: 'analytics', table_name: 'table_d', service_name: 'svc',
+CREATE (d:Table {unique_id: $m + '.table_d', schema_name: 'analytics', table_name: 'table_d', project_name: 'svc',
                  schedule_name: 'daily', active: false, retired_at: datetime('2026-10-25T10:00:00Z'), release_id: 'r6',
                  code_version_promoted_at: datetime('2026-10-18T09:00:00Z'), test_marker: $m})
 CREATE (b)-[:DEPENDS_ON]->(a)
@@ -85,15 +85,15 @@ CREATE (sig:ErrorSignature {signature: $m + '-signature', category: 'compile', r
 CREATE (rej)-[:HAS_SIGNATURE]->(sig)
 CREATE (d)-[:FAILED {release_id: 'r6'}]->(rej)
 CREATE (prop:Proposal {proposal_id: $m + '-proposal', test_marker: $m})
-CREATE (rej)-[:PROPOSED {service: 'svc'}]->(prop)
-CREATE (pr:PullRequest {proposal_id: prop.proposal_id, service: 'svc', state: 'merged', test_marker: $m})
+CREATE (rej)-[:PROPOSED {project: 'svc'}]->(prop)
+CREATE (pr:PullRequest {proposal_id: prop.proposal_id, project: 'svc', state: 'merged', test_marker: $m})
 CREATE (prop)-[:HAS_PR]->(pr)
 CREATE (prop)-[:EDITED {path: 'models/table_d.sql'}]->(d)
 CREATE (rej)-[:RESOLVED_BY]->(vd)
 WITH 1 AS seeded
 UNWIND range(1, $bulk) AS i
 CREATE (:Table {unique_id: $m + '.bulk.' + toString(i), schema_name: 'bulk', table_name: 'bulk_' + toString(i),
-                service_name: 'svc', active: true, release_id: 'r7', test_marker: $m})`
+                project_name: 'svc', active: true, release_id: 'r7', test_marker: $m})`
 
 // oldShapeFixture seeds the old shape under its test's marker on a graph
 // whose constraints and indexes it reset to the old ones. Its cleanup deletes
@@ -258,7 +258,7 @@ func (f *oldShapeFixture) assertMigrated(when string) {
 
 	a := f.one(`MATCH (n:Node {unique_id: $m + '.table_a'}) RETURN properties(n) AS p`)["p"].(map[string]any)
 	for key, want := range map[string]any{
-		"tenant_id": "default", "schema_name": "analytics", "table_name": "table_a", "service_name": "svc",
+		"tenant_id": "default", "schema_name": "analytics", "table_name": "table_a", "project_name": "svc",
 		"schedule_name": "daily", "active": true, "release_id": "r7", "code_version_promotion_seq": int64(7),
 	} {
 		assert.Equal(t, want, a[key], "%s: table_a keeps %s", when, key)

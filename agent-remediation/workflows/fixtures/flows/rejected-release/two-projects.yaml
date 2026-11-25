@@ -1,45 +1,45 @@
-# Two dbt-validation fixes in two services: sales and finance each get a
+# Two dbt-validation fixes in two projects: sales and finance each get a
 # verification run of their own.
 kind: fixture
 version: 1
 flow: rejected-release
-scenario: two_services
+scenario: two_projects
 trigger:
   source: validation
-  release_id: rel-flow-two-services
+  release_id: rel-flow-two-projects
   repo: o/repo
-  commit_sha: sha-two-services
-  code_bundle_uri: s3://continuo/code-bundles/rel-flow-two-services/bundle.json
+  commit_sha: sha-two-projects
+  code_bundle_uri: s3://continuo/code-bundles/rel-flow-two-projects/bundle.json
   nodes:
     - node_id: model.sales.orders
       category: validation
       error_signature: sig-orders-total
       reason: missing_column
       error_excerpt: 'column "total" does not exist'
-      candidate_artifact_uri: s3://candidates/rel-flow-two-services/model.sales.orders.sql
+      candidate_artifact_uri: s3://candidates/rel-flow-two-projects/model.sales.orders.sql
       file_path: models/orders.sql
-      service: sales
+      project: sales
       node_type: dbt-model
     - node_id: model.finance.revenue
       category: validation
       error_signature: sig-revenue-net
       reason: missing_column
       error_excerpt: 'column "net" does not exist'
-      candidate_artifact_uri: s3://candidates/rel-flow-two-services/model.finance.revenue.sql
+      candidate_artifact_uri: s3://candidates/rel-flow-two-projects/model.finance.revenue.sql
       file_path: models/revenue.sql
-      service: finance
+      project: finance
       node_type: dbt-model
-service_repo_paths:
+project_repo_paths:
   sales: services/sales
   finance: services/finance
 objects:
-  s3://candidates/rel-flow-two-services/model.sales.orders.sql: "select id, total from analytics.raw_orders"
-  s3://candidates/rel-flow-two-services/model.finance.revenue.sql: "select sum(net) as revenue from analytics.invoices"
+  s3://candidates/rel-flow-two-projects/model.sales.orders.sql: "select id, total from analytics.raw_orders"
+  s3://candidates/rel-flow-two-projects/model.finance.revenue.sql: "select sum(net) as revenue from analytics.invoices"
 bundle:
   model.sales.orders: { runtime: dbt, raw_code: "select id, total from analytics.raw_orders\n" }
   model.finance.revenue: { runtime: dbt, raw_code: "select sum(net) as revenue from analytics.invoices\n" }
 release:
-  image_tag: sha-two-services
+  image_tag: sha-two-projects
 answers:
   pass:
     - proposed_sql: "select 1"

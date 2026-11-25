@@ -1,7 +1,7 @@
 package domain
 
 // NodeMeta is per-node topology metadata for a single node of a tenant,
-// addressed by its (service, schema, table) identity. TestCountKnown is false
+// addressed by its (project, schema, table) identity. TestCountKnown is false
 // when the node was recorded before its test count was captured; callers must
 // treat that as "unknown", never as zero. Inactive is true for a retired node:
 // a later release dropped it from the current topology, and the graph keeps it

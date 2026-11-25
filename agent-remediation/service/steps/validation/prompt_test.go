@@ -29,7 +29,7 @@ const (
 var (
 	upstreamChanges = []prompt.UpstreamChange{{NodeID: "model.svc.up", Depth: 1, CodeDiff: "<code>"}}
 	precedentList   = []prompt.Precedent{{ReleaseID: "old", NodeID: "n0", ErrorExcerpt: "same error"}}
-	ancestorList    = []prompt.ReleaseUpstreamChange{{NodeID: "model.svc.up", Service: "svc", Depth: 1, Diff: "<diff>"}}
+	ancestorList    = []prompt.ReleaseUpstreamChange{{NodeID: "model.svc.up", Project: "svc", Depth: 1, Diff: "<diff>"}}
 )
 
 func validationEvidence(bundle remediation.CandidateSource) remediation.Evidence {
@@ -44,7 +44,7 @@ func validationEvidence(bundle remediation.CandidateSource) remediation.Evidence
 }
 
 func resolvedBundle() remediation.CandidateSource {
-	return remediation.CandidateSource{Source: modelSource, Origin: "bundle", FilePath: "models/a.sql", Service: "svc"}
+	return remediation.CandidateSource{Source: modelSource, Origin: "bundle", FilePath: "models/a.sql", Project: "svc"}
 }
 
 func stepOne(sql string) ports.ProposeResult {
@@ -244,10 +244,10 @@ func TestDBTValidation_TheDraftsConfidenceIsTheSecondAnswers(t *testing.T) {
 // step handed such evidence is a wiring defect and calls no model.
 func TestDBTValidation_RefusesASourceItCannotLocate(t *testing.T) {
 	cases := map[string]remediation.CandidateSource{
-		"no source":                         {FilePath: "models/a.sql", Service: "svc"},
-		"no file path":                      {Source: modelSource, Service: "svc"},
-		"no service":                        {Source: modelSource, FilePath: "models/a.sql"},
-		"a service with no repository path": {Source: modelSource, FilePath: "models/a.sql", Service: "ghost"},
+		"no source":                         {FilePath: "models/a.sql", Project: "svc"},
+		"no file path":                      {Source: modelSource, Project: "svc"},
+		"no project":                        {Source: modelSource, FilePath: "models/a.sql"},
+		"a project with no repository path": {Source: modelSource, FilePath: "models/a.sql", Project: "ghost"},
 	}
 	for name, bundle := range cases {
 		t.Run(name, func(t *testing.T) {

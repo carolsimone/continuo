@@ -100,12 +100,12 @@ func (f *releasePromotedFixture) scalar(cypher string) any {
 	return v
 }
 
-func modelNode(uid, table, service, image, schedule string, upstreams ...string) topologyartifact.Node {
+func modelNode(uid, table, project, image, schedule string, upstreams ...string) topologyartifact.Node {
 	if upstreams == nil {
 		upstreams = []string{}
 	}
 	return topologyartifact.Node{
-		UniqueID: uid, SchemaName: "public", TableName: table, ServiceName: service,
+		UniqueID: uid, SchemaName: "public", TableName: table, ProjectName: project,
 		NodeType: "dbt-model", ContentHash: "sha256:" + uid, ImageTag: image, Schedule: schedule,
 		UpstreamUniqueIDs: upstreams,
 	}
@@ -113,7 +113,7 @@ func modelNode(uid, table, service, image, schedule string, upstreams ...string)
 
 func seedNode(uid, image, hash string) topologyartifact.Node {
 	return topologyartifact.Node{
-		UniqueID: uid, SchemaName: "seeds", TableName: uid, ServiceName: "svc",
+		UniqueID: uid, SchemaName: "seeds", TableName: uid, ProjectName: "svc",
 		NodeType: "dbt-seed", ContentHash: hash, ImageTag: image, Schedule: "daily",
 		UpstreamUniqueIDs: []string{},
 	}

@@ -42,15 +42,15 @@ func TestImagePackagesStep_ProvidesTheReleasesPackageList(t *testing.T) {
 	assert.Equal(t, map[remediation.EvidenceKey]any{
 		remediation.KeyImagePackages: remediation.ImagePackages(thePackages),
 	}, out.Evidence)
-	assert.Equal(t, [][2]string{{"rel-1", "svc"}}, images.asked, "the rejected release's list, for the failing node's service")
+	assert.Equal(t, [][2]string{{"rel-1", "svc"}}, images.asked, "the rejected release's list, for the failing node's project")
 }
 
 // TestImagePackagesStep_DeclinesWhenTheReleaseRecordsNone covers a release none
-// of whose bundles records the service's package list: it is known before any
+// of whose bundles records the project's package list: it is known before any
 // draft and no draft can change it, so the cluster is declined with the reason
 // before the model is called, and the reason is logged.
 func TestImagePackagesStep_DeclinesWhenTheReleaseRecordsNone(t *testing.T) {
-	noPackages := fmt.Errorf("release rel-1, service svc: %w (the release has no contract bundle)", ports.ErrNoImagePackages)
+	noPackages := fmt.Errorf("release rel-1, project svc: %w (the release has no contract bundle)", ports.ErrNoImagePackages)
 	var logs bytes.Buffer
 
 	out, err := gatherImages(t, &fakeImages{err: noPackages}, slog.New(slog.NewJSONHandler(&logs, nil)))

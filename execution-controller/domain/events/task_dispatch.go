@@ -18,7 +18,7 @@ type TaskDispatch struct {
 	Attempt        int
 	KnownStatus    pkgmodel.AttemptStatus
 	ScheduleName   string
-	ServiceName    string
+	ProjectName    string
 	SchemaName     string
 	TableName      string
 	NodeType       string
@@ -37,7 +37,7 @@ type TaskDispatch struct {
 func (d TaskDispatch) Command() command.DeployTask {
 	return command.DeployTask{
 		TenantID: d.TenantID, TaskID: d.TaskID.String(), RunID: d.RunID.String(), ScheduleName: d.ScheduleName,
-		ServiceName: d.ServiceName, SchemaName: d.SchemaName, TableName: d.TableName, JobName: d.JobName,
+		ProjectName: d.ProjectName, SchemaName: d.SchemaName, TableName: d.TableName, JobName: d.JobName,
 		NodeType: d.NodeType, ImageTag: d.ImageTag, SecretRef: d.SecretRef, Attempt: d.Attempt,
 		Operation: d.Operation, TimeoutSeconds: d.TimeoutSeconds, ContentHash: d.ContentHash,
 		SeedPreflight: d.SeedPreflight,

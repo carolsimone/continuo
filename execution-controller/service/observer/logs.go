@@ -150,16 +150,16 @@ func findingsOf(p *validationresult.Preflight) *seedreload.Findings {
 }
 
 // artifactPath files a Job's log and run results under the node it ran,
-// <service>/<schema>/<table>, or under <service>/compile for a release's
+// <project>/<schema>/<table>, or under <project>/compile for a release's
 // compile leg, which runs no node: an object key may hold no empty segment.
 func artifactPath(d *model.Deployment) string {
 	if d.Mode() == model.ModeProduction {
 		c := d.Command()
-		return fmt.Sprintf("%s/%s/%s", c.ServiceName, c.SchemaName, c.TableName)
+		return fmt.Sprintf("%s/%s/%s", c.ProjectName, c.SchemaName, c.TableName)
 	}
 	vc := d.ValidationCommand()
 	if d.Mode() == model.ModeCompile {
-		return vc.ServiceName + "/compile"
+		return vc.ProjectName + "/compile"
 	}
-	return fmt.Sprintf("%s/%s/%s", vc.ServiceName, vc.SchemaName, vc.TableName)
+	return fmt.Sprintf("%s/%s/%s", vc.ProjectName, vc.SchemaName, vc.TableName)
 }

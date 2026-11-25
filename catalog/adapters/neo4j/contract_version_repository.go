@@ -26,14 +26,14 @@ RETURN uid                                             AS unique_id,
 
 // createMissingContractNodesCypher creates every node of the promotion's
 // contracts the tenant's graph does not hold yet, inactive, with the contract's
-// service and the release's id; it has no retired_at, because it was never
+// project and the release's id; it has no retired_at, because it was never
 // live. A node the graph holds is left as it is: the topology swap owns a
 // node's properties and makes it live when it applies a release that carries
 // it.
 const createMissingContractNodesCypher = `
 UNWIND $nodes AS c
 MERGE (n:Node {tenant_id: $tenant_id, unique_id: c.unique_id})
-ON CREATE SET n.service_name = c.service,
+ON CREATE SET n.project_name = c.project,
               n.release_id   = $release_id,
               n.active       = false`
 
@@ -57,7 +57,7 @@ const writeContractVersionsCypher = `
 UNWIND $versions AS c
 MERGE (v:ContractVersion {tenant_id: $tenant_id, unique_id: c.unique_id, contract_hash: c.contract_hash})
 ON CREATE SET v.family           = c.family,
-              v.service          = c.service,
+              v.project          = c.project,
               v.document         = c.document,
               v.first_release_id = c.first_release_id`
 
@@ -212,14 +212,14 @@ func (r *contractVersionRepository) Write(
 			"unique_id":        v.UniqueID,
 			"contract_hash":    v.ContractHash,
 			"family":           string(v.Family),
-			"service":          v.Service,
+			"project":          v.Project,
 			"document":         document,
 			"first_release_id": v.FirstReleaseID,
 		})
 		if _, dup := seen[v.UniqueID]; !dup {
 			seen[v.UniqueID] = struct{}{}
 			uniqueIDs = append(uniqueIDs, v.UniqueID)
-			nodes = append(nodes, map[string]any{"unique_id": v.UniqueID, "service": v.Service})
+			nodes = append(nodes, map[string]any{"unique_id": v.UniqueID, "project": v.Project})
 		}
 	}
 

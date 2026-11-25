@@ -48,7 +48,7 @@ func NewGateway(baseURL string, evidence ports.EvidenceReader, hc *http.Client) 
 // verificationBody is the POST /verification-runs wire shape.
 type verificationBody struct {
 	RunID             string `json:"run_id"`
-	Service           string `json:"service"`
+	Project           string `json:"project"`
 	ImageTag          string `json:"image_tag"`
 	Kind              string `json:"kind"`
 	VerifiesReleaseID string `json:"verifies_release_id"`
@@ -64,7 +64,7 @@ func (g *Gateway) Submit(ctx context.Context, r ports.VerificationRequest) error
 		return fmt.Errorf("submit verification run %s: kind is required", r.RunID)
 	}
 	raw, err := json.Marshal(verificationBody{
-		RunID: r.RunID, Service: r.Service, ImageTag: r.ImageTag, Kind: r.Kind,
+		RunID: r.RunID, Project: r.Project, ImageTag: r.ImageTag, Kind: r.Kind,
 		VerifiesReleaseID: r.VerifiesReleaseID, Attempt: r.Attempt, SourceOverlayURI: r.SourceOverlayURI,
 	})
 	if err != nil {
@@ -285,15 +285,15 @@ type releaseResponse struct {
 	PerNode              []releaseNodeResult `json:"per_node_results"`
 }
 
-// ImageTag returns image_tags[service] of the candidate release releaseID.
-func (g *Gateway) ImageTag(ctx context.Context, releaseID, service string) (string, error) {
+// ImageTag returns image_tags[project] of the candidate release releaseID.
+func (g *Gateway) ImageTag(ctx context.Context, releaseID, project string) (string, error) {
 	rel, err := g.getRelease(ctx, releaseID)
 	if err != nil {
 		return "", err
 	}
-	tag, ok := rel.ImageTags[service]
+	tag, ok := rel.ImageTags[project]
 	if !ok || tag == "" {
-		return "", fmt.Errorf("release %s has no image tag for service %q", releaseID, service)
+		return "", fmt.Errorf("release %s has no image tag for project %q", releaseID, project)
 	}
 	return tag, nil
 }

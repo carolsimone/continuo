@@ -17,6 +17,15 @@ mkfix(){ # $1 dir  $2 image-tag  $3 dev-pin  $4 prod-pin
 mkfix "$tmp/match" 0.6.0 0.6.0 0.6.0
 bash "$G" "$tmp/match" >/dev/null 2>&1; assert "pins equal to the target pass" "[ $? -eq 0 ]"
 
+mkfix "$tmp/ahead" 0.6.0 0.7.0 0.7.0
+bash "$G" "$tmp/ahead" >/dev/null 2>&1; assert "pins newer than the target pass" "[ $? -eq 0 ]"
+
+mkfix "$tmp/ahead-minor" 0.9.0 0.10.0 0.10.0
+bash "$G" "$tmp/ahead-minor" >/dev/null 2>&1; assert "pins compare as versions, not text (0.10.0 is newer than 0.9.0)" "[ $? -eq 0 ]"
+
+mkfix "$tmp/split" 0.6.0 0.7.0 0.8.0
+bash "$G" "$tmp/split" >/dev/null 2>&1; assert "dev and prod pins that differ fail" "[ $? -ne 0 ]"
+
 mkfix "$tmp/devdrift" 0.6.0 0.4.0 0.6.0
 bash "$G" "$tmp/devdrift" >/dev/null 2>&1; assert "dev pin lagging the target fails" "[ $? -ne 0 ]"
 

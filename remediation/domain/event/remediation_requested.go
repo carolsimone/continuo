@@ -73,15 +73,15 @@ type FailingNode struct {
 	DBTLogURI            string
 	CandidateArtifactURI string
 	FilePath             string
-	Service              string
+	Project              string
 	NodeType             string
-	OtherService         string
+	OtherProject         string
 	OtherFilePath        string
 	// ChangedAncestors are the node's transitive upstream ancestors whose
 	// content changed in the rejected release, stamped by release-controller
 	// from the candidate topology. They let the agent group failures that share
 	// a changed ancestor and target that ancestor with one fix, and each carries
-	// the file path and service the candidate declares for it so the fix edits
+	// the file path and project the candidate declares for it so the fix edits
 	// the ancestor where THIS release holds it.
 	ChangedAncestors []ChangedAncestor
 	// Unfixable is set when the classifier judged that no change to the
@@ -105,6 +105,6 @@ type Unfixable struct {
 type ChangedAncestor struct {
 	NodeID   string
 	FilePath string
-	Service  string
+	Project  string
 	Depth    int
 }

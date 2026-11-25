@@ -33,9 +33,9 @@ func TriggerFromRequested(p events.RemediationRequested) remediation.Trigger {
 			DBTLogURI:            n.DBTLogURI,
 			CandidateArtifactURI: n.CandidateArtifactURI,
 			FilePath:             n.FilePath,
-			Service:              n.Service,
+			Project:              n.Project,
 			NodeType:             n.NodeType,
-			OtherService:         n.OtherService,
+			OtherProject:         n.OtherProject,
 			OtherFilePath:        n.OtherFilePath,
 		}
 		for _, a := range n.ChangedAncestors {
@@ -76,9 +76,9 @@ func requestedFromTrigger(t remediation.Trigger) events.RemediationRequested {
 			DBTLogURI:            n.DBTLogURI,
 			CandidateArtifactURI: n.CandidateArtifactURI,
 			FilePath:             n.FilePath,
-			Service:              n.Service,
+			Project:              n.Project,
 			NodeType:             n.NodeType,
-			OtherService:         n.OtherService,
+			OtherProject:         n.OtherProject,
 			OtherFilePath:        n.OtherFilePath,
 		}
 		for _, a := range n.ChangedAncestors {

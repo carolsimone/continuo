@@ -139,7 +139,7 @@ func newCapturingDispatcher(db *sqlx.DB, dep deploy.Deployer) *deployer.Dispatch
 // pipelineNode is one entry in the canonical validation.requested:v1 nodes[].
 type pipelineNode struct {
 	UniqueID    string `json:"unique_id"`
-	ServiceName string `json:"service_name"`
+	ProjectName string `json:"project_name"`
 	NodeType    string `json:"node_type"`
 	SchemaName  string `json:"schema_name"`
 	TableName   string `json:"table_name"`
@@ -155,7 +155,7 @@ func requestedXMessage(t *testing.T, msgID, releaseID, candidateSchema string, n
 	imageTags := map[string]string{}
 	for _, n := range nodes {
 		order = append(order, n.UniqueID)
-		imageTags[n.ServiceName] = n.ImageTag
+		imageTags[n.ProjectName] = n.ImageTag
 	}
 	body := map[string]any{
 		"release_id":        releaseID,
@@ -248,9 +248,9 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 	releaseID := "rel-pipeline-1"
 	candidateSchema := "_candidate_" + releaseID
 	nodes := []pipelineNode{
-		{UniqueID: "model.shop.orders", ServiceName: "shop", NodeType: "dbt-model", SchemaName: "public", TableName: "orders", ImageTag: "sha-orders"},
-		{UniqueID: "model.shop.customers", ServiceName: "shop", NodeType: "dbt-model", SchemaName: "public", TableName: "customers", ImageTag: "sha-customers"},
-		{UniqueID: "model.shop.line_items", ServiceName: "shop", NodeType: "dbt-model", SchemaName: "public", TableName: "line_items", ImageTag: "sha-line-items"},
+		{UniqueID: "model.shop.orders", ProjectName: "shop", NodeType: "dbt-model", SchemaName: "public", TableName: "orders", ImageTag: "sha-orders"},
+		{UniqueID: "model.shop.customers", ProjectName: "shop", NodeType: "dbt-model", SchemaName: "public", TableName: "customers", ImageTag: "sha-customers"},
+		{UniqueID: "model.shop.line_items", ProjectName: "shop", NodeType: "dbt-model", SchemaName: "public", TableName: "line_items", ImageTag: "sha-line-items"},
 	}
 
 	// Step 2: validation.requested:v1 → one pending validation deployment per node.
@@ -291,7 +291,7 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 		assert.Equal(t, n.NodeType, s.NodeType)
 		assert.Equal(t, n.TableName, s.TableName)
 		assert.Equal(t, n.SchemaName, s.SchemaName)
-		assert.Equal(t, n.ServiceName, s.ServiceName)
+		assert.Equal(t, n.ProjectName, s.ProjectName)
 		assert.Equal(t, n.ImageTag, s.ImageTag)
 		assert.Equal(t, candidateSchema, s.CandidateSchema, "candidate schema threaded to the Job")
 	}
@@ -342,9 +342,9 @@ func TestValidationPipeline_FailurePath(t *testing.T) {
 	releaseID := "rel-pipeline-fail"
 	candidateSchema := "_candidate_" + releaseID
 	nodes := []pipelineNode{
-		{UniqueID: "model.shop.orders", ServiceName: "shop", NodeType: "dbt-model", SchemaName: "public", TableName: "orders", ImageTag: "sha-orders"},
-		{UniqueID: "model.shop.customers", ServiceName: "shop", NodeType: "dbt-model", SchemaName: "public", TableName: "customers", ImageTag: "sha-customers"},
-		{UniqueID: "model.shop.line_items", ServiceName: "shop", NodeType: "dbt-model", SchemaName: "public", TableName: "line_items", ImageTag: "sha-line-items"},
+		{UniqueID: "model.shop.orders", ProjectName: "shop", NodeType: "dbt-model", SchemaName: "public", TableName: "orders", ImageTag: "sha-orders"},
+		{UniqueID: "model.shop.customers", ProjectName: "shop", NodeType: "dbt-model", SchemaName: "public", TableName: "customers", ImageTag: "sha-customers"},
+		{UniqueID: "model.shop.line_items", ProjectName: "shop", NodeType: "dbt-model", SchemaName: "public", TableName: "line_items", ImageTag: "sha-line-items"},
 	}
 
 	requested := newValidationRequestedBinding(db)

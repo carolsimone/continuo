@@ -141,8 +141,8 @@ func TestRunner_AnAllUnfixableRemediationHandsEveryNodeOver(t *testing.T) {
 		parseDetail = "the parser refuses a construct no edit of the source avoids"
 	)
 	h := newHarness(t)
-	orders := remediation.TriggerNode{NodeID: "model.sales.orders", ErrorSignature: "sig-o", NodeType: "dbt-model", Service: "svc-a", FilePath: "models/orders.sql"}
-	items := remediation.TriggerNode{NodeID: "model.sales.items", ErrorSignature: "sig-i", NodeType: "dbt-model", Service: "svc-a", FilePath: "models/items.sql"}
+	orders := remediation.TriggerNode{NodeID: "model.sales.orders", ErrorSignature: "sig-o", NodeType: "dbt-model", Project: "svc-a", FilePath: "models/orders.sql"}
+	items := remediation.TriggerNode{NodeID: "model.sales.items", ErrorSignature: "sig-i", NodeType: "dbt-model", Project: "svc-a", FilePath: "models/items.sql"}
 	trig := trigger("parse",
 		unfixable(orders, model.HandoverReasonClassifierInfra, infraDetail),
 		unfixable(items, model.HandoverReasonClassifierUnhealableParse, parseDetail))
