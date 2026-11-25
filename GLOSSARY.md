@@ -156,6 +156,22 @@ _Avoid_: node trigger, ad-hoc run
 
 ### Fixing a rejected release
 
+**Heal trigger**:
+The request to fix a rejected release, naming every failing node to work on.
+_Avoid_: remediation request, heal event
+
+**Round**:
+One turn of fixing a rejected release. The first rejection starts round 1, and every "Try again" on the release starts the next round.
+_Avoid_: remediation round number, retry
+
+**Unfixable node**:
+A failing node no change to the release's code can fix, such as one that failed for an infrastructure reason. It is handed over without a model ever seeing it.
+_Avoid_: dropped node, skipped node
+
+**Error signature**:
+A failure's error with the parts that change from one release to the next taken out, so the same failure reads the same at every node and in every release.
+_Avoid_: error fingerprint, error hash
+
 **Fix**:
 A change to a rejected release's code that continuo proposes and that has passed a release check, offered to the owner as a pull request.
 _Avoid_: proposal, patch, heal

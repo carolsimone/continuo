@@ -1,18 +1,10 @@
 # agent-remediation
 
-agent-remediation proposes fixes for a rejected release: it groups the release's failures, asks a model for a fix to each group, checks every fix and proves it with a release check before offering it to the owner. The shared words (release, rejection, fix, hand-over, owner, release check) are in the root `GLOSSARY.md`.
+agent-remediation proposes fixes for a rejected release: it groups the release's failures, asks a model for a fix to each group, checks every fix and proves it with a release check before offering it to the owner. The shared words (release, rejection, fix, hand-over, owner, release check, heal trigger, round, unfixable node, error signature) are in the root `GLOSSARY.md`.
 
 ## Language
 
 ### The work on one rejected release
-
-**Heal trigger**:
-The request to fix a rejected release, naming every failing node to work on.
-_Avoid_: remediation request, heal event
-
-**Round**:
-One turn of fixing a rejected release. The first rejection starts round 1, and every "Try again" on the release starts the next round.
-_Avoid_: remediation round number, retry
 
 **Remediation**:
 The whole effort to fix one rejected release in one round, in answer to one heal trigger, made of one or more tries.
@@ -29,10 +21,6 @@ _Avoid_: empty attempt, skipped attempt
 **Cluster**:
 The failing nodes one draft fixes together, because they fail the same way and share the changed node the fix belongs in.
 _Avoid_: group, batch, bucket
-
-**Unfixable node**:
-A failing node no change to the release's code can fix, such as one that failed for an infrastructure reason. It is handed over without a model ever seeing it.
-_Avoid_: dropped node, skipped node
 
 **System failure**:
 The end of a remediation that stopped because continuo itself kept failing, not because no fix was found. Sending its heal trigger again resumes it.
