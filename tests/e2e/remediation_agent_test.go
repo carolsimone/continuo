@@ -260,7 +260,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	// (g) POST /api/remediation/proposals/{id}/pull-request — expect 200 with
 	//     one pull_requests entry from stub-github. ftable_e's fix touches one
 	//     service (service-2), and every edit now carries its cluster's member
-	//     node ids, so PRServices never falls back to the legacy [""] group —
+	//     node ids, so PRServices never falls back to the whole-proposal group [""] —
 	//     the route opens exactly one pull request, attributed to service-2.
 	createPRResp := callCreatePREndpoint(t, ctx, clients.uiBase, proposalID, http.StatusOK)
 	require.Empty(t, createPRResp.Errors, "no per-service group should fail to open a pull request; got %+v", createPRResp.Errors)
@@ -316,12 +316,11 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 
 	// (i) Assert the (proposal, service) child row now reflects pr_state='open',
 	//     a non-empty pr_url, the same pr_number the create call returned, and a
-	//     branch carrying the /<service> suffix BuildBranch appends for a real
-	//     (non-legacy) owning-service group. The parent proposal's singular
-	//     pr_state/pr_url/pr_number columns are not written once a proposal
-	//     enters the per-service split (db/migration/agent_remediation/V17__
-	//     proposal_pull_requests.sql) — every PR-lifecycle read now goes
-	//     through proposal_pull_request, keyed by (proposal_id, service).
+	//     branch carrying the /<service> suffix BuildBranch appends for an
+	//     owning-service group (not the whole-proposal group ""). The parent
+	//     proposal's singular pr_state/pr_url/pr_number columns are not written
+	//     once a proposal enters the per-service split: every PR-lifecycle read
+	//     goes through proposal_pull_request, keyed by (proposal_id, service).
 	finalRow := pollChildPRState(t, ctx, clients, proposalID, changedService, "open", 30*time.Second)
 	require.NotEmpty(t, finalRow.PRUrl, "proposal_pull_request.pr_url must be non-empty")
 	require.Equal(t, pr.PRNumber, finalRow.PRNumber, "the row must record the number the create call returned")
@@ -463,7 +462,7 @@ func TestE2E_AgentRemediation_OpeningSweepRecoversStrandedPR(t *testing.T) {
 	//    proving recovery, not the fail path.
 	//
 	//    This proposal was seeded directly (no edits/member node ids), so
-	//    PRServices reads it as the legacy, unsplit group — service "" — and
+	//    PRServices reads it as the whole-proposal group — service "" — and
 	//    every write BeginPullRequest/the opening sweep make lands on the
 	//    (proposal, "") child row in proposal_pull_request, not on the parent
 	//    proposal's own (unwritten, post-split) pr_* columns.
@@ -499,10 +498,9 @@ func TestE2E_AgentRemediation_OpeningSweepFailsClaimWithoutRepo(t *testing.T) {
 	const attempt = 1
 
 	// 1. A proposed, source-resolved proposal with NO repository, and a child
-	//    pull-request row already in 'opening' with a fresh claim time — the
-	//    shape a legacy row left behind. Seeded directly: the claim path
-	//    itself now refuses such a proposal (asserted below), so the row
-	//    cannot be produced through it.
+	//    pull-request row already in 'opening' with a fresh claim time.
+	//    Seeded directly: the claim path refuses such a proposal (asserted
+	//    below), so the row cannot be produced through it.
 	var proposalID string
 	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &proposalID, `
 		INSERT INTO proposal
@@ -576,10 +574,10 @@ type proposalRow struct {
 
 // prRow captures the PR-lifecycle fields asserted after calling the
 // create-PR endpoint, read from the (proposal, service) child row —
-// proposal_pull_request — the table every pull request's lifecycle now lives
-// on (db/migration/agent_remediation/V17__proposal_pull_requests.sql). The
-// parent proposal's singular pr_* columns stop being written once a proposal
-// enters the per-service split; they remain only for a legacy (pre-split) row.
+// proposal_pull_request — the table every pull request's lifecycle lives on.
+// The parent proposal's singular pr_* columns are not written once a proposal
+// enters the per-service split; only the whole-proposal group "" reads its pull
+// request URL from them, for a proposal with no child row.
 type prRow struct {
 	PRState     string     `db:"pr_state"`
 	PRUrl       string     `db:"pr_url"`

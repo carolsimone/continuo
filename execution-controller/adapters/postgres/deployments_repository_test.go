@@ -662,9 +662,9 @@ func TestAggregateGate_ConcurrentLastNodes_EmitsExactlyOnce(t *testing.T) {
 		"exactly one validation terminal (kind=complete) row — never zero (lost) and never two (double)")
 }
 
-// TestMigration_DeploymentsHasFailedContainerColumn asserts flyway
-// migration V21 ran and created the failed_container column on
-// deployments (the table the mode CHECK constraint targets).
+// TestMigration_DeploymentsHasFailedContainerColumn asserts the execution
+// migrations created the failed_container column on deployments (the table
+// the mode CHECK constraint targets).
 func TestMigration_DeploymentsHasFailedContainerColumn(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()

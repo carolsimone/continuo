@@ -4,10 +4,6 @@ package postgres_test
 
 import (
 	"context"
-	"os"
-	"path/filepath"
-	"regexp"
-	"runtime"
 	"testing"
 	"time"
 
@@ -60,43 +56,4 @@ func TestRepo_ADeploymentKeepsItsTenant(t *testing.T) {
 	var column string
 	require.NoError(t, db.Get(&column, `SELECT tenant_id FROM deployments WHERE id = $1`, leg.ID()))
 	assert.Equal(t, model.ReleaseLegTenantID, column)
-}
-
-// v15WrapQuery extracts the expression and predicate from V15's UPDATE of the
-// report rows of execution_outbox, and evaluates them over a fixture in a
-// read-only SELECT.
-func v15WrapQuery(t *testing.T) string {
-	t.Helper()
-	_, thisFile, _, _ := runtime.Caller(0)
-	repoRoot := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(thisFile))))
-	b, err := os.ReadFile(filepath.Join(repoRoot, "db", "migration", "execution", "V15__deployments_tenant.sql"))
-	require.NoError(t, err)
-	body := regexp.MustCompile(`(?m)^\s*--[^\n]*`).ReplaceAllString(string(b), "")
-	statement := regexp.MustCompile(`(?s)UPDATE\s+execution_outbox\s+SET\s+payload\s*=\s*([^;]+?)\s+WHERE\s+([^;]+)\s*;`)
-	parts := statement.FindStringSubmatch(body)
-	require.Len(t, parts, 3, "V15 must contain the execution_outbox payload UPDATE")
-	return `SELECT (CASE WHEN ` + parts[2] + ` THEN ` + parts[1] + ` ELSE payload END)::text
-		FROM (SELECT $1::jsonb AS payload, $2::text AS event_type) AS fixture`
-}
-
-// V15 stores a task report row written before the migration beside the default
-// tenant, leaves a row that already stores a tenant as it is, and leaves every
-// other event type alone.
-func TestV15_WrapsTheReportRowsThatStoreNoTenant(t *testing.T) {
-	db, cleanup := setupPostgres(t)
-	defer cleanup()
-	query := v15WrapQuery(t)
-	report := `{"run_id":"r","task_id":"t","status":"queued"}`
-	wrapped := `{"tenant_id":"acme","payload":` + report + `}`
-	for name, tc := range map[string]struct{ eventType, input, want string }{
-		"report without a tenant": {"task_status_report", report, `{"tenant_id":"default","payload":` + report + `}`},
-		"report with a tenant":    {"task_status_report", wrapped, wrapped},
-		"release leg row":         {"validation_completed", `{"release_id":"rel"}`, `{"release_id":"rel"}`},
-	} {
-		t.Run(name, func(t *testing.T) {
-			var got string
-			require.NoError(t, db.Get(&got, query, tc.input, tc.eventType))
-			assert.JSONEq(t, tc.want, got)
-		})
-	}
 }

@@ -28,47 +28,48 @@ func TestStartupAdvancesTheQueueBeforeTheConsumersStart(t *testing.T) {
 	}
 }
 
-// release-controller refuses to start on a release database that still has the
-// legacy topology columns, so main.go checks the schema before it serves an API
-// request, runs a startup step or starts a consumer.
+// release-controller refuses to start on a database the release migrations
+// have not built, so main.go checks the schema before it serves an API request,
+// runs a startup step or starts a consumer.
 func TestStartupChecksTheReleaseSchemaFirst(t *testing.T) {
 	src, err := os.ReadFile("main.go")
 	if err != nil {
 		t.Fatalf("read main.go: %v", err)
 	}
 	body := string(src)
-	check := strings.Index(body, "handlers.CheckLegacyTopologyColumnsDropped(")
+	check := strings.Index(body, "handlers.CheckReleaseSchemaInitialized(")
 	if check < 0 {
-		t.Fatal("main.go must call handlers.CheckLegacyTopologyColumnsDropped")
+		t.Fatal("main.go must call handlers.CheckReleaseSchemaInitialized")
 	}
-	for _, later := range []string{"objectstore.New(", "srv.ServeAPI(", "pkgredis.Connect(", "handlers.AdvanceQueue(", `runConsumer("`} {
+	for _, later := range []string{"handlers.CheckNoServiceOnPythonKind(", "objectstore.New(", "srv.ServeAPI(", "pkgredis.Connect(", "handlers.AdvanceQueue(", `runConsumer("`} {
 		at := strings.Index(body, later)
 		if at < 0 {
 			t.Fatalf("expected main.go to contain %q", later)
 		}
 		if check > at {
-			t.Fatalf("main.go must call handlers.CheckLegacyTopologyColumnsDropped before %s", later)
+			t.Fatalf("main.go must call handlers.CheckReleaseSchemaInitialized before %s", later)
 		}
+	}
+
+	// A refusal ends the process: the if block that holds the call exits.
+	block, _, found := strings.Cut(body[check:], "\n\t}\n")
+	if !found || !strings.Contains(block, "os.Exit(") {
+		t.Fatal("main.go must exit when handlers.CheckReleaseSchemaInitialized returns an error")
 	}
 }
 
 // A release database that still holds a service released as kind python is
 // refused before release-controller serves an API request, runs a startup step
-// or starts a consumer. The check reads service_prod, so it comes after the
-// schema check, which refuses a database that has no such table yet.
+// or starts a consumer.
 func TestStartupRefusesPythonKindServicesBeforeAnythingServes(t *testing.T) {
 	src, err := os.ReadFile("main.go")
 	if err != nil {
 		t.Fatalf("read main.go: %v", err)
 	}
 	body := string(src)
-	schema := strings.Index(body, "handlers.CheckLegacyTopologyColumnsDropped(")
 	check := strings.Index(body, "handlers.CheckNoServiceOnPythonKind(")
 	if check < 0 {
 		t.Fatal("main.go must call handlers.CheckNoServiceOnPythonKind")
-	}
-	if check < schema {
-		t.Fatal("main.go must call handlers.CheckNoServiceOnPythonKind after handlers.CheckLegacyTopologyColumnsDropped")
 	}
 	for _, later := range []string{"objectstore.New(", "srv.ServeAPI(", "pkgredis.Connect(", "handlers.AdvanceQueue(", `runConsumer("`} {
 		at := strings.Index(body, later)

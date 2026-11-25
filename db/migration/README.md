@@ -2,24 +2,19 @@
 
 ## Structure
 
-Migrations are organized by service ownership:
+Each service that keeps Postgres owns one database and one directory here:
 
-```
-db/migration/
-├── run_controller/ Run-controller (runs, tasks, task_attempts, run_controller_outbox)
-├── execution/     Execution-controller (message_processing, execution_outbox, cancelled_runs, deployments, validation_aggregates)
-├── dependency/    Dependency-controller (outbox, message_processing, published_messages)
-├── dead_letter/   Dead-letter-controller (dead_letters, dead_letter_outbox)
-```
+| Directory | Database | Service |
+|-----------|----------|---------|
+| `run_controller/` | `continuo_run_controller` | run-controller |
+| `execution/` | `continuo_execution` | execution-controller |
+| `release/` | `continuo_release` | release-controller |
+| `agent_chat/` | `continuo_agent_chat` | agent-chat |
+| `remediation/` | `continuo_remediation` | remediation |
+| `agent_remediation/` | `continuo_agent_remediation` | agent-remediation |
+| `dead_letter/` | `continuo_dead_letter` | dead-letter-controller |
 
-## Database Mapping
-
-| Service | Database | Tables |
-|---------|----------|--------|
-| Run-controller | continuo_run_controller | runs, tasks, task_attempts, run_controller_outbox |
-| Execution-controller | continuo_execution | message_processing, execution_outbox, cancelled_runs, deployments, validation_aggregates |
-| Dependency-controller | continuo_dependency | outbox, message_processing, published_messages |
-| Dead-letter-controller | continuo_dead_letter | dead_letters, dead_letter_outbox |
+Each directory starts with one `V1__` file that builds the whole database: every table as one block (its columns and constraints, then its indexes, triggers and comments), and the rows the services need from the start. A change to a table or column edits that block, or adds the next migration.
 
 `catalog` keeps no Postgres: its graph and its processed-message markers live in Neo4j, so it has no migration directory, no `continuo_*` database and no Flyway job. `TestProvisioning_ListsExactlyTheServicesThatKeepPostgres` (`pkg/deploycheck`) holds every provisioning site (`db/migrate-all.sh`, `db/Dockerfile.migrate`, `db/init-databases.sh`, the chart's db-init loop, the compose Flyway jobs and the directories here) to the same list of services.
 
@@ -47,32 +42,10 @@ docker compose up -d
 
 ## Naming Convention
 
-All migrations follow Flyway standard:
-
-```
-V{version}__{description}.sql
-```
-
-Examples:
-- V1__init_scheduler_tracker.sql
-- V2__add_index_on_status.sql
-
-Version numbers start at 1 within each service directory.
+Migrations follow the Flyway convention, `V{version}__{description}.sql`, with versions counted from 1 within each directory.
 
 ## Creating New Migrations
 
-1. Identify which service owns the table
-2. Create migration in appropriate directory (db/migration/{service}/)
-3. Use next available version number
-4. Follow naming convention
-5. Test migration locally
-6. Commit with descriptive message
-
-## Migration History
-
-- **2026-02-13:** Initial consolidation from scattered migrations
-  - Centralized all migrations to db/migration/
-  - Established logical database separation
-  - Standardized on Flyway naming convention
-
-See `docs/plans/2026-02-13-database-migration-consolidation-design.md` for complete design details.
+1. Find the directory of the service that owns the table.
+2. Add `V{next version}__{description}.sql` there.
+3. Run `make test-deps-up`, which applies every migration to the docker-compose Postgres, then the service's integration tests.

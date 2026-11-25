@@ -163,21 +163,16 @@ func main() {
 	})
 	metricsReg.WatchDB(db.DB, cfg.Postgres.DB)
 
-	// release-controller never reads the columns that held topologies inline,
-	// so it refuses to run on a database that still has them: release migration
-	// V26 has not applied yet, or it refused because rows still need them.
-	// Nothing but the health routes has started yet.
-	if err := handlers.CheckLegacyTopologyColumnsDropped(ctx, postgres.NewLegacyTopologyColumns(db)); err != nil {
+	// release-controller refuses to run on a database the release migrations
+	// have not built. Nothing but the health routes has started yet.
+	if err := handlers.CheckReleaseSchemaInitialized(ctx, postgres.NewReleaseSchema(db)); err != nil {
 		logger.Error("Refusing to start: the release database is not migrated", "error", err)
 		os.Exit(1)
 	}
 
 	// topology-controller reads no contract.yaml, so a service still released
-	// as kind python could not be released again. The release migration V30
-	// stops an upgrade on such a service; with the bundled Postgres the
-	// migration Job is no hook, so this check keeps release-controller from
-	// starting and names the services. Nothing but the health routes has
-	// started yet.
+	// as kind python could not be released again: this check keeps
+	// release-controller from starting and names the services.
 	if err := handlers.CheckNoServiceOnPythonKind(ctx, postgres.NewServiceProdRepository(db)); err != nil {
 		os.Exit(pythonKindCheckExitCode(ctx, logger, err))
 	}

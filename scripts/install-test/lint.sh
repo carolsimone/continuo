@@ -1040,18 +1040,20 @@ if grep -qF "$service_account_note" "${tmp}/notes-install.txt"; then
   echo "FAIL: the install notes carry the ServiceAccount upgrade note"; exit 1
 fi
 
-# An upgrading operator is told once that release kind python is no longer
-# accepted and that the upgrade stops while a service is still released as
-# python; an installing one has no service to move and is told nothing.
-python_kind_note='release kind "python" (contract.yaml) is no longer accepted'
-[ "$(grep -cF "$python_kind_note" "${tmp}/notes-upgrade.txt")" = 1 ] \
-  || { echo "FAIL: the upgrade notes do not say exactly once that release kind python is no longer accepted"; exit 1; }
-grep -qF 'If a service is still released as "python", release it as "python-odcs"' "${tmp}/notes-upgrade.txt" \
-  || { echo "FAIL: the python kind upgrade note does not tell an operator to release a service as python-odcs"; exit 1; }
-grep -qF 'Run helm rollback continuo, release them as "python-odcs", then upgrade again.' "${tmp}/notes-upgrade.txt" \
-  || { echo "FAIL: the python kind upgrade note does not say how to recover with the bundled Postgres"; exit 1; }
-if grep -qF "$python_kind_note" "${tmp}/notes-install.txt"; then
-  echo "FAIL: the install notes carry the python kind upgrade note"; exit 1
+# An upgrading operator is told once to upgrade with empty databases, which
+# five databases to drop, and to release each Python service as python-odcs
+# when it releases its services again; an installing one is told nothing.
+empty_db_note='BREAKING: upgrade with empty databases.'
+[ "$(grep -cF "$empty_db_note" "${tmp}/notes-upgrade.txt")" = 1 ] \
+  || { echo "FAIL: the upgrade notes do not say exactly once to upgrade with empty databases"; exit 1; }
+for db in continuo_run_controller continuo_execution continuo_release continuo_remediation continuo_agent_remediation; do
+  grep -F "$empty_db_note" "${tmp}/notes-upgrade.txt" | grep -qF "$db" \
+    || { echo "FAIL: the empty-database upgrade note does not name ${db}"; exit 1; }
+done
+grep -qF 'release each Python service as "python-odcs"' "${tmp}/notes-upgrade.txt" \
+  || { echo "FAIL: the empty-database upgrade note does not tell an operator to release a Python service as python-odcs"; exit 1; }
+if grep -qF "$empty_db_note" "${tmp}/notes-install.txt"; then
+  echo "FAIL: the install notes carry the empty-database upgrade note"; exit 1
 fi
 # The re-baseline note agrees with deploy/README.md: a Python service is
 # released as python-odcs, built on runtime 0.13.0 or later, and no older

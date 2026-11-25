@@ -7,10 +7,6 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
-	"regexp"
-	"runtime"
 	"testing"
 	"time"
 
@@ -73,17 +69,6 @@ func newTestDB(t *testing.T) *sqlx.DB {
 		}
 	})
 	return db
-}
-
-// agentRemediationMigrationDir locates production SQL for read-only expression
-// checks; tests never execute its migration statements.
-func agentRemediationMigrationDir() (string, error) {
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		return "", fmt.Errorf("runtime.Caller failed: cannot locate production migration SQL")
-	}
-	repoRoot := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(thisFile))))
-	return filepath.Join(repoRoot, "db", "migration", "agent_remediation"), nil
 }
 
 // TestProposalRepositorySourceFixFields inserts a proposal with all three
@@ -2514,52 +2499,6 @@ func TestProposalSchemaVerificationContract(t *testing.T) {
 		WHERE schemaname=current_schema() AND tablename=$1 AND indexname=$2`,
 		"proposal", "idx_proposal_services"))
 	require.Contains(t, indexDefinition, "USING gin (services)")
-}
-
-// TestV18_ConvertsLegacyVerificationRows evaluates the production backfill
-// expressions in read-only SELECTs over legacy JSON fixtures. It verifies
-// service union, verification run IDs, terminal phases and failure summaries
-// without changing the externally migrated schema or executing any migration.
-func TestV18_ConvertsLegacyVerificationRows(t *testing.T) {
-	db := newTestDB(t)
-	dir, err := agentRemediationMigrationDir()
-	require.NoError(t, err)
-	sqlBytes, err := os.ReadFile(filepath.Join(dir, "V18__proposal_verification_phase_and_services.sql"))
-	require.NoError(t, err)
-	services := regexp.MustCompile(`(?s)UPDATE proposal SET services = (.*?);`).FindStringSubmatch(string(sqlBytes))
-	verifications := regexp.MustCompile(`(?s)UPDATE proposal SET verifications = (.*?)\n WHERE`).FindStringSubmatch(string(sqlBytes))
-	require.Len(t, services, 2, "locate the production services expression")
-	require.Len(t, verifications, 2, "locate the production verifications expression")
-	query := `WITH proposal(status, verify_error, trigger_payload, verifications) AS
-		(VALUES ($1::text, $2::text, $3::jsonb, $4::jsonb))
-		SELECT ` + services[1] + ` AS services, ` + verifications[1] + ` AS verifications FROM proposal`
-	for _, fixture := range []struct {
-		status, verifyError, trigger, verifications, wantVerifications string
-		wantServices                                                   []string
-	}{
-		{
-			status: "proposed", verifyError: "", trigger: `{"nodes":[{"service":"core"},{"service":"ops"}]}`,
-			verifications:     `[{"service":"core","kind":"dbt","shadow_release_id":"shadow-rel-1-core-a1"}]`,
-			wantServices:      []string{"core", "ops"},
-			wantVerifications: `[{"service":"core","kind":"dbt","run_id":"shadow-rel-1-core-a1","phase":"passed","activated_at":null,"error":""}]`,
-		},
-		{
-			status: "failed", verifyError: "model.core.orders: boom", trigger: `{}`,
-			verifications:     `[{"service":"core","kind":"dbt","shadow_release_id":"shadow-rel-2-core-a1"}]`,
-			wantServices:      []string{"core"},
-			wantVerifications: `[{"service":"core","kind":"dbt","run_id":"shadow-rel-2-core-a1","phase":"failed","activated_at":null,"error":"model.core.orders: boom"}]`,
-		},
-	} {
-		t.Run(fixture.status, func(t *testing.T) {
-			var got struct {
-				Services      pq.StringArray `db:"services"`
-				Verifications []byte         `db:"verifications"`
-			}
-			require.NoError(t, db.Get(&got, query, fixture.status, fixture.verifyError, fixture.trigger, fixture.verifications))
-			require.Equal(t, pq.StringArray(fixture.wantServices), got.Services)
-			require.JSONEq(t, fixture.wantVerifications, string(got.Verifications))
-		})
-	}
 }
 
 // seedVerifying records one attempt for releaseID parked in 'verifying' with

@@ -7,8 +7,6 @@ cd "$(dirname "$0")/.."
 if git grep -n "python-model" -- \
     ':!db/migration' ':!deploy/continuo/CHANGELOG.md' ':!docs/release-notes.md' ':!docs/superpowers' \
     ':!scripts/check-retired-node-kind.sh' \
-    ':!release-controller/adapters/postgres/node_type_migration_test.go' \
-    ':!execution-controller/adapters/postgres/node_type_migration_test.go' \
     ':!pkg/domain/model/nodetype_guard_test.go' \
     ':!agent-remediation/adapters/repofs/contract_locator.go' \
     ':!agent-remediation/adapters/repofs/contract_locator_test.go' \
