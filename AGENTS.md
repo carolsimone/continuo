@@ -151,6 +151,15 @@ The five default roles as GitHub labels: `needs-triage`, `needs-info`, `ready-fo
 
 Multi-context: `GLOSSARY-MAP.md` lists the shared `GLOSSARY.md` at the root and one `GLOSSARY.md` per component; ADRs are in `carolsimone/arch` `continuo/adr/`. See `docs/agents/domain.md`.
 
+# Retired names
+`retired-names.yaml` at the repository root lists the names the glossary replaced. `TestNoRetiredNames` in `pkg/deploycheck` (run by `make guards`, so by CI on every pull request) fails when a tracked file holds one: code, UI copy, contracts, generated files, migrations or docs. Each failure reads `<file>:<line>: "<old name>" is a retired name; use "<glossary word>"`. Three places keep old names on purpose and are not checked: the `_Avoid_:` lines of every `GLOSSARY.md`, the released sections (`## [x.y.z]`, `## x.y.z`) of `deploy/continuo/CHANGELOG.md` and `docs/release-notes.md`, and the list itself.
+
+A rename pull request adds the old names of its term group to the list, in the same pull request that removes them from the code, so a renamed term cannot come back:
+1. Add one entry per old name under `names`: `pattern` (a Go regular expression the guard wraps in word boundaries, so `foo` does not match `foobar`, `foo_bar` or `fooBar`; case-sensitive unless it starts with `(?i)`), `use` (the glossary word) and, when the name is retired only in some places, `paths` (directories, files or globs from the repository root; `*` and `?` stay within one path segment, `**` crosses segments). The file's header shows an example entry. Because of the word boundaries, the pattern lists the name's code forms itself, for example `attempts?|attempt_\w+|[aA]ttempt[A-Z]\w*` for `attempt`, `attempt_id`, `attemptCount` and `AttemptStatus`, and starts and ends with a letter, digit or `_`.
+2. Run `cd pkg && go test ./deploycheck/ -run TestNoRetiredNames` and rename every occurrence it lists. A word that is right in its own context (a Kubernetes Job, a dbt snapshot, a library's own name) needs a pattern or `paths` that leave it out, not an exemption.
+
+The guard refuses a list it cannot honour: an unknown key, an entry with no `pattern` or `use`, a pattern that does not compile or matches the empty string, and a path that names no tracked file.
+
 # Helm chart versioning (`deploy/continuo/`)
 `release.yml` locks the chart's `version` and `appVersion` together — one `vX.Y.Z` git tag stamps both identically and retags every service image to match, so there is no chart-vs-app compatibility matrix to track. The only thing chart versioning has to protect is: **does an unmodified existing user's `values.yaml`/overrides still produce a working install after `helm upgrade` to the new version?**
 

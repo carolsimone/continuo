@@ -348,9 +348,11 @@ test-topology:
 # self-hosted runner.
 #
 # The tests cover the two Go modules no other test target reaches: pkg (the
-# cross-cutting static guards) and tests/e2e/stub-llm (the canned model the
-# remediation e2e scenarios read as an LLM's answers, whose tests run against
-# the real contract fixtures on disk). GOWORK=off because stub-llm sits under
+# cross-cutting static guards, among them pkg/deploycheck's TestNoRetiredNames,
+# which fails on a name retired-names.yaml lists in any tracked file) and
+# tests/e2e/stub-llm (the canned model the remediation e2e scenarios read as
+# an LLM's answers, whose tests run against the real contract fixtures on
+# disk). GOWORK=off because stub-llm sits under
 # a go.work member but is a module of its own. pkg/lifecycle also runs a second
 # time under -race: its concurrency invariants (Go/Shutdown,
 # RegisterShutdownHandler/Shutdown racing on the shared handler slice) are only

@@ -1,6 +1,8 @@
-// Package deploycheck holds static consistency guards over deploy-time
-// artifacts (migration scripts, Helm values) that cannot be exercised by the
-// e2e suite because e2e always runs against a freshly-initialised database.
+// Package deploycheck holds static consistency guards over the repository's
+// files: deploy-time artifacts (migration scripts, Helm values, compose) that
+// the e2e suite cannot exercise because e2e always runs against a
+// freshly-initialised database, and repository-wide rules such as the
+// retired names of retired-names.yaml.
 package deploycheck
 
 import (

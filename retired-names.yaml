@@ -1,0 +1,35 @@
+# Retired names: the names the glossary replaced (GLOSSARY.md and each
+# component's GLOSSARY.md, listed in GLOSSARY-MAP.md). A retired name may not
+# appear in any tracked file: code, UI copy, contracts, generated files,
+# migrations or docs. TestNoRetiredNames (pkg/deploycheck) fails CI with
+# `<file>:<line>: "<old name>" is a retired name; use "<glossary word>"`.
+#
+# Each entry has:
+#   pattern  a Go regular expression (RE2) for the old name. The guard wraps it
+#            in word boundaries (\b...\b), so `foo` does not match `foobar`,
+#            `foo_bar` or `fooBar`, and does match `foo-bar` and `foo.bar`.
+#            List the code forms of the name in the pattern too, for example
+#            `foos?|foo_\w+|[fF]oo[A-Z]\w*`. Start and end it with a letter,
+#            digit or `_`: a `\b` next to any other character matches only
+#            beside a word character. It is case-sensitive; start it with
+#            (?i) to ignore case.
+#   use      the glossary word to write instead.
+#   paths    optional. The name is retired only in these paths. A path is a
+#            directory or file (`agent-remediation`, `ui/src/client/App.tsx`)
+#            or a glob over the path from the repository root (`*` and `?`
+#            within one path segment, `**` across segments); it covers the
+#            files under a directory it names. Each path must name at least
+#            one tracked file. With no paths the name is retired everywhere.
+#
+# Exempt everywhere: the `_Avoid_:` lines of every GLOSSARY.md, the released
+# sections (`## [x.y.z]`, `## x.y.z`) of deploy/continuo/CHANGELOG.md and
+# docs/release-notes.md, and this file.
+#
+# A rename pull request adds the old names of its term group here, in the
+# same pull request that removes them, so a renamed term cannot come back.
+# Example entry:
+#
+#   - pattern: (?i)widget runs?|widget_?run\w*
+#     use: gadget run
+#     paths: [run-controller, "ui/src/client/**/runs*"]
+names: []
