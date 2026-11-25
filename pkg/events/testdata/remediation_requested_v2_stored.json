@@ -17,19 +17,19 @@
       "dbt_log_uri": "s3://continuo/tenants/default/releases/rel_20261112_0042/validation/analytics.orders_enriched/dbt.log",
       "candidate_artifact_uri": "s3://continuo/tenants/default/releases/rel_20261112_0042/validation/analytics.orders_enriched/candidate.json",
       "file_path": "models/analytics/orders_enriched.sql",
-      "service": "service-1",
+      "project": "service-1",
       "node_type": "dbt-model",
       "changed_ancestors": [
         {
           "node_id": "analytics.customers_clean",
           "file_path": "models/analytics/customers_clean.sql",
-          "service": "service-1",
+          "project": "service-1",
           "depth": 1
         },
         {
           "node_id": "staging.stg_customers",
           "file_path": "models/staging/stg_customers.sql",
-          "service": "service-1",
+          "project": "service-1",
           "depth": 2
         }
       ]
@@ -42,7 +42,7 @@
       "error_excerpt": "division by zero",
       "dbt_log_uri": "s3://continuo/tenants/default/releases/rel_20261112_0042/validation/analytics.daily_revenue/dbt.log",
       "file_path": "models/analytics/daily_revenue.sql",
-      "service": "service-1",
+      "project": "service-1",
       "node_type": "dbt-model"
     }
   ]

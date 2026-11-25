@@ -46,9 +46,9 @@ type RemediationRequestedNode struct {
 	DBTLogURI            string `json:"dbt_log_uri"`
 	CandidateArtifactURI string `json:"candidate_artifact_uri,omitempty"`
 	FilePath             string `json:"file_path,omitempty"`
-	Service              string `json:"service,omitempty"`
+	Project              string `json:"project,omitempty"`
 	NodeType             string `json:"node_type,omitempty"`
-	OtherService         string `json:"other_service,omitempty"`
+	OtherProject         string `json:"other_project,omitempty"`
 	OtherFilePath        string `json:"other_file_path,omitempty"`
 	// ChangedAncestors are the node's transitive upstream ancestors whose
 	// content changed in the rejected release.
@@ -59,12 +59,12 @@ type RemediationRequestedNode struct {
 }
 
 // RemediationRequestedAncestor is one changed upstream of a failing node, with
-// the file path and service the candidate topology declares for it. Depth is
+// the file path and project the candidate topology declares for it. Depth is
 // its distance from the failing node in the dependency graph.
 type RemediationRequestedAncestor struct {
 	NodeID   string `json:"node_id"`
 	FilePath string `json:"file_path,omitempty"`
-	Service  string `json:"service,omitempty"`
+	Project  string `json:"project,omitempty"`
 	Depth    int    `json:"depth"`
 }
 

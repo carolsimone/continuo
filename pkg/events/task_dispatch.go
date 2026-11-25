@@ -24,7 +24,7 @@ type TaskDispatch struct {
 	KnownStatus    model.AttemptStatus `json:"known_status"`
 	ScheduleName   string              `json:"schedule_name"`
 	NodeKey        string              `json:"node_key"`
-	ServiceName    string              `json:"service_name"`
+	ProjectName    string              `json:"project_name"`
 	SchemaName     string              `json:"schema_name"`
 	TableName      string              `json:"table_name"`
 	NodeType       string              `json:"node_type"`

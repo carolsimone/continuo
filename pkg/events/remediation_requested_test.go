@@ -101,8 +101,8 @@ func TestDecodeRemediationRequested_ReadsTheUnfixableMarkAndTheChangedAncestors(
 
 	assert.Nil(t, p.Nodes[0].Unfixable)
 	assert.Equal(t, []events.RemediationRequestedAncestor{
-		{NodeID: "analytics.customers_clean", FilePath: "models/analytics/customers_clean.sql", Service: "service-1", Depth: 1},
-		{NodeID: "staging.stg_customers", FilePath: "models/staging/stg_customers.sql", Service: "service-1", Depth: 2},
+		{NodeID: "analytics.customers_clean", FilePath: "models/analytics/customers_clean.sql", Project: "service-1", Depth: 1},
+		{NodeID: "staging.stg_customers", FilePath: "models/staging/stg_customers.sql", Project: "service-1", Depth: 2},
 	}, p.Nodes[0].ChangedAncestors)
 
 	assert.Equal(t, &events.Unfixable{
@@ -135,7 +135,7 @@ func TestDecodeRemediationRequestedPayload_ReadsAStoredV2Payload(t *testing.T) {
 	assert.Equal(t, "column \"customer_segment\" does not exist", p.Nodes[0].ErrorExcerpt)
 	assert.Equal(t, "dbt-model", p.Nodes[0].NodeType)
 	require.Len(t, p.Nodes[0].ChangedAncestors, 2)
-	assert.Equal(t, events.RemediationRequestedAncestor{NodeID: "staging.stg_customers", FilePath: "models/staging/stg_customers.sql", Service: "service-1", Depth: 2}, p.Nodes[0].ChangedAncestors[1])
+	assert.Equal(t, events.RemediationRequestedAncestor{NodeID: "staging.stg_customers", FilePath: "models/staging/stg_customers.sql", Project: "service-1", Depth: 2}, p.Nodes[0].ChangedAncestors[1])
 	assert.Empty(t, p.Nodes[1].ChangedAncestors)
 }
 

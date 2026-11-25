@@ -42,7 +42,7 @@ type Node struct {
 	SchemaName         string   `json:"schema_name"`
 	TableName          string   `json:"table_name"`
 	ResolvedRelationID string   `json:"resolved_relation_id"`
-	ServiceName        string   `json:"service_name"`
+	ProjectName        string   `json:"project_name"`
 	NodeType           string   `json:"node_type"`
 	TestCount          int      `json:"test_count"`
 	ContentHash        string   `json:"content_hash"`
@@ -123,7 +123,7 @@ func CanonicalJSON(d Document) ([]byte, error) {
 			"schema_name":          n.SchemaName,
 			"table_name":           n.TableName,
 			"resolved_relation_id": n.ResolvedRelationID,
-			"service_name":         n.ServiceName,
+			"project_name":         n.ProjectName,
 			"node_type":            n.NodeType,
 			"test_count":           n.TestCount,
 			"content_hash":         n.ContentHash,

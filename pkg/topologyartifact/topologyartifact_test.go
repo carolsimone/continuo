@@ -216,12 +216,12 @@ func TestDecode_RejectsMalformedObjects(t *testing.T) {
 // duplicate-claims gate reports to the operator; the codec keeps both nodes in
 // input order and leaves the verdict to that gate.
 func TestDecode_KeepsNodesThatShareAUniqueID(t *testing.T) {
-	obj := gz(t, []byte(`{"schema_version":1,"tenant_id":"default","release_id":"r","nodes":[{"unique_id":"a.b","service_name":"one"},{"unique_id":"a.b","service_name":"two"}]}`))
+	obj := gz(t, []byte(`{"schema_version":1,"tenant_id":"default","release_id":"r","nodes":[{"unique_id":"a.b","project_name":"one"},{"unique_id":"a.b","project_name":"two"}]}`))
 	doc, err := topologyartifact.Decode(obj, sha(obj))
 	require.NoError(t, err)
 	require.Len(t, doc.Nodes, 2)
-	assert.Equal(t, "one", doc.Nodes[0].ServiceName)
-	assert.Equal(t, "two", doc.Nodes[1].ServiceName)
+	assert.Equal(t, "one", doc.Nodes[0].ProjectName)
+	assert.Equal(t, "two", doc.Nodes[1].ProjectName)
 }
 
 // The input holds far more nodes than the insertion-sort threshold of an
@@ -235,7 +235,7 @@ func TestCanonicalJSON_KeepsInputOrderForEqualUniqueIDs(t *testing.T) {
 	for i := 0; i < total; i++ {
 		id := ids[(i*7+i/3)%len(ids)]
 		svc := fmt.Sprintf("svc-%02d", i)
-		d.Nodes = append(d.Nodes, topologyartifact.Node{UniqueID: id, ServiceName: svc})
+		d.Nodes = append(d.Nodes, topologyartifact.Node{UniqueID: id, ProjectName: svc})
 		wantByID[id] = append(wantByID[id], svc)
 	}
 	var want []string
@@ -250,11 +250,11 @@ func TestCanonicalJSON_KeepsInputOrderForEqualUniqueIDs(t *testing.T) {
 	var parsed topologyartifact.Document
 	require.NoError(t, json.Unmarshal(got, &parsed))
 	require.Len(t, parsed.Nodes, total)
-	gotServices := make([]string, 0, total)
+	gotProjects := make([]string, 0, total)
 	for _, n := range parsed.Nodes {
-		gotServices = append(gotServices, n.ServiceName)
+		gotProjects = append(gotProjects, n.ProjectName)
 	}
-	assert.Equal(t, want, gotServices)
+	assert.Equal(t, want, gotProjects)
 }
 
 func TestKey(t *testing.T) {

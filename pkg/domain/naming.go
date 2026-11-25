@@ -18,7 +18,7 @@ var (
 const cutHashLen = 6
 
 // ComputeJobName generates the Kubernetes Job name of one attempt of a task:
-// the sanitized {service}-{schema}-{table} prefix, the first 8 characters of
+// the sanitized {project}-{schema}-{table} prefix, the first 8 characters of
 // the run id (runID), and -r{attempt} for every attempt after the first.
 // It follows DNS-1123 label rules: lowercase alphanumerics and hyphens,
 // starting and ending alphanumeric, at most 63 characters.
@@ -38,7 +38,7 @@ const cutHashLen = 6
 // ("<name>.v1", "<name>.v2") differ only at the end of the table name, and
 // can run in one run. A prefix that fits is not cut and carries no hash. A
 // negative attempt, or a name that is empty after sanitization, is an error.
-func ComputeJobName(serviceName, schemaName, tableName, runID string, attempt int) (string, error) {
+func ComputeJobName(projectName, schemaName, tableName, runID string, attempt int) (string, error) {
 	if attempt < 0 {
 		return "", fmt.Errorf("attempt %d is negative", attempt)
 	}
@@ -54,7 +54,7 @@ func ComputeJobName(serviceName, schemaName, tableName, runID string, attempt in
 	}
 
 	// Sanitize only the prefix so truncation never eats the suffix.
-	prefixRaw := fmt.Sprintf("%s-%s-%s", serviceName, schemaName, tableName)
+	prefixRaw := fmt.Sprintf("%s-%s-%s", projectName, schemaName, tableName)
 	prefixRaw = strings.ToLower(prefixRaw)
 	prefix := reInvalidChars.ReplaceAllString(prefixRaw, "-")
 	prefix = reConsecutiveHyphens.ReplaceAllString(prefix, "-")

@@ -48,7 +48,7 @@ type Document struct {
 	ODCSSchemaSHA256  string                       `json:"odcs_schema_sha256"`
 	ContinuoContracts string                       `json:"continuo_contracts"`
 	Ontology          json.RawMessage              `json:"ontology"`
-	Provenance        map[string]ServiceProvenance `json:"provenance"`
+	Provenance        map[string]ProjectProvenance `json:"provenance"`
 	Summary           Summary                      `json:"summary"`
 	Failures          json.RawMessage              `json:"failures"`
 	Timings           json.RawMessage              `json:"timings"`
@@ -58,7 +58,7 @@ type Document struct {
 }
 
 // OntologyVersion names the ontology the bundle's contracts were resolved
-// against: "<release_id>@sha256:<hex>", the release of the ontology service that
+// against: "<release_id>@sha256:<hex>", the release of the ontology project that
 // wrote the file and the SHA-256 of the file's text. It is empty when the
 // bundle names no ontology release: the install's ontology switch was off, or it
 // was on and no ontology was released. A reader never has to tell the two
@@ -77,9 +77,9 @@ func (d Document) OntologyVersion() string {
 	return ontology.ReleaseID + "@sha256:" + ontology.SHA256
 }
 
-// ServiceProvenance records what built a service's Python contracts: the
-// runtime that packed them and the packages of the service's image.
-type ServiceProvenance struct {
+// ProjectProvenance records what built a project's Python contracts: the
+// runtime that packed them and the packages of the project's image.
+type ProjectProvenance struct {
 	ContinuoPythonRuntime string            `json:"continuo_python_runtime"`
 	ImagePackages         map[string]string `json:"image_packages"`
 }
@@ -101,14 +101,14 @@ type Summary struct {
 // node's code fingerprint.
 type Contract struct {
 	Family       model.ContractFamily `json:"family"`
-	Service      string               `json:"service"`
+	Project      string               `json:"project"`
 	ContractHash string               `json:"contract_hash"`
 	ContentHash  string               `json:"content_hash"`
 	Source       Source               `json:"source"`
 	Document     json.RawMessage      `json:"document"`
 }
 
-// Source is the file a contract stands for: its path in the service's
+// Source is the file a contract stands for: its path in the project's
 // repository and the SHA-256 of what it was written from (a Python contract
 // file's text, or the manifest fields the dbt generator read).
 type Source struct {

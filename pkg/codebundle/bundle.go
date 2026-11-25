@@ -46,8 +46,8 @@ type Node struct {
 }
 
 // SharedCodeUnit is one shared-code unit's entry, keyed in Bundle.SharedCode by
-// its service-namespaced unit id ("<service>:<unit id>"). The namespace keeps
-// two services' copies of a same-named unit distinct.
+// its project-namespaced unit id ("<project>:<unit id>"). The namespace keeps
+// two projects' copies of a same-named unit distinct.
 type SharedCodeUnit struct {
 	Source    string   `json:"source"`
 	Checksum  string   `json:"checksum"`

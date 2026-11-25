@@ -125,7 +125,7 @@ streams:
 
   - name: compile.requested:v1
     const: CompileRequestedV1
-    description: release-controller requests the changed service's dbt compile; execution-controller dispatches the compile Job.
+    description: release-controller requests the changed project's dbt compile; execution-controller dispatches the compile Job.
     producers: [release-controller]
     consumers:
       - service: execution-controller
@@ -231,7 +231,7 @@ streams:
 
   - name: remediation.pr_closed:v1
     const: RemediationPrClosedV1
-    description: Terminal PR outcome (merged, or closed without merge), one per (release, attempt, service); merged outcomes carry per-edit amended flags and diffs, and catalog's provenance group draws RESOLVED_BY/EDITED case-base edges from them.
+    description: Terminal PR outcome (merged, or closed without merge), one per (release, attempt, project); merged outcomes carry per-edit amended flags and diffs, and catalog's provenance group draws RESOLVED_BY/EDITED case-base edges from them.
     producers: [agent-remediation]
     consumers:
       - service: catalog
@@ -321,7 +321,7 @@ vocabularies:
       - value: invalid_artifact
         const: InvalidArtifact
         healable: false
-        description: the uploaded manifest or contract is unreadable, empty, of unknown kind, names another service, or declares an invalid node setting.
+        description: the uploaded manifest or contract is unreadable, empty, of unknown kind, names another project, or declares an invalid node setting.
       - value: internal
         const: Internal
         healable: false
@@ -363,7 +363,7 @@ vocabularies:
       - value: invalid_artifact
         const: InvalidArtifact
         healable: false
-        description: a manifest or python contract in the release is unreadable, empty, of unknown kind, names another service, or declares an invalid node setting.
+        description: a manifest or python contract in the release is unreadable, empty, of unknown kind, names another project, or declares an invalid node setting.
       - value: internal_error
         const: InternalError
         healable: false
@@ -372,8 +372,8 @@ vocabularies:
         const: DuplicateTable
         healable: true
         description: two nodes in the candidate topology claim the same warehouse relation.
-      - value: unbuildable_cross_service_upstream
-        const: UnbuildableCrossServiceUpstream
+      - value: unbuildable_cross_project_upstream
+        const: UnbuildableCrossProjectUpstream
         healable: false
         description: a changed node reads an upstream that is absent from the candidate topology, so the candidate schema cannot build it.
       - value: nothing_to_validate
@@ -472,7 +472,7 @@ vocabularies:
         description: a dbt model, seed or snapshot, whose contract topology-controller generates from its manifest entry and its tests.
       - value: python
         const: Python
-        description: a Python node, whose contract its service authors in a file of its repository and packs into odcs-bundle.json.
+        description: a Python node, whose contract its project authors in a file of its repository and packs into odcs-bundle.json.
 
   - name: remediation_source
     const: RemediationSource
@@ -551,7 +551,7 @@ vocabularies:
       - value: python-node
         const: PythonNode
         runtime: python
-        description: a python script node declared in a service contract; its script's run(ctx) returns the table.
+        description: a python script node declared in a project's contract; its script's run(ctx) returns the table.
       - value: python-csv
         const: PythonCsv
         runtime: python
@@ -811,11 +811,11 @@ vocabularies:
       - value: seed_full_refresh_undefined
         const: SeedFullRefreshUndefined
         class: invalid
-        description: the task is a seed full refresh and the dbt-commands block that governs its service defines no seed_full_refresh command; refused before any container starts.
+        description: the task is a seed full refresh and the dbt-commands block that governs its project defines no seed_full_refresh command; refused before any container starts.
       - value: full_refresh_undefined
         const: FullRefreshUndefined
         class: invalid
-        description: the task is a model full refresh and the dbt-commands block that governs its service defines no full_refresh command; refused before any container starts.
+        description: the task is a model full refresh and the dbt-commands block that governs its project defines no full_refresh command; refused before any container starts.
       - value: warehouse_unreachable
         const: WarehouseUnreachable
         class: infra

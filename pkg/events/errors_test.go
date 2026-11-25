@@ -7,7 +7,7 @@ import (
 )
 
 func TestErrPermanent_IsRecognisedViaErrorsIs(t *testing.T) {
-	wrapped := fmt.Errorf("%w: image_tag missing for service svc-1", ErrPermanent)
+	wrapped := fmt.Errorf("%w: image_tag missing for project svc-1", ErrPermanent)
 	if !errors.Is(wrapped, ErrPermanent) {
 		t.Fatalf("expected errors.Is(wrapped, ErrPermanent) == true, got false")
 	}

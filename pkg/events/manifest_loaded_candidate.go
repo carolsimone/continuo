@@ -23,7 +23,7 @@ const (
 type ManifestFailedNode struct {
 	NodeID   string `json:"node_id"`
 	Kind     string `json:"kind"`
-	Service  string `json:"service"`
+	Project  string `json:"project"`
 	FilePath string `json:"file_path"`
 	NodeType string `json:"node_type"`
 	Detail   string `json:"detail"`

@@ -28,14 +28,14 @@ type bundleFixture struct {
 		Contracts      []struct {
 			UniqueID     string          `json:"unique_id"`
 			Family       string          `json:"family"`
-			Service      string          `json:"service"`
+			Project      string          `json:"project"`
 			ContractHash string          `json:"contract_hash"`
 			ContentHash  string          `json:"content_hash"`
 			SourcePath   string          `json:"source_path"`
 			SourceSHA256 string          `json:"source_sha256"`
 			Document     json.RawMessage `json:"document"`
 		} `json:"contracts"`
-		Provenance map[string]contractbundle.ServiceProvenance `json:"provenance"`
+		Provenance map[string]contractbundle.ProjectProvenance `json:"provenance"`
 		Timings    json.RawMessage                             `json:"timings"`
 	} `json:"input"`
 	Canonical string `json:"canonical"`
@@ -95,7 +95,7 @@ func TestDecode_ReadsTheFixture(t *testing.T) {
 		got, ok := doc.Contracts[want.UniqueID]
 		require.True(t, ok, "the contracts are keyed by unique id: %s", want.UniqueID)
 		assert.Equal(t, model.ContractFamily(want.Family), got.Family, want.UniqueID)
-		assert.Equal(t, want.Service, got.Service, want.UniqueID)
+		assert.Equal(t, want.Project, got.Project, want.UniqueID)
 		assert.Equal(t, want.ContractHash, got.ContractHash, want.UniqueID)
 		assert.Equal(t, want.ContentHash, got.ContentHash, want.UniqueID)
 		assert.Equal(t, contractbundle.Source{Path: want.SourcePath, SHA256: want.SourceSHA256}, got.Source, want.UniqueID)
@@ -127,9 +127,9 @@ func TestOntologyVersion_IsEmptyWhenTheBundleNamesNoOntologyRelease(t *testing.T
 	for name, ontology := range map[string]string{
 		"a switch off":                  `null`,
 		"no ontology key":               ``,
-		"a switch on and no ontology":   `{"enabled":true,"service":null,"release_id":null,"sha256":null,"declared_services":[],"findings":[]}`,
-		"a release id and no digest":    `{"enabled":true,"service":"o","release_id":"rel-1","sha256":null}`,
-		"a digest and no release id":    `{"enabled":true,"service":"o","release_id":"","sha256":"ab"}`,
+		"a switch on and no ontology":   `{"enabled":true,"project":null,"release_id":null,"sha256":null,"declared_projects":[],"findings":[]}`,
+		"a release id and no digest":    `{"enabled":true,"project":"o","release_id":"rel-1","sha256":null}`,
+		"a digest and no release id":    `{"enabled":true,"project":"o","release_id":"","sha256":"ab"}`,
 		"an ontology that is no object": `"rel-1"`,
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -20,7 +20,7 @@ const (
 	ParseFailureKindUnqualifiedReference ParseFailureKind = "unqualified_reference"
 	// ParseFailureKindInvalidContract — a dbt node's or python-odcs node's contract breaks the contract rules or, with the ontology switch on, breaks one of the ontology's rules, or a seed's declared columns differ from its CSV header; every invalid contract of the release is named in one failure.
 	ParseFailureKindInvalidContract ParseFailureKind = "invalid_contract"
-	// ParseFailureKindInvalidArtifact — the uploaded manifest or contract is unreadable, empty, of unknown kind, names another service, or declares an invalid node setting.
+	// ParseFailureKindInvalidArtifact — the uploaded manifest or contract is unreadable, empty, of unknown kind, names another project, or declares an invalid node setting.
 	ParseFailureKindInvalidArtifact ParseFailureKind = "invalid_artifact"
 	// ParseFailureKindInternal — continuo's own wiring or an S3 write failed; no change to the user's source will fix it.
 	ParseFailureKindInternal ParseFailureKind = "internal"
@@ -84,14 +84,14 @@ const (
 	RejectReasonUnqualifiedReference RejectReason = "unqualified_reference"
 	// RejectReasonInvalidContract — a dbt node's or python-odcs node's contract in the release breaks the contract rules or, with the ontology switch on, breaks one of the ontology's rules, or a seed's declared columns differ from its CSV header.
 	RejectReasonInvalidContract RejectReason = "invalid_contract"
-	// RejectReasonInvalidArtifact — a manifest or python contract in the release is unreadable, empty, of unknown kind, names another service, or declares an invalid node setting.
+	// RejectReasonInvalidArtifact — a manifest or python contract in the release is unreadable, empty, of unknown kind, names another project, or declares an invalid node setting.
 	RejectReasonInvalidArtifact RejectReason = "invalid_artifact"
 	// RejectReasonInternalError — continuo's own wiring or an S3 access failed while resolving the release.
 	RejectReasonInternalError RejectReason = "internal_error"
 	// RejectReasonDuplicateTable — two nodes in the candidate topology claim the same warehouse relation.
 	RejectReasonDuplicateTable RejectReason = "duplicate_table"
-	// RejectReasonUnbuildableCrossServiceUpstream — a changed node reads an upstream that is absent from the candidate topology, so the candidate schema cannot build it.
-	RejectReasonUnbuildableCrossServiceUpstream RejectReason = "unbuildable_cross_service_upstream"
+	// RejectReasonUnbuildableCrossProjectUpstream — a changed node reads an upstream that is absent from the candidate topology, so the candidate schema cannot build it.
+	RejectReasonUnbuildableCrossProjectUpstream RejectReason = "unbuildable_cross_project_upstream"
 	// RejectReasonNothingToValidate — a fix-verification run's candidate declares no node, so the fix it proposes is unproven.
 	RejectReasonNothingToValidate RejectReason = "nothing_to_validate"
 	// RejectReasonSeedBuildFailed — building the release's candidate seeds failed.
@@ -116,7 +116,7 @@ func RejectReasons() []RejectReason {
 		RejectReasonInvalidArtifact,
 		RejectReasonInternalError,
 		RejectReasonDuplicateTable,
-		RejectReasonUnbuildableCrossServiceUpstream,
+		RejectReasonUnbuildableCrossProjectUpstream,
 		RejectReasonNothingToValidate,
 		RejectReasonSeedBuildFailed,
 		RejectReasonValidationFailed,
@@ -146,7 +146,7 @@ func (v RejectReason) IsValid() bool {
 		return true
 	case RejectReasonDuplicateTable:
 		return true
-	case RejectReasonUnbuildableCrossServiceUpstream:
+	case RejectReasonUnbuildableCrossProjectUpstream:
 		return true
 	case RejectReasonNothingToValidate:
 		return true
@@ -328,7 +328,7 @@ type ContractFamily string
 const (
 	// ContractFamilyDbt — a dbt model, seed or snapshot, whose contract topology-controller generates from its manifest entry and its tests.
 	ContractFamilyDbt ContractFamily = "dbt"
-	// ContractFamilyPython — a Python node, whose contract its service authors in a file of its repository and packs into odcs-bundle.json.
+	// ContractFamilyPython — a Python node, whose contract its project authors in a file of its repository and packs into odcs-bundle.json.
 	ContractFamilyPython ContractFamily = "python"
 )
 
@@ -481,7 +481,7 @@ const (
 	NodeTypeDbtSeed NodeType = "dbt-seed"
 	// NodeTypeDbtSnapshot — a dbt snapshot; built with dbt snapshot.
 	NodeTypeDbtSnapshot NodeType = "dbt-snapshot"
-	// NodeTypePythonNode — a python script node declared in a service contract; its script's run(ctx) returns the table.
+	// NodeTypePythonNode — a python script node declared in a project's contract; its script's run(ctx) returns the table.
 	NodeTypePythonNode NodeType = "python-node"
 	// NodeTypePythonCsv — a contract-only python node that loads its table from one csv uri; it has no script.
 	NodeTypePythonCsv NodeType = "python-csv"
@@ -916,9 +916,9 @@ const (
 	FailureReasonUnownedDependents FailureReason = "unowned_dependents"
 	// FailureReasonEngineMismatch — the validation image's engine adapter declares another drop family than the install's warehouse engine, so the seed preflight cannot tell what a drop destroys; nothing was dropped.
 	FailureReasonEngineMismatch FailureReason = "engine_mismatch"
-	// FailureReasonSeedFullRefreshUndefined — the task is a seed full refresh and the dbt-commands block that governs its service defines no seed_full_refresh command; refused before any container starts.
+	// FailureReasonSeedFullRefreshUndefined — the task is a seed full refresh and the dbt-commands block that governs its project defines no seed_full_refresh command; refused before any container starts.
 	FailureReasonSeedFullRefreshUndefined FailureReason = "seed_full_refresh_undefined"
-	// FailureReasonFullRefreshUndefined — the task is a model full refresh and the dbt-commands block that governs its service defines no full_refresh command; refused before any container starts.
+	// FailureReasonFullRefreshUndefined — the task is a model full refresh and the dbt-commands block that governs its project defines no full_refresh command; refused before any container starts.
 	FailureReasonFullRefreshUndefined FailureReason = "full_refresh_undefined"
 	// FailureReasonWarehouseUnreachable — the seed preflight could not connect to the warehouse; nothing was dropped.
 	FailureReasonWarehouseUnreachable FailureReason = "warehouse_unreachable"
