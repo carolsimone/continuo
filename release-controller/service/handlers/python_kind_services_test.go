@@ -3,9 +3,6 @@ package handlers_test
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
@@ -82,23 +79,4 @@ func TestStartup_ReportsAFailedRead(t *testing.T) {
 	assert.ErrorIs(t, err, boom)
 	var refusal *handlers.PythonKindServicesError
 	assert.False(t, errors.As(err, &refusal), "a failed read is not the python-kind refusal")
-}
-
-// The startup check and release migration V30 tell an operator the same thing:
-// the check's message is the migration's RAISE format with the names in place of
-// its % placeholder. If they differed, the operator would read contradictory
-// advice depending on where the install stopped.
-func TestStartup_MessageMatchesTheMigration(t *testing.T) {
-	_, thisFile, _, ok := runtime.Caller(0)
-	require.True(t, ok, "locate test file")
-	repoRoot := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(thisFile))))
-	matches, err := filepath.Glob(filepath.Join(repoRoot, "db", "migration", "release", "V30__*.sql"))
-	require.NoError(t, err)
-	require.Len(t, matches, 1, "exactly one release migration has version 30")
-	sql, err := os.ReadFile(matches[0])
-	require.NoError(t, err)
-
-	format := (&handlers.PythonKindServicesError{Services: []string{"%"}}).Error()
-	assert.Contains(t, string(sql), "RAISE EXCEPTION '"+format+"', names;",
-		"release migration V30 must raise the message the startup check returns")
 }

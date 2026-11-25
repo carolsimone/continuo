@@ -111,6 +111,12 @@ streamReaper.enabled=false, delete the drained consumer groups after upgrading:
 
 {{- if .Release.IsUpgrade }}
 
+BREAKING: upgrade with empty databases. Each continuo database's migrations are now one baseline, so Flyway refuses a database the earlier migrations built ("Migration checksum mismatch for migration version 1") and the db-init-migrate Job fails.
+Before the upgrade, drop the continuo databases (continuo_run_controller, continuo_execution, continuo_release, continuo_agent_chat, continuo_remediation, continuo_agent_remediation and continuo_dead_letter; not your warehouse). With databaseInit.enabled the Job creates them again; otherwise create each one empty, owned by the migration login (deploy/CREDENTIALS.md). Then release every service again as a bootstrap release.
+{{- end }}
+
+{{- if .Release.IsUpgrade }}
+
 agent-remediation has one engine. If your values set agentRemediation.engine, remove it: the chart no longer accepts the key. The flow file's tries decides how many times a fix is tried; AGENT_REMEDIATION_MAX_ATTEMPTS is no longer read.
 {{- end }}
 
@@ -118,9 +124,7 @@ agent-remediation has one engine. If your values set agentRemediation.engine, re
 
 BREAKING: release kind "python" (contract.yaml) is no longer accepted.
 If a service is still released as "python", release it as "python-odcs" (docs/contracts.md) on a continuo version that accepts it.
-The upgrade stops while a service is still released as "python".
-With your own database, release migration V30 stops the upgrade in the db-init-migrate hook Job, before any pod changes. The Job's log names the services.
-With the bundled Postgres, the Job is not a hook, so the pods roll and release-controller refuses to start. Its log names the services. Run helm rollback {{ .Release.Name }}, release them as "python-odcs", then upgrade again.
+release-controller refuses to start while a service is still released as "python". Its log names the services. Run helm rollback {{ .Release.Name }}, release them as "python-odcs", then upgrade again.
 A run of kind "python" still queued or in flight is rejected invalid_artifact.
 {{- end }}
 

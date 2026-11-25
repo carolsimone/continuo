@@ -11,8 +11,7 @@ import (
 
 // PythonKindServicesError reports that services are still released as kind
 // python (a contract.yaml service). topology-controller reads no contract.yaml,
-// so a release of such a service would fail. Its text is the one release
-// migration V30 raises.
+// so a release of such a service would fail.
 type PythonKindServicesError struct {
 	// Services are the names of those services, sorted ascending.
 	Services []string

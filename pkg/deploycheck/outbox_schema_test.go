@@ -40,56 +40,49 @@ func TestEveryOutboxTableHasClaimIndexesAndNotifyTrigger(t *testing.T) {
 	assert.Equal(t, 6, tables, "outbox tables found under db/migration")
 }
 
-// A rename the catalog model does not follow would pass a migration that leaves
-// an outbox table without its claim indexes or notify trigger. Deleting, from
-// run-controller's migrations, the statement that gives the table, one of its
-// indexes or its trigger the name the service's outbox has must therefore fail
-// the check, one object at a time.
-func TestOutboxCheckFailsWhenARenameIsDeleted(t *testing.T) {
+// The check reads the migrations as committed, so deleting, from
+// run-controller's migrations, the statement that creates one of its outbox
+// table's indexes or its trigger must fail it, one object at a time.
+func TestOutboxCheckFailsWhenACreateIsDeleted(t *testing.T) {
 	dir := filepath.Join(repoRoot(t), "db", "migration", "run_controller")
 	assert.Empty(t, catalogOf(readMigrations(t, dir)).problems(), "the migrations as committed")
 
 	const table = "run_controller_outbox"
 	for _, tc := range []struct {
 		name    string
-		rename  *regexp.Regexp // the statement to delete
+		create  *regexp.Regexp // the statement to delete
 		problem string         // what the check must then report
 	}{
 		{
-			"the claim index rename",
-			regexp.MustCompile(`^ALTER INDEX \S+ RENAME TO idx_` + table + `_claimable$`),
+			"the claim index",
+			regexp.MustCompile(`^CREATE INDEX idx_` + table + `_claimable ON `),
 			"lacks index idx_" + table + "_claimable",
 		},
 		{
-			"the open-by-aggregate index rename",
-			regexp.MustCompile(`^ALTER INDEX \S+ RENAME TO idx_` + table + `_open_by_aggregate$`),
+			"the open-by-aggregate index",
+			regexp.MustCompile(`^CREATE INDEX idx_` + table + `_open_by_aggregate ON `),
 			"lacks index idx_" + table + "_open_by_aggregate",
 		},
 		{
-			"the failed index rename",
-			regexp.MustCompile(`^ALTER INDEX \S+ RENAME TO idx_` + table + `_failed$`),
+			"the failed index",
+			regexp.MustCompile(`^CREATE INDEX idx_` + table + `_failed ON `),
 			"lacks index idx_" + table + "_failed",
 		},
 		{
-			"the trigger rename",
-			regexp.MustCompile(`^ALTER TRIGGER \S+ ON ` + table + ` RENAME TO ` + table + `_notify$`),
+			"the notify trigger",
+			regexp.MustCompile(`^CREATE TRIGGER ` + table + `_notify `),
 			"lacks trigger " + table + "_notify",
-		},
-		{
-			"the table rename",
-			regexp.MustCompile(`^ALTER TABLE \S+ RENAME TO ` + table + `$`),
-			"lacks index",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var edited []migration
 			removed := 0
 			for _, m := range readMigrations(t, dir) {
-				without, n := dropStatements(m.sql, tc.rename)
+				without, n := dropStatements(m.sql, tc.create)
 				removed += n
 				edited = append(edited, migration{m.version, m.name, without})
 			}
-			require.Equal(t, 1, removed, "exactly one migration statement matches %s: update this test with the migration", tc.rename)
+			require.Equal(t, 1, removed, "exactly one migration statement matches %s: update this test with the migration", tc.create)
 
 			problems := catalogOf(edited).problems()
 			require.NotEmpty(t, problems, "the check accepted a database without %s", tc.name)

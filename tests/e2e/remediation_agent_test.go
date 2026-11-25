@@ -319,9 +319,8 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	//     branch carrying the /<service> suffix BuildBranch appends for a real
 	//     (non-legacy) owning-service group. The parent proposal's singular
 	//     pr_state/pr_url/pr_number columns are not written once a proposal
-	//     enters the per-service split (db/migration/agent_remediation/V17__
-	//     proposal_pull_requests.sql) — every PR-lifecycle read now goes
-	//     through proposal_pull_request, keyed by (proposal_id, service).
+	//     enters the per-service split: every PR-lifecycle read goes through
+	//     proposal_pull_request, keyed by (proposal_id, service).
 	finalRow := pollChildPRState(t, ctx, clients, proposalID, changedService, "open", 30*time.Second)
 	require.NotEmpty(t, finalRow.PRUrl, "proposal_pull_request.pr_url must be non-empty")
 	require.Equal(t, pr.PRNumber, finalRow.PRNumber, "the row must record the number the create call returned")
@@ -576,9 +575,8 @@ type proposalRow struct {
 
 // prRow captures the PR-lifecycle fields asserted after calling the
 // create-PR endpoint, read from the (proposal, service) child row —
-// proposal_pull_request — the table every pull request's lifecycle now lives
-// on (db/migration/agent_remediation/V17__proposal_pull_requests.sql). The
-// parent proposal's singular pr_* columns stop being written once a proposal
+// proposal_pull_request — the table every pull request's lifecycle lives on.
+// The parent proposal's singular pr_* columns stop being written once a proposal
 // enters the per-service split; they remain only for a legacy (pre-split) row.
 type prRow struct {
 	PRState     string     `db:"pr_state"`
