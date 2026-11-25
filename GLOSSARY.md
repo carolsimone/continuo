@@ -82,6 +82,30 @@ _Avoid_: job, step, node run
 One try at a task. A task that fails for a reason worth retrying gets another attempt.
 _Avoid_: retry, job, execution
 
+**Operation**:
+What a task does at its node: run it, test it, build it (run then test), or full-refresh it.
+_Avoid_: command, mode, action
+
+**Full refresh**:
+The operation that rebuilds a node's table from nothing instead of adding to it. For a seed it drops and reloads the table.
+_Avoid_: rebuild, reset, reload
+
+**Dispatch**:
+Handing one attempt of a task to the component that runs it.
+_Avoid_: send, enqueue, schedule
+
+**Failure class**:
+Why an attempt failed, in the words that decide whether it is tried again: the task's own code, resources, infrastructure, a pod that never started, a timeout, or an invalid request.
+_Avoid_: error type, failure kind
+
+**Seed reload**:
+The load of a seed whose content changed. A load that drops the seed's table also takes away every view built on it, so the same run rebuilds them.
+_Avoid_: seed refresh, seed promotion
+
+**Dependents check**:
+The check, before a seed reload drops the seed's table, that lists every object in the warehouse reading that table. It stops the load when an object continuo does not rebuild would break, unless an operator has acknowledged that object.
+_Avoid_: seed preflight, preflight, pre-flight
+
 **Rerun**:
 A new run that executes again the nodes a failed or cancelled run did not finish, and the nodes below them, on that run's own release.
 _Avoid_: rerun failed, rerun on this snapshot, retry
