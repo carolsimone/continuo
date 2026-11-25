@@ -162,7 +162,7 @@ func (r *ScheduleGraphRepository) stampLastRuns(ctx context.Context, tenantID st
 
 // builtNodeTypeNames returns, as topology_nodes stores them, the node types
 // model.BuiltNodeTypes names: the types the node list, its name suggestions
-// and its service list read. A row of any other type, an unknown-external
+// and its project list read. A row of any other type, an unknown-external
 // node under any of its names or a dbt test, is never listed.
 func builtNodeTypeNames() []string {
 	types := model.BuiltNodeTypes()

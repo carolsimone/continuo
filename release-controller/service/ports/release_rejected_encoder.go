@@ -35,7 +35,7 @@ const (
 	// node references an upstream absent from the candidate topology. It
 	// names only the release, the reason and the offending edges: there is no
 	// per-node evidence a fixer could act on.
-	RejectionShapeUnbuildableUpstream RejectionShape = "unbuildable_cross_service_upstream"
+	RejectionShapeUnbuildableUpstream RejectionShape = "unbuildable_cross_project_upstream"
 )
 
 // ChangedAncestor is one changed upstream of a failing validation node,
@@ -45,7 +45,7 @@ const (
 type ChangedAncestor struct {
 	NodeID   string
 	FilePath string
-	Service  string
+	Project  string
 	Depth    int
 }
 
@@ -62,11 +62,11 @@ type RejectedNode struct {
 	Kind   string
 	Detail string
 
-	// FilePath, Service and NodeType locate the node's source. The parse,
+	// FilePath, Project and NodeType locate the node's source. The parse,
 	// seed-build, validation and duplicate-table legs resolve them from the
 	// candidate topology; the compile leg does not carry them.
 	FilePath string
-	Service  string
+	Project  string
 	NodeType string
 
 	// DBTLogURI and RunResultsURI point at the artifacts of the job that
@@ -83,11 +83,11 @@ type RejectedNode struct {
 	// cloned empty from its production table. Only the validation leg sets it.
 	ValidationOp pkg_model.ValidationOp
 
-	// RelationID, OtherService and OtherFilePath describe a duplicate-table
+	// RelationID, OtherProject and OtherFilePath describe a duplicate-table
 	// collision: the contested relation, and the competing claimant that a
 	// rename must move away from.
 	RelationID    string
-	OtherService  string
+	OtherProject  string
 	OtherFilePath string
 
 	// ChangedAncestors lists the changed upstreams that may be the root cause
@@ -119,7 +119,7 @@ type ReleaseRejection struct {
 	FailingNodes []string
 	PerNode      []RejectedNode
 
-	// Repo and CommitSHA identify the source the changed service ships from,
+	// Repo and CommitSHA identify the source the changed project ships from,
 	// and CodeBundleURI the packaged copy of it, so a consumer can read the
 	// files the failing nodes are declared in.
 	Repo          string

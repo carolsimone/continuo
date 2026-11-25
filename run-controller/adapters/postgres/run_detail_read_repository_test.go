@@ -129,9 +129,9 @@ func TestNodeReadRepository_ReadsTheTenantsNodes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, history)
 
-	services, err := nodes.ListNodeServices(ctx, acmeTenant)
+	projects, err := nodes.ListNodeProjects(ctx, acmeTenant)
 	require.NoError(t, err)
-	assert.Contains(t, services, "service-1")
+	assert.Contains(t, projects, "service-1")
 
 	nodeList, total, err := nodes.ListNodes(ctx, acmeTenant, table, "", "", false, 10, 0)
 	require.NoError(t, err)

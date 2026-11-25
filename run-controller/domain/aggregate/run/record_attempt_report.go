@@ -193,7 +193,7 @@ func (r *Run) dispatchNextAttempt(ctx context.Context, tasks TaskCollection, gra
 		return nil, fmt.Errorf("retry task %s: release %s holds no node %s", taskID, r.release.ReleaseID, task.NodeKey)
 	}
 	next := task.Attempt + 1
-	jobName, err := domain.ComputeJobName(task.ServiceName, task.SchemaName, task.TableName, r.runID.String(), int(next))
+	jobName, err := domain.ComputeJobName(task.ProjectName, task.SchemaName, task.TableName, r.runID.String(), int(next))
 	if err != nil {
 		return nil, fmt.Errorf("name attempt %d of task %s: %w", next, taskID, err)
 	}

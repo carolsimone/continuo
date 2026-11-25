@@ -10,7 +10,7 @@ import (
 func failed(ids ...string) []FailedNode {
 	nodes := make([]FailedNode, len(ids))
 	for i, id := range ids {
-		nodes[i] = FailedNode{NodeID: id, Service: "svc"}
+		nodes[i] = FailedNode{NodeID: id, Project: "svc"}
 	}
 	return nodes
 }
@@ -34,29 +34,29 @@ func concat(groups ...[]FailedNode) []FailedNode {
 func numberedNodes(n int) []FailedNode {
 	nodes := make([]FailedNode, n)
 	for i := range nodes {
-		nodes[i] = FailedNode{NodeID: fmt.Sprintf("n%d", i+1), Service: "svc"}
+		nodes[i] = FailedNode{NodeID: fmt.Sprintf("n%d", i+1), Project: "svc"}
 	}
 	return nodes
 }
 
-func TestSummarizeValidationFailure_NamesTheFailedNodeAndItsService(t *testing.T) {
+func TestSummarizeValidationFailure_NamesTheFailedNodeAndItsProject(t *testing.T) {
 	got := SummarizeValidationFailure(133,
-		[]FailedNode{{NodeID: "analytics.daily_transactions", Service: "core"}}, nil)
+		[]FailedNode{{NodeID: "analytics.daily_transactions", Project: "core"}}, nil)
 
 	assert.Equal(t, "1 of 133 nodes failed validation: analytics.daily_transactions (core)", got)
 }
 
 func TestSummarizeValidationFailure_JoinsSeveralNodesWithAnd(t *testing.T) {
 	got := SummarizeValidationFailure(10, []FailedNode{
-		{NodeID: "a", Service: "core"},
-		{NodeID: "b", Service: "finance"},
-		{NodeID: "c", Service: "finance"},
+		{NodeID: "a", Project: "core"},
+		{NodeID: "b", Project: "finance"},
+		{NodeID: "c", Project: "finance"},
 	}, nil)
 
 	assert.Equal(t, "3 of 10 nodes failed validation: a (core), b (finance) and c (finance)", got)
 }
 
-func TestSummarizeValidationFailure_OmitsTheServiceWhenTheTopologyDoesNotNameOne(t *testing.T) {
+func TestSummarizeValidationFailure_OmitsTheProjectWhenTheTopologyDoesNotNameOne(t *testing.T) {
 	got := SummarizeValidationFailure(4, []FailedNode{{NodeID: "orphan"}}, nil)
 
 	assert.Equal(t, "1 of 4 nodes failed validation: orphan", got)
@@ -129,8 +129,8 @@ func TestSummarizeValidationFailure_SaysSoWhenOnlySkippedNodesWereRecorded(t *te
 
 func TestSummarizeValidationFailure_NamesTheChangedUpstreamNearestFirst(t *testing.T) {
 	got := SummarizeValidationFailure(10, failed("a"), []ChangedAncestor{
-		{NodeID: "far", Service: "finance", Depth: 3},
-		{NodeID: "near", Service: "core", Depth: 1},
+		{NodeID: "far", Project: "finance", Depth: 3},
+		{NodeID: "near", Project: "core", Depth: 1},
 	})
 
 	assert.Equal(t,
@@ -140,8 +140,8 @@ func TestSummarizeValidationFailure_NamesTheChangedUpstreamNearestFirst(t *testi
 
 func TestSummarizeValidationFailure_BreaksADepthTieById(t *testing.T) {
 	got := SummarizeValidationFailure(10, failed("a"), []ChangedAncestor{
-		{NodeID: "z", Service: "s", Depth: 1},
-		{NodeID: "m", Service: "s", Depth: 1},
+		{NodeID: "z", Project: "s", Depth: 1},
+		{NodeID: "m", Project: "s", Depth: 1},
 	})
 
 	assert.Contains(t, got, "changed upstream of the failing nodes: m (s) and z (s)")
@@ -151,9 +151,9 @@ func TestSummarizeValidationFailure_ListsASharedAncestorOnceAtItsNearestDepth(t 
 	// Two failing nodes reach the same changed ancestor: once directly, once
 	// through a longer path. It is one upstream node, not two.
 	got := SummarizeValidationFailure(10, failed("a", "b"), []ChangedAncestor{
-		{NodeID: "x", Service: "finance", Depth: 4},
-		{NodeID: "y", Service: "core", Depth: 2},
-		{NodeID: "x", Service: "finance", Depth: 1},
+		{NodeID: "x", Project: "finance", Depth: 4},
+		{NodeID: "y", Project: "core", Depth: 2},
+		{NodeID: "x", Project: "finance", Depth: 1},
 	})
 
 	assert.Contains(t, got, "changed upstream of the failing nodes: x (finance) and y (core)")
@@ -163,8 +163,8 @@ func TestSummarizeValidationFailure_DoesNotRepeatAFailedNodeAsUpstream(t *testin
 	// b failed and so did its changed ancestor a: a is already named as failing.
 	// Only a changed ancestor that did not fail adds information.
 	got := SummarizeValidationFailure(10, failed("a", "b"), []ChangedAncestor{
-		{NodeID: "a", Service: "svc", Depth: 1},
-		{NodeID: "x", Service: "finance", Depth: 2},
+		{NodeID: "a", Project: "svc", Depth: 1},
+		{NodeID: "x", Project: "finance", Depth: 2},
 	})
 
 	assert.Equal(t,
@@ -176,8 +176,8 @@ func TestSummarizeValidationFailure_DoesNotListASkippedNodeAsUpstream(t *testing
 	// A skipped ancestor never ran: it is a consequence of the failure upstream
 	// of it, not a change that broke anything.
 	got := SummarizeValidationFailure(10, concat(failed("f"), skipped("s")), []ChangedAncestor{
-		{NodeID: "s", Service: "svc", Depth: 1},
-		{NodeID: "x", Service: "finance", Depth: 2},
+		{NodeID: "s", Project: "svc", Depth: 1},
+		{NodeID: "x", Project: "finance", Depth: 2},
 	})
 
 	assert.Contains(t, got, "changed upstream of the failing nodes: x (finance)")
@@ -186,7 +186,7 @@ func TestSummarizeValidationFailure_DoesNotListASkippedNodeAsUpstream(t *testing
 
 func TestSummarizeValidationFailure_OmitsTheUpstreamClauseWhenEveryAncestorFailed(t *testing.T) {
 	got := SummarizeValidationFailure(10, failed("a", "b"), []ChangedAncestor{
-		{NodeID: "a", Service: "svc", Depth: 1},
+		{NodeID: "a", Project: "svc", Depth: 1},
 	})
 
 	assert.Equal(t, "2 of 10 nodes failed validation: a (svc) and b (svc)", got)
@@ -195,7 +195,7 @@ func TestSummarizeValidationFailure_OmitsTheUpstreamClauseWhenEveryAncestorFaile
 func TestSummarizeValidationFailure_NamesAtMostThreeUpstreamNodesAndCountsTheRest(t *testing.T) {
 	ancestors := make([]ChangedAncestor, 6)
 	for i := range ancestors {
-		ancestors[i] = ChangedAncestor{NodeID: fmt.Sprintf("u%d", i+1), Service: "s", Depth: i + 1}
+		ancestors[i] = ChangedAncestor{NodeID: fmt.Sprintf("u%d", i+1), Project: "s", Depth: i + 1}
 	}
 
 	got := SummarizeValidationFailure(10, failed("a"), ancestors)
@@ -240,7 +240,7 @@ func BenchmarkSummarizeValidationFailure(b *testing.B) {
 	nodes := concat(skipped(skippedIDs...), numberedNodes(10_000))
 	ancestors := make([]ChangedAncestor, 50_000)
 	for i := range ancestors {
-		ancestors[i] = ChangedAncestor{NodeID: fmt.Sprintf("u%d", i%2_000), Service: "svc", Depth: i%7 + 1}
+		ancestors[i] = ChangedAncestor{NodeID: fmt.Sprintf("u%d", i%2_000), Project: "svc", Depth: i%7 + 1}
 	}
 
 	b.ReportAllocs()
@@ -251,15 +251,15 @@ func BenchmarkSummarizeValidationFailure(b *testing.B) {
 
 func TestSummarizeSeedFailure_NamesTheSeedsThatDidNotBuild(t *testing.T) {
 	got := SummarizeSeedFailure([]FailedNode{
-		{NodeID: "seed_a", Service: "finance"},
-		{NodeID: "seed_b", Service: "core"},
+		{NodeID: "seed_a", Project: "finance"},
+		{NodeID: "seed_b", Project: "core"},
 	})
 
 	assert.Equal(t, "2 seeds did not build: seed_a (finance) and seed_b (core)", got)
 }
 
 func TestSummarizeSeedFailure_SingularForOneSeed(t *testing.T) {
-	got := SummarizeSeedFailure([]FailedNode{{NodeID: "seed_a", Service: "finance"}})
+	got := SummarizeSeedFailure([]FailedNode{{NodeID: "seed_a", Project: "finance"}})
 
 	assert.Equal(t, "1 seed did not build: seed_a (finance)", got)
 }

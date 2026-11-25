@@ -12,7 +12,7 @@ import (
 )
 
 // ServiceProdRepository is the Postgres-backed implementation of
-// repository.ServiceProdRepository. It owns the per-service production pointer
+// repository.ServiceProdRepository. It owns the per-project production pointer
 // rows in the service_prod table.
 type ServiceProdRepository struct{ q Queryer }
 
@@ -27,7 +27,7 @@ var _ repository.ServiceProdRepository = (*ServiceProdRepository)(nil)
 
 // serviceProdRow is the scan target for SELECT queries against the service_prod table.
 type serviceProdRow struct {
-	ServiceName   string    `db:"service_name"`
+	ProjectName   string    `db:"project_name"`
 	ReleaseID     string    `db:"release_id"`
 	ManifestS3Key string    `db:"manifest_s3_key"`
 	ImageTag      string    `db:"image_tag"`
@@ -35,12 +35,12 @@ type serviceProdRow struct {
 	UpdatedAt     time.Time `db:"updated_at"`
 }
 
-// List returns all per-service production pointers ordered by service name.
+// List returns all per-project production pointers ordered by project name.
 func (r *ServiceProdRepository) List(ctx context.Context) ([]*release.ServiceProd, error) {
 	rows, err := r.q.QueryxContext(ctx,
-		`SELECT service_name, release_id, manifest_s3_key, image_tag, manifest_kind, updated_at
+		`SELECT project_name, release_id, manifest_s3_key, image_tag, manifest_kind, updated_at
 		   FROM service_prod
-		  ORDER BY service_name`)
+		  ORDER BY project_name`)
 	if err != nil {
 		return nil, fmt.Errorf("list service_prod: %w", err)
 	}
@@ -52,7 +52,7 @@ func (r *ServiceProdRepository) List(ctx context.Context) ([]*release.ServicePro
 		if err := rows.StructScan(&row); err != nil {
 			return nil, fmt.Errorf("scan service_prod row: %w", err)
 		}
-		out = append(out, release.NewServiceProd(row.ServiceName, row.ReleaseID, row.ManifestS3Key, row.ImageTag, release.ManifestKind(row.ManifestKind), row.UpdatedAt))
+		out = append(out, release.NewServiceProd(row.ProjectName, row.ReleaseID, row.ManifestS3Key, row.ImageTag, release.ManifestKind(row.ManifestKind), row.UpdatedAt))
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate service_prod rows: %w", err)
@@ -60,50 +60,50 @@ func (r *ServiceProdRepository) List(ctx context.Context) ([]*release.ServicePro
 	return out, nil
 }
 
-// Get returns the production pointer for the named service. When no row exists
-// for that service, (nil, nil) is returned — not an error.
-func (r *ServiceProdRepository) Get(ctx context.Context, serviceName string) (*release.ServiceProd, error) {
+// Get returns the production pointer for the named project. When no row exists
+// for that project, (nil, nil) is returned — not an error.
+func (r *ServiceProdRepository) Get(ctx context.Context, projectName string) (*release.ServiceProd, error) {
 	var row serviceProdRow
 	err := r.q.GetContext(ctx, &row,
-		`SELECT service_name, release_id, manifest_s3_key, image_tag, manifest_kind, updated_at
+		`SELECT project_name, release_id, manifest_s3_key, image_tag, manifest_kind, updated_at
 		   FROM service_prod
-		  WHERE service_name = $1`, serviceName)
+		  WHERE project_name = $1`, projectName)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("get service_prod %q: %w", serviceName, err)
+		return nil, fmt.Errorf("get service_prod %q: %w", projectName, err)
 	}
-	return release.NewServiceProd(row.ServiceName, row.ReleaseID, row.ManifestS3Key, row.ImageTag, release.ManifestKind(row.ManifestKind), row.UpdatedAt), nil
+	return release.NewServiceProd(row.ProjectName, row.ReleaseID, row.ManifestS3Key, row.ImageTag, release.ManifestKind(row.ManifestKind), row.UpdatedAt), nil
 }
 
-// Upsert inserts or updates the production pointer for the service recorded in
-// sp. If a row already exists for sp.ServiceName(), it is fully replaced.
+// Upsert inserts or updates the production pointer for the project recorded in
+// sp. If a row already exists for sp.ProjectName(), it is fully replaced.
 func (r *ServiceProdRepository) Upsert(ctx context.Context, sp *release.ServiceProd) error {
 	_, err := r.q.ExecContext(ctx,
-		`INSERT INTO service_prod (service_name, release_id, manifest_s3_key, image_tag, manifest_kind, updated_at)
+		`INSERT INTO service_prod (project_name, release_id, manifest_s3_key, image_tag, manifest_kind, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6)
-		 ON CONFLICT (service_name) DO UPDATE SET
+		 ON CONFLICT (project_name) DO UPDATE SET
 		   release_id      = EXCLUDED.release_id,
 		   manifest_s3_key = EXCLUDED.manifest_s3_key,
 		   image_tag       = EXCLUDED.image_tag,
 		   manifest_kind   = EXCLUDED.manifest_kind,
 		   updated_at      = EXCLUDED.updated_at`,
-		sp.ServiceName(), sp.ReleaseID(), sp.ManifestS3Key(), sp.ImageTag(), string(sp.ManifestKind()), sp.UpdatedAt())
+		sp.ProjectName(), sp.ReleaseID(), sp.ManifestS3Key(), sp.ImageTag(), string(sp.ManifestKind()), sp.UpdatedAt())
 	if err != nil {
-		return fmt.Errorf("upsert service_prod %q: %w", sp.ServiceName(), err)
+		return fmt.Errorf("upsert service_prod %q: %w", sp.ProjectName(), err)
 	}
 	return nil
 }
 
-// ServicesWithKind returns the names of the services whose pointer has the
+// ProjectsWithKind returns the names of the projects whose pointer has the
 // given manifest kind, sorted ascending. When none has it the list is empty.
-func (r *ServiceProdRepository) ServicesWithKind(ctx context.Context, kind release.ManifestKind) ([]string, error) {
+func (r *ServiceProdRepository) ProjectsWithKind(ctx context.Context, kind release.ManifestKind) ([]string, error) {
 	rows, err := r.q.QueryxContext(ctx,
-		`SELECT service_name
+		`SELECT project_name
 		   FROM service_prod
 		  WHERE manifest_kind = $1
-		  ORDER BY service_name`, string(kind))
+		  ORDER BY project_name`, string(kind))
 	if err != nil {
 		return nil, fmt.Errorf("list service_prod of kind %q: %w", kind, err)
 	}

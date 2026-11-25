@@ -18,7 +18,7 @@ func promoteCandidate(t *testing.T, deps *handlers.Deps, releaseID string, topo 
 	t.Helper()
 	ctx := context.Background()
 	require.NoError(t, handlers.ReceiveCandidate(ctx, deps, handlers.ReceiveCandidateInput{
-		Service: "svc-a", ReleaseID: releaseID, ImageTag: "sha-" + releaseID, Repo: "acme/demo", CommitSHA: "deadbeef",
+		Project: "svc-a", ReleaseID: releaseID, ImageTag: "sha-" + releaseID, Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(ctx, deps))
 	require.NoError(t, handlers.HandleCompileResult(ctx, deps, handlers.HandleCompileResultInput{ReleaseID: releaseID, Status: "ok"}))
@@ -40,7 +40,7 @@ func promoteCandidate(t *testing.T, deps *handlers.Deps, releaseID string, topo 
 func TestPromote_EachPromotionTakesTheNextSeq(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
-	topo := release.Topology{{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h1", UpstreamUniqueIDs: []string{}}}
+	topo := release.Topology{{UniqueID: "a", ProjectName: "svc-a", ContentHash: "h1", UpstreamUniqueIDs: []string{}}}
 
 	promoteCandidate(t, deps, "rA", topo)
 	topo[0].ContentHash = "h2"
@@ -70,15 +70,15 @@ func TestPromote_ChangedNodeIDsAreSortedAndNeverNameATest(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
 	seedProd(t, deps, store, "prev", release.Topology{
-		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "same", UpstreamUniqueIDs: []string{}},
-		{UniqueID: "c", ServiceName: "svc-a", ContentHash: "old", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "a", ProjectName: "svc-a", ContentHash: "same", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "c", ProjectName: "svc-a", ContentHash: "old", UpstreamUniqueIDs: []string{}},
 	}, time.Unix(50, 0).UTC())
 
 	promoteCandidate(t, deps, "rA", release.Topology{
-		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "same", UpstreamUniqueIDs: []string{}},
-		{UniqueID: "c", ServiceName: "svc-a", ContentHash: "new", UpstreamUniqueIDs: []string{}},
-		{UniqueID: "b", ServiceName: "svc-a", ContentHash: "new", UpstreamUniqueIDs: []string{}},
-		{UniqueID: "test.p.not_null_b.1", ServiceName: "svc-a", NodeType: "dbt-test", ContentHash: "t", UpstreamUniqueIDs: []string{"b"}},
+		{UniqueID: "a", ProjectName: "svc-a", ContentHash: "same", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "c", ProjectName: "svc-a", ContentHash: "new", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "b", ProjectName: "svc-a", ContentHash: "new", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "test.p.not_null_b.1", ProjectName: "svc-a", NodeType: "dbt-test", ContentHash: "t", UpstreamUniqueIDs: []string{"b"}},
 	})
 
 	p := promotedEvent(t, findEntry(t, store, streams.ReleasePromotedV2))
@@ -94,11 +94,11 @@ func TestPromote_BootstrapListsTheExactDiff(t *testing.T) {
 	deps.Bucket = "continuo"
 	ctx := context.Background()
 	require.NoError(t, handlers.ReceiveCandidate(ctx, deps, handlers.ReceiveCandidateInput{
-		Service: "svc-a", ReleaseID: "rBoot", ImageTag: "sha-a", Repo: "acme/demo", CommitSHA: "deadbeef", Bootstrap: true,
+		Project: "svc-a", ReleaseID: "rBoot", ImageTag: "sha-a", Repo: "acme/demo", CommitSHA: "deadbeef", Bootstrap: true,
 	}))
 	require.NoError(t, handlers.AdvanceQueue(ctx, deps))
 	require.NoError(t, handlers.HandleCompileResult(ctx, deps, handlers.HandleCompileResultInput{ReleaseID: "rBoot", Status: "ok"}))
-	ref, err := deps.Topologies.Write(ctx, "rBoot", release.Topology{{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{}}})
+	ref, err := deps.Topologies.Write(ctx, "rBoot", release.Topology{{UniqueID: "a", ProjectName: "svc-a", UpstreamUniqueIDs: []string{}}})
 	require.NoError(t, err)
 	require.NoError(t, handlers.HandleParsedManifest(ctx, deps, handlers.HandleParsedManifestInput{ReleaseID: "rBoot", Status: "ok", TopologyRef: ref}))
 
@@ -128,14 +128,14 @@ func TestPromoteToProduction_CarriesTheContractBundle(t *testing.T) {
 			SHA256: "9b0c4d1e7a52f3860be1d9c4a7f08e35b216d0a94c7e53f1a8b20d6e49c71f3a",
 		}
 	}
-	topo := release.Topology{{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h1", UpstreamUniqueIDs: []string{}}}
+	topo := release.Topology{{UniqueID: "a", ProjectName: "svc-a", ContentHash: "h1", UpstreamUniqueIDs: []string{}}}
 
 	t.Run("after a validation", func(t *testing.T) {
 		deps, store := newDeps(time.Unix(100, 0).UTC())
 		deps.Bucket = "continuo"
 		ctx := context.Background()
 		require.NoError(t, handlers.ReceiveCandidate(ctx, deps, handlers.ReceiveCandidateInput{
-			Service: "svc-a", ReleaseID: "rV", ImageTag: "sha-rV", Repo: "acme/demo", CommitSHA: "deadbeef", Kind: "python-odcs",
+			Project: "svc-a", ReleaseID: "rV", ImageTag: "sha-rV", Repo: "acme/demo", CommitSHA: "deadbeef", Kind: "python-odcs",
 		}))
 		require.NoError(t, handlers.AdvanceQueue(ctx, deps))
 		require.NoError(t, handlers.HandleParsedManifest(ctx, deps, handlers.HandleParsedManifestInput{

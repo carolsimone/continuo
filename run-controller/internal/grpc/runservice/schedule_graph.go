@@ -34,9 +34,9 @@ func (s *Server) GetScheduleGraph(ctx context.Context, req *runv1.GetScheduleGra
 	nodes := make([]*runv1.ScheduleGraphNode, 0, len(graph.Nodes))
 	ids := make(map[topology.NodeKey]string, len(graph.Nodes))
 	for _, n := range graph.Nodes {
-		ids[n.Key] = n.ServiceName + "." + n.SchemaName + "." + n.TableName
+		ids[n.Key] = n.ProjectName + "." + n.SchemaName + "." + n.TableName
 		node := &runv1.ScheduleGraphNode{
-			ServiceName:  n.ServiceName,
+			ProjectName:  n.ProjectName,
 			SchemaName:   n.SchemaName,
 			TableName:    n.TableName,
 			NodeType:     n.NodeType,

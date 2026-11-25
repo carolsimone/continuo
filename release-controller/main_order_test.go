@@ -41,7 +41,7 @@ func TestStartupChecksTheReleaseSchemaFirst(t *testing.T) {
 	if check < 0 {
 		t.Fatal("main.go must call handlers.CheckReleaseSchemaInitialized")
 	}
-	for _, later := range []string{"handlers.CheckNoServiceOnPythonKind(", "objectstore.New(", "srv.ServeAPI(", "pkgredis.Connect(", "handlers.AdvanceQueue(", `runConsumer("`} {
+	for _, later := range []string{"handlers.CheckNoProjectOnPythonKind(", "objectstore.New(", "srv.ServeAPI(", "pkgredis.Connect(", "handlers.AdvanceQueue(", `runConsumer("`} {
 		at := strings.Index(body, later)
 		if at < 0 {
 			t.Fatalf("expected main.go to contain %q", later)
@@ -58,18 +58,18 @@ func TestStartupChecksTheReleaseSchemaFirst(t *testing.T) {
 	}
 }
 
-// A release database that still holds a service released as kind python is
+// A release database that still holds a project released as kind python is
 // refused before release-controller serves an API request, runs a startup step
 // or starts a consumer.
-func TestStartupRefusesPythonKindServicesBeforeAnythingServes(t *testing.T) {
+func TestStartupRefusesPythonKindProjectsBeforeAnythingServes(t *testing.T) {
 	src, err := os.ReadFile("main.go")
 	if err != nil {
 		t.Fatalf("read main.go: %v", err)
 	}
 	body := string(src)
-	check := strings.Index(body, "handlers.CheckNoServiceOnPythonKind(")
+	check := strings.Index(body, "handlers.CheckNoProjectOnPythonKind(")
 	if check < 0 {
-		t.Fatal("main.go must call handlers.CheckNoServiceOnPythonKind")
+		t.Fatal("main.go must call handlers.CheckNoProjectOnPythonKind")
 	}
 	for _, later := range []string{"objectstore.New(", "srv.ServeAPI(", "pkgredis.Connect(", "handlers.AdvanceQueue(", `runConsumer("`} {
 		at := strings.Index(body, later)
@@ -77,17 +77,17 @@ func TestStartupRefusesPythonKindServicesBeforeAnythingServes(t *testing.T) {
 			t.Fatalf("expected main.go to contain %q", later)
 		}
 		if check > at {
-			t.Fatalf("main.go must call handlers.CheckNoServiceOnPythonKind before %s", later)
+			t.Fatalf("main.go must call handlers.CheckNoProjectOnPythonKind before %s", later)
 		}
 	}
 
 	// A refusal ends the process: the if block that holds the call exits.
 	block, _, found := strings.Cut(body[check:], "\n\t}\n")
 	if !found {
-		t.Fatal("expected the handlers.CheckNoServiceOnPythonKind call to open an if block in main.go")
+		t.Fatal("expected the handlers.CheckNoProjectOnPythonKind call to open an if block in main.go")
 	}
 	if !strings.Contains(block, "os.Exit(") {
-		t.Fatal("main.go must exit when handlers.CheckNoServiceOnPythonKind returns an error, " +
-			"or release-controller would start while a service is still released as kind python")
+		t.Fatal("main.go must exit when handlers.CheckNoProjectOnPythonKind returns an error, " +
+			"or release-controller would start while a project is still released as kind python")
 	}
 }

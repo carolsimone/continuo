@@ -22,7 +22,7 @@ const topologyLockKey int64 = 0x544F_504F // "TOPO"
 // copyTopologyNodes and copyTopologyEdges stream a release's rows with COPY …
 // FROM STDIN, one round trip per table.
 const (
-	copyTopologyNodes = `COPY topology_nodes (tenant_id, release_id, node_key, unique_id, service_name, schema_name, table_name, node_type, test_count, content_hash, seed_columns_hash, materialized, full_refresh, resolved_relation_id, image_tag, secret_ref, schedule_name, timeout_seconds) FROM STDIN`
+	copyTopologyNodes = `COPY topology_nodes (tenant_id, release_id, node_key, unique_id, project_name, schema_name, table_name, node_type, test_count, content_hash, seed_columns_hash, materialized, full_refresh, resolved_relation_id, image_tag, secret_ref, schedule_name, timeout_seconds) FROM STDIN`
 	copyTopologyEdges = `COPY topology_edges (tenant_id, release_id, upstream_key, downstream_key) FROM STDIN`
 )
 
@@ -152,7 +152,7 @@ func nodeRows(rel topology.Release) [][]any {
 			fullRefresh = *n.FullRefresh
 		}
 		rows = append(rows, []any{
-			rel.TenantID, rel.ReleaseID, string(n.Key), n.UniqueID, n.ServiceName, n.SchemaName, n.TableName,
+			rel.TenantID, rel.ReleaseID, string(n.Key), n.UniqueID, n.ProjectName, n.SchemaName, n.TableName,
 			n.NodeType, testCount, n.ContentHash, n.SeedColumnsHash, n.Materialized, fullRefresh, n.ResolvedRelationID, n.ImageTag, n.SecretRef, n.ScheduleName, timeout,
 		})
 	}
@@ -244,7 +244,7 @@ func (r *TopologyRepository) SetLivePointer(ctx context.Context, tenantID string
 type topologyNodeRow struct {
 	NodeKey            string        `db:"node_key"`
 	UniqueID           string        `db:"unique_id"`
-	ServiceName        string        `db:"service_name"`
+	ProjectName        string        `db:"project_name"`
 	SchemaName         string        `db:"schema_name"`
 	TableName          string        `db:"table_name"`
 	NodeType           string        `db:"node_type"`
@@ -282,7 +282,7 @@ func (row topologyNodeRow) toDomain() topology.Node {
 	return topology.Node{
 		Key:                topology.NodeKey(row.NodeKey),
 		UniqueID:           row.UniqueID,
-		ServiceName:        row.ServiceName,
+		ProjectName:        row.ProjectName,
 		SchemaName:         row.SchemaName,
 		TableName:          row.TableName,
 		NodeType:           string(model.CanonicalNodeType(row.NodeType)),
@@ -317,7 +317,7 @@ func (r *TopologyRepository) ReleaseNodes(ctx context.Context, tenantID, release
 }
 
 // topologyNodeColumns lists the topology_nodes columns topologyNodeRow scans.
-const topologyNodeColumns = `node_key, unique_id, service_name, schema_name, table_name, node_type, test_count,
+const topologyNodeColumns = `node_key, unique_id, project_name, schema_name, table_name, node_type, test_count,
 		       content_hash, seed_columns_hash, materialized, full_refresh, resolved_relation_id, image_tag, secret_ref, schedule_name,
 		       timeout_seconds`
 

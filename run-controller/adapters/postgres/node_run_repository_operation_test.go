@@ -30,7 +30,7 @@ func TestListNodes_FiltersByOperation(t *testing.T) {
 			t.Fatal(err)
 		}
 		if _, err := db.Exec(`INSERT INTO tasks
-			(tenant_id, task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries, operation)
+			(tenant_id, task_id, run_id, created_at, project_name, schema_name, table_name, job_name, status, max_retries, operation)
 			VALUES ((SELECT tenant_id FROM runs WHERE run_id = $2), $1,$2,now(),'svc','analytics','opnode',$3,$4,3,$5)`,
 			tid, sid, "j-"+tid.String(), taskStatus, op); err != nil {
 			t.Fatal(err)
@@ -74,7 +74,7 @@ func TestListNodeRuns_FiltersByOperation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO tasks
-		(tenant_id, task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries, operation)
+		(tenant_id, task_id, run_id, created_at, project_name, schema_name, table_name, job_name, status, max_retries, operation)
 		VALUES ((SELECT tenant_id FROM runs WHERE run_id = $2), $1,$2,now(),'svc','analytics','opruns',$3,'failed',3,'test')`,
 		tid, sid, "j-"+tid.String()); err != nil {
 		t.Fatal(err)
@@ -113,7 +113,7 @@ func TestListNodes_FoldsFullRefreshIntoRun(t *testing.T) {
 			t.Fatal(err)
 		}
 		if _, err := db.Exec(`INSERT INTO tasks
-			(tenant_id, task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries, operation)
+			(tenant_id, task_id, run_id, created_at, project_name, schema_name, table_name, job_name, status, max_retries, operation)
 			VALUES ((SELECT tenant_id FROM runs WHERE run_id = $2), $1,$2,now(),'svc','analytics','frnode',$3,$4,3,$5)`,
 			tid, sid, "j-"+tid.String(), taskStatus, op); err != nil {
 			t.Fatal(err)
@@ -151,7 +151,7 @@ func TestListNodeRuns_RunIncludesFullRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO tasks
-		(tenant_id, task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries, operation)
+		(tenant_id, task_id, run_id, created_at, project_name, schema_name, table_name, job_name, status, max_retries, operation)
 		VALUES ((SELECT tenant_id FROM runs WHERE run_id = $2), $1,$2,now(),'svc','analytics','frruns',$3,'succeeded',3,'full_refresh')`,
 		tid, sid, "j-"+tid.String()); err != nil {
 		t.Fatal(err)
@@ -193,7 +193,7 @@ func TestNodeReads_ReadTheDefaultOperationAsTheStoredRun(t *testing.T) {
 			t.Fatal(err)
 		}
 		if _, err := db.Exec(`INSERT INTO tasks
-			(tenant_id, task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries, operation)
+			(tenant_id, task_id, run_id, created_at, project_name, schema_name, table_name, job_name, status, max_retries, operation)
 			VALUES ((SELECT tenant_id FROM runs WHERE run_id = $2), $1,$2,now(),'svc','analytics','defaultop',$3,$4,3,$5)`,
 			tid, sid, "j-"+tid.String(), taskStatus, op); err != nil {
 			t.Fatal(err)

@@ -261,7 +261,7 @@ func TestRetryRemediation_VerificationRunIsNotAnID(t *testing.T) {
 		ID:                "rel-1",
 		Kind:              pipeline.KindVerification,
 		Status:            pipeline.StatusRejected,
-		ChangedService:    "finance",
+		ChangedProject:    "finance",
 		VerifiesReleaseID: "rel-orig",
 		Attempt:           1,
 		RejectionPayload:  []byte(`{"reason":"compile_failed"}`),
@@ -351,21 +351,21 @@ func TestRetryRemediation_NamesTheLowestNodeIDWhenSeveralAreOpen(t *testing.T) {
 	require.Equal(t, "https://x/pr/finance", open.PRURL)
 }
 
-func TestRetryRemediation_MultiServiceProposedOneServiceStillOpenBlocks(t *testing.T) {
+func TestRetryRemediation_MultiProjectProposedOneProjectStillOpenBlocks(t *testing.T) {
 	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
 	store.SeedRelease(rejectedRelease(t, "rel-1", `{"reason":"compile_failed"}`))
-	// A batched attempt opened one PR per owning service: service "a"'s PR was
-	// rejected, service "b"'s is still open. The singular PRState mirrors the
-	// first service's row ("rejected"); reading it alone would wrongly call the
+	// A batched attempt opened one PR per owning project: project "a"'s PR was
+	// rejected, project "b"'s is still open. The singular PRState mirrors the
+	// first project's row ("rejected"); reading it alone would wrongly call the
 	// whole attempt a dead end. The still-open "b" PR must block the retry, and
 	// the refusal must name that open PR rather than the rejected one.
 	deps.Proposals = &fakeProposals{items: []ports.ProposalSummary{{
 		ID: "p1", NodeID: "finance", Attempt: 1, Status: "proposed",
 		PRState: "rejected", PRURL: "https://x/pr/a",
-		PRServices: []string{"a", "b"},
+		PRProjects: []string{"a", "b"},
 		PullRequests: []ports.ProposalPR{
-			{Service: "a", PRState: "rejected", PRURL: "https://x/pr/a"},
-			{Service: "b", PRState: "open", PRURL: "https://x/pr/b"},
+			{Project: "a", PRState: "rejected", PRURL: "https://x/pr/a"},
+			{Project: "b", PRState: "open", PRURL: "https://x/pr/b"},
 		},
 		RemediationRound: 1,
 	}}}
@@ -382,21 +382,21 @@ func TestRetryRemediation_MultiServiceProposedOneServiceStillOpenBlocks(t *testi
 	require.Empty(t, outboxEntries(store), "nothing emitted")
 }
 
-func TestRetryRemediation_MultiServiceMergedPRAcrossRoundsBlocks(t *testing.T) {
+func TestRetryRemediation_MultiProjectMergedPRAcrossRoundsBlocks(t *testing.T) {
 	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
 	store.SeedRelease(rejectedRelease(t, "rel-1", `{"reason":"compile_failed"}`))
 	// The attempt escalated (its status blocks nothing on the current-round
-	// check), but one of its per-service PRs merged while another was rejected.
-	// A merged fix already landed for a service, so a new round would duplicate
-	// it — the singular PRState ("rejected", mirroring the first service) hides
+	// check), but one of its per-project PRs merged while another was rejected.
+	// A merged fix already landed for a project, so a new round would duplicate
+	// it — the singular PRState ("rejected", mirroring the first project) hides
 	// the merged PR from an aggregate-blind reader.
 	deps.Proposals = &fakeProposals{items: []ports.ProposalSummary{{
 		ID: "p1", NodeID: "finance", Attempt: 1, Status: "escalated",
 		PRState: "rejected", PRURL: "https://x/pr/a",
-		PRServices: []string{"a", "b"},
+		PRProjects: []string{"a", "b"},
 		PullRequests: []ports.ProposalPR{
-			{Service: "a", PRState: "rejected", PRURL: "https://x/pr/a"},
-			{Service: "b", PRState: "merged", PRURL: "https://x/pr/b"},
+			{Project: "a", PRState: "rejected", PRURL: "https://x/pr/a"},
+			{Project: "b", PRState: "merged", PRURL: "https://x/pr/b"},
 		},
 		RemediationRound: 1,
 	}}}
@@ -412,18 +412,18 @@ func TestRetryRemediation_MultiServiceMergedPRAcrossRoundsBlocks(t *testing.T) {
 	require.Empty(t, outboxEntries(store), "nothing emitted")
 }
 
-func TestRetryRemediation_MultiServiceBothPRsRejectedIsADeadEnd(t *testing.T) {
+func TestRetryRemediation_MultiProjectBothPRsRejectedIsADeadEnd(t *testing.T) {
 	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
 	store.SeedRelease(rejectedRelease(t, "rel-1", `{"reason":"compile_failed"}`))
-	// Every owning service's PR was rejected: the attempt is a genuine dead end,
+	// Every owning project's PR was rejected: the attempt is a genuine dead end,
 	// so a new round is allowed.
 	deps.Proposals = &fakeProposals{items: []ports.ProposalSummary{{
 		ID: "p1", NodeID: "finance", Attempt: 1, Status: "proposed",
 		PRState: "rejected", PRURL: "https://x/pr/a",
-		PRServices: []string{"a", "b"},
+		PRProjects: []string{"a", "b"},
 		PullRequests: []ports.ProposalPR{
-			{Service: "a", PRState: "rejected", PRURL: "https://x/pr/a"},
-			{Service: "b", PRState: "rejected", PRURL: "https://x/pr/b"},
+			{Project: "a", PRState: "rejected", PRURL: "https://x/pr/a"},
+			{Project: "b", PRState: "rejected", PRURL: "https://x/pr/b"},
 		},
 		RemediationRound: 1,
 	}}}
@@ -437,19 +437,19 @@ func TestRetryRemediation_MultiServiceBothPRsRejectedIsADeadEnd(t *testing.T) {
 	require.Equal(t, 2, r.RemediationRound())
 }
 
-func TestRetryRemediation_MultiServiceOwningServiceWithoutPRBlocks(t *testing.T) {
+func TestRetryRemediation_MultiProjectOwningProjectWithoutPRBlocks(t *testing.T) {
 	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
 	store.SeedRelease(rejectedRelease(t, "rel-1", `{"reason":"compile_failed"}`))
-	// Two owning services, but only service "a" has opened (and had rejected) a
-	// PR; service "b" has no PR row yet, so its fix could still land. The attempt
-	// is a dead end only once every owning service's PR is rejected, so it must
+	// Two owning projects, but only project "a" has opened (and had rejected) a
+	// PR; project "b" has no PR row yet, so its fix could still land. The attempt
+	// is a dead end only once every owning project's PR is rejected, so it must
 	// still block the retry.
 	deps.Proposals = &fakeProposals{items: []ports.ProposalSummary{{
 		ID: "p1", NodeID: "finance", Attempt: 1, Status: "proposed",
 		PRState: "rejected", PRURL: "https://x/pr/a",
-		PRServices: []string{"a", "b"},
+		PRProjects: []string{"a", "b"},
 		PullRequests: []ports.ProposalPR{
-			{Service: "a", PRState: "rejected", PRURL: "https://x/pr/a"},
+			{Project: "a", PRState: "rejected", PRURL: "https://x/pr/a"},
 		},
 		RemediationRound: 1,
 	}}}
@@ -465,9 +465,9 @@ func TestRetryRemediation_MultiServiceOwningServiceWithoutPRBlocks(t *testing.T)
 	require.Empty(t, outboxEntries(store), "nothing emitted")
 }
 
-func TestRetryRemediation_LegacyProposalWithoutPerServicePRs(t *testing.T) {
+func TestRetryRemediation_LegacyProposalWithoutPerProjectPRs(t *testing.T) {
 	// A pre-split proposal carries no PullRequests, only the singular fields, and
-	// must decide exactly as it did before the per-service split.
+	// must decide exactly as it did before the per-project split.
 	t.Run("proposed with singular rejected is a dead end", func(t *testing.T) {
 		deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
 		store.SeedRelease(rejectedRelease(t, "rel-1", `{"reason":"compile_failed"}`))
@@ -499,7 +499,7 @@ func TestIsHealableReason(t *testing.T) {
 	for _, reason := range []string{"compile_failed", "seed_build_failed", "validation_failed", "duplicate_table", "invalid_sql", "unqualified_reference"} {
 		assert.True(t, handlers.IsHealableReason(reason), reason)
 	}
-	for _, reason := range []string{"invalid_artifact", "internal_error", "parse_rehearsal_failed", "artifact_upload_failed", "unbuildable_cross_service_upstream", "nothing_to_validate", "upstream_clone_failed", ""} {
+	for _, reason := range []string{"invalid_artifact", "internal_error", "parse_rehearsal_failed", "artifact_upload_failed", "unbuildable_cross_project_upstream", "nothing_to_validate", "upstream_clone_failed", ""} {
 		assert.False(t, handlers.IsHealableReason(reason), reason)
 	}
 }

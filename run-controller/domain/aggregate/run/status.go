@@ -216,7 +216,7 @@ const (
 
 // NodeID is a triple identifying one materialised model in the topology.
 type NodeID struct {
-	ServiceName string
+	ProjectName string
 	SchemaName  string
 	TableName   string
 }

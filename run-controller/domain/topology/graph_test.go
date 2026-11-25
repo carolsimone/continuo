@@ -138,13 +138,13 @@ func TestNewGraph_DoesNotDependOnInputOrder(t *testing.T) {
 
 func TestNewGraph_KeepsTheFirstOfTwoNodesWithOneKey(t *testing.T) {
 	first := gnode("stg.a")
-	first.ServiceName = "svc-1"
+	first.ProjectName = "svc-1"
 	second := gnode("stg.a")
-	second.ServiceName = "svc-2"
+	second.ProjectName = "svc-2"
 	g := topology.NewGraph([]topology.Node{first, second}, nil)
 	assert.Equal(t, 1, g.Len())
 	n, _ := g.Node("stg.a")
-	assert.Equal(t, "svc-1", n.ServiceName)
+	assert.Equal(t, "svc-1", n.ProjectName)
 }
 
 // A Graph shares nothing with its inputs or its callers: changing an input

@@ -182,7 +182,7 @@ func (f *fakeTaskStatusTaskCollection) GetStatus(_ context.Context, _ uuid.UUID)
 func (f *fakeTaskStatusTaskCollection) LoadAttemptState(_ context.Context, id uuid.UUID) (run.TaskAttemptState, bool, error) {
 	f.lockOrder = append(f.lockOrder, "task "+id.String())
 	return run.TaskAttemptState{RunID: f.runID, Status: f.prevStatus, Attempt: f.prevAttempt, MaxRetries: f.maxRetries,
-		NodeKey: "raw.orders", ServiceName: "svc", SchemaName: "raw", TableName: "orders"}, f.prevExists, f.getStatusErr
+		NodeKey: "raw.orders", ProjectName: "svc", SchemaName: "raw", TableName: "orders"}, f.prevExists, f.getStatusErr
 }
 
 func (f *fakeTaskStatusTaskCollection) MarkDispatched(_ context.Context, _ []uuid.UUID, _ time.Time) ([]uuid.UUID, error) {
@@ -585,7 +585,7 @@ func TestAttemptReport_ARetryableFailureDispatchesTheNextAttempt(t *testing.T) {
 	taskColl := (&fakeTaskStatusTaskCollection{prevStatus: run.TaskStatusRunning, maxRetries: 2, prevExists: true, updateAffected: 1}).
 		held(taskID, 0, run.AttemptRunning)
 	u := newTaskStatusHandlerUoW(runRepo, outbox, taskColl)
-	u.Graph = nodeGraph{node: topology.Node{Key: "raw.orders", ServiceName: "svc", SchemaName: "raw", TableName: "orders"}}
+	u.Graph = nodeGraph{node: topology.Node{Key: "raw.orders", ProjectName: "svc", SchemaName: "raw", TableName: "orders"}}
 
 	require.NoError(t, newAttemptReportHandler().Handle(context.Background(), u, report(scheduleID, taskID, 0, run.AttemptFailed), uuid.New()))
 
@@ -795,7 +795,7 @@ func TestAttemptReport_RecordsTheVersionAPlannedRunLoaded(t *testing.T) {
 	runRepo := &fakeTaskStatusRunRepo{stored: newReleaseTaskStatusRun(scheduleID, "rel-1")}
 	taskColl := (&fakeTaskStatusTaskCollection{
 		prevStatus: run.TaskStatusRunning, prevExists: true, updateAffected: 1,
-		task: run.Task{TaskID: taskID, ScheduleID: scheduleID, ServiceName: "svc", SchemaName: "RAW", TableName: "Orders", ImageTag: "svc:7"},
+		task: run.Task{TaskID: taskID, ScheduleID: scheduleID, ProjectName: "svc", SchemaName: "RAW", TableName: "Orders", ImageTag: "svc:7"},
 	}).held(taskID, 0, run.AttemptRunning)
 	topo := &hashTopology{hashes: map[string]topology.NodeHashes{"rel-1/raw.orders": {ContentHash: "h-orders"}}}
 	mats := &builtRecorder{}
@@ -819,7 +819,7 @@ func TestAttemptReport_RecordsTheVersionAPlannedRunLoaded(t *testing.T) {
 // version, so neither records.
 func TestAttemptReport_RecordsBuiltVersionsForPlannedWritingRuns(t *testing.T) {
 	scheduleID, taskID := uuid.New(), uuid.New()
-	orders := run.Task{TaskID: taskID, ScheduleID: scheduleID, ServiceName: "svc", SchemaName: "raw", TableName: "orders", ImageTag: "svc:7"}
+	orders := run.Task{TaskID: taskID, ScheduleID: scheduleID, ProjectName: "svc", SchemaName: "raw", TableName: "orders", ImageTag: "svc:7"}
 	unplanned := newRunningTaskStatusRun(scheduleID, "daily", 1, 0)
 	unplanned.HydrateRelease(run.ReleaseStamp{ReleaseID: "rel-1", PromotionSeq: 3})
 
@@ -861,7 +861,7 @@ func TestAttemptReport_RecordsBuiltVersionsForPlannedWritingRuns(t *testing.T) {
 // lacks or holds without a content hash.
 func TestAttemptReport_RecordsNothingWithoutAVersion(t *testing.T) {
 	scheduleID, taskID := uuid.New(), uuid.New()
-	orders := run.Task{TaskID: taskID, ScheduleID: scheduleID, ServiceName: "svc", SchemaName: "raw", TableName: "orders", ImageTag: "svc:7"}
+	orders := run.Task{TaskID: taskID, ScheduleID: scheduleID, ProjectName: "svc", SchemaName: "raw", TableName: "orders", ImageTag: "svc:7"}
 	cases := []struct {
 		name    string
 		run     *run.Run
@@ -908,7 +908,7 @@ func TestAttemptReport_RecordsNothingWithoutAVersion(t *testing.T) {
 // the run open.
 func TestAttemptReport_RecordsAVersionOnlyForAnAppliedSuccess(t *testing.T) {
 	scheduleID, taskID := uuid.New(), uuid.New()
-	orders := run.Task{TaskID: taskID, ScheduleID: scheduleID, ServiceName: "svc", SchemaName: "raw", TableName: "orders", ImageTag: "svc:7"}
+	orders := run.Task{TaskID: taskID, ScheduleID: scheduleID, ProjectName: "svc", SchemaName: "raw", TableName: "orders", ImageTag: "svc:7"}
 	releaseRun := func(total, terminal int32) func() *run.Run {
 		return func() *run.Run {
 			r := newRunningTaskStatusRunOfKind(run.KindPromoteSeed, scheduleID, "promote-seed-abc12345", total, terminal)
@@ -983,7 +983,7 @@ func TestAttemptReport_RecordsTheSeedColumnsHashOfTheLoadedVersion(t *testing.T)
 	at := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 	taskColl := (&fakeTaskStatusTaskCollection{
 		prevStatus: run.TaskStatusRunning, prevExists: true, updateAffected: 1,
-		task: run.Task{TaskID: taskID, ScheduleID: scheduleID, ServiceName: "svc", SchemaName: "raw", TableName: "countries", ImageTag: "svc:7"},
+		task: run.Task{TaskID: taskID, ScheduleID: scheduleID, ProjectName: "svc", SchemaName: "raw", TableName: "countries", ImageTag: "svc:7"},
 	}).held(taskID, 0, run.AttemptRunning)
 	topo := &hashTopology{hashes: map[string]topology.NodeHashes{
 		"rel-1/raw.countries": {ContentHash: "h-countries", SeedColumnsHash: "sha256:e5a0"}}}
@@ -1005,7 +1005,7 @@ var reloadNow = time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)
 // seedReloadTask is the task of the seed raw.countries whose load drops its
 // table, with the preflight its pod runs first.
 func seedReloadTask(op model.Operation) run.Task {
-	return run.Task{ServiceName: "svc", SchemaName: "raw", TableName: "countries", NodeKey: "raw.countries", ImageTag: "svc:7",
+	return run.Task{ProjectName: "svc", SchemaName: "raw", TableName: "countries", NodeKey: "raw.countries", ImageTag: "svc:7",
 		Operation: op, SeedPreflight: &seedreload.Preflight{Mode: seedreload.PreflightCheck, Family: warehouse.SchemaBound,
 			Relation: "raw.countries", Allowed: []string{"stg.v"}}}
 }
@@ -1013,7 +1013,7 @@ func seedReloadTask(op model.Operation) run.Task {
 // rebuildTask is the task of the view stg.v that rebuilds after the load of
 // raw.countries.
 func rebuildTask() run.Task {
-	return run.Task{ServiceName: "svc", SchemaName: "stg", TableName: "v", NodeKey: "stg.v", ImageTag: "svc:7", RebuildOf: "raw.countries"}
+	return run.Task{ProjectName: "svc", SchemaName: "stg", TableName: "v", NodeKey: "stg.v", ImageTag: "svc:7", RebuildOf: "raw.countries"}
 }
 
 // seedReloadCase wires a report of task's attempt 0, which is running, in a
@@ -1028,7 +1028,7 @@ func seedReloadCase(task run.Task, status run.AttemptStatus, reason model.Failur
 		maxRetries: maxRetries, task: task}).held(task.TaskID, 0, run.AttemptRunning)
 	u := newTaskStatusHandlerUoW(&fakeTaskStatusRunRepo{stored: plannedRun(runID, "rel-1", model.OperationRun, 2)},
 		&fakeTaskStatusOutboxPub{}, coll)
-	u.Graph = nodeGraph{node: topology.Node{Key: task.NodeKey, ServiceName: "svc", SchemaName: task.SchemaName, TableName: task.TableName}}
+	u.Graph = nodeGraph{node: topology.Node{Key: task.NodeKey, ProjectName: "svc", SchemaName: task.SchemaName, TableName: task.TableName}}
 	u.TopologyRepo, u.MaterializationRepo = &hashTopology{}, &builtRecorder{}
 	u.SetClock(taskStatusClock{at: reloadNow})
 	rep := report(runID, task.TaskID, 0, status)

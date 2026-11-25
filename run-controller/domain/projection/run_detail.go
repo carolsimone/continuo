@@ -41,7 +41,7 @@ type TaskDetail struct {
 	TaskID      uuid.UUID
 	RunID       uuid.UUID
 	CreatedAt   time.Time
-	ServiceName string
+	ProjectName string
 	SchemaName  string
 	TableName   string
 	JobName     string

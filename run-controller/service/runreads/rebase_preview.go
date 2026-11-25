@@ -16,7 +16,7 @@ import (
 
 // RebasePreview is what a rebase of a source run would do on the live
 // release: the release, the selection with its counts, and the changed
-// upstream nodes the selection names, in its order (service, schema, table),
+// upstream nodes the selection names, in its order (project, schema, table),
 // each with how long its latest successful execution took.
 type RebasePreview struct {
 	Release run.ReleaseStamp
@@ -71,7 +71,7 @@ func (p *RebasePreviewer) Preview(ctx context.Context, tenantID string, sourceID
 	}
 	nodes := make([]run.NodeID, 0, len(pv.Changed))
 	for _, c := range pv.Changed {
-		nodes = append(nodes, run.NodeID{ServiceName: c.ServiceName, SchemaName: c.SchemaName, TableName: c.TableName})
+		nodes = append(nodes, run.NodeID{ProjectName: c.ProjectName, SchemaName: c.SchemaName, TableName: c.TableName})
 	}
 	last, err := p.reads.LastSuccessDurations(ctx, src.TenantID(), nodes)
 	if err != nil {

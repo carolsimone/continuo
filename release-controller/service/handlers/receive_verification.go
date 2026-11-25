@@ -22,22 +22,22 @@ var ErrInvalidInput = errors.New("invalid input")
 var ErrRunKindConflict = repository.ErrRunKindConflict
 
 // ReceiveVerificationInput is the POST /verification-runs body: a
-// fix-verification run agent-remediation submits for one edited service.
+// fix-verification run agent-remediation submits for one edited project.
 type ReceiveVerificationInput struct {
 	RunID    string
-	Service  string
+	Project  string
 	ImageTag string
-	// Kind is the service's manifest kind: "dbt" or "python-odcs".
+	// Kind is the project's manifest kind: "dbt" or "python-odcs".
 	// Required: an absent kind is a caller bug, not a default.
 	Kind string
 	// VerifiesReleaseID names the rejected candidate this run verifies a fix
-	// for; that release's own candidate is assembled for its changed service.
+	// for; that release's own candidate is assembled for its changed project.
 	VerifiesReleaseID string
 	// Attempt is which attempt of the release's remediation this run belongs to.
 	Attempt int
-	// SourceOverlayURI is the tarball of proposed source a dbt service's
+	// SourceOverlayURI is the tarball of proposed source a dbt project's
 	// compile and seed-build Jobs lay over the project. A python-odcs
-	// service is verified by its packaged bundle instead and carries none.
+	// project is verified by its packaged bundle instead and carries none.
 	SourceOverlayURI string
 }
 
@@ -45,8 +45,8 @@ func (i ReceiveVerificationInput) validate() (release.ManifestKind, error) {
 	switch {
 	case i.RunID == "":
 		return "", fmt.Errorf("%w: run_id is required", ErrInvalidInput)
-	case i.Service == "":
-		return "", fmt.Errorf("%w: service is required", ErrInvalidInput)
+	case i.Project == "":
+		return "", fmt.Errorf("%w: project is required", ErrInvalidInput)
 	case i.ImageTag == "":
 		return "", fmt.Errorf("%w: image_tag is required", ErrInvalidInput)
 	case i.Kind == "":
@@ -94,7 +94,7 @@ func ReceiveVerification(ctx context.Context, d *Deps, in ReceiveVerificationInp
 		return fmt.Errorf("load run: %w", err)
 	}
 	if existing == nil {
-		r := pipeline.NewVerification(in.RunID, in.Service, in.ImageTag, in.VerifiesReleaseID, in.Attempt, in.SourceOverlayURI, kind, d.Clock.Now())
+		r := pipeline.NewVerification(in.RunID, in.Project, in.ImageTag, in.VerifiesReleaseID, in.Attempt, in.SourceOverlayURI, kind, d.Clock.Now())
 		inserted, err := u.RunRepo().Create(ctx, r)
 		if err != nil {
 			return fmt.Errorf("create verification: %w", err)

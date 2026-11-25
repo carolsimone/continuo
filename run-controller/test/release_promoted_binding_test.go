@@ -87,7 +87,7 @@ func (h *promotionHarness) deliver(t *testing.T, tenantID, releaseID string, seq
 func promotedNode(schema, table, nodeType string, upstream ...string) topology.NodeSpec {
 	zero := 0
 	return topology.NodeSpec{
-		UniqueID: schema + "." + table, ServiceName: "service-1", SchemaName: schema, TableName: table,
+		UniqueID: schema + "." + table, ProjectName: "service-1", SchemaName: schema, TableName: table,
 		NodeType: nodeType, TestCount: &zero, ContentHash: "sha256:" + table, ImageTag: "service-1:v1",
 		ScheduleName: "daily", UpstreamUniqueIDs: upstream,
 	}
@@ -220,7 +220,7 @@ func TestReleasePromotedBinding(t *testing.T) {
 		const tenant = "t-duplicate"
 		uri := h.publish(tenant, "rel-1", "sha-1",
 			promotedNode("raw", "orders", "dbt-seed"),
-			topology.NodeSpec{UniqueID: "RAW.Orders", ServiceName: "service-2", SchemaName: "RAW", TableName: "Orders", NodeType: "python-csv"})
+			topology.NodeSpec{UniqueID: "RAW.Orders", ProjectName: "service-2", SchemaName: "RAW", TableName: "Orders", NodeType: "python-csv"})
 
 		_, err := h.deliver(t, tenant, "rel-1", 1, uri, "sha-1")
 		require.Error(t, err)

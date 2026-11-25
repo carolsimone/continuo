@@ -29,7 +29,7 @@ type Reads struct {
 	// Attempts serves ListRunAttempts.
 	Attempts *runreads.Attempts
 	// Nodes serves ListNodeTasks, ListNodes, ListNodeNames and
-	// ListNodeServices.
+	// ListNodeProjects.
 	Nodes *runreads.Nodes
 	// Graphs serves GetRunGraph, ListRuns and ListActiveRunDrifts.
 	Graphs *runreads.Service

@@ -54,7 +54,7 @@ func TestRunService_ServesTheReadsOfATriggeredRun(t *testing.T) {
 	assert.NotZero(t, graph.GetRunPromotionSeq())
 
 	nodeTasks, err := runClient.ListNodeTasks(ctx, &runv1.ListNodeTasksRequest{
-		ServiceName: task.GetServiceName(), SchemaName: task.GetSchemaName(), TableName: task.GetTableName(),
+		ProjectName: task.GetProjectName(), SchemaName: task.GetSchemaName(), TableName: task.GetTableName(),
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, nodeTasks.GetTasks())
@@ -78,13 +78,13 @@ func TestRunService_ServesTheReadsOfATriggeredRun(t *testing.T) {
 	assert.Zero(t, d.GetTaskCount())
 	assert.Empty(t, d.GetLastRunAt(), "the dormant node never ran")
 
-	names, err := runClient.ListNodeNames(ctx, &runv1.ListNodeNamesRequest{ServiceName: task.GetServiceName()})
+	names, err := runClient.ListNodeNames(ctx, &runv1.ListNodeNamesRequest{ProjectName: task.GetProjectName()})
 	require.NoError(t, err)
 	assert.Contains(t, names.GetTableNames(), task.GetTableName())
 	assert.Contains(t, names.GetTableNames(), "run_service_reads_dormant", "a dormant node that never ran is suggested")
-	services, err := runClient.ListNodeServices(ctx, &runv1.ListNodeServicesRequest{})
+	projects, err := runClient.ListNodeProjects(ctx, &runv1.ListNodeProjectsRequest{})
 	require.NoError(t, err)
-	assert.Contains(t, services.GetServiceNames(), task.GetServiceName())
+	assert.Contains(t, projects.GetProjectNames(), task.GetProjectName())
 
 	drifts, err := runClient.ListActiveRunDrifts(ctx, &runv1.ListActiveRunDriftsRequest{})
 	require.NoError(t, err)

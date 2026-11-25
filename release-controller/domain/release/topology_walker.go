@@ -115,9 +115,9 @@ func DescendantsClosure(topo Topology, seeds []string) []string {
 }
 
 // FullAncestorsClosure returns the union of the seed nodes and ALL their
-// transitive upstream ancestors — across service boundaries — deduplicated and
+// transitive upstream ancestors — across project boundaries — deduplicated and
 // sorted topologically (upstreams before downstreams). Under self-contained
-// validation every upstream (intra- or cross-service) is built into the
+// validation every upstream (intra- or cross-project) is built into the
 // candidate schema, so the walk follows every known edge. Seeds absent from the
 // topology are ignored. An unknown-external node is never an ancestor and never a seed:
 // nothing builds it, so an edge to it is followed like an edge to an unknown
@@ -160,7 +160,7 @@ func FullAncestorsClosure(topo Topology, seeds []string) []string {
 }
 
 // InSetUpstreams returns nodeID's upstreams that are in the build-set — the
-// gating edges (intra- AND cross-service) that must succeed before nodeID's
+// gating edges (intra- AND cross-project) that must succeed before nodeID's
 // candidate --empty run can resolve its refs. Out-of-set edges are excluded.
 // Output is lexically sorted for determinism.
 func InSetUpstreams(topo Topology, nodeID string, set map[string]bool) []string {
@@ -183,26 +183,26 @@ func InSetUpstreams(topo Topology, nodeID string, set map[string]bool) []string 
 	return out
 }
 
-// CrossServiceEdge names a node and one of its cross-service upstreams.
-type CrossServiceEdge struct {
+// CrossProjectEdge names a node and one of its cross-project upstreams.
+type CrossProjectEdge struct {
 	Node     string
 	Upstream string
 }
 
-// UnbuildableCrossServiceUpstreams returns, for every node in nodeIDs, each
+// UnbuildableCrossProjectUpstreams returns, for every node in nodeIDs, each
 // upstream edge whose target is absent from the CANDIDATE topology — a dangling
 // reference that cannot be built into the candidate schema and would make the
 // dependent's SQL fail. Pass the full validation build set: any node that will
 // run a candidate --empty job must have all its upstreams present. Under
-// self-contained validation every in-topology upstream (intra- or cross-service)
+// self-contained validation every in-topology upstream (intra- or cross-project)
 // is built in the candidate schema, so only truly unknown upstreams are flagged.
 // Output is sorted (node, upstream).
-func UnbuildableCrossServiceUpstreams(candidate Topology, nodeIDs []string) []CrossServiceEdge {
+func UnbuildableCrossProjectUpstreams(candidate Topology, nodeIDs []string) []CrossProjectEdge {
 	byID := make(map[string]Node, len(candidate))
 	for _, n := range candidate {
 		byID[n.UniqueID] = n
 	}
-	var out []CrossServiceEdge
+	var out []CrossProjectEdge
 	for _, id := range nodeIDs {
 		n, ok := byID[id]
 		if !ok {
@@ -210,7 +210,7 @@ func UnbuildableCrossServiceUpstreams(candidate Topology, nodeIDs []string) []Cr
 		}
 		for _, up := range n.UpstreamUniqueIDs {
 			if _, known := byID[up]; !known {
-				out = append(out, CrossServiceEdge{Node: id, Upstream: up})
+				out = append(out, CrossProjectEdge{Node: id, Upstream: up})
 			}
 		}
 	}
@@ -235,13 +235,13 @@ func UnbuildableCrossServiceUpstreams(candidate Topology, nodeIDs []string) []Cr
 type ChangedAncestor struct {
 	NodeID   string
 	FilePath string
-	Service  string
+	Project  string
 	Depth    int
 }
 
 // ChangedAncestors returns the transitive upstream ancestors of nodeID — across
-// service boundaries — that are in changed, sorted by id, each with the file
-// path and service the candidate topology declares for it and its minimum hop
+// project boundaries — that are in changed, sorted by id, each with the file
+// path and project the candidate topology declares for it and its minimum hop
 // distance. nodeID itself is never included even when it changed, and an
 // unknown node yields nil. It tells a remediation which changed nodes upstream
 // of a failing node could be the root cause of its failure, where to edit them,
@@ -280,7 +280,7 @@ func ChangedAncestors(topo Topology, nodeID string, changed map[string]bool) []C
 		out = append(out, ChangedAncestor{
 			NodeID:   id,
 			FilePath: byID[id].OriginalFilePath,
-			Service:  byID[id].ServiceName,
+			Project:  byID[id].ProjectName,
 			Depth:    d,
 		})
 	}

@@ -507,7 +507,7 @@ func (r *Run) Start(
 		if !ok {
 			return nil, fmt.Errorf("%w: %s", ErrPlanNodeNotInGraph, p.Key)
 		}
-		jobName, err := domain.ComputeJobName(n.ServiceName, n.SchemaName, n.TableName, r.runID.String(), 0)
+		jobName, err := domain.ComputeJobName(n.ProjectName, n.SchemaName, n.TableName, r.runID.String(), 0)
 		if err != nil {
 			return nil, fmt.Errorf("name the job of %s: %w", p.Key, err)
 		}
@@ -515,7 +515,7 @@ func (r *Run) Start(
 			TaskID:        TaskIDFor(r.tenantID, r.runID, p.Key),
 			ScheduleID:    r.runID,
 			CreatedAt:     now,
-			ServiceName:   n.ServiceName,
+			ProjectName:   n.ProjectName,
 			SchemaName:    n.SchemaName,
 			TableName:     n.TableName,
 			NodeKey:       p.Key,

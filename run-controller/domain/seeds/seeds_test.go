@@ -14,14 +14,14 @@ import (
 
 func desired(table, hash string) seeds.Desired {
 	return seeds.Desired{
-		Key: topology.KeyOf("raw", table), ServiceName: "svc", SchemaName: "raw", TableName: table,
+		Key: topology.KeyOf("raw", table), ProjectName: "svc", SchemaName: "raw", TableName: table,
 		NodeType: "dbt-seed", ContentHash: hash, ImageTag: "svc:2",
 	}
 }
 
 func seedNode(table, hash string) topology.Node {
 	return topology.Node{
-		Key: topology.KeyOf("raw", table), UniqueID: "raw." + table, ServiceName: "svc", SchemaName: "raw",
+		Key: topology.KeyOf("raw", table), UniqueID: "raw." + table, ProjectName: "svc", SchemaName: "raw",
 		TableName: table, NodeType: "dbt-seed", ContentHash: hash, ImageTag: "svc:2",
 	}
 }

@@ -27,7 +27,7 @@ func TestIntegration_PythonODCSRelease_SkipsCompileLeg(t *testing.T) {
 	defer db.Close()
 
 	body, _ := json.Marshal(httpinfra.ReceiveCandidateRequest{
-		Service:   "svc-py",
+		Project:   "svc-py",
 		ReleaseID: "it-py-1",
 		ImageTag:  "img",
 		Repo:      "acme/py",
@@ -53,7 +53,7 @@ func TestIntegration_PythonODCSRelease_SkipsCompileLeg(t *testing.T) {
 	var p struct {
 		ReleaseID    string `json:"release_id"`
 		ManifestKeys []struct {
-			Service string `json:"service"`
+			Project string `json:"project"`
 			S3URI   string `json:"s3_uri"`
 			Kind    string `json:"kind"`
 		} `json:"manifest_keys"`
@@ -61,7 +61,7 @@ func TestIntegration_PythonODCSRelease_SkipsCompileLeg(t *testing.T) {
 	require.NoError(t, json.Unmarshal(entries[0].Payload, &p))
 	assert.Equal(t, "it-py-1", p.ReleaseID)
 	require.Len(t, p.ManifestKeys, 1)
-	assert.Equal(t, "svc-py", p.ManifestKeys[0].Service)
+	assert.Equal(t, "svc-py", p.ManifestKeys[0].Project)
 	assert.Equal(t, "python-odcs", p.ManifestKeys[0].Kind)
 	assert.Equal(t, "s3://test-bucket/svc-py/it-py-1/odcs-bundle.json", p.ManifestKeys[0].S3URI)
 }

@@ -15,7 +15,7 @@ import (
 func TestReceiveCandidate_PersistsAsReceived(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	input := handlers.ReceiveCandidateInput{
-		Service:   "service-1",
+		Project:   "service-1",
 		ReleaseID: "sha-abc",
 		ImageTag:  "sha-abc",
 		Repo:      "acme/demo",
@@ -25,14 +25,14 @@ func TestReceiveCandidate_PersistsAsReceived(t *testing.T) {
 	r, err := store.GetRelease("sha-abc")
 	require.NoError(t, err)
 	assert.Equal(t, pipeline.StatusReceived, r.Status())
-	assert.Equal(t, "service-1", r.ChangedService())
+	assert.Equal(t, "service-1", r.ChangedProject())
 	assert.Equal(t, map[string]string{"service-1": "sha-abc"}, r.ImageTags())
 }
 
 func TestReceiveCandidate_IsIdempotentOnReleaseID(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	input := handlers.ReceiveCandidateInput{
-		Service:   "svc",
+		Project:   "svc",
 		ReleaseID: "sha-abc",
 		ImageTag:  "sha-abc",
 		Repo:      "acme/demo",
@@ -48,17 +48,17 @@ func TestReceiveCandidate_IsIdempotentOnReleaseID(t *testing.T) {
 func TestReceiveCandidate_RejectsEmptyReleaseID(t *testing.T) {
 	deps, _ := newDeps(time.Unix(100, 0).UTC())
 	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service:   "svc",
+		Project:   "svc",
 		ReleaseID: "",
 		ImageTag:  "t",
 	})
 	assert.Error(t, err)
 }
 
-func TestReceiveCandidate_RejectsEmptyService(t *testing.T) {
+func TestReceiveCandidate_RejectsEmptyProject(t *testing.T) {
 	deps, _ := newDeps(time.Unix(100, 0).UTC())
 	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service:   "",
+		Project:   "",
 		ReleaseID: "sha-abc",
 		ImageTag:  "t",
 	})
@@ -68,7 +68,7 @@ func TestReceiveCandidate_RejectsEmptyService(t *testing.T) {
 func TestReceiveCandidate_RejectsEmptyImageTag(t *testing.T) {
 	deps, _ := newDeps(time.Unix(100, 0).UTC())
 	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service:   "svc",
+		Project:   "svc",
 		ReleaseID: "sha-abc",
 		ImageTag:  "",
 	})
@@ -78,7 +78,7 @@ func TestReceiveCandidate_RejectsEmptyImageTag(t *testing.T) {
 func TestReceiveCandidate_PersistsBootstrapFlag(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service:   "svc-a",
+		Project:   "svc-a",
 		ReleaseID: "rBoot",
 		ImageTag:  "sha-a",
 		Bootstrap: true,
@@ -93,7 +93,7 @@ func TestReceiveCandidate_PersistsBootstrapFlag(t *testing.T) {
 func TestReceiveCandidate_RejectsEmptyRepo(t *testing.T) {
 	deps, _ := newDeps(time.Unix(100, 0).UTC())
 	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service:   "svc",
+		Project:   "svc",
 		ReleaseID: "sha-abc",
 		ImageTag:  "t",
 		Repo:      "",
@@ -105,7 +105,7 @@ func TestReceiveCandidate_RejectsEmptyRepo(t *testing.T) {
 func TestReceiveCandidate_RejectsEmptyCommitSHA(t *testing.T) {
 	deps, _ := newDeps(time.Unix(100, 0).UTC())
 	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service:   "svc",
+		Project:   "svc",
 		ReleaseID: "sha-abc",
 		ImageTag:  "t",
 		Repo:      "acme/demo",
@@ -117,7 +117,7 @@ func TestReceiveCandidate_RejectsEmptyCommitSHA(t *testing.T) {
 func TestReceiveCandidate_DefaultsAbsentKindToDbt(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc", ReleaseID: "rK1", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
+		Project: "svc", ReleaseID: "rK1", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	r, err := store.GetRelease("rK1")
 	require.NoError(t, err)
@@ -127,7 +127,7 @@ func TestReceiveCandidate_DefaultsAbsentKindToDbt(t *testing.T) {
 func TestReceiveCandidate_PersistsPythonODCSKind(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc", ReleaseID: "rK2", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
+		Project: "svc", ReleaseID: "rK2", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
 		Kind: "python-odcs",
 	}))
 	r, err := store.GetRelease("rK2")
@@ -141,12 +141,12 @@ func TestReceiveCandidate_PersistsPythonODCSKind(t *testing.T) {
 func TestReceiveCandidate_RefusesPython(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc", ReleaseID: "rK4", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
+		Project: "svc", ReleaseID: "rK4", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
 		Kind: "python",
 	})
 	require.ErrorIs(t, err, handlers.ErrInvalidCandidate)
 	assert.ErrorContains(t, err,
-		`kind "python" is no longer accepted: release the service as "python-odcs", one ODCS contract per node (docs/contracts.md)`)
+		`kind "python" is no longer accepted: release the project as "python-odcs", one ODCS contract per node (docs/contracts.md)`)
 	r, _ := store.GetRelease("rK4")
 	assert.Nil(t, r, "a refused kind must not persist a release")
 }
@@ -154,7 +154,7 @@ func TestReceiveCandidate_RefusesPython(t *testing.T) {
 func TestReceiveCandidate_RejectsUnknownKind(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc", ReleaseID: "rK3", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
+		Project: "svc", ReleaseID: "rK3", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
 		Kind: "r",
 	})
 	require.Error(t, err)
@@ -168,14 +168,14 @@ func TestReceiveCandidate_ConflictsWithAVerification(t *testing.T) {
 	deps, store := newDeps(now)
 	store.SeedRelease(pipeline.NewVerification("run-9", "core", "img", "rel-0", 1, "", release.ManifestKindDbt, now))
 	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "core", ReleaseID: "run-9", ImageTag: "img", Repo: "acme/demo", CommitSHA: "deadbeef",
+		Project: "core", ReleaseID: "run-9", ImageTag: "img", Repo: "acme/demo", CommitSHA: "deadbeef",
 	})
 	assert.ErrorIs(t, err, handlers.ErrRunKindConflict)
 }
 
 func TestReceiveCandidate_ValidationErrorsWrapErrInvalidCandidate(t *testing.T) {
 	deps, _ := newDeps(time.Unix(100, 0).UTC())
-	input := handlers.ReceiveCandidateInput{Service: "core", ReleaseID: "rel-1", Repo: "o/r", CommitSHA: "sha"}
+	input := handlers.ReceiveCandidateInput{Project: "core", ReleaseID: "rel-1", Repo: "o/r", CommitSHA: "sha"}
 	err := handlers.ReceiveCandidate(context.Background(), deps, input)
 	require.ErrorIs(t, err, handlers.ErrInvalidCandidate)
 	require.ErrorContains(t, err, "image_tag is required")
@@ -187,7 +187,7 @@ func TestReceiveCandidate_ValidationErrorsWrapErrInvalidCandidate(t *testing.T) 
 
 func conflictBase() handlers.ReceiveCandidateInput {
 	return handlers.ReceiveCandidateInput{
-		Service: "core", ReleaseID: "rel-1", ImageTag: "img:1", Repo: "acme/demo", CommitSHA: "deadbeef",
+		Project: "core", ReleaseID: "rel-1", ImageTag: "img:1", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}
 }
 
@@ -195,7 +195,7 @@ func conflictBase() handlers.ReceiveCandidateInput {
 // the new submission differs, and the stored candidate is left as it was.
 func TestReceiveCandidate_ConflictingResubmitWrapsErrReleaseIDConflict(t *testing.T) {
 	for name, mutate := range map[string]func(*handlers.ReceiveCandidateInput){
-		"service":    func(in *handlers.ReceiveCandidateInput) { in.Service = "billing" },
+		"project":    func(in *handlers.ReceiveCandidateInput) { in.Project = "billing" },
 		"image tag":  func(in *handlers.ReceiveCandidateInput) { in.ImageTag = "img:2" },
 		"kind":       func(in *handlers.ReceiveCandidateInput) { in.Kind = "python-odcs" },
 		"bootstrap":  func(in *handlers.ReceiveCandidateInput) { in.Bootstrap = true },
@@ -212,7 +212,7 @@ func TestReceiveCandidate_ConflictingResubmitWrapsErrReleaseIDConflict(t *testin
 			assert.ErrorContains(t, err, `"rel-1"`)
 			r, gerr := store.GetRelease("rel-1")
 			require.NoError(t, gerr)
-			assert.Equal(t, "core", r.ChangedService())
+			assert.Equal(t, "core", r.ChangedProject())
 			assert.Equal(t, "img:1", r.ImageTags()["core"])
 		})
 	}
@@ -285,7 +285,7 @@ func TestReceiveCandidate_LosingARaceToAVerificationIsAKindConflict(t *testing.T
 func TestReceiveCandidate_RefusesRebaselineWithoutBootstrap(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc", ReleaseID: "rRebase", ImageTag: "t", Rebaseline: true, Repo: "acme/demo", CommitSHA: "deadbeef"})
+		Project: "svc", ReleaseID: "rRebase", ImageTag: "t", Rebaseline: true, Repo: "acme/demo", CommitSHA: "deadbeef"})
 	require.ErrorIs(t, err, handlers.ErrInvalidCandidate)
 	assert.Contains(t, err.Error(), "rebaseline is accepted only together with bootstrap")
 	_, getErr := store.GetRelease("rRebase")
@@ -295,7 +295,7 @@ func TestReceiveCandidate_RefusesRebaselineWithoutBootstrap(t *testing.T) {
 func TestReceiveCandidate_StoresRebaselineWithBootstrap(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc", ReleaseID: "rRebase", ImageTag: "t", Bootstrap: true, Rebaseline: true, Repo: "acme/demo", CommitSHA: "deadbeef"}))
+		Project: "svc", ReleaseID: "rRebase", ImageTag: "t", Bootstrap: true, Rebaseline: true, Repo: "acme/demo", CommitSHA: "deadbeef"}))
 	r, err := store.GetRelease("rRebase")
 	require.NoError(t, err)
 	assert.True(t, r.IsBootstrap())

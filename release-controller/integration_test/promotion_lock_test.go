@@ -34,7 +34,7 @@ func TestIntegration_AnnounceTopology_SerializesUnderTheReleaseQueueLock(t *test
 	_, deps, db := setup(t)
 	defer db.Close()
 	ctx := context.Background()
-	topo := release.Topology{{UniqueID: "a", ServiceName: "svc", NodeType: "dbt-model", UpstreamUniqueIDs: []string{}}}
+	topo := release.Topology{{UniqueID: "a", ProjectName: "svc", NodeType: "dbt-model", UpstreamUniqueIDs: []string{}}}
 
 	holder := deps.NewUoW()
 	require.NoError(t, holder.Begin(ctx))
@@ -113,15 +113,15 @@ func TestIntegration_PromoteToProduction_SerializesUnderTheReleaseQueueLock(t *t
 
 	// Drive a candidate to Validating on a fresh install.
 	require.NoError(t, handlers.ReceiveCandidate(ctx, deps, handlers.ReceiveCandidateInput{
-		Service: "service-1", ReleaseID: "rA", ImageTag: "sha-rA", Repo: "acme/demo", CommitSHA: "deadbeefcafe1234",
+		Project: "service-1", ReleaseID: "rA", ImageTag: "sha-rA", Repo: "acme/demo", CommitSHA: "deadbeefcafe1234",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(ctx, deps))
 	require.NoError(t, handlers.HandleCompileResult(ctx, deps, handlers.HandleCompileResultInput{ReleaseID: "rA", Status: "ok"}))
 	require.NoError(t, handlers.HandleParsedManifest(ctx, deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA", Status: "ok",
 		TopologyRef: putTopology(t, deps, "rA", release.Topology{
-			{UniqueID: "a", ServiceName: "service-1", NodeType: "dbt-model", UpstreamUniqueIDs: []string{}},
-			{UniqueID: "b", ServiceName: "service-1", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"a"}},
+			{UniqueID: "a", ProjectName: "service-1", NodeType: "dbt-model", UpstreamUniqueIDs: []string{}},
+			{UniqueID: "b", ProjectName: "service-1", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"a"}},
 		}),
 	}))
 	for _, n := range []handlers.NodeValidationResultInput{

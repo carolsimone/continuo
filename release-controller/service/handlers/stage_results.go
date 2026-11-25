@@ -51,15 +51,15 @@ func stageResults(perNode []NodeResult) (results []pipeline.NodeValidationResult
 	return results, failing
 }
 
-// failedNodes pairs each failing node id with the service serviceOf names for
-// it, the input of the operator-facing failure summaries. serviceOf may be nil
+// failedNodes pairs each failing node id with the project projectOf names for
+// it, the input of the operator-facing failure summaries. projectOf may be nil
 // where no candidate topology exists yet, as in the compile leg.
-func failedNodes(ids []string, serviceOf func(id string) string) []release.FailedNode {
+func failedNodes(ids []string, projectOf func(id string) string) []release.FailedNode {
 	nodes := make([]release.FailedNode, len(ids))
 	for i, id := range ids {
 		nodes[i].NodeID = id
-		if serviceOf != nil {
-			nodes[i].Service = serviceOf(id)
+		if projectOf != nil {
+			nodes[i].Project = projectOf(id)
 		}
 	}
 	return nodes

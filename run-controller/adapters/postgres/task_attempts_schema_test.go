@@ -31,7 +31,7 @@ func newSchemaTaskOf(t *testing.T, db *sqlx.DB, tenant string) uuid.UUID {
 		_, _ = db.Exec(`DELETE FROM runs WHERE run_id = $1`, scheduleID)
 	})
 	_, err = db.Exec(`
-		INSERT INTO tasks (tenant_id, task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries)
+		INSERT INTO tasks (tenant_id, task_id, run_id, project_name, schema_name, table_name, job_name, status, max_retries)
 		VALUES ((SELECT tenant_id FROM runs WHERE run_id = $2), $1, $2, 'svc', 'sch', 'tbl', 'job-0', 'pending', 2)`, taskID, scheduleID)
 	require.NoError(t, err)
 	return taskID

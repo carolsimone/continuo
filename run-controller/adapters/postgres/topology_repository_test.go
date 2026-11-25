@@ -39,7 +39,7 @@ func newTopoTenant(t *testing.T, db *sqlx.DB) string {
 func topoSpec(schema, table, nodeType, hash string, upstream ...string) topology.NodeSpec {
 	zero := 0
 	return topology.NodeSpec{
-		UniqueID: schema + "." + table, ServiceName: "svc", SchemaName: schema, TableName: table,
+		UniqueID: schema + "." + table, ProjectName: "svc", SchemaName: schema, TableName: table,
 		NodeType: nodeType, TestCount: &zero, ContentHash: hash, ImageTag: "svc:1", ScheduleName: "daily",
 		UpstreamUniqueIDs: upstream,
 	}
@@ -70,7 +70,7 @@ func saveTopoRelease(t *testing.T, db *sqlx.DB, rel topology.Release) (bool, err
 }
 
 // unknownExternalSpec is the unknown-external node of schema.table as a topology artifact
-// states it: a node no service owns, with no content hash, schedule or image,
+// states it: a node no project owns, with no content hash, schedule or image,
 // that no run builds.
 func unknownExternalSpec(schema, table string) topology.NodeSpec {
 	zero := 0
@@ -162,13 +162,13 @@ func TestTopologyRepository_ReleaseNodesRoundTripsEveryColumnInKeyOrder(t *testi
 	tenant := newTopoTenant(t, db)
 	three := 3
 	rich := topology.NodeSpec{ //nolint:gosec // G101: continuo-api-* is a Secret name, not a value
-		UniqueID: "raw.ab", ServiceName: "svc-2", SchemaName: "raw", TableName: "ab", NodeType: "python-api",
+		UniqueID: "raw.ab", ProjectName: "svc-2", SchemaName: "raw", TableName: "ab", NodeType: "python-api",
 		TestCount: &three, ContentHash: "h-ab", ImageTag: "svc-2:7", SecretRef: "continuo-api-weather", ScheduleName: "hourly",
 	}
 	eightHours := 28800
 	rich.TimeoutSeconds = &eightHours
 	unknown := topology.NodeSpec{
-		UniqueID: "raw.a_b", ServiceName: "svc", SchemaName: "raw", TableName: "a_b", NodeType: "dbt-seed", ContentHash: "h-a_b",
+		UniqueID: "raw.a_b", ProjectName: "svc", SchemaName: "raw", TableName: "a_b", NodeType: "dbt-seed", ContentHash: "h-a_b",
 	}
 	rel := topoRelease(t, tenant, "rel-1", 1, "aa", rich, unknown,
 		topoSpec("raw", "aa", "dbt-seed", "h-aa"), topoSpec("stg", "x", "dbt-model", "h-x"))
@@ -193,7 +193,7 @@ func TestTopologyRepository_ReleaseNodesRoundTripsEveryColumnInKeyOrder(t *testi
 	assert.Empty(t, none)
 }
 
-// An unknown-external node has an empty service name, content hash, image tag and
+// An unknown-external node has an empty project name, content hash, image tag and
 // schedule name. It is stored like any other node and read back with every
 // field as the artifact stated it, and the edge from it to its reader is kept.
 func TestTopologyRepository_AnUnknownExternalNodeIsStoredAndReadBackIntact(t *testing.T) {
@@ -208,7 +208,7 @@ func TestTopologyRepository_AnUnknownExternalNodeIsStoredAndReadBackIntact(t *te
 	require.Len(t, nodes, 2)
 	assert.Equal(t, topology.Node{
 		Key: "raw.x", UniqueID: "raw.x", SchemaName: "raw", TableName: "x", NodeType: "unknown-external", TestCount: &zero,
-	}, nodes[1], "empty service name, content hash, image tag, secret ref and schedule name come back empty")
+	}, nodes[1], "empty project name, content hash, image tag, secret ref and schedule name come back empty")
 
 	unknownExternal, err := repo.ReleaseNodes(ctx, tenant, "rel-1", "unknown-external")
 	require.NoError(t, err)
@@ -283,9 +283,9 @@ func TestTopologyRow_ReadsLegacyIngestedAsUnknownExternal(t *testing.T) {
 	got, ok := g.Node("raw.x")
 	require.True(t, ok)
 	assert.Equal(t, want, got, "Graph")
-	for _, service := range []string{"", "svc"} {
-		_, err = runplan.SingleNode{Key: "raw.x", ServiceName: service, Operation: model.OperationRun}.Select(g)
-		assert.ErrorIs(t, err, runplan.ErrExternalNode, "a run of the node alone, service %q", service)
+	for _, project := range []string{"", "svc"} {
+		_, err = runplan.SingleNode{Key: "raw.x", ProjectName: project, Operation: model.OperationRun}.Select(g)
+		assert.ErrorIs(t, err, runplan.ErrExternalNode, "a run of the node alone, project %q", project)
 	}
 
 	inGraphTx(t, db, tenant, func(tg *postgres.TaskGraph) {

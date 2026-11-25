@@ -79,13 +79,13 @@ func TestParsedManifestInput_CarriesTheParseTimings(t *testing.T) {
 func TestParsedManifestInput_Failed(t *testing.T) {
 	in := parsedManifestInput(pkgevents.ManifestLoadedCandidate{
 		ReleaseID: "r1", Status: pkgevents.ManifestStatusFailed, FailureKind: "invalid_sql", Detail: "1 node failed to parse: a.b",
-		FailedNodes: []pkgevents.ManifestFailedNode{{NodeID: "a.b", Kind: "invalid_sql", Service: "s", FilePath: "models/b.sql", NodeType: "dbt-model", Detail: "Expecting )"}},
+		FailedNodes: []pkgevents.ManifestFailedNode{{NodeID: "a.b", Kind: "invalid_sql", Project: "s", FilePath: "models/b.sql", NodeType: "dbt-model", Detail: "Expecting )"}},
 	}, slog.Default())
 	assert.Equal(t, pkg_model.ParseFailureKindInvalidSQL, in.FailureKind)
 	assert.Equal(t, "1 node failed to parse: a.b", in.Detail)
 	assert.True(t, in.TopologyRef.IsZero())
 	require.Len(t, in.FailedNodes, 1)
-	assert.Equal(t, handlers.ParsedFailedNode{NodeID: "a.b", Kind: pkg_model.ParseFailureKindInvalidSQL, Service: "s",
+	assert.Equal(t, handlers.ParsedFailedNode{NodeID: "a.b", Kind: pkg_model.ParseFailureKindInvalidSQL, Project: "s",
 		FilePath: "models/b.sql", NodeType: "dbt-model", Detail: "Expecting )"}, in.FailedNodes[0])
 }
 

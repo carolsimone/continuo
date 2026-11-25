@@ -170,10 +170,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// topology-controller reads no contract.yaml, so a service still released
+	// topology-controller reads no contract.yaml, so a project still released
 	// as kind python could not be released again: this check keeps
-	// release-controller from starting and names the services.
-	if err := handlers.CheckNoServiceOnPythonKind(ctx, postgres.NewServiceProdRepository(db)); err != nil {
+	// release-controller from starting and names the projects.
+	if err := handlers.CheckNoProjectOnPythonKind(ctx, postgres.NewServiceProdRepository(db)); err != nil {
 		os.Exit(pythonKindCheckExitCode(ctx, logger, err))
 	}
 

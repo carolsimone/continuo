@@ -188,10 +188,10 @@ func openProposal(current, all []ports.ProposalSummary) (ErrProposalOpen, bool) 
 
 // openInCurrentRound reports whether any node's latest attempt in the current
 // round is still generating or verifying, or is proposed with a fix that could
-// still land. A batched attempt opens one pull request per owning service, so
+// still land. A batched attempt opens one pull request per owning project, so
 // the decision weighs all of them: the attempt is a dead end — closed without
-// landing a fix — only once every owning service's pull request has been
-// rejected. If any owning service has no pull request yet, or one in any
+// landing a fix — only once every owning project's pull request has been
+// rejected. If any owning project has no pull request yet, or one in any
 // non-rejected state, a fix may still land and a new round would duplicate it.
 // Only each node's latest attempt is consulted; an earlier attempt superseded
 // by a later one on the same node does not count.
@@ -220,8 +220,8 @@ func openInCurrentRound(current []ports.ProposalSummary) (ErrProposalOpen, bool)
 // openPRAcrossRounds reports whether any proposal from any round — not just the
 // current one — has a pull request that is opening, open, or merged: a fix
 // already out for human review makes a new round redundant regardless of which
-// round proposed it. A batched attempt's per-service pull requests are all
-// weighed, so one service's still-open PR blocks even when a sibling service's
+// round proposed it. A batched attempt's per-project pull requests are all
+// weighed, so one project's still-open PR blocks even when a sibling project's
 // PR was rejected.
 func openPRAcrossRounds(all []ports.ProposalSummary) (ErrProposalOpen, bool) {
 	byNode := map[string]ports.ProposalSummary{}
@@ -242,16 +242,16 @@ func openPRAcrossRounds(all []ports.ProposalSummary) (ErrProposalOpen, bool) {
 }
 
 // isDeadEnd reports whether a proposed attempt has run out of road: every
-// owning service's pull request has been rejected, so no fix from this attempt
-// can still land. An owning service with no pull request yet, or one in any
+// owning project's pull request has been rejected, so no fix from this attempt
+// can still land. An owning project with no pull request yet, or one in any
 // non-rejected state, means the attempt is still live.
 func isDeadEnd(p ports.ProposalSummary) bool {
-	byService := map[string]ports.ProposalPR{}
+	byProject := map[string]ports.ProposalPR{}
 	for _, pr := range p.EffectivePRs() {
-		byService[pr.Service] = pr
+		byProject[pr.Project] = pr
 	}
-	for _, svc := range owningServices(p) {
-		pr, ok := byService[svc]
+	for _, project := range owningProjects(p) {
+		pr, ok := byProject[project]
 		if !ok || pr.PRState != "rejected" {
 			return false
 		}
@@ -259,20 +259,20 @@ func isDeadEnd(p ports.ProposalSummary) bool {
 	return true
 }
 
-// owningServices names the services whose fixes an attempt must land before it
-// is exhausted: PRServices when the attempt carries them, otherwise the
-// services named by its effective pull requests (the unsplit single-group
+// owningProjects names the projects whose fixes an attempt must land before it
+// is exhausted: PRProjects when the attempt carries them, otherwise the
+// projects named by its effective pull requests (the unsplit single-group
 // case, whose one group is named by the empty string).
-func owningServices(p ports.ProposalSummary) []string {
-	if len(p.PRServices) > 0 {
-		return p.PRServices
+func owningProjects(p ports.ProposalSummary) []string {
+	if len(p.PRProjects) > 0 {
+		return p.PRProjects
 	}
 	prs := p.EffectivePRs()
-	svcs := make([]string, 0, len(prs))
+	projects := make([]string, 0, len(prs))
 	for _, pr := range prs {
-		svcs = append(svcs, pr.Service)
+		projects = append(projects, pr.Project)
 	}
-	return svcs
+	return projects
 }
 
 // hasOutstandingPR reports whether any of an attempt's pull requests is being
@@ -288,12 +288,12 @@ func hasOutstandingPR(p ports.ProposalSummary) bool {
 }
 
 // representativePRURL is the pull request URL to name when an attempt blocks a
-// retry: the first non-rejected pull request's URL in service order, so a human
+// retry: the first non-rejected pull request's URL in project order, so a human
 // is pointed at a PR that could still land rather than a closed one; the
-// attempt's singular URL when it carries no per-service pull requests.
+// attempt's singular URL when it carries no per-project pull requests.
 func representativePRURL(p ports.ProposalSummary) string {
 	prs := append([]ports.ProposalPR(nil), p.EffectivePRs()...)
-	sort.Slice(prs, func(i, j int) bool { return prs[i].Service < prs[j].Service })
+	sort.Slice(prs, func(i, j int) bool { return prs[i].Project < prs[j].Project })
 	for _, pr := range prs {
 		if pr.PRState != "rejected" {
 			return pr.PRURL

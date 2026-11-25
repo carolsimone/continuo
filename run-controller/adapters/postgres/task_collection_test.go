@@ -36,7 +36,7 @@ func TestTaskCollection_GetByID(t *testing.T) {
 	})
 	require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{
 		TenantID: pkgevents.DefaultTenantID,
-		TaskID:   taskID, ScheduleID: sched.ScheduleID, CreatedAt: time.Now(), ServiceName: "service-1",
+		TaskID:   taskID, ScheduleID: sched.ScheduleID, CreatedAt: time.Now(), ProjectName: "service-1",
 		SchemaName: "raw", TableName: "orders", JobName: "job-orders", Status: run.TaskStatusSucceeded,
 		ImageTag: "service-1:v3",
 	}))
@@ -46,7 +46,7 @@ func TestTaskCollection_GetByID(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, taskID, got.TaskID)
 	assert.Equal(t, sched.ScheduleID, got.ScheduleID)
-	assert.Equal(t, run.NodeID{ServiceName: "service-1", SchemaName: "raw", TableName: "orders"}, got.Node())
+	assert.Equal(t, run.NodeID{ProjectName: "service-1", SchemaName: "raw", TableName: "orders"}, got.Node())
 	assert.Equal(t, "service-1:v3", got.ImageTag)
 	assert.Equal(t, run.TaskStatusSucceeded, got.Status)
 
@@ -77,7 +77,7 @@ func TestTaskCollection_RunReleasesOf(t *testing.T) {
 	for id, sched := range map[uuid.UUID]uuid.UUID{stampedTask: stamped.ScheduleID, legacyTask: legacy.ScheduleID} {
 		require.NoError(t, taskRepo.Create(context.Background(), &postgres.TaskRow{
 			TenantID: pkgevents.DefaultTenantID,
-			TaskID:   id, ScheduleID: sched, CreatedAt: time.Now(), ServiceName: "service-1",
+			TaskID:   id, ScheduleID: sched, CreatedAt: time.Now(), ProjectName: "service-1",
 			SchemaName: "raw", TableName: "orders", JobName: "job-orders", Status: run.TaskStatusSucceeded,
 		}))
 	}
@@ -122,7 +122,7 @@ func TestTaskCollection_ListByRunIDPagesTasksOfOneCreatedAtInTaskIDOrder(t *test
 		want = append(want, id.String())
 		require.NoError(t, taskRepo.Create(ctx, &postgres.TaskRow{
 			TenantID: pkgevents.DefaultTenantID,
-			TaskID:   id, ScheduleID: sched.ScheduleID, CreatedAt: createdAt, ServiceName: "service-1",
+			TaskID:   id, ScheduleID: sched.ScheduleID, CreatedAt: createdAt, ProjectName: "service-1",
 			SchemaName: "raw", TableName: "orders", JobName: "job-" + id.String(), Status: run.TaskStatusPending,
 		}))
 	}
@@ -165,7 +165,7 @@ func TestTaskCollection_StoresTheDispatchSpecAndReadsItBack(t *testing.T) {
 	viewSpec := run.DispatchSpec{Operation: model.OperationRun, Reason: "rebuild: dropped by the load of e2e_schema.seed_fx_rates_eur"}
 	task := func(table string, key topology.NodeKey, status run.TaskStatus, spec run.DispatchSpec) run.Task {
 		return run.Task{TaskID: run.TaskIDFor(tenant, r.RunID(), key), ScheduleID: r.RunID(), CreatedAt: now,
-			ServiceName: "service-1", SchemaName: "e2e_schema", TableName: table, NodeKey: key, JobName: "job-" + table,
+			ProjectName: "service-1", SchemaName: "e2e_schema", TableName: table, NodeKey: key, JobName: "job-" + table,
 			Status: status, MaxRetries: 2, Operation: spec.Operation, PlanReason: spec.Reason, SeedPreflight: spec.Preflight}
 	}
 	seed := task("seed_fx_rates_eur", seedKey, run.TaskStatusDispatched, seedSpec)

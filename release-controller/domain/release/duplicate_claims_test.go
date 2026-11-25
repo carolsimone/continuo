@@ -7,19 +7,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func node(uniqueID, service, filePath string) Node {
-	return Node{UniqueID: uniqueID, ServiceName: service, OriginalFilePath: filePath}
+func node(uniqueID, project, filePath string) Node {
+	return Node{UniqueID: uniqueID, ProjectName: project, OriginalFilePath: filePath}
 }
 
-func nodeOfType(uniqueID, service, filePath, nodeType string) Node {
-	return Node{UniqueID: uniqueID, ServiceName: service, OriginalFilePath: filePath, NodeType: nodeType}
+func nodeOfType(uniqueID, project, filePath, nodeType string) Node {
+	return Node{UniqueID: uniqueID, ProjectName: project, OriginalFilePath: filePath, NodeType: nodeType}
 }
 
 // nodeWithRelation sets ResolvedRelationID independently of UniqueID, so a
 // test can construct a claimant whose declared identity and physical relation
 // differ (an alias override) or coincide only by declared name (no alias).
-func nodeWithRelation(uniqueID, relationID, service, filePath string) Node {
-	return Node{UniqueID: uniqueID, ResolvedRelationID: relationID, ServiceName: service, OriginalFilePath: filePath}
+func nodeWithRelation(uniqueID, relationID, project, filePath string) Node {
+	return Node{UniqueID: uniqueID, ResolvedRelationID: relationID, ProjectName: project, OriginalFilePath: filePath}
 }
 
 // A python claimant's NodeType must survive into its Claimant so the
@@ -38,7 +38,7 @@ func TestDuplicateClaims_CarriesNodeType(t *testing.T) {
 	assert.Equal(t, "python-node", claims[0].Claimants[1].NodeType)
 }
 
-func TestDuplicateClaims_AcrossServices(t *testing.T) {
+func TestDuplicateClaims_AcrossProjects(t *testing.T) {
 	topo := Topology{
 		node("analytics.orders", "marketing", "models/orders.sql"),
 		node("analytics.customers", "finance", "models/customers.sql"),
@@ -50,12 +50,12 @@ func TestDuplicateClaims_AcrossServices(t *testing.T) {
 	require.Len(t, claims, 1)
 	assert.Equal(t, "analytics.orders", claims[0].RelationID)
 	assert.Equal(t, []Claimant{
-		{UniqueID: "analytics.orders", ServiceName: "finance", OriginalFilePath: "models/orders.sql"},
-		{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders.sql"},
-	}, claims[0].Claimants, "claimants are sorted by service then path")
+		{UniqueID: "analytics.orders", ProjectName: "finance", OriginalFilePath: "models/orders.sql"},
+		{UniqueID: "analytics.orders", ProjectName: "marketing", OriginalFilePath: "models/orders.sql"},
+	}, claims[0].Claimants, "claimants are sorted by project then path")
 }
 
-func TestDuplicateClaims_WithinOneService(t *testing.T) {
+func TestDuplicateClaims_WithinOneProject(t *testing.T) {
 	topo := Topology{
 		node("analytics.orders", "finance", "models/orders.sql"),
 		node("analytics.orders", "finance", "models/orders_v2.sql"),
@@ -80,9 +80,9 @@ func TestDuplicateClaims_ThreeWay(t *testing.T) {
 
 	require.Len(t, claims, 1)
 	require.Len(t, claims[0].Claimants, 3)
-	assert.Equal(t, "finance", claims[0].Claimants[0].ServiceName)
-	assert.Equal(t, "marketing", claims[0].Claimants[1].ServiceName)
-	assert.Equal(t, "sales", claims[0].Claimants[2].ServiceName)
+	assert.Equal(t, "finance", claims[0].Claimants[0].ProjectName)
+	assert.Equal(t, "marketing", claims[0].Claimants[1].ProjectName)
+	assert.Equal(t, "sales", claims[0].Claimants[2].ProjectName)
 }
 
 // unique_id values are lowercased where they are minted, in topology-controller,
@@ -237,43 +237,43 @@ func TestDuplicateClaims_DuplicateDbtTestID_IdentityCollision(t *testing.T) {
 	require.Len(t, claims[0].Claimants, 2)
 }
 
-func TestDuplicateClaim_TargetPrefersChangedService(t *testing.T) {
+func TestDuplicateClaim_TargetPrefersChangedProject(t *testing.T) {
 	c := DuplicateClaim{
 		RelationID: "analytics.orders",
 		Claimants: []Claimant{
-			{ServiceName: "finance", OriginalFilePath: "models/orders.sql"},
-			{ServiceName: "marketing", OriginalFilePath: "models/orders.sql"},
+			{ProjectName: "finance", OriginalFilePath: "models/orders.sql"},
+			{ProjectName: "marketing", OriginalFilePath: "models/orders.sql"},
 		},
 	}
 
 	target, other := c.Target("marketing")
 
-	assert.Equal(t, "marketing", target.ServiceName, "the service changing now is the one that renames")
-	assert.Equal(t, "finance", other.ServiceName)
+	assert.Equal(t, "marketing", target.ProjectName, "the project changing now is the one that renames")
+	assert.Equal(t, "finance", other.ProjectName)
 }
 
 func TestDuplicateClaim_TargetFallsBackToFirstClaimant(t *testing.T) {
 	c := DuplicateClaim{
 		RelationID: "analytics.orders",
 		Claimants: []Claimant{
-			{ServiceName: "finance", OriginalFilePath: "models/orders.sql"},
-			{ServiceName: "marketing", OriginalFilePath: "models/orders.sql"},
+			{ProjectName: "finance", OriginalFilePath: "models/orders.sql"},
+			{ProjectName: "marketing", OriginalFilePath: "models/orders.sql"},
 		},
 	}
 
 	target, other := c.Target("sales")
 
-	assert.Equal(t, "finance", target.ServiceName,
-		"no claimant is the changed service (bootstrap): pick deterministically")
-	assert.Equal(t, "marketing", other.ServiceName)
+	assert.Equal(t, "finance", target.ProjectName,
+		"no claimant is the changed project (bootstrap): pick deterministically")
+	assert.Equal(t, "marketing", other.ProjectName)
 }
 
 func TestFormatDuplicateClaims_NamesEveryClaimant(t *testing.T) {
 	claims := []DuplicateClaim{{
 		RelationID: "analytics.orders",
 		Claimants: []Claimant{
-			{ServiceName: "finance", OriginalFilePath: "models/orders.sql"},
-			{ServiceName: "marketing", OriginalFilePath: "models/orders.sql"},
+			{ProjectName: "finance", OriginalFilePath: "models/orders.sql"},
+			{ProjectName: "marketing", OriginalFilePath: "models/orders.sql"},
 		},
 	}}
 
@@ -288,13 +288,13 @@ func TestFormatDuplicateClaims_NamesEveryClaimant(t *testing.T) {
 func TestFormatDuplicateClaims_ThreeClaimantsAndTwoCollisions(t *testing.T) {
 	claims := []DuplicateClaim{
 		{RelationID: "analytics.customers", Claimants: []Claimant{
-			{ServiceName: "finance", OriginalFilePath: "models/customers.sql"},
-			{ServiceName: "sales", OriginalFilePath: "models/customers.sql"},
+			{ProjectName: "finance", OriginalFilePath: "models/customers.sql"},
+			{ProjectName: "sales", OriginalFilePath: "models/customers.sql"},
 		}},
 		{RelationID: "analytics.orders", Claimants: []Claimant{
-			{ServiceName: "finance", OriginalFilePath: "models/orders.sql"},
-			{ServiceName: "marketing", OriginalFilePath: "models/orders.sql"},
-			{ServiceName: "sales", OriginalFilePath: "models/orders.sql"},
+			{ProjectName: "finance", OriginalFilePath: "models/orders.sql"},
+			{ProjectName: "marketing", OriginalFilePath: "models/orders.sql"},
+			{ProjectName: "sales", OriginalFilePath: "models/orders.sql"},
 		}},
 	}
 
@@ -312,8 +312,8 @@ func TestFormatDuplicateClaims_IdentityCollisionNamesTheRemedy(t *testing.T) {
 		Kind:     CollisionIdentity,
 		UniqueID: "analytics.orders",
 		Claimants: []Claimant{
-			{ServiceName: "finance", OriginalFilePath: "models/orders.sql"},
-			{ServiceName: "marketing", OriginalFilePath: "models/orders.sql"},
+			{ProjectName: "finance", OriginalFilePath: "models/orders.sql"},
+			{ProjectName: "marketing", OriginalFilePath: "models/orders.sql"},
 		},
 	}}
 
@@ -400,7 +400,7 @@ func TestDuplicateClaims_IgnoresAnUnknownExternalNode(t *testing.T) {
 	t.Run("a built node resolves to the unknown-external node's relation", func(t *testing.T) {
 		topo := Topology{
 			{UniqueID: "raw.x", NodeType: "unknown-external", ResolvedRelationID: "raw.x"},
-			{UniqueID: "a.m", NodeType: "dbt-model", ServiceName: "svc", ResolvedRelationID: "raw.x"},
+			{UniqueID: "a.m", NodeType: "dbt-model", ProjectName: "svc", ResolvedRelationID: "raw.x"},
 		}
 		assert.Empty(t, DuplicateClaims(topo))
 	})
@@ -409,7 +409,7 @@ func TestDuplicateClaims_IgnoresAnUnknownExternalNode(t *testing.T) {
 		// emitter, is what keeps the shared unique_id from being reported.
 		topo := Topology{
 			{UniqueID: "raw.x", NodeType: "unknown-external", ResolvedRelationID: "raw.x"},
-			{UniqueID: "raw.x", NodeType: "dbt-model", ServiceName: "svc", ResolvedRelationID: "raw.y"},
+			{UniqueID: "raw.x", NodeType: "dbt-model", ProjectName: "svc", ResolvedRelationID: "raw.y"},
 		}
 		assert.Empty(t, DuplicateClaims(topo))
 	})

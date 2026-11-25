@@ -152,7 +152,7 @@ func promotedRelease(releaseID string, seq int64) events.ReleasePromoted {
 func seedSpec(table string) topology.NodeSpec {
 	zero := 0
 	return topology.NodeSpec{
-		UniqueID: "raw." + table, ServiceName: "svc", SchemaName: "raw", TableName: table,
+		UniqueID: "raw." + table, ProjectName: "svc", SchemaName: "raw", TableName: table,
 		NodeType: "dbt-seed", TestCount: &zero, ContentHash: "h-" + table, ImageTag: "svc:1",
 	}
 }

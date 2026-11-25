@@ -61,25 +61,25 @@ func logLines(t *testing.T, fn func(*slog.Logger)) string {
 	return buf.String()
 }
 
-// A service still released as kind python is logged as exactly that, naming the
-// services, and stops the process with a failure.
-func TestPythonKindCheckExitCode_NamesTheServicesAndFails(t *testing.T) {
-	err := fmt.Errorf("wrapped: %w", &handlers.PythonKindServicesError{Services: []string{"svc-a", "svc-b"}})
+// A project still released as kind python is logged as exactly that, naming the
+// projects, and stops the process with a failure.
+func TestPythonKindCheckExitCode_NamesTheProjectsAndFails(t *testing.T) {
+	err := fmt.Errorf("wrapped: %w", &handlers.PythonKindProjectsError{Projects: []string{"svc-a", "svc-b"}})
 	var code int
 	out := logLines(t, func(l *slog.Logger) { code = pythonKindCheckExitCode(context.Background(), l, err) })
 
 	assert.Equal(t, 1, code)
-	assert.Contains(t, out, "Refusing to start: services are still released as kind python")
+	assert.Contains(t, out, "Refusing to start: projects are still released as kind python")
 	assert.Contains(t, out, "svc-a")
 	assert.Contains(t, out, "svc-b")
 }
 
 // A read that fails for any other reason, such as a lost connection, is not
-// reported as a python service: it is logged as a failed check.
+// reported as a python project: it is logged as a failed check.
 func TestPythonKindCheckExitCode_AnyOtherErrorIsLoggedAsAFailedCheck(t *testing.T) {
 	var code int
 	out := logLines(t, func(l *slog.Logger) {
-		code = pythonKindCheckExitCode(context.Background(), l, errors.New("list the services: connection refused"))
+		code = pythonKindCheckExitCode(context.Background(), l, errors.New("list the projects: connection refused"))
 	})
 
 	assert.Equal(t, 1, code)
@@ -94,7 +94,7 @@ func TestPythonKindCheckExitCode_ShutdownDuringTheCheckExitsCleanly(t *testing.T
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
 	for name, err := range map[string]error{
-		"the read reports the cancellation": fmt.Errorf("list the services: %w", context.Canceled),
+		"the read reports the cancellation": fmt.Errorf("list the projects: %w", context.Canceled),
 		"the read reports another error":    errors.New("driver: bad connection"),
 	} {
 		t.Run(name, func(t *testing.T) {

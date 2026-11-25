@@ -28,7 +28,7 @@ func verificationRunResponse(r *pipeline.Run) map[string]any {
 	body := map[string]any{
 		"run_id":              r.ID(),
 		"status":              string(r.Status()),
-		"changed_service":     r.ChangedService(),
+		"changed_project":     r.ChangedProject(),
 		"verifies_release_id": r.VerifiesReleaseID(),
 		"attempt":             r.Attempt(),
 		"created_at":          r.CreatedAt().UTC().Format(time.RFC3339),

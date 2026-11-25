@@ -28,7 +28,7 @@ func parsedManifestInput(p pkgevents.ManifestLoadedCandidate, logger *slog.Logge
 	failed := make([]handlers.ParsedFailedNode, 0, len(p.FailedNodes))
 	for _, n := range p.FailedNodes {
 		failed = append(failed, handlers.ParsedFailedNode{
-			NodeID: n.NodeID, Kind: pkg_model.ParseFailureKind(n.Kind), Service: n.Service,
+			NodeID: n.NodeID, Kind: pkg_model.ParseFailureKind(n.Kind), Project: n.Project,
 			FilePath: n.FilePath, NodeType: n.NodeType, Detail: n.Detail,
 		})
 	}

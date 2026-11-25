@@ -207,7 +207,7 @@ func TestPass_AsksAboutEachDueAttemptWithItsKnownStatus(t *testing.T) {
 }
 
 // node is the node the questions of these tests are about.
-var node = topology.Node{Key: "e2e_schema.ftable_a", ServiceName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_a", NodeType: "dbt-model"}
+var node = topology.Node{Key: "e2e_schema.ftable_a", ProjectName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_a", NodeType: "dbt-model"}
 
 // One pass asks about the due attempts of every tenant the scan lists: each
 // attempt is locked and its next check moved under its own tenant, so an

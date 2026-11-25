@@ -20,7 +20,7 @@ const predictionRefused = "refused"
 type NoticeDTO struct {
 	Kind              string                `json:"kind"`
 	NodeID            string                `json:"node_id"`
-	Service           string                `json:"service"`
+	Project           string                `json:"project"`
 	EngineFamily      string                `json:"engine_family"`
 	Change            string                `json:"change"`
 	Columns           ColumnChangesDTO      `json:"columns"`
@@ -97,7 +97,7 @@ func NoticesFromDomain(in []release.Notice) []NoticeDTO {
 		out = append(out, NoticeDTO{
 			Kind:         n.Kind,
 			NodeID:       n.NodeID,
-			Service:      n.Service,
+			Project:      n.Project,
 			EngineFamily: string(n.EngineFamily),
 			Change:       string(n.Change),
 			Columns: ColumnChangesDTO{
@@ -141,7 +141,7 @@ func NoticesToDomain(in []NoticeDTO) []release.Notice {
 		out = append(out, release.Notice{
 			Kind:         d.Kind,
 			NodeID:       d.NodeID,
-			Service:      d.Service,
+			Project:      d.Project,
 			EngineFamily: warehouse.Family(d.EngineFamily),
 			Change:       seedreload.Change(d.Change),
 			Columns: release.ColumnChanges{

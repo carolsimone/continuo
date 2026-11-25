@@ -22,7 +22,7 @@ type runFinishedPayload struct {
 	RunID             string    `json:"run_id"`
 	RunKind           string    `json:"run_kind"`
 	Outcome           string    `json:"outcome"`
-	Service           string    `json:"service"`
+	Project           string    `json:"project"`
 	CandidateSchema   string    `json:"candidate_schema"`
 	VerifiesReleaseID string    `json:"verifies_release_id"`
 	Attempt           int       `json:"attempt"`
@@ -43,7 +43,7 @@ func enqueueRunFinished(ctx context.Context, u uow.UnitOfWork, r *pipeline.Run, 
 		RunID:             r.ID(),
 		RunKind:           string(r.Kind()),
 		Outcome:           string(r.Status()),
-		Service:           r.ChangedService(),
+		Project:           r.ChangedProject(),
 		CandidateSchema:   CandidateSchemaFor(r.ID()),
 		VerifiesReleaseID: r.VerifiesReleaseID(),
 		Attempt:           r.Attempt(),

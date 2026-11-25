@@ -47,7 +47,7 @@ func (f fakeUoW) RunRepo() repository.RunRepository { return f.runs }
 
 func designNotice() release.Notice {
 	return release.Notice{
-		Kind: "seed_reload", NodeID: "analytics.seed_fx_rates_eur", Service: "finance",
+		Kind: "seed_reload", NodeID: "analytics.seed_fx_rates_eur", Project: "finance",
 		EngineFamily: warehouse.SchemaBound, Change: seedreload.ChangeColumns,
 		Columns: release.ColumnChanges{Added: []string{"source"}},
 		Load:    seedreload.Load{Operation: model.OperationRun, DropsTable: true, Reason: "columns changed"},
@@ -95,7 +95,7 @@ func TestGetReleaseNotices_ReturnsTheStoredNotices(t *testing.T) {
 	n := resp.Notices[0]
 	assert.Equal(t, "seed_reload", n.Kind)
 	assert.Equal(t, "analytics.seed_fx_rates_eur", n.NodeId)
-	assert.Equal(t, "finance", n.Service)
+	assert.Equal(t, "finance", n.Project)
 	assert.Equal(t, "schema_bound", n.EngineFamily)
 	assert.Equal(t, []string{"source"}, n.Columns.Added)
 	assert.Equal(t, "run", n.Load.Operation)

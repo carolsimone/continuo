@@ -23,7 +23,7 @@ func rebuildIDs(n release.Notice) []string {
 // candidate carries it, with the column source added.
 func fxSeeds() (prodSeed, candSeed release.Node) {
 	yes := true
-	prodSeed = release.Node{UniqueID: "analytics.seed_fx_rates_eur", ServiceName: "finance", NodeType: "dbt-seed", Materialized: "seed", FullRefresh: &yes,
+	prodSeed = release.Node{UniqueID: "analytics.seed_fx_rates_eur", ProjectName: "finance", NodeType: "dbt-seed", Materialized: "seed", FullRefresh: &yes,
 		ContentHash: "sha256:9c2b", SeedColumnsHash: "sha256:e5a0", Schedule: "seed",
 		SeedColumns: []release.SeedColumn{{Name: "currency"}, {Name: "rate_date"}, {Name: "rate_to_eur"}}}
 	candSeed = prodSeed
@@ -43,7 +43,7 @@ func fxViews() release.Topology {
 
 func TestBuildNotices_TheDesignsExample(t *testing.T) {
 	yes := true
-	prodSeed := release.Node{UniqueID: "analytics.seed_fx_rates_eur", ServiceName: "finance", NodeType: "dbt-seed", Materialized: "seed", FullRefresh: &yes,
+	prodSeed := release.Node{UniqueID: "analytics.seed_fx_rates_eur", ProjectName: "finance", NodeType: "dbt-seed", Materialized: "seed", FullRefresh: &yes,
 		ContentHash: "sha256:9c2b", SeedColumnsHash: "sha256:e5a0", Schedule: "seed",
 		SeedColumns: []release.SeedColumn{{Name: "currency"}, {Name: "rate_date"}, {Name: "rate_to_eur"}}}
 	candSeed := prodSeed
@@ -80,7 +80,7 @@ func TestBuildNotices_TheNoticeNamesTheSeedAndItsChange(t *testing.T) {
 	n := notices[0]
 	assert.Equal(t, "seed_reload", n.Kind)
 	assert.Equal(t, "analytics.seed_fx_rates_eur", n.NodeID)
-	assert.Equal(t, "finance", n.Service)
+	assert.Equal(t, "finance", n.Project)
 	assert.Equal(t, warehouse.SchemaBound, n.EngineFamily)
 	assert.Equal(t, seedreload.ChangeColumns, n.Change)
 	assert.Empty(t, n.StopReason)
@@ -92,13 +92,13 @@ func TestBuildNotices_TheNoticeNamesTheSeedAndItsChange(t *testing.T) {
 }
 
 func TestBuildNotices_SkipsNewUnchangedAndNonDroppingSeeds(t *testing.T) {
-	unset := release.Node{UniqueID: "analytics.seed_unset", ServiceName: "finance", NodeType: "dbt-seed", Materialized: "seed",
+	unset := release.Node{UniqueID: "analytics.seed_unset", ProjectName: "finance", NodeType: "dbt-seed", Materialized: "seed",
 		ContentHash: "sha256:a1", SeedColumnsHash: "sha256:c1"}
 	unsetCand := unset
 	unsetCand.ContentHash = "sha256:a2"
-	same := release.Node{UniqueID: "analytics.seed_same", ServiceName: "finance", NodeType: "dbt-seed", Materialized: "seed",
+	same := release.Node{UniqueID: "analytics.seed_same", ProjectName: "finance", NodeType: "dbt-seed", Materialized: "seed",
 		ContentHash: "sha256:b1", SeedColumnsHash: "sha256:c1"}
-	brandNew := release.Node{UniqueID: "analytics.seed_new", ServiceName: "finance", NodeType: "dbt-seed", Materialized: "seed",
+	brandNew := release.Node{UniqueID: "analytics.seed_new", ProjectName: "finance", NodeType: "dbt-seed", Materialized: "seed",
 		ContentHash: "sha256:n1", SeedColumnsHash: "sha256:c1"}
 	view := release.Node{UniqueID: "analytics.v", NodeType: "dbt-model", Materialized: "view",
 		UpstreamUniqueIDs: []string{"analytics.seed_unset", "analytics.seed_same", "analytics.seed_new"}}

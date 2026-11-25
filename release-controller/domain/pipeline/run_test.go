@@ -142,7 +142,7 @@ func TestRun_StageDurationOfTheStageInProgressIsZero(t *testing.T) {
 func TestRehydrate_BuildsTheRightKind(t *testing.T) {
 	v := pipeline.Rehydrate(pipeline.RehydrateInput{
 		ID: "verify-x", Kind: pipeline.KindVerification, Status: pipeline.StatusPassed,
-		ImageTags: map[string]string{"core": "img"}, ChangedService: "core",
+		ImageTags: map[string]string{"core": "img"}, ChangedProject: "core",
 		CreatedAt: t0, ManifestKind: release.ManifestKindDbt,
 		VerifiesReleaseID: "rel-1", Attempt: 2, SourceOverlayURI: "s3://o",
 	})
@@ -152,7 +152,7 @@ func TestRehydrate_BuildsTheRightKind(t *testing.T) {
 
 	c := pipeline.Rehydrate(pipeline.RehydrateInput{
 		ID: "rel-1", Kind: pipeline.KindCandidate, Status: pipeline.StatusRejected,
-		ImageTags: map[string]string{"core": "img"}, ChangedService: "core",
+		ImageTags: map[string]string{"core": "img"}, ChangedProject: "core",
 		CreatedAt: t0, ManifestKind: release.ManifestKindDbt, Repo: "org/repo", CommitSHA: "abc",
 	})
 	require.NotNil(t, c.Candidate())
@@ -161,7 +161,7 @@ func TestRehydrate_BuildsTheRightKind(t *testing.T) {
 
 func candidateSubmission() pipeline.CandidateSubmission {
 	return pipeline.CandidateSubmission{
-		Service: "core", ImageTag: "img:1", Kind: release.ManifestKindDbt,
+		Project: "core", ImageTag: "img:1", Kind: release.ManifestKindDbt,
 		Bootstrap: false, Repo: "org/repo", CommitSHA: "abc123",
 	}
 }
@@ -172,7 +172,7 @@ func TestMatchesSubmission_SameFactsMatch(t *testing.T) {
 
 func TestMatchesSubmission_AnyDifferingFactDoesNotMatch(t *testing.T) {
 	for name, mutate := range map[string]func(*pipeline.CandidateSubmission){
-		"service":    func(s *pipeline.CandidateSubmission) { s.Service = "other" },
+		"project":    func(s *pipeline.CandidateSubmission) { s.Project = "other" },
 		"image tag":  func(s *pipeline.CandidateSubmission) { s.ImageTag = "img:2" },
 		"kind":       func(s *pipeline.CandidateSubmission) { s.Kind = release.ManifestKindPythonODCS },
 		"bootstrap":  func(s *pipeline.CandidateSubmission) { s.Bootstrap = true },
@@ -187,8 +187,8 @@ func TestMatchesSubmission_AnyDifferingFactDoesNotMatch(t *testing.T) {
 	}
 }
 
-// Activation replaces the image-tag map with every service's tag; the
-// candidate still matches on the tag it holds for its own service.
+// Activation replaces the image-tag map with every project's tag; the
+// candidate still matches on the tag it holds for its own project.
 func TestMatchesSubmission_HoldsAfterActivationAssemblesImageTags(t *testing.T) {
 	r := candidate(t)
 	r.SetAssembledImageTags(map[string]string{"core": "img:1", "billing": "img:9"})
@@ -214,7 +214,7 @@ func TestRun_CandidateTopologyRefRehydratesAndIsRecordedByTheTransition(t *testi
 
 func TestMatchesSubmission_ComparesRebaseline(t *testing.T) {
 	r := pipeline.NewCandidate("rel-1", "core", "abc", true, true, "o/r", "sha", release.ManifestKindDbt, time.Unix(100, 0).UTC())
-	same := pipeline.CandidateSubmission{Service: "core", ImageTag: "abc", Kind: release.ManifestKindDbt, Bootstrap: true, Rebaseline: true, Repo: "o/r", CommitSHA: "sha"}
+	same := pipeline.CandidateSubmission{Project: "core", ImageTag: "abc", Kind: release.ManifestKindDbt, Bootstrap: true, Rebaseline: true, Repo: "o/r", CommitSHA: "sha"}
 	assert.True(t, r.MatchesSubmission(same))
 	other := same
 	other.Rebaseline = false

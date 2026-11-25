@@ -93,14 +93,14 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pi
 	// Build a single lookup from the candidate topology so per-node rejection
 	// entries carry the source location the remediation agent needs: the
 	// promoted topology GetNodeLocation serves cannot find newly-added seeds.
-	type sourceLoc struct{ filePath, service string }
+	type sourceLoc struct{ filePath, project string }
 	topo, err := candidateTopology(ctx, d, r)
 	if err != nil {
 		return err
 	}
 	locByNodeID := make(map[string]sourceLoc, len(topo))
 	for _, n := range topo {
-		locByNodeID[n.UniqueID] = sourceLoc{filePath: n.OriginalFilePath, service: n.ServiceName}
+		locByNodeID[n.UniqueID] = sourceLoc{filePath: n.OriginalFilePath, project: n.ProjectName}
 	}
 
 	// Text from the producer is the better explanation; when it sends none, say
@@ -108,7 +108,7 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pi
 	detail := in.ErrorDetail
 	if detail == "" {
 		detail = release.SummarizeSeedFailure(
-			failedNodes(failing, func(id string) string { return locByNodeID[id].service }))
+			failedNodes(failing, func(id string) string { return locByNodeID[id].project }))
 	}
 	if err := r.Fail(string(pkg_model.RejectReasonSeedBuildFailed), detail, failing, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
@@ -123,7 +123,7 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pi
 			DBTLogURI:     n.DBTLogURI,
 			RunResultsURI: n.RunResultsURI,
 			FilePath:      loc.filePath,
-			Service:       loc.service,
+			Project:       loc.project,
 		}
 	}
 

@@ -120,7 +120,7 @@ func noticesToProto(in []serialization.NoticeDTO) []*releasev1.ReleaseNotice {
 		out = append(out, &releasev1.ReleaseNotice{
 			Kind:              n.Kind,
 			NodeId:            n.NodeID,
-			Service:           n.Service,
+			Project:           n.Project,
 			EngineFamily:      n.EngineFamily,
 			Change:            n.Change,
 			Columns:           &releasev1.ColumnChanges{Added: n.Columns.Added, Removed: n.Columns.Removed, Retyped: n.Columns.Retyped},

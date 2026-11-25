@@ -21,14 +21,14 @@ func buildCurrentProd(releaseID string, nodes ...release.Node) prodSnapshot {
 	return prodSnapshot{releaseID: releaseID, topo: release.Topology(nodes)}
 }
 
-func TestSeedServiceProd_SeedsAllServices(t *testing.T) {
+func TestSeedServiceProd_SeedsAllProjects(t *testing.T) {
 	now := time.Unix(1_000_000, 0).UTC()
 
-	// Snapshot with two services: service-1 (2 nodes, tag t1) and service-2 (1 node, tag t2).
+	// Snapshot with two projects: service-1 (2 nodes, tag t1) and service-2 (1 node, tag t2).
 	cp := buildCurrentProd("rel-1",
-		release.Node{UniqueID: "n1", ServiceName: "service-1", ImageTag: "t1"},
-		release.Node{UniqueID: "n2", ServiceName: "service-1", ImageTag: "t1-dup"}, // second node; first tag wins
-		release.Node{UniqueID: "n3", ServiceName: "service-2", ImageTag: "t2"},
+		release.Node{UniqueID: "n1", ProjectName: "service-1", ImageTag: "t1"},
+		release.Node{UniqueID: "n2", ProjectName: "service-1", ImageTag: "t1-dup"}, // second node; first tag wins
+		release.Node{UniqueID: "n3", ProjectName: "service-2", ImageTag: "t2"},
 	)
 	existingKeys := map[string]string{
 		"service-1": "s3://bucket/service-1/manifest.json",
@@ -45,10 +45,10 @@ func TestSeedServiceProd_SeedsAllServices(t *testing.T) {
 	sp1, err := repo.Get(context.Background(), "service-1")
 	require.NoError(t, err)
 	require.NotNil(t, sp1)
-	assert.Equal(t, "service-1", sp1.ServiceName())
+	assert.Equal(t, "service-1", sp1.ProjectName())
 	assert.Equal(t, "rel-1", sp1.ReleaseID())
 	assert.Equal(t, "s3://bucket/service-1/manifest.json", sp1.ManifestS3Key())
-	assert.Equal(t, "t1", sp1.ImageTag(), "first non-empty image tag among service nodes")
+	assert.Equal(t, "t1", sp1.ImageTag(), "first non-empty image tag among project nodes")
 	assert.Equal(t, now, sp1.UpdatedAt())
 
 	sp2, err := repo.Get(context.Background(), "service-2")
@@ -62,8 +62,8 @@ func TestSeedServiceProd_MissingKeyReturnsError(t *testing.T) {
 	now := time.Unix(1_000_000, 0).UTC()
 
 	cp := buildCurrentProd("rel-1",
-		release.Node{UniqueID: "n1", ServiceName: "service-1", ImageTag: "t1"},
-		release.Node{UniqueID: "n2", ServiceName: "service-2", ImageTag: "t2"},
+		release.Node{UniqueID: "n1", ProjectName: "service-1", ImageTag: "t1"},
+		release.Node{UniqueID: "n2", ProjectName: "service-2", ImageTag: "t2"},
 	)
 	// existingKeys only covers service-1; service-2 is missing.
 	existingKeys := map[string]string{
@@ -78,12 +78,12 @@ func TestSeedServiceProd_MissingKeyReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "service-2")
 }
 
-func TestSeedServiceProd_SkipsNodesWithEmptyServiceName(t *testing.T) {
+func TestSeedServiceProd_SkipsNodesWithEmptyProjectName(t *testing.T) {
 	now := time.Unix(1_000_000, 0).UTC()
 
 	cp := buildCurrentProd("rel-1",
-		release.Node{UniqueID: "n1", ServiceName: "", ImageTag: "t1"}, // no service name — skipped
-		release.Node{UniqueID: "n2", ServiceName: "service-1", ImageTag: "t1"},
+		release.Node{UniqueID: "n1", ProjectName: "", ImageTag: "t1"}, // no project name — skipped
+		release.Node{UniqueID: "n2", ProjectName: "service-1", ImageTag: "t1"},
 	)
 	existingKeys := map[string]string{
 		"service-1": "s3://bucket/service-1/manifest.json",
@@ -94,17 +94,17 @@ func TestSeedServiceProd_SkipsNodesWithEmptyServiceName(t *testing.T) {
 
 	n, err := handlers.SeedServiceProd(context.Background(), cp.releaseID, cp.topo, existingKeys, repo, now)
 	require.NoError(t, err)
-	assert.Equal(t, 1, n, "node with empty service_name must be skipped")
+	assert.Equal(t, 1, n, "node with empty project_name must be skipped")
 }
 
-// An unknown-external node belongs to no service, so it never gets a service_prod
+// An unknown-external node belongs to no project, so it never gets a service_prod
 // pointer and never asks for a manifest key.
 func TestSeedServiceProd_SkipsAnUnknownExternalNode(t *testing.T) {
 	now := time.Unix(1_000_000, 0).UTC()
 
 	cp := buildCurrentProd("rel-1",
 		release.Node{UniqueID: "raw.orders", SchemaName: "raw", TableName: "orders", NodeType: "unknown-external"},
-		release.Node{UniqueID: "n2", ServiceName: "service-1", ImageTag: "t1", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"raw.orders"}},
+		release.Node{UniqueID: "n2", ProjectName: "service-1", ImageTag: "t1", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"raw.orders"}},
 	)
 	existingKeys := map[string]string{
 		"service-1": "s3://bucket/service-1/manifest.json",
@@ -115,18 +115,18 @@ func TestSeedServiceProd_SkipsAnUnknownExternalNode(t *testing.T) {
 
 	n, err := handlers.SeedServiceProd(context.Background(), cp.releaseID, cp.topo, existingKeys, repo, now)
 	require.NoError(t, err)
-	assert.Equal(t, 1, n, "only service-1 is a service")
+	assert.Equal(t, 1, n, "only service-1 is a project")
 	pointers, err := repo.List(context.Background())
 	require.NoError(t, err)
 	require.Len(t, pointers, 1, "no pointer is written for the unknown-external node")
-	assert.Equal(t, "service-1", pointers[0].ServiceName())
+	assert.Equal(t, "service-1", pointers[0].ProjectName())
 }
 
 func TestSeedServiceProd_IdempotentOnRerun(t *testing.T) {
 	now := time.Unix(1_000_000, 0).UTC()
 
 	cp := buildCurrentProd("rel-1",
-		release.Node{UniqueID: "n1", ServiceName: "service-1", ImageTag: "t1"},
+		release.Node{UniqueID: "n1", ProjectName: "service-1", ImageTag: "t1"},
 	)
 	existingKeys := map[string]string{"service-1": "s3://bucket/service-1/manifest.json"}
 
@@ -137,7 +137,7 @@ func TestSeedServiceProd_IdempotentOnRerun(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, n1)
 
-	// Running again should succeed and still report 1 service.
+	// Running again should succeed and still report 1 project.
 	n2, err := handlers.SeedServiceProd(context.Background(), cp.releaseID, cp.topo, existingKeys, repo, now)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n2)
@@ -159,13 +159,13 @@ func TestSeedServiceProd_EmptyTopologyReturnsZero(t *testing.T) {
 	assert.Equal(t, 0, n)
 }
 
-func TestSeedServiceProd_DerivesManifestKindPerService(t *testing.T) {
+func TestSeedServiceProd_DerivesManifestKindPerProject(t *testing.T) {
 	now := time.Unix(1_000_000, 0).UTC()
 
-	// service-1 is a dbt service; service-2 is a python service.
+	// service-1 is a dbt project; service-2 is a python project.
 	cp := buildCurrentProd("rel-1",
-		release.Node{UniqueID: "n1", ServiceName: "service-1", ImageTag: "t1", NodeType: "dbt-model"},
-		release.Node{UniqueID: "n2", ServiceName: "service-2", ImageTag: "t2", NodeType: "python-node"},
+		release.Node{UniqueID: "n1", ProjectName: "service-1", ImageTag: "t1", NodeType: "dbt-model"},
+		release.Node{UniqueID: "n2", ProjectName: "service-2", ImageTag: "t2", NodeType: "python-node"},
 	)
 	existingKeys := map[string]string{
 		"service-1": "s3://bucket/service-1/manifest.json",
@@ -190,13 +190,13 @@ func TestSeedServiceProd_DerivesManifestKindPerService(t *testing.T) {
 	assert.Equal(t, release.ManifestKindPythonODCS, sp2.ManifestKind())
 }
 
-func TestSeedServiceProd_CsvServiceClassifiedPythonODCS(t *testing.T) {
+func TestSeedServiceProd_CsvProjectClassifiedPythonODCS(t *testing.T) {
 	now := time.Unix(1_000_000, 0).UTC()
 
 	// service-1 has only python-csv nodes: it must classify as python, same
-	// as a service made only of python-nodes.
+	// as a project made only of python-nodes.
 	cp := buildCurrentProd("rel-1",
-		release.Node{UniqueID: "n1", ServiceName: "service-1", ImageTag: "t1", NodeType: "python-csv"},
+		release.Node{UniqueID: "n1", ProjectName: "service-1", ImageTag: "t1", NodeType: "python-csv"},
 	)
 	existingKeys := map[string]string{
 		"service-1": "s3://bucket/service-1/rel-1/odcs-bundle.json",
@@ -215,16 +215,16 @@ func TestSeedServiceProd_CsvServiceClassifiedPythonODCS(t *testing.T) {
 	assert.Equal(t, release.ManifestKindPythonODCS, sp.ManifestKind())
 }
 
-// A python service's pointer must name an odcs-bundle.json: the only artifact
-// any parser reads for a python service. One that names anything else (a
-// contract.yaml) is an error naming the service, and nothing is written,
-// including the pointer of the clean service beside it.
+// A python project's pointer must name an odcs-bundle.json: the only artifact
+// any parser reads for a python project. One that names anything else (a
+// contract.yaml) is an error naming the project, and nothing is written,
+// including the pointer of the clean project beside it.
 func TestSeedServiceProd_AContractYAMLKeyIsAnError(t *testing.T) {
 	now := time.Unix(1_000_000, 0).UTC()
 
 	cp := buildCurrentProd("rel-1",
-		release.Node{UniqueID: "n1", ServiceName: "service-odcs", ImageTag: "t1", NodeType: "python-node"},
-		release.Node{UniqueID: "n2", ServiceName: "service-legacy", ImageTag: "t2", NodeType: "python-node"},
+		release.Node{UniqueID: "n1", ProjectName: "service-odcs", ImageTag: "t1", NodeType: "python-node"},
+		release.Node{UniqueID: "n2", ProjectName: "service-legacy", ImageTag: "t2", NodeType: "python-node"},
 	)
 	existingKeys := map[string]string{
 		"service-odcs":   "s3://bucket/service-odcs/rel-1/odcs-bundle.json",
@@ -243,21 +243,21 @@ func TestSeedServiceProd_AContractYAMLKeyIsAnError(t *testing.T) {
 
 	odcs, err := repo.Get(context.Background(), "service-odcs")
 	require.NoError(t, err)
-	assert.Nil(t, odcs, "no service must be written when one pointer is refused")
+	assert.Nil(t, odcs, "no project must be written when one pointer is refused")
 	legacy, err := repo.Get(context.Background(), "service-legacy")
 	require.NoError(t, err)
 	assert.Nil(t, legacy)
 }
 
-func TestSeedServiceProd_MixedKindServiceErrorsAndWritesNothing(t *testing.T) {
+func TestSeedServiceProd_MixedKindProjectErrorsAndWritesNothing(t *testing.T) {
 	now := time.Unix(1_000_000, 0).UTC()
 
 	// service-1 mixes a dbt node and a python node — this must be rejected
 	// before anything is written, including the clean service-2 pointer.
 	cp := buildCurrentProd("rel-1",
-		release.Node{UniqueID: "n1", ServiceName: "service-1", ImageTag: "t1", NodeType: "dbt-model"},
-		release.Node{UniqueID: "n2", ServiceName: "service-1", ImageTag: "t1", NodeType: "python-node"},
-		release.Node{UniqueID: "n3", ServiceName: "service-2", ImageTag: "t2", NodeType: "dbt-model"},
+		release.Node{UniqueID: "n1", ProjectName: "service-1", ImageTag: "t1", NodeType: "dbt-model"},
+		release.Node{UniqueID: "n2", ProjectName: "service-1", ImageTag: "t1", NodeType: "python-node"},
+		release.Node{UniqueID: "n3", ProjectName: "service-2", ImageTag: "t2", NodeType: "dbt-model"},
 	)
 	existingKeys := map[string]string{
 		"service-1": "s3://bucket/service-1/manifest.json",
@@ -274,9 +274,9 @@ func TestSeedServiceProd_MixedKindServiceErrorsAndWritesNothing(t *testing.T) {
 
 	sp1, err := repo.Get(context.Background(), "service-1")
 	require.NoError(t, err)
-	assert.Nil(t, sp1, "mixed-kind service must not be written")
+	assert.Nil(t, sp1, "mixed-kind project must not be written")
 
 	sp2, err := repo.Get(context.Background(), "service-2")
 	require.NoError(t, err)
-	assert.Nil(t, sp2, "no service must be written when validation fails")
+	assert.Nil(t, sp2, "no project must be written when validation fails")
 }

@@ -16,8 +16,8 @@ import (
 
 func benchTopology() release.Topology {
 	return release.Topology{
-		{UniqueID: "bench.n1", ServiceName: "bench", NodeType: "dbt-model", UpstreamUniqueIDs: []string{}},
-		{UniqueID: "bench.n2", ServiceName: "bench", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"bench.n1"}},
+		{UniqueID: "bench.n1", ProjectName: "bench", NodeType: "dbt-model", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "bench.n2", ProjectName: "bench", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"bench.n1"}},
 	}
 }
 
@@ -98,7 +98,7 @@ func TestAnnounceTopology_RefusesAnEmptyTopology(t *testing.T) {
 func TestAnnounceTopology_RefusesAnAllDbtTestTopology(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	onlyTests := release.Topology{
-		{UniqueID: "test.p.not_null_a.1", ServiceName: "svc", NodeType: "dbt-test", UpstreamUniqueIDs: []string{"a"}},
+		{UniqueID: "test.p.not_null_a.1", ProjectName: "svc", NodeType: "dbt-test", UpstreamUniqueIDs: []string{"a"}},
 	}
 	_, err := handlers.AnnounceTopology(context.Background(), deps, "bench-1", onlyTests)
 	require.Error(t, err)
@@ -106,8 +106,8 @@ func TestAnnounceTopology_RefusesAnAllDbtTestTopology(t *testing.T) {
 	assert.Equal(t, int64(0), store.LastPromotionSeq())
 
 	_, err = handlers.AnnounceTopology(context.Background(), deps, "bench-2", release.Topology{
-		{UniqueID: "a", ServiceName: "svc", NodeType: "dbt-model", UpstreamUniqueIDs: []string{}},
-		{UniqueID: "test.p.not_null_a.1", ServiceName: "svc", NodeType: "dbt-test", UpstreamUniqueIDs: []string{"a"}},
+		{UniqueID: "a", ProjectName: "svc", NodeType: "dbt-model", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "test.p.not_null_a.1", ProjectName: "svc", NodeType: "dbt-test", UpstreamUniqueIDs: []string{"a"}},
 	})
 	require.NoError(t, err)
 }

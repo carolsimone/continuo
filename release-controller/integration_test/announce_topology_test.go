@@ -19,7 +19,7 @@ func TestIntegration_AnnounceTopology_WithoutCurrentProd(t *testing.T) {
 	_, deps, db := setup(t)
 	defer db.Close()
 	ctx := context.Background()
-	topo := release.Topology{{UniqueID: "e2e.a", ServiceName: "e2e", NodeType: "dbt-model", UpstreamUniqueIDs: []string{}}}
+	topo := release.Topology{{UniqueID: "e2e.a", ProjectName: "e2e", NodeType: "dbt-model", UpstreamUniqueIDs: []string{}}}
 
 	first, err := handlers.AnnounceTopology(ctx, deps, "e2e-seed-1", topo)
 	require.NoError(t, err)

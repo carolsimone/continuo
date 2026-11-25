@@ -163,12 +163,12 @@ func TestPlanShape_LastSuccessDurationsProbesTheNodeIdentity(t *testing.T) {
 	succeedWithAttempts(t, db, r.RunID())
 	_, err := db.ExecContext(context.Background(), `ANALYZE tasks, task_attempts`)
 	require.NoError(t, err)
-	services, schemas, tables := make([]string, 10), make([]string, 10), make([]string, 10)
+	projects, schemas, tables := make([]string, 10), make([]string, 10), make([]string, 10)
 	for i := range 10 {
-		services[i], schemas[i], tables[i] = "bench-svc", "bench", fmt.Sprintf("n%02d_0000", i)
+		projects[i], schemas[i], tables[i] = "bench-svc", "bench", fmt.Sprintf("n%02d_0000", i)
 	}
 
-	scans := planScans(t, postgres.LastSuccessDurationsQueryForTest, pq.Array(services), pq.Array(schemas), pq.Array(tables), tenant)
+	scans := planScans(t, postgres.LastSuccessDurationsQueryForTest, pq.Array(projects), pq.Array(schemas), pq.Array(tables), tenant)
 	assert.Empty(t, seqScansOf(scans), "last success durations: %v", scans)
 	assert.Subset(t, indexesOf(scans), []string{"idx_tasks_node_identity", "task_attempts_pkey"},
 		"last success durations: %v", scans)

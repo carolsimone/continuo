@@ -36,7 +36,7 @@ func insertSchemaRelease(t *testing.T, db *sqlx.DB, tenant, releaseID string, ke
 	require.NoError(t, err)
 	for _, key := range keys {
 		_, err := db.Exec(`
-			INSERT INTO topology_nodes (tenant_id, release_id, node_key, unique_id, service_name, schema_name, table_name, node_type)
+			INSERT INTO topology_nodes (tenant_id, release_id, node_key, unique_id, project_name, schema_name, table_name, node_type)
 			VALUES ($1, $2, $3, $3, 'svc', 'raw', $3, 'dbt-seed')`, tenant, releaseID, key)
 		require.NoError(t, err)
 	}

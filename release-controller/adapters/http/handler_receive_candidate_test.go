@@ -27,7 +27,7 @@ func postCandidate(srv *Server, in ReceiveCandidateRequest) *httptest.ResponseRe
 }
 
 func validCandidateInput() ReceiveCandidateRequest {
-	return ReceiveCandidateRequest{Service: "core", ReleaseID: "rel-1", ImageTag: "img:1", Repo: "org/r", CommitSHA: "sha"}
+	return ReceiveCandidateRequest{Project: "core", ReleaseID: "rel-1", ImageTag: "img:1", Repo: "org/r", CommitSHA: "sha"}
 }
 
 func TestHandleReceiveCandidate_Accepted(t *testing.T) {
@@ -39,6 +39,33 @@ func TestHandleReceiveCandidate_Accepted(t *testing.T) {
 	assert.NotNil(t, releases.releases["rel-1"])
 }
 
+func postCandidateBody(srv *Server, body string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/releases", bytes.NewReader([]byte(body))))
+	return rec
+}
+
+// A release names its project in the field project: a body that names it
+// only in a field called service is refused as a client error naming
+// project, and stores nothing, while the same body with project is accepted.
+func TestHandleReceiveCandidate_RequiresProjectAndRefusesABodyThatNamesOnlyService(t *testing.T) {
+	const rest = `"release_id":"rel-1","image_tag":"img:1","repo":"org/r","commit_sha":"sha"`
+
+	deps, releases := newRetryRemediationDeps(time.Unix(100, 0).UTC())
+	rec := postCandidateBody(newTestServer(deps), `{"service":"core",`+rest+`}`)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "project is required")
+	assert.Empty(t, releases.releases)
+
+	deps, releases = newRetryRemediationDeps(time.Unix(100, 0).UTC())
+	rec = postCandidateBody(newTestServer(deps), `{"project":"core",`+rest+`}`)
+
+	require.Equal(t, http.StatusAccepted, rec.Code)
+	require.NotNil(t, releases.releases["rel-1"])
+	assert.Equal(t, "core", releases.releases["rel-1"].ChangedProject())
+}
+
 // A submission the caller got wrong is a client error naming the field.
 func TestHandleReceiveCandidate_ValidationFailureIs400(t *testing.T) {
 	for name, tc := range map[string]struct {
@@ -46,7 +73,7 @@ func TestHandleReceiveCandidate_ValidationFailureIs400(t *testing.T) {
 		want   string
 	}{
 		"missing image_tag": {func(in *ReceiveCandidateRequest) { in.ImageTag = "" }, "image_tag is required"},
-		"missing service":   {func(in *ReceiveCandidateRequest) { in.Service = "" }, "service is required"},
+		"missing project":   {func(in *ReceiveCandidateRequest) { in.Project = "" }, "project is required"},
 		"unknown kind":      {func(in *ReceiveCandidateRequest) { in.Kind = "yaml" }, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -75,7 +102,7 @@ func TestHandleReceiveCandidate_RefusesPythonWith400AndTheMessage(t *testing.T) 
 
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	assert.Contains(t, rec.Body.String(),
-		`kind "python" is no longer accepted: release the service as "python-odcs", one ODCS contract per node (docs/contracts.md)`)
+		`kind "python" is no longer accepted: release the project as "python-odcs", one ODCS contract per node (docs/contracts.md)`)
 	assert.Empty(t, releases.releases)
 }
 
@@ -105,26 +132,26 @@ func TestHandleReceiveCandidate_AcceptsOntologyWhileTheSwitchIsOn(t *testing.T) 
 	assert.Equal(t, release.ManifestKindOntology, releases.releases["rel-1"].ManifestKind())
 }
 
-// The rules about the ontology service are conflicts with what the install
+// The rules about the ontology project are conflicts with what the install
 // holds, so POST /releases answers each with 409 and the message as the body.
 func TestHandleReceiveCandidate_OntologyConflictsAre409(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
-	t.Run("a second ontology service", func(t *testing.T) {
+	t.Run("a second ontology project", func(t *testing.T) {
 		deps, releases := newRetryRemediationDeps(now)
 		deps.OntologyEnabled = true
 		seedServiceProd(t, deps, release.NewServiceProd("ontology-a", "rel-0", "s3://b/ontology-a/rel-0/ontology.yaml", "img:1",
 			release.ManifestKindOntology, now))
 		in := validCandidateInput()
-		in.Service, in.Kind = "ontology-b", "ontology"
+		in.Project, in.Kind = "ontology-b", "ontology"
 
 		rec := postCandidate(newTestServer(deps), in)
 
 		require.Equal(t, http.StatusConflict, rec.Code)
-		assert.Equal(t, `service "ontology-a" is the install's ontology: an install has one ontology service`+"\n", rec.Body.String())
+		assert.Equal(t, `project "ontology-a" is the install's ontology: an install has one ontology project`+"\n", rec.Body.String())
 		assert.Empty(t, releases.releases)
 	})
 
-	t.Run("a dbt service released as the ontology", func(t *testing.T) {
+	t.Run("a dbt project released as the ontology", func(t *testing.T) {
 		deps, releases := newRetryRemediationDeps(now)
 		deps.OntologyEnabled = true
 		seedServiceProd(t, deps, release.NewServiceProd("core", "rel-0", "s3://b/core/rel-0/manifest.json", "img:1",
@@ -135,11 +162,11 @@ func TestHandleReceiveCandidate_OntologyConflictsAre409(t *testing.T) {
 		rec := postCandidate(newTestServer(deps), in)
 
 		require.Equal(t, http.StatusConflict, rec.Code)
-		assert.Equal(t, `service "core" is released as kind "dbt": a service cannot change between kind "ontology" and a node kind`+"\n", rec.Body.String())
+		assert.Equal(t, `project "core" is released as kind "dbt": a project cannot change between kind "ontology" and a node kind`+"\n", rec.Body.String())
 		assert.Empty(t, releases.releases)
 	})
 
-	t.Run("the ontology service released as python-odcs", func(t *testing.T) {
+	t.Run("the ontology project released as python-odcs", func(t *testing.T) {
 		deps, releases := newRetryRemediationDeps(now)
 		deps.OntologyEnabled = true
 		seedServiceProd(t, deps, release.NewServiceProd("core", "rel-0", "s3://b/core/rel-0/ontology.yaml", "img:1",
@@ -150,7 +177,7 @@ func TestHandleReceiveCandidate_OntologyConflictsAre409(t *testing.T) {
 		rec := postCandidate(newTestServer(deps), in)
 
 		require.Equal(t, http.StatusConflict, rec.Code)
-		assert.Equal(t, `service "core" is released as kind "ontology": a service cannot change between kind "ontology" and a node kind`+"\n", rec.Body.String())
+		assert.Equal(t, `project "core" is released as kind "ontology": a project cannot change between kind "ontology" and a node kind`+"\n", rec.Body.String())
 		assert.Empty(t, releases.releases)
 	})
 }
@@ -184,13 +211,13 @@ func TestHandleReceiveCandidate_StorageFailureIs500WithoutInternalText(t *testin
 // The request DTO decodes the same wire field names the application input is
 // built from, so the POST /releases body format is pinned here.
 func TestReceiveCandidateRequest_DecodesEveryWireField(t *testing.T) {
-	raw := `{"service":"core","release_id":"rel-1","image_tag":"img:1","bootstrap":true,"rebaseline":true,` +
+	raw := `{"project":"core","release_id":"rel-1","image_tag":"img:1","bootstrap":true,"rebaseline":true,` +
 		`"repo":"org/r","commit_sha":"sha","kind":"python-odcs","shadow":true,` +
 		`"source_overlay_uri":"s3://x","verifies_release_id":"rel-0"}`
 	var body ReceiveCandidateRequest
 	require.NoError(t, json.Unmarshal([]byte(raw), &body))
 	in := body.toInput()
-	assert.Equal(t, "core", in.Service)
+	assert.Equal(t, "core", in.Project)
 	assert.Equal(t, "rel-1", in.ReleaseID)
 	assert.Equal(t, "img:1", in.ImageTag)
 	assert.True(t, in.Bootstrap)
@@ -224,7 +251,7 @@ func TestHandleReceiveCandidate_ConflictingResubmitIs409(t *testing.T) {
 	rec := postCandidate(srv, in)
 
 	require.Equal(t, http.StatusConflict, rec.Code)
-	assert.Equal(t, "release id already names a different candidate: \"rel-1\" has a different service, image tag, kind, bootstrap or rebaseline flag, or source change\n", rec.Body.String())
+	assert.Equal(t, "release id already names a different candidate: \"rel-1\" has a different project, image tag, kind, bootstrap or rebaseline flag, or source change\n", rec.Body.String())
 	assert.Equal(t, "img:1", releases.releases["rel-1"].ImageTags()["core"])
 }
 

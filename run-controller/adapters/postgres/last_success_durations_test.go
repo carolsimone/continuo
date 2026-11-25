@@ -15,15 +15,15 @@ import (
 	"github.com/carolsimone/continuo/run-controller/domain/aggregate/run"
 )
 
-// durationTask inserts a task of runID at service.raw.table with operation
+// durationTask inserts a task of runID at project.raw.table with operation
 // and status, inherited from inheritedFrom when it is not nil.
-func durationTask(t *testing.T, db *sqlx.DB, runID uuid.UUID, service, table, operation, status string, inheritedFrom *uuid.UUID) uuid.UUID {
+func durationTask(t *testing.T, db *sqlx.DB, runID uuid.UUID, project, table, operation, status string, inheritedFrom *uuid.UUID) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
 	_, err := db.Exec(`
-		INSERT INTO tasks (tenant_id, task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries, node_key, operation, inherited_from_task_id)
+		INSERT INTO tasks (tenant_id, task_id, run_id, project_name, schema_name, table_name, job_name, status, max_retries, node_key, operation, inherited_from_task_id)
 		VALUES ((SELECT tenant_id FROM runs WHERE run_id = $2), $1, $2, $3, 'raw', $4::text, $5, $6, 2, 'raw.' || $4::text, $7, $8)`,
-		id, runID, service, table, "job-"+id.String()[:8], status, operation, inheritedFrom)
+		id, runID, project, table, "job-"+id.String()[:8], status, operation, inheritedFrom)
 	require.NoError(t, err)
 	return id
 }
@@ -71,7 +71,7 @@ func TestRunReadRepository_LastSuccessDurations(t *testing.T) {
 	durationTask(t, db, newer, svc, "carried", "run", "succeeded", &first)
 
 	node := func(table string) run.NodeID {
-		return run.NodeID{ServiceName: svc, SchemaName: "raw", TableName: table}
+		return run.NodeID{ProjectName: svc, SchemaName: "raw", TableName: table}
 	}
 	got, err := postgres.NewRunReadRepository(db).LastSuccessDurations(ctx, pkgevents.DefaultTenantID, []run.NodeID{
 		node("orders"), node("tested"), node("broken"), node("carried"), node("absent"), node("orders"),
@@ -93,10 +93,10 @@ func TestRunReadRepository_LastSuccessDurationsReadsTheSucceededAttempt(t *testi
 	attemptOf(t, db, task, 1, "succeeded", t0.Add(time.Minute), seconds(12))
 
 	got, err := postgres.NewRunReadRepository(db).LastSuccessDurations(context.Background(), pkgevents.DefaultTenantID,
-		[]run.NodeID{{ServiceName: svc, SchemaName: "raw", TableName: "orders"}})
+		[]run.NodeID{{ProjectName: svc, SchemaName: "raw", TableName: "orders"}})
 
 	require.NoError(t, err)
-	assert.Equal(t, map[run.NodeID]time.Duration{{ServiceName: svc, SchemaName: "raw", TableName: "orders"}: 12 * time.Second}, got)
+	assert.Equal(t, map[run.NodeID]time.Duration{{ProjectName: svc, SchemaName: "raw", TableName: "orders"}: 12 * time.Second}, got)
 }
 
 func TestRunReadRepository_LastSuccessDurationsOfNoNode(t *testing.T) {

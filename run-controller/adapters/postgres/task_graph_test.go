@@ -28,7 +28,7 @@ func storeEdges(t *testing.T, db *sqlx.DB, schedule string, edges [][2]string, t
 	specs := make([]topology.NodeSpec, 0, len(tables))
 	for _, table := range tables {
 		specs = append(specs, topology.NodeSpec{
-			UniqueID: "e2e_schema." + table, ServiceName: "service-1", SchemaName: "e2e_schema", TableName: table,
+			UniqueID: "e2e_schema." + table, ProjectName: "service-1", SchemaName: "e2e_schema", TableName: table,
 			NodeType: "dbt-model", ContentHash: "h-" + table, ImageTag: "service-1:5", ScheduleName: schedule,
 			UpstreamUniqueIDs: upstream[table],
 		})
@@ -72,7 +72,7 @@ func insertTasks(t *testing.T, db *sqlx.DB, tenant string, statuses map[string]r
 	for table, status := range statuses {
 		ids[table] = uuid.New()
 		_, err := db.Exec(`
-			INSERT INTO tasks (tenant_id, task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries, node_key)
+			INSERT INTO tasks (tenant_id, task_id, run_id, project_name, schema_name, table_name, job_name, status, max_retries, node_key)
 			VALUES ((SELECT tenant_id FROM runs WHERE run_id = $2), $1, $2, 'service-1', 'e2e_schema', $3, $3, $4, 2, $5)`,
 			ids[table], runID, table, string(status), "e2e_schema."+table)
 		require.NoError(t, err)
@@ -109,7 +109,7 @@ func TestTaskGraph_ReadyCandidatesOfTheExampleRun(t *testing.T) {
 		assert.False(t, got[0].Ready())
 		assert.Equal(t, run.TaskIDFor(tenant, r.RunID(), "e2e_schema.ftable_g"), got[1].TaskID)
 		assert.Equal(t, topology.Node{
-			Key: "e2e_schema.ftable_g", UniqueID: "e2e_schema.ftable_g", ServiceName: "service-1", SchemaName: "e2e_schema",
+			Key: "e2e_schema.ftable_g", UniqueID: "e2e_schema.ftable_g", ProjectName: "service-1", SchemaName: "e2e_schema",
 			TableName: "ftable_g", NodeType: "dbt-model", ContentHash: "h-ftable_g", ImageTag: "service-1:5",
 			ScheduleName: "e2e-schedule-failure",
 		}, got[1].Node)

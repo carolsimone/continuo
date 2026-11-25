@@ -136,7 +136,7 @@ func (p Planner) SingleNode(ctx context.Context, u uow.UnitOfWork, tenantID stri
 		stamp = live
 	}
 	key := topology.KeyOf(target.SchemaName, target.TableName)
-	selector := runplan.SingleNode{Key: key, ServiceName: target.ServiceName, Operation: op}
+	selector := runplan.SingleNode{Key: key, ProjectName: target.ProjectName, Operation: op}
 	if stamp.ReleaseID == "" {
 		return Selection{Stamp: stamp}, fmt.Errorf("%w: no release is live", runplan.ErrTargetNotFound)
 	}

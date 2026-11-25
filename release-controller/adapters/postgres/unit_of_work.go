@@ -53,7 +53,7 @@ func (u *UnitOfWork) CurrentProdRepo() repository.CurrentProdRepository {
 	return NewCurrentProdRepository(u.queryer())
 }
 
-// ServiceProdRepo returns the per-service production pointer repository bound
+// ServiceProdRepo returns the per-project production pointer repository bound
 // to the current queryer.
 func (u *UnitOfWork) ServiceProdRepo() repository.ServiceProdRepository {
 	return NewServiceProdRepository(u.queryer())

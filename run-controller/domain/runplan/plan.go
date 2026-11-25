@@ -105,7 +105,7 @@ var (
 	// data-test count.
 	ErrNoTests = errors.New("runplan: no node in the selection has data tests")
 	// ErrTargetNotFound: a node the run names is not in the release, or not
-	// in the service the run names.
+	// in the project the run names.
 	ErrTargetNotFound = errors.New("runplan: the target node is not in the release")
 	// ErrFullRefreshUnsupported: a full refresh names a node whose type
 	// cannot be rebuilt from scratch.

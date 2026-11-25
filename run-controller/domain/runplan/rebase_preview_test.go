@@ -126,7 +126,7 @@ func tableOf(k topology.NodeKey) string { return string(k)[len(e2eSchema)+1:] }
 
 // changedNode is the ChangedNode of a service-1 fixture table.
 func changedNode(table string, downstream int) runplan.ChangedNode {
-	return runplan.ChangedNode{Key: key(table), ServiceName: "service-1", SchemaName: e2eSchema, TableName: table, Downstream: downstream}
+	return runplan.ChangedNode{Key: key(table), ProjectName: "service-1", SchemaName: e2eSchema, TableName: table, Downstream: downstream}
 }
 
 // Two branches, x → y → z and p → q: z failed because y wrote a wrong column.
@@ -218,7 +218,7 @@ func TestRebasePreview_SelectPlansThePreviewsPlan(t *testing.T) {
 	}
 }
 
-// A service release moves every node's image, so an image alone is not a
+// A project release moves every node's image, so an image alone is not a
 // change.
 func TestRebasePreview_AnImageAloneIsNotAChange(t *testing.T) {
 	src := sourceRun(model.OperationRun, []string{"x", "y", "p", "q"}, []string{"z"})
@@ -232,7 +232,7 @@ func TestRebasePreview_AnImageAloneIsNotAChange(t *testing.T) {
 
 // A node is changed when what it executes changes: its content hash, its node
 // type, the secret it runs with or the nodes it reads. The test count, the
-// unique id and the owning service are not compared.
+// unique id and the owning project are not compared.
 func TestRebasePreview_WhatMakesANodeChanged(t *testing.T) {
 	src := sourceRun(model.OperationRun, []string{"x", "y", "p", "q"}, []string{"z"})
 	for name, tc := range map[string]struct {
@@ -245,7 +245,7 @@ func TestRebasePreview_WhatMakesANodeChanged(t *testing.T) {
 		"upstream set": {rewired(twoBranches(), "y", "x", "p"), true},
 		"test count":   {edited(twoBranches(), "y", func(n *topology.Node) { n.TestCount = count(4) }), false},
 		"unique id":    {edited(twoBranches(), "y", func(n *topology.Node) { n.UniqueID = "model.other.y" }), false},
-		"service":      {edited(twoBranches(), "y", func(n *topology.Node) { n.ServiceName = "service-9" }), false},
+		"project":      {edited(twoBranches(), "y", func(n *topology.Node) { n.ProjectName = "service-9" }), false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			pv, err := runplan.Rebase{Source: src, SourceGraphs: onSource(twoBranches()), IncludeChangedUpstream: true}.Preview(tc.live)
@@ -339,14 +339,14 @@ func TestRebasePreview_OfTheFailureSchedule(t *testing.T) {
 		pending("ftable_c", "ftable_d", "ftable_e", "ftable_f", "ftable_g", "ftable_h")...,
 	), "ftable_c", "ftable_g"), pv.Plan)
 	assert.Equal(t, []runplan.ChangedNode{{
-		Key: key("ftable_c"), ServiceName: "service-3", SchemaName: e2eSchema, TableName: "ftable_c", Downstream: 3,
+		Key: key("ftable_c"), ProjectName: "service-3", SchemaName: e2eSchema, TableName: "ftable_c", Downstream: 3,
 	}}, pv.Changed)
 	assert.Equal(t, counts{FailedOrSkipped: 4, ChangedUpstream: 1, Downstream: 1, Inherited: 2}, countsOf(t, pv))
 }
 
-// The changed nodes are listed by service, schema and table, whatever the
+// The changed nodes are listed by project, schema and table, whatever the
 // order of their keys; their names are the live node's.
-func TestRebasePreview_ChangedNodesAreOrderedByServiceSchemaAndTable(t *testing.T) {
+func TestRebasePreview_ChangedNodesAreOrderedByProjectSchemaAndTable(t *testing.T) {
 	g := releaseGraph([]fixtureNode{
 		{"a_node", "service-2", "rebase", nil},
 		{"b_node", "service-1", "rebase", nil},
@@ -358,8 +358,8 @@ func TestRebasePreview_ChangedNodesAreOrderedByServiceSchemaAndTable(t *testing.
 	pv, err := runplan.Rebase{Source: src, SourceGraphs: onSource(g)}.Preview(live)
 	require.NoError(t, err)
 	assert.Equal(t, []runplan.ChangedNode{
-		{Key: key("b_node"), ServiceName: "service-1", SchemaName: e2eSchema, TableName: "B_Node", Downstream: 1},
-		{Key: key("a_node"), ServiceName: "service-2", SchemaName: e2eSchema, TableName: "a_node", Downstream: 1},
+		{Key: key("b_node"), ProjectName: "service-1", SchemaName: e2eSchema, TableName: "B_Node", Downstream: 1},
+		{Key: key("a_node"), ProjectName: "service-2", SchemaName: e2eSchema, TableName: "a_node", Downstream: 1},
 	}, pv.Changed)
 }
 

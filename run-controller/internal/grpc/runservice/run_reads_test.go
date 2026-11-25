@@ -79,7 +79,7 @@ func TestListTasks_MapsTheWaitFields(t *testing.T) {
 	runID, holder, waiting := uuid.New(), uuid.New(), uuid.New()
 	store.putTasks(tenantA, runID,
 		projection.TaskDetail{
-			TaskID: waiting, RunID: runID, CreatedAt: base, ServiceName: "svc", SchemaName: "sch", TableName: "orders",
+			TaskID: waiting, RunID: runID, CreatedAt: base, ProjectName: "svc", SchemaName: "sch", TableName: "orders",
 			JobName: "svc-sch-orders", Status: run.TaskStatusPending, Attempt: 2, MaxRetries: 3,
 			WaitReason: run.WaitReasonNodeLease, WaitingSince: ptr(base.Add(time.Minute)), WaitingOnRunID: &holder,
 			CancelledAt: ptr(base), CancelledBy: "stale-stamp",
@@ -98,7 +98,7 @@ func TestListTasks_MapsTheWaitFields(t *testing.T) {
 	w := resp.GetTasks()[0]
 	assert.Equal(t, waiting.String(), w.GetTaskId())
 	assert.Equal(t, runID.String(), w.GetRunId())
-	assert.Equal(t, "svc", w.GetServiceName())
+	assert.Equal(t, "svc", w.GetProjectName())
 	assert.Equal(t, "sch", w.GetSchemaName())
 	assert.Equal(t, "orders", w.GetTableName())
 	assert.Equal(t, "svc-sch-orders", w.GetJobName())
@@ -262,16 +262,16 @@ func TestListNodeTasks_CarriesTheOutageAndTheBlockingObjects(t *testing.T) {
 	}}
 	srv := newServer(store)
 
-	resp, err := srv.ListNodeTasks(ctxOf(tenantA), &runv1.ListNodeTasksRequest{ServiceName: "finance", SchemaName: "analytics", TableName: "fx_rates_latest_eur"})
+	resp, err := srv.ListNodeTasks(ctxOf(tenantA), &runv1.ListNodeTasksRequest{ProjectName: "finance", SchemaName: "analytics", TableName: "fx_rates_latest_eur"})
 	require.NoError(t, err)
 	assert.Equal(t, &runv1.ViewOutage{State: "missing", Since: "2026-10-27T08:16:02Z", SeedNodeId: "analytics.seed_fx_rates_eur", RunId: runID.String()}, resp.Outage)
 	assert.Equal(t, []string{"bi.fx_rates_report"}, resp.GetTasks()[0].GetBlockingObjects())
 
-	other, err := srv.ListNodeTasks(ctxOf(tenantA), &runv1.ListNodeTasksRequest{ServiceName: "finance", SchemaName: "analytics", TableName: "orders"})
+	other, err := srv.ListNodeTasks(ctxOf(tenantA), &runv1.ListNodeTasksRequest{ProjectName: "finance", SchemaName: "analytics", TableName: "orders"})
 	require.NoError(t, err)
 	assert.Nil(t, other.Outage, "a node with no open outage has none")
 
-	foreign, err := srv.ListNodeTasks(ctxOf(tenantB), &runv1.ListNodeTasksRequest{ServiceName: "finance", SchemaName: "analytics", TableName: "fx_rates_latest_eur"})
+	foreign, err := srv.ListNodeTasks(ctxOf(tenantB), &runv1.ListNodeTasksRequest{ProjectName: "finance", SchemaName: "analytics", TableName: "fx_rates_latest_eur"})
 	require.NoError(t, err)
 	assert.Nil(t, foreign.Outage, "another tenant's outage is not read")
 }
@@ -289,7 +289,7 @@ func TestListNodeTasks_MapsRunStatus(t *testing.T) {
 	}}
 
 	resp, err := newServer(store).ListNodeTasks(ctxOf(tenantA), &runv1.ListNodeTasksRequest{
-		ServiceName: "svc", SchemaName: "sch", TableName: "orders", Limit: 7, Operation: "test",
+		ProjectName: "svc", SchemaName: "sch", TableName: "orders", Limit: 7, Operation: "test",
 	})
 
 	require.NoError(t, err)
@@ -323,7 +323,7 @@ func TestNodeReads_RefuseAnUnknownOperation(t *testing.T) {
 	srv := newServer(newStore())
 	ctx := ctxOf(tenantA)
 	for _, op := range []string{"tset", "RUN", "full-refresh"} {
-		_, err := srv.ListNodeTasks(ctx, &runv1.ListNodeTasksRequest{ServiceName: "svc", SchemaName: "sch", TableName: "orders", Operation: op})
+		_, err := srv.ListNodeTasks(ctx, &runv1.ListNodeTasksRequest{ProjectName: "svc", SchemaName: "sch", TableName: "orders", Operation: op})
 		assert.Equal(t, codes.InvalidArgument, status.Code(err), "ListNodeTasks with operation %q", op)
 		_, err = srv.ListNodes(ctx, &runv1.ListNodesRequest{Operation: op})
 		assert.Equal(t, codes.InvalidArgument, status.Code(err), "ListNodes with operation %q", op)
@@ -344,7 +344,7 @@ func TestNodeReads_ParseTheOperation(t *testing.T) {
 		"build":        model.OperationBuild,
 		"full_refresh": model.OperationFullRefresh,
 	} {
-		_, err := srv.ListNodeTasks(ctx, &runv1.ListNodeTasksRequest{ServiceName: "svc", SchemaName: "sch", TableName: "orders", Operation: wire})
+		_, err := srv.ListNodeTasks(ctx, &runv1.ListNodeTasksRequest{ProjectName: "svc", SchemaName: "sch", TableName: "orders", Operation: wire})
 		require.NoError(t, err, "ListNodeTasks with operation %q", wire)
 		assert.Equal(t, want, store.nodeTasksOperation, "ListNodeTasks with operation %q", wire)
 		_, err = srv.ListNodes(ctx, &runv1.ListNodesRequest{Operation: wire})
@@ -357,20 +357,20 @@ func TestListNodes_MapsTaskCount(t *testing.T) {
 	store := newStore()
 	store.nodes = []*projection.NodeSummary{
 		{
-			ServiceName: "svc", SchemaName: "sch", TableName: "orders", NodeType: "dbt-model", RunCount: 12, SuccessRatePct: 90,
+			ProjectName: "svc", SchemaName: "sch", TableName: "orders", NodeType: "dbt-model", RunCount: 12, SuccessRatePct: 90,
 			AvgDurationSec: 30, P95DurationSec: 80, FlakyRatePct: 8, LastStatus: "succeeded",
 			LastRunAt: &base, Operation: "run", TimeoutSeconds: ptr(600),
 		},
-		{ServiceName: "svc", SchemaName: "sch", TableName: "users", NodeType: "python-node", Dormant: true, RunCount: 1, SuccessRatePct: -1, AvgDurationSec: -1, P95DurationSec: -1, LastRunAt: &base},
+		{ProjectName: "svc", SchemaName: "sch", TableName: "users", NodeType: "python-node", Dormant: true, RunCount: 1, SuccessRatePct: -1, AvgDurationSec: -1, P95DurationSec: -1, LastRunAt: &base},
 	}
 
-	resp, err := newServer(store).ListNodes(ctxOf(tenantA), &runv1.ListNodesRequest{Search: "ord", ServiceName: "svc"})
+	resp, err := newServer(store).ListNodes(ctxOf(tenantA), &runv1.ListNodesRequest{Search: "ord", ProjectName: "svc"})
 
 	require.NoError(t, err)
 	assert.Equal(t, int32(2), resp.GetTotalCount())
 	require.Len(t, resp.GetNodes(), 2)
 	n := resp.GetNodes()[0]
-	assert.Equal(t, "svc", n.GetServiceName())
+	assert.Equal(t, "svc", n.GetProjectName())
 	assert.Equal(t, "sch", n.GetSchemaName())
 	assert.Equal(t, "orders", n.GetTableName())
 	assert.Equal(t, int32(12), n.GetTaskCount())
@@ -392,7 +392,7 @@ func TestListNodes_MapsTaskCount(t *testing.T) {
 	assert.Equal(t, int32(1800), u.GetTimeoutSeconds(), "a node declaring no timeout gets the install default")
 	assert.False(t, u.GetTimeoutDeclared())
 	assert.Equal(t, "ord", store.nodesSearch)
-	assert.Equal(t, "svc", store.nodesService)
+	assert.Equal(t, "svc", store.nodesProject)
 }
 
 // A node that never ran is listed with no task, no last status and an empty
@@ -400,7 +400,7 @@ func TestListNodes_MapsTaskCount(t *testing.T) {
 func TestListNodes_MapsANodeThatNeverRan(t *testing.T) {
 	store := newStore()
 	store.nodes = []*projection.NodeSummary{{
-		ServiceName: "svc", SchemaName: "sch", TableName: "dormant", NodeType: "dbt-model", Dormant: true,
+		ProjectName: "svc", SchemaName: "sch", TableName: "dormant", NodeType: "dbt-model", Dormant: true,
 		SuccessRatePct: -1, AvgDurationSec: -1, P95DurationSec: -1, Operation: "run",
 	}}
 
@@ -450,25 +450,25 @@ func TestListNodes_ClampsPaging(t *testing.T) {
 	}
 }
 
-func TestListNodeNames_PassesTheServiceFilter(t *testing.T) {
+func TestListNodeNames_PassesTheProjectFilter(t *testing.T) {
 	store := newStore()
 	store.nodeNames = []string{"orders", "users"}
 
-	resp, err := newServer(store).ListNodeNames(ctxOf(tenantA), &runv1.ListNodeNamesRequest{ServiceName: "svc"})
+	resp, err := newServer(store).ListNodeNames(ctxOf(tenantA), &runv1.ListNodeNamesRequest{ProjectName: "svc"})
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"orders", "users"}, resp.GetTableNames())
-	assert.Equal(t, "svc", store.nodeNamesService)
+	assert.Equal(t, "svc", store.nodeNamesProject)
 }
 
-func TestListNodeServices_ListsDistinctServices(t *testing.T) {
+func TestListNodeProjects_ListsDistinctProjects(t *testing.T) {
 	store := newStore()
-	store.nodeServices = []string{"a", "b"}
+	store.nodeProjects = []string{"a", "b"}
 
-	resp, err := newServer(store).ListNodeServices(ctxOf(tenantA), &runv1.ListNodeServicesRequest{})
+	resp, err := newServer(store).ListNodeProjects(ctxOf(tenantA), &runv1.ListNodeProjectsRequest{})
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{"a", "b"}, resp.GetServiceNames())
+	assert.Equal(t, []string{"a", "b"}, resp.GetProjectNames())
 }
 
 func TestGetRunGraph_MapsNodesAndEdges(t *testing.T) {
@@ -476,7 +476,7 @@ func TestGetRunGraph_MapsNodesAndEdges(t *testing.T) {
 	runID, taskID, holder := uuid.New(), uuid.New(), uuid.New()
 	store.putGraph(tenantA, runID, projection.RunGraph{
 		Nodes: []projection.RunGraphNode{{
-			ServiceName: "svc", SchemaName: "sch", TableName: "orders", ScheduleName: "daily", NodeType: "model",
+			ProjectName: "svc", SchemaName: "sch", TableName: "orders", ScheduleName: "daily", NodeType: "model",
 			Status: run.TaskStatusPending, TaskID: taskID, WaitReason: run.WaitReasonNodeLease,
 			WaitingSince: ptr(base), WaitingOnRunID: &holder,
 		}},
@@ -491,7 +491,7 @@ func TestGetRunGraph_MapsNodesAndEdges(t *testing.T) {
 	assert.Equal(t, int64(7), resp.GetLatestPromotionSeq())
 	require.Len(t, resp.GetNodes(), 1)
 	n := resp.GetNodes()[0]
-	assert.Equal(t, "svc", n.GetServiceName())
+	assert.Equal(t, "svc", n.GetProjectName())
 	assert.Equal(t, "sch", n.GetSchemaName())
 	assert.Equal(t, "orders", n.GetTableName())
 	assert.Equal(t, "daily", n.GetScheduleName())
@@ -653,7 +653,7 @@ func TestRunReads_RefuseOtherMalformedRequests(t *testing.T) {
 	_, err = srv.ListRuns(ctx, &runv1.ListRunsRequest{})
 	assert.Equal(t, codes.InvalidArgument, status.Code(err), "an empty schedule_name")
 	for _, req := range []*runv1.ListNodeTasksRequest{
-		{SchemaName: "s", TableName: "t"}, {ServiceName: "v", TableName: "t"}, {ServiceName: "v", SchemaName: "s"},
+		{SchemaName: "s", TableName: "t"}, {ProjectName: "v", TableName: "t"}, {ProjectName: "v", SchemaName: "s"},
 	} {
 		_, err = srv.ListNodeTasks(ctx, req)
 		assert.Equal(t, codes.InvalidArgument, status.Code(err), "an incomplete node identity %v", req)
@@ -705,12 +705,12 @@ func TestRunReads_ARequestWithoutATenantIsInternal(t *testing.T) {
 		"ListTasks":       func() error { _, err := srv.ListTasks(ctx, &runv1.ListTasksRequest{RunId: id}); return err },
 		"ListRunAttempts": func() error { _, err := srv.ListRunAttempts(ctx, &runv1.ListRunAttemptsRequest{RunId: id}); return err },
 		"ListNodeTasks": func() error {
-			_, err := srv.ListNodeTasks(ctx, &runv1.ListNodeTasksRequest{ServiceName: "a", SchemaName: "b", TableName: "c"})
+			_, err := srv.ListNodeTasks(ctx, &runv1.ListNodeTasksRequest{ProjectName: "a", SchemaName: "b", TableName: "c"})
 			return err
 		},
 		"ListNodes":           func() error { _, err := srv.ListNodes(ctx, &runv1.ListNodesRequest{}); return err },
 		"ListNodeNames":       func() error { _, err := srv.ListNodeNames(ctx, &runv1.ListNodeNamesRequest{}); return err },
-		"ListNodeServices":    func() error { _, err := srv.ListNodeServices(ctx, &runv1.ListNodeServicesRequest{}); return err },
+		"ListNodeProjects":    func() error { _, err := srv.ListNodeProjects(ctx, &runv1.ListNodeProjectsRequest{}); return err },
 		"GetRunGraph":         func() error { _, err := srv.GetRunGraph(ctx, &runv1.GetRunGraphRequest{RunId: id}); return err },
 		"ListRuns":            func() error { _, err := srv.ListRuns(ctx, &runv1.ListRunsRequest{ScheduleName: "daily"}); return err },
 		"ListActiveRunDrifts": func() error { _, err := srv.ListActiveRunDrifts(ctx, &runv1.ListActiveRunDriftsRequest{}); return err },
@@ -740,12 +740,12 @@ func TestRunReads_AFailingReadIsInternal(t *testing.T) {
 		"ListTasks":       func() error { _, err := srv.ListTasks(ctx, &runv1.ListTasksRequest{RunId: id}); return err },
 		"ListRunAttempts": func() error { _, err := srv.ListRunAttempts(ctx, &runv1.ListRunAttemptsRequest{RunId: id}); return err },
 		"ListNodeTasks": func() error {
-			_, err := srv.ListNodeTasks(ctx, &runv1.ListNodeTasksRequest{ServiceName: "a", SchemaName: "b", TableName: "c"})
+			_, err := srv.ListNodeTasks(ctx, &runv1.ListNodeTasksRequest{ProjectName: "a", SchemaName: "b", TableName: "c"})
 			return err
 		},
 		"ListNodes":           func() error { _, err := srv.ListNodes(ctx, &runv1.ListNodesRequest{}); return err },
 		"ListNodeNames":       func() error { _, err := srv.ListNodeNames(ctx, &runv1.ListNodeNamesRequest{}); return err },
-		"ListNodeServices":    func() error { _, err := srv.ListNodeServices(ctx, &runv1.ListNodeServicesRequest{}); return err },
+		"ListNodeProjects":    func() error { _, err := srv.ListNodeProjects(ctx, &runv1.ListNodeProjectsRequest{}); return err },
 		"GetRunGraph":         func() error { _, err := srv.GetRunGraph(ctx, &runv1.GetRunGraphRequest{RunId: id}); return err },
 		"ListRuns":            func() error { _, err := srv.ListRuns(ctx, &runv1.ListRunsRequest{ScheduleName: "daily"}); return err },
 		"ListActiveRunDrifts": func() error { _, err := srv.ListActiveRunDrifts(ctx, &runv1.ListActiveRunDriftsRequest{}); return err },
@@ -793,12 +793,12 @@ func TestListRunAttempts_ClampsPaging(t *testing.T) {
 func TestRunReads_NodeAndScheduleReadsAreOfTheRequestsTenant(t *testing.T) {
 	store := newStore()
 	store.nodeTasks = []*projection.NodeRun{{ScheduleID: uuid.New(), TaskID: uuid.New(), CreatedAt: base}}
-	store.nodes = []*projection.NodeSummary{{ServiceName: "svc", TableName: "orders", LastRunAt: &base}}
+	store.nodes = []*projection.NodeSummary{{ProjectName: "svc", TableName: "orders", LastRunAt: &base}}
 	store.nodeNames = []string{"orders"}
-	store.nodeServices = []string{"svc"}
+	store.nodeProjects = []string{"svc"}
 	store.scheduleSummaries[tenantA] = []schedules.Summary{{Name: "daily", ModelCount: 1}}
 	srv := newServer(store)
-	node := &runv1.ListNodeTasksRequest{ServiceName: "svc", SchemaName: "sch", TableName: "orders"}
+	node := &runv1.ListNodeTasksRequest{ProjectName: "svc", SchemaName: "sch", TableName: "orders"}
 
 	// The default tenant sees the rows, so an empty answer below is the
 	// tenant's doing.
@@ -811,9 +811,9 @@ func TestRunReads_NodeAndScheduleReadsAreOfTheRequestsTenant(t *testing.T) {
 	ownNames, err := srv.ListNodeNames(ctxOf(tenantA), &runv1.ListNodeNamesRequest{})
 	require.NoError(t, err)
 	require.Len(t, ownNames.GetTableNames(), 1)
-	ownServices, err := srv.ListNodeServices(ctxOf(tenantA), &runv1.ListNodeServicesRequest{})
+	ownProjects, err := srv.ListNodeProjects(ctxOf(tenantA), &runv1.ListNodeProjectsRequest{})
 	require.NoError(t, err)
-	require.Len(t, ownServices.GetServiceNames(), 1)
+	require.Len(t, ownProjects.GetProjectNames(), 1)
 	ownSchedules, err := srv.ListSchedules(ctxOf(tenantA), &runv1.ListSchedulesRequest{})
 	require.NoError(t, err)
 	require.Len(t, ownSchedules.GetSchedules(), 1)
@@ -829,9 +829,9 @@ func TestRunReads_NodeAndScheduleReadsAreOfTheRequestsTenant(t *testing.T) {
 	names, err := srv.ListNodeNames(ctx, &runv1.ListNodeNamesRequest{})
 	require.NoError(t, err)
 	assert.Empty(t, names.GetTableNames())
-	services, err := srv.ListNodeServices(ctx, &runv1.ListNodeServicesRequest{})
+	projects, err := srv.ListNodeProjects(ctx, &runv1.ListNodeProjectsRequest{})
 	require.NoError(t, err)
-	assert.Empty(t, services.GetServiceNames())
+	assert.Empty(t, projects.GetProjectNames())
 	schedules, err := srv.ListSchedules(ctx, &runv1.ListSchedulesRequest{})
 	require.NoError(t, err)
 	assert.Empty(t, schedules.GetSchedules())

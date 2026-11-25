@@ -88,7 +88,7 @@ func (e *edgeTenant) cleanup(db *sqlx.DB) {
 }
 
 // node is the request fields naming the tenant's node.
-func (e *edgeTenant) node() (service, schema, table string) { return "service-1", "raw", e.table }
+func (e *edgeTenant) node() (project, schema, table string) { return "service-1", "raw", e.table }
 
 // attemptStatus reads the status of attempt 0 of the tenant's task.
 func (e *edgeTenant) attemptStatus(t *testing.T, db *sqlx.DB) string {
@@ -147,7 +147,7 @@ func TestTenantEdges(t *testing.T) {
 	require.Equal(t, string(run.RunStatusRunning), e.runStatus(t, runControllerDB))
 	require.Equal(t, string(run.AttemptDispatched), e.attemptStatus(t, runControllerDB))
 	runID := e.runID.String()
-	service, schema, table := e.node()
+	project, schema, table := e.node()
 
 	t.Run("reads", func(t *testing.T) {
 		_, err := runClient.GetRun(ctx, &runv1.GetRunRequest{RunId: runID})
@@ -170,7 +170,7 @@ func TestTenantEdges(t *testing.T) {
 		for _, d := range drifts.GetActiveRuns() {
 			assert.NotEqual(t, runID, d.GetRunId(), "another tenant's active run drifts for no request")
 		}
-		nodeTasks, err := runClient.ListNodeTasks(ctx, &runv1.ListNodeTasksRequest{ServiceName: service, SchemaName: schema, TableName: table})
+		nodeTasks, err := runClient.ListNodeTasks(ctx, &runv1.ListNodeTasksRequest{ProjectName: project, SchemaName: schema, TableName: table})
 		require.NoError(t, err)
 		assert.Empty(t, nodeTasks.GetTasks())
 		nodes, err := runClient.ListNodes(ctx, &runv1.ListNodesRequest{Search: table})
@@ -192,12 +192,12 @@ func TestTenantEdges(t *testing.T) {
 		_, err = runClient.TriggerRebase(ctx, &runv1.TriggerRebaseRequest{RequestId: uuid.NewString(), SourceRunId: runID})
 		requireCode(t, err, codes.NotFound, "TriggerRebase")
 		_, err = runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{
-			RequestId: uuid.NewString(), ServiceName: service, SchemaName: schema, TableName: table,
+			RequestId: uuid.NewString(), ProjectName: project, SchemaName: schema, TableName: table,
 			MetadataSource: "snapshot_of_run", SourceRunId: runID,
 		})
 		requireCode(t, err, codes.NotFound, "TriggerSingleNodeRun of another tenant's run")
 		_, err = runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{
-			RequestId: uuid.NewString(), ServiceName: service, SchemaName: schema, TableName: table, MetadataSource: "latest",
+			RequestId: uuid.NewString(), ProjectName: project, SchemaName: schema, TableName: table, MetadataSource: "latest",
 		})
 		requireCode(t, err, codes.NotFound, "TriggerSingleNodeRun of a node only another tenant's release holds")
 

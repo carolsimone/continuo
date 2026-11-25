@@ -20,7 +20,7 @@ import (
 func emitReleaseRequested(ctx context.Context, u uow.UnitOfWork, releaseID string, keys []release.ManifestKey, imageTags map[string]string) error {
 	manifestKeys := make([]pkgevents.ManifestKey, len(keys))
 	for i, k := range keys {
-		manifestKeys[i] = pkgevents.ManifestKey{Service: k.Service, S3URI: k.S3URI, Kind: string(k.Kind)}
+		manifestKeys[i] = pkgevents.ManifestKey{Project: k.Project, S3URI: k.S3URI, Kind: string(k.Kind)}
 	}
 	payload, err := pkgevents.ReleaseRequestedPayload(pkgevents.ReleaseRequested{ReleaseID: releaseID, ManifestKeys: manifestKeys, ImageTags: imageTags})
 	if err != nil {

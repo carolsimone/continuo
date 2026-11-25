@@ -84,7 +84,7 @@ func TestScheduleGraph_IsTheScheduleAndItsOneHopUpstreams(t *testing.T) {
 	seed2 := g.Nodes[1]
 	one := 1
 	assert.Equal(t, topology.Node{ //nolint:gosec // G101: secret-* is a Secret name, not a value
-		Key: "stg.seed_table_2", UniqueID: "stg.seed_table_2", ServiceName: "svc-seeds", SchemaName: "stg",
+		Key: "stg.seed_table_2", UniqueID: "stg.seed_table_2", ProjectName: "svc-seeds", SchemaName: "stg",
 		TableName: "seed_table_2", NodeType: "dbt-seed", TestCount: &one, ContentHash: "h-seed_table_2",
 		ImageTag: "svc:1", SecretRef: "secret-seed_table_2", ScheduleName: "seeds",
 	}, seed2.Node)
@@ -103,7 +103,7 @@ func TestScheduleGraph_AScheduleWithNoUpstreamInAnotherScheduleHasNoCrossEdge(t 
 
 // The schedule graph the UI draws returns the upstreams of a schedule's nodes
 // whatever their type, so an unknown-external node shows up with the edge to its
-// reader, and with no service.
+// reader, and with no project.
 func TestGraph_ReturnsAnUnknownExternalUpstreamAndItsEdge(t *testing.T) {
 	db := newTestDB(t)
 	tenant := unknownExternalRelease(t, db)
@@ -117,7 +117,7 @@ func TestGraph_ReturnsAnUnknownExternalUpstreamAndItsEdge(t *testing.T) {
 	assert.Equal(t, topology.Node{
 		Key: "raw.x", UniqueID: "raw.x", SchemaName: "raw", TableName: "x", NodeType: "unknown-external", TestCount: &zero,
 	}, g.Nodes[1].Node)
-	assert.Equal(t, "", g.Nodes[1].ServiceName)
+	assert.Equal(t, "", g.Nodes[1].ProjectName)
 	assert.Equal(t, []topology.Edge{{Upstream: "raw.x", Downstream: "a.m"}}, g.Edges)
 }
 
@@ -265,7 +265,7 @@ func dormantRelease(t *testing.T, db *sqlx.DB, extra ...topology.NodeSpec) strin
 }
 
 // insertNodeRun stores a run of tenant created at createdAt holding one run
-// task, created with the run, of each node key, of service svc, and deletes
+// task, created with the run, of each node key, of project svc, and deletes
 // the run and its tasks when the test ends.
 func insertNodeRun(t *testing.T, db *sqlx.DB, tenant string, createdAt time.Time, nodeKeys ...string) {
 	t.Helper()
@@ -273,9 +273,9 @@ func insertNodeRun(t *testing.T, db *sqlx.DB, tenant string, createdAt time.Time
 }
 
 // insertNodeRunOf stores a run of operation op of tenant created at createdAt
-// holding one task of op, created with the run, of each node key, of service,
+// holding one task of op, created with the run, of each node key, of project,
 // and deletes the run and its tasks when the test ends.
-func insertNodeRunOf(t *testing.T, db *sqlx.DB, tenant, service, op string, createdAt time.Time, nodeKeys ...string) {
+func insertNodeRunOf(t *testing.T, db *sqlx.DB, tenant, project, op string, createdAt time.Time, nodeKeys ...string) {
 	t.Helper()
 	runID := uuid.New()
 	_, err := db.Exec(`
@@ -286,9 +286,9 @@ func insertNodeRunOf(t *testing.T, db *sqlx.DB, tenant, service, op string, crea
 	for _, k := range nodeKeys {
 		schema, table, _ := strings.Cut(k, ".")
 		_, err := db.Exec(`
-			INSERT INTO tasks (tenant_id, task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries, node_key, operation)
+			INSERT INTO tasks (tenant_id, task_id, run_id, created_at, project_name, schema_name, table_name, job_name, status, max_retries, node_key, operation)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'succeeded', 2, $9, $10)`,
-			tenant, uuid.New(), runID, createdAt, service, schema, table, "job-"+uuid.NewString()[:8], k, op)
+			tenant, uuid.New(), runID, createdAt, project, schema, table, "job-"+uuid.NewString()[:8], k, op)
 		require.NoError(t, err)
 	}
 }
@@ -340,7 +340,7 @@ func TestLastRunOfADormantNode_IsItsNewestRunOnTheGraphAndTheNodeList(t *testing
 		graphSpec("refreshed", "dbt-model", "")))
 	require.NoError(t, err)
 	makeTenantLive(t, db, tenant, "rel-1", 1)
-	// graphSpec gives a node of no schedule the service "svc-".
+	// graphSpec gives a node of no schedule the project "svc-".
 	ran := time.Date(2026, 11, 1, 8, 0, 0, 0, time.UTC)
 	refreshed := ran.Add(time.Hour)
 	insertNodeRunOf(t, db, tenant, "svc-", "test", ran.Add(-time.Hour), "stg.test_only")
@@ -459,7 +459,7 @@ func TestSummaries_CountsEveryNodeTypeModelIsDormantCallsDormant(t *testing.T) {
 	for _, s := range specs {
 		if !kept[s.UniqueID] {
 			rel.Nodes = append(rel.Nodes, topology.Node{
-				Key: topology.KeyOf(s.SchemaName, s.TableName), UniqueID: s.UniqueID, ServiceName: s.ServiceName,
+				Key: topology.KeyOf(s.SchemaName, s.TableName), UniqueID: s.UniqueID, ProjectName: s.ProjectName,
 				SchemaName: s.SchemaName, TableName: s.TableName, NodeType: s.NodeType, ContentHash: s.ContentHash,
 			})
 		}

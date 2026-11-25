@@ -95,14 +95,14 @@ func TestTopologyWalker_CycleDetected_Panics(t *testing.T) {
 	}, "expected panic on cyclic topology")
 }
 
-func TestFullAncestorsClosure_CrossesServiceBoundaries(t *testing.T) {
-	// svcA: a1 -> a2 -> a3; svcB: b1 is a CROSS-service upstream of a3 and MUST
+func TestFullAncestorsClosure_CrossesProjectBoundaries(t *testing.T) {
+	// svcA: a1 -> a2 -> a3; svcB: b1 is a CROSS-project upstream of a3 and MUST
 	// be followed under self-contained validation.
 	topo := release.Topology{
-		{UniqueID: "a1", ServiceName: "svcA"},
-		{UniqueID: "a2", ServiceName: "svcA", UpstreamUniqueIDs: []string{"a1"}},
-		{UniqueID: "a3", ServiceName: "svcA", UpstreamUniqueIDs: []string{"a2", "b1"}},
-		{UniqueID: "b1", ServiceName: "svcB"},
+		{UniqueID: "a1", ProjectName: "svcA"},
+		{UniqueID: "a2", ProjectName: "svcA", UpstreamUniqueIDs: []string{"a1"}},
+		{UniqueID: "a3", ProjectName: "svcA", UpstreamUniqueIDs: []string{"a2", "b1"}},
+		{UniqueID: "b1", ProjectName: "svcB"},
 	}
 	got := release.FullAncestorsClosure(topo, []string{"a3"})
 	assert.ElementsMatch(t, []string{"a1", "a2", "a3", "b1"}, got)
@@ -116,7 +116,7 @@ func TestFullAncestorsClosure_CrossesServiceBoundaries(t *testing.T) {
 }
 
 func TestFullAncestorsClosure_SeedsNotInTopoIgnored(t *testing.T) {
-	topo := release.Topology{{UniqueID: "a1", ServiceName: "svcA"}}
+	topo := release.Topology{{UniqueID: "a1", ProjectName: "svcA"}}
 	got := release.FullAncestorsClosure(topo, []string{"ghost"})
 	assert.Empty(t, got)
 }
@@ -126,10 +126,10 @@ func TestFullAncestorsClosure_MultiSeedUnionDeduped(t *testing.T) {
 	// Seeds a3 and a4 share ancestor a1; the union must be deduplicated and
 	// topologically ordered (upstreams before downstreams).
 	topo := release.Topology{
-		{UniqueID: "a1", ServiceName: "svcA"},
-		{UniqueID: "a2", ServiceName: "svcA", UpstreamUniqueIDs: []string{"a1"}},
-		{UniqueID: "a3", ServiceName: "svcA", UpstreamUniqueIDs: []string{"a2"}},
-		{UniqueID: "a4", ServiceName: "svcA", UpstreamUniqueIDs: []string{"a1"}},
+		{UniqueID: "a1", ProjectName: "svcA"},
+		{UniqueID: "a2", ProjectName: "svcA", UpstreamUniqueIDs: []string{"a1"}},
+		{UniqueID: "a3", ProjectName: "svcA", UpstreamUniqueIDs: []string{"a2"}},
+		{UniqueID: "a4", ProjectName: "svcA", UpstreamUniqueIDs: []string{"a1"}},
 	}
 	got := release.FullAncestorsClosure(topo, []string{"a3", "a4"})
 	// Expected: a1 first (root), then a2 and a4 (both depend only on a1),
@@ -138,21 +138,21 @@ func TestFullAncestorsClosure_MultiSeedUnionDeduped(t *testing.T) {
 }
 
 func TestFullAncestorsClosure_CycleDetected_Panics(t *testing.T) {
-	// a -> b -> a (cycle within same service)
+	// a -> b -> a (cycle within same project)
 	topo := release.Topology{
-		withUpstream(release.Node{UniqueID: "a", ServiceName: "svcA"}, "b"),
-		withUpstream(release.Node{UniqueID: "b", ServiceName: "svcA"}, "a"),
+		withUpstream(release.Node{UniqueID: "a", ProjectName: "svcA"}, "b"),
+		withUpstream(release.Node{UniqueID: "b", ProjectName: "svcA"}, "a"),
 	}
 	assert.Panics(t, func() {
 		release.FullAncestorsClosure(topo, []string{"a"})
 	}, "expected panic on cyclic topology")
 }
 
-func TestInSetUpstreams_IncludesCrossServiceWhenInSet(t *testing.T) {
+func TestInSetUpstreams_IncludesCrossProjectWhenInSet(t *testing.T) {
 	topo := release.Topology{
-		{UniqueID: "a1", ServiceName: "svcA"},
-		{UniqueID: "a2", ServiceName: "svcA", UpstreamUniqueIDs: []string{"a1", "b1"}},
-		{UniqueID: "b1", ServiceName: "svcB"},
+		{UniqueID: "a1", ProjectName: "svcA"},
+		{UniqueID: "a2", ProjectName: "svcA", UpstreamUniqueIDs: []string{"a1", "b1"}},
+		{UniqueID: "b1", ProjectName: "svcB"},
 	}
 	got := release.InSetUpstreams(topo, "a2", map[string]bool{"a1": true, "a2": true, "b1": true})
 	assert.Equal(t, []string{"a1", "b1"}, got)
@@ -161,26 +161,26 @@ func TestInSetUpstreams_IncludesCrossServiceWhenInSet(t *testing.T) {
 	assert.Equal(t, []string{"a1"}, got)
 }
 
-func TestUnbuildableCrossServiceUpstreams_FlagsDanglingEdge(t *testing.T) {
+func TestUnbuildableCrossProjectUpstreams_FlagsDanglingEdge(t *testing.T) {
 	candidate := release.Topology{
-		{UniqueID: "a2", ServiceName: "svcA", UpstreamUniqueIDs: []string{"b_known", "b_ghost"}},
-		{UniqueID: "b_known", ServiceName: "svcB"},
+		{UniqueID: "a2", ProjectName: "svcA", UpstreamUniqueIDs: []string{"b_known", "b_ghost"}},
+		{UniqueID: "b_known", ProjectName: "svcB"},
 	}
-	got := release.UnbuildableCrossServiceUpstreams(candidate, []string{"a2"})
-	assert.Equal(t, []release.CrossServiceEdge{{Node: "a2", Upstream: "b_ghost"}}, got)
+	got := release.UnbuildableCrossProjectUpstreams(candidate, []string{"a2"})
+	assert.Equal(t, []release.CrossProjectEdge{{Node: "a2", Upstream: "b_ghost"}}, got)
 }
 
-func TestUnbuildableCrossServiceUpstreams_NoneWhenAllInCandidate(t *testing.T) {
+func TestUnbuildableCrossProjectUpstreams_NoneWhenAllInCandidate(t *testing.T) {
 	candidate := release.Topology{
-		{UniqueID: "a2", ServiceName: "svcA", UpstreamUniqueIDs: []string{"b1"}},
-		{UniqueID: "b1", ServiceName: "svcB"},
+		{UniqueID: "a2", ProjectName: "svcA", UpstreamUniqueIDs: []string{"b1"}},
+		{UniqueID: "b1", ProjectName: "svcB"},
 	}
-	assert.Empty(t, release.UnbuildableCrossServiceUpstreams(candidate, []string{"a2"}))
+	assert.Empty(t, release.UnbuildableCrossProjectUpstreams(candidate, []string{"a2"}))
 }
 
 func TestChangedAncestors_FiltersTransitiveAncestorsToChangedOnes(t *testing.T) {
 	topo := release.Topology{
-		{UniqueID: "s.u", ServiceName: "svcU", OriginalFilePath: "models/u.sql"},
+		{UniqueID: "s.u", ProjectName: "svcU", OriginalFilePath: "models/u.sql"},
 		{UniqueID: "s.m", UpstreamUniqueIDs: []string{"s.u"}},
 		{UniqueID: "s.x", UpstreamUniqueIDs: []string{"s.m"}},
 		{UniqueID: "s.other"},
@@ -189,7 +189,7 @@ func TestChangedAncestors_FiltersTransitiveAncestorsToChangedOnes(t *testing.T) 
 
 	got := release.ChangedAncestors(topo, "s.x", changed)
 
-	want := []release.ChangedAncestor{{NodeID: "s.u", FilePath: "models/u.sql", Service: "svcU", Depth: 2}}
+	want := []release.ChangedAncestor{{NodeID: "s.u", FilePath: "models/u.sql", Project: "svcU", Depth: 2}}
 	assert.Equal(t, want, got, "m unchanged, x is itself, other unrelated; u is two hops up through m")
 	assert.Nil(t, release.ChangedAncestors(topo, "s.unknown", changed), "unknown node must yield nil")
 }
@@ -201,14 +201,14 @@ func TestChangedAncestors_FiltersTransitiveAncestorsToChangedOnes(t *testing.T) 
 // the fix to a file that no longer holds the node.
 func TestChangedAncestors_CarriesTheLocationTheCandidateDeclares(t *testing.T) {
 	topo := release.Topology{
-		{UniqueID: "s.u", ServiceName: "svcB", OriginalFilePath: "models/marts/u_renamed.sql"},
-		{UniqueID: "s.x", ServiceName: "svcA", UpstreamUniqueIDs: []string{"s.u"}},
+		{UniqueID: "s.u", ProjectName: "svcB", OriginalFilePath: "models/marts/u_renamed.sql"},
+		{UniqueID: "s.x", ProjectName: "svcA", UpstreamUniqueIDs: []string{"s.u"}},
 	}
 
 	got := release.ChangedAncestors(topo, "s.x", map[string]bool{"s.u": true})
 
 	assert.Equal(t, []release.ChangedAncestor{
-		{NodeID: "s.u", FilePath: "models/marts/u_renamed.sql", Service: "svcB", Depth: 1},
+		{NodeID: "s.u", FilePath: "models/marts/u_renamed.sql", Project: "svcB", Depth: 1},
 	}, got)
 }
 
@@ -217,23 +217,23 @@ func TestChangedAncestors_CarriesTheLocationTheCandidateDeclares(t *testing.T) {
 // reports the shorter path; a farther changed ancestor reports its own hops.
 func TestChangedAncestors_DepthIsTheMinimumHopCount(t *testing.T) {
 	topo := release.Topology{
-		{UniqueID: "s.far", ServiceName: "svcB", OriginalFilePath: "models/far.sql"},
-		{UniqueID: "s.u", ServiceName: "svcB", OriginalFilePath: "models/u.sql", UpstreamUniqueIDs: []string{"s.far"}},
-		{UniqueID: "s.m", ServiceName: "svcA", UpstreamUniqueIDs: []string{"s.u"}},
-		{UniqueID: "s.x", ServiceName: "svcA", UpstreamUniqueIDs: []string{"s.u", "s.m"}},
+		{UniqueID: "s.far", ProjectName: "svcB", OriginalFilePath: "models/far.sql"},
+		{UniqueID: "s.u", ProjectName: "svcB", OriginalFilePath: "models/u.sql", UpstreamUniqueIDs: []string{"s.far"}},
+		{UniqueID: "s.m", ProjectName: "svcA", UpstreamUniqueIDs: []string{"s.u"}},
+		{UniqueID: "s.x", ProjectName: "svcA", UpstreamUniqueIDs: []string{"s.u", "s.m"}},
 	}
 	changed := map[string]bool{"s.u": true, "s.far": true}
 
 	got := release.ChangedAncestors(topo, "s.x", changed)
 
 	assert.Equal(t, []release.ChangedAncestor{
-		{NodeID: "s.far", FilePath: "models/far.sql", Service: "svcB", Depth: 2},
-		{NodeID: "s.u", FilePath: "models/u.sql", Service: "svcB", Depth: 1},
+		{NodeID: "s.far", FilePath: "models/far.sql", Project: "svcB", Depth: 2},
+		{NodeID: "s.u", FilePath: "models/u.sql", Project: "svcB", Depth: 1},
 	}, got)
 }
 
 // unknownExternalProbe is the node topology-controller writes for a table that a
-// reader names and no node builds: no content, no service, no upstreams.
+// reader names and no node builds: no content, no project, no upstreams.
 func unknownExternalProbe() release.Node {
 	return release.Node{
 		UniqueID: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe",
@@ -263,7 +263,7 @@ func TestDerivedChangedNodeIDs_NeverReturnsAnUnknownExternalNode(t *testing.T) {
 // unknown-external node, the candidate node is a real node with content and is changed.
 func TestDerivedChangedNodeIDs_ATableANodeStartsBuildingIsChanged(t *testing.T) {
 	prod := release.Topology{unknownExternalProbe()}
-	cand := release.Topology{{UniqueID: "raw.ingest_probe", NodeType: "dbt-model", ServiceName: "svc", ContentHash: "h"}}
+	cand := release.Topology{{UniqueID: "raw.ingest_probe", NodeType: "dbt-model", ProjectName: "svc", ContentHash: "h"}}
 
 	assert.Equal(t, []string{"raw.ingest_probe"}, release.DerivedChangedNodeIDs(cand, prod))
 }
@@ -273,7 +273,7 @@ func TestDerivedChangedNodeIDs_ATableANodeStartsBuildingIsChanged(t *testing.T) 
 // as an unknown-external node, the candidate node has no content to validate, so it is
 // not changed even though its content hash differs from production's.
 func TestDerivedChangedNodeIDs_ATableANodeStopsBuildingIsNotChanged(t *testing.T) {
-	prod := release.Topology{{UniqueID: "raw.x", NodeType: "dbt-model", ServiceName: "svc", ContentHash: "h"}}
+	prod := release.Topology{{UniqueID: "raw.x", NodeType: "dbt-model", ProjectName: "svc", ContentHash: "h"}}
 	cand := release.Topology{{UniqueID: "raw.x", NodeType: "unknown-external", SchemaName: "raw", TableName: "x", ResolvedRelationID: "raw.x"}}
 
 	assert.Empty(t, release.DerivedChangedNodeIDs(cand, prod))
@@ -312,8 +312,8 @@ func TestFullAncestorsClosure_ReachesAnAncestorBeyondTheUnknownExternalEdge(t *t
 func TestChangedAncestors_NeverNamesAnUnknownExternalNode(t *testing.T) {
 	cand := release.Topology{
 		unknownExternalProbe(),
-		{UniqueID: "a.m", NodeType: "dbt-model", ServiceName: "svcA", OriginalFilePath: "models/m.sql", ContentHash: "h2", UpstreamUniqueIDs: []string{"raw.ingest_probe"}},
-		{UniqueID: "a.x", NodeType: "dbt-model", ServiceName: "svcA", ContentHash: "hx", UpstreamUniqueIDs: []string{"a.m"}},
+		{UniqueID: "a.m", NodeType: "dbt-model", ProjectName: "svcA", OriginalFilePath: "models/m.sql", ContentHash: "h2", UpstreamUniqueIDs: []string{"raw.ingest_probe"}},
+		{UniqueID: "a.x", NodeType: "dbt-model", ProjectName: "svcA", ContentHash: "hx", UpstreamUniqueIDs: []string{"a.m"}},
 	}
 	changed := map[string]bool{}
 	for _, id := range release.DerivedChangedNodeIDs(cand, nil) {
@@ -323,21 +323,21 @@ func TestChangedAncestors_NeverNamesAnUnknownExternalNode(t *testing.T) {
 	got := release.ChangedAncestors(cand, "a.x", changed)
 
 	assert.Equal(t, []release.ChangedAncestor{
-		{NodeID: "a.m", FilePath: "models/m.sql", Service: "svcA", Depth: 1},
+		{NodeID: "a.m", FilePath: "models/m.sql", Project: "svcA", Depth: 1},
 	}, got, "only the reader a.m: the unknown-external node raw.ingest_probe sits two hops up and is never changed")
 	for _, a := range got {
 		assert.NotEqual(t, "raw.ingest_probe", a.NodeID)
 	}
 }
 
-// TestUnbuildableCrossServiceUpstreams_AnUnknownExternalUpstreamIsKnown pins that an
+// TestUnbuildableCrossProjectUpstreams_AnUnknownExternalUpstreamIsKnown pins that an
 // edge to an unknown-external node is not a dangling reference: the node is in the
 // candidate topology even though it is never built.
-func TestUnbuildableCrossServiceUpstreams_AnUnknownExternalUpstreamIsKnown(t *testing.T) {
+func TestUnbuildableCrossProjectUpstreams_AnUnknownExternalUpstreamIsKnown(t *testing.T) {
 	topo := release.Topology{
 		unknownExternalProbe(),
 		{UniqueID: "a.m", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"raw.ingest_probe"}},
 	}
 
-	assert.Empty(t, release.UnbuildableCrossServiceUpstreams(topo, []string{"a.m"}))
+	assert.Empty(t, release.UnbuildableCrossProjectUpstreams(topo, []string{"a.m"}))
 }

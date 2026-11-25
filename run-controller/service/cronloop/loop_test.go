@@ -319,7 +319,7 @@ func ordersToRevenue(name string) topology.Graph { return ordersToRevenueOfType(
 func ordersToRevenueOfType(name, nodeType string) topology.Graph {
 	node := func(schema, table string) topology.Node {
 		return topology.Node{
-			Key: topology.KeyOf(schema, table), ServiceName: "svc", SchemaName: schema, TableName: table,
+			Key: topology.KeyOf(schema, table), ProjectName: "svc", SchemaName: schema, TableName: table,
 			NodeType: nodeType, ContentHash: "h-" + table, ImageTag: "svc:1", ScheduleName: name,
 		}
 	}

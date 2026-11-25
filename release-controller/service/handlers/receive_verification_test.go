@@ -14,7 +14,7 @@ import (
 
 func validVerification() handlers.ReceiveVerificationInput {
 	return handlers.ReceiveVerificationInput{
-		RunID: "verify-rel-1-core-a1", Service: "core", ImageTag: "img:1", Kind: "dbt",
+		RunID: "verify-rel-1-core-a1", Project: "core", ImageTag: "img:1", Kind: "dbt",
 		VerifiesReleaseID: "rel-1", Attempt: 1, SourceOverlayURI: "s3://b/core/verify-rel-1-core-a1/source-overlay.tar.gz",
 	}
 }
@@ -37,7 +37,7 @@ func TestReceiveVerification_Validation(t *testing.T) {
 	deps, _ := newDeps(now)
 	for name, mutate := range map[string]func(*handlers.ReceiveVerificationInput){
 		"missing run_id":         func(in *handlers.ReceiveVerificationInput) { in.RunID = "" },
-		"missing service":        func(in *handlers.ReceiveVerificationInput) { in.Service = "" },
+		"missing project":        func(in *handlers.ReceiveVerificationInput) { in.Project = "" },
 		"missing image_tag":      func(in *handlers.ReceiveVerificationInput) { in.ImageTag = "" },
 		"missing kind":           func(in *handlers.ReceiveVerificationInput) { in.Kind = "" },
 		"bad kind":               func(in *handlers.ReceiveVerificationInput) { in.Kind = "yaml" },
@@ -82,7 +82,7 @@ func TestReceiveVerification_RefusesPython(t *testing.T) {
 			err := handlers.ReceiveVerification(context.Background(), deps, in)
 			require.ErrorIs(t, err, handlers.ErrInvalidInput)
 			assert.ErrorContains(t, err,
-				`kind "python" is no longer accepted: release the service as "python-odcs", one ODCS contract per node (docs/contracts.md)`)
+				`kind "python" is no longer accepted: release the project as "python-odcs", one ODCS contract per node (docs/contracts.md)`)
 			_, getErr := store.GetRelease(in.RunID)
 			assert.Error(t, getErr, "a refused verification stores nothing")
 		})
@@ -116,7 +116,7 @@ func TestReceiveVerification_IdempotentOnRunID_ConflictsWithACandidate(t *testin
 func TestReceiveCandidate_RefusesVerificationFields(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	deps, _ := newDeps(now)
-	base := handlers.ReceiveCandidateInput{Service: "core", ReleaseID: "rel-1", ImageTag: "img", Repo: "org/r", CommitSHA: "sha"}
+	base := handlers.ReceiveCandidateInput{Project: "core", ReleaseID: "rel-1", ImageTag: "img", Repo: "org/r", CommitSHA: "sha"}
 	for name, mutate := range map[string]func(*handlers.ReceiveCandidateInput){
 		"shadow":              func(in *handlers.ReceiveCandidateInput) { in.Shadow = true },
 		"source_overlay_uri":  func(in *handlers.ReceiveCandidateInput) { in.SourceOverlayURI = "s3://x" },
@@ -139,7 +139,7 @@ func TestReceiveVerification_LosingARaceToAVerificationIsANoOp(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	deps, store := newDeps(now)
 	in := validVerification()
-	winner := pipeline.NewVerification(in.RunID, in.Service, "img:winner", in.VerifiesReleaseID, in.Attempt, in.SourceOverlayURI, release.ManifestKindDbt, now)
+	winner := pipeline.NewVerification(in.RunID, in.Project, "img:winner", in.VerifiesReleaseID, in.Attempt, in.SourceOverlayURI, release.ManifestKindDbt, now)
 	store.RaceRelease(winner)
 
 	require.NoError(t, handlers.ReceiveVerification(context.Background(), deps, in))
@@ -147,7 +147,7 @@ func TestReceiveVerification_LosingARaceToAVerificationIsANoOp(t *testing.T) {
 	got, err := store.GetRelease(in.RunID)
 	require.NoError(t, err)
 	assert.Same(t, winner, got, "the loser must not overwrite the winner's run")
-	assert.Equal(t, "img:winner", got.ImageTags()[in.Service])
+	assert.Equal(t, "img:winner", got.ImageTags()[in.Project])
 }
 
 func TestReceiveVerification_LosingARaceToACandidateIsAKindConflict(t *testing.T) {

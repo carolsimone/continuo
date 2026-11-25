@@ -26,7 +26,7 @@ type HandleCompileResultInput struct {
 // proposing a model fix for a problem no model change can solve.
 //
 // The compile leg enqueues exactly one compile Deployment per release (one
-// node, named for the service), and that pod's initContainers run
+// node, named for the project), and that pod's initContainers run
 // sequentially — the first failure terminates the pod, so the "upload" main
 // container never runs. A compile pod therefore reports at most one failed
 // container, so perNode carries at most one entry with FailedContainer set;
@@ -96,7 +96,7 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 		if errorDetail == "" {
 			// No pod container to blame and no text from the producer: name what
 			// failed to compile. The compile leg runs before any topology exists,
-			// so the nodes (one per service) carry no service of their own.
+			// so the nodes (one per project) carry no project of their own.
 			errorDetail = release.SummarizeCompileFailure(failedNodes(failing, nil))
 		}
 
@@ -149,7 +149,7 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 
 	// ok path: Compiling → Parsing, re-read live service_prod, emit release.requested.
 	// Record compile results on the ok path too so the UI can surface
-	// "Compilation: success" for each service unit.
+	// "Compilation: success" for each project unit.
 	r.RecordStageResults("compile", results)
 	if err := r.TransitionFromCompiling(now); err != nil {
 		return fmt.Errorf("transition from compiling: %w", err)

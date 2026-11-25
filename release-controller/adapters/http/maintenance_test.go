@@ -17,7 +17,7 @@ func TestMaintenance_ReleaseIntakeAndRetryAnswer503(t *testing.T) {
 	deps.Maintenance = true
 	srv := newTestServer(deps)
 	for _, tc := range []struct{ method, path, body string }{
-		{http.MethodPost, "/releases", `{"service":"svc","release_id":"r1","image_tag":"t","repo":"o/r","commit_sha":"s"}`},
+		{http.MethodPost, "/releases", `{"project":"svc","release_id":"r1","image_tag":"t","repo":"o/r","commit_sha":"s"}`},
 		{http.MethodPost, "/releases/r1/retry-remediation", ``},
 	} {
 		t.Run(tc.path, func(t *testing.T) {

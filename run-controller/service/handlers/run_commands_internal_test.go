@@ -15,7 +15,7 @@ import (
 // replays; naming any adds one part that tells another list apart.
 func TestSingleNodeFingerprint_TheAcknowledgedObjectsAreOnePartOnlyWhenNamed(t *testing.T) {
 	in := TriggerSingleNodeRunInput{
-		Target:         run.NodeID{ServiceName: "svc", SchemaName: "raw", TableName: "fx"},
+		Target:         run.NodeID{ProjectName: "svc", SchemaName: "raw", TableName: "fx"},
 		MetadataSource: run.MetadataSourceLatest, Operation: model.OperationFullRefresh,
 	}
 	fingerprint := func(in TriggerSingleNodeRunInput) string {

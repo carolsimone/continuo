@@ -110,7 +110,7 @@ func TestStartRun_TheMadeUpNameOfASingleNodeRunNeedsNoModelOrCron(t *testing.T) 
 	promoteRelease(t, runControllerDB, scheduledNode("mart", table, "dbt-model", ""))
 
 	single, err := runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{
-		RequestId: uuid.NewString(), ServiceName: "service-1", SchemaName: "mart", TableName: table, MetadataSource: "latest",
+		RequestId: uuid.NewString(), ProjectName: "service-1", SchemaName: "mart", TableName: table, MetadataSource: "latest",
 	})
 	require.NoError(t, err, "a single-node run starts under its made-up name")
 	assert.Zero(t, scheduleRowsOf(t, single.GetScheduleName()))

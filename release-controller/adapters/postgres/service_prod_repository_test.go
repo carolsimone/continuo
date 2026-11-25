@@ -49,7 +49,7 @@ func TestServiceProdRepository_UpsertListGet(t *testing.T) {
 	assert.Equal(t, "s3://bucket/svc-a/v2.json", got.ManifestS3Key())
 	assert.Equal(t, "image-a:sha-99", got.ImageTag())
 
-	// Get for a missing service returns (nil, nil) — not an error.
+	// Get for a missing project returns (nil, nil) — not an error.
 	missing, err := repo.Get(ctx, "svc-does-not-exist")
 	require.NoError(t, err)
 	assert.Nil(t, missing)
@@ -64,10 +64,10 @@ func TestServiceProdRepository_UpsertListGet(t *testing.T) {
 	assert.Equal(t, release.ManifestKindPythonODCS, gotPy.ManifestKind())
 }
 
-// TestServiceProdRepository_StoresAnOntologyService proves service_prod accepts
+// TestServiceProdRepository_StoresAnOntologyProject proves service_prod accepts
 // a row of the kind ontology and returns it, and still refuses a kind no
 // release can carry.
-func TestServiceProdRepository_StoresAnOntologyService(t *testing.T) {
+func TestServiceProdRepository_StoresAnOntologyProject(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewServiceProdRepository(db)
 	ctx := context.Background()
@@ -80,16 +80,16 @@ func TestServiceProdRepository_StoresAnOntologyService(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, release.ManifestKindOntology, got.ManifestKind())
 
-	_, err = db.ExecContext(ctx, `INSERT INTO service_prod (service_name, release_id, manifest_s3_key, image_tag, manifest_kind)
+	_, err = db.ExecContext(ctx, `INSERT INTO service_prod (project_name, release_id, manifest_s3_key, image_tag, manifest_kind)
 		VALUES ('svc-bogus', 'rel-1', 's3://b/svc-bogus/rel-1/manifest.json', 'img:1', 'bogus')`)
 	require.Error(t, err, "the constraint accepts only the kinds a release can carry")
 	assert.Contains(t, err.Error(), "service_prod_manifest_kind_check")
 }
 
-// TestServicesWithKind_ListsThePythonServices writes service_prod rows of its
+// TestProjectsWithKind_ListsThePythonProjects writes service_prod rows of its
 // own, in reverse name order, and reads them back by kind. It deletes only the rows
 // it wrote, so rows other tests left in the table stay.
-func TestServicesWithKind_ListsThePythonServices(t *testing.T) {
+func TestProjectsWithKind_ListsThePythonProjects(t *testing.T) {
 	db := connectTestDB(t)
 	// One connection, with index scans off, makes a query that does not sort
 	// return the rows in the order they were written: the rows below are
@@ -115,14 +115,14 @@ func TestServicesWithKind_ListsThePythonServices(t *testing.T) {
 		{prefix + "py-a", release.ManifestKindPython},
 	}
 	t.Cleanup(func() {
-		_, err := db.Exec(`DELETE FROM service_prod WHERE service_name LIKE $1`, prefix+"%")
+		_, err := db.Exec(`DELETE FROM service_prod WHERE project_name LIKE $1`, prefix+"%")
 		require.NoError(t, err)
 	})
 	for _, r := range rows {
 		require.NoError(t, repo.Upsert(ctx, release.NewServiceProd(r.name, "rel-1", "s3://b/"+r.name+"/manifest.json", "img:1", r.kind, now)))
 	}
 
-	// named keeps the services this test wrote, in the order the repository
+	// named keeps the projects this test wrote, in the order the repository
 	// returned them: another test's leftover row of the kind cannot fail it.
 	named := func(names []string) []string {
 		out := []string{}
@@ -134,18 +134,18 @@ func TestServicesWithKind_ListsThePythonServices(t *testing.T) {
 		return out
 	}
 
-	python, err := repo.ServicesWithKind(ctx, release.ManifestKindPython)
+	python, err := repo.ProjectsWithKind(ctx, release.ManifestKindPython)
 	require.NoError(t, err)
 	assert.Equal(t, []string{prefix + "py-a", prefix + "py-b", prefix + "py-c"}, named(python))
 
-	odcs, err := repo.ServicesWithKind(ctx, release.ManifestKindPythonODCS)
+	odcs, err := repo.ProjectsWithKind(ctx, release.ManifestKindPythonODCS)
 	require.NoError(t, err)
 	assert.Equal(t, []string{prefix + "odcs"}, named(odcs))
 
 	// A kind that no row of this test holds yields an empty list, not an error.
-	_, err = db.Exec(`DELETE FROM service_prod WHERE service_name LIKE $1 AND manifest_kind = 'python'`, prefix+"%")
+	_, err = db.Exec(`DELETE FROM service_prod WHERE project_name LIKE $1 AND manifest_kind = 'python'`, prefix+"%")
 	require.NoError(t, err)
-	python, err = repo.ServicesWithKind(ctx, release.ManifestKindPython)
+	python, err = repo.ProjectsWithKind(ctx, release.ManifestKindPython)
 	require.NoError(t, err)
 	assert.Empty(t, named(python))
 }

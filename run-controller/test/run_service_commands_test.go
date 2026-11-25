@@ -257,7 +257,7 @@ func TestTriggerSingleNodeRun_ReuseForAnotherNodeIsAlreadyExists(t *testing.T) {
 	requestID := uuid.NewString()
 	nodeRun := func(table string) *runv1.TriggerSingleNodeRunRequest {
 		return &runv1.TriggerSingleNodeRunRequest{
-			RequestId: requestID, ServiceName: "service-1", SchemaName: "mart", TableName: table, MetadataSource: "latest",
+			RequestId: requestID, ProjectName: "service-1", SchemaName: "mart", TableName: table, MetadataSource: "latest",
 		}
 	}
 
@@ -399,7 +399,7 @@ func TestTriggerSingleNodeRun_TheAcknowledgedObjectsArePartOfTheFingerprint(t *t
 	requestID := uuid.New()
 	fullRefresh := func(acknowledged ...string) svchandlers.TriggerSingleNodeRunCommand {
 		return svchandlers.TriggerSingleNodeRunCommand{RequestID: requestID, TriggerSingleNodeRunInput: svchandlers.TriggerSingleNodeRunInput{
-			TenantID: pkgevents.DefaultTenantID, Target: run.NodeID{ServiceName: "service-1", SchemaName: "raw", TableName: "rs_ack_seed"},
+			TenantID: pkgevents.DefaultTenantID, Target: run.NodeID{ProjectName: "service-1", SchemaName: "raw", TableName: "rs_ack_seed"},
 			MetadataSource: run.MetadataSourceLatest, Operation: model.OperationFullRefresh, AcknowledgedDependents: acknowledged,
 		}}
 	}
@@ -431,7 +431,7 @@ func TestTriggerSingleNodeRun_ARefusedCallStoresNothing(t *testing.T) {
 	commands := svchandlers.NewRunCommands(h.factory, noRunMetrics{}, planner, h.logger)
 	single := func(requestID uuid.UUID, table string, op model.Operation, acknowledged ...string) svchandlers.TriggerSingleNodeRunCommand {
 		return svchandlers.TriggerSingleNodeRunCommand{RequestID: requestID, TriggerSingleNodeRunInput: svchandlers.TriggerSingleNodeRunInput{
-			TenantID: pkgevents.DefaultTenantID, Target: run.NodeID{ServiceName: "service-1", SchemaName: "raw", TableName: table},
+			TenantID: pkgevents.DefaultTenantID, Target: run.NodeID{ProjectName: "service-1", SchemaName: "raw", TableName: table},
 			MetadataSource: run.MetadataSourceLatest, Operation: op, AcknowledgedDependents: acknowledged,
 		}}
 	}

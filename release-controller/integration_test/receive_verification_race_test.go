@@ -59,7 +59,7 @@ func TestIntegration_ConcurrentFirstVerificationSubmissionsOfOneIDHaveOneWinner(
 				<-start
 				ctx := context.WithValue(context.Background(), submitterKey{}, tag)
 				errs[i] = handlers.ReceiveVerification(ctx, deps, handlers.ReceiveVerificationInput{
-					RunID: "verify-race-1", Service: "service-1", ImageTag: tag, Kind: "dbt",
+					RunID: "verify-race-1", Project: "service-1", ImageTag: tag, Kind: "dbt",
 					VerifiesReleaseID: "rel-0", Attempt: 1,
 				})
 			}(i, tag)

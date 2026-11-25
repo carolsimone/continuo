@@ -1,11 +1,11 @@
 // seed-service-prod is a one-time migration command that populates the
 // service_prod table from the topology current_prod points at. Run it
-// once after deploying the per-service release feature so that each service has
+// once after deploying the per-project release feature so that each project has
 // a production pointer for the first incremental release cycle.
 //
-// The --keys flag accepts a JSON object mapping service names to their existing
-// manifest S3 keys: a dbt service's manifest.json, and a python service's
-// odcs-bundle.json (a python service whose key ends in anything else is
+// The --keys flag accepts a JSON object mapping project names to their existing
+// manifest S3 keys: a dbt project's manifest.json, and a python project's
+// odcs-bundle.json (a python project whose key ends in anything else is
 // refused), e.g.:
 //
 //	--keys '{"service-1":"s3://bucket/svc1/manifest.json","service-py":"s3://bucket/service-py/<release>/odcs-bundle.json"}'
@@ -36,7 +36,7 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	var keysJSON string
-	flag.StringVar(&keysJSON, "keys", "", `JSON map of service_name -> manifest S3 key (a python service's key ends in odcs-bundle.json), e.g. '{"svc":"s3://..."}'`)
+	flag.StringVar(&keysJSON, "keys", "", `JSON map of project_name -> manifest S3 key (a python project's key ends in odcs-bundle.json), e.g. '{"svc":"s3://..."}'`)
 	flag.Parse()
 
 	if keysJSON == "" {
@@ -103,8 +103,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger.Info("seed complete", "services_seeded", n, "release_id", cp.ReleaseID())
-	fmt.Printf("seeded %d service(s) from release %s\n", n, cp.ReleaseID())
+	logger.Info("seed complete", "projects_seeded", n, "release_id", cp.ReleaseID())
+	fmt.Printf("seeded %d project(s) from release %s\n", n, cp.ReleaseID())
 }
 
 // loadPostgresConfig reads the connection settings from the environment.

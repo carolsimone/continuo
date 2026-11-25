@@ -375,14 +375,14 @@ func (w *world) loaded(table, hash string) {
 
 func seedNode(table, hash string) topology.Node {
 	return topology.Node{
-		Key: topology.KeyOf("raw", table), UniqueID: "seed.svc." + table, ServiceName: "svc", SchemaName: "raw",
+		Key: topology.KeyOf("raw", table), UniqueID: "seed.svc." + table, ProjectName: "svc", SchemaName: "raw",
 		TableName: table, NodeType: "dbt-seed", ContentHash: hash, ImageTag: "svc:2",
 	}
 }
 
 func modelNode(table string) topology.Node {
 	return topology.Node{
-		Key: topology.KeyOf("mart", table), UniqueID: "model.svc." + table, ServiceName: "svc", SchemaName: "mart",
+		Key: topology.KeyOf("mart", table), UniqueID: "model.svc." + table, ProjectName: "svc", SchemaName: "mart",
 		TableName: table, NodeType: "dbt-model", ContentHash: "h-" + table, ImageTag: "svc:2",
 	}
 }

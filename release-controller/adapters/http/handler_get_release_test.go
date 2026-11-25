@@ -157,7 +157,7 @@ func TestGetReleaseResponse_IncludesRebaseline(t *testing.T) {
 
 func TestGetRelease_ReturnsTheNotices(t *testing.T) {
 	yes := true
-	prodSeed := release.Node{UniqueID: "analytics.seed_fx_rates_eur", ServiceName: "finance", NodeType: "dbt-seed", Materialized: "seed", FullRefresh: &yes,
+	prodSeed := release.Node{UniqueID: "analytics.seed_fx_rates_eur", ProjectName: "finance", NodeType: "dbt-seed", Materialized: "seed", FullRefresh: &yes,
 		ContentHash: "sha256:9c2b", SeedColumnsHash: "sha256:e5a0", Schedule: "seed",
 		SeedColumns: []release.SeedColumn{{Name: "currency"}, {Name: "rate_date"}, {Name: "rate_to_eur"}}}
 	candSeed := prodSeed

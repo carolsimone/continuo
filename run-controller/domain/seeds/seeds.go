@@ -27,7 +27,7 @@ var promotedSeedsNamespace = uuid.MustParse("3e7b1a2f-8c4d-4e9a-b5f0-1d2c3a4e5f6
 // and the image that builds it.
 type Desired struct {
 	Key         topology.NodeKey
-	ServiceName string
+	ProjectName string
 	SchemaName  string
 	TableName   string
 	NodeType    string
@@ -104,7 +104,7 @@ func (d Decision) String() string {
 // it (found is false when no row exists). The rules apply in order: no hash →
 // skip; built at the desired hash → nothing; a build in flight → wait; the
 // build of the desired hash failed → no retry; otherwise → build. The image
-// is not compared: it changes on every release of its service.
+// is not compared: it changes on every release of its project.
 func Decide(d Desired, m Materialization, found bool) Decision {
 	switch {
 	case d.ContentHash == "":
@@ -236,7 +236,7 @@ func RunID(tenantID, releaseID string, n int) uuid.UUID {
 func desiredOf(n topology.Node) Desired {
 	return Desired{
 		Key:             n.Key,
-		ServiceName:     n.ServiceName,
+		ProjectName:     n.ProjectName,
 		SchemaName:      n.SchemaName,
 		TableName:       n.TableName,
 		NodeType:        n.NodeType,

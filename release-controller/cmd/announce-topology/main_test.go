@@ -46,8 +46,8 @@ func runWith(t *testing.T, a *fakeAnnouncer, stdin string, args ...string) (int,
 	return code, stdout.String(), stderr.String()
 }
 
-const twoNodes = `[{"unique_id":"bench.n1","service_name":"bench","node_type":"dbt-model","upstream_unique_ids":[]},
- {"unique_id":"bench.n2","service_name":"bench","node_type":"dbt-model","upstream_unique_ids":["bench.n1"]}]`
+const twoNodes = `[{"unique_id":"bench.n1","project_name":"bench","node_type":"dbt-model","upstream_unique_ids":[]},
+ {"unique_id":"bench.n2","project_name":"bench","node_type":"dbt-model","upstream_unique_ids":["bench.n1"]}]`
 
 func TestRun_AnnouncesATopologyFromStdin(t *testing.T) {
 	a := &fakeAnnouncer{result: handlers.AnnounceResult{ReleaseID: "bench-1", PromotionSeq: 4, TopologyURI: "s3://b/k", TopologySHA256: "f00d"}}
@@ -75,7 +75,7 @@ func TestRun_UsageErrors(t *testing.T) {
 		{name: "not JSON", stdin: "{", args: []string{"--release-id", "bench-1", "--topology", "-"}},
 		{name: "unknown node field", stdin: `[{"unique_id":"a","changed":false}]`, args: []string{"--release-id", "bench-1", "--topology", "-"}},
 		{name: "no nodes", stdin: `[]`, args: []string{"--release-id", "bench-1", "--topology", "-"}},
-		{name: "a node without unique_id", stdin: `[{"service_name":"bench"}]`, args: []string{"--release-id", "bench-1", "--topology", "-"}},
+		{name: "a node without unique_id", stdin: `[{"project_name":"bench"}]`, args: []string{"--release-id", "bench-1", "--topology", "-"}},
 		{name: "a duplicate unique_id", stdin: `[{"unique_id":"a"},{"unique_id":"a"}]`, args: []string{"--release-id", "bench-1", "--topology", "-"}},
 		{name: "an extra argument", args: []string{"--reannounce-current", "extra"}},
 	} {
@@ -105,7 +105,7 @@ func TestRun_ErrorExitCodes(t *testing.T) {
 
 func TestRun_PrintsTheCurrentTopology(t *testing.T) {
 	a := &fakeAnnouncer{current: release.Topology{
-		{UniqueID: "a", ServiceName: "svc", NodeType: "dbt-model", ContentHash: "h", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "a", ProjectName: "svc", NodeType: "dbt-model", ContentHash: "h", UpstreamUniqueIDs: []string{}},
 	}}
 	code, stdout, _ := runWith(t, a, "", "--print-current")
 	require.Equal(t, exitOK, code)
@@ -120,7 +120,7 @@ func TestRun_PrintsTheCurrentTopology(t *testing.T) {
 // builds its union from one and announces it with the other.
 func TestTopologyRoundTrip(t *testing.T) {
 	topo := release.Topology{{ //nolint:gosec // G101: SecretRef names a Kubernetes Secret; it is not a credential
-		UniqueID: "a", SchemaName: "s", TableName: "t", ResolvedRelationID: "s.t", ServiceName: "svc",
+		UniqueID: "a", SchemaName: "s", TableName: "t", ResolvedRelationID: "s.t", ProjectName: "svc",
 		NodeType: "python-api", ContentHash: "h", TestCount: 2, ImageTag: "img",
 		UpstreamUniqueIDs: []string{"b"}, Schedule: "daily", OriginalFilePath: "p.py", SecretRef: "continuo-api-x",
 		TimeoutSeconds: 7200, RelationName: "T_Rel", SeedColumnsHash: "sha256:e5a0",
@@ -137,12 +137,12 @@ func TestTopologyRoundTrip(t *testing.T) {
 func TestTopologyRoundTrip_KeepsTheSeedReloadFields(t *testing.T) {
 	yes, no := true, false
 	topo := release.Topology{
-		{UniqueID: "a.seed", ServiceName: "svc", NodeType: "dbt-seed", UpstreamUniqueIDs: []string{},
+		{UniqueID: "a.seed", ProjectName: "svc", NodeType: "dbt-seed", UpstreamUniqueIDs: []string{},
 			Materialized: "seed", FullRefresh: &yes,
 			SeedColumns: []release.SeedColumn{{Name: "currency"}, {Name: "rate", Type: "numeric"}}},
-		{UniqueID: "a.flags", ServiceName: "svc", NodeType: "dbt-seed", UpstreamUniqueIDs: []string{},
+		{UniqueID: "a.flags", ProjectName: "svc", NodeType: "dbt-seed", UpstreamUniqueIDs: []string{},
 			Materialized: "seed", FullRefresh: &no},
-		{UniqueID: "a.view", ServiceName: "svc", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"a.seed"},
+		{UniqueID: "a.view", ProjectName: "svc", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"a.seed"},
 			Materialized: "view"},
 	}
 	raw, err := json.Marshal(fromTopology(topo))
@@ -154,8 +154,8 @@ func TestTopologyRoundTrip_KeepsTheSeedReloadFields(t *testing.T) {
 
 // A node's declared timeout in the input array reaches the announced topology.
 func TestReadTopology_KeepsTheTimeout(t *testing.T) {
-	in := `[{"unique_id":"a","service_name":"svc","node_type":"dbt-model","upstream_unique_ids":[],"timeout_seconds":7200},
-	 {"unique_id":"b","service_name":"svc","node_type":"dbt-model","upstream_unique_ids":["a"]}]`
+	in := `[{"unique_id":"a","project_name":"svc","node_type":"dbt-model","upstream_unique_ids":[],"timeout_seconds":7200},
+	 {"unique_id":"b","project_name":"svc","node_type":"dbt-model","upstream_unique_ids":["a"]}]`
 	topo, err := readTopology(strings.NewReader(in))
 	require.NoError(t, err)
 	require.Len(t, topo, 2)
@@ -167,12 +167,12 @@ func TestReadTopology_KeepsTheTimeout(t *testing.T) {
 // dbt-test when it applies the promotion, so announcing one would leave an
 // empty swap set that retires every live node. One non-test node is enough.
 func TestReadTopology_RefusesAnAllDbtTestTopology(t *testing.T) {
-	onlyTests := `[{"unique_id":"test.p.not_null_a.1","service_name":"svc","node_type":"dbt-test","upstream_unique_ids":["a"]}]`
+	onlyTests := `[{"unique_id":"test.p.not_null_a.1","project_name":"svc","node_type":"dbt-test","upstream_unique_ids":["a"]}]`
 	_, err := readTopology(strings.NewReader(onlyTests))
 	require.Error(t, err)
 
-	withModel := `[{"unique_id":"a","service_name":"svc","node_type":"dbt-model","upstream_unique_ids":[]},
-	 {"unique_id":"test.p.not_null_a.1","service_name":"svc","node_type":"dbt-test","upstream_unique_ids":["a"]}]`
+	withModel := `[{"unique_id":"a","project_name":"svc","node_type":"dbt-model","upstream_unique_ids":[]},
+	 {"unique_id":"test.p.not_null_a.1","project_name":"svc","node_type":"dbt-test","upstream_unique_ids":["a"]}]`
 	topo, err := readTopology(strings.NewReader(withModel))
 	require.NoError(t, err)
 	require.Len(t, topo, 2)

@@ -15,7 +15,7 @@ import (
 
 func TestReleaseNotices_ARebaselineGetsNoNoticeAndNoPreflight(t *testing.T) {
 	yes := true
-	prodSeed := release.Node{UniqueID: "analytics.seed_fx_rates_eur", ServiceName: "finance", NodeType: "dbt-seed", Materialized: "seed",
+	prodSeed := release.Node{UniqueID: "analytics.seed_fx_rates_eur", ProjectName: "finance", NodeType: "dbt-seed", Materialized: "seed",
 		FullRefresh: &yes, ContentHash: "sha256:9c2b", SeedColumnsHash: "sha256:e5a0"}
 	candSeed := prodSeed
 	candSeed.ContentHash, candSeed.SeedColumnsHash = "sha256:71fe", "sha256:0d3c"
@@ -41,7 +41,7 @@ func TestReleaseNotices_ARebaselineGetsNoNoticeAndNoPreflight(t *testing.T) {
 
 func TestReleaseNotices_AVerificationRunGetsNoNoticeAndNoPreflight(t *testing.T) {
 	yes := true
-	prodSeed := release.Node{UniqueID: "analytics.seed_fx_rates_eur", ServiceName: "finance", NodeType: "dbt-seed", Materialized: "seed",
+	prodSeed := release.Node{UniqueID: "analytics.seed_fx_rates_eur", ProjectName: "finance", NodeType: "dbt-seed", Materialized: "seed",
 		FullRefresh: &yes, ContentHash: "sha256:9c2b", SeedColumnsHash: "sha256:e5a0"}
 	candSeed := prodSeed
 	candSeed.ContentHash, candSeed.SeedColumnsHash = "sha256:71fe", "sha256:0d3c"

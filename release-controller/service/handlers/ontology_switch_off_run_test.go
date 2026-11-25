@@ -19,15 +19,15 @@ import (
 // releaseID ended rejected invalid_artifact with the text intake answers while
 // the switch is off, emitted release.rejected:v1 and pipeline.run.finished:v1,
 // and wrote neither current_prod nor a service_prod row for the ontology
-// service.
-func assertOntologyRunRejectedWhileSwitchIsOff(t *testing.T, store *fakeStore, releaseID, service string) {
+// project.
+func assertOntologyRunRejectedWhileSwitchIsOff(t *testing.T, store *fakeStore, releaseID, project string) {
 	t.Helper()
 	r := mustGetRelease(t, store, releaseID)
 	assert.Equal(t, pipeline.StatusRejected, r.Status(), "an ontology run met with the switch off is rejected, never promoted")
 	assert.Equal(t, string(pkg_model.RejectReasonInvalidArtifact), r.FailReason())
 	assert.Equal(t, handlers.ErrOntologyDisabled.Error(), r.FailDetail())
 
-	assert.Nil(t, store.GetServiceProd(service), "no service_prod row is written for the ontology file")
+	assert.Nil(t, store.GetServiceProd(project), "no service_prod row is written for the ontology file")
 	assert.Zero(t, store.CurrentProdUpsertCalls(), "current_prod is not moved")
 	for _, e := range store.OutboxEntries() {
 		assert.NotEqual(t, streams.ReleasePromotedV2, e.StreamName, "nothing is promoted")
@@ -79,8 +79,8 @@ func TestHandleParsedManifest_AParsingOntologyRunIsRejectedWhileTheSwitchIsOff(t
 	store.SeedServiceProd(release.NewServiceProd("svc-a", "prev", "s3://continuo/svc-a/prev/manifest.json", "sha-a",
 		release.ManifestKindDbt, time.Unix(0, 0)))
 	topo := release.Topology{
-		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h_a"},
-		{UniqueID: "b", ServiceName: "svc-a", ContentHash: "h_b", UpstreamUniqueIDs: []string{"a"}},
+		{UniqueID: "a", ProjectName: "svc-a", ContentHash: "h_a"},
+		{UniqueID: "b", ProjectName: "svc-a", ContentHash: "h_b", UpstreamUniqueIDs: []string{"a"}},
 	}
 	seedProd(t, deps, store, "prev", topo, time.Unix(50, 0).UTC())
 	require.NoError(t, receiveOntology(deps, "rOnt", "company-ontology", "ontology"))
@@ -97,7 +97,7 @@ func TestHandleParsedManifest_AParsingOntologyRunIsRejectedWhileTheSwitchIsOff(t
 
 	assertOntologyRunRejectedWhileSwitchIsOff(t, store, "rOnt", "company-ontology")
 	assert.Equal(t, "prev", store.GetCurrentProd().ReleaseID(), "current_prod stays on the release it named")
-	assert.Equal(t, "dbt", string(store.GetServiceProd("svc-a").ManifestKind()), "another service's pointer is not touched")
+	assert.Equal(t, "dbt", string(store.GetServiceProd("svc-a").ManifestKind()), "another project's pointer is not touched")
 }
 
 // The refusal is the same for a failed parse result: the run is rejected with
@@ -127,7 +127,7 @@ func TestNodeKindRunsAreUnaffectedByTheOntologySwitchBeingOff(t *testing.T) {
 		deps.Bucket = "b"
 		require.False(t, deps.OntologyEnabled)
 		require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-			Service: "svc-a", ReleaseID: "rDbt", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
+			Project: "svc-a", ReleaseID: "rDbt", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
 		}))
 
 		require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
@@ -140,13 +140,13 @@ func TestNodeKindRunsAreUnaffectedByTheOntologySwitchBeingOff(t *testing.T) {
 		deps.Bucket = "continuo"
 		require.False(t, deps.OntologyEnabled)
 		require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-			Service: "svc-py", ReleaseID: "rPy", ImageTag: "sha-py", Repo: "acme/demo", CommitSHA: "deadbeef",
+			Project: "svc-py", ReleaseID: "rPy", ImageTag: "sha-py", Repo: "acme/demo", CommitSHA: "deadbeef",
 			Kind: "python-odcs", Bootstrap: true,
 		}))
 		require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 		require.Equal(t, pipeline.StatusParsing, mustGetRelease(t, store, "rPy").Status())
 
-		topo := release.Topology{{UniqueID: "a", ServiceName: "svc-py", UpstreamUniqueIDs: []string{}}}
+		topo := release.Topology{{UniqueID: "a", ProjectName: "svc-py", UpstreamUniqueIDs: []string{}}}
 		require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 			ReleaseID:   "rPy",
 			Status:      "ok",

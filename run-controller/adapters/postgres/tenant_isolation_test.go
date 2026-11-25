@@ -60,7 +60,7 @@ func tenantRelease(t *testing.T, db *sqlx.DB, tenant string, tables ...string) s
 	specs := make([]topology.NodeSpec, 0, len(tables))
 	for _, table := range tables {
 		specs = append(specs, topology.NodeSpec{
-			UniqueID: "e2e_schema." + table, ServiceName: "service-1", SchemaName: "e2e_schema", TableName: table,
+			UniqueID: "e2e_schema." + table, ProjectName: "service-1", SchemaName: "e2e_schema", TableName: table,
 			NodeType: "dbt-model", ContentHash: "h-" + table, ImageTag: "service-1:5", ScheduleName: table,
 		})
 	}
@@ -86,7 +86,7 @@ func tenantTask(t *testing.T, db *sqlx.DB, tenant string, runID uuid.UUID, table
 	t.Helper()
 	taskID := uuid.New()
 	_, err := db.Exec(`
-		INSERT INTO tasks (tenant_id, task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries, node_key)
+		INSERT INTO tasks (tenant_id, task_id, run_id, project_name, schema_name, table_name, job_name, status, max_retries, node_key)
 		VALUES ($1, $2, $3, 'service-1', 'e2e_schema', $4, $4, $5, 2, $6)`,
 		tenant, taskID, runID, table, string(status), string(leaseKey(table)))
 	require.NoError(t, err)

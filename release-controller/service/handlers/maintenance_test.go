@@ -20,7 +20,7 @@ func TestReceiveCandidate_RefusedDuringMaintenance(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Maintenance = true
 	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc-a", ReleaseID: "rA", ImageTag: "tag-a", Repo: "acme/demo", CommitSHA: "deadbeef",
+		Project: "svc-a", ReleaseID: "rA", ImageTag: "tag-a", Repo: "acme/demo", CommitSHA: "deadbeef",
 	})
 	require.True(t, errors.Is(err, maintenance.ErrActive), "%v", err)
 	_, getErr := store.GetRelease("rA")

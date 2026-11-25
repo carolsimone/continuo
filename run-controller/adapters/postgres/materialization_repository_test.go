@@ -134,7 +134,7 @@ func TestMaterializationRepository_RecordAttemptLeavesTheVersionAlone(t *testing
 	tenant := newTopoTenant(t, db)
 	repo := postgres.NewMaterializationRepository(db, nil)
 	require.NoError(t, repo.RecordBuilt(ctx, tenant, seeds.Adopted(seeds.Desired{
-		Key: "raw.orders", ServiceName: "svc", SchemaName: "raw", TableName: "orders", NodeType: "dbt-seed",
+		Key: "raw.orders", ProjectName: "svc", SchemaName: "raw", TableName: "orders", NodeType: "dbt-seed",
 		ContentHash: "h1", ImageTag: "svc:1",
 	}, "rel-1", materializedAt)))
 	runID := insertSeedRun(t, db, tenant, run.RunStatusFailed)

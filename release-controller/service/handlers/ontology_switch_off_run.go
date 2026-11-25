@@ -25,6 +25,6 @@ func isOntologyRunWhileSwitchOff(d *Deps, r *pipeline.Run) bool {
 // (rejectInvalidArtifactRun).
 func rejectOntologyRunWhileSwitchOff(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, now time.Time) error {
 	d.Logger.Warn("rejecting a run of the kind ontology while the ontology switch is off",
-		"release_id", r.ID(), "service", r.ChangedService(), "status", string(r.Status()))
+		"release_id", r.ID(), "project", r.ChangedProject(), "status", string(r.Status()))
 	return rejectInvalidArtifactRun(ctx, d, u, r, ErrOntologyDisabled.Error(), now)
 }

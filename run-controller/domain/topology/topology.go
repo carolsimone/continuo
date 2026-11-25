@@ -25,7 +25,7 @@ func KeyOf(schemaName, tableName string) NodeKey {
 // upstream nodes it reads are named by unique id.
 type NodeSpec struct {
 	UniqueID        string
-	ServiceName     string
+	ProjectName     string
 	SchemaName      string
 	TableName       string
 	NodeType        string
@@ -54,7 +54,7 @@ type NodeSpec struct {
 type Node struct {
 	Key             NodeKey
 	UniqueID        string
-	ServiceName     string
+	ProjectName     string
 	SchemaName      string
 	TableName       string
 	NodeType        string
@@ -89,7 +89,7 @@ func (n Node) IsDormant() bool {
 
 // NodeHashes are the two fingerprints a release states for one node: the hash
 // of its code and, for a seed, the hash of its CSV header and column types
-// (empty when the release carried no compile extras for the seed's service).
+// (empty when the release carried no compile extras for the seed's project).
 type NodeHashes struct {
 	ContentHash     string
 	SeedColumnsHash string
@@ -146,7 +146,7 @@ func NewRelease(tenantID, releaseID string, seq int64, uri, sha256 string, specs
 		nodes = append(nodes, Node{
 			Key:                key,
 			UniqueID:           s.UniqueID,
-			ServiceName:        s.ServiceName,
+			ProjectName:        s.ProjectName,
 			SchemaName:         s.SchemaName,
 			TableName:          s.TableName,
 			NodeType:           s.NodeType,

@@ -29,7 +29,7 @@ func (c *CurrentProd) PromotionSeq() int64   { return c.promotionSeq }
 func (c *CurrentProd) UpdatedAt() time.Time  { return c.updatedAt }
 
 // Update points current_prod at a newly promoted release and its topology
-// artifact, announced under promotionSeq. The per-service manifest locations
+// artifact, announced under promotionSeq. The per-project manifest locations
 // are tracked in service_prod, not on current_prod.
 func (c *CurrentProd) Update(releaseID string, topology TopologyRef, promotionSeq int64, now time.Time) error {
 	if err := c.checkSeq(promotionSeq); err != nil {

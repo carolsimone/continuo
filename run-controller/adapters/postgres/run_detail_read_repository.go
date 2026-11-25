@@ -93,7 +93,7 @@ func taskDetailOf(row *TaskRow) projection.TaskDetail {
 		TaskID:         row.TaskID,
 		RunID:          row.ScheduleID,
 		CreatedAt:      row.CreatedAt,
-		ServiceName:    row.ServiceName,
+		ProjectName:    row.ProjectName,
 		SchemaName:     row.SchemaName,
 		TableName:      row.TableName,
 		JobName:        row.JobName,

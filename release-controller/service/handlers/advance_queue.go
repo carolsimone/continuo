@@ -19,9 +19,9 @@ import (
 // Validating). Safe to call repeatedly; it is a no-op when the queue is empty
 // or when a release is already in flight.
 //
-// The assembled manifest set (for all services) is computed once here, before
+// The assembled manifest set (for all projects) is computed once here, before
 // the branch below, so both paths record the same SetAssembledImageTags map
-// and read the other services' service_prod pointers exactly once. Those
+// and read the other projects' service_prod pointers exactly once. Those
 // pointers can change as earlier-queued releases are promoted, so we must
 // read them at activation time to guarantee we see the live state.
 //
@@ -43,7 +43,7 @@ import (
 // run accepted while it was on): it is rejected invalid_artifact with
 // ErrOntologyDisabled as its detail (rejectOntologyRunWhileSwitchOff), before
 // anything is assembled. So is a run whose kind is on the other side of the
-// line between the ontology and the node kinds from its service's service_prod
+// line between the ontology and the node kinds from its project's service_prod
 // pointer: it is rejected invalid_artifact with the kind-change refusal as its
 // detail.
 //
@@ -96,18 +96,18 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 		return AdvanceQueue(ctx, d)
 	}
 
-	// Activation guard for the per-service model. The full topology is
+	// Activation guard for the per-project model. The full topology is
 	// reconstructed from the service_prod pointer table plus this release's
-	// changed service. After an upgrade from the old whole-snapshot model,
-	// current_prod still lists every live service but service_prod starts empty,
-	// so activating now would assemble only the changed service and, on promote,
-	// retire every unseeded service. Refuse to activate until every service live
+	// changed project. After an upgrade from the old whole-snapshot model,
+	// current_prod still lists every live project but service_prod starts empty,
+	// so activating now would assemble only the changed project and, on promote,
+	// retire every unseeded project. Refuse to activate until every project live
 	// in current_prod is covered by a service_prod pointer (or is this release's
-	// changed service). The release stays Received; once the operator runs
+	// changed project). The release stays Received; once the operator runs
 	// seed-service-prod, a later AdvanceQueue tick proceeds automatically.
 	//
 	// A fresh install (current_prod unseeded) is unaffected: there are no live
-	// services to amputate, so the first bootstrap release proceeds normally.
+	// projects to amputate, so the first bootstrap release proceeds normally.
 	cp, err := u.CurrentProdRepo().Get(ctx)
 	if err != nil {
 		return fmt.Errorf("current prod: %w", err)
@@ -121,16 +121,16 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 		return fmt.Errorf("list service prod: %w", err)
 	}
 	// Intake refuses a kind change against the service_prod row it sees, but a
-	// run queued before another run of the service promoted meets the row that
+	// run queued before another run of the project promoted meets the row that
 	// promotion wrote only here, where the queue lock is held and the pointers
-	// are read. Assembling the set for such a run would swap the service's
+	// are read. Assembling the set for such a run would swap the project's
 	// manifest for an artifact of the other side and drop or replace its nodes.
-	if stored := pointerOf(pointers, next.ChangedService()); stored != nil &&
+	if stored := pointerOf(pointers, next.ChangedProject()); stored != nil &&
 		(stored.ManifestKind() == release.ManifestKindOntology) != (next.ManifestKind() == release.ManifestKindOntology) {
-		d.Logger.Warn("rejecting a run that changes its service between the kind ontology and a node kind",
-			"release_id", next.ID(), "service", next.ChangedService(),
+		d.Logger.Warn("rejecting a run that changes its project between the kind ontology and a node kind",
+			"release_id", next.ID(), "project", next.ChangedProject(),
 			"stored_kind", string(stored.ManifestKind()), "kind", string(next.ManifestKind()))
-		detail := kindChangeRefusalText(next.ChangedService(), stored.ManifestKind())
+		detail := kindChangeRefusalText(next.ChangedProject(), stored.ManifestKind())
 		if err := rejectInvalidArtifactRun(ctx, d, u, next, detail, d.Clock.Now()); err != nil {
 			return err
 		}
@@ -141,18 +141,18 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 		if err != nil {
 			return err
 		}
-		if missing := uncoveredProdServices(prod, pointers, next.ChangedService()); len(missing) > 0 {
+		if missing := uncoveredProdProjects(prod, pointers, next.ChangedProject()); len(missing) > 0 {
 			d.Logger.Warn(
-				"release activation blocked: service_prod is missing pointers for live services; run seed-service-prod before accepting releases",
+				"release activation blocked: service_prod is missing pointers for live projects; run seed-service-prod before accepting releases",
 				"release_id", next.ID(),
-				"missing_services", missing,
+				"missing_projects", missing,
 			)
 			return u.Commit()
 		}
 	}
 
 	now := d.Clock.Now()
-	imageTag := next.ImageTags()[next.ChangedService()]
+	imageTag := next.ImageTags()[next.ChangedProject()]
 	set := assembleFor(ctx, u, d.Logger, next, pointers, d.Bucket)
 	next.SetAssembledImageTags(set.ImageTags)
 
@@ -187,7 +187,7 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 
 	type compileRequestedPayload struct {
 		ReleaseID        string `json:"release_id"`
-		Service          string `json:"service"`
+		Project          string `json:"project"`
 		ImageTag         string `json:"image_tag"`
 		Bucket           string `json:"bucket"`
 		CandidateSchema  string `json:"candidate_schema"`
@@ -195,7 +195,7 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 	}
 	payload, err := json.Marshal(compileRequestedPayload{
 		ReleaseID:        next.ID(),
-		Service:          next.ChangedService(),
+		Project:          next.ChangedProject(),
 		ImageTag:         imageTag,
 		Bucket:           d.Bucket,
 		CandidateSchema:  CandidateSchemaFor(next.ID()),
@@ -223,27 +223,27 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 	return nil
 }
 
-// pointerOf returns the service_prod pointer of service, or nil when the
-// service has none.
-func pointerOf(pointers []*release.ServiceProd, service string) *release.ServiceProd {
+// pointerOf returns the service_prod pointer of project, or nil when the
+// project has none.
+func pointerOf(pointers []*release.ServiceProd, project string) *release.ServiceProd {
 	for _, p := range pointers {
-		if p.ServiceName() == service {
+		if p.ProjectName() == project {
 			return p
 		}
 	}
 	return nil
 }
 
-// uncoveredProdServices returns the sorted set of service names live in the
+// uncoveredProdProjects returns the sorted set of project names live in the
 // production topology that have no service_prod pointer and are not the
-// release's changed service. A non-empty result means assembling the full
-// topology now would silently drop those services on promote. An unknown-external node
-// belongs to no service, so it is skipped: no service_prod pointer covers it and
+// release's changed project. A non-empty result means assembling the full
+// topology now would silently drop those projects on promote. An unknown-external node
+// belongs to no project, so it is skipped: no service_prod pointer covers it and
 // promoting without one drops nothing.
-func uncoveredProdServices(prod release.Topology, pointers []*release.ServiceProd, changedService string) []string {
-	covered := map[string]struct{}{changedService: {}}
+func uncoveredProdProjects(prod release.Topology, pointers []*release.ServiceProd, changedProject string) []string {
+	covered := map[string]struct{}{changedProject: {}}
 	for _, p := range pointers {
-		covered[p.ServiceName()] = struct{}{}
+		covered[p.ProjectName()] = struct{}{}
 	}
 
 	missingSet := map[string]struct{}{}
@@ -251,8 +251,8 @@ func uncoveredProdServices(prod release.Topology, pointers []*release.ServicePro
 		if n.IsExternal() {
 			continue
 		}
-		if _, ok := covered[n.ServiceName]; !ok {
-			missingSet[n.ServiceName] = struct{}{}
+		if _, ok := covered[n.ProjectName]; !ok {
+			missingSet[n.ProjectName] = struct{}{}
 		}
 	}
 

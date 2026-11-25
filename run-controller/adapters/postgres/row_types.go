@@ -48,7 +48,7 @@ type TaskRow struct {
 	TaskID              uuid.UUID      `json:"task_id" db:"task_id"`
 	ScheduleID          uuid.UUID      `json:"schedule_id" db:"run_id"`
 	CreatedAt           time.Time      `json:"created_at" db:"created_at"`
-	ServiceName         string         `json:"service_name" db:"service_name"`
+	ProjectName         string         `json:"project_name" db:"project_name"`
 	SchemaName          string         `json:"schema_name" db:"schema_name"`
 	TableName           string         `json:"table_name" db:"table_name"`
 	JobName             string         `json:"job_name" db:"job_name"`

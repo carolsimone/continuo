@@ -37,9 +37,9 @@ func ctx(t *testing.T) context.Context {
 // changed-closure).
 func topoSeedPlusModel() release.Topology {
 	return release.Topology{
-		{UniqueID: "seed.core.fx", ServiceName: "svc-fin", NodeType: "dbt-seed",
+		{UniqueID: "seed.core.fx", ProjectName: "svc-fin", NodeType: "dbt-seed",
 			SchemaName: "schema_fin", TableName: "fx", ImageTag: "sha-fin"},
-		{UniqueID: "model.fin.report", ServiceName: "svc-fin", NodeType: "dbt-model",
+		{UniqueID: "model.fin.report", ProjectName: "svc-fin", NodeType: "dbt-model",
 			SchemaName: "schema_fin", TableName: "report", ImageTag: "sha-fin",
 			UpstreamUniqueIDs: []string{"seed.core.fx"}},
 	}
@@ -49,7 +49,7 @@ func topoSeedPlusModel() release.Topology {
 // models — used to exercise the empty-after-exclusion promote edge case.
 func topoSeedOnly() release.Topology {
 	return release.Topology{
-		{UniqueID: "seed.core.fx", ServiceName: "svc-fin", NodeType: "dbt-seed",
+		{UniqueID: "seed.core.fx", ProjectName: "svc-fin", NodeType: "dbt-seed",
 			SchemaName: "schema_fin", TableName: "fx", ImageTag: "sha-fin"},
 	}
 }
@@ -63,7 +63,7 @@ func putSeedBuildingRelease(t *testing.T, store *fakeStore, deps *handlers.Deps,
 	t.Helper()
 
 	require.NoError(t, handlers.ReceiveCandidate(ctx(t), deps, handlers.ReceiveCandidateInput{
-		Service:   "svc-fin",
+		Project:   "svc-fin",
 		ReleaseID: releaseID,
 		ImageTag:  "sha-fin",
 		Repo:      "acme/demo",
@@ -268,9 +268,9 @@ func TestHandleSeedBuildResult_FailedPayloadCarriesCandidateSchema(t *testing.T)
 // per_node seed-build failure path with multiple entries.
 func topoTwoSeeds() release.Topology {
 	return release.Topology{
-		{UniqueID: "analytics.seed_fx_rates_eur", ServiceName: "svc-fin", NodeType: "dbt-seed",
+		{UniqueID: "analytics.seed_fx_rates_eur", ProjectName: "svc-fin", NodeType: "dbt-seed",
 			SchemaName: "schema_fin", TableName: "seed_fx_rates_eur"},
-		{UniqueID: "analytics.seed_equities", ServiceName: "svc-fin", NodeType: "dbt-seed",
+		{UniqueID: "analytics.seed_equities", ProjectName: "svc-fin", NodeType: "dbt-seed",
 			SchemaName: "schema_fin", TableName: "seed_equities"},
 	}
 }
@@ -455,26 +455,26 @@ func TestHandleSeedBuildResult_EmptyAfterExclusionPromotePayloadCarriesCandidate
 }
 
 // topoSeedsWithFilePath returns a topology with two dbt-seeds that each carry
-// an OriginalFilePath and ServiceName, so the rejection payload can include
+// an OriginalFilePath and ProjectName, so the rejection payload can include
 // the source location for the remediation agent.
 func topoSeedsWithFilePath() release.Topology {
 	return release.Topology{
-		{UniqueID: "analytics.seed_fx_rates_eur", ServiceName: "svc-fin", NodeType: "dbt-seed",
+		{UniqueID: "analytics.seed_fx_rates_eur", ProjectName: "svc-fin", NodeType: "dbt-seed",
 			SchemaName: "schema_fin", TableName: "seed_fx_rates_eur",
 			OriginalFilePath: "seeds/seed_fx_rates_eur.csv"},
-		{UniqueID: "analytics.seed_equities", ServiceName: "svc-fin", NodeType: "dbt-seed",
+		{UniqueID: "analytics.seed_equities", ProjectName: "svc-fin", NodeType: "dbt-seed",
 			SchemaName: "schema_fin", TableName: "seed_equities",
 			OriginalFilePath: "seeds/seed_equities.csv"},
 	}
 }
 
-// TestHandleSeedBuildResult_Failed_PerNodeCarriesFilePathAndService verifies
-// that when the candidate topology carries OriginalFilePath and ServiceName for
+// TestHandleSeedBuildResult_Failed_PerNodeCarriesFilePathAndProject verifies
+// that when the candidate topology carries OriginalFilePath and ProjectName for
 // a seed node, the release.rejected:v1 per_node entry includes those values so
 // the remediation agent can locate the source file without querying
 // GetNodeLocation (which only has promoted topology and cannot find
 // newly-added seeds).
-func TestHandleSeedBuildResult_Failed_PerNodeCarriesFilePathAndService(t *testing.T) {
+func TestHandleSeedBuildResult_Failed_PerNodeCarriesFilePathAndProject(t *testing.T) {
 	deps, store := newTestDeps(t)
 	releaseID := "rel-seed-fp"
 	putSeedBuildingRelease(t, store, deps, releaseID, topoSeedsWithFilePath())
@@ -496,22 +496,22 @@ func TestHandleSeedBuildResult_Failed_PerNodeCarriesFilePathAndService(t *testin
 	var perNode []struct {
 		NodeID   string `json:"node_id"`
 		FilePath string `json:"file_path"`
-		Service  string `json:"service"`
+		Project  string `json:"project"`
 	}
 	require.NoError(t, json.Unmarshal(topLevel["per_node"], &perNode))
 	require.Len(t, perNode, 1)
 	assert.Equal(t, "seeds/seed_fx_rates_eur.csv", perNode[0].FilePath,
 		"file_path must be taken from the candidate topology's OriginalFilePath")
-	assert.Equal(t, "svc-fin", perNode[0].Service,
-		"service must be taken from the candidate topology's ServiceName")
+	assert.Equal(t, "svc-fin", perNode[0].Project,
+		"project must be taken from the candidate topology's ProjectName")
 }
 
 // putSeedBuildingVerification mirrors putSeedBuildingRelease but seeds a
 // verification run (via seedToParsingVerification's Received → AdvanceQueue →
 // HandleCompileResult(ok) sequence) instead of a candidate.
-func putSeedBuildingVerification(t *testing.T, releaseID string, service string, topo release.Topology) (*handlers.Deps, *fakeStore) {
+func putSeedBuildingVerification(t *testing.T, releaseID string, project string, topo release.Topology) (*handlers.Deps, *fakeStore) {
 	t.Helper()
-	deps, store := seedToParsingVerification(t, releaseID, map[string]string{service: "img-" + service})
+	deps, store := seedToParsingVerification(t, releaseID, map[string]string{project: "img-" + project})
 
 	require.NoError(t, handlers.HandleParsedManifest(ctx(t), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: releaseID, Status: "ok", TopologyRef: putTopology(t, deps, releaseID, topo),

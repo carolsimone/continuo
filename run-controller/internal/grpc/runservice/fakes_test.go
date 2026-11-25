@@ -54,7 +54,7 @@ type fakeStore struct {
 	nodeTasks    []*projection.NodeRun
 	nodes        []*projection.NodeSummary
 	nodeNames    []string
-	nodeServices []string
+	nodeProjects []string
 
 	// The schedules service's answers, by tenant, and the arguments of its
 	// last call.
@@ -87,11 +87,11 @@ type fakeStore struct {
 	nodeTasksOperation    model.Operation
 	nodesOperation        model.Operation
 	nodesSearch           string
-	nodesService          string
+	nodesProject          string
 	nodesDormantOnly      bool
 	nodesLimit            int
 	nodesOffset           int
-	nodeNamesService      string
+	nodeNamesProject      string
 }
 
 func newStore() *fakeStore {
@@ -288,8 +288,8 @@ func (f fakeNodes) ListNodeTasks(_ context.Context, tenantID, _, _, _ string, op
 	return f.nodeTasks, nil
 }
 
-func (f fakeNodes) ListNodes(_ context.Context, tenantID, search, serviceName string, operation model.Operation, dormantOnly bool, limit, offset int) ([]*projection.NodeSummary, int, error) {
-	f.nodesSearch, f.nodesService, f.nodesOperation, f.nodesLimit, f.nodesOffset = search, serviceName, operation, limit, offset
+func (f fakeNodes) ListNodes(_ context.Context, tenantID, search, projectName string, operation model.Operation, dormantOnly bool, limit, offset int) ([]*projection.NodeSummary, int, error) {
+	f.nodesSearch, f.nodesProject, f.nodesOperation, f.nodesLimit, f.nodesOffset = search, projectName, operation, limit, offset
 	f.nodesDormantOnly = dormantOnly
 	if f.failWith != nil {
 		return nil, 0, f.failWith
@@ -300,8 +300,8 @@ func (f fakeNodes) ListNodes(_ context.Context, tenantID, search, serviceName st
 	return f.nodes, len(f.nodes), nil
 }
 
-func (f fakeNodes) ListNodeNames(_ context.Context, tenantID, serviceName string) ([]string, error) {
-	f.nodeNamesService = serviceName
+func (f fakeNodes) ListNodeNames(_ context.Context, tenantID, projectName string) ([]string, error) {
+	f.nodeNamesProject = projectName
 	if f.failWith != nil {
 		return nil, f.failWith
 	}
@@ -311,14 +311,14 @@ func (f fakeNodes) ListNodeNames(_ context.Context, tenantID, serviceName string
 	return f.nodeNames, nil
 }
 
-func (f fakeNodes) ListNodeServices(_ context.Context, tenantID string) ([]string, error) {
+func (f fakeNodes) ListNodeProjects(_ context.Context, tenantID string) ([]string, error) {
 	if f.failWith != nil {
 		return nil, f.failWith
 	}
 	if tenantID != tenantA {
 		return nil, nil
 	}
-	return f.nodeServices, nil
+	return f.nodeProjects, nil
 }
 
 type fakeScheduleGraphs struct{ *fakeStore }

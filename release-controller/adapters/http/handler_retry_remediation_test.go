@@ -104,17 +104,17 @@ func (f *fakeReleaseRepo) List(_ context.Context, filter repository.ListFilter) 
 	return out, nil, nil
 }
 
-// ActiveCandidateServicesWithKind lists the services of the candidate runs of
+// ActiveCandidateProjectsWithKind lists the projects of the candidate runs of
 // the given manifest kind that have not ended, sorted and without repeats.
-func (f *fakeReleaseRepo) ActiveCandidateServicesWithKind(_ context.Context, kind release.ManifestKind) ([]string, error) {
+func (f *fakeReleaseRepo) ActiveCandidateProjectsWithKind(_ context.Context, kind release.ManifestKind) ([]string, error) {
 	seen := map[string]bool{}
 	names := []string{}
 	for _, r := range f.releases {
-		if r.Kind() != pipeline.KindCandidate || r.ManifestKind() != kind || r.Status().IsTerminal() || seen[r.ChangedService()] {
+		if r.Kind() != pipeline.KindCandidate || r.ManifestKind() != kind || r.Status().IsTerminal() || seen[r.ChangedProject()] {
 			continue
 		}
-		seen[r.ChangedService()] = true
-		names = append(names, r.ChangedService())
+		seen[r.ChangedProject()] = true
+		names = append(names, r.ChangedProject())
 	}
 	sort.Strings(names)
 	return names, nil
@@ -156,11 +156,11 @@ func (f *fakeServiceProdRepo) Get(_ context.Context, name string) (*release.Serv
 }
 
 func (f *fakeServiceProdRepo) Upsert(_ context.Context, sp *release.ServiceProd) error {
-	f.rows[sp.ServiceName()] = sp
+	f.rows[sp.ProjectName()] = sp
 	return nil
 }
 
-func (f *fakeServiceProdRepo) ServicesWithKind(_ context.Context, kind release.ManifestKind) ([]string, error) {
+func (f *fakeServiceProdRepo) ProjectsWithKind(_ context.Context, kind release.ManifestKind) ([]string, error) {
 	names := []string{}
 	for name, sp := range f.rows {
 		if sp.ManifestKind() == kind {

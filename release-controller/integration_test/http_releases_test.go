@@ -23,7 +23,7 @@ func TestIntegration_ListReleasesPaginated(t *testing.T) {
 	ctx := context.Background()
 	for _, id := range []string{"rh1", "rh2", "rh3"} {
 		require.NoError(t, handlers.ReceiveCandidate(ctx, deps, handlers.ReceiveCandidateInput{
-			Service: "service-1", ReleaseID: id, ImageTag: "t",
+			Project: "service-1", ReleaseID: id, ImageTag: "t",
 			Repo: "acme/demo", CommitSHA: "deadbeefcafe1234",
 		}))
 	}
@@ -50,7 +50,7 @@ func TestIntegration_ListReleasesLimitFallback(t *testing.T) {
 	ctx := context.Background()
 	for _, id := range []string{"rl1", "rl2", "rl3"} {
 		require.NoError(t, handlers.ReceiveCandidate(ctx, deps, handlers.ReceiveCandidateInput{
-			Service: "service-1", ReleaseID: id, ImageTag: "t",
+			Project: "service-1", ReleaseID: id, ImageTag: "t",
 			Repo: "acme/demo", CommitSHA: "deadbeefcafe1234",
 		}))
 	}
@@ -75,7 +75,7 @@ func TestIntegration_GetReleaseIncludesPerNode(t *testing.T) {
 
 	// Drive through the full failure path so per_node_results are persisted.
 	require.NoError(t, handlers.ReceiveCandidate(ctx, deps, handlers.ReceiveCandidateInput{
-		Service: "service-1", ReleaseID: "rd1", ImageTag: "t",
+		Project: "service-1", ReleaseID: "rd1", ImageTag: "t",
 		Repo: "acme/demo", CommitSHA: "deadbeefcafe1234",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(ctx, deps))
@@ -85,8 +85,8 @@ func TestIntegration_GetReleaseIncludesPerNode(t *testing.T) {
 	require.NoError(t, handlers.HandleParsedManifest(ctx, deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rd1", Status: "ok",
 		TopologyRef: putTopology(t, deps, "rd1", release.Topology{
-			{UniqueID: "a", ServiceName: "service-1"},
-			{UniqueID: "b", ServiceName: "service-1", UpstreamUniqueIDs: []string{"a"}},
+			{UniqueID: "a", ProjectName: "service-1"},
+			{UniqueID: "b", ProjectName: "service-1", UpstreamUniqueIDs: []string{"a"}},
 		}),
 	}))
 	// Project each node's result via the per-node stream (node b failing) so the
@@ -121,7 +121,7 @@ func TestIntegration_PostReleases_UnknownKind_Returns400(t *testing.T) {
 	defer db.Close()
 
 	body, _ := json.Marshal(httpinfra.ReceiveCandidateRequest{
-		Service:   "svc-bad",
+		Project:   "svc-bad",
 		ReleaseID: "rBadKind",
 		ImageTag:  "t",
 		Repo:      "acme/demo",
@@ -149,7 +149,7 @@ func TestIntegration_VerificationRunExposedOnItsOwnRoutesOnly(t *testing.T) {
 	ctx := context.Background()
 
 	require.NoError(t, handlers.ReceiveVerification(ctx, deps, handlers.ReceiveVerificationInput{
-		RunID: "verify-rv1", Service: "service-1", ImageTag: "t", Kind: "dbt",
+		RunID: "verify-rv1", Project: "service-1", ImageTag: "t", Kind: "dbt",
 		VerifiesReleaseID: "rv1", Attempt: 1,
 	}))
 

@@ -17,10 +17,10 @@ import (
 // seed_table_1 -> table_a -> table_d <- table_b <- seed_table_2, where
 // seed_table_2 belongs to the schedule "seeds".
 func dailyGraph() topology.ScheduleGraph {
-	node := func(service, table, nodeType, schedule string) topology.ScheduleGraphNode {
+	node := func(project, table, nodeType, schedule string) topology.ScheduleGraphNode {
 		return topology.ScheduleGraphNode{Node: topology.Node{
 			Key:         topology.KeyOf("analytics", table),
-			ServiceName: service, SchemaName: "analytics", TableName: table,
+			ProjectName: project, SchemaName: "analytics", TableName: table,
 			NodeType: nodeType, ScheduleName: schedule,
 		}}
 	}
@@ -52,7 +52,7 @@ func TestGetScheduleGraph_MapsEveryField(t *testing.T) {
 	assert.Equal(t, int64(7), resp.GetPromotionSeq())
 	require.Len(t, resp.GetNodes(), 5)
 	seed2 := resp.GetNodes()[1]
-	assert.Equal(t, "svc-b", seed2.GetServiceName())
+	assert.Equal(t, "svc-b", seed2.GetProjectName())
 	assert.Equal(t, "analytics", seed2.GetSchemaName())
 	assert.Equal(t, "seed_table_2", seed2.GetTableName())
 	assert.Equal(t, "dbt-seed", seed2.GetNodeType())
@@ -73,15 +73,15 @@ func TestGetScheduleGraph_MapsEveryField(t *testing.T) {
 	}, got)
 }
 
-// The graph keeps an unknown-external node a schedule's node reads, with no service
+// The graph keeps an unknown-external node a schedule's node reads, with no project
 // and no schedule, and the edge to its reader: the node id starts with a dot,
-// the empty service followed by the schema and table.
+// the empty project followed by the schema and table.
 func TestGetScheduleGraph_ReturnsAnUnknownExternalNodeAndItsEdge(t *testing.T) {
 	store := newStore()
 	store.putScheduleGraph(tenantA, "daily", topology.ScheduleGraph{
 		PromotionSeq: 3,
 		Nodes: []topology.ScheduleGraphNode{
-			{Node: topology.Node{Key: "analytics.table_a", ServiceName: "svc-a", SchemaName: "analytics", TableName: "table_a", NodeType: "dbt-model", ScheduleName: "daily"}},
+			{Node: topology.Node{Key: "analytics.table_a", ProjectName: "svc-a", SchemaName: "analytics", TableName: "table_a", NodeType: "dbt-model", ScheduleName: "daily"}},
 			{Node: topology.Node{Key: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe", NodeType: "unknown-external"}},
 		},
 		Edges: []topology.Edge{{Upstream: "raw.ingest_probe", Downstream: "analytics.table_a"}},
@@ -92,7 +92,7 @@ func TestGetScheduleGraph_ReturnsAnUnknownExternalNodeAndItsEdge(t *testing.T) {
 
 	require.Len(t, resp.GetNodes(), 2)
 	unknownExternal := resp.GetNodes()[1]
-	assert.Equal(t, "", unknownExternal.GetServiceName())
+	assert.Equal(t, "", unknownExternal.GetProjectName())
 	assert.Equal(t, "raw", unknownExternal.GetSchemaName())
 	assert.Equal(t, "ingest_probe", unknownExternal.GetTableName())
 	assert.Equal(t, "unknown-external", unknownExternal.GetNodeType())
@@ -190,9 +190,9 @@ func TestGetScheduleGraph_SetsDormant(t *testing.T) {
 	store.putScheduleGraph(tenantA, "daily", topology.ScheduleGraph{
 		PromotionSeq: 4,
 		Nodes: []topology.ScheduleGraphNode{
-			{Node: topology.Node{Key: "analytics.dormant", ServiceName: "svc-a", SchemaName: "analytics", TableName: "dormant", NodeType: "dbt-model"}, LastRunAt: &ran},
-			{Node: topology.Node{Key: "analytics.never", ServiceName: "svc-a", SchemaName: "analytics", TableName: "never", NodeType: "dbt-snapshot"}},
-			{Node: topology.Node{Key: "analytics.table_a", ServiceName: "svc-a", SchemaName: "analytics", TableName: "table_a", NodeType: "dbt-model", ScheduleName: "daily"}},
+			{Node: topology.Node{Key: "analytics.dormant", ProjectName: "svc-a", SchemaName: "analytics", TableName: "dormant", NodeType: "dbt-model"}, LastRunAt: &ran},
+			{Node: topology.Node{Key: "analytics.never", ProjectName: "svc-a", SchemaName: "analytics", TableName: "never", NodeType: "dbt-snapshot"}},
+			{Node: topology.Node{Key: "analytics.table_a", ProjectName: "svc-a", SchemaName: "analytics", TableName: "table_a", NodeType: "dbt-model", ScheduleName: "daily"}},
 			{Node: topology.Node{Key: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe", NodeType: "unknown-external"}},
 		},
 		Edges: []topology.Edge{

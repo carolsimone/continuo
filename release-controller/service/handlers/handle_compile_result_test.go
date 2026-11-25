@@ -24,12 +24,12 @@ func decodeJSON(t *testing.T, data []byte) map[string]any {
 
 // putCompilingRelease seeds a release that has been activated (Received →
 // Compiling via AdvanceQueue) and has a service_prod pointer for a second
-// service so AssembleManifestSet in HandleCompileResult produces a non-trivial
+// project so AssembleManifestSet in HandleCompileResult produces a non-trivial
 // manifest_keys list.
 func putCompilingRelease(t *testing.T, store *fakeStore, deps *handlers.Deps, releaseID string) {
 	t.Helper()
 	require.NoError(t, handlers.ReceiveCandidate(ctx(t), deps, handlers.ReceiveCandidateInput{
-		Service:   "svc-a",
+		Project:   "svc-a",
 		ReleaseID: releaseID,
 		ImageTag:  "sha-compile",
 		Repo:      "acme/demo",
@@ -89,7 +89,7 @@ func TestHandleCompileResult_OKEmitsReleaseRequested(t *testing.T) {
 	var typed struct {
 		ReleaseID    string `json:"release_id"`
 		ManifestKeys []struct {
-			Service string `json:"service"`
+			Project string `json:"project"`
 			S3URI   string `json:"s3_uri"`
 			Kind    string `json:"kind"`
 		} `json:"manifest_keys"`

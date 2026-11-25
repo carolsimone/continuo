@@ -157,7 +157,7 @@ func (h *builtHarness) legacyRun(t *testing.T, releaseID, table string) (uuid.UU
 		VALUES ('default', $1, $2, 'running', 1, $3, 1)`, runID, "legacy-"+runID.String()[:8], releaseID)
 	require.NoError(t, err)
 	_, err = h.db.Exec(`
-		INSERT INTO tasks (tenant_id, task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries, image_tag, node_key)
+		INSERT INTO tasks (tenant_id, task_id, run_id, project_name, schema_name, table_name, job_name, status, max_retries, image_tag, node_key)
 		VALUES ((SELECT tenant_id FROM runs WHERE run_id = $2), $1, $2, 'service-1', 'raw', $3, $3, 'pending', 2, 'service-1:v1', $4)`, taskID, runID, table, "raw."+table)
 	require.NoError(t, err)
 	return runID, taskID

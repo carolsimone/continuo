@@ -109,7 +109,7 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 			KnownStatus:    model.AttemptStatus(e.KnownStatus),
 			ScheduleName:   e.ScheduleName,
 			NodeKey:        string(e.Node.Key),
-			ServiceName:    e.Node.ServiceName,
+			ProjectName:    e.Node.ProjectName,
 			SchemaName:     e.Node.SchemaName,
 			TableName:      e.Node.TableName,
 			NodeType:       e.Node.NodeType,

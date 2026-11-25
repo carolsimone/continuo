@@ -142,7 +142,7 @@ func TestAttemptRepository_LockQuestionCarriesTheAttemptsDispatch(t *testing.T) 
 		assert.Equal(t, run.Question{
 			RunID: f.r.RunID(), TenantID: tenant, ScheduleName: "e2e-schedule-failure", TaskID: f.keyOf("e2e_schema.ftable_a", 0).TaskID,
 			Attempt: 0, Status: run.AttemptQueued, JobName: jobName, Spec: run.DispatchSpec{Operation: model.OperationRun},
-			Node: topology.Node{Key: "e2e_schema.ftable_a", UniqueID: "e2e_schema.ftable_a", ServiceName: "service-1",
+			Node: topology.Node{Key: "e2e_schema.ftable_a", UniqueID: "e2e_schema.ftable_a", ProjectName: "service-1",
 				SchemaName: "e2e_schema", TableName: "ftable_a", NodeType: "dbt-model", ContentHash: "h-ftable_a",
 				ImageTag: "service-1:5", ScheduleName: "e2e-schedule-failure"},
 		}, q)
@@ -440,7 +440,7 @@ func storeSchedules(t *testing.T, db *sqlx.DB, tables ...string) string {
 	specs := make([]topology.NodeSpec, 0, len(tables))
 	for _, table := range tables {
 		specs = append(specs, topology.NodeSpec{
-			UniqueID: "e2e_schema." + table, ServiceName: "service-1", SchemaName: "e2e_schema", TableName: table,
+			UniqueID: "e2e_schema." + table, ProjectName: "service-1", SchemaName: "e2e_schema", TableName: table,
 			NodeType: "dbt-model", ContentHash: "h-" + table, ImageTag: "service-1:5", ScheduleName: table,
 		})
 	}

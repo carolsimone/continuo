@@ -32,10 +32,10 @@ import (
 // NodeRunRepository reads per-node run history and the node list of the
 // tenant's live release.
 type NodeRunRepository interface {
-	List(ctx context.Context, serviceName, schemaName, tableName string, operation model.Operation, limit int) ([]*projection.NodeRun, error)
-	ListNodes(ctx context.Context, search, serviceName string, operation model.Operation, dormantOnly bool, limit, offset int) ([]*projection.NodeSummary, int, error)
-	ListNodeNames(ctx context.Context, serviceName string) ([]string, error)
-	ListNodeServices(ctx context.Context) ([]string, error)
+	List(ctx context.Context, projectName, schemaName, tableName string, operation model.Operation, limit int) ([]*projection.NodeRun, error)
+	ListNodes(ctx context.Context, search, projectName string, operation model.Operation, dormantOnly bool, limit, offset int) ([]*projection.NodeSummary, int, error)
+	ListNodeNames(ctx context.Context, projectName string) ([]string, error)
+	ListNodeProjects(ctx context.Context) ([]string, error)
 }
 
 type nodeRunRepository struct {
@@ -73,7 +73,7 @@ func NewNodeRunRepository(db *sqlx.DB, tenantID string, logger *slog.Logger) Nod
 // as a run does.
 func (r *nodeRunRepository) List(
 	ctx context.Context,
-	serviceName, schemaName, tableName string,
+	projectName, schemaName, tableName string,
 	op model.Operation,
 	limit int,
 ) ([]*projection.NodeRun, error) {
@@ -89,7 +89,7 @@ func (r *nodeRunRepository) List(
 			       t.wait_reason, t.lease_wait_since
 			FROM tasks t
 			WHERE t.tenant_id    = $6
-			  AND t.service_name = $1
+			  AND t.project_name = $1
 			  AND t.schema_name  = $2
 			  AND t.table_name   = $3
 			  AND (t.operation = $4 OR ($4 = 'run' AND t.operation = 'full_refresh'))
@@ -142,9 +142,9 @@ func (r *nodeRunRepository) List(
 
 	rows := []nodeRunRow{}
 	if err := r.db.SelectContext(ctx, &rows, query,
-		serviceName, schemaName, tableName, operation, limit, r.tenantID); err != nil {
+		projectName, schemaName, tableName, operation, limit, r.tenantID); err != nil {
 		r.logger.Error("Failed to list node runs",
-			"service", serviceName, "schema", schemaName, "table", tableName,
+			"project", projectName, "schema", schemaName, "table", tableName,
 			"error", err)
 		return nil, fmt.Errorf("failed to list node runs: %w", err)
 	}
@@ -234,7 +234,7 @@ func toNodeRun(row nodeRunRow) (*projection.NodeRun, error) {
 // no node: it carries only TotalCount.
 type nodeSummaryRow struct {
 	Listed         bool     `db:"listed"`
-	ServiceName    string   `db:"service_name"`
+	ProjectName    string   `db:"project_name"`
 	SchemaName     string   `db:"schema_name"`
 	TableName      string   `db:"table_name"`
 	NodeType       string   `db:"node_type"`
@@ -263,7 +263,7 @@ type nodeSummaryRow struct {
 // the page and the total are of the same live release. Its parameters:
 // $1 the table name, matched case-insensitively and exactly (searching
 // "table_2" finds "table_2", never "ftable_2" or "table_2_v2"), empty for
-// every table; $2 the service, exact, empty for every service; $3 the
+// every table; $2 the project, exact, empty for every project; $3 the
 // run/test/build dimension as stored (the run dimension includes
 // full_refresh tasks and reports them as 'run'); $5 and $6 the limit and the
 // offset; $7 the node types a release builds (builtNodeTypeNames); $8 true to
@@ -271,18 +271,18 @@ type nodeSummaryRow struct {
 // dormantNodeTypeNames.
 //
 //   - nodes: the live release's nodes of the types in $7 that match $1, $2 and
-//     $8, one row per service, schema and table (two nodes sharing a table
+//     $8, one row per project, schema and table (two nodes sharing a table
 //     make one row, with the type and schedule of the first node key and the
 //     larger declared timeout). The test dimension keeps only the nodes with
 //     a known, positive data-test count.
 //   - last_runs: each node's newest task of the dimension, by its run's
 //     creation; a node that never ran has none. A search names one table, so
 //     its nodes' tasks are probed through the node identity; without one, the
-//     tenant's tasks (of $2's service when given) are read once and grouped,
+//     tenant's tasks (of $2's project when given) are read once and grouped,
 //     which costs less than one probe per node of a large list. The
 //     condition on $1 leaves exactly one of the two branches to run.
 //   - page: the nodes ordered by that time, newest first and never-run nodes
-//     last, then by service, schema and table, sliced by $5 and $6.
+//     last, then by project, schema and table, sliced by $5 and $6.
 //   - ranked, windowed, agg: the stats of each page node over its most recent
 //     50 tasks of the dimension; a duration comes from a task's latest
 //     succeeded attempt only.
@@ -294,7 +294,7 @@ type nodeSummaryRow struct {
 // last run, the page order and the stats count the same tasks.
 var listNodesQuery = `
 	WITH nodes AS (
-		SELECT n.service_name, n.schema_name, n.table_name,
+		SELECT n.project_name, n.schema_name, n.table_name,
 		       (ARRAY_AGG(n.node_type ORDER BY n.node_key))[1] AS node_type,
 		       (ARRAY_AGG(n.schedule_name ORDER BY n.node_key))[1] AS schedule_name,
 		       MAX(n.timeout_seconds) AS timeout_seconds
@@ -304,51 +304,51 @@ var listNodesQuery = `
 		WHERE l.tenant_id = $4
 		  AND n.node_type = ANY($7::text[])
 		  AND ($1 = '' OR lower(n.table_name) = lower($1))
-		  AND ($2 = '' OR n.service_name = $2)
+		  AND ($2 = '' OR n.project_name = $2)
 		  AND (NOT $8::boolean OR ` + dormantNodeCondition("$9") + `)
 		  AND ($3 <> 'test' OR n.test_count > 0)
-		GROUP BY n.service_name, n.schema_name, n.table_name
+		GROUP BY n.project_name, n.schema_name, n.table_name
 	),
 	last_runs AS (
-		SELECT t.service_name, t.schema_name, t.table_name, MAX(s.created_at) AS last_run_at
+		SELECT t.project_name, t.schema_name, t.table_name, MAX(s.created_at) AS last_run_at
 		FROM nodes n
 		JOIN tasks t
-		  ON t.tenant_id = $4 AND t.service_name = n.service_name
+		  ON t.tenant_id = $4 AND t.project_name = n.project_name
 		 AND t.schema_name = n.schema_name AND t.table_name = n.table_name
 		JOIN runs s ON s.tenant_id = t.tenant_id AND s.run_id = t.run_id
 		WHERE $1 <> ''
 		  AND ` + listedOperation + `
-		GROUP BY t.service_name, t.schema_name, t.table_name
+		GROUP BY t.project_name, t.schema_name, t.table_name
 		UNION ALL
-		SELECT t.service_name, t.schema_name, t.table_name, MAX(s.created_at) AS last_run_at
+		SELECT t.project_name, t.schema_name, t.table_name, MAX(s.created_at) AS last_run_at
 		FROM tasks t
 		JOIN runs s ON s.tenant_id = t.tenant_id AND s.run_id = t.run_id
 		WHERE $1 = '' AND t.tenant_id = $4
-		  AND ($2 = '' OR t.service_name = $2)
+		  AND ($2 = '' OR t.project_name = $2)
 		  AND ` + listedOperation + `
-		GROUP BY t.service_name, t.schema_name, t.table_name
+		GROUP BY t.project_name, t.schema_name, t.table_name
 	),
 	page AS (
-		SELECT n.service_name, n.schema_name, n.table_name, n.node_type, n.schedule_name,
+		SELECT n.project_name, n.schema_name, n.table_name, n.node_type, n.schedule_name,
 		       n.timeout_seconds, lr.last_run_at
 		FROM nodes n
 		LEFT JOIN last_runs lr
-		  ON lr.service_name = n.service_name AND lr.schema_name = n.schema_name
+		  ON lr.project_name = n.project_name AND lr.schema_name = n.schema_name
 		 AND lr.table_name = n.table_name
-		ORDER BY lr.last_run_at DESC NULLS LAST, n.service_name, n.schema_name, n.table_name
+		ORDER BY lr.last_run_at DESC NULLS LAST, n.project_name, n.schema_name, n.table_name
 		LIMIT $5 OFFSET $6
 	),
 	ranked AS (
-		SELECT t.task_id, t.service_name, t.schema_name, t.table_name,
+		SELECT t.task_id, t.project_name, t.schema_name, t.table_name,
 		       t.attempt, t.status AS run_status, s.created_at,
 		       CASE WHEN t.operation = 'full_refresh' THEN 'run' ELSE t.operation END AS operation,
 		       ROW_NUMBER() OVER (
-		         PARTITION BY t.service_name, t.schema_name, t.table_name
+		         PARTITION BY t.project_name, t.schema_name, t.table_name
 		         ORDER BY s.created_at DESC
 		       ) AS rn
 		FROM page p
 		JOIN tasks t
-		  ON t.tenant_id = $4 AND t.service_name = p.service_name
+		  ON t.tenant_id = $4 AND t.project_name = p.project_name
 		 AND t.schema_name = p.schema_name AND t.table_name = p.table_name
 		JOIN runs s ON s.tenant_id = t.tenant_id AND s.run_id = t.run_id
 		WHERE ` + listedOperation + `
@@ -356,7 +356,7 @@ var listNodesQuery = `
 	windowed AS ( SELECT * FROM ranked WHERE rn <= 50 ),
 	agg AS (
 		SELECT
-		  w.service_name, w.schema_name, w.table_name,
+		  w.project_name, w.schema_name, w.table_name,
 		  COUNT(*) AS run_count,
 		  COUNT(*) FILTER (WHERE w.run_status IN ('succeeded','failed','cancelled','skipped')) AS terminal_count,
 		  COUNT(*) FILTER (WHERE w.run_status = 'succeeded') AS succeeded_count,
@@ -379,10 +379,10 @@ var listNodesQuery = `
 			ORDER BY a.attempt DESC
 			LIMIT 1
 		) sa ON true
-		GROUP BY w.service_name, w.schema_name, w.table_name, w.operation
+		GROUP BY w.project_name, w.schema_name, w.table_name, w.operation
 	)
-	SELECT p.service_name IS NOT NULL AS listed,
-	       COALESCE(p.service_name, '') AS service_name,
+	SELECT p.project_name IS NOT NULL AS listed,
+	       COALESCE(p.project_name, '') AS project_name,
 	       COALESCE(p.schema_name, '') AS schema_name,
 	       COALESCE(p.table_name, '') AS table_name,
 	       COALESCE(p.node_type, '') AS node_type,
@@ -400,9 +400,9 @@ var listNodesQuery = `
 	FROM (SELECT COUNT(*)::int AS total_count FROM nodes) total
 	LEFT JOIN page p ON true
 	LEFT JOIN agg a
-	  ON a.service_name = p.service_name AND a.schema_name = p.schema_name
+	  ON a.project_name = p.project_name AND a.schema_name = p.schema_name
 	 AND a.table_name = p.table_name
-	ORDER BY p.last_run_at DESC NULLS LAST, p.service_name, p.schema_name, p.table_name`
+	ORDER BY p.last_run_at DESC NULLS LAST, p.project_name, p.schema_name, p.table_name`
 
 // listedOperation keeps the tasks t of the operation dimension bound to $3, as
 // stored: the run dimension includes full_refresh tasks. listNodesQuery and
@@ -420,15 +420,15 @@ const listedOperation = `(t.operation = $3 OR ($3 = 'run' AND t.operation = 'ful
 // release declares for it and, when it ran, stats over its most recent 50
 // tasks of the operation; a node that never ran has no task, no last status
 // and no last run. Filters: search, a case-insensitive exact match on the
-// table name (when non-empty); serviceName, exact (when non-empty);
+// table name (when non-empty); projectName, exact (when non-empty);
 // dormantOnly, only the dormant nodes (dormantNodeCondition); and the
 // run/test/build operation (run includes full_refresh; matched as stored, see
 // operationWithDefault), whose test dimension lists only the nodes with data
 // tests. Rows are ordered by last run, newest first and never-run nodes
-// last, with (service, schema, table) tiebreakers for deterministic paging.
+// last, with (project, schema, table) tiebreakers for deterministic paging.
 func (r *nodeRunRepository) ListNodes(
 	ctx context.Context,
-	search, serviceName string,
+	search, projectName string,
 	op model.Operation,
 	dormantOnly bool,
 	limit, offset int,
@@ -445,9 +445,9 @@ func (r *nodeRunRepository) ListNodes(
 	operation := operationWithDefault(string(op))
 
 	rows := []nodeSummaryRow{}
-	if err := r.db.SelectContext(ctx, &rows, listNodesQuery, search, serviceName, operation, r.tenantID,
+	if err := r.db.SelectContext(ctx, &rows, listNodesQuery, search, projectName, operation, r.tenantID,
 		limit, offset, pq.Array(builtNodeTypeNames()), dormantOnly, pq.Array(dormantNodeTypeNames())); err != nil {
-		r.logger.Error("Failed to list nodes", "search", search, "service", serviceName, "error", err)
+		r.logger.Error("Failed to list nodes", "search", search, "project", projectName, "error", err)
 		return nil, 0, fmt.Errorf("failed to list nodes: %w", err)
 	}
 
@@ -465,46 +465,46 @@ func (r *nodeRunRepository) ListNodes(
 // ListNodeNames returns the distinct table names of the nodes ListNodes
 // lists: the nodes of the tenant's live release whose type a release builds
 // (builtNodeTypeNames), a node that never ran included, filtered by exact
-// service when serviceName is non-empty. A node the live release does not
+// project when projectName is non-empty. A node the live release does not
 // hold is not named, whatever runs it had. The names are in byte order
 // (COLLATE "C"), the same on every install. A cheap DISTINCT over the
 // release's nodes; it feeds the search autocomplete.
-func (r *nodeRunRepository) ListNodeNames(ctx context.Context, serviceName string) ([]string, error) {
+func (r *nodeRunRepository) ListNodeNames(ctx context.Context, projectName string) ([]string, error) {
 	const query = `
 		SELECT DISTINCT n.table_name COLLATE "C" AS table_name
 		FROM live_release l
 		JOIN topology_nodes n
 		  ON n.tenant_id = l.tenant_id AND n.release_id = l.release_id
 		WHERE l.tenant_id = $2 AND n.node_type = ANY($3::text[])
-		  AND ($1 = '' OR n.service_name = $1)
+		  AND ($1 = '' OR n.project_name = $1)
 		ORDER BY table_name`
 	names := []string{}
-	if err := r.db.SelectContext(ctx, &names, query, serviceName, r.tenantID, pq.Array(builtNodeTypeNames())); err != nil {
-		r.logger.Error("Failed to list node names", "service", serviceName, "error", err)
+	if err := r.db.SelectContext(ctx, &names, query, projectName, r.tenantID, pq.Array(builtNodeTypeNames())); err != nil {
+		r.logger.Error("Failed to list node names", "project", projectName, "error", err)
 		return nil, fmt.Errorf("failed to list node names: %w", err)
 	}
 	return names, nil
 }
 
-// ListNodeServices returns the distinct service names of the nodes ListNodes
+// ListNodeProjects returns the distinct project names of the nodes ListNodes
 // lists: the nodes of the tenant's live release whose type a release builds
-// (builtNodeTypeNames), a service whose nodes never ran included, in byte
+// (builtNodeTypeNames), a project whose nodes never ran included, in byte
 // order. COLLATE "C" keeps the order independent of the database's locale
-// (en_US, for one, ignores '-'), so every install lists services the same way.
-func (r *nodeRunRepository) ListNodeServices(ctx context.Context) ([]string, error) {
+// (en_US, for one, ignores '-'), so every install lists projects the same way.
+func (r *nodeRunRepository) ListNodeProjects(ctx context.Context) ([]string, error) {
 	const query = `
-		SELECT DISTINCT n.service_name COLLATE "C" AS service_name
+		SELECT DISTINCT n.project_name COLLATE "C" AS project_name
 		FROM live_release l
 		JOIN topology_nodes n
 		  ON n.tenant_id = l.tenant_id AND n.release_id = l.release_id
 		WHERE l.tenant_id = $1 AND n.node_type = ANY($2::text[])
-		ORDER BY service_name`
-	services := []string{}
-	if err := r.db.SelectContext(ctx, &services, query, r.tenantID, pq.Array(builtNodeTypeNames())); err != nil {
-		r.logger.Error("Failed to list node services", "error", err)
-		return nil, fmt.Errorf("failed to list node services: %w", err)
+		ORDER BY project_name`
+	projects := []string{}
+	if err := r.db.SelectContext(ctx, &projects, query, r.tenantID, pq.Array(builtNodeTypeNames())); err != nil {
+		r.logger.Error("Failed to list node projects", "error", err)
+		return nil, fmt.Errorf("failed to list node projects: %w", err)
 	}
-	return services, nil
+	return projects, nil
 }
 
 func toNodeSummary(row nodeSummaryRow) *projection.NodeSummary {
@@ -526,7 +526,7 @@ func toNodeSummary(row nodeSummaryRow) *projection.NodeSummary {
 	}
 	nodeType := model.CanonicalNodeType(row.NodeType)
 	return &projection.NodeSummary{
-		ServiceName:    row.ServiceName,
+		ProjectName:    row.ProjectName,
 		SchemaName:     row.SchemaName,
 		TableName:      row.TableName,
 		NodeType:       string(nodeType),
