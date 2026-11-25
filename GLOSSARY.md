@@ -13,7 +13,7 @@ One table, view or other object continuo builds or reads, together with the code
 _Avoid_: model (a model is one kind of dbt node), asset, job, step
 
 **Project**:
-The code a team releases as one unit: one dbt project, or one Python package of nodes. One repository can hold several projects.
+The code a team releases as one unit. Its kind is dbt (a dbt project of nodes), Python (a package of Python nodes, one contract each) or ontology (the company's ontology file, with no nodes; an install has at most one). One repository can hold several projects.
 _Avoid_: service (the name code, API and storage use for it), repo, team repo, job
 
 **Seed**:
@@ -69,6 +69,10 @@ _Avoid_: deploy, go-live, publish
 **Rejection**:
 The end of a candidate release that failed its release check. It never becomes live, and its failures can be fixed.
 _Avoid_: failed release, rollback
+
+**Reject reason**:
+Why a candidate release was rejected, from a fixed list. A healable reason is one a change to the release's code can fix, so continuo tries; any other goes straight to a person.
+_Avoid_: failure reason, error code
 
 **Run**:
 One execution of a set of nodes on one release, started by a schedule, by hand, or from an earlier run that failed.
