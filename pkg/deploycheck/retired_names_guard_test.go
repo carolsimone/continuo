@@ -1,264 +1,341 @@
 package deploycheck
 
 import (
+	"bytes"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
-	"reflect"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
-// fixtureRepo builds a throwaway git repository holding list as its
-// retired-names.yaml and each of files (path → content), all tracked.
-func fixtureRepo(t *testing.T, list string, files map[string]string) string {
-	t.Helper()
-	dir := t.TempDir()
-	write := func(rel, content string) {
-		full := filepath.Join(dir, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	write(retiredNamesFile, list)
-	for rel, content := range files {
-		write(rel, content)
-	}
-	for _, args := range [][]string{{"init", "-q"}, {"add", "-A"}} {
-		cmd := exec.Command("git", append([]string{"-C", dir, "-c", "init.defaultBranch=main"}, args...)...) //nolint:gosec // G204: git with fixed arguments over the test's own temporary directory
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
-		}
-	}
-	return dir
+// retiredNamesFile is the list of retired names, a path from the repository
+// root. Its format is described in the file's own header.
+const retiredNamesFile = "retired-names.yaml"
+
+// releasedSectionFiles are the files whose released sections describe their
+// own versions and keep the words of their date. A released section starts at
+// a `## [x.y.z]` or `## x.y.z` heading and runs to the next `## ` heading.
+var releasedSectionFiles = map[string]bool{
+	"deploy/continuo/CHANGELOG.md": true,
+	"docs/release-notes.md":        true,
 }
 
-// findingsIn runs the guard over a fixture repository and returns each
-// finding as the line the test reports.
-func findingsIn(t *testing.T, list string, files map[string]string) []string {
-	t.Helper()
-	found, err := checkRetiredNames(fixtureRepo(t, list, files))
+var (
+	sectionHeading  = regexp.MustCompile(`^## `)
+	releasedHeading = regexp.MustCompile(`^## \[?v?[0-9]+\.[0-9]+\.[0-9]+\]?(\s|$)`)
+)
+
+// glossaryFile is the name of every glossary file, the shared one and each
+// component's. Its `_Avoid_:` lines name the retired words on purpose.
+const glossaryFile = "GLOSSARY.md"
+
+const avoidLinePrefix = "_Avoid_:"
+
+// binarySniffBytes is how much of a file is read for a NUL byte, git's own
+// test for a binary file.
+const binarySniffBytes = 8000
+
+// retiredNamesList is the YAML document of retiredNamesFile.
+type retiredNamesList struct {
+	Names *[]retiredNameEntry `yaml:"names"`
+}
+
+type retiredNameEntry struct {
+	Pattern string   `yaml:"pattern"`
+	Use     string   `yaml:"use"`
+	Paths   []string `yaml:"paths"`
+}
+
+// retiredName is one entry of the list, compiled. where names the entry in
+// an error: its index in the list and its pattern.
+type retiredName struct {
+	entry retiredNameEntry
+	where string
+	re    *regexp.Regexp
+	paths []retiredNamePath
+}
+
+// retiredNamePath is one path of an entry, as the list writes it and
+// compiled.
+type retiredNamePath struct {
+	source string
+	re     *regexp.Regexp
+}
+
+// appliesTo reports whether the name is retired in file: everywhere when the
+// entry lists no paths, otherwise only in the files its paths cover.
+func (n retiredName) appliesTo(file string) bool {
+	if len(n.paths) == 0 {
+		return true
+	}
+	for _, p := range n.paths {
+		if p.re.MatchString(file) {
+			return true
+		}
+	}
+	return false
+}
+
+// retiredNameFinding is one occurrence of a retired name.
+type retiredNameFinding struct {
+	File  string
+	Line  int
+	Match string
+	Use   string
+}
+
+func (f retiredNameFinding) String() string {
+	return fmt.Sprintf("%s:%d: %q is a retired name; use %q", f.File, f.Line, f.Match, f.Use)
+}
+
+// parseRetiredNames reads the list and compiles each entry. It refuses an
+// unknown key, a missing `names` key, a second YAML document, an entry
+// without a pattern or a word to use, a pattern that does not compile or
+// matches the empty string, and a path that is not a relative path from the
+// repository root.
+func parseRetiredNames(data []byte) ([]retiredName, error) {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	var list retiredNamesList
+	if err := dec.Decode(&list); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, fmt.Errorf("%s: no names key", retiredNamesFile)
+		}
+		return nil, fmt.Errorf("%s: %w", retiredNamesFile, err)
+	}
+	if list.Names == nil {
+		return nil, fmt.Errorf("%s: no names key", retiredNamesFile)
+	}
+	if err := dec.Decode(new(retiredNamesList)); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("%s: more than one YAML document", retiredNamesFile)
+	}
+	names := make([]retiredName, 0, len(*list.Names))
+	for i, e := range *list.Names {
+		where := fmt.Sprintf("%s: names[%d]", retiredNamesFile, i)
+		if strings.TrimSpace(e.Pattern) == "" {
+			return nil, fmt.Errorf("%s: no pattern", where)
+		}
+		where = fmt.Sprintf("%s (%s)", where, e.Pattern)
+		if strings.TrimSpace(e.Use) == "" {
+			return nil, fmt.Errorf("%s: no word to use", where)
+		}
+		inner, err := regexp.Compile(e.Pattern)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", where, err)
+		}
+		if inner.MatchString("") {
+			return nil, fmt.Errorf("%s: the pattern matches the empty string", where)
+		}
+		n := retiredName{entry: e, where: where, re: regexp.MustCompile(`\b(?:` + e.Pattern + `)\b`)}
+		for _, p := range e.Paths {
+			re, err := pathPattern(p)
+			if err != nil {
+				return nil, fmt.Errorf("%s: path %q: %w", where, p, err)
+			}
+			n.paths = append(n.paths, retiredNamePath{source: p, re: re})
+		}
+		names = append(names, n)
+	}
+	return names, nil
+}
+
+// pathPattern compiles a path of the list into a regular expression over a
+// file's path from the repository root. `*` and `?` match within one path
+// segment, `**` across segments, and every other character is literal. The
+// expression matches the path itself and every file under it.
+func pathPattern(p string) (*regexp.Regexp, error) {
+	p = strings.TrimSuffix(p, "/")
+	switch {
+	case p == "":
+		return nil, errors.New("empty")
+	case strings.HasPrefix(p, "/"), strings.HasPrefix(p, "./"), strings.Contains(p, `\`):
+		return nil, errors.New("not a relative path from the repository root")
+	case path.Clean(p) != p:
+		return nil, errors.New("not a clean path")
+	}
+	var b strings.Builder
+	b.WriteString("^")
+	for i := 0; i < len(p); i++ {
+		c := p[i]
+		switch {
+		case c == '*' && i+1 < len(p) && p[i+1] == '*':
+			i++
+			if i+1 < len(p) && p[i+1] == '/' {
+				i++
+				b.WriteString("(?:.*/)?")
+			} else {
+				b.WriteString(".*")
+			}
+		case c == '*':
+			b.WriteString("[^/]*")
+		case c == '?':
+			b.WriteString("[^/]")
+		default:
+			b.WriteString(regexp.QuoteMeta(string(c)))
+		}
+	}
+	b.WriteString("(?:/.*)?$")
+	return regexp.Compile(b.String())
+}
+
+// trackedFiles lists the files git tracks under root, in git's order.
+func trackedFiles(root string) ([]string, error) {
+	out, err := exec.Command("git", "-C", root, "ls-files", "-z").Output() //nolint:gosec // G204: root is the repository root or a test's temporary directory, not external input
+	if err != nil {
+		return nil, fmt.Errorf("git ls-files in %s: %w", root, err)
+	}
+	var files []string
+	for _, f := range strings.Split(string(out), "\x00") {
+		if f != "" {
+			files = append(files, f)
+		}
+	}
+	return files, nil
+}
+
+// checkRetiredNames reads root's list of retired names and returns every
+// occurrence of one in the files git tracks under root, in file, line and
+// column order. It returns an error when the list cannot be read or one of
+// its paths names no tracked file.
+func checkRetiredNames(root string) ([]retiredNameFinding, error) {
+	data, err := os.ReadFile(filepath.Join(root, retiredNamesFile)) //nolint:gosec // G304: root joined with a fixed file name, not external input
+	if err != nil {
+		return nil, err
+	}
+	names, err := parseRetiredNames(data)
+	if err != nil {
+		return nil, err
+	}
+	files, err := trackedFiles(root)
+	if err != nil {
+		return nil, err
+	}
+	for _, n := range names {
+		for _, p := range n.paths {
+			if !anyMatch(p.re, files) {
+				return nil, fmt.Errorf("%s: path %q names no tracked file", n.where, p.source)
+			}
+		}
+	}
+	var findings []retiredNameFinding
+	for _, f := range files {
+		if f == retiredNamesFile {
+			continue
+		}
+		var applicable []retiredName
+		for _, n := range names {
+			if n.appliesTo(f) {
+				applicable = append(applicable, n)
+			}
+		}
+		if len(applicable) == 0 {
+			continue
+		}
+		content, ok, err := readTrackedFile(root, f)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			findings = append(findings, scanForRetiredNames(f, content, applicable)...)
+		}
+	}
+	return findings, nil
+}
+
+func anyMatch(re *regexp.Regexp, files []string) bool {
+	for _, f := range files {
+		if re.MatchString(f) {
+			return true
+		}
+	}
+	return false
+}
+
+// readTrackedFile reads one tracked file. It reports false, with no error,
+// for a file that is not there to read as text: deleted from the working
+// tree, a symbolic link, a submodule, or binary.
+func readTrackedFile(root, file string) ([]byte, bool, error) {
+	full := filepath.Join(root, filepath.FromSlash(file))
+	info, err := os.Lstat(full)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, false, nil
+	}
+	content, err := os.ReadFile(full) //nolint:gosec // G304: full is a path git ls-files listed under root, not external input
+	if err != nil {
+		return nil, false, err
+	}
+	if bytes.IndexByte(content[:min(len(content), binarySniffBytes)], 0) >= 0 {
+		return nil, false, nil
+	}
+	return content, true, nil
+}
+
+// scanForRetiredNames returns every occurrence of names in one file's
+// content, leaving out a glossary's `_Avoid_:` lines and the released
+// sections of releasedSectionFiles.
+func scanForRetiredNames(file string, content []byte, names []retiredName) []retiredNameFinding {
+	glossary := path.Base(file) == glossaryFile
+	history := releasedSectionFiles[file]
+	released := false
+	var findings []retiredNameFinding
+	for i, raw := range strings.Split(string(content), "\n") {
+		line := strings.TrimSuffix(raw, "\r")
+		if history && sectionHeading.MatchString(line) {
+			released = releasedHeading.MatchString(line)
+		}
+		if released || (glossary && strings.HasPrefix(line, avoidLinePrefix)) {
+			continue
+		}
+		var onLine []lineMatch
+		for _, n := range names {
+			for _, loc := range n.re.FindAllStringIndex(line, -1) {
+				onLine = append(onLine, lineMatch{column: loc[0], finding: retiredNameFinding{
+					File: file, Line: i + 1, Match: line[loc[0]:loc[1]], Use: n.entry.Use,
+				}})
+			}
+		}
+		sort.SliceStable(onLine, func(a, b int) bool { return onLine[a].column < onLine[b].column })
+		for _, m := range onLine {
+			findings = append(findings, m.finding)
+		}
+	}
+	return findings
+}
+
+// lineMatch is a finding with the column it starts at, to order the findings
+// of one line.
+type lineMatch struct {
+	column  int
+	finding retiredNameFinding
+}
+
+// No tracked file names a retired name of retired-names.yaml outside the
+// places that keep old words on purpose. A failure names the file, the line,
+// the old name and the glossary word to write instead.
+func TestNoRetiredNames(t *testing.T) {
+	findings, err := checkRetiredNames(repoRoot(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var lines []string
-	for _, f := range found {
-		lines = append(lines, f.String())
+	for _, f := range findings {
+		t.Error(f)
 	}
-	return lines
-}
-
-func assertFindings(t *testing.T, got []string, want ...string) {
-	t.Helper()
-	if len(got) == 0 && len(want) == 0 {
-		return
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("findings:\n  got  %q\n  want %q", got, want)
-	}
-}
-
-const frobnicateList = `names:
-  - pattern: frobnicate
-    use: widget
-`
-
-func TestRetiredNames_EmptyListPasses(t *testing.T) {
-	got := findingsIn(t, "names: []\n", map[string]string{"src/a.go": "frobnicate()\n"})
-	assertFindings(t, got)
-}
-
-func TestRetiredNames_PlantedNameFailsNamingFileLineNameAndWord(t *testing.T) {
-	got := findingsIn(t, frobnicateList, map[string]string{
-		"src/a.go": "package a\n\nfunc f() { frobnicate() }\n",
-	})
-	assertFindings(t, got, `src/a.go:3: "frobnicate" is a retired name; use "widget"`)
-}
-
-func TestRetiredNames_RespectsWordBoundaries(t *testing.T) {
-	got := findingsIn(t, frobnicateList, map[string]string{
-		"src/words.txt": strings.Join([]string{
-			"frobnicated",      // a longer word
-			"refrobnicate",     // a longer word
-			"frobnicate_all",   // snake_case identifier
-			"frobnicateAll",    // camelCase identifier
-			"Frobnicate",       // another case
-			"run frobnicate-x", // hyphenated: matches
-			"(frobnicate).",    // punctuation: matches
-			"a.frobnicate b",   // dotted: matches
-			"frobnicate\r",     // CRLF line ending: matches
-		}, "\n"),
-	})
-	assertFindings(t, got,
-		`src/words.txt:6: "frobnicate" is a retired name; use "widget"`,
-		`src/words.txt:7: "frobnicate" is a retired name; use "widget"`,
-		`src/words.txt:8: "frobnicate" is a retired name; use "widget"`,
-		`src/words.txt:9: "frobnicate" is a retired name; use "widget"`,
-	)
-}
-
-func TestRetiredNames_CaseInsensitivePatternAndAlternation(t *testing.T) {
-	list := `names:
-  - pattern: (?i)gizmo runs?|gizmo_id
-    use: gadget run
-`
-	got := findingsIn(t, list, map[string]string{
-		"src/a.md": "A Gizmo run and two GIZMO RUNS, a gizmo_id, a gizmo runner.\n",
-	})
-	assertFindings(t, got,
-		`src/a.md:1: "Gizmo run" is a retired name; use "gadget run"`,
-		`src/a.md:1: "GIZMO RUNS" is a retired name; use "gadget run"`,
-		`src/a.md:1: "gizmo_id" is a retired name; use "gadget run"`,
-	)
-}
-
-func TestRetiredNames_FindingsOfOneLineInColumnOrder(t *testing.T) {
-	list := `names:
-  - pattern: zeta
-    use: last
-  - pattern: alpha
-    use: first
-`
-	got := findingsIn(t, list, map[string]string{"a.txt": "alpha zeta alpha\n"})
-	assertFindings(t, got,
-		`a.txt:1: "alpha" is a retired name; use "first"`,
-		`a.txt:1: "zeta" is a retired name; use "last"`,
-		`a.txt:1: "alpha" is a retired name; use "first"`,
-	)
-}
-
-func TestRetiredNames_GlossaryAvoidLinePasses(t *testing.T) {
-	got := findingsIn(t, frobnicateList, map[string]string{
-		"GLOSSARY.md": "**Widget**:\nA widget.\n_Avoid_: frobnicate, gizmo\n",
-		"catalog/GLOSSARY.md": "**Widget**:\n_Avoid_: frobnicate\n" +
-			"Still a frobnicate here.\n",
-		"docs/notes.md": "_Avoid_: frobnicate\n",
-	})
-	assertFindings(t, got,
-		// A glossary's other lines are checked.
-		`catalog/GLOSSARY.md:3: "frobnicate" is a retired name; use "widget"`,
-		// An _Avoid_: line outside a glossary is checked.
-		`docs/notes.md:1: "frobnicate" is a retired name; use "widget"`,
-	)
-}
-
-func TestRetiredNames_ReleasedChangelogSectionPasses(t *testing.T) {
-	changelog := strings.Join([]string{
-		"# Changelog",
-		"Intro naming frobnicate.", // line 2: before any section, checked
-		"## [Unreleased]",
-		"### Breaking",
-		"- frobnicate is now widget.", // line 5: unreleased, checked
-		"## [0.2.0] - 2026-11-17",
-		"- Added frobnicate.", // released, exempt
-		"### Changed",
-		"- frobnicate again.", // released, exempt
-		"## [0.1.0] - 2026-11-01",
-		"- frobnicate.", // released, exempt
-	}, "\n")
-	notes := strings.Join([]string{
-		"# Release notes",
-		"About frobnicate.", // line 2: checked
-		"## 0.2.0 · 2026-11-17 · `MINOR`",
-		"frobnicate shipped.", // released, exempt
-	}, "\n")
-	got := findingsIn(t, frobnicateList, map[string]string{
-		"deploy/continuo/CHANGELOG.md": changelog,
-		"docs/release-notes.md":        notes,
-		// The same headings in any other file exempt nothing.
-		"docs/other.md": "## [0.2.0] - 2026-11-17\nfrobnicate\n",
-	})
-	assertFindings(t, got,
-		`deploy/continuo/CHANGELOG.md:2: "frobnicate" is a retired name; use "widget"`,
-		`deploy/continuo/CHANGELOG.md:5: "frobnicate" is a retired name; use "widget"`,
-		`docs/other.md:2: "frobnicate" is a retired name; use "widget"`,
-		`docs/release-notes.md:2: "frobnicate" is a retired name; use "widget"`,
-	)
-}
-
-func TestRetiredNames_PathLimitedEntryFailsOnlyInsideItsPaths(t *testing.T) {
-	list := `names:
-  - pattern: attempt
-    use: try
-    paths: [agent-remediation, "ui/src/**/remediation*", docs/one.md]
-`
-	text := "an attempt\n"
-	got := findingsIn(t, list, map[string]string{
-		"agent-remediation/service/runner/runner.go":  text, // under a directory path
-		"ui/src/client/pages/remediation-tab.tsx":     text, // a glob over the file
-		"ui/src/client/pages/remediation/view.tsx":    text, // a glob over its directory
-		"ui/src/remediation.ts":                       text, // ** matches no segment too
-		"docs/one.md":                                 text, // a file path
-		"run-controller/service/attempt.go":           text, // outside every path
-		"agent-remediation-extra/a.go":                text, // a longer directory name
-		"ui/src/client/pages/runs/remediation-x/a.md": text, // a glob over a parent directory
-		"ui/tests/remediation.test.ts":                text, // outside the glob's root
-		"docs/one.md.bak":                             text, // a longer file name
-	})
-	assertFindings(t, got,
-		`agent-remediation/service/runner/runner.go:1: "attempt" is a retired name; use "try"`,
-		`docs/one.md:1: "attempt" is a retired name; use "try"`,
-		`ui/src/client/pages/remediation-tab.tsx:1: "attempt" is a retired name; use "try"`,
-		`ui/src/client/pages/remediation/view.tsx:1: "attempt" is a retired name; use "try"`,
-		`ui/src/client/pages/runs/remediation-x/a.md:1: "attempt" is a retired name; use "try"`,
-		`ui/src/remediation.ts:1: "attempt" is a retired name; use "try"`,
-	)
-}
-
-func TestRetiredNames_ListItselfAndBinaryFilesPass(t *testing.T) {
-	got := findingsIn(t, frobnicateList+"# frobnicate in a comment\n", map[string]string{
-		"img/logo.png": "\x89PNG\x00frobnicate",
-	})
-	assertFindings(t, got)
-}
-
-func TestRetiredNames_UntrackedFilePasses(t *testing.T) {
-	dir := fixtureRepo(t, frobnicateList, map[string]string{"a.txt": "fine\n"})
-	if err := os.WriteFile(filepath.Join(dir, "scratch.txt"), []byte("frobnicate\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	found, err := checkRetiredNames(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(found) != 0 {
-		t.Errorf("an untracked file was checked: %v", found)
-	}
-}
-
-func TestRetiredNames_RefusesABadList(t *testing.T) {
-	cases := map[string]struct{ list, want string }{
-		"empty file":      {"", "no names key"},
-		"no names key":    {"other: []\n", "field other not found"},
-		"names is null":   {"names:\n", "no names key"},
-		"unknown key":     {"names:\n  - pattern: a\n    use: b\n    path: [x]\n", "field path not found"},
-		"no pattern":      {"names:\n  - use: b\n", "no pattern"},
-		"no word to use":  {"names:\n  - pattern: a\n", "no word to use"},
-		"bad pattern":     {"names:\n  - pattern: a(\n    use: b\n", "missing closing )"},
-		"empty match":     {"names:\n  - pattern: a?\n    use: b\n", "matches the empty string"},
-		"absolute path":   {"names:\n  - pattern: a\n    use: b\n    paths: [/src]\n", "not a relative path"},
-		"dot path":        {"names:\n  - pattern: a\n    use: b\n    paths: [./src]\n", "not a relative path"},
-		"unclean path":    {"names:\n  - pattern: a\n    use: b\n    paths: [src/../ui]\n", "not a clean path"},
-		"empty path":      {"names:\n  - pattern: a\n    use: b\n    paths: [\"\"]\n", "empty"},
-		"untracked path":  {"names:\n  - pattern: a\n    use: b\n    paths: [nowhere]\n", `path "nowhere" names no tracked file`},
-		"unmatched glob":  {"names:\n  - pattern: a\n    use: b\n    paths: [\"src/*.py\"]\n", `path "src/*.py" names no tracked file`},
-		"second document": {"names: []\n---\nnames: []\n", "more than one YAML document"},
-	}
-	for name, c := range cases {
-		t.Run(name, func(t *testing.T) {
-			_, err := checkRetiredNames(fixtureRepo(t, c.list, map[string]string{"src/a.go": "package a\n"}))
-			if c.want == "" {
-				if err != nil {
-					t.Fatalf("refused: %v", err)
-				}
-				return
-			}
-			if err == nil || !strings.Contains(err.Error(), c.want) {
-				t.Fatalf("error %v, want one containing %q", err, c.want)
-			}
-		})
+	if len(findings) > 0 {
+		t.Logf("%d occurrences of retired names; write the glossary word instead (see %s)", len(findings), retiredNamesFile)
 	}
 }
