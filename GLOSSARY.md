@@ -12,6 +12,18 @@ This glossary holds the words more than one component uses. A word only one comp
 One table, view or other object continuo builds or reads, together with the code that builds it: a dbt model, seed or snapshot, or a Python node.
 _Avoid_: model (a model is one kind of dbt node), asset, job, step
 
+**Topology**:
+The nodes of a release and the edges between them, without their code.
+_Avoid_: DAG, lineage
+
+**Upstream**:
+The nodes a node reads, directly or through other nodes.
+_Avoid_: parent, dependency, above
+
+**Downstream**:
+The nodes that read a node, directly or through other nodes.
+_Avoid_: child, dependent, below
+
 **Project**:
 The code a team releases as one unit. Its kind is dbt (a dbt project of nodes), Python (a package of Python nodes, one contract each) or ontology (the company's ontology file, with no nodes; an install has at most one). One repository can hold several projects.
 _Avoid_: service (the name code, API and storage use for it), repo, team repo, job
@@ -111,11 +123,11 @@ The check, before a seed reload drops the seed's table, that lists every object 
 _Avoid_: seed preflight, preflight, pre-flight
 
 **Rerun**:
-A new run that executes again the nodes a failed or cancelled run did not finish, and the nodes below them, on that run's own release.
+A new run that executes again the nodes a failed or cancelled run did not finish, and everything downstream of them, on that run's own release.
 _Avoid_: rerun failed, rerun on this snapshot, retry
 
 **Rebase**:
-A new run that restarts a failed or cancelled run from its failure on the live release, also running the nodes the live release added below it.
+A new run that restarts a failed or cancelled run from its failure on the live release, also running the nodes the live release added downstream of it.
 _Avoid_: rerun on latest snapshot, rerun failed (latest snapshot)
 
 **Single-node run**:

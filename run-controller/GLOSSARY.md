@@ -49,7 +49,7 @@ A task that is ready but waits because another run's task holds its node's write
 _Avoid_: blocked task, queued task
 
 **Rebuild task**:
-A task that rebuilds a view below a seed whose reload dropped the seed's table, whatever the view's schedule.
+A task that rebuilds a view downstream of a seed whose reload dropped the seed's table, whatever the view's schedule.
 _Avoid_: repair task, dependent refresh
 
 **View outage**:
