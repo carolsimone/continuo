@@ -149,7 +149,7 @@ The five default roles as GitHub labels: `needs-triage`, `needs-info`, `ready-fo
 
 ### Domain docs
 
-Multi-context: `GLOSSARY-MAP.md` lists the shared `GLOSSARY.md` at the root and one `GLOSSARY.md` per service; ADRs are in `carolsimone/arch` `continuo/adr/`. See `docs/agents/domain.md`.
+Multi-context: `GLOSSARY-MAP.md` lists the shared `GLOSSARY.md` at the root and one `GLOSSARY.md` per component; ADRs are in `carolsimone/arch` `continuo/adr/`. See `docs/agents/domain.md`.
 
 # Helm chart versioning (`deploy/continuo/`)
 `release.yml` locks the chart's `version` and `appVersion` together — one `vX.Y.Z` git tag stamps both identically and retags every service image to match, so there is no chart-vs-app compatibility matrix to track. The only thing chart versioning has to protect is: **does an unmodified existing user's `values.yaml`/overrides still produce a working install after `helm upgrade` to the new version?**
