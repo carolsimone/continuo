@@ -28,6 +28,10 @@ _Avoid_: child, dependent, below
 The code a team releases as one unit. Its kind is dbt (a dbt project of nodes), Python (a package of Python nodes, one contract each) or ontology (the company's ontology file, with no nodes; an install has at most one). One repository can hold several projects.
 _Avoid_: service (the name code, API and storage use for it), repo, team repo, job
 
+**Relation**:
+The name a node's table has in the warehouse, as schema and table: `analytics.orders`.
+_Avoid_: table key, fully qualified name
+
 **Seed**:
 A node whose data is a CSV file in the project, loaded as a table.
 _Avoid_: static table, lookup load
@@ -39,6 +43,10 @@ _Avoid_: ingested node, source, external table
 **Dormant node**:
 A node continuo builds that belongs to no schedule, so only a run started by hand executes it.
 _Avoid_: orphan node, unscheduled model, inactive node
+
+**Criticality**:
+How much a node matters to the business: regulatory, core or secondary.
+_Avoid_: priority, tier, severity
 
 **Owner**:
 The team that answers for a node and reviews the fixes proposed for it.
@@ -55,6 +63,14 @@ _Avoid_: schema file, data contract spec
 **Ontology**:
 The company's one file naming the things its data is about and which team owns each, which contracts can bind their tables to.
 _Avoid_: taxonomy, business glossary
+
+**Binding**:
+A contract's statement of which ontology thing its table holds, and which columns hold which of the thing's facts.
+_Avoid_: mapping, link, annotation
+
+**Ontology switch**:
+The install setting that turns the ontology on. With it off, an ontology project is ignored and bindings are not checked against anything.
+_Avoid_: ontology flag, ontology mode
 
 ### Releases and runs
 
