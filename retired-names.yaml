@@ -32,4 +32,16 @@
 #   - pattern: (?i)widget runs?|widget_?run\w*
 #     use: gadget run
 #     paths: [run-controller, "ui/src/client/**/runs*"]
-names: []
+names:
+  - pattern: '[sS]ervice_?[nN]ames?|SERVICE_NAMES?'
+    use: project name
+  - pattern: '[cC]hanged_?[sS]ervices?|CHANGED_SERVICES?'
+    use: changed project
+  - pattern: '[lL]istNodeServices\w*'
+    use: ListNodeProjects
+  - pattern: 'pr_services|[pP][rR]Services'
+    use: pr_projects
+  - pattern: '\w*[cC]ross_?[sS]ervice\w*|[cC]ross-service'
+    use: cross-project
+  - pattern: 'declared_services?|[dD]eclaredServices?'
+    use: declared project
