@@ -198,10 +198,10 @@ type Task struct {
 	TaskId         string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
 	RunId          string                 `protobuf:"bytes,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
 	CreatedAt      *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	ServiceName    string                 `protobuf:"bytes,4,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`
+	ProjectName    string                 `protobuf:"bytes,4,opt,name=project_name,json=projectName,proto3" json:"project_name,omitempty"`
 	SchemaName     string                 `protobuf:"bytes,5,opt,name=schema_name,json=schemaName,proto3" json:"schema_name,omitempty"`
 	TableName      string                 `protobuf:"bytes,6,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`
-	JobName        string                 `protobuf:"bytes,7,opt,name=job_name,json=jobName,proto3" json:"job_name,omitempty"` // Kubernetes Job identifier (computed from service-schema-table)
+	JobName        string                 `protobuf:"bytes,7,opt,name=job_name,json=jobName,proto3" json:"job_name,omitempty"` // Kubernetes Job identifier (computed from project-schema-table)
 	Status         string                 `protobuf:"bytes,8,opt,name=status,proto3" json:"status,omitempty"`                  // pending | dispatched | queued | running | stopping | succeeded | failed | cancelled | skipped
 	Attempt        int32                  `protobuf:"varint,9,opt,name=attempt,proto3" json:"attempt,omitempty"`               // 0-based number of the current attempt of the task
 	MaxRetries     int32                  `protobuf:"varint,10,opt,name=max_retries,json=maxRetries,proto3" json:"max_retries,omitempty"`
@@ -272,9 +272,9 @@ func (x *Task) GetCreatedAt() *timestamppb.Timestamp {
 	return nil
 }
 
-func (x *Task) GetServiceName() string {
+func (x *Task) GetProjectName() string {
 	if x != nil {
-		return x.ServiceName
+		return x.ProjectName
 	}
 	return ""
 }
@@ -1101,7 +1101,7 @@ func (x *TriggerRerunResponse) GetScheduleName() string {
 type TriggerSingleNodeRunRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	RequestId      string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`                // Required: UUID
-	ServiceName    string                 `protobuf:"bytes,2,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`          // Required
+	ProjectName    string                 `protobuf:"bytes,2,opt,name=project_name,json=projectName,proto3" json:"project_name,omitempty"`          // Required
 	SchemaName     string                 `protobuf:"bytes,3,opt,name=schema_name,json=schemaName,proto3" json:"schema_name,omitempty"`             // Required
 	TableName      string                 `protobuf:"bytes,4,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`                // Required
 	MetadataSource string                 `protobuf:"bytes,5,opt,name=metadata_source,json=metadataSource,proto3" json:"metadata_source,omitempty"` // Required: "latest" | "snapshot_of_run"
@@ -1154,9 +1154,9 @@ func (x *TriggerSingleNodeRunRequest) GetRequestId() string {
 	return ""
 }
 
-func (x *TriggerSingleNodeRunRequest) GetServiceName() string {
+func (x *TriggerSingleNodeRunRequest) GetProjectName() string {
 	if x != nil {
-		return x.ServiceName
+		return x.ProjectName
 	}
 	return ""
 }
@@ -1430,7 +1430,7 @@ func (x *PreviewRebaseRequest) GetIncludeChangedUpstream() bool {
 // ChangedUpstreamNode is a changed node upstream of what a rebase re-executes.
 type ChangedUpstreamNode struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
-	ServiceName        string                 `protobuf:"bytes,1,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`
+	ProjectName        string                 `protobuf:"bytes,1,opt,name=project_name,json=projectName,proto3" json:"project_name,omitempty"`
 	SchemaName         string                 `protobuf:"bytes,2,opt,name=schema_name,json=schemaName,proto3" json:"schema_name,omitempty"`
 	TableName          string                 `protobuf:"bytes,3,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`
 	Downstream         int32                  `protobuf:"varint,4,opt,name=downstream,proto3" json:"downstream,omitempty"`                                              // nodes below it in the live schedule
@@ -1469,9 +1469,9 @@ func (*ChangedUpstreamNode) Descriptor() ([]byte, []int) {
 	return file_proto_run_v1_run_proto_rawDescGZIP(), []int{16}
 }
 
-func (x *ChangedUpstreamNode) GetServiceName() string {
+func (x *ChangedUpstreamNode) GetProjectName() string {
 	if x != nil {
-		return x.ServiceName
+		return x.ProjectName
 	}
 	return ""
 }
@@ -1515,7 +1515,7 @@ type PreviewRebaseResponse struct {
 	ChangedUpstream int32                  `protobuf:"varint,7,opt,name=changed_upstream,json=changedUpstream,proto3" json:"changed_upstream,omitempty"`   // changed upstream nodes it re-executes; 0 without include_changed_upstream
 	Downstream      int32                  `protobuf:"varint,8,opt,name=downstream,proto3" json:"downstream,omitempty"`                                    // every other re-executed node, each below one counted above
 	Inherited       int32                  `protobuf:"varint,9,opt,name=inherited,proto3" json:"inherited,omitempty"`                                      // source successes carried over
-	ChangedNodes    []*ChangedUpstreamNode `protobuf:"bytes,10,rep,name=changed_nodes,json=changedNodes,proto3" json:"changed_nodes,omitempty"`            // ordered by service, schema, table
+	ChangedNodes    []*ChangedUpstreamNode `protobuf:"bytes,10,rep,name=changed_nodes,json=changedNodes,proto3" json:"changed_nodes,omitempty"`            // ordered by project, schema, table
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -2505,7 +2505,7 @@ func (x *ListRunAttemptsResponse) GetTotalCount() int32 {
 
 type RunGraphNode struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
-	ServiceName    string                 `protobuf:"bytes,1,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`
+	ProjectName    string                 `protobuf:"bytes,1,opt,name=project_name,json=projectName,proto3" json:"project_name,omitempty"`
 	SchemaName     string                 `protobuf:"bytes,2,opt,name=schema_name,json=schemaName,proto3" json:"schema_name,omitempty"`
 	TableName      string                 `protobuf:"bytes,3,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`
 	ScheduleName   string                 `protobuf:"bytes,4,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"` // the schedule of the node in the release of the run; empty when unknown
@@ -2551,9 +2551,9 @@ func (*RunGraphNode) Descriptor() ([]byte, []int) {
 	return file_proto_run_v1_run_proto_rawDescGZIP(), []int{33}
 }
 
-func (x *RunGraphNode) GetServiceName() string {
+func (x *RunGraphNode) GetProjectName() string {
 	if x != nil {
-		return x.ServiceName
+		return x.ProjectName
 	}
 	return ""
 }
@@ -2637,8 +2637,8 @@ func (x *RunGraphNode) GetPlanReason() string {
 
 type RunGraphEdge struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	FromNodeId    string                 `protobuf:"bytes,1,opt,name=from_node_id,json=fromNodeId,proto3" json:"from_node_id,omitempty"` // the dependent node, "service.schema.table"
-	ToNodeId      string                 `protobuf:"bytes,2,opt,name=to_node_id,json=toNodeId,proto3" json:"to_node_id,omitempty"`       // its dependency, "service.schema.table"
+	FromNodeId    string                 `protobuf:"bytes,1,opt,name=from_node_id,json=fromNodeId,proto3" json:"from_node_id,omitempty"` // the dependent node, "project.schema.table"
+	ToNodeId      string                 `protobuf:"bytes,2,opt,name=to_node_id,json=toNodeId,proto3" json:"to_node_id,omitempty"`       // its dependency, "project.schema.table"
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2801,7 +2801,7 @@ func (x *GetRunGraphResponse) GetLatestPromotionSeq() int64 {
 
 type ListNodeTasksRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	ServiceName   string                 `protobuf:"bytes,1,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"` // Required
+	ProjectName   string                 `protobuf:"bytes,1,opt,name=project_name,json=projectName,proto3" json:"project_name,omitempty"` // Required
 	SchemaName    string                 `protobuf:"bytes,2,opt,name=schema_name,json=schemaName,proto3" json:"schema_name,omitempty"`    // Required
 	TableName     string                 `protobuf:"bytes,3,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`       // Required
 	Limit         int32                  `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`                               // 0 means the server default 50; at most 50
@@ -2840,9 +2840,9 @@ func (*ListNodeTasksRequest) Descriptor() ([]byte, []int) {
 	return file_proto_run_v1_run_proto_rawDescGZIP(), []int{37}
 }
 
-func (x *ListNodeTasksRequest) GetServiceName() string {
+func (x *ListNodeTasksRequest) GetProjectName() string {
 	if x != nil {
-		return x.ServiceName
+		return x.ProjectName
 	}
 	return ""
 }
@@ -3218,7 +3218,7 @@ func (x *NodeTask) GetBlockingObjects() []string {
 type ListNodesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Search        string                 `protobuf:"bytes,1,opt,name=search,proto3" json:"search,omitempty"`                               // case-insensitive exact match on the table name; empty means no filter
-	ServiceName   string                 `protobuf:"bytes,2,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`  // exact service filter; empty means all services
+	ProjectName   string                 `protobuf:"bytes,2,opt,name=project_name,json=projectName,proto3" json:"project_name,omitempty"`  // exact project filter; empty means all projects
 	Limit         int32                  `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`                                // page size; 0 means 50, clamped to at most 200
 	Offset        int32                  `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`                              // page offset; default 0
 	Operation     string                 `protobuf:"bytes,5,opt,name=operation,proto3" json:"operation,omitempty"`                         // run | test | build; empty means run
@@ -3264,9 +3264,9 @@ func (x *ListNodesRequest) GetSearch() string {
 	return ""
 }
 
-func (x *ListNodesRequest) GetServiceName() string {
+func (x *ListNodesRequest) GetProjectName() string {
 	if x != nil {
-		return x.ServiceName
+		return x.ProjectName
 	}
 	return ""
 }
@@ -3353,7 +3353,7 @@ func (x *ListNodesResponse) GetTotalCount() int32 {
 
 type NodeSummary struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
-	ServiceName     string                 `protobuf:"bytes,1,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`
+	ProjectName     string                 `protobuf:"bytes,1,opt,name=project_name,json=projectName,proto3" json:"project_name,omitempty"`
 	SchemaName      string                 `protobuf:"bytes,2,opt,name=schema_name,json=schemaName,proto3" json:"schema_name,omitempty"`
 	TableName       string                 `protobuf:"bytes,3,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`
 	TaskCount       int32                  `protobuf:"varint,4,opt,name=task_count,json=taskCount,proto3" json:"task_count,omitempty"`                    // tasks in the stats window (at most 50)
@@ -3402,9 +3402,9 @@ func (*NodeSummary) Descriptor() ([]byte, []int) {
 	return file_proto_run_v1_run_proto_rawDescGZIP(), []int{43}
 }
 
-func (x *NodeSummary) GetServiceName() string {
+func (x *NodeSummary) GetProjectName() string {
 	if x != nil {
-		return x.ServiceName
+		return x.ProjectName
 	}
 	return ""
 }
@@ -3509,7 +3509,7 @@ func (x *NodeSummary) GetDormant() bool {
 
 type ListNodeNamesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	ServiceName   string                 `protobuf:"bytes,1,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"` // exact service filter; empty means all services
+	ProjectName   string                 `protobuf:"bytes,1,opt,name=project_name,json=projectName,proto3" json:"project_name,omitempty"` // exact project filter; empty means all projects
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3544,9 +3544,9 @@ func (*ListNodeNamesRequest) Descriptor() ([]byte, []int) {
 	return file_proto_run_v1_run_proto_rawDescGZIP(), []int{44}
 }
 
-func (x *ListNodeNamesRequest) GetServiceName() string {
+func (x *ListNodeNamesRequest) GetProjectName() string {
 	if x != nil {
-		return x.ServiceName
+		return x.ProjectName
 	}
 	return ""
 }
@@ -3595,26 +3595,26 @@ func (x *ListNodeNamesResponse) GetTableNames() []string {
 	return nil
 }
 
-type ListNodeServicesRequest struct {
+type ListNodeProjectsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ListNodeServicesRequest) Reset() {
-	*x = ListNodeServicesRequest{}
+func (x *ListNodeProjectsRequest) Reset() {
+	*x = ListNodeProjectsRequest{}
 	mi := &file_proto_run_v1_run_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ListNodeServicesRequest) String() string {
+func (x *ListNodeProjectsRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ListNodeServicesRequest) ProtoMessage() {}
+func (*ListNodeProjectsRequest) ProtoMessage() {}
 
-func (x *ListNodeServicesRequest) ProtoReflect() protoreflect.Message {
+func (x *ListNodeProjectsRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_run_v1_run_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -3626,32 +3626,32 @@ func (x *ListNodeServicesRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ListNodeServicesRequest.ProtoReflect.Descriptor instead.
-func (*ListNodeServicesRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use ListNodeProjectsRequest.ProtoReflect.Descriptor instead.
+func (*ListNodeProjectsRequest) Descriptor() ([]byte, []int) {
 	return file_proto_run_v1_run_proto_rawDescGZIP(), []int{46}
 }
 
-type ListNodeServicesResponse struct {
+type ListNodeProjectsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	ServiceNames  []string               `protobuf:"bytes,1,rep,name=service_names,json=serviceNames,proto3" json:"service_names,omitempty"` // distinct, sorted ascending
+	ProjectNames  []string               `protobuf:"bytes,1,rep,name=project_names,json=projectNames,proto3" json:"project_names,omitempty"` // distinct, sorted ascending
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ListNodeServicesResponse) Reset() {
-	*x = ListNodeServicesResponse{}
+func (x *ListNodeProjectsResponse) Reset() {
+	*x = ListNodeProjectsResponse{}
 	mi := &file_proto_run_v1_run_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ListNodeServicesResponse) String() string {
+func (x *ListNodeProjectsResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ListNodeServicesResponse) ProtoMessage() {}
+func (*ListNodeProjectsResponse) ProtoMessage() {}
 
-func (x *ListNodeServicesResponse) ProtoReflect() protoreflect.Message {
+func (x *ListNodeProjectsResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_run_v1_run_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -3663,14 +3663,14 @@ func (x *ListNodeServicesResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ListNodeServicesResponse.ProtoReflect.Descriptor instead.
-func (*ListNodeServicesResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use ListNodeProjectsResponse.ProtoReflect.Descriptor instead.
+func (*ListNodeProjectsResponse) Descriptor() ([]byte, []int) {
 	return file_proto_run_v1_run_proto_rawDescGZIP(), []int{47}
 }
 
-func (x *ListNodeServicesResponse) GetServiceNames() []string {
+func (x *ListNodeProjectsResponse) GetProjectNames() []string {
 	if x != nil {
-		return x.ServiceNames
+		return x.ProjectNames
 	}
 	return nil
 }
@@ -4282,7 +4282,7 @@ func (x *GetScheduleGraphRequest) GetScheduleName() string {
 // ScheduleGraphNode is a node of the live release.
 type ScheduleGraphNode struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	ServiceName   string                 `protobuf:"bytes,1,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`
+	ProjectName   string                 `protobuf:"bytes,1,opt,name=project_name,json=projectName,proto3" json:"project_name,omitempty"`
 	SchemaName    string                 `protobuf:"bytes,2,opt,name=schema_name,json=schemaName,proto3" json:"schema_name,omitempty"`
 	TableName     string                 `protobuf:"bytes,3,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`
 	NodeType      string                 `protobuf:"bytes,4,opt,name=node_type,json=nodeType,proto3" json:"node_type,omitempty"`
@@ -4323,9 +4323,9 @@ func (*ScheduleGraphNode) Descriptor() ([]byte, []int) {
 	return file_proto_run_v1_run_proto_rawDescGZIP(), []int{58}
 }
 
-func (x *ScheduleGraphNode) GetServiceName() string {
+func (x *ScheduleGraphNode) GetProjectName() string {
 	if x != nil {
-		return x.ServiceName
+		return x.ProjectName
 	}
 	return ""
 }
@@ -4374,8 +4374,8 @@ func (x *ScheduleGraphNode) GetLastRunAt() string {
 
 type ScheduleGraphEdge struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	FromNodeId    string                 `protobuf:"bytes,1,opt,name=from_node_id,json=fromNodeId,proto3" json:"from_node_id,omitempty"` // the dependent node, "service.schema.table"
-	ToNodeId      string                 `protobuf:"bytes,2,opt,name=to_node_id,json=toNodeId,proto3" json:"to_node_id,omitempty"`       // its dependency, "service.schema.table"
+	FromNodeId    string                 `protobuf:"bytes,1,opt,name=from_node_id,json=fromNodeId,proto3" json:"from_node_id,omitempty"` // the dependent node, "project.schema.table"
+	ToNodeId      string                 `protobuf:"bytes,2,opt,name=to_node_id,json=toNodeId,proto3" json:"to_node_id,omitempty"`       // its dependency, "project.schema.table"
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4665,7 +4665,7 @@ const file_proto_run_v1_run_proto_rawDesc = "" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x129\n" +
 	"\n" +
 	"created_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12!\n" +
-	"\fservice_name\x18\x04 \x01(\tR\vserviceName\x12\x1f\n" +
+	"\fproject_name\x18\x04 \x01(\tR\vprojectName\x12\x1f\n" +
 	"\vschema_name\x18\x05 \x01(\tR\n" +
 	"schemaName\x12\x1d\n" +
 	"\n" +
@@ -4756,7 +4756,7 @@ const file_proto_run_v1_run_proto_rawDesc = "" +
 	"\x1bTriggerSingleNodeRunRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12!\n" +
-	"\fservice_name\x18\x02 \x01(\tR\vserviceName\x12\x1f\n" +
+	"\fproject_name\x18\x02 \x01(\tR\vprojectName\x12\x1f\n" +
 	"\vschema_name\x18\x03 \x01(\tR\n" +
 	"schemaName\x12\x1d\n" +
 	"\n" +
@@ -4781,7 +4781,7 @@ const file_proto_run_v1_run_proto_rawDesc = "" +
 	"\rsource_run_id\x18\x01 \x01(\tR\vsourceRunId\x128\n" +
 	"\x18include_changed_upstream\x18\x02 \x01(\bR\x16includeChangedUpstream\"\xca\x01\n" +
 	"\x13ChangedUpstreamNode\x12!\n" +
-	"\fservice_name\x18\x01 \x01(\tR\vserviceName\x12\x1f\n" +
+	"\fproject_name\x18\x01 \x01(\tR\vprojectName\x12\x1f\n" +
 	"\vschema_name\x18\x02 \x01(\tR\n" +
 	"schemaName\x12\x1d\n" +
 	"\n" +
@@ -4876,7 +4876,7 @@ const file_proto_run_v1_run_proto_rawDesc = "" +
 	"\vtotal_count\x18\x02 \x01(\x05R\n" +
 	"totalCount\"\x94\x03\n" +
 	"\fRunGraphNode\x12!\n" +
-	"\fservice_name\x18\x01 \x01(\tR\vserviceName\x12\x1f\n" +
+	"\fproject_name\x18\x01 \x01(\tR\vprojectName\x12\x1f\n" +
 	"\vschema_name\x18\x02 \x01(\tR\n" +
 	"schemaName\x12\x1d\n" +
 	"\n" +
@@ -4906,7 +4906,7 @@ const file_proto_run_v1_run_proto_rawDesc = "" +
 	"\x11run_promotion_seq\x18\x03 \x01(\x03R\x0frunPromotionSeq\x120\n" +
 	"\x14latest_promotion_seq\x18\x04 \x01(\x03R\x12latestPromotionSeq\"\xad\x01\n" +
 	"\x14ListNodeTasksRequest\x12!\n" +
-	"\fservice_name\x18\x01 \x01(\tR\vserviceName\x12\x1f\n" +
+	"\fproject_name\x18\x01 \x01(\tR\vprojectName\x12\x1f\n" +
 	"\vschema_name\x18\x02 \x01(\tR\n" +
 	"schemaName\x12\x1d\n" +
 	"\n" +
@@ -4955,7 +4955,7 @@ const file_proto_run_v1_run_proto_rawDesc = "" +
 	"\x10blocking_objects\x18\x16 \x03(\tR\x0fblockingObjects\"\xbc\x01\n" +
 	"\x10ListNodesRequest\x12\x16\n" +
 	"\x06search\x18\x01 \x01(\tR\x06search\x12!\n" +
-	"\fservice_name\x18\x02 \x01(\tR\vserviceName\x12\x14\n" +
+	"\fproject_name\x18\x02 \x01(\tR\vprojectName\x12\x14\n" +
 	"\x05limit\x18\x03 \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06offset\x18\x04 \x01(\x05R\x06offset\x12\x1c\n" +
 	"\toperation\x18\x05 \x01(\tR\toperation\x12!\n" +
@@ -4965,7 +4965,7 @@ const file_proto_run_v1_run_proto_rawDesc = "" +
 	"\vtotal_count\x18\x02 \x01(\x05R\n" +
 	"totalCount\"\x9d\x04\n" +
 	"\vNodeSummary\x12!\n" +
-	"\fservice_name\x18\x01 \x01(\tR\vserviceName\x12\x1f\n" +
+	"\fproject_name\x18\x01 \x01(\tR\vprojectName\x12\x1f\n" +
 	"\vschema_name\x18\x02 \x01(\tR\n" +
 	"schemaName\x12\x1d\n" +
 	"\n" +
@@ -4986,13 +4986,13 @@ const file_proto_run_v1_run_proto_rawDesc = "" +
 	"\tnode_type\x18\x0e \x01(\tR\bnodeType\x12\x18\n" +
 	"\adormant\x18\x0f \x01(\bR\adormant\"9\n" +
 	"\x14ListNodeNamesRequest\x12!\n" +
-	"\fservice_name\x18\x01 \x01(\tR\vserviceName\"8\n" +
+	"\fproject_name\x18\x01 \x01(\tR\vprojectName\"8\n" +
 	"\x15ListNodeNamesResponse\x12\x1f\n" +
 	"\vtable_names\x18\x01 \x03(\tR\n" +
 	"tableNames\"\x19\n" +
-	"\x17ListNodeServicesRequest\"?\n" +
-	"\x18ListNodeServicesResponse\x12#\n" +
-	"\rservice_names\x18\x01 \x03(\tR\fserviceNames\"\xd1\x01\n" +
+	"\x17ListNodeProjectsRequest\"?\n" +
+	"\x18ListNodeProjectsResponse\x12#\n" +
+	"\rproject_names\x18\x01 \x03(\tR\fprojectNames\"\xd1\x01\n" +
 	"\x15UpsertScheduleRequest\x12#\n" +
 	"\rschedule_name\x18\x01 \x01(\tR\fscheduleName\x12\x12\n" +
 	"\x04cron\x18\x02 \x01(\tR\x04cron\x12\x1a\n" +
@@ -5041,7 +5041,7 @@ const file_proto_run_v1_run_proto_rawDesc = "" +
 	"\x17GetScheduleGraphRequest\x12#\n" +
 	"\rschedule_name\x18\x01 \x01(\tR\fscheduleName\"\xf2\x01\n" +
 	"\x11ScheduleGraphNode\x12!\n" +
-	"\fservice_name\x18\x01 \x01(\tR\vserviceName\x12\x1f\n" +
+	"\fproject_name\x18\x01 \x01(\tR\vprojectName\x12\x1f\n" +
 	"\vschema_name\x18\x02 \x01(\tR\n" +
 	"schemaName\x12\x1d\n" +
 	"\n" +
@@ -5086,7 +5086,7 @@ const file_proto_run_v1_run_proto_rawDesc = "" +
 	"\rListNodeTasks\x12\x1c.run.v1.ListNodeTasksRequest\x1a\x1d.run.v1.ListNodeTasksResponse\x12@\n" +
 	"\tListNodes\x12\x18.run.v1.ListNodesRequest\x1a\x19.run.v1.ListNodesResponse\x12L\n" +
 	"\rListNodeNames\x12\x1c.run.v1.ListNodeNamesRequest\x1a\x1d.run.v1.ListNodeNamesResponse\x12U\n" +
-	"\x10ListNodeServices\x12\x1f.run.v1.ListNodeServicesRequest\x1a .run.v1.ListNodeServicesResponse\x12O\n" +
+	"\x10ListNodeProjects\x12\x1f.run.v1.ListNodeProjectsRequest\x1a .run.v1.ListNodeProjectsResponse\x12O\n" +
 	"\x0eUpsertSchedule\x12\x1d.run.v1.UpsertScheduleRequest\x1a\x1e.run.v1.UpsertScheduleResponse\x12O\n" +
 	"\x0eDeleteSchedule\x12\x1d.run.v1.DeleteScheduleRequest\x1a\x1e.run.v1.DeleteScheduleResponse\x12R\n" +
 	"\x0fPreviewSchedule\x12\x1e.run.v1.PreviewScheduleRequest\x1a\x1f.run.v1.PreviewScheduleResponse\x12L\n" +
@@ -5154,8 +5154,8 @@ var file_proto_run_v1_run_proto_goTypes = []any{
 	(*NodeSummary)(nil),                    // 43: run.v1.NodeSummary
 	(*ListNodeNamesRequest)(nil),           // 44: run.v1.ListNodeNamesRequest
 	(*ListNodeNamesResponse)(nil),          // 45: run.v1.ListNodeNamesResponse
-	(*ListNodeServicesRequest)(nil),        // 46: run.v1.ListNodeServicesRequest
-	(*ListNodeServicesResponse)(nil),       // 47: run.v1.ListNodeServicesResponse
+	(*ListNodeProjectsRequest)(nil),        // 46: run.v1.ListNodeProjectsRequest
+	(*ListNodeProjectsResponse)(nil),       // 47: run.v1.ListNodeProjectsResponse
 	(*UpsertScheduleRequest)(nil),          // 48: run.v1.UpsertScheduleRequest
 	(*UpsertScheduleResponse)(nil),         // 49: run.v1.UpsertScheduleResponse
 	(*DeleteScheduleRequest)(nil),          // 50: run.v1.DeleteScheduleRequest
@@ -5230,7 +5230,7 @@ var file_proto_run_v1_run_proto_depIdxs = []int32{
 	37, // 52: run.v1.RunService.ListNodeTasks:input_type -> run.v1.ListNodeTasksRequest
 	41, // 53: run.v1.RunService.ListNodes:input_type -> run.v1.ListNodesRequest
 	44, // 54: run.v1.RunService.ListNodeNames:input_type -> run.v1.ListNodeNamesRequest
-	46, // 55: run.v1.RunService.ListNodeServices:input_type -> run.v1.ListNodeServicesRequest
+	46, // 55: run.v1.RunService.ListNodeProjects:input_type -> run.v1.ListNodeProjectsRequest
 	48, // 56: run.v1.RunService.UpsertSchedule:input_type -> run.v1.UpsertScheduleRequest
 	50, // 57: run.v1.RunService.DeleteSchedule:input_type -> run.v1.DeleteScheduleRequest
 	52, // 58: run.v1.RunService.PreviewSchedule:input_type -> run.v1.PreviewScheduleRequest
@@ -5253,7 +5253,7 @@ var file_proto_run_v1_run_proto_depIdxs = []int32{
 	38, // 75: run.v1.RunService.ListNodeTasks:output_type -> run.v1.ListNodeTasksResponse
 	42, // 76: run.v1.RunService.ListNodes:output_type -> run.v1.ListNodesResponse
 	45, // 77: run.v1.RunService.ListNodeNames:output_type -> run.v1.ListNodeNamesResponse
-	47, // 78: run.v1.RunService.ListNodeServices:output_type -> run.v1.ListNodeServicesResponse
+	47, // 78: run.v1.RunService.ListNodeProjects:output_type -> run.v1.ListNodeProjectsResponse
 	49, // 79: run.v1.RunService.UpsertSchedule:output_type -> run.v1.UpsertScheduleResponse
 	51, // 80: run.v1.RunService.DeleteSchedule:output_type -> run.v1.DeleteScheduleResponse
 	53, // 81: run.v1.RunService.PreviewSchedule:output_type -> run.v1.PreviewScheduleResponse

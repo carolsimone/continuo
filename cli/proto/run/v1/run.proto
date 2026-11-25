@@ -92,7 +92,7 @@ service RunService {
   // The run holds no schedule, so an active run of the node's schedule does
   // not refuse it.
   // Errors:
-  //   INVALID_ARGUMENT    - an empty service_name, schema_name or table_name,
+  //   INVALID_ARGUMENT    - an empty project_name, schema_name or table_name,
   //                         an empty or unknown metadata_source,
   //                         "snapshot_of_run" without a UUID source_run_id,
   //                         "latest" with a non-empty source_run_id, an
@@ -106,7 +106,7 @@ service RunService {
   //   NOT_FOUND           - the source run, or its task for the identity,
   //                         does not exist; or no release is live for
   //                         "latest"; or the release holds no such node of
-  //                         that service.
+  //                         that project.
   //   FAILED_PRECONDITION - "snapshot_of_run" with a source run that is not
   //                         terminal or names no release; or a test of a node
   //                         with no data tests; or a node type the node_type
@@ -231,7 +231,7 @@ service RunService {
   // GetRunGraph returns a run's tasks as nodes and the dependencies among them
   // in the run's own release, with the promotion seq that release was live
   // under and the live one. Edges point from the dependent node to its
-  // dependency; node ids are "service.schema.table". An unknown run returns no
+  // dependency; node ids are "project.schema.table". An unknown run returns no
   // nodes and run_promotion_seq 0; a run that names no release returns its
   // nodes, no edges and run_promotion_seq 0. Consumers treat 0 as "drift
   // unknown". A run of another tenant is an unknown run.
@@ -247,7 +247,7 @@ service RunService {
   // full refreshes. The identity fields are required; limit is capped
   // server-side at 50 (0 uses the default of 50). A node with no task returns
   // no tasks.
-  // Errors: INVALID_ARGUMENT (service_name, schema_name or table_name is
+  // Errors: INVALID_ARGUMENT (project_name, schema_name or table_name is
   // empty, or operation is not an operation value).
   rpc ListNodeTasks(ListNodeTasksRequest) returns (ListNodeTasksResponse);
 
@@ -257,7 +257,7 @@ service RunService {
   // node. A node that never ran has no stats and is listed after the nodes that
   // ran. dormant_only keeps only the dormant nodes. Supports a
   // case-insensitive exact match on the table name (searching "table_2" returns
-  // only "table_2", never "ftable_2" or "table_2_v2"), an exact service_name
+  // only "table_2", never "ftable_2" or "table_2_v2"), an exact project_name
   // filter, and limit/offset paging. total_count reports the full
   // match count (before paging). A limit of 0 or less means 50 and a limit
   // above 200 is 200; a negative offset is 0. The node list of run (the empty
@@ -268,19 +268,19 @@ service RunService {
 
   // ListNodeNames returns the distinct table names of the nodes ListNodes
   // lists (the live release's nodes that continuo builds, a node that never
-  // ran included), optionally filtered by service. It powers the node search
+  // ran included), optionally filtered by project. It powers the node search
   // autocomplete (the complete name list, independent of the paginated node
   // list).
-  // Errors: none beyond the service-wide ones. A service with no node returns
+  // Errors: none beyond the service-wide ones. A project with no node returns
   // an empty list.
   rpc ListNodeNames(ListNodeNamesRequest) returns (ListNodeNamesResponse);
 
-  // ListNodeServices returns the distinct service names of the nodes ListNodes
-  // lists, a service whose nodes never ran included. It powers the node list
-  // and remediation service filters (the complete service list, independent of
+  // ListNodeProjects returns the distinct project names of the nodes ListNodes
+  // lists, a project whose nodes never ran included. It powers the node list
+  // and remediation project filters (the complete project list, independent of
   // the paginated node list).
   // Errors: none beyond the service-wide ones.
-  rpc ListNodeServices(ListNodeServicesRequest) returns (ListNodeServicesResponse);
+  rpc ListNodeProjects(ListNodeProjectsRequest) returns (ListNodeProjectsResponse);
 
   // ==========================================================================
   // Schedule commands
@@ -410,10 +410,10 @@ message Task {
   string task_id = 1;
   string run_id = 2;
   google.protobuf.Timestamp created_at = 3;
-  string service_name = 4;
+  string project_name = 4;
   string schema_name = 5;
   string table_name = 6;
-  string job_name = 7;  // Kubernetes Job identifier (computed from service-schema-table)
+  string job_name = 7;  // Kubernetes Job identifier (computed from project-schema-table)
   string status = 8;    // pending | dispatched | queued | running | stopping | succeeded | failed | cancelled | skipped
   int32 attempt = 9;    // 0-based number of the current attempt of the task
   int32 max_retries = 10;
@@ -532,7 +532,7 @@ message TriggerRerunResponse {
 
 message TriggerSingleNodeRunRequest {
   string request_id = 1;       // Required: UUID
-  string service_name = 2;     // Required
+  string project_name = 2;     // Required
   string schema_name = 3;      // Required
   string table_name = 4;       // Required
   string metadata_source = 5;  // Required: "latest" | "snapshot_of_run"
@@ -570,7 +570,7 @@ message PreviewRebaseRequest {
 
 // ChangedUpstreamNode is a changed node upstream of what a rebase re-executes.
 message ChangedUpstreamNode {
-  string service_name = 1;
+  string project_name = 1;
   string schema_name = 2;
   string table_name = 3;
   int32 downstream = 4;             // nodes below it in the live schedule
@@ -587,7 +587,7 @@ message PreviewRebaseResponse {
   int32 changed_upstream = 7;    // changed upstream nodes it re-executes; 0 without include_changed_upstream
   int32 downstream = 8;          // every other re-executed node, each below one counted above
   int32 inherited = 9;           // source successes carried over
-  repeated ChangedUpstreamNode changed_nodes = 10;  // ordered by service, schema, table
+  repeated ChangedUpstreamNode changed_nodes = 10;  // ordered by project, schema, table
 }
 
 message CancelRunRequest {
@@ -688,7 +688,7 @@ message ListRunAttemptsResponse {
 }
 
 message RunGraphNode {
-  string service_name = 1;
+  string project_name = 1;
   string schema_name = 2;
   string table_name = 3;
   string schedule_name = 4;      // the schedule of the node in the release of the run; empty when unknown
@@ -703,8 +703,8 @@ message RunGraphNode {
 }
 
 message RunGraphEdge {
-  string from_node_id = 1;  // the dependent node, "service.schema.table"
-  string to_node_id = 2;    // its dependency, "service.schema.table"
+  string from_node_id = 1;  // the dependent node, "project.schema.table"
+  string to_node_id = 2;    // its dependency, "project.schema.table"
 }
 
 message GetRunGraphRequest {
@@ -723,7 +723,7 @@ message GetRunGraphResponse {
 // ============================================================================
 
 message ListNodeTasksRequest {
-  string service_name = 1;  // Required
+  string project_name = 1;  // Required
   string schema_name = 2;   // Required
   string table_name = 3;    // Required
   int32 limit = 4;          // 0 means the server default 50; at most 50
@@ -777,7 +777,7 @@ message NodeTask {
 
 message ListNodesRequest {
   string search = 1;        // case-insensitive exact match on the table name; empty means no filter
-  string service_name = 2;  // exact service filter; empty means all services
+  string project_name = 2;  // exact project filter; empty means all projects
   int32 limit = 3;          // page size; 0 means 50, clamped to at most 200
   int32 offset = 4;         // page offset; default 0
   string operation = 5;     // run | test | build; empty means run
@@ -790,7 +790,7 @@ message ListNodesResponse {
 }
 
 message NodeSummary {
-  string service_name = 1;
+  string project_name = 1;
   string schema_name = 2;
   string table_name = 3;
   int32 task_count = 4;         // tasks in the stats window (at most 50)
@@ -808,17 +808,17 @@ message NodeSummary {
 }
 
 message ListNodeNamesRequest {
-  string service_name = 1;  // exact service filter; empty means all services
+  string project_name = 1;  // exact project filter; empty means all projects
 }
 
 message ListNodeNamesResponse {
   repeated string table_names = 1;  // distinct, sorted ascending
 }
 
-message ListNodeServicesRequest {}
+message ListNodeProjectsRequest {}
 
-message ListNodeServicesResponse {
-  repeated string service_names = 1;  // distinct, sorted ascending
+message ListNodeProjectsResponse {
+  repeated string project_names = 1;  // distinct, sorted ascending
 }
 
 // ============================================================================
@@ -889,7 +889,7 @@ message GetScheduleGraphRequest {
 
 // ScheduleGraphNode is a node of the live release.
 message ScheduleGraphNode {
-  string service_name = 1;
+  string project_name = 1;
   string schema_name = 2;
   string table_name = 3;
   string node_type = 4;
@@ -899,8 +899,8 @@ message ScheduleGraphNode {
 }
 
 message ScheduleGraphEdge {
-  string from_node_id = 1;  // the dependent node, "service.schema.table"
-  string to_node_id = 2;    // its dependency, "service.schema.table"
+  string from_node_id = 1;  // the dependent node, "project.schema.table"
+  string to_node_id = 2;    // its dependency, "project.schema.table"
 }
 
 message GetScheduleGraphResponse {

@@ -9,7 +9,7 @@ option go_package = "github.com/carolsimone/continuo/agent-remediation/api/remed
 // and drives the PR workflow via BeginPullRequest/RecordPullRequest/FailPullRequest.
 service RemediationProposals {
   // ListProposals returns proposals filtered by status, pr_state, release_id,
-  // service, and limit.
+  // project, and limit.
   rpc ListProposals(ListProposalsRequest) returns (ListProposalsResponse);
   // GetProposal returns a single proposal by ID.
   rpc GetProposal(GetProposalRequest) returns (Proposal);
@@ -78,21 +78,21 @@ message Proposal {
   // cluster that was skipped or failed leaves its members
   // skipped/failed while other members verify.
   map<string, NodeOutcome> node_outcomes = 31;
-  // verifications is one fix-verification run per edited service; the first
+  // verifications is one fix-verification run per edited project; the first
   // entry is the view mirrored onto verification_run_id.
   repeated Verification verifications = 32;
-  // pull_requests is one entry per (proposal, service) pull request; empty
-  // for a proposal that never entered the PR lifecycle. service = "" is the
+  // pull_requests is one entry per (proposal, project) pull request; empty
+  // for a proposal that never entered the PR lifecycle. project = "" is the
   // legacy whole-proposal group. The singular pr_* fields above mirror
-  // pull_requests[0] for old readers that predate the per-service split.
+  // pull_requests[0] for old readers that predate the per-project split.
   repeated PullRequest pull_requests = 33;
-  // pr_services is the sorted owning-service groups this proposal's pull
+  // pr_projects is the sorted owning-project groups this proposal's pull
   // requests split into; [""] for a legacy (unsplit) proposal.
-  repeated string pr_services = 34;
-  // services is every service this attempt touched — the failing nodes'
-  // services plus the edited ones, sorted — the same set the
-  // ListProposalsRequest.service filter matches a proposal on.
-  repeated string services = 35;
+  repeated string pr_projects = 34;
+  // projects is every project this attempt touched — the failing nodes'
+  // projects plus the edited ones, sorted — the same set the
+  // ListProposalsRequest.project filter matches a proposal on.
+  repeated string projects = 35;
   // approvers is who must approve what this attempt did with each node a
   // remediation settled at its end, the fixed nodes and the handed-over ones,
   // one entry per node sorted by node_id. Empty on an attempt row with no
@@ -106,7 +106,7 @@ message ListProposalsRequest {
   string pr_state = 2;
   int32 limit = 3;
   string release_id = 4; // when set, only proposals of this release
-  string service = 5; // when set, only proposals whose services contain it
+  string project = 5; // when set, only proposals whose projects contain it
 }
 
 message ListProposalsResponse {
@@ -120,9 +120,9 @@ message GetProposalRequest {
 // BeginPullRequestRequest identifies the proposal to claim for PR creation.
 message BeginPullRequestRequest {
   string id = 1;
-  // service is the owning-service group to claim; "" is the legacy
-  // whole-proposal group. Must be one of the proposal's pr_services.
-  string service = 2;
+  // project is the owning-project group to claim; "" is the legacy
+  // whole-proposal group. Must be one of the proposal's pr_projects.
+  string project = 2;
 }
 
 // BeginPullRequestResponse carries all data needed to open a GitHub pull-request.
@@ -156,9 +156,9 @@ message BeginPullRequestResponse {
   // resolved_node_ids is the failing nodes this attempt addresses, sorted;
   // node_id is their representative.
   repeated string resolved_node_ids = 16;
-  // service is the owning-service group this claim covers, echoing the
-  // request's service; "" is the legacy whole-proposal group.
-  string service = 17;
+  // project is the owning-project group this claim covers, echoing the
+  // request's project; "" is the legacy whole-proposal group.
+  string project = 17;
   // approvers is who must approve the claim's fix: the proposal's approvers of
   // the nodes in resolved_node_ids, sorted by node_id. A node the proposal
   // records no approver for has no entry.
@@ -171,9 +171,9 @@ message RecordPullRequestRequest {
   string pr_url = 2;
   int32 pr_number = 3;
   string opened_by = 4;
-  // service is the owning-service group this PR covers; "" is the legacy
+  // project is the owning-project group this PR covers; "" is the legacy
   // whole-proposal group.
-  string service = 5;
+  string project = 5;
 }
 
 message RecordPullRequestResponse {}
@@ -187,9 +187,9 @@ message FailPullRequestRequest {
   // claim already released and re-claimed by someone else is left untouched
   // instead of being reset out from under its new owner.
   string claimed_at = 2;
-  // service is the owning-service group this claim covers; "" is the legacy
+  // project is the owning-project group this claim covers; "" is the legacy
   // whole-proposal group.
-  string service = 3;
+  string project = 3;
 }
 
 message FailPullRequestResponse {
@@ -235,12 +235,12 @@ message Approver {
   string source = 3;
 }
 
-// Verification is one fix-verification run per edited service and the
+// Verification is one fix-verification run per edited project and the
 // durable summary of how it went. phase is queued | running | passed |
 // failed (empty before the first read); activated_at is RFC 3339 or empty;
 // error is the named per-node errors on a failed run.
 message Verification {
-  string service = 1;
+  string project = 1;
   string kind = 2;
   string run_id = 3;
   string phase = 4;
@@ -249,10 +249,10 @@ message Verification {
 }
 
 // PullRequest is one pull request opened from a proposal, mirroring
-// proposal.PullRequest. One entry per (proposal, service) split; service =
+// proposal.PullRequest. One entry per (proposal, project) split; project =
 // "" is the legacy whole-proposal group.
 message PullRequest {
-  string service = 1;
+  string project = 1;
   string repo = 2;
   string branch = 3;
   string pr_url = 4;

@@ -35,7 +35,7 @@ const (
 	RunService_ListNodeTasks_FullMethodName          = "/run.v1.RunService/ListNodeTasks"
 	RunService_ListNodes_FullMethodName              = "/run.v1.RunService/ListNodes"
 	RunService_ListNodeNames_FullMethodName          = "/run.v1.RunService/ListNodeNames"
-	RunService_ListNodeServices_FullMethodName       = "/run.v1.RunService/ListNodeServices"
+	RunService_ListNodeProjects_FullMethodName       = "/run.v1.RunService/ListNodeProjects"
 	RunService_UpsertSchedule_FullMethodName         = "/run.v1.RunService/UpsertSchedule"
 	RunService_DeleteSchedule_FullMethodName         = "/run.v1.RunService/DeleteSchedule"
 	RunService_PreviewSchedule_FullMethodName        = "/run.v1.RunService/PreviewSchedule"
@@ -132,7 +132,7 @@ type RunServiceClient interface {
 	// not refuse it.
 	// Errors:
 	//
-	//	INVALID_ARGUMENT    - an empty service_name, schema_name or table_name,
+	//	INVALID_ARGUMENT    - an empty project_name, schema_name or table_name,
 	//	                      an empty or unknown metadata_source,
 	//	                      "snapshot_of_run" without a UUID source_run_id,
 	//	                      "latest" with a non-empty source_run_id, an
@@ -146,7 +146,7 @@ type RunServiceClient interface {
 	//	NOT_FOUND           - the source run, or its task for the identity,
 	//	                      does not exist; or no release is live for
 	//	                      "latest"; or the release holds no such node of
-	//	                      that service.
+	//	                      that project.
 	//	FAILED_PRECONDITION - "snapshot_of_run" with a source run that is not
 	//	                      terminal or names no release; or a test of a node
 	//	                      with no data tests; or a node type the node_type
@@ -261,7 +261,7 @@ type RunServiceClient interface {
 	// GetRunGraph returns a run's tasks as nodes and the dependencies among them
 	// in the run's own release, with the promotion seq that release was live
 	// under and the live one. Edges point from the dependent node to its
-	// dependency; node ids are "service.schema.table". An unknown run returns no
+	// dependency; node ids are "project.schema.table". An unknown run returns no
 	// nodes and run_promotion_seq 0; a run that names no release returns its
 	// nodes, no edges and run_promotion_seq 0. Consumers treat 0 as "drift
 	// unknown". A run of another tenant is an unknown run.
@@ -272,7 +272,7 @@ type RunServiceClient interface {
 	// full refreshes. The identity fields are required; limit is capped
 	// server-side at 50 (0 uses the default of 50). A node with no task returns
 	// no tasks.
-	// Errors: INVALID_ARGUMENT (service_name, schema_name or table_name is
+	// Errors: INVALID_ARGUMENT (project_name, schema_name or table_name is
 	// empty, or operation is not an operation value).
 	ListNodeTasks(ctx context.Context, in *ListNodeTasksRequest, opts ...grpc.CallOption) (*ListNodeTasksResponse, error)
 	// ListNodes returns the node list: one summary row per node the live release
@@ -281,7 +281,7 @@ type RunServiceClient interface {
 	// node. A node that never ran has no stats and is listed after the nodes that
 	// ran. dormant_only keeps only the dormant nodes. Supports a
 	// case-insensitive exact match on the table name (searching "table_2" returns
-	// only "table_2", never "ftable_2" or "table_2_v2"), an exact service_name
+	// only "table_2", never "ftable_2" or "table_2_v2"), an exact project_name
 	// filter, and limit/offset paging. total_count reports the full
 	// match count (before paging). A limit of 0 or less means 50 and a limit
 	// above 200 is 200; a negative offset is 0. The node list of run (the empty
@@ -291,18 +291,18 @@ type RunServiceClient interface {
 	ListNodes(ctx context.Context, in *ListNodesRequest, opts ...grpc.CallOption) (*ListNodesResponse, error)
 	// ListNodeNames returns the distinct table names of the nodes ListNodes
 	// lists (the live release's nodes that continuo builds, a node that never
-	// ran included), optionally filtered by service. It powers the node search
+	// ran included), optionally filtered by project. It powers the node search
 	// autocomplete (the complete name list, independent of the paginated node
 	// list).
-	// Errors: none beyond the service-wide ones. A service with no node returns
+	// Errors: none beyond the service-wide ones. A project with no node returns
 	// an empty list.
 	ListNodeNames(ctx context.Context, in *ListNodeNamesRequest, opts ...grpc.CallOption) (*ListNodeNamesResponse, error)
-	// ListNodeServices returns the distinct service names of the nodes ListNodes
-	// lists, a service whose nodes never ran included. It powers the node list
-	// and remediation service filters (the complete service list, independent of
+	// ListNodeProjects returns the distinct project names of the nodes ListNodes
+	// lists, a project whose nodes never ran included. It powers the node list
+	// and remediation project filters (the complete project list, independent of
 	// the paginated node list).
 	// Errors: none beyond the service-wide ones.
-	ListNodeServices(ctx context.Context, in *ListNodeServicesRequest, opts ...grpc.CallOption) (*ListNodeServicesResponse, error)
+	ListNodeProjects(ctx context.Context, in *ListNodeProjectsRequest, opts ...grpc.CallOption) (*ListNodeProjectsResponse, error)
 	// UpsertSchedule creates or replaces the cron of a schedule: its cron (five
 	// fields or a descriptor such as @daily), the IANA timezone it is read in,
 	// its description and whether it is paused. The next fire counts from now,
@@ -544,10 +544,10 @@ func (c *runServiceClient) ListNodeNames(ctx context.Context, in *ListNodeNamesR
 	return out, nil
 }
 
-func (c *runServiceClient) ListNodeServices(ctx context.Context, in *ListNodeServicesRequest, opts ...grpc.CallOption) (*ListNodeServicesResponse, error) {
+func (c *runServiceClient) ListNodeProjects(ctx context.Context, in *ListNodeProjectsRequest, opts ...grpc.CallOption) (*ListNodeProjectsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ListNodeServicesResponse)
-	err := c.cc.Invoke(ctx, RunService_ListNodeServices_FullMethodName, in, out, cOpts...)
+	out := new(ListNodeProjectsResponse)
+	err := c.cc.Invoke(ctx, RunService_ListNodeProjects_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -702,7 +702,7 @@ type RunServiceServer interface {
 	// not refuse it.
 	// Errors:
 	//
-	//	INVALID_ARGUMENT    - an empty service_name, schema_name or table_name,
+	//	INVALID_ARGUMENT    - an empty project_name, schema_name or table_name,
 	//	                      an empty or unknown metadata_source,
 	//	                      "snapshot_of_run" without a UUID source_run_id,
 	//	                      "latest" with a non-empty source_run_id, an
@@ -716,7 +716,7 @@ type RunServiceServer interface {
 	//	NOT_FOUND           - the source run, or its task for the identity,
 	//	                      does not exist; or no release is live for
 	//	                      "latest"; or the release holds no such node of
-	//	                      that service.
+	//	                      that project.
 	//	FAILED_PRECONDITION - "snapshot_of_run" with a source run that is not
 	//	                      terminal or names no release; or a test of a node
 	//	                      with no data tests; or a node type the node_type
@@ -831,7 +831,7 @@ type RunServiceServer interface {
 	// GetRunGraph returns a run's tasks as nodes and the dependencies among them
 	// in the run's own release, with the promotion seq that release was live
 	// under and the live one. Edges point from the dependent node to its
-	// dependency; node ids are "service.schema.table". An unknown run returns no
+	// dependency; node ids are "project.schema.table". An unknown run returns no
 	// nodes and run_promotion_seq 0; a run that names no release returns its
 	// nodes, no edges and run_promotion_seq 0. Consumers treat 0 as "drift
 	// unknown". A run of another tenant is an unknown run.
@@ -842,7 +842,7 @@ type RunServiceServer interface {
 	// full refreshes. The identity fields are required; limit is capped
 	// server-side at 50 (0 uses the default of 50). A node with no task returns
 	// no tasks.
-	// Errors: INVALID_ARGUMENT (service_name, schema_name or table_name is
+	// Errors: INVALID_ARGUMENT (project_name, schema_name or table_name is
 	// empty, or operation is not an operation value).
 	ListNodeTasks(context.Context, *ListNodeTasksRequest) (*ListNodeTasksResponse, error)
 	// ListNodes returns the node list: one summary row per node the live release
@@ -851,7 +851,7 @@ type RunServiceServer interface {
 	// node. A node that never ran has no stats and is listed after the nodes that
 	// ran. dormant_only keeps only the dormant nodes. Supports a
 	// case-insensitive exact match on the table name (searching "table_2" returns
-	// only "table_2", never "ftable_2" or "table_2_v2"), an exact service_name
+	// only "table_2", never "ftable_2" or "table_2_v2"), an exact project_name
 	// filter, and limit/offset paging. total_count reports the full
 	// match count (before paging). A limit of 0 or less means 50 and a limit
 	// above 200 is 200; a negative offset is 0. The node list of run (the empty
@@ -861,18 +861,18 @@ type RunServiceServer interface {
 	ListNodes(context.Context, *ListNodesRequest) (*ListNodesResponse, error)
 	// ListNodeNames returns the distinct table names of the nodes ListNodes
 	// lists (the live release's nodes that continuo builds, a node that never
-	// ran included), optionally filtered by service. It powers the node search
+	// ran included), optionally filtered by project. It powers the node search
 	// autocomplete (the complete name list, independent of the paginated node
 	// list).
-	// Errors: none beyond the service-wide ones. A service with no node returns
+	// Errors: none beyond the service-wide ones. A project with no node returns
 	// an empty list.
 	ListNodeNames(context.Context, *ListNodeNamesRequest) (*ListNodeNamesResponse, error)
-	// ListNodeServices returns the distinct service names of the nodes ListNodes
-	// lists, a service whose nodes never ran included. It powers the node list
-	// and remediation service filters (the complete service list, independent of
+	// ListNodeProjects returns the distinct project names of the nodes ListNodes
+	// lists, a project whose nodes never ran included. It powers the node list
+	// and remediation project filters (the complete project list, independent of
 	// the paginated node list).
 	// Errors: none beyond the service-wide ones.
-	ListNodeServices(context.Context, *ListNodeServicesRequest) (*ListNodeServicesResponse, error)
+	ListNodeProjects(context.Context, *ListNodeProjectsRequest) (*ListNodeProjectsResponse, error)
 	// UpsertSchedule creates or replaces the cron of a schedule: its cron (five
 	// fields or a descriptor such as @daily), the IANA timezone it is read in,
 	// its description and whether it is paused. The next fire counts from now,
@@ -1002,8 +1002,8 @@ func (UnimplementedRunServiceServer) ListNodes(context.Context, *ListNodesReques
 func (UnimplementedRunServiceServer) ListNodeNames(context.Context, *ListNodeNamesRequest) (*ListNodeNamesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListNodeNames not implemented")
 }
-func (UnimplementedRunServiceServer) ListNodeServices(context.Context, *ListNodeServicesRequest) (*ListNodeServicesResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ListNodeServices not implemented")
+func (UnimplementedRunServiceServer) ListNodeProjects(context.Context, *ListNodeProjectsRequest) (*ListNodeProjectsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListNodeProjects not implemented")
 }
 func (UnimplementedRunServiceServer) UpsertSchedule(context.Context, *UpsertScheduleRequest) (*UpsertScheduleResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpsertSchedule not implemented")
@@ -1332,20 +1332,20 @@ func _RunService_ListNodeNames_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
-func _RunService_ListNodeServices_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ListNodeServicesRequest)
+func _RunService_ListNodeProjects_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListNodeProjectsRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RunServiceServer).ListNodeServices(ctx, in)
+		return srv.(RunServiceServer).ListNodeProjects(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: RunService_ListNodeServices_FullMethodName,
+		FullMethod: RunService_ListNodeProjects_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RunServiceServer).ListNodeServices(ctx, req.(*ListNodeServicesRequest))
+		return srv.(RunServiceServer).ListNodeProjects(ctx, req.(*ListNodeProjectsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1530,8 +1530,8 @@ var RunService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _RunService_ListNodeNames_Handler,
 		},
 		{
-			MethodName: "ListNodeServices",
-			Handler:    _RunService_ListNodeServices_Handler,
+			MethodName: "ListNodeProjects",
+			Handler:    _RunService_ListNodeProjects_Handler,
 		},
 		{
 			MethodName: "UpsertSchedule",

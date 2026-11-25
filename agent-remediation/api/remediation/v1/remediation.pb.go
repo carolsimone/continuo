@@ -78,21 +78,21 @@ type Proposal struct {
 	// cluster that was skipped or failed leaves its members
 	// skipped/failed while other members verify.
 	NodeOutcomes map[string]*NodeOutcome `protobuf:"bytes,31,rep,name=node_outcomes,json=nodeOutcomes,proto3" json:"node_outcomes,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	// verifications is one fix-verification run per edited service; the first
+	// verifications is one fix-verification run per edited project; the first
 	// entry is the view mirrored onto verification_run_id.
 	Verifications []*Verification `protobuf:"bytes,32,rep,name=verifications,proto3" json:"verifications,omitempty"`
-	// pull_requests is one entry per (proposal, service) pull request; empty
-	// for a proposal that never entered the PR lifecycle. service = "" is the
+	// pull_requests is one entry per (proposal, project) pull request; empty
+	// for a proposal that never entered the PR lifecycle. project = "" is the
 	// legacy whole-proposal group. The singular pr_* fields above mirror
-	// pull_requests[0] for old readers that predate the per-service split.
+	// pull_requests[0] for old readers that predate the per-project split.
 	PullRequests []*PullRequest `protobuf:"bytes,33,rep,name=pull_requests,json=pullRequests,proto3" json:"pull_requests,omitempty"`
-	// pr_services is the sorted owning-service groups this proposal's pull
+	// pr_projects is the sorted owning-project groups this proposal's pull
 	// requests split into; [""] for a legacy (unsplit) proposal.
-	PrServices []string `protobuf:"bytes,34,rep,name=pr_services,json=prServices,proto3" json:"pr_services,omitempty"`
-	// services is every service this attempt touched — the failing nodes'
-	// services plus the edited ones, sorted — the same set the
-	// ListProposalsRequest.service filter matches a proposal on.
-	Services []string `protobuf:"bytes,35,rep,name=services,proto3" json:"services,omitempty"`
+	PrProjects []string `protobuf:"bytes,34,rep,name=pr_projects,json=prProjects,proto3" json:"pr_projects,omitempty"`
+	// projects is every project this attempt touched — the failing nodes'
+	// projects plus the edited ones, sorted — the same set the
+	// ListProposalsRequest.project filter matches a proposal on.
+	Projects []string `protobuf:"bytes,35,rep,name=projects,proto3" json:"projects,omitempty"`
 	// approvers is who must approve what this attempt did with each node a
 	// remediation settled at its end, the fixed nodes and the handed-over ones,
 	// one entry per node sorted by node_id. Empty on an attempt row with no
@@ -363,16 +363,16 @@ func (x *Proposal) GetPullRequests() []*PullRequest {
 	return nil
 }
 
-func (x *Proposal) GetPrServices() []string {
+func (x *Proposal) GetPrProjects() []string {
 	if x != nil {
-		return x.PrServices
+		return x.PrProjects
 	}
 	return nil
 }
 
-func (x *Proposal) GetServices() []string {
+func (x *Proposal) GetProjects() []string {
 	if x != nil {
-		return x.Services
+		return x.Projects
 	}
 	return nil
 }
@@ -391,7 +391,7 @@ type ListProposalsRequest struct {
 	PrState       string                 `protobuf:"bytes,2,opt,name=pr_state,json=prState,proto3" json:"pr_state,omitempty"`
 	Limit         int32                  `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
 	ReleaseId     string                 `protobuf:"bytes,4,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"` // when set, only proposals of this release
-	Service       string                 `protobuf:"bytes,5,opt,name=service,proto3" json:"service,omitempty"`                      // when set, only proposals whose services contain it
+	Project       string                 `protobuf:"bytes,5,opt,name=project,proto3" json:"project,omitempty"`                      // when set, only proposals whose projects contain it
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -454,9 +454,9 @@ func (x *ListProposalsRequest) GetReleaseId() string {
 	return ""
 }
 
-func (x *ListProposalsRequest) GetService() string {
+func (x *ListProposalsRequest) GetProject() string {
 	if x != nil {
-		return x.Service
+		return x.Project
 	}
 	return ""
 }
@@ -553,9 +553,9 @@ func (x *GetProposalRequest) GetId() string {
 type BeginPullRequestRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	// service is the owning-service group to claim; "" is the legacy
-	// whole-proposal group. Must be one of the proposal's pr_services.
-	Service       string `protobuf:"bytes,2,opt,name=service,proto3" json:"service,omitempty"`
+	// project is the owning-project group to claim; "" is the legacy
+	// whole-proposal group. Must be one of the proposal's pr_projects.
+	Project       string `protobuf:"bytes,2,opt,name=project,proto3" json:"project,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -597,9 +597,9 @@ func (x *BeginPullRequestRequest) GetId() string {
 	return ""
 }
 
-func (x *BeginPullRequestRequest) GetService() string {
+func (x *BeginPullRequestRequest) GetProject() string {
 	if x != nil {
-		return x.Service
+		return x.Project
 	}
 	return ""
 }
@@ -636,9 +636,9 @@ type BeginPullRequestResponse struct {
 	// resolved_node_ids is the failing nodes this attempt addresses, sorted;
 	// node_id is their representative.
 	ResolvedNodeIds []string `protobuf:"bytes,16,rep,name=resolved_node_ids,json=resolvedNodeIds,proto3" json:"resolved_node_ids,omitempty"`
-	// service is the owning-service group this claim covers, echoing the
-	// request's service; "" is the legacy whole-proposal group.
-	Service string `protobuf:"bytes,17,opt,name=service,proto3" json:"service,omitempty"`
+	// project is the owning-project group this claim covers, echoing the
+	// request's project; "" is the legacy whole-proposal group.
+	Project string `protobuf:"bytes,17,opt,name=project,proto3" json:"project,omitempty"`
 	// approvers is who must approve the claim's fix: the proposal's approvers of
 	// the nodes in resolved_node_ids, sorted by node_id. A node the proposal
 	// records no approver for has no entry.
@@ -789,9 +789,9 @@ func (x *BeginPullRequestResponse) GetResolvedNodeIds() []string {
 	return nil
 }
 
-func (x *BeginPullRequestResponse) GetService() string {
+func (x *BeginPullRequestResponse) GetProject() string {
 	if x != nil {
-		return x.Service
+		return x.Project
 	}
 	return ""
 }
@@ -810,9 +810,9 @@ type RecordPullRequestRequest struct {
 	PrUrl    string                 `protobuf:"bytes,2,opt,name=pr_url,json=prUrl,proto3" json:"pr_url,omitempty"`
 	PrNumber int32                  `protobuf:"varint,3,opt,name=pr_number,json=prNumber,proto3" json:"pr_number,omitempty"`
 	OpenedBy string                 `protobuf:"bytes,4,opt,name=opened_by,json=openedBy,proto3" json:"opened_by,omitempty"`
-	// service is the owning-service group this PR covers; "" is the legacy
+	// project is the owning-project group this PR covers; "" is the legacy
 	// whole-proposal group.
-	Service       string `protobuf:"bytes,5,opt,name=service,proto3" json:"service,omitempty"`
+	Project       string `protobuf:"bytes,5,opt,name=project,proto3" json:"project,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -875,9 +875,9 @@ func (x *RecordPullRequestRequest) GetOpenedBy() string {
 	return ""
 }
 
-func (x *RecordPullRequestRequest) GetService() string {
+func (x *RecordPullRequestRequest) GetProject() string {
 	if x != nil {
-		return x.Service
+		return x.Project
 	}
 	return ""
 }
@@ -928,9 +928,9 @@ type FailPullRequestRequest struct {
 	// claim already released and re-claimed by someone else is left untouched
 	// instead of being reset out from under its new owner.
 	ClaimedAt string `protobuf:"bytes,2,opt,name=claimed_at,json=claimedAt,proto3" json:"claimed_at,omitempty"`
-	// service is the owning-service group this claim covers; "" is the legacy
+	// project is the owning-project group this claim covers; "" is the legacy
 	// whole-proposal group.
-	Service       string `protobuf:"bytes,3,opt,name=service,proto3" json:"service,omitempty"`
+	Project       string `protobuf:"bytes,3,opt,name=project,proto3" json:"project,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -979,9 +979,9 @@ func (x *FailPullRequestRequest) GetClaimedAt() string {
 	return ""
 }
 
-func (x *FailPullRequestRequest) GetService() string {
+func (x *FailPullRequestRequest) GetProject() string {
 	if x != nil {
-		return x.Service
+		return x.Project
 	}
 	return ""
 }
@@ -1245,13 +1245,13 @@ func (x *Approver) GetSource() string {
 	return ""
 }
 
-// Verification is one fix-verification run per edited service and the
+// Verification is one fix-verification run per edited project and the
 // durable summary of how it went. phase is queued | running | passed |
 // failed (empty before the first read); activated_at is RFC 3339 or empty;
 // error is the named per-node errors on a failed run.
 type Verification struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Service       string                 `protobuf:"bytes,1,opt,name=service,proto3" json:"service,omitempty"`
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
 	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
 	RunId         string                 `protobuf:"bytes,3,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
 	Phase         string                 `protobuf:"bytes,4,opt,name=phase,proto3" json:"phase,omitempty"`
@@ -1291,9 +1291,9 @@ func (*Verification) Descriptor() ([]byte, []int) {
 	return file_proto_remediation_v1_remediation_proto_rawDescGZIP(), []int{13}
 }
 
-func (x *Verification) GetService() string {
+func (x *Verification) GetProject() string {
 	if x != nil {
-		return x.Service
+		return x.Project
 	}
 	return ""
 }
@@ -1334,11 +1334,11 @@ func (x *Verification) GetError() string {
 }
 
 // PullRequest is one pull request opened from a proposal, mirroring
-// proposal.PullRequest. One entry per (proposal, service) split; service =
+// proposal.PullRequest. One entry per (proposal, project) split; project =
 // "" is the legacy whole-proposal group.
 type PullRequest struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
-	Service  string                 `protobuf:"bytes,1,opt,name=service,proto3" json:"service,omitempty"`
+	Project  string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
 	Repo     string                 `protobuf:"bytes,2,opt,name=repo,proto3" json:"repo,omitempty"`
 	Branch   string                 `protobuf:"bytes,3,opt,name=branch,proto3" json:"branch,omitempty"`
 	PrUrl    string                 `protobuf:"bytes,4,opt,name=pr_url,json=prUrl,proto3" json:"pr_url,omitempty"`
@@ -1387,9 +1387,9 @@ func (*PullRequest) Descriptor() ([]byte, []int) {
 	return file_proto_remediation_v1_remediation_proto_rawDescGZIP(), []int{14}
 }
 
-func (x *PullRequest) GetService() string {
+func (x *PullRequest) GetProject() string {
 	if x != nil {
-		return x.Service
+		return x.Project
 	}
 	return ""
 }
@@ -1498,9 +1498,9 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\rnode_outcomes\x18\x1f \x03(\v2*.remediation.v1.Proposal.NodeOutcomesEntryR\fnodeOutcomes\x12B\n" +
 	"\rverifications\x18  \x03(\v2\x1c.remediation.v1.VerificationR\rverifications\x12@\n" +
 	"\rpull_requests\x18! \x03(\v2\x1b.remediation.v1.PullRequestR\fpullRequests\x12\x1f\n" +
-	"\vpr_services\x18\" \x03(\tR\n" +
-	"prServices\x12\x1a\n" +
-	"\bservices\x18# \x03(\tR\bservices\x126\n" +
+	"\vpr_projects\x18\" \x03(\tR\n" +
+	"prProjects\x12\x1a\n" +
+	"\bprojects\x18# \x03(\tR\bprojects\x126\n" +
 	"\tapprovers\x18$ \x03(\v2\x18.remediation.v1.ApproverR\tapprovers\x1a\\\n" +
 	"\x11NodeOutcomesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x121\n" +
@@ -1511,14 +1511,14 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\x05limit\x18\x03 \x01(\x05R\x05limit\x12\x1d\n" +
 	"\n" +
 	"release_id\x18\x04 \x01(\tR\treleaseId\x12\x18\n" +
-	"\aservice\x18\x05 \x01(\tR\aservice\"O\n" +
+	"\aproject\x18\x05 \x01(\tR\aproject\"O\n" +
 	"\x15ListProposalsResponse\x126\n" +
 	"\tproposals\x18\x01 \x03(\v2\x18.remediation.v1.ProposalR\tproposals\"$\n" +
 	"\x12GetProposalRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"C\n" +
 	"\x17BeginPullRequestRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
-	"\aservice\x18\x02 \x01(\tR\aservice\"\xdb\x04\n" +
+	"\aproject\x18\x02 \x01(\tR\aproject\"\xdb\x04\n" +
 	"\x18BeginPullRequestResponse\x12\x1f\n" +
 	"\vproposal_id\x18\x01 \x01(\tR\n" +
 	"proposalId\x12\x12\n" +
@@ -1543,20 +1543,20 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"claimed_at\x18\x0e \x01(\tR\tclaimedAt\x12.\n" +
 	"\x05edits\x18\x0f \x03(\v2\x18.remediation.v1.FileEditR\x05edits\x12*\n" +
 	"\x11resolved_node_ids\x18\x10 \x03(\tR\x0fresolvedNodeIds\x12\x18\n" +
-	"\aservice\x18\x11 \x01(\tR\aservice\x126\n" +
+	"\aproject\x18\x11 \x01(\tR\aproject\x126\n" +
 	"\tapprovers\x18\x12 \x03(\v2\x18.remediation.v1.ApproverR\tapprovers\"\x95\x01\n" +
 	"\x18RecordPullRequestRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
 	"\x06pr_url\x18\x02 \x01(\tR\x05prUrl\x12\x1b\n" +
 	"\tpr_number\x18\x03 \x01(\x05R\bprNumber\x12\x1b\n" +
 	"\topened_by\x18\x04 \x01(\tR\bopenedBy\x12\x18\n" +
-	"\aservice\x18\x05 \x01(\tR\aservice\"\x1b\n" +
+	"\aproject\x18\x05 \x01(\tR\aproject\"\x1b\n" +
 	"\x19RecordPullRequestResponse\"a\n" +
 	"\x16FailPullRequestRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
 	"claimed_at\x18\x02 \x01(\tR\tclaimedAt\x12\x18\n" +
-	"\aservice\x18\x03 \x01(\tR\aservice\"5\n" +
+	"\aproject\x18\x03 \x01(\tR\aproject\"5\n" +
 	"\x17FailPullRequestResponse\x12\x1a\n" +
 	"\breleased\x18\x01 \x01(\bR\breleased\"\xa3\x01\n" +
 	"\bFileEdit\x12\x12\n" +
@@ -1575,14 +1575,14 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\x05owner\x18\x02 \x01(\tR\x05owner\x12\x16\n" +
 	"\x06source\x18\x03 \x01(\tR\x06source\"\xa2\x01\n" +
 	"\fVerification\x12\x18\n" +
-	"\aservice\x18\x01 \x01(\tR\aservice\x12\x12\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x15\n" +
 	"\x06run_id\x18\x03 \x01(\tR\x05runId\x12\x14\n" +
 	"\x05phase\x18\x04 \x01(\tR\x05phase\x12!\n" +
 	"\factivated_at\x18\x05 \x01(\tR\vactivatedAt\x12\x14\n" +
 	"\x05error\x18\x06 \x01(\tR\x05error\"\x88\x02\n" +
 	"\vPullRequest\x12\x18\n" +
-	"\aservice\x18\x01 \x01(\tR\aservice\x12\x12\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\x12\x12\n" +
 	"\x04repo\x18\x02 \x01(\tR\x04repo\x12\x16\n" +
 	"\x06branch\x18\x03 \x01(\tR\x06branch\x12\x15\n" +
 	"\x06pr_url\x18\x04 \x01(\tR\x05prUrl\x12\x1b\n" +
