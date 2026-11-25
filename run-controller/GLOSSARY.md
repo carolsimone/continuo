@@ -22,9 +22,9 @@ _Avoid_: skipped run, backfill
 A schedule whose cron is kept but starts no run until it is resumed.
 _Avoid_: disabled schedule, stopped schedule
 
-**Scheduled run**:
+**Cron run**:
 A run its schedule's cron started.
-_Avoid_: cron run, automatic run
+_Avoid_: scheduled run, automatic run
 
 **Manual run**:
 A run of a whole schedule that someone started by hand.
