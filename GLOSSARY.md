@@ -201,3 +201,7 @@ _Avoid_: freeze, read-only mode
 **Dead letter**:
 A message no component could process, kept until an operator sends it again.
 _Avoid_: poison message, failed event
+
+**Replay horizon**:
+How long a message may still be sent again: 30 days. Components keep what they need to recognise a repeated message at least that long.
+_Avoid_: retention window, dedup window
