@@ -57,8 +57,8 @@ entities:
 
 `principals` says who acts on data. Here that is one domain with its owner team,
 and two projects that name their domain. The `kind` of a project in this file is
-the ontology's own word (`dbt` or `python`). The release kind of a Python project
-in continuo is `python-odcs`, and `python` is refused. `entities` says what the data is
+the ontology's own word (`dbt` or `python`), the same word as the kind a project
+is released with. `entities` says what the data is
 about. Here that is one thing, `Order`. It belongs to the domain `shop`, it is
 identified by `order_id`, and it has one property, `amount_eur`.
 

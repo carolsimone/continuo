@@ -84,10 +84,10 @@ const (
 	dbtSeedHeaderColumn = "id"
 )
 
-// TestE2E_PythonODCSRelease_IsPromotedAndPublished proves a Python contract's
+// TestE2E_PythonRelease_IsPromotedAndPublished proves a Python contract's
 // way from an odcs-bundle.json to the readers of continuo:
 //
-//  1. the py-probe project is released as python-odcs, validated and
+//  1. the py-probe project is released as kind python, validated and
 //     promoted;
 //  2. catalog records the py_probe contract as version 1 (on a stack where an
 //     earlier run already promoted it, the version after the highest one it
@@ -99,7 +99,7 @@ const (
 //  4. a second release that changes only team.name validates nothing, since
 //     no node's content_hash changes, and makes the next version, with the
 //     same content_hash and the new team.name.
-func TestE2E_PythonODCSRelease_IsPromotedAndPublished(t *testing.T) {
+func TestE2E_PythonRelease_IsPromotedAndPublished(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
@@ -118,7 +118,7 @@ func TestE2E_PythonODCSRelease_IsPromotedAndPublished(t *testing.T) {
 	bin, env := contractsCLI(t, ctx)
 	before := highestContractVersion(t, ctx, clients, pyProbeUniqueID)
 
-	// ── 1. the py-probe project is promoted as python-odcs ──────────────────
+	// ── 1. the py-probe project is promoted as kind python ──────────────────
 	validationTap := startStreamTap(t, ctx, clients.redisClient, streams.ValidationRequestedV1)
 	firstID, cleanup := promotePythonFixtureRelease(t, ctx, clients, validationTap, defaultPythonReleaseBudget)
 	defer cleanup()
@@ -166,17 +166,17 @@ func TestE2E_PythonODCSRelease_IsPromotedAndPublished(t *testing.T) {
 	assert.Equal(t, first.ContentHash, second.ContentHash, "team.name is no part of the node's code")
 	assert.Equal(t, pyProbeOtherTeam, documentTeam(t, second.DocumentYAML), "the document carries the new team.name")
 	requireLiveContract(t, ctx, clients, secondID, second)
-	t.Logf("✅ %s promoted as python-odcs: contract version %d published, then version %d from a team.name change that validated nothing",
+	t.Logf("✅ %s promoted as kind python: contract version %d published, then version %d from a team.name change that validated nothing",
 		pyProbeUniqueID, first.Version, second.Version)
 }
 
-// TestE2E_PythonODCSRelease_AnInvalidContractIsRejected proves a release whose
+// TestE2E_PythonRelease_AnInvalidContractIsRejected proves a release whose
 // bundle holds a contract continuo refuses never reaches validation: the
 // py_probe contract declares the type NUMERIC(12), outside the runtime's types,
 // so topology-controller rejects the release invalid_contract, naming the node
 // and its file, and the public release status names the continuo-contracts
 // version that refused it.
-func TestE2E_PythonODCSRelease_AnInvalidContractIsRejected(t *testing.T) {
+func TestE2E_PythonRelease_AnInvalidContractIsRejected(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}

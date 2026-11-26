@@ -30,8 +30,6 @@ type HandleSeedBuildResultInput struct {
 // live in the candidate schema). On failure it rejects the release.
 // If excluding the built seeds leaves an empty validation set, the release is
 // promoted directly (mirror of the nothing-to-validate path in handleParseOK).
-// A stored run of the kind python is rejected invalid_artifact whatever the
-// result (rejectStoredPythonRun).
 func HandleSeedBuildResult(ctx context.Context, d *Deps, in HandleSeedBuildResultInput) error {
 	u := d.NewUoW()
 	if err := u.Begin(ctx); err != nil {
@@ -53,9 +51,6 @@ func HandleSeedBuildResult(ctx context.Context, d *Deps, in HandleSeedBuildResul
 		return nil
 	}
 	now := d.Clock.Now()
-	if isStoredPythonRun(r) {
-		return rejectStoredPythonRun(ctx, d, u, r, now)
-	}
 	if in.Status != "ok" {
 		return handleSeedBuildFailed(ctx, d, u, r, in, now)
 	}

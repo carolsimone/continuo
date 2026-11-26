@@ -82,7 +82,7 @@ def test_kind_defaults_to_dbt_and_is_threaded_when_present():
             "release_id": "rel-1",
             "manifest_keys": [
                 {"project": "service-1", "s3_uri": "s3://continuo/service-1/rel-1/manifest.json"},
-                {"project": "marketing-py", "kind": "python-odcs",
+                {"project": "marketing-py", "kind": "python",
                  "s3_uri": "s3://continuo/marketing-py/rel-1/odcs-bundle.json"},
             ],
         }),
@@ -90,7 +90,7 @@ def test_kind_defaults_to_dbt_and_is_threaded_when_present():
     )
 
     assert [(r.project, r.kind) for r in got.requests] == [
-        ("service-1", ManifestKind.DBT), ("marketing-py", ManifestKind.PYTHON_ODCS),
+        ("service-1", ManifestKind.DBT), ("marketing-py", ManifestKind.PYTHON),
     ]
 
 
@@ -276,7 +276,7 @@ def test_the_payload_release_controller_writes_parses_into_a_release_requested()
             ManifestRequest(project="service-1", key="service-1/rel-2026-10-28-0001/manifest.json", kind=ManifestKind.DBT),
             ManifestRequest(
                 project="service-py", key="service-py/rel-2026-10-28-0001/odcs-bundle.json",
-                kind=ManifestKind.PYTHON_ODCS),
+                kind=ManifestKind.PYTHON),
         ],
         bucket="continuo",
         image_tags={"service-1": "0.16.0", "service-py": "0.16.0"},

@@ -21,7 +21,7 @@ import (
 // relation is rejected at parse time, before any validation Job runs and before
 // current_prod moves.
 //
-// A python-odcs release is used because it has no compile leg — the bundle is
+// A Python release is used because it has no compile leg — the bundle is
 // uploaded directly and parsed on arrival — so the collision is reachable
 // without rebuilding a dbt project image, and no project's committed models are
 // left permanently colliding.

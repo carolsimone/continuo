@@ -1,4 +1,4 @@
-"""Reads the producer bundle of a `python-odcs` project into ManifestNodes.
+"""Reads the producer bundle of a Python project into ManifestNodes.
 
 A project's CI packs the ODCS contracts of its repository into one `odcs-bundle.json`
 (`continuo-runtime pack`) and uploads it with the release:
@@ -329,7 +329,7 @@ def parse_odcs_bundle(
     validator: ContractValidator,
     library_version: str = LIBRARY_VERSION,
 ) -> ParsedArtifact:
-    """Parse a `python-odcs` producer bundle into the nodes of its valid contracts and
+    """Parse a Python producer bundle into the nodes of its valid contracts and
     one FailedNode for each invalid one.
 
     `skipped` is accepted so every parse function takes the same arguments and is

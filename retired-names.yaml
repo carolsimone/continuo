@@ -262,3 +262,8 @@ names:
     use: release.promoted:v1
   - pattern: '(?i)\w*remediation[._]?retry[._]?requested[:_]?v2\w*'
     use: remediation.retry_requested:v1
+  # Project kind group: a Python project's release kind is python. The pattern
+  # covers the kind's value and the names built from it (ManifestKindPython...,
+  # PYTHON_..., test names).
+  - pattern: '(?i)\w*python[-_]?odcs\w*'
+    use: python (the kind of a Python project)

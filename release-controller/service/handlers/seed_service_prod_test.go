@@ -187,10 +187,10 @@ func TestSeedServiceProd_DerivesManifestKindPerProject(t *testing.T) {
 	sp2, err := repo.Get(context.Background(), "service-2")
 	require.NoError(t, err)
 	require.NotNil(t, sp2)
-	assert.Equal(t, release.ManifestKindPythonODCS, sp2.ManifestKind())
+	assert.Equal(t, release.ManifestKindPython, sp2.ManifestKind())
 }
 
-func TestSeedServiceProd_CsvProjectClassifiedPythonODCS(t *testing.T) {
+func TestSeedServiceProd_CsvProjectClassifiedPython(t *testing.T) {
 	now := time.Unix(1_000_000, 0).UTC()
 
 	// service-1 has only python-csv nodes: it must classify as python, same
@@ -212,7 +212,7 @@ func TestSeedServiceProd_CsvProjectClassifiedPythonODCS(t *testing.T) {
 	sp, err := repo.Get(context.Background(), "service-1")
 	require.NoError(t, err)
 	require.NotNil(t, sp)
-	assert.Equal(t, release.ManifestKindPythonODCS, sp.ManifestKind())
+	assert.Equal(t, release.ManifestKindPython, sp.ManifestKind())
 }
 
 // A python project's pointer must name an odcs-bundle.json: the only artifact

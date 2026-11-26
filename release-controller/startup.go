@@ -2,13 +2,11 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
-	"github.com/carolsimone/continuo/release-controller/service/handlers"
 )
 
 // startupStepFirstDelay and startupStepMaxDelay bound the backoff between
@@ -46,25 +44,4 @@ func retryWhileUnreachable(ctx context.Context, logger *slog.Logger, name string
 		}
 		delay = min(delay*2, maxDelay)
 	}
-}
-
-// pythonKindCheckExitCode logs why the startup check for projects still
-// released as kind python failed and returns the exit code of the process. A
-// shutdown requested during the check ends the process with 0, as it does while
-// it waits for Postgres. A project on kind python is logged with its names; any
-// other failure, such as a lost connection, is logged as a failed check. err is
-// the non-nil error the check returned; the caller calls this only on a failure.
-func pythonKindCheckExitCode(ctx context.Context, logger *slog.Logger, err error) int {
-	var python *handlers.PythonKindProjectsError
-	switch {
-	case errors.Is(err, context.Canceled) || ctx.Err() != nil:
-		logger.Info("Shutdown requested during the check for projects released as kind python")
-		return 0
-	case errors.As(err, &python):
-		logger.Error("Refusing to start: projects are still released as kind python",
-			"projects", python.Projects, "error", err)
-	default:
-		logger.Error("Failed to check whether projects are still released as kind python", "error", err)
-	}
-	return 1
 }

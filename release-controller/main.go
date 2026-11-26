@@ -170,13 +170,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// topology-controller reads no contract.yaml, so a project still released
-	// as kind python could not be released again: this check keeps
-	// release-controller from starting and names the projects.
-	if err := handlers.CheckNoProjectOnPythonKind(ctx, postgres.NewServiceProdRepository(db)); err != nil {
-		os.Exit(pythonKindCheckExitCode(ctx, logger, err))
-	}
-
 	// One object-storage client, passed to each adapter as the role it uses:
 	// prune-time prefix deletion (objectstore.PrefixDeleter), and topology
 	// artifact reads and writes (objectstore.ReadWriter).

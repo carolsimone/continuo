@@ -41,7 +41,7 @@ def _vector(name: str) -> dict:
 
 
 def _node(name: str, text: str, *, path: str | None = None, project: str = "service-py") -> ManifestNode:
-    """The node the python-odcs parse builds from `text`, with the fields the stored form reads."""
+    """The node the Python parse builds from `text`, with the fields the stored form reads."""
     document = yaml_strict.load(text)
     schema, table = document["id"].split(".")
     return ManifestNode(

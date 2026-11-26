@@ -3,7 +3,7 @@
 `generate_estate` builds what release-controller would have uploaded for a
 release that carries dbt projects and one python project: a dbt `manifest.json`
 and `compile-extras.json` per dbt project, and the python project's
-`odcs-bundle.json` (kind `python-odcs`), one ODCS contract per node. Every
+`odcs-bundle.json` (kind `python`), one ODCS contract per node. Every
 value comes from one `random.Random(seed)`, so with `ontology=False` the same
 arguments give the same bytes and two baselines parse the same estate, for one
 version of the harness and of the libraries it pins: the python bundle's
@@ -421,7 +421,7 @@ def generate_estate(
         }
         bundle_key = f"{_PYTHON_PROJECT}/{release_id}/odcs-bundle.json"
         objects[bundle_key] = json.dumps(bundle, sort_keys=True).encode()
-        requests.append(ManifestRequest(project=_PYTHON_PROJECT, key=bundle_key, kind=ManifestKind.PYTHON_ODCS))
+        requests.append(ManifestRequest(project=_PYTHON_PROJECT, key=bundle_key, kind=ManifestKind.PYTHON))
         image_tags[_PYTHON_PROJECT] = _IMAGE_TAG
 
     if ontology:

@@ -692,7 +692,7 @@ aws --endpoint-url http://localhost:9000 \
   s3 cp /tmp/odcs-bundle.json s3://continuo/service-py/rel-py-v1/odcs-bundle.json
 ```
 
-Only now post the release, with one extra field — `"kind": "python-odcs"` —
+Only now post the release, with one extra field — `"kind": "python"` —
 telling continuo to skip the compile leg and read the bundle you just uploaded.
 Note the `image_tag`. For a dbt release you pass the bare tag (`v1`) and continuo
 builds the full image reference itself. **For a python release, `image_tag` *is*
@@ -709,7 +709,7 @@ curl -s -X POST $API/releases \
     "project": "service-py",
     "image_tag": "service-py:v1",
     "bootstrap": true,
-    "kind": "python-odcs",
+    "kind": "python",
     "repo": "<your-username>/continuo-demo-docs",
     "commit_sha": "'"$(git rev-parse HEAD)"'"
   }' | jq
@@ -1280,13 +1280,12 @@ contracts carries a newer contract library than the one your install runs.
 Pin an older `continuo-python-runtime` in CI, or upgrade continuo. See
 [the library version CI must pin](contracts.md#the-library-version-ci-must-pin).
 
-**A python release is refused with a `400` that says `kind "python" is no longer
-accepted`.** The post names the kind `python`, which stands for one
-`contract.yaml` per project. Post the release with `"kind": "python-odcs"` and
-the bundle that `continuo-runtime pack` writes from the project's
-`contracts/*.odcs.yaml` files. [Moving from
-`contract.yaml`](contracts.md#moving-from-contractyaml) maps each field of the
-old file to the new one.
+**A release is refused with a `400` that says `unknown manifest kind`.**
+The post names a kind continuo does not read: the kinds are `dbt`, `python` and
+`ontology`. A Python project is released with
+`"kind": "python"` and the bundle that `continuo-runtime pack` writes from the
+project's `contracts/*.odcs.yaml` files. Change the kind in your CI and post the
+same bundle again.
 
 **A release sits in `compiling` and then rejects with `compile_failed`.** Your
 dbt project does not compile. The most common cause is a `{{ ref() }}` pointing

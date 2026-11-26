@@ -467,8 +467,8 @@ func TestHandleValidationResult_CandidatePromoted_EmitsFinishedToo(t *testing.T)
 }
 
 // seedToValidatingPython mirrors seedToValidating but registers the release as
-// Kind: "python-odcs" for a distinct project, so promotion tests can assert the
-// service_prod pointer written for a python-odcs release points at
+// Kind: "python" for a distinct project, so promotion tests can assert the
+// service_prod pointer written for a Python release points at
 // odcs-bundle.json rather than manifest.json. A python release has no compile
 // leg: AdvanceQueue activates it straight into Parsing, so — unlike
 // seedToValidating — there is no HandleCompileResult call here.
@@ -483,7 +483,7 @@ func seedToValidatingPython(t *testing.T, releaseID string) (*handlers.Deps, *fa
 		ImageTag:  "sha-py",
 		Repo:      "acme/demo",
 		CommitSHA: "deadbeef",
-		Kind:      "python-odcs",
+		Kind:      "python",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
@@ -499,12 +499,12 @@ func seedToValidatingPython(t *testing.T, releaseID string) (*handlers.Deps, *fa
 	return deps, store
 }
 
-// TestHandleValidationResult_PythonODCSKind_PromotesWithBundlePointer verifies
-// that promoting a python-odcs release upserts a service_prod pointer whose
-// ManifestKind is python-odcs and whose stored S3 key ends in odcs-bundle.json, not
+// TestHandleValidationResult_PythonKind_PromotesWithBundlePointer verifies
+// that promoting a Python release upserts a service_prod pointer whose
+// ManifestKind is python and whose stored S3 key ends in odcs-bundle.json, not
 // manifest.json — the promote-path counterpart to
 // TestCanonicalManifestKey_PerKindArtifactName.
-func TestHandleValidationResult_PythonODCSKind_PromotesWithBundlePointer(t *testing.T) {
+func TestHandleValidationResult_PythonKind_PromotesWithBundlePointer(t *testing.T) {
 	deps, store := seedToValidatingPython(t, "rPy")
 	seedValidationNodes(t, deps, "rPy", []handlers.NodeResult{
 		{NodeID: "a", Status: "ok"},
@@ -519,7 +519,7 @@ func TestHandleValidationResult_PythonODCSKind_PromotesWithBundlePointer(t *test
 
 	sp := store.GetServiceProd("svc-py")
 	require.NotNil(t, sp)
-	assert.Equal(t, release.ManifestKindPythonODCS, sp.ManifestKind())
+	assert.Equal(t, release.ManifestKindPython, sp.ManifestKind())
 	assert.True(t, strings.HasSuffix(sp.ManifestS3Key(), "/odcs-bundle.json"))
 }
 

@@ -36,14 +36,14 @@ func TestReceiveVerification_Validation(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	deps, _ := newDeps(now)
 	for name, mutate := range map[string]func(*handlers.ReceiveVerificationInput){
-		"missing run_id":         func(in *handlers.ReceiveVerificationInput) { in.RunID = "" },
-		"missing project":        func(in *handlers.ReceiveVerificationInput) { in.Project = "" },
-		"missing image_tag":      func(in *handlers.ReceiveVerificationInput) { in.ImageTag = "" },
-		"missing kind":           func(in *handlers.ReceiveVerificationInput) { in.Kind = "" },
-		"bad kind":               func(in *handlers.ReceiveVerificationInput) { in.Kind = "yaml" },
-		"missing verifies":       func(in *handlers.ReceiveVerificationInput) { in.VerifiesReleaseID = "" },
-		"attempt below one":      func(in *handlers.ReceiveVerificationInput) { in.Attempt = 0 },
-		"overlay on python-odcs": func(in *handlers.ReceiveVerificationInput) { in.Kind = "python-odcs" },
+		"missing run_id":    func(in *handlers.ReceiveVerificationInput) { in.RunID = "" },
+		"missing project":   func(in *handlers.ReceiveVerificationInput) { in.Project = "" },
+		"missing image_tag": func(in *handlers.ReceiveVerificationInput) { in.ImageTag = "" },
+		"missing kind":      func(in *handlers.ReceiveVerificationInput) { in.Kind = "" },
+		"bad kind":          func(in *handlers.ReceiveVerificationInput) { in.Kind = "yaml" },
+		"missing verifies":  func(in *handlers.ReceiveVerificationInput) { in.VerifiesReleaseID = "" },
+		"attempt below one": func(in *handlers.ReceiveVerificationInput) { in.Attempt = 0 },
+		"overlay on python": func(in *handlers.ReceiveVerificationInput) { in.Kind = "python" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			in := validVerification()
@@ -55,44 +55,24 @@ func TestReceiveVerification_Validation(t *testing.T) {
 	}
 }
 
-func TestReceiveVerification_AcceptsPythonODCS(t *testing.T) {
+func TestReceiveVerification_AcceptsPython(t *testing.T) {
 	deps, store := newDeps(time.Unix(1_700_000_000, 0).UTC())
 	in := validVerification()
-	in.Kind = "python-odcs"
+	in.Kind = "python"
 	in.SourceOverlayURI = ""
 	require.NoError(t, handlers.ReceiveVerification(context.Background(), deps, in))
 
 	got, err := store.GetRelease(in.RunID)
 	require.NoError(t, err)
 	require.NotNil(t, got)
-	assert.Equal(t, release.ManifestKindPythonODCS, got.ManifestKind())
+	assert.Equal(t, release.ManifestKindPython, got.ManifestKind())
 	assert.Empty(t, got.SourceOverlayURI())
 }
 
-// The python kind names a contract.yaml artifact no parser reads: a
-// verification naming it is refused whatever else it carries, with the message
-// that names the kind to use, and stores nothing.
-func TestReceiveVerification_RefusesPython(t *testing.T) {
-	for name, overlay := range map[string]string{"without an overlay": "", "with an overlay": "s3://b/svc/overlay.tar.gz"} {
-		t.Run(name, func(t *testing.T) {
-			deps, store := newDeps(time.Unix(1_700_000_000, 0).UTC())
-			in := validVerification()
-			in.Kind = "python"
-			in.SourceOverlayURI = overlay
-			err := handlers.ReceiveVerification(context.Background(), deps, in)
-			require.ErrorIs(t, err, handlers.ErrInvalidInput)
-			assert.ErrorContains(t, err,
-				`kind "python" is no longer accepted: release the project as "python-odcs", one ODCS contract per node (docs/contracts.md)`)
-			_, getErr := store.GetRelease(in.RunID)
-			assert.Error(t, getErr, "a refused verification stores nothing")
-		})
-	}
-}
-
-func TestReceiveVerification_RefusesASourceOverlayForPythonODCS(t *testing.T) {
+func TestReceiveVerification_RefusesASourceOverlayForPython(t *testing.T) {
 	deps, store := newDeps(time.Unix(1_700_000_000, 0).UTC())
 	in := validVerification()
-	in.Kind = "python-odcs" // validVerification carries a source overlay
+	in.Kind = "python" // validVerification carries a source overlay
 	err := handlers.ReceiveVerification(context.Background(), deps, in)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, handlers.ErrInvalidInput)

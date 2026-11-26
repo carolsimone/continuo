@@ -27,7 +27,7 @@ type ReceiveVerificationInput struct {
 	RunID    string
 	Project  string
 	ImageTag string
-	// Kind is the project's manifest kind: "dbt" or "python-odcs".
+	// Kind is the project's manifest kind: "dbt" or "python".
 	// Required: an absent kind is a caller bug, not a default.
 	Kind string
 	// VerifiesReleaseID names the rejected candidate this run verifies a fix
@@ -36,7 +36,7 @@ type ReceiveVerificationInput struct {
 	// Attempt is which attempt of the release's remediation this run belongs to.
 	Attempt int
 	// SourceOverlayURI is the tarball of proposed source a dbt project's
-	// compile and seed-build Jobs lay over the project. A python-odcs
+	// compile and seed-build Jobs lay over the project. A python
 	// project is verified by its packaged bundle instead and carries none.
 	SourceOverlayURI string
 }
@@ -50,7 +50,7 @@ func (i ReceiveVerificationInput) validate() (release.ManifestKind, error) {
 	case i.ImageTag == "":
 		return "", fmt.Errorf("%w: image_tag is required", ErrInvalidInput)
 	case i.Kind == "":
-		return "", fmt.Errorf("%w: kind is required (dbt or python-odcs)", ErrInvalidInput)
+		return "", fmt.Errorf("%w: kind is required (dbt or python)", ErrInvalidInput)
 	case i.VerifiesReleaseID == "":
 		return "", fmt.Errorf("%w: verifies_release_id is required", ErrInvalidInput)
 	case i.Attempt < 1:
@@ -66,7 +66,7 @@ func (i ReceiveVerificationInput) validate() (release.ManifestKind, error) {
 			as:   ErrInvalidInput,
 		}
 	}
-	if kind.IsPython() && i.SourceOverlayURI != "" {
+	if kind == release.ManifestKindPython && i.SourceOverlayURI != "" {
 		return "", fmt.Errorf("%w: source_overlay_uri is accepted only with kind dbt", ErrInvalidInput)
 	}
 	return kind, nil

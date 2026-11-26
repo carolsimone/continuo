@@ -71,7 +71,7 @@ var pyFixtureRepo embed.FS
 var pyCsvFixtureData []byte
 
 const (
-	// odcsBundleName is the object a python-odcs project's CI uploads for a
+	// odcsBundleName is the object a Python project's CI uploads for a
 	// release, at <project>/<release_id>/odcs-bundle.json.
 	odcsBundleName = "odcs-bundle.json"
 	// pyBundleRuntime and pyBundleContracts are the producer versions a
@@ -81,7 +81,7 @@ const (
 	pyBundleContracts = "0.5.0"
 )
 
-// odcsBundle is the document a python-odcs project's CI uploads, as
+// odcsBundle is the document a Python project's CI uploads, as
 // `continuo-runtime pack` writes it.
 type odcsBundle struct {
 	BundleVersion int               `json:"bundle_version"`
@@ -219,11 +219,11 @@ func pyFixtureBundle(t *testing.T, ctx context.Context, replace map[string]strin
 }
 
 // TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes proves the
-// python release path end to end: a python-odcs release skips the compile
+// python release path end to end: a Python release skips the compile
 // leg, reads every ODCS contract of its bundle, validates every node —
 // including a python-csv node in the same mixed DAG — via a real
 // build_from_columns Job against the published runner image, promotes, swaps
-// the Neo4j topology, and records the python-odcs kind and the bundle pointer
+// the Neo4j topology, and records the python kind and the bundle pointer
 // on service_prod.
 func TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes(t *testing.T) {
 	if testing.Short() {
@@ -259,12 +259,12 @@ func TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes(t *testing.T) 
 	assertValidationNodeOp(t, ctx, validationTap, releaseID, pyAPIUniqueID, model.ValidationOpBuildFromColumns, ".json")
 	assertNoCompileRequested(t, compileTap, releaseID)
 
-	// The promoted pointer records the python-odcs kind and the bundle.
+	// The promoted pointer records the python kind and the bundle.
 	var kind, s3Key string
 	require.NoError(t, clients.releaseDB.QueryRowContext(ctx,
 		`SELECT manifest_kind, manifest_s3_key FROM service_prod WHERE project_name = $1`,
 		pyE2EProject).Scan(&kind, &s3Key))
-	assert.Equal(t, "python-odcs", kind)
+	assert.Equal(t, "python", kind)
 	assert.True(t, strings.HasSuffix(s3Key, "/"+odcsBundleName),
 		"pointer must be the project's bundle, got %s", s3Key)
 	t.Log("✅ python release skipped compile, validated via build_from_columns, promoted, and swapped topology")
@@ -304,7 +304,7 @@ func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *tes
 // promotePythonContractRelease drives pyE2EProject through a full release of
 // the given odcs-bundle.json: it seeds the baseline pointers, uploads the
 // bundle to S3 before the POST (the ordering a domain repository's CI must
-// honour), posts a python-odcs release naming the side-loaded fixture image, checks the
+// honour), posts a Python release naming the side-loaded fixture image, checks the
 // validation request names exactly validationNodes, waits for promotion, and
 // waits for swapNode to appear in the swapped topology, each wait within its
 // ceiling in budget. It returns the release id and a cleanup the caller MUST
@@ -543,7 +543,7 @@ func triggerPythonNodeRun(t *testing.T, ctx context.Context, clients *testClient
 	return runID, resp.ScheduleName
 }
 
-// postPythonRelease submits a python-odcs release through the public API as
+// postPythonRelease submits a Python release through the public API as
 // the CI pipeline of the python fixture repository. When bootstrap is true the
 // release promotes without validation.
 func postPythonRelease(t *testing.T, clients *testClients, project, releaseID, imageTag string, bootstrap bool) {
@@ -553,14 +553,14 @@ func postPythonRelease(t *testing.T, clients *testClients, project, releaseID, i
 		"project":    project,
 		"release_id": releaseID,
 		"image_tag":  imageTag,
-		"kind":       "python-odcs",
+		"kind":       "python",
 		"bootstrap":  bootstrap,
 	})
 	require.Equal(t, http.StatusAccepted, status, "POST /api/v1/releases: expected 202, got %d: %v", status, body)
 }
 
 // putODCSBundle uploads bundle as project's odcs-bundle.json for releaseID,
-// the object a python-odcs release reads, and returns its key.
+// the object a Python release reads, and returns its key.
 func putODCSBundle(t *testing.T, ctx context.Context, clients *testClients, project, releaseID string, bundle []byte) string {
 	t.Helper()
 	key := fmt.Sprintf("%s/%s/%s", project, releaseID, odcsBundleName)

@@ -217,7 +217,7 @@ describe('POST /api/v1/releases', () => {
     it.each([
       ['a dbt project released as an ontology', 'project "core" is released as kind "dbt": a project cannot change between kind "ontology" and a node kind\n'],
       ['the ontology released as a node kind', 'project "company-ontology" is released as kind "ontology": a project cannot change between kind "ontology" and a node kind\n'],
-      ['a python-odcs project', 'project "core" is released as kind "python-odcs": a project cannot change between kind "ontology" and a node kind\n'],
+      ['a python project', 'project "core" is released as kind "python": a project cannot change between kind "ontology" and a node kind\n'],
       ['a name Go has to escape', 'project "co\\"re\\\\x" is released as kind "dbt": a project cannot change between kind "ontology" and a node kind\n'],
     ])('passes the kind-change 409 of %s to a person and to a CI identity as it is', async (_n, text) => {
       for (const p of [operator, ci()]) {

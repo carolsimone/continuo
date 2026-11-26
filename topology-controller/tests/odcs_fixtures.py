@@ -1,5 +1,5 @@
 """The ODCS demo contracts and the producer bundle that carries them, for the tests of the
-`python-odcs` path.
+Python path.
 
 `fixtures/odcs_demo/contracts` holds the three demo contracts of the service-py demo, and
 `python_node` writes the contract of one more node from the few settings a test varies.
@@ -172,7 +172,7 @@ def write_bundle(tmp_path: Path, doc: object, *, declared_project: str = PROJECT
     """Write `doc` as a bundle file and return the ManifestFile that names it."""
     path = tmp_path / name
     path.write_bytes((json.dumps(doc, sort_keys=True, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
-    return ManifestFile(path=str(path), image_tag=IMAGE_TAG, declared_project=declared_project, kind=ManifestKind.PYTHON_ODCS)
+    return ManifestFile(path=str(path), image_tag=IMAGE_TAG, declared_project=declared_project, kind=ManifestKind.PYTHON)
 
 
 def bundle_file(tmp_path: Path, nodes: list[dict], *, declared_project: str = PROJECT, **producer) -> ManifestFile:

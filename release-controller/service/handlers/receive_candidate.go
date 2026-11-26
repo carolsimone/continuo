@@ -69,10 +69,10 @@ type ReceiveCandidateInput struct {
 	CommitSHA  string
 	// Kind selects how this project's artifact is parsed: "dbt"
 	// (manifest.json — the default when absent, so existing CI callers are
-	// untouched), "python-odcs" (odcs-bundle.json, uploaded by the domain
+	// untouched), "python" (odcs-bundle.json, uploaded by the domain
 	// repo's CI before this POST) or "ontology" (ontology.yaml, the install's
 	// company ontology, accepted only while the install's ontology switch is
-	// on). Anything else, the python kind included, is rejected (HTTP 400).
+	// on). Anything else is rejected (HTTP 400).
 	Kind string
 	// Shadow, SourceOverlayURI, and VerifiesReleaseID are fix-verification
 	// concepts and are refused here (HTTP 400): a fix-verification run is

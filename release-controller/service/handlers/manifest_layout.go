@@ -6,7 +6,7 @@ import (
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 )
 
-// odcsBundleName is the object name of a python-odcs project's artifact: the
+// odcsBundleName is the object name of a Python project's artifact: the
 // bundle of its ODCS contracts, one per node.
 const odcsBundleName = "odcs-bundle.json"
 
@@ -17,12 +17,12 @@ const ontologyFileName = "ontology.yaml"
 // CanonicalManifestKey is the single source of the per-release artifact layout
 // convention: s3://<bucket>/<project>/<release_id>/manifest.json for a dbt
 // project (uploaded by the compile leg), .../odcs-bundle.json for a
-// python-odcs project and .../ontology.yaml for the ontology project (both
+// Python project and .../ontology.yaml for the ontology project (both
 // uploaded by the owning repo's CI before POST /releases).
 func CanonicalManifestKey(bucket, project, releaseID string, kind release.ManifestKind) string {
 	name := "manifest.json"
 	switch kind {
-	case release.ManifestKindPythonODCS:
+	case release.ManifestKindPython:
 		name = odcsBundleName
 	case release.ManifestKindOntology:
 		name = ontologyFileName

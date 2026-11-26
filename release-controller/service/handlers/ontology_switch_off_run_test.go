@@ -135,13 +135,13 @@ func TestNodeKindRunsAreUnaffectedByTheOntologySwitchBeingOff(t *testing.T) {
 		assert.Equal(t, pipeline.StatusCompiling, mustGetRelease(t, store, "rDbt").Status())
 	})
 
-	t.Run("a python-odcs run is activated, parsed and promoted", func(t *testing.T) {
+	t.Run("a Python run is activated, parsed and promoted", func(t *testing.T) {
 		deps, store := newDeps(time.Unix(100, 0).UTC())
 		deps.Bucket = "continuo"
 		require.False(t, deps.OntologyEnabled)
 		require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 			Project: "svc-py", ReleaseID: "rPy", ImageTag: "sha-py", Repo: "acme/demo", CommitSHA: "deadbeef",
-			Kind: "python-odcs", Bootstrap: true,
+			Kind: "python", Bootstrap: true,
 		}))
 		require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 		require.Equal(t, pipeline.StatusParsing, mustGetRelease(t, store, "rPy").Status())

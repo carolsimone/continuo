@@ -51,7 +51,7 @@ const (
 // written last. The nodes of
 // a promotion are those whose contract watermark is its seq: every bundle
 // names every node of the release that has a contract (each dbt model, seed
-// and snapshot and each python-odcs node), so the set never waits for the
+// and snapshot and each Python node), so the set never waits for the
 // topology swap, takes a node the release added at once and drops a node the
 // release removed at once. A file's bytes depend only on the node's current
 // contract version, the schema the node is declared in and the publishing

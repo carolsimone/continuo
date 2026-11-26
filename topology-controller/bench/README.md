@@ -77,7 +77,7 @@ stamp names the runtime and library versions, so it changes with them.
 
 - 10 dbt projects, `svc-0` to `svc-9`, with the models split evenly, and one
   python project, `svc-py`, of one node per ten models. `svc-py` is written as
-  its `odcs-bundle.json` (kind `python-odcs`), one ODCS contract per node with
+  its `odcs-bundle.json` (kind `python`), one ODCS contract per node with
   its read queries, valid under continuo-contracts 0.5.0. The bundle's producer
   names `continuo-python-runtime` 0.15.0 and continuo-contracts 0.5.0.
 - Each model has `--columns` columns, a compiled SQL of a CTE over one upstream,

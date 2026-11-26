@@ -6,7 +6,7 @@ import (
 )
 
 // ManifestKey names one project's artifact in a release.requested:v1 payload.
-// Kind is "dbt", "python-odcs" or "ontology" and is always written; a reader
+// Kind is "dbt", "python" or "ontology" and is always written; a reader
 // treats an absent kind as "dbt".
 type ManifestKey struct {
 	Project string `json:"project"`

@@ -21,7 +21,7 @@ import (
 // makes the project a python project, otherwise ManifestKindDbt; a project whose
 // nodes mix python and non-python types is an error (a project is either a
 // dbt project or a python project, never both). A python project is
-// ManifestKindPythonODCS, and its manifest key must name an odcs-bundle.json:
+// ManifestKindPython, and its manifest key must name an odcs-bundle.json:
 // a python project whose key names anything else is an error. Idempotent:
 // re-running upserts the same rows.
 // Returns the count of projects seeded.
@@ -74,7 +74,7 @@ func SeedServiceProd(
 			return 0, fmt.Errorf("project %q has both dbt and python nodes; a project must be a single kind", project)
 		}
 		if entries[project].hasPython && !strings.HasSuffix(existingKeys[project], "/"+odcsBundleName) {
-			return 0, fmt.Errorf("python project %q has manifest key %q, which is not an %s; release it as python-odcs (one ODCS contract per node) and seed from that release",
+			return 0, fmt.Errorf("python project %q has manifest key %q, which is not an %s; release it as kind python (one ODCS contract per node) and seed from that release",
 				project, existingKeys[project], odcsBundleName)
 		}
 	}
@@ -82,7 +82,7 @@ func SeedServiceProd(
 	for _, project := range orderSeen {
 		kind := release.ManifestKindDbt
 		if entries[project].hasPython {
-			kind = release.ManifestKindPythonODCS
+			kind = release.ManifestKindPython
 		}
 		sp := release.NewServiceProd(project, releaseID, existingKeys[project], entries[project].imageTag, kind, now)
 		if err := repo.Upsert(ctx, sp); err != nil {

@@ -31,13 +31,13 @@ class ManifestKind(StrEnum):
     """Which artifact dialect a project's release payload speaks.
 
     Carried per manifest_keys entry on release.requested:v1. Absent means dbt.
-    `dbt` is a project's `manifest.json`, `python-odcs` its ODCS bundle
+    `dbt` is a project's `manifest.json`, `python` its ODCS bundle
     (`odcs-bundle.json`), and `ontology` the install's company ontology
     (`ontology.yaml`), which declares no node: it is read only to resolve and
     check the contracts of the other projects.
     """
     DBT = "dbt"
-    PYTHON_ODCS = "python-odcs"
+    PYTHON = "python"
     ONTOLOGY = "ontology"
 
 
@@ -427,9 +427,9 @@ class ParsedArtifact:
     its compile ran with (None for a python contract).
 
     `failed` holds one FailedNode for each contract that did not pass its
-    checks: a `python-odcs` bundle's in path order, a dbt manifest's (a
+    checks: a Python bundle's in path order, a dbt manifest's (a
     generated contract with issues, or a node whose field the generator cannot
-    read) in manifest order. A `python-odcs` bundle also reports
+    read) in manifest order. A Python bundle also reports
     `python_provenance` (the producer's `continuo_python_runtime` and the
     `image_packages` of the image the project runs), which a dbt manifest
     leaves empty. Each node but a dbt test carries its contract

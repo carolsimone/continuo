@@ -123,8 +123,8 @@ func TestReceiveCandidate_RefusesAKindChangeToOrFromOntology(t *testing.T) {
 		submit string
 	}{
 		"dbt to ontology":            {release.ManifestKindDbt, "ontology"},
-		"python-odcs to ontology":    {release.ManifestKindPythonODCS, "ontology"},
-		"ontology to python-odcs":    {release.ManifestKindOntology, "python-odcs"},
+		"python to ontology":         {release.ManifestKindPython, "ontology"},
+		"ontology to python":         {release.ManifestKindOntology, "python"},
 		"ontology to dbt":            {release.ManifestKindOntology, "dbt"},
 		"ontology to an absent kind": {release.ManifestKindOntology, ""},
 	}
@@ -154,10 +154,10 @@ func TestReceiveCandidate_NodeKindsKeepWorkingNextToTheOntologyRules(t *testing.
 	store.SeedServiceProd(release.NewServiceProd("svc-dbt", "rel-1", "s3://b/svc-dbt/rel-1/manifest.json", "img:1",
 		release.ManifestKindDbt, time.Unix(0, 0)))
 	store.SeedServiceProd(release.NewServiceProd("svc-py", "rel-1", "s3://b/svc-py/rel-1/odcs-bundle.json", "img:1",
-		release.ManifestKindPythonODCS, time.Unix(0, 0)))
+		release.ManifestKindPython, time.Unix(0, 0)))
 
 	require.NoError(t, receiveOntology(deps, "rDbt", "svc-dbt", ""))
-	require.NoError(t, receiveOntology(deps, "rPy", "svc-py", "python-odcs"))
+	require.NoError(t, receiveOntology(deps, "rPy", "svc-py", "python"))
 	require.NoError(t, receiveOntology(deps, "rNew", "svc-new", "dbt"))
 }
 

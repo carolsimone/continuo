@@ -116,24 +116,6 @@ func TestGetReleaseResponse_IncludesManifestKind(t *testing.T) {
 	rel := pipeline.Rehydrate(pipeline.RehydrateInput{
 		ID:           "rKIND",
 		Status:       pipeline.StatusReceived,
-		ManifestKind: release.ManifestKindPythonODCS,
-	})
-
-	body, err := json.Marshal(getReleaseResponse(rel))
-	require.NoError(t, err)
-
-	var decoded map[string]any
-	require.NoError(t, json.Unmarshal(body, &decoded))
-	assert.Equal(t, "python-odcs", decoded["manifest_kind"])
-}
-
-// A release stored with the python kind still reads: rehydration takes the
-// stored kind as it is and never parses it, so the refusal of that kind on new
-// submissions does not reach a stored row.
-func TestGetReleaseResponse_AStoredPythonKindStillReads(t *testing.T) {
-	rel := pipeline.Rehydrate(pipeline.RehydrateInput{
-		ID:           "rOLD",
-		Status:       pipeline.StatusPromoted,
 		ManifestKind: release.ManifestKindPython,
 	})
 
@@ -214,18 +196,18 @@ func TestGetRelease_ReturnsContinuoContracts(t *testing.T) {
 		wantBundle release.ContractBundleRef
 	}{
 		"before the parse": {
-			in: pipeline.RehydrateInput{ID: "rel-1", Status: pipeline.StatusParsing, ManifestKind: release.ManifestKindPythonODCS},
+			in: pipeline.RehydrateInput{ID: "rel-1", Status: pipeline.StatusParsing, ManifestKind: release.ManifestKindPython},
 		},
 		"a promoted release": {
 			in: pipeline.RehydrateInput{
-				ID: "rel-1", Status: pipeline.StatusPromoted, ManifestKind: release.ManifestKindPythonODCS,
+				ID: "rel-1", Status: pipeline.StatusPromoted, ManifestKind: release.ManifestKindPython,
 				CandidateContractBundle: bundle, ContinuoContracts: "0.2.0",
 			},
 			wantLib: "0.2.0", wantBundle: bundle,
 		},
 		"a rejected release": {
 			in: pipeline.RehydrateInput{
-				ID: "rel-1", Status: pipeline.StatusRejected, ManifestKind: release.ManifestKindPythonODCS,
+				ID: "rel-1", Status: pipeline.StatusRejected, ManifestKind: release.ManifestKindPython,
 				ContinuoContracts: "0.2.0",
 			},
 			wantLib: "0.2.0",

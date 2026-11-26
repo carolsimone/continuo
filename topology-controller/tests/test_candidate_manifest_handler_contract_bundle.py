@@ -1,5 +1,5 @@
 """The handler's contract bundle: every release that publishes ok writes one, after the
-code bundle and before the topology artifact, holding the stored form of each python-odcs
+code bundle and before the topology artifact, holding the stored form of each Python
 contract of the release."""
 import gzip
 import hashlib
@@ -106,7 +106,7 @@ def test_a_release_with_no_manifest_writes_an_empty_bundle_too():
     assert publisher.publish_ok.call_args.kwargs["contract_bundle"] == bundle_writer.refs[0]
 
 
-def test_the_bundle_holds_the_stored_form_of_each_python_odcs_contract(tmp_path):
+def test_the_bundle_holds_the_stored_form_of_each_python_contract(tmp_path):
     bundle_writer = RecordingContractBundleWriter()
     source = source_of(bundle_file(tmp_path, demo_nodes()))
 
@@ -158,7 +158,7 @@ def test_a_contract_reads_the_tables_its_queries_name_and_no_system_relation(tmp
         {"property": "reads", "value": ["analytics.daily_transactions"], "vendor": "continuo"}]
 
 
-def test_each_python_odcs_project_has_its_own_provenance(tmp_path):
+def test_each_python_project_has_its_own_provenance(tmp_path):
     bundle_writer = RecordingContractBundleWriter()
     first, second = tmp_path / "first", tmp_path / "second"
     first.mkdir()
@@ -179,7 +179,7 @@ def test_each_python_odcs_project_has_its_own_provenance(tmp_path):
 
 
 @pytest.mark.parametrize("first_project", ["service-a", "service-b"])
-def test_an_id_two_python_odcs_projects_declare_is_left_out_of_the_bundle_and_the_release_publishes(
+def test_an_id_two_python_projects_declare_is_left_out_of_the_bundle_and_the_release_publishes(
     tmp_path, first_project, caplog,
 ):
     """Two projects that each declare analytics.py_daily_kpis are release-controller's

@@ -77,7 +77,7 @@ var pyTimeoutFixture embed.FS
 //	→ `continuo-runtime pack`, run inside the fixture image (built on the
 //	  runtime base image the Helm chart's validation.imageTag defaults to),
 //	  checks both contracts and writes the bundle
-//	→ the bundle is uploaded and a python-odcs release posted, as a domain
+//	→ the bundle is uploaded and a Python release posted, as a domain
 //	  repository's CI does
 //	→ topology-controller publishes timeout_seconds = 5400 on that node
 //	→ the release validates, promotes and run-controller stores it: that node carries

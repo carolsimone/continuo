@@ -82,7 +82,7 @@ _PARSERS: dict[str, ManifestParser] = {
         ),
         empty_detail="manifest contains no model/seed nodes",
     ),
-    ManifestKind.PYTHON_ODCS: ManifestParser(
+    ManifestKind.PYTHON: ManifestParser(
         parse=parse_odcs_bundle,
         permanent_errors=(InvalidOdcsBundleError,),
         empty_detail="bundle declares no nodes",
