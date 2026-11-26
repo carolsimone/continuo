@@ -47,11 +47,14 @@ func releaseCheckResponse(r *releasecheck.Check) map[string]any {
 	return body
 }
 
+// handleGetReleaseCheck answers GET /release-checks/{id} with a fix's release
+// check. A candidate release's check is read at GET /releases/{id}, so an id
+// of a candidate's check answers 404 here.
 func (s *Server) handleGetReleaseCheck(w http.ResponseWriter, r *http.Request) {
 	u := s.deps.NewUoW()
 	check, err := u.ReleaseCheckRepo().Get(r.Context(), r.PathValue("id"))
 	if err != nil || check == nil || check.Kind() != releasecheck.KindFix {
-		http.Error(w, "release check not found", http.StatusNotFound)
+		http.Error(w, "no fix's release check has this id (a candidate release's check is at GET /releases/{id})", http.StatusNotFound)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

@@ -286,7 +286,7 @@ func (p *Proposal) NormalizeSingleFileView() {
 // ReleaseCheckID defaults to the first release check's id, and the
 // single-file scalars follow edits[0]. Every writer calls it before the
 // aggregate is persisted or turned into an event, so the row and the event
-// cannot disagree about which node or run represents the attempt.
+// cannot disagree about which node or release check represents the attempt.
 func (p *Proposal) NormalizeRepresentativeViews() {
 	sort.Strings(p.ResolvedNodeIDs)
 	if p.NodeID == "" && len(p.ResolvedNodeIDs) > 0 {

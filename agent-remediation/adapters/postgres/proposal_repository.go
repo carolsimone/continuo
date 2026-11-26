@@ -232,7 +232,7 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
 		ON CONFLICT (release_id, attempt) DO UPDATE SET
 			status                 = EXCLUDED.status,
-			release_check_id    = EXCLUDED.release_check_id,
+			release_check_id       = EXCLUDED.release_check_id,
 			confidence             = EXCLUDED.confidence,
 			rationale              = EXCLUDED.rationale,
 			proposed_sql_uri       = EXCLUDED.proposed_sql_uri,

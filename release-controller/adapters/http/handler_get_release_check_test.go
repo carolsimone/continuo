@@ -51,6 +51,7 @@ func TestHandleGetReleaseCheck_CandidateIDAnswers404(t *testing.T) {
 	newTestServer(deps).Routes().ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Contains(t, rec.Body.String(), "GET /releases/{id}", "the 404 says where a candidate release's check is read")
 }
 
 func TestHandleGetReleaseCheck_UnknownIDAnswers404(t *testing.T) {
