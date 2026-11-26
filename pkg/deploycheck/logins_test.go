@@ -115,22 +115,22 @@ func TestEveryPostgresDatabaseHasItsLogin(t *testing.T) {
 	assertSameSet(t, "_helpers.tpl continuo.postgres.componentDatabases", mapped, dbs)
 
 	for _, db := range dbs {
-		var svc string
-		for _, s := range values.Components {
-			if s.Env["POSTGRES_DB"] == "continuo_"+db {
-				svc = s.Name
+		var component string
+		for _, c := range values.Components {
+			if c.Env["POSTGRES_DB"] == "continuo_"+db {
+				component = c.Name
 			}
 		}
-		if svc == "" {
+		if component == "" {
 			t.Errorf("continuo_%s: no component in values.yaml keeps it (env.POSTGRES_DB)", db)
 			continue
 		}
-		if componentDatabases[svc] != db {
-			t.Errorf("continuo_%s: _helpers.tpl continuo.postgres.componentDatabases maps %s to %q", db, svc, componentDatabases[svc])
+		if componentDatabases[component] != db {
+			t.Errorf("continuo_%s: _helpers.tpl continuo.postgres.componentDatabases maps %s to %q", db, component, componentDatabases[component])
 		}
-		login := values.Credentials.Postgres[svc].Username
+		login := values.Credentials.Postgres[component].Username
 		if login == "" {
-			t.Errorf("continuo_%s: credentials.postgres.%s names no login", db, svc)
+			t.Errorf("continuo_%s: credentials.postgres.%s names no login", db, component)
 			continue
 		}
 		if !strings.Contains(initScript, "CREATE ROLE "+login+" LOGIN") {

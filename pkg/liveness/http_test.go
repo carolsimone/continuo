@@ -60,8 +60,8 @@ func TestHandler_ServiceUnavailableWhenFailures(t *testing.T) {
 		t.Fatalf("expected 2 per-failure Warn logs, got: %q", out)
 	}
 	for _, name := range []string{"redis", "consumer_a_heartbeat"} {
-		if !strings.Contains(out, name) {
-			t.Fatalf("expected failing check %q to be logged, got: %q", name, out)
+		if !strings.Contains(out, "check="+name) {
+			t.Fatalf("expected failing check %q to be logged under the key check, got: %q", name, out)
 		}
 	}
 }

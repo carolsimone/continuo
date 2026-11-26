@@ -61,6 +61,9 @@ func TestReadiness_ChecksNeo4j(t *testing.T) {
 	if ready.Code != http.StatusServiceUnavailable {
 		t.Fatalf("/ready with a failing neo4j probe = %d, want 503", ready.Code)
 	}
+	if got, want := ready.Body.String(), "NOT READY: 1 check(s) unhealthy"; got != want {
+		t.Fatalf("/ready body = %q, want %q", got, want)
+	}
 
 	live := httptest.NewRecorder()
 	h.server.Handler.ServeHTTP(live, httptest.NewRequest(http.MethodGet, "/livez", nil))
