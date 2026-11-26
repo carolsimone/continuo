@@ -19,13 +19,13 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 )
 
-// pythonComponentNameRe matches topology-controller's SERVICE_NAME assignment.
-var pythonComponentNameRe = regexp.MustCompile(`(?m)^SERVICE_NAME\s*=\s*"([^"]+)"\s*$`)
+// pythonComponentNameRe matches topology-controller's COMPONENT_NAME assignment.
+var pythonComponentNameRe = regexp.MustCompile(`(?m)^COMPONENT_NAME\s*=\s*"([^"]+)"\s*$`)
 
 // TestDeadLetterProducersMatchTheComponentNames pins the producers of
 // consumer.dead_letter:v1 in contract.yaml to the component names the consumers
 // stamp on the dead letters they write: every Go component's config.ComponentName
-// and topology-controller's SERVICE_NAME. A component that runs stream consumers
+// and topology-controller's COMPONENT_NAME. A component that runs stream consumers
 // declares that constant (TestMainsThatRunConsumersNameTheirComponent), so the
 // two sets are equal.
 func TestDeadLetterProducersMatchTheComponentNames(t *testing.T) {
@@ -94,7 +94,7 @@ func goComponentNames(t *testing.T, root string) map[string]string {
 	return names
 }
 
-// pythonComponentName returns the SERVICE_NAME string assigned in path.
+// pythonComponentName returns the COMPONENT_NAME string assigned in path.
 func pythonComponentName(t *testing.T, path string) string {
 	t.Helper()
 	src, err := os.ReadFile(path) //nolint:gosec // G304: path is built from the repo root and fixed segments
@@ -103,7 +103,7 @@ func pythonComponentName(t *testing.T, path string) string {
 	}
 	m := pythonComponentNameRe.FindSubmatch(src)
 	if m == nil {
-		t.Fatalf("%s: no SERVICE_NAME = \"...\" assignment", path)
+		t.Fatalf("%s: no COMPONENT_NAME = \"...\" assignment", path)
 	}
 	return string(m[1])
 }

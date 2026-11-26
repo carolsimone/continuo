@@ -17,7 +17,7 @@ function normalizeKey(raw: string): string {
 }
 
 // extractPrUrl extracts the first https://... URL from a gRPC error message,
-// which the remediation service embeds when a PR already exists.
+// which agent-remediation embeds when a PR already exists.
 function extractPrUrl(message: string): string | undefined {
   const m = message.match(/https?:\/\/\S+/);
   return m ? m[0] : undefined;
@@ -55,7 +55,7 @@ function changedOnBaseBranchText(err: FileChangedOnBaseBranchError): string {
 // than attempted. Any other failure is logged and swallowed rather than
 // propagated: this function runs from inside a catch block with no try of
 // its own around it, so a rejection here would otherwise surface as an
-// unhandled promise rejection and, under this service's default Node
+// unhandled promise rejection and, under this component's default Node
 // settings, crash the process.
 async function safeFailPullRequest(
   remediation: RemediationClient,
@@ -155,7 +155,7 @@ export function createRemediationRouter(
         err?.code ?? 'unknown',
         err?.message ?? String(err),
       );
-      res.status(502).json({ error: 'remediation service request failed' });
+      res.status(502).json({ error: 'agent-remediation request failed' });
     }
   });
 
@@ -174,7 +174,7 @@ export function createRemediationRouter(
         err?.code ?? 'unknown',
         err?.message ?? String(err),
       );
-      res.status(502).json({ error: 'remediation service request failed' });
+      res.status(502).json({ error: 'agent-remediation request failed' });
     }
   });
 
@@ -229,7 +229,7 @@ export function createRemediationRouter(
         err?.code ?? 'unknown',
         err?.message ?? String(err),
       );
-      return { ok: false, error: { project, error: 'remediation service request failed' } };
+      return { ok: false, error: { project, error: 'agent-remediation request failed' } };
     }
 
     // claimed_at is the pr_claimed_at value BeginPullRequest's CAS persisted
@@ -485,7 +485,7 @@ export function createRemediationRouter(
         err?.code ?? 'unknown',
         err?.message ?? String(err),
       );
-      return res.status(502).json({ error: 'remediation service request failed' });
+      return res.status(502).json({ error: 'agent-remediation request failed' });
     }
 
     // pr_projects is always non-empty on the wire — [""] for a legacy,

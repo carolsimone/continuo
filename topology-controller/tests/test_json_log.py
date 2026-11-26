@@ -25,7 +25,7 @@ def test_a_line_carries_time_level_logger_message_and_every_extra_field():
     assert (line["release_id"], line["count"]) == ("rel-1", 2)
 
 
-def test_warning_and_critical_take_the_go_services_level_names():
+def test_warning_and_critical_take_the_go_components_level_names():
     assert _line(_record(at_level=logging.WARNING))["level"] == "WARN"
     assert _line(_record(at_level=logging.CRITICAL))["level"] == "ERROR"
 

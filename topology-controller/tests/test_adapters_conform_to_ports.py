@@ -2,7 +2,7 @@
 
 The adapters implement the service.ports protocols structurally — they do not
 inherit them — so nothing forces them to stay in sync as either side changes.
-There is no static type checker in this service's CI, so a renamed adapter
+There is no static type checker in this component's CI, so a renamed adapter
 method would otherwise only surface at runtime. These runtime_checkable
 issubclass checks are structural (they inspect the methods the port declares),
 so they fail the moment an adapter stops providing the port's surface.

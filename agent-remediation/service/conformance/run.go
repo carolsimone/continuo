@@ -58,7 +58,7 @@ func (u hookedUoW) Commit() error {
 	return nil
 }
 
-// start builds the world of a scenario and a runner over it, as the service
+// start builds the world of a scenario and a runner over it, as the component
 // wires one: the suite's contract locator, inspector and model reference
 // finder, the world's other
 // ports, and the suite's files. Every remediation the runner accepts follows

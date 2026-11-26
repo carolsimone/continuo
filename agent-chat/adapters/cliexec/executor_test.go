@@ -109,7 +109,7 @@ func TestExecutor_NilEnvStillInheritsParentWhenStampingActor(t *testing.T) {
 	// A nil base env means "inherit the parent environment". Stamping the actor
 	// must NOT break that inheritance (regression: appending to nil would replace
 	// the whole env with a single CONTINUO_ACTOR entry, stripping PATH and the
-	// inherited CONTINUO_* service config).
+	// inherited CONTINUO_* component config).
 	t.Setenv("CONTINUO_TEST_MARKER", "present")
 	e := NewExecutor(testCatalog(t), actorAndMarkerCLI(t), nil, 5*time.Second, 4096,
 		slog.New(slog.NewTextHandler(os.Stderr, nil)))

@@ -30,7 +30,7 @@ func TestRebaseFromFailedRun(t *testing.T) {
 
 	clients := setupClients(t, ctx)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 
 	defer cleanupTestData(t, ctx, clients, failureTestScheduleName)
@@ -171,7 +171,7 @@ func TestRebaseAllInheritedFinalizes(t *testing.T) {
 
 	clients := setupClients(t, ctx)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 
 	defer cleanupTestData(t, ctx, clients, failureTestScheduleName)

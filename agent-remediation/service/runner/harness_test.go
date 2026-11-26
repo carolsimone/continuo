@@ -130,7 +130,7 @@ func (noUpstream) UpstreamChanges(context.Context, string) ([]prompt.UpstreamCha
 	return nil, nil
 }
 
-// contractFiles searches and reads a checkout's contract yaml as the service
+// contractFiles searches and reads a checkout's contract yaml as the component
 // does.
 var contractFiles = repofs.NewLocator(discard)
 

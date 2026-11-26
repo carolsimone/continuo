@@ -43,7 +43,7 @@ class HealthServer(ThreadingHTTPServer):
 
     Both `/health` and `/ready` report the same check here: is the consumer
     thread alive, and has it completed a loop pass recently? This differs
-    deliberately from the Go services' split model (a liveness endpoint that
+    deliberately from the Go components' split model (a liveness endpoint that
     is hardcoded 200, plus a heartbeat/registry-aware readiness endpoint):
     topology-controller serves no application traffic through this port, so
     there's no reason to keep liveness blind to a stuck consumer. The whole

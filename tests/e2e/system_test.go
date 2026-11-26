@@ -31,7 +31,7 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 
 	// Verify prerequisites
 	t.Log("Verifying prerequisites...")
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 
 	// Cleanup any existing data
@@ -102,7 +102,7 @@ func startScheduleRun(
 		RequestId:    uuid.NewString(),
 		ScheduleName: testScheduleName,
 	})
-	require.NoError(t, err, "Failed to start a run of the schedule via run-controller service")
+	require.NoError(t, err, "Failed to start a run of the schedule via run-controller")
 
 	t.Logf("Started a run of schedule %q: run_id=%s", testScheduleName, resp.GetRunId())
 	return resp.GetRunId()

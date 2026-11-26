@@ -83,13 +83,13 @@ class FailureStage(StrEnum):
 
 CONTRACT_FAILURE_STAGES: Final = tuple(stage.value for stage in FailureStage)
 
-# The reasons this service counts besides the contracts library's own: a manifest entry
+# The reasons this component counts besides the contracts library's own: a manifest entry
 # the generation cannot read, and a column that a seed's CSV header and its contract do
 # not both have.
 REASON_MANIFEST_SHAPE: Final = "manifest_shape"
 REASON_SEED_HEADER: Final = "seed_header"
 
-# The reasons of the library's vocabulary that this service reports itself, for a contract
+# The reasons of the library's vocabulary that this component reports itself, for a contract
 # the strict YAML reader refuses, whose id is not its node's, or that a later step refuses
 # after every check accepted it.
 REASON_STRICT_YAML: Final = "strict_yaml"
@@ -97,7 +97,7 @@ REASON_IDENTITY: Final = "identity"
 REASON_VALUE: Final = "value"
 
 # The reasons a contract failure is counted under: every reason the contracts
-# library's validation names, the two this service adds, and every rule of the
+# library's validation names, the two this component adds, and every rule of the
 # library's ontology checks.
 CONTRACT_FAILURE_REASONS: Final = (*REASONS, REASON_MANIFEST_SHAPE, REASON_SEED_HEADER, *RULES)
 
@@ -263,7 +263,7 @@ class ReleaseTimings:
         """Count one contract failure under its stage (one of CONTRACT_FAILURE_STAGES)
         and reason (one of CONTRACT_FAILURE_REASONS). Raises ValueError for another
         stage or reason, so every counted failure lands on a series exported from boot.
-        A label no code of this service writes is a defect, and it is not hidden: the
+        A label no code of this component writes is a defect, and it is not hidden: the
         release is retried, then dead-lettered."""
         if stage not in CONTRACT_FAILURE_STAGES:
             raise ValueError(f"{stage!r} is not a contract failure stage, expected one of {CONTRACT_FAILURE_STAGES}")

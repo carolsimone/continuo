@@ -111,7 +111,7 @@ describe('GET /api/schedules', () => {
 describe('GET /api/schedules/:name/runs', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
-  it('lists completed runs from the run-controller service', async () => {
+  it('lists completed runs from run-controller', async () => {
     mockListRuns.mockImplementation((req: any, cb: any) => {
       expect(req).toEqual({ schedule_name: 'daily', page_size: 10, page_offset: 0 });
       cb(null, { runs: [

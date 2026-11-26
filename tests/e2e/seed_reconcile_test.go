@@ -32,7 +32,7 @@ func TestSeedReconcile_LoadsAChangedSeedOnce(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 	clients := setupClients(t, ctx)
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 
 	// run-controller records the seeds its first promotion applies as already loaded.

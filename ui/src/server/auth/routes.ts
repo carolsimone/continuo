@@ -37,7 +37,7 @@ export function createAuthRouter(deps: {
   // The login/callback handlers do crypto and an upstream OIDC round-trip per
   // request, so cap them per client IP. The limit is far above any human flow
   // (a login uses 2-3 requests) but stops a single source hammering the IdP.
-  // xForwardedForHeader validation is off because the service runs behind an
+  // xForwardedForHeader validation is off because the ui runs behind an
   // ingress that always sets the header while Express has no trust proxy.
   router.use(
     rateLimit({

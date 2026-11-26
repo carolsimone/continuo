@@ -43,113 +43,28 @@ names:
   - pattern: 'ServiceName'
     use: ComponentName
     paths: ["*/config"]
+  # topology-controller names itself COMPONENT_NAME (retired with service_name
+  # below) and its directory COMPONENT_ROOT; the e2e suite checks every
+  # component's health.
+  - pattern: 'SERVICE_ROOT|_SERVICE_DIR'
+    use: COMPONENT_ROOT or _COMPONENT_DIR
+  - pattern: 'verifyServicesHealthy'
+    use: verifyComponentsHealthy
+  - pattern: 'maintenanceServices'
+    use: maintenanceComponents
+  - pattern: 'logServiceTails'
+    use: logComponentTails
+  - pattern: 'TestMetrics_ServicesServePrometheusMetrics'
+    use: TestMetrics_ComponentsServePrometheusMetrics
+  - pattern: 'TestVendored\w+ProtoMatchesService'
+    use: TestVendored...ProtoMatchesComponent
   # Project group: the code a team releases as one unit is a project.
-  # Bare service_name and ServiceName also name topology-controller's
-  # SERVICE_NAME (its component name), gRPC's ServiceDesc.ServiceName and a
-  # StatefulSet's serviceName, so those two are retired only where they meant
-  # a project.
+  # Bare ServiceName also names gRPC's ServiceDesc.ServiceName and a
+  # StatefulSet's serviceName, so it is retired only where it meant a project.
   - pattern: 'service_names|serviceNames|ServiceNames|SERVICE_NAMES'
     use: project names
   - pattern: 'service_name|SERVICE_NAME'
-    use: project_name
-    paths:
-      - ".dockerignore"
-      - ".github"
-      - ".gitignore"
-      - ".gitleaks.toml"
-      - ".golangci.yml"
-      - ".trivyignore.yaml"
-      - "AGENTS.md"
-      - "CODE_OF_CONDUCT.md"
-      - "CONTRIBUTING.md"
-      - "DCO"
-      - "Dockerfile.base"
-      - "GLOSSARY-MAP.md"
-      - "GLOSSARY.md"
-      - "LICENSE"
-      - "Makefile"
-      - "NOTICE"
-      - "README.md"
-      - "SECURITY.md"
-      - "agent-chat"
-      - "agent-remediation"
-      - "catalog"
-      - "cli"
-      - "compose"
-      - "config"
-      - "db"
-      - "dbt"
-      - "dead-letter-controller"
-      - "deploy"
-      - "docker-compose.ci.yml"
-      - "docker-compose.yml"
-      - "docs"
-      - "egress-proxy"
-      - "execution-controller"
-      - "go.work"
-      - "go.work.sum"
-      - "mcp-arch.yaml"
-      - "pkg/codebundle"
-      - "pkg/config"
-      - "pkg/contractbundle"
-      - "pkg/db"
-      - "pkg/deploycheck"
-      - "pkg/domain"
-      - "pkg/events"
-      - "pkg/identity"
-      - "pkg/lifecycle"
-      - "pkg/liveness"
-      - "pkg/maintenance"
-      - "pkg/messageprocessing"
-      - "pkg/metrics"
-      - "pkg/num"
-      - "pkg/objectstore"
-      - "pkg/outbox"
-      - "pkg/parsecache"
-      - "pkg/redis"
-      - "pkg/retention"
-      - "pkg/sanitize"
-      - "pkg/seedreload"
-      - "pkg/startupwait"
-      - "pkg/testdeps"
-      - "pkg/testmigrations"
-      - "pkg/topologyartifact"
-      - "pkg/validationresult"
-      - "pkg/warehouse"
-      - "release-controller"
-      - "remediation"
-      - "run-controller"
-      - "s3-sidecar"
-      - "scripts"
-      - "tests"
-      - "topology-controller/bench"
-      - "topology-controller/domain"
-      - "topology-controller/service"
-      - "topology-controller/tests/fingerprint_fixtures.py"
-      - "topology-controller/tests/fixtures"
-      - "topology-controller/tests/test_candidate_artifacts.py"
-      - "topology-controller/tests/test_candidate_manifest_handler.py"
-      - "topology-controller/tests/test_candidate_manifest_handler_contract_bundle.py"
-      - "topology-controller/tests/test_candidate_manifest_handler_external.py"
-      - "topology-controller/tests/test_code_bundle.py"
-      - "topology-controller/tests/test_code_bundle_contract.py"
-      - "topology-controller/tests/test_contract_bundle.py"
-      - "topology-controller/tests/test_external.py"
-      - "topology-controller/tests/test_model.py"
-      - "topology-controller/tests/test_odcs_bundle_parser.py"
-      - "topology-controller/tests/test_ontology_stage.py"
-      - "topology-controller/tests/test_parser.py"
-      - "topology-controller/tests/test_parser_dbt_contracts.py"
-      - "topology-controller/tests/test_parser_tests.py"
-      - "topology-controller/tests/test_python_node_builder.py"
-      - "topology-controller/tests/test_release_timings.py"
-      - "topology-controller/tests/test_resolver.py"
-      - "topology-controller/tests/test_rewriter.py"
-      - "topology-controller/tests/test_store_with_ontology.py"
-      - "topology-controller/tests/test_table_refs.py"
-      - "topology-controller/tests/test_topology_artifact.py"
-      - "topology-controller/tests/test_unique_id.py"
-      - "ui"
+    use: project_name, or COMPONENT_NAME for a component's name
   - pattern: 'serviceName|ServiceName'
     use: projectName
     paths:

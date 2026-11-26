@@ -181,7 +181,7 @@ func TestTriggerNode_EmptySourceRunArgExits2WithoutCalling(t *testing.T) {
 		var env map[string]output.CLIError
 		require.NoError(t, json.Unmarshal([]byte(stdout), &env))
 		assert.Equal(t, output.CodeUsage, env["error"].Code)
-		assert.Equal(t, "", fake.gotTrigProject, "the run-controller service must not be called")
+		assert.Equal(t, "", fake.gotTrigProject, "run-controller must not be called")
 	}
 }
 

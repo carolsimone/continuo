@@ -15,8 +15,8 @@ from typing import TextIO
 # through `extra=` and is printed as a field of the line.
 _RESERVED = frozenset(vars(logging.LogRecord("", 0, "", 0, "", None, None))) | {"message", "asctime"}
 
-# The Go services print `WARN` and `ERROR`; the two levels Python names
-# differently take those names, so one query reads the logs of every service.
+# The Go components print `WARN` and `ERROR`; the two levels Python names
+# differently take those names, so one query reads the logs of every component.
 _LEVEL_NAMES = {"WARNING": "WARN", "CRITICAL": "ERROR"}
 
 

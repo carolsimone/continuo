@@ -16,21 +16,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// verifyServicesHealthy checks all service health endpoints
-func verifyServicesHealthy(t *testing.T) {
-	dockerComposeServices := []string{
+// verifyComponentsHealthy checks all component health endpoints
+func verifyComponentsHealthy(t *testing.T) {
+	composeComponents := []string{
 		"http://run-controller:8082/health",
 		"http://catalog:8087/health",
 	}
 
-	for _, url := range dockerComposeServices {
-		resp, err := http.Get(url) //nolint:gosec // url is one of the fixed dockerComposeServices literals above, not external input
-		require.NoError(t, err, "Failed to reach service: %s", url)
-		require.Equal(t, http.StatusOK, resp.StatusCode, "Service unhealthy: %s", url)
+	for _, url := range composeComponents {
+		resp, err := http.Get(url) //nolint:gosec // url is one of the fixed composeComponents literals above, not external input
+		require.NoError(t, err, "Failed to reach component: %s", url)
+		require.Equal(t, http.StatusOK, resp.StatusCode, "Component unhealthy: %s", url)
 		_ = resp.Body.Close()
 	}
 
-	// execution-controller, the one service that runs in the kind cluster
+	// execution-controller, the one component that runs in the kind cluster
 	kindDeployments := map[string]int{"execution-controller": 8084}
 
 	for deployment, port := range kindDeployments {
@@ -42,7 +42,7 @@ func verifyServicesHealthy(t *testing.T) {
 		// loop owns the port-forward lifecycle so each retry is clean.
 		portForwardHealthy(t, deployment, port)
 	}
-	t.Log("✅ All services healthy (docker-compose + K8s)")
+	t.Log("✅ All components healthy (docker-compose + K8s)")
 }
 
 // verifyK8sAvailable checks if kubectl can reach the cluster
@@ -68,7 +68,7 @@ func portForwardHealthy(t *testing.T, deployment string, port int) {
 
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		pf := exec.Command("kubectl", "port-forward", //nolint:gosec // deployment/port come from the fixed kindDeployments map in verifyServicesHealthy, not external input
+		pf := exec.Command("kubectl", "port-forward", //nolint:gosec // deployment/port come from the fixed kindDeployments map in verifyComponentsHealthy, not external input
 			fmt.Sprintf("deployment/%s", deployment),
 			fmt.Sprintf("%d:%d", port, port),
 			"-n", "default",
@@ -121,7 +121,7 @@ func portForwardHealthy(t *testing.T, deployment string, port int) {
 	}
 
 	require.FailNow(t,
-		fmt.Sprintf("K8s service unhealthy after port-forward: %s (after %d attempts; last error: %v)", deployment, maxAttempts, lastErr))
+		fmt.Sprintf("K8s component unhealthy after port-forward: %s (after %d attempts; last error: %v)", deployment, maxAttempts, lastErr))
 }
 
 // pollUntil polls a condition until it succeeds or times out.
@@ -405,7 +405,7 @@ func waitForAttemptJob(t *testing.T, ctx context.Context, taskID uuid.UUID, n in
 // runs with: how long a Job's pod may take, after the Job is created, to start
 // a container. It is the Deployment's JOB_START_TIMEOUT_SECONDS
 // (tests/e2e/k8s/execution-controller-deployment.yaml); a Deployment without it
-// fails the test rather than leave it to wait out the service's default.
+// fails the test rather than leave it to wait out the component's default.
 func jobStartTimeout(t *testing.T, ctx context.Context) time.Duration {
 	t.Helper()
 	out, err := exec.CommandContext(ctx, "kubectl", "get", "deployment", "execution-controller",

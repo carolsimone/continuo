@@ -17,7 +17,7 @@ The `Dockerfile` builds a small image with the binary at `/usr/local/bin/continu
 
 ## Connect
 
-The CLI calls four services over gRPC. On a local install, forward them to the default ports:
+The CLI calls four components over gRPC. On a local install, forward them to the default ports:
 
 ```bash
 kubectl -n continuo port-forward svc/run-controller 50051:50051 &
@@ -59,14 +59,14 @@ A command that works prints JSON on stdout and exits 0. A command that fails pri
 | 2 | `usage` | Wrong arguments or flags. Fix the command |
 | 3 | `not_found` | The schedule, run, node or id does not exist |
 | 4 | `conflict` | The request clashes with the current state, for example the schedule already has an active run |
-| 5 | `unavailable` | A service is unreachable or too slow |
+| 5 | `unavailable` | A component is unreachable or too slow |
 | 6 | `internal` | A bug or an unexpected server error |
 | 7 | `maintenance` | continuo is in maintenance mode and refuses new work |
 | 1 | | Any other error |
 
 ## Request ids
 
-`schedule trigger`, `test`, `build` and `cancel`, `node trigger`, `test`, `build` and `full-refresh`, `run rerun` and `run rebase` send a request id: `CONTINUO_REQUEST_ID` (it must be a UUID) or a fresh one. Sending the same id with the same arguments again returns the first run and starts nothing, so a lost answer is safe to retry. The same id with other arguments is a `conflict`. The CLI tries these commands up to three times in all when the service is unavailable, with the same id.
+`schedule trigger`, `test`, `build` and `cancel`, `node trigger`, `test`, `build` and `full-refresh`, `run rerun` and `run rebase` send a request id: `CONTINUO_REQUEST_ID` (it must be a UUID) or a fresh one. Sending the same id with the same arguments again returns the first run and starts nothing, so a lost answer is safe to retry. The same id with other arguments is a `conflict`. The CLI tries these commands up to three times in all when run-controller is unavailable, with the same id.
 
 The other commands that change state send no request id.
 
@@ -135,7 +135,7 @@ A node is one model, seed or python script. Node commands take it as `<project> 
 
 ### Failures and dead letters
 
-A dead letter is a message a service gave up on.
+A dead letter is a message a component gave up on.
 
 | Command | What it does | Changes state |
 |---|---|:--:|

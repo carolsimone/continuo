@@ -24,7 +24,7 @@ const (
 	// releaseControllerContainer is the compose container release-controller runs in.
 	releaseControllerContainer = "release-controller"
 	// announceTopologyBin is the announce-topology command the release-controller
-	// dev image builds next to the service binary (release-controller/Dockerfile.dev).
+	// dev image builds next to the component binary (release-controller/Dockerfile.dev).
 	announceTopologyBin = "/app/release-controller/bin/announce-topology"
 )
 
@@ -40,7 +40,7 @@ type announceResult struct {
 // release-controller's announce-topology: release-controller writes the artifact
 // to MinIO, takes the next promotion seq and queues release.promoted:v2, which
 // catalog applies as it applies a promoted release. The command runs
-// inside the release-controller container, which carries the service's
+// inside the release-controller container, which carries the component's
 // Postgres and S3 settings.
 func announceTopology(t *testing.T, ctx context.Context, releaseID string, nodes []topologyartifact.Node) announceResult {
 	t.Helper()

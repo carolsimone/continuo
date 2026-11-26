@@ -17,8 +17,8 @@ pins the chart's engines to the code's.
 import re
 from pathlib import Path
 
-SERVICE_ROOT = Path(__file__).parent.parent
-DOCKERFILE_PROD = SERVICE_ROOT / "Dockerfile.prod"
+COMPONENT_ROOT = Path(__file__).parent.parent
+DOCKERFILE_PROD = COMPONENT_ROOT / "Dockerfile.prod"
 
 # A pinned dependency in a pip/uv install line, e.g. `sqlglot==29.0.1`.
 # Ignores base-image tags (`FROM python:3.14-slim`), which are Docker's own

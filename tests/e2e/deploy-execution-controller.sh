@@ -61,7 +61,7 @@ kubectl rollout restart deployment/execution-controller -n default || {
 # pods Ready). `rollout status` is stricter than `wait --for=condition=available`,
 # which only requires minReplicas Ready and can return while old pods are still
 # terminating — leaving a window where `kubectl port-forward deployment/...`
-# from the e2e suite can attach to a dying pod, producing a "K8s service
+# from the e2e suite can attach to a dying pod, producing a "K8s component
 # unhealthy after port-forward" failure on the first test that runs.
 log_info "Waiting for rollout to complete (timeout: 120s)..."
 

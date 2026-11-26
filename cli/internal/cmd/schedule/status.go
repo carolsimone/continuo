@@ -68,7 +68,7 @@ Output (stdout, JSON):
 Errors:
   not_found  (exit 3)  no schedule with that name
   usage      (exit 2)  wrong number of arguments
-  unavailable(exit 5)  the run-controller service is unreachable
+  unavailable(exit 5)  run-controller is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo schedule status daily-revenue",
 		Annotations: map[string]string{

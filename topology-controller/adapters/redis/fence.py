@@ -1,4 +1,4 @@
-"""The Redis permission fence: in perService mode a service refuses to start
+"""The Redis permission fence: in perService mode a component refuses to start
 when its Redis login can read keys outside its own.
 
 The fence runs XINFO GROUPS on PERMISSION_PROBE_KEY. Every generated Redis rule

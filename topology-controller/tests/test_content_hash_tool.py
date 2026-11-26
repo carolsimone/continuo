@@ -1,7 +1,7 @@
 """The e2e tests ask topology-controller's own parser for the content hash of each node, by running
 `tools/content_hash.py` in its container. It calls the parser the way a release does, so a change to
 that call breaks it where only the e2e run would show: this runs the script, as the e2e does, on the
-manifests the service's own tests use."""
+manifests the component's own tests use."""
 import json
 import os
 import shutil
@@ -13,15 +13,15 @@ import pytest
 
 from tests.fakes import parse_manifest as parse_for_test
 
-SERVICE_ROOT = Path(__file__).parent.parent
+COMPONENT_ROOT = Path(__file__).parent.parent
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def _run(directory: Path) -> dict[str, str]:
-    environment = {**os.environ, "PYTHONPATH": os.pathsep.join([str(SERVICE_ROOT), str(SERVICE_ROOT / "proto")])}
+    environment = {**os.environ, "PYTHONPATH": os.pathsep.join([str(COMPONENT_ROOT), str(COMPONENT_ROOT / "proto")])}
     done = subprocess.run(
-        [sys.executable, str(SERVICE_ROOT / "tools" / "content_hash.py"), str(directory)],
-        cwd=SERVICE_ROOT, env=environment, capture_output=True, text=True, check=False,
+        [sys.executable, str(COMPONENT_ROOT / "tools" / "content_hash.py"), str(directory)],
+        cwd=COMPONENT_ROOT, env=environment, capture_output=True, text=True, check=False,
     )
     assert done.returncode == 0, done.stderr
     return json.loads(done.stdout)

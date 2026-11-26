@@ -1,5 +1,5 @@
 // Package packaging implements ports.ContractPackager as a thin subprocess
-// wrapper over the continuo-runtime CLI installed in the service image.
+// wrapper over the continuo-runtime CLI installed in the component image.
 package packaging
 
 import (

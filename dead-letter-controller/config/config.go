@@ -44,7 +44,7 @@ type Config struct {
 	// still needs is quarantined as a dead letter and then trimmed (STREAM_RETENTION).
 	StreamRetention time.Duration
 	// ConfigErr is the first trim setting that could not be parsed. Validate
-	// returns it, so the service refuses to start rather than fall back to a default.
+	// returns it, so the component refuses to start rather than fall back to a default.
 	ConfigErr error
 }
 
@@ -71,7 +71,7 @@ func Load(v *pkgconfig.Validator) Config {
 	}
 }
 
-// Validate reports a setting the service cannot honour: an unparseable trim
+// Validate reports a setting the component cannot honour: an unparseable trim
 // setting, or a retention outside (0, model.ReplayHorizon).
 func (c Config) Validate() error {
 	if c.ConfigErr != nil {

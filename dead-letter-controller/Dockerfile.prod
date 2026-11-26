@@ -38,7 +38,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -a -installsuffix cgo -o /app/bin/dead-letter-controller .
 
 # streams-init, the deploy step that creates every Redis stream and consumer
-# group of the release; the chart runs it from this image before the services.
+# group of the release; the chart runs it from this image before the components.
 RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -a -installsuffix cgo -o /app/bin/streams-init ./cmd/streams-init
 

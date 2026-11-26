@@ -8,11 +8,11 @@ implements the read) must go through read_secret.
 import ast
 from pathlib import Path
 
-SERVICE_DIR = Path(__file__).parent.parent
+COMPONENT_DIR = Path(__file__).parent.parent
 SECRETS_MODULE = Path("config") / "secrets.py"
 SKIPPED_DIRS = {".venv", "tests", "proto", "__pycache__"}
 
-# The closed credential list; pkg/deploycheck pins it to the Go services' list.
+# The closed credential list; pkg/deploycheck pins it to the Go components' list.
 CREDENTIAL_VARS = (
     "POSTGRES_PASSWORD",
     "REDIS_PASSWORD",
@@ -68,9 +68,9 @@ def _credential_reads(source: str) -> list[str]:
     return offenders
 
 
-def _service_modules():
-    for path in sorted(SERVICE_DIR.rglob("*.py")):
-        relative = path.relative_to(SERVICE_DIR)
+def _component_modules():
+    for path in sorted(COMPONENT_DIR.rglob("*.py")):
+        relative = path.relative_to(COMPONENT_DIR)
         if SKIPPED_DIRS & set(relative.parts) or relative == SECRETS_MODULE:
             continue
         yield path, relative
@@ -79,7 +79,7 @@ def _service_modules():
 def test_credentials_are_read_only_through_read_secret():
     inspected = 0
     offenders = []
-    for path, relative in _service_modules():
+    for path, relative in _component_modules():
         inspected += 1
         for name in _credential_reads(path.read_text()):
             offenders.append(f"{relative}: reads {name} from the environment")

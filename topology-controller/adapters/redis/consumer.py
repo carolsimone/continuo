@@ -106,16 +106,16 @@ class Consumer:
         group_name: str,
         message_handler: Callable[[dict], None],
         *,
-        service_name: str,
+        component_name: str,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         observer: ConsumerObserver = _NoConsumerObserver(),
     ) -> None:
         # The name is the producer of every dead letter this consumer writes;
         # refuse to run unnamed rather than stamp an empty producer.
-        if not service_name:
+        if not component_name:
             raise ValueError(
-                f"consumer of {stream_name!r}/{group_name!r} has an empty service_name: "
-                "name the service that produces its dead letters"
+                f"consumer of {stream_name!r}/{group_name!r} has an empty component_name: "
+                "name the component that produces its dead letters"
             )
         self._redis = redis_client
         self._stream = stream_name
@@ -124,8 +124,8 @@ class Consumer:
         self._group = group_name
         self._name = f"consumer-{uuid.uuid4().hex[:8]}"
         self._message_handler = message_handler
-        # Names this service as the producer of the dead letters it writes.
-        self._service = service_name
+        # Names this component as the producer of the dead letters it writes.
+        self._component = component_name
         self._now = clock
         self._observer = observer
         # The messages of the batch being read or the page being claimed that
@@ -373,7 +373,7 @@ class Consumer:
         # The exception type stays in the text: str(KeyError("s3_uri")) alone
         # is just "'s3_uri'".
         error = f"{type(exc).__name__}: {exc}"
-        fields = build_fields(tenant_id=tenant_of(msg_fields), producer=self._service, occurred_at=self._now(),
+        fields = build_fields(tenant_id=tenant_of(msg_fields), producer=self._component, occurred_at=self._now(),
                               stream=self._stream, group=self._group, message_id=text_id, key=key, fields=msg_fields,
                               failure_kind=kind, error=error, delivery_count=deliveries)
         writes = 0

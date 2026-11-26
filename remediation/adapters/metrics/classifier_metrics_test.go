@@ -27,7 +27,7 @@ func requireSeries(t *testing.T, body string, want ...string) {
 }
 
 // Each counted decision lands on the series of its decision and its rule's
-// family, next to the service label the registry adds.
+// family, next to the component label the registry adds.
 func TestClassifierMetrics_CountsEachNewDecision(t *testing.T) {
 	reg := pkgmetrics.New("remediation")
 	m := NewClassifierMetrics(reg)

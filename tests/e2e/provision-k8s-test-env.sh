@@ -79,8 +79,8 @@ log_info "Wrote per-project image tags to tests/e2e/.image-tags: ${DBT_PER_PROJE
 log_info "Images built and loaded successfully"
 
 # Regenerate kubeconfig with the current kind API server address so that
-# service containers can reach the cluster (bind-mounted from host).
-log_info "Regenerating kubeconfig for service containers..."
+# component containers can reach the cluster (bind-mounted from host).
+log_info "Regenerating kubeconfig for component containers..."
 CLUSTER_NAME="continuo"
 KUBE_IP=$(docker exec ${CLUSTER_NAME}-control-plane kubectl get endpoints kubernetes -n default -o jsonpath='{.subsets[0].addresses[0].ip}')
 KUBE_PORT=$(docker exec ${CLUSTER_NAME}-control-plane kubectl get endpoints kubernetes -n default -o jsonpath='{.subsets[0].ports[0].port}')
@@ -159,7 +159,7 @@ log_info "Deployment is ready"
 
 log_info "Verifying controller health endpoint..."
 
-# Function to check health for a k8s-deployed service via kubectl port-forward
+# Function to check health for a k8s-deployed component via kubectl port-forward
 check_k8s_health() {
   local deployment=$1
   local port=$2

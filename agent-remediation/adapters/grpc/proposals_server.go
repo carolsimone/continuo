@@ -1,4 +1,4 @@
-// Package grpc contains gRPC adapter implementations for external service clients
+// Package grpc contains gRPC adapter implementations for clients of other components
 // and the RemediationProposals gRPC server.
 package grpc
 

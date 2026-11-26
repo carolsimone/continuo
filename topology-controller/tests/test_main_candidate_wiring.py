@@ -12,7 +12,7 @@ from adapters.process import MonotonicClock, ResidentMemoryProbe
 from adapters.redis.error_class import ErrorClass, classify, is_infrastructure
 from adapters.redis.fence import PermissionFenceError
 from adapters.topology_artifact_writer import TopologyArtifactWriter
-from config.config import _SYSTEM_RELATIONS, SERVICE_NAME
+from config.config import _SYSTEM_RELATIONS, COMPONENT_NAME
 from config.secrets import EnvOrFileCredentialProvider
 from domain.model import ManifestRequest
 from service.contract_validation import ContractValidator
@@ -28,10 +28,10 @@ from streams_contract import (
 class _RecordingConsumer:
     instances = []
 
-    def __init__(self, redis_client, stream_name, group_name, message_handler, service_name, observer=None):
+    def __init__(self, redis_client, stream_name, group_name, message_handler, component_name, observer=None):
         self.stream_name = stream_name
         self.observer = observer
-        self.service_name = service_name
+        self.component_name = component_name
         self.group_name = group_name
         self.message_handler = message_handler
         _RecordingConsumer.instances.append(self)
@@ -340,11 +340,11 @@ def test_both_runtimes_have_an_artifact_builder(monkeypatch):
     assert set(captured["builders"]) == {"dbt", "python"}
 
 
-def test_main_names_the_service_on_the_consumer(monkeypatch):
-    """The consumer stamps SERVICE_NAME as the producer of its dead letters."""
+def test_main_names_the_component_on_the_consumer(monkeypatch):
+    """The consumer stamps COMPONENT_NAME as the producer of its dead letters."""
     _common_monkeypatches(monkeypatch)
     main.main()
-    assert _RecordingConsumer.instances[0].service_name == SERVICE_NAME == "topology-controller"
+    assert _RecordingConsumer.instances[0].component_name == COMPONENT_NAME == "topology-controller"
 
 
 def test_the_handler_surfaces_the_parsers_permanent_error_without_building_a_source(monkeypatch):
@@ -476,7 +476,7 @@ def test_main_hands_every_handler_the_one_validator_of_the_process(monkeypatch):
     assert first is second
 
 
-def test_main_publishes_parse_results_on_the_v2_stream_as_this_service(monkeypatch):
+def test_main_publishes_parse_results_on_the_v2_stream_as_this_component(monkeypatch):
     _common_monkeypatches(monkeypatch)
     built = []
     monkeypatch.setattr(main, "CandidateManifestPublisher",
@@ -486,7 +486,7 @@ def test_main_publishes_parse_results_on_the_v2_stream_as_this_service(monkeypat
 
     ((args, kwargs),) = built
     assert args[1] == MANIFEST_LOADED_CANDIDATE_V2
-    assert kwargs["producer"] == SERVICE_NAME
+    assert kwargs["producer"] == COMPONENT_NAME
 
 
 def test_main_announces_the_library_version_the_handler_writes_its_bundle_with(monkeypatch):

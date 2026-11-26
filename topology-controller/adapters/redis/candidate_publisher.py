@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 SCHEMA_VERSION = 1
 
 # sqlglot underlines the offending token with terminal escape sequences; they
-# must not reach a JSON payload another service stores and renders.
+# must not reach a JSON payload another component stores and renders.
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 
 

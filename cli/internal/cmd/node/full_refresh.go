@@ -68,7 +68,7 @@ Flags:
                                  server.
 
 The initiating identity is not an argument: it is taken from the CONTINUO_ACTOR
-environment variable when set, otherwise the run-controller service records its own
+environment variable when set, otherwise run-controller records its own
 system identity.
 
 This command reports acceptance, not completion. On success the new run is
@@ -94,7 +94,7 @@ Output (stdout, JSON):
 Errors:
   usage      (exit 2)  wrong number of arguments, a malformed source run id, the server rejects the identity triple, the seed is set to +full_refresh: false on Postgres, or --acknowledge names an object on a node that is not a seed
 ` + sourceRunErrorsDoc + `
-  unavailable(exit 5)  the run-controller service is unreachable
+  unavailable(exit 5)  run-controller is unreachable
   maintenance(exit 7)  continuo is in maintenance mode; new work is refused until it is turned off (not retryable)
   internal   (exit 6)  unexpected server error`,
 		Example: `  continuo node full-refresh finance analytics orders

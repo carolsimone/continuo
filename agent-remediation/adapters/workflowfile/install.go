@@ -40,7 +40,7 @@ type InstallReport struct {
 // one loaded file, which the runner's file revisions rely on. An install file
 // at a built-in's path that replaces what the built-in file defines, a byte
 // for byte copy among them, loads. This is the flow and type part of
-// CheckInstallPaths, the part the service needs, since it reads no fixture.
+// CheckInstallPaths, the part the component needs, since it reads no fixture.
 func LoadInstall(builtin, install fs.FS) (workflow.Set, InstallReport, error) {
 	base, err := Load(builtin)
 	if err != nil {

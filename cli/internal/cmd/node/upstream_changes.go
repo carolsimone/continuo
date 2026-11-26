@@ -71,7 +71,7 @@ Output (stdout, JSON):
 Errors:
   usage      (exit 2)  wrong number of arguments, --depth above 10, or --since is not RFC3339
   not_found  (exit 3)  the node's unique_id is not recorded
-  unavailable(exit 5)  the catalog service is unreachable
+  unavailable(exit 5)  catalog is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo node upstream-changes finance analytics orders --depth 5 --since 2026-07-01T00:00:00Z",
 		Annotations: map[string]string{

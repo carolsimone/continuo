@@ -32,7 +32,7 @@ func TestRender_PayloadFieldWithoutOutboxEntryID(t *testing.T) {
 	}
 }
 
-// TestRender_StampsTheDefaultTenant holds that every message the service
+// TestRender_StampsTheDefaultTenant holds that every message the component
 // publishes carries tenant_id beside its payload, and that a dead-letter row's
 // fields are rendered as they are. The stamp is in Render, which feeds both the
 // XADD and the original fields an outbox dead letter stores, so a redrive of a
@@ -149,7 +149,7 @@ func remediationRequestedRow(t *testing.T, tenantID string, p pkgevents.Remediat
 
 // TestRender_RemediationRequestedV3CarriesTheRowsTenant holds that a
 // remediation.requested:v3 row renders under the envelope of the row: the row's
-// id as the event, the tenant its payload is stored under, the service as the
+// id as the event, the tenant its payload is stored under, the component as the
 // producer and the time the row was written. The fields read back through the
 // typed decoder, and the rendered fields are what an outbox dead letter stores,
 // so a redrive keeps the tenant.

@@ -40,7 +40,7 @@ func TestSingleNodeRunLatest(t *testing.T) {
 	)
 
 	// Verify infrastructure is up before proceeding.
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 
 	// Ensure graph topology is loaded so that Snapshot+SingleNode can resolve
@@ -170,7 +170,7 @@ func TestSingleNodeRunStale(t *testing.T) {
 	)
 
 	// Verify infrastructure is up before proceeding.
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 
 	// Ensure we have a clean slate for the source schedule and graph topology.
@@ -257,7 +257,7 @@ func TestSingleNodeRunTargetNotFound(t *testing.T) {
 
 	clients := setupClients(t, ctx)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 
 	// Make sure the topology is loaded, so the refusal comes from the target
 	// being absent from the live release.

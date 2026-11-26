@@ -44,7 +44,7 @@ func TestEmptyDAG_ManualStartIsRefused(t *testing.T) {
 	// Cleanups run last in, first out: registered first, the close runs after
 	// the deletions registered below.
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 
 	// A unique schedule name isolates the test from other runs and from the
 	// shared e2e schedules.
@@ -105,7 +105,7 @@ func TestEmptyDAG_ACronFireRecordsAFailedRun(t *testing.T) {
 	// Cleanups run last in, first out: registered first, the close runs after
 	// the deletions registered below.
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 
 	scheduleName := fmt.Sprintf("empty-dag-cron-%s", uuid.NewString()[:8])
 	t.Cleanup(func() { deleteScheduleAndRuns(t, clients, scheduleName) })

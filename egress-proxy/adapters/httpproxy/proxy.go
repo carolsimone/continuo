@@ -111,7 +111,7 @@ func New(auth Authorizer, obs ports.Observer, logger *slog.Logger, opts Options)
 	return p
 }
 
-// Listen binds the proxy port, so a taken port stops the service at startup.
+// Listen binds the proxy port, so a taken port stops the component at startup.
 // Port 0 picks a free port.
 func (p *Proxy) Listen(port int) (net.Addr, error) {
 	ln, err := net.Listen("tcp", ":"+strconv.Itoa(port))

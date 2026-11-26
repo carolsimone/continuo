@@ -13,9 +13,9 @@ from streams_contract import (
 
 REDIS_URL       = os.environ.get("REDIS_URL", "")
 
-# Names this service as the producer of the entries it writes to Redis, such as
+# Names this component as the producer of the entries it writes to Redis, such as
 # the dead letters of release.requested messages it cannot process.
-SERVICE_NAME    = "topology-controller"
+COMPONENT_NAME  = "topology-controller"
 
 # Serves /health and /ready for the k8s liveness/readiness probes (see
 # deploy/continuo/templates/deployment.yaml and values.yaml's
@@ -35,7 +35,7 @@ S3_ENV          = os.environ.get("S3_ENV", "")
 AWS_DEFAULT_REGION    = os.environ.get("AWS_DEFAULT_REGION", "")
 
 # Engine name (as the chart declares it in validation.engine, injected through
-# the shared ConfigMap as WAREHOUSE_ENGINE) -> the sqlglot dialect this service
+# the shared ConfigMap as WAREHOUSE_ENGINE) -> the sqlglot dialect this component
 # reads and writes SQL with. Defaults to postgres when unset, which is what an
 # install that never chose an engine runs.
 #
@@ -78,7 +78,7 @@ def warehouse_dialect() -> str:
 # Engine name -> the relations that engine keeps for itself, which a node's SQL
 # may read but no release produces, so none of them becomes a node. The keys are
 # exactly _ENGINE_DIALECTS' (test_system_relations_cover_exactly_the_supported_engines
-# pins it), so every engine this service can read has its system relations listed.
+# pins it), so every engine this component can read has its system relations listed.
 #
 # postgres reserves every schema name that starts with pg_ (pg_catalog, pg_toast,
 # pg_temp_N), and information_schema is the standard catalog schema. trino has an
@@ -135,7 +135,7 @@ _LOG_LEVELS = {
 def log_level() -> int:
     """Return the logging level LOG_LEVEL names.
 
-    Raises RuntimeError for a name outside _LOG_LEVELS, so a level this service
+    Raises RuntimeError for a name outside _LOG_LEVELS, so a level this component
     cannot honour stops it at startup rather than logging at another level.
     """
     raw = os.environ.get("LOG_LEVEL", "")
@@ -155,7 +155,7 @@ def metrics_port() -> int:
     A value is accepted only when it is written as ASCII digits and lies in
     1..65535. int() alone would also take "9_464", " 9464" and non-ASCII
     digits, which a port setting never means. Raises RuntimeError for any
-    other value, so a port this service cannot bind stops it at startup.
+    other value, so a port this component cannot bind stops it at startup.
     """
     raw = os.environ.get("METRICS_PORT", "")
     if not raw:
@@ -168,11 +168,11 @@ def metrics_port() -> int:
 
 
 # REDIS_ACL_MODE (the chart's Redis login mode, injected through the shared
-# ConfigMap): in perService mode each service signs in as its own Redis login,
-# whose rule fences it to its own keys, and the service refuses to start when
+# ConfigMap): in perService mode each component signs in as its own Redis login,
+# whose rule fences it to its own keys, and the component refuses to start when
 # its login reaches keys outside them (adapters.redis.fence). In shared mode
-# every service signs in with the same password and nothing is checked. These
-# are the values pkg/config accepts for the Go services. Unset is shared.
+# every component signs in with the same password and nothing is checked. These
+# are the values pkg/config accepts for the Go components. Unset is shared.
 REDIS_ACL_MODE_SHARED = "shared"
 REDIS_ACL_MODE_PER_SERVICE = "perService"
 _REDIS_ACL_MODES = (REDIS_ACL_MODE_SHARED, REDIS_ACL_MODE_PER_SERVICE)
@@ -182,7 +182,7 @@ def redis_acl_mode() -> str:
     """Return the REDIS_ACL_MODE this install declares.
 
     Raises RuntimeError for any other value than the two modes, so a mode this
-    service cannot honour stops it at startup instead of skipping the check.
+    component cannot honour stops it at startup instead of skipping the check.
     """
     raw = os.environ.get("REDIS_ACL_MODE", "")
     if not raw:
@@ -207,7 +207,7 @@ def ontology_enabled() -> bool:
 
     Raises RuntimeError for any value other than `true` or `false`, in lower case
     and without surrounding space, the two words the chart renders, so a switch
-    this service cannot read stops it at startup instead of reading as off.
+    this component cannot read stops it at startup instead of reading as off.
     """
     raw = os.environ.get("ONTOLOGY_ENABLED", "")
     if not raw:
@@ -243,8 +243,8 @@ def validate() -> None:
     empty file, raises read_secret's error. Also rejects a REDIS_URL that
     carries credentials (they come from REDIS_USERNAME and REDIS_PASSWORD), an
     unsupported WAREHOUSE_ENGINE, which is optional but must name an engine
-    this service has a SQL dialect and a list of system relations for, a
-    LOG_LEVEL that names no level this service logs at, a METRICS_PORT that is
+    this component has a SQL dialect and a list of system relations for, a
+    LOG_LEVEL that names no level this component logs at, a METRICS_PORT that is
     not a whole number from 1 to 65535, a REDIS_ACL_MODE other than shared
     or perService, and an ONTOLOGY_ENABLED other than true or false.
     """

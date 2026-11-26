@@ -67,28 +67,28 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 		fmt.Sprintf("%s:50052", catalogHost),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
-	require.NoError(t, err, "Failed to connect to catalog service")
+	require.NoError(t, err, "Failed to connect to catalog")
 
 	// Setup run-controller gRPC client (RunService, port 50051)
 	runControllerConn, err := grpc.NewClient(
 		fmt.Sprintf("%s:50051", runControllerHost),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
-	require.NoError(t, err, "Failed to connect to run-controller service")
+	require.NoError(t, err, "Failed to connect to run-controller")
 
 	// Setup agent-remediation gRPC client (RemediationProposals, port 50054)
 	agentRemediationConn, err := grpc.NewClient(
 		fmt.Sprintf("%s:50054", agentRemediationHost),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
-	require.NoError(t, err, "Failed to connect to agent-remediation service")
+	require.NoError(t, err, "Failed to connect to agent-remediation")
 
 	// Setup dead-letter-controller gRPC client (DeadLetterService, port 50055)
 	deadLetterConn, err := grpc.NewClient(
 		fmt.Sprintf("%s:50055", deadLetterHost),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
-	require.NoError(t, err, "Failed to connect to dead-letter-controller service")
+	require.NoError(t, err, "Failed to connect to dead-letter-controller")
 
 	// Setup Redis client. The harness signs in as Redis's default user, which
 	// reads every stream (compose/redis-users.acl); E2E_REDIS_PASSWORD, not
@@ -108,7 +108,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	require.NoError(t, err, "Failed to connect to Neo4j")
 
 	// Setup PostgreSQL connections for each database
-	// The services' databases are read as the migration login, which owns
+	// The components' databases are read as the migration login, which owns
 	// them; the warehouse is read and written as its own login, the one dbt
 	// and the validation runner sign in as, so every table the harness creates
 	// there belongs to the login that may replace it.

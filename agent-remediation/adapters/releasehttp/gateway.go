@@ -18,7 +18,7 @@ import (
 
 // maxReleaseBodyBytes bounds how much of a release-controller response this
 // gateway reads, matching the defensive cap other HTTP adapters in this
-// service apply to third-party responses.
+// component apply to third-party responses.
 const maxReleaseBodyBytes = 1 << 20 // 1 MiB
 
 // Gateway implements ports.VerificationPipeline and ports.ReleaseReader

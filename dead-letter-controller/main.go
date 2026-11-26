@@ -54,7 +54,7 @@ func redriveContract() deadletter.Contract {
 func main() {
 	// The logger writes at the level LOG_LEVEL names. An unknown level is
 	// recorded on v, and the missing-configuration check below stops the
-	// service once this logger can report it.
+	// component once this logger can report it.
 	v := &pkgconfig.Validator{}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: pkgconfig.LoadLogLevel(v)}))
 
@@ -191,7 +191,7 @@ func main() {
 		return db.PingContext(ctx)
 	})
 
-	// Start the outbox relay backed by pkg/outbox. It publishes this service's
+	// Start the outbox relay backed by pkg/outbox. It publishes this component's
 	// redrive rows to their original streams through RedrivePublisher, and its
 	// own terminal publish failures become outbox.dead_letter:v1 entries. The
 	// relay wakes on the notification a committed insert sends.
@@ -253,7 +253,7 @@ func main() {
 	expirer := handlers.NewExpirer(repo, clock, obs, logger)
 	lifecycleManager.Go(func() { expirer.Run(ctx, expireInterval) })
 
-	// Stream consumers. The service's own dead-letter consumers run WITHOUT
+	// Stream consumers. The component's own dead-letter consumers run WITHOUT
 	// dead-lettering: a store failure must leave the entry pending so it is
 	// stored once the store recovers, never dead-lettered onto itself (which
 	// would loop).
@@ -267,7 +267,7 @@ func main() {
 	// Stream trim loop. Every stream consumer group the contract declares is
 	// watched for lag, and the loop trims each stream to what its groups still
 	// need. It holds a Postgres advisory lock, so only one replica trims at a time.
-	// Watch is idempotent, so the service's own two groups registered above are harmless to repeat.
+	// Watch is idempotent, so the component's own two groups registered above are harmless to repeat.
 	for stream, groups := range streams.Groups {
 		for _, g := range groups {
 			metricsReg.Consumers().Watch(stream, g)

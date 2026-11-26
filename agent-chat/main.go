@@ -47,7 +47,7 @@ const metricsComponentName = "agent-chat"
 func main() {
 	// The logger writes at the level LOG_LEVEL names. An unknown level is
 	// recorded on v, and the missing-configuration check below stops the
-	// service once this logger can report it.
+	// component once this logger can report it.
 	v := &pkgconfig.Validator{}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: pkgconfig.LoadLogLevel(v)}))
 

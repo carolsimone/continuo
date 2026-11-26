@@ -93,10 +93,10 @@ def test_validate_rejects_unsupported_engine(monkeypatch):
 
 
 def test_supported_engines_match_the_chart(monkeypatch):
-    """The engines this service maps are exactly the ones the chart accepts.
+    """The engines this component maps are exactly the ones the chart accepts.
 
     templates/_helpers.tpl fails an install whose validation.engine is not in
-    its supported list; an engine the chart allows but this service cannot map
+    its supported list; an engine the chart allows but this component cannot map
     would render fine and then crash topology-controller at boot.
     """
     from config.config import _ENGINE_DIALECTS
@@ -152,7 +152,7 @@ def test_system_relations_follow_the_configured_engine(monkeypatch, engine):
 
 def test_validate_requires_system_relations_for_the_configured_engine(monkeypatch):
     """validate() resolves the system relations, so an engine that has a
-    dialect but no system-relation list stops the service at startup."""
+    dialect but no system-relation list stops the component at startup."""
     monkeypatch.setenv("REDIS_URL", "redis://redis:6379")
     monkeypatch.setenv("REDIS_PASSWORD", "redis-pw")
     monkeypatch.setenv("S3_ENDPOINT_URL", "http://minio:9000")
@@ -392,7 +392,7 @@ def test_ontology_enabled_reads_true_or_false(monkeypatch, raw, on):
 @pytest.mark.parametrize("raw", ["TRUE", "False", "1", "0", "yes", "on", " true", "true ", "null"])
 def test_ontology_enabled_refuses_any_other_value(monkeypatch, raw):
     """Only the two words the chart renders are a setting: any other spelling stops the
-    service at boot instead of reading as off."""
+    component at boot instead of reading as off."""
     monkeypatch.setenv("ONTOLOGY_ENABLED", raw)
     from config.config import ontology_enabled
     with pytest.raises(RuntimeError, match=f"unsupported ONTOLOGY_ENABLED {raw!r}: expected true or false"):

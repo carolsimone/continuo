@@ -83,7 +83,7 @@ func TestRedis_AllowReturnsErrorWhenBackendDown(t *testing.T) {
 }
 
 // TestRateLimitKeyIsPrefixed pins the Redis key of a user's window to the
-// continuo: prefix, so the key falls under the service's ACL key pattern.
+// continuo: prefix, so the key falls under the component's ACL key pattern.
 func TestRateLimitKeyIsPrefixed(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rl := NewRedis(goredis.NewClient(&goredis.Options{Addr: mr.Addr()}), 2)

@@ -4,7 +4,7 @@ Comprehensive end-to-end test validating the complete Continuo orchestration pip
 
 ## Test Overview
 
-The suite covers both the run-orchestration pipeline and the dbt blue/green release pipeline. The happy-path test exercises a 6-node `ftable_*` DAG through every service:
+The suite covers both the run-orchestration pipeline and the dbt blue/green release pipeline. The happy-path test exercises a 6-node `ftable_*` DAG through every component:
 - `run-controller` - Plans and creates runs, dispatches ready tasks, owns the run/task lifecycle
 - `catalog` - Applies each promoted release to the Neo4j topology (a node a release drops stays, retired, with its history), serves the topology, code-version and failure-precedent reads (nodes, code versions, precedents), and exports each tenant's graph to MinIO (`catalog-backup export`)
 - `execution-controller` - Deploys k8s jobs and monitors their status
@@ -40,11 +40,11 @@ DOCKER_BUILDKIT=1 docker build -t continuo-base:latest -f Dockerfile.base .
 #    - Builds all docker-compose service images (including dbt-base)
 #    - Builds and loads dbt project images into kind
 #    - Compiles dbt manifests (requires postgres to be up briefly)
-#    - Writes kubeconfigs into service directories
+#    - Writes kubeconfigs into component directories
 #    - Starts docker-compose in detached mode
 bash scripts/setup.sh
 
-# 4. Start Go service processes inside containers and wait for health
+# 4. Start Go component processes inside containers and wait for health
 bash tests/e2e/start-services.sh
 
 # 5. Start the ui container
@@ -77,7 +77,7 @@ docker compose down
 
 # Start (or restart) all docker-compose services. The one-shot streams-init
 # service creates every Redis stream and consumer group under the continuo:
-# prefix and exits; the services wait up to five minutes for their groups.
+# prefix and exits; the components wait up to five minutes for their groups.
 docker compose up -d
 # The compose Redis has no persistence: after it restarts or loses its data,
 # run `docker compose up streams-init` to create the streams and groups again.
@@ -85,7 +85,7 @@ docker compose up -d
 # Wait for neo4j to be healthy (can take up to 90s)
 docker compose ps   # neo4j should show "(healthy)"
 
-# Start Go service processes and wait for health
+# Start Go component processes and wait for health
 bash tests/e2e/start-services.sh
 
 # Start ui
@@ -110,7 +110,7 @@ Or use the convenience target (assumes kind cluster and images already exist):
 make e2e-full
 ```
 
-`make e2e-full` runs `docker compose up -d`, waits for health, starts services,
+`make e2e-full` runs `docker compose up -d`, waits for health, starts components,
 runs `provision-k8s-test-env.sh`, then executes the tests.
 
 ## Auth e2e suite (OIDC against Dex)
@@ -140,7 +140,7 @@ covered by ui unit tests.
 | Script | What it does |
 |--------|-------------|
 | `scripts/setup.sh` | Full bootstrap: kind cluster + image builds + dbt manifests + dbt seeds + the outside table `e2e_raw.ingest_probe` + kubeconfig + compose up |
-| `tests/e2e/start-services.sh` | Starts Go service processes inside containers (`go run`), waits for HTTP health |
+| `tests/e2e/start-services.sh` | Starts Go component processes inside containers (`go run`), waits for HTTP health |
 | `tests/e2e/provision-k8s-test-env.sh` | Rebuilds controller + dbt images, loads them into kind, regenerates kubeconfig, deploys k8s manifests |
 | `tests/e2e/deploy-execution-controller.sh` | Deploys the pre-built execution-controller image already in kind (no rebuild); used by CI after `setup.sh` |
 | `tests/e2e/cleanup-execution-controller.sh` | Removes the execution-controller Deployment from the kind cluster |
@@ -181,8 +181,8 @@ The E2E test uses a hybrid setup:
 
 **In docker-compose:**
 - PostgreSQL, Redis, Neo4j (data stores), MinIO (S3 — dbt manifests)
-- run-controller, catalog, topology-controller, release-controller (services)
-- egress-proxy (forward proxy for the outbound HTTP of agent-chat and agent-remediation; they reach their LLM and GitHub only through it, and reach the stack's own services directly via `NO_PROXY`). `start-services.sh` starts it before agent-remediation: health `:8093/ready`, proxy port `:3128`. Its allowlist is `tests/e2e/config/egress-allowlist.yaml`, which admits `stub-llm`, `stub-github` and the public LLM and GitHub APIs
+- run-controller, catalog, topology-controller, release-controller (components)
+- egress-proxy (forward proxy for the outbound HTTP of agent-chat and agent-remediation; they reach their LLM and GitHub only through it, and reach the stack's own components directly via `NO_PROXY`). `start-services.sh` starts it before agent-remediation: health `:8093/ready`, proxy port `:3128`. Its allowlist is `tests/e2e/config/egress-allowlist.yaml`, which admits `stub-llm`, `stub-github` and the public LLM and GitHub APIs
 
 **In kind cluster (Kubernetes):**
 - execution-controller (Deployment)
@@ -195,7 +195,7 @@ The controller in kind connects to docker-compose services via docker bridge net
 
 | File | Purpose |
 |------|---------|
-| `system_test.go` | `TestE2E_HappyPath_FullDAGExecution` — 6-node `ftable_*` DAG through every service |
+| `system_test.go` | `TestE2E_HappyPath_FullDAGExecution` — 6-node `ftable_*` DAG through every component |
 | `trigger_test.go` | `TestTriggerSchedule_SeedRunAndRerun` — trigger seed schedule via the ui's `POST /api/schedules/seed/trigger` (`StartRun`), wait for completion, re-trigger |
 | `failure_test.go` | `TestE2E_FailurePath_RerunRebasesBothFailureSubtrees` — two parallel failing subtrees, then a rerun rebases both |
 | `rebase_test.go` | `TestRebaseFromFailedRun`, `TestRebaseAllInheritedFinalizes` |
@@ -283,9 +283,9 @@ The failure model `ftable_e` runs in the `service-2` Docker image but JOINs `pub
 ## Test Flow
 
 ### Happy Path
-1. **Setup** - Initialize clients, verify services healthy
+1. **Setup** - Initialize clients, verify components healthy
 2. **Cleanup** - Remove any leftover test data
-3. **Seed** - Create 6-node `ftable_*` DAG in Neo4j via graph service
+3. **Seed** - Create 6-node `ftable_*` DAG in Neo4j via catalog
 4. **Trigger** - `RunService.StartRun` gRPC call → run-controller creates the run (kind `trigger`)
 5. **Verify Level 0** - Check root jobs (`ftable_a`, `ftable_b`) deploy and complete
 6. **Verify Level 1** - Check `ftable_c` unlocks and executes
@@ -295,14 +295,14 @@ The failure model `ftable_e` runs in the `service-2` Docker image but JOINs `pub
 10. **Cleanup** - Remove all test data
 
 ### Trigger Run-and-Rerun (seed schedule)
-1. **Setup** - Initialize clients, verify services healthy, cleanup seed schedule data
+1. **Setup** - Initialize clients, verify components healthy, cleanup seed schedule data
 2. **Topology** - Announce the e2e DAG (`seedTopology`), which returns once catalog and run-controller's live release hold it, with the seed schedule's models
 3. **Run 1** - `POST /api/schedules/seed/trigger` → wait for 3 seed tasks to succeed → scheduler SUCCEEDED
 4. **Run 2** - `POST /api/schedules/seed/trigger` again → wait for second run to complete → scheduler SUCCEEDED
 5. **Cleanup** - Remove all seed schedule data
 
 ### Failure Path
-1. **Setup** - Initialize clients, verify services healthy
+1. **Setup** - Initialize clients, verify components healthy
 2. **Seed** - Create the 6-node `ftable_*` DAG in Neo4j
 3. **Trigger** - `RunService.StartRun` gRPC call
 4. **Verify Level 0** - Root nodes (`ftable_a`, `ftable_b`) complete successfully
@@ -346,13 +346,13 @@ colima start --disk 100  # 100GB
 
 **Test fails with connection errors:**
 - Verify docker-compose services are running: `docker compose ps`
-- Check service health: `curl http://localhost:8082/health`
+- Check component health: `curl http://localhost:8082/health`
 
 **An agent call fails with a 403 or a connection error to `egress-proxy:3128`:**
 - egress-proxy refused the host. `docker logs egress-proxy | grep 'egress denied'` names the refused host and port; add them to `tests/e2e/config/egress-allowlist.yaml` and `docker compose restart egress-proxy` (the allowlist is read when the process starts), then start the process again with `docker exec -d egress-proxy bash -c "cd /app/egress-proxy && go run ."`.
-- A service the agents should reach directly (a compose service name) belongs in that agent's `NO_PROXY` in `docker-compose.yml`.
+- A component the agents should reach directly (a compose service name) belongs in that agent's `NO_PROXY` in `docker-compose.yml`.
 
-**Neo4j not healthy / services fail to start:**
+**Neo4j not healthy / components fail to start:**
 - Neo4j takes up to 90 seconds to become healthy. Wait for `docker compose ps` to show `neo4j` as `(healthy)` before running `bash tests/e2e/start-services.sh`.
 
 **Test fails with kubectl errors:**
@@ -375,7 +375,7 @@ colima start --disk 100  # 100GB
 - Verify the migrations job completed (Flyway, then each login's grants and check): `docker compose logs migrations`
 - Check the execution outbox table exists: `docker compose exec postgres psql -U continuo_svc -d continuo_execution -c '\dt execution_outbox'`
 
-**Services not starting:**
+**Components not starting:**
 ```bash
 docker compose ps
 docker logs catalog --tail 50
@@ -406,7 +406,7 @@ docker exec continuo-control-plane crictl images | grep continuo
 # Test from controller pod to postgres
 kubectl exec deployment/execution-controller -- nc -zv 172.17.0.1 5432
 
-# Test from controller pod to run-controller service
+# Test from controller pod to run-controller
 kubectl exec deployment/execution-controller -- nc -zv 172.17.0.1 50051
 ```
 
@@ -427,4 +427,4 @@ docker-compose up -d --force-recreate neo4j
 
 The harness runs inside the `catalog` container, whose `REDIS_*` and `POSTGRES_*` variables are catalog's own login, so it reads its own: `E2E_REDIS_PASSWORD` (default `continuo`, Redis's default user) and `E2E_POSTGRES_PASSWORD` (default `continuo`, the migration login `continuo_svc`). `E2E_WAREHOUSE_DB` (default `continuo_dbt`) selects the warehouse database the harness inspects for dbt-materialized tables; it signs in there as `E2E_WAREHOUSE_USER` (default `continuo_warehouse`) with `E2E_WAREHOUSE_PASSWORD` (default `local-continuo_warehouse`).
 
-**Maintenance mode (`TestMaintenanceMode`):** triggers a single-node run, then restarts the `run-controller` and `release-controller` containers with `MAINTENANCE_ENABLED=true` (relaunching `go run .` with the flag overridden; each service's output goes to `/tmp/<container>.log` inside its container). With maintenance on it asserts a new node run (via `ui`) and a new public release are refused with HTTP 503 and the `maintenance` code, and that the run already in flight still reaches `succeeded`. It then restarts both services with the flag off and asserts a new run is accepted and succeeds. The restarts take a minute or more each, and a `t.Cleanup` turns maintenance off again even on failure. If the test is interrupted before that cleanup runs, restore the stack with `docker restart run-controller release-controller && bash tests/e2e/start-services.sh`.
+**Maintenance mode (`TestMaintenanceMode`):** triggers a single-node run, then restarts the `run-controller` and `release-controller` containers with `MAINTENANCE_ENABLED=true` (relaunching `go run .` with the flag overridden; each component's output goes to `/tmp/<container>.log` inside its container). With maintenance on it asserts a new node run (via `ui`) and a new public release are refused with HTTP 503 and the `maintenance` code, and that the run already in flight still reaches `succeeded`. It then restarts both components with the flag off and asserts a new run is accepted and succeeds. The restarts take a minute or more each, and a `t.Cleanup` turns maintenance off again even on failure. If the test is interrupted before that cleanup runs, restore the stack with `docker restart run-controller release-controller && bash tests/e2e/start-services.sh`.

@@ -3,7 +3,7 @@
 The dialect is a property of the operator's warehouse, resolved from
 WAREHOUSE_ENGINE at the composition root and injected downward. A literal baked
 into service code works for whoever wrote it and silently reads or emits the
-wrong engine's SQL everywhere else — the exact failure this service shipped
+wrong engine's SQL everywhere else — the exact failure this component shipped
 before the engine reached it. Tests may name a dialect; production code may not.
 """
 import re

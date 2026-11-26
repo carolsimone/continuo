@@ -1,5 +1,5 @@
 // remediation-check checks the workflow files of agent-remediation and lists
-// the steps they may name. It ships in the image beside the service binary, for
+// the steps they may name. It ships in the image beside the component binary, for
 // an install to check its own files, and the repository's tests run it on the
 // built-in files.
 //
@@ -7,7 +7,7 @@
 //	remediation-check steps
 //	remediation-check help [files|steps]
 //
-// files loads the files the service would load with <dir> as its install
+// files loads the files the component would load with <dir> as its install
 // folder: the built-in flow, type and fixture files, then the ones under <dir>
 // over them (an install file with the kind and name of a built-in replaces it
 // whole, any other file is added, and one at the path of a built-in file whose
@@ -93,7 +93,7 @@ const filesHelp = `remediation-check files <dir>
 
 Purpose
   Checks the workflow files an install gives agent-remediation. It loads the
-  files the service loads with <dir> as its install folder: the built-in flow,
+  files the component loads with <dir> as its install folder: the built-in flow,
   type and fixture files, then the ones under <dir> over them. An install file
   with the kind and name of a built-in replaces it whole, and any other file is
   added; one at the path of a built-in file whose flow, type or fixture stays
@@ -316,7 +316,7 @@ func writeJSON(w io.Writer, v any) error {
 }
 
 // checkFiles loads, validates and runs the conformance suite over the files
-// the service would load with dir as its install folder.
+// the component would load with dir as its install folder.
 func checkFiles(ctx context.Context, dir string) report {
 	rep := report{Errors: []string{}, Warnings: []string{}, Scenarios: []scenarioResult{}}
 	fsys := os.DirFS(dir)

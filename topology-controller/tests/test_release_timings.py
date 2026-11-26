@@ -241,7 +241,7 @@ def test_a_stage_given_as_the_enum_is_counted_under_its_plain_name():
 @pytest.mark.parametrize("reason", [
     REASON_MANIFEST_SHAPE, REASON_SEED_HEADER, REASON_STRICT_YAML, REASON_IDENTITY, REASON_VALUE,
 ])
-def test_every_reason_this_service_writes_is_one_the_metrics_export(reason):
+def test_every_reason_this_component_writes_is_one_the_metrics_export(reason):
     assert reason in CONTRACT_FAILURE_REASONS
 
 

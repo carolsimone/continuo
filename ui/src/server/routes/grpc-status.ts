@@ -7,7 +7,7 @@ import { isMaintenanceRefusal, sendMaintenance } from '../maintenance';
 // transaction's time, so the same request id may be sent again at once.
 const ABORTED_RETRY_AFTER_SECONDS = 1;
 
-// Maps a gRPC status code from a backend service onto the HTTP status the
+// Maps a gRPC status code from a backend component onto the HTTP status the
 // browser should see. ABORTED, a command whose request id concurrent calls
 // kept rolling back, is 503: the browser keeps a request id open on a 5xx, so
 // the retry of the action sends the same id. An absent or unrecognised code is

@@ -20,7 +20,7 @@ func (g Group) Need() StreamID {
 
 // Snapshot is one stream's consumer state. Present holds the contract groups
 // that exist in Redis; Missing names the contract groups that do not (their
-// service has not started yet, or is disabled).
+// component has not started yet, or is disabled).
 type Snapshot struct {
 	Stream  string
 	Present []Group

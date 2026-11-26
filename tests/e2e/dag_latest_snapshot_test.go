@@ -23,7 +23,7 @@ func TestE2E_DAGLatestSnapshot(t *testing.T) {
 
 	t.Logf("Verifying topology endpoints at %s", base)
 
-	// Topology may take a moment to load after services start; poll for up to 60s.
+	// Topology may take a moment to load after components start; poll for up to 60s.
 	deadline := time.Now().Add(60 * time.Second)
 	var found bool
 	for time.Now().Before(deadline) {

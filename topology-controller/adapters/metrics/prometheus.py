@@ -5,10 +5,10 @@ release observer of the candidate handler (service.ports.ReleaseObserverPort)
 and the observer of the stream consumer (adapters.redis.consumer.ConsumerObserver).
 
 Every series declares `service` as its first label, because a prometheus-client
-registry takes no labels of its own and the Go services' series carry it. The
+registry takes no labels of its own and the Go components' series carry it. The
 registry holds no process or Python runtime collectors for the same reason: they
 cannot carry the label. Each metric name is a literal at its definition, so a
-scan of this file's source finds every series the service exports.
+scan of this file's source finds every series the component exports.
 """
 from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, disable_created_metrics
 
@@ -35,15 +35,15 @@ _NO_FAILURE_KIND = "none"
 
 
 class TopologyMetrics:
-    """Turns finished releases and consumer events into the service's series."""
+    """Turns finished releases and consumer events into the component's series."""
 
-    def __init__(self, service: str) -> None:
+    def __init__(self, component: str) -> None:
         # Prometheus-client appends a `_created` timestamp series to every
         # counter and histogram unless told not to, and the global switch only
         # affects series defined after it.
         disable_created_metrics()
         self.registry = CollectorRegistry()
-        self._service = service
+        self._component = component
 
         self._stage_duration = Histogram(
             "continuo_topology_stage_duration_seconds",
@@ -127,18 +127,18 @@ class TopologyMetrics:
         # increase over a series that has not moved yet is 0, not absent (an
         # increase does not count a series' first sample from an implied 0).
         for stage in Stage:
-            self._stage_duration.labels(service, stage.value)
-        self._releases.labels(service, ReleaseOutcome.OK.value, _NO_FAILURE_KIND)
+            self._stage_duration.labels(component, stage.value)
+        self._releases.labels(component, ReleaseOutcome.OK.value, _NO_FAILURE_KIND)
         for kind in ParseFailureKind:
-            self._releases.labels(service, ReleaseOutcome.FAILED.value, kind.value)
+            self._releases.labels(component, ReleaseOutcome.FAILED.value, kind.value)
         for reason in SkipReason:
-            self._release_skipped_nodes.labels(service, reason.value).set(0)
-        self._release_dormant_nodes.labels(service).set(0)
+            self._release_skipped_nodes.labels(component, reason.value).set(0)
+        self._release_dormant_nodes.labels(component).set(0)
         for contract_stage in CONTRACT_FAILURE_STAGES:
             for reason in CONTRACT_FAILURE_REASONS:
-                self._contract_failures.labels(service, contract_stage, reason)
+                self._contract_failures.labels(component, contract_stage, reason)
         for result in VALIDATION_CACHE_RESULTS:
-            self._validation_cache.labels(service, result)
+            self._validation_cache.labels(component, result)
 
     def release_finished(self, timings: ReleaseTimings) -> None:
         """Count a release that ended and replace the gauges of the last one.
@@ -152,27 +152,27 @@ class TopologyMetrics:
         """
         for stage, record in timings.stages.items():
             if record.runs > 0:
-                self._stage_duration.labels(self._service, stage.value).observe(record.seconds)
+                self._stage_duration.labels(self._component, stage.value).observe(record.seconds)
         failure_kind = timings.failure_kind.value if timings.failure_kind is not None else _NO_FAILURE_KIND
-        self._releases.labels(self._service, timings.outcome.value, failure_kind).inc()
+        self._releases.labels(self._component, timings.outcome.value, failure_kind).inc()
         for family, count in timings.nodes.items():
-            self._release_nodes.labels(self._service, family).set(count)
+            self._release_nodes.labels(self._component, family).set(count)
         for family, count in timings.columns.items():
-            self._release_columns.labels(self._service, family).set(count)
+            self._release_columns.labels(self._component, family).set(count)
         for reason in SkipReason:
-            self._release_skipped_nodes.labels(self._service, reason.value).set(timings.skipped.get(reason, 0))
-        self._release_dormant_nodes.labels(self._service).set(sum(timings.dormant.values()))
-        self._release_peak_rss.labels(self._service).set(timings.peak_rss_bytes)
+            self._release_skipped_nodes.labels(self._component, reason.value).set(timings.skipped.get(reason, 0))
+        self._release_dormant_nodes.labels(self._component).set(sum(timings.dormant.values()))
+        self._release_peak_rss.labels(self._component).set(timings.peak_rss_bytes)
         for (contract_stage, reason), count in timings.contract_failures.items():
-            self._contract_failures.labels(self._service, contract_stage, reason).inc(count)
+            self._contract_failures.labels(self._component, contract_stage, reason).inc(count)
         for result, count in timings.validation_cache.items():
-            self._validation_cache.labels(self._service, result).inc(count)
+            self._validation_cache.labels(self._component, result).inc(count)
 
     def handled(self, stream: str, group: str, result: str, seconds: float) -> None:
-        self._handled.labels(self._service, stream, group, result).observe(seconds)
+        self._handled.labels(self._component, stream, group, result).observe(seconds)
 
     def dead_lettered(self, stream: str, group: str, kind: str) -> None:
-        self._dead_letters.labels(self._service, stream, group, kind).inc()
+        self._dead_letters.labels(self._component, stream, group, kind).inc()
 
     def paused(self, stream: str, group: str) -> None:
-        self._pauses.labels(self._service, stream, group).inc()
+        self._pauses.labels(self._component, stream, group).inc()

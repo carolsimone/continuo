@@ -48,7 +48,7 @@ type VerificationStatus struct {
 	RunError    string
 }
 
-// VerificationPipeline is this service's client of the release pipeline for
+// VerificationPipeline is this component's client of the release pipeline for
 // fix verification: submit a run, then read its status until it is terminal.
 // Submit is idempotent on RunID (a 202 for an already-known id is success).
 type VerificationPipeline interface {

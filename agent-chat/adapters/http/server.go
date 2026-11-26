@@ -23,7 +23,7 @@ type Server struct {
 // as the process can serve HTTP. agent-chat runs no stream consumers, so
 // /ready additionally checks a Postgres dependency probe, while /livez has no
 // workers or heartbeats registered and is a constant 200 — the route exists
-// so the deploy chart's two probes stay uniform across services.
+// so the deploy chart's two probes stay uniform across components.
 func NewServer(port int, registry *liveness.Registry, logger *slog.Logger) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)

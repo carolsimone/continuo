@@ -37,7 +37,7 @@ func TestBuildOperationSingleNode(t *testing.T) {
 		targetTable   = "seed_table_1"
 	)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 
 	cleanupTestData(t, ctx, clients, "single-node-build-op")
@@ -99,7 +99,7 @@ func TestBuildOperationWholeDAGCascadeSkip(t *testing.T) {
 	defer cleanupTestData(t, ctx, clients, failureTestScheduleName)
 	cleanupTestData(t, ctx, clients, failureTestScheduleName)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 
 	t.Log("Seeding topology via announce-topology...")
@@ -163,7 +163,7 @@ func TestBuildOperationRerun(t *testing.T) {
 	defer cleanupTestData(t, ctx, clients, failureTestScheduleName)
 	cleanupTestData(t, ctx, clients, failureTestScheduleName)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 
 	t.Log("Seeding topology via announce-topology...")

@@ -73,7 +73,7 @@ def test_guard_catches_a_violation():
     assert _disallowed_imports("import main") == [(1, "main")]
     assert _disallowed_imports("from bench import harness") == [(1, "bench")]
     assert _disallowed_imports("from streams_contract import ParseFailureKind") == [(1, "streams_contract")]
-    # The service's other runtime dependencies are outside the domain too.
+    # The component's other runtime dependencies are outside the domain too.
     assert _disallowed_imports("import grpc") == [(1, "grpc")]
     assert _disallowed_imports("import yaml") == [(1, "yaml")]
     assert _disallowed_imports("from google.protobuf import json_format") == [(1, "google.protobuf")]

@@ -63,7 +63,7 @@ const workDirCleanupTimeout = 30 * time.Second
 // compile-extras.json beside it when there is one, through topology-controller's own
 // parser, and prints {unique_id: content_hash} of every node the parser yields as
 // JSON, its only stdout line (topology-controller/tools/content_hash.py, which the
-// service's own tests run).
+// component's own tests run).
 const contentHashTool = "tools/content_hash.py"
 
 var (
@@ -79,7 +79,7 @@ var (
 // the harness asks it rather than keeping a copy: both files are copied into
 // the topology-controller container and its content-hash script runs
 // parse_manifest over them with the container's installed environment
-// (`uv run --no-sync`, so the running service's venv is never re-synced).
+// (`uv run --no-sync`, so the running component's venv is never re-synced).
 // Results are kept for the life of the process,
 // keyed by the SHA-256 of both inputs, since every test seeds production from
 // the same baseline manifests.

@@ -4,12 +4,12 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../scripts/lib/common.sh"
 
 check_health(){ check_container_health "$1" "$2" "${3:-/health}"; }
-start_service(){ start_go_service "$1" "$3"; }
+start_component(){ start_go_service "$1" "$3"; }
 
-log_info "Starting all services..."
+log_info "Starting all components..."
 
 # Start the run-controller first (dependency for others)
-start_service "run-controller" "run-controller" "run-controller"
+start_component "run-controller" "run-controller" "run-controller"
 check_health "run-controller" 8082 || exit 1
 
 # Copy kubeconfig so catalog can run kubectl during e2e tests
@@ -17,49 +17,49 @@ docker exec catalog mkdir -p /root/.kube
 docker cp kubeconfig/kubeconfig.yaml catalog:/root/.kube/config 2>/dev/null || log_warn "No kubeconfig found — catalog kubectl will not work"
 docker network connect kind catalog 2>/dev/null || true
 
-start_service "catalog" "catalog" "catalog"
+start_component "catalog" "catalog" "catalog"
 
 # Note: execution-controller runs in kind for E2E tests, but we can start it
 # in docker-compose too for development flexibility.
 # Uncomment if you want to start it:
-# start_service "execution-controller" "execution-controller" "execution-controller"
+# start_component "execution-controller" "execution-controller" "execution-controller"
 
-# Check health of all started services
+# Check health of all started components
 check_health "catalog" 8087 || exit 1
 
 # Uncomment if you started execution-controller:
 # check_health "execution-controller" 8084 || exit 1
 
 # release-controller (blue/green release API + stream consumers) runs in
-# docker-compose alongside the other stream services. The e2e release-promote
+# docker-compose alongside the other stream components. The e2e release-promote
 # test reaches its HTTP API at release-controller:8088 over the compose network,
 # and its consumers drive the candidate-parse → validation → promotion loop. It
 # also serves ReleaseQuery on 50056, which the e2e `continuo release notices`
 # run dials; /healthz answers before the gRPC listener binds, so wait for the
 # port as well.
-start_service "release-controller" "release-controller" "release-controller"
+start_component "release-controller" "release-controller" "release-controller"
 check_health "release-controller" 8088 "/healthz" || exit 1
 wait_for_tcp_port release-controller 50056 || exit 1
 
-start_service "remediation" "remediation" "remediation"
+start_component "remediation" "remediation" "remediation"
 check_health "remediation" 8090 "/healthz" || exit 1
 
 # egress-proxy carries the outbound HTTP of agent-remediation and agent-chat
 # (HTTP_PROXY in docker-compose.yml), so it listens before either starts. Its
 # health port answers once the allowlist is loaded; the proxy port is awaited
 # separately because that is the one the agents dial.
-start_service "egress-proxy" "egress-proxy" "egress-proxy"
+start_component "egress-proxy" "egress-proxy" "egress-proxy"
 check_health "egress-proxy" 8093 "/ready" || exit 1
 wait_for_tcp_port egress-proxy 3128 || exit 1
 
-start_service "agent-remediation" "agent-remediation" "agent-remediation"
+start_component "agent-remediation" "agent-remediation" "agent-remediation"
 check_health "agent-remediation" 8092 "/healthz" || exit 1
 
 # dead-letter-controller stores the dead letters every consumer and outbox
 # relay publishes, and serves DeadLetterService on 50055: the dead-letter e2e
 # lists and redrives through it. /health answers before the gRPC listener
 # binds, so wait for the port as well.
-start_service "dead-letter-controller" "dead-letter-controller" "dead-letter-controller"
+start_component "dead-letter-controller" "dead-letter-controller" "dead-letter-controller"
 check_health "dead-letter-controller" 8096 "/ready" || exit 1
 wait_for_tcp_port dead-letter-controller 50055 || exit 1
 
@@ -84,4 +84,4 @@ docker exec dbt-compile-and-load \
 log_info "dbt manifests uploaded to canonical keys (<project>/e2e-baseline/manifest.json)"
 log_info "NOTE: per-project image tags are seeded into the release-controller service_prod table by setup.sh / provision-k8s-test-env.sh"
 
-log_info "All services started successfully!"
+log_info "All components started successfully!"

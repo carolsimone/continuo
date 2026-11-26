@@ -485,7 +485,7 @@ func TestAssemble_OmitsTheReleaseUpstreamSectionWhenUnknown(t *testing.T) {
 }
 
 // Every prompt asks the model for one sentence about its edit, not a cause: the
-// cause is composed by the service from facts it holds.
+// cause is composed by the component from facts it holds.
 func TestEveryPrompt_AsksForANoteNotACause(t *testing.T) {
 	reqs := []ProposeRequest{
 		Assemble(Evidence{NodeID: "n", CandidateSQL: "select 1", DBTLog: "e"}),

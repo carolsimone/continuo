@@ -5,8 +5,8 @@ WORKDIR /app
 # Layer 1: Workspace stub. All go.mod / go.sum files are copied so
 # `go mod download` can satisfy every dependency cited by go.work, but
 # only the modules this image builds against (pkg, agent-chat) get their
-# source trees later. Limiting the source-copy layers to the service-
-# owned dirs means a change to another service does not invalidate this
+# source trees later. Limiting the source-copy layers to the component-
+# owned dirs means a change to another component does not invalidate this
 # image's cache.
 COPY go.work go.work.sum* ./
 COPY agent-chat/go.mod agent-chat/go.sum ./agent-chat/
@@ -22,7 +22,7 @@ COPY dead-letter-controller/go.mod dead-letter-controller/go.sum ./dead-letter-c
 COPY egress-proxy/go.mod egress-proxy/go.sum ./egress-proxy/
 
 # Layer 2: Drop unused use-directives so `go build` does not require the
-# other services' source trees to be present in this image.
+# other components' source trees to be present in this image.
 RUN go work edit -dropuse=./catalog \
     && go work edit -dropuse=./execution-controller \
     && go work edit -dropuse=./release-controller \
@@ -43,7 +43,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 COPY cli/ /cli/
 RUN cd /cli && CGO_ENABLED=0 go build -o /usr/local/bin/continuo ./cmd/continuo
 
-# Layer 5: Source for the modules this service builds against. pkg/ first
+# Layer 5: Source for the modules this component builds against. pkg/ first
 # (lower churn) so a change in agent-chat/ does not invalidate the pkg layer.
 COPY pkg/ ./pkg/
 COPY agent-chat/ ./agent-chat/

@@ -1,6 +1,6 @@
 .PHONY: build test test-unit test-integration install fmt vet clean
 
-# cli is deliberately outside the parent go.work so service Docker builds
+# cli is deliberately outside the parent go.work so component Docker builds
 # don't need to COPY cli/ into their contexts. GOWORK=off keeps these
 # targets working from inside cli/ regardless of the parent workspace.
 export GOWORK=off
@@ -9,7 +9,7 @@ export GOWORK=off
 build:
 	CGO_ENABLED=0 go build -o bin/continuo ./cmd/continuo
 
-# All tests except integration (matches sibling-service convention).
+# All tests except integration (matches sibling-component convention).
 test: test-unit
 
 test-unit:
@@ -32,7 +32,7 @@ clean:
 	rm -rf bin/
 
 # Regenerate gRPC stubs from the vendored public .proto contracts under proto/.
-# Never generates from a service's source tree — the CLI is a pure client.
+# Never generates from a component's source tree — the CLI is a pure client.
 # Prerequisites on PATH:
 #   - protoc, installed WITH its bundled well-known-type includes
 #     (Homebrew, apt protobuf-compiler, or an official release zip that

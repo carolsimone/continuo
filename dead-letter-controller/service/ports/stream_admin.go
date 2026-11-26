@@ -3,7 +3,7 @@ package ports
 import "context"
 
 // StreamAdmin creates the Redis streams and consumer groups the system reads
-// and writes, and checks that the Redis logins of the services sign in. Every stream call takes the contract
+// and writes, and checks that the Redis logins of the components sign in. Every stream call takes the contract
 // name of the stream (for example streams.TaskDispatchV1); the implementation
 // maps it to the key it acts on. Every stream call is idempotent: a second
 // call creates nothing.

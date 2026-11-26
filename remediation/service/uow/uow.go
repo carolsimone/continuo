@@ -1,4 +1,4 @@
-// Package uow declares the UnitOfWork seam for the remediation service. The
+// Package uow declares the UnitOfWork seam for the remediation component. The
 // Postgres implementation lives in adapters/postgres.
 package uow
 

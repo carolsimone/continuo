@@ -18,10 +18,10 @@ import (
 
 const maintenanceMessage = "continuo is in maintenance mode: new work is not accepted until it is turned off"
 
-// maintenanceServices are restarted with the flag flipped: run-controller gates runs,
+// maintenanceComponents are restarted with the flag flipped: run-controller gates runs,
 // release-controller gates releases. Each entry is the container, its Go
 // module directory under /app and its health URL.
-var maintenanceServices = []struct{ container, dir, health string }{
+var maintenanceComponents = []struct{ container, dir, health string }{
 	{"run-controller", "run-controller", "http://run-controller:8082/health"},
 	{"release-controller", "release-controller", "http://release-controller:8088/healthz"},
 }
@@ -30,7 +30,7 @@ var maintenanceServices = []struct{ container, dir, health string }{
 // set to on, in parallel, and waits until both answer their health checks. The
 // restart stops the running `go run` process; the relaunch inherits the
 // container's compose environment except for the overridden flag. Each
-// service's output goes to /tmp/<container>.log inside its container.
+// component's output goes to /tmp/<container>.log inside its container.
 func setMaintenance(t *testing.T, ctx context.Context, on bool) {
 	t.Helper()
 	start := time.Now()
@@ -39,11 +39,11 @@ func setMaintenance(t *testing.T, ctx context.Context, on bool) {
 	// config). pollUntil ends the test with t.Fatal, which runs this defer.
 	defer func() {
 		if t.Failed() {
-			logServiceTails(t)
+			logComponentTails(t)
 		}
 	}()
-	errs := make(chan error, len(maintenanceServices))
-	for _, s := range maintenanceServices {
+	errs := make(chan error, len(maintenanceComponents))
+	for _, s := range maintenanceComponents {
 		go func() {
 			if out, err := exec.CommandContext(ctx, "docker", "restart", "-t", "20", s.container).CombinedOutput(); err != nil { //nolint:gosec // fixed container names
 				errs <- fmt.Errorf("docker restart %s: %v: %s", s.container, err, out)
@@ -58,10 +58,10 @@ func setMaintenance(t *testing.T, ctx context.Context, on bool) {
 			errs <- nil
 		}()
 	}
-	for range maintenanceServices {
+	for range maintenanceComponents {
 		require.NoError(t, <-errs)
 	}
-	for _, s := range maintenanceServices {
+	for _, s := range maintenanceComponents {
 		pollUntil(t, ctx, 3*time.Minute, time.Second, func() (bool, error) {
 			resp, err := http.Get(s.health) //nolint:gosec,noctx // fixed health URL
 			if err != nil {
@@ -74,13 +74,13 @@ func setMaintenance(t *testing.T, ctx context.Context, on bool) {
 	t.Logf("maintenance=%t restart took %s", on, time.Since(start).Round(time.Second))
 }
 
-// logServiceTails writes the last lines of each restarted service's
+// logComponentTails writes the last lines of each restarted component's
 // /tmp/<container>.log into the test output.
-func logServiceTails(t *testing.T) {
+func logComponentTails(t *testing.T) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	for _, s := range maintenanceServices {
+	for _, s := range maintenanceComponents {
 		out, err := exec.CommandContext(ctx, "docker", "exec", s.container, "tail", "-n", "50", "/tmp/"+s.container+".log").CombinedOutput() //nolint:gosec // fixed container names
 		if err != nil {
 			t.Logf("tail of %s log failed: %v: %s", s.container, err, out)
@@ -145,7 +145,7 @@ func TestMaintenanceMode(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 	clients := setupClients(t, ctx)
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 	cleanupTestData(t, ctx, clients, "maintenance-mode")
 	seedTopology(t, ctx, clients)

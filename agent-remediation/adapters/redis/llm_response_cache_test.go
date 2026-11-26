@@ -86,7 +86,7 @@ func TestLLMResponseCache_PutSetsTTL(t *testing.T) {
 }
 
 // TestLLMCacheKeyIsPrefixed pins the Redis key of a cached result to the
-// continuo: prefix, so the key falls under the service's ACL key pattern.
+// continuo: prefix, so the key falls under the component's ACL key pattern.
 func TestLLMCacheKeyIsPrefixed(t *testing.T) {
 	ctx := context.Background()
 	mr := miniredis.RunT(t)

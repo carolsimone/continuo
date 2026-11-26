@@ -84,7 +84,7 @@ Output (stdout, JSON):
 Errors:
   usage      (exit 2)  wrong number of arguments
   not_found  (exit 3)  the node has no contract, is retired, or its unique_id is not recorded
-  unavailable(exit 5)  the catalog service is unreachable
+  unavailable(exit 5)  catalog is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo node contract analytics.orders\n  continuo node contract analytics.py_daily_kpis",
 		Annotations: map[string]string{

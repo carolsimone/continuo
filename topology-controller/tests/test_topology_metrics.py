@@ -235,7 +235,7 @@ def test_no_created_series_are_exported():
     assert "_created" not in generate_latest(metrics.registry).decode()
 
 
-def test_the_registry_holds_only_the_service_series():
+def test_the_registry_holds_only_the_component_series():
     metrics = TopologyMetrics("topology-controller")
     metrics.release_finished(_finished({"dbt": 1}))
     names = {line.split("{")[0].split(" ")[0] for line in generate_latest(metrics.registry).decode().splitlines()

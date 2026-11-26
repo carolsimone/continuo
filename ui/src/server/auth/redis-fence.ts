@@ -1,8 +1,8 @@
 import { ReplyError } from 'ioredis';
 
-// The REDIS_ACL_MODE values. In perService mode each service signs in as its
+// The REDIS_ACL_MODE values. In perService mode each component signs in as its
 // own Redis login, whose rule fences it to its own keys; in shared mode every
-// service signs in with the same password and nothing is checked.
+// component signs in with the same password and nothing is checked.
 export const REDIS_ACL_MODES = ['shared', 'perService'] as const;
 export type RedisAclMode = (typeof REDIS_ACL_MODES)[number];
 

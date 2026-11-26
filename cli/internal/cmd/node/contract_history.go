@@ -52,7 +52,7 @@ Output (stdout, JSON):
 
 Errors:
   usage      (exit 2)  wrong number of arguments, or a limit that is not a whole number from 0 up
-  unavailable(exit 5)  the catalog service is unreachable
+  unavailable(exit 5)  catalog is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo node contract-history analytics.orders\n  continuo node contract-history analytics.py_daily_kpis 5",
 		Annotations: map[string]string{

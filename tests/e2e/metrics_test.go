@@ -14,10 +14,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestMetrics_ServicesServePrometheusMetrics scrapes /metrics on every service
+// TestMetrics_ComponentsServePrometheusMetrics scrapes /metrics on every component
 // the e2e stack runs in compose. execution-controller runs in kind; the chart
 // lint covers its metrics port.
-func TestMetrics_ServicesServePrometheusMetrics(t *testing.T) {
+func TestMetrics_ComponentsServePrometheusMetrics(t *testing.T) {
 	withConsumersAndOutbox := []string{"continuo_consumer_pending{", "continuo_outbox_backlog{", "go_sql_open_connections{"}
 	// catalog keeps no outbox and no Postgres, so it exposes consumer series
 	// and its own export series only.
@@ -50,7 +50,7 @@ func TestMetrics_ServicesServePrometheusMetrics(t *testing.T) {
 	}
 }
 
-// Every series a service exposes carries a service label, so the samples below
+// Every series a component exposes carries a service label, so the samples below
 // are matched with their label set, e.g.
 // continuo_stream_trim_last_success_timestamp_seconds{service="dead-letter-controller"} 1.7e+09.
 

@@ -310,7 +310,7 @@ func TestFiles_AGateOfTwoStepsExitsOne(t *testing.T) {
 }
 
 // Every heal trigger runs the flow rejected-release. An install file that
-// replaces it with a flow that cannot run is refused, as the service refuses it
+// replaces it with a flow that cannot run is refused, as the component refuses it
 // at startup, and the built-in flow does not stand in for it.
 func TestFiles_AReplacementOfTheTriggerFlowThatCannotRunExitsOne(t *testing.T) {
 	for name, tc := range map[string]struct{ from, to, want string }{
@@ -340,7 +340,7 @@ func TestFiles_AReplacementOfTheTriggerFlowThatCannotRunExitsOne(t *testing.T) {
 }
 
 // A type runs at least one pre-flight round, so a type that asks for none is
-// refused at its agent line, as the service refuses it at startup.
+// refused at its agent line, as the component refuses it at startup.
 func TestFiles_ATypeWithNoRoundsExitsOne(t *testing.T) {
 	dir := copyBuiltinEditing(t, filepath.Join("types", "dbt-compile.yaml"), func(typ string) string {
 		return strings.Replace(typ, "rounds: 3", "rounds: 0", 1)

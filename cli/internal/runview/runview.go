@@ -17,7 +17,7 @@ import (
 // page the server serves for attempts.
 const PageSize = 200
 
-// Reader is the part of the run service the view reads.
+// Reader is the part of RunService the view reads.
 type Reader interface {
 	GetRun(ctx context.Context, runID string) (*runv1.RunResponse, error)
 	ListTasks(ctx context.Context, runID, status string, pageSize, pageOffset int32) (*runv1.ListTasksResponse, error)

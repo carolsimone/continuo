@@ -18,7 +18,7 @@ import (
 // unreadable, non-redrivable dead letter and Handle returns nil, so the entry is
 // acknowledged: returning a decode failure would redeliver it forever. A failure
 // to store, whether of a readable or an unreadable entry, is returned, so the
-// entry stays pending and is stored once the store recovers (the service's own
+// entry stays pending and is stored once the store recovers (the component's own
 // consumers run without dead-lettering, so nothing else can claim the entry).
 type ConsumerDeadLetterBinding struct {
 	rec   Recorder
