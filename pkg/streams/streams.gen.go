@@ -12,7 +12,7 @@ const (
 	TaskDispatchV1 = "task.dispatch:v1"
 	// TaskStatusUpdatedV2 — What execution-controller knows of one attempt of a task — queued, running, succeeded, failed with a failure class and reason, or stopped once a cancel stopped it and no pod of it can run again — each report carrying every fact known so far. run-controller applies a report only when it ranks higher than the attempt's current status, and on a failure decides in the same transaction whether to dispatch the next attempt.
 	TaskStatusUpdatedV2 = "task.status.updated:v2"
-	// OutboxDeadLetterV1 — Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by the outbox processor of each service that keeps an outbox, with the fields the row would have published. dead-letter-controller stores them for listing and redrive.
+	// OutboxDeadLetterV1 — Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by the outbox processor of each component that keeps an outbox, with the fields the row would have published. dead-letter-controller stores them for listing and redrive.
 	OutboxDeadLetterV1 = "outbox.dead_letter:v1"
 	// ConsumerDeadLetterV1 — Messages a stream consumer gave up on (a permanent error, or a transient error on its fifth delivery), written before the original is acknowledged. dead-letter-controller stores them for listing and redrive.
 	ConsumerDeadLetterV1 = "consumer.dead_letter:v1"
@@ -46,7 +46,7 @@ const (
 	RemediationRequestedV3 = "remediation.requested:v3"
 	// RemediationProposedV1 — One verified fix proposal per (release, attempt), carrying every node the attempt resolves and every file it edits; emitted by the remediation agent, consumed by the PR creator and approval surfaces.
 	RemediationProposedV1 = "remediation.proposed:v1"
-	// RemediationHandedOverV1 — One event when a remediation ends with nodes a human must fix, each with its reason code and its owner; emitted by the remediation agent, read by people and not consumed by any service.
+	// RemediationHandedOverV1 — One event when a remediation ends with nodes a human must fix, each with its reason code and its owner; emitted by the remediation agent, read by people and not consumed by any component.
 	RemediationHandedOverV1 = "remediation.handed_over:v1"
 	// RemediationPrOpenedV1 — Emitted when an operator opens a GitHub PR from a fix proposal, one per (release, attempt) and carrying every node the PR resolves; consumed by catalog's case-base proposals group.
 	RemediationPrOpenedV1 = "remediation.pr_opened:v1"

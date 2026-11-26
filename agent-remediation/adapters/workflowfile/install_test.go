@@ -302,7 +302,7 @@ func TestLoadInstall_NotesComeInNameOrder(t *testing.T) {
 }
 
 // An install's type needs no fixture to load: fixtures are read by the
-// conformance check, never by the service.
+// conformance check, never by the component.
 func TestLoadInstall_DoesNotNeedFixtures(t *testing.T) {
 	install := fstest.MapFS{"csv-extra.yaml": {Data: []byte("kind: type\nversion: 1\nname: csv-extra\nmatch: { cluster: single, source: validation }\n")}}
 

@@ -40,7 +40,7 @@ func reliabilityConsumer(t *testing.T, handler MessageHandler, rec *recorder) (*
 	var logs bytes.Buffer
 	c := NewStreamConsumer(nil, "orders:v1", "svc-orders", handler,
 		slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	c.SetService("run-controller")
+	c.SetComponent("run-controller")
 	c.ackFn = func(_ context.Context, id string) error { rec.record("ack:" + id); return nil }
 	c.deadLetterFn = func(_ context.Context, v map[string]any) error {
 		rec.mu.Lock()
@@ -225,11 +225,11 @@ func TestHoldWhileInHand_StopsWithTheConsumer(t *testing.T) {
 	assert.False(t, h.running(50*time.Millisecond), "the holder stops with the consumer")
 }
 
-func TestStart_RefusesWithoutService(t *testing.T) {
+func TestStart_RefusesWithoutComponent(t *testing.T) {
 	c := NewStreamConsumer(nil, "s", "g", func(context.Context, goredis.XMessage) error { return nil }, discardLog())
 	err := c.Start(context.Background())
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "SetService")
+	assert.Contains(t, err.Error(), "SetComponent")
 }
 
 func TestProcessOne_PermanentErrorDeadLettersThenAcks(t *testing.T) {
@@ -335,7 +335,7 @@ func TestProcessOne_ShutdownLeavesPermanentFailurePending(t *testing.T) {
 		return events.ErrPermanent
 	}, rec)
 	c.processOne(ctx, msg("1-0"))
-	assert.Empty(t, rec.calls, "a message being handled when the service stops is neither dead-lettered nor acknowledged")
+	assert.Empty(t, rec.calls, "a message being handled when the component stops is neither dead-lettered nor acknowledged")
 }
 
 func TestSettleReclaimed_DeadLettersOnTheFifthDelivery(t *testing.T) {
@@ -444,7 +444,7 @@ func TestProcessOne_PermanentErrorAtTheDeadlineIsDeadLetteredAsPermanent(t *test
 	assert.Equal(t, model.DeadLetterKindPermanent, payloadOf(t, rec.deadLetters[0]).FailureKind)
 }
 
-func TestWithInfraClassifier_ServiceOutagePausesTheConsumer(t *testing.T) {
+func TestWithInfraClassifier_ComponentDependencyOutagePausesTheConsumer(t *testing.T) {
 	errGraphDown := errors.New("graph database unavailable")
 	rec := &recorder{}
 	calls := 0
@@ -551,7 +551,7 @@ func TestStreamConsumer_InfraPause_PeerSweepDoesNotTakeMessage(t *testing.T) {
 		}
 		return nil
 	}, discardLog())
-	a.SetService("pkg-redis-test")
+	a.SetComponent("pkg-redis-test")
 	a.infraBackoffBase, a.pauseSlice = 400*time.Millisecond, 100*time.Millisecond
 
 	peerCalls, peerDone := sweepingPeer(ctx, rc, stream, group)
@@ -581,7 +581,7 @@ func sweepingPeerEvery(ctx context.Context, rc *goredis.Client, stream, group st
 	var calls atomic.Int32
 	b := NewStreamConsumer(rc, stream, group, func(context.Context, goredis.XMessage) error { calls.Add(1); return nil },
 		discardLog(), WithReclaimMinIdle(gate))
-	b.SetService("pkg-redis-test")
+	b.SetComponent("pkg-redis-test")
 	b.consumerName = "peer"
 	done := make(chan struct{})
 	go func() {
@@ -619,7 +619,7 @@ func TestStreamConsumer_InlineRetry_PeerSweepDoesNotTakeMessage(t *testing.T) {
 		time.Sleep(300 * time.Millisecond)
 		return nil
 	}, discardLog())
-	a.SetService("pkg-redis-test")
+	a.SetComponent("pkg-redis-test")
 	a.pauseSlice = 100 * time.Millisecond
 
 	peerCalls, peerDone := sweepingPeerEvery(ctx, rc, stream, group, 400*time.Millisecond, 25*time.Millisecond)
@@ -658,7 +658,7 @@ func TestStreamConsumer_InlineRetry_LeftPendingSiblingStillReachesTheSweep(t *te
 		}
 		return nil
 	}, discardLog(), WithReclaimMinIdle(gate))
-	c.SetService("pkg-redis-test")
+	c.SetComponent("pkg-redis-test")
 	c.pauseSlice = 20 * time.Millisecond // the holder runs several times during each retried message
 
 	left, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, Values: map[string]any{"k": "left"}}).Result()
@@ -714,7 +714,7 @@ func TestStreamConsumer_InfraPause_LeftPendingSiblingStillReachesTheSweep(t *tes
 		}
 		return nil
 	}, discardLog(), WithReclaimMinIdle(gate))
-	c.SetService("pkg-redis-test")
+	c.SetComponent("pkg-redis-test")
 	c.infraBackoffBase, c.pauseSlice = 100*time.Millisecond, 20*time.Millisecond
 
 	left, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: key, Values: map[string]any{"k": "left"}}).Result()
@@ -773,7 +773,7 @@ func TestStreamConsumer_SlowHandlers_PeerSweepDoesNotTakeBatchSibling(t *testing
 		time.Sleep(400 * time.Millisecond)
 		return nil
 	}, discardLog())
-	a.SetService("pkg-redis-test")
+	a.SetComponent("pkg-redis-test")
 	a.pauseSlice = 100 * time.Millisecond
 
 	peerCalls, peerDone := sweepingPeerEvery(ctx, rc, stream, group, 400*time.Millisecond, 25*time.Millisecond)
@@ -802,7 +802,7 @@ func TestHold_RestartsIdleOfPendingAndSkipsAcknowledged(t *testing.T) {
 	require.NoError(t, err)
 
 	c := NewStreamConsumer(rc, stream, group, nil, discardLog())
-	c.SetService("pkg-redis-test")
+	c.SetComponent("pkg-redis-test")
 	_, err = rc.XReadGroup(ctx, &goredis.XReadGroupArgs{
 		Group: group, Consumer: c.consumerName, Streams: []string{key, ">"}, Count: 10,
 	}).Result()
@@ -855,7 +855,7 @@ func TestStreamConsumer_InfraPause_PeerSweepDoesNotTakeBatchSibling(t *testing.T
 		secondDeliveries = append(secondDeliveries, a.deliveryCount(hctx, m.ID))
 		return nil
 	}, discardLog())
-	a.SetService("pkg-redis-test")
+	a.SetComponent("pkg-redis-test")
 	a.infraBackoffBase, a.pauseSlice = 400*time.Millisecond, 100*time.Millisecond
 
 	peerCalls, peerDone := sweepingPeer(ctx, rc, stream, group)
@@ -909,7 +909,7 @@ func TestStreamConsumer_ReclaimPath_HandledMessageAckedWhileALaterOnePauses(t *t
 		}
 		return nil
 	}, discardLog(), WithReclaimMinIdle(0))
-	c.SetService("pkg-redis-test")
+	c.SetComponent("pkg-redis-test")
 	c.infraBackoffBase, c.pauseSlice = 50*time.Millisecond, 50*time.Millisecond
 
 	require.NoError(t, c.reclaimPending(ctx))
@@ -933,7 +933,7 @@ func TestStreamConsumer_PermanentError_WritesDeadLetterBeforeAck(t *testing.T) {
 	require.NoError(t, err)
 
 	c := NewStreamConsumer(rc, stream, group, func(context.Context, goredis.XMessage) error { return events.ErrPermanent }, discardLog())
-	c.SetService("pkg-redis-test")
+	c.SetComponent("pkg-redis-test")
 	require.NoError(t, c.readAndProcess(ctx))
 
 	dl := deadLettersFor(t, rc, stream)

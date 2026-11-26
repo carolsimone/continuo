@@ -45,7 +45,7 @@ func TestE2E_Retry_AFailOnceModelSucceedsOnItsSecondAttempt(t *testing.T) {
 	clients := setupClients(t, ctx)
 	defer cleanupTestData(t, ctx, clients, retryScheduleName)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 	cleanupTestData(t, ctx, clients, retryScheduleName)
 

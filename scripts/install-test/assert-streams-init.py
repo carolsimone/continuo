@@ -19,7 +19,7 @@ Redis stream and consumer group of the release.
   - Its env is exactly REDIS_ADDR (the shared ConfigMap's), REDIS_PASSWORD (a
     secretKeyRef), REDIS_ACL_MODE (--acl-mode), REDIS_INIT_CREATE_STREAMS
     (--create-streams) and LOG_LEVEL (the shared ConfigMap's), plus
-    REDIS_USERNAME and REDIS_LOGINS_DIR in perService mode, which also mounts
+    REDIS_USERNAME and REDIS_LOGINS_DIR in perComponent mode, which also mounts
     the redis-logins volume and nothing else. Which login and which files
     those are is assert-redis-logins.py's to check.
   - A hook runs before the release's regular resources exist, so a hook Job
@@ -30,7 +30,7 @@ Redis stream and consumer group of the release.
     password the chart holds (no existingSecret) reads it.
 
 Usage: assert-streams-init.py <rendered-manifest.yaml> --mode hook|job
-           --create-streams true|false --acl-mode perService|shared
+           --create-streams true|false --acl-mode perComponent|shared
 """
 import argparse
 import logging
@@ -65,11 +65,11 @@ CONTAINER_SECURITY = {
 COMMON_ENV = {"REDIS_ADDR", "REDIS_PASSWORD", "REDIS_ACL_MODE", "REDIS_INIT_CREATE_STREAMS", "LOG_LEVEL"}
 MAIN_ENV = {
     "shared": COMMON_ENV,
-    "perService": COMMON_ENV | {"REDIS_USERNAME", "REDIS_LOGINS_DIR"},
+    "perComponent": COMMON_ENV | {"REDIS_USERNAME", "REDIS_LOGINS_DIR"},
 }
 WAIT_ENV = {
     "shared": {"REDISCLI_AUTH", "REDIS_HOST", "REDIS_PORT"},
-    "perService": {"REDISCLI_AUTH", "REDIS_USERNAME", "REDIS_HOST", "REDIS_PORT"},
+    "perComponent": {"REDISCLI_AUTH", "REDIS_USERNAME", "REDIS_HOST", "REDIS_PORT"},
 }
 TTL = {"hook": 3600, "job": 86400}
 
@@ -247,7 +247,7 @@ def check_job(docs, mode, create_streams, acl_mode):
 
     mounts = sorted(m["name"] for m in container.get("volumeMounts") or [])
     volumes = sorted(v["name"] for v in pod.get("volumes") or [])
-    want_volumes = ["redis-logins"] if acl_mode == "perService" else []
+    want_volumes = ["redis-logins"] if acl_mode == "perComponent" else []
     if mounts != want_volumes or volumes != want_volumes:
         failures.append(f"the Job mounts {mounts} from volumes {volumes}, want {want_volumes}")
 
@@ -321,7 +321,7 @@ def main(argv):
     parser.add_argument("manifest")
     parser.add_argument("--mode", choices=("hook", "job"), required=True)
     parser.add_argument("--create-streams", choices=("true", "false"), required=True)
-    parser.add_argument("--acl-mode", choices=("perService", "shared"), required=True)
+    parser.add_argument("--acl-mode", choices=("perComponent", "shared"), required=True)
     args = parser.parse_args(argv[1:])
     with open(args.manifest) as handle:
         docs = [d for d in yaml.safe_load_all(handle) if d]

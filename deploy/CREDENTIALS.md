@@ -1,6 +1,6 @@
 # Credentials
 
-Every continuo service signs in to Postgres and to Redis as its own login, and
+Every continuo component signs in to Postgres and to Redis as its own login, and
 reads each credential from an environment variable or from a file. This guide
 lists every login continuo uses, says how to create each one, and shows how to
 hand the passwords to the pods.
@@ -44,7 +44,7 @@ can grant rights.
 | Redis | `continuo_ui` | Read and write the ui sessions (`continuo:uisession:*`) | ui |
 | Redis | `continuo_redis_migrate` | Create every stream and consumer group under `continuo:` | the `streams-init` Job |
 
-Every name is a value: `credentials.postgres.<service>.username` and
+Every name is a value: `credentials.postgres.<component>.username` and
 `credentials.redis.logins.<name>.username`. The names above are the defaults,
 and the published Redis rules use them.
 
@@ -88,7 +88,7 @@ credentials:
 
 `key` names another key in the Secret. A password the pod receives as a file of
 your own (see [Hand the passwords to the pods](#hand-the-passwords-to-the-pods))
-needs no Secret: give `POSTGRES_PASSWORD` in `credentials.files.<service>`.
+needs no Secret: give `POSTGRES_PASSWORD` in `credentials.files.<component>`.
 
 ### The migration login owns every continuo database
 
@@ -176,7 +176,7 @@ it every schema, table, view, sequence and routine there that it does not own.
 
 ### Managed Postgres
 
-- **A hardened `postgres` database.** A service's `wait-for-migrations` init
+- **A hardened `postgres` database.** A component's `wait-for-migrations` init
   container (bundled Postgres only) and the migrate Job's checks connect to
   the `postgres` maintenance database. Where `CONNECT` on it is revoked from
   `PUBLIC`, grant it to each runtime login.
@@ -199,7 +199,7 @@ Every key continuo uses starts with `continuo:`: its streams
 (`continuo:task.dispatch:v1`), the ui sessions (`continuo:uisession:<id>`),
 agent-chat's rate-limit keys and agent-remediation's LLM cache. On a Redis
 shared with other applications, `~continuo:*` fences continuo away from their
-keys, and the per-login rules below fence each service away from the others'.
+keys, and the per-login rules below fence each component away from the others'.
 
 ### Create the logins
 
@@ -213,7 +213,7 @@ chart, in two forms:
 
   ```json
   {"key_prefix": "continuo:",
-   "logins": [{"service": "run-controller", "username": "continuo_run_controller", "rule": "~continuo:release.promoted:v2 ... -@all +ping ..."}]}
+   "logins": [{"component": "run-controller", "username": "continuo_run_controller", "rule": "~continuo:release.promoted:v2 ... -@all +ping ..."}]}
   ```
 
 Create each login with its rule and a password. With `redis-cli`, as a login
@@ -255,7 +255,7 @@ and name it in the values:
 ```yaml
 credentials:
   redis:
-    mode: perService
+    mode: perComponent
     logins:
       streams-init: {existingSecret: continuo-redis-streams-init}
       run-controller: {existingSecret: continuo-redis-run-controller}
@@ -270,22 +270,22 @@ credentials:
       dead-letter-controller: {existingSecret: continuo-redis-dead-letter-controller}
 ```
 
-A service's password given as a file of your own needs no Secret: give
-`REDIS_PASSWORD` in `credentials.files.<service>`.
+A component's password given as a file of your own needs no Secret: give
+`REDIS_PASSWORD` in `credentials.files.<component>`.
 
 **Rules change with releases.** A release that changes a rule says so in the
 chart's CHANGELOG with the words "Redis rule". Apply the new rules before, or
 with, the upgrade that carries them.
 
 **A Redis with no ACL users** (some managed offerings have a single password)
-sets `credentials.redis.mode: shared`. Every service then signs in with the one
-password in `externalRedis`, and any service's credential reaches every key.
+sets `credentials.redis.mode: shared`. Every component then signs in with the one
+password in `externalRedis`, and any component's credential reaches every key.
 
 ### The streams step
 
 The `streams-init` Job creates every stream and consumer group of the release
-before the services roll, from ID `0` where one is missing, signed in as
-`continuo_redis_migrate`. Running it twice changes nothing; no service creates
+before the components roll, from ID `0` where one is missing, signed in as
+`continuo_redis_migrate`. Running it twice changes nothing; no component creates
 a stream or a group itself. To create them yourself, set
 `redisInit.createStreams: false` and run `/streams-init` from the
 dead-letter-controller image with a login that may, before the upgrade; the
@@ -293,21 +293,21 @@ Job then creates nothing but still checks every login.
 
 ### What continuo checks
 
-- **Before any service rolls**, `streams-init` signs in as every login whose
+- **Before any component rolls**, `streams-init` signs in as every login whose
   password is in a Secret and stops the deploy when one is missing or its
   password is wrong.
-- **When a service starts**, it asks Redis about a key no rule covers
+- **When a component starts**, it asks Redis about a key no rule covers
   (`continuo-permission-probe`) and refuses to start unless Redis answers
   `NOPERM`: a login that reaches keys outside its own fails here. A login whose
   password reaches its pod only as a file of your own is checked here too.
 - **A rule that lacks a command or stream the release needs** shows as `NOPERM`
-  when the service first uses it, which is why the CHANGELOG names every rule
+  when the component first uses it, which is why the CHANGELOG names every rule
   change.
 
 ## Hand the passwords to the pods
 
-`credentials.delivery` (and a service's `credentialDelivery`) chooses how each
-credential reaches a service's pod:
+`credentials.delivery` (and a component's `credentialDelivery`) chooses how each
+credential reaches a component's pod:
 
 | Mode | The chart | Fits |
 |---|---|---|
@@ -315,7 +315,7 @@ credential reaches a service's pod:
 | `file` | mounts the same Secret keys read-only under `/var/run/secrets/continuo` and sets `<VAR>_FILE`; no credential is in the environment | the same, for a company that keeps credentials out of the environment |
 | your own files (`credentials.files`) | attaches no Secret for that credential and sets `<VAR>_FILE` to the path you give | Vault Agent injector, Secrets Store CSI driver |
 
-Every service reads `<VAR>` or `<VAR>_FILE`, never both; one trailing newline is
+Every component reads `<VAR>` or `<VAR>_FILE`, never both; one trailing newline is
 trimmed. The Postgres and Redis passwords are read from the file again for
 every new connection, so a rotated file needs no restart. Postgres keeps open
 sessions across a password change.
@@ -344,7 +344,7 @@ credentials:
   files:
     run-controller:
       POSTGRES_PASSWORD: /vault/secrets/postgres
-services:
+components:
   - name: run-controller
     # ... the rest of the chart's entry
     podAnnotations:
@@ -356,10 +356,10 @@ services:
         {{ with secret "secret/data/continuo/run-controller" }}{{ .Data.data.password }}{{ end }}
 ```
 
-Every service runs under a ServiceAccount of its own, named after it, which a
+Every component runs under a ServiceAccount of its own, named after it, which a
 Vault Kubernetes role binds to.
 
-**Secrets Store CSI driver:** mount the volume in the service's entry, and
+**Secrets Store CSI driver:** mount the volume in the component's entry, and
 name the file:
 
 ```yaml
@@ -367,7 +367,7 @@ credentials:
   files:
     execution-controller:
       POSTGRES_PASSWORD: /mnt/secrets-store/postgres-password
-services:
+components:
   - name: execution-controller
     # ... the rest of the chart's entry
     volumes:
@@ -388,7 +388,7 @@ key from the Secret `execution.jobS3Secret`, and the warehouse from
 
 ## How an upgrade names a missing login
 
-Each problem stops the upgrade before any service rolls, so the running version
+Each problem stops the upgrade before any component rolls, so the running version
 stays up:
 
 | Problem | Where | Message |
@@ -397,7 +397,7 @@ stays up:
 | A Postgres login does not exist | the migrate Job | `login continuo_release_controller does not exist: create it as described in deploy/CREDENTIALS.md` |
 | A Postgres login has more rights than its own | the migrate Job | `login continuo_agent_chat: has CREATEDB` |
 | A Redis login does not exist, or its password is wrong | the `streams-init` Job | `redis login continuo_ui: ...; create it as described in deploy/CREDENTIALS.md` |
-| A Redis login reaches keys outside its own | the service, at start | `redis login continuo_ui can read keys outside its own: apply the rules in deploy/redis-acl-rules.acl` |
+| A Redis login reaches keys outside its own | the component, at start | `redis login continuo_ui can read keys outside its own: apply the rules in deploy/redis-acl-rules.acl` |
 
 `helm upgrade` prints every login to create, in its notes, when the release
 runs against your own Postgres or Redis.

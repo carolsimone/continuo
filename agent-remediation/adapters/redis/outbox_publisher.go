@@ -123,7 +123,7 @@ func renderRemediationHandedOver(entry *pkgoutbox.Entry) (map[string]any, error)
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return nil, handedOverPermanent(fmt.Errorf("decode payload: %w", err))
 	}
-	values, err := pkgevents.RemediationHandedOverFields(entry.ID.String(), tenantID, config.ServiceName, entry.CreatedAt, p)
+	values, err := pkgevents.RemediationHandedOverFields(entry.ID.String(), tenantID, config.ComponentName, entry.CreatedAt, p)
 	if err != nil {
 		return nil, handedOverPermanent(err)
 	}
@@ -154,7 +154,7 @@ func renderConsumerDeadLetter(entry *pkgoutbox.Entry) (map[string]any, error) {
 		return nil, consumerDeadLetterPermanent(fmt.Errorf("decode payload: %w", err))
 	}
 	m.TenantID = tenantID
-	m.Producer = config.ServiceName
+	m.Producer = config.ComponentName
 	values, err := pkgevents.ConsumerDeadLetterFields(m)
 	if err != nil {
 		return nil, consumerDeadLetterPermanent(err)

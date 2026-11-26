@@ -9,7 +9,7 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-// maintenanceTrailerKey is the trailer a continuo service sets to "true" when
+// maintenanceTrailerKey is the trailer a continuo component sets to "true" when
 // it refuses a call because maintenance mode is on.
 const maintenanceTrailerKey = "continuo-maintenance"
 

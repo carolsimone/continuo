@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Each service signs in to Redis as its own login.
+"""Each component signs in to Redis as its own login.
 
-perService (credentials.redis.mode):
-  - every Deployment of a Redis service sets REDIS_USERNAME to its login from
+perComponent (credentials.redis.mode):
+  - every Deployment of a Redis component sets REDIS_USERNAME to its login from
     deploy/continuo/files/redis-acl-rules.json and reads REDIS_PASSWORD from
     that login's Secret; its wait-for-redis init container, when rendered,
     signs in as the same login;
-  - the shared ConfigMap says REDIS_ACL_MODE=perService;
+  - the shared ConfigMap says REDIS_ACL_MODE=perComponent;
   - the streams-init Job signs in as continuo_redis_migrate, checks its own
-    login's reach (REDIS_ACL_MODE=perService), and mounts the
+    login's reach (REDIS_ACL_MODE=perComponent), and mounts the
     password of every other login it can reach under
     /var/run/secrets/continuo/redis-logins/<username> (REDIS_LOGINS_DIR);
   - bundled: Redis starts from an ACL file (--aclfile, no --requirepass) with
@@ -19,10 +19,10 @@ shared:
     Redis keeps --requirepass.
 
 Usage:
-  assert-redis-logins.py <rendered.yaml> perService bundled
-  assert-redis-logins.py <rendered.yaml> perService external <secret-name-format>
-    <secret-name-format> names each login's Secret, with {service} for the
-    service name (streams-init included); its key is `password`.
+  assert-redis-logins.py <rendered.yaml> perComponent bundled
+  assert-redis-logins.py <rendered.yaml> perComponent external <secret-name-format>
+    <secret-name-format> names each login's Secret, with {component} for the
+    component name (streams-init included); its key is `password`.
   assert-redis-logins.py <rendered.yaml> shared
 """
 import hashlib
@@ -72,23 +72,23 @@ def credential_ref(pod_spec: dict, container: dict, var: str):
 def main() -> int:
     logging.basicConfig(stream=sys.stderr, format="%(message)s", level=logging.INFO)
     args = sys.argv[1:]
-    if len(args) < 2 or args[1] not in ("perService", "shared"):
+    if len(args) < 2 or args[1] not in ("perComponent", "shared"):
         logger.error(__doc__)
         return 2
     path, mode = args[0], args[1]
-    where = args[2] if mode == "perService" else None
+    where = args[2] if mode == "perComponent" else None
     ref_name_format = args[3] if where == "external" else None
     with open(path) as fh:
         rendered = [d for d in yaml.safe_load_all(fh) if d]
     rules = json.loads(RULES.read_text())
-    login_of = {l["service"]: l["username"] for l in rules["logins"]}
+    login_of = {l["component"]: l["username"] for l in rules["logins"]}
     rule_of = {l["username"]: l["rule"] for l in rules["logins"]}
     problems = []
 
-    def want_ref(svc: str):
+    def want_ref(component: str):
         if where == "bundled":
-            return (f"{RELEASE}-logins", f"redis-{svc}")
-        return (ref_name_format.format(service=svc), "password")
+            return (f"{RELEASE}-logins", f"redis-{component}")
+        return (ref_name_format.format(component=component), "password")
 
     cm = next(d for d in rendered if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == f"{RELEASE}-config")
     if cm["data"].get("REDIS_ACL_MODE") != mode:
@@ -124,7 +124,7 @@ def main() -> int:
             got = credential_ref(spec, wait, "REDISCLI_AUTH")
             if got != want_ref(name):
                 problems.append(f"{name}: wait-for-redis reads REDISCLI_AUTH from {got}, want {want_ref(name)}")
-    if mode == "perService":
+    if mode == "perComponent":
         missing = {s for s in login_of if s != STREAMS_INIT} - seen
         if missing:
             problems.append(f"no Redis Deployment rendered for {sorted(missing)}")
@@ -141,8 +141,8 @@ def main() -> int:
                 problems.append(f"streams-init signs in as {value(env, 'REDIS_USERNAME')!r}")
             if key_ref(env, "REDIS_PASSWORD") != want_ref(STREAMS_INIT):
                 problems.append(f"streams-init reads REDIS_PASSWORD from {key_ref(env, 'REDIS_PASSWORD')}")
-            if value(env, "REDIS_ACL_MODE") != "perService":
-                problems.append(f"streams-init REDIS_ACL_MODE is {value(env, 'REDIS_ACL_MODE')!r}, want 'perService'")
+            if value(env, "REDIS_ACL_MODE") != "perComponent":
+                problems.append(f"streams-init REDIS_ACL_MODE is {value(env, 'REDIS_ACL_MODE')!r}, want 'perComponent'")
             if value(env, "REDIS_LOGINS_DIR") != LOGINS_DIR:
                 problems.append(f"streams-init REDIS_LOGINS_DIR is {value(env, 'REDIS_LOGINS_DIR')!r}")
             mounts = {m["name"]: m["mountPath"] for m in main.get("volumeMounts") or []}
@@ -162,7 +162,7 @@ def main() -> int:
                 and d["metadata"].get("labels", {}).get("app.kubernetes.io/name") == "redis"), None)
     if sts:
         redis_args = sts["spec"]["template"]["spec"]["containers"][0].get("args") or []
-        if mode == "perService":
+        if mode == "perComponent":
             if "--aclfile" not in redis_args or "--requirepass" in redis_args:
                 problems.append(f"bundled Redis args {redis_args}: want --aclfile and no --requirepass")
             ref_docs = {d["metadata"]["name"]: d for d in rendered if d.get("kind") == "Secret"}
@@ -181,11 +181,11 @@ def main() -> int:
                         users[parts[1]] = parts
                 if set(users) != set(rule_of):
                     problems.append(f"users.acl names {sorted(users)}, want {sorted(rule_of)}")
-                for svc, login in login_of.items():
+                for component, login in login_of.items():
                     parts = users.get(login)
                     if not parts:
                         continue
-                    stored = generated_values.get(f"redis-{svc}", "")
+                    stored = generated_values.get(f"redis-{component}", "")
                     want_hash = "#" + hashlib.sha256(stored.encode()).hexdigest()
                     if parts[2] != "on" or parts[3] != want_hash or parts[4] != rule_of[login]:
                         problems.append(f"users.acl line for {login} does not match its rule and password")

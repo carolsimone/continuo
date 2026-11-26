@@ -1,7 +1,7 @@
 // Package retention keeps tables and collections bounded: a Sweeper runs
 // each Target's PruneFunc on a timer, in bounded batches, deleting what has
 // aged past the retention. It holds no database code; each target brings
-// its own prune, so a service links only the storage it keeps.
+// its own prune, so a component links only the storage it keeps.
 package retention
 
 import (
@@ -64,7 +64,7 @@ func (c Config) withDefaults() Config {
 }
 
 // Sweeper periodically prunes rows that have aged past the retention window
-// from one or more stores, through the PruneFunc of each Target. A service
+// from one or more stores, through the PruneFunc of each Target. A component
 // runs one over what would otherwise grow without bound: a transactional
 // outbox, the message_processing dedup rows (every consumed message leaves a
 // row carrying its full payload), or a graph's processed-message markers.

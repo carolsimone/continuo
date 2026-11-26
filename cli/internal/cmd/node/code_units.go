@@ -79,7 +79,7 @@ Output (stdout, JSON):
 Errors:
   usage      (exit 2)  wrong number of positional arguments, or the selector is not exactly one of <unit-id> / --project+--schema+--table
   not_found  (exit 3)  the unit_id, or the node's unique_id, is not recorded
-  unavailable(exit 5)  the catalog service is unreachable
+  unavailable(exit 5)  catalog is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo node code-units unit_abc123\n  continuo node code-units --project finance --schema analytics --table orders",
 		Annotations: map[string]string{

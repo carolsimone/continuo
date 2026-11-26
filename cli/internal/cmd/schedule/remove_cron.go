@@ -38,7 +38,7 @@ Output (stdout, JSON):
 
 Errors:
   usage      (exit 2)  wrong number of arguments or a blank name
-  unavailable(exit 5)  the run-controller service is unreachable
+  unavailable(exit 5)  run-controller is unreachable
   maintenance(exit 7)  continuo is in maintenance mode; edits are refused until it is turned off (not retryable)
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo schedule remove-cron daily",

@@ -7,9 +7,9 @@ e2e test fixtures, not production content; real teams own their dbt models
 in their own repo (e.g. [`continuo-demo`](https://github.com/carolsimone/continuo-demo))
 and ship them as their own project image built on this base.
 
-## Job, not a service
+## Job, not a component
 
-The images built from `base/` and `projects/*` are not long-running services
+The images built from `base/` and `projects/*` are not long-running components
 (see the [top-level README](../README.md) for those) — `execution-controller`
 dispatches each as a one-shot Kubernetes `Job` per scheduled run, setting the
 container's `Command` explicitly from
@@ -191,7 +191,7 @@ Each project has its own `Dockerfile`, `dbt_project.yml`, and `profiles.yml`.
 parameters — `schedule_name`, `table_name`, `schema_name`, `job_name`,
 `project_name` — then runs `dbt run --select $TABLE_NAME`) is the image's
 default `ENTRYPOINT`, but execution-controller-created Jobs override `Command`
-explicitly (see [Job, not a service](#job-not-a-service) above), so it only
+explicitly (see [Job, not a component](#job-not-a-component) above), so it only
 runs when a Job is launched *without* an explicit command — e.g. manual
 debugging via `docker run`/`kubectl run`, not the production dispatch path.
 

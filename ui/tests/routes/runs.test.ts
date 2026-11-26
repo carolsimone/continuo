@@ -389,7 +389,7 @@ describe('routes/runs: GET /:id/graph', () => {
     expect(res.body).not.toHaveProperty('latest_topology_generation');
   });
 
-  it('returns task statuses as the run-controller service sends them', async () => {
+  it('returns task statuses as run-controller sends them', async () => {
     mockGetRunGraph.mockImplementation((_req: any, cb: any) =>
       cb(null, {
         nodes: [{ project_name: 's', schema_name: 'sch', table_name: 't', node_type: 'dbt-model', status: 'skipped' }],

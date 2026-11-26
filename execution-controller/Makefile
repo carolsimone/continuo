@@ -1,10 +1,10 @@
 .PHONY: build run test test-unit test-integration test-ci fmt vet lint clean deps
 
-# Build the service
+# Build the component
 build:
 	go build -o bin/execution-controller .
 
-# Run the service locally
+# Run the component locally
 run:
 	go run .
 

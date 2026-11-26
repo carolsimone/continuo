@@ -12,7 +12,7 @@ WORKDIR /app
 # catalog and the other workspace modules listed below are copied;
 # Layer 2 drops every module but pkg and catalog from the workspace, so
 # only those two are built against and get their source trees later.
-# Limiting the source-copy layers to the dirs this service actually
+# Limiting the source-copy layers to the dirs this component actually
 # touches means a change to execution-controller does not invalidate
 # this image's cache.
 COPY go.work go.work.sum* ./
@@ -27,7 +27,7 @@ COPY dead-letter-controller/go.mod dead-letter-controller/go.sum ./dead-letter-c
 COPY egress-proxy/go.mod egress-proxy/go.sum ./egress-proxy/
 
 # Layer 2: Drop unused use-directives so `go build` does not require the
-# other services' source trees to be present in this image.
+# other components' source trees to be present in this image.
 RUN go work edit -dropuse=./run-controller \
     && go work edit -dropuse=./execution-controller \
     && go work edit -dropuse=./agent-chat \

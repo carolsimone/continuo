@@ -11,8 +11,8 @@ import (
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 )
 
-// Name is the service's name in logs and on every metric series. It runs no
-// stream consumer, so it declares no ServiceName.
+// Name is the component's name in logs and on every metric series. It runs no
+// stream consumer, so it declares no ComponentName.
 const Name = "egress-proxy"
 
 // defaultMaxTunnels is the cap on tunnels and forwarded requests used when

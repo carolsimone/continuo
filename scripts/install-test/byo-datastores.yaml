@@ -48,7 +48,7 @@ spec:
             capabilities:
               drop: ["ALL"]
           # The company's superuser; run.sh signs in as it to create the
-          # migration login and each service's login, as a platform team would.
+          # migration login and each component's login, as a platform team would.
           env:
             - name: POSTGRES_USER
               value: postgres

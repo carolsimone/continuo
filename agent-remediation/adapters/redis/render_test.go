@@ -33,7 +33,7 @@ func TestRender_PayloadFieldWithoutOutboxEntryID(t *testing.T) {
 	}
 }
 
-// TestRender_StampsTheDefaultTenant holds that every message the service
+// TestRender_StampsTheDefaultTenant holds that every message the component
 // publishes carries tenant_id beside its payload, and that a dead-letter row's
 // fields are rendered as they are. The stamp is in Render, which feeds both the
 // XADD and the original fields an outbox dead letter stores, so a redrive of a

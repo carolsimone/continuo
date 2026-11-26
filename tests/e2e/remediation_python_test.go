@@ -107,7 +107,7 @@ const (
 	// stack.
 	pyAttemptFinalizeBudget = 2 * time.Minute
 	// pyRecordVisibleBudget covers a write becoming readable through another
-	// service's API or stream: a submitted release appearing in the release
+	// component's API or stream: a submitted release appearing in the release
 	// list, an emitted event reaching its stream, a classification decision
 	// landing in Postgres.
 	pyRecordVisibleBudget = 1 * time.Minute
@@ -151,7 +151,7 @@ func TestE2E_PythonValidationFailure_VerifiedFix(t *testing.T) {
 
 	clients := setupClients(t, ctx)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 	requireReleaseControllerHealthy(t, clients)
 
@@ -288,7 +288,7 @@ func TestE2E_PythonValidationFailure_VerificationErrorFeedsNextAttempt(t *testin
 
 	clients := setupClients(t, ctx)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 	requireReleaseControllerHealthy(t, clients)
 
@@ -742,7 +742,7 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 
 	clients := setupClients(t, ctx)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 	requireReleaseControllerHealthy(t, clients)
 

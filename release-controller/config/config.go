@@ -8,11 +8,11 @@ import (
 	"github.com/carolsimone/continuo/pkg/warehouse"
 )
 
-// ServiceName names this service as the producer of the dead letters its
+// ComponentName names this component as the producer of the dead letters its
 // stream consumers write.
-const ServiceName = "release-controller"
+const ComponentName = "release-controller"
 
-// Config holds all configuration for the release-controller service.
+// Config holds all configuration for the release-controller component.
 type Config struct {
 	Postgres              pkgconfig.PostgresConfig
 	Redis                 pkgconfig.RedisConfig
@@ -61,7 +61,7 @@ const ontologyEnabledEnvKey = "ONTOLOGY_ENABLED"
 
 // loadOntologyEnabled reads ONTOLOGY_ENABLED: unset or empty is off, and
 // exactly "true" or "false" is read as written. Any other spelling is recorded
-// on v, so the service refuses to start instead of reading a switch it cannot
+// on v, so the component refuses to start instead of reading a switch it cannot
 // honour as off.
 func loadOntologyEnabled(v *pkgconfig.Validator) bool {
 	switch raw := os.Getenv(ontologyEnabledEnvKey); raw {

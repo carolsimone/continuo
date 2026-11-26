@@ -16,7 +16,7 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "continuo.selectorLabels" (dict "root" $ "service" "minio-bucket-init") | nindent 8 }}
+        {{- include "continuo.selectorLabels" (dict "root" $ "name" "minio-bucket-init") | nindent 8 }}
     spec:
       restartPolicy: OnFailure
       securityContext:

@@ -22,7 +22,7 @@ import (
 
 // The tests of this file read the design's contract history of py_daily_kpis
 // (contract a at seq 41, b at 47, a again at 52) through the gRPC handler, the
-// query service and the Neo4j reader.
+// contract query service (queries.ContractQueryService) and the Neo4j reader.
 
 // newQueryHandler is the CatalogQuery handler over f's graph, wired as main
 // wires it.

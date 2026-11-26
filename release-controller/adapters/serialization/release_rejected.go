@@ -30,7 +30,7 @@ type parseNodeDTO struct {
 
 // compileNodeDTO is one compile-leg result. The rejection event body carries no
 // duration_ms (compile results carry it elsewhere) and no source location (the
-// remediation service resolves it when it reads the S3 logs).
+// remediation component resolves it when it reads the S3 logs).
 type compileNodeDTO struct {
 	NodeID        string `json:"node_id"`
 	Status        string `json:"status"`

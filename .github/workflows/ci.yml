@@ -141,7 +141,7 @@ jobs:
         # docker/kind setup below.
         run: make guards
 
-      - name: Lint Go services
+      - name: Lint Go components
         # Static analysis (golangci-lint v2) over the modules enrolled in
         # scripts/lint-ci-modules.txt. Runs early and needs no docker/kind/e2e
         # infra, so it fails fast before the slow setup. All install/run logic
@@ -149,8 +149,8 @@ jobs:
         run: bash scripts/lint-go.sh --ci
 
       - name: Test continuo CLI
-        # cli/ is a Go module outside go.work (so service images need not copy
-        # it in), which keeps it out of make test-go's GO_SERVICES loop; its own
+        # cli/ is a Go module outside go.work (so component images need not copy
+        # it in), which keeps it out of make test-go's GO_COMPONENTS loop; its own
         # Makefile exports GOWORK=off so these targets run from the repo root on
         # the bare runner. Needs only the Go toolchain, so it runs here, before
         # the slow infra setup, and fails fast. test-integration starts an
@@ -193,7 +193,7 @@ jobs:
 
       - name: Smoke-run the topology-controller prod image
         # Loads this runner's own platform from the build cache above and imports
-        # every dependency and the service's entrypoint module with the image's
+        # every dependency and the component's entrypoint module with the image's
         # interpreter, which fails if the venv was made for another Python.
         if: steps.tcfilter.outputs.topology_controller == 'true'
         env:
@@ -231,7 +231,7 @@ jobs:
           # package, anonymous pull) and fall back to a local build if the
           # pull fails.
           # --load makes the result land in the daemon's image store, which is
-          # where the service builds resolve "FROM continuo-base:latest" from.
+          # where the component builds resolve "FROM continuo-base:latest" from.
           if [ "${{ steps.basefilter.outputs.base }}" = "true" ]; then
             echo "Dockerfile.base changed in this PR; building continuo-base locally..."
             DOCKER_BUILDKIT=1 docker build --load -t continuo-base:latest -f Dockerfile.base .
@@ -272,7 +272,7 @@ jobs:
 
       - name: Disk usage (after infrastructure)
         # On the self-hosted box the job stops here below 6 GiB free. The steps
-        # up to the e2e run write about 3.5 GiB more (build caches in the service
+        # up to the e2e run write about 3.5 GiB more (build caches in the component
         # containers), and the 2 GiB checked before e2e is what that suite needs:
         # once the disk is nearly full MinIO answers every write with HTTP 507,
         # which fails each e2e test that uploads to S3. A GitHub-hosted runner
@@ -281,8 +281,8 @@ jobs:
           CI_MIN_FREE_GIB: ${{ runner.environment == 'self-hosted' && '6' || '' }}
         run: bash scripts/ci-disk-usage.sh "after set up infrastructure"
 
-      - name: Wait for service containers
-        # Block until all long-running service containers report Running=true.
+      - name: Wait for component containers
+        # Block until all long-running component containers report Running=true.
         # wait_for_container_running is defined in scripts/lib/common.sh.
         run: |
           source scripts/lib/common.sh
@@ -292,10 +292,10 @@ jobs:
             wait_for_container_running "$c"
           done
 
-      - name: Test all Go services
+      - name: Test all Go components
         # Run on the runner via the shared Make target (not in-container): brings up
-        # the data deps and runs `go test -tags integration` for every Go service
-        # with its per-service DB env, plus pkg's Redis-backed tests. Running on the
+        # the data deps and runs `go test -tags integration` for every Go component
+        # with its per-component DB env, plus pkg's Redis-backed tests. Running on the
         # runner (clean env) keeps the container's ambient env out of config tests.
         run: make test-go
 
@@ -306,7 +306,7 @@ jobs:
         # step above runs on. cli_packager_test.go skips itself there for exactly
         # that reason, which would otherwise let this package's only integration
         # test pass CI without ever calling the real CLI. Run it here instead,
-        # inside the agent-remediation container that "Wait for service
+        # inside the agent-remediation container that "Wait for component
         # containers" already confirmed is up, where continuo-runtime is on PATH
         # and the Go toolchain + this PR's source are both baked into the image.
         # Every other Go test stays on the runner; this is the one package whose
@@ -366,17 +366,17 @@ jobs:
       # ── E2E test ────────────────────────────────────────────────────────────
       - name: Wait for streams-init
         # The one-shot streams-init container creates every Redis stream and
-        # consumer group; the e2e services wait for their groups, so a failed
+        # consumer group; the e2e components wait for their groups, so a failed
         # creation fails the job here with its cause instead of as a timeout.
         run: |
           cid=$(docker compose ps -aq streams-init)
           [ -n "$cid" ] && [ "$(docker wait "$cid")" = 0 ] \
             || { echo "::error::streams-init did not exit 0"; docker compose logs streams-init; exit 1; }
 
-      - name: Start services for e2e
-        # Build and start all service binaries the e2e suite depends on.
-        # All build/run/wait logic lives in tests/e2e/start-services.sh.
-        run: bash tests/e2e/start-services.sh
+      - name: Start components for e2e
+        # Build and start all component binaries the e2e suite depends on.
+        # All build/run/wait logic lives in tests/e2e/start-components.sh.
+        run: bash tests/e2e/start-components.sh
 
       - name: Disk usage (before e2e)
         # Stops the job below 2 GiB free on the self-hosted box; see the check

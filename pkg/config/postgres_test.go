@@ -107,7 +107,7 @@ func TestLoadPostgresPool(t *testing.T) {
 		want             PoolConfig
 		invalid          string
 	}{
-		{name: "unset keeps the service default", want: PoolConfig{}},
+		{name: "unset keeps the component default", want: PoolConfig{}},
 		{name: "both set", open: "25", idle: "5", want: PoolConfig{MaxOpenConns: 25, MaxIdleConns: 5}},
 		{name: "only open", open: "8", want: PoolConfig{MaxOpenConns: 8}},
 		{name: "zero is refused", open: "0", invalid: "DB_MAX_OPEN_CONNS"},
@@ -175,7 +175,7 @@ func TestLoadPostgresWithDefaultDB(t *testing.T) {
 }
 
 // POSTGRES_PORT is optional, but a value that is not a port number stops the
-// service instead of connecting to 5432.
+// component instead of connecting to 5432.
 func TestLoadPostgres_Port(t *testing.T) {
 	cases := []struct {
 		name, port string

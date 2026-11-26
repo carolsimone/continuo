@@ -1,5 +1,5 @@
 // Package repository declares the domain repository ports for the remediation
-// service; concrete implementations live in adapters/postgres.
+// component; concrete implementations live in adapters/postgres.
 package repository
 
 import (

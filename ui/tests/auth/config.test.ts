@@ -71,14 +71,14 @@ describe('loadAuthConfig', () => {
     const unset = loadAuthConfig(oidcEnv);
     if (unset.mode !== 'oidc') throw new Error('expected oidc');
     expect(unset.redisAclMode).toBe('shared');
-    const perService = loadAuthConfig({ ...oidcEnv, REDIS_ACL_MODE: 'perService' });
-    if (perService.mode !== 'oidc') throw new Error('expected oidc');
-    expect(perService.redisAclMode).toBe('perService');
+    const perComponent = loadAuthConfig({ ...oidcEnv, REDIS_ACL_MODE: 'perComponent' });
+    if (perComponent.mode !== 'oidc') throw new Error('expected oidc');
+    expect(perComponent.redisAclMode).toBe('perComponent');
   });
 
   it('rejects an unknown REDIS_ACL_MODE', () => {
-    expect(() => loadAuthConfig({ ...oidcEnv, REDIS_ACL_MODE: 'perservice' })).toThrow(
-      'REDIS_ACL_MODE must be "shared" or "perService", got "perservice"',
+    expect(() => loadAuthConfig({ ...oidcEnv, REDIS_ACL_MODE: 'percomponent' })).toThrow(
+      'REDIS_ACL_MODE must be "shared" or "perComponent", got "percomponent"',
     );
   });
 

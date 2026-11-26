@@ -88,7 +88,7 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	dropParseFixClonedProdRelations := ensureParseFixClonedProdRelations(t, ctx, clients)
 	defer dropParseFixClonedProdRelations()
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 	requireReleaseControllerHealthy(t, clients)
 

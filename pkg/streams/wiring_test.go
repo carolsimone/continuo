@@ -14,10 +14,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// servicesWithMainGo lists service-root main.go paths (relative to repo root)
+// componentsWithMainGo lists component-root main.go paths (relative to repo root)
 // that must reference only pkg/streams constants — never string literals — for
 // stream names or consumer groups.
-var servicesWithMainGo = []string{
+var componentsWithMainGo = []string{
 	"run-controller/main.go",
 	"catalog/main.go",
 	"execution-controller/main.go",
@@ -55,10 +55,10 @@ func repoRootFromTest(t *testing.T) string {
 	}
 }
 
-// contractServicePrefixes returns "<service>-" for every service that
+// contractComponentPrefixes returns "<component>-" for every component that
 // contract.yaml declares as a consumer, so the detector below follows the
-// contract and cannot drift from the services it names.
-func contractServicePrefixes(t *testing.T) []string {
+// contract and cannot drift from the components it names.
+func contractComponentPrefixes(t *testing.T) []string {
 	t.Helper()
 	raw, err := os.ReadFile("contract.yaml")
 	if err != nil {
@@ -67,7 +67,7 @@ func contractServicePrefixes(t *testing.T) []string {
 	var c struct {
 		Streams []struct {
 			Consumers []struct {
-				Service string `yaml:"service"`
+				Component string `yaml:"component"`
 			} `yaml:"consumers"`
 		} `yaml:"streams"`
 	}
@@ -78,14 +78,14 @@ func contractServicePrefixes(t *testing.T) []string {
 	var prefixes []string
 	for _, s := range c.Streams {
 		for _, cons := range s.Consumers {
-			if cons.Service != "" && !seen[cons.Service] {
-				seen[cons.Service] = true
-				prefixes = append(prefixes, cons.Service+"-")
+			if cons.Component != "" && !seen[cons.Component] {
+				seen[cons.Component] = true
+				prefixes = append(prefixes, cons.Component+"-")
 			}
 		}
 	}
 	if len(prefixes) == 0 {
-		t.Fatal("contract.yaml declares no consuming service: the detector has no prefix to look for")
+		t.Fatal("contract.yaml declares no consuming component: the detector has no prefix to look for")
 	}
 	return prefixes
 }
@@ -93,8 +93,8 @@ func contractServicePrefixes(t *testing.T) []string {
 // inlinedNames returns one message per string literal of f that is a versioned
 // stream name or a consumer-group name, positioned by fset. A literal is a
 // group name when it is kebab-case and either mentions "group" or "consumer"
-// or starts with one of servicePrefixes.
-func inlinedNames(fset *token.FileSet, f *ast.File, servicePrefixes []string) []string {
+// or starts with one of componentPrefixes.
+func inlinedNames(fset *token.FileSet, f *ast.File, componentPrefixes []string) []string {
 	var found []string
 	ast.Inspect(f, func(n ast.Node) bool {
 		bl, ok := n.(*ast.BasicLit)
@@ -108,7 +108,7 @@ func inlinedNames(fset *token.FileSet, f *ast.File, servicePrefixes []string) []
 		}
 		if groupLiteralRe.MatchString(val) && (strings.Contains(val, "group") ||
 			strings.Contains(val, "consumer") ||
-			hasAnyPrefix(val, servicePrefixes)) {
+			hasAnyPrefix(val, componentPrefixes)) {
 			found = append(found, fmt.Sprintf("%s:%d: group-name literal %q — use pkg/streams constant", pos.Filename, pos.Line, val))
 		}
 		return true
@@ -125,13 +125,13 @@ func hasAnyPrefix(s string, prefixes []string) bool {
 	return false
 }
 
-// TestNoStreamOrGroupLiteralsInMains walks every service main.go and asserts
+// TestNoStreamOrGroupLiteralsInMains walks every component main.go and asserts
 // that no string literal matches the stream/group regexes.
 func TestNoStreamOrGroupLiteralsInMains(t *testing.T) {
 	root := repoRootFromTest(t)
-	prefixes := contractServicePrefixes(t)
+	prefixes := contractComponentPrefixes(t)
 	fset := token.NewFileSet()
-	for _, rel := range servicesWithMainGo {
+	for _, rel := range componentsWithMainGo {
 		path := filepath.Join(root, rel)
 		f, err := parser.ParseFile(fset, path, nil, parser.AllErrors)
 		if err != nil {
@@ -143,13 +143,13 @@ func TestNoStreamOrGroupLiteralsInMains(t *testing.T) {
 	}
 }
 
-// TestInlinedNamesDetector_FlagsAGroupOfEveryContractService proves the
-// detector flags an inlined group literal for each service the contract
+// TestInlinedNamesDetector_FlagsAGroupOfEveryContractComponent proves the
+// detector flags an inlined group literal for each component the contract
 // declares as a consumer, and a versioned stream literal, in a main.go-shaped
 // source; and that a constant reference and an unrelated kebab-case literal
 // pass.
-func TestInlinedNamesDetector_FlagsAGroupOfEveryContractService(t *testing.T) {
-	prefixes := contractServicePrefixes(t)
+func TestInlinedNamesDetector_FlagsAGroupOfEveryContractComponent(t *testing.T) {
+	prefixes := contractComponentPrefixes(t)
 	fset := token.NewFileSet()
 
 	for _, prefix := range prefixes {
@@ -207,7 +207,7 @@ var streamLiteralScanDirs = []string{
 // TestNoStreamLiteralsInProductionGoFiles walks every production (non-test) Go
 // file under the binding/handler directories and asserts that no string literal
 // matches the versioned-stream regex. This is the repo-wide guard that catches
-// inlined names like "task.dispatch:v1" outside service main.go files. The
+// inlined names like "task.dispatch:v1" outside component main.go files. The
 // regex matches a literal that is a stream name as a whole; a name inside a
 // longer literal, such as a log message, is not matched. A listed directory
 // that is missing or holds no production Go file fails the test, so a rename

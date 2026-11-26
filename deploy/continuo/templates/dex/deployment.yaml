@@ -13,11 +13,11 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      {{- include "continuo.selectorLabels" (dict "root" $ "service" "dex") | nindent 6 }}
+      {{- include "continuo.selectorLabels" (dict "root" $ "name" "dex") | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "continuo.selectorLabels" (dict "root" $ "service" "dex") | nindent 8 }}
+        {{- include "continuo.selectorLabels" (dict "root" $ "name" "dex") | nindent 8 }}
       annotations:
         # Dex reads its config once at boot; roll it when the config changes.
         # Hashed with a placeholder secret so the generated client secret

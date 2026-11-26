@@ -16,7 +16,7 @@ import (
 // InitSchema brings the graph to the catalog's shape and creates its
 // constraints and indexes, before any consumer or the gRPC server starts. It
 // runs the steps of startupMigration in order and returns the first failure,
-// so the service refuses to start rather than serve a graph halfway there.
+// so the component refuses to start rather than serve a graph halfway there.
 //
 // Every step is idempotent: it acts only on what it has not brought to the
 // catalog's shape yet, so a second InitSchema changes nothing, and a run that

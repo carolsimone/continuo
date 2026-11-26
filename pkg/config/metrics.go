@@ -6,12 +6,12 @@ import (
 	"strconv"
 )
 
-// DefaultMetricsPort is the port every Go service serves /metrics on when
+// DefaultMetricsPort is the port every Go component serves /metrics on when
 // METRICS_PORT is unset.
 const DefaultMetricsPort = 9464
 
 // LoadMetricsPort reads METRICS_PORT. Unset returns DefaultMetricsPort. A value
-// that is not a port number is recorded on v, so the service refuses to start.
+// that is not a port number is recorded on v, so the component refuses to start.
 func LoadMetricsPort(v *Validator) int {
 	raw := os.Getenv("METRICS_PORT")
 	if raw == "" {

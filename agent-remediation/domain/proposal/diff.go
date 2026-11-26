@@ -9,7 +9,7 @@ import (
 // candidate SQL and the proposed SQL, labelled with the model's file path. It
 // is deterministic and dependency-free: a longest-common-subsequence algorithm
 // provides the line-by-line comparison sufficient for the small single-file
-// dbt models this service handles. Identical inputs yield an empty string with
+// dbt models this component handles. Identical inputs yield an empty string with
 // no header or +/- lines.
 func ComputeUnifiedDiff(candidate, proposed, path string) string {
 	return unifiedDiff(candidate, proposed, path, path)

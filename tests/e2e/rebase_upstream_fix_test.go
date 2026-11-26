@@ -51,7 +51,7 @@ func TestRebase_ReRunsAChangedUpstreamNode(t *testing.T) {
 
 	clients := setupClients(t, ctx)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 
 	defer cleanupTestData(t, ctx, clients, failureTestScheduleName)

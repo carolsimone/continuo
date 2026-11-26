@@ -244,7 +244,7 @@ const chartFixtures = "../../../scripts/install-test/fixtures/remediation-workfl
 
 // The chart refuses at render time what the loader refuses at startup: each
 // file the lint renders as accepted-* loads, as flows and types and as
-// fixtures, and the service's loader refuses each refused-* file, for every
+// fixtures, and the component's loader refuses each refused-* file, for every
 // folder of shapes the chart reads line by line (markers, end markers,
 // directives, duplicate kind and version lines).
 func TestLoad_AgreesWithTheChartsFixtures(t *testing.T) {

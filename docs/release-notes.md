@@ -2,7 +2,7 @@
 
 Every continuo release is one published Helm chart
 (`oci://ghcr.io/carolsimone/charts/continuo`). A single `vX.Y.Z` tag stamps the
-chart `version` and its `appVersion`, so a release pins every service image to
+chart `version` and its `appVersion`, so a release pins every component image to
 the same tag. A version is the whole platform at that point.
 
 Highlights are below, newest first. For the rest:

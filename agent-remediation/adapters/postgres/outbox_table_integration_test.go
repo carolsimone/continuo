@@ -79,7 +79,7 @@ func TestOutboxTableIsAgentRemediationOutbox(t *testing.T) {
 	assert.Contains(t, constraints, "agent_remediation_outbox_message_processing_id_fkey")
 }
 
-// Every row the service writes to its outbox carries the aggregate type
+// Every row the component writes to its outbox carries the aggregate type
 // event.AggregateType, so a release's events share one relay lane. The rows
 // here come from the PR-lifecycle service on the real unit of work: the
 // remediation.pr_opened:v1 and remediation.pr_closed:v1 entries it commits.

@@ -232,9 +232,9 @@ is left off. With no `baseUrl` the links stay `continuo-ontology:Order`. The
 stored contract and its hash do not change.
 
 The chart sets `ONTOLOGY_ENABLED` for topology-controller and release-controller,
-and `ONTOLOGY_BASE_URL` for catalog. A service stops at start when the value is
+and `ONTOLOGY_BASE_URL` for catalog. A component stops at start when the value is
 not `true` or `false`, or when the base address is not valid. A change of either
-restarts every service.
+restarts every component.
 
 ## Releasing the ontology
 

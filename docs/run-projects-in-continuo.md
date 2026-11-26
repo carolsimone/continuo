@@ -150,7 +150,7 @@ The `continuo` CLI is optional: the UI does everything this guide asks of it. It
 is not published as a download, so build it from a clone of the
 [continuo repository](https://github.com/carolsimone/continuo) with Go
 installed: `make -C cli install` puts it in `$GOBIN` (`~/go/bin` by default). It
-reaches the `run-controller` and `catalog` services over gRPC, at
+reaches the `run-controller` and `catalog` components over gRPC, at
 `localhost:50051` and `localhost:50052` unless you set
 `CONTINUO_RUN_CONTROLLER_ADDR` and `CONTINUO_CATALOG_ADDR`, so forward both first:
 
@@ -488,7 +488,7 @@ received → compiling → parsing → validating → promoted
 
 ### What just happened
 
-Those statuses are the whole pipeline, and each one is a different service:
+Those statuses are the whole pipeline, and each one is a different component:
 
 **`compiling`** — `release-controller` published a request that
 `execution-controller` turned into a Kubernetes Job running **your `core:v1`
@@ -1207,7 +1207,7 @@ boundaries in the right order every time.
 kind delete cluster --name continuo
 ```
 
-That removes everything: the cluster, all continuo services, both databases, and
+That removes everything: the cluster, all continuo components, both databases, and
 every image you loaded onto the node. The only thing left on your machine is the images in
 your local Docker daemon, which `docker image rm core:v1 finance:v1 finance:v2
 marketing:v1 marketing:v2 service-py:v1` clears.

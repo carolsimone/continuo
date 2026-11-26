@@ -38,7 +38,7 @@ func (c ErrorClass) String() string {
 	}
 }
 
-// InfraClassifier reports whether err means a service-specific dependency
+// InfraClassifier reports whether err means a component-specific dependency
 // (for catalog, Neo4j) is unreachable.
 type InfraClassifier func(error) bool
 
@@ -71,7 +71,7 @@ var unreachableErrnos = []syscall.Errno{
 	syscall.ETIMEDOUT, syscall.EHOSTUNREACH, syscall.ENETUNREACH,
 }
 
-// isInfrastructure recognises the outages every service shares: a socket
+// isInfrastructure recognises the outages every component shares: a socket
 // error, a broken database connection, a Postgres error in classes 08
 // (connection), 53 (insufficient resources) or 57 (operator intervention)
 // other than 57014, an HTTP 5xx, a stream cut short mid-body

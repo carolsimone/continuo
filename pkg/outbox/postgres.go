@@ -57,7 +57,7 @@ type postgresRepository struct {
 
 // newPostgresRepository builds the concrete repository. In-package callers (the
 // processor) use it directly to reach ScheduleRetry / CountTerminal, which are
-// deliberately NOT on the Repository interface so the ~10 service fakes that
+// deliberately NOT on the Repository interface so the ~10 component fakes that
 // satisfy pkgoutbox.Repository need no changes.
 func newPostgresRepository(exec Executor, tableName string, logger *slog.Logger) *postgresRepository {
 	return &postgresRepository{exec: exec, tableName: tableName, logger: logger}

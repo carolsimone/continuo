@@ -47,7 +47,7 @@ BUCKET = "bench"
 # The version of the result line's fields, documented in README.md.
 RESULT_SCHEMA = 1
 _ENV = "bench"
-_SERVICE_DIR = Path(__file__).resolve().parent.parent
+_COMPONENT_DIR = Path(__file__).resolve().parent.parent
 _PACKAGES = ("sqlglot", "PyYAML", "jsonschema", "continuo-contracts", "prometheus-client")
 _STDERR_TAIL_LINES = 50
 _DIALECTS = ("postgres", "trino")
@@ -186,10 +186,10 @@ def _run_child(args: argparse.Namespace) -> int:
 
 
 def _command_output(command: list[str]) -> str | None:
-    """The stdout of a command run in the service directory, or None when the
+    """The stdout of a command run in the component directory, or None when the
     command is missing or fails."""
     try:
-        result = subprocess.run(command, capture_output=True, text=True, check=False, cwd=_SERVICE_DIR)
+        result = subprocess.run(command, capture_output=True, text=True, check=False, cwd=_COMPONENT_DIR)
     except OSError:
         return None
     if result.returncode != 0:
@@ -283,7 +283,7 @@ def _run_parent(args: argparse.Namespace) -> int:
                 logger.info("running size %d, repetition %d of %d", size, rep, args.reps)
                 child = subprocess.run(
                     _child_command(args, size, rep),
-                    cwd=_SERVICE_DIR, capture_output=True, text=True, check=False,
+                    cwd=_COMPONENT_DIR, capture_output=True, text=True, check=False,
                 )
                 if child.returncode != 0:
                     tail = "\n".join(child.stderr.splitlines()[-_STDERR_TAIL_LINES:])

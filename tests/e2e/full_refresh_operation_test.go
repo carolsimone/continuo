@@ -26,7 +26,7 @@ func TestFullRefreshOperationSingleNode(t *testing.T) {
 
 	clients := setupClients(t, ctx)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 	cleanupTestData(t, ctx, clients, "single-node-full-refresh-op")
 	seedTopology(t, ctx, clients)

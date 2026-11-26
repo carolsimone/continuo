@@ -22,7 +22,7 @@ import (
 // are not limited by it.
 const attemptTimeout = 5 * time.Second
 
-// DefaultStartupPolicy gives Postgres the budget a service gives Redis. The first
+// DefaultStartupPolicy gives Postgres the budget a component gives Redis. The first
 // pauses are short because the usual cause clears within two seconds: a new
 // pod's connections are refused until the NetworkPolicy in front of Postgres
 // admits its IP.
@@ -34,7 +34,7 @@ func DefaultStartupPolicy() startupwait.Policy {
 	}
 }
 
-// Connect is Open for a service starting up: it waits under policy until
+// Connect is Open for a component starting up: it waits under policy until
 // Postgres can be reached, so a refused connection delays the start instead of
 // crashing the process, and Kubernetes never holds back its restart. An answer
 // waiting cannot change (a wrong password, an unknown database) fails at once.

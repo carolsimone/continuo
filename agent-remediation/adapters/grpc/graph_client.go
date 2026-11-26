@@ -29,7 +29,7 @@ var _ ports.CurrentContractReader = (*GraphClient)(nil)
 const upstreamDepth = 10
 
 // NewGraphClient dials the catalog gRPC endpoint (insecure transport,
-// matching the cluster-internal convention shared by every service client).
+// matching the cluster-internal convention shared by every component client).
 func NewGraphClient(addr string) (*GraphClient, error) {
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {

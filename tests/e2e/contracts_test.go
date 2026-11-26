@@ -111,7 +111,7 @@ func TestE2E_PythonODCSRelease_IsPromotedAndPublished(t *testing.T) {
 
 	clients := setupClients(t, ctx)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 	requireReleaseControllerHealthy(t, clients)
 
@@ -185,7 +185,7 @@ func TestE2E_PythonODCSRelease_AnInvalidContractIsRejected(t *testing.T) {
 
 	clients := setupClients(t, ctx)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	requireReleaseControllerHealthy(t, clients)
 
 	allProjects := baselineProjects(t, ctx, clients)
@@ -257,7 +257,7 @@ func TestE2E_DbtContracts_AnInvalidContractIsRejected(t *testing.T) {
 
 	clients := setupClients(t, ctx)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 	requireReleaseControllerHealthy(t, clients)
 
@@ -352,7 +352,7 @@ func TestE2E_DbtContracts_ASeedWithAnUndeclaredHeaderColumnIsRejected(t *testing
 
 	clients := setupClients(t, ctx)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 	requireReleaseControllerHealthy(t, clients)
 

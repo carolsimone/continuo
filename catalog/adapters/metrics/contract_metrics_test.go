@@ -27,15 +27,15 @@ func TestContractMetrics_EveryLabelPairStartsAtZero(t *testing.T) {
 
 	body := scrape(reg)
 	for _, want := range []string{
-		`continuo_catalog_contract_versions_written_total{service="catalog"} 0`,
-		`continuo_catalog_live_contract_writes_total{op="put",outcome="ok",service="catalog"} 0`,
-		`continuo_catalog_live_contract_writes_total{op="put",outcome="failed",service="catalog"} 0`,
-		`continuo_catalog_live_contract_writes_total{op="delete",outcome="ok",service="catalog"} 0`,
-		`continuo_catalog_live_contract_writes_total{op="delete",outcome="failed",service="catalog"} 0`,
-		`continuo_catalog_live_contract_writes_total{op="index",outcome="ok",service="catalog"} 0`,
-		`continuo_catalog_live_contract_writes_total{op="index",outcome="failed",service="catalog"} 0`,
-		`continuo_catalog_contracts_duration_seconds_count{service="catalog",step="ingest"} 0`,
-		`continuo_catalog_contracts_duration_seconds_count{service="catalog",step="live_rewrite"} 0`,
+		`continuo_catalog_contract_versions_written_total{component="catalog"} 0`,
+		`continuo_catalog_live_contract_writes_total{component="catalog",op="put",outcome="ok"} 0`,
+		`continuo_catalog_live_contract_writes_total{component="catalog",op="put",outcome="failed"} 0`,
+		`continuo_catalog_live_contract_writes_total{component="catalog",op="delete",outcome="ok"} 0`,
+		`continuo_catalog_live_contract_writes_total{component="catalog",op="delete",outcome="failed"} 0`,
+		`continuo_catalog_live_contract_writes_total{component="catalog",op="index",outcome="ok"} 0`,
+		`continuo_catalog_live_contract_writes_total{component="catalog",op="index",outcome="failed"} 0`,
+		`continuo_catalog_contracts_duration_seconds_count{component="catalog",step="ingest"} 0`,
+		`continuo_catalog_contracts_duration_seconds_count{component="catalog",step="live_rewrite"} 0`,
 		"# TYPE continuo_catalog_contract_versions_written_total counter",
 		"# TYPE continuo_catalog_live_contract_writes_total counter",
 		"# TYPE continuo_catalog_contracts_duration_seconds histogram",
@@ -62,15 +62,15 @@ func TestContractMetrics_CountsWhatItIsTold(t *testing.T) {
 
 	body := scrape(reg)
 	for _, want := range []string{
-		`continuo_catalog_contract_versions_written_total{service="catalog"} 5`,
-		`continuo_catalog_live_contract_writes_total{op="put",outcome="ok",service="catalog"} 2`,
-		`continuo_catalog_live_contract_writes_total{op="delete",outcome="failed",service="catalog"} 1`,
-		`continuo_catalog_live_contract_writes_total{op="delete",outcome="ok",service="catalog"} 0`,
-		`continuo_catalog_live_contract_writes_total{op="index",outcome="ok",service="catalog"} 1`,
-		`continuo_catalog_contracts_duration_seconds_count{service="catalog",step="ingest"} 1`,
-		`continuo_catalog_contracts_duration_seconds_sum{service="catalog",step="ingest"} 1.5`,
-		`continuo_catalog_contracts_duration_seconds_count{service="catalog",step="live_rewrite"} 2`,
-		`continuo_catalog_contracts_duration_seconds_sum{service="catalog",step="live_rewrite"} 1`,
+		`continuo_catalog_contract_versions_written_total{component="catalog"} 5`,
+		`continuo_catalog_live_contract_writes_total{component="catalog",op="put",outcome="ok"} 2`,
+		`continuo_catalog_live_contract_writes_total{component="catalog",op="delete",outcome="failed"} 1`,
+		`continuo_catalog_live_contract_writes_total{component="catalog",op="delete",outcome="ok"} 0`,
+		`continuo_catalog_live_contract_writes_total{component="catalog",op="index",outcome="ok"} 1`,
+		`continuo_catalog_contracts_duration_seconds_count{component="catalog",step="ingest"} 1`,
+		`continuo_catalog_contracts_duration_seconds_sum{component="catalog",step="ingest"} 1.5`,
+		`continuo_catalog_contracts_duration_seconds_count{component="catalog",step="live_rewrite"} 2`,
+		`continuo_catalog_contracts_duration_seconds_sum{component="catalog",step="live_rewrite"} 1`,
 	} {
 		assert.Contains(t, body, want)
 	}

@@ -24,7 +24,7 @@ type neo4jClient struct {
 	logger *slog.Logger
 }
 
-// StartupPolicy bounds how long a service waits for Neo4j to accept connections
+// StartupPolicy bounds how long a component waits for Neo4j to accept connections
 // at boot. The wait covers a Neo4j that is still starting, or whose Service name
 // or endpoint has not propagated yet, which is the normal state when a Deployment
 // rolls out next to a StatefulSet. A value the driver cannot honour (bad

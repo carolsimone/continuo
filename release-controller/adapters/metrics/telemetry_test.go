@@ -35,8 +35,8 @@ func TestTelemetry_RecordsStageDurationsAndReleaseOutcomes(t *testing.T) {
 	assert.Equal(t, 1.0, testutil.ToFloat64(tel.releases.WithLabelValues("rejected", "invalid_sql")))
 	rec := httptest.NewRecorder()
 	reg.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	assert.Contains(t, rec.Body.String(), `continuo_release_stage_duration_seconds_sum{outcome="failed",service="release-controller",stage="parsing"} 9`)
-	assert.Contains(t, rec.Body.String(), `continuo_release_stage_duration_seconds_count{outcome="ok",service="release-controller",stage="compiling"} 1`)
+	assert.Contains(t, rec.Body.String(), `continuo_release_stage_duration_seconds_sum{component="release-controller",outcome="failed",stage="parsing"} 9`)
+	assert.Contains(t, rec.Body.String(), `continuo_release_stage_duration_seconds_count{component="release-controller",outcome="ok",stage="compiling"} 1`)
 }
 
 func TestTelemetry_AReleaseThatValidatesNoNodeHasNoValidatingSample(t *testing.T) {
@@ -55,6 +55,6 @@ func TestTelemetry_AReleaseThatValidatesNoNodeHasNoValidatingSample(t *testing.T
 	tel.ReleaseValidationCompleted(ctx, "rel-2", true, 3, 0, 20*time.Second)
 	tel.ReleaseValidationCompleted(ctx, "rel-3", false, 2, 1, 5*time.Second)
 	body := scrape()
-	assert.Contains(t, body, `continuo_release_stage_duration_seconds_count{outcome="ok",service="release-controller",stage="validating"} 1`)
-	assert.Contains(t, body, `continuo_release_stage_duration_seconds_count{outcome="failed",service="release-controller",stage="validating"} 1`)
+	assert.Contains(t, body, `continuo_release_stage_duration_seconds_count{component="release-controller",outcome="ok",stage="validating"} 1`)
+	assert.Contains(t, body, `continuo_release_stage_duration_seconds_count{component="release-controller",outcome="failed",stage="validating"} 1`)
 }

@@ -57,9 +57,9 @@ func TestFenceVerdictDoesNotReportAnUnansweredProbeAsAViolation(t *testing.T) {
 func TestCheckPermissionFenceRefusesAnUnknownMode(t *testing.T) {
 	client := goredis.NewClient(&goredis.Options{Addr: "redis.invalid:6379"})
 	defer func() { _ = client.Close() }()
-	err := CheckPermissionFence(context.Background(), client, "perservice")
+	err := CheckPermissionFence(context.Background(), client, "percomponent")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), `unknown REDIS_ACL_MODE "perservice"`)
+	assert.Contains(t, err.Error(), `unknown REDIS_ACL_MODE "percomponent"`)
 }
 
 func TestCheckPermissionFenceSkipsSharedModeWithoutAskingRedis(t *testing.T) {

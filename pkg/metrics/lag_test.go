@@ -18,7 +18,7 @@ import (
 func TestConsumers_LagAndPendingAreReadAtScrape(t *testing.T) {
 	addr := os.Getenv("REDIS_ADDR")
 	if addr == "" {
-		testdeps.Unavailable(t, "REDIS_ADDR not set; run `make test-go SERVICE=pkg`")
+		testdeps.Unavailable(t, "REDIS_ADDR not set; run `make test-go COMPONENT=pkg`")
 	}
 	rc := goredis.NewClient(&goredis.Options{Addr: addr, Password: os.Getenv("REDIS_PASSWORD")})
 	defer rc.Close()
@@ -38,6 +38,6 @@ func TestConsumers_LagAndPendingAreReadAtScrape(t *testing.T) {
 	reg.Consumers().Watch(stream, "g")
 	body := scrape(t, reg.Handler())
 	// The gauges are labelled with the contract stream name and read the prefixed key.
-	assert.Contains(t, body, fmt.Sprintf(`continuo_consumer_lag{group="g",service="test-svc",stream="%s"} 2`, stream))
-	assert.Contains(t, body, fmt.Sprintf(`continuo_consumer_pending{group="g",service="test-svc",stream="%s"} 1`, stream))
+	assert.Contains(t, body, fmt.Sprintf(`continuo_consumer_lag{component="test-svc",group="g",stream="%s"} 2`, stream))
+	assert.Contains(t, body, fmt.Sprintf(`continuo_consumer_pending{component="test-svc",group="g",stream="%s"} 1`, stream))
 }

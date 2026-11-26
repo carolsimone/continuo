@@ -61,7 +61,7 @@ func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, sc
 
 // cleanupRedis empties the streams the tests publish to. It trims them rather
 // than deleting them: the streams-init step created each stream with its
-// consumer groups, and the services never recreate either.
+// consumer groups, and the components never recreate either.
 func cleanupRedis(t *testing.T, ctx context.Context, clients *testClients) {
 	testStreams := []string{
 		streams.TaskDispatchV1,

@@ -31,11 +31,11 @@ func TestMetrics_CountersAndBacklog(t *testing.T) {
 	m.Expired(deadletter.DeadLetter{Source: deadletter.SourceOutbox})
 	body := scrape(reg)
 	for _, want := range []string{
-		`continuo_dead_letters_total{group="g",kind="permanent",service="dead-letter-controller",source="consumer",stream="s:v1"} 1`,
-		`continuo_dead_letters_redriven_total{service="dead-letter-controller",source="consumer",stream="s:v1"} 1`,
-		`continuo_dead_letters_expired_total{service="dead-letter-controller",source="outbox"} 1`,
-		`continuo_dead_letter_backlog{kind="permanent",service="dead-letter-controller",source="consumer",stream="s:v1"} 4`,
-		`continuo_dead_letter_oldest_open_age_seconds{service="dead-letter-controller",source="consumer"}`,
+		`continuo_dead_letters_total{component="dead-letter-controller",group="g",kind="permanent",source="consumer",stream="s:v1"} 1`,
+		`continuo_dead_letters_redriven_total{component="dead-letter-controller",source="consumer",stream="s:v1"} 1`,
+		`continuo_dead_letters_expired_total{component="dead-letter-controller",source="outbox"} 1`,
+		`continuo_dead_letter_backlog{component="dead-letter-controller",kind="permanent",source="consumer",stream="s:v1"} 4`,
+		`continuo_dead_letter_oldest_open_age_seconds{component="dead-letter-controller",source="consumer"}`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %s", want)

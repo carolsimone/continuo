@@ -18,7 +18,7 @@ export interface OidcAuthConfig {
   sessionMaxTtlSeconds: number;
   redisUrl: string; // carries no credentials
   redisUsername?: string;
-  // REDIS_ACL_MODE: in perService mode the ui refuses to start when its Redis
+  // REDIS_ACL_MODE: in perComponent mode the ui refuses to start when its Redis
   // login can read keys outside its own (see checkPermissionFence).
   redisAclMode: RedisAclMode;
 }
@@ -91,7 +91,7 @@ function redisUrlWithoutCredentials(env: NodeJS.ProcessEnv): string {
 function redisAclMode(env: NodeJS.ProcessEnv): RedisAclMode {
   const raw = env.REDIS_ACL_MODE || 'shared';
   if (!(REDIS_ACL_MODES as readonly string[]).includes(raw)) {
-    throw new Error(`REDIS_ACL_MODE must be "shared" or "perService", got "${raw}"`);
+    throw new Error(`REDIS_ACL_MODE must be "shared" or "perComponent", got "${raw}"`);
   }
   return raw as RedisAclMode;
 }

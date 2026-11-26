@@ -63,7 +63,7 @@ var dbPool = pkgconfig.PoolConfig{MaxOpenConns: 30, MaxIdleConns: 5}
 func main() {
 	// The logger writes at the level LOG_LEVEL names. An unknown level is
 	// recorded on v, and the missing-configuration check below stops the
-	// service once this logger can report it.
+	// component once this logger can report it.
 	v := &pkgconfig.Validator{}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: pkgconfig.LoadLogLevel(v)}))
 
@@ -72,7 +72,7 @@ func main() {
 		logger.Error("missing required env vars", "vars", strings.Join(missing, ", "))
 		os.Exit(1)
 	}
-	logger.Info("Starting execution-controller service")
+	logger.Info("Starting execution-controller component")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -84,10 +84,10 @@ func main() {
 	// heartbeats only, so a backing-store outage stops traffic without
 	// restarting a pod whose consumers are already retrying.
 	liveReg := liveness.NewRegistry()
-	metricsReg := pkgmetrics.New(config.ServiceName)
+	metricsReg := pkgmetrics.New(config.ComponentName)
 
 	startConsumer := func(name string, consumer *pkgredis.StreamConsumer, handlerTimeout time.Duration) {
-		consumer.SetService(config.ServiceName)
+		consumer.SetComponent(config.ComponentName)
 		consumer.SetObserver(metricsReg.Consumers())
 		consumer.SetHandlerTimeout(handlerTimeout)
 		liveReg.RegisterWorker(name)
@@ -443,5 +443,5 @@ func main() {
 	startup.Done()
 
 	<-lifecycleManager.Done()
-	logger.Info("execution-controller service stopped")
+	logger.Info("execution-controller component stopped")
 }

@@ -14,10 +14,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestMetrics_ServicesServePrometheusMetrics scrapes /metrics on every service
+// TestMetrics_ComponentsServePrometheusMetrics scrapes /metrics on every component
 // the e2e stack runs in compose. execution-controller runs in kind; the chart
 // lint covers its metrics port.
-func TestMetrics_ServicesServePrometheusMetrics(t *testing.T) {
+func TestMetrics_ComponentsServePrometheusMetrics(t *testing.T) {
 	withConsumersAndOutbox := []string{"continuo_consumer_pending{", "continuo_outbox_backlog{", "go_sql_open_connections{"}
 	// catalog keeps no outbox and no Postgres, so it exposes consumer series
 	// and its own export series only.
@@ -50,16 +50,16 @@ func TestMetrics_ServicesServePrometheusMetrics(t *testing.T) {
 	}
 }
 
-// Every series a service exposes carries a service label, so the samples below
+// Every series a component exposes carries a component label, so the samples below
 // are matched with their label set, e.g.
-// continuo_stream_trim_last_success_timestamp_seconds{service="dead-letter-controller"} 1.7e+09.
+// continuo_stream_trim_last_success_timestamp_seconds{component="dead-letter-controller"} 1.7e+09.
 
 // trimLastSuccessPattern captures the sample value of the trim loop's
 // last-success gauge from Prometheus exposition text.
 var trimLastSuccessPattern = regexp.MustCompile(`(?m)^continuo_stream_trim_last_success_timestamp_seconds\{[^}]*\} (\S+)$`)
 
 // dispatchLengthPattern matches the stream-length sample for task.dispatch:v1,
-// e.g. continuo_stream_length{service="dead-letter-controller",stream="task.dispatch:v1"} 12.
+// e.g. continuo_stream_length{component="dead-letter-controller",stream="task.dispatch:v1"} 12.
 var dispatchLengthPattern = regexp.MustCompile(
 	`(?m)^continuo_stream_length\{[^}]*stream="` + regexp.QuoteMeta(streams.TaskDispatchV1) + `"[^}]*\} \S+$`)
 

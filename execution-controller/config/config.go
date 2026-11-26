@@ -9,9 +9,9 @@ import (
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 )
 
-// ServiceName names this service as the producer of the dead letters its
+// ComponentName names this component as the producer of the dead letters its
 // stream consumers write.
-const ServiceName = "execution-controller"
+const ComponentName = "execution-controller"
 
 // defaultShutdownGrace bounds the graceful-shutdown sequence: the in-flight
 // drain plus the infra-close handlers. Override with SHUTDOWN_GRACE (e.g. "30s").
@@ -48,7 +48,7 @@ const (
 	MaxK8sClientBurst     = 2000
 )
 
-// Config holds every setting the service reads at boot.
+// Config holds every setting the component reads at boot.
 type Config struct {
 	Redis    pkgconfig.RedisConfig
 	Postgres pkgconfig.PostgresConfig
@@ -98,7 +98,7 @@ type Config struct {
 // Load reads configuration from environment variables. v accumulates missing
 // required vars; check v.Missing() after calling.
 func Load(v *pkgconfig.Validator) Config {
-	// Every Job this service creates attaches the warehouse Secret named by
+	// Every Job this component creates attaches the warehouse Secret named by
 	// VALIDATION_WAREHOUSE_SECRET via envFrom. The k8s adapter reads it through
 	// os.Getenv; it is required here so a missing name fails at boot rather
 	// than failing every Job at dispatch time.

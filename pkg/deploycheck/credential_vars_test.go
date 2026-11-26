@@ -12,32 +12,32 @@ import (
 )
 
 // TestCredentialVarsMatchTheChart pins pkgconfig.CredentialVars, the closed
-// list of variables a service reads through Secret (each as the variable or
-// as <NAME>_FILE), to the credentials the chart hands to services: every
-// secretEnv name of the chart's services, plus the S3 keys, which the
-// deployment template adds to every storage-reading service on its own. A
+// list of variables a component reads through Secret (each as the variable or
+// as <NAME>_FILE), to the credentials the chart hands to components: every
+// secretEnv name of the chart's components, plus the S3 keys, which the
+// deployment template adds to every storage-reading component on its own. A
 // credential the chart starts delivering without a Secret read would reach
-// the service only in its environment form, and a Secret read the chart never
+// the component only in its environment form, and a Secret read the chart never
 // delivers is dead. The chart's helper continuo.credentialVariables, the list
 // credentials.files keys are checked against and file delivery mounts, must
 // hold the same names.
 func TestCredentialVarsMatchTheChart(t *testing.T) {
 	var values struct {
-		Services []struct {
+		Components []struct {
 			Name      string `yaml:"name"`
 			SecretEnv []struct {
 				Name string `yaml:"name"`
 			} `yaml:"secretEnv"`
-		} `yaml:"services"`
+		} `yaml:"components"`
 	}
 	if err := yaml.Unmarshal([]byte(readRepoFile(t, "deploy", "continuo", "values.yaml")), &values); err != nil {
 		t.Fatalf("parse values.yaml: %v", err)
 	}
-	if len(values.Services) == 0 {
+	if len(values.Components) == 0 {
 		t.Fatal("values.yaml lists no services")
 	}
 	chart := []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}
-	for _, svc := range values.Services {
+	for _, svc := range values.Components {
 		for _, env := range svc.SecretEnv {
 			chart = append(chart, env.Name)
 		}
@@ -80,7 +80,7 @@ func chartCredentialVariables(t *testing.T) []string {
 	return names
 }
 
-// credentialListPatterns match the closed credential list each non-Go service
+// credentialListPatterns match the closed credential list each non-Go component
 // keeps for its credential-read guard: the CREDENTIAL_VARS tuple of
 // topology-controller and the CREDENTIAL_VARS array of ui.
 var (
@@ -93,7 +93,7 @@ var (
 // lists of topology-controller and ui, which their guards use to keep every
 // credential read on the <NAME>_FILE-aware reader, to pkgconfig.CredentialVars.
 // A credential added on one side only would be read without its file form in
-// the services of the other.
+// the components of the other.
 func TestCredentialVarsMatchThePythonAndNodeLists(t *testing.T) {
 	want := slices.Clone(pkgconfig.CredentialVars)
 	slices.Sort(want)

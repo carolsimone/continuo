@@ -1,4 +1,4 @@
-// Package startupwait waits at boot for a dependency a service cannot start
+// Package startupwait waits at boot for a dependency a component cannot start
 // without, so a dependency that is not reachable yet delays the start instead of
 // crashing the process.
 package startupwait
@@ -22,7 +22,7 @@ type Policy struct {
 	MaxDelay     time.Duration
 }
 
-// Dependency is what a service waits for.
+// Dependency is what a component waits for.
 type Dependency struct {
 	// Name names the dependency in logs and errors, such as "Postgres".
 	Name string

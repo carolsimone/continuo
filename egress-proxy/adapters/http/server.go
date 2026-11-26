@@ -40,7 +40,7 @@ func NewServer(port string, registry *liveness.Registry, logger *slog.Logger) *S
 	}
 }
 
-// Listen binds the health port, so a taken port stops the service at startup
+// Listen binds the health port, so a taken port stops the component at startup
 // instead of leaving a process whose probes cannot connect.
 func (s *Server) Listen() error {
 	ln, err := net.Listen("tcp", s.httpServer.Addr)

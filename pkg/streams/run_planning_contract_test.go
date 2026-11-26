@@ -48,7 +48,7 @@ func TestRunPlanningStreams_AreRetired(t *testing.T) {
 
 // TestRunDispatchStreams_HaveOneProducer pins who writes the two streams a
 // run's tasks move on: run-controller dispatches every ready task, and
-// execution-controller alone reports task statuses (no other service reports
+// execution-controller alone reports task statuses (no other component reports
 // a skipped task).
 func TestRunDispatchStreams_HaveOneProducer(t *testing.T) {
 	raw, err := os.ReadFile("contract.yaml")

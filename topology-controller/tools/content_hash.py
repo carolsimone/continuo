@@ -1,4 +1,4 @@
-"""Print the content_hash of every node a dbt manifest yields, through the service's own parser.
+"""Print the content_hash of every node a dbt manifest yields, through the component's own parser.
 
     python tools/content_hash.py <directory>
 

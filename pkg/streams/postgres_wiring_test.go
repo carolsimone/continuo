@@ -11,28 +11,28 @@ import (
 
 const pkgDBImportPath = "github.com/carolsimone/continuo/pkg/db"
 
-// TestServiceMainsOpenPostgresThroughTheStartupWait fails when a service's
+// TestComponentMainsOpenPostgresThroughTheStartupWait fails when a component's
 // main.go calls pkg/db.Open, which makes one attempt, instead of pkg/db.Connect.
 // A new pod's connections are refused until the NetworkPolicy in front of
-// Postgres admits its IP, a second or two after it starts, so a service that
+// Postgres admits its IP, a second or two after it starts, so a component that
 // gives up on the first refusal crashes on every deploy and Kubernetes then
-// holds its restart back. Every service's main.go is discovered by glob, so a
-// new service is covered the day it lands; a one-shot tool under cmd/ is not a
-// service and may use Open, since failing at once is what its operator wants.
+// holds its restart back. Every component's main.go is discovered by glob, so a
+// new component is covered the day it lands; a one-shot tool under cmd/ is not a
+// component and may use Open, since failing at once is what its operator wants.
 //
 // It also fails when main.go reaches Connect before AddStartupGate. The wait
 // lasts up to five minutes, and a liveness probe restarts a pod that has not
 // answered for about 35 seconds, so the health server and its startup gate come
 // up first: /livez answers throughout and readiness stays false until startup
 // ends.
-func TestServiceMainsOpenPostgresThroughTheStartupWait(t *testing.T) {
+func TestComponentMainsOpenPostgresThroughTheStartupWait(t *testing.T) {
 	root := repoRootFromTest(t)
 	mains, err := filepath.Glob(filepath.Join(root, "*", "main.go"))
 	if err != nil {
 		t.Fatalf("glob main.go: %v", err)
 	}
 	if len(mains) == 0 {
-		t.Fatal("no service main.go files found one level under the repo root")
+		t.Fatal("no component main.go files found one level under the repo root")
 	}
 
 	fset := token.NewFileSet()
@@ -65,7 +65,7 @@ func TestServiceMainsOpenPostgresThroughTheStartupWait(t *testing.T) {
 			}
 			switch sel.Sel.Name {
 			case "Open":
-				t.Errorf("%s: a service must open Postgres with pkg/db.Connect, which waits through a refused connection, not pkg/db.Open", fset.Position(call.Pos()))
+				t.Errorf("%s: a component must open Postgres with pkg/db.Connect, which waits through a refused connection, not pkg/db.Open", fset.Position(call.Pos()))
 			case "Connect":
 				connect = call.Pos()
 				connecting++
@@ -77,7 +77,7 @@ func TestServiceMainsOpenPostgresThroughTheStartupWait(t *testing.T) {
 		}
 	}
 	if connecting == 0 {
-		t.Fatal("no service main.go calls pkg/db.Connect, so this guard checked nothing")
+		t.Fatal("no component main.go calls pkg/db.Connect, so this guard checked nothing")
 	}
 }
 

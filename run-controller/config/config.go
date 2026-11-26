@@ -10,9 +10,9 @@ import (
 	"github.com/carolsimone/continuo/pkg/warehouse"
 )
 
-// ServiceName names this service as the producer of the dead letters its
+// ComponentName names this component as the producer of the dead letters its
 // stream consumers write.
-const ServiceName = "run-controller"
+const ComponentName = "run-controller"
 
 // The retry budget's default and the range run-controller accepts: the chart's
 // runs.taskMaxRetries, 0 to 10.
@@ -30,7 +30,7 @@ const taskMaxRetriesKey = "TASK_MAX_RETRIES"
 // var is introduced; override with SHUTDOWN_GRACE (e.g. "30s").
 const defaultShutdownGrace = 15 * time.Second
 
-// Config holds all configuration for the run-controller service.
+// Config holds all configuration for the run-controller component.
 type Config struct {
 	Redis    pkgconfig.RedisConfig
 	Postgres pkgconfig.PostgresConfig

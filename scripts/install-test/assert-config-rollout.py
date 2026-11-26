@@ -5,7 +5,7 @@ that read it only at startup, and no others.
 Kubernetes rolls a Deployment only when its pod template changes. A ConfigMap
 read through envFrom, or mounted and read once at boot, reaches a running pod
 only if the pod template carries a digest of it; without one, `helm upgrade`
-updates the ConfigMap, renders an identical Deployment, and the service keeps
+updates the ConfigMap, renders an identical Deployment, and the component keeps
 its previous configuration with no error.
 
 For each chart-managed ConfigMap, the check changes that ConfigMap's source (a
@@ -15,7 +15,7 @@ after, and compares the pod template of every Deployment and StatefulSet:
     in the case's `reread_by` (it re-reads the file on every use);
   - every other workload must stay identical, so an upgrade restarts only what
     it has to.
-The same cases then run against a render whose service volumes name
+The same cases then run against a render whose component volumes name
 operator-owned ConfigMaps (configMap.name set): no workload consumes the
 chart's copies there, so a change to them must roll nothing. A case whose
 values the chart refuses while a volume it names is operator-owned is left out
@@ -25,7 +25,7 @@ operator-owned one leaves the files out of the pod and a named one carries no
 digest. They run once more against a render where
 only agent-remediation's project-repos volume names an operator-owned
 ConfigMap: its other volume, the remediation workflows, keeps its digest, so
-each volume of a service decides its own.
+each volume of a component decides its own.
 
 It also checks that:
   - two identical renders give identical pod templates, so an upgrade that
@@ -154,18 +154,18 @@ def consumers(docs: list) -> dict:
 
 def operator_owned_values(chart: pathlib.Path, workdir: pathlib.Path,
                           only: "set[str] | None" = None) -> "tuple[pathlib.Path, set[str]]":
-    """A values file whose service volumes name operator-owned ConfigMaps (every
+    """A values file whose component volumes name operator-owned ConfigMaps (every
     configMap volume, or only the volumes named in `only`), and the names of
     the volumes it changed."""
     values = yaml.safe_load((chart / "values.yaml").read_text())
     owned = set()
-    for svc in values["services"]:
-        for volume in svc.get("volumes") or []:
+    for component in values["components"]:
+        for volume in component.get("volumes") or []:
             if "configMap" in volume and (only is None or volume["name"] in only):
                 volume["configMap"]["name"] = f"operator-{volume['name']}"
                 owned.add(volume["name"])
     path = workdir / f"values-operator-configmaps-{'-'.join(sorted(only)) if only else 'all'}.yaml"
-    path.write_text(yaml.safe_dump({"services": values["services"]}))
+    path.write_text(yaml.safe_dump({"components": values["components"]}))
     return path, owned
 
 

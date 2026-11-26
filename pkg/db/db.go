@@ -1,4 +1,4 @@
-// Package db opens the Postgres connection pool every Go service uses.
+// Package db opens the Postgres connection pool every Go component uses.
 package db
 
 import (
@@ -20,11 +20,11 @@ const (
 )
 
 // Open connects to the database cfg names (with DB_SSLMODE), bounds the pool
-// by cfg.Pool over the service's defaults, and pings it within ctx. Each new
+// by cfg.Pool over the component's defaults, and pings it within ctx. Each new
 // connection the pool opens reads cfg.Password again, so a rotated
 // POSTGRES_PASSWORD_FILE is picked up without a restart.
 //
-// It makes one attempt, which is what a one-shot tool wants. A service starting
+// It makes one attempt, which is what a one-shot tool wants. A component starting
 // up uses Connect, which waits for Postgres to become reachable.
 func Open(ctx context.Context, cfg pkgconfig.PostgresConfig, defaults pkgconfig.PoolConfig) (*sqlx.DB, error) {
 	pool, err := EffectivePool(cfg.Pool, defaults)

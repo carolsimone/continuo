@@ -16,7 +16,7 @@ import (
 func TestMissingColumns_NamesOnlyTheMissingOnesInOrder(t *testing.T) {
 	cfg := pkgconfig.LoadPostgres(&pkgconfig.Validator{})
 	if cfg.Host == "" {
-		testdeps.Unavailable(t, "POSTGRES_HOST not set; run `make test-go SERVICE=pkg`")
+		testdeps.Unavailable(t, "POSTGRES_HOST not set; run `make test-go COMPONENT=pkg`")
 	}
 	db, err := pkgdb.Open(context.Background(), cfg, pkgconfig.PoolConfig{MaxOpenConns: 2, MaxIdleConns: 1})
 	require.NoError(t, err)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The ui Deployment must receive CI auth from the template itself, not only
-from its `services` entry: exactly one CI_AUTH_CONFIG_PATH env var pointing at
+from its `components` entry: exactly one CI_AUTH_CONFIG_PATH env var pointing at
 the mounted file, exactly one read-only ci-auth mount at /app/ci-auth, and
 exactly one ci-auth volume backed by the <fullname>-ci-auth ConfigMap, whose
 ci-auth.json parses.

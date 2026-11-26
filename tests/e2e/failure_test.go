@@ -39,7 +39,7 @@ func TestE2E_FailurePath_RerunRebasesBothFailureSubtrees(t *testing.T) {
 		cleanupTestData(t, ctx, clients, failureTestScheduleName)
 	}()
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 
 	cleanupTestData(t, ctx, clients, failureTestScheduleName)
@@ -140,7 +140,7 @@ func startFailureScheduleRun(
 		RequestId:    uuid.NewString(),
 		ScheduleName: failureTestScheduleName,
 	})
-	require.NoError(t, err, "Failed to start a run of the failure schedule via run-controller service")
+	require.NoError(t, err, "Failed to start a run of the failure schedule via run-controller")
 	t.Logf("Started a run of the failure schedule: run_id=%s", resp.GetRunId())
 	return resp.GetRunId()
 }

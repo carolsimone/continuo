@@ -35,7 +35,7 @@ func TestE2E_DuplicateTable_RejectsBeforePromotion(t *testing.T) {
 
 	clients := setupClients(t, ctx)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	requireReleaseControllerHealthy(t, clients)
 
 	releaseID := "e2e-dup-" + uuid.NewString()[:8]

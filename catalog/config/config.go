@@ -14,9 +14,9 @@ import (
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 )
 
-// ServiceName names this service as the producer of the dead letters its
+// ComponentName names this component as the producer of the dead letters its
 // stream consumers write.
-const ServiceName = "catalog"
+const ComponentName = "catalog"
 
 // defaultShutdownGrace bounds the graceful-shutdown sequence: the in-flight
 // drain plus the infra-close handlers. It is a safe default so no required env
@@ -77,7 +77,7 @@ const (
 	maxContractHistoryRetentionDays = 36500
 )
 
-// Config holds all configuration for the catalog service.
+// Config holds all configuration for the catalog component.
 type Config struct {
 	Redis pkgconfig.RedisConfig
 	Neo4j Neo4jConfig

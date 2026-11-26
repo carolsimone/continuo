@@ -67,7 +67,7 @@ func TestE2E_ReleasePromote_ATimeoutOnlyChangePromotesWithoutValidation(t *testi
 
 	clients := setupClients(t, ctx)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 	requireReleaseControllerHealthy(t, clients)
 
@@ -269,7 +269,7 @@ func TestE2E_NodeTimeout_ATaskPastItsDeadlineFailsWithoutARetry(t *testing.T) {
 	// whose client is gone until the query ends: end the sleep with the test.
 	defer endDeadlineQuery(t, clients)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 	cleanupTestData(t, ctx, clients, deadlineScheduleName)
 	startTimeout := jobStartTimeout(t, ctx)

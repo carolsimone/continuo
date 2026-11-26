@@ -44,7 +44,7 @@ func TestE2E_Verification_FailsConsumerFixThatIgnoresChangedUpstream(t *testing.
 
 	clients := setupClients(t, ctx)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 	requireReleaseControllerHealthy(t, clients)
 

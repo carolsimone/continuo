@@ -3,7 +3,7 @@
 The application layer depends on ports it owns (service/ports.py), never on the
 concrete adapters that implement them, so the dependency arrow runs
 adapter -> port. A service module that reaches into adapters/* inverts that
-arrow — the drift this guard exists to catch. The Go services are guarded by
+arrow — the drift this guard exists to catch. The Go components are guarded by
 TestServiceHandlersDoNotImportAdapters (pkg/streams/handler_imports_test.go);
 this is the Python side's equivalent, and its absence is why the Python layer
 was free to drift.

@@ -27,7 +27,7 @@ var sharedFixtures = []struct{ goPath, pyPath string }{
 }
 
 // The test reads both copies from the repository checkout, so it runs where
-// the whole checkout is present (make guards), not in a service's dev
+// the whole checkout is present (make guards), not in a component's dev
 // container, which mounts only some directories.
 func TestSharedFixtures_PythonCopiesAreIdentical(t *testing.T) {
 	root := repoRootFromTest(t)

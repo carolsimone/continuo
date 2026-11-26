@@ -79,8 +79,8 @@ func newRootCommand(stdout, stderr io.Writer) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
-	root.PersistentFlags().StringVar(&flagEndpoint, "endpoint", "", "gRPC address of the run-controller service (env: CONTINUO_RUN_CONTROLLER_ADDR)")
-	root.PersistentFlags().StringVar(&flagCatalogEndpoint, "catalog-endpoint", "", "gRPC address of the catalog service (env: CONTINUO_CATALOG_ADDR)")
+	root.PersistentFlags().StringVar(&flagEndpoint, "endpoint", "", "gRPC address of run-controller (env: CONTINUO_RUN_CONTROLLER_ADDR)")
+	root.PersistentFlags().StringVar(&flagCatalogEndpoint, "catalog-endpoint", "", "gRPC address of catalog (env: CONTINUO_CATALOG_ADDR)")
 	root.PersistentFlags().StringVar(&flagDeadLetterEndpoint, "dead-letter-endpoint", "", "gRPC address of dead-letter-controller (env: CONTINUO_DEAD_LETTER_ADDR)")
 	root.PersistentFlags().StringVar(&flagReleaseEndpoint, "release-endpoint", "", "gRPC address of release-controller (env: CONTINUO_RELEASE_CONTROLLER_ADDR)")
 	root.PersistentFlags().StringVar(&flagTimeout, "timeout", "", "gRPC deadline (env: CONTINUO_TIMEOUT)")

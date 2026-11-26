@@ -43,7 +43,7 @@ const (
 // such a row, so the earlier-tries evidence leaves it out.
 const NoRemediationInFlightReason = "continuo changed its remediation engine while this attempt was in flight; use Try again"
 
-// Phase is where a fix-verification run stands, as this service last read it
+// Phase is where a fix-verification run stands, as this component last read it
 // from release-controller. queued: waiting its turn in the pipeline's FIFO.
 // running: in one of the legs. passed / failed: the verdict.
 type Phase string

@@ -59,7 +59,7 @@ npm exec --yes -- license-checker@25.0.1 --production --summary
 
 ## Python
 
-`topology-controller` is the only Python 3.12 service in this repository, managed
+`topology-controller` is the only Python 3.12 component in this repository, managed
 with uv. The python-node runtime and validation stack (the
 `continuo-python-runtime-<engine>` images the Helm chart pulls) is built and
 released from the separate `continuo-python-runtime` repository, so its Python
@@ -109,4 +109,4 @@ that is the supported production configuration in any case. See
   a copy of the root `LICENSE`, so a consumer running
   `go get github.com/carolsimone/continuo/pkg` receives the license with the module.
 - dbt itself (`dbt-core`, `dbt-postgres`) is Apache-2.0 and is installed into the dbt job
-  images, not into any Continuo service image.
+  images, not into any continuo component image.

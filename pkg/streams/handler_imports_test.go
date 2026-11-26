@@ -17,7 +17,7 @@ import (
 //
 // Whole `service` subtrees are listed where the entire application layer is
 // guarded (catalog); narrower entries are used where only specific
-// application packages exist under a service's tree.
+// application packages exist under a component's tree.
 var handlerDirs = []string{
 	"catalog/service",
 	"run-controller/service/attemptreconcile",
@@ -46,7 +46,7 @@ var handlerDirs = []string{
 	"dead-letter-controller/service/handlers",
 	"dead-letter-controller/service/trimmer",
 	"egress-proxy/service",
-	// Every service's Unit-of-Work port. The interface is application
+	// Every component's Unit-of-Work port. The interface is application
 	// vocabulary; the concrete *UnitOfWork that satisfies it belongs in
 	// adapters/postgres, so this package must not reach back into an adapter.
 	"execution-controller/service/uow",
@@ -60,7 +60,7 @@ var handlerDirs = []string{
 
 // grpcEdgeDirs lists the gRPC edge packages (relative to repo root): handlers
 // that parse a wire request and map the result to a wire response, so they
-// import the service's generated proto and grpc status packages. They must
+// import the component's generated proto and grpc status packages. They must
 // still import no adapters/* package; they reach every collaborator through
 // the read and application services behind ports.
 var grpcEdgeDirs = []string{

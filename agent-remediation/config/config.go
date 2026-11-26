@@ -13,10 +13,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ServiceName names this service as the producer of the dead letters its
+// ComponentName names this component as the producer of the dead letters its
 // stream consumers write and of the events whose envelope its outbox publisher
 // renders.
-const ServiceName = "agent-remediation"
+const ComponentName = "agent-remediation"
 
 // Config is the full agent-remediation runtime configuration, read once at boot.
 type Config struct {
@@ -77,7 +77,7 @@ type Config struct {
 	// passes to continuo-runtime's --dialect flag when packaging a proposed
 	// python-node fix. Resolved from WAREHOUSE_ENGINE at startup (see
 	// engineDialects) — the same shared-ConfigMap key topology-controller
-	// reads for its own parser dialect, so both services agree on which
+	// reads for its own parser dialect, so both components agree on which
 	// engines they can honour.
 	SQLDialect string
 
@@ -158,9 +158,9 @@ const defaultVerificationTimeout = 20 * time.Minute
 const defaultVerificationPollInterval = 15 * time.Second
 
 // engineDialects maps WAREHOUSE_ENGINE (the chart's validation.engine value,
-// published to every service on the shared ConfigMap) to the sqlglot dialect
+// published to every component on the shared ConfigMap) to the sqlglot dialect
 // name continuo-runtime renders SQL with. Mirrors topology-controller's
-// _ENGINE_DIALECTS exactly: the two services must agree on which engines
+// _ENGINE_DIALECTS exactly: the two components must agree on which engines
 // they can honour, so a release topology-controller accepts is never
 // packaged here under a dialect topology-controller never validated it
 // against.
@@ -172,7 +172,7 @@ var engineDialects = map[string]string{
 // resolveSQLDialect reads WAREHOUSE_ENGINE and returns the sqlglot dialect
 // name for it, defaulting an unset value to postgres (the engine an install
 // that never chose one runs). Records a validation failure on v and returns
-// "" for an engine with no dialect mapping, so a warehouse this service
+// "" for an engine with no dialect mapping, so a warehouse this component
 // cannot honour fails startup rather than packaging under postgres's rules
 // and having the wrong SQL reach a different warehouse.
 func resolveSQLDialect(v *pkgconfig.Validator) string {

@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -105,5 +106,47 @@ func TestLivenessDoesNotFlipOnDependencyFailure(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("livez during dependency outage = %d, want 200 (deps must not restart the pod)", rec.Code)
+	}
+}
+
+// TestProbeBodiesNameTheComponent holds every probe body to the key component,
+// naming agent-chat, and never the key service.
+func TestProbeBodiesNameTheComponent(t *testing.T) {
+	live := liveness.NewRegistry()
+	live.RegisterWorker("session_store")
+
+	failing := liveness.NewRegistry()
+	failing.RegisterWorker("session_store")
+	failing.WorkerExited("session_store", errors.New("boom"))
+
+	for _, tc := range []struct {
+		name       string
+		handler    http.HandlerFunc
+		wantStatus string
+	}{
+		{"health", healthHandler, "healthy"},
+		{"ready", newReadinessHandler(live), "ready"},
+		{"not ready", newReadinessHandler(failing), "not_ready"},
+		{"live", newLivenessHandler(live), "live"},
+		{"not live", newLivenessHandler(failing), "not_live"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			tc.handler(rec, httptest.NewRequest(http.MethodGet, "/probe", nil))
+
+			var body map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode %q: %v", rec.Body.String(), err)
+			}
+			if body["status"] != tc.wantStatus {
+				t.Errorf("status = %v, want %q", body["status"], tc.wantStatus)
+			}
+			if body["component"] != "agent-chat" {
+				t.Errorf("component = %v, want agent-chat", body["component"])
+			}
+			if _, ok := body["service"]; ok {
+				t.Errorf("body %s names the component under the key service, want component", rec.Body.String())
+			}
+		})
 	}
 }

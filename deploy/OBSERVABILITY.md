@@ -4,20 +4,20 @@ continuo ships no monitoring stack, dashboards or alert rules. It exposes metric
 
 | What | Where it comes from | What you do |
 |---|---|---|
-| Service metrics | `/metrics` on every Go service and on topology-controller | Point your scraper at it and allow it through the NetworkPolicy |
+| Component metrics | `/metrics` on every Go component and on topology-controller | Point your scraper at it and allow it through the NetworkPolicy |
 | Failed Jobs, with their table | Labels on each Kubernetes Job | Export the labels through kube-state-metrics or your agent's equivalent |
 | Alerts | Your monitoring tool | Write your own, or start from the [example rules](#example-alert-rules) |
-| Logs | Pod output, and the bucket for attempt logs. The Go services and topology-controller log one JSON object per line | Collect pod output with your log agent |
+| Logs | Pod output, and the bucket for attempt logs. The Go components and topology-controller log one JSON object per line | Collect pod output with your log agent |
 
 continuo emits no traces.
 
-## Service metrics
+## Component metrics
 
-Every Go service and topology-controller serve Prometheus metrics at `/metrics` on `metrics.port` (default 9464), on a listener of its own. `ui` doesn't serve metrics.
+Every Go component and topology-controller serve Prometheus metrics at `/metrics` on `metrics.port` (default 9464), on a listener of its own. `ui` doesn't serve metrics.
 
 | Value | Default | Effect |
 |---|---|---|
-| `metrics.port` | `9464` | The port the services serve metrics on |
+| `metrics.port` | `9464` | The port the components serve metrics on |
 | `metrics.podAnnotations` | `true` | Adds `prometheus.io/scrape`, `prometheus.io/port` and `prometheus.io/path` to those pods, for scrapers that find pods by annotation |
 | `metrics.scrapeNamespaceSelector` | `{}` | The namespaces allowed to reach the port |
 
@@ -30,7 +30,7 @@ metrics:
       kubernetes.io/metadata.name: monitoring
 ```
 
-With the Prometheus Operator, this PodMonitor scrapes the services. Replace `<release>` and `<namespace>` with your own, and make sure your Prometheus selects it:
+With the Prometheus Operator, this PodMonitor scrapes the components. Replace `<release>` and `<namespace>` with your own, and make sure your Prometheus selects it:
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -50,20 +50,20 @@ spec:
 
 ### Metrics
 
-Every series also carries a `service` label.
+Every series also carries a `component` label.
 
 | Metric | Type | Labels | Served by |
 |---|---|---|---|
-| `continuo_consumer_handler_duration_seconds` | histogram | `stream`, `group`, `result` | services with stream consumers |
-| `continuo_consumer_dead_letters_total` | counter | `stream`, `group`, `kind` | services with stream consumers |
-| `continuo_consumer_infra_pauses_total` | counter | `stream`, `group` | services with stream consumers |
-| `continuo_consumer_lag` | gauge | `stream`, `group` | Go services with stream consumers |
-| `continuo_consumer_pending` | gauge | `stream`, `group` | Go services with stream consumers |
-| `continuo_outbox_published_total` | counter | `table` | services with an outbox |
-| `continuo_outbox_publish_failures_total` | counter | `table`, `kind` | services with an outbox |
-| `continuo_outbox_backlog` | gauge | `table` | services with an outbox |
-| `continuo_outbox_oldest_open_age_seconds` | gauge | `table` | services with an outbox |
-| `continuo_outbox_dead_letters` | gauge | `table` | services with an outbox |
+| `continuo_consumer_handler_duration_seconds` | histogram | `stream`, `group`, `result` | components with stream consumers |
+| `continuo_consumer_dead_letters_total` | counter | `stream`, `group`, `kind` | components with stream consumers |
+| `continuo_consumer_infra_pauses_total` | counter | `stream`, `group` | components with stream consumers |
+| `continuo_consumer_lag` | gauge | `stream`, `group` | Go components with stream consumers |
+| `continuo_consumer_pending` | gauge | `stream`, `group` | Go components with stream consumers |
+| `continuo_outbox_published_total` | counter | `table` | components with an outbox |
+| `continuo_outbox_publish_failures_total` | counter | `table`, `kind` | components with an outbox |
+| `continuo_outbox_backlog` | gauge | `table` | components with an outbox |
+| `continuo_outbox_oldest_open_age_seconds` | gauge | `table` | components with an outbox |
+| `continuo_outbox_dead_letters` | gauge | `table` | components with an outbox |
 | `continuo_dead_letters_total` | counter | `source`, `stream`, `group`, `kind` | `dead-letter-controller` |
 | `continuo_dead_letters_redriven_total` | counter | `source`, `stream` | `dead-letter-controller` |
 | `continuo_dead_letters_expired_total` | counter | `source` | `dead-letter-controller` |
@@ -72,35 +72,35 @@ Every series also carries a `service` label.
 | `continuo_stream_trimmed_entries_total` | counter | `stream` | `dead-letter-controller` |
 | `continuo_stream_quarantined_total` | counter | `stream`, `group` | `dead-letter-controller` |
 | `continuo_stream_length` | gauge | `stream` | `dead-letter-controller` |
-| `continuo_redis_used_memory_bytes` | gauge | none beyond `service` | `dead-letter-controller` |
-| `continuo_redis_maxmemory_bytes` | gauge | none beyond `service` | `dead-letter-controller` |
-| `continuo_stream_trim_last_success_timestamp_seconds` | gauge | none beyond `service` | `dead-letter-controller` |
+| `continuo_redis_used_memory_bytes` | gauge | none beyond `component` | `dead-letter-controller` |
+| `continuo_redis_maxmemory_bytes` | gauge | none beyond `component` | `dead-letter-controller` |
+| `continuo_stream_trim_last_success_timestamp_seconds` | gauge | none beyond `component` | `dead-letter-controller` |
 | `continuo_egress_requests_total` | counter | `decision` (`allowed`, `denied`), `reason` | `egress-proxy` |
 | `continuo_egress_bytes_total` | counter | `direction` (`up` to the destination, `down` to the agent) | `egress-proxy` |
-| `continuo_egress_active_tunnels` | gauge | none beyond `service` | `egress-proxy` |
-| `continuo_attempts_awaiting_pod_stop` | gauge | none beyond `service` | `execution-controller` |
-| `continuo_attempts_stopped_total` | counter | none beyond `service` | `execution-controller` |
+| `continuo_egress_active_tunnels` | gauge | none beyond `component` | `egress-proxy` |
+| `continuo_attempts_awaiting_pod_stop` | gauge | none beyond `component` | `execution-controller` |
+| `continuo_attempts_stopped_total` | counter | none beyond `component` | `execution-controller` |
 | `continuo_fenced_jobs_deleted_total` | counter | `reason` (`fenced_run`, `ended_undeployed`) | `execution-controller` |
-| `continuo_runs_stalled_total` | counter | none beyond `service` | `run-controller` |
-| `continuo_runs_cancelling` | gauge | none beyond `service` | `run-controller` |
-| `continuo_runs_cancelling_overdue` | gauge | none beyond `service` | `run-controller` |
-| `continuo_run_cancel_seconds` | histogram | none beyond `service` | `run-controller` |
-| `continuo_node_lease_waiters` | gauge | none beyond `service` | `run-controller` |
-| `continuo_node_lease_wait_seconds` | histogram | none beyond `service` | `run-controller` |
-| `continuo_node_leases_repaired_total` | counter | none beyond `service` | `run-controller` |
+| `continuo_runs_stalled_total` | counter | none beyond `component` | `run-controller` |
+| `continuo_runs_cancelling` | gauge | none beyond `component` | `run-controller` |
+| `continuo_runs_cancelling_overdue` | gauge | none beyond `component` | `run-controller` |
+| `continuo_run_cancel_seconds` | histogram | none beyond `component` | `run-controller` |
+| `continuo_node_lease_waiters` | gauge | none beyond `component` | `run-controller` |
+| `continuo_node_lease_wait_seconds` | histogram | none beyond `component` | `run-controller` |
+| `continuo_node_leases_repaired_total` | counter | none beyond `component` | `run-controller` |
 | `continuo_command_requests_total` | counter | `command`, `outcome` | `run-controller` |
 | `continuo_cron_fires_total` | counter | `outcome` | `run-controller` |
 | `continuo_schedules` | gauge | `state` | `run-controller` |
 | `continuo_seed_reloads_total` | counter | `action` (`load`, `full_refresh`), `outcome` (`loaded`, `stopped`, `refused`, `failed`) | `run-controller` |
 | `continuo_seed_reload_stops_total` | counter | `reason` | `run-controller` |
 | `continuo_views_missing` | gauge | `state` (`missing`, `stale`) | `run-controller` |
-| `continuo_view_outage_seconds` | histogram | none beyond `service` | `run-controller` |
+| `continuo_view_outage_seconds` | histogram | none beyond `component` | `run-controller` |
 | `continuo_catalog_exports_total` | counter | `outcome` (`success`, `failure`, `skipped`) | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |
-| `continuo_catalog_export_duration_seconds` | histogram | none beyond `service` | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |
-| `continuo_catalog_export_bytes` | gauge | none beyond `service` | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |
+| `continuo_catalog_export_duration_seconds` | histogram | none beyond `component` | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |
+| `continuo_catalog_export_bytes` | gauge | none beyond `component` | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |
 | `continuo_catalog_export_records` | gauge | `kind` (`node`, `relationship`) | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |
-| `continuo_catalog_export_last_success_timestamp_seconds` | gauge | none beyond `service` | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |
-| `continuo_catalog_contract_versions_written_total` | counter | none beyond `service` | `catalog` |
+| `continuo_catalog_export_last_success_timestamp_seconds` | gauge | none beyond `component` | `catalog`, while `CATALOG_BACKUP_ENABLED` is true |
+| `continuo_catalog_contract_versions_written_total` | counter | none beyond `component` | `catalog` |
 | `continuo_catalog_live_contract_writes_total` | counter | `op` (`put`, `delete`, `index`), `outcome` (`ok`, `failed`) | `catalog` |
 | `continuo_catalog_contracts_duration_seconds` | histogram | `step` (`ingest`, `live_rewrite`) | `catalog` |
 | `continuo_topology_stage_duration_seconds` | histogram | `stage` | `topology-controller` |
@@ -108,8 +108,8 @@ Every series also carries a `service` label.
 | `continuo_topology_release_nodes` | gauge | `family` | `topology-controller` |
 | `continuo_topology_release_columns` | gauge | `family` | `topology-controller` |
 | `continuo_topology_release_skipped_nodes` | gauge | `reason` (`no_owner`, `local_stub`, `installed_package`) | `topology-controller` |
-| `continuo_topology_release_dormant_nodes` | gauge | none beyond `service` | `topology-controller` |
-| `continuo_topology_release_peak_rss_bytes` | gauge | none beyond `service` | `topology-controller` |
+| `continuo_topology_release_dormant_nodes` | gauge | none beyond `component` | `topology-controller` |
+| `continuo_topology_release_peak_rss_bytes` | gauge | none beyond `component` | `topology-controller` |
 | `continuo_topology_contract_failures_total` | counter | `stage` (`generate`, `validate`, `normalise`, `hash`, `ontology`), `reason` (a `continuo-contracts` validation reason, `manifest_shape` or `seed_header`, or, on the stage `ontology`, the name of an ontology rule) | `topology-controller` |
 | `continuo_topology_validation_cache_total` | counter | `result` (`hit`, `miss`) | `topology-controller` |
 | `continuo_releases_total` | counter | `outcome` (`promoted`, `rejected`), `reject_reason` (`none` or a reject reason) | `release-controller` |
@@ -121,8 +121,8 @@ Every series also carries a `service` label.
 | `continuo_remediation_stage_seconds` | histogram | `flow`, `type`, `stage` (`context`, `propose`, `preflight`, `cross_cluster`, `gate`, `output`) | `agent-remediation` |
 | `continuo_remediation_model_tokens_total` | counter | `flow`, `type`, `direction` (`in`, `out`) | `agent-remediation` |
 | `continuo_remediation_classified_total` | counter | `decision` (`emit`, `drop`), `reason` (`infra`, `parse`, `logic`, `test`, `unknown`) | `remediation` |
-| `go_sql_*` (open, in-use, idle connections, wait count and duration, closed-by-limit counters) | gauge / counter | `db_name` | every service that keeps a Postgres database (not `catalog` or `egress-proxy`) |
-| `go_*`, `process_*` | Go runtime and process collectors | none beyond `service` | every Go service |
+| `go_sql_*` (open, in-use, idle connections, wait count and duration, closed-by-limit counters) | gauge / counter | `db_name` | every component that keeps a Postgres database (not `catalog` or `egress-proxy`) |
+| `go_*`, `process_*` | Go runtime and process collectors | none beyond `component` | every Go component |
 
 `continuo_topology_stage_duration_seconds` times each stage of a release's parse, `stage` being one of `download`, `dbt_parse`, `python_parse`, `registry`, `resolve`, `rewrite`, `candidate_upload`, `code_bundle`, `contract_generation`, `contract_validation`, `canonical_hashing`, `ontology`, `contract_bundle`, `topology_artifact` and `publish`. `contract_generation` runs inside `dbt_parse`, because a dbt node's contract is generated from its manifest entry while the manifest is parsed. `contract_validation` runs inside `python_parse` and `dbt_parse`, because a contract is checked while its bundle or manifest is parsed. So the time of a parse includes the `contract_generation` and `contract_validation` time of the same parse: do not add them up. `canonical_hashing` stores and hashes every contract, and fills it in from the ontology when the ontology switch is on. `ontology` times the reading of the release's ontology file and the check of every stored contract against it, and runs only for a release with the switch on that carries an ontology. `contract_bundle` writes the release's contract bundle. The contract stages (`contract_generation`, `contract_validation`, `canonical_hashing`, `ontology` and `contract_bundle`) add up to the `contracts_ms` the release page shows. `continuo_topology_contract_failures_total` counts each part of a dbt manifest the contract generation cannot read (`generate`, reason `manifest_shape`), each issue of an invalid contract (`validate`), each column that a seed's CSV header and its declared columns do not both have (`validate`, reason `seed_header`), each table a contract cannot list as `<schema>.<table>` (`normalise`), each contract the library refused after its checks (`normalise`, `hash`) and each error the ontology check found, under the stage `ontology` with the rule that found it as the reason (`ontology` for the ontology file's own rule, then `contract`, `coverage`, `access`, `order`, `drift`, `quality` and `privacy`). `continuo_topology_validation_cache_total` counts the schema-check cache's lookups.
 
@@ -328,5 +328,5 @@ datadog:
 
 ## Logs
 
-- **Service logs:** services write to their pod's output. `global.logLevel` sets the level for the Go services and `topology-controller`.
+- **Component logs:** components write to their pod's output. `global.logLevel` sets the level for the Go components and `topology-controller`.
 - **Attempt logs:** `execution-controller` uploads each attempt's log to the bucket when the attempt ends. You can read them in the UI.

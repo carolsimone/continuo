@@ -34,7 +34,7 @@ func TestUIWholeDAGTestOperation(t *testing.T) {
 
 	const seedSchedule = "seed"
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 
 	cleanupTestData(t, ctx, clients, seedSchedule)
@@ -78,7 +78,7 @@ func TestUISingleNodeBuildOperation(t *testing.T) {
 		targetTable   = "seed_table_1"
 	)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 
 	cleanupTestData(t, ctx, clients, "single-node-build-op-ui")

@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// Repository defines operations on the per-service message_processing table.
+// Repository defines operations on the per-component message_processing table.
 // Implementations must operate against a table with columns:
 // id (uuid PK), message_id (text), stream_name (text),
 // state (text), payload (jsonb), error (text NULL),

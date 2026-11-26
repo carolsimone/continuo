@@ -25,7 +25,7 @@ const (
 // ReasonFromResultBlock maps the reason a result block names to the failure
 // reason of the attempt that printed it: image_contract_mismatch from a python
 // harness, and unowned_dependents, engine_mismatch and warehouse_unreachable
-// from a seed preflight. A block that names no reason, or one this service
+// from a seed preflight. A block that names no reason, or one this component
 // does not know, maps to "" and leaves the attempt to be classified from what
 // Kubernetes shows of it.
 func ReasonFromResultBlock(reason string) pkgmodel.FailureReason {

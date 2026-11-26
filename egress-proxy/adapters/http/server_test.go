@@ -22,7 +22,7 @@ func freePort(t *testing.T) string {
 	return strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
 }
 
-// A taken health port is reported by Listen, before the service serves.
+// A taken health port is reported by Listen, before the component serves.
 func TestListen_FailsWhenPortIsTaken(t *testing.T) {
 	taken, err := net.Listen("tcp", ":0") //nolint:gosec // G102: the server under test binds every interface, so a taken port must too
 	require.NoError(t, err)

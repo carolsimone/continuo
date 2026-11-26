@@ -6,8 +6,8 @@ WORKDIR /app
 # `go mod download` can satisfy every dependency cited by go.work, but
 # only the modules this image actually builds against (pkg,
 # execution-controller) get their source trees later. Limiting the
-# source-copy layers to the service-owned dirs means a change to another
-# service does not invalidate this image's cache.
+# source-copy layers to the component-owned dirs means a change to another
+# component does not invalidate this image's cache.
 COPY go.work go.work.sum* ./
 COPY run-controller/go.mod run-controller/go.sum ./run-controller/
 COPY pkg/go.mod pkg/go.sum ./pkg/
@@ -21,7 +21,7 @@ COPY dead-letter-controller/go.mod dead-letter-controller/go.sum ./dead-letter-c
 COPY egress-proxy/go.mod egress-proxy/go.sum ./egress-proxy/
 
 # Layer 2: Drop unused use-directives so `go build` does not require the
-# other services' source trees to be present in this image.
+# other components' source trees to be present in this image.
 RUN go work edit -dropuse=./run-controller \
     && go work edit -dropuse=./agent-chat \
     && go work edit -dropuse=./catalog \
@@ -38,7 +38,7 @@ RUN go work edit -dropuse=./run-controller \
 # downloads again.
 RUN go mod download
 
-# Layer 4: Source for the modules this service builds against. pkg/ first
+# Layer 4: Source for the modules this component builds against. pkg/ first
 # (lower churn) so a change in execution-controller/ does not invalidate
 # the pkg layer.
 COPY pkg/ ./pkg/

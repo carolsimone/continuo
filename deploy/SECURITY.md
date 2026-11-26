@@ -19,7 +19,7 @@ in the chart README's [Security defaults](continuo/README.md#3-security-defaults
   Jobs that execution-controller creates (dbt, validation, seed-build)
   carry the same securityContext.
 - **Default-deny NetworkPolicies** (`networkPolicy.enabled: true` by
-  default) with allow rules derived from the real service graph. On
+  default) with allow rules derived from the real component graph. On
   policy-enforcing CNIs these are load-bearing — the CI install test
   exercises them behaviorally on kind. Caveat: when your datastores are
   pre-existing pods in the same namespace, the default-deny selects them
@@ -30,7 +30,7 @@ in the chart README's [Security defaults](continuo/README.md#3-security-defaults
   must point at commits reachable from `main`, images are retagged (not
   rebuilt) from the exact commit's digests, and chart publish is gated on a
   passing kind install test in bundled and BYO modes.
-- **Least-privilege RBAC.** Every `services` entry runs under its own ServiceAccount.
+- **Least-privilege RBAC.** Every `components` entry runs under its own ServiceAccount.
   Only execution-controller's holds (namespace-scoped, minimal) Kubernetes
   API access; every other one is bound to nothing. egress-proxy, the bundled
   datastores, Dex and the chart's Jobs run as the namespace's `default`
@@ -38,16 +38,16 @@ in the chart README's [Security defaults](continuo/README.md#3-security-defaults
 - **Credentials as files.** With `credentials.delivery: file` the chart
   mounts each credential read-only under `/var/run/secrets/continuo` and sets
   `<VAR>_FILE`, so no credential is in a pod's environment;
-  `credentials.files` points a service at files a secret manager writes
+  `credentials.files` points a component at files a secret manager writes
   (the Vault Agent injector, a Secrets Store CSI volume). The Postgres and
   Redis passwords are read again for every new connection.
-- **One login per service.** Each service signs in to Postgres and Redis as
-  its own login, so a leaked credential reaches one service's database and
-  one service's streams and keys. The migrate Job revokes `CONNECT` from
+- **One login per component.** Each component signs in to Postgres and Redis as
+  its own login, so a leaked credential reaches one component's database and
+  one component's streams and keys. The migrate Job revokes `CONNECT` from
   `PUBLIC` on every continuo database, grants each login only its own, and
   fails the deploy when a login holds more (superuser, `CREATEDB`,
   `CREATEROLE`, `REPLICATION`, `BYPASSRLS`, another database). Each Redis
-  login's rule comes from the stream contract, and a service refuses to start
+  login's rule comes from the stream contract, and a component refuses to start
   when its login reaches keys outside its own. `credentials.redis.mode:
   shared`, for a Redis with no ACL users, gives this up for Redis.
 
@@ -59,7 +59,7 @@ in the chart README's [Security defaults](continuo/README.md#3-security-defaults
   encrypting CNI; the chart is mesh-compatible and configures no app-level
   mTLS.
 - **Logins and secret storage** — with your own Postgres and Redis you create
-  each service's login, its password and the Secret or file holding it
+  each component's login, its password and the Secret or file holding it
   ([CREDENTIALS.md](CREDENTIALS.md)); the chart consumes Secrets or files a
   secret manager writes (via `existingSecret` or `credentials.files`), and
   rotating them is operator process. continuo grants each Postgres login its

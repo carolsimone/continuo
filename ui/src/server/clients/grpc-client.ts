@@ -4,7 +4,7 @@ import path from 'path';
 import type { Request } from 'express';
 
 // Canonical gRPC metadata header carrying the initiating user's stable id into
-// the backend services. It MUST match pkg/identity.MetadataKey on the Go side
+// the backend components. It MUST match pkg/identity.MetadataKey on the Go side
 // (the run-controller server interceptor reads this exact, lowercase key); the two are
 // the single propagation contract. gRPC lowercases metadata keys, so this is
 // already lowercase.

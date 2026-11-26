@@ -21,9 +21,9 @@ var blockingServerMethods = map[string]bool{
 	"Run":               true,
 }
 
-// TestLifecycleGoNeverWrapsAServerStart discovers every service's main.go by
+// TestLifecycleGoNeverWrapsAServerStart discovers every component's main.go by
 // globbing one level under the repo root (run-controller/main.go, agent-chat/main.go,
-// ...) rather than reading from a maintained list, so a new service is
+// ...) rather than reading from a maintained list, so a new component is
 // covered the day it lands. For each file it fails if a tracked goroutine —
 // a call to Go(...) with method name "Go", any receiver — invokes a
 // blocking-server method (see blockingServerMethods) on a variable that is
@@ -43,7 +43,7 @@ var blockingServerMethods = map[string]bool{
 // Detecting the actual invariant (registered as a shutdown target), rather
 // than matching known variable-name substrings like "healthServer", also
 // catches an arbitrarily named server variable (e.g. "srv") and a future
-// service this guard has never seen before.
+// component this guard has never seen before.
 func TestLifecycleGoNeverWrapsAServerStart(t *testing.T) {
 	root := repoRootFromTest(t)
 	mains, err := filepath.Glob(filepath.Join(root, "*", "main.go"))
@@ -51,7 +51,7 @@ func TestLifecycleGoNeverWrapsAServerStart(t *testing.T) {
 		t.Fatalf("glob main.go: %v", err)
 	}
 	if len(mains) == 0 {
-		t.Fatal("no service main.go files found one level under the repo root")
+		t.Fatal("no component main.go files found one level under the repo root")
 	}
 
 	fset := token.NewFileSet()

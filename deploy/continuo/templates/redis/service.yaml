@@ -10,7 +10,7 @@ metadata:
 spec:
   clusterIP: None
   selector:
-    {{- include "continuo.selectorLabels" (dict "root" $ "service" "redis") | nindent 4 }}
+    {{- include "continuo.selectorLabels" (dict "root" $ "name" "redis") | nindent 4 }}
   ports:
     - name: redis
       port: 6379

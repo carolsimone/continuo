@@ -16,7 +16,7 @@ import (
 )
 
 // Publisher performs the side effect an outbox entry represents. Every
-// service's publisher XADDs to entry.StreamName the fields its Render
+// component's publisher XADDs to entry.StreamName the fields its Render
 // (Renderer) returns for the entry, one XADD per entry, with an
 // outbox_entry_id that deduplicates the message (the entry's own id; a redrive
 // of an outbox-source dead letter keeps the original event's id instead);
@@ -43,7 +43,7 @@ type BatchPublisher interface {
 // TerminalFailureHook runs once per entry when its retry budget is exhausted,
 // just before MarkFailed. Best-effort: errors are logged, not propagated.
 // Passing nil to the constructor (Processor.OnTerminalFailure unset) means
-// "no-op", which is what every service passes.
+// "no-op", which is what every component passes.
 type TerminalFailureHook func(ctx context.Context, entry *Entry, cause error) error
 
 // FallbackTick is the poll interval of a relay with a Waker. Between wakes the

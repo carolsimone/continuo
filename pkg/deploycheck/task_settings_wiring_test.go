@@ -39,9 +39,9 @@ func TestTaskSettingsReachEveryDeploymentPath(t *testing.T) {
 	}
 }
 
-// The chart's runs.taskTimeoutHours is the range the services accept, in
-// hours: a value the chart allows but a service refused would render and then
-// stop the service at startup.
+// The chart's runs.taskTimeoutHours is the range the components accept, in
+// hours: a value the chart allows but a component refused would render and then
+// stop the component at startup.
 func TestTaskTimeoutRangeMatchesTheChart(t *testing.T) {
 	var schema struct {
 		Properties struct {
@@ -60,16 +60,16 @@ func TestTaskTimeoutRangeMatchesTheChart(t *testing.T) {
 	}
 	got := schema.Properties.Runs.Properties.TaskTimeoutHours
 	if min := time.Duration(got.Minimum) * time.Hour; min != pkgconfig.MinTaskTimeout {
-		t.Errorf("runs.taskTimeoutHours minimum = %v, the services accept from %v", min, pkgconfig.MinTaskTimeout)
+		t.Errorf("runs.taskTimeoutHours minimum = %v, the components accept from %v", min, pkgconfig.MinTaskTimeout)
 	}
 	if max := time.Duration(got.Maximum) * time.Hour; max != pkgconfig.MaxTaskTimeout {
-		t.Errorf("runs.taskTimeoutHours maximum = %v, the services accept up to %v", max, pkgconfig.MaxTaskTimeout)
+		t.Errorf("runs.taskTimeoutHours maximum = %v, the components accept up to %v", max, pkgconfig.MaxTaskTimeout)
 	}
 }
 
-// Both services read the task timeout through the shared loader, so they
+// Both components read the task timeout through the shared loader, so they
 // accept the same range.
-func TestTaskTimeoutServicesLoadItThroughPkgConfig(t *testing.T) {
+func TestTaskTimeoutComponentsLoadItThroughPkgConfig(t *testing.T) {
 	for _, svc := range []string{"run-controller", "execution-controller"} {
 		if !strings.Contains(readRepoFile(t, svc, "config", "config.go"), "pkgconfig.LoadTaskTimeout(v)") {
 			t.Errorf("%s/config/config.go does not read %s through pkgconfig.LoadTaskTimeout", svc, pkgconfig.TaskTimeoutEnvKey)

@@ -6,7 +6,7 @@ import "github.com/google/uuid"
 
 const EventType = "remediation_proposed"
 
-// AggregateType is the outbox aggregate type of every event this service
+// AggregateType is the outbox aggregate type of every event this component
 // emits. The relay withholds a row while an older open row shares its aggregate
 // (type and id), so all of a release's events (see AggregateIDForRelease) share
 // one lane.

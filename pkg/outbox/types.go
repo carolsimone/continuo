@@ -12,9 +12,9 @@ import (
 // about 24 minutes of outage.
 const MaxAttempts = 13
 
-// Entry is the canonical transactional-outbox row, shared across all services.
-// Each service owns its own physical <service>_outbox table; this struct is the
-// shared Go contract that every per-service table conforms to.
+// Entry is the canonical transactional-outbox row, shared across all components.
+// Each component owns its own physical <component>_outbox table; this struct is the
+// shared Go contract that every per-component table conforms to.
 type Entry struct {
 	ID                  uuid.UUID
 	MessageProcessingID *uuid.UUID // provenance: nullable FK to message_processing(id)

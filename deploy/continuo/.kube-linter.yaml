@@ -4,7 +4,7 @@ checks:
     # Single-writer datastores and hook Jobs cannot be multi-replica.
     - "no-anti-affinity"
     - "minimum-three-replicas"
-    # This chart intentionally runs one replica per service by default.
+    # This chart intentionally runs one replica per component by default.
     - "no-rolling-update-strategy"
 
     # --- Below: checks that are "Enabled by default: false" in kube-linter
@@ -46,7 +46,7 @@ checks:
     - "sorted-keys"
     # execution-controller's entire job is dispatching dbt task execution as
     # Kubernetes Jobs and watching them to a terminal state (see AGENTS.md
-    # service description) — create access to `batch/jobs` is the feature,
+    # component description) — create access to `batch/jobs` is the feature,
     # not an oversight. Its Role is scoped to `jobs` create/get/list/watch/
     # delete and `pods`/`pods/log` get/list/watch; it has no direct `pods`
     # create verb.
@@ -63,7 +63,7 @@ checks:
     # from the single rendered manifest kube-linter inspects; a real cluster
     # resolves them fine at admission time.
     - "env-value-from"
-    # Every services entry runs under a ServiceAccount of its own (rbac.yaml).
+    # Every components entry runs under a ServiceAccount of its own (rbac.yaml).
     # egress-proxy, the bundled datastores, Dex, the migration Job and the
     # bundled MinIO bucket-init Job run under the namespace's default
     # ServiceAccount, which this chart never binds to any Role/ClusterRole, so

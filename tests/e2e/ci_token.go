@@ -12,7 +12,7 @@ import (
 
 // The ui trusts stub-github as its GitHub Actions issuer (tests/e2e/ci-auth.json).
 // These repository ids are bound there: dbt fixtures, python fixtures, and one
-// service bound without allowBootstrap.
+// project bound without allowBootstrap.
 const (
 	ciAudience                 = "http://ui:8090"
 	e2eDbtRepositoryID         = "100000001"

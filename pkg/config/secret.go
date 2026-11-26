@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// CredentialVars lists every credential variable a service can read through
+// CredentialVars lists every credential variable a component can read through
 // a Secret. Each one is given as the environment variable itself or as a file
 // named by <NAME>_FILE.
 var CredentialVars = []string{

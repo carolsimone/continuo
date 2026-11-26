@@ -1,19 +1,19 @@
 {{- /*
-  The chart-managed ConfigMaps each service mounts through its `volumes`
-  entries, keyed by service name, one entry per ConfigMap: `volume` is the
+  The chart-managed ConfigMaps each component mounts through its `volumes`
+  entries, keyed by component name, one entry per ConfigMap: `volume` is the
   name of the volume that mounts it and `name` the helper that names it. A
   volume whose configMap.name is empty mounts the ConfigMap of the entry whose
-  `volume` is the volume's own name, and the service's first entry when no
+  `volume` is the volume's own name, and the component's first entry when no
   entry has that name. An entry that sets `mountedAt`, the helper that gives
-  the folder its service reads that ConfigMap from (called with the services
+  the folder its component reads that ConfigMap from (called with the components
   entry), is the ConfigMap of a volume of its name only while a volumeMounts
   entry mounts the volume at that folder, both compared without a trailing
   slash; a volume of that name mounted anywhere else, or nowhere, mounts the
-  service's first entry, as a volume of any other name does. The ConfigMaps a
-  service reads only at startup also set `checksum` and `template`: while an
+  component's first entry, as a volume of any other name does. The ConfigMaps a
+  component reads only at startup also set `checksum` and `template`: while an
   empty-named volume mounts one, the pod template carries
   `checksum/<checksum>`, the digest of the ConfigMap that `template` renders,
-  so `helm upgrade` rolls the service when that file changes. The ui re-reads
+  so `helm upgrade` rolls the component when that file changes. The ui re-reads
   cancel-config.json on every request from a directory mount the kubelet keeps
   current, so it carries no digest and an edit reaches it without a restart.
 */ -}}
@@ -24,21 +24,21 @@
         (dict "volume" "remediation-workflows" "name" "continuo.agentRemediationWorkflowsConfigMapName" "checksum" "agent-remediation-workflows" "template" "agent-remediation-workflows-configmap.yaml" "mountedAt" "continuo.agentRemediation.workflowsDir"))
       "ui" (list (dict "volume" "cancel-config" "name" "continuo.cancelConfigMapName")) }}
 {{- include "continuo.credentials.assertFiles" $ }}
-{{- range $svc := .Values.services }}
+{{- range $svc := .Values.components }}
 {{- if $svc.enabled }}
-{{- $servesMetrics := has $svc.name (include "continuo.metrics.services" $ | fromJsonArray) }}
+{{- $servesMetrics := has $svc.name (include "continuo.metrics.components" $ | fromJsonArray) }}
 {{- $mounted := default (list) (get $mountedConfigMaps $svc.name) }}
 {{- /* $resolved: the $mounted entry each volume with an empty configMap.name
        mounts, by volume name: the entry of the volume's own name (for an
        entry with `mountedAt`, only while the volume is mounted at that
-       folder), else the service's first entry. A service the chart mounts no
+       folder), else the component's first entry. A component the chart mounts no
        ConfigMap into has nothing to fall back to, and the API server would
        refuse the Deployment, so the render fails naming the volume. */}}
 {{- $resolved := dict }}
 {{- range $volume := $svc.volumes }}
 {{- if and (hasKey $volume "configMap") (not (dig "configMap" "name" "" $volume)) }}
 {{- if not $mounted }}
-{{- fail (printf "services[%s].volumes[%s]: configMap.name is empty, but the chart mounts no ConfigMap of its own into %s; name a ConfigMap you own, or remove the volume and its volumeMounts entry" $svc.name $volume.name $svc.name) }}
+{{- fail (printf "components[%s].volumes[%s]: configMap.name is empty, but the chart mounts no ConfigMap of its own into %s; name a ConfigMap you own, or remove the volume and its volumeMounts entry" $svc.name $volume.name $svc.name) }}
 {{- end }}
 {{- $entry := first $mounted }}
 {{- range $candidate := $mounted }}
@@ -63,7 +63,7 @@
 {{- end }}
 {{- $isAgent := has $svc.name (list "agent-chat" "agent-remediation") }}
 {{- if $isAgent }}{{ include "continuo.agent.assertEnv" (dict "root" $ "svc" $svc) }}{{ end }}
-{{- /* How this service's credentials reach it ("continuo.credentialSource"):
+{{- /* How this component's credentials reach it ("continuo.credentialSource"):
        $fileDelivery when it reads them as files projected from their Secrets,
        $companyFiles the credentials.files entries the company provides, and
        $projection the sources of the continuo-credentials volume. */}}
@@ -107,11 +107,11 @@ spec:
   {{- end }}
   selector:
     matchLabels:
-      {{- include "continuo.selectorLabels" (dict "root" $ "service" $svc.name) | nindent 6 }}
+      {{- include "continuo.selectorLabels" (dict "root" $ "name" $svc.name) | nindent 6 }}
   template:
     metadata:
       annotations:
-        # Every service reads the shared ConfigMap through envFrom, and
+        # Every component reads the shared ConfigMap through envFrom, and
         # Kubernetes never refreshes environment variables in a running pod when
         # that ConfigMap changes. Without this checksum, `helm upgrade` with a
         # different REDIS_HOST, S3_BUCKET, LOG_LEVEL or WAREHOUSE_ENGINE renders
@@ -143,7 +143,7 @@ spec:
         {{- if and $entry.template $chartManaged }}{{ $hashed = append $hashed $entry }}{{ end }}
         {{- end }}
         {{- if $hashed }}
-        # The service reads its mounted file only at startup; a changed file
+        # The component reads its mounted file only at startup; a changed file
         # must roll it. A volume naming an operator-owned ConfigMap is not
         # hashed: Helm cannot read it, so an edit to it needs
         # `kubectl rollout restart`.
@@ -155,7 +155,7 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
       labels:
-        {{- include "continuo.selectorLabels" (dict "root" $ "service" $svc.name) | nindent 8 }}
+        {{- include "continuo.selectorLabels" (dict "root" $ "name" $svc.name) | nindent 8 }}
     spec:
       # Bounds how long the kubelet waits after SIGTERM before SIGKILLing the
       # container. Must stay comfortably above the app's own SHUTDOWN_GRACE
@@ -174,27 +174,27 @@ spec:
         runAsGroup: 65532
         {{- end }}
       {{- $needsMigrations := and $.Values.postgresql.enabled $svc.env $svc.env.POSTGRES_DB }}
-      {{- $needsRedis := and $.Values.redis.enabled (has $svc.name (include "continuo.redis.clientServices" $ | fromJsonArray)) }}
+      {{- $needsRedis := and $.Values.redis.enabled (has $svc.name (include "continuo.redis.clientComponents" $ | fromJsonArray)) }}
       {{- if or $needsMigrations $needsRedis }}
       initContainers:
         {{- if $needsRedis }}
         # Bundled mode: Redis is a StatefulSet with no ordering guarantee against
-        # these Deployments, so every service that connects to Redis waits here
-        # until it answers PING (continuo.redis.clientServices names them). The
-        # services also wait for Redis in code, which covers BYO installs and
+        # these Deployments, so every component that connects to Redis waits here
+        # until it answers PING (continuo.redis.clientComponents names them). The
+        # components also wait for Redis in code, which covers BYO installs and
         # docker-compose; this gate keeps a cold bundled install from logging a
-        # retry per service while Redis is still being scheduled. BYO installs
+        # retry per component while Redis is still being scheduled. BYO installs
         # point at Redis that is already running and render nothing.
         - name: wait-for-redis
           image: "{{ $.Values.redis.image.repository }}:{{ $.Values.redis.image.tag }}"
           imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
           securityContext:
             {{- include "continuo.containerSecurityContext" $ | nindent 12 }}
-          {{- $redisPerService := eq (include "continuo.redis.mode" $) "perService" }}
-          {{- $redisAuth := dict "root" $ "svc" $svc "name" "REDIS_PASSWORD" "ref" (ternary "redisLogin" "redis" $redisPerService) "as" "REDISCLI_AUTH" }}
+          {{- $redisPerComponent := eq (include "continuo.redis.mode" $) "perComponent" }}
+          {{- $redisAuth := dict "root" $ "svc" $svc "name" "REDIS_PASSWORD" "ref" (ternary "redisLogin" "redis" $redisPerComponent) "as" "REDISCLI_AUTH" }}
           env:
             {{- with include "continuo.credentialEnv" $redisAuth | trim }}{{ . | nindent 12 }}{{ end }}
-            {{- if $redisPerService }}
+            {{- if $redisPerComponent }}
             - name: REDIS_USERNAME
               value: {{ (include "continuo.redis.login" (dict "root" $ "svc" $svc.name) | fromJson).username | quote }}
             {{- end }}
@@ -216,7 +216,7 @@ spec:
                 REDISCLI_AUTH="$credential"; export REDISCLI_AUTH
               fi
               tries=0
-              # Signs in as the service's own login when it has one, so a
+              # Signs in as the component's own login when it has one, so a
               # wrong password stops the pod here.
               set -- -h "$REDIS_HOST" -p "$REDIS_PORT"
               if [ -n "${REDIS_USERNAME:-}" ]; then set -- "$@" --user "$REDIS_USERNAME"; fi
@@ -234,7 +234,7 @@ spec:
         {{- end }}
         {{- if $needsMigrations }}
         # Bundled mode: the migration Job is a regular resource (hooks would
-        # deadlock — see db-init-migrate-job.yaml), so Postgres-backed services
+        # deadlock — see db-init-migrate-job.yaml), so Postgres-backed components
         # gate on Flyway having initialized their database. BYO installs keep
         # the pre-install hook and render no initContainer.
         - name: wait-for-migrations
@@ -267,9 +267,9 @@ spec:
                 PGPASSWORD="$credential"; export PGPASSWORD
               fi
               tries=0
-              # Signs in as the service's own login, so a wrong password stops
+              # Signs in as the component's own login, so a wrong password stops
               # the pod here. Probes through the always-present maintenance
-              # database, then the service's own, using queries that cannot
+              # database, then the component's own, using queries that cannot
               # fail server-side: connecting to a database the login may not
               # connect to yet, or selecting from a table that does not exist
               # yet, would log a FATAL/ERROR on Postgres for every iteration.
@@ -303,29 +303,29 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ include "continuo.configMapName" $ }}
-          {{- $needsS3 := has $svc.name (include "continuo.s3.credentialServices" $ | fromJsonArray) }}
-          {{- $needsPostgres := hasKey (include "continuo.postgres.serviceDatabases" $ | fromJson) $svc.name }}
-          {{- $needsRedisLogin := and (has $svc.name (include "continuo.redis.clientServices" $ | fromJsonArray)) (eq (include "continuo.redis.mode" $) "perService") }}
+          {{- $needsS3 := has $svc.name (include "continuo.s3.credentialComponents" $ | fromJsonArray) }}
+          {{- $needsPostgres := hasKey (include "continuo.postgres.componentDatabases" $ | fromJson) $svc.name }}
+          {{- $needsRedisLogin := and (has $svc.name (include "continuo.redis.clientComponents" $ | fromJsonArray)) (eq (include "continuo.redis.mode" $) "perComponent") }}
           {{- if or $svc.secretEnv $svc.env $needsS3 $needsPostgres $needsRedisLogin (eq $svc.name "ui") $isAgent $companyFiles }}
           env:
             {{- /*
-              Services that read or write object storage get their S3 credentials
-              from here rather than from their `secretEnv` entry. `services` is a
+              Components that read or write object storage get their S3 credentials
+              from here rather than from their `secretEnv` entry. `components` is a
               list, and Helm replaces lists wholesale, so an operator upgrading
               with their own copy of values.yaml keeps an older entry — which
-              would silently drop these refs and leave the service authenticating
+              would silently drop these refs and leave the component authenticating
               with nothing. Injecting them from the template makes the credentials
               independent of that replaceable list.
             */}}
             {{- /*
-              The same holds for the Postgres login: a service that keeps a
+              The same holds for the Postgres login: a component that keeps a
               continuo database signs in as its own login
               (credentials.postgres), whatever its `secretEnv` entry says.
               POSTGRES_USER here wins over the shared ConfigMap's, which names
               the migration login.
 
               Every credential goes through "continuo.credentialEnv", which
-              renders it as the service's delivery asks: a secretKeyRef
+              renders it as the component's delivery asks: a secretKeyRef
               variable, a <VAR>_FILE naming its projected file, or a
               <VAR>_FILE naming a company-provided file.
             */}}
@@ -341,8 +341,8 @@ spec:
             {{- with include "continuo.credentialEnv" (dict "root" $ "svc" $svc "name" $c.name "ref" $c.ref) | trim }}{{ . | nindent 12 }}{{ end }}
             {{- end }}
             {{- if eq $svc.name "ui" }}
-            {{- /* Injected here rather than through the ui's `services` entry so
-                   an overridden or reused `services` list cannot drop CI auth;
+            {{- /* Injected here rather than through the ui's `components` entry so
+                   an overridden or reused `components` list cannot drop CI auth;
                    the file is the ci-auth ConfigMap mounted below. */}}
             - name: CI_AUTH_CONFIG_PATH
               value: /app/ci-auth/ci-auth.json
@@ -352,14 +352,14 @@ spec:
             {{- . | nindent 12 }}
             {{- end }}
             {{- end }}
-            {{- /* A company file reaches the service even when its entry does
+            {{- /* A company file reaches the component even when its entry does
                    not list the credential. */}}
             {{- range $name := (include "continuo.credentialExtraFiles" (dict "root" $ "svc" $svc) | fromJsonArray) }}
             - name: {{ printf "%s_FILE" $name }}
               value: {{ get $companyFiles $name | quote }}
             {{- end }}
           {{- if $svc.env }}
-            {{- /* The logins above are the service's POSTGRES_USER and
+            {{- /* The logins above are the component's POSTGRES_USER and
                    REDIS_USERNAME; an env entry of either name is left out
                    rather than set twice. */}}
             {{- $ownEnv := $svc.env | default dict }}
@@ -452,21 +452,20 @@ spec:
           livenessProbe:
             httpGet:
               # livenessPath resolves independently of readinessPath, so a
-              # service points liveness at a WORKER-health-only endpoint (a dead
+              # component points liveness at a WORKER-health-only endpoint (a dead
               # or wedged consumer restarts the pod) that is distinct from the
               # readiness endpoint (which also includes dependency probes, so a
               # Redis/Postgres outage stops traffic WITHOUT restarting a pod
-              # whose consumers are already retrying). This split closes the gap
-              # that let five services sit at 1/1 Running with dead consumers
-              # during the Redis blip, without letting a dependency outage turn
-              # into CrashLoopBackOff. Falls back to probePath then /health.
+              # whose consumers are already retrying). This split keeps a component
+              # whose consumers died from staying at 1/1 Running, without
+              # letting a dependency outage turn into CrashLoopBackOff. Falls back to probePath then /health.
               path: {{ default (default "/health" $svc.probePath) $svc.livenessPath }}
               port: {{ $svc.httpPort }}
             initialDelaySeconds: 15
             periodSeconds: 10
             failureThreshold: 3
           {{- else if $svc.grpcPort }}
-          # No service registers the gRPC health service and the Go images carry
+          # No component registers the gRPC health service and the Go images carry
           # no Python, so a gRPC-only entry is probed by a TCP connect to its
           # gRPC port, which the kubelet makes without any binary in the image.
           readinessProbe:

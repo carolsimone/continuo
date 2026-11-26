@@ -69,7 +69,7 @@ Arguments:
 
 The node is addressed by its unique_id, "<schema>.<table>"; <project> is
 accepted for consistency with the other node subcommands but does not appear
-in the unique_id, matching how the catalog service tracks version history.
+in the unique_id, matching how catalog tracks version history.
 
 Flags:
   --limit         Maximum number of versions returned, newest first. Default
@@ -97,7 +97,7 @@ Output (stdout, JSON):
 Errors:
   usage      (exit 2)  wrong number of arguments
   not_found  (exit 3)  the node's unique_id is not recorded
-  unavailable(exit 5)  the catalog service is unreachable
+  unavailable(exit 5)  catalog is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo node versions finance analytics orders --limit 5 --include-code",
 		Annotations: map[string]string{

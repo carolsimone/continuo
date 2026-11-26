@@ -1,5 +1,5 @@
 {{- if .Values.redis.enabled }}
-{{- $perService := eq (include "continuo.redis.mode" .) "perService" }}
+{{- $perComponent := eq (include "continuo.redis.mode" .) "perComponent" }}
 # Quickstart Redis: single instance, AOF persistence, noeviction (this Redis
 # holds event streams and auth sessions — data loss on eviction is worse than
 # a full-memory error; streams are bounded by dead-letter-controller's trim loop).
@@ -16,12 +16,12 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      {{- include "continuo.selectorLabels" (dict "root" $ "service" "redis") | nindent 6 }}
+      {{- include "continuo.selectorLabels" (dict "root" $ "name" "redis") | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "continuo.selectorLabels" (dict "root" $ "service" "redis") | nindent 8 }}
-      {{- if $perService }}
+        {{- include "continuo.selectorLabels" (dict "root" $ "name" "redis") | nindent 8 }}
+      {{- if $perComponent }}
       annotations:
         # Redis reads its ACL file only when it starts: a change to the
         # rendered file (a rule, a login's name or password) restarts it.
@@ -39,8 +39,8 @@ spec:
           imagePullPolicy: IfNotPresent
           securityContext:
             {{- include "continuo.containerSecurityContext" . | nindent 12 }}
-          {{- if $perService }}
-          # perService: every login, with its rule and the hash of its password,
+          {{- if $perComponent }}
+          # perComponent: every login, with its rule and the hash of its password,
           # comes from the ACL file, and the default user is off. The probes
           # sign in as streams-init's login.
           {{- $probe := dict "root" $ "ref" "redisLogin" "svc" (dict "name" "streams-init") }}
@@ -107,12 +107,12 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
-            {{- if $perService }}
+            {{- if $perComponent }}
             - name: acl
               mountPath: /etc/redis
               readOnly: true
             {{- end }}
-      {{- if $perService }}
+      {{- if $perComponent }}
       volumes:
         - name: acl
           secret:

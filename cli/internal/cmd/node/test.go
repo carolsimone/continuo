@@ -15,14 +15,14 @@ import (
 // the run uses the latest topology metadata; with a fourth it reuses the
 // metadata snapshot of that past run.
 //
-// The command reports acceptance, not completion: the run-controller service plans the
+// The command reports acceptance, not completion: run-controller plans the
 // test run and durably records it with its first dispatches. A node the live
 // release does not hold is refused (not_found), and so is a node without data
 // tests (conflict); neither creates a run.
 //
 // The initiating identity is not an argument: it comes from cfg.Actor (the
 // CONTINUO_ACTOR env var) and is forwarded as gRPC metadata. When empty, the
-// run-controller service records its own system identity.
+// run-controller component records its own system identity.
 func NewTestCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "test <project> <schema> <table> [source-run-id]",
@@ -42,7 +42,7 @@ Arguments:
 ` + sourceRunArgDoc + `
 
 The initiating identity is not an argument: it is taken from the CONTINUO_ACTOR
-environment variable when set, otherwise the run-controller service records its own
+environment variable when set, otherwise run-controller records its own
 system identity.
 
 This command reports acceptance, not completion. On success the new run is
@@ -60,7 +60,7 @@ Output (stdout, JSON):
 Errors:
   usage      (exit 2)  wrong number of arguments, a malformed source run id, or the server rejects the identity triple
 ` + sourceRunErrorsDoc + `
-  unavailable(exit 5)  the run-controller service is unreachable
+  unavailable(exit 5)  run-controller is unreachable
   maintenance(exit 7)  continuo is in maintenance mode; new work is refused until it is turned off (not retryable)
   internal   (exit 6)  unexpected server error`,
 		Example: `  continuo node test finance analytics orders

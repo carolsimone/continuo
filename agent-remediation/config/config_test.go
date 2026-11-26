@@ -280,8 +280,8 @@ func TestLoad_VerificationPollIntervalNonPositiveFallsBackToDefault(t *testing.T
 // TestLoad_MalformedDurationFailsStartup pins the fail-closed rule for every
 // duration an operator can override.
 //
-// Each of these keys reaches the service from the chart's values, and a value
-// the service cannot read is an operator who asked for one behaviour and would
+// Each of these keys reaches the component from the chart's values, and a value
+// the component cannot read is an operator who asked for one behaviour and would
 // have got a different one with nothing anywhere saying so: the install looks
 // configured, the key greps cleanly in values.yaml, and the process runs the
 // author's default. Start-up fails naming the key instead.
@@ -300,7 +300,7 @@ func TestLoad_MalformedDurationFailsStartup(t *testing.T) {
 			Load(v)
 
 			missing := v.Missing()
-			require.Len(t, missing, 1, "a value the service cannot honour must stop start-up")
+			require.Len(t, missing, 1, "a value the component cannot honour must stop start-up")
 			assert.Contains(t, missing[0], key,
 				"the boot log must name the key the operator has to correct")
 		})
@@ -471,7 +471,7 @@ func loadWith(t *testing.T, env map[string]string) (Config, []string) {
 
 // TestLoad_IgnoresTheRemovedMaxAttemptsSetting verifies that a leftover
 // AGENT_REMEDIATION_MAX_ATTEMPTS in an install's environment changes nothing
-// the service loads and does not stop start-up: the attempts a remediation
+// the component loads and does not stop start-up: the attempts a remediation
 // makes come from its flow's tries.
 func TestLoad_IgnoresTheRemovedMaxAttemptsSetting(t *testing.T) {
 	without, missingWithout := loadWith(t, map[string]string{"AGENT_REMEDIATION_MAX_ATTEMPTS": ""})
@@ -487,7 +487,7 @@ func TestLoad_IgnoresTheRemovedMaxAttemptsSetting(t *testing.T) {
 
 // TestLoad_IgnoresAgentRemediationEngine verifies that an
 // AGENT_REMEDIATION_ENGINE in an install's environment, whatever its value,
-// changes nothing the service loads and does not stop start-up: the service
+// changes nothing the component loads and does not stop start-up: the component
 // reads no such setting.
 func TestLoad_IgnoresAgentRemediationEngine(t *testing.T) {
 	without, missingWithout := loadWith(t, map[string]string{"AGENT_REMEDIATION_ENGINE": ""})

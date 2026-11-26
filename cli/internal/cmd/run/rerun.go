@@ -11,7 +11,7 @@ import (
 )
 
 // NewRerunCommand builds `continuo run rerun <run-id>`. It asks the
-// run-controller service for a new run that re-executes the source run's tasks that did not
+// run-controller component for a new run that re-executes the source run's tasks that did not
 // succeed, and their descendants, on the release the source ran on.
 func NewRerunCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
@@ -40,7 +40,7 @@ Errors:
   usage      (exit 2)  wrong number of arguments, a blank run id, or the run id is not a UUID
   not_found  (exit 3)  no run with that id
   conflict   (exit 4)  the run is not failed or cancelled, names no release, is a test run, leaves nothing to re-execute, or its schedule already has an active run; or the request id was used before with other arguments
-  unavailable(exit 5)  the run-controller service is unreachable
+  unavailable(exit 5)  run-controller is unreachable
   maintenance(exit 7)  continuo is in maintenance mode; new work is refused until it is turned off (not retryable)
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo run rerun 0b6f4a52-3c1d-4d7e-9a0b-1f2e3d4c5b6a",

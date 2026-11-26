@@ -9,7 +9,7 @@ metadata:
     app.kubernetes.io/name: dex
 spec:
   selector:
-    {{- include "continuo.selectorLabels" (dict "root" $ "service" "dex") | nindent 4 }}
+    {{- include "continuo.selectorLabels" (dict "root" $ "name" "dex") | nindent 4 }}
   ports:
     - name: http
       port: 5556

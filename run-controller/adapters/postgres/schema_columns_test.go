@@ -15,7 +15,7 @@ import (
 
 // The migrated run-controller database has every column run-controller checks
 // for at startup, so a column a migration renames or drops fails here rather
-// than as a service that refuses to boot.
+// than as a component that refuses to boot.
 func TestSchemaColumns_TheMigratedDatabasePassesTheStartupSchemaCheck(t *testing.T) {
 	db := newTestDB(t)
 	require.NoError(t, svchandlers.CheckSchema(context.Background(), postgres.NewSchemaColumns(db)))

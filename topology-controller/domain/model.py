@@ -10,7 +10,7 @@ from domain.contract_vocabulary import NodeType
 
 DEFAULT_TENANT_ID = "default"
 """The tenant every release belongs to on a single-tenant install. It prefixes
-the topology artifact's key and stamps every event this service writes."""
+the topology artifact's key and stamps every event this component writes."""
 
 
 def relation_key(schema_name: str, name: str) -> str:

@@ -37,7 +37,7 @@ func TestTriggerSchedule_SeedRunAndRerun(t *testing.T) {
 	}()
 
 	// Prerequisites
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 	cleanupTestData(t, ctx, clients, scheduleName)
 

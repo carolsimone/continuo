@@ -72,7 +72,7 @@ func TestStreamConsumer_CleanupStaleConsumers(t *testing.T) {
 	require.NoError(t, err)
 
 	c := NewStreamConsumer(rc, stream, group, func(context.Context, goredis.XMessage) error { return nil }, discardLog())
-	c.SetService("pkg-redis-test")
+	c.SetComponent("pkg-redis-test")
 	// Self must never be deleted even when drained.
 	require.NoError(t, rc.XGroupCreateConsumer(ctx, key, group, c.consumerName).Err())
 
@@ -118,7 +118,7 @@ func TestStreamConsumer_WorkerPool_AcksFinishedLaneWhileAnotherBlocks(t *testing
 	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
 
 	probe := NewStreamConsumer(rc, stream, group, nil, discardLog(), WithWorkerPool(2, keyField))
-	probe.SetService("pkg-redis-test")
+	probe.SetComponent("pkg-redis-test")
 	fastKey, slowKey := distinctLaneKeys(probe)
 
 	block := make(chan struct{})
@@ -137,7 +137,7 @@ func TestStreamConsumer_WorkerPool_AcksFinishedLaneWhileAnotherBlocks(t *testing
 	require.NoError(t, err)
 
 	c := NewStreamConsumer(rc, stream, group, handler, discardLog(), WithWorkerPool(2, keyField))
-	c.SetService("pkg-redis-test")
+	c.SetComponent("pkg-redis-test")
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go c.Start(runCtx) //nolint:errcheck
@@ -177,7 +177,7 @@ func TestStreamConsumer_WorkerPool_AcksFinishedLaneWhileAnotherBlocks(t *testing
 func TestStreamConsumer_Healthy_ReflectsHeartbeatFreshness(t *testing.T) {
 	c := NewStreamConsumer(goredis.NewClient(&goredis.Options{Addr: "127.0.0.1:1"}),
 		"stream", "group", func(context.Context, goredis.XMessage) error { return nil }, discardLog())
-	c.SetService("pkg-redis-test")
+	c.SetComponent("pkg-redis-test")
 
 	assert.NoError(t, c.Healthy(time.Minute), "freshly constructed consumer must read healthy")
 
@@ -213,7 +213,7 @@ func TestStreamConsumer_Start_SurvivesConnectionErrors_WithoutExiting(t *testing
 
 	c := NewStreamConsumer(unreachable, "stream", "group",
 		func(context.Context, goredis.XMessage) error { return nil }, discardLog())
-	c.SetService("pkg-redis-test")
+	c.SetComponent("pkg-redis-test")
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -265,7 +265,7 @@ func TestStreamConsumer_Start_PermanentBootstrapError_ReturnsSoHealthSurfaces(t 
 		return nil
 	}
 	c := NewStreamConsumer(rc, stream, group, handler, discardLog())
-	c.SetService("pkg-redis-test")
+	c.SetComponent("pkg-redis-test")
 
 	// Generous timeout: if the bug regressed (infinite retry), Start would keep
 	// looping until this ctx cancels and we'd see a nil return well after the
@@ -326,7 +326,7 @@ func TestStreamConsumer_ReclaimPath_PoisonMessageQuarantinedAfterMaxDeliveries(t
 	}
 	// MinIdle 0 so every sweep is eligible immediately.
 	c := NewStreamConsumer(rc, stream, group, poison, discardLog(), WithReclaimMinIdle(0))
-	c.SetService("pkg-redis-test")
+	c.SetComponent("pkg-redis-test")
 
 	pendingCount := func() int64 {
 		res, perr := rc.XPending(ctx, key, group).Result()

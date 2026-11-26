@@ -77,12 +77,12 @@ func TestRedriveContract_SchedulesLoadedV1DeadLettersAreNotRedrivable(t *testing
 	}
 }
 
-// TestServiceNameMatchesDirectory pins config.ServiceName to this service's
+// TestComponentNameMatchesDirectory pins config.ComponentName to this component's
 // directory name: the contract's producer lists, the consumer groups and the
 // dead letters' producer field all have to agree on it.
-func TestServiceNameMatchesDirectory(t *testing.T) {
-	if config.ServiceName != "dead-letter-controller" {
-		t.Fatalf("ServiceName = %q, want dead-letter-controller", config.ServiceName)
+func TestComponentNameMatchesDirectory(t *testing.T) {
+	if config.ComponentName != "dead-letter-controller" {
+		t.Fatalf("ComponentName = %q, want dead-letter-controller", config.ComponentName)
 	}
 }
 

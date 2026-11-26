@@ -62,7 +62,7 @@ func TestE2E_StartFailure_AMissingImageIsRetriedWithoutOverlap(t *testing.T) {
 
 	clients := setupClients(t, ctx)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 	cleanupTestData(t, ctx, clients, "single-node-run")
 
@@ -191,7 +191,7 @@ func TestE2E_StartFailure_APodThatNeverStartsTimesOutWithoutARetry(t *testing.T)
 
 	clients := setupClients(t, ctx)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 	cleanupTestData(t, ctx, clients, "single-node-run")
 	startTimeout := jobStartTimeout(t, ctx)

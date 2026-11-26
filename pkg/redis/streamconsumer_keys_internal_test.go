@@ -43,7 +43,7 @@ func TestConsumerNeverCreatesItsGroup(t *testing.T) {
 	group := "test-group"
 
 	c := NewStreamConsumer(rc, stream, group, func(context.Context, goredis.XMessage) error { return nil }, discardLog())
-	c.SetService("pkg-redis-test")
+	c.SetComponent("pkg-redis-test")
 	c.startup = shortStartup
 
 	select {
@@ -70,7 +70,7 @@ func TestConsumerWaitsForItsGroup(t *testing.T) {
 		seen <- m.Values["k"].(string)
 		return nil
 	}, discardLog())
-	c.SetService("pkg-redis-test")
+	c.SetComponent("pkg-redis-test")
 	c.startup = StartupPolicy{Timeout: 10 * time.Second, InitialDelay: 50 * time.Millisecond, MaxDelay: 100 * time.Millisecond}
 	done := startConsumer(ctx, c)
 
@@ -109,7 +109,7 @@ func TestConsumerReadsOnlyThePrefixedKey(t *testing.T) {
 		seen <- m.Values["from"].(string)
 		return nil
 	}, discardLog())
-	c.SetService("pkg-redis-test")
+	c.SetComponent("pkg-redis-test")
 	c.startup = shortStartup
 	done := startConsumer(ctx, c)
 
@@ -145,7 +145,7 @@ func TestConsumerStopsWhenItsGroupDisappears(t *testing.T) {
 	require.NoError(t, rc.XGroupCreateMkStream(ctx, Key(stream), group, "0").Err())
 
 	c := NewStreamConsumer(rc, stream, group, func(context.Context, goredis.XMessage) error { return nil }, discardLog())
-	c.SetService("pkg-redis-test")
+	c.SetComponent("pkg-redis-test")
 	c.startup = shortStartup
 	done := startConsumer(ctx, c)
 	time.Sleep(300 * time.Millisecond)
@@ -177,7 +177,7 @@ func TestConsumerDeadLettersToThePrefixedStream(t *testing.T) {
 	require.NoError(t, err)
 
 	c := NewStreamConsumer(rc, stream, group, func(context.Context, goredis.XMessage) error { return events.ErrPermanent }, discardLog())
-	c.SetService("pkg-redis-test")
+	c.SetComponent("pkg-redis-test")
 	c.startup = shortStartup
 	done := startConsumer(ctx, c)
 
@@ -245,7 +245,7 @@ func TestConsumerQualifiesTheDedupIdentityByItsKey(t *testing.T) {
 		identity <- DedupMessageID(ctx, m)
 		return nil
 	}, discardLog())
-	c.SetService("pkg-redis-test")
+	c.SetComponent("pkg-redis-test")
 	c.startup = shortStartup
 	done := startConsumer(ctx, c)
 
@@ -279,7 +279,7 @@ func TestConsumerDeadLetterCarriesTheHandlersDedupIdentity(t *testing.T) {
 		identity <- DedupMessageID(ctx, m)
 		return fmt.Errorf("%w: the entry fails", events.ErrPermanent)
 	}, discardLog())
-	c.SetService("pkg-redis-test")
+	c.SetComponent("pkg-redis-test")
 	c.startup = shortStartup
 	done := startConsumer(ctx, c)
 

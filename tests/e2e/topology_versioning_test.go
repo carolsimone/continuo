@@ -32,8 +32,8 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 
 	defer cleanupTestData(t, ctx, clients, scheduleName)
 
-	// Step 1: Verify all services and Kubernetes are reachable.
-	verifyServicesHealthy(t)
+	// Step 1: Verify all components and Kubernetes are reachable.
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 
 	// Step 2: Clean any leftover data from previous runs.

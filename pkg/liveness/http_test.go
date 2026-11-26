@@ -33,8 +33,8 @@ func TestHandler_OKWhenNoFailures(t *testing.T) {
 }
 
 // TestHandler_ServiceUnavailableWhenFailures: a non-empty failure set yields
-// 503, the body "NOT <kind>: N component(s) unhealthy", and one Warn log per
-// failing component.
+// 503, the body "NOT <kind>: N check(s) unhealthy", and one Warn log per
+// failing check.
 func TestHandler_ServiceUnavailableWhenFailures(t *testing.T) {
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
@@ -52,7 +52,7 @@ func TestHandler_ServiceUnavailableWhenFailures(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d", rec.Code)
 	}
-	if got, want := rec.Body.String(), "NOT liveness: 2 component(s) unhealthy"; got != want {
+	if got, want := rec.Body.String(), "NOT liveness: 2 check(s) unhealthy"; got != want {
 		t.Fatalf("expected body %q, got %q", want, got)
 	}
 	out := logs.String()
@@ -60,8 +60,8 @@ func TestHandler_ServiceUnavailableWhenFailures(t *testing.T) {
 		t.Fatalf("expected 2 per-failure Warn logs, got: %q", out)
 	}
 	for _, name := range []string{"redis", "consumer_a_heartbeat"} {
-		if !strings.Contains(out, name) {
-			t.Fatalf("expected failing component %q to be logged, got: %q", name, out)
+		if !strings.Contains(out, "check="+name) {
+			t.Fatalf("expected failing check %q to be logged under the key check, got: %q", name, out)
 		}
 	}
 }

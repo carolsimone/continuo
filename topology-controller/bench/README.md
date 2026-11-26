@@ -4,7 +4,7 @@ This package times the release parse of topology-controller on synthetic
 estates. It drives the real `CandidateManifestHandler`, with its real parsers,
 resolver, rewriter, builders and writers, over an in-memory S3, and reads the
 per-stage record the handler keeps (`service/release_timings.py`). It uses the
-standard library and the service's own dependencies, so it adds nothing to
+standard library and the component's own dependencies, so it adds nothing to
 `pyproject.toml`.
 
 It runs by hand. No workflow, make target or test runs it, and its results never

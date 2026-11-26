@@ -11,9 +11,9 @@ import (
 	"github.com/carolsimone/continuo/pkg/maintenance"
 )
 
-// enforcingServices are the services that refuse new work in maintenance mode
+// enforcingComponents are the components that refuse new work in maintenance mode
 // and refuse to start without MAINTENANCE_ENABLED.
-var enforcingServices = []string{"run-controller", "release-controller", "agent-remediation", "dead-letter-controller"}
+var enforcingComponents = []string{"run-controller", "release-controller", "agent-remediation", "dead-letter-controller"}
 
 func readRepoFile(t *testing.T, rel ...string) string {
 	t.Helper()
@@ -32,7 +32,7 @@ func TestMaintenanceFlagReachesEveryDeploymentPath(t *testing.T) {
 		t.Errorf("templates/configmap.yaml does not set %s", pkgconfig.MaintenanceEnvKey)
 	}
 	compose := readRepoFile(t, "docker-compose.yml")
-	for _, svc := range append([]string{"ui", "ui-auth"}, enforcingServices...) {
+	for _, svc := range append([]string{"ui", "ui-auth"}, enforcingComponents...) {
 		block := regexp.MustCompile(`(?ms)^  ` + regexp.QuoteMeta(svc) + `:\n(.*?)(?:^  \S|\z)`).FindStringSubmatch(compose)
 		if block == nil || !strings.Contains(block[1], pkgconfig.MaintenanceEnvKey+"=false") {
 			t.Errorf("docker-compose.yml service %q does not set %s=false", svc, pkgconfig.MaintenanceEnvKey)
@@ -40,9 +40,9 @@ func TestMaintenanceFlagReachesEveryDeploymentPath(t *testing.T) {
 	}
 }
 
-// Every enforcing service reads the flag through the strict loader.
-func TestEnforcingServicesLoadMaintenanceStrictly(t *testing.T) {
-	for _, svc := range enforcingServices {
+// Every enforcing component reads the flag through the strict loader.
+func TestEnforcingComponentsLoadMaintenanceStrictly(t *testing.T) {
+	for _, svc := range enforcingComponents {
 		if !strings.Contains(readRepoFile(t, svc, "config", "config.go"), "pkgconfig.LoadMaintenance(v)") {
 			t.Errorf("%s/config/config.go does not read MAINTENANCE_ENABLED through pkgconfig.LoadMaintenance", svc)
 		}

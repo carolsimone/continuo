@@ -21,21 +21,21 @@ type chartValues struct {
 	Validation struct {
 		WarehouseDatabase string `yaml:"warehouseDatabase"`
 	} `yaml:"validation"`
-	Services []struct {
+	Components []struct {
 		Name string            `yaml:"name"`
 		Env  map[string]string `yaml:"env"`
-	} `yaml:"services"`
+	} `yaml:"components"`
 }
 
 type redisRules struct {
 	Logins []struct {
-		Service  string `yaml:"service" json:"service"`
-		Username string `yaml:"username" json:"username"`
+		Component string `yaml:"component" json:"component"`
+		Username  string `yaml:"username" json:"username"`
 	} `json:"logins"`
 }
 
 // composeRedisService maps a docker-compose service that connects to Redis to
-// the service whose generated Redis login it signs in as.
+// the component whose generated Redis login it signs in as.
 var composeRedisService = map[string]string{"ui-auth": "ui"}
 
 // composeRedisExempt lists the docker-compose services that sign in to Redis
@@ -43,11 +43,11 @@ var composeRedisService = map[string]string{"ui-auth": "ui"}
 var composeRedisExempt = map[string]bool{"e2e": true}
 
 // TestComposeServicesUseTheirOwnLogins holds docker-compose to the logins the
-// chart gives each service: a service that keeps a Postgres database signs in
+// chart gives each component: a component that keeps a Postgres database signs in
 // as the login credentials.postgres names for it (the warehouse login for the
-// dbt warehouse), and a service that connects to Redis signs in as its
+// dbt warehouse), and a component that connects to Redis signs in as its
 // generated Redis login, each with the local password local-<login>, and with
-// REDIS_ACL_MODE=perService. The one migrations service receives every
+// REDIS_ACL_MODE=perComponent. The one migrations service receives every
 // database's login.
 func TestComposeServicesUseTheirOwnLogins(t *testing.T) {
 	var compose composeFile
@@ -64,14 +64,14 @@ func TestComposeServicesUseTheirOwnLogins(t *testing.T) {
 	}
 
 	pgLoginByDB := map[string]string{}
-	for _, svc := range values.Services {
+	for _, svc := range values.Components {
 		db := svc.Env["POSTGRES_DB"]
 		if db == "" {
 			continue
 		}
 		login := values.Credentials.Postgres[svc.Name].Username
 		if login == "" {
-			t.Errorf("values.yaml: service %s keeps %s but credentials.postgres names no login for it", svc.Name, db)
+			t.Errorf("values.yaml: component %s keeps %s but credentials.postgres names no login for it", svc.Name, db)
 		}
 		pgLoginByDB[db] = login
 	}
@@ -82,7 +82,7 @@ func TestComposeServicesUseTheirOwnLogins(t *testing.T) {
 	}
 	redisLogin := map[string]string{}
 	for _, l := range rules.Logins {
-		redisLogin[l.Service] = l.Username
+		redisLogin[l.Component] = l.Username
 	}
 
 	names := make([]string, 0, len(compose.Services))
@@ -124,8 +124,8 @@ func TestComposeServicesUseTheirOwnLogins(t *testing.T) {
 			if env["REDIS_PASSWORD"] != "local-"+want {
 				t.Errorf("docker-compose.yml %s: REDIS_PASSWORD=%q, want %q", name, env["REDIS_PASSWORD"], "local-"+want)
 			}
-			if env["REDIS_ACL_MODE"] != "perService" {
-				t.Errorf("docker-compose.yml %s: REDIS_ACL_MODE=%q, want perService", name, env["REDIS_ACL_MODE"])
+			if env["REDIS_ACL_MODE"] != "perComponent" {
+				t.Errorf("docker-compose.yml %s: REDIS_ACL_MODE=%q, want perComponent", name, env["REDIS_ACL_MODE"])
 			}
 		}
 	}
@@ -146,12 +146,12 @@ func TestComposeServicesUseTheirOwnLogins(t *testing.T) {
 	assertSameSet(t, "docker-compose.yml migrations CONTINUO_PG_LOGINS", got, want)
 }
 
-// TestE2EHarnessReadsNoServiceCredential: the e2e harness runs inside the
+// TestE2EHarnessReadsNoComponentCredential: the e2e harness runs inside the
 // catalog container, whose REDIS_* and POSTGRES_* variables are catalog's own
 // login. The harness signs in as the migration login and Redis's default user,
 // so it reads its credentials from E2E_* variables and never from the
-// service's.
-func TestE2EHarnessReadsNoServiceCredential(t *testing.T) {
+// component's.
+func TestE2EHarnessReadsNoComponentCredential(t *testing.T) {
 	root := repoRoot(t)
 	files, err := filepath.Glob(filepath.Join(root, "tests", "e2e", "*.go"))
 	if err != nil {

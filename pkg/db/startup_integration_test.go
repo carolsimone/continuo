@@ -45,7 +45,7 @@ func loadStartupTestPostgres(t *testing.T) pkgconfig.PostgresConfig {
 	t.Setenv("DB_MAX_IDLE_CONNS", "")
 	cfg := pkgconfig.LoadPostgres(&pkgconfig.Validator{})
 	if cfg.Host == "" {
-		testdeps.Unavailable(t, "POSTGRES_HOST not set; run `make test-go SERVICE=pkg`")
+		testdeps.Unavailable(t, "POSTGRES_HOST not set; run `make test-go COMPONENT=pkg`")
 	}
 	return cfg
 }
@@ -55,7 +55,7 @@ func loadStartupTestPostgres(t *testing.T) pkgconfig.PostgresConfig {
 func forward(t *testing.T, addr, upstream string) {
 	t.Helper()
 	lis, err := net.Listen("tcp", addr)
-	require.NoError(t, err, "take the port the service is waiting on")
+	require.NoError(t, err, "take the port the component is waiting on")
 	t.Cleanup(func() { _ = lis.Close() })
 	go func() {
 		for {

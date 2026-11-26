@@ -21,7 +21,7 @@ type fakeBacklog struct {
 func (f fakeBacklog) Table() string                                   { return f.table }
 func (f fakeBacklog) Backlog(context.Context) (outbox.Backlog, error) { return f.b, f.err }
 
-// The outbox series are served on the process's registry, with its service
+// The outbox series are served on the process's registry, with its component
 // label: what each table published and failed to, and each watched table's
 // backlog, read at scrape time. A table whose backlog cannot be read omits
 // its gauges.
@@ -38,11 +38,11 @@ func TestMetrics_ServesTheOutboxSeries(t *testing.T) {
 	reg.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
 	body := rec.Body.String()
 	for _, want := range []string{
-		`continuo_outbox_published_total{service="test-svc",table="t"} 3`,
-		`continuo_outbox_publish_failures_total{kind="retry",service="test-svc",table="t"} 1`,
-		`continuo_outbox_backlog{service="test-svc",table="t"} 4`,
-		`continuo_outbox_oldest_open_age_seconds{service="test-svc",table="t"} 90`,
-		`continuo_outbox_dead_letters{service="test-svc",table="t"} 1`,
+		`continuo_outbox_published_total{component="test-svc",table="t"} 3`,
+		`continuo_outbox_publish_failures_total{component="test-svc",kind="retry",table="t"} 1`,
+		`continuo_outbox_backlog{component="test-svc",table="t"} 4`,
+		`continuo_outbox_oldest_open_age_seconds{component="test-svc",table="t"} 90`,
+		`continuo_outbox_dead_letters{component="test-svc",table="t"} 1`,
 	} {
 		assert.Contains(t, body, want)
 	}

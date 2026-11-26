@@ -218,20 +218,20 @@ func TestBackupMetrics_CountsEachExportByOutcome(t *testing.T) {
 	reg.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	body := rec.Body.String()
 	for _, want := range []string{
-		`continuo_catalog_exports_total{outcome="success",service="catalog"} 2`,
-		`continuo_catalog_exports_total{outcome="failure",service="catalog"} 2`,
-		`continuo_catalog_exports_total{outcome="skipped",service="catalog"} 1`,
-		`continuo_catalog_export_duration_seconds_count{service="catalog"} 2`,
-		`continuo_catalog_export_duration_seconds_sum{service="catalog"} 120`,
-		`continuo_catalog_export_bytes{service="catalog"} 4096`,
-		`continuo_catalog_export_records{kind="node",service="catalog"} 12`,
-		`continuo_catalog_export_records{kind="relationship",service="catalog"} 11`,
+		`continuo_catalog_exports_total{component="catalog",outcome="success"} 2`,
+		`continuo_catalog_exports_total{component="catalog",outcome="failure"} 2`,
+		`continuo_catalog_exports_total{component="catalog",outcome="skipped"} 1`,
+		`continuo_catalog_export_duration_seconds_count{component="catalog"} 2`,
+		`continuo_catalog_export_duration_seconds_sum{component="catalog"} 120`,
+		`continuo_catalog_export_bytes{component="catalog"} 4096`,
+		`continuo_catalog_export_records{component="catalog",kind="node"} 12`,
+		`continuo_catalog_export_records{component="catalog",kind="relationship"} 11`,
 	} {
 		assert.True(t, strings.Contains(body, want), "the scrape lacks %q", want)
 	}
 }
 
-// The last-success gauge is served under its name with the service label.
+// The last-success gauge is served under its name with the component label.
 func TestBackupMetrics_LastSuccessIsScraped(t *testing.T) {
 	reg := pkgmetrics.New("catalog")
 	at := time.Date(2026, 10, 30, 2, 0, 0, 0, time.UTC)
@@ -239,6 +239,6 @@ func TestBackupMetrics_LastSuccessIsScraped(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	reg.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	assert.Contains(t, rec.Body.String(), `continuo_catalog_export_last_success_timestamp_seconds{service="catalog"} 1.7933256e+09`)
+	assert.Contains(t, rec.Body.String(), `continuo_catalog_export_last_success_timestamp_seconds{component="catalog"} 1.7933256e+09`)
 	assert.Contains(t, rec.Body.String(), "# TYPE continuo_catalog_export_last_success_timestamp_seconds gauge")
 }

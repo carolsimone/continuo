@@ -22,7 +22,7 @@ type RationaleUpstream struct {
 	Depth   int
 }
 
-// RationaleFacts is everything the service knows about one cluster's fix.
+// RationaleFacts is everything the component knows about one cluster's fix.
 // The rationale a reviewer reads is composed from these facts alone; the
 // model contributes only ModelNote, one sentence describing its edit, taken
 // from the same call that produced the edit.

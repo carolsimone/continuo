@@ -56,24 +56,24 @@ Treat each as a concrete check:
 
 1. **Port placement.**
    - Domain repository ports (collection-like abstractions over an aggregate,
-     e.g. `RunRepository`) live in `<service>/domain/repository`.
+     e.g. `RunRepository`) live in `<component>/domain/repository`.
    - Technical/application ports (non-domain collaborators, e.g. `LogUploader`,
-     `OutboxPublisher`, `Clock`) live in `<service>/service/ports`.
-   - The `UnitOfWork` interface lives in `<service>/service/uow`.
+     `OutboxPublisher`, `Clock`) live in `<component>/service/ports`.
+   - The `UnitOfWork` interface lives in `<component>/service/uow`.
    - Concrete implementations — including every `*UnitOfWork` — live in
-     `<service>/adapters/*` and carry a `var _ Port = (*impl)(nil)` assertion.
+     `<component>/adapters/*` and carry a `var _ Port = (*impl)(nil)` assertion.
    - Adapters only *implement* ports; an adapter package must never *declare* a
      port consumed by the application layer. (An interface declared in an
      adapter and consumed only by other adapters is fine — that is
      adapter-to-adapter wiring, not application→adapter inversion.)
 
-2. **Handlers don't import adapters.** No file under `<service>/service/handlers`
+2. **Handlers don't import adapters.** No file under `<component>/service/handlers`
    may import any `adapters/*` package. (Enforced by
    `TestServiceHandlersDoNotImportAdapters` in
    `pkg/streams/handler_imports_test.go`.)
 
 3. **No inlined stream / consumer-group names.** Versioned stream names
-   (e.g. `"task.dispatch:v1"`) and service-prefixed consumer-group names must
+   (e.g. `"task.dispatch:v1"`) and component-prefixed consumer-group names must
    reference constants from `pkg/streams` (Go) or `streams_contract` (Python) —
    in production code, integration tests, unit fixtures, and adapter bindings
    (`message_processing.stream_name`). Flag any string literal of this shape.
@@ -83,7 +83,7 @@ Treat each as a concrete check:
    `SELECT … FOR UPDATE`). Flag a `Get*` that locks for update, or a `Load*`
    that is a plain read.
 
-5. **Arch-doc currency.** If the diff changes service behavior, interfaces,
+5. **Arch-doc currency.** If the diff changes component behavior, interfaces,
    storage ownership, Redis flows, gRPC interactions, Kubernetes behavior, or
    S3 usage, the relevant files under `docs/arch/**` must be updated in the same
    change. Flag behavioral changes whose `docs/arch/**` counterparts are

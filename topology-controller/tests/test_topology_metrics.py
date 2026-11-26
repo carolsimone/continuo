@@ -17,11 +17,11 @@ from service.release_timings import (
 from streams_contract import RELEASE_REQUESTED_V1, TOPOLOGY_CONTROLLER_RELEASE_REQUESTED
 from tests.fakes import FakeClock, ScriptedMemoryProbe
 
-SERVICE = {"service": "topology-controller"}
+COMPONENT = {"component": "topology-controller"}
 
 
 def _value(metrics, name, **labels):
-    return metrics.registry.get_sample_value(name, {**SERVICE, **labels})
+    return metrics.registry.get_sample_value(name, {**COMPONENT, **labels})
 
 
 def _finished(nodes, skipped=None, outcome=ReleaseOutcome.OK, kind=None, peak=0, dormant=None):
@@ -235,7 +235,7 @@ def test_no_created_series_are_exported():
     assert "_created" not in generate_latest(metrics.registry).decode()
 
 
-def test_the_registry_holds_only_the_service_series():
+def test_the_registry_holds_only_the_component_series():
     metrics = TopologyMetrics("topology-controller")
     metrics.release_finished(_finished({"dbt": 1}))
     names = {line.split("{")[0].split(" ")[0] for line in generate_latest(metrics.registry).decode().splitlines()

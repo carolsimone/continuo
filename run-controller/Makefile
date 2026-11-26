@@ -19,7 +19,7 @@ test-ci:
 	@go tool cover -func=/tmp/coverage.out
 	@echo "======================"
 
-# Build the service (placeholder for future when main.go is added)
+# Build the component (placeholder for future when main.go is added)
 build:
 	go build -o bin/run-controller .
 

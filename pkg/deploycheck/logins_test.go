@@ -11,7 +11,7 @@ import (
 )
 
 // helperJSON returns the JSON body of a one-line named template in the
-// chart's _helpers.tpl, e.g. continuo.redis.clientServices.
+// chart's _helpers.tpl, e.g. continuo.redis.clientComponents.
 func helperJSON(t *testing.T, name string, into any) {
 	t.Helper()
 	helpers := readRepoFile(t, "deploy", "continuo", "templates", "_helpers.tpl")
@@ -78,10 +78,10 @@ type loginValues struct {
 			} `yaml:"logins"`
 		} `yaml:"redis"`
 	} `yaml:"credentials"`
-	Services []struct {
+	Components []struct {
 		Name string            `yaml:"name"`
 		Env  map[string]string `yaml:"env"`
-	} `yaml:"services"`
+	} `yaml:"components"`
 }
 
 func readLoginValues(t *testing.T) loginValues {
@@ -94,43 +94,43 @@ func readLoginValues(t *testing.T) loginValues {
 }
 
 // TestEveryPostgresDatabaseHasItsLogin: each database db/migrate-all.sh
-// migrates has a service that keeps it, a login in credentials.postgres, an
-// entry in the chart's continuo.postgres.serviceDatabases (from which the
+// migrates has a component that keeps it, a login in credentials.postgres, an
+// entry in the chart's continuo.postgres.componentDatabases (from which the
 // migrate Job's CONTINUO_PG_LOGINS is built), a CREATE ROLE in the compose
 // init script and a row in the credentials guide; and so has the warehouse
 // login. A database added without a login would stop every deploy at the
 // migrate Job, and a login the guide does not name is one no company creates.
 func TestEveryPostgresDatabaseHasItsLogin(t *testing.T) {
 	values := readLoginValues(t)
-	var serviceDatabases map[string]string
-	helperJSON(t, "continuo.postgres.serviceDatabases", &serviceDatabases)
+	var componentDatabases map[string]string
+	helperJSON(t, "continuo.postgres.componentDatabases", &componentDatabases)
 	initScript := readRepoFile(t, "db", "init-databases.sh")
 	rows := guideLoginTable(t)
 
 	dbs := databasesAssignment(t, readRepoFile(t, "db", "migrate-all.sh"), "db/migrate-all.sh")
 	var mapped []string
-	for _, db := range serviceDatabases {
+	for _, db := range componentDatabases {
 		mapped = append(mapped, db)
 	}
-	assertSameSet(t, "_helpers.tpl continuo.postgres.serviceDatabases", mapped, dbs)
+	assertSameSet(t, "_helpers.tpl continuo.postgres.componentDatabases", mapped, dbs)
 
 	for _, db := range dbs {
-		var svc string
-		for _, s := range values.Services {
-			if s.Env["POSTGRES_DB"] == "continuo_"+db {
-				svc = s.Name
+		var component string
+		for _, c := range values.Components {
+			if c.Env["POSTGRES_DB"] == "continuo_"+db {
+				component = c.Name
 			}
 		}
-		if svc == "" {
-			t.Errorf("continuo_%s: no service in values.yaml keeps it (env.POSTGRES_DB)", db)
+		if component == "" {
+			t.Errorf("continuo_%s: no component in values.yaml keeps it (env.POSTGRES_DB)", db)
 			continue
 		}
-		if serviceDatabases[svc] != db {
-			t.Errorf("continuo_%s: _helpers.tpl continuo.postgres.serviceDatabases maps %s to %q", db, svc, serviceDatabases[svc])
+		if componentDatabases[component] != db {
+			t.Errorf("continuo_%s: _helpers.tpl continuo.postgres.componentDatabases maps %s to %q", db, component, componentDatabases[component])
 		}
-		login := values.Credentials.Postgres[svc].Username
+		login := values.Credentials.Postgres[component].Username
 		if login == "" {
-			t.Errorf("continuo_%s: credentials.postgres.%s names no login", db, svc)
+			t.Errorf("continuo_%s: credentials.postgres.%s names no login", db, component)
 			continue
 		}
 		if !strings.Contains(initScript, "CREATE ROLE "+login+" LOGIN") {
@@ -153,18 +153,18 @@ func TestEveryPostgresDatabaseHasItsLogin(t *testing.T) {
 	}
 }
 
-// TestEveryRedisServiceHasItsLogin: each service the chart treats as a Redis
+// TestEveryRedisComponentHasItsLogin: each component the chart treats as a Redis
 // client, and streams-init, has a login in credentials.redis.logins whose
 // username is the one the generated rules give it, and a row in the guide;
 // the rules name no login the chart does not use.
-func TestEveryRedisServiceHasItsLogin(t *testing.T) {
+func TestEveryRedisComponentHasItsLogin(t *testing.T) {
 	values := readLoginValues(t)
 	var clients []string
-	helperJSON(t, "continuo.redis.clientServices", &clients)
+	helperJSON(t, "continuo.redis.clientComponents", &clients)
 	var rules struct {
 		Logins []struct {
-			Service  string `json:"service"`
-			Username string `json:"username"`
+			Component string `json:"component"`
+			Username  string `json:"username"`
 		} `json:"logins"`
 	}
 	if err := json.Unmarshal([]byte(readRepoFile(t, "deploy", "continuo", "files", "redis-acl-rules.json")), &rules); err != nil {
@@ -172,7 +172,7 @@ func TestEveryRedisServiceHasItsLogin(t *testing.T) {
 	}
 	ruled := map[string]string{}
 	for _, l := range rules.Logins {
-		ruled[l.Service] = l.Username
+		ruled[l.Component] = l.Username
 	}
 	rows := guideLoginTable(t)
 
@@ -200,7 +200,7 @@ func TestEveryRedisServiceHasItsLogin(t *testing.T) {
 }
 
 // TestGuideNamesOnlyLoginsTheChartUses: every row of the guide's login table
-// names a login the chart gives a service, streams-init, the warehouse or the
+// names a login the chart gives a component, streams-init, the warehouse or the
 // migration step.
 func TestGuideNamesOnlyLoginsTheChartUses(t *testing.T) {
 	values := readLoginValues(t)

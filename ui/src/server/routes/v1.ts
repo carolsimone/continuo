@@ -286,7 +286,7 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
       upstream = await releases.submitRelease(body);
     } catch {
       auditSubmit(p, body, 503);
-      return fail(res, 503, 'upstream_unavailable', 'release service unavailable');
+      return fail(res, 503, 'upstream_unavailable', 'release-controller unavailable');
     }
     if (upstream.status === 202) {
       auditSubmit(p, body, 202);
@@ -308,7 +308,7 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
     if (upstream.status === 503 && upstreamCode(upstream.text) === MAINTENANCE_CODE) {
       return sendMaintenance(res);
     }
-    return fail(res, 503, 'upstream_unavailable', 'release service unavailable');
+    return fail(res, 503, 'upstream_unavailable', 'release-controller unavailable');
   });
 
   // A CI identity reading a release of a project it is not bound to gets the
@@ -322,9 +322,9 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
       rel = await releases.getRelease(req.params.id);
     } catch (err) {
       if (err instanceof HttpError && err.status === 404) return fail(res, 404, 'not_found', 'release not found');
-      return fail(res, 503, 'upstream_unavailable', 'release service unavailable');
+      return fail(res, 503, 'upstream_unavailable', 'release-controller unavailable');
     }
-    if (!isObject(rel)) return fail(res, 503, 'upstream_unavailable', 'release service unavailable');
+    if (!isObject(rel)) return fail(res, 503, 'upstream_unavailable', 'release-controller unavailable');
     const d = authorize(p, { kind: 'release.read', project: str(rel.changed_project) });
     if (!d.allow) {
       if (p.kind === 'ci') return fail(res, 404, 'not_found', 'release not found');
@@ -340,9 +340,9 @@ export function createV1Router(releases: ReleaseClient, publicUrl?: string): Rou
     try {
       cp = await releases.getCurrentProd();
     } catch {
-      return fail(res, 503, 'upstream_unavailable', 'release service unavailable');
+      return fail(res, 503, 'upstream_unavailable', 'release-controller unavailable');
     }
-    if (!isObject(cp)) return fail(res, 503, 'upstream_unavailable', 'release service unavailable');
+    if (!isObject(cp)) return fail(res, 503, 'upstream_unavailable', 'release-controller unavailable');
     res.json(projectCurrentProd(cp));
   });
 

@@ -227,14 +227,14 @@ func TestLoadRedisFromAddr_reads_the_acl_mode(t *testing.T) {
 	clearRedisEnv(t)
 	t.Setenv("REDIS_ADDR", "redishost:6379")
 	t.Setenv("REDIS_PASSWORD", "secret")
-	t.Setenv("REDIS_ACL_MODE", "perService")
+	t.Setenv("REDIS_ACL_MODE", "perComponent")
 	v := &Validator{}
 	cfg := LoadRedisFromAddr(v)
 	if len(v.Missing()) != 0 {
 		t.Fatalf("want no missing, got %v", v.Missing())
 	}
-	if cfg.ACLMode != RedisACLModePerService {
-		t.Fatalf("ACLMode = %q; want %q", cfg.ACLMode, RedisACLModePerService)
+	if cfg.ACLMode != RedisACLModePerComponent {
+		t.Fatalf("ACLMode = %q; want %q", cfg.ACLMode, RedisACLModePerComponent)
 	}
 }
 
@@ -243,10 +243,10 @@ func TestLoadRedis_unknown_acl_mode_is_reported(t *testing.T) {
 	t.Setenv("REDIS_HOST", "redishost")
 	t.Setenv("REDIS_PORT", "6379")
 	t.Setenv("REDIS_PASSWORD", "secret")
-	t.Setenv("REDIS_ACL_MODE", "perservice")
+	t.Setenv("REDIS_ACL_MODE", "percomponent")
 	v := &Validator{}
 	LoadRedis(v)
-	want := `REDIS_ACL_MODE (invalid value "perservice": expected shared or perService)`
+	want := `REDIS_ACL_MODE (invalid value "percomponent": expected shared or perComponent)`
 	if !containsEntry(v.Missing(), want) {
 		t.Fatalf("missing = %v; want %q", v.Missing(), want)
 	}

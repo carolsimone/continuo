@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Every chart-deployed service must receive its HTTP port under the env name
+"""Every chart-deployed component must receive its HTTP port under the env name
 its code reads, set to the Deployment's `http` containerPort, and must not
 receive a port variable it never reads (which only looks like configuration).
 
-The variable a service reads is taken from its own source, so the chart cannot
+The variable a component reads is taken from its own source, so the chart cannot
 drift from the code:
-  - Go services:        <service>/config/config.go   (HTTPPort / HealthPort field)
-  - topology-controller: <service>/config/config.py   (HTTP_PORT = int(os.environ.get(...)))
-  - ui:                  <service>/src/server/index.ts (PORT = parseInt(process.env.X))
+  - Go components:      <component>/config/config.go   (HTTPPort / HealthPort field)
+  - topology-controller: <component>/config/config.py   (HTTP_PORT = int(os.environ.get(...)))
+  - ui:                  <component>/src/server/index.ts (PORT = parseInt(process.env.X))
 
-A Deployment that exposes an `http` port and has a service directory in the
+A Deployment that exposes an `http` port and has a component directory in the
 repo, but whose source form is not recognised, fails the check rather than
-being skipped, so a refactor of a config file cannot silently take a service
-out of the guard. Deployments with no service directory (third-party images
+being skipped, so a refactor of a config file cannot silently take a component
+out of the guard. Deployments with no component directory (third-party images
 such as dex) are not governed by repo code and are not checked.
 
 Usage: assert-port-env.py <rendered-manifest.yaml> <repo-root>
@@ -26,7 +26,7 @@ import yaml
 
 logger = logging.getLogger("assert-port-env")
 
-# Each entry: (source file relative to the service dir, regex capturing the env name).
+# Each entry: (source file relative to the component dir, regex capturing the env name).
 SOURCES = (
     ("config/config.go", re.compile(r'(?:HTTPPort|HealthPort):\s*[\w.]*\(\s*"([A-Z0-9_]+)"')),
     ("config/config.py", re.compile(r'HTTP_PORT\s*=\s*int\(os\.environ\.get\("([A-Z0-9_]+)"')),
@@ -37,9 +37,9 @@ SOURCES = (
 PORT_NAME_RE = re.compile(r"^(?:(?:[A-Z0-9_]+_)?(?:HTTP|HEALTH)_PORT|PORT)$")
 
 
-def port_var(repo: pathlib.Path, service: str):
+def port_var(repo: pathlib.Path, component: str):
     for relative, pattern in SOURCES:
-        source = repo / service / relative
+        source = repo / component / relative
         if source.exists():
             m = pattern.search(source.read_text())
             if m:
@@ -71,10 +71,10 @@ def main() -> int:
             failures.append(f"{name}: reads {want}, chart sets {want}={env.get(want)!r}, http containerPort={port}")
         for key in env:
             if PORT_NAME_RE.match(key) and key != want:
-                failures.append(f"{name}: chart sets {key}, which the service never reads (it reads {want})")
+                failures.append(f"{name}: chart sets {key}, which the component never reads (it reads {want})")
         checked.append(f"{name}={want}")
     if not checked and not failures:
-        failures.append("no Deployment exposing an http port with a service directory in the repo was checked")
+        failures.append("no Deployment exposing an http port with a component directory in the repo was checked")
     for f in failures:
         logger.error("FAIL: %s", f)
     if not failures:

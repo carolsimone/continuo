@@ -78,7 +78,7 @@ func TestComposeNoProxyNamesRunController(t *testing.T) {
 	}
 }
 
-// agent-chat's CLI subprocess also dials the catalog service over gRPC, so its
+// agent-chat's CLI subprocess also dials the catalog component over gRPC, so its
 // literal NO_PROXY must name the compose service catalog. No NO_PROXY may list
 // the host orchestrator: no compose service is named that.
 func TestComposeNoProxyNamesCatalog(t *testing.T) {

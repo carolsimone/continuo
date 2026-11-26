@@ -18,14 +18,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRegister_AddsServiceLabelledCollector(t *testing.T) {
+func TestRegister_AddsComponentLabelledCollector(t *testing.T) {
 	reg := metrics.New("svc")
 	g := prometheus.NewGauge(prometheus.GaugeOpts{Name: "continuo_test_gauge", Help: "h"})
 	g.Set(3)
 	reg.Register(g)
 	rec := httptest.NewRecorder()
 	reg.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
-	if !strings.Contains(rec.Body.String(), `continuo_test_gauge{service="svc"} 3`) {
+	if !strings.Contains(rec.Body.String(), `continuo_test_gauge{component="svc"} 3`) {
 		t.Fatalf("body:\n%s", rec.Body.String())
 	}
 }
@@ -53,10 +53,10 @@ func TestRegistry_ServesConsumerAndRuntimeSeries(t *testing.T) {
 
 	body := scrape(t, reg.Handler())
 	for _, want := range []string{
-		`continuo_consumer_handler_duration_seconds_count{group="g",result="ok",service="test-svc",stream="s"} 1`,
-		`continuo_consumer_dead_letters_total{group="g",kind="permanent",service="test-svc",stream="s"} 1`,
-		`continuo_consumer_infra_pauses_total{group="g",service="test-svc",stream="s"} 1`,
-		`go_goroutines{service="test-svc"}`,
+		`continuo_consumer_handler_duration_seconds_count{component="test-svc",group="g",result="ok",stream="s"} 1`,
+		`continuo_consumer_dead_letters_total{component="test-svc",group="g",kind="permanent",stream="s"} 1`,
+		`continuo_consumer_infra_pauses_total{component="test-svc",group="g",stream="s"} 1`,
+		`go_goroutines{component="test-svc"}`,
 	} {
 		assert.Contains(t, body, want)
 	}

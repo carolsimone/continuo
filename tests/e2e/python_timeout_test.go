@@ -92,7 +92,7 @@ func TestE2E_PythonNodeTimeout_ReachesRunControllerThroughTheRuntimeCLI(t *testi
 
 	clients := setupClients(t, ctx)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 	requireReleaseControllerHealthy(t, clients)
 

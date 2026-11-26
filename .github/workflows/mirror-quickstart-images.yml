@@ -2,7 +2,7 @@ name: mirror-quickstart-images
 
 # Manual: run when bumping the bundled-MinIO version pins in values.yaml /
 # docker-compose.yml. NOT tag-triggered — the release flow retags our own
-# service images by sha; a vendor image is mirrored on a version bump, not per
+# component images by sha; a vendor image is mirrored on a version bump, not per
 # release. The source is anonymous, so the only credential is the ghcr push
 # token.
 on:

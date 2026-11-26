@@ -36,7 +36,7 @@ RUN go work edit -dropuse=./run-controller \
 # downloads again.
 RUN go mod download
 
-# Layer 4: Source for the modules this service builds against. pkg/ first
+# Layer 4: Source for the modules this component builds against. pkg/ first
 # (lower churn) so a change in egress-proxy/ does not invalidate the pkg layer.
 COPY pkg/ ./pkg/
 COPY egress-proxy/ ./egress-proxy/

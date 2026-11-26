@@ -27,7 +27,7 @@ func requireSeries(t *testing.T, body string, want ...string) {
 }
 
 // Each counted decision lands on the series of its decision and its rule's
-// family, next to the service label the registry adds.
+// family, next to the component label the registry adds.
 func TestClassifierMetrics_CountsEachNewDecision(t *testing.T) {
 	reg := pkgmetrics.New("remediation")
 	m := NewClassifierMetrics(reg)
@@ -41,11 +41,11 @@ func TestClassifierMetrics_CountsEachNewDecision(t *testing.T) {
 	m.Classified("drop", "parse:not_healable")
 
 	requireSeries(t, scrape(reg),
-		`continuo_remediation_classified_total{decision="emit",reason="logic",service="remediation"} 2`,
-		`continuo_remediation_classified_total{decision="emit",reason="test",service="remediation"} 1`,
-		`continuo_remediation_classified_total{decision="emit",reason="unknown",service="remediation"} 1`,
-		`continuo_remediation_classified_total{decision="drop",reason="infra",service="remediation"} 2`,
-		`continuo_remediation_classified_total{decision="drop",reason="parse",service="remediation"} 1`,
+		`continuo_remediation_classified_total{component="remediation",decision="emit",reason="logic"} 2`,
+		`continuo_remediation_classified_total{component="remediation",decision="emit",reason="test"} 1`,
+		`continuo_remediation_classified_total{component="remediation",decision="emit",reason="unknown"} 1`,
+		`continuo_remediation_classified_total{component="remediation",decision="drop",reason="infra"} 2`,
+		`continuo_remediation_classified_total{component="remediation",decision="drop",reason="parse"} 1`,
 	)
 }
 
@@ -62,9 +62,9 @@ func TestClassifierMetrics_ReasonKeepsOnlyTheRuleFamily(t *testing.T) {
 
 	body := scrape(reg)
 	requireSeries(t, body,
-		`continuo_remediation_classified_total{decision="emit",reason="logic",service="remediation"} 2`,
-		`continuo_remediation_classified_total{decision="drop",reason="infra",service="remediation"} 1`,
-		`continuo_remediation_classified_total{decision="emit",reason="unknown",service="remediation"} 1`,
+		`continuo_remediation_classified_total{component="remediation",decision="emit",reason="logic"} 2`,
+		`continuo_remediation_classified_total{component="remediation",decision="drop",reason="infra"} 1`,
+		`continuo_remediation_classified_total{component="remediation",decision="emit",reason="unknown"} 1`,
 	)
 	series := regexp.MustCompile(`(?m)^continuo_remediation_classified_total\{.*$`).FindAllString(body, -1)
 	if len(series) != 3 {

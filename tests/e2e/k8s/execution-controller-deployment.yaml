@@ -126,7 +126,7 @@ spec:
             - name: REDIS_PASSWORD
               value: "local-continuo_execution_controller"
             - name: REDIS_ACL_MODE
-              value: "perService"
+              value: "perComponent"
             - name: POSTGRES_HOST
               value: "${DOCKER_BRIDGE_IP}"
             - name: POSTGRES_PORT
@@ -142,7 +142,7 @@ spec:
             - name: MAX_CONCURRENT_JOBS
               value: "50"
             # A pod has 1 minute to start a container, the lowest value the
-            # service accepts; the chart default is 15 minutes. The start-timeout
+            # component accepts; the chart default is 15 minutes. The start-timeout
             # and node-deadline e2e tests each wait out this value (a Job's
             # deadline is the start timeout plus the node's own timeout), so it
             # sets how long they run.

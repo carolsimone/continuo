@@ -8,7 +8,7 @@
     "global", "postgresql", "externalDatabase", "redis", "externalRedis",
     "neo4j", "externalNeo4j", "minio", "s3", "dex", "auth", "llm", "github",
     "validation", "databaseInit", "streamReaper", "networkPolicy", "ingress",
-    "defaultResources", "services"
+    "defaultResources", "components"
   ],
   "definitions": {
     "credentialLogin": {
@@ -16,8 +16,8 @@
       "additionalProperties": false,
       "required": ["username"],
       "properties": {
-        "username": {"type": "string", "minLength": 1, "maxLength": 63, "description": "The login the service signs in as."},
-        "existingSecret": {"type": "string", "description": "Secret holding the login's password. Required for an enabled service on an external datastore unless credentials.files gives the service's password file; empty with the bundled datastore uses the generated <release>-logins Secret."},
+        "username": {"type": "string", "minLength": 1, "maxLength": 63, "description": "The login the component signs in as."},
+        "existingSecret": {"type": "string", "description": "Secret holding the login's password. Required for an enabled component on an external datastore unless credentials.files gives the component's password file; empty with the bundled datastore uses the generated <release>-logins Secret."},
         "key": {"type": "string", "minLength": 1, "description": "Key of the password in existingSecret."}
       }
     },
@@ -94,7 +94,7 @@
         "terminationGracePeriodSeconds": {
           "type": "integer",
           "minimum": 20,
-          "description": "Pod-level SIGTERM-to-SIGKILL window. Floored at 20s: the largest SHUTDOWN_GRACE default in the code is 15s (pkg/lifecycle's own drain+teardown budget), so anything at or below that leaves zero headroom for the kubelet to deliver SIGTERM and for the process to actually exit before the grace period expires, guaranteeing a mid-teardown SIGKILL. 20s leaves 5s of genuine headroom above that default; raise SHUTDOWN_GRACE and this value together if a service needs a longer budget."
+          "description": "Pod-level SIGTERM-to-SIGKILL window. Floored at 20s: the largest SHUTDOWN_GRACE default in the code is 15s (pkg/lifecycle's own drain+teardown budget), so anything at or below that leaves zero headroom for the kubelet to deliver SIGTERM and for the process to actually exit before the grace period expires, guaranteeing a mid-teardown SIGKILL. 20s leaves 5s of genuine headroom above that default; raise SHUTDOWN_GRACE and this value together if a component needs a longer budget."
         }
       }
     },
@@ -333,7 +333,7 @@
         },
         "files": {
           "type": "object",
-          "description": "Credentials a company provides as files of its own, per service name: credential variable to absolute file path. The chart attaches no Secret for them and sets <VAR>_FILE to the path.",
+          "description": "Credentials a company provides as files of its own, per component name: credential variable to absolute file path. The chart attaches no Secret for them and sets <VAR>_FILE to the path.",
           "additionalProperties": {
             "type": "object",
             "propertyNames": {"pattern": "^[A-Z][A-Z0-9_]*$"},
@@ -343,7 +343,7 @@
         "postgres": {
           "type": "object",
           "additionalProperties": false,
-          "description": "The Postgres login each service signs in as, and the Secret holding its password.",
+          "description": "The Postgres login each component signs in as, and the Secret holding its password.",
           "properties": {
             "run-controller": {"$ref": "#/definitions/credentialLogin"},
             "execution-controller": {"$ref": "#/definitions/credentialLogin"},
@@ -365,13 +365,13 @@
         "redis": {
           "type": "object",
           "additionalProperties": false,
-          "description": "How each service signs in to Redis: perService (its own login, with the published rule) or shared (the one Redis password, for a Redis with no ACL users).",
+          "description": "How each component signs in to Redis: perComponent (its own login, with the published rule) or shared (the one Redis password, for a Redis with no ACL users).",
           "properties": {
-            "mode": {"type": "string", "enum": ["perService", "shared"]},
+            "mode": {"type": "string", "enum": ["perComponent", "shared"]},
             "logins": {
               "type": "object",
               "additionalProperties": false,
-              "description": "The Redis login of each service and of streams-init, and the Secret holding its password (perService mode).",
+              "description": "The Redis login of each component and of streams-init, and the Secret holding its password (perComponent mode).",
               "properties": {
                 "streams-init": {"$ref": "#/definitions/credentialLogin"},
                 "run-controller": {"$ref": "#/definitions/credentialLogin"},
@@ -724,7 +724,7 @@
 
     "defaultResources": {"$ref": "#/definitions/resourceSpec"},
 
-    "services": {
+    "components": {
       "type": "array",
       "items": {
         "type": "object",
@@ -732,12 +732,12 @@
         "required": ["name", "enabled"],
         "properties": {
           "name": {"type": "string"},
-          "enabled": {"type": "boolean", "description": "False omits this service Deployment, Service and RBAC resources."},
+          "enabled": {"type": "boolean", "description": "False omits this component's Deployment, Service and RBAC resources."},
           "image": {
             "type": "string",
             "description": "Full image ref override, e.g. for a custom build. Empty/absent = derived via the continuo.image helper (registry/prefix/continuo-<name>:tag)."
           },
-          "replicas": {"type": "integer", "minimum": 0, "description": "Deployment replicas; omitted defaults to one and zero scales the service down."},
+          "replicas": {"type": "integer", "minimum": 0, "description": "Deployment replicas; omitted defaults to one and zero scales the component down."},
           "httpPort": {"type": "integer", "description": "Optional HTTP Service port, independent of grpcPort."},
           "grpcPort": {"type": "integer", "description": "Optional gRPC Service port; no httpPort is required. Without httpPort, the probes connect to this port over TCP."},
           "readinessPath": {"type": "string"},
@@ -747,7 +747,7 @@
           "podAnnotations": {
             "type": "object",
             "additionalProperties": {"type": "string"},
-            "description": "Annotations on the service's pods, e.g. the Vault Agent injector's."
+            "description": "Annotations on the component's pods, e.g. the Vault Agent injector's."
           },
           "serviceAccount": {
             "type": "object",
@@ -756,18 +756,18 @@
               "annotations": {
                 "type": "object",
                 "additionalProperties": {"type": "string"},
-                "description": "Annotations on the ServiceAccount named after the service, e.g. eks.amazonaws.com/role-arn."
+                "description": "Annotations on the ServiceAccount named after the component, e.g. eks.amazonaws.com/role-arn."
               },
               "imagePullSecrets": {
                 "$ref": "#/definitions/imagePullSecrets",
-                "description": "When set, replaces the top-level imagePullSecrets on this service's ServiceAccount."
+                "description": "When set, replaces the top-level imagePullSecrets on this component's ServiceAccount."
               }
             }
           },
           "credentialDelivery": {
             "type": "string",
             "enum": ["", "env", "file"],
-            "description": "How this service gets its credentials; empty uses credentials.delivery."
+            "description": "How this component gets its credentials; empty uses credentials.delivery."
           },
           "secretEnv": {
             "type": "array",
@@ -821,7 +821,7 @@
           },
           "volumes": {
             "type": "array",
-            "description": "Pod volumes of any Kubernetes volume type, mounted through volumeMounts. A configMap volume with an empty name mounts the chart's own ConfigMap for the services that have one; on agent-remediation, which has two, the one of the volume's name (project-repos or remediation-workflows), and project-repos for a volume of any other name.",
+            "description": "Pod volumes of any Kubernetes volume type, mounted through volumeMounts. A configMap volume with an empty name mounts the chart's own ConfigMap for the components that have one; on agent-remediation, which has two, the one of the volume's name (project-repos or remediation-workflows), and project-repos for a volume of any other name.",
             "items": {
               "type": "object",
               "additionalProperties": {"type": "object"},

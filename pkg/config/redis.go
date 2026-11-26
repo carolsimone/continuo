@@ -17,36 +17,36 @@ type RedisConfig struct {
 	// Password is REDIS_PASSWORD or the file REDIS_PASSWORD_FILE names. A
 	// client reads it on every new connection (see pkg/redis.NewClient).
 	Password Secret
-	// ACLMode is REDIS_ACL_MODE: RedisACLModeShared or RedisACLModePerService.
-	// In perService mode a service refuses to start when its login can read
+	// ACLMode is REDIS_ACL_MODE: RedisACLModeShared or RedisACLModePerComponent.
+	// In perComponent mode a component refuses to start when its login can read
 	// keys outside its own (see pkg/redis.CheckPermissionFence).
 	ACLMode string
 }
 
 // The values REDIS_ACL_MODE takes.
 const (
-	// RedisACLModeShared is a Redis whose logins are not fenced per service:
-	// every service signs in with the same password.
+	// RedisACLModeShared is a Redis whose logins are not fenced per component:
+	// every component signs in with the same password.
 	RedisACLModeShared = "shared"
-	// RedisACLModePerService is a Redis where each service signs in as its own
-	// login, whose rule limits it to the keys and commands the service uses.
-	RedisACLModePerService = "perService"
+	// RedisACLModePerComponent is a Redis where each component signs in as its own
+	// login, whose rule limits it to the keys and commands the component uses.
+	RedisACLModePerComponent = "perComponent"
 )
 
 // loadRedisACLMode reads REDIS_ACL_MODE, RedisACLModeShared when unset. Any
 // other value than the two modes is recorded on v naming the variable, and
-// RedisACLModePerService is returned so a service that ignores v still runs
+// RedisACLModePerComponent is returned so a component that ignores v still runs
 // the stricter check.
 func loadRedisACLMode(v *Validator) string {
 	raw := os.Getenv("REDIS_ACL_MODE")
 	switch raw {
 	case "":
 		return RedisACLModeShared
-	case RedisACLModeShared, RedisACLModePerService:
+	case RedisACLModeShared, RedisACLModePerComponent:
 		return raw
 	default:
-		v.Add(fmt.Sprintf("REDIS_ACL_MODE (invalid value %q: expected %s or %s)", raw, RedisACLModeShared, RedisACLModePerService))
-		return RedisACLModePerService
+		v.Add(fmt.Sprintf("REDIS_ACL_MODE (invalid value %q: expected %s or %s)", raw, RedisACLModeShared, RedisACLModePerComponent))
+		return RedisACLModePerComponent
 	}
 }
 
@@ -93,7 +93,7 @@ func LoadRedisFromAddr(v *Validator) RedisConfig {
 	}
 }
 
-// LoadOptionalRedis reads Redis config from REDIS_ADDR for a service that
+// LoadOptionalRedis reads Redis config from REDIS_ADDR for a component that
 // runs without Redis when REDIS_ADDR is unset. It returns false, and records
 // nothing on v, when REDIS_ADDR is unset; otherwise it reads the same
 // variables as LoadRedisFromAddr, the password included.

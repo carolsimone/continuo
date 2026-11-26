@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Tests scripts/check-service-names.sh against throwaway fixture repos: every
+# Tests scripts/check-component-names.sh against throwaway fixture repos: every
 # retired form must fail the guard, history and ordinary prose must pass, and
 # the repository itself must pass.
 set -uo pipefail
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; G="${HERE}/check-service-names.sh"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; G="${HERE}/check-component-names.sh"
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT; fail=0
 n=0
 assert(){ if eval "$2"; then echo "PASS - $1"; else echo "FAIL - $1"; fail=1; fi; }
@@ -36,7 +36,7 @@ expect_pass(){
   assert "$1 passes the guard" "[ $rc -eq 0 ]"
 }
 
-# The retired state service, in the forms that cannot be ordinary words.
+# The retired state component, in the forms that cannot be ordinary words.
 expect_fail "database continuo_state"            'POSTGRES_DB: continuo_state'
 expect_fail "outbox table state_outbox"          'SELECT * FROM state_outbox'
 expect_fail "STATE_GRPC_ADDR"                    'STATE_GRPC_ADDR=state:1'
@@ -65,7 +65,7 @@ for g in task-dispatch run-cancelled validation-requested validation-result-tear
   expect_fail "group executor-$g"                "group: executor-$g"
 done
 
-# The retired orchestrator service, matched case-insensitively wherever the
+# The retired orchestrator component, matched case-insensitively wherever the
 # name appears: prose, identifiers, environment variables, compose services,
 # databases and the proto service.
 expect_fail "orchestrator in prose"             'the orchestrator applies a promotion'
@@ -88,7 +88,7 @@ expect_fail "remediation-agent"                  'name: remediation-agent'
 expect_fail "manifest-controller"                'docker exec manifest-controller sh'
 
 # History stays: a migration, the released changelog, the release notes, the
-# superpowers docs and the NOTES.txt upgrade warnings may name old services.
+# superpowers docs and the NOTES.txt upgrade warnings may name old components.
 expect_pass "a migration naming continuo_state"  'db/migration/run_controller/V1__x.sql' 'ALTER DATABASE continuo_state RENAME TO x;'
 expect_pass "a migration naming state_outbox"    'db/migration/run_controller/V2__x.sql' 'ALTER TABLE state_outbox RENAME TO run_controller_outbox;'
 expect_pass "the chart changelog"                'deploy/continuo/CHANGELOG.md' 'The service state is now run-controller; group state-task-status-updated.'

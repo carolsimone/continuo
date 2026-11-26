@@ -57,7 +57,7 @@ func BuiltNodeTypes() []NodeType {
 // rerun or rebase of such a run executes that rebuild again when the rebuild
 // did not finish. A dbt test, a table no node builds and an undeclared type are
 // never dormant.
-// Go services ask this function rather than restate the rule;
+// Go components ask this function rather than restate the rule;
 // topology-controller's is_dormant is its Python twin, and
 // testdata/dormant_cases.json pins the two to each other.
 func IsDormant(t NodeType, schedule string) bool {

@@ -39,15 +39,15 @@ import (
 // are unset: the gRPC sessions' queries.
 var dbPool = pkgconfig.PoolConfig{MaxOpenConns: 20, MaxIdleConns: 5}
 
-// metricsServiceName labels agent-chat's metrics. It is deliberately not
-// config.ServiceName: that constant marks the services that run stream
+// metricsComponentName labels agent-chat's metrics. It is deliberately not
+// config.ComponentName: that constant marks the components that run stream
 // consumers and produce dead letters, which agent-chat does not.
-const metricsServiceName = "agent-chat"
+const metricsComponentName = "agent-chat"
 
 func main() {
 	// The logger writes at the level LOG_LEVEL names. An unknown level is
 	// recorded on v, and the missing-configuration check below stops the
-	// service once this logger can report it.
+	// component once this logger can report it.
 	v := &pkgconfig.Validator{}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: pkgconfig.LoadLogLevel(v)}))
 
@@ -61,7 +61,7 @@ func main() {
 		logger.Warn("LLM_API_KEY is not set; agent-chat will start and serve gRPC, but chat sessions will fail until a key is supplied")
 	}
 
-	logger.Info("Starting agent-chat service")
+	logger.Info("Starting agent-chat component")
 
 	// Create root context cancelled by shutdown signal.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -74,7 +74,7 @@ func main() {
 	lifecycleManager.SetupSignalHandlers(cancel, cfg.ShutdownGrace)
 
 	liveReg := liveness.NewRegistry()
-	metricsReg := pkgmetrics.New(metricsServiceName)
+	metricsReg := pkgmetrics.New(metricsComponentName)
 
 	// HTTP health server: /health is a plain process-up probe. /ready is backed
 	// by the liveness registry so traffic stops when Postgres is unreachable;

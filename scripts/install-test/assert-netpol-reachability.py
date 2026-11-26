@@ -3,9 +3,9 @@
 platform depends on and refuses the ones it must not make.
 
 Ingress: the chart default-denies ingress and re-opens exactly the edges the
-service graph needs. A service that starts calling another without its allow
+component graph needs. A component that starts calling another without its allow
 rule renders the platform "up" but silently unreachable on that path, so
-REQUIRED_EDGES must be admitted; CLOSED_EDGES, edges no service needs, must
+REQUIRED_EDGES must be admitted; CLOSED_EDGES, edges no component needs, must
 not be. While the render holds egress-proxy, every source its ingress rules
 admit (sampled as below) must be agent-chat or agent-remediation of this
 release, in its namespace, on the proxy port.
@@ -56,8 +56,8 @@ Usage: assert-netpol-reachability.py <rendered-manifest.yaml> [release-name]
 values that produced the render set it (an egress.directDestinations entry,
 or the IP address of a URL the agents call, as a /32 or /128 on its port).
 
-Extend REQUIRED_EDGES whenever a service begins reaching another over the
-network. Each edge is (source service, destination service, port, why): the
+Extend REQUIRED_EDGES whenever a component begins reaching another over the
+network. Each edge is (source workload, destination workload, port, why): the
 destination must admit ingress from the source on that port, and a source
 whose egress is restricted must be allowed to send it.
 """
@@ -129,7 +129,7 @@ CLOSED_EDGES = [
     ("agent-remediation", "release-controller", 50056, "only agent-chat calls release-controller's gRPC server"),
 ]
 
-# While the render holds egress-proxy, no service but the two agents may use it.
+# While the render holds egress-proxy, no component but the two agents may use it.
 PROXY_CLOSED_EDGES = [
     (source, PROXY, PROXY_PORT, "only agent-chat and agent-remediation use the proxy")
     for source in ("ui", "run-controller", "catalog", "execution-controller", "release-controller",
@@ -435,9 +435,9 @@ class Facts:
             return "pod", self.namespace
         return "name", None
 
-    def pod(self, service):
-        labels = self.workloads.get(service) or {INSTANCE: self.instance, NAME: service}
-        return Pod(self.namespace, labels, service)
+    def pod(self, workload):
+        labels = self.workloads.get(workload) or {INSTANCE: self.instance, NAME: workload}
+        return Pod(self.namespace, labels, workload)
 
     def expected(self, source, target, port, protocol):
         """True when `source` may reach `target`, False when it must not, None

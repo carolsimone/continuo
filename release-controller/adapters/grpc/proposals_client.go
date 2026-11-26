@@ -1,4 +1,4 @@
-// Package grpc holds release-controller's gRPC clients to other services and its
+// Package grpc holds release-controller's gRPC clients to other components and its
 // own gRPC server, release.v1.ReleaseQuery.
 package grpc
 

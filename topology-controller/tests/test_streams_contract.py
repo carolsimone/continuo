@@ -33,12 +33,12 @@ def test_streams_contract_matches_yaml():
         involves_tc = "topology-controller" in (stream.get("producers") or [])
         consumers = stream.get("consumers") or []
         if not involves_tc:
-            involves_tc = any(c["service"] == "topology-controller" for c in consumers)
+            involves_tc = any(c["component"] == "topology-controller" for c in consumers)
         if not involves_tc:
             continue
         expected[_screaming(stream["const"])] = stream["name"]
         for c in consumers:
-            if c["service"] == "topology-controller":
+            if c["component"] == "topology-controller":
                 expected[_screaming(c["const"])] = c["group"]
 
     for name, value in expected.items():

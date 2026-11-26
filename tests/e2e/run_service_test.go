@@ -40,7 +40,7 @@ func TestE2E_RunService_ARetriedStartRunReturnsTheSameRun(t *testing.T) {
 	clients := setupClients(t, ctx)
 	defer cleanupTestData(t, ctx, clients, testScheduleName)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 	cleanupTestData(t, ctx, clients, testScheduleName)
 

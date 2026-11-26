@@ -125,7 +125,7 @@ func TestEnvBoolOrDefault(t *testing.T) {
 // TestValidatorDurationOrDefault pins the difference between a value an
 // operator never set and one they set wrongly.
 //
-// An unset key is a service running its own default, which is the intended
+// An unset key is a component running its own default, which is the intended
 // shape of every optional duration. A key set to something that is not a Go
 // duration is an operator who asked for a specific behaviour and would silently
 // get a different one: the install looks configured, and nothing anywhere says

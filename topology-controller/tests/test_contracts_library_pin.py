@@ -8,11 +8,11 @@ from continuo_contracts import dbt
 from domain.model import SkipReason
 from service import contracts_library
 
-SERVICE_ROOT = Path(__file__).parent.parent
+COMPONENT_ROOT = Path(__file__).parent.parent
 
 
 def test_continuo_contracts_is_pinned_exactly():
-    assert '"continuo-contracts==0.5.0"' in (SERVICE_ROOT / "pyproject.toml").read_text()
+    assert '"continuo-contracts==0.5.0"' in (COMPONENT_ROOT / "pyproject.toml").read_text()
 
 
 def test_installed_library_is_the_pinned_version():

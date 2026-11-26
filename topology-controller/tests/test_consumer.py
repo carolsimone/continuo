@@ -11,7 +11,7 @@ import redis.exceptions as redis_exceptions
 import adapters.redis.consumer as consumer_mod
 from adapters.redis.consumer import LOG_DEAD_LETTERED, Consumer
 from adapters.redis.keys import key
-from config.config import SERVICE_NAME
+from config.config import COMPONENT_NAME
 from domain.contract_vocabulary import DeadLetterKind
 from service.errors import PermanentMessageError
 from streams_contract import (
@@ -20,7 +20,7 @@ from streams_contract import (
     TOPOLOGY_CONTROLLER_RELEASE_REQUESTED,
 )
 
-_SERVICE_NAME = SERVICE_NAME
+_COMPONENT_NAME = COMPONENT_NAME
 _STREAM = RELEASE_REQUESTED_V1
 _GROUP = TOPOLOGY_CONTROLLER_RELEASE_REQUESTED
 # The key the consumers under test read: the prefixed key of their stream.
@@ -71,7 +71,7 @@ def test_process_message_calls_message_handler_with_fields():
     c = Consumer(
         redis_client=redis_mock, stream_name="s", group_name="g",
         message_handler=handler,
-        service_name=_SERVICE_NAME,
+        component_name=_COMPONENT_NAME,
     )
     fields = {b"payload": b'{"release_id":"r"}'}
     c._process_message(msg_id="1-0", fields=fields)
@@ -85,7 +85,7 @@ def test_process_message_propagates_handler_exception():
     c = Consumer(
         redis_client=redis_mock, stream_name="s", group_name="g",
         message_handler=boom,
-        service_name=_SERVICE_NAME,
+        component_name=_COMPONENT_NAME,
     )
     with pytest.raises(RuntimeError, match="nope"):
         c._process_message(msg_id="1-0", fields={})
@@ -104,7 +104,7 @@ def test_dispatch_failure_logs_the_actual_exception_with_traceback(caplog):
     c = Consumer(
         redis_client=redis_mock, stream_name="s", group_name="g",
         message_handler=boom,
-        service_name=_SERVICE_NAME,
+        component_name=_COMPONENT_NAME,
     )
 
     with caplog.at_level(logging.ERROR, logger="adapters.redis.consumer"):
@@ -126,7 +126,7 @@ def _consumer(redis_mock, handler):
     return Consumer(
         redis_client=redis_mock, stream_name="s", group_name="g",
         message_handler=handler,
-        service_name=_SERVICE_NAME,
+        component_name=_COMPONENT_NAME,
     )
 
 
@@ -211,7 +211,7 @@ def test_reclaim_only_claims_messages_idle_for_at_least_a_minute():
 #
 # Reproduces the 2026-07-19 incident: Redis briefly went unreachable and
 # topology-controller's consumer loop was suspected to have died silently on
-# the first redis.exceptions.ConnectionError, unlike the Go services' stream
+# the first redis.exceptions.ConnectionError, unlike the Go components' stream
 # consumer (pkg/redis/streamconsumer.go Start()), which logs "Error in read
 # loop" and keeps retrying with a flat 3s backoff until Redis recovers.
 #
@@ -299,7 +299,7 @@ def test_start_survives_transient_connection_errors_and_keeps_consuming(monkeypa
     c = Consumer(
         redis_client=redis_mock, stream_name="s", group_name="g",
         message_handler=lambda fields: seen.append(fields),
-        service_name=_SERVICE_NAME,
+        component_name=_COMPONENT_NAME,
     )
 
     t = start_in_background(c, redis_mock)
@@ -325,7 +325,7 @@ def test_start_raises_when_the_group_is_removed_while_running(monkeypatch):
         "NOGROUP No such key 'continuo:s' or consumer group 'g'"
     )
     c = Consumer(redis_client=redis_mock, stream_name="s", group_name="g", message_handler=lambda f: None,
-                 service_name=_SERVICE_NAME)
+                 component_name=_COMPONENT_NAME)
 
     with pytest.raises(redis_exceptions.ResponseError, match="NOGROUP"):
         c.start()
@@ -343,7 +343,7 @@ def test_last_heartbeat_advances_while_loop_runs(monkeypatch, start_in_backgroun
     redis_mock.xautoclaim.side_effect = redis_exceptions.ConnectionError("Error 111 connecting.")
     redis_mock.xreadgroup.return_value = []
 
-    c = Consumer(redis_client=redis_mock, stream_name="s", group_name="g", message_handler=lambda f: None, service_name=_SERVICE_NAME)
+    c = Consumer(redis_client=redis_mock, stream_name="s", group_name="g", message_handler=lambda f: None, component_name=_COMPONENT_NAME)
     initial = c.last_heartbeat
 
     t = start_in_background(c, redis_mock)
@@ -380,7 +380,7 @@ def _fake_clock(monkeypatch):
 def _idle_consumer(redis_mock):
     return Consumer(
         redis_client=redis_mock, stream_name=_STREAM, group_name=_GROUP,
-        message_handler=MagicMock(), service_name=_SERVICE_NAME,
+        message_handler=MagicMock(), component_name=_COMPONENT_NAME,
     )
 
 
@@ -584,20 +584,20 @@ def _raising(exc):
 
 
 def _dl_consumer(handler, redis_mock):
-    return Consumer(redis_mock, _STREAM, _GROUP, handler, service_name=_SERVICE_NAME)
+    return Consumer(redis_mock, _STREAM, _GROUP, handler, component_name=_COMPONENT_NAME)
 
 
 def _names(redis_mock):
     return [c[0] for c in redis_mock.method_calls if c[0] in ("xadd", "xack", "xclaim", "xpending_range")]
 
 
-def test_a_consumer_without_a_service_name_refuses_to_start():
-    """The service name is the producer of every dead letter the consumer
+def test_a_consumer_without_a_component_name_refuses_to_start():
+    """The component name is the producer of every dead letter the consumer
     writes, so an empty one is a configuration error caught at construction,
     before the consumer touches Redis."""
     r = MagicMock()
-    with pytest.raises(ValueError, match="service_name"):
-        Consumer(r, _STREAM, _GROUP, lambda fields: None, service_name="")
+    with pytest.raises(ValueError, match="component_name"):
+        Consumer(r, _STREAM, _GROUP, lambda fields: None, component_name="")
     r.xgroup_create.assert_not_called()
 
 
@@ -612,7 +612,7 @@ def test_permanent_error_dead_letters_then_acks(monkeypatch, caplog):
     stream, fields = r.xadd.call_args[0]
     assert stream == key(CONSUMER_DEAD_LETTER_V1)
     assert r.xadd.call_args.kwargs == {"nomkstream": True}
-    assert fields["producer"] == _SERVICE_NAME
+    assert fields["producer"] == _COMPONENT_NAME
     assert json.loads(fields["payload"])["failure_kind"] == DeadLetterKind.PERMANENT
     assert caplog.text.count(LOG_DEAD_LETTERED) == 1
 
@@ -788,7 +788,7 @@ def test_dead_letter_is_stamped_from_the_injected_clock(monkeypatch):
     r.xpending_range.return_value = [{"times_delivered": 1}]
     at = datetime(2026, 10, 3, 12, 0, 0, tzinfo=timezone.utc)
     c = Consumer(r, _STREAM, _GROUP, _raising(PermanentMessageError("bad")),
-                 service_name=_SERVICE_NAME, clock=lambda: at)
+                 component_name=_COMPONENT_NAME, clock=lambda: at)
     c._dispatch(_KEY, b"1-0", {b"k": b"v"})
     assert r.xadd.call_args[0][1]["occurred_at"] == "2026-10-03T12:00:00.000000Z"
 
@@ -843,7 +843,7 @@ def test_failed_ack_after_a_handled_message_leaves_it_pending_and_continues_the_
     r.xreadgroup.return_value = [(_KEY.encode(), [(b"1-0", {b"payload": b"a"}), (b"2-0", {b"payload": b"b"})])]
     r.xack.side_effect = [redis_exceptions.ConnectionError("down"), 1]
     seen = []
-    c = Consumer(r, _STREAM, _GROUP, seen.append, service_name=_SERVICE_NAME)
+    c = Consumer(r, _STREAM, _GROUP, seen.append, component_name=_COMPONENT_NAME)
     c._consume_once()  # must not raise
     assert seen == [{b"payload": b"a"}, {b"payload": b"b"}], "the second message is still handled"
     assert [call.args[2] for call in r.xack.call_args_list] == [b"1-0", b"2-0"]
@@ -855,7 +855,7 @@ def test_failed_ack_after_a_dead_letter_write_leaves_it_pending_and_continues_th
     r.xpending_range.return_value = [{"times_delivered": 1}]
     r.xreadgroup.return_value = [(_KEY.encode(), [(b"1-0", {b"payload": b"a"}), (b"2-0", {b"payload": b"b"})])]
     r.xack.side_effect = [redis_exceptions.ConnectionError("down"), 1]
-    c = Consumer(r, _STREAM, _GROUP, _raising(PermanentMessageError("bad")), service_name=_SERVICE_NAME)
+    c = Consumer(r, _STREAM, _GROUP, _raising(PermanentMessageError("bad")), component_name=_COMPONENT_NAME)
     with caplog.at_level(logging.ERROR):
         c._consume_once()  # must not raise
     assert r.xadd.call_count == 2, "both messages are dead-lettered"
@@ -1176,7 +1176,7 @@ class _RecordingObserver:
 
 
 def _observed(handler, redis_mock, observer):
-    return Consumer(redis_mock, _STREAM, _GROUP, handler, service_name=_SERVICE_NAME, observer=observer)
+    return Consumer(redis_mock, _STREAM, _GROUP, handler, component_name=_COMPONENT_NAME, observer=observer)
 
 
 def _raising_in_turn(*excs):

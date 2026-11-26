@@ -1,4 +1,4 @@
-{{- range $svc := .Values.services }}
+{{- range $svc := .Values.components }}
 {{- if and $svc.enabled (or $svc.httpPort $svc.grpcPort) }}
 ---
 apiVersion: v1
@@ -12,7 +12,7 @@ metadata:
 spec:
   type: {{ default "ClusterIP" $svc.serviceType }}
   selector:
-    {{- include "continuo.selectorLabels" (dict "root" $ "service" $svc.name) | nindent 4 }}
+    {{- include "continuo.selectorLabels" (dict "root" $ "name" $svc.name) | nindent 4 }}
   ports:
     {{- if $svc.httpPort }}
     - name: http

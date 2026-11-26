@@ -1,10 +1,10 @@
-# An operator-supplied `services` list whose agent-remediation entry mounts a
+# An operator-supplied `components` list whose agent-remediation entry mounts a
 # volume that names no ConfigMap, under a name none of the chart's
 # agent-remediation ConfigMaps is mounted through (project-repos,
-# remediation-workflows). Such a volume mounts the service's first chart
+# remediation-workflows). Such a volume mounts the component's first chart
 # ConfigMap, project-repos; lint.sh asserts the render mounts it and carries
 # its digest.
-services:
+components:
   - name: agent-remediation
     enabled: true
     httpPort: 8092

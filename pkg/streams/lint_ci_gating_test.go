@@ -13,7 +13,7 @@ import (
 // scripts/lint-ci-modules.txt; that list must stay in lockstep with the
 // authoritative module set — every go.work member plus the cli module, which is
 // a separate module outside the workspace by design (see AGENTS.md). Without
-// this guard a newly added service would be linted locally by `make lint-go`
+// this guard a newly added component would be linted locally by `make lint-go`
 // yet silently skipped by CI until someone remembered to enroll it.
 func TestLintCIModulesCoversWorkspace(t *testing.T) {
 	root := repoRootFromTest(t)

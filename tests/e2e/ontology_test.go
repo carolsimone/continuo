@@ -63,9 +63,9 @@ const (
 	// python release's.
 	ontologyReleaseBudget = 2 * time.Minute
 
-	// ontologySwitchBudget bounds the three services restarting and answering
+	// ontologySwitchBudget bounds the three components restarting and answering
 	// their health checks together. Measured in CI: the maintenance test's
-	// restart of services, 23 s.
+	// restart of components, 23 s.
 	ontologySwitchBudget = 2 * time.Minute
 
 	// ontologyContractsBudget bounds catalog reading a promoted release: the
@@ -74,12 +74,12 @@ const (
 	// be promoted and published.
 	ontologyContractsBudget = time.Minute
 
-	// ontologyAnswerBudget bounds an answer a service gives at once: a 400, a
+	// ontologyAnswerBudget bounds an answer a component gives at once: a 400, a
 	// 409, a health check, a query. Measured in CI: under 0.1 s.
 	ontologyAnswerBudget = 5 * time.Second
 
 	// ontologyStopGrace is how long a stopped process has to exit before it is
-	// killed (the grace `docker restart -t 20` gives the other services), and
+	// killed (the grace `docker restart -t 20` gives the other components), and
 	// ontologyKillGrace how long it has after the kill.
 	ontologyStopGrace = 20 * time.Second
 	ontologyKillGrace = 10 * time.Second
@@ -133,7 +133,7 @@ var pyFixtureNodes = []string{pyProbeUniqueID, pyCsvUniqueID, pyAPIUniqueID, pyB
 //     and leaves the published contracts and the released ontology as they were;
 //  6. a dbt project released as kind ontology is refused with 409.
 //
-// Running time: about 3 minutes. Measured in CI: a restart of services 23 s (the
+// Running time: about 3 minutes. Measured in CI: a restart of components 23 s (the
 // maintenance test's, taken for the switch on and for the switch off), the
 // py-probe release 32 s and a rejection 5 s. Estimated: the ontology release,
 // 19 s, from the nearest measurement (a python release, 18.5 s). Fixed: the
@@ -156,7 +156,7 @@ func TestE2E_Ontology(t *testing.T) {
 	t.Cleanup(func() { http.DefaultClient.Timeout = httpTimeout })
 
 	clients := setupClients(t, ctx)
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 	requireReleaseControllerHealthy(t, clients)
 
@@ -455,17 +455,17 @@ func forgetOntologyProjects(t *testing.T, clients *testClients) {
 	require.NoError(t, err, "delete the service_prod rows of %s and %s", ontologyE2EProject, pyE2EProject)
 }
 
-// ontologyProcess is one service whose process the ontology switch restarts.
+// ontologyProcess is one component whose process the ontology switch restarts.
 type ontologyProcess struct {
 	container string
-	// env is the setting the service reads, as the relaunched process gets it.
+	// env is the setting the component reads, as the relaunched process gets it.
 	env func(on bool) string
-	// command starts the service inside its container, and log is the file
+	// command starts the component inside its container, and log is the file
 	// its output goes to.
 	command, log string
-	// health is the URL that answers 200 once the service runs.
+	// health is the URL that answers 200 once the component runs.
 	health string
-	// processName is set for a service whose container also runs this test:
+	// processName is set for a component whose container also runs this test:
 	// restarting the container would end the test, so only the process of
 	// that name is stopped.
 	processName string
@@ -511,7 +511,7 @@ var ontologyProcesses = []ontologyProcess{
 // so only catalog's process is stopped and started again. The relaunch inherits
 // the container's compose environment except for the overridden setting. The
 // relaunches and the health checks share one ceiling, ontologySwitchBudget, so
-// a service that does not come back costs one wait, and the failure names it.
+// a component that does not come back costs one wait, and the failure names it.
 func setOntology(t *testing.T, ctx context.Context, on bool) {
 	t.Helper()
 	start := time.Now()
@@ -541,7 +541,7 @@ func setOntology(t *testing.T, ctx context.Context, on bool) {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		outcome = fmt.Sprintf("did not finish within %s", ontologySwitchBudget)
 	}
-	require.NoError(t, errors.Join(relaunched...), "ontology=%t: relaunching the services %s", on, outcome)
+	require.NoError(t, errors.Join(relaunched...), "ontology=%t: relaunching the components %s", on, outcome)
 
 	down := make([]string, len(ontologyProcesses))
 	for i, p := range ontologyProcesses {
@@ -577,10 +577,10 @@ func answersHealth(ctx context.Context, url string) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-// relaunch stops the service and starts it again with its setting for on. A
+// relaunch stops the component and starts it again with its setting for on. A
 // process that does not run fails the switch going on, so a wrong process name
-// is reported at once; the switch going off starts the service whether or not
-// it runs, so a service that is down comes back.
+// is reported at once; the switch going off starts the component whether or not
+// it runs, so a component that is down comes back.
 func (p ontologyProcess) relaunch(ctx context.Context, on bool) error {
 	if p.processName == "" {
 		if out, err := exec.CommandContext(ctx, "docker", "restart", "-t", "20", p.container).CombinedOutput(); err != nil { //nolint:gosec // fixed container names
@@ -671,7 +671,7 @@ func stopProcessWith(ctx context.Context, probe processProbe, container, name st
 	}
 }
 
-// logOntologyProcessTails writes the last lines of each relaunched service's
+// logOntologyProcessTails writes the last lines of each relaunched component's
 // log into the test output.
 func logOntologyProcessTails(t *testing.T) {
 	t.Helper()

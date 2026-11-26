@@ -57,7 +57,7 @@ Output (stdout, JSON):
 Errors:
   usage      (exit 2)  wrong number of arguments, a version that is not a whole number, or a version below 1
   not_found  (exit 3)  the node has no promotion for one of the two versions, or its unique_id is not recorded
-  unavailable(exit 5)  the catalog service is unreachable
+  unavailable(exit 5)  catalog is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo node contract-diff analytics.orders 1 3\n  continuo node contract-diff analytics.py_daily_kpis 1 3",
 		Annotations: map[string]string{
@@ -107,7 +107,7 @@ Errors:
 
 // parseContractVersion reads a version positional as a whole number. Whether
 // it names a version the node has, and whether it is at least 1, is the
-// catalog service's to say.
+// catalog component's to say.
 func parseContractVersion(name, arg string) (int64, error) {
 	n, err := strconv.ParseInt(arg, 10, 64)
 	if err != nil {

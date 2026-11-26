@@ -28,7 +28,7 @@ func testConsumer(handler MessageHandler) *StreamConsumer {
 			handler:          handler,
 			observer:         nopObserver{},
 			workerCount:      1,
-			service:          "pkg-redis-test",
+			component:        "pkg-redis-test",
 			handlerTimeout:   DefaultHandlerTimeout,
 			infraBackoffBase: defaultInfraBackoffBase,
 			infraBackoffCap:  defaultInfraBackoffCap,

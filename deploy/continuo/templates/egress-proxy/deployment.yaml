@@ -1,9 +1,9 @@
 {{- if eq (include "continuo.egress.proxyEnabled" .) "true" }}
 {{- $e := .Values.egress | default dict }}
 {{- $p := $e.proxy | default dict }}
-{{- range .Values.services }}
+{{- range .Values.components }}
 {{- if eq .name "egress-proxy" }}
-{{- fail "services[name=egress-proxy] collides with the egress-proxy Deployment and Service the chart renders from the egress block: remove the services entry, or set egress.enabled=false to run your own" }}
+{{- fail "components[name=egress-proxy] collides with the egress-proxy Deployment and Service the chart renders from the egress block: remove the components entry, or set egress.enabled=false to run your own" }}
 {{- end }}
 {{- end }}
 apiVersion: apps/v1
@@ -18,7 +18,7 @@ spec:
   replicas: {{ $p.replicas | default 2 }}
   selector:
     matchLabels:
-      {{- include "continuo.selectorLabels" (dict "root" . "service" "egress-proxy") | nindent 6 }}
+      {{- include "continuo.selectorLabels" (dict "root" . "name" "egress-proxy") | nindent 6 }}
   template:
     metadata:
       annotations:
@@ -33,7 +33,7 @@ spec:
         prometheus.io/path: /metrics
         {{- end }}
       labels:
-        {{- include "continuo.selectorLabels" (dict "root" . "service" "egress-proxy") | nindent 8 }}
+        {{- include "continuo.selectorLabels" (dict "root" . "name" "egress-proxy") | nindent 8 }}
     spec:
       terminationGracePeriodSeconds: {{ .Values.global.terminationGracePeriodSeconds }}
       securityContext:

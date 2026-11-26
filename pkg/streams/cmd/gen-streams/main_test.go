@@ -14,10 +14,20 @@ streams:
     description: Node state transitions.
     producers: [run-controller]
     consumers:
-      - service: run-controller
+      - component: run-controller
         group: run-controller-node-updated
         const: RunControllerNodeUpdated
 `
+
+// A consumer names its component under `component:`; a contract that writes
+// any other key there is refused rather than read as naming none.
+func TestParseContract_RefusesAConsumerKeyOtherThanComponent(t *testing.T) {
+	y := strings.Replace(validYAML, "      - component: run-controller", "      - service: run-controller", 1)
+	_, err := parseContract(strings.NewReader(y))
+	if err == nil || !strings.Contains(err.Error(), "field service not found") {
+		t.Fatalf("parseContract = %v; want an unknown-field error naming service", err)
+	}
+}
 
 func TestParseContract_Valid(t *testing.T) {
 	c, err := parseContract(strings.NewReader(validYAML))
@@ -85,14 +95,14 @@ streams:
     const: AV1
     producers: [run-controller]
     consumers:
-      - service: run-controller
+      - component: run-controller
         group: same-group
         const: ConstA
   - name: b:v1
     const: BV1
     producers: [run-controller]
     consumers:
-      - service: run-controller
+      - component: run-controller
         group: same-group
         const: ConstB
 `
@@ -110,14 +120,14 @@ streams:
     const: AV1
     producers: [run-controller]
     consumers:
-      - service: run-controller
+      - component: run-controller
         group: group-a
         const: SameConst
   - name: b:v1
     const: BV1
     producers: [run-controller]
     consumers:
-      - service: run-controller
+      - component: run-controller
         group: group-b
         const: SameConst
 `
@@ -135,7 +145,7 @@ streams:
     const: AV1
     producers: [run-controller]
     consumers:
-      - service: run-controller
+      - component: run-controller
         group: run_controller_node_updated
         const: RunControllerNodeUpdated
 `
@@ -145,10 +155,10 @@ streams:
 	}
 }
 
-// TestValidate_MalformedServiceName: a service name that is not lowercase
+// TestValidate_MalformedComponentName: a component name that is not lowercase
 // words joined by hyphens is refused. A well-formed name with no directory of
-// its own is refused by checkServiceDirectories.
-func TestValidate_MalformedServiceName(t *testing.T) {
+// its own is refused by checkComponentDirectories.
+func TestValidate_MalformedComponentName(t *testing.T) {
 	y := `
 key_prefix: "continuo:"
 streams:
@@ -156,13 +166,13 @@ streams:
     const: AV1
     producers: [run-controller]
     consumers:
-      - service: Nope_Controller
+      - component: Nope_Controller
         group: nope-group
         const: NopeGroup
 `
 	_, err := loadAndValidate(strings.NewReader(y))
-	if err == nil || !strings.Contains(err.Error(), `service "Nope_Controller" must match`) {
-		t.Fatalf("expected a malformed service name error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), `component "Nope_Controller" must match`) {
+		t.Fatalf("expected a malformed component name error, got %v", err)
 	}
 }
 
@@ -174,7 +184,7 @@ streams:
     const: AV1
     producers: [run-controller]
     consumers:
-      - service: run-controller
+      - component: run-controller
         group: Run-Controller-Node-Updated
         const: RunControllerNodeUpdated
 `
@@ -227,7 +237,7 @@ streams:
     description: Manifest refresh trigger.
     producers: [run-controller]
     consumers:
-      - service: topology-controller
+      - component: topology-controller
         group: topology-controller-update-graph
         const: ManifestUpdateGraph
   - name: manifest.loaded:v1
@@ -235,7 +245,7 @@ streams:
     description: Topology after manifest load.
     producers: [topology-controller]
     consumers:
-      - service: run-controller
+      - component: run-controller
         group: run-controller-manifest-loaded
         const: RunControllerManifestLoaded
   - name: irrelevant.to.python:v1
@@ -243,7 +253,7 @@ streams:
     description: Should not appear in Python output.
     producers: [run-controller]
     consumers:
-      - service: run-controller
+      - component: run-controller
         group: run-controller-irrelevant
         const: RunControllerIrrelevant
 `
@@ -1010,7 +1020,7 @@ func TestValidate_AcceptsDeadLetterControllerConsumer(t *testing.T) {
 	c := &Contract{KeyPrefix: "continuo:", Streams: []Stream{{
 		Name: "consumer.dead_letter:v1", Const: "ConsumerDeadLetterV1", Description: "d",
 		Producers: []string{"dead-letter-controller"},
-		Consumers: []Consumer{{Service: "dead-letter-controller", Group: "dead-letter-controller-consumer-dead-letters", Const: "DeadLetterControllerConsumerDeadLetters"}},
+		Consumers: []Consumer{{Component: "dead-letter-controller", Group: "dead-letter-controller-consumer-dead-letters", Const: "DeadLetterControllerConsumerDeadLetters"}},
 	}}}
 	if err := validate(c); err != nil {
 		t.Fatalf("validate: %v", err)
@@ -1032,7 +1042,7 @@ func TestEmitGo_GroupsAndRetired(t *testing.T) {
 	c := &Contract{
 		KeyPrefix: "continuo:",
 		Streams: []Stream{
-			{Name: "a:v1", Const: "AV1", Description: "d", Consumers: []Consumer{{Service: "run-controller", Group: "run-controller-a", Const: "RunControllerA"}}},
+			{Name: "a:v1", Const: "AV1", Description: "d", Consumers: []Consumer{{Component: "run-controller", Group: "run-controller-a", Const: "RunControllerA"}}},
 			{Name: "b:v1", Const: "BV1", Description: "d"},
 		},
 		RetiredStreams: []RetiredStream{{Name: "old:v1"}},

@@ -516,7 +516,7 @@ drained:
 		case <-ctx.Done():
 			// Distinguish a disconnect from an in-session interrupt. When the
 			// whole session is shutting down (s.ctx cancelled — the gRPC stream
-			// dropped or the service is stopping), leave the action pending and
+			// dropped or the component is stopping), leave the action pending and
 			// non-expired so a reconnect can resume the confirmation; do not run
 			// the tool and do not persist a result. When only this turn was
 			// cancelled (Interrupt, s.ctx still alive), expire the action — the

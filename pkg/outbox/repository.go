@@ -16,7 +16,7 @@ type Executor interface {
 	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
 }
 
-// Repository defines operations on a service's outbox table.
+// Repository defines operations on a component's outbox table.
 // Implementations operate against a table conforming to the canonical schema:
 //
 //	id (uuid PK), message_processing_id (uuid nullable FK), aggregate_type (text),

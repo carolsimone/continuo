@@ -59,14 +59,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
  && rm -rf /var/lib/apt/lists/* \
  && pip install --no-cache-dir continuo-python-runtime==0.15.0
 
-# Explicit COPY allowlist — the service binary and remediation-check; new
+# Explicit COPY allowlist — the component binary and remediation-check; new
 # builder artifacts are absent from the runtime image unless added here.
 COPY --from=builder /app/bin/agent-remediation /usr/local/bin/agent-remediation
 COPY --from=builder /app/bin/remediation-check /usr/local/bin/remediation-check
 
 EXPOSE 8092
 
-# Runs unprivileged. The service writes to temporary directories at runtime —
+# Runs unprivileged. The component writes to temporary directories at runtime —
 # it extracts a repository tarball to search for a python node's contract file,
 # and the packaging CLI writes the odcs bundle to a temp file — so it needs
 # a writable /tmp, which the base image provides world-writable. Nothing outside

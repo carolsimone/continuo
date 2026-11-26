@@ -36,23 +36,23 @@ function fakeClock() {
 describe('checkPermissionFence', () => {
   it('passes when Redis answers the probe with NOPERM', async () => {
     const redis = fakeRedis([new ReplyError("NOPERM No permissions to access a key")]);
-    await expect(checkPermissionFence(redis, 'perService')).resolves.toBeUndefined();
+    await expect(checkPermissionFence(redis, 'perComponent')).resolves.toBeUndefined();
     expect(redis.call).toHaveBeenCalledWith('XINFO', 'GROUPS', 'continuo-permission-probe');
   });
 
   it('fails, naming the login, when the probe succeeds', async () => {
     const redis = fakeRedis([[]]);
-    await expect(checkPermissionFence(redis, 'perService')).rejects.toThrow(VIOLATION);
+    await expect(checkPermissionFence(redis, 'perComponent')).rejects.toThrow(VIOLATION);
   });
 
   it('fails when Redis answers that the probe key does not exist', async () => {
     const redis = fakeRedis([new ReplyError('ERR no such key')]);
-    await expect(checkPermissionFence(redis, 'perService')).rejects.toThrow(VIOLATION);
+    await expect(checkPermissionFence(redis, 'perComponent')).rejects.toThrow(VIOLATION);
   });
 
   it('names the default login when no username is set', async () => {
     const redis = fakeRedis([[]], '');
-    await expect(checkPermissionFence(redis, 'perService')).rejects.toThrow(
+    await expect(checkPermissionFence(redis, 'perComponent')).rejects.toThrow(
       /^redis login default can read keys outside its own/,
     );
   });
@@ -65,7 +65,7 @@ describe('checkPermissionFence', () => {
 
   it('refuses an unknown mode', async () => {
     const redis = fakeRedis([[]]);
-    await expect(checkPermissionFence(redis, 'perservice')).rejects.toThrow('unknown REDIS_ACL_MODE "perservice"');
+    await expect(checkPermissionFence(redis, 'percomponent')).rejects.toThrow('unknown REDIS_ACL_MODE "percomponent"');
     expect(redis.call).not.toHaveBeenCalled();
   });
 
@@ -76,7 +76,7 @@ describe('checkPermissionFence', () => {
       new Error('Reached the max retries per request limit (which is 20).'),
       new ReplyError('NOPERM No permissions to access a key'),
     ]);
-    await expect(checkPermissionFence(redis, 'perService', timing)).resolves.toBeUndefined();
+    await expect(checkPermissionFence(redis, 'perComponent', timing)).resolves.toBeUndefined();
     expect(redis.call).toHaveBeenCalledTimes(3);
     expect(clock.sleeps).toEqual([1000, 2000]);
   });
@@ -84,7 +84,7 @@ describe('checkPermissionFence', () => {
   it('gives up on an unreachable Redis without calling it a fence violation', async () => {
     const { clock, timing } = fakeClock();
     const redis = fakeRedis([new Error('connect ECONNREFUSED 10.0.0.1:6379')]);
-    const err = await checkPermissionFence(redis, 'perService', timing).catch((e: Error) => e);
+    const err = await checkPermissionFence(redis, 'perComponent', timing).catch((e: Error) => e);
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toBe(
       'check the permissions of redis login continuo_ui: connect ECONNREFUSED 10.0.0.1:6379',
@@ -102,7 +102,7 @@ describe('checkPermissionFence', () => {
   ])('waits out a Redis that answers %s, as one it cannot reach', async (reply) => {
     const { clock, timing } = fakeClock();
     const redis = fakeRedis([new ReplyError(reply), new ReplyError('NOPERM No permissions to access a key')]);
-    await expect(checkPermissionFence(redis, 'perService', timing)).resolves.toBeUndefined();
+    await expect(checkPermissionFence(redis, 'perComponent', timing)).resolves.toBeUndefined();
     expect(redis.call).toHaveBeenCalledTimes(2);
     expect(clock.sleeps).toEqual([1000]);
   });
@@ -110,7 +110,7 @@ describe('checkPermissionFence', () => {
   it('gives up on a Redis that stays loading without calling it a fence violation', async () => {
     const { timing } = fakeClock();
     const redis = fakeRedis([new ReplyError('LOADING Redis is loading the dataset in memory')]);
-    await expect(checkPermissionFence(redis, 'perService', timing)).rejects.toThrow(
+    await expect(checkPermissionFence(redis, 'perComponent', timing)).rejects.toThrow(
       'check the permissions of redis login continuo_ui: LOADING Redis is loading the dataset in memory',
     );
   });
@@ -118,7 +118,7 @@ describe('checkPermissionFence', () => {
   it('does not wait out a refused sign-in', async () => {
     const { clock, timing } = fakeClock();
     const redis = fakeRedis([new ReplyError('WRONGPASS invalid username-password pair or user is disabled.')]);
-    await expect(checkPermissionFence(redis, 'perService', timing)).rejects.toThrow(/WRONGPASS/);
+    await expect(checkPermissionFence(redis, 'perComponent', timing)).rejects.toThrow(/WRONGPASS/);
     expect(clock.sleeps).toEqual([]);
   });
 });
@@ -142,7 +142,7 @@ describe('the permission probe key', () => {
     const { readFileSync } = await import('fs');
     const path = await import('path');
     const redis = fakeRedis([new ReplyError('NOPERM No permissions to access a key')]);
-    await checkPermissionFence(redis as never, 'perService');
+    await checkPermissionFence(redis as never, 'perComponent');
     const key = String(redis.call.mock.calls[0].at(-1));
     expect(key).toMatch(/^continuo-/);
     const rules = JSON.parse(readFileSync(path.resolve(__dirname, '../../../deploy/continuo/files/redis-acl-rules.json'), 'utf8'));

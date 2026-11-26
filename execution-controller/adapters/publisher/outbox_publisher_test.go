@@ -171,7 +171,7 @@ func TestPublisher_UnknownEventType_IsTransient(t *testing.T) {
 }
 
 // TestPublisher_ContractAllHandledEventTypes is a regression guard that asserts
-// every event_type this service's outbox rows carry — from the dispatcher, the
+// every event_type this component's outbox rows carry — from the dispatcher, the
 // observer, and every other emit site — does NOT return "unknown
 // event_type". An emit site whose event_type has no matching case in the
 // publisher switch strands its row unpublished with no visible error until an

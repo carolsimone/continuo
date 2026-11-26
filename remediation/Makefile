@@ -19,7 +19,7 @@ test-ci:
 	@go tool cover -func=/tmp/coverage.out
 	@echo "======================"
 
-# Build the service
+# Build the component
 build:
 	go build -o bin/remediation .
 

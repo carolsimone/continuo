@@ -19,7 +19,7 @@ import (
 	"github.com/carolsimone/continuo/remediation/adapters/postgres"
 )
 
-// producer is the envelope's producer of every entry the service renders.
+// producer is the envelope's producer of every entry the component renders.
 const producer = "remediation"
 
 // remediationOutboxPublisher implements pkgoutbox.Publisher by XADDing each

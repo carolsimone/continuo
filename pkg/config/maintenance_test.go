@@ -21,7 +21,7 @@ func TestLoadMaintenance_AcceptsExactlyTrueOrFalse(t *testing.T) {
 	}
 }
 
-// A value that is almost a boolean must stop the service rather than be read
+// A value that is almost a boolean must stop the component rather than be read
 // as on or off: the operator meant something, and guessing which risks either
 // accepting work during an upgrade or refusing it in production.
 func TestLoadMaintenance_RefusesEverythingElse(t *testing.T) {

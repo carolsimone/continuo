@@ -245,7 +245,7 @@ func listBackupExports(t *testing.T, ctx context.Context) []printedListing {
 
 // runCatalogBackup runs the operator command from catalog's source with the
 // environment of this process, which is the catalog container's: the Neo4j and
-// object-store settings the service itself reads.
+// object-store settings the component itself reads.
 func runCatalogBackup(ctx context.Context, args ...string) (stdout, stderr string, err error) {
 	cmd := exec.CommandContext(ctx, "go", append([]string{"run", "./cmd/catalog-backup"}, args...)...) //nolint:gosec // fixed command; the arguments are literals of the test
 	cmd.Dir = catalogSourceDir

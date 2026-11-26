@@ -59,7 +59,7 @@ func TestE2E_Schedules_UpsertPreviewAndDeleteOnAPausedSchedule(t *testing.T) {
 	// Cleanups run last in, first out: registered first, the close runs after
 	// the row's deletion registered below.
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 
 	// Only a schedule's first cron needs a model of the live release with its
 	// tag; the announced e2e DAG has the models of e2e-schedule.

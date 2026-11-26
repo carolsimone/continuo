@@ -5,7 +5,7 @@ import redis
 from config.config import (
     REDIS_URL,
     HTTP_PORT,
-    SERVICE_NAME,
+    COMPONENT_NAME,
     S3_ENDPOINT_URL, S3_BUCKET, S3_ENV,
     AWS_DEFAULT_REGION,
     RELEASE_REQUESTED_STREAM, RELEASE_REQUESTED_GROUP,
@@ -54,7 +54,7 @@ def main() -> None:
 
     # Bound before anything consumes, so a port another process holds stops the
     # process here instead of leaving a consumer working with no scrape target.
-    metrics = TopologyMetrics(SERVICE_NAME)
+    metrics = TopologyMetrics(COMPONENT_NAME)
     try:
         start_metrics_server(metrics_port(), metrics.registry)
     except OSError as exc:
@@ -82,14 +82,14 @@ def main() -> None:
         decode_responses=False,
         credential_provider=EnvOrFileCredentialProvider(),
     )
-    # In perService mode the login must be fenced to its own keys; a login
+    # In perComponent mode the login must be fenced to its own keys; a login
     # that reaches others raises PermissionFenceError here, which stops the
     # process before anything consumes.
     check_permission_fence(redis_client, redis_acl_mode())
 
     # Candidate-parse flow (release.requested:v1 -> manifest.loaded.candidate:v2).
     candidate_publisher = CandidateManifestPublisher(
-        redis_client, MANIFEST_LOADED_CANDIDATE_STREAM, producer=SERVICE_NAME,
+        redis_client, MANIFEST_LOADED_CANDIDATE_STREAM, producer=COMPONENT_NAME,
         continuo_contracts=LIBRARY_VERSION,
     )
     candidate_uploader = CandidateSqlUploader(s3_client, S3_BUCKET)
@@ -106,7 +106,7 @@ def main() -> None:
     system_relations = warehouse_system_relations()
     logger.info("topology-controller SQL dialect: %s", dialect)
     # Resolved once at boot, like the dialect: validate() has already refused a
-    # switch this service cannot read.
+    # switch this component cannot read.
     ontology_switch = ontology_enabled()
     logger.info("topology-controller ontology switch: %s", "on" if ontology_switch else "off")
 
@@ -150,7 +150,7 @@ def main() -> None:
         stream_name=RELEASE_REQUESTED_STREAM,
         group_name=RELEASE_REQUESTED_GROUP,
         message_handler=handle_release_requested,
-        service_name=SERVICE_NAME,
+        component_name=COMPONENT_NAME,
         observer=metrics,
     )
 

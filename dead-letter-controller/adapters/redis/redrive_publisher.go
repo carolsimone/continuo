@@ -18,7 +18,7 @@ import (
 // redrive carries the row's id as outbox_entry_id, so it is reprocessed; an
 // outbox-source redrive preserves the original event's outbox_entry_id, so
 // consumers that already processed it deduplicate it. A dead-letter row of this
-// outbox publishes like any other service's.
+// outbox publishes like any other component's.
 type RedrivePublisher struct{ redis *goredis.Client }
 
 var (

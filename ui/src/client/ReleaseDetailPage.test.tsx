@@ -915,7 +915,7 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
     const btn = await screen.findByRole('button', { name: 'Try again (round 1 of 3)' });
     fireEvent.click(btn);
-    expect(await screen.findByText('The remediation service is unreachable — try again in a moment.')).toBeInTheDocument();
+    expect(await screen.findByText('agent-remediation is unreachable — try again in a moment.')).toBeInTheDocument();
   });
 
   it('treats a proposal with remediation_round 0 as round 1 (Try again shows on a round-1 dead end)', async () => {

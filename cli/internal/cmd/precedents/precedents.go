@@ -116,7 +116,7 @@ Errors:
   usage      (exit 2)  more than one positional argument was given, or
                         neither a signature (--signature or positional) nor a
                         complete --category and --reason pair was given
-  unavailable(exit 5)  the catalog service is unreachable
+  unavailable(exit 5)  catalog is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo precedents 3f9c…\n  continuo precedents --signature 3f9c…\n  continuo precedents --category logic --reason logic:missing_object --limit 3",
 		Annotations: map[string]string{

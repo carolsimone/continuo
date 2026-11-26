@@ -79,7 +79,7 @@ func TestStreamConsumer_FailedHandlerMessageStaysInPEL(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	consumer := redis.NewStreamConsumer(rc, stream, group, failingHandler, logger)
-	consumer.SetService("pkg-redis-test")
+	consumer.SetComponent("pkg-redis-test")
 
 	// Ensure the consumer group exists so we can call readAndProcess-equivalent.
 	require.NoError(t, rc.XGroupCreateMkStream(ctx, key, group, "0").Err())
@@ -116,7 +116,7 @@ func TestStreamConsumer_FailedHandlerMessageStaysInPEL(t *testing.T) {
 
 // TestStreamConsumer_ReclaimPendingRecoversStuckMessage verifies that after a
 // handler failure leaves a message in the PEL, a new consumer instance (simulating
-// a service restart or periodic reclaim) recovers and successfully processes it.
+// a component restart or periodic reclaim) recovers and successfully processes it.
 //
 // A handler that fails — for example on a shared UnitOfWork returning
 // "transaction already in progress" — must not strand its message: a later
@@ -147,7 +147,7 @@ func TestStreamConsumer_ReclaimPendingRecoversStuckMessage(t *testing.T) {
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	failing := redis.NewStreamConsumer(rc, stream, group, failingHandler, logger)
-	failing.SetService("pkg-redis-test")
+	failing.SetComponent("pkg-redis-test")
 
 	failCtx, failCancel := context.WithTimeout(ctx, 2*time.Second)
 	defer failCancel()
@@ -170,7 +170,7 @@ func TestStreamConsumer_ReclaimPendingRecoversStuckMessage(t *testing.T) {
 	}
 	succeeding := redis.NewStreamConsumer(rc, stream, group, succeedingHandler, logger,
 		redis.WithReclaimMinIdle(0))
-	succeeding.SetService("pkg-redis-test")
+	succeeding.SetComponent("pkg-redis-test")
 
 	recoverCtx, recoverCancel := context.WithTimeout(ctx, 3*time.Second)
 	defer recoverCancel()
@@ -221,7 +221,7 @@ func TestStreamConsumer_ReadPath_PermanentError_ACKsAndExitsPEL(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	consumer := redis.NewStreamConsumer(rc, stream, group, permHandler, logger)
-	consumer.SetService("pkg-redis-test")
+	consumer.SetComponent("pkg-redis-test")
 
 	runCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -261,7 +261,7 @@ func TestStreamConsumer_ReadPath_TransientError_StaysInPEL(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	consumer := redis.NewStreamConsumer(rc, stream, group, transHandler, logger)
-	consumer.SetService("pkg-redis-test")
+	consumer.SetComponent("pkg-redis-test")
 
 	runCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -308,7 +308,7 @@ func TestStreamConsumer_ReclaimPath_PermanentError_ACKsAndExitsPEL(t *testing.T)
 		return errors.New("transient blip")
 	}
 	failing := redis.NewStreamConsumer(rc, stream, group, transHandler, logger)
-	failing.SetService("pkg-redis-test")
+	failing.SetComponent("pkg-redis-test")
 	failCtx, failCancel := context.WithTimeout(ctx, 2*time.Second)
 	defer failCancel()
 	go failing.Start(failCtx) //nolint:errcheck
@@ -326,7 +326,7 @@ func TestStreamConsumer_ReclaimPath_PermanentError_ACKsAndExitsPEL(t *testing.T)
 	}
 	reclaiming := redis.NewStreamConsumer(rc, stream, group, permHandler, logger,
 		redis.WithReclaimMinIdle(0))
-	reclaiming.SetService("pkg-redis-test")
+	reclaiming.SetComponent("pkg-redis-test")
 	recoverCtx, recoverCancel := context.WithTimeout(ctx, 3*time.Second)
 	defer recoverCancel()
 	go reclaiming.Start(recoverCtx) //nolint:errcheck
@@ -380,7 +380,7 @@ func TestStreamConsumer_Reclaim_RespectsMinIdle(t *testing.T) {
 	}
 	a := redis.NewStreamConsumer(rc, stream, group, failingHandler, logger,
 		redis.WithReclaimMinIdle(0))
-	a.SetService("pkg-redis-test")
+	a.SetComponent("pkg-redis-test")
 	aCtx, aCancel := context.WithTimeout(ctx, 4*time.Second)
 	defer aCancel()
 	go a.Start(aCtx)            //nolint:errcheck
@@ -402,7 +402,7 @@ func TestStreamConsumer_Reclaim_RespectsMinIdle(t *testing.T) {
 	}
 	b := redis.NewStreamConsumer(rc, stream, group, bHandler, logger,
 		redis.WithReclaimMinIdle(1*time.Hour))
-	b.SetService("pkg-redis-test")
+	b.SetComponent("pkg-redis-test")
 	bCtx, bCancel := context.WithTimeout(ctx, 2*time.Second)
 	defer bCancel()
 	go b.Start(bCtx) //nolint:errcheck
@@ -457,7 +457,7 @@ func TestStreamConsumer_TransientError_RecoversWithinBudget_ThenACKed(t *testing
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	consumer := redis.NewStreamConsumer(rc, stream, group, handler, logger)
-	consumer.SetService("pkg-redis-test")
+	consumer.SetComponent("pkg-redis-test")
 
 	// Budget: 0 + 100ms — one quick in-process retry. A transient blip that
 	// clears on the retry is ACKed before the consumer moves on; failures that
@@ -505,7 +505,7 @@ func TestStreamConsumer_PermanentError_NotRetried(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	consumer := redis.NewStreamConsumer(rc, stream, group, handler, logger)
-	consumer.SetService("pkg-redis-test")
+	consumer.SetComponent("pkg-redis-test")
 
 	runCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -552,7 +552,7 @@ func TestStreamConsumer_TransientError_ExhaustedRetries_StaysInPEL(t *testing.T)
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	consumer := redis.NewStreamConsumer(rc, stream, group, handler, logger)
-	consumer.SetService("pkg-redis-test")
+	consumer.SetComponent("pkg-redis-test")
 
 	// Long enough for the full in-process retry budget (~100ms) but short
 	// enough not to pick up a second cycle from periodic reclaim (2 min).
@@ -604,7 +604,7 @@ func TestStreamConsumer_ReclaimPath_TransientError_StaysInPEL(t *testing.T) {
 	first := redis.NewStreamConsumer(rc, stream, group, func(_ context.Context, _ goredis.XMessage) error {
 		return errors.New("first failure")
 	}, logger)
-	first.SetService("pkg-redis-test")
+	first.SetComponent("pkg-redis-test")
 	failCtx, failCancel := context.WithTimeout(ctx, 2*time.Second)
 	defer failCancel()
 	go first.Start(failCtx) //nolint:errcheck
@@ -614,7 +614,7 @@ func TestStreamConsumer_ReclaimPath_TransientError_StaysInPEL(t *testing.T) {
 	second := redis.NewStreamConsumer(rc, stream, group, func(_ context.Context, _ goredis.XMessage) error {
 		return errors.New("second failure")
 	}, logger, redis.WithReclaimMinIdle(0))
-	second.SetService("pkg-redis-test")
+	second.SetComponent("pkg-redis-test")
 	recoverCtx, recoverCancel := context.WithTimeout(ctx, 3*time.Second)
 	defer recoverCancel()
 	go second.Start(recoverCtx) //nolint:errcheck
@@ -668,7 +668,7 @@ func TestStreamConsumer_ReclaimPath_TransientError_IsSingleShot(t *testing.T) {
 		called.Add(1)
 		return errors.New("still transient")
 	}, logger, redis.WithReclaimMinIdle(0))
-	reclaiming.SetService("pkg-redis-test")
+	reclaiming.SetComponent("pkg-redis-test")
 
 	recoverCtx, recoverCancel := context.WithTimeout(ctx, time.Second)
 	defer recoverCancel()

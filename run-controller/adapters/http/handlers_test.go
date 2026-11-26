@@ -95,9 +95,9 @@ func TestLivenessHandler_DependencyFailureDoesNotFlipLivez(t *testing.T) {
 }
 
 // Every body the health, readiness and liveness handlers answer, ready or not,
-// names the service as config.ServiceName, the name the service's dead letters
+// names the component as config.ComponentName, the name the component's dead letters
 // and envelopes carry.
-func TestProbeBodiesNameTheService(t *testing.T) {
+func TestProbeBodiesNameTheComponent(t *testing.T) {
 	live := liveness.NewRegistry()
 	live.RegisterWorker("consumer_a")
 
@@ -120,15 +120,18 @@ func TestProbeBodiesNameTheService(t *testing.T) {
 			rec := httptest.NewRecorder()
 			tc.handler(rec, httptest.NewRequest(http.MethodGet, "/probe", nil))
 
-			var body ReadinessResponse
+			var body map[string]any
 			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 				t.Fatalf("decode %q: %v", rec.Body.String(), err)
 			}
-			if body.Status != tc.wantStatus {
-				t.Errorf("status = %q, want %q", body.Status, tc.wantStatus)
+			if body["status"] != tc.wantStatus {
+				t.Errorf("status = %v, want %q", body["status"], tc.wantStatus)
 			}
-			if body.Service != config.ServiceName {
-				t.Errorf("service = %q, want config.ServiceName %q", body.Service, config.ServiceName)
+			if body["component"] != config.ComponentName {
+				t.Errorf("component = %v, want config.ComponentName %q", body["component"], config.ComponentName)
+			}
+			if _, ok := body["service"]; ok {
+				t.Errorf("body %s names the component under the key service, want component", rec.Body.String())
 			}
 		})
 	}

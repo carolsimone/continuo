@@ -24,7 +24,7 @@ chmod +x "$TMP/helm" "$TMP/docker"; export PATH="$TMP:$PATH"
 bash "$SCRIPT" >/dev/null 2>&1 || { echo "FAIL: all-pullable should pass"; fail=1; }
 # Case 2: a datastore image 401s → fail.
 STUB_BAD="continuo-mc" bash "$SCRIPT" >/dev/null 2>&1 && { echo "FAIL: a 401 datastore image should fail"; fail=1; } || true
-# Case 3: a 401 on a NON-datastore (our service) image must NOT fail this guard.
-STUB_BAD="continuo-run-controller" bash "$SCRIPT" >/dev/null 2>&1 || { echo "FAIL: service image is out of scope, should still pass"; fail=1; }
+# Case 3: a 401 on a NON-datastore (our component) image must NOT fail this guard.
+STUB_BAD="continuo-run-controller" bash "$SCRIPT" >/dev/null 2>&1 || { echo "FAIL: component image is out of scope, should still pass"; fail=1; }
 
 [[ $fail -eq 0 ]] && echo "ALL PASS" || { echo "TESTS FAILED"; exit 1; }

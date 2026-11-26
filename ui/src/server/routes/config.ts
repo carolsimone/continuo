@@ -7,7 +7,7 @@ export function createConfigRouter(configFilePath: string) {
 
   // Each request re-reads the config file from disk (intentional, see below),
   // so bound it per client IP. The UI fetches this once per cancel dialog.
-  // xForwardedForHeader validation is off because the service runs behind an
+  // xForwardedForHeader validation is off because the ui runs behind an
   // ingress that always sets the header while Express has no trust proxy.
   router.use(
     rateLimit({

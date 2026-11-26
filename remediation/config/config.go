@@ -2,11 +2,11 @@ package config
 
 import pkgconfig "github.com/carolsimone/continuo/pkg/config"
 
-// ServiceName names this service as the producer of the dead letters its
+// ComponentName names this component as the producer of the dead letters its
 // stream consumers write.
-const ServiceName = "remediation"
+const ComponentName = "remediation"
 
-// Config holds all configuration for the remediation service.
+// Config holds all configuration for the remediation component.
 type Config struct {
 	Postgres pkgconfig.PostgresConfig
 	Redis    pkgconfig.RedisConfig

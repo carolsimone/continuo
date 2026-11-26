@@ -48,7 +48,7 @@ func TestCancelMidwayAndRetrigger(t *testing.T) {
 		cleanupTestData(t, ctx, clients, testScheduleName)
 	}()
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 
 	cleanupTestData(t, ctx, clients, testScheduleName)

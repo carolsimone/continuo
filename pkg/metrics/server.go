@@ -17,7 +17,7 @@ type Server struct {
 	logger *slog.Logger
 }
 
-// Listen binds the metrics port at once, so a service whose METRICS_PORT is
+// Listen binds the metrics port at once, so a component whose METRICS_PORT is
 // taken refuses to start instead of running unobservable. Port 0 picks a free
 // port.
 func Listen(port int, reg *Registry, logger *slog.Logger) (*Server, error) {

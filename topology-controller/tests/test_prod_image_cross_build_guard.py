@@ -19,9 +19,9 @@ platform, and the stage of the target platform only copies files:
 import re
 from pathlib import Path
 
-SERVICE_ROOT = Path(__file__).parent.parent
-DOCKERFILE_PROD = SERVICE_ROOT / "Dockerfile.prod"
-DOCKERFILE_DEV = SERVICE_ROOT / "Dockerfile.dev"
+COMPONENT_ROOT = Path(__file__).parent.parent
+DOCKERFILE_PROD = COMPONENT_ROOT / "Dockerfile.prod"
+DOCKERFILE_DEV = COMPONENT_ROOT / "Dockerfile.dev"
 
 _FROM = re.compile(r"^FROM\s+(?P<args>.+?)\s*$", re.M | re.I)
 _RUN = re.compile(r"^RUN\s", re.M | re.I)

@@ -38,7 +38,7 @@ func TestSingleNodeTestOperation(t *testing.T) {
 		targetTable   = "seed_table_1" // seeded test_count=2, real dbt tests not_null+unique
 	)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 
 	cleanupTestData(t, ctx, clients, "single-node-test-op")
@@ -95,7 +95,7 @@ func TestSingleNodeTestOperationNoTests(t *testing.T) {
 		targetTable   = "seed_table_2" // seeded with no tests (test_count=0)
 	)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 
 	cleanupTestData(t, ctx, clients, "single-node-test-no-tests")
 	seedTopology(t, ctx, clients)
@@ -130,7 +130,7 @@ func TestSingleNodeTestOperationUnsetTestCountIsGated(t *testing.T) {
 		targetTable   = "seed_table_2" // no dbt tests
 	)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 
 	cleanupTestData(t, ctx, clients, "single-node-test-unset")
 	seedTopology(t, ctx, clients)
@@ -180,7 +180,7 @@ func TestWholeDAGTestOperation(t *testing.T) {
 
 	const seedSchedule = "seed"
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 
 	cleanupTestData(t, ctx, clients, seedSchedule)
@@ -244,7 +244,7 @@ func TestWholeDAGTestOperationNoTestsFinalizesSkipped(t *testing.T) {
 
 	const noTestsSchedule = failureTestScheduleName // e2e-schedule-failure: all nodes test_count=0
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 
 	cleanupTestData(t, ctx, clients, noTestsSchedule)
@@ -304,7 +304,7 @@ func TestNodeCatalogOperationScoping(t *testing.T) {
 		noTestsTable  = "seed_table_2" // test_count=0: never dispatched under operation=test
 	)
 
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 
 	cleanupTestData(t, ctx, clients, "node-catalog-op-scoping")

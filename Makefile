@@ -18,11 +18,11 @@ build-base:
 build-dev: build-base
 	DOCKER_BUILDKIT=1 $(DOCKER_COMPOSE) build
 
-# Build single service for rapid iteration
-.PHONY: build-service
-build-service:
-	@test -n "$(SERVICE)" || (echo "Usage: make build-service SERVICE=run-controller" && exit 1)
-	DOCKER_BUILDKIT=1 $(DOCKER_COMPOSE) build $(SERVICE)
+# Build one component for rapid iteration
+.PHONY: build-component
+build-component:
+	@test -n "$(COMPONENT)" || (echo "Usage: make build-component COMPONENT=run-controller" && exit 1)
+	DOCKER_BUILDKIT=1 $(DOCKER_COMPOSE) build $(COMPONENT)
 
 # Rebuild base from scratch (rarely needed)
 .PHONY: rebuild-base
@@ -46,11 +46,11 @@ build-prod: build-base
 	DOCKER_BUILDKIT=1 docker build -t continuo-dead-letter-controller:prod -f dead-letter-controller/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-egress-proxy:prod -f egress-proxy/Dockerfile.prod .
 
-# Build single production service
-.PHONY: build-prod-service
-build-prod-service:
-	@test -n "$(SERVICE)" || (echo "Usage: make build-prod-service SERVICE=run-controller" && exit 1)
-	DOCKER_BUILDKIT=1 docker build -t continuo-$(SERVICE):prod -f $(SERVICE)/Dockerfile.prod .
+# Build one production component image
+.PHONY: build-prod-component
+build-prod-component:
+	@test -n "$(COMPONENT)" || (echo "Usage: make build-prod-component COMPONENT=run-controller" && exit 1)
+	DOCKER_BUILDKIT=1 docker build -t continuo-$(COMPONENT):prod -f $(COMPONENT)/Dockerfile.prod .
 
 up: dev-env
 	$(DOCKER_COMPOSE) up
@@ -85,7 +85,7 @@ e2e-setup:  ## Provision K8s test environment for E2E testing
 	@bash tests/e2e/provision-k8s-test-env.sh
 
 .PHONY: e2e-test
-e2e-test: e2e-setup  ## Run E2E tests (assumes docker-compose up and e2e-start-services already done)
+e2e-test: e2e-setup  ## Run E2E tests (assumes docker-compose up and e2e-start-components already done)
 	@echo "Running E2E tests..."
 	@docker exec -e UI_HTTP_BASE=http://ui:8090 catalog go test -v -count=1 -timeout 172m /app/tests/e2e/...
 	@$(MAKE) e2e-cleanup
@@ -95,10 +95,10 @@ e2e-cleanup:  ## Cleanup the execution-controller
 	@echo "Cleaning up execution-controller..."
 	@bash tests/e2e/cleanup-execution-controller.sh
 
-.PHONY: e2e-start-services
-e2e-start-services:  ## Start Go services inside docker-compose containers and wait for health
-	@echo "Starting services..."
-	@bash tests/e2e/start-services.sh
+.PHONY: e2e-start-components
+e2e-start-components:  ## Start Go components inside docker-compose containers and wait for health
+	@echo "Starting components..."
+	@bash tests/e2e/start-components.sh
 
 # Remove dangling images, stopped containers, unused networks, and build cache.
 # Safe to run between test runs — does NOT delete named volumes or the kind cluster.
@@ -119,7 +119,7 @@ nuke:
 	docker system prune -af --volumes
 
 .PHONY: e2e-full
-e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start-services + test + cleanup)
+e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start-components + test + cleanup)
 	@echo "Starting docker-compose services..."
 	@$(DOCKER_COMPOSE) up -d
 	@echo "Waiting for neo4j and redis to become healthy..."
@@ -132,7 +132,7 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 		fi; \
 	done
 	@echo "Migrations, grants and streams done."
-	@$(MAKE) e2e-start-services
+	@$(MAKE) e2e-start-components
 	@echo "Building dbt-base image (required for e2e-setup)..."
 	@DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/
 	@echo "Pulling validation runner (postgres) image (required for e2e-setup)..."
@@ -142,10 +142,10 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@$(MAKE) e2e-cleanup
 
 # ── CI contract: SINGLE entrypoints used identically by local dev and CI jobs.
-GO_SERVICES := run-controller catalog execution-controller release-controller \
+GO_COMPONENTS := run-controller catalog execution-controller release-controller \
                remediation agent-remediation agent-chat dead-letter-controller egress-proxy
-# One-shot jobs the stack needs before the services: migrations runs every
-# Flyway migration and grants each service's login its rights; streams-init
+# One-shot jobs the stack needs before the components: migrations runs every
+# Flyway migration and grants each component's login its rights; streams-init
 # creates every Redis stream and consumer group.
 MIGRATION_JOBS := migrations streams-init
 
@@ -158,13 +158,13 @@ CI_HOST_IP ?= localhost
 # The host ports the data dependencies publish, which docker-compose.yml reads
 # under the same names. Set them to run a second stack beside one that holds the
 # defaults, such as another worktree's:
-#   make test-go SERVICE=pkg PG_HOST_PORT=25432 REDIS_HOST_PORT=26379 \
+#   make test-go COMPONENT=pkg PG_HOST_PORT=25432 REDIS_HOST_PORT=26379 \
 #     NEO4J_HOST_PORT=27687 NEO4J_HTTP_HOST_PORT=27474
 # A worktree's compose project is named after its directory, so the two stacks
 # share nothing else; COMPOSE_PROJECT_NAME names it otherwise. Tests never point
 # at another worktree's database: an applied migration it does not know about
 # fails its next Flyway validation. These are not named REDIS_PORT and the like
-# because those are the services' own configuration, which tests read.
+# because those are the components' own configuration, which tests read.
 PG_HOST_PORT ?= 5432
 REDIS_HOST_PORT ?= 6379
 NEO4J_HOST_PORT ?= 7687
@@ -195,10 +195,10 @@ test-deps-up:
 test-deps-down:
 	$(DOCKER_COMPOSE) rm -fsv postgres neo4j redis $(MIGRATION_JOBS) 2>/dev/null || true
 
-# Run go tests for one service (SERVICE=x) or all. Brings deps up first; points
-# DB-backed tests at the local Postgres/Neo4j with the FULL per-service env. The
+# Run go tests for one component (COMPONENT=x) or all. Brings deps up first; points
+# DB-backed tests at the local Postgres/Neo4j with the FULL per-component env. The
 # Task-1 baseline proved POSTGRES_HOST alone is NOT enough — pkgconfig.LoadPostgres
-# requires POSTGRES_DB/USER/PASSWORD and defaults DB_SSLMODE; each service that keeps
+# requires POSTGRES_DB/USER/PASSWORD and defaults DB_SSLMODE; each component that keeps
 # Postgres uses its own database continuo_<svc> (catalog and egress-proxy keep none, so
 # their db is empty). Creds (continuo_svc/continuo) come from docker-compose.yml.
 # Includes -tags integration (closes the coverage gap). On macOS add
@@ -221,7 +221,7 @@ test-deps-down:
 # misaddressed dependency skips whole suites and the run still exits 0.
 .PHONY: test-go
 test-go: test-deps-up
-	@rc=0; for s in $(or $(SERVICE),$(GO_SERVICES) pkg); do \
+	@rc=0; for s in $(or $(COMPONENT),$(GO_COMPONENTS) pkg); do \
 	  extra=; pkgs=./...; \
 	  case $$s in \
 	    run-controller) db=continuo_run_controller; \
@@ -237,7 +237,7 @@ test-go: test-deps-up
 	    egress-proxy) db=;; \
 	    pkg) db=continuo_execution; pkgs=./...; \
 	      extra="REDIS_ADDR=$(CI_HOST_IP):$(REDIS_HOST_PORT) REDIS_PASSWORD=continuo GOFLAGS=-p=1";; \
-	    *) echo "unknown service $$s" >&2; exit 2;; \
+	    *) echo "unknown component $$s" >&2; exit 2;; \
 	  esac; \
 	  echo "== go test $$s (db=$$db) =="; \
 	  (cd $$s && env POSTGRES_HOST=$(CI_HOST_IP) POSTGRES_PORT=$(PG_HOST_PORT) POSTGRES_DB=$$db \
@@ -263,15 +263,15 @@ test-topology:
 # lines instead.
 #
 # The check scripts:
-# - check-service-names: no tracked file outside immutable history (Flyway
+# - check-component-names: no tracked file outside immutable history (Flyway
 #   migrations, the chart changelog, the release notes, the superpowers docs and
-#   the NOTES.txt upgrade warnings) may name a retired service in a form that is
+#   the NOTES.txt upgrade warnings) may name a retired component in a form that is
 #   not an ordinary word: its database, outbox table, environment variables,
 #   address, image, compose service, consumer groups or test identifiers. Its
 #   _test.sh runs the guard against throwaway fixture repositories: every
 #   retired form fails it (status 1, naming the file), history and ordinary
 #   prose pass, and so does this repository.
-# - check-dead-go: no Go function may be unreachable from every service main
+# - check-dead-go: no Go function may be unreachable from every component main
 #   (deadcode, see scripts/check-dead-go.sh). golangci-lint's `unused` skips
 #   exported names and counts test callers, so it cannot see these.
 # - check-ci-alignment: ci.yml must call shared scripts / Make targets, never
@@ -367,8 +367,8 @@ test-topology:
 # differs from release-controller's only in its go_package line.
 .PHONY: guards
 guards:
-	bash scripts/check-service-names.sh
-	bash scripts/check-service-names_test.sh
+	bash scripts/check-component-names.sh
+	bash scripts/check-component-names_test.sh
 	bash scripts/check-dead-go.sh
 	bash scripts/check-dead-go_test.sh
 	bash scripts/test-go-env_test.sh
@@ -416,7 +416,7 @@ stack-up:
 
 .PHONY: e2e
 e2e:
-	bash tests/e2e/start-services.sh
+	bash tests/e2e/start-components.sh
 	$(DOCKER_COMPOSE) up -d ui
 	bash -c 'source scripts/lib/common.sh && wait_for_http_host http://$(CI_HOST_IP):8090/api/schedules'
 	bash tests/e2e/deploy-execution-controller.sh

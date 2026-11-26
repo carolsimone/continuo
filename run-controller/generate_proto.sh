@@ -1,5 +1,5 @@
 #!/bin/bash
-# Generate proto code for run-controller service
+# Generate proto code for run-controller component
 # Run this inside the Docker container with protoc installed
 
 set -e

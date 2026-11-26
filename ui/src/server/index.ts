@@ -80,7 +80,7 @@ async function main() {
     app.use(express.static(staticDir));
     // The SPA fallback reads index.html from disk per request; bound it per
     // client IP (navigation loads it once — the limit only bites automated
-    // hammering). xForwardedForHeader validation is off because the service
+    // hammering). xForwardedForHeader validation is off because the ui
     // runs behind an ingress that always sets the header while Express has
     // no trust proxy.
     const spaFallbackLimiter = rateLimit({

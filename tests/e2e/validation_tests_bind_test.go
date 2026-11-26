@@ -41,7 +41,7 @@ func TestE2E_ReleaseValidation_TestThatNoLongerBindsRejects(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), batchCtxBudget)
 	defer cancel()
 	clients := setupClients(t, ctx)
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 	requireReleaseControllerHealthy(t, clients)
 
@@ -119,7 +119,7 @@ func TestE2E_ReleaseValidation_TestsBindAndArePromotedInvisibly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), batchCtxBudget)
 	defer cancel()
 	clients := setupClients(t, ctx)
-	verifyServicesHealthy(t)
+	verifyComponentsHealthy(t)
 	verifyK8sAvailable(t, ctx)
 	requireReleaseControllerHealthy(t, clients)
 

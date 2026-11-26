@@ -372,7 +372,7 @@ func TestList_LongNamesEveryTaskStatus(t *testing.T) {
 	assert.ElementsMatch(t, served, listed)
 }
 
-// "catalog" names the catalog service (the code-version and failure-precedent
+// "catalog" names catalog (the code-version and failure-precedent
 // reads). The node list is run-controller's, so its help must not send the
 // reader to a catalog.
 func TestNodeListHelpNeverSaysCatalog(t *testing.T) {

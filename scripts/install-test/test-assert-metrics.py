@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise assert-metrics.py's discovery of Go and Python metrics services."""
+"""Exercise assert-metrics.py's discovery of Go and Python metrics components."""
 import importlib.util
 import pathlib
 import tempfile
@@ -21,16 +21,16 @@ class AssertMetricsTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = pathlib.Path(self.tmp.name)
-        write(self.root, "svc-go/main.go", "package main\n")
-        write(self.root, "svc-go/adapters/m.go",
+        write(self.root, "component-go/main.go", "package main\n")
+        write(self.root, "component-go/adapters/m.go",
               'import "github.com/carolsimone/continuo/pkg/metrics"\nvar x = Opts{Name: "continuo_go_total"}\n')
-        write(self.root, "svc-py/main.py", "")
-        write(self.root, "svc-py/adapters/metrics/m.py",
+        write(self.root, "component-py/main.py", "")
+        write(self.root, "component-py/adapters/metrics/m.py",
               'from prometheus_client import Counter\nX = Counter(\n    "continuo_py_total", "help")\n')
-        write(self.root, "svc-py/tests/test_m.py",
+        write(self.root, "component-py/tests/test_m.py",
               'from prometheus_client import Counter\nCounter("continuo_test_only_total", "h")\n')
-        write(self.root, "svc-py/.venv/lib/prometheus_client/c.py", 'Counter("continuo_vendored_total", "h")\n')
-        write(self.root, "svc-plain/main.py", "import logging\n")
+        write(self.root, "component-py/.venv/lib/prometheus_client/c.py", 'Counter("continuo_vendored_total", "h")\n')
+        write(self.root, "component-plain/main.py", "import logging\n")
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -38,8 +38,8 @@ class AssertMetricsTest(unittest.TestCase):
     def guide(self, *names):
         write(self.root, "deploy/OBSERVABILITY.md", "".join(f"| `{n}` | counter | | x |\n" for n in names))
 
-    def test_a_python_service_that_imports_prometheus_client_serves_metrics(self):
-        self.assertEqual(assert_metrics.serving_services(self.root), {"svc-go", "svc-py"})
+    def test_a_python_component_that_imports_prometheus_client_serves_metrics(self):
+        self.assertEqual(assert_metrics.serving_components(self.root), {"component-go", "component-py"})
 
     def test_python_series_are_read_from_non_test_sources_only(self):
         self.assertEqual(assert_metrics.registered_metrics(self.root), {"continuo_go_total", "continuo_py_total"})

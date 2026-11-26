@@ -64,7 +64,7 @@ Output (stdout, JSON):
 Errors:
   usage      (exit 2)  wrong number of arguments, missing --from/--to, or --from equals --to
   not_found  (exit 3)  the node's unique_id, or one of the two seqs, is not recorded
-  unavailable(exit 5)  the catalog service is unreachable
+  unavailable(exit 5)  catalog is unreachable
   internal   (exit 6)  unexpected server error`,
 		Example: "  continuo node diff finance analytics orders --from 1 --to 3",
 		Annotations: map[string]string{
