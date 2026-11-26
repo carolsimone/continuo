@@ -11,13 +11,13 @@ import (
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 )
 
-// ErrUnmappedEdit marks an edit whose path lies outside every service this
+// ErrUnmappedEdit marks an edit whose path lies outside every project this
 // install configures a repository path for. Nothing downstream can run such an
-// edit: a verification run is submitted for one service, and the overlay it
-// lays down is relative to that service's project.
-var ErrUnmappedEdit = errors.New("edit belongs to no configured service")
+// edit: a verification run is submitted for one project, and the overlay it
+// lays down is relative to that project's directory.
+var ErrUnmappedEdit = errors.New("edit belongs to no configured project")
 
-// ErrMixedManifestKinds marks a service whose edits would have to be verified
+// ErrMixedManifestKinds marks a project whose edits would have to be verified
 // as two different manifest kinds at once: a packaged python contract plus at
 // least one edit to something that is not a python node's contract. A
 // verification run parses one kind, so whichever were chosen would verify only
@@ -25,14 +25,14 @@ var ErrUnmappedEdit = errors.New("edit belongs to no configured service")
 var ErrMixedManifestKinds = errors.New("mixes a python contract with dbt edits in one attempt; a release verifies one manifest kind")
 
 // ErrDuplicateEditPath marks a try carrying two edits to one repository path. A
-// source overlay holds one file per path and a python service is verified by
+// source overlay holds one file per path and a python project is verified by
 // one packaged contract, so the second edit would silently replace the first.
 var ErrDuplicateEditPath = errors.New("two edits change the same file")
 
 // The finding codes of the three refusals of a try no verification run could
 // judge.
 const (
-	CodeEditOutsideServices = "edit_outside_services"
+	CodeEditOutsideProjects = "edit_outside_projects"
 	CodePathEditedTwice     = "path_edited_twice"
 	CodeMixedManifestKinds  = "mixed_manifest_kinds"
 )
@@ -43,7 +43,7 @@ func RefusalFinding(err error) (remediation.Finding, bool) {
 	var code string
 	switch {
 	case errors.Is(err, ErrUnmappedEdit):
-		code = CodeEditOutsideServices
+		code = CodeEditOutsideProjects
 	case errors.Is(err, ErrDuplicateEditPath):
 		code = CodePathEditedTwice
 	case errors.Is(err, ErrMixedManifestKinds):
@@ -54,12 +54,12 @@ func RefusalFinding(err error) (remediation.Finding, bool) {
 	return remediation.Finding{Code: code, Message: err.Error()}, true
 }
 
-// ServiceEdits is the part of a try one verification run judges: the edits that
-// land in one service, with the packaged contract that verifies them when the
-// service is a python one. Prefix is the service's repository path, which a
+// ProjectEdits is the part of a try one verification run judges: the edits that
+// land in one project, with the packaged contract that verifies them when the
+// project is a python one. Prefix is the project's repository path, which a
 // dbt run's overlay paths are relative to.
-type ServiceEdits struct {
-	Service  string
+type ProjectEdits struct {
+	Project  string
 	Prefix   string
 	Edits    []remediation.Edit
 	Contract []byte
@@ -74,12 +74,12 @@ func EditsOf(drafts []step.ClusterDraft) []remediation.Edit {
 	return edits
 }
 
-// contractsByService maps a service to the packaged contract of the cluster
-// whose first edit is in it. The service is derived from the cluster's own
+// contractsByProject maps a project to the packaged contract of the cluster
+// whose first edit is in it. The project is derived from the cluster's own
 // edit paths, exactly as the edits are grouped, so a contract and the edits it
 // packages always end up on the same verification run. A later cluster of the
-// same service replaces an earlier one's contract.
-func contractsByService(serviceRepoPaths map[string]string, drafts []step.ClusterDraft) map[string][]byte {
+// same project replaces an earlier one's contract.
+func contractsByProject(projectRepoPaths map[string]string, drafts []step.ClusterDraft) map[string][]byte {
 	contracts := map[string][]byte{}
 	for _, d := range drafts {
 		if len(d.Draft.Edits) == 0 {
@@ -89,17 +89,17 @@ func contractsByService(serviceRepoPaths map[string]string, drafts []step.Cluste
 		if !ok || contract == nil {
 			continue
 		}
-		if service, _, ok := proposal.ServiceForPath(serviceRepoPaths, d.Draft.Edits[0].Path); ok {
-			contracts[service] = contract
+		if project, _, ok := proposal.ProjectForPath(projectRepoPaths, d.Draft.Edits[0].Path); ok {
+			contracts[project] = contract
 		}
 	}
 	return contracts
 }
 
-// FirstUnmapped returns the first edit no configured service owns.
-func FirstUnmapped(serviceRepoPaths map[string]string, edits []remediation.Edit) (remediation.Edit, bool) {
+// FirstUnmapped returns the first edit no configured project owns.
+func FirstUnmapped(projectRepoPaths map[string]string, edits []remediation.Edit) (remediation.Edit, bool) {
 	for _, e := range edits {
-		if _, _, ok := proposal.ServiceForPath(serviceRepoPaths, e.Path); !ok {
+		if _, _, ok := proposal.ProjectForPath(projectRepoPaths, e.Path); !ok {
 			return e, true
 		}
 	}
@@ -107,11 +107,11 @@ func FirstUnmapped(serviceRepoPaths map[string]string, edits []remediation.Edit)
 }
 
 // FirstDuplicate returns the first edit to a path an earlier edit already
-// changed. An edit no service owns takes no part: it is refused as unmapped.
-func FirstDuplicate(serviceRepoPaths map[string]string, edits []remediation.Edit) (remediation.Edit, bool) {
+// changed. An edit no project owns takes no part: it is refused as unmapped.
+func FirstDuplicate(projectRepoPaths map[string]string, edits []remediation.Edit) (remediation.Edit, bool) {
 	seen := map[string]bool{}
 	for _, e := range edits {
-		if _, _, ok := proposal.ServiceForPath(serviceRepoPaths, e.Path); !ok {
+		if _, _, ok := proposal.ProjectForPath(projectRepoPaths, e.Path); !ok {
 			continue
 		}
 		if seen[e.Path] {
@@ -122,26 +122,26 @@ func FirstDuplicate(serviceRepoPaths map[string]string, edits []remediation.Edit
 	return remediation.Edit{}, false
 }
 
-// FirstMixed returns the first service, in name order, that has a packaged
+// FirstMixed returns the first project, in name order, that has a packaged
 // contract and an edit that is not the contract of a python node the trigger
 // names, with that edit. An edit qualifies as a contract edit only when it
 // changes the source of a failing node the trigger carries and that node is a
 // python kind.
-func FirstMixed(serviceRepoPaths map[string]string, t remediation.Trigger, drafts []step.ClusterDraft) (service string, edit remediation.Edit, found bool) {
-	contracts := contractsByService(serviceRepoPaths, drafts)
-	byService := map[string][]remediation.Edit{}
+func FirstMixed(projectRepoPaths map[string]string, t remediation.Trigger, drafts []step.ClusterDraft) (project string, edit remediation.Edit, found bool) {
+	contracts := contractsByProject(projectRepoPaths, drafts)
+	byProject := map[string][]remediation.Edit{}
 	for _, e := range EditsOf(drafts) {
-		if s, _, ok := proposal.ServiceForPath(serviceRepoPaths, e.Path); ok {
-			byService[s] = append(byService[s], e)
+		if s, _, ok := proposal.ProjectForPath(projectRepoPaths, e.Path); ok {
+			byProject[s] = append(byProject[s], e)
 		}
 	}
-	services := make([]string, 0, len(contracts))
+	projects := make([]string, 0, len(contracts))
 	for s := range contracts {
-		services = append(services, s)
+		projects = append(projects, s)
 	}
-	sort.Strings(services)
-	for _, s := range services {
-		for _, e := range byService[s] {
+	sort.Strings(projects)
+	for _, s := range projects {
+		for _, e := range byProject[s] {
 			if !isPythonNodeEdit(t, e) {
 				return s, e, true
 			}
@@ -159,41 +159,41 @@ func isPythonNodeEdit(t remediation.Trigger, e remediation.Edit) bool {
 	return false
 }
 
-// Group splits a try's edits into one ServiceEdits per edited service, sorted
-// by service name. It refuses, with ErrUnmappedEdit, ErrDuplicateEditPath or
-// ErrMixedManifestKinds, wrapped with the path or service as the cross-cluster
+// Group splits a try's edits into one ProjectEdits per edited project, sorted
+// by project name. It refuses, with ErrUnmappedEdit, ErrDuplicateEditPath or
+// ErrMixedManifestKinds, wrapped with the path or project as the cross-cluster
 // checks report them, a try no verification run could judge.
-func Group(serviceRepoPaths map[string]string, t remediation.Trigger, drafts []step.ClusterDraft) ([]ServiceEdits, error) {
+func Group(projectRepoPaths map[string]string, t remediation.Trigger, drafts []step.ClusterDraft) ([]ProjectEdits, error) {
 	edits := EditsOf(drafts)
-	if e, ok := FirstUnmapped(serviceRepoPaths, edits); ok {
+	if e, ok := FirstUnmapped(projectRepoPaths, edits); ok {
 		return nil, UnmappedError(e)
 	}
-	if e, ok := FirstDuplicate(serviceRepoPaths, edits); ok {
+	if e, ok := FirstDuplicate(projectRepoPaths, edits); ok {
 		return nil, DuplicateError(e)
 	}
-	if s, _, ok := FirstMixed(serviceRepoPaths, t, drafts); ok {
+	if s, _, ok := FirstMixed(projectRepoPaths, t, drafts); ok {
 		return nil, MixedError(s)
 	}
-	contracts := contractsByService(serviceRepoPaths, drafts)
-	byService := map[string]*ServiceEdits{}
+	contracts := contractsByProject(projectRepoPaths, drafts)
+	byProject := map[string]*ProjectEdits{}
 	for _, e := range edits {
-		service, prefix, _ := proposal.ServiceForPath(serviceRepoPaths, e.Path)
-		g, ok := byService[service]
+		project, prefix, _ := proposal.ProjectForPath(projectRepoPaths, e.Path)
+		g, ok := byProject[project]
 		if !ok {
-			g = &ServiceEdits{Service: service, Prefix: prefix, Contract: contracts[service]}
-			byService[service] = g
+			g = &ProjectEdits{Project: project, Prefix: prefix, Contract: contracts[project]}
+			byProject[project] = g
 		}
 		g.Edits = append(g.Edits, e)
 	}
-	out := make([]ServiceEdits, 0, len(byService))
-	for _, g := range byService {
+	out := make([]ProjectEdits, 0, len(byProject))
+	for _, g := range byProject {
 		out = append(out, *g)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Service < out[j].Service })
+	sort.Slice(out, func(i, j int) bool { return out[i].Project < out[j].Project })
 	return out, nil
 }
 
-// UnmappedError is the refusal of an edit no configured service owns.
+// UnmappedError is the refusal of an edit no configured project owns.
 func UnmappedError(e remediation.Edit) error {
 	return fmt.Errorf("%w: %s", ErrUnmappedEdit, e.Path)
 }
@@ -203,8 +203,8 @@ func DuplicateError(e remediation.Edit) error {
 	return fmt.Errorf("%w: %s", ErrDuplicateEditPath, e.Path)
 }
 
-// MixedError is the refusal of a service that mixes a python contract with
+// MixedError is the refusal of a project that mixes a python contract with
 // edits of another manifest kind.
-func MixedError(service string) error {
-	return fmt.Errorf("service %s %w", service, ErrMixedManifestKinds)
+func MixedError(project string) error {
+	return fmt.Errorf("project %s %w", project, ErrMixedManifestKinds)
 }

@@ -48,7 +48,7 @@ func TestHandleGetPipeline_ActiveCandidate(t *testing.T) {
 	assert.Equal(t, "rel-1", active["run_id"])
 	assert.Equal(t, "candidate", active["run_kind"])
 	assert.Equal(t, "compiling", active["status"])
-	assert.Equal(t, "core", active["service"])
+	assert.Equal(t, "core", active["project"])
 	_, hasVerifies := active["verifies_release_id"]
 	assert.False(t, hasVerifies, "a candidate's active summary carries no verifies_release_id")
 }

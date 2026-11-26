@@ -34,14 +34,14 @@ var _ ports.ContractBundleReader = (*fakeBundles)(nil)
 // contractBundleRef is where the tests' release keeps its contract bundle.
 var contractBundleRef = objectstore.Ref{Bucket: testBucket, Key: "tenants/default/topologies/rel-1/contracts.json.gz"}
 
-// producerBundleRef is where the service's CI uploaded its bundle for rel-1.
+// producerBundleRef is where the project's CI uploaded its bundle for rel-1.
 var producerBundleRef = objectstore.Ref{Bucket: testBucket, Key: "svc-py/rel-1/odcs-bundle.json"}
 
 const contractBundleDoc = `{"schema_version":1,"tenant_id":"default","release_id":"rel-1",
  "provenance":{"svc-py":{"continuo_python_runtime":"0.13.0","image_packages":{"pyarrow":"26.0.0","duckdb":"1.4.0"}}},
  "contracts":{}}`
 
-const producerBundleDoc = `{"bundle_version":1,"service":"svc-py",
+const producerBundleDoc = `{"bundle_version":1,"project":"svc-py",
  "producer":{"continuo_python_runtime":"0.13.0","continuo_contracts":"0.2.0"},
  "image_packages":{"pyarrow":"25.0.0"},"nodes":[]}`
 
@@ -101,9 +101,9 @@ func TestImagePackages_AContractBundleThatMissesIsNeverReplacedByTheProducerBund
 		setup func(t *testing.T) (*objectstoretest.Memory, *fakeBundles)
 		why   string
 	}{
-		"the service absent": {func(t *testing.T) (*objectstoretest.Memory, *fakeBundles) {
+		"the project absent": {func(t *testing.T) (*objectstoretest.Memory, *fakeBundles) {
 			return storeWithContractBundle(t, `{"schema_version":1,"tenant_id":"default","release_id":"rel-1","provenance":{},"contracts":{}}`)
-		}, "records no package list for the service"},
+		}, "records no package list for the project"},
 		"a checksum mismatch": {func(t *testing.T) (*objectstoretest.Memory, *fakeBundles) {
 			mem, rel := storeWithContractBundle(t, contractBundleDoc)
 			rel.sha = "00"
@@ -137,23 +137,23 @@ func TestImagePackages_AContractBundleThatMissesIsNeverReplacedByTheProducerBund
 	}
 }
 
-// TestImagePackages_NeitherHoldsTheServiceIsErrNoImagePackages covers a release
-// with no contract bundle whose producer bundle does not hold the service.
-func TestImagePackages_NeitherHoldsTheServiceIsErrNoImagePackages(t *testing.T) {
+// TestImagePackages_NeitherHoldsTheProjectIsErrNoImagePackages covers a release
+// with no contract bundle whose producer bundle does not hold the project.
+func TestImagePackages_NeitherHoldsTheProjectIsErrNoImagePackages(t *testing.T) {
 	cases := map[string]func(t *testing.T) (*objectstoretest.Memory, *fakeBundles){
 		"no bundle at all": func(*testing.T) (*objectstoretest.Memory, *fakeBundles) {
 			return objectstoretest.NewMemory(testBucket), &fakeBundles{}
 		},
-		"a producer bundle of another service": func(t *testing.T) (*objectstoretest.Memory, *fakeBundles) {
+		"a producer bundle of another project": func(t *testing.T) (*objectstoretest.Memory, *fakeBundles) {
 			mem := objectstoretest.NewMemory(testBucket)
 			require.NoError(t, mem.Put(context.Background(), producerBundleRef,
-				[]byte(`{"bundle_version":1,"service":"svc-other","image_packages":{"a":"1"},"nodes":[]}`), "application/json"))
+				[]byte(`{"bundle_version":1,"project":"svc-other","image_packages":{"a":"1"},"nodes":[]}`), "application/json"))
 			return mem, &fakeBundles{}
 		},
 		"a producer bundle with no package list": func(t *testing.T) (*objectstoretest.Memory, *fakeBundles) {
 			mem := objectstoretest.NewMemory(testBucket)
 			require.NoError(t, mem.Put(context.Background(), producerBundleRef,
-				[]byte(`{"bundle_version":1,"service":"svc-py","nodes":[]}`), "application/json"))
+				[]byte(`{"bundle_version":1,"project":"svc-py","nodes":[]}`), "application/json"))
 			return mem, &fakeBundles{}
 		},
 		"a producer bundle that is not JSON": func(t *testing.T) (*objectstoretest.Memory, *fakeBundles) {

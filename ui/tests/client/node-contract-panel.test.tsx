@@ -86,7 +86,7 @@ function serve(contract: NodeContractResponse, diffs: Record<string, ContractFie
 function renderPanel(table = 'py_daily_kpis') {
   return render(
     <MemoryRouter>
-      <NodeContractPanel service="py-service" schema="analytics" table={table} />
+      <NodeContractPanel project="py-service" schema="analytics" table={table} />
     </MemoryRouter>,
   );
 }
@@ -226,7 +226,7 @@ describe('NodeContractPanel', () => {
     renderPanel();
 
     expect(await screen.findByText('This node has no contract. A dbt test and an unknown-external table have none.')).toBeInTheDocument();
-    expect(screen.queryByText(/Only Python services/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Only Python projects/)).not.toBeInTheDocument();
     expect(screen.queryByRole('region')).not.toBeInTheDocument();
   });
 
@@ -274,7 +274,7 @@ describe('NodeContractPanel', () => {
 
     rerender(
       <MemoryRouter>
-        <NodeContractPanel service="py-service" schema="analytics" table="py_other" />
+        <NodeContractPanel project="py-service" schema="analytics" table="py_other" />
       </MemoryRouter>,
     );
 

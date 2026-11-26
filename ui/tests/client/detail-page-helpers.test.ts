@@ -127,7 +127,7 @@ describe('detail page graph helpers', () => {
     };
     const matchingTask: Task = {
       task_id: 'task-1',
-      service_name: 'svc',
+      project_name: 'svc',
       schema_name: 'analytics',
       table_name: 'orders',
       job_name: '',
@@ -141,9 +141,9 @@ describe('detail page graph helpers', () => {
     expect(resolveNodeStatus(graphNode, [])).toBe('succeeded');
   });
 
-  it('parses a node_id into service, schema, and table', () => {
+  it('parses a node_id into project, schema, and table', () => {
     expect(parseNodeId('svc.analytics.orders')).toEqual({
-      service_name: 'svc',
+      project_name: 'svc',
       schema_name: 'analytics',
       table_name: 'orders',
     });
@@ -151,7 +151,7 @@ describe('detail page graph helpers', () => {
 
   it('keeps a versioned table name whole', () => {
     expect(parseNodeId('svc.analytics.orders.v2')).toEqual({
-      service_name: 'svc',
+      project_name: 'svc',
       schema_name: 'analytics',
       table_name: 'orders.v2',
     });
@@ -159,13 +159,13 @@ describe('detail page graph helpers', () => {
 
   it('returns empty strings for missing node_id segments', () => {
     expect(parseNodeId('only')).toEqual({
-      service_name: 'only',
+      project_name: 'only',
       schema_name: '',
       table_name: '',
     });
   });
 
-  it('names an unknown-external node by its schema and table, skipping its empty service', () => {
+  it('names an unknown-external node by its schema and table, skipping its empty project', () => {
     expect(externalNodeName('.raw.ingest_probe')).toBe('raw.ingest_probe');
   });
 

@@ -1,27 +1,27 @@
 import { ProposalDTO } from './types';
 
 // One pull request the server opened (or already had open) for one owning
-// service, as returned by POST .../pull-request.
+// project, as returned by POST .../pull-request.
 export interface CreatePullRequestResultEntry {
-  service: string;
+  project: string;
   pr_url: string;
   pr_number: number;
 }
 
-// One owning-service group the server failed to open a pull request for.
+// One owning-project group the server failed to open a pull request for.
 export interface CreatePullRequestErrorEntry {
-  service: string;
+  project: string;
   error: string;
 }
 
-// One owning-service group whose pull request opened but whose owners GitHub
+// One owning-project group whose pull request opened but whose owners GitHub
 // would not take as reviewers; warning says why.
 export interface CreatePullRequestWarningEntry {
-  service: string;
+  project: string;
   warning: string;
 }
 
-// CreatePullRequestResponse is the body of a 200 (every service succeeded)
+// CreatePullRequestResponse is the body of a 200 (every project succeeded)
 // or 207 (some, but not all, succeeded) response. warnings lists the opened
 // pull requests whose reviewer request was refused.
 export interface CreatePullRequestResponse {
@@ -34,17 +34,17 @@ export interface CreatePullRequestError {
   status: number;
   pr_url?: string;
   message: string;
-  // errors carries the per-service failures when the server's response body
+  // errors carries the per-project failures when the server's response body
   // was itself the {pull_requests, errors} shape (the 502-nothing-succeeded
   // case) rather than a single {error} message.
   errors?: CreatePullRequestErrorEntry[];
 }
 
-export function fetchProposals(filter: { status?: string; pr_state?: string; service?: string } = {}): Promise<ProposalDTO[]> {
+export function fetchProposals(filter: { status?: string; pr_state?: string; project?: string } = {}): Promise<ProposalDTO[]> {
   const qs = new URLSearchParams();
   if (filter.status) qs.set('status', filter.status);
   if (filter.pr_state) qs.set('pr_state', filter.pr_state);
-  if (filter.service) qs.set('service', filter.service);
+  if (filter.project) qs.set('project', filter.project);
   const query = qs.toString();
   const url = query
     ? `/api/remediation/proposals?${query}`
@@ -54,12 +54,12 @@ export function fetchProposals(filter: { status?: string; pr_state?: string; ser
     .then((data: { proposals: ProposalDTO[] }) => data.proposals);
 }
 
-// createPullRequest opens one pull request per owning service the proposal
-// still needs one for. r.ok covers both 200 (every service succeeded) and
+// createPullRequest opens one pull request per owning project the proposal
+// still needs one for. r.ok covers both 200 (every project succeeded) and
 // 207 (a partial success) — both resolve with the full {pull_requests,
-// errors} body so the caller can show whichever services still failed. Only
+// errors} body so the caller can show whichever projects still failed. Only
 // a response with no successes at all (503 unconfigured, 404 not found, or
-// the 502 issued when every service failed) rejects.
+// the 502 issued when every project failed) rejects.
 export function createPullRequest(id: string): Promise<CreatePullRequestResponse> {
   return fetch(`/api/remediation/proposals/${encodeURIComponent(id)}/pull-request`, {
     method: 'POST',
@@ -68,7 +68,7 @@ export function createPullRequest(id: string): Promise<CreatePullRequestResponse
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
       const combinedFromErrors = Array.isArray(body.errors) && body.errors.length > 0
-        ? body.errors.map((e: CreatePullRequestErrorEntry) => `${e.service ? `${e.service}: ` : ''}${e.error}`).join('; ')
+        ? body.errors.map((e: CreatePullRequestErrorEntry) => `${e.project ? `${e.project}: ` : ''}${e.error}`).join('; ')
         : undefined;
       const err: CreatePullRequestError = {
         status: r.status,

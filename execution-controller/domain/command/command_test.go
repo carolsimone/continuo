@@ -14,7 +14,7 @@ import (
 
 func TestDeployTask_ToJobSpec(t *testing.T) {
 	c := command.DeployTask{
-		TaskID: "t1", RunID: "s1", ScheduleName: "daily", ServiceName: "dbt",
+		TaskID: "t1", RunID: "s1", ScheduleName: "daily", ProjectName: "dbt",
 		SchemaName: "public", TableName: "orders", JobName: "dbt-public-orders",
 		NodeType: "dbt-model", ImageTag: "sha-abc", Attempt: 2, ContentHash: "sha256:91d4c0",
 	}
@@ -23,7 +23,7 @@ func TestDeployTask_ToJobSpec(t *testing.T) {
 	assert.Equal(t, "t1", spec.TaskID)
 	assert.Equal(t, "s1", spec.RunID)
 	assert.Equal(t, "daily", spec.ScheduleName)
-	assert.Equal(t, "dbt", spec.ServiceName)
+	assert.Equal(t, "dbt", spec.ProjectName)
 	assert.Equal(t, "public", spec.SchemaName)
 	assert.Equal(t, "orders", spec.TableName)
 	assert.Equal(t, "dbt-model", spec.NodeType)
@@ -47,7 +47,7 @@ func TestValidationDeployTask_JSONRoundTrip(t *testing.T) {
 	orig := command.ValidationDeployTask{
 		ReleaseID:            "rel_123",
 		NodeID:               "node_456",
-		ServiceName:          "dbt",
+		ProjectName:          "dbt",
 		SchemaName:           "public",
 		TableName:            "orders",
 		NodeType:             "dbt-model",
@@ -70,7 +70,7 @@ func TestValidationDeployTask_ToValidationJobSpec(t *testing.T) {
 	c := command.ValidationDeployTask{
 		ReleaseID:            "rel_123",
 		NodeID:               "node_456",
-		ServiceName:          "svc",
+		ProjectName:          "svc",
 		SchemaName:           "public",
 		TableName:            "orders",
 		NodeType:             "dbt-model",
@@ -84,7 +84,7 @@ func TestValidationDeployTask_ToValidationJobSpec(t *testing.T) {
 	assert.Equal(t, c.JobName, spec.JobName)
 	assert.Equal(t, c.ReleaseID, spec.ReleaseID)
 	assert.Equal(t, c.NodeID, spec.NodeID)
-	assert.Equal(t, c.ServiceName, spec.ServiceName)
+	assert.Equal(t, c.ProjectName, spec.ProjectName)
 	assert.Equal(t, c.SchemaName, spec.SchemaName)
 	assert.Equal(t, c.TableName, spec.TableName)
 	assert.Equal(t, c.NodeType, spec.NodeType)
@@ -97,7 +97,7 @@ func TestValidationDeployTask_ToValidationJobSpec_CarriesParseCacheURIs(t *testi
 	c := command.ValidationDeployTask{
 		ReleaseID:           "rel_123",
 		NodeID:              "svc",
-		ServiceName:         "svc",
+		ProjectName:         "svc",
 		ImageTag:            "sha-abc",
 		JobName:             "compile-svc",
 		CandidateSchema:     "_candidate_rel_123",
@@ -111,7 +111,7 @@ func TestValidationDeployTask_ToValidationJobSpec_CarriesParseCacheURIs(t *testi
 
 func TestValidationDeployTask_ToValidationJobSpec_CarriesOp(t *testing.T) {
 	cmd := command.ValidationDeployTask{
-		ReleaseID: "r", NodeID: "model.a", ServiceName: "s", SchemaName: "sc",
+		ReleaseID: "r", NodeID: "model.a", ProjectName: "s", SchemaName: "sc",
 		TableName: "a", NodeType: "dbt-model", ImageTag: "t", JobName: "j",
 		CandidateSchema: "_candidate_r", CandidateArtifactURI: "s3://b/a.sql",
 		ValidationOp: string(pkg_model.ValidationOpCloneFromProd), ProdSchema: "analytics",

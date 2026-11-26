@@ -1,7 +1,7 @@
 -- continuo_release: release-controller's database.
 --
 -- Each release and verification run with its legs and results, the
--- production pointer of each service and of the install, the promotion
+-- production pointer of each project and of the install, the promotion
 -- sequence, the messages it consumed and its outbox.
 --
 -- Each table is one block: its columns and constraints, then its indexes,
@@ -88,7 +88,7 @@ CREATE TABLE release_pipeline_runs (
     resolved_at timestamptz,
     transitions jsonb DEFAULT '[]'::jsonb NOT NULL,
     bootstrap boolean DEFAULT false NOT NULL,
-    changed_service text DEFAULT '' NOT NULL,
+    changed_project text DEFAULT '' NOT NULL,
     repo text NOT NULL,
     commit_sha text NOT NULL,
     code_bundle_uri text DEFAULT '' NOT NULL,
@@ -130,13 +130,13 @@ CREATE INDEX idx_release_pipeline_runs_verifies ON release_pipeline_runs (verifi
 -- service_prod
 
 CREATE TABLE service_prod (
-    service_name text NOT NULL,
+    project_name text NOT NULL,
     release_id text NOT NULL,
     manifest_s3_key text NOT NULL,
     image_tag text NOT NULL,
     updated_at timestamptz DEFAULT now() NOT NULL,
     manifest_kind text DEFAULT 'dbt' NOT NULL,
-    CONSTRAINT service_prod_pkey PRIMARY KEY (service_name),
+    CONSTRAINT service_prod_pkey PRIMARY KEY (project_name),
     CONSTRAINT service_prod_manifest_kind_check CHECK ((manifest_kind IN ('dbt', 'python', 'python-odcs', 'ontology')))
 );
 

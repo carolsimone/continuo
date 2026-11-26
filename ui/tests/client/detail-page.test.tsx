@@ -74,7 +74,7 @@ function freshRoutes() {
       tasks: [
         {
           task_id: 't1',
-          service_name: 'svc1',
+          project_name: 'svc1',
           schema_name: 'public',
           table_name: 'orders',
           job_name: 'orders',
@@ -794,7 +794,7 @@ function latestRoutes() {
       tasks: [
         {
           task_id: 't1',
-          service_name: 'svc',
+          project_name: 'svc',
           schema_name: 'sch',
           table_name: 'a',
           job_name: '',
@@ -1128,7 +1128,7 @@ describe('DetailPage — Run tab polling', () => {
   });
   const taskAt = (status: string) => ({
     tasks: [{
-      task_id: 't1', service_name: 'svc1', schema_name: 'public', table_name: 'orders',
+      task_id: 't1', project_name: 'svc1', schema_name: 'public', table_name: 'orders',
       job_name: 'orders', status, attempt: 0, max_retries: 0, created_at: null,
     }],
   });
@@ -1201,7 +1201,7 @@ describe('DetailPage — Run tab polling', () => {
       [`/api/runs/${OLD_RUN_ID}/tasks`]: async () => ({
         total_count: 1,
         tasks: [{
-          task_id: 'old-t1', service_name: 'svc1', schema_name: 'public', table_name: 'old_orders',
+          task_id: 'old-t1', project_name: 'svc1', schema_name: 'public', table_name: 'old_orders',
           job_name: '', status: 'failed', attempt: 0, max_retries: 0, created_at: null,
         }],
       }),
@@ -1361,7 +1361,7 @@ describe('DetailPage — historical run attempts', () => {
         total_count: 1,
         tasks: [
           {
-            task_id: 'old-t1', service_name: 'svc1', schema_name: 'public', table_name: 'old_orders',
+            task_id: 'old-t1', project_name: 'svc1', schema_name: 'public', table_name: 'old_orders',
             job_name: '', status: 'failed', attempt: 1, max_retries: 1, created_at: null,
           },
         ],
@@ -1440,11 +1440,11 @@ describe('DetailPage — historical run attempts', () => {
   });
 });
 
-describe('DetailPage — Run List service grouping', () => {
+describe('DetailPage — Run List project grouping', () => {
   const NODE_A = 'svc1.public.orders';
   const NODE_B = 'svc2.public.payments';
 
-  function multiServiceRoutes() {
+  function multiProjectRoutes() {
     return {
       ...failedRoutes(),
       [`/api/runs/${RUN_ID}/graph`]: async () => ({
@@ -1459,11 +1459,11 @@ describe('DetailPage — Run List service grouping', () => {
       [`/api/runs/${RUN_ID}/tasks`]: async () => ({
         tasks: [
           {
-            task_id: 't1', service_name: 'svc1', schema_name: 'public', table_name: 'orders',
+            task_id: 't1', project_name: 'svc1', schema_name: 'public', table_name: 'orders',
             job_name: '', status: 'succeeded', attempt: 0, max_retries: 0, created_at: null,
           },
           {
-            task_id: 't2', service_name: 'svc2', schema_name: 'public', table_name: 'payments',
+            task_id: 't2', project_name: 'svc2', schema_name: 'public', table_name: 'payments',
             job_name: '', status: 'failed', attempt: 0, max_retries: 0, created_at: null,
           },
         ],
@@ -1471,19 +1471,19 @@ describe('DetailPage — Run List service grouping', () => {
     };
   }
 
-  // Node rows carry the table_name in `.nodes-node-name`; a service is
+  // Node rows carry the table_name in `.nodes-node-name`; a project is
   // expanded when its rows are present, collapsed when only the group header
   // shows.
   function tableNodeNames(container: HTMLElement): (string | null)[] {
     return [...container.querySelectorAll('.nodes-node-name')].map(el => el.textContent);
   }
 
-  it('defaults service groups to collapsed when several services exist', async () => {
-    vi.stubGlobal('fetch', mockFetchSequence(multiServiceRoutes()));
+  it('defaults project groups to collapsed when several projects exist', async () => {
+    vi.stubGlobal('fetch', mockFetchSequence(multiProjectRoutes()));
     try {
       const { container } = render(withRouter({ last_run_id: RUN_ID }));
 
-      // One collapsible header per service; the node rows are hidden until a
+      // One collapsible header per project; the node rows are hidden until a
       // group is opened.
       await waitFor(() => {
         expect(container.querySelectorAll('.nodes-group-row')).toHaveLength(2);
@@ -1496,7 +1496,7 @@ describe('DetailPage — Run List service grouping', () => {
   });
 
   it('expanding a group reveals its node rows while the other stays collapsed', async () => {
-    vi.stubGlobal('fetch', mockFetchSequence(multiServiceRoutes()));
+    vi.stubGlobal('fetch', mockFetchSequence(multiProjectRoutes()));
     try {
       const { container } = render(withRouter({ last_run_id: RUN_ID }));
       await waitFor(() => {
@@ -1510,7 +1510,7 @@ describe('DetailPage — Run List service grouping', () => {
       await waitFor(() => {
         expect(tableNodeNames(container)).toContain('orders');
       });
-      // The other service stays collapsed.
+      // The other project stays collapsed.
       expect(tableNodeNames(container)).not.toContain('payments');
     } finally {
       vi.unstubAllGlobals();
@@ -1518,7 +1518,7 @@ describe('DetailPage — Run List service grouping', () => {
   });
 
   it('collapsing an expanded group hides its node rows again', async () => {
-    vi.stubGlobal('fetch', mockFetchSequence(multiServiceRoutes()));
+    vi.stubGlobal('fetch', mockFetchSequence(multiProjectRoutes()));
     try {
       const { container } = render(withRouter({ last_run_id: RUN_ID }));
       await waitFor(() => {
@@ -1685,7 +1685,7 @@ describe('DetailPage — arrival and teardown', () => {
   const taskRows = (table: string, status = 'failed') => ({
     total_count: 1,
     tasks: [{
-      task_id: `t-${table}`, service_name: 'svc1', schema_name: 'public', table_name: table,
+      task_id: `t-${table}`, project_name: 'svc1', schema_name: 'public', table_name: table,
       job_name: table, status, attempt: 0, max_retries: 0, created_at: null,
     }],
   });
@@ -1928,7 +1928,7 @@ describe('DetailPage — following the newest run', () => {
   const taskRows = (table: string, status = 'succeeded') => ({
     total_count: 1,
     tasks: [{
-      task_id: `t-${table}`, service_name: 'svc1', schema_name: 'public', table_name: table,
+      task_id: `t-${table}`, project_name: 'svc1', schema_name: 'public', table_name: table,
       job_name: table, status, attempt: 0, max_retries: 0, created_at: null,
     }],
   });
@@ -2147,7 +2147,7 @@ describe('DetailPage — following the newest run', () => {
 describe('DetailPage — the release link of the shown run', () => {
   const OLD_RUN_ID = 'run-old';
   const taskRow = (name: string) => ({
-    task_id: `t-${name}`, service_name: 'svc1', schema_name: 'public', table_name: name,
+    task_id: `t-${name}`, project_name: 'svc1', schema_name: 'public', table_name: name,
     job_name: '', status: 'failed', attempt: 0, max_retries: 0, created_at: null,
   });
   const latestRun = {

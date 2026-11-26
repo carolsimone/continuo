@@ -11,7 +11,7 @@ func TestReleasePromotedTopologyNode_Fields(t *testing.T) {
 		UniqueID:          "model.svc_a.table_x",
 		SchemaName:        "public",
 		TableName:         "table_x",
-		ServiceName:       "svc_a",
+		ProjectName:       "svc_a",
 		ImageTag:          "sha256:aabbcc",
 		Schedule:          "0 * * * *",
 		UpstreamUniqueIDs: []string{"model.svc_b.table_y", "model.svc_c.table_z"},
@@ -26,8 +26,8 @@ func TestReleasePromotedTopologyNode_Fields(t *testing.T) {
 	if node.TableName != "table_x" {
 		t.Errorf("TableName: got %q", node.TableName)
 	}
-	if node.ServiceName != "svc_a" {
-		t.Errorf("ServiceName: got %q", node.ServiceName)
+	if node.ProjectName != "svc_a" {
+		t.Errorf("ProjectName: got %q", node.ProjectName)
 	}
 	if node.ImageTag != "sha256:aabbcc" {
 		t.Errorf("ImageTag: got %q", node.ImageTag)

@@ -26,7 +26,7 @@ import (
 
 // The agent-remediation database keeps its outbox in agent_remediation_outbox:
 // the table, its constraints, its indexes and the trigger that notifies its
-// relay all carry the service's name, and the relay targets the same table
+// relay all carry the project's name, and the relay targets the same table
 // through OutboxTable.
 func TestOutboxTableIsAgentRemediationOutbox(t *testing.T) {
 	db := newTestDB(t)

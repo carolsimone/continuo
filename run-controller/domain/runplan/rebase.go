@@ -32,7 +32,7 @@ import (
 // is compared with the release of the run that built it, not with the source
 // run's own release: a fix promoted after that run is a change even when the
 // source run itself is on a release that holds the fix. Its image tag, test
-// count, unique id and owning service are not compared: a service release
+// count, unique id and owning project are not compared: a project release
 // moves the image of every node it owns.
 type Rebase struct {
 	Source                 Source
@@ -57,7 +57,7 @@ type Preview struct {
 	Inherited       int
 	// Changed lists every changed node the widening adds that has a
 	// descendant in g — the nodes IncludeChangedUpstream adds as changed
-	// upstream — whether or not the option is set, ordered by service, schema
+	// upstream — whether or not the option is set, ordered by project, schema
 	// and table.
 	Changed []ChangedNode
 }
@@ -75,7 +75,7 @@ func (p Preview) Total() int { return p.WillRun() + p.Inherited }
 // the live schedule graph.
 type ChangedNode struct {
 	Key         topology.NodeKey
-	ServiceName string
+	ProjectName string
 	SchemaName  string
 	TableName   string
 	Downstream  int
@@ -204,7 +204,7 @@ func widen(g topology.Graph, closure map[topology.NodeKey]bool, changed func(top
 }
 
 // changedUpstream returns the changed nodes widening added to closure that
-// have a descendant in g, ordered by service, schema and table. widened is
+// have a descendant in g, ordered by project, schema and table. widened is
 // closed under descendants, so each such descendant is one widened executes.
 func changedUpstream(g topology.Graph, closure, widened map[topology.NodeKey]bool, changed func(topology.NodeKey) bool) []ChangedNode {
 	var out []ChangedNode
@@ -214,13 +214,13 @@ func changedUpstream(g topology.Graph, closure, widened map[topology.NodeKey]boo
 		}
 		n, _ := g.Node(k)
 		out = append(out, ChangedNode{
-			Key: k, ServiceName: n.ServiceName, SchemaName: n.SchemaName, TableName: n.TableName,
+			Key: k, ProjectName: n.ProjectName, SchemaName: n.SchemaName, TableName: n.TableName,
 			Downstream: len(g.Descendants([]topology.NodeKey{k})),
 		})
 	}
 	slices.SortFunc(out, func(a, b ChangedNode) int {
 		return cmp.Or(
-			cmp.Compare(a.ServiceName, b.ServiceName),
+			cmp.Compare(a.ProjectName, b.ProjectName),
 			cmp.Compare(a.SchemaName, b.SchemaName),
 			cmp.Compare(a.TableName, b.TableName),
 			cmp.Compare(a.Key, b.Key),

@@ -50,7 +50,7 @@ func TestBuildNode_SuccessEmitsJSON(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
 	assert.Equal(t, "run_9", payload["run_id"])
 	assert.Equal(t, "single-node-run-abcd1234", payload["schedule_name"])
-	assert.Equal(t, "finance", fake.gotBuildSvc)
+	assert.Equal(t, "finance", fake.gotBuildProject)
 	assert.Equal(t, "analytics", fake.gotBuildSchema)
 	assert.Equal(t, "orders", fake.gotBuildTable)
 }
@@ -181,6 +181,6 @@ func TestBuildNode_EmptySourceRunArgExits2WithoutCalling(t *testing.T) {
 		var env map[string]output.CLIError
 		require.NoError(t, json.Unmarshal([]byte(stdout), &env))
 		assert.Equal(t, output.CodeUsage, env["error"].Code)
-		assert.Equal(t, "", fake.gotBuildSvc, "the run-controller service must not be called")
+		assert.Equal(t, "", fake.gotBuildProject, "the run-controller service must not be called")
 	}
 }

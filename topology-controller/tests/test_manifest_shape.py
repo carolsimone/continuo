@@ -147,7 +147,7 @@ def _released(tmp_path, document):
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(document))
     publisher = MagicMock()
-    source = source_of(ManifestFile(path=str(path), image_tag="", declared_service="service-1"))
+    source = source_of(ManifestFile(path=str(path), image_tag="", declared_project="service-1"))
     timings = build_handler(source, publisher, make_uploader()).handle(release_id="rel-1")
     return publisher, timings
 

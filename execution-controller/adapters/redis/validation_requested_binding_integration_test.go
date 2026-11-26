@@ -55,7 +55,7 @@ func buildValidationBinding(db *sqlx.DB) (func(ctx context.Context, msg goredis.
 // validation.requested:v1 "payload" JSON body.
 type validationNode struct {
 	UniqueID    string `json:"unique_id"`
-	ServiceName string `json:"service_name"`
+	ProjectName string `json:"project_name"`
 	NodeType    string `json:"node_type"`
 	SchemaName  string `json:"schema_name"`
 	TableName   string `json:"table_name"`
@@ -72,7 +72,7 @@ func validationRequestedXMessage(t *testing.T, msgID, releaseID string, nodeIDs 
 	for _, id := range nodeIDs {
 		nodes = append(nodes, validationNode{
 			UniqueID:    id,
-			ServiceName: "shop",
+			ProjectName: "shop",
 			NodeType:    "dbt-model",
 			SchemaName:  "public",
 			TableName:   id,

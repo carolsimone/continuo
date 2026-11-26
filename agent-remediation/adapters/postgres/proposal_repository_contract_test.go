@@ -65,7 +65,7 @@ func TestProposalRepository_ReopenTryAttemptMovesOnlyItsFailedRowBack(t *testing
 		require.False(t, hit, "a row in flight is not reopened")
 
 		edits := []proposal.FileEdit{{Path: "models/a.sql", ContentURI: "s3://c", DiffURI: "s3://d", TargetNodeID: "model.a", MemberNodeIDs: []string{"model.a"}}}
-		runs := []proposal.Verification{{Service: "svc", Kind: "dbt", RunID: "run-1", Phase: proposal.PhaseQueued}}
+		runs := []proposal.Verification{{Project: "svc", Kind: "dbt", RunID: "run-1", Phase: proposal.PhaseQueued}}
 		verifyingOutcomes := map[string]proposal.NodeOutcome{"model.a": {Status: proposal.StatusVerifying}, "model.c": handedOver}
 		require.NoError(t, env.proposals.Upsert(ctx, proposal.Proposal{
 			Source: "validation", ReleaseID: "rel-reopen", RemediationID: r.ID.String(), NodeID: "model.a",

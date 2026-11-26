@@ -23,7 +23,7 @@ import (
 // the same contract genuinely can succeed.
 var ErrContractRejected = errors.New("the packaging tool refused the contract")
 
-// ContractPackager packs the ODCS contracts of a service's contract directory
+// ContractPackager packs the ODCS contracts of a project's contract directory
 // into the odcs-bundle.json a python-odcs release is submitted with, by running
 // the same tool the team's CI runs for a release. A python fix is packed by
 // that tool, so its bundle is read by topology-controller for the same reason
@@ -31,13 +31,13 @@ var ErrContractRejected = errors.New("the packaging tool refused the contract")
 type ContractPackager interface {
 	// Pack runs `continuo-runtime pack` against contractDir, resolving the
 	// node scripts and their in-repo import closure against repoRoot,
-	// labelling the bundle with service, checking declared reads under
+	// labelling the bundle with project, checking declared reads under
 	// dialect and recording imagePackages (package name to version) as the
-	// package list of the image the service runs. It returns the bundle's
+	// package list of the image the project runs. It returns the bundle's
 	// bytes exactly as the CLI wrote them.
 	//
-	// repoRoot is the SERVICE's own directory — the parent of contractDir,
-	// and the same directory the service's runtime image uses as its
+	// repoRoot is the project's own directory — the parent of contractDir,
+	// and the same directory the project's runtime image uses as its
 	// application root — never the enclosing monorepo root. Every script path
 	// a contract declares is relative to it, and the shared-code hashes fold
 	// the import closure discovered beneath it, so passing the monorepo root
@@ -45,5 +45,5 @@ type ContractPackager interface {
 	// files: the hashes then disagree with the ones the team's own CI produced
 	// for the identical source, and the release is rejected for a mismatch
 	// that has nothing to do with the fix.
-	Pack(ctx context.Context, contractDir, repoRoot, service, dialect string, imagePackages map[string]string) ([]byte, error)
+	Pack(ctx context.Context, contractDir, repoRoot, project, dialect string, imagePackages map[string]string) ([]byte, error)
 }

@@ -46,7 +46,7 @@ func TestBuildPodSpec_HydratesProdParseCache(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
 
 	params := JobParams{
-		ServiceName: "service-1",
+		ProjectName: "service-1",
 		ImageTag:    "abc123",
 		NodeType:    pkg_model.NodeTypeDbtModel,
 		TableName:   "orders",
@@ -60,7 +60,7 @@ func TestBuildPodSpec_HydratesProdParseCache(t *testing.T) {
 		{Name: "TASK_ATTEMPT", Value: "0"},
 		{Name: "SCHEDULE_ID", Value: params.RunID},
 		{Name: "SCHEDULE_NAME", Value: params.ScheduleName},
-		{Name: "SERVICE_NAME", Value: params.ServiceName},
+		{Name: "PROJECT_NAME", Value: params.ProjectName},
 		{Name: "SCHEMA", Value: params.SchemaName},
 		{Name: "TABLE_NAME", Value: params.TableName},
 		{Name: "JOB_NAME", Value: params.JobName},
@@ -119,7 +119,7 @@ func TestBuildPodSpec_NoHydrationWithoutBucket(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
 
 	params := JobParams{
-		ServiceName: "service-1",
+		ProjectName: "service-1",
 		ImageTag:    "abc123",
 		NodeType:    pkg_model.NodeTypeDbtModel,
 		TableName:   "orders",
@@ -147,7 +147,7 @@ func TestBuildSeedBuildPodSpec_HydratesCandidateParseCache(t *testing.T) {
 
 	p := validationParams()
 	p.ReleaseID = "rel123"
-	p.ServiceName = "service-1"
+	p.ProjectName = "service-1"
 	command := []string{"dbt", "seed", "--select", p.TableName}
 	wantCommand := append([]string(nil), command...)
 	// Team container inline env is exactly the ValidationJobParams-derived vars
@@ -156,7 +156,7 @@ func TestBuildSeedBuildPodSpec_HydratesCandidateParseCache(t *testing.T) {
 	wantEnv := []corev1.EnvVar{
 		{Name: "RELEASE_ID", Value: p.ReleaseID},
 		{Name: "NODE_ID", Value: p.NodeID},
-		{Name: "SERVICE_NAME", Value: p.ServiceName},
+		{Name: "PROJECT_NAME", Value: p.ProjectName},
 		{Name: "SCHEMA", Value: p.SchemaName},
 		{Name: "TABLE_NAME", Value: p.TableName},
 		{Name: "JOB_NAME", Value: p.JobName},
@@ -230,7 +230,7 @@ func TestWarehouseSecretEnvFromDriftGuard(t *testing.T) {
 	require.Equal(t, wantWarehouseEnvFrom(), want)
 
 	runSpec, err := buildPodSpec(JobParams{
-		ServiceName: "service-1",
+		ProjectName: "service-1",
 		ImageTag:    "abc123",
 		NodeType:    pkg_model.NodeTypeDbtModel,
 		TableName:   "orders",
@@ -275,7 +275,7 @@ func TestWarehouseSecretEnvFromDriftGuard(t *testing.T) {
 func TestBuildPodSpecFailsPermanentWithoutWarehouseSecret(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "")
 	_, err := buildPodSpec(JobParams{
-		ServiceName: "service-1",
+		ProjectName: "service-1",
 		ImageTag:    "abc123",
 		NodeType:    pkg_model.NodeTypeDbtModel,
 		TableName:   "orders",

@@ -21,7 +21,7 @@ import (
 // idx_topology_edges_downstream, tasks by uq_tasks_run_node.
 const readyCandidatesQuery = `
 	SELECT t.task_id, t.job_name, t.operation, t.plan_reason, t.seed_preflight,
-	       n.node_key, n.unique_id, n.service_name, n.schema_name, n.table_name, n.node_type, n.test_count,
+	       n.node_key, n.unique_id, n.project_name, n.schema_name, n.table_name, n.node_type, n.test_count,
 	       n.content_hash, n.seed_columns_hash, n.image_tag, n.secret_ref, n.schedule_name, n.timeout_seconds,
 	       ARRAY(
 	           SELECT ut.status::text

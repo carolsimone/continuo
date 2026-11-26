@@ -24,7 +24,7 @@ const maxRationaleUpstream = 3
 func rationaleFactsFor(t remediation.Trigger, c remediation.Cluster, d remediation.Draft) proposal.RationaleFacts {
 	f := proposal.RationaleFacts{
 		TargetNodeID:  c.TargetNodeID,
-		CrossService:  c.Kind == workflow.ClusterCrossService,
+		CrossProject:  c.Kind == workflow.ClusterCrossProject,
 		ModelNote:     d.Rationale,
 		UpstreamKnown: t.Source == "validation",
 	}
@@ -34,14 +34,14 @@ func rationaleFactsFor(t remediation.Trigger, c remediation.Cluster, d remediati
 		if !ok {
 			continue
 		}
-		f.Members = append(f.Members, proposal.RationaleMember{NodeID: n.NodeID, Service: n.Service, ErrorLine: proposal.RedactDataValues(sanitize.Text(n.ErrorExcerpt))})
+		f.Members = append(f.Members, proposal.RationaleMember{NodeID: n.NodeID, Project: n.Project, ErrorLine: proposal.RedactDataValues(sanitize.Text(n.ErrorExcerpt))})
 		for _, a := range n.ChangedAncestors {
 			if cur, seen := nearest[a.NodeID]; !seen || a.Depth < cur.Depth {
-				nearest[a.NodeID] = proposal.RationaleUpstream{NodeID: a.NodeID, Service: a.Service, Depth: a.Depth}
+				nearest[a.NodeID] = proposal.RationaleUpstream{NodeID: a.NodeID, Project: a.Project, Depth: a.Depth}
 			}
 		}
 	}
-	f.TargetService = nearest[c.TargetNodeID].Service
+	f.TargetProject = nearest[c.TargetNodeID].Project
 	for _, u := range nearest {
 		f.Upstream = append(f.Upstream, u)
 	}

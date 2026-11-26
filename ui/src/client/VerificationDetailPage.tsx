@@ -4,7 +4,7 @@ import PageHeader from './PageHeader';
 import { VerificationRunDetail } from './types';
 import { reasonLabel, releasePillClass, verificationRunPhase } from './release-helpers';
 import { NodeResultsTable } from './node-results';
-import ServiceTiles from './ServiceTiles';
+import ProjectTiles from './ProjectTiles';
 import PipelineTimeline from './PipelineTimeline';
 
 const POLL_INTERVAL_MS = 5000;
@@ -75,7 +75,7 @@ export default function VerificationDetailPage() {
         <span className="page-sub__sep">·</span>
         attempt {run.attempt}
         <span className="page-sub__sep">·</span>
-        service {run.changed_service}
+        project {run.changed_project}
         <span className="page-sub__sep">·</span>
         {run.manifest_kind}
       </p>
@@ -94,9 +94,9 @@ export default function VerificationDetailPage() {
 
       <main className="page-content page-content--readable">
         <p>Submitted {fmt(run.created_at)} · started {fmt(run.activated_at)} · finished {fmt(run.finished_at)}</p>
-        <ServiceTiles
+        <ProjectTiles
           imageTags={run.image_tags || {}}
-          changedService={run.changed_service}
+          changedProject={run.changed_project}
           subject="verification run"
           carriedFrom={run.verifies_release_id}
         />

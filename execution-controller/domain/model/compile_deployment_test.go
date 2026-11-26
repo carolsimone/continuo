@@ -15,7 +15,7 @@ func compileCmd() command.ValidationDeployTask {
 	return command.ValidationDeployTask{
 		ReleaseID:     "rel-compile-2026",
 		NodeID:        "finance",
-		ServiceName:   "finance",
+		ProjectName:   "finance",
 		ImageTag:      "sha-compile1",
 		JobName:       "compile-rel-compile-2026-finance",
 		ManifestS3URI: "s3://my-bucket/finance/rel-compile-2026/manifest.json",
@@ -68,7 +68,7 @@ func TestNewCompileDeployment_ValidationCommandStored(t *testing.T) {
 	got := d.ValidationCommand()
 	assert.Equal(t, cmd.ReleaseID, got.ReleaseID)
 	assert.Equal(t, cmd.NodeID, got.NodeID)
-	assert.Equal(t, cmd.ServiceName, got.ServiceName)
+	assert.Equal(t, cmd.ProjectName, got.ProjectName)
 	assert.Equal(t, cmd.ImageTag, got.ImageTag)
 	assert.Equal(t, cmd.JobName, got.JobName)
 	assert.Equal(t, cmd.ManifestS3URI, got.ManifestS3URI)
@@ -76,12 +76,12 @@ func TestNewCompileDeployment_ValidationCommandStored(t *testing.T) {
 
 func TestNewCompileDeployment_IsDeployable(t *testing.T) {
 	now := time.Now()
-	// Compile jobs have no NodeType — the full service manifest is compiled,
+	// Compile jobs have no NodeType — the full project manifest is compiled,
 	// not a single dbt node. IsDeployable only requires identity + image.
 	cmd := command.ValidationDeployTask{
 		ReleaseID:   "rel-1",
 		NodeID:      "finance",
-		ServiceName: "finance",
+		ProjectName: "finance",
 		ImageTag:    "sha-1",
 		JobName:     "compile-rel-1-finance",
 	}

@@ -12,7 +12,7 @@ func TestComputeJobName(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		service     string
+		project     string
 		schema      string
 		table       string
 		runID       string
@@ -22,7 +22,7 @@ func TestComputeJobName(t *testing.T) {
 	}{
 		{
 			name:     "simple case",
-			service:  "analytics",
+			project:  "analytics",
 			schema:   "public",
 			table:    "users",
 			runID:    runID,
@@ -30,7 +30,7 @@ func TestComputeJobName(t *testing.T) {
 		},
 		{
 			name:     "uppercase converted to lowercase",
-			service:  "Analytics",
+			project:  "Analytics",
 			schema:   "PUBLIC",
 			table:    "Users",
 			runID:    runID,
@@ -38,7 +38,7 @@ func TestComputeJobName(t *testing.T) {
 		},
 		{
 			name:     "underscores converted to hyphens",
-			service:  "my_service",
+			project:  "my_service",
 			schema:   "prod_schema",
 			table:    "user_table",
 			runID:    runID,
@@ -46,7 +46,7 @@ func TestComputeJobName(t *testing.T) {
 		},
 		{
 			name:     "dots converted to hyphens",
-			service:  "prod.service",
+			project:  "prod.service",
 			schema:   "public.schema",
 			table:    "user.table",
 			runID:    runID,
@@ -54,7 +54,7 @@ func TestComputeJobName(t *testing.T) {
 		},
 		{
 			name:     "special chars sanitized",
-			service:  "my@service",
+			project:  "my@service",
 			schema:   "prod#schema",
 			table:    "user$table",
 			runID:    runID,
@@ -62,7 +62,7 @@ func TestComputeJobName(t *testing.T) {
 		},
 		{
 			name:     "consecutive hyphens collapsed",
-			service:  "my--service",
+			project:  "my--service",
 			schema:   "prod___schema",
 			table:    "user..table",
 			runID:    runID,
@@ -70,7 +70,7 @@ func TestComputeJobName(t *testing.T) {
 		},
 		{
 			name:     "leading and trailing hyphens removed",
-			service:  "-service",
+			project:  "-service",
 			schema:   "_schema_",
 			table:    "table-",
 			runID:    runID,
@@ -78,7 +78,7 @@ func TestComputeJobName(t *testing.T) {
 		},
 		{
 			name:    "max length truncation at 63 chars",
-			service: "very-long-service-name-that-exceeds-kubernetes-limits-significantly",
+			project: "very-long-service-name-that-exceeds-kubernetes-limits-significantly",
 			schema:  "very-long-schema-name",
 			table:   "very-long-table-name",
 			runID:   runID,
@@ -89,7 +89,7 @@ func TestComputeJobName(t *testing.T) {
 		},
 		{
 			name:     "all numeric values",
-			service:  "123",
+			project:  "123",
 			schema:   "456",
 			table:    "789",
 			runID:    runID,
@@ -97,15 +97,15 @@ func TestComputeJobName(t *testing.T) {
 		},
 		{
 			name:     "mixed alphanumeric",
-			service:  "service1",
+			project:  "service1",
 			schema:   "schema2",
 			table:    "table3",
 			runID:    runID,
 			expected: "service1-schema2-table3-" + shortSuffix,
 		},
 		{
-			name:    "empty service/schema/table but valid runID suffix",
-			service: "___",
+			name:    "empty project/schema/table but valid runID suffix",
+			project: "___",
 			schema:  "...",
 			table:   "!!!",
 			runID:   runID,
@@ -114,7 +114,7 @@ func TestComputeJobName(t *testing.T) {
 		},
 		{
 			name:     "only special characters but valid runID suffix",
-			service:  "@#$",
+			project:  "@#$",
 			schema:   "%^&",
 			table:    "*()",
 			runID:    runID,
@@ -122,7 +122,7 @@ func TestComputeJobName(t *testing.T) {
 		},
 		{
 			name:     "unicode characters converted",
-			service:  "sėrvicė",
+			project:  "sėrvicė",
 			schema:   "schēma",
 			table:    "tåble",
 			runID:    runID,
@@ -130,7 +130,7 @@ func TestComputeJobName(t *testing.T) {
 		},
 		{
 			name:     "already compliant name",
-			service:  "query-executor",
+			project:  "query-executor",
 			schema:   "public",
 			table:    "metrics-v2",
 			runID:    runID,
@@ -138,7 +138,7 @@ func TestComputeJobName(t *testing.T) {
 		},
 		{
 			name:     "runID longer than 8 chars uses only first 8",
-			service:  "svc",
+			project:  "svc",
 			schema:   "sc",
 			table:    "t",
 			runID:    "abcdef12-longer-uuid-string",
@@ -146,7 +146,7 @@ func TestComputeJobName(t *testing.T) {
 		},
 		{
 			name:     "runID exactly 8 chars",
-			service:  "svc",
+			project:  "svc",
 			schema:   "sc",
 			table:    "t",
 			runID:    "abcdef12",
@@ -157,7 +157,7 @@ func TestComputeJobName(t *testing.T) {
 			// sanitizes to 65 characters, keeps 47 with a hash of the full
 			// prefix, and the 8-character run-id suffix keeps runs distinct.
 			name:     "suffix preserved when prefix exceeds 54 chars",
-			service:  "very-long-service-name",
+			project:  "very-long-service-name",
 			schema:   "very-long-schema-name",
 			table:    "very-long-table-name",
 			runID:    "a1b2c3d4-xxxx",
@@ -166,7 +166,7 @@ func TestComputeJobName(t *testing.T) {
 		{
 			// Regression: two runs with the same long prefix must NOT collide.
 			name:     "different schedule IDs produce different names for long prefix",
-			service:  "very-long-service-name",
+			project:  "very-long-service-name",
 			schema:   "very-long-schema-name",
 			table:    "very-long-table-name",
 			runID:    "b5c6d7e8-yyyy",
@@ -174,7 +174,7 @@ func TestComputeJobName(t *testing.T) {
 		},
 		{
 			name:     "attempt 1 appends -r1",
-			service:  "analytics",
+			project:  "analytics",
 			schema:   "public",
 			table:    "users",
 			runID:    runID,
@@ -186,7 +186,7 @@ func TestComputeJobName(t *testing.T) {
 			// characters of the full prefix's SHA-256; the run-id suffix stays
 			// whole and the name is exactly 63 characters.
 			name:     "attempt 1 at the length limit keeps the run-id suffix and tags the cut prefix",
-			service:  "very-long-service-name",
+			project:  "very-long-service-name",
 			schema:   "very-long-schema-name",
 			table:    "very-long-table-name",
 			runID:    "a1b2c3d4-xxxx",
@@ -196,7 +196,7 @@ func TestComputeJobName(t *testing.T) {
 		{
 			// A cut that ends on a hyphen is trimmed, so no name holds "--".
 			name:     "attempt 10 at the length limit trims the hyphen the cut leaves",
-			service:  "very-long-service-name",
+			project:  "very-long-service-name",
 			schema:   "very-long-schema-na",
 			table:    "very-long-table-name",
 			runID:    "a1b2c3d4-xxxx",
@@ -205,7 +205,7 @@ func TestComputeJobName(t *testing.T) {
 		},
 		{
 			name:        "negative attempt is refused",
-			service:     "svc",
+			project:     "svc",
 			schema:      "sc",
 			table:       "t",
 			runID:       runID,
@@ -216,7 +216,7 @@ func TestComputeJobName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := ComputeJobName(tt.service, tt.schema, tt.table, tt.runID, tt.attempt)
+			result, err := ComputeJobName(tt.project, tt.schema, tt.table, tt.runID, tt.attempt)
 
 			if tt.expectError {
 				if err == nil {

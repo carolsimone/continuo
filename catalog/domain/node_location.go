@@ -16,8 +16,8 @@ var ErrNodeNotFound = errors.New("node not found")
 var ErrUnitNotFound = errors.New("code unit not found")
 
 // NodeLocation is where a node's source lives: the project-relative file path
-// captured from the manifest, and the service that owns the node.
+// captured from the manifest, and the project that owns the node.
 type NodeLocation struct {
 	FilePath    string
-	ServiceName string
+	ProjectName string
 }

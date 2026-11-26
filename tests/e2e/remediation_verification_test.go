@@ -28,8 +28,8 @@ const (
 // ybreak_down; a run that cloned ybreak_up from production would pass the
 // broken fix.
 //
-// Both fixtures live in service-2 on purpose: a cross-service failure is fixed
-// at the producer, so only a same-service pair exercises a consumer-side fix.
+// Both fixtures live in service-2 on purpose: a cross-project failure is fixed
+// at the producer, so only a same-project pair exercises a consumer-side fix.
 //
 // The flow's tries let the runner retry the same stub answer after this test
 // returns; those later verification runs fail the same way and drain through
@@ -49,29 +49,29 @@ func TestE2E_Verification_FailsConsumerFixThatIgnoresChangedUpstream(t *testing.
 	requireReleaseControllerHealthy(t, clients)
 
 	releaseID := "e2e-ver-seed-" + uuid.NewString()[:8]
-	changedService := "service-2"
-	t.Logf("release_id=%s changed_service=%s changed_node=%s expected_failure=%s",
-		releaseID, changedService, ybreakUpUniqueID, ybreakDownUniqueID)
+	changedProject := "service-2"
+	t.Logf("release_id=%s changed_project=%s changed_node=%s expected_failure=%s",
+		releaseID, changedProject, ybreakUpUniqueID, ybreakDownUniqueID)
 
 	// 1. Production holds every baseline node; ybreak_up at a stale hash so it
 	//    is the release's only changed node, ybreak_down at its real hash so it
 	//    is pulled in only as a descendant.
-	allServices := baselineServices(t, ctx, clients)
-	require.NotEmpty(t, allServices,
-		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
-	changedImageTag := allServices[changedService].imageTag
-	require.NotEmpty(t, changedImageTag, "image_tag missing for %s — setup.sh must seed service_prod", changedService)
+	allProjects := baselineProjects(t, ctx, clients)
+	require.NotEmpty(t, allProjects,
+		"no baseline manifests under s3://%s/<project>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
+	changedImageTag := allProjects[changedProject].imageTag
+	require.NotEmpty(t, changedImageTag, "image_tag missing for %s — setup.sh must seed service_prod", changedProject)
 
 	seen := map[string]bool{}
 	var prodNodes []map[string]string
-	for svc, si := range allServices {
+	for svc, si := range allProjects {
 		for _, n := range si.nodes {
 			seen[n.uniqueID] = true
 			hash := n.contentHash
 			if n.uniqueID == ybreakUpUniqueID {
 				hash = "stale-" + hash
 			}
-			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "service": svc, "content_hash": hash})
+			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "project": svc, "content_hash": hash})
 		}
 	}
 	for _, id := range []string{ybreakUpUniqueID, ybreakDownUniqueID} {
@@ -84,19 +84,19 @@ func TestE2E_Verification_FailsConsumerFixThatIgnoresChangedUpstream(t *testing.
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allServices)
+	seedServiceProd(t, ctx, clients, allProjects)
 	seedModelTopologyNodes(t, ctx, clients,
-		topologyModel{uniqueID: ybreakUpUniqueID, schema: "e2e_schema", table: "ybreak_up", service: changedService, filePath: "models/ybreak_up.sql"},
-		topologyModel{uniqueID: ybreakDownUniqueID, schema: "e2e_schema", table: "ybreak_down", service: changedService, filePath: "models/ybreak_down.sql"},
+		topologyModel{uniqueID: ybreakUpUniqueID, schema: "e2e_schema", table: "ybreak_up", project: changedProject, filePath: "models/ybreak_up.sql"},
+		topologyModel{uniqueID: ybreakDownUniqueID, schema: "e2e_schema", table: "ybreak_down", project: changedProject, filePath: "models/ybreak_down.sql"},
 	)
 
 	// 2. The release is rejected on the consumer alone.
-	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
+	postRelease(t, clients, changedProject, releaseID, changedImageTag, false)
 	waitForReleaseRejected(t, ctx, clients, releaseID, batchRejectBudget)
 	failing := releaseFailingNodes(t, ctx, clients, releaseID)
 	require.Equal(t, []string{ybreakDownUniqueID}, failing, "only the consumer of the dropped column may fail; got %v", failing)
 
-	// 3. One failing node, whose changed ancestor is in its own service, so the
+	// 3. One failing node, whose changed ancestor is in its own project, so the
 	//    agent fixes the consumer itself.
 	trigger := waitForBatchedTrigger(t, ctx, requestedTap, releaseID, []string{ybreakDownUniqueID}, batchTriggerBudget)
 	require.Len(t, trigger.Nodes, 1, "the trigger must carry exactly the failing consumer; got %v", triggerNodeIDs(trigger))
@@ -112,7 +112,7 @@ func TestE2E_Verification_FailsConsumerFixThatIgnoresChangedUpstream(t *testing.
 
 	verifications := decodeVerifications(t, verifying.Verifications)
 	require.Len(t, verifications, 1)
-	require.Equal(t, changedService, verifications[0].Service)
+	require.Equal(t, changedProject, verifications[0].Project)
 	runID := verifications[0].RunID
 	require.NotEmpty(t, runID)
 	assertPipelineNamedVerification(t, ctx, clients, runID, batchVerifyBudget)

@@ -76,7 +76,7 @@ func (s *ChangedAncestorDiffs) Gather(ctx context.Context, in step.ContextInput)
 		} else {
 			diff = s.changes.Diff(ctx, a.NodeID, src.RawCode)
 		}
-		out = append(out, prompt.ReleaseUpstreamChange{NodeID: a.NodeID, Service: a.Service, Depth: a.Depth, Diff: diff})
+		out = append(out, prompt.ReleaseUpstreamChange{NodeID: a.NodeID, Project: a.Project, Depth: a.Depth, Diff: diff})
 	}
 	return step.ContextOutput{Evidence: map[remediation.EvidenceKey]any{
 		remediation.KeyChangedAncestorDiffs: out,

@@ -16,7 +16,7 @@ import (
 
 // SeedBuildRequestedHandler processes seed.build.requested:v1 events by
 // enqueuing one pending seed-build Deployment per seed in the request. Seeds
-// are dbt roots with no intra-service upstreams, so every deployment starts
+// are dbt roots with no intra-project upstreams, so every deployment starts
 // pending (immediately dispatchable). The handler is pure orchestration — it
 // never parses JSON, manages the transaction, or runs dedup (dedup is
 // binding-level, keyed per-release on a deterministic outbox_entry_id).
@@ -43,7 +43,7 @@ func (h *SeedBuildRequestedHandler) Handle(
 		cmd := command.ValidationDeployTask{
 			ReleaseID:       evt.ReleaseID,
 			NodeID:          s.NodeID,
-			ServiceName:     s.ServiceName,
+			ProjectName:     s.ProjectName,
 			SchemaName:      s.SchemaName,
 			TableName:       s.TableName,
 			NodeType:        string(s.NodeType),

@@ -1,6 +1,6 @@
 import os
 import pytest
-from dbt_upload.config import load_target, resolve_service_dirs
+from dbt_upload.config import load_target, resolve_project_dirs
 
 
 class TestLoadTarget:
@@ -97,23 +97,23 @@ class TestLoadTarget:
             load_target(str(targets_file), "hetzner")
 
 
-class TestResolveServiceDirs:
+class TestResolveProjectDirs:
     def test_explicit_paths(self, tmp_path):
         svc1 = tmp_path / "service-1"
         svc2 = tmp_path / "service-2"
         svc1.mkdir()
         svc2.mkdir()
 
-        result = resolve_service_dirs([str(svc1), str(svc2)], None)
+        result = resolve_project_dirs([str(svc1), str(svc2)], None)
 
         assert result == [str(svc1), str(svc2)]
 
-    def test_services_dir_discovers_subdirs(self, tmp_path):
+    def test_projects_dir_discovers_subdirs(self, tmp_path):
         (tmp_path / "service-a").mkdir()
         (tmp_path / "service-b").mkdir()
         (tmp_path / "not-a-dir.txt").touch()
 
-        result = resolve_service_dirs(None, str(tmp_path))
+        result = resolve_project_dirs(None, str(tmp_path))
 
         assert result == [
             str(tmp_path / "service-a"),
@@ -122,4 +122,4 @@ class TestResolveServiceDirs:
 
     def test_neither_argument_raises(self):
         with pytest.raises(ValueError, match="Provide either"):
-            resolve_service_dirs(None, None)
+            resolve_project_dirs(None, None)

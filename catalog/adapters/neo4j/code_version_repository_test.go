@@ -39,7 +39,7 @@ func (f *swapFixture) writeBatch(in codeversion.WriteInput) codeversion.WriteRes
 func (f *swapFixture) seedLiveNode(uniqueID string) {
 	f.t.Helper()
 	f.exec(`CREATE (:Node {tenant_id: $tenant_id, unique_id: $uid, schema_name: 'live', table_name: $uid,
-		service_name: 'svc', node_type: 'dbt-model', content_hash: 'sha256:live', release_id: 'r-live', active: true})`,
+		project_name: 'svc', node_type: 'dbt-model', content_hash: 'sha256:live', release_id: 'r-live', active: true})`,
 		map[string]any{"uid": uniqueID})
 }
 
@@ -270,7 +270,7 @@ func TestWriteBatch_MissingNodeIsCreatedInactiveFromTheArtifact(t *testing.T) {
 	f.seedLiveNode("analytics.table_a")
 	in := batchOf("r8", 8, versionOf("analytics.table_a", "sha256:a8"), versionOf("analytics.table_e", "sha256:e8"))
 	in.Topology["analytics.table_e"] = topology.ReleasePromotedTopologyNode{
-		UniqueID: "analytics.table_e", SchemaName: "analytics", TableName: "table_e", ServiceName: "svc",
+		UniqueID: "analytics.table_e", SchemaName: "analytics", TableName: "table_e", ProjectName: "svc",
 		NodeType: "dbt-model", ContentHash: "sha256:e8", TestCount: 2, ImageTag: "img-8", Schedule: "daily",
 		UpstreamUniqueIDs: []string{"analytics.table_a"}, OriginalFilePath: "models/table_e.sql",
 	}
@@ -284,7 +284,7 @@ func TestWriteBatch_MissingNodeIsCreatedInactiveFromTheArtifact(t *testing.T) {
 	require.NotNil(t, e)
 	for key, want := range map[string]any{
 		"active": false, "release_id": "r8", "schema_name": "analytics", "table_name": "table_e",
-		"service_name": "svc", "node_type": "dbt-model", "content_hash": "sha256:e8", "test_count": int64(2),
+		"project_name": "svc", "node_type": "dbt-model", "content_hash": "sha256:e8", "test_count": int64(2),
 		"image_tag": "img-8", "schedule_name": "daily", "original_file_path": "models/table_e.sql",
 		"code_version_promotion_seq": int64(8),
 	} {

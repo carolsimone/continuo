@@ -168,20 +168,20 @@ func (s *fakeStore) GetCurrentProd() *release.CurrentProd {
 }
 
 // SeedServiceProd installs a service_prod pointer directly so advance-queue
-// tests can assert that other services' manifest keys are picked up.
+// tests can assert that other projects' manifest keys are picked up.
 func (s *fakeStore) SeedServiceProd(sp *release.ServiceProd) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.serviceProd[sp.ServiceName()] = sp
+	s.serviceProd[sp.ProjectName()] = sp
 }
 
-// GetServiceProd returns the service_prod pointer written for the given service
+// GetServiceProd returns the service_prod pointer written for the given project
 // name, or nil if no upsert has been recorded yet. Used by handler tests to
 // assert the values written by promoteToProduction.
-func (s *fakeStore) GetServiceProd(serviceName string) *release.ServiceProd {
+func (s *fakeStore) GetServiceProd(projectName string) *release.ServiceProd {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.serviceProd[serviceName]
+	return s.serviceProd[projectName]
 }
 
 // CurrentProdUpsertCalls returns how many times CurrentProdRepo.Upsert has
@@ -320,19 +320,19 @@ func (f *fakeRunRepo) Active(_ context.Context) (*pipeline.Run, error) {
 	return nil, nil
 }
 
-// ActiveCandidateServicesWithKind lists the services of the candidate runs of
+// ActiveCandidateProjectsWithKind lists the projects of the candidate runs of
 // the given manifest kind that have not ended, sorted and without repeats.
-func (f *fakeRunRepo) ActiveCandidateServicesWithKind(_ context.Context, kind release.ManifestKind) ([]string, error) {
+func (f *fakeRunRepo) ActiveCandidateProjectsWithKind(_ context.Context, kind release.ManifestKind) ([]string, error) {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
 	seen := map[string]bool{}
 	names := []string{}
 	for _, r := range f.store.releases {
-		if r.Kind() != pipeline.KindCandidate || r.ManifestKind() != kind || r.Status().IsTerminal() || seen[r.ChangedService()] {
+		if r.Kind() != pipeline.KindCandidate || r.ManifestKind() != kind || r.Status().IsTerminal() || seen[r.ChangedProject()] {
 			continue
 		}
-		seen[r.ChangedService()] = true
-		names = append(names, r.ChangedService())
+		seen[r.ChangedProject()] = true
+		names = append(names, r.ChangedProject())
 	}
 	slices.Sort(names)
 	return names, nil
@@ -416,20 +416,20 @@ func (f *fakeServiceProdRepo) List(_ context.Context) ([]*release.ServiceProd, e
 	return out, nil
 }
 
-func (f *fakeServiceProdRepo) Get(_ context.Context, serviceName string) (*release.ServiceProd, error) {
+func (f *fakeServiceProdRepo) Get(_ context.Context, projectName string) (*release.ServiceProd, error) {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
-	return f.store.serviceProd[serviceName], nil
+	return f.store.serviceProd[projectName], nil
 }
 
 func (f *fakeServiceProdRepo) Upsert(_ context.Context, sp *release.ServiceProd) error {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
-	f.store.serviceProd[sp.ServiceName()] = sp
+	f.store.serviceProd[sp.ProjectName()] = sp
 	return nil
 }
 
-func (f *fakeServiceProdRepo) ServicesWithKind(_ context.Context, kind release.ManifestKind) ([]string, error) {
+func (f *fakeServiceProdRepo) ProjectsWithKind(_ context.Context, kind release.ManifestKind) ([]string, error) {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
 	var names []string
@@ -617,7 +617,7 @@ func topologyOf(t *testing.T, d *handlers.Deps, r *pipeline.Run) release.Topolog
 // SDK's response errors do.
 type storeOutage struct{}
 
-func (storeOutage) Error() string       { return "s3: service unavailable" }
+func (storeOutage) Error() string       { return "s3: project unavailable" }
 func (storeOutage) HTTPStatusCode() int { return 503 }
 
 // seedProd writes topo as release releaseID's topology artifact through the

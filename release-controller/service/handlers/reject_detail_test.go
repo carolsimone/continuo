@@ -67,10 +67,10 @@ func TestHandleValidationResult_Rejected_DetailNamesTheFailuresNotTheSkippedNode
 	r, err := store.GetRelease("rDetailSkip")
 	require.NoError(t, err)
 	topo := release.Topology{
-		{UniqueID: "a-skipped", ServiceName: "svc-a", UpstreamUniqueIDs: []string{"b-failed", "u-unrelated"}, ContentHash: "h-s"},
-		{UniqueID: "b-failed", ServiceName: "svc-a", UpstreamUniqueIDs: []string{"x-changed"}, ContentHash: "h-f"},
-		{UniqueID: "u-unrelated", ServiceName: "svc-u", UpstreamUniqueIDs: []string{}, ContentHash: "new-u"},
-		{UniqueID: "x-changed", ServiceName: "svc-x", UpstreamUniqueIDs: []string{}, ContentHash: "new-x"},
+		{UniqueID: "a-skipped", ProjectName: "svc-a", UpstreamUniqueIDs: []string{"b-failed", "u-unrelated"}, ContentHash: "h-s"},
+		{UniqueID: "b-failed", ProjectName: "svc-a", UpstreamUniqueIDs: []string{"x-changed"}, ContentHash: "h-f"},
+		{UniqueID: "u-unrelated", ProjectName: "svc-u", UpstreamUniqueIDs: []string{}, ContentHash: "new-u"},
+		{UniqueID: "x-changed", ProjectName: "svc-x", UpstreamUniqueIDs: []string{}, ContentHash: "new-x"},
 	}
 	rewireValidating(t, store, r, topo, []string{"a-skipped", "b-failed", "u-unrelated", "x-changed"})
 	seedProd(t, deps, store, "prev", release.Topology{
@@ -115,7 +115,7 @@ func TestHandleValidationResult_VerificationFails_DetailNamesTheFailingNodes(t *
 	deps, store := newDeps(now)
 	r := pipeline.NewVerification("verify-rel-1-core-a1", "core", "img", "rel-1", 1, "", release.ManifestKindDbt, now)
 	require.NoError(t, r.TransitionToParsing(now))
-	require.NoError(t, r.TransitionToValidating(store.storeTopology(r.ID(), release.Topology{{UniqueID: "model.core.orders", ServiceName: "core"}}), []string{"model.core.orders"}, now))
+	require.NoError(t, r.TransitionToValidating(store.storeTopology(r.ID(), release.Topology{{UniqueID: "model.core.orders", ProjectName: "core"}}), []string{"model.core.orders"}, now))
 	r.UpsertStageResult("validation", pipeline.NodeValidationResult{NodeID: "model.core.orders", Status: "failed"})
 	store.SeedRelease(r)
 

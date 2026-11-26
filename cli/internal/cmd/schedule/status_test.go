@@ -143,9 +143,9 @@ func ranSchedule() *fakeRunControllerStatus {
 			CancelledBy:    "bob", CancellationReason: "stop", FailureReason: "stalled",
 		},
 		taskPages: []*runv1.ListTasksResponse{{TotalCount: 2, Tasks: []*runv1.Task{
-			{TaskId: "t-a", ServiceName: "svc", SchemaName: "analytics", TableName: "orders", Status: "succeeded",
+			{TaskId: "t-a", ProjectName: "svc", SchemaName: "analytics", TableName: "orders", Status: "succeeded",
 				Operation: "full_refresh", PlanReason: "columns changed"},
-			{TaskId: "t-b", ServiceName: "svc", SchemaName: "analytics", TableName: "revenue", Status: "failed", Attempt: 1,
+			{TaskId: "t-b", ProjectName: "svc", SchemaName: "analytics", TableName: "revenue", Status: "failed", Attempt: 1,
 				WaitReason: "node_lease", WaitingOnRunId: "run-1"},
 		}}},
 		attempts: []*runv1.TaskAttempt{
@@ -185,9 +185,9 @@ func TestScheduleStatus_PrintsTheRunShowShape(t *testing.T) {
 func TestScheduleStatus_PagesThroughAllTasks(t *testing.T) {
 	var first, second []*runv1.Task
 	for i := 0; i < 200; i++ {
-		first = append(first, &runv1.Task{TaskId: "t", ServiceName: "s", SchemaName: "x", TableName: "a", Status: "succeeded"})
+		first = append(first, &runv1.Task{TaskId: "t", ProjectName: "s", SchemaName: "x", TableName: "a", Status: "succeeded"})
 	}
-	second = append(second, &runv1.Task{TaskId: "u", ServiceName: "s", SchemaName: "x", TableName: "c", Status: "skipped"})
+	second = append(second, &runv1.Task{TaskId: "u", ProjectName: "s", SchemaName: "x", TableName: "c", Status: "skipped"})
 	fake := ranSchedule()
 	fake.taskPages = []*runv1.ListTasksResponse{{TotalCount: 201, Tasks: first}, {TotalCount: 201, Tasks: second}}
 	fake.attempts, fake.attemptsTotal = nil, 0

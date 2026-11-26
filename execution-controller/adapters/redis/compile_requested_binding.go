@@ -26,7 +26,7 @@ var compileDedupNamespace = uuid.MustParse("a7c3e1f9-2b4d-6e8a-0c2e-4f6a8b0c2e4f
 
 // compileDedupKey maps a release_id to the deterministic UUID used as the
 // outbox_entry_id override in message_processing. One compile.requested:v1
-// message carries one service per release, so dedup is per-release: a
+// message carries one project per release, so dedup is per-release: a
 // redelivery (even with a fresh Redis message_id) collides on this key and is
 // skipped, so the compile deployment is enqueued exactly once.
 func compileDedupKey(releaseID string) uuid.UUID {

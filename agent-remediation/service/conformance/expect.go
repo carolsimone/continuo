@@ -89,25 +89,25 @@ func (e *expectation) members(a Attempt, nodeIDs []string, status proposal.Statu
 	}
 }
 
-// runsPerEditedService expects one verification run per service attempt a
+// runsPerEditedProject expects one verification run per project attempt a
 // edits, and no other run.
-func (e *expectation) runsPerEditedService(a Attempt, serviceRepoPaths map[string]string) {
+func (e *expectation) runsPerEditedProject(a Attempt, projectRepoPaths map[string]string) {
 	edited := map[string]bool{}
 	for _, ed := range a.Proposal.Edits {
-		service, _, ok := proposal.ServiceForPath(serviceRepoPaths, ed.Path)
-		e.that(ok, "attempt %d edits %s, which belongs to no service", a.Proposal.Attempt, ed.Path)
-		edited[service] = true
+		project, _, ok := proposal.ProjectForPath(projectRepoPaths, ed.Path)
+		e.that(ok, "attempt %d edits %s, which belongs to no project", a.Proposal.Attempt, ed.Path)
+		edited[project] = true
 	}
 	e.that(len(edited) > 0, "attempt %d has no edit", a.Proposal.Attempt)
 	runs := map[string]int{}
 	for _, r := range e.sr.w.Runs() {
-		runs[r.Service]++
+		runs[r.Project]++
 	}
-	for _, service := range sortedKeys(edited) {
-		e.that(runs[service] == 1, "service %s had %d verification runs, want 1", service, runs[service])
+	for _, project := range sortedKeys(edited) {
+		e.that(runs[project] == 1, "project %s had %d verification runs, want 1", project, runs[project])
 	}
-	for _, service := range sortedKeys(runs) {
-		e.that(edited[service], "service %s had %d verification runs and no edit", service, runs[service])
+	for _, project := range sortedKeys(runs) {
+		e.that(edited[project], "project %s had %d verification runs and no edit", project, runs[project])
 	}
 }
 
@@ -283,11 +283,11 @@ func (e *expectation) distinctModelRequests() {
 }
 
 // proposed expects one attempt, proposed for every failing node, with one
-// verification run per service it edits and one remediation.proposed event.
+// verification run per project it edits and one remediation.proposed event.
 func (e *expectation) proposed(f Fixture) {
 	if as := e.attempts(proposal.StatusProposed); len(as) == 1 {
 		e.nodes(as[0], proposal.StatusProposed)
-		e.runsPerEditedService(as[0], f.ServiceRepoPaths)
+		e.runsPerEditedProject(as[0], f.ProjectRepoPaths)
 	}
 	e.proposedEvents(1)
 	e.noHandedOver()
@@ -368,7 +368,7 @@ func (e *expectation) membersRanTheirTypes(files workflow.Set, c remediation.Clu
 	e.noHandedOver()
 }
 
-// membersSkipped expects the cross-service cluster c to have fallen back with
+// membersSkipped expects the cross-project cluster c to have fallen back with
 // every member skipped in attempt a and handed over with code, the cause of
 // the fall back, in the remediation's first and only try, and no verification
 // run. The code is declined when a step declined the upstream fix and

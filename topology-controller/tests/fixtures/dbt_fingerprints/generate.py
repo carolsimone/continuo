@@ -96,7 +96,7 @@ def docker_command(name: str, variant: Variant, copy: Path, network: str) -> lis
     script = (
         "dbt compile --profiles-dir /project --target fp"
         " && python3 /extras/compile_extras.py --manifest target/manifest.json --project-dir /project"
-        f" --service fpshop --release-id {name} --out target/compile-extras.json"
+        f" --project fpshop --release-id {name} --out target/compile-extras.json"
     )
     if variant.pre_compile:
         script = f"{variant.pre_compile} && {script}"

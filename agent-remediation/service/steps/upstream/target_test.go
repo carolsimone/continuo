@@ -41,7 +41,7 @@ func TestTarget_MetaNamesWhatItNeedsAndProvides(t *testing.T) {
 
 func TestTarget_ReadsTheAncestorFromTheBundleAtTheTriggersLocation(t *testing.T) {
 	bundle := okBundle()
-	loc := &fakeLocator{filePath: "graph/x.sql", service: "down-svc"}
+	loc := &fakeLocator{filePath: "graph/x.sql", project: "down-svc"}
 	versions := &fakeVersions{versions: map[string]ports.CurrentVersion{targetID: {RawCode: "select older from raw"}}}
 
 	out := gather(t, newTarget(bundle, versions, loc), failure(nil), remediation.NewEvidence())
@@ -50,7 +50,7 @@ func TestTarget_ReadsTheAncestorFromTheBundleAtTheTriggersLocation(t *testing.T)
 		NodeID:        targetID,
 		Source:        targetSource,
 		FilePath:      targetFile,
-		Service:       targetSvc,
+		Project:       targetSvc,
 		OwnChangeDiff: proposal.ComputeUnifiedDiff("select older from raw", targetSource, targetID),
 	}, gatheredTarget(t, out))
 	assert.Equal(t, []bundleCall{{"s3://bundle/rel-1", targetID, "rel-1"}}, bundle.calls)
@@ -73,26 +73,26 @@ func TestTarget_LocatesAnAncestorTheTriggerDoesNotPlace(t *testing.T) {
 				f.Trigger.Nodes[i].ChangedAncestors = []remediation.ChangedAncestor{{NodeID: targetID, FilePath: targetFile}}
 			}
 		}},
-		{"only the service is given", func(f *remediation.Failure) {
+		{"only the project is given", func(f *remediation.Failure) {
 			for i := range f.Trigger.Nodes {
-				f.Trigger.Nodes[i].ChangedAncestors = []remediation.ChangedAncestor{{NodeID: targetID, Service: targetSvc}}
+				f.Trigger.Nodes[i].ChangedAncestors = []remediation.ChangedAncestor{{NodeID: targetID, Project: targetSvc}}
 			}
 		}},
 		{"the trigger names another ancestor", func(f *remediation.Failure) {
 			for i := range f.Trigger.Nodes {
-				f.Trigger.Nodes[i].ChangedAncestors = []remediation.ChangedAncestor{{NodeID: "model.up-svc.other", FilePath: "x.sql", Service: targetSvc}}
+				f.Trigger.Nodes[i].ChangedAncestors = []remediation.ChangedAncestor{{NodeID: "model.up-svc.other", FilePath: "x.sql", Project: targetSvc}}
 			}
 		}},
 	}
 	for _, c := range unplaced {
 		t.Run(c.name, func(t *testing.T) {
-			loc := &fakeLocator{filePath: "graph/x.sql", service: "down-svc"}
+			loc := &fakeLocator{filePath: "graph/x.sql", project: "down-svc"}
 
 			out := gather(t, newTarget(okBundle(), &fakeVersions{}, loc), failure(c.mod), remediation.NewEvidence())
 
 			got := gatheredTarget(t, out)
 			assert.Equal(t, "graph/x.sql", got.FilePath)
-			assert.Equal(t, "down-svc", got.Service)
+			assert.Equal(t, "down-svc", got.Project)
 			assert.Equal(t, []string{targetID}, loc.calls)
 		})
 	}
@@ -102,25 +102,25 @@ func TestTarget_TheFirstLocatedAncestorEntryWins(t *testing.T) {
 	loc := &fakeLocator{}
 	out := gather(t, newTarget(okBundle(), &fakeVersions{}, loc), failure(func(f *remediation.Failure) {
 		f.Trigger.Nodes[0].ChangedAncestors = []remediation.ChangedAncestor{{NodeID: targetID}}
-		f.Trigger.Nodes[1].ChangedAncestors = []remediation.ChangedAncestor{{NodeID: targetID, FilePath: "second.sql", Service: "down-svc"}}
+		f.Trigger.Nodes[1].ChangedAncestors = []remediation.ChangedAncestor{{NodeID: targetID, FilePath: "second.sql", Project: "down-svc"}}
 	}), remediation.NewEvidence())
 
 	got := gatheredTarget(t, out)
 	assert.Equal(t, "second.sql", got.FilePath)
-	assert.Equal(t, "down-svc", got.Service)
+	assert.Equal(t, "down-svc", got.Project)
 	assert.Empty(t, loc.calls)
 }
 
 func TestTarget_OfTwoCompleteAncestorEntriesTheFirstWins(t *testing.T) {
-	loc := &fakeLocator{filePath: "graph/x.sql", service: "down-svc"}
+	loc := &fakeLocator{filePath: "graph/x.sql", project: "down-svc"}
 	out := gather(t, newTarget(okBundle(), &fakeVersions{}, loc), failure(func(f *remediation.Failure) {
-		f.Trigger.Nodes[0].ChangedAncestors = []remediation.ChangedAncestor{{NodeID: targetID, FilePath: "first.sql", Service: "up-svc"}}
-		f.Trigger.Nodes[1].ChangedAncestors = []remediation.ChangedAncestor{{NodeID: targetID, FilePath: "second.sql", Service: "down-svc"}}
+		f.Trigger.Nodes[0].ChangedAncestors = []remediation.ChangedAncestor{{NodeID: targetID, FilePath: "first.sql", Project: "up-svc"}}
+		f.Trigger.Nodes[1].ChangedAncestors = []remediation.ChangedAncestor{{NodeID: targetID, FilePath: "second.sql", Project: "down-svc"}}
 	}), remediation.NewEvidence())
 
 	got := gatheredTarget(t, out)
 	assert.Equal(t, "first.sql", got.FilePath)
-	assert.Equal(t, "up-svc", got.Service)
+	assert.Equal(t, "up-svc", got.Project)
 	assert.Empty(t, loc.calls)
 }
 
@@ -167,7 +167,7 @@ func TestTarget_DeclinesNamingWhyNoTargetIsFound(t *testing.T) {
 			decline: "the changed ancestor model.up-svc.up cannot be located in the promoted graph",
 		},
 		{
-			name:   "a location with no service",
+			name:   "a location with no project",
 			bundle: okBundle(),
 			loc:    &fakeLocator{filePath: "x.sql"},
 			mod: func(f *remediation.Failure) {
@@ -176,13 +176,13 @@ func TestTarget_DeclinesNamingWhyNoTargetIsFound(t *testing.T) {
 			decline: "the changed ancestor model.up-svc.up cannot be located in the promoted graph",
 		},
 		{
-			name:   "a service with no repository path",
+			name:   "a project with no repository path",
 			bundle: okBundle(),
 			loc:    &fakeLocator{},
 			mod: func(f *remediation.Failure) {
-				f.Trigger.Nodes[0].ChangedAncestors = []remediation.ChangedAncestor{{NodeID: targetID, FilePath: targetFile, Service: "ghost"}}
+				f.Trigger.Nodes[0].ChangedAncestors = []remediation.ChangedAncestor{{NodeID: targetID, FilePath: targetFile, Project: "ghost"}}
 			},
-			decline: `service "ghost" has no repository path mapping`,
+			decline: `project "ghost" has no repository path mapping`,
 		},
 	}
 	for _, c := range cases {

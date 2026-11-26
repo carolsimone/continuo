@@ -159,7 +159,7 @@ describe('DAGPanel viewport', () => {
         tasks: [
           {
             task_id: 'core.sch.a',
-            service_name: 'core',
+            project_name: 'core',
             schema_name: 'sch',
             table_name: 'a',
             job_name: '',

@@ -41,10 +41,10 @@ def _broken_sql_node(name):
     return {**dbt_node(name), "compiled_code": "SELECT FROM WHERE((("}
 
 
-def _dbt_manifest(tmp_path, *nodes, declared_service="service-1"):
+def _dbt_manifest(tmp_path, *nodes, declared_project="service-1"):
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps({"nodes": {n["unique_id"]: n for n in nodes}}))
-    return ManifestFile(path=str(path), image_tag="", declared_service=declared_service)
+    return ManifestFile(path=str(path), image_tag="", declared_project=declared_project)
 
 
 def test_an_invalid_contract_rejects_the_release_with_invalid_contract(tmp_path):
@@ -60,7 +60,7 @@ def test_an_invalid_contract_rejects_the_release_with_invalid_contract(tmp_path)
     assert kwargs["failed_nodes"] == [FailedNode(
         node_id="analytics.py_daily_kpis",
         kind=ParseFailureKind.INVALID_CONTRACT,
-        service="service-py",
+        project="service-py",
         file_path=KPIS_PATH,
         node_type="python-node",
         detail=KPIS_ISSUE,
@@ -88,15 +88,15 @@ def test_the_invalid_contracts_of_two_manifests_are_named_together(tmp_path):
     first.mkdir()
     second.mkdir()
     source = source_of(
-        bundle_file(first, [KPIS_WITH_NUMERIC_12], declared_service="service-a", service="service-a"),
-        bundle_file(second, [CSV_WITH_SERVERS], declared_service="service-b", service="service-b"),
+        bundle_file(first, [KPIS_WITH_NUMERIC_12], declared_project="service-a", project="service-a"),
+        bundle_file(second, [CSV_WITH_SERVERS], declared_project="service-b", project="service-b"),
     )
 
     python_handler(source, publisher).handle(release_id="rel-1")
 
     kwargs = _failed_kwargs(publisher)
     assert kwargs["detail"] == "2 nodes failed to parse: analytics.demo_orders_csv, analytics.py_daily_kpis"
-    assert {(n.node_id, n.service) for n in kwargs["failed_nodes"]} == {
+    assert {(n.node_id, n.project) for n in kwargs["failed_nodes"]} == {
         ("analytics.py_daily_kpis", "service-a"), ("analytics.demo_orders_csv", "service-b")}
 
 
@@ -184,7 +184,7 @@ def test_any_other_unreadable_manifest_is_named_by_its_path_and_its_error(tmp_pa
 
 
 def _failed_node_ids(publisher):
-    return [(n.node_id, n.service) for n in _failed_kwargs(publisher)["failed_nodes"]]
+    return [(n.node_id, n.project) for n in _failed_kwargs(publisher)["failed_nodes"]]
 
 
 def test_the_failed_nodes_do_not_depend_on_the_order_of_the_manifests_or_of_the_nodes(tmp_path):
@@ -194,8 +194,8 @@ def test_the_failed_nodes_do_not_depend_on_the_order_of_the_manifests_or_of_the_
     (tmp_path / "b").mkdir()
     (tmp_path / "c").mkdir()
     manifests = [
-        bundle_file(tmp_path / "a", [KPIS_WITH_NUMERIC_12], declared_service="service-a", service="service-a"),
-        bundle_file(tmp_path / "b", [CSV_WITH_SERVERS], declared_service="service-b", service="service-b"),
+        bundle_file(tmp_path / "a", [KPIS_WITH_NUMERIC_12], declared_project="service-a", project="service-a"),
+        bundle_file(tmp_path / "b", [CSV_WITH_SERVERS], declared_project="service-b", project="service-b"),
         _dbt_manifest(tmp_path / "c", _broken_sql_node("zeta"), _broken_sql_node("alpha")),
     ]
     expected = [
@@ -208,17 +208,17 @@ def test_the_failed_nodes_do_not_depend_on_the_order_of_the_manifests_or_of_the_
     for order in itertools.permutations(manifests):
         publisher = MagicMock()
         python_handler(source_of(*order), publisher).handle(release_id="rel-1")
-        assert _failed_node_ids(publisher) == expected, [m.declared_service for m in order]
+        assert _failed_node_ids(publisher) == expected, [m.declared_project for m in order]
 
 
 def test_failed_nodes_that_share_an_id_and_a_path_are_ordered_by_what_else_they_carry(tmp_path):
-    """The same contract id at the same path in two services is two failed nodes: their order
+    """The same contract id at the same path in two projects is two failed nodes: their order
     is theirs, not the order the manifests came in."""
     (tmp_path / "a").mkdir()
     (tmp_path / "b").mkdir()
     manifests = [
-        bundle_file(tmp_path / "a", [KPIS_WITH_NUMERIC_12], declared_service="service-a", service="service-a"),
-        bundle_file(tmp_path / "b", [KPIS_WITH_NUMERIC_12], declared_service="service-b", service="service-b"),
+        bundle_file(tmp_path / "a", [KPIS_WITH_NUMERIC_12], declared_project="service-a", project="service-a"),
+        bundle_file(tmp_path / "b", [KPIS_WITH_NUMERIC_12], declared_project="service-b", project="service-b"),
     ]
 
     for order in (manifests, manifests[::-1]):
@@ -230,19 +230,19 @@ def test_failed_nodes_that_share_an_id_and_a_path_are_ordered_by_what_else_they_
 
 def _unreadable_bundle(directory):
     return write_bundle(
-        directory, {**bundle_doc(demo_nodes(), service="service-b"), "bundle_version": 2}, declared_service="service-b")
+        directory, {**bundle_doc(demo_nodes(), project="service-b"), "bundle_version": 2}, declared_project="service-b")
 
 
 def _empty_bundle(directory):
-    return bundle_file(directory, [], declared_service="service-b", service="service-b")
+    return bundle_file(directory, [], declared_project="service-b", project="service-b")
 
 
 def _foreign_nodes_manifest(directory):
-    return _dbt_manifest(directory, dbt_node("foreign"), declared_service="service-b")
+    return _dbt_manifest(directory, dbt_node("foreign"), declared_project="service-b")
 
 
 def _unknown_kind(directory):
-    return ManifestFile(path=str(directory / "odcs-bundle.json"), declared_service="service-b", kind="spark")
+    return ManifestFile(path=str(directory / "odcs-bundle.json"), declared_project="service-b", kind="spark")
 
 
 @pytest.mark.parametrize("artifact_error_first", [False, True])
@@ -254,7 +254,7 @@ def _unknown_kind(directory):
 ])
 def test_an_artifact_level_error_fails_the_release_with_no_failed_nodes(
         tmp_path, artifact_error, detail, artifact_error_first):
-    """An unreadable, empty, wrong-service or unknown-kind manifest ends the release at once
+    """An unreadable, empty, wrong-project or unknown-kind manifest ends the release at once
     as invalid_artifact, whether an earlier or a later bundle holds invalid contracts."""
     (tmp_path / "invalid").mkdir()
     (tmp_path / "bad").mkdir()

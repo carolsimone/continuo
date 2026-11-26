@@ -16,9 +16,9 @@ interface Props {
   // null or absent when run-controller recorded none.
   releaseId: string | null | undefined;
   driftLabel: string | null;
-  // serviceColors is the page's accent palette, so a service is painted here
+  // projectColors is the page's accent palette, so a project is painted here
   // as everywhere else on the page.
-  serviceColors: Map<string, string>;
+  projectColors: Map<string, string>;
   onClose: () => void;
   // onSubmitted runs once the rerun has been accepted.
   onSubmitted: () => void;
@@ -33,7 +33,7 @@ type TasksRead = { state: 'loading' } | { state: 'failed' } | { state: 'read'; t
 // taskItem lists a task under its schema.table id with its status.
 function taskItem(t: Task): PreviewItem {
   const id = `${t.schema_name}.${t.table_name}`;
-  return { key: t.task_id, service: t.service_name, label: id, title: `${t.service_name}.${id}`, facts: [t.status] };
+  return { key: t.task_id, project: t.project_name, label: id, title: `${t.project_name}.${id}`, facts: [t.status] };
 }
 
 // RerunDialog confirms a rerun: it names the release the rerun runs on (the
@@ -42,7 +42,7 @@ function taskItem(t: Task): PreviewItem {
 // rerun. Rerun stays disabled until the tasks are read. A refusal stays in
 // the dialog.
 export default function RerunDialog({
-  runId, releaseId, driftLabel, serviceColors, onClose, onSubmitted,
+  runId, releaseId, driftLabel, projectColors, onClose, onSubmitted,
 }: Props) {
   // One request id for the dialog: a press repeated after a timeout returns
   // the run the first one made.
@@ -135,7 +135,7 @@ export default function RerunDialog({
                 {`of ${formatCount(tasks.length)} nodes · ${formatCount(inherited)} inherited`}
               </div>
             </div>
-            <PreviewList items={again.map(taskItem)} colors={serviceColors} />
+            <PreviewList items={again.map(taskItem)} colors={projectColors} />
           </section>
         )}
 

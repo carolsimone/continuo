@@ -23,7 +23,7 @@ import (
 //
 // A python-odcs release is used because it has no compile leg — the bundle is
 // uploaded directly and parsed on arrival — so the collision is reachable
-// without rebuilding a dbt service image, and no service's committed models are
+// without rebuilding a dbt project image, and no project's committed models are
 // left permanently colliding.
 func TestE2E_DuplicateTable_RejectsBeforePromotion(t *testing.T) {
 	if testing.Short() {
@@ -40,24 +40,24 @@ func TestE2E_DuplicateTable_RejectsBeforePromotion(t *testing.T) {
 
 	releaseID := "e2e-dup-" + uuid.NewString()[:8]
 
-	// Every dbt service keeps its live pointer; the colliding python service is
+	// Every dbt project keeps its live pointer; the colliding python project is
 	// new, so the assembled topology is "all prod nodes + this contract's node".
-	allServices := baselineServices(t, ctx, clients)
-	require.NotEmpty(t, allServices,
+	allProjects := baselineProjects(t, ctx, clients)
+	require.NotEmpty(t, allProjects,
 		"no baseline manifests in S3 — setup.sh must run before the e2e suite")
 
 	// Pick the victim deterministically: map iteration order is randomized in Go,
 	// so collect every candidate node and sort by unique_id before choosing.
 	type candidateNode struct {
 		uniqueID    string
-		service     string
+		project     string
 		contentHash string
 	}
 	var candidates []candidateNode
-	for svc, si := range allServices {
+	for svc, si := range allProjects {
 		for _, n := range si.nodes {
 			candidates = append(candidates, candidateNode{
-				uniqueID: n.uniqueID, service: svc, contentHash: n.contentHash,
+				uniqueID: n.uniqueID, project: svc, contentHash: n.contentHash,
 			})
 		}
 	}
@@ -65,24 +65,24 @@ func TestE2E_DuplicateTable_RejectsBeforePromotion(t *testing.T) {
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].uniqueID < candidates[j].uniqueID })
 
 	victim := candidates[0]
-	victimUniqueID, victimService := victim.uniqueID, victim.service
+	victimUniqueID, victimProject := victim.uniqueID, victim.project
 	victimSchema, victimTable := splitUniqueID(t, victimUniqueID)
-	t.Logf("release_id=%s colliding_with=%s (service %s)", releaseID, victimUniqueID, victimService)
+	t.Logf("release_id=%s colliding_with=%s (project %s)", releaseID, victimUniqueID, victimProject)
 
 	var prodNodes []map[string]string
 	for _, c := range candidates {
 		prodNodes = append(prodNodes, map[string]string{
-			"unique_id": c.uniqueID, "service": c.service, "content_hash": c.contentHash,
+			"unique_id": c.uniqueID, "project": c.project, "content_hash": c.contentHash,
 		})
 	}
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allServices)
+	seedServiceProd(t, ctx, clients, allProjects)
 	defer func() {
 		if _, derr := clients.releaseDB.ExecContext(context.Background(),
-			`DELETE FROM service_prod WHERE service_name = $1`, dupE2EService); derr != nil {
-			t.Errorf("cleanup: delete %s service_prod row: %v", dupE2EService, derr)
+			`DELETE FROM service_prod WHERE project_name = $1`, dupE2EProject); derr != nil {
+			t.Errorf("cleanup: delete %s service_prod row: %v", dupE2EProject, derr)
 		}
 	}()
 
@@ -112,14 +112,14 @@ schema:
     properties:
       - {name: id, physicalType: integer, required: true}
 `, victimSchema, victimTable, victimTable)
-	bundle := encodeODCSBundle(t, dupE2EService, map[string]string{}, []odcsBundleNode{{
+	bundle := encodeODCSBundle(t, dupE2EProject, map[string]string{}, []odcsBundleNode{{
 		Path:       "contracts/" + victimTable + ".odcs.yaml",
 		Text:       contract,
 		SourceHash: sha256Hex("models/collider.py"),
 	}})
-	putODCSBundle(t, ctx, clients, dupE2EService, releaseID, bundle)
+	putODCSBundle(t, ctx, clients, dupE2EProject, releaseID, bundle)
 
-	postPythonRelease(t, clients, dupE2EService, releaseID, dupE2EImage, false)
+	postPythonRelease(t, clients, dupE2EProject, releaseID, dupE2EImage, false)
 
 	waitForReleaseRejected(t, ctx, clients, releaseID, 3*time.Minute)
 
@@ -132,10 +132,10 @@ schema:
 	// assertion about the identity rather than its spelling.
 	assert.Contains(t, rejectDetail, strings.ToLower(victimUniqueID),
 		"the rejection must name the contested relation")
-	assert.Contains(t, rejectDetail, victimService,
-		"the rejection must name the incumbent service")
-	assert.Contains(t, rejectDetail, dupE2EService,
-		"the rejection must name the newcomer service")
+	assert.Contains(t, rejectDetail, victimProject,
+		"the rejection must name the incumbent project")
+	assert.Contains(t, rejectDetail, dupE2EProject,
+		"the rejection must name the newcomer project")
 
 	var currentProdRelease string
 	require.NoError(t, clients.releaseDB.QueryRowContext(ctx,
@@ -144,9 +144,9 @@ schema:
 		"a rejected release must never become current_prod")
 }
 
-// dupE2EService is the synthetic python service this test introduces; it exists
+// dupE2EProject is the synthetic python project this test introduces; it exists
 // only for the duration of the test and is removed from service_prod on cleanup.
-const dupE2EService = "e2e-dup-collider"
+const dupE2EProject = "e2e-dup-collider"
 
 // dupE2EImage is an arbitrary tag: the release is rejected at parse time, so no
 // Job is ever created from it.

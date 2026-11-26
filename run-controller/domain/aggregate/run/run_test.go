@@ -507,7 +507,7 @@ func (f *fakeTaskCollection) LoadAttemptState(_ context.Context, id uuid.UUID) (
 	return run.TaskAttemptState{
 		RunID:  c.ScheduleID,
 		Status: s, Attempt: f.attempts[id], MaxRetries: f.maxRetries[id], NodeKey: f.keys[id],
-		JobName: c.JobName, ServiceName: c.ServiceName, SchemaName: c.SchemaName, TableName: c.TableName,
+		JobName: c.JobName, ProjectName: c.ProjectName, SchemaName: c.SchemaName, TableName: c.TableName,
 		DispatchedAt: c.DispatchedAt, WaitReason: f.waits[id], Spec: c.Spec(),
 	}, ok, nil
 }
@@ -723,7 +723,7 @@ func TestHasTaskAt_ReturnsTrueWhenPresent(t *testing.T) {
 	ctx := context.Background()
 	tc := newFakeTaskCollection()
 	r := freshPendingRun(t)
-	node := run.NodeID{ServiceName: "s", SchemaName: "p", TableName: "a"}
+	node := run.NodeID{ProjectName: "s", SchemaName: "p", TableName: "a"}
 	tc.byNode[node] = run.Task{TaskID: uuid.New(), Status: run.TaskStatusSucceeded}
 
 	ok, err := r.HasTaskAt(ctx, tc, node)
@@ -739,7 +739,7 @@ func TestHasTaskAt_ReturnsFalseWhenMissing(t *testing.T) {
 	ctx := context.Background()
 	tc := newFakeTaskCollection()
 	r := freshPendingRun(t)
-	ok, err := r.HasTaskAt(ctx, tc, run.NodeID{ServiceName: "x"})
+	ok, err := r.HasTaskAt(ctx, tc, run.NodeID{ProjectName: "x"})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -768,7 +768,7 @@ func dispatchedRun(t *testing.T, tc *fakeTaskCollection, dispatchedAt time.Time,
 	tasks := make([]run.Task, 0, len(ids))
 	for i, id := range ids {
 		tasks = append(tasks, run.Task{
-			TaskID: id, ScheduleID: r.RunID(), ServiceName: "s", SchemaName: "p", TableName: fmt.Sprintf("t%d", i),
+			TaskID: id, ScheduleID: r.RunID(), ProjectName: "s", SchemaName: "p", TableName: fmt.Sprintf("t%d", i),
 			Status: run.TaskStatusPending, MaxRetries: 3,
 		})
 	}

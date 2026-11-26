@@ -47,22 +47,22 @@ func (n *Nodes) ViewOutage(ctx context.Context, tenantID, schemaName, tableName 
 
 // ListNodeTasks returns the most recent tasks of a node of tenantID applying
 // operation, newest run first. The repository caps limit at 50.
-func (n *Nodes) ListNodeTasks(ctx context.Context, tenantID, serviceName, schemaName, tableName string, operation model.Operation, limit int) ([]*projection.NodeRun, error) {
-	return n.nodes.ListNodeTasks(ctx, tenantID, serviceName, schemaName, tableName, operation, limit)
+func (n *Nodes) ListNodeTasks(ctx context.Context, tenantID, projectName, schemaName, tableName string, operation model.Operation, limit int) ([]*projection.NodeRun, error) {
+	return n.nodes.ListNodeTasks(ctx, tenantID, projectName, schemaName, tableName, operation, limit)
 }
 
 // ListNodes returns one page of tenantID's node list, the nodes of its live
 // release, and how many nodes match; dormantOnly keeps only dormant nodes. A
 // limit below 1 becomes DefaultPageSize, one above MaxPageSize becomes
 // MaxPageSize, and a negative offset becomes 0.
-func (n *Nodes) ListNodes(ctx context.Context, tenantID, search, serviceName string, operation model.Operation, dormantOnly bool, limit, offset int) ([]NodeCatalogEntry, int, error) {
+func (n *Nodes) ListNodes(ctx context.Context, tenantID, search, projectName string, operation model.Operation, dormantOnly bool, limit, offset int) ([]NodeCatalogEntry, int, error) {
 	if limit < 1 {
 		limit = DefaultPageSize
 	}
 	limit = min(limit, MaxPageSize)
 	offset = max(offset, 0)
 
-	rows, total, err := n.nodes.ListNodes(ctx, tenantID, search, serviceName, operation, dormantOnly, limit, offset)
+	rows, total, err := n.nodes.ListNodes(ctx, tenantID, search, projectName, operation, dormantOnly, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -76,13 +76,13 @@ func (n *Nodes) ListNodes(ctx context.Context, tenantID, search, serviceName str
 }
 
 // ListNodeNames returns the distinct table names of the nodes ListNodes lists
-// for tenantID, only serviceName's when it is not empty.
-func (n *Nodes) ListNodeNames(ctx context.Context, tenantID, serviceName string) ([]string, error) {
-	return n.nodes.ListNodeNames(ctx, tenantID, serviceName)
+// for tenantID, only projectName's when it is not empty.
+func (n *Nodes) ListNodeNames(ctx context.Context, tenantID, projectName string) ([]string, error) {
+	return n.nodes.ListNodeNames(ctx, tenantID, projectName)
 }
 
-// ListNodeServices returns the distinct service names of the nodes ListNodes
+// ListNodeProjects returns the distinct project names of the nodes ListNodes
 // lists for tenantID.
-func (n *Nodes) ListNodeServices(ctx context.Context, tenantID string) ([]string, error) {
-	return n.nodes.ListNodeServices(ctx, tenantID)
+func (n *Nodes) ListNodeProjects(ctx context.Context, tenantID string) ([]string, error) {
+	return n.nodes.ListNodeProjects(ctx, tenantID)
 }

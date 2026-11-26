@@ -28,7 +28,7 @@ message GetReleaseNoticesResponse {
 message ReleaseNotice {
   string kind = 1;
   string node_id = 2;
-  string service = 3;
+  string project = 3;
   string engine_family = 4;
   string change = 5;
   ColumnChanges columns = 6;

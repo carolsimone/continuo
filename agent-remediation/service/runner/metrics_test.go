@@ -162,7 +162,7 @@ func TestRunner_CountsTheResultOfEachTry(t *testing.T) {
 				sample(h.clusterFor(id, 1, "model.core.base").TypeName, "checks_failed"),
 				sample(h.clusterFor(id, 1, "core").TypeName, "checks_failed"),
 			}, m.gotTries())
-			assert.Equal(t, "cross-service-upstream", h.clusterFor(id, 1, "model.core.base").TypeName)
+			assert.Equal(t, "cross-project-upstream", h.clusterFor(id, 1, "model.core.base").TypeName)
 		})
 	}
 
@@ -188,19 +188,19 @@ func TestRunner_CountsTheResultOfEachTry(t *testing.T) {
 		assert.Equal(t, []string{sample("dbt-compile", "declined")}, m.gotTries())
 	})
 
-	t.Run("a cross-service cluster fell back because a step declined", func(t *testing.T) {
+	t.Run("a cross-project cluster fell back because a step declined", func(t *testing.T) {
 		m := &recordedMetrics{}
 		h := newHarness(t, withMetrics(m), withTries(1))
-		id := h.accept(trigger("compile", crossServiceNode()))
+		id := h.accept(trigger("compile", crossProjectNode()))
 		require.NoError(t, h.runner.Drive(ctx, id))
 
 		require.Equal(t, remediation.ClusterFellBack, h.cluster(id, 1, 1).Status)
-		assert.Equal(t, []string{sample("cross-service-upstream", "declined")}, m.gotTries(),
+		assert.Equal(t, []string{sample("cross-project-upstream", "declined")}, m.gotTries(),
 			"its members get no cluster of their own, so it counts its own failure")
-		assert.Equal(t, []string{sample("cross-service-upstream", "handed_over", "declined")}, m.gotOutcomes())
+		assert.Equal(t, []string{sample("cross-project-upstream", "handed_over", "declined")}, m.gotOutcomes())
 	})
 
-	t.Run("a cross-service cluster fell back because its pre-flight rounds were spent", func(t *testing.T) {
+	t.Run("a cross-project cluster fell back because its pre-flight rounds were spent", func(t *testing.T) {
 		m := &recordedMetrics{}
 		h := newHarness(t, withMetrics(m), withTries(1))
 		h.bundle.nodes = map[string]ports.CandidateSource{"model.core.base": {RawCode: "select 1", Runtime: "dbt"}}
@@ -209,14 +209,14 @@ func TestRunner_CountsTheResultOfEachTry(t *testing.T) {
 			r.ProposedSQL, r.Confidence = "select 3", "low"
 			return r
 		}
-		trig := trigger("compile", crossServiceNode())
+		trig := trigger("compile", crossProjectNode())
 		trig.CodeBundleURI = "s3://bundles/rel-1.tar.gz"
 		id := h.accept(trig)
 		require.NoError(t, h.runner.Drive(ctx, id))
 
 		require.Equal(t, remediation.ClusterFellBack, h.cluster(id, 1, 1).Status)
-		assert.Equal(t, []string{sample("cross-service-upstream", "preflight_spent")}, m.gotTries())
-		assert.Equal(t, []string{sample("cross-service-upstream", "handed_over", "preflight_rounds_spent")}, m.gotOutcomes())
+		assert.Equal(t, []string{sample("cross-project-upstream", "preflight_spent")}, m.gotTries())
+		assert.Equal(t, []string{sample("cross-project-upstream", "handed_over", "preflight_rounds_spent")}, m.gotOutcomes())
 	})
 
 	t.Run("a draft made no edit", func(t *testing.T) {
@@ -238,8 +238,8 @@ func TestRunner_CountsNothingForAClusterNoTypeMatchedOrCarriedOver(t *testing.T)
 	t.Run("no type matches", func(t *testing.T) {
 		m := &recordedMetrics{}
 		h := newHarness(t, withMetrics(m))
-		test := remediation.TriggerNode{NodeID: "test.sales.not_null", ErrorSignature: "sig-t", NodeType: "dbt-test", Service: "svc-a"}
-		python := remediation.TriggerNode{NodeID: "python.sales.loader", ErrorSignature: "sig-p", NodeType: "python-node", Service: "svc-a"}
+		test := remediation.TriggerNode{NodeID: "test.sales.not_null", ErrorSignature: "sig-t", NodeType: "dbt-test", Project: "svc-a"}
+		python := remediation.TriggerNode{NodeID: "python.sales.loader", ErrorSignature: "sig-p", NodeType: "python-node", Project: "svc-a"}
 		id := h.accept(trigger("validation", test, python))
 		require.NoError(t, h.runner.Drive(ctx, id))
 
@@ -249,7 +249,7 @@ func TestRunner_CountsNothingForAClusterNoTypeMatchedOrCarriedOver(t *testing.T)
 	t.Run("a shared-upstream cluster fell back to its members", func(t *testing.T) {
 		m := &recordedMetrics{}
 		h := newHarness(t, withMetrics(m), withTries(1))
-		ancestor := remediation.ChangedAncestor{NodeID: "model.core.base", FilePath: "models/base.sql", Service: "core", Depth: 1}
+		ancestor := remediation.ChangedAncestor{NodeID: "model.core.base", FilePath: "models/base.sql", Project: "core", Depth: 1}
 		a, b := compileNode("svc-a"), compileNode("svc-b")
 		a.ErrorSignature, b.ErrorSignature = "sig-shared", "sig-shared"
 		a.ChangedAncestors = []remediation.ChangedAncestor{ancestor}

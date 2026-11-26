@@ -248,8 +248,8 @@ def test_main_candidate_handler_dispatches_with_manifest_keys(monkeypatch):
     payload = json.dumps({
         "release_id": "rel-77",
         "manifest_keys": [
-            {"service": "service-1", "s3_uri": "s3://continuo/service-1/rel-77/manifest.json"},
-            {"service": "service-2", "s3_uri": "s3://continuo/service-2/rel-77/manifest.json"},
+            {"project": "service-1", "s3_uri": "s3://continuo/service-1/rel-77/manifest.json"},
+            {"project": "service-2", "s3_uri": "s3://continuo/service-2/rel-77/manifest.json"},
         ],
     })
     candidate_consumer.message_handler({b"payload": payload.encode()})
@@ -258,8 +258,8 @@ def test_main_candidate_handler_dispatches_with_manifest_keys(monkeypatch):
     src = captured["source"]
     assert src.kwargs["bucket"] == "continuo"
     assert src.kwargs["keys"] == [
-        ManifestRequest(service="service-1", key="service-1/rel-77/manifest.json"),
-        ManifestRequest(service="service-2", key="service-2/rel-77/manifest.json"),
+        ManifestRequest(project="service-1", key="service-1/rel-77/manifest.json"),
+        ManifestRequest(project="service-2", key="service-2/rel-77/manifest.json"),
     ]
     assert captured["bundle_uploader"] is not None
     assert captured["dialect"] == "postgres"
@@ -298,7 +298,7 @@ def test_main_passes_the_configured_engines_dialect_to_the_handler(monkeypatch):
     payload = json.dumps({
         "release_id": "rel-78",
         "manifest_keys": [
-            {"service": "service-1", "s3_uri": "s3://continuo/service-1/rel-78/manifest.json"},
+            {"project": "service-1", "s3_uri": "s3://continuo/service-1/rel-78/manifest.json"},
         ],
     })
     candidate_consumer.message_handler({b"payload": payload.encode()})
@@ -333,7 +333,7 @@ def test_both_runtimes_have_an_artifact_builder(monkeypatch):
     _RecordingConsumer.instances[0].message_handler({b"payload": json.dumps({
         "release_id": "rel-1",
         "manifest_keys": [
-            {"service": "s1", "s3_uri": "s3://continuo/s1/rel-1/manifest.json"},
+            {"project": "s1", "s3_uri": "s3://continuo/s1/rel-1/manifest.json"},
         ],
     }).encode()})
 

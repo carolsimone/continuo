@@ -26,14 +26,14 @@ var startNow = time.Date(2026, 10, 14, 23, 0, 0, 0, time.UTC)
 // feed ftable_c, which feeds ftable_d and ftable_e, which feed ftable_f;
 // ftable_a feeds ftable_g, which feeds ftable_h.
 func failureSchedule() topology.Graph {
-	service := map[string]string{
+	projectOf := map[string]string{
 		"ftable_a": "service-1", "ftable_b": "service-1", "ftable_c": "service-3", "ftable_d": "service-2",
 		"ftable_e": "service-2", "ftable_f": "service-3", "ftable_g": "service-3", "ftable_h": "service-2",
 	}
 	var nodes []topology.Node
-	for table, svc := range service {
+	for table, svc := range projectOf {
 		nodes = append(nodes, topology.Node{
-			Key: topology.KeyOf("e2e_schema", table), ServiceName: svc, SchemaName: "e2e_schema", TableName: table,
+			Key: topology.KeyOf("e2e_schema", table), ProjectName: svc, SchemaName: "e2e_schema", TableName: table,
 			NodeType: "dbt-model", ImageTag: svc + ":5", ScheduleName: "e2e-schedule-failure",
 		})
 	}
@@ -84,7 +84,7 @@ func TestStart_StoresEveryTaskAndDispatchesTheReadyOnes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, run.Task{
 		TaskID: run.TaskIDFor("default", r.RunID(), fkey("ftable_c")), ScheduleID: r.RunID(),
-		CreatedAt: startNow, ServiceName: "service-3", SchemaName: "e2e_schema", TableName: "ftable_c",
+		CreatedAt: startNow, ProjectName: "service-3", SchemaName: "e2e_schema", TableName: "ftable_c",
 		NodeKey: fkey("ftable_c"), JobName: jobName, Status: run.TaskStatusPending, MaxRetries: 2,
 		ImageTag: "service-3:5", Operation: model.OperationRun,
 	}, c, "a task that waits for its upstreams is stored undispatched")
@@ -340,7 +340,7 @@ func TestTaskIDFor_IsStableAndNamesOneTaskPerRunAndNode(t *testing.T) {
 // fxNode is the node table of the fx release, of type nodeType, materialized
 // as materialized.
 func fxNode(table string, nodeType model.NodeType, materialized string) topology.Node {
-	return topology.Node{Key: topology.KeyOf("analytics", table), ServiceName: "finance", SchemaName: "analytics",
+	return topology.Node{Key: topology.KeyOf("analytics", table), ProjectName: "finance", SchemaName: "analytics",
 		TableName: table, NodeType: string(nodeType), Materialized: materialized, ImageTag: "finance:3", ScheduleName: "fx"}
 }
 

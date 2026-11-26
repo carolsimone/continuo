@@ -75,7 +75,7 @@ func TestE2E_StartFailure_AMissingImageIsRetriedWithoutOverlap(t *testing.T) {
 		SchemaName:         seedSchemaName,
 		TableName:          missingImageTable,
 		ResolvedRelationID: seedSchemaName + "." + missingImageTable,
-		ServiceName:        "service-1",
+		ProjectName:        "service-1",
 		NodeType:           "dbt-model",
 		ImageTag:           missingTag,
 		Schedule:           missingImageSchedule,
@@ -91,7 +91,7 @@ func TestE2E_StartFailure_AMissingImageIsRetriedWithoutOverlap(t *testing.T) {
 	waitForRunControllerLiveRelease(t, ctx, clients, announced)
 
 	resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
-		ServiceName:    "service-1",
+		ProjectName:    "service-1",
 		SchemaName:     seedSchemaName,
 		TableName:      missingImageTable,
 		MetadataSource: "latest",
@@ -201,7 +201,7 @@ func TestE2E_StartFailure_APodThatNeverStartsTimesOutWithoutARetry(t *testing.T)
 	blockPodCreation(t, ctx)
 
 	resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
-		ServiceName:    "service-1",
+		ProjectName:    "service-1",
 		SchemaName:     seedSchemaName,
 		TableName:      startTimeoutTable,
 		MetadataSource: "latest",

@@ -97,7 +97,7 @@ func Load(ctx context.Context, r Reader, timeout time.Duration, runID string) (V
 	view := View{Run: ToRun(resp.GetRun()), Tasks: make([]Task, 0, len(tasks))}
 	for _, t := range tasks {
 		task := Task{
-			Node:           Node(t.GetServiceName(), t.GetSchemaName(), t.GetTableName()),
+			Node:           Node(t.GetProjectName(), t.GetSchemaName(), t.GetTableName()),
 			Operation:      t.GetOperation(),
 			PlanReason:     t.GetPlanReason(),
 			Status:         t.GetStatus(),
@@ -114,10 +114,10 @@ func Load(ctx context.Context, r Reader, timeout time.Duration, runID string) (V
 	return view, nil
 }
 
-// Node names a node as "<service>.<schema>.<table>", the form of a run graph
+// Node names a node as "<project>.<schema>.<table>", the form of a run graph
 // edge's node ids.
-func Node(service, schema, table string) string {
-	return service + "." + schema + "." + table
+func Node(project, schema, table string) string {
+	return project + "." + schema + "." + table
 }
 
 // Timestamp renders ts as RFC3339 in UTC, or "" when it is unset.

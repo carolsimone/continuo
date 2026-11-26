@@ -13,7 +13,7 @@ import (
 // node's identity, schedule and type in the run's release, and the task's
 // status. ScheduleName and NodeType are empty for a run that names no release.
 type RunGraphNode struct {
-	ServiceName  string
+	ProjectName  string
 	SchemaName   string
 	TableName    string
 	ScheduleName string
@@ -39,7 +39,7 @@ type RunGraphNode struct {
 
 // RunGraphEdge is one dependency between two tasks of a run, read from the
 // run's release: FromNodeID depends on ToNodeID. Both are
-// "service.schema.table".
+// "project.schema.table".
 type RunGraphEdge struct {
 	FromNodeID string
 	ToNodeID   string

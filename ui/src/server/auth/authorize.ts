@@ -3,9 +3,9 @@ import type { Principal } from './principal';
 export type Action =
   | { kind: 'api.read' }
   | { kind: 'api.mutate' }
-  | { kind: 'release.read'; service: string }
+  | { kind: 'release.read'; project: string }
   | { kind: 'prod.read' }
-  | { kind: 'release.submit'; service: string; bootstrap: boolean };
+  | { kind: 'release.submit'; project: string; bootstrap: boolean };
 
 export type Decision =
   | { allow: true }
@@ -16,7 +16,7 @@ const deny = (reason: string, code: 'forbidden' | 'bootstrap_not_allowed' = 'for
 
 // Every permission decision for /api. Humans are governed by role: viewers
 // read, operators do everything. A CI identity reaches only the v1 release
-// actions, and only for the services its bindings grant; one whose repository
+// actions, and only for the projects its bindings grant; one whose repository
 // matches no binding may do nothing at all.
 export function authorize(p: Principal, a: Action): Decision {
   if (p.kind === 'human') {
@@ -24,7 +24,7 @@ export function authorize(p: Principal, a: Action): Decision {
     if (a.kind === 'api.read' || a.kind === 'release.read' || a.kind === 'prod.read') return ALLOW;
     return deny('operator role required');
   }
-  if (p.grants.size === 0) return deny(`repository ${p.claims.repository} is not bound to any service`);
+  if (p.grants.size === 0) return deny(`repository ${p.claims.repository} is not bound to any project`);
   switch (a.kind) {
     case 'api.read':
     case 'api.mutate':
@@ -32,12 +32,12 @@ export function authorize(p: Principal, a: Action): Decision {
     case 'prod.read':
       return ALLOW;
     case 'release.read':
-      return p.grants.has(a.service) ? ALLOW : deny(`repository ${p.claims.repository} is not bound to service "${a.service}"`);
+      return p.grants.has(a.project) ? ALLOW : deny(`repository ${p.claims.repository} is not bound to project "${a.project}"`);
     case 'release.submit': {
-      const grant = p.grants.get(a.service);
-      if (!grant) return deny(`repository ${p.claims.repository} is not bound to service "${a.service}"`);
+      const grant = p.grants.get(a.project);
+      if (!grant) return deny(`repository ${p.claims.repository} is not bound to project "${a.project}"`);
       if (a.bootstrap && !grant.allowBootstrap) {
-        return deny(`the binding for service "${a.service}" does not allow bootstrap`, 'bootstrap_not_allowed');
+        return deny(`the binding for project "${a.project}" does not allow bootstrap`, 'bootstrap_not_allowed');
       }
       return ALLOW;
     }

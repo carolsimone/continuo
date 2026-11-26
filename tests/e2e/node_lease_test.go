@@ -16,10 +16,10 @@ import (
 )
 
 const (
-	// leaseService and leaseTable name the node both runs of the lease test
+	// leaseProject and leaseTable name the node both runs of the lease test
 	// write: service-1's table_a, a node of e2e-schedule that reads
 	// seed_table_1.
-	leaseService = "service-1"
+	leaseProject = "service-1"
 	leaseTable   = "table_a"
 	// leaseNodeKey is that node's key in run-controller's node_leases: "<schema>.<table>",
 	// lowercased.
@@ -87,7 +87,7 @@ func TestE2E_NodeLease_ASingleNodeRunWaitsForTheScheduledWriter(t *testing.T) {
 
 	// ── A single-node run of the same node waits for it ──────────────────────
 	snResp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
-		ServiceName:    leaseService,
+		ProjectName:    leaseProject,
 		SchemaName:     testSchemaName,
 		TableName:      leaseTable,
 		MetadataSource: "latest",
@@ -286,7 +286,7 @@ func readLeaseTask(ctx context.Context, clients *testClients, runID uuid.UUID) (
 		return nil, fmt.Errorf("ListTasks(%s): %w", runID, err)
 	}
 	for _, task := range resp.GetTasks() {
-		if task.GetServiceName() == leaseService && task.GetSchemaName() == testSchemaName && task.GetTableName() == leaseTable {
+		if task.GetProjectName() == leaseProject && task.GetSchemaName() == testSchemaName && task.GetTableName() == leaseTable {
 			return task, nil
 		}
 	}

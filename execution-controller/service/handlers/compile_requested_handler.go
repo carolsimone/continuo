@@ -16,8 +16,8 @@ import (
 )
 
 // CompileRequestedHandler processes compile.requested:v1 events by enqueuing
-// exactly one pending compile Deployment for the named service. The compile
-// node has no intra-service upstreams, so it always starts pending
+// exactly one pending compile Deployment for the named project. The compile
+// node has no intra-project upstreams, so it always starts pending
 // (immediately dispatchable). The handler is pure orchestration — it never
 // parses JSON, manages the transaction, or runs dedup (dedup is
 // binding-level, keyed per-release on a deterministic outbox_entry_id).
@@ -42,11 +42,11 @@ func (h *CompileRequestedHandler) Handle(
 	now := time.Now()
 	cmd := command.ValidationDeployTask{
 		ReleaseID:        evt.ReleaseID,
-		NodeID:           evt.Service,
-		ServiceName:      evt.Service,
+		NodeID:           evt.Project,
+		ProjectName:      evt.Project,
 		ImageTag:         evt.ImageTag,
-		JobName:          BuildValidationJobName(evt.ReleaseID, evt.Service),
-		ManifestS3URI:    artifacts.ManifestURI(evt.Bucket, evt.Service, evt.ReleaseID),
+		JobName:          BuildValidationJobName(evt.ReleaseID, evt.Project),
+		ManifestS3URI:    artifacts.ManifestURI(evt.Bucket, evt.Project, evt.ReleaseID),
 		SourceOverlayURI: evt.SourceOverlayURI,
 		// Compile tasks have no candidate SQL URI, upstreams, validation op, or prod schema.
 	}
@@ -54,8 +54,8 @@ func (h *CompileRequestedHandler) Handle(
 	// compile.requested without candidate_schema disables the leg entirely.
 	if evt.CandidateSchema != "" {
 		cmd.CandidateSchema = evt.CandidateSchema
-		cmd.ParseProdS3URI = artifacts.ParseCacheProdURI(evt.Bucket, evt.Service, evt.ImageTag)
-		cmd.ParseCandidateS3URI = artifacts.ParseCacheCandidateURI(evt.Bucket, evt.Service, evt.ReleaseID)
+		cmd.ParseProdS3URI = artifacts.ParseCacheProdURI(evt.Bucket, evt.Project, evt.ImageTag)
+		cmd.ParseCandidateS3URI = artifacts.ParseCacheCandidateURI(evt.Bucket, evt.Project, evt.ReleaseID)
 	}
 	var procID *uuid.UUID
 	if msgProcID != uuid.Nil {
@@ -63,9 +63,9 @@ func (h *CompileRequestedHandler) Handle(
 		procID = &id
 	}
 	if err := u.DeploymentsRepo().Add(ctx, model.NewCompileDeployment(cmd, procID, now)); err != nil {
-		return fmt.Errorf("add compile deployment for service %s: %w", evt.Service, err)
+		return fmt.Errorf("add compile deployment for project %s: %w", evt.Project, err)
 	}
 	h.logger.Info("enqueued compile deployment",
-		"release_id", evt.ReleaseID, "service", evt.Service)
+		"release_id", evt.ReleaseID, "project", evt.Project)
 	return nil
 }

@@ -35,11 +35,11 @@ function setup(props: {
 
 const succeededTasks: Task[] = [
   {
-    task_id: 's.sch.a', service_name: 's', schema_name: 'sch', table_name: 'a',
+    task_id: 's.sch.a', project_name: 's', schema_name: 'sch', table_name: 'a',
     job_name: '', status: 'succeeded', attempt: 0, max_retries: 0, created_at: null,
   },
   {
-    task_id: 's.sch.b', service_name: 's', schema_name: 'sch', table_name: 'b',
+    task_id: 's.sch.b', project_name: 's', schema_name: 'sch', table_name: 'b',
     job_name: '', status: 'succeeded', attempt: 0, max_retries: 0, created_at: null,
   },
 ];
@@ -84,7 +84,7 @@ describe('DAGPanel colorByStatus', () => {
     const tasks: Task[] = [
       ...succeededTasks,
       {
-        task_id: 's.sch.c', service_name: 's', schema_name: 'sch', table_name: 'c',
+        task_id: 's.sch.c', project_name: 's', schema_name: 'sch', table_name: 'c',
         job_name: '', status: 'succeeded', attempt: 0, max_retries: 0, created_at: null,
       },
     ];
@@ -115,7 +115,7 @@ describe('DAGPanel colorByStatus', () => {
   });
 });
 
-// ---- Service-level view ----
+// ---- Project-level view ----
 
 const SVC_NODES: GraphNode[] = [
   { node_id: 'svc-a.sch.n1', node_type: 'dbt-model', schedule_name: 's', dormant: false, last_run_at: null },
@@ -128,21 +128,21 @@ const SVC_EDGES: GraphEdge[] = [
 ];
 const SVC_TASKS: Task[] = [
   {
-    task_id: 'svc-a.sch.n1', service_name: 'svc-a', schema_name: 'sch', table_name: 'n1',
+    task_id: 'svc-a.sch.n1', project_name: 'svc-a', schema_name: 'sch', table_name: 'n1',
     job_name: '', status: 'failed', attempt: 0, max_retries: 0, created_at: null,
   },
   {
-    task_id: 'svc-a.sch.n2', service_name: 'svc-a', schema_name: 'sch', table_name: 'n2',
+    task_id: 'svc-a.sch.n2', project_name: 'svc-a', schema_name: 'sch', table_name: 'n2',
     job_name: '', status: 'succeeded', attempt: 0, max_retries: 0, created_at: null,
   },
   {
-    task_id: 'svc-b.sch.m1', service_name: 'svc-b', schema_name: 'sch', table_name: 'm1',
+    task_id: 'svc-b.sch.m1', project_name: 'svc-b', schema_name: 'sch', table_name: 'm1',
     job_name: '', status: 'succeeded', attempt: 0, max_retries: 0, created_at: null,
   },
 ];
 
-function setupServiceView(expanded: Set<string>, onServiceClick = () => {}) {
-  const serviceColors = new Map([['svc-a', '#0ea5e9'], ['svc-b', '#f59e0b']]);
+function setupProjectView(expanded: Set<string>, onProjectClick = () => {}) {
+  const projectColors = new Map([['svc-a', '#0ea5e9'], ['svc-b', '#f59e0b']]);
   return render(
     <ReactFlowProvider>
       <DAGPanel
@@ -151,24 +151,24 @@ function setupServiceView(expanded: Set<string>, onServiceClick = () => {}) {
         tasks={SVC_TASKS}
         selectedNodeId={null}
         onNodeClick={() => {}}
-        serviceView
-        expandedServices={expanded}
-        onServiceClick={onServiceClick}
-        serviceColors={serviceColors}
+        projectView
+        expandedProjects={expanded}
+        onProjectClick={onProjectClick}
+        projectColors={projectColors}
       />
     </ReactFlowProvider>,
   );
 }
 
-describe('DAGPanel service view', () => {
-  it('renders one vertex per collapsed service and no model nodes by default', () => {
-    const { container } = setupServiceView(new Set());
+describe('DAGPanel project view', () => {
+  it('renders one vertex per collapsed project and no model nodes by default', () => {
+    const { container } = setupProjectView(new Set());
     const ids = [...container.querySelectorAll('.react-flow__node')].map(n => n.getAttribute('data-id'));
     expect(ids.sort()).toEqual(['svc:svc-a', 'svc:svc-b']);
   });
 
-  it('paints a collapsed service vertex with its rolled-up status (failed wins)', () => {
-    const { container } = setupServiceView(new Set());
+  it('paints a collapsed project vertex with its rolled-up status (failed wins)', () => {
+    const { container } = setupProjectView(new Set());
     const vertexA = container.querySelector('.react-flow__node[data-id="svc:svc-a"]') as HTMLElement;
     // failed background #fef2f2
     expect(vertexA.style.background).toBe('rgb(254, 242, 242)');
@@ -177,32 +177,32 @@ describe('DAGPanel service view', () => {
     expect(vertexB.style.background).toBe('rgb(240, 253, 244)');
   });
 
-  it('shows the service name and node count on the vertex', () => {
-    const { container } = setupServiceView(new Set());
+  it('shows the project name and node count on the vertex', () => {
+    const { container } = setupProjectView(new Set());
     const vertexA = container.querySelector('.react-flow__node[data-id="svc:svc-a"]') as HTMLElement;
     expect(vertexA.textContent).toContain('svc-a');
     expect(vertexA.textContent).toContain('2');
   });
 
-  it('reveals a service\'s model nodes when it is expanded, keeping others collapsed', () => {
-    const { container } = setupServiceView(new Set(['svc-a']));
+  it('reveals a project\'s model nodes when it is expanded, keeping others collapsed', () => {
+    const { container } = setupProjectView(new Set(['svc-a']));
     const ids = [...container.querySelectorAll('.react-flow__node')].map(n => n.getAttribute('data-id'));
     expect(ids.sort()).toEqual(['svc-a.sch.n1', 'svc-a.sch.n2', 'svc:svc-b']);
   });
 
-  it('invokes onServiceClick with the service name when its vertex is clicked', () => {
-    const onServiceClick = vi.fn();
-    const { container } = setupServiceView(new Set(), onServiceClick);
+  it('invokes onProjectClick with the project name when its vertex is clicked', () => {
+    const onProjectClick = vi.fn();
+    const { container } = setupProjectView(new Set(), onProjectClick);
     const vertexA = container.querySelector('.react-flow__node[data-id="svc:svc-a"]') as HTMLElement;
     fireEvent.click(vertexA);
-    expect(onServiceClick).toHaveBeenCalledWith('svc-a');
+    expect(onProjectClick).toHaveBeenCalledWith('svc-a');
   });
 
-  it('keeps the service accent on a selected model node (longhand border regression)', () => {
-    // The focus role rewrites the border; the left service accent must
+  it('keeps the project accent on a selected model node (longhand border regression)', () => {
+    // The focus role rewrites the border; the left project accent must
     // survive it. A `border` shorthand mixed with a `borderLeft` longhand
     // used to drop the accent on re-render.
-    const serviceColors = new Map([['svc-a', '#0ea5e9'], ['svc-b', '#f59e0b']]);
+    const projectColors = new Map([['svc-a', '#0ea5e9'], ['svc-b', '#f59e0b']]);
     const { container } = render(
       <ReactFlowProvider>
         <DAGPanel
@@ -211,10 +211,10 @@ describe('DAGPanel service view', () => {
           tasks={SVC_TASKS}
           selectedNodeId="svc-a.sch.n1"
           onNodeClick={() => {}}
-          serviceView
-          expandedServices={new Set(['svc-a'])}
-          onServiceClick={() => {}}
-          serviceColors={serviceColors}
+          projectView
+          expandedProjects={new Set(['svc-a'])}
+          onProjectClick={() => {}}
+          projectColors={projectColors}
         />
       </ReactFlowProvider>,
     );
@@ -232,8 +232,8 @@ describe('DAGPanel service view', () => {
     expect(dimVertex.style.borderLeftColor).toBe('rgb(245, 158, 11)'); // svc-b accent
   });
 
-  it('lays out a cyclic service graph without crashing', () => {
-    // svc-a→svc-b via n1→m1 and svc-b→svc-a via m1→n2: the collapsed service
+  it('lays out a cyclic project graph without crashing', () => {
+    // svc-a→svc-b via n1→m1 and svc-b→svc-a via m1→n2: the collapsed project
     // graph is a 2-cycle even though the model graph is a DAG.
     const cyclicEdges: GraphEdge[] = [
       { from_node_id: 'svc-a.sch.n1', to_node_id: 'svc-b.sch.m1' },
@@ -247,10 +247,10 @@ describe('DAGPanel service view', () => {
           tasks={SVC_TASKS}
           selectedNodeId={null}
           onNodeClick={() => {}}
-          serviceView
-          expandedServices={new Set()}
-          onServiceClick={() => {}}
-          serviceColors={new Map()}
+          projectView
+          expandedProjects={new Set()}
+          onProjectClick={() => {}}
+          projectColors={new Map()}
         />
       </ReactFlowProvider>,
     );

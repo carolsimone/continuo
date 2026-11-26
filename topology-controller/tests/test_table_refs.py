@@ -8,7 +8,7 @@ def _node(*sqls: str, schema: str = "analytics", table: str = "m") -> ManifestNo
     return ManifestNode(
         table_name=table,
         schema_name=schema,
-        service_name="service-1",
+        project_name="service-1",
         owner="data-platform",
         schedule_name="daily",
         criticality="SECONDARY",

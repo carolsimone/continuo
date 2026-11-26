@@ -25,9 +25,9 @@ type PRClosed struct {
 	// representative of that set; a payload emitted before the field existed
 	// carries only NodeID.
 	ResolvedNodeIDs []string
-	// Service is the owning-service group this PR covers; empty for a legacy
+	// Project is the owning project this PR covers; empty for a legacy
 	// whole-proposal PR. Its DTO field is omitempty.
-	Service  string
+	Project  string
 	PrURL    string
 	PrNumber int
 	// Outcome is "merged" or "rejected".

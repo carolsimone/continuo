@@ -20,7 +20,7 @@ func TestCompileRequestedHandler_EnqueuesOneCompileDeployment(t *testing.T) {
 
 	evt := events.CompileRequested{
 		ReleaseID: "rel-compile-2026",
-		Service:   "finance",
+		Project:   "finance",
 		ImageTag:  "sha-compile-1",
 		Bucket:    "my-artifacts-bucket",
 	}
@@ -42,14 +42,14 @@ func TestCompileRequestedHandler_EnqueuesOneCompileDeployment(t *testing.T) {
 	cmd := dep.ValidationCommand()
 	assert.Equal(t, "rel-compile-2026", cmd.ReleaseID)
 	assert.Equal(t, "finance", cmd.NodeID,
-		"NodeID must equal the service name for compile")
-	assert.Equal(t, "finance", cmd.ServiceName)
+		"NodeID must equal the project name for compile")
+	assert.Equal(t, "finance", cmd.ProjectName)
 	assert.Equal(t, "sha-compile-1", cmd.ImageTag)
 	assert.NotEmpty(t, cmd.JobName, "handler must populate JobName via BuildValidationJobName")
 	assert.Equal(t,
 		"s3://my-artifacts-bucket/finance/rel-compile-2026/manifest.json",
 		cmd.ManifestS3URI,
-		"ManifestS3URI must be s3://<bucket>/<service>/<release_id>/manifest.json",
+		"ManifestS3URI must be s3://<bucket>/<project>/<release_id>/manifest.json",
 	)
 }
 
@@ -59,7 +59,7 @@ func TestCompileRequestedHandler_MsgProcIDNilAllowed(t *testing.T) {
 
 	evt := events.CompileRequested{
 		ReleaseID: "rel-nil",
-		Service:   "analytics",
+		Project:   "analytics",
 		ImageTag:  "sha-t1",
 		Bucket:    "bucket-x",
 	}
@@ -77,7 +77,7 @@ func TestCompileRequestedHandler_JobNameDeterministic(t *testing.T) {
 
 	evt := events.CompileRequested{
 		ReleaseID: "rel-abc",
-		Service:   "shop",
+		Project:   "shop",
 		ImageTag:  "sha-2",
 		Bucket:    "bkt",
 	}
@@ -86,7 +86,7 @@ func TestCompileRequestedHandler_JobNameDeterministic(t *testing.T) {
 	require.NoError(t, h.Handle(context.Background(), u, evt, uuid.Nil))
 	require.Len(t, depl.added, 1)
 
-	// Verify job name matches BuildValidationJobName(releaseID, service)
+	// Verify job name matches BuildValidationJobName(releaseID, project)
 	expected := handlers.BuildValidationJobName("rel-abc", "shop")
 	assert.Equal(t, expected, depl.added[0].ValidationCommand().JobName)
 }
@@ -97,7 +97,7 @@ func TestCompileRequestedHandler_ThreadsCandidateSchemaAndParseCacheURIs(t *test
 
 	evt := events.CompileRequested{
 		ReleaseID:       "rel-parse-1",
-		Service:         "finance",
+		Project:         "finance",
 		ImageTag:        "sha-parse-1",
 		Bucket:          "my-artifacts-bucket",
 		CandidateSchema: "_candidate_rel_parse_1",
@@ -110,11 +110,11 @@ func TestCompileRequestedHandler_ThreadsCandidateSchemaAndParseCacheURIs(t *test
 	cmd := depl.added[0].ValidationCommand()
 	assert.Equal(t, "_candidate_rel_parse_1", cmd.CandidateSchema)
 	assert.Equal(t,
-		artifacts.ParseCacheProdURI(evt.Bucket, evt.Service, evt.ImageTag),
+		artifacts.ParseCacheProdURI(evt.Bucket, evt.Project, evt.ImageTag),
 		cmd.ParseProdS3URI,
 	)
 	assert.Equal(t,
-		artifacts.ParseCacheCandidateURI(evt.Bucket, evt.Service, evt.ReleaseID),
+		artifacts.ParseCacheCandidateURI(evt.Bucket, evt.Project, evt.ReleaseID),
 		cmd.ParseCandidateS3URI,
 	)
 }
@@ -125,7 +125,7 @@ func TestCompileRequestedHandler_EmptyCandidateSchemaDisablesParseCacheLeg(t *te
 
 	evt := events.CompileRequested{
 		ReleaseID: "rel-parse-2",
-		Service:   "finance",
+		Project:   "finance",
 		ImageTag:  "sha-parse-2",
 		Bucket:    "my-artifacts-bucket",
 		// CandidateSchema deliberately absent: older compile.requested wire format.
@@ -147,7 +147,7 @@ func TestCompileRequestedHandler_ThreadsSourceOverlayURI(t *testing.T) {
 
 	evt := events.CompileRequested{
 		ReleaseID:        "verify-rel-1-svc-a1",
-		Service:          "finance",
+		Project:          "finance",
 		ImageTag:         "sha-verify-1",
 		Bucket:           "my-artifacts-bucket",
 		SourceOverlayURI: "s3://my-artifacts-bucket/finance/verify-rel-1-svc-a1/source-overlay.tar.gz",

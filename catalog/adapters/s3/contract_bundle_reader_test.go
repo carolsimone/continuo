@@ -59,7 +59,7 @@ func contractBundleOf(entries ...[2]string) []byte {
 // a contract hash.
 func contractEntry(id, contractHash string) string {
 	return fmt.Sprintf(
-		`{"family":"python","service":"service-py","contract_hash":%q,"content_hash":"sha256:c-%s","source":{"path":"contracts/%s.odcs.yaml","sha256":"sha256:s"},"document":{"id":%q,"kind":"DataContract","schema":[{"name":"t","properties":[{"name":"n","maxLength":32}]}]}}`,
+		`{"family":"python","project":"service-py","contract_hash":%q,"content_hash":"sha256:c-%s","source":{"path":"contracts/%s.odcs.yaml","sha256":"sha256:s"},"document":{"id":%q,"kind":"DataContract","schema":[{"name":"t","properties":[{"name":"n","maxLength":32}]}]}}`,
 		contractHash, id, id, id)
 }
 
@@ -79,7 +79,7 @@ func TestContractBundleReader_ReadsTheFixture(t *testing.T) {
 			Contracts      []struct {
 				UniqueID     string          `json:"unique_id"`
 				Family       string          `json:"family"`
-				Service      string          `json:"service"`
+				Project      string          `json:"project"`
 				ContractHash string          `json:"contract_hash"`
 				ContentHash  string          `json:"content_hash"`
 				SourcePath   string          `json:"source_path"`
@@ -110,7 +110,7 @@ func TestContractBundleReader_ReadsTheFixture(t *testing.T) {
 		assert.Equal(t, want.ContractHash, got.ContractHash, want.UniqueID)
 		assert.Equal(t, want.ContentHash, got.ContentHash, want.UniqueID)
 		assert.Equal(t, model.ContractFamily(want.Family), got.Family, want.UniqueID)
-		assert.Equal(t, want.Service, got.Service, want.UniqueID)
+		assert.Equal(t, want.Project, got.Project, want.UniqueID)
 		assert.Equal(t, want.SourcePath, got.SourcePath, want.UniqueID)
 		// A number keeps the exact text the contract hash was taken over.
 		var wantDocument map[string]any
@@ -280,13 +280,13 @@ func TestContractBundleReader_ABadEntryIsInvalid(t *testing.T) {
 		"an empty contract hash":   {"a.t", contractEntry("a.t", "")},
 		"a document of another id": {"a.t", contractEntry("a.other", "sha256:h1")},
 		"a document with no id": {"a.t",
-			`{"family":"python","service":"s","contract_hash":"sha256:h1","document":{"kind":"DataContract"}}`},
+			`{"family":"python","project":"s","contract_hash":"sha256:h1","document":{"kind":"DataContract"}}`},
 		"a document that is not an object": {"a.t",
-			`{"family":"python","service":"s","contract_hash":"sha256:h1","document":[1,2]}`},
+			`{"family":"python","project":"s","contract_hash":"sha256:h1","document":[1,2]}`},
 		"no document": {"a.t",
-			`{"family":"python","service":"s","contract_hash":"sha256:h1"}`},
+			`{"family":"python","project":"s","contract_hash":"sha256:h1"}`},
 		"an id that is not a string": {"a.t",
-			`{"family":"python","service":"s","contract_hash":"sha256:h1","document":{"id":7}}`},
+			`{"family":"python","project":"s","contract_hash":"sha256:h1","document":{"id":7}}`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			mem := objectstoretest.NewMemory(defaultBucket)
@@ -319,7 +319,7 @@ func TestContractBundleReader_OtherFailuresKeepTheirCause(t *testing.T) {
 // text the bundle holds, so the stored version keeps the value its
 // contract_hash was taken over.
 func TestContractBundleReader_KeepsANumberAsItsText(t *testing.T) {
-	entry := `{"family":"python","service":"service-py","contract_hash":"sha256:h","content_hash":"sha256:c","source":{"path":"contracts/t.odcs.yaml","sha256":"sha256:s"},"document":{"id":"analytics.t","limit":9007199254740993,"ratio":0.1}}`
+	entry := `{"family":"python","project":"service-py","contract_hash":"sha256:h","content_hash":"sha256:c","source":{"path":"contracts/t.odcs.yaml","sha256":"sha256:s"},"document":{"id":"analytics.t","limit":9007199254740993,"ratio":0.1}}`
 	mem := objectstoretest.NewMemory(defaultBucket)
 	sha := putContractBundle(t, mem, contractBundleOf([2]string{"analytics.t", entry}))
 
@@ -346,7 +346,7 @@ func TestContractBundleReader_ReadsTheOntologyVersion(t *testing.T) {
 	bundle, err := fetchContractBundle(t, mem, sha)
 	require.NoError(t, err)
 
-	assert.Equal(t, "rel-9f8e7d6-14@sha256:bd4d098b4e54cd2181b7c553c13827313c3638a1a145104d51d127733f9a0da0", bundle.OntologyVersion)
+	assert.Equal(t, "rel-9f8e7d6-14@sha256:7fbc2f43bfb6483c0ac8996f21c72df341c9579998d6acdb79f8c7143dcf2c46", bundle.OntologyVersion)
 }
 
 // A bundle that names no ontology release, whether its ontology value is null,
@@ -355,7 +355,7 @@ func TestContractBundleReader_ABundleWithNoOntologyReleaseHasNoOntologyVersion(t
 	for name, ontology := range map[string]string{
 		"null":                        `"ontology":null,`,
 		"absent":                      ``,
-		"a switch on and no ontology": `"ontology":{"enabled":true,"service":null,"release_id":null,"sha256":null,"declared_services":[],"findings":[]},`,
+		"a switch on and no ontology": `"ontology":{"enabled":true,"project":null,"release_id":null,"sha256":null,"declared_projects":[],"findings":[]},`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			mem := objectstoretest.NewMemory(defaultBucket)

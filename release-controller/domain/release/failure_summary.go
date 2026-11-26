@@ -16,19 +16,19 @@ const (
 	maxNamedUpstream = 3
 )
 
-// FailedNode is a node that did not pass a pipeline stage, with the service
+// FailedNode is a node that did not pass a pipeline stage, with the project
 // the candidate topology declares for it ("" when it names none). Skipped marks
 // a node that never ran because something upstream of it failed: a consequence
 // of a failure, not a failure of its own.
 type FailedNode struct {
 	NodeID  string
-	Service string
+	Project string
 	Skipped bool
 }
 
 // SummarizeValidationFailure is the operator-facing explanation of a
 // validation rejection, built from what release-controller knows about the
-// failure without reading any log: which nodes failed, in which service, how
+// failure without reading any log: which nodes failed, in which project, how
 // many more were skipped because of them, and which changed nodes sit upstream
 // of them. It says where to look, not why a node failed; the why lives in the
 // node's log, which only the log's owner interprets.
@@ -79,7 +79,7 @@ func SummarizeCloneFailure(cloned []string) string {
 }
 
 // SummarizeSeedFailure is the operator-facing explanation of a seed-build
-// rejection: which seeds did not build, and in which service.
+// rejection: which seeds did not build, and in which project.
 func SummarizeSeedFailure(failing []FailedNode) string {
 	if len(failing) == 0 {
 		return "seed build failed, but no per-node failure was recorded"
@@ -90,7 +90,7 @@ func SummarizeSeedFailure(failing []FailedNode) string {
 
 // SummarizeCompileFailure is the operator-facing explanation of a compile
 // rejection that carries no attribution to a pod container. The compile leg
-// reports one node per service it compiled, so the node ids name services.
+// reports one node per project it compiled, so the node ids name projects.
 func SummarizeCompileFailure(failing []FailedNode) string {
 	if len(failing) == 0 {
 		return "dbt compile failed, but no per-node failure was recorded"
@@ -142,10 +142,10 @@ func andMore(list string, rest int) string {
 }
 
 func (n FailedNode) label() string {
-	if n.Service == "" {
+	if n.Project == "" {
 		return n.NodeID
 	}
-	return n.NodeID + " (" + n.Service + ")"
+	return n.NodeID + " (" + n.Project + ")"
 }
 
 // plural picks the wording for a count: one for exactly 1, many otherwise.
@@ -190,7 +190,7 @@ func nearestFirstExcept(ancestors []ChangedAncestor, except []FailedNode) []Fail
 	})
 	nodes := make([]FailedNode, len(unique))
 	for i, a := range unique {
-		nodes[i] = FailedNode{NodeID: a.NodeID, Service: a.Service}
+		nodes[i] = FailedNode{NodeID: a.NodeID, Project: a.Project}
 	}
 	return nodes
 }

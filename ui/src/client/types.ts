@@ -54,7 +54,7 @@ export interface Scheduler {
 
 export interface Task {
   task_id: string;
-  service_name: string;
+  project_name: string;
   schema_name: string;
   table_name: string;
   job_name: string;
@@ -76,7 +76,7 @@ export interface Task {
 }
 
 export interface GraphNode {
-  node_id: string;     // "{service}.{schema}.{table}"
+  node_id: string;     // "{project}.{schema}.{table}"
   node_type: string;   // a NodeType from src/server/generated/vocabulary.gen.ts, or "" when unknown
   schedule_name: string;
   // True for a node continuo builds that belongs to no schedule: a run started
@@ -353,7 +353,7 @@ export interface ReleaseTransition {
 export interface ReleaseNotice {
   kind: string; // 'seed_reload'
   node_id: string;
-  service: string;
+  project: string;
   engine_family: 'schema_bound' | 'late_binding';
   change: 'rows' | 'columns';
   columns: { added: string[]; removed: string[]; retyped: string[] };
@@ -401,9 +401,9 @@ export interface ReleaseDetail {
   // How many remediation rounds have run for this release. 1 for every release
   // that has not been retried; "Try again" increments it up to the 3-round cap.
   remediation_round: number;
-  // The one service this candidate changes; every other entry in image_tags is
+  // The one project this candidate changes; every other entry in image_tags is
   // carried over from prod. Empty when the release row records none.
-  changed_service?: string;
+  changed_project?: string;
   // Where the change came from: the GitHub owner/name repo and the commit, and
   // the commit's page under the install's GitHub host, attached by the ui
   // server when both are recorded.
@@ -428,7 +428,7 @@ export interface ReleaseDetail {
 // One node of the live release, with the stats of its recent runs. A node
 // that never ran has task_count 0 and null stats, last_status and last_run_at.
 export interface NodeSummary {
-  service_name: string;
+  project_name: string;
   schema_name: string;
   table_name: string;
   task_count: number;
@@ -454,11 +454,11 @@ export interface NodesResponse {
   nodes: NodeSummary[];
 }
 
-// The distinct service names of the nodes the node list lists, from GET
-// /api/nodes/services. Feeds the Nodes-tab and Remediation-tab service
+// The distinct project names of the nodes the node list lists, from GET
+// /api/nodes/projects. Feeds the Nodes-tab and Remediation-tab project
 // filters.
-export interface ServicesResponse {
-  services: string[];
+export interface ProjectsResponse {
+  projects: string[];
 }
 
 // Where the user arrived at /node/:fqn from — drives the back link.
@@ -489,29 +489,29 @@ export interface NodeOutcomeDTO {
 }
 
 // One pull request opened from a proposal. A proposal splits into one entry
-// per owning service; service === '' is the legacy whole-proposal group.
+// per owning project; project === '' is the legacy whole-proposal group.
 export interface PullRequestDTO {
-  service: string;
+  project: string;
   repo: string;
   branch: string;
   pr_url: string;
   pr_number: number;
   // pr_state is the terminal state from GitHub: "merged" or "rejected", or
   // "open"/"opening" while the PR has not yet closed, "" or "failed" while
-  // no live PR exists for this service.
+  // no live PR exists for this project.
   pr_state: string;
   pr_opened_at: string;
   pr_opened_by: string;
   pr_closed_at: string;
 }
 
-// One fix-verification run a batched attempt ran for one edited service, with
+// One fix-verification run a batched attempt ran for one edited project, with
 // the durable summary agent-remediation keeps of how it went. phase is ''
 // until the reconciler first reads the run, then queued | running | passed |
 // failed. activated_at is when the run left the pipeline's queue ('' while
 // queued); error is the named per-node errors of a failed run.
 export interface VerificationDTO {
-  service: string;
+  project: string;
   kind: string;
   run_id: string;
   phase: '' | 'queued' | 'running' | 'passed' | 'failed';
@@ -590,26 +590,26 @@ export interface ProposalDTO {
   // proposalReasonForNode.
   node_outcomes?: Record<string, NodeOutcomeDTO>;
   // verifications lists the verification runs this attempt ran, one per
-  // edited service that needed verification. Empty on a proposal judged
+  // edited project that needed verification. Empty on a proposal judged
   // without one, or a legacy row that only ever tracked a single
   // verification_run_id.
   verifications?: VerificationDTO[];
-  // pull_requests is one entry per (proposal, service) pull request; absent
+  // pull_requests is one entry per (proposal, project) pull request; absent
   // or empty on a proposal that never entered the PR lifecycle, or one from
-  // before the per-service split existed — in which case the singular pr_*
-  // fields above describe its one (legacy, service '') pull request. See
+  // before the per-project split existed — in which case the singular pr_*
+  // fields above describe its one (legacy, project '') pull request. See
   // proposalPullRequests.
   pull_requests?: PullRequestDTO[];
-  // pr_services is the sorted owning-service groups this proposal's pull
+  // pr_projects is the sorted owning-project groups this proposal's pull
   // requests split into; absent, or [''], for a legacy (unsplit) proposal.
-  // See proposalPrServices.
-  pr_services?: string[];
-  // services is every service this attempt touched — the failing nodes'
-  // services plus the edited ones, sorted — the same set the server's
-  // `service` list filter matches a proposal on. Absent from a proposal
+  // See proposalPrProjects.
+  pr_projects?: string[];
+  // projects is every project this attempt touched — the failing nodes'
+  // projects plus the edited ones, sorted — the same set the server's
+  // `project` list filter matches a proposal on. Absent from a proposal
   // served by an agent-remediation that predates the field. See
-  // proposalServices.
-  services?: string[];
+  // proposalProjects.
+  projects?: string[];
   // approvers is who must approve what this attempt did with each node a
   // remediation settled at its end, the fixed and the handed-over nodes, one
   // entry per node sorted by node_id. Absent or empty on an attempt row with
@@ -625,7 +625,7 @@ export interface ProposalDTO {
 export interface VerificationRunDetail {
   run_id: string;
   status: string; // received|compiling|parsing|seed_building|validating|passed|failed
-  changed_service: string;
+  changed_project: string;
   verifies_release_id: string;
   attempt: number;
   created_at: string;
@@ -650,7 +650,7 @@ export interface VerificationRunDetail {
 export interface VerificationRunSummary {
   run_id: string;
   status: string;
-  service: string;
+  project: string;
   attempt: number;
   created_at: string;
   activated_at: string;
@@ -665,7 +665,7 @@ export interface PipelineActive {
   run_id: string;
   run_kind: 'candidate' | 'verification';
   status: string;
-  service: string;
+  project: string;
   since: string;
   verifies_release_id?: string;
   attempt?: number;
@@ -680,7 +680,7 @@ export interface PipelineResponse {
 // last_success_seconds is the duration of its latest successful run, null
 // when it has never succeeded.
 export interface ChangedUpstreamNode {
-  service_name: string;
+  project_name: string;
   schema_name: string;
   table_name: string;
   downstream: number;

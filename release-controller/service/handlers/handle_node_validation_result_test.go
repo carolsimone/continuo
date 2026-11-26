@@ -95,7 +95,7 @@ func TestHandleNodeValidationResult_StampsNodeTypeFromCandidateTopology(t *testi
 	deps.Bucket = "continuo"
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc-a", ReleaseID: "rA", ImageTag: "sha-a", Repo: "acme/demo", CommitSHA: "deadbeef",
+		Project: "svc-a", ReleaseID: "rA", ImageTag: "sha-a", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
@@ -104,8 +104,8 @@ func TestHandleNodeValidationResult_StampsNodeTypeFromCandidateTopology(t *testi
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA", Status: "ok",
 		TopologyRef: putTopology(t, deps, "rA", release.Topology{
-			{UniqueID: "a", ServiceName: "svc-a", NodeType: "dbt-model", UpstreamUniqueIDs: []string{}},
-			{UniqueID: "test.p.not_null_a_id.1", ServiceName: "svc-a", NodeType: "dbt-test", UpstreamUniqueIDs: []string{"a"}},
+			{UniqueID: "a", ProjectName: "svc-a", NodeType: "dbt-model", UpstreamUniqueIDs: []string{}},
+			{UniqueID: "test.p.not_null_a_id.1", ProjectName: "svc-a", NodeType: "dbt-test", UpstreamUniqueIDs: []string{"a"}},
 		}),
 	}))
 

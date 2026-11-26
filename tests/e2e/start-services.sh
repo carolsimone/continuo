@@ -80,8 +80,8 @@ wait_for_tcp_port agent-chat 50053
 
 log_info "Compiling and uploading dbt manifests..."
 docker exec dbt-compile-and-load \
-  uv run python -m dbt_upload load --services-dir /app/services --release-id e2e-baseline
-log_info "dbt manifests uploaded to canonical keys (<service>/e2e-baseline/manifest.json)"
-log_info "NOTE: per-service image tags are seeded into the release-controller service_prod table by setup.sh / provision-k8s-test-env.sh"
+  uv run python -m dbt_upload load --projects-dir /app/projects --release-id e2e-baseline
+log_info "dbt manifests uploaded to canonical keys (<project>/e2e-baseline/manifest.json)"
+log_info "NOTE: per-project image tags are seeded into the release-controller service_prod table by setup.sh / provision-k8s-test-env.sh"
 
 log_info "All services started successfully!"

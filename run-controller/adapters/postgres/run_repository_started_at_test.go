@@ -18,13 +18,13 @@ import (
 )
 
 // independentNodes is a release slice of unconnected dbt models
-// public.<table> of service svc, with the plan of a run that executes them all.
+// public.<table> of project svc, with the plan of a run that executes them all.
 func independentNodes(t *testing.T, tables ...string) (runplan.Plan, topology.Graph) {
 	t.Helper()
 	nodes := make([]topology.Node, 0, len(tables))
 	for _, table := range tables {
 		nodes = append(nodes, topology.Node{
-			Key: topology.KeyOf("public", table), ServiceName: "svc", SchemaName: "public", TableName: table, NodeType: "dbt-model",
+			Key: topology.KeyOf("public", table), ProjectName: "svc", SchemaName: "public", TableName: table, NodeType: "dbt-model",
 		})
 	}
 	g := topology.NewGraph(nodes, nil)

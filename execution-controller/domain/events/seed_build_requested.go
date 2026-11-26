@@ -12,7 +12,7 @@ import (
 // are built directly into the candidate schema via `dbt seed`.
 type SeedBuildNode struct {
 	NodeID      string // dbt unique_id
-	ServiceName string
+	ProjectName string
 	SchemaName  string
 	TableName   string
 	NodeType    pkg_model.NodeType // always NodeTypeDbtSeed

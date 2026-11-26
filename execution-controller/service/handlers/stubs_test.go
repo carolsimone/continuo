@@ -140,14 +140,14 @@ func (r *recordingCancelledRepo) DeleteOlderThan(_ context.Context, _ time.Durat
 }
 
 // fakeResolver is a ports.CommandResolver whose FullRefreshBlock answers from
-// blocks, keyed "<service>/<node type>": every service is governed by its own
+// blocks, keyed "<project>/<node type>": every project is governed by its own
 // override block, and a pair blocks does not hold is defined.
 type fakeResolver struct {
 	ports.CommandResolver
 	blocks map[string]bool
 }
 
-func (r fakeResolver) FullRefreshBlock(serviceName string, nt pkgmodel.NodeType) (string, bool) {
-	defined, ok := r.blocks[serviceName+"/"+string(nt)]
-	return "services." + serviceName, defined || !ok
+func (r fakeResolver) FullRefreshBlock(projectName string, nt pkgmodel.NodeType) (string, bool) {
+	defined, ok := r.blocks[projectName+"/"+string(nt)]
+	return "projects." + projectName, defined || !ok
 }

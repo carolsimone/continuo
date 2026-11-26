@@ -1,12 +1,12 @@
-# The install's ontology as the ontology service releases it in the e2e suite.
-# It declares the py-probe service, svc-py-e2e, in the domain e2e, and one thing
-# for each of the service's four contracts. Every contract of the service binds
+# The install's ontology as the ontology project releases it in the e2e suite.
+# It declares the py-probe project, svc-py-e2e, in the domain e2e, and one thing
+# for each of the project's four contracts. Every contract of the project binds
 # to one of them, so a release that carries this file checks all four.
 principals:
   domains:
     e2e:
       owner_team: e2e
-  services:
+  projects:
     svc-py-e2e:
       domain: e2e
       kind: python

@@ -29,7 +29,7 @@ type codeUnitVersionsPayload struct {
 }
 
 // NewCodeUnitsCommand builds
-// `continuo node code-units [<unit-id>] [--service <s> --schema <s> --table <t>]`.
+// `continuo node code-units [<unit-id>] [--project <s> --schema <s> --table <t>]`.
 func NewCodeUnitsCommand(factory CatalogClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "code-units [<unit-id>]",
@@ -42,28 +42,28 @@ unit): every recorded checksum, its source, and the release that promoted it.
 This command takes exactly one of two mutually exclusive selectors:
 
   <unit-id>                              query one unit's chain directly.
-  --service <s> --schema <s> --table <t> resolve the named node's CURRENT
+  --project <s> --schema <s> --table <t> resolve the named node's CURRENT
                                           units first, then return each of
                                           their chains concatenated in
                                           resolution order. All three flags
                                           are required together; the node is
                                           addressed by its unique_id,
-                                          "<schema>.<table>" ( --service is
+                                          "<schema>.<table>" ( --project is
                                           accepted for consistency with the
                                           other node subcommands but does not
                                           appear in the unique_id).
 
-Supplying both the positional <unit-id> and any of --service/--schema/--table,
+Supplying both the positional <unit-id> and any of --project/--schema/--table,
 or supplying neither, is a usage error — there is no default selector.
 
 Flags:
-  --service  Owning service name of the node whose units to list. Must be
+  --project  Owning project name of the node whose units to list. Must be
              combined with --schema and --table; mutually exclusive with
              <unit-id>.
   --schema   Schema name of the node whose units to list. Must be combined
-             with --service and --table; mutually exclusive with <unit-id>.
+             with --project and --table; mutually exclusive with <unit-id>.
   --table    Table (model) name of the node whose units to list. Must be
-             combined with --service and --schema; mutually exclusive with
+             combined with --project and --schema; mutually exclusive with
              <unit-id>.
   --limit    Maximum number of versions returned per unit, newest first.
              Default 20; the server also applies this default when sent 0,
@@ -77,11 +77,11 @@ Output (stdout, JSON):
   the version carries no value for them.
 
 Errors:
-  usage      (exit 2)  wrong number of positional arguments, or the selector is not exactly one of <unit-id> / --service+--schema+--table
+  usage      (exit 2)  wrong number of positional arguments, or the selector is not exactly one of <unit-id> / --project+--schema+--table
   not_found  (exit 3)  the unit_id, or the node's unique_id, is not recorded
   unavailable(exit 5)  the catalog service is unreachable
   internal   (exit 6)  unexpected server error`,
-		Example: "  continuo node code-units unit_abc123\n  continuo node code-units --service finance --schema analytics --table orders",
+		Example: "  continuo node code-units unit_abc123\n  continuo node code-units --project finance --schema analytics --table orders",
 		Annotations: map[string]string{
 			"output_schema": `{"versions":"array"}`,
 			"exit_codes":    `[0,2,3,5,6]`,
@@ -90,22 +90,22 @@ Errors:
 			if len(args) > 1 {
 				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("code-units accepts at most one positional argument: <unit-id>"))
 			}
-			service, _ := cmd.Flags().GetString("service")
+			project, _ := cmd.Flags().GetString("project")
 			schema, _ := cmd.Flags().GetString("schema")
 			table, _ := cmd.Flags().GetString("table")
-			nodeSelectorSet := service != "" || schema != "" || table != ""
+			nodeSelectorSet := project != "" || schema != "" || table != ""
 
 			if len(args) == 1 {
 				if nodeSelectorSet {
-					return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("specify either <unit-id> or --service/--schema/--table, not both"))
+					return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("specify either <unit-id> or --project/--schema/--table, not both"))
 				}
 				return nil
 			}
 			if !nodeSelectorSet {
-				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("code-units requires either <unit-id> or --service, --schema, and --table"))
+				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("code-units requires either <unit-id> or --project, --schema, and --table"))
 			}
-			if service == "" || schema == "" || table == "" {
-				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("--service, --schema, and --table must all be set together"))
+			if project == "" || schema == "" || table == "" {
+				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("--project, --schema, and --table must all be set together"))
 			}
 			return nil
 		},
@@ -140,9 +140,9 @@ Errors:
 			return output.EmitSuccess(stdout, toCodeUnitVersionsPayload(resp.GetVersions()))
 		},
 	}
-	cmd.Flags().String("service", "", "Owning service name of the node whose units to list (must be combined with --schema and --table)")
-	cmd.Flags().String("schema", "", "Schema name of the node whose units to list (must be combined with --service and --table)")
-	cmd.Flags().String("table", "", "Table (model) name of the node whose units to list (must be combined with --service and --schema)")
+	cmd.Flags().String("project", "", "Owning project name of the node whose units to list (must be combined with --schema and --table)")
+	cmd.Flags().String("schema", "", "Schema name of the node whose units to list (must be combined with --project and --table)")
+	cmd.Flags().String("table", "", "Table (model) name of the node whose units to list (must be combined with --project and --schema)")
 	cmd.Flags().Int32("limit", defaultVersionsLimit, "Maximum number of versions returned per unit, newest first (default 20, server max 200)")
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true

@@ -33,8 +33,8 @@ then apply to the host itself.
 | [kubectl](https://kubernetes.io/docs/tasks/tools/) | Talking to that cluster | `brew install kubectl` |
 | [Helm](https://helm.sh/) 3.14+ | Installing continuo | `brew install helm` |
 | `git`, `curl`, `jq` | Cloning, calling the release API, reading its answers | `brew install jq` |
-| [AWS CLI](https://docs.aws.amazon.com/cli/) | Uploading the python service's artifacts to the bundled MinIO (chapter 4 of the [Run dbt and Python projects in continuo](run-projects-in-continuo.md) guide) | `brew install awscli` |
-| [uv](https://docs.astral.sh/uv/) | Installing the runtime CLI that builds the python service's contract (chapter 4 of the [Run dbt and Python projects in continuo](run-projects-in-continuo.md) guide) | `brew install uv` |
+| [AWS CLI](https://docs.aws.amazon.com/cli/) | Uploading the python project's artifacts to the bundled MinIO (chapter 4 of the [Run dbt and Python projects in continuo](run-projects-in-continuo.md) guide) | `brew install awscli` |
+| [uv](https://docs.astral.sh/uv/) | Installing the runtime CLI that builds the python project's contract (chapter 4 of the [Run dbt and Python projects in continuo](run-projects-in-continuo.md) guide) | `brew install uv` |
 
 **Room to run it.** continuo brings its own PostgreSQL, Redis, Neo4j, MinIO and
 identity provider in this mode, plus its own services, and then runs your

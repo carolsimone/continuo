@@ -22,7 +22,7 @@ func TestFixture_CloneSharesNothingWithTheOriginal(t *testing.T) {
 			Unfixable:        &remediation.Unfixable{Reason: model.HandoverReasonClassifierInfra, Detail: "down"},
 		}}},
 		DeclineBeforeModel: &decline,
-		ServiceRepoPaths:   map[string]string{"svc": "services/svc"},
+		ProjectRepoPaths:   map[string]string{"svc": "services/svc"},
 		RepoFiles:          map[string]string{"services/svc/a.sql": "select 1"},
 		Objects:            map[string]string{"s3://logs/a.log": "log"},
 		Bundle:             map[string]ports.CandidateSource{"a": {RawCode: "select 1", Runtime: "dbt"}},
@@ -44,7 +44,7 @@ func TestFixture_CloneSharesNothingWithTheOriginal(t *testing.T) {
 	c.Trigger.Nodes[0].ChangedAncestors[0].NodeID = "changed"
 	c.Trigger.Nodes[0].Unfixable.Detail = "changed"
 	c.DeclineBeforeModel.Nodes[0].FilePath = "changed"
-	c.ServiceRepoPaths["svc"] = "changed"
+	c.ProjectRepoPaths["svc"] = "changed"
 	c.RepoFiles["services/svc/a.sql"] = "changed"
 	c.Objects["s3://logs/a.log"] = "changed"
 	c.Bundle["a"] = ports.CandidateSource{RawCode: "changed"}
@@ -61,7 +61,7 @@ func TestFixture_CloneSharesNothingWithTheOriginal(t *testing.T) {
 	assert.Equal(t, "b", f.Trigger.Nodes[0].ChangedAncestors[0].NodeID)
 	assert.Equal(t, "down", f.Trigger.Nodes[0].Unfixable.Detail)
 	assert.Equal(t, "models/a.sql", f.DeclineBeforeModel.Nodes[0].FilePath)
-	assert.Equal(t, "services/svc", f.ServiceRepoPaths["svc"])
+	assert.Equal(t, "services/svc", f.ProjectRepoPaths["svc"])
 	assert.Equal(t, "select 1", f.RepoFiles["services/svc/a.sql"])
 	assert.Equal(t, "log", f.Objects["s3://logs/a.log"])
 	assert.Equal(t, "select 1", f.Bundle["a"].RawCode)

@@ -37,7 +37,7 @@ var labels = []struct {
 	{Rejection, []string{"release_id", "node_id"}},
 	{ErrorSignature, []string{"signature"}},
 	{Proposal, []string{"proposal_id"}},
-	{PullRequest, []string{"proposal_id", "service"}},
+	{PullRequest, []string{"proposal_id", "project"}},
 	{ProcessedMessage, []string{"group", "message_id"}},
 	{ContractVersion, []string{"unique_id", "contract_hash"}},
 }

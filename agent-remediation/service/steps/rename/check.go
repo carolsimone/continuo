@@ -23,7 +23,7 @@ var _ step.Check = (*MatchesPlan)(nil)
 
 // NewMatchesPlan builds the rename_matches_plan step. finder reads the
 // patched checkout the same way the model_rename step read the repository, so
-// both judge "names the model" by one rule; repoPaths maps a service to its
+// both judge "names the model" by one rule; repoPaths maps a project to its
 // dbt project's directory.
 func NewMatchesPlan(finder ports.ModelReferenceFinder, repoPaths map[string]string) *MatchesPlan {
 	return &MatchesPlan{finder: finder, repoPaths: repoPaths}
@@ -114,9 +114,9 @@ func (c *MatchesPlan) stillNaming(ctx context.Context, in step.CheckInput, plan 
 	if in.Scratch == nil {
 		return nil, errors.New("rename_matches_plan: the check was given no checkout")
 	}
-	projectDir, ok := c.repoPaths[plan.Service]
+	projectDir, ok := c.repoPaths[plan.Project]
 	if !ok || projectDir == "" {
-		return nil, fmt.Errorf("rename_matches_plan: no repository directory is configured for service %q", plan.Service)
+		return nil, fmt.Errorf("rename_matches_plan: no repository directory is configured for project %q", plan.Project)
 	}
 	files := make([]ports.ProposedFile, 0, len(in.Draft.Edits))
 	for _, e := range in.Draft.Edits {

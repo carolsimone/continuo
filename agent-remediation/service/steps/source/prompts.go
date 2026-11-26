@@ -59,7 +59,7 @@ func NewDBTParse() step.Prompt {
 		suspectsRoot: true,
 		pick:         pickNamed,
 		build: func(f remediation.Failure, files remediation.SourceFiles, _ string, precedents []prompt.Precedent) prompt.ProposeRequest {
-			return prompt.AssembleParseFix(shownFiles(files), f.Target.ErrorExcerpt, f.Target.Service, f.Target.NodeID, precedents)
+			return prompt.AssembleParseFix(shownFiles(files), f.Target.ErrorExcerpt, f.Target.Project, f.Target.NodeID, precedents)
 		},
 	}
 }

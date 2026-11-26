@@ -34,7 +34,7 @@ func (f *fakeChecker) PRStatus(_ context.Context, _ string, number int) (ports.P
 type fakeRecorder struct {
 	calls []struct {
 		ID       string
-		Service  string
+		Project  string
 		Outcome  proposal.PROutcome
 		ClosedAt time.Time
 		Edits    []event.ClosedEdit
@@ -42,15 +42,15 @@ type fakeRecorder struct {
 	}
 }
 
-func (f *fakeRecorder) RecordOutcome(_ context.Context, id, service string, outcome proposal.PROutcome, closedAt time.Time, edits []event.ClosedEdit, resolved []string) error {
+func (f *fakeRecorder) RecordOutcome(_ context.Context, id, project string, outcome proposal.PROutcome, closedAt time.Time, edits []event.ClosedEdit, resolved []string) error {
 	f.calls = append(f.calls, struct {
 		ID       string
-		Service  string
+		Project  string
 		Outcome  proposal.PROutcome
 		ClosedAt time.Time
 		Edits    []event.ClosedEdit
 		Resolved []string
-	}{id, service, outcome, closedAt, edits, resolved})
+	}{id, project, outcome, closedAt, edits, resolved})
 	return nil
 }
 
@@ -190,11 +190,11 @@ func TestReconcileOnce_ZeroClosedAtFallsBackToClock(t *testing.T) {
 	require.Equal(t, fixedClock{}.Now(), recorder.calls[0].ClosedAt)
 }
 
-// amendServiceRepoPaths and amendView build a split proposal whose two edits
-// land under different services ("core" and "finance"), each fixing one node,
-// so a per-service PR's compare and resolved subset can be asserted to cover
+// amendProjectRepoPaths and amendView build a split proposal whose two edits
+// land under different projects ("core" and "finance"), each fixing one node,
+// so a per-project PR's compare and resolved subset can be asserted to cover
 // only its own files and nodes.
-func amendServiceRepoPaths() map[string]string {
+func amendProjectRepoPaths() map[string]string {
 	return map[string]string{"core": "services/core", "finance": "services/finance"}
 }
 
@@ -217,16 +217,16 @@ func amendView() proposal.View {
 	}
 }
 
-// TestReconcileOnce_MergedRunsAmendCompareOverServiceSubset verifies a merged
-// per-service PR drives resolveClosedEdits over ONLY that service's edits (the
+// TestReconcileOnce_MergedRunsAmendCompareOverProjectSubset verifies a merged
+// per-project PR drives resolveClosedEdits over ONLY that project's edits (the
 // finance edit is never fetched), stamps the human amendment it finds, and
-// passes both the resolved close detail and the per-service resolved node set
+// passes both the resolved close detail and the per-project resolved node set
 // into RecordOutcome — the non-empty subset, not the empty-fallback the
 // outcome-mirror pass relies on.
-func TestReconcileOnce_MergedRunsAmendCompareOverServiceSubset(t *testing.T) {
+func TestReconcileOnce_MergedRunsAmendCompareOverProjectSubset(t *testing.T) {
 	closedAt, _ := time.Parse(time.RFC3339, "2026-07-03T10:00:00Z")
 	lister := &fakeLister{prs: []proposal.OpenPR{
-		{ID: "prop-1", Repo: "acme/r", PRNumber: 7, ReleaseID: "rel-1", NodeID: "model.core.a", Attempt: 1, Service: "core"},
+		{ID: "prop-1", Repo: "acme/r", PRNumber: 7, ReleaseID: "rel-1", NodeID: "model.core.a", Attempt: 1, Project: "core"},
 	}}
 	checker := &fakeChecker{statuses: map[int]ports.PRStatus{
 		7: {Closed: true, Merged: true, ClosedAt: closedAt, MergeCommitSHA: "mergesha"},
@@ -252,7 +252,7 @@ func TestReconcileOnce_MergedRunsAmendCompareOverServiceSubset(t *testing.T) {
 		Getter:           getter,
 		Sources:          sources,
 		Evidence:         evidence,
-		ServiceRepoPaths: amendServiceRepoPaths(),
+		ProjectRepoPaths: amendProjectRepoPaths(),
 		Clock:            fixedClock{},
 		Logger:           slog.Default(),
 	})
@@ -261,15 +261,15 @@ func TestReconcileOnce_MergedRunsAmendCompareOverServiceSubset(t *testing.T) {
 	require.Len(t, recorder.calls, 1)
 	call := recorder.calls[0]
 	require.Equal(t, "prop-1", call.ID)
-	require.Equal(t, "core", call.Service)
+	require.Equal(t, "core", call.Project)
 	require.Equal(t, proposal.PROutcomeMerged, call.Outcome)
 	require.Equal(t, closedAt, call.ClosedAt)
-	require.Len(t, call.Edits, 1, "only the core service's edit is compared, not finance")
+	require.Len(t, call.Edits, 1, "only the core project's edit is compared, not finance")
 	require.Equal(t, "services/core/models/a.sql", call.Edits[0].Path)
 	require.True(t, call.Edits[0].Amended, "the merged core file differs from the proposal")
 	require.Equal(t, "core diff text", call.Edits[0].Diff)
 	require.Equal(t, []string{"model.core.a"}, call.Resolved,
-		"RecordOutcome must receive the non-empty per-service resolved subset, not rely on the empty-fallback")
+		"RecordOutcome must receive the non-empty per-project resolved subset, not rely on the empty-fallback")
 }
 
 // TestReconcileOnce_MergedAmendCompareErrorRecordsNothing verifies a transient
@@ -278,7 +278,7 @@ func TestReconcileOnce_MergedRunsAmendCompareOverServiceSubset(t *testing.T) {
 // flip the reconciler to degraded (only a PRStatus permission error does that).
 func TestReconcileOnce_MergedAmendCompareErrorRecordsNothing(t *testing.T) {
 	lister := &fakeLister{prs: []proposal.OpenPR{
-		{ID: "prop-1", Repo: "acme/r", PRNumber: 7, ReleaseID: "rel-1", NodeID: "model.core.a", Attempt: 1, Service: "core"},
+		{ID: "prop-1", Repo: "acme/r", PRNumber: 7, ReleaseID: "rel-1", NodeID: "model.core.a", Attempt: 1, Project: "core"},
 	}}
 	checker := &fakeChecker{statuses: map[int]ports.PRStatus{
 		7: {Closed: true, Merged: true, MergeCommitSHA: "mergesha"},
@@ -297,7 +297,7 @@ func TestReconcileOnce_MergedAmendCompareErrorRecordsNothing(t *testing.T) {
 		Getter:           getter,
 		Sources:          sources,
 		Evidence:         evidence,
-		ServiceRepoPaths: amendServiceRepoPaths(),
+		ProjectRepoPaths: amendProjectRepoPaths(),
 		Clock:            fixedClock{},
 		Logger:           slog.Default(),
 	})
@@ -310,11 +310,11 @@ func TestReconcileOnce_MergedAmendCompareErrorRecordsNothing(t *testing.T) {
 // TestReconcileOnce_RejectedSkipsAmendCompare verifies a rejected (closed but
 // not merged) PR records its outcome with no edits and never runs the amend
 // compare — no source or evidence read happens — while still naming the
-// per-service resolved node subset.
+// per-project resolved node subset.
 func TestReconcileOnce_RejectedSkipsAmendCompare(t *testing.T) {
 	closedAt, _ := time.Parse(time.RFC3339, "2026-07-03T10:00:00Z")
 	lister := &fakeLister{prs: []proposal.OpenPR{
-		{ID: "prop-1", Repo: "acme/r", PRNumber: 8, ReleaseID: "rel-1", NodeID: "model.core.a", Attempt: 1, Service: "core"},
+		{ID: "prop-1", Repo: "acme/r", PRNumber: 8, ReleaseID: "rel-1", NodeID: "model.core.a", Attempt: 1, Project: "core"},
 	}}
 	checker := &fakeChecker{statuses: map[int]ports.PRStatus{
 		8: {Closed: true, Merged: false, ClosedAt: closedAt},
@@ -334,7 +334,7 @@ func TestReconcileOnce_RejectedSkipsAmendCompare(t *testing.T) {
 		Getter:           getter,
 		Sources:          sources,
 		Evidence:         evidence,
-		ServiceRepoPaths: amendServiceRepoPaths(),
+		ProjectRepoPaths: amendProjectRepoPaths(),
 		Clock:            fixedClock{},
 		Logger:           slog.Default(),
 	})
@@ -435,10 +435,10 @@ func timePtr(t time.Time) *time.Time { return &t }
 type fakeOpeningLister struct{ opening []proposal.OpeningPR }
 
 // ListStuckOpening simulates the real repository's keyset pagination: rows
-// must already be sorted by (CreatedAt, ID, Service) in f.opening, since
-// callers rely on that same ordering to build a resumable cursor. Service is
+// must already be sorted by (CreatedAt, ID, Project) in f.opening, since
+// callers rely on that same ordering to build a resumable cursor. Project is
 // part of the key because one proposal can now have several 'opening' children
-// (one per owning service) that share a (CreatedAt, ID) — the service tiebreak
+// (one per owning project) that share a (CreatedAt, ID) — the project tiebreak
 // keeps a second child from being skipped past on the following page.
 func (f *fakeOpeningLister) ListStuckOpening(_ context.Context, limit int, cursor *repository.OpeningCursor) ([]proposal.OpeningPR, *repository.OpeningCursor, error) {
 	start := 0
@@ -462,13 +462,13 @@ func (f *fakeOpeningLister) ListStuckOpening(_ context.Context, limit int, curso
 	var next *repository.OpeningCursor
 	if end < len(f.opening) {
 		last := page[len(page)-1]
-		next = &repository.OpeningCursor{CreatedAt: last.CreatedAt, ID: last.ID, Service: last.Service}
+		next = &repository.OpeningCursor{CreatedAt: last.CreatedAt, ID: last.ID, Project: last.Project}
 	}
 	return page, next, nil
 }
 
 // openingAfterCursor reports whether o sorts strictly after the cursor under
-// the (CreatedAt, ID, Service) keyset the real repository orders by.
+// the (CreatedAt, ID, Project) keyset the real repository orders by.
 func openingAfterCursor(o proposal.OpeningPR, c *repository.OpeningCursor) bool {
 	if !o.CreatedAt.Equal(c.CreatedAt) {
 		return o.CreatedAt.After(c.CreatedAt)
@@ -476,7 +476,7 @@ func openingAfterCursor(o proposal.OpeningPR, c *repository.OpeningCursor) bool 
 	if o.ID != c.ID {
 		return o.ID > c.ID
 	}
-	return o.Service > c.Service
+	return o.Project > c.Project
 }
 
 // fakeBranchFinder returns a canned PR ref (or error) per branch.
@@ -519,13 +519,13 @@ type fakeFailer struct {
 	err           error
 }
 
-func (f *fakeFailer) FailStuckClaim(_ context.Context, id, service string, observedClaimedAt time.Time) (bool, error) {
+func (f *fakeFailer) FailStuckClaim(_ context.Context, id, project string, observedClaimedAt time.Time) (bool, error) {
 	if f.observedClaim == nil {
 		f.observedClaim = map[string]time.Time{}
 		f.observedSvc = map[string]string{}
 	}
 	f.observedClaim[id] = observedClaimedAt
-	f.observedSvc[id] = service
+	f.observedSvc[id] = project
 	if f.err != nil {
 		return false, f.err
 	}
@@ -612,7 +612,7 @@ func TestReconcileOnce_OpeningSweep_InvalidRepoFailsAtOnce(t *testing.T) {
 	now := fixedClock{}.Now()
 	claimedAt := now.Add(-10 * time.Second) // well inside the grace period
 	opening := &fakeOpeningLister{opening: []proposal.OpeningPR{
-		{ID: "p1", Repo: "", Service: "", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1, ClaimedAt: timePtr(claimedAt)},
+		{ID: "p1", Repo: "", Project: "", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1, ClaimedAt: timePtr(claimedAt)},
 	}}
 	branch := proposals.BuildBranch("rel-1", 1, "")
 	finder := &fakeBranchFinder{errs: map[string]error{branch: fmt.Errorf("find pr by branch: %w: %q", ports.ErrInvalidRepo, "")}}
@@ -1027,25 +1027,25 @@ func TestReconcileOnce_OpeningSweepSkippedWithoutDeps(t *testing.T) {
 	require.Len(t, recorder.calls, 1, "the open-PR mirror must still run when opening-sweep deps are absent")
 }
 
-// TestReconcileOnce_OpeningSweep_MultipleServicesSameProposalNotStarved is the
+// TestReconcileOnce_OpeningSweep_MultipleProjectsSameProposalNotStarved is the
 // regression test for the F5 cursor fix: one proposal now has two 'opening'
-// children (a per-service PR each for "core" and "finance") that share the
+// children (a per-project PR each for "core" and "finance") that share the
 // parent's (created_at, id). With a batch limit small enough to split the two
 // children across pages, the sweep must still visit both — the keyset cursor
-// includes the service, so resuming after the first child does not skip past
+// includes the project, so resuming after the first child does not skip past
 // the second. Under the old (created_at, id)-only cursor the second child was
 // stranded forever, since `> (created_at, id)` excluded a sibling sharing that
 // key.
-func TestReconcileOnce_OpeningSweep_MultipleServicesSameProposalNotStarved(t *testing.T) {
+func TestReconcileOnce_OpeningSweep_MultipleProjectsSameProposalNotStarved(t *testing.T) {
 	now := fixedClock{}.Now()
 	coreBranch := proposals.BuildBranch("rel-1", 1, "core")
 	financeBranch := proposals.BuildBranch("rel-1", 1, "finance")
 	// Two children of the SAME proposal (same ID and CreatedAt), sorted by the
-	// (CreatedAt, ID, Service) keyset the real repository orders by: core < finance.
+	// (CreatedAt, ID, Project) keyset the real repository orders by: core < finance.
 	opening := &fakeOpeningLister{opening: []proposal.OpeningPR{
-		{ID: "p1", Service: "core", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.core.a", Attempt: 1,
+		{ID: "p1", Project: "core", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.core.a", Attempt: 1,
 			ClaimedAt: timePtr(now), CreatedAt: now},
-		{ID: "p1", Service: "finance", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.finance.b", Attempt: 1,
+		{ID: "p1", Project: "finance", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.finance.b", Attempt: 1,
 			ClaimedAt: timePtr(now), CreatedAt: now},
 	}}
 	finder := &fakeBranchFinder{refs: map[string]ports.PullRequestRef{
@@ -1067,18 +1067,18 @@ func TestReconcileOnce_OpeningSweep_MultipleServicesSameProposalNotStarved(t *te
 		BatchLimit:      1, // one child per page: the two siblings land on different pages
 	})
 
-	// Pass 1 records "core" and leaves a cursor keyed on (…, id=p1, service=core).
+	// Pass 1 records "core" and leaves a cursor keyed on (…, id=p1, project=core).
 	rec.ReconcileOnce(context.Background())
 	// Pass 2 must resume AFTER (p1, core) and reach (p1, finance), not skip it.
 	rec.ReconcileOnce(context.Background())
 
-	require.Len(t, recorder.calls, 2, "both per-service children of one proposal must be recovered")
+	require.Len(t, recorder.calls, 2, "both per-project children of one proposal must be recovered")
 	got := make([][2]string, len(recorder.calls))
 	for i, c := range recorder.calls {
-		got[i] = [2]string{c.ProposalID, c.Service}
+		got[i] = [2]string{c.ProposalID, c.Project}
 	}
 	require.ElementsMatch(t, [][2]string{{"p1", "core"}, {"p1", "finance"}}, got,
-		"a second per-service child sharing the parent's (created_at, id) must not be starved by the cursor")
+		"a second per-project child sharing the parent's (created_at, id) must not be starved by the cursor")
 }
 
 // levelCounter is a minimal slog.Handler that counts records by level.

@@ -111,7 +111,7 @@ func observerWithLogs(t *testing.T, logs *fakeLogs) *Observer {
 // in mode.
 func seedDeployment(mode seedreload.PreflightMode) *model.Deployment {
 	return model.NewDeployment(command.DeployTask{
-		TaskID: "task-1", RunID: "run-1", JobName: "analytics-seed-1", ServiceName: "analytics",
+		TaskID: "task-1", RunID: "run-1", JobName: "analytics-seed-1", ProjectName: "analytics",
 		SchemaName: "analytics", TableName: "seed_fx_rates_eur", NodeType: string(pkgmodel.NodeTypeDbtSeed),
 		SeedPreflight: &seedreload.Preflight{Mode: mode, Relation: "analytics.seed_fx_rates_eur"},
 	}, nil, time.Now())
@@ -248,7 +248,7 @@ func TestReadLogs_AnAttemptWithoutAPreflightReadsNoPreflightLog(t *testing.T) {
 	block := preflightBlock("error", "unowned_dependents", `"checked":true`)
 	logs := &fakeLogs{containers: map[string]string{model.SeedPreflightContainer: block}}
 	o := observerWithLogs(t, logs)
-	d := model.NewDeployment(command.DeployTask{TaskID: "task-1", JobName: "job-1", ServiceName: "s", SchemaName: "a", TableName: "b"}, nil, time.Now())
+	d := model.NewDeployment(command.DeployTask{TaskID: "task-1", JobName: "job-1", ProjectName: "s", SchemaName: "a", TableName: "b"}, nil, time.Now())
 
 	f := o.readLogs(context.Background(), d)
 
@@ -363,7 +363,7 @@ func TestProbeViews_BoundsTheProbeByItsTimeout(t *testing.T) {
 // seedBuildDeployment is a seed-build leg whose pod runs a preflight in mode.
 func seedBuildDeployment(mode seedreload.PreflightMode) *model.Deployment {
 	return model.NewSeedBuildDeployment(command.ValidationDeployTask{
-		ReleaseID: "rel-1", NodeID: "analytics.seed_fx_rates_eur", JobName: "seedbuild-fx-rates", ServiceName: "analytics",
+		ReleaseID: "rel-1", NodeID: "analytics.seed_fx_rates_eur", JobName: "seedbuild-fx-rates", ProjectName: "analytics",
 		SchemaName: "analytics", TableName: "seed_fx_rates_eur", NodeType: string(pkgmodel.NodeTypeDbtSeed),
 		SeedPreflight: &seedreload.Preflight{Mode: mode, Relation: "analytics.seed_fx_rates_eur"},
 	}, nil, time.Now())
@@ -400,7 +400,7 @@ func TestReadLogs_ASeedBuildReadsThePreflightFindingsAndSetsNoReason(t *testing.
 func TestReadLogs_ASeedBuildWithoutAPreflightReadsNoPreflightLog(t *testing.T) {
 	block := preflightBlock("success", "", `"checked":true`)
 	o := observerWithLogs(t, &fakeLogs{containers: map[string]string{model.SeedPreflightContainer: block}})
-	d := model.NewSeedBuildDeployment(command.ValidationDeployTask{ReleaseID: "r", NodeID: "n", JobName: "j", ServiceName: "s", SchemaName: "a", TableName: "b"}, nil, time.Now())
+	d := model.NewSeedBuildDeployment(command.ValidationDeployTask{ReleaseID: "r", NodeID: "n", JobName: "j", ProjectName: "s", SchemaName: "a", TableName: "b"}, nil, time.Now())
 
 	f := o.readLogs(context.Background(), d)
 
@@ -415,10 +415,10 @@ func TestReadLogs_ASeedBuildWithoutAPreflightReadsNoPreflightLog(t *testing.T) {
 func TestReadLogs_NothingToDoFailsOnlyANodeThatIsNotPython(t *testing.T) {
 	deployments := map[string]func(pkgmodel.NodeType) *model.Deployment{
 		"production": func(nodeType pkgmodel.NodeType) *model.Deployment {
-			return model.NewDeployment(command.DeployTask{NodeType: string(nodeType), ServiceName: "analytics", SchemaName: "public", TableName: "orders"}, nil, time.Now())
+			return model.NewDeployment(command.DeployTask{NodeType: string(nodeType), ProjectName: "analytics", SchemaName: "public", TableName: "orders"}, nil, time.Now())
 		},
 		"validation": func(nodeType pkgmodel.NodeType) *model.Deployment {
-			return model.NewValidationDeployment(command.ValidationDeployTask{NodeType: string(nodeType), ServiceName: "analytics", SchemaName: "public", TableName: "orders"}, nil, time.Now(), false)
+			return model.NewValidationDeployment(command.ValidationDeployTask{NodeType: string(nodeType), ProjectName: "analytics", SchemaName: "public", TableName: "orders"}, nil, time.Now(), false)
 		},
 	}
 	for _, nodeType := range []pkgmodel.NodeType{pkgmodel.NodeTypePythonNode, pkgmodel.NodeTypePythonCsv, pkgmodel.NodeTypePythonApi, pkgmodel.NodeTypeDbtModel} {

@@ -305,7 +305,7 @@ func TestRunCommands_NeedOneConnection(t *testing.T) {
 			RequestID: uuid.New(),
 			TriggerSingleNodeRunInput: svchandlers.TriggerSingleNodeRunInput{
 				TenantID:       pkgevents.DefaultTenantID,
-				Target:         run.NodeID{ServiceName: "service-1", SchemaName: "raw", TableName: "pool_cmd_a"},
+				Target:         run.NodeID{ProjectName: "service-1", SchemaName: "raw", TableName: "pool_cmd_a"},
 				MetadataSource: run.MetadataSourceSnapshotOfRun,
 				SourceRunID:    &started,
 				Operation:      model.OperationRun,

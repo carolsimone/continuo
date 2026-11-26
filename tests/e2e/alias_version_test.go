@@ -57,14 +57,14 @@ func TestE2E_AliasedAndVersionedModels_ValidateWithTheirDependants(t *testing.T)
 	requireReleaseControllerHealthy(t, clients)
 
 	releaseID := "e2e-aliasver-" + uuid.NewString()[:8]
-	changedService := "service-1"
-	t.Logf("release_id=%s changed_service=%s", releaseID, changedService)
+	changedProject := "service-1"
+	t.Logf("release_id=%s changed_project=%s", releaseID, changedProject)
 
-	allServices := baselineServices(t, ctx, clients)
-	require.NotEmpty(t, allServices,
-		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
-	changedImageTag := allServices[changedService].imageTag
-	require.NotEmpty(t, changedImageTag, "image_tag missing for %s", changedService)
+	allProjects := baselineProjects(t, ctx, clients)
+	require.NotEmpty(t, allProjects,
+		"no baseline manifests under s3://%s/<project>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
+	changedImageTag := allProjects[changedProject].imageTag
+	require.NotEmpty(t, changedImageTag, "image_tag missing for %s", changedProject)
 
 	changed := []string{aliasSrcUniqueID, aliasDepUniqueID, verSrcUniqueID, verDepUniqueID}
 	excluded := make(map[string]bool, len(changed))
@@ -73,14 +73,14 @@ func TestE2E_AliasedAndVersionedModels_ValidateWithTheirDependants(t *testing.T)
 	}
 	found := map[string]bool{}
 	var prodNodes []map[string]string
-	for svc, si := range allServices {
+	for svc, si := range allProjects {
 		for _, n := range si.nodes {
 			if excluded[n.uniqueID] {
 				found[n.uniqueID] = true
 				continue
 			}
 			prodNodes = append(prodNodes, map[string]string{
-				"unique_id": n.uniqueID, "service": svc, "content_hash": n.contentHash,
+				"unique_id": n.uniqueID, "project": svc, "content_hash": n.contentHash,
 			})
 		}
 	}
@@ -96,9 +96,9 @@ func TestE2E_AliasedAndVersionedModels_ValidateWithTheirDependants(t *testing.T)
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allServices)
+	seedServiceProd(t, ctx, clients, allProjects)
 
-	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
+	postRelease(t, clients, changedProject, releaseID, changedImageTag, false)
 
 	assertValidationRequestedNodes(t, ctx, validationTap, releaseID, changed)
 	nodes := validationRequestedNodes(t, ctx, validationTap, releaseID)

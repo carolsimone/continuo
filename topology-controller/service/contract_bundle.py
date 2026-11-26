@@ -59,7 +59,7 @@ class StoredContract:
     what it was written from, bare hex)."""
     unique_id: str
     family: ContractFamily
-    service: str
+    project: str
     contract_hash: str
     content_hash: str
     source_path: str
@@ -166,7 +166,7 @@ def invalid_contract_reads(
     return FailedNode(
         node_id=node.unique_id,
         kind=ParseFailureKind.INVALID_CONTRACT,
-        service=node.service_name,
+        project=node.project_name,
         file_path=contract.path,
         node_type=node.node_type,
         detail="; ".join(problems),
@@ -175,16 +175,16 @@ def invalid_contract_reads(
 
 def shared_unique_ids(nodes: Sequence[ManifestNode]) -> dict[str, list[str]]:
     """Each unique_id that more than one node of the release declares (a dbt test, which
-    writes no relation, aside), with the services that declare it, sorted.
+    writes no relation, aside), with the projects that declare it, sorted.
 
     Such a release is release-controller's to reject as duplicate_table, which names
-    every service involved. Its contracts stay out of the bundle: the bundle keys a
+    every project involved. Its contracts stay out of the bundle: the bundle keys a
     contract by unique_id and cannot hold two."""
-    services: dict[str, list[str]] = {}
+    projects: dict[str, list[str]] = {}
     for node in nodes:
         if node.node_type != NodeType.DBT_TEST:
-            services.setdefault(node.unique_id, []).append(node.service_name)
-    return {uid: sorted(names) for uid, names in sorted(services.items()) if len(names) > 1}
+            projects.setdefault(node.unique_id, []).append(node.project_name)
+    return {uid: sorted(names) for uid, names in sorted(projects.items()) if len(names) > 1}
 
 
 def store_contracts(
@@ -234,7 +234,7 @@ def store_contracts(
         stored.append(StoredContract(
             unique_id=node.unique_id,
             family=contract.family,
-            service=node.service_name,
+            project=node.project_name,
             contract_hash=digest,
             content_hash=node.content_hash,
             source_path=contract.path,
@@ -249,10 +249,10 @@ def store_contracts(
 def _normalise(contract: NodeContract, node: ManifestNode, tables: list[str]) -> dict[str, Any]:
     """The stored form of a node's contract, by the rules of its family: a dbt contract
     joins the tables it names with the ones it declares, a Python contract takes the
-    node's service."""
+    node's project."""
     if contract.family is ContractFamily.DBT:
         return normalise_dbt(contract.document, reads=tables)
-    return normalise_python(contract.document, service=node.service_name, reads=tables)
+    return normalise_python(contract.document, project=node.project_name, reads=tables)
 
 
 def _library_call[T](stage: FailureStage, node: ManifestNode, timings: ReleaseTimings | None, call: Callable[[], T]) -> T:
@@ -263,7 +263,7 @@ def _library_call[T](stage: FailureStage, node: ManifestNode, timings: ReleaseTi
     except Exception:
         logger.exception(
             "candidate: the library refused a contract that passed every check",
-            extra={"node_id": node.unique_id, "service": node.service_name, "stage": stage.value},
+            extra={"node_id": node.unique_id, "project": node.project_name, "stage": stage.value},
         )
         if timings is not None:
             timings.add_contract_failure(stage, REASON_VALUE)
@@ -294,7 +294,7 @@ def build_contract_bundle(
 
     contracts are keyed by unique_id in the document, so no two may share one: the
     caller leaves out the contracts of every id shared_unique_ids names. Each contract
-    keeps its own family. provenance holds, per service whose contracts a producer bundle
+    keeps its own family. provenance holds, per project whose contracts a producer bundle
     carried, the runtime that packed them and the packages of its image; timings is the
     release's ReleaseTimings.bundle_timings(). ontology is the value of the document's
     `ontology` key: None, written as null, for a release with the ontology switch off.
@@ -311,7 +311,7 @@ def build_contract_bundle(
             raise ValueError(f"two contracts of the release carry the unique id {contract.unique_id}")
         by_id[contract.unique_id] = {
             "family": contract.family.value,
-            "service": contract.service,
+            "project": contract.project,
             "contract_hash": contract.contract_hash,
             "content_hash": contract.content_hash,
             "source": {"path": contract.source_path, "sha256": contract.source_sha256},

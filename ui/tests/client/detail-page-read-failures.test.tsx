@@ -32,7 +32,7 @@ const graph = {
 const tasks = {
   total_count: 1,
   tasks: [{
-    task_id: 't1', service_name: 'svc1', schema_name: 'public', table_name: 'orders',
+    task_id: 't1', project_name: 'svc1', schema_name: 'public', table_name: 'orders',
     job_name: 'orders', status: 'running', attempt: 0, max_retries: 0, created_at: null,
   }],
 };

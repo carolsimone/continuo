@@ -16,7 +16,7 @@ type Task struct {
 	TaskID              uuid.UUID
 	ScheduleID          uuid.UUID
 	CreatedAt           time.Time
-	ServiceName         string
+	ProjectName         string
 	SchemaName          string
 	TableName           string
 	NodeKey             topology.NodeKey
@@ -50,8 +50,8 @@ func (t Task) Spec() DispatchSpec {
 	return DispatchSpec{Operation: t.Operation, Reason: t.PlanReason, Preflight: t.SeedPreflight}
 }
 
-// Node returns the (service, schema, table) triple identifying which model
+// Node returns the (project, schema, table) triple identifying which model
 // this task targets.
 func (t Task) Node() NodeID {
-	return NodeID{ServiceName: t.ServiceName, SchemaName: t.SchemaName, TableName: t.TableName}
+	return NodeID{ProjectName: t.ProjectName, SchemaName: t.SchemaName, TableName: t.TableName}
 }

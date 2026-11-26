@@ -22,12 +22,12 @@ const (
 )
 
 // GetNode returns per-node topology metadata for a single node, addressed by
-// its (service, schema, table) identity. Used by the UI to decide which
+// its (project, schema, table) identity. Used by the UI to decide which
 // single-node operations are meaningful before submitting them. By default only
 // an active node matches and an inactive one is NOT_FOUND.
 type GetNodeRequest struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
-	ServiceName string                 `protobuf:"bytes,1,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`
+	ProjectName string                 `protobuf:"bytes,1,opt,name=project_name,json=projectName,proto3" json:"project_name,omitempty"`
 	SchemaName  string                 `protobuf:"bytes,2,opt,name=schema_name,json=schemaName,proto3" json:"schema_name,omitempty"`
 	TableName   string                 `protobuf:"bytes,3,opt,name=table_name,json=tableName,proto3" json:"table_name,omitempty"`
 	// include_inactive, when true, also returns a retired node, one no longer
@@ -69,9 +69,9 @@ func (*GetNodeRequest) Descriptor() ([]byte, []int) {
 	return file_proto_catalog_v1_catalog_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *GetNodeRequest) GetServiceName() string {
+func (x *GetNodeRequest) GetProjectName() string {
 	if x != nil {
-		return x.ServiceName
+		return x.ProjectName
 	}
 	return ""
 }
@@ -216,7 +216,7 @@ func (x *GetNodeLocationRequest) GetUniqueId() string {
 type GetNodeLocationResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	FilePath      string                 `protobuf:"bytes,1,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"` // dbt original_file_path (project-relative); "" if not captured
-	ServiceName   string                 `protobuf:"bytes,2,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`
+	ProjectName   string                 `protobuf:"bytes,2,opt,name=project_name,json=projectName,proto3" json:"project_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -258,9 +258,9 @@ func (x *GetNodeLocationResponse) GetFilePath() string {
 	return ""
 }
 
-func (x *GetNodeLocationResponse) GetServiceName() string {
+func (x *GetNodeLocationResponse) GetProjectName() string {
 	if x != nil {
-		return x.ServiceName
+		return x.ProjectName
 	}
 	return ""
 }
@@ -2106,7 +2106,7 @@ const file_proto_catalog_v1_catalog_proto_rawDesc = "" +
 	"\x1eproto/catalog/v1/catalog.proto\x12\n" +
 	"catalog.v1\"\x9e\x01\n" +
 	"\x0eGetNodeRequest\x12!\n" +
-	"\fservice_name\x18\x01 \x01(\tR\vserviceName\x12\x1f\n" +
+	"\fproject_name\x18\x01 \x01(\tR\vprojectName\x12\x1f\n" +
 	"\vschema_name\x18\x02 \x01(\tR\n" +
 	"schemaName\x12\x1d\n" +
 	"\n" +
@@ -2122,7 +2122,7 @@ const file_proto_catalog_v1_catalog_proto_rawDesc = "" +
 	"\tunique_id\x18\x01 \x01(\tR\buniqueId\"Y\n" +
 	"\x17GetNodeLocationResponse\x12\x1b\n" +
 	"\tfile_path\x18\x01 \x01(\tR\bfilePath\x12!\n" +
-	"\fservice_name\x18\x02 \x01(\tR\vserviceName\"\xce\x04\n" +
+	"\fproject_name\x18\x02 \x01(\tR\vprojectName\"\xce\x04\n" +
 	"\vVersionView\x12\x1b\n" +
 	"\tunique_id\x18\x01 \x01(\tR\buniqueId\x12\x1f\n" +
 	"\vversion_seq\x18\x02 \x01(\x03R\n" +

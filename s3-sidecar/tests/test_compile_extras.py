@@ -34,7 +34,7 @@ def test_header_strips_the_bom_and_honours_the_delimiter(tmp_path):
 
 def test_extras_carry_column_types_flags_and_identity(tmp_path):
     doc = compile_extras.build_extras(_manifest(tmp_path), str(tmp_path), "core", "rel-1")
-    assert doc["version"] == 1 and doc["service"] == "core" and doc["release_id"] == "rel-1"
+    assert doc["version"] == 1 and doc["project"] == "core" and doc["release_id"] == "rel-1"
     assert doc["seeds"]["seed.core.seed_users"]["column_types"] == {"id": "integer"}
     assert doc["project_flags"] == {"send_anonymous_usage_stats": False}
 
@@ -60,7 +60,7 @@ def test_main_fails_without_dbt_core(tmp_path, monkeypatch):
     monkeypatch.setattr(compile_extras, "_version", lambda dist: None)
     (tmp_path / "m.json").write_text(json.dumps(_manifest(tmp_path)))
     rc = compile_extras.main(["--manifest", str(tmp_path / "m.json"), "--project-dir", str(tmp_path),
-                              "--service", "core", "--release-id", "rel-1", "--out", str(tmp_path / "x.json")])
+                              "--project", "core", "--release-id", "rel-1", "--out", str(tmp_path / "x.json")])
     assert rc == 1 and not (tmp_path / "x.json").exists()
 
 
@@ -68,7 +68,7 @@ def test_main_fails_without_dbt_project_yml(tmp_path, monkeypatch):
     monkeypatch.setattr(compile_extras, "_version", lambda dist: "1.0")
     (tmp_path / "m.json").write_text(json.dumps({"metadata": {}, "nodes": {}}))
     rc = compile_extras.main(["--manifest", str(tmp_path / "m.json"), "--project-dir", str(tmp_path / "nope"),
-                              "--service", "core", "--release-id", "rel-1", "--out", str(tmp_path / "x.json")])
+                              "--project", "core", "--release-id", "rel-1", "--out", str(tmp_path / "x.json")])
     assert rc == 1
 
 
@@ -124,7 +124,7 @@ def test_a_missing_package_seed_fails_naming_the_path(tmp_path, monkeypatch, cap
     (tmp_path / "dbt_packages" / "pkg" / "seeds" / "shared.csv").unlink()
     (tmp_path / "m.json").write_text(json.dumps(manifest))
     rc = compile_extras.main(["--manifest", str(tmp_path / "m.json"), "--project-dir", str(tmp_path),
-                              "--service", "core", "--release-id", "rel-1", "--out", str(tmp_path / "x.json")])
+                              "--project", "core", "--release-id", "rel-1", "--out", str(tmp_path / "x.json")])
     assert rc == 1 and not (tmp_path / "x.json").exists()
     assert str(tmp_path / "dbt_packages" / "pkg" / "seeds" / "shared.csv") in caplog.text
 
@@ -134,11 +134,11 @@ def test_main_writes_the_extras_with_sorted_keys(tmp_path, monkeypatch):
     (tmp_path / "m.json").write_text(json.dumps(_manifest(tmp_path)))
     out = tmp_path / "x.json"
     rc = compile_extras.main(["--manifest", str(tmp_path / "m.json"), "--project-dir", str(tmp_path),
-                              "--service", "core", "--release-id", "rel-1", "--out", str(out)])
+                              "--project", "core", "--release-id", "rel-1", "--out", str(out)])
     assert rc == 0
     written = json.loads(out.read_text())
     assert list(written) == sorted(written)
-    assert written["service"] == "core" and "seed.core.seed_users" in written["seeds"]
+    assert written["project"] == "core" and "seed.core.seed_users" in written["seeds"]
     seed = written["seeds"]["seed.core.seed_users"]
     assert list(seed) == sorted(seed)
 
@@ -149,7 +149,7 @@ def test_main_fails_when_a_seed_file_is_unreadable(tmp_path, monkeypatch):
     (tmp_path / "seeds" / "seed_users.csv").unlink()
     (tmp_path / "m.json").write_text(json.dumps(manifest))
     rc = compile_extras.main(["--manifest", str(tmp_path / "m.json"), "--project-dir", str(tmp_path),
-                              "--service", "core", "--release-id", "rel-1", "--out", str(tmp_path / "x.json")])
+                              "--project", "core", "--release-id", "rel-1", "--out", str(tmp_path / "x.json")])
     assert rc == 1 and not (tmp_path / "x.json").exists()
 
 

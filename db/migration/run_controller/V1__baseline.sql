@@ -329,7 +329,7 @@ CREATE TABLE tasks (
     task_id uuid NOT NULL,
     run_id uuid NOT NULL,
     created_at timestamptz DEFAULT now() NOT NULL,
-    service_name varchar(100) NOT NULL,
+    project_name varchar(100) NOT NULL,
     schema_name varchar(100) NOT NULL,
     table_name varchar(100) NOT NULL,
     job_name varchar(63) NOT NULL,
@@ -362,7 +362,7 @@ CREATE INDEX idx_tasks_job_name ON tasks (job_name);
 
 CREATE INDEX idx_tasks_lease_waiters ON tasks (tenant_id, node_key, lease_wait_since) WHERE (wait_reason)::text = 'node_lease';
 
-CREATE INDEX idx_tasks_node_identity ON tasks (service_name, schema_name, table_name);
+CREATE INDEX idx_tasks_node_identity ON tasks (project_name, schema_name, table_name);
 
 CREATE INDEX idx_tasks_node_key_created ON tasks (tenant_id, node_key, created_at DESC) WHERE node_key IS NOT NULL;
 
@@ -405,7 +405,7 @@ CREATE TABLE topology_nodes (
     release_id text NOT NULL,
     node_key text NOT NULL,
     unique_id text NOT NULL,
-    service_name text NOT NULL,
+    project_name text NOT NULL,
     schema_name text NOT NULL,
     table_name text NOT NULL,
     node_type text NOT NULL,

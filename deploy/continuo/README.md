@@ -288,7 +288,7 @@ Every container in this chart, bundled or not, gets:
 | `catalog.backup.keep` | How many of each tenant's newest exports catalog keeps (default `7`; `CATALOG_BACKUP_KEEP`); after each stored export it deletes the rest. A whole number of at least 1. A hand-run `catalog-backup export` prunes with the same value. |
 | `catalog.contractHistory.retentionDays` | How many days of contract versions catalog keeps (default `0`, which keeps every version; `CONTRACT_HISTORY_RETENTION_DAYS`). Above 0, catalog's retention sweeper deletes a version once its promotion is older than that, never a node's current contract or the version before it. A whole number from 0 to 36500 (100 years): rendering fails on any other value, and catalog refuses to start on it. |
 | `contracts.publish.server.host` / `.port` / `.database` | The warehouse entry (`servers`) of the contract files catalog writes to `tenants/<tenant>/contracts/live/` in the bucket (default empty, 0, empty; `CONTRACTS_SERVER_HOST`, `CONTRACTS_SERVER_PORT`, `CONTRACTS_SERVER_DATABASE`). With a `host`, each file names the warehouse (`type`, `host`, `port`, `database`, and the contract's `schema`), so a catalog tool that reads the folder can bind a contract to its table. The `type` is `postgres` or `trino`, from `validation.engine`. `database` is the catalog name on `trino`, and an empty one uses `validation.warehouseDatabase`. A `host` that is empty or only blanks is no host: no file carries a `servers` entry, and `port` and `database` are ignored. Blanks around a host or a database are trimmed. With a host, rendering fails unless `port` is a whole number from 1 to 65535 and a database that is not blank resolves. catalog refuses to start on the same values. A change rewrites every file when catalog restarts. |
-| `contracts.ontology.enabled` / `.baseUrl` | The install's ontology (default `false` and empty; `ONTOLOGY_ENABLED`, `ONTOLOGY_BASE_URL`). `enabled` is read by topology-controller and release-controller, which each refuse to start on any value other than `true` or `false`. While it is `false`, release-controller refuses a release of kind `ontology` with HTTP 400, and topology-controller stores each contract without its ontology part and ignores an ontology a release carries. While it is `true`, a release that carries the install's ontology resolves the contracts of the services the ontology declares and checks them against it. `baseUrl` is read by catalog: empty publishes the ontology links of a contract as stored, each starting with `continuo-ontology:`, and an absolute `http://` or `https://` URL with a host name, no credentials, no query, no fragment and no whitespace is put, with a slash, in front of each link in the live contracts folder and in `continuo node contract`. catalog trims one trailing slash and refuses to start on a value that is not empty and not such a URL. The schema refuses more than catalog does: an IPv6 literal, an empty port, an upper-case scheme, a host with a character other than letters, digits, `.`, `_`, `~` and `-`, and a path with a character other than letters, digits, `._~-!$&'()*+,;=:@/` and `%XX` escapes. [docs/ontology.md](../../docs/ontology.md) says what the ontology is and how to bind a contract to it. A change to either restarts every continuo service, and a change to `baseUrl` rewrites every file of the live folder when catalog restarts. |
+| `contracts.ontology.enabled` / `.baseUrl` | The install's ontology (default `false` and empty; `ONTOLOGY_ENABLED`, `ONTOLOGY_BASE_URL`). `enabled` is read by topology-controller and release-controller, which each refuse to start on any value other than `true` or `false`. While it is `false`, release-controller refuses a release of kind `ontology` with HTTP 400, and topology-controller stores each contract without its ontology part and ignores an ontology a release carries. While it is `true`, a release that carries the install's ontology resolves the contracts of the projects the ontology declares and checks them against it. `baseUrl` is read by catalog: empty publishes the ontology links of a contract as stored, each starting with `continuo-ontology:`, and an absolute `http://` or `https://` URL with a host name, no credentials, no query, no fragment and no whitespace is put, with a slash, in front of each link in the live contracts folder and in `continuo node contract`. catalog trims one trailing slash and refuses to start on a value that is not empty and not such a URL. The schema refuses more than catalog does: an IPv6 literal, an empty port, an upper-case scheme, a host with a character other than letters, digits, `.`, `_`, `~` and `-`, and a path with a character other than letters, digits, `._~-!$&'()*+,;=:@/` and `%XX` escapes. [docs/ontology.md](../../docs/ontology.md) says what the ontology is and how to bind a contract to it. A change to either restarts every continuo service, and a change to `baseUrl` rewrites every file of the live folder when catalog restarts. |
 | `credentials.delivery` | How the chart hands the credentials (`POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `NEO4J_PASSWORD`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `LLM_API_KEY`, `GITHUB_TOKEN`, `GITHUB_APP_PRIVATE_KEY`, `AUTH_OIDC_CLIENT_SECRET`) to the pods. `env` (default): each is an environment variable read from its Secret. `file`: the chart mounts the same Secret keys read-only under `/var/run/secrets/continuo`, one file per variable named after it, and sets `<VAR>_FILE` to the file, so no credential is in the environment; a key the chart knows is empty (`llm.apiKey` or a GitHub key left unset) is left out. Rendering fails on any other value. Install-time only: it shapes the Deployments, and every service reads both forms (see the note below the table). |
 | `credentials.files` | Credentials your company puts in the pod as files of its own (the Vault Agent injector, a Secrets Store CSI volume), per service: `{<service>: {<VAR>: <path>}}`, default `{}`. The chart attaches no Secret for those and sets `<VAR>_FILE` to the path, whatever the delivery; add the pod annotations, ServiceAccount annotations and volumes that put the file there to the service's `services` entry. A service with no enabled `services` entry, or a key that is not one of the credentials above, fails the render. With the Vault Agent injector, a Postgres or Redis password given this way also needs the pod annotation `vault.hashicorp.com/agent-init-first: "true"`, so the file exists before the service's wait init containers read it. Install-time only. |
 | `execution.jobS3Secret.name` / `.accessKeyIdKey` / `.secretAccessKeyKey` | The Kubernetes Secret and its two keys the validation, seed-build and compile Job pods read the S3 key pair from, by reference (`JOB_S3_SECRET_NAME`, `JOB_S3_ACCESS_KEY_ID_KEY`, `JOB_S3_SECRET_ACCESS_KEY_KEY` on the shared ConfigMap). Empty name (default): the chart's own S3 Secret and keys (MinIO's, `s3.existingSecret`'s, or the chart's credentials Secret). With a name, the keys default to `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Required when execution-controller's S3 keys are listed in `credentials.files`, since a Job pod can only reference a Kubernetes Secret: rendering fails without it. |
@@ -296,7 +296,7 @@ Every container in this chart, bundled or not, gets:
 | `services[].serviceAccount.annotations` / `services[].serviceAccount.imagePullSecrets` | Every enabled `services` entry runs under its own ServiceAccount, named after the service; only an entry with `rbac.enabled` also gets a Role and RoleBinding. `annotations` (default none) go on that ServiceAccount, for a cloud role (`eks.amazonaws.com/role-arn` for IRSA, GKE workload identity) or the identity a Vault role is bound to. `imagePullSecrets`, when the entry sets it, replaces the top-level `imagePullSecrets` for that service; an explicit `[]` gives it none. Install-time only. |
 | `services[].podAnnotations` | Annotations on the service's pods (default none), such as the Vault Agent injector's. Install-time only. |
 | `services[].credentialDelivery` | `env` or `file` for that service, overriding `credentials.delivery`; empty (default) uses it. Install-time only. |
-| `services[].volumes` / `services[].volumeMounts` | Extra volumes of any Kubernetes type (`csi`, `secret`, `configMap`, ...) and their mounts. A `configMap` volume with an empty name mounts the chart's ConfigMap for the services that have one; on agent-remediation, which has two, the one of the volume's name: `service-repos`, or `remediation-workflows` while the volume is mounted at the folder `AGENT_REMEDIATION_WORKFLOWS_DIR` names (`/etc/continuo-workflows` when unset). Any other volume mounts `service-repos`. Install-time only. |
+| `services[].volumes` / `services[].volumeMounts` | Extra volumes of any Kubernetes type (`csi`, `secret`, `configMap`, ...) and their mounts. A `configMap` volume with an empty name mounts the chart's ConfigMap for the services that have one; on agent-remediation, which has two, the one of the volume's name: `project-repos`, or `remediation-workflows` while the volume is mounted at the folder `AGENT_REMEDIATION_WORKFLOWS_DIR` names (`/etc/continuo-workflows` when unset). Any other volume mounts `project-repos`. Install-time only. |
 | `agentRemediation.workflows.files` | The install's own remediation flow, type and fixture files, as `{<name>: <content>}` (default `{}`), each passed with `--set-file agentRemediation.workflows.files.<name>\.yaml=<path>`. They become the ConfigMap `<release>-agent-remediation-workflows`, which agent-remediation mounts at `/etc/continuo-workflows` (`AGENT_REMEDIATION_WORKFLOWS_DIR`) and loads over its built-in files at startup. A change rolls agent-remediation only. A file that agent-remediation would refuse for its kind, its `version`, a top-level `kind` or `version` line written twice, an empty document or a directive that no `---` follows fails the render, naming the file, and so does a `services` list whose agent-remediation entry does not mount the files where agent-remediation reads them. See [Remediation files](#7-remediation-files). |
 | `services[].resources` / `defaultResources` | Per-service CPU/memory requests and limits; any service without its own `resources` block falls back to `defaultResources`. |
 
@@ -518,11 +518,11 @@ roles, give each role the actions of its own rows, so catalog's role gets the
 logs and results, dbt manifests and parse caches, chat archives and remediation
 proposals), which the table leaves out.
 
-The validation and compile Jobs write `<service>/<release>/compile-extras.json`
+The validation and compile Jobs write `<project>/<release>/compile-extras.json`
 beside the manifest they upload, so their key needs `s3:PutObject` on that key
 too. A key scoped to `*/manifest.json` alone fails the upload of the extras.
 
-topology-controller also reads `<service>/<release>/compile-extras.json` beside
+topology-controller also reads `<project>/<release>/compile-extras.json` beside
 each dbt manifest. With your own bucket, grant it `s3:GetObject` there and
 `s3:ListBucket` on the bucket for those prefixes, so that a stored release
 without extras reads as 404, not 403. A 403 still counts as "no extras", with a
@@ -532,12 +532,12 @@ with dbt's checksum for its seeds until the grant is in place. A 404 is also
 redelivers it.
 
 agent-remediation packs a Python fix with the package list of the rejected
-release's image of the service. It reads the list from the release's contract
+release's image of the project. It reads the list from the release's contract
 bundle, `tenants/<tenant>/topologies/<release>/contracts.json.gz`, or, only for
-a release that has none, from `<service>/<release>/odcs-bundle.json`, the
-bundle the service's CI uploaded. With your own bucket, grant it `s3:GetObject`
+a release that has none, from `<project>/<release>/odcs-bundle.json`, the
+bundle the project's CI uploaded. With your own bucket, grant it `s3:GetObject`
 on both keys and `s3:ListBucket` on the bucket for the prefix `tenants/` and
-each Python service's own prefix, so that a missing bundle reads as 404, not
+each Python project's own prefix, so that a missing bundle reads as 404, not
 403. A 404 means the release records no list: no verification starts and no fix
 is proposed for the node. A 403 is a read a retry may clear, so the remediation
 tries again and ends as a system failure.
@@ -737,7 +737,7 @@ loaded and checked, but no heal trigger runs it: startup and
 `remediation-check files` still plays it as itself, each scenario running a
 remediation that follows that flow, so it needs flow fixtures of its own:
 fixtures copied from `rejected-release` fail the scenarios the flow cannot
-handle, such as two types fixing one service in a flow that lists one type. A
+handle, such as two types fixing one project in a flow that lists one type. A
 type is played in `rejected-release` when that flow lists it, else in the first
 flow, by name, that lists it.
 
@@ -862,8 +862,8 @@ is set, the render fails, saying what is wrong, unless the entry has:
 
 An empty-named volume called `remediation-workflows` mounts the ConfigMap of
 the files only while it is mounted at that folder. Mounted anywhere else, or
-nowhere, it mounts the `service-repos` ConfigMap, as a volume of any other
-name does, so a list whose volume of that name holds the service repository
+nowhere, it mounts the `project-repos` ConfigMap, as a volume of any other
+name does, so a list whose volume of that name holds the project repository
 map at `/etc/continuo` keeps it.
 
 To keep your files in a ConfigMap of your own instead, name it on the

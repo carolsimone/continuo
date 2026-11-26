@@ -5,14 +5,14 @@ import { ApproverDTO, ReleaseDetail, NodeValidationResult, ProposalDTO, Verifica
 import {
   releasePillClass, proposalKey, reasonLabel,
   proposalNodeIds, proposalStatusForNode, proposalReasonForNode, proposalCodeForNode, proposalApproverForNode,
-  proposalPullRequests, proposalPrServices, proposalPrStateForService,
+  proposalPullRequests, proposalPrProjects, proposalPrStateForProject,
   verificationPhase, verificationRunPhase, effectiveRound, shortSha,
 } from './release-helpers';
 import ErrorCell from './ErrorCell';
 import { HANDOVER_TEXT } from './handover-text';
 import { fetchProposals } from './remediation-api';
 import { NodeResultsTable } from './node-results';
-import ServiceTiles from './ServiceTiles';
+import ProjectTiles from './ProjectTiles';
 import PipelineTimeline from './PipelineTimeline';
 import SeedReloadNotices from './SeedReloadNotices';
 import ReleaseRunsPanel from './ReleaseRunsPanel';
@@ -73,13 +73,13 @@ function isFixState(status: string): status is FixState {
 const TERMINAL_NODE_STATUSES = new Set(['proposed', 'skipped', 'failed', 'escalated']);
 
 // proposalIsDeadEnd mirrors release-controller's isDeadEnd: a batched attempt
-// opens one pull request per owning service, so it is a dead end only once
-// every owning service's pull request has been rejected. An owning service
+// opens one pull request per owning project, so it is a dead end only once
+// every owning project's pull request has been rejected. An owning project
 // with no pull request yet, or one in any non-rejected state, means a fix
-// could still land. A legacy (unsplit) proposal has one owning service group
+// could still land. A legacy (unsplit) proposal has one owning project group
 // (''), whose pull request is synthesized from the singular pr_* fields.
 function proposalIsDeadEnd(p: ProposalDTO): boolean {
-  return proposalPrServices(p).every((service) => proposalPrStateForService(p, service) === 'rejected');
+  return proposalPrProjects(p).every((project) => proposalPrStateForProject(p, project) === 'rejected');
 }
 
 // hasActiveFix reports whether any failed node has a generating/verifying/
@@ -87,10 +87,10 @@ function proposalIsDeadEnd(p: ProposalDTO): boolean {
 // FixCell uses, restricted to whatever list is passed in (all proposals, or
 // only the current remediation round's), so the dead-end check below can be
 // scoped to a single round without disturbing how the table renders. A
-// 'proposed' attempt every one of whose owning-service PRs was closed
+// 'proposed' attempt every one of whose owning-project PRs was closed
 // without merging is excluded: that attempt is a dead end for every node it
 // resolves, not just its representative one, so it must not keep those nodes
-// counted as having an active fix. A single owning service still open (or not
+// counted as having an active fix. A single owning project still open (or not
 // yet PR'd) keeps the whole attempt counted as active.
 function hasActiveFix(list: ProposalDTO[], failedKeys: string[]): boolean {
   const byKey = new Map<string, FixState>();
@@ -110,9 +110,9 @@ function hasActiveFix(list: ProposalDTO[], failedKeys: string[]): boolean {
 // anyOpenPR reports whether any proposal in the list has a pull request out
 // for review — checked across every round, not just the current one, since a
 // fix from an earlier round is still the thing to look at instead of
-// retrying. A batched attempt's pull requests are weighed per owning service
-// (proposalPullRequests), so one service's still-open PR counts even when a
-// sibling service's PR was rejected; a legacy (unsplit) proposal falls back
+// retrying. A batched attempt's pull requests are weighed per owning project
+// (proposalPullRequests), so one project's still-open PR counts even when a
+// sibling project's PR was rejected; a legacy (unsplit) proposal falls back
 // to its singular pr_state, so behavior for those is unchanged.
 function anyOpenPR(list: ProposalDTO[]): boolean {
   return list.some(p => proposalPullRequests(p).some(pr => OPEN_PR_STATES.includes(pr.pr_state ?? '')));
@@ -561,9 +561,9 @@ export default function ReleaseDetailPage() {
         </span>
       </PageHeader>
 
-      {rel.changed_service && (
+      {rel.changed_project && (
         <p className="page-sub">
-          Changes <strong>{rel.changed_service}</strong>
+          Changes <strong>{rel.changed_project}</strong>
           {rel.commit_url && (
             <>
               <span className="page-sub__sep">·</span>
@@ -622,7 +622,7 @@ export default function ReleaseDetailPage() {
       )}
 
       <main className="page-content page-content--readable">
-        <ServiceTiles imageTags={rel.image_tags || {}} changedService={rel.changed_service} />
+        <ProjectTiles imageTags={rel.image_tags || {}} changedProject={rel.changed_project} />
         <PipelineTimeline
           transitions={rel.transitions}
           run={{
@@ -659,7 +659,7 @@ export default function ReleaseDetailPage() {
               </div>
             </div>
             <table className="nodes-table">
-              <thead><tr><th>Run</th><th>Attempt</th><th>Service</th><th>Status</th><th>Started</th></tr></thead>
+              <thead><tr><th>Run</th><th>Attempt</th><th>Project</th><th>Status</th><th>Started</th></tr></thead>
               <tbody>
                 {verificationRuns.map(v => {
                   const phase = verificationRunPhase(v.status);
@@ -667,7 +667,7 @@ export default function ReleaseDetailPage() {
                     <tr key={v.run_id}>
                       <td><Link className="nodes-node-name" to={`/verifications/${v.run_id}`}>{v.run_id}</Link></td>
                       <td>{v.attempt}</td>
-                      <td>{v.service}</td>
+                      <td>{v.project}</td>
                       <td><span className={`pill-sm ${releasePillClass(phase).replace('pill--', 'pill-sm--')}`}>{phase}</span></td>
                       <td className="nodes-ts">{v.activated_at ? v.activated_at.slice(0, 19).replace('T', ' ') : '—'}</td>
                     </tr>

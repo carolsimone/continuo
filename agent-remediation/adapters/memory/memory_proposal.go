@@ -101,7 +101,7 @@ func (r *proposalRepository) InsertGenerating(_ context.Context, p proposal.Prop
 			Attempt:          p.Attempt,
 			Status:           proposal.StatusGenerating,
 			NodeOutcomes:     p.NodeOutcomes,
-			Services:         p.Services,
+			Projects:         p.Projects,
 			CreatedAt:        p.CreatedAt,
 		})})
 		return nil
@@ -237,7 +237,7 @@ func (row *proposalRow) view() proposal.View {
 		Verifications:       verifications,
 		Approvers:           approvers,
 		VerificationRunID:   p.VerificationRunID,
-		Services:            p.Services,
+		Projects:            p.Projects,
 		VerifyError:         row.verifyError,
 		Confidence:          p.Confidence,
 		Rationale:           p.Rationale,
@@ -288,7 +288,7 @@ func (r *proposalRepository) List(_ context.Context, filter repository.ProposalF
 			if filter.Source != "" && v.Source != filter.Source {
 				continue
 			}
-			if filter.Service != "" && !containsString(v.Services, filter.Service) {
+			if filter.Project != "" && !containsString(v.Projects, filter.Project) {
 				continue
 			}
 			out = append(out, v)

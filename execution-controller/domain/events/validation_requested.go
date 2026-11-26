@@ -16,7 +16,7 @@ import (
 // the (release_id, node_id) lookup key all derive from this value.
 //
 // UpstreamNodeIDs lists the dbt unique_ids of in-set nodes (intra- AND
-// cross-service) that must complete successfully before this node may be
+// cross-project) that must complete successfully before this node may be
 // dispatched. An empty slice means the node is a root and can be dispatched
 // immediately.
 //
@@ -32,7 +32,7 @@ import (
 // pre-built).
 type ValidationNode struct {
 	NodeID               string // dbt unique_id
-	ServiceName          string
+	ProjectName          string
 	SchemaName           string
 	TableName            string
 	NodeType             pkg_model.NodeType

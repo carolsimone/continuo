@@ -17,7 +17,7 @@ import (
 
 func validVerificationInput() ReceiveVerificationRequest {
 	return ReceiveVerificationRequest{
-		RunID: "verify-rel-1-core-a1", Service: "core", ImageTag: "img:1", Kind: "dbt",
+		RunID: "verify-rel-1-core-a1", Project: "core", ImageTag: "img:1", Kind: "dbt",
 		VerifiesReleaseID: "rel-1", Attempt: 1, SourceOverlayURI: "s3://b/core/verify-rel-1-core-a1/source-overlay.tar.gz",
 	}
 }
@@ -79,7 +79,7 @@ func TestHandleReceiveVerification_RefusesPythonWith400AndTheMessage(t *testing.
 
 			require.Equal(t, http.StatusBadRequest, rec.Code)
 			assert.Contains(t, rec.Body.String(),
-				`kind "python" is no longer accepted: release the service as "python-odcs", one ODCS contract per node (docs/contracts.md)`)
+				`kind "python" is no longer accepted: release the project as "python-odcs", one ODCS contract per node (docs/contracts.md)`)
 			assert.Empty(t, releases.releases)
 		})
 	}
@@ -118,7 +118,7 @@ func TestHandleReceiveCandidate_VerificationIDConflictIs409(t *testing.T) {
 	releases.releases["run-9"] = pipeline.NewVerification("run-9", "core", "img", "rel-0", 1, "", release.ManifestKindDbt, now)
 
 	body, _ := json.Marshal(ReceiveCandidateRequest{
-		Service: "core", ReleaseID: "run-9", ImageTag: "img", Repo: "org/r", CommitSHA: "sha",
+		Project: "core", ReleaseID: "run-9", ImageTag: "img", Repo: "org/r", CommitSHA: "sha",
 	})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/releases", bytes.NewReader(body))
@@ -132,7 +132,7 @@ func TestHandleReceiveCandidate_VerificationIDConflictIs409(t *testing.T) {
 // fix-verification-only fields, rather than persisting a misrouted run.
 func TestHandleReceiveCandidate_RefusesVerificationFieldsWith400(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
-	base := ReceiveCandidateRequest{Service: "core", ReleaseID: "rel-1", ImageTag: "img", Repo: "org/r", CommitSHA: "sha"}
+	base := ReceiveCandidateRequest{Project: "core", ReleaseID: "rel-1", ImageTag: "img", Repo: "org/r", CommitSHA: "sha"}
 	for name, mutate := range map[string]func(*ReceiveCandidateRequest){
 		"shadow":              func(in *ReceiveCandidateRequest) { in.Shadow = true },
 		"source_overlay_uri":  func(in *ReceiveCandidateRequest) { in.SourceOverlayURI = "s3://x" },
@@ -157,7 +157,7 @@ func TestHandleReceiveCandidate_RefusesVerificationFieldsWith400(t *testing.T) {
 // against a raw JSON body.
 func TestHandleReceiveVerification_StoresEveryWireFieldAsSent(t *testing.T) {
 	deps, releases := newRetryRemediationDeps(time.Unix(100, 0).UTC())
-	raw := `{"run_id":"verify-rel-7-core-a3","service":"core","image_tag":"img:7","kind":"dbt",` +
+	raw := `{"run_id":"verify-rel-7-core-a3","project":"core","image_tag":"img:7","kind":"dbt",` +
 		`"verifies_release_id":"rel-7","attempt":3,"source_overlay_uri":"s3://b/core/overlay.tar.gz"}`
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/verification-runs", strings.NewReader(raw))

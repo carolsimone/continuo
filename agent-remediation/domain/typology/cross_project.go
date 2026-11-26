@@ -2,22 +2,22 @@ package typology
 
 import "sort"
 
-// CrossServiceCause claims every failing node that descends from a node ANOTHER
-// service changed in this release. A release changes one service, so such a
-// node did not change itself: a fix in its own service can never ship before
+// CrossProjectCause claims every failing node that descends from a node ANOTHER
+// project changed in this release. A release changes one project, so such a
+// node did not change itself: a fix in its own project can never ship before
 // the change that broke it (its release would be validated against the
 // producer's production code), and the only fix that ships is at that changed
 // ancestor. It runs before every other strategy, ignores error signatures (two
 // consumers may fail differently on one change), and needs no minimum group
 // size.
 //
-// A node with several cross-service changed ancestors is assigned to the
+// A node with several cross-project changed ancestors is assigned to the
 // nearest one (fewest upstream hops), ties broken by the smallest id: the
 // direct upstream is the contract the node reads. Nodes are grouped per
 // target, members sorted, clusters ordered by their smallest member.
-type CrossServiceCause struct{}
+type CrossProjectCause struct{}
 
-func (CrossServiceCause) Claim(remaining []FailingNode, dag DagView) ([]Cluster, []FailingNode) {
+func (CrossProjectCause) Claim(remaining []FailingNode, dag DagView) ([]Cluster, []FailingNode) {
 	byID := make(map[string]FailingNode, len(remaining))
 	nodeTypeByID := make(map[string]string, len(remaining))
 	byTarget := map[string][]string{}
@@ -25,7 +25,7 @@ func (CrossServiceCause) Claim(remaining []FailingNode, dag DagView) ([]Cluster,
 	for _, n := range remaining {
 		byID[n.NodeID] = n
 		nodeTypeByID[n.NodeID] = n.NodeType
-		target, ok := nearestCrossServiceAncestor(n, dag)
+		target, ok := nearestCrossProjectAncestor(n, dag)
 		if !ok {
 			rest = append(rest, n)
 			continue
@@ -56,24 +56,24 @@ func (CrossServiceCause) Claim(remaining []FailingNode, dag DagView) ([]Cluster,
 			}
 			continue
 		}
-		clusters = append(clusters, Cluster{TargetNodeID: target, Members: members, Kind: KindCrossServiceUpstream})
+		clusters = append(clusters, Cluster{TargetNodeID: target, Members: members, Kind: KindCrossProjectUpstream})
 	}
 	sort.Slice(clusters, func(i, j int) bool { return clusters[i].Members[0] < clusters[j].Members[0] })
 	return clusters, rest
 }
 
-// nearestCrossServiceAncestor picks the changed ancestor in a service other
+// nearestCrossProjectAncestor picks the changed ancestor in a project other
 // than the node's own that is closest to it, ties on id. False when the node
-// or an ancestor names no service (nothing to compare) or no ancestor is in
-// another service.
-func nearestCrossServiceAncestor(n FailingNode, dag DagView) (string, bool) {
-	if n.Service == "" {
+// or an ancestor names no project (nothing to compare) or no ancestor is in
+// another project.
+func nearestCrossProjectAncestor(n FailingNode, dag DagView) (string, bool) {
+	if n.Project == "" {
 		return "", false
 	}
 	var best ChangedAncestor
 	found := false
 	for _, a := range dag.ChangedAncestorsByNode[n.NodeID] {
-		if a.Service == "" || a.Service == n.Service {
+		if a.Project == "" || a.Project == n.Project {
 			continue
 		}
 		if !found || a.Depth < best.Depth || (a.Depth == best.Depth && a.NodeID < best.NodeID) {

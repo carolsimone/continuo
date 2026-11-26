@@ -20,7 +20,7 @@ func TestCreateSeedBuildJob_TeamImageDbtSeedIntoCandidate(t *testing.T) {
 	c := newValidationTestClient() // reuse the k8s fake-client constructor
 	p := ValidationJobParams{
 		JobName: "seedbuild-fx", ReleaseID: "r", NodeID: "seed.core.fx",
-		ServiceName: "core", SchemaName: "analytics", TableName: "fx",
+		ProjectName: "core", SchemaName: "analytics", TableName: "fx",
 		NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "abc123",
 		CandidateSchema: "_candidate_r", Namespace: "default",
 	}
@@ -42,7 +42,7 @@ func TestCreateSeedBuildJob_SetsTTLSecondsAfterFinished(t *testing.T) {
 	c := newValidationTestClient()
 	p := ValidationJobParams{
 		JobName: "seedbuild-fx-ttl", ReleaseID: "r", NodeID: "seed.core.fx",
-		ServiceName: "core", SchemaName: "analytics", TableName: "fx",
+		ProjectName: "core", SchemaName: "analytics", TableName: "fx",
 		NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "abc123",
 		CandidateSchema: "_candidate_r", Namespace: "default",
 	}
@@ -54,7 +54,7 @@ func TestCreateSeedBuildJob_SetsTTLSecondsAfterFinished(t *testing.T) {
 
 func TestCreateSeedBuildJob_EmptyImageTagErrors(t *testing.T) {
 	c := newValidationTestClient()
-	p := ValidationJobParams{JobName: "x", ServiceName: "core", TableName: "fx",
+	p := ValidationJobParams{JobName: "x", ProjectName: "core", TableName: "fx",
 		NodeType: pkg_model.NodeTypeDbtSeed, CandidateSchema: "_candidate_r", Namespace: "default"}
 	require.Error(t, c.CreateSeedBuildJob(context.Background(), p))
 }
@@ -64,7 +64,7 @@ func TestCreateSeedBuildJob_EmptyImageTagErrors(t *testing.T) {
 func seedOverlayParams() ValidationJobParams {
 	return ValidationJobParams{
 		JobName: "seedbuild-fx-verify", ReleaseID: "verify-rel-1-core-a1", NodeID: "seed.core.fx",
-		ServiceName: "core", SchemaName: "analytics", TableName: "fx",
+		ProjectName: "core", SchemaName: "analytics", TableName: "fx",
 		NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "abc123",
 		CandidateSchema:  "_candidate_verify_rel_1",
 		SourceOverlayURI: "s3://continuo/core/verify-rel-1-core-a1/source-overlay.tar.gz",
@@ -188,7 +188,7 @@ func TestBuildSeedBuildPodSpec_OverlayAndParseCacheCoexist(t *testing.T) {
 // produced before the source-overlay feature existed, captured verbatim. A
 // release without an overlay must still produce exactly this: the overlay leg
 // is additive, never a rewrite of the ordinary seed Job.
-const seedPodSpecWithoutOverlayJSON = `{"containers":[{"name":"dbt-job","image":"carolsimone/core:abc123","command":["dbt","seed","--select","fx"],"envFrom":[{"secretRef":{"name":"wh-secret"}}],"env":[{"name":"RELEASE_ID","value":"rel-1"},{"name":"NODE_ID","value":"seed.core.fx"},{"name":"SERVICE_NAME","value":"core"},{"name":"SCHEMA","value":"analytics"},{"name":"TABLE_NAME","value":"fx"},{"name":"JOB_NAME","value":"seedbuild-fx"},{"name":"DBT_TARGET_SCHEMA","value":"_candidate_rel_1"}],"resources":{},"imagePullPolicy":"IfNotPresent","securityContext":{"capabilities":{"drop":["ALL"]},"allowPrivilegeEscalation":false}}],"restartPolicy":"Never","securityContext":{"seccompProfile":{"type":"RuntimeDefault"}}}`
+const seedPodSpecWithoutOverlayJSON = `{"containers":[{"name":"dbt-job","image":"carolsimone/core:abc123","command":["dbt","seed","--select","fx"],"envFrom":[{"secretRef":{"name":"wh-secret"}}],"env":[{"name":"RELEASE_ID","value":"rel-1"},{"name":"NODE_ID","value":"seed.core.fx"},{"name":"PROJECT_NAME","value":"core"},{"name":"SCHEMA","value":"analytics"},{"name":"TABLE_NAME","value":"fx"},{"name":"JOB_NAME","value":"seedbuild-fx"},{"name":"DBT_TARGET_SCHEMA","value":"_candidate_rel_1"}],"resources":{},"imagePullPolicy":"IfNotPresent","securityContext":{"capabilities":{"drop":["ALL"]},"allowPrivilegeEscalation":false}}],"restartPolicy":"Never","securityContext":{"seccompProfile":{"type":"RuntimeDefault"}}}`
 
 func TestBuildSeedBuildPodSpec_NoOverlayIsByteIdentical(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
@@ -196,7 +196,7 @@ func TestBuildSeedBuildPodSpec_NoOverlayIsByteIdentical(t *testing.T) {
 	t.Setenv("S3_BUCKET", "")
 	p := ValidationJobParams{
 		JobName: "seedbuild-fx", ReleaseID: "rel-1", NodeID: "seed.core.fx",
-		ServiceName: "core", SchemaName: "analytics", TableName: "fx",
+		ProjectName: "core", SchemaName: "analytics", TableName: "fx",
 		NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "abc123",
 		CandidateSchema: "_candidate_rel_1", Namespace: "default",
 	}
@@ -215,7 +215,7 @@ func TestBuildSeedBuildPodSpec_NoOverlayIsByteIdentical(t *testing.T) {
 func seedBuildParams() ValidationJobParams {
 	return ValidationJobParams{
 		JobName: "seedbuild-fx-rates", ReleaseID: "rel-1", NodeID: "analytics.seed_fx_rates_eur",
-		ServiceName: "analytics", SchemaName: "analytics", TableName: "seed_fx_rates_eur",
+		ProjectName: "analytics", SchemaName: "analytics", TableName: "seed_fx_rates_eur",
 		NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "abc123",
 		CandidateSchema: "_candidate_rel_1", Namespace: "default",
 	}

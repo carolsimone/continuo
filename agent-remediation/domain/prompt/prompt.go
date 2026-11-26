@@ -25,7 +25,7 @@ type UpstreamChange struct {
 // ancestor's minimum upstream hop distance from the failing node.
 type ReleaseUpstreamChange struct {
 	NodeID  string
-	Service string
+	Project string
 	Depth   int
 	Diff    string
 }
@@ -165,7 +165,7 @@ func renderPrecedents(b *strings.Builder, ps []Precedent) {
 	if len(ps) == 0 {
 		return
 	}
-	b.WriteString("How similar failures were fixed before (same error shape, any service):\n")
+	b.WriteString("How similar failures were fixed before (same error shape, any project):\n")
 	diffs := 0
 	for _, p := range ps {
 		hasResolution := p.ResolutionDiff != "" || len(p.Edited) > 0
@@ -286,7 +286,7 @@ func singleFileProposeRequest(system, user, toolDescription string) ProposeReque
 // which shown file to change (target_file) and returns its corrected content.
 func AssembleCompileFix(files []NamedFile, dbtLog, nodeID string, precedents []Precedent) ProposeRequest {
 	var u strings.Builder
-	fmt.Fprintf(&u, "Service: %s\n\n", nodeID)
+	fmt.Fprintf(&u, "Project: %s\n\n", nodeID)
 	writeFiles(&u, files)
 	fmt.Fprintf(&u, "dbt compile error:\n```\n%s\n```\n\n", dbtLog)
 	renderPrecedents(&u, precedents)
@@ -311,9 +311,9 @@ Rules:
 // parse leg rejected. It has the compile-fix shape (the model picks one shown
 // file and returns its corrected content) but shows the parser's error text
 // in place of a dbt log, since no dbt run happened.
-func AssembleParseFix(files []NamedFile, parseError, service, nodeID string, precedents []Precedent) ProposeRequest {
+func AssembleParseFix(files []NamedFile, parseError, project, nodeID string, precedents []Precedent) ProposeRequest {
 	var u strings.Builder
-	fmt.Fprintf(&u, "Service: %s\nNode: %s\n\n", service, nodeID)
+	fmt.Fprintf(&u, "Project: %s\nNode: %s\n\n", project, nodeID)
 	writeFiles(&u, files)
 	fmt.Fprintf(&u, "SQL parse error:\n```\n%s\n```\n\n", parseError)
 	renderPrecedents(&u, precedents)

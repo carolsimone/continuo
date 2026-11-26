@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router';
 import VerificationDetailPage from './VerificationDetailPage';
 
 const run = {
-  run_id: 'verify-rel-1-core-a2', status: 'failed', changed_service: 'core', verifies_release_id: 'rel-1', attempt: 2,
+  run_id: 'verify-rel-1-core-a2', status: 'failed', changed_project: 'core', verifies_release_id: 'rel-1', attempt: 2,
   created_at: '2026-09-02T10:00:00Z', activated_at: '2026-09-02T10:01:00Z', finished_at: '2026-09-02T10:09:00Z',
   transitions: [{ to: 'received', at: '2026-09-02T10:00:00Z' }, { to: 'failed', at: '2026-09-02T10:09:00Z' }],
   validation_node_ids: ['model.core.orders'], failing_nodes: ['model.core.orders'],
@@ -38,7 +38,7 @@ describe('VerificationDetailPage', () => {
     expect(document.querySelector('header .pill')?.textContent).toBe('failed');
     expect(screen.getByRole('link', { name: 'rel-1' })).toHaveAttribute('href', '/releases/rel-1');
     expect(screen.getByText(/attempt 2/)).toBeInTheDocument();
-    expect(screen.getByText(/service core/)).toBeInTheDocument();
+    expect(screen.getByText(/project core/)).toBeInTheDocument();
     // 'Validation' appears twice: the failure-reason strip (reasonLabel) and
     // the per-node results section header (stageLabel) for the same stage.
     expect(screen.getAllByText('Validation').length).toBeGreaterThan(0);
@@ -99,13 +99,13 @@ describe('VerificationDetailPage — brand header', () => {
   });
 });
 
-describe('VerificationDetailPage — services and timeline', () => {
-  it('renders the run\'s images as service tiles and its transitions as a timeline', async () => {
+describe('VerificationDetailPage — projects and timeline', () => {
+  it('renders the run\'s images as project tiles and its transitions as a timeline', async () => {
     renderAt('verify-rel-1-core-a2');
     await screen.findByText('verify-rel-1-core-a2');
-    const tile = document.querySelector('.service-tile--changed')!;
-    expect(tile.querySelector('.service-tile__name')?.textContent).toBe('core');
-    expect(tile.querySelector('.service-tile__tag')?.textContent).toBe('img:1');
+    const tile = document.querySelector('.project-tile--changed')!;
+    expect(tile.querySelector('.project-tile__name')?.textContent).toBe('core');
+    expect(tile.querySelector('.project-tile__tag')?.textContent).toBe('img:1');
     expect(document.querySelector('.section-header__sub')?.textContent).toBe('core is new in this verification run · 1 carried over from rel-1');
     const steps = Array.from(document.querySelectorAll('.release-timeline__step .pill-sm')).map(e => e.textContent);
     expect(steps).toEqual(['received', 'failed']);

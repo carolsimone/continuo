@@ -17,9 +17,9 @@ import (
 )
 
 const (
-	// seedReloadService is the dbt service that holds seed_table_1 and the view
+	// seedReloadProject is the dbt project that holds seed_table_1 and the view
 	// over it.
-	seedReloadService = "service-1"
+	seedReloadProject = "service-1"
 	// seedReloadViewKey is the unique_id of seed_table_1_view, a dbt view over
 	// seed_table_1 on the seed-view schedule.
 	seedReloadViewKey = seedSchemaName + ".seed_table_1_view"
@@ -100,19 +100,19 @@ func TestSeedReload_RebuildsTheViewAndStopsOnAViewContinuoDoesNotOwn(t *testing.
 	requireReleaseControllerHealthy(t, clients)
 
 	releaseID := "e2e-seedreload-" + uuid.NewString()[:8]
-	t.Logf("release_id=%s service=%s", releaseID, seedReloadService)
+	t.Logf("release_id=%s project=%s", releaseID, seedReloadProject)
 
 	// ── 1. setup and the release's notice ────────────────────────────────────
-	allServices := baselineServices(t, ctx, clients)
-	require.NotEmpty(t, allServices,
-		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
-	imageTag := allServices[seedReloadService].imageTag
-	require.NotEmpty(t, imageTag, "image_tag missing for %s", seedReloadService)
+	allProjects := baselineProjects(t, ctx, clients)
+	require.NotEmpty(t, allProjects,
+		"no baseline manifests under s3://%s/<project>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
+	imageTag := allProjects[seedReloadProject].imageTag
+	require.NotEmpty(t, imageTag, "image_tag missing for %s", seedReloadProject)
 
 	oldSeedHash := "sha256:e2e-old-seed-" + uuid.NewString()
 	var prodNodes []map[string]string
 	seedFound, viewFound := false, false
-	for svc, si := range allServices {
+	for svc, si := range allProjects {
 		for _, n := range si.nodes {
 			switch n.uniqueID {
 			case seedReloadViewKey:
@@ -122,7 +122,7 @@ func TestSeedReload_RebuildsTheViewAndStopsOnAViewContinuoDoesNotOwn(t *testing.
 				seedFound = true
 				prodNodes = append(prodNodes, map[string]string{
 					"unique_id":         n.uniqueID,
-					"service":           svc,
+					"project":           svc,
 					"content_hash":      oldSeedHash,
 					"seed_columns":      `[{"name":"id","type":""},{"name":"legacy","type":""}]`,
 					"seed_columns_hash": "sha256:e2e-old-columns",
@@ -130,7 +130,7 @@ func TestSeedReload_RebuildsTheViewAndStopsOnAViewContinuoDoesNotOwn(t *testing.
 				continue
 			}
 			prodNodes = append(prodNodes, map[string]string{
-				"unique_id": n.uniqueID, "service": svc, "content_hash": n.contentHash,
+				"unique_id": n.uniqueID, "project": svc, "content_hash": n.contentHash,
 			})
 		}
 	}
@@ -148,10 +148,10 @@ func TestSeedReload_RebuildsTheViewAndStopsOnAViewContinuoDoesNotOwn(t *testing.
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allServices)
+	seedServiceProd(t, ctx, clients, allProjects)
 	setLoadedSeedVersion(t, ctx, clients, oldSeedHash, "sha256:e2e-old-columns")
 
-	postRelease(t, clients, seedReloadService, releaseID, imageTag, false)
+	postRelease(t, clients, seedReloadProject, releaseID, imageTag, false)
 
 	notices := waitForReleaseNotices(t, ctx, clients, releaseID, 10*time.Minute)
 	require.Len(t, notices, 1, "the release changes one seed's load: %+v", notices)
@@ -185,10 +185,10 @@ func TestSeedReload_RebuildsTheViewAndStopsOnAViewContinuoDoesNotOwn(t *testing.
 	waitForTasksToSucceed(t, ctx, clients, promoteRun, []string{"seed_table_1", "seed_table_1_view"}, 5*time.Minute)
 
 	shown := showRun(t, ctx, bin, env, promoteRun)
-	seedTask := shown.task(t, seedReloadService+"."+seedReconcileNodeKey)
+	seedTask := shown.task(t, seedReloadProject+"."+seedReconcileNodeKey)
 	assert.Equal(t, "full_refresh", seedTask.Operation, "the column change full-refreshes the seed")
 	assert.Equal(t, "columns changed", seedTask.PlanReason)
-	viewTask := shown.task(t, seedReloadService+"."+seedReloadViewKey)
+	viewTask := shown.task(t, seedReloadProject+"."+seedReloadViewKey)
 	assert.Equal(t, "run", viewTask.Operation, "a view is rebuilt with run")
 	assert.Equal(t, "rebuild: dropped by the load of "+seedReconcileNodeKey, viewTask.PlanReason)
 	require.True(t, relationExists(t, ctx, clients, seedReloadViewKey), "the promote-seed run built %s", seedReloadViewKey)
@@ -253,7 +253,7 @@ func TestSeedReload_RebuildsTheViewAndStopsOnAViewContinuoDoesNotOwn(t *testing.
 	var triggered struct {
 		RunID string `json:"run_id"`
 	}
-	runCLI(t, ctx, bin, env, &triggered, "node", "full-refresh", seedReloadService, seedSchemaName, "seed_table_1",
+	runCLI(t, ctx, bin, env, &triggered, "node", "full-refresh", seedReloadProject, seedSchemaName, "seed_table_1",
 		"--acknowledge", seedReloadOutsideView, "--acknowledge", seedReloadOutsideMatView)
 	refreshRun, err := uuid.Parse(triggered.RunID)
 	require.NoError(t, err, "continuo node full-refresh prints the run id: %q", triggered.RunID)
@@ -457,7 +457,7 @@ type shownTask struct {
 	Status     string `json:"status"`
 }
 
-// task returns the task of node, "<service>.<schema>.<table>", and fails the
+// task returns the task of node, "<project>.<schema>.<table>", and fails the
 // test when the run has none.
 func (r shownRun) task(t *testing.T, node string) shownTask {
 	t.Helper()

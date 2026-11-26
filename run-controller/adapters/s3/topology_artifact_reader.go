@@ -115,7 +115,7 @@ func artifactOf(doc topologyartifact.Document) ports.TopologyArtifact {
 		}
 		nodes = append(nodes, topology.NodeSpec{
 			UniqueID:           n.UniqueID,
-			ServiceName:        n.ServiceName,
+			ProjectName:        n.ProjectName,
 			SchemaName:         n.SchemaName,
 			TableName:          n.TableName,
 			NodeType:           n.NodeType,

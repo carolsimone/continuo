@@ -119,7 +119,7 @@ func (f *contractsFixture) releaseResolvedAgainst(releaseID string, seq int64, c
 		body, err := json.Marshal(map[string]any{"id": id, "kind": "DataContract", "description": hash})
 		require.NoError(f.t, err)
 		doc.Contracts[id] = contractbundle.Contract{
-			Family: "python", Service: "service-py", ContractHash: hash, ContentHash: "sha256:code-" + id,
+			Family: "python", Project: "service-py", ContractHash: hash, ContentHash: "sha256:code-" + id,
 			Source:   contractbundle.Source{Path: "contracts/" + id + ".odcs.yaml", SHA256: "sha256:src"},
 			Document: body,
 		}
@@ -254,7 +254,7 @@ func TestContractsHandler_AFirstPromotionWritesVersionOne(t *testing.T) {
 
 // A promotion whose bundle holds a dbt contract next to a Python one records
 // both alike: each is its own version 1, with its promotion edge, its pointer
-// and the family and service its producer wrote on the stored contract, and the
+// and the family and project its producer wrote on the stored contract, and the
 // dbt contract reads back as the document the bundle held.
 func TestContractsHandler_IngestsDbtContracts(t *testing.T) {
 	ctx := context.Background()
@@ -276,7 +276,7 @@ func TestContractsHandler_IngestsDbtContracts(t *testing.T) {
 	for id, want := range map[string]contractbundle.Contract{dbtID: dbtContract, pythonID: pythonContract} {
 		stored := `MATCH (v:ContractVersion {tenant_id: $tenant_id, unique_id: '` + id + `', contract_hash: '` + want.ContractHash + `'}) `
 		assert.Equal(t, string(want.Family), f.value(stored+`RETURN v.family AS v`), id)
-		assert.Equal(t, want.Service, f.value(stored+`RETURN v.service AS v`), id)
+		assert.Equal(t, want.Project, f.value(stored+`RETURN v.project AS v`), id)
 		edge := `MATCH (:Node {tenant_id: $tenant_id, unique_id: '` + id + `'})-[e:CONTRACT_PROMOTED]->(:ContractVersion {tenant_id: $tenant_id, contract_hash: '` + want.ContractHash + `'}) `
 		assert.Equal(t, int64(1), f.value(edge+`RETURN e.version AS v`), id)
 		assert.Equal(t, int64(41), f.value(edge+`RETURN e.promotion_seq AS v`), id)
@@ -305,7 +305,7 @@ func TestContractsHandler_RecordsTheOntologyVersion(t *testing.T) {
 	f := newContractsFixture(t)
 	const id = "analytics.py_daily_kpis"
 	f.exec(f.tenantID, `CREATE (:Node {tenant_id: $tenant_id, unique_id: $id, active: true})`, map[string]any{"id": id})
-	ontology := json.RawMessage(`{"enabled":true,"service":"ontology","release_id":"rel-o-3","sha256":"abc123","declared_services":[],"findings":[]}`)
+	ontology := json.RawMessage(`{"enabled":true,"project":"ontology","release_id":"rel-o-3","sha256":"abc123","declared_projects":[],"findings":[]}`)
 
 	require.NoError(t, f.handler.Handle(ctx, "41-0", nil, f.releaseResolvedAgainst("rel-1", 41, map[string]string{id: "sha256:3f1c"}, ontology)))
 	require.NoError(t, f.handler.Handle(ctx, "47-0", nil, f.release("rel-2", 47, map[string]string{id: "sha256:a0b1"})))

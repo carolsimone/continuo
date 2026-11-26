@@ -79,8 +79,8 @@ const (
 	ClusterSingle ClusterKind = "single"
 	// ClusterSharedUpstream: several nodes fixed at a shared changed ancestor.
 	ClusterSharedUpstream ClusterKind = "shared_upstream"
-	// ClusterCrossService: nodes of more than one service.
-	ClusterCrossService ClusterKind = "cross_service"
+	// ClusterCrossProject: nodes of more than one project.
+	ClusterCrossProject ClusterKind = "cross_project"
 )
 
 // NodeTypeNone stands in a Match's node types for a failure that carries no

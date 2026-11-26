@@ -56,7 +56,7 @@ type TriggerSingleNodeRunInput struct {
 // schedule name. In stale mode (MetadataSource = snapshot_of_run) it requires
 // the source run to be terminal and to carry a task at the requested node. A
 // selection the planner refuses (the node is not in the release or another
-// service owns it, a test of a node without data tests, a full refresh of a
+// project owns it, a test of a node without data tests, a full refresh of a
 // type that cannot be rebuilt, a seed that sets +full_refresh: false and needs
 // its table rebuilt, acknowledged dependents on any other run, a source that
 // names no release) is returned as is, and the caller rolls back.

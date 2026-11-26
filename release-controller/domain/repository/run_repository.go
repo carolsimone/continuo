@@ -54,11 +54,11 @@ type RunRepository interface {
 	// Active is the single run of either kind currently compiling, parsing,
 	// seed_building, or validating; nil if none.
 	Active(ctx context.Context) (*pipeline.Run, error)
-	// ActiveCandidateServicesWithKind lists the changed services of the
+	// ActiveCandidateProjectsWithKind lists the changed projects of the
 	// candidate runs of the given manifest kind that have not ended, sorted
 	// ascending and without repeats. A verification run and a run that ended
 	// are left out. No such run is an empty list, not an error.
-	ActiveCandidateServicesWithKind(ctx context.Context, kind release.ManifestKind) ([]string, error)
+	ActiveCandidateProjectsWithKind(ctx context.Context, kind release.ManifestKind) ([]string, error)
 	// List is the paginated history, newest first, narrowed by the filter.
 	List(ctx context.Context, f ListFilter) (items []*pipeline.Run, next *ListCursor, err error)
 	// DeleteFinishedBefore removes terminal runs of either kind created

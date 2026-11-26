@@ -49,14 +49,14 @@ func (f *fakeSource) ListDir(_ context.Context, _, _, dir string) ([]string, err
 var _ ports.SourceReader = (*fakeSource)(nil)
 
 type fakeLocator struct {
-	filePath, service string
+	filePath, project string
 	err               error
 	calls             []string
 }
 
 func (f *fakeLocator) Locate(_ context.Context, id string) (string, string, error) {
 	f.calls = append(f.calls, id)
-	return f.filePath, f.service, f.err
+	return f.filePath, f.project, f.err
 }
 
 var _ ports.NodeLocator = (*fakeLocator)(nil)

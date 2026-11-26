@@ -1,11 +1,11 @@
 """Parses a dbt manifest.json into ManifestNodes and the shared code they use.
 
 Every node carries a content_hash folded from its own source, the shared code it
-uses (macros, functions, unit tests and the project's service units), its hashed
+uses (macros, functions, unit tests and the project units), its hashed
 config and, for a model or snapshot, its compiled SQL (service/dbt_hashing.py
 holds the parts and their fold). A seed the compile extras name also carries its
 column fingerprint, CSV header and column types, and the parse reports the
-service's provenance: the manifest's dbt version, the extras' package versions
+project's provenance: the manifest's dbt version, the extras' package versions
 and the seeds whose source part is still dbt's `path` checksum. A model, seed or
 snapshot a gate leaves out (no owner, a local stub, an untagged node of an
 installed dbt package) is reported through the caller's `skipped` list, never
@@ -16,7 +16,7 @@ continuo-contracts' `dbt` module, so a producer's CI and this parse answer alike
 
 Each node the gates keep gets its ODCS contract, which the library generates from
 the node and its tests and the parse checks. The node's run facts (its table,
-relation, service, kind, schedule, criticality, owner, file path,
+relation, project, kind, schedule, criticality, owner, file path,
 materialization and timeout) are read back from that contract, so the topology
 says what the contract says. Its schema keeps the spelling the project
 declares, which the contract's id holds in lower case. A node whose contract
@@ -47,7 +47,7 @@ from domain.model import (
     NodeType,
     ParsedArtifact,
     SeedExtras,
-    ServiceProvenance,
+    ProjectProvenance,
     SkippedNode,
     SkipReason,
     relation_key,
@@ -111,8 +111,8 @@ _RESOURCE_TYPE_TO_NODE_TYPE = {
 }
 
 
-def _tolerant_service(node: dict) -> str:
-    """The service of a node as the first entry of a well-formed fqn, with `_`
+def _tolerant_project(node: dict) -> str:
+    """The project of a node as the first entry of a well-formed fqn, with `_`
     written `-`, or "" for an fqn of any other shape: the report of a node the
     parse does not build must not raise on the field that kept it out."""
     fqn = node.get("fqn")
@@ -123,22 +123,22 @@ def _tolerant_service(node: dict) -> str:
 def _skipped(node_id: str, node: dict, reason: SkipReason) -> SkippedNode:
     """The report of a node a gate left out. A node the parse never builds can
     lack an fqn, or carry one of another shape, without raising."""
-    return SkippedNode(node_id=node_id, service=_tolerant_service(node), reason=reason)
+    return SkippedNode(node_id=node_id, project=_tolerant_project(node), reason=reason)
 
 
-def _service(node_id: str, node: dict) -> str:
-    """The service of a dbt test the parse builds: the first entry of its fqn,
+def _project(node_id: str, node: dict) -> str:
+    """The project of a dbt test the parse builds: the first entry of its fqn,
     with `_` written `-`. dbt writes an fqn for every node, so a test with none
-    does not say which service it belongs to, and the artifact is refused."""
+    does not say which project it belongs to, and the artifact is refused."""
     with _rejecting_node_shape():
-        service = dbt.node_service(node)
+        project = dbt.node_project(node)
     _require_fqn(node_id, node)
-    return service
+    return project
 
 
 def _require_fqn(node_id: str, node: dict) -> None:
     """Refuse a node the parse builds that has no fqn entry: dbt writes an fqn
-    for every node, so such a node does not say which service it belongs to."""
+    for every node, so such a node does not say which project it belongs to."""
     if not node.get("fqn"):
         raise InvalidNodeSettingError(f"{node_id}: fqn must be a non-empty list of strings")
 
@@ -260,14 +260,14 @@ class _HeldTargets:
 
 
 def _failed_node(name: str, node: dict, resource_type: str, detail: str) -> FailedNode:
-    """The invalid contract of a node the gates did not leave out. Its service
+    """The invalid contract of a node the gates did not leave out. Its project
     and file path are read tolerantly, as the node may hold either in a shape
     the library refused."""
     file_path = node.get("original_file_path")
     return FailedNode(
         node_id=name,
         kind=ParseFailureKind.INVALID_CONTRACT,
-        service=_tolerant_service(node),
+        project=_tolerant_project(node),
         file_path=file_path if isinstance(file_path, str) else "",
         node_type=_RESOURCE_TYPE_TO_NODE_TYPE[resource_type],
         detail=detail,
@@ -421,7 +421,7 @@ def parse_manifest(
     extras: CompileExtras | None = None,
     *,
     skipped: list[SkippedNode] | None = None,
-    declared_service: str = "",
+    declared_project: str = "",
     validator: ContractValidator,
     progress: Callable[[], None] = _no_progress,
     timings: ReleaseTimings,
@@ -429,7 +429,7 @@ def parse_manifest(
     """Parse a dbt manifest into its nodes, the shared code they use and the
     invalid contracts of the nodes that could not be built.
 
-    `extras` is the compile-extras.json of the same service when its compile wrote
+    `extras` is the compile-extras.json of the same project when its compile wrote
     one. A seed's source part is the SHA-256 of its file bytes the extras record,
     or dbt's own checksum when the extras are absent or do not name the seed; a
     seed the extras name also carries seed_columns_hash, seed_header and
@@ -445,10 +445,10 @@ def parse_manifest(
     `dbt.skip_reason`'s and run in this order: no owner, a `local_stub` tag, then
     no tag on a node of an installed dbt package. dbt applies a project's
     top-level `+meta` to the nodes of its installed packages too, so a package's
-    node can carry the project's owner; with no tag it is not the service's to
+    node can carry the project's owner; with no tag it is not the project's to
     schedule. A node of a package that carries a tag is kept under the package's
-    service, so the caller's service check refuses it. The project is the
-    manifest's own `metadata.project_name`, else `declared_service`. When neither
+    project, so the caller's project check refuses it. The project is the
+    manifest's own `metadata.project_name`, else `declared_project`. When neither
     is known, no node is left out for belonging to a package.
 
     Each node the gates keep, in manifest order, gets its contract from
@@ -456,7 +456,7 @@ def parse_manifest(
     and the tests `dbt.tests_by_node` joins to it, and the contract is checked
     with `validator.check_dbt` (timed as `contract_validation`, each cache lookup
     counted). A valid contract becomes the node's `contract`, and the node's run
-    facts come from `dbt.run_facts` of it: its table, relation, service, node
+    facts come from `dbt.run_facts` of it: its table, relation, project, node
     type, schedule, criticality, owner, file path, materialization and timeout.
     Its schema is the manifest's, in the spelling the project declares, while
     its unique_id is the contract's id, in lower case. Everything else (its SQL,
@@ -472,7 +472,7 @@ def parse_manifest(
     (the library lowers `<schema>.<table>` as one string, the unique_id each part on
     its own, and a capital Σ can lower differently), a seed whose declared columns
     differ from its CSV header, and a node field the library cannot read, is a
-    FailedNode of the result (invalid_contract) naming the node, its service, its
+    FailedNode of the result (invalid_contract) naming the node, its project, its
     file and every issue, each issue counted on `timings` by its reason (an id that
     is not the unique_id as `validate`/`identity`, a column of a seed the header and
     the contract disagree on as `validate`/`seed_header`, a field the library
@@ -496,7 +496,7 @@ def parse_manifest(
     with open(manifest_path) as f:
         manifest = json.load(f)
 
-    project = _manifest_call(lambda: dbt.project_service(manifest, declared_service), timings)
+    project = _manifest_call(lambda: dbt.manifest_project(manifest, declared_project), timings)
     tests_of = _manifest_call(lambda: dbt.tests_by_node(manifest), timings)
     _require_readable_manifest(manifest, timings)
     with _rejecting_hash_input(manifest_path):
@@ -557,7 +557,7 @@ def parse_manifest(
             resolved_relation=facts.physical_name,
             materialized=facts.materialized,
             full_refresh=_seed_full_refresh(resource_type, node.get("config") or {}),
-            service_name=facts.service,
+            project_name=facts.project,
             owner=facts.owner,
             schedule_name=facts.schedule,
             criticality=facts.criticality,
@@ -624,13 +624,13 @@ def parse_manifest(
             continue
         compiled = node.get("compiled_code", "")
         node.setdefault("unique_id", node_id)
-        test_service = _service(node_id, node)
+        test_project = _project(node_id, node)
         parts = _hash(node_id, node, ctx)
         used_units.update(parts.units)
         test_nodes.append(ManifestNode(
             table_name=node["name"],
             schema_name=node["schema"],
-            service_name=test_service,
+            project_name=test_project,
             owner="",
             schedule_name="",
             criticality="SECONDARY",
@@ -660,7 +660,7 @@ def parse_manifest(
         }
         for unit_id, unit in sorted(used_units.items())
     }
-    provenance = ServiceProvenance(
+    provenance = ProjectProvenance(
         dbt_version=(manifest.get("metadata") or {}).get("dbt_version", ""),
         packages=dict(extras.packages) if extras is not None else {},
         path_checksum_seeds=tuple(sorted(path_checksum_seeds)),

@@ -62,7 +62,7 @@ func TestIntegration_HappyPath(t *testing.T) {
 
 	// 1. POST /releases
 	body, _ := json.Marshal(httpinfra.ReceiveCandidateRequest{
-		Service:   "service-1",
+		Project:   "service-1",
 		ReleaseID: "rA",
 		ImageTag:  "sha-rA",
 		Repo:      "acme/demo",
@@ -93,8 +93,8 @@ func TestIntegration_HappyPath(t *testing.T) {
 		ReleaseID: "rA",
 		Status:    "ok",
 		TopologyRef: putTopology(t, deps, "rA", release.Topology{
-			{UniqueID: "a", ServiceName: "service-1"},
-			{UniqueID: "b", ServiceName: "service-1", UpstreamUniqueIDs: []string{"a"}},
+			{UniqueID: "a", ProjectName: "service-1"},
+			{UniqueID: "b", ProjectName: "service-1", UpstreamUniqueIDs: []string{"a"}},
 		}),
 	}))
 	r, _ = deps.NewUoW().RunRepo().Get(context.Background(), "rA")
@@ -130,8 +130,8 @@ func TestIntegration_HappyPath(t *testing.T) {
 
 	// 6. service_prod must be upserted for service-1.
 	var spCount int
-	require.NoError(t, db.Get(&spCount, `SELECT count(*) FROM service_prod WHERE service_name = 'service-1'`))
-	assert.Equal(t, 1, spCount, "service_prod must have a row for the promoted service")
+	require.NoError(t, db.Get(&spCount, `SELECT count(*) FROM service_prod WHERE project_name = 'service-1'`))
+	assert.Equal(t, 1, spCount, "service_prod must have a row for the promoted project")
 
 	// 7. Outbox has 5 entries (compile.requested + release.requested +
 	// validation.requested + release.promoted + pipeline.run.finished — the

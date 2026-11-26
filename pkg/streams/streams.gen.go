@@ -30,7 +30,7 @@ const (
 	SeedBuildRequestedV1 = "seed.build.requested:v1"
 	// SeedBuildCompletedV1 — aggregated candidate seed-build result from execution-controller back to release-controller.
 	SeedBuildCompletedV1 = "seed.build.completed:v1"
-	// CompileRequestedV1 — release-controller requests the changed service's dbt compile; execution-controller dispatches the compile Job.
+	// CompileRequestedV1 — release-controller requests the changed project's dbt compile; execution-controller dispatches the compile Job.
 	CompileRequestedV1 = "compile.requested:v1"
 	// CompileCompletedV1 — aggregated compile result from execution-controller back to release-controller.
 	CompileCompletedV1 = "compile.completed:v1"
@@ -50,7 +50,7 @@ const (
 	RemediationHandedOverV1 = "remediation.handed_over:v1"
 	// RemediationPrOpenedV1 — Emitted when an operator opens a GitHub PR from a fix proposal, one per (release, attempt) and carrying every node the PR resolves; consumed by catalog's case-base proposals group.
 	RemediationPrOpenedV1 = "remediation.pr_opened:v1"
-	// RemediationPrClosedV1 — Terminal PR outcome (merged, or closed without merge), one per (release, attempt, service); merged outcomes carry per-edit amended flags and diffs, and catalog's provenance group draws RESOLVED_BY/EDITED case-base edges from them.
+	// RemediationPrClosedV1 — Terminal PR outcome (merged, or closed without merge), one per (release, attempt, project); merged outcomes carry per-edit amended flags and diffs, and catalog's provenance group draws RESOLVED_BY/EDITED case-base edges from them.
 	RemediationPrClosedV1 = "remediation.pr_closed:v1"
 )
 

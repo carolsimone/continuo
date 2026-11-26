@@ -10,7 +10,7 @@ import (
 )
 
 // An unknown-external node reaches the swap as it is in the artifact: its type, its
-// empty service and content hash, and the readers' edges. A dbt test never
+// empty project and content hash, and the readers' edges. A dbt test never
 // does.
 func TestPromotedNodes_KeepsAnUnknownExternalNode(t *testing.T) {
 	doc := topologyartifact.Document{
@@ -21,7 +21,7 @@ func TestPromotedNodes_KeepsAnUnknownExternalNode(t *testing.T) {
 			{UniqueID: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe", NodeType: "unknown-external"},
 			{
 				UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders",
-				ServiceName: "service-1", NodeType: "dbt-model", ContentHash: "sha256:orders",
+				ProjectName: "service-1", NodeType: "dbt-model", ContentHash: "sha256:orders",
 				UpstreamUniqueIDs: []string{"raw.ingest_probe"},
 			},
 			{UniqueID: "test.service_1.not_null_orders_id.5c1f0b2a3d", NodeType: "dbt-test"},

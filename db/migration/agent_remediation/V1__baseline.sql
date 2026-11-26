@@ -156,7 +156,7 @@ CREATE TABLE proposal (
     resolved_node_ids jsonb DEFAULT '[]'::jsonb NOT NULL,
     node_outcomes jsonb DEFAULT '{}'::jsonb NOT NULL,
     verifications jsonb DEFAULT '[]'::jsonb NOT NULL,
-    services text[] DEFAULT '{}'::text[] NOT NULL,
+    projects text[] DEFAULT '{}'::text[] NOT NULL,
     remediation_id uuid,
     approvers jsonb DEFAULT '[]'::jsonb NOT NULL,
     CONSTRAINT proposal_pkey PRIMARY KEY (id),
@@ -169,7 +169,7 @@ CREATE INDEX idx_proposal_release_round ON proposal (release_id, remediation_rou
 
 CREATE INDEX idx_proposal_resolved_node_ids ON proposal USING gin (resolved_node_ids);
 
-CREATE INDEX idx_proposal_services ON proposal USING gin (services);
+CREATE INDEX idx_proposal_projects ON proposal USING gin (projects);
 
 CREATE INDEX proposal_remediation_id ON proposal (remediation_id) WHERE remediation_id IS NOT NULL;
 
@@ -196,7 +196,7 @@ CREATE TABLE remediation_try (
 
 CREATE TABLE proposal_pull_request (
     proposal_id uuid NOT NULL,
-    service text DEFAULT '' NOT NULL,
+    project text DEFAULT '' NOT NULL,
     repo text DEFAULT '' NOT NULL,
     branch text DEFAULT '' NOT NULL,
     pr_state text DEFAULT '' NOT NULL,
@@ -206,7 +206,7 @@ CREATE TABLE proposal_pull_request (
     pr_opened_at timestamptz,
     pr_opened_by text DEFAULT '' NOT NULL,
     pr_closed_at timestamptz,
-    CONSTRAINT proposal_pull_request_pkey PRIMARY KEY (proposal_id, service),
+    CONSTRAINT proposal_pull_request_pkey PRIMARY KEY (proposal_id, project),
     CONSTRAINT proposal_pull_request_proposal_id_fkey FOREIGN KEY (proposal_id) REFERENCES proposal(id) ON DELETE CASCADE
 );
 
@@ -228,7 +228,7 @@ CREATE TABLE remediation_cluster (
     updated_at timestamptz DEFAULT now() NOT NULL,
     CONSTRAINT remediation_cluster_pkey PRIMARY KEY (remediation_id, try, cluster),
     CONSTRAINT remediation_cluster_cluster_check CHECK ((cluster >= 1)),
-    CONSTRAINT remediation_cluster_kind_check CHECK ((kind IN ('single', 'shared_upstream', 'cross_service'))),
+    CONSTRAINT remediation_cluster_kind_check CHECK ((kind IN ('single', 'shared_upstream', 'cross_project'))),
     CONSTRAINT remediation_cluster_status_check CHECK ((status IN ('gathering', 'proposing', 'preflight', 'checked', 'handed_over', 'fell_back'))),
     CONSTRAINT remediation_cluster_remediation_id_try_fkey FOREIGN KEY (remediation_id, try) REFERENCES remediation_try(remediation_id, try) ON DELETE CASCADE
 );

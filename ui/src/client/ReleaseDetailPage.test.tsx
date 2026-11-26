@@ -274,7 +274,7 @@ describe('ReleaseDetailPage — hand-over reasons in the FIX cell', () => {
   });
 
   it('truncates a long message behind a more toggle and keeps the hand-over text visible', async () => {
-    const long = 'the change that broke this node lives in finance; a fix in this node\'s own service cannot ship before it: '
+    const long = 'the change that broke this node lives in finance; a fix in this node\'s own project cannot ship before it: '
       + 'column amount_cents is missing from the upstream model';
     mockFetchProposals.mockResolvedValue([batched({
       's.a': { status: 'failed', reason: long, code: 'tries_spent' },
@@ -829,21 +829,21 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
     expect(await screen.findByRole('button', { name: 'Try again (round 1 of 3)' })).toBeInTheDocument();
   });
 
-  it('hides Try again when a batched proposal has one owning service rejected but another still open', async () => {
+  it('hides Try again when a batched proposal has one owning project rejected but another still open', async () => {
     // The server mirrors the singular pr_state from pull_requests[0] — here
-    // service 'a' (alphabetically first, and rejected) — so a reader that
+    // project 'a' (alphabetically first, and rejected) — so a reader that
     // only looks at the singular field would misjudge this attempt as a dead
-    // end even though service 'b' still has a PR open for review.
+    // end even though project 'b' still has a PR open for review.
     mockFetchProposals.mockResolvedValue([proposal({
       source: 'compile', node_id: 'finance', status: 'proposed', pr_state: 'rejected', remediation_round: 1,
-      pr_services: ['a', 'b'],
+      pr_projects: ['a', 'b'],
       pull_requests: [
         {
-          service: 'a', repo: 'demo', branch: 'fix/a', pr_url: 'https://x/pr/1', pr_number: 1,
+          project: 'a', repo: 'demo', branch: 'fix/a', pr_url: 'https://x/pr/1', pr_number: 1,
           pr_state: 'rejected', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '',
         },
         {
-          service: 'b', repo: 'demo', branch: 'fix/b', pr_url: 'https://x/pr/2', pr_number: 2,
+          project: 'b', repo: 'demo', branch: 'fix/b', pr_url: 'https://x/pr/2', pr_number: 2,
           pr_state: 'open', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '',
         },
       ],
@@ -1003,12 +1003,12 @@ describe('ReleaseDetailPage — verification runs section', () => {
   it('lists the verification runs that judged fixes for this release', async () => {
     mockVerificationRuns([
       {
-        run_id: 'verify-rel-1-core-a1', status: 'failed', service: 'core', attempt: 1,
+        run_id: 'verify-rel-1-core-a1', status: 'failed', project: 'core', attempt: 1,
         created_at: '2026-09-02T10:00:00Z', activated_at: '2026-09-02T10:01:00Z',
         finished_at: '2026-09-02T10:05:00Z', fail_reason: 'validation_failed',
       },
       {
-        run_id: 'verify-rel-1-core-a2', status: 'validating', service: 'core', attempt: 2,
+        run_id: 'verify-rel-1-core-a2', status: 'validating', project: 'core', attempt: 2,
         created_at: '2026-09-02T10:06:00Z', activated_at: '2026-09-02T10:07:00Z', finished_at: '',
       },
     ]);

@@ -1,7 +1,7 @@
 // The body release-controller's POST /releases takes for a candidate release.
 export interface ReleaseSubmission {
   release_id: string;
-  service: string;
+  project: string;
   image_tag: string;
   bootstrap?: boolean;
   rebaseline?: boolean;

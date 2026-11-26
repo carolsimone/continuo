@@ -18,7 +18,7 @@ from service.release_timings import ReleaseTimings, Stage
 from tests.fakes import FakeClock, ScriptedMemoryProbe
 from tests.odcs_fixtures import (
     IMAGE_TAG,
-    SERVICE,
+    PROJECT,
     bundle_doc,
     bundle_file,
     bundle_node,
@@ -72,8 +72,8 @@ def test_a_node_carries_what_its_contract_declares(tmp_path):
     csv, fx, kpis = parsed.nodes
     assert [n.node_type for n in parsed.nodes] == [NodeType.PYTHON_CSV, NodeType.PYTHON_API, NodeType.PYTHON_NODE]
     assert {n.runtime for n in parsed.nodes} == {Runtime.PYTHON}
-    assert {(n.service_name, n.image_tag, n.owner, n.schedule_name, n.criticality) for n in parsed.nodes} == {
-        (SERVICE, IMAGE_TAG, "service-py", "daily", "SECONDARY")
+    assert {(n.project_name, n.image_tag, n.owner, n.schedule_name, n.criticality) for n in parsed.nodes} == {
+        (PROJECT, IMAGE_TAG, "service-py", "daily", "SECONDARY")
     }
     assert csv.csv_source == "s3://continuo-dev/static-files/demo/orders.csv"
     assert csv.dependency_sqls == [] and csv.original_file_path == ""
@@ -100,7 +100,7 @@ def test_every_invalid_node_is_named(tmp_path):
         ("analytics.demo_orders_csv", ParseFailureKind.INVALID_CONTRACT, "contracts/demo_orders_csv.odcs.yaml"),
         ("analytics.py_daily_kpis", ParseFailureKind.INVALID_CONTRACT, "contracts/py_daily_kpis.odcs.yaml")]
     assert parsed.failed[1].detail == "schema[0].properties[2].physicalType: 'NUMERIC(12)' is not a type continuo accepts"
-    assert all(isinstance(f, FailedNode) and f.service == SERVICE for f in parsed.failed)
+    assert all(isinstance(f, FailedNode) and f.project == PROJECT for f in parsed.failed)
     assert [f.node_type for f in parsed.failed] == ["python-csv", "python-node"]
     assert timings.contract_failures == {("validate", "column_type"): 1, ("validate", "refused_field"): 1}
 
@@ -211,9 +211,9 @@ def _node_without(key):
     (lambda p: _doc(p, bundle_version="1"), "unsupported bundle_version '1'"),
     (lambda p: _doc(p, bundle_version=True), "unsupported bundle_version True"),
     (lambda p: _doc(p, bundle_version=KeyError), "the bundle is missing ['bundle_version']"),
-    (lambda p: _doc(p, service="other-service"), "the bundle is for service 'other-service', not 'service-py'"),
-    (lambda p: _doc(p, service=""), "service must be a non-empty string"),
-    (lambda p: _doc(p, service=7), "service must be a non-empty string"),
+    (lambda p: _doc(p, project="other-service"), "the bundle is for project 'other-service', not 'service-py'"),
+    (lambda p: _doc(p, project=""), "project must be a non-empty string"),
+    (lambda p: _doc(p, project=7), "project must be a non-empty string"),
     (lambda p: _doc(p, producer=KeyError), "the bundle is missing ['producer']"),
     (lambda p: _doc(p, producer="0.2.0"), "producer must be an object"),
     (lambda p: _doc(p, producer={"continuo_python_runtime": "0.13.0"}), "producer is missing ['continuo_contracts']"),
@@ -254,9 +254,9 @@ def test_a_lone_surrogate_in_a_hash_part_is_refused(tmp_path):
         parse(mf)
 
 
-def test_a_bundle_that_names_no_service_is_read_as_the_service_it_names(tmp_path):
-    parsed = parse(bundle_file(tmp_path, demo_nodes(), declared_service=""))
-    assert {n.service_name for n in parsed.nodes} == {SERVICE}
+def test_a_bundle_that_names_no_project_is_read_as_the_project_it_names(tmp_path):
+    parsed = parse(bundle_file(tmp_path, demo_nodes(), declared_project=""))
+    assert {n.project_name for n in parsed.nodes} == {PROJECT}
 
 
 def test_an_empty_node_list_is_an_empty_artifact(tmp_path):
@@ -314,7 +314,7 @@ def test_an_id_the_node_would_key_in_another_case_is_an_invalid_contract(tmp_pat
     assert parsed.failed == (FailedNode(
         node_id="analytics.ölstand",
         kind=ParseFailureKind.INVALID_CONTRACT,
-        service=SERVICE,
+        project=PROJECT,
         file_path=path,
         node_type="python-node",
         detail=f"id: {path} declares the id 'analytics.Ölstand', and continuo names its node"
@@ -428,7 +428,7 @@ def test_a_contract_the_node_builder_refuses_after_the_checks_is_one_failed_node
 
 def _vector_node(tmp_path, name):
     case = next(case for case in _vector_cases() if case["name"] == name)
-    mf = bundle_file(tmp_path, [bundle_node(case["path"], case["text"])], service=case["service"], declared_service=case["service"])
+    mf = bundle_file(tmp_path, [bundle_node(case["path"], case["text"])], project=case["project"], declared_project=case["project"])
     (node,) = parse(mf).nodes
     return node
 
@@ -497,7 +497,7 @@ def test_the_library_vectors_pass_through_the_parser(tmp_path, case):
     # every case of continuo_contracts/vectors/contracts.json, packed as one bundle node of its own:
     # a valid case parses and keeps its document, an invalid case fails with the vector's reasons
     timings = release_timings()
-    mf = bundle_file(tmp_path, [bundle_node(case["path"], case["text"])], service=case["service"], declared_service=case["service"])
+    mf = bundle_file(tmp_path, [bundle_node(case["path"], case["text"])], project=case["project"], declared_project=case["project"])
     parsed = parse(mf, timings=timings)
     if "issues" in case:
         assert parsed.nodes == [] and len(parsed.failed) == 1
@@ -513,4 +513,4 @@ def test_the_library_vectors_pass_through_the_parser(tmp_path, case):
     assert node.unique_id == case["stored"]["id"]
     assert node.contract.document == yaml_strict.load(case["text"])
     assert node.contract.source_sha256 == hashlib.sha256(case["text"].encode("utf-8")).hexdigest()
-    assert contract_hash(normalise_python(node.contract.document, service=case["service"], reads=case["reads"])) == case["contract_hash"]
+    assert contract_hash(normalise_python(node.contract.document, project=case["project"], reads=case["reads"])) == case["contract_hash"]

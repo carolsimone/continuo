@@ -52,11 +52,11 @@ func TestSubmit_PostsTheVerificationBody(t *testing.T) {
 	defer srv.Close()
 	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
 	require.NoError(t, g.Submit(context.Background(), ports.VerificationRequest{
-		RunID: "verify-rel-1-core-a1", Service: "core", ImageTag: "img:1", Kind: ports.VerificationKindDbt,
+		RunID: "verify-rel-1-core-a1", Project: "core", ImageTag: "img:1", Kind: ports.VerificationKindDbt,
 		VerifiesReleaseID: "rel-1", Attempt: 1, SourceOverlayURI: "s3://b/core/verify-rel-1-core-a1/source-overlay.tar.gz",
 	}))
 	assert.Equal(t, map[string]any{
-		"run_id": "verify-rel-1-core-a1", "service": "core", "image_tag": "img:1", "kind": "dbt",
+		"run_id": "verify-rel-1-core-a1", "project": "core", "image_tag": "img:1", "kind": "dbt",
 		"verifies_release_id": "rel-1", "attempt": float64(1),
 		"source_overlay_uri": "s3://b/core/verify-rel-1-core-a1/source-overlay.tar.gz",
 	}, got)
@@ -70,7 +70,7 @@ func TestSubmit_PythonOmitsTheOverlay(t *testing.T) {
 	}))
 	defer srv.Close()
 	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
-	require.NoError(t, g.Submit(context.Background(), ports.VerificationRequest{RunID: "v", Service: "py", ImageTag: "i", Kind: ports.VerificationKindPythonODCS, VerifiesReleaseID: "rel-1", Attempt: 2}))
+	require.NoError(t, g.Submit(context.Background(), ports.VerificationRequest{RunID: "v", Project: "py", ImageTag: "i", Kind: ports.VerificationKindPythonODCS, VerifiesReleaseID: "rel-1", Attempt: 2}))
 	_, has := got["source_overlay_uri"]
 	assert.False(t, has)
 }
@@ -80,7 +80,7 @@ func TestSubmit_PythonOmitsTheOverlay(t *testing.T) {
 // before any HTTP call is made.
 func TestSubmit_RequiresKind(t *testing.T) {
 	g := NewGateway("http://unused", &fakeEvidence{}, nil)
-	err := g.Submit(context.Background(), ports.VerificationRequest{RunID: "v", Service: "s", ImageTag: "i", VerifiesReleaseID: "rel-1", Attempt: 1})
+	err := g.Submit(context.Background(), ports.VerificationRequest{RunID: "v", Project: "s", ImageTag: "i", VerifiesReleaseID: "rel-1", Attempt: 1})
 	require.ErrorContains(t, err, "kind is required")
 }
 
@@ -88,7 +88,7 @@ func TestSubmit_NonAcceptedStatusIsAnError(t *testing.T) {
 	srv := releaseServer(t, "/verification-runs", http.StatusConflict, `run id already names a candidate`)
 	defer srv.Close()
 	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
-	err := g.Submit(context.Background(), ports.VerificationRequest{RunID: "v", Service: "s", ImageTag: "i", Kind: "dbt", VerifiesReleaseID: "rel-1", Attempt: 1})
+	err := g.Submit(context.Background(), ports.VerificationRequest{RunID: "v", Project: "s", ImageTag: "i", Kind: "dbt", VerifiesReleaseID: "rel-1", Attempt: 1})
 	require.ErrorContains(t, err, "status 409")
 }
 

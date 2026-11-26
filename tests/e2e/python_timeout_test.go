@@ -37,19 +37,19 @@ const (
 	// pyTimeoutFixtureRoot is the fixture's directory inside pyTimeoutFixture.
 	pyTimeoutFixtureRoot = "fixtures/py-timeout"
 
-	// packBundleScript builds a service's odcs-bundle.json from a tar archive
+	// packBundleScript builds a project's odcs-bundle.json from a tar archive
 	// of a domain repository (contracts/ and scripts/) read on stdin, as a
 	// domain repository's CI runs `continuo-runtime pack`, and writes the
 	// bundle to stdout. The package list it records is the one the image's
 	// own `continuo-runtime packages` prints, given to pack with
 	// --image-packages: the image the command runs in is the image the
-	// release names. The CLI logs to stderr. $1 is the service name.
+	// release names. The CLI logs to stderr. $1 is the project name.
 	// --dialect postgres matches the e2e stack's warehouse engine.
 	packBundleScript = `set -eu
 work="$(mktemp -d)"
 tar -x -C "$work"
 continuo-runtime packages > "$work/image-packages.json"
-continuo-runtime pack "$work/contracts" --service "$1" --repo-root "$work" --image-packages "$work/image-packages.json" --dialect postgres --out "$work/odcs-bundle.json" >&2
+continuo-runtime pack "$work/contracts" --project "$1" --repo-root "$work" --image-packages "$work/image-packages.json" --dialect postgres --out "$work/odcs-bundle.json" >&2
 cat "$work/odcs-bundle.json"`
 
 	// hashContractsScript prints the relation and content_hash of every node
@@ -96,7 +96,7 @@ func TestE2E_PythonNodeTimeout_ReachesRunControllerThroughTheRuntimeCLI(t *testi
 	verifyK8sAvailable(t, ctx)
 	requireReleaseControllerHealthy(t, clients)
 
-	bundle := packBundleWithRuntime(t, ctx, pyFixtureImage, pyE2EService, pyTimeoutFixture, pyTimeoutFixtureRoot)
+	bundle := packBundleWithRuntime(t, ctx, pyFixtureImage, pyE2EProject, pyTimeoutFixture, pyTimeoutFixtureRoot)
 	requireBundledTimeout(t, bundle, pyTimeoutContract, pyTimeoutMinutes)
 	requireBundledTimeout(t, bundle, pyNoTimeoutContract, 0)
 
@@ -119,9 +119,9 @@ func TestE2E_PythonNodeTimeout_ReachesRunControllerThroughTheRuntimeCLI(t *testi
 // domain repository fixture, the tree under root in fixture (its contracts/
 // and scripts/), and returns the odcs-bundle.json it writes, recording the
 // package list of image.
-func packBundleWithRuntime(t *testing.T, ctx context.Context, image, service string, fixture fs.FS, root string) []byte {
+func packBundleWithRuntime(t *testing.T, ctx context.Context, image, project string, fixture fs.FS, root string) []byte {
 	t.Helper()
-	bundle := runRuntimeOverFixture(t, ctx, image, fixture, root, packBundleScript, service)
+	bundle := runRuntimeOverFixture(t, ctx, image, fixture, root, packBundleScript, project)
 	require.NotEmpty(t, bundle, "continuo-runtime pack in %s wrote no bundle", image)
 	return bundle
 }

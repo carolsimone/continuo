@@ -52,7 +52,7 @@ func TestPruneFinishedRuns_IncludesServiceProdReleaseIDs(t *testing.T) {
 	store := newFakeStore()
 	// current_prod points at cp-1
 	store.SeedCurrentProd(release.RehydrateCurrentProd("cp-1", release.TopologyRef{}, 0, now))
-	// service_prod rows point at different releases for each service
+	// service_prod rows point at different releases for each project
 	store.SeedServiceProd(release.NewServiceProd("svc-a", "sp-a", "s3://a", "t1", release.ManifestKindDbt, now))
 	store.SeedServiceProd(release.NewServiceProd("svc-b", "sp-b", "s3://b", "t2", release.ManifestKindDbt, now))
 

@@ -16,9 +16,9 @@ trigger:
       reason: csv_header_mismatch
       error_excerpt: "csv header missing declared column(s): ['customer_id']"
       dbt_log_uri: s3://logs/rel-csv-1/analytics.py_csv_orders.log
-      service: svc-csv
+      project: svc-csv
       node_type: python-csv
-service_repo_paths:
+project_repo_paths:
   svc-csv: services/service-csv
 repo_files:
   services/service-csv/contracts/py_csv_orders.odcs.yaml: |
@@ -78,7 +78,7 @@ release:
 packager:
   # The odcs-bundle.json continuo-runtime pack writes for the patched contract
   # directory, with the release's image packages.
-  packed: '{"bundle_version": 1, "service": "svc-csv", "producer": {"continuo_python_runtime": "0.13.0", "continuo_contracts": "0.2.0"}, "image_packages": {"pyarrow": "26.0.0"}, "nodes": [{"path": "contracts/py_csv_orders.odcs.yaml", "text": "id: analytics.py_csv_orders\n", "source_hash": "", "shared_code_hash": ""}]}'
+  packed: '{"bundle_version": 1, "project": "svc-csv", "producer": {"continuo_python_runtime": "0.13.0", "continuo_contracts": "0.2.0"}, "image_packages": {"pyarrow": "26.0.0"}, "nodes": [{"path": "contracts/py_csv_orders.odcs.yaml", "text": "id: analytics.py_csv_orders\n", "source_hash": "", "shared_code_hash": ""}]}'
 answers:
   pass:
     - files:
@@ -129,6 +129,6 @@ answers:
       confidence: low
       model: claude-test
 decline_before_model:
-  node: { service: "" }
+  node: { project: "" }
 gate_errors:
   analytics.py_csv_orders: "csv header missing declared column(s): ['cust_id']"

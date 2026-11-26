@@ -36,8 +36,8 @@ type Fixture struct {
 	// declines before the model is called. Nil when the fixture has none.
 	DeclineBeforeModel *remediation.Trigger
 
-	// ServiceRepoPaths maps a service name to its path inside the repository.
-	ServiceRepoPaths map[string]string
+	// ProjectRepoPaths maps a project name to its path inside the repository.
+	ProjectRepoPaths map[string]string
 	// RepoFiles is the repository at the trigger's commit, by
 	// repository-relative path.
 	RepoFiles map[string]string
@@ -112,19 +112,19 @@ type Catalog struct {
 	Contracts map[string]string
 }
 
-// Location is the file and service that declare a node.
+// Location is the file and project that declare a node.
 type Location struct {
 	FilePath string
-	Service  string
+	Project  string
 }
 
 // Release is what the failing release's reader answers.
 type Release struct {
-	// ImageTag is the image tag of every service in the release.
+	// ImageTag is the image tag of every project in the release.
 	ImageTag string
 	// FailingNodes is the release's failing nodes with their errors.
 	FailingNodes map[string]string
-	// ImagePackages is the package list of every service's image in the
+	// ImagePackages is the package list of every project's image in the
 	// release. With none, no bundle of the release records one.
 	ImagePackages map[string]string
 }

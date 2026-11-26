@@ -1,0 +1,22 @@
+# config/project_repos.yaml
+# Maps a project name (catalog topology project_name; dbt or python) to
+# its project root within that project's own repository. The agent joins
+# <repo_path> with the offending file's path to read the model source from
+# GitHub, and routes the verification run that verifies a fix by the project
+# root that owns the edited file — so a project absent from the map has its
+# fix recorded as unverifiable, and its compile, seed, and duplicate-table
+# proposals skipped.
+#
+# This file is the documented shape of that map, not the map any deployment
+# reads. Point PROJECT_REPO_MAP_PATH at your own copy: a Helm install mounts
+# the ConfigMap built from deploy/continuo/files/project_repos.yaml, and the
+# local docker-compose stack mounts tests/e2e/config/project_repos.yaml. The
+# entries below are the demo projects of the single shared checkout — a dev
+# convenience, not the deployed shape, since production is a data mesh of one
+# repository per team. Edit your own copy when adding a project or changing a
+# repo's layout, then restart agent-remediation.
+projects:
+  core: services/core
+  finance: services/finance
+  marketing: services/marketing
+  service-py: services/service-py

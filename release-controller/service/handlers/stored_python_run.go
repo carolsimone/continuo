@@ -26,7 +26,7 @@ func isStoredPythonRun(r *pipeline.Run) bool {
 // (rejectInvalidArtifactRun).
 func rejectStoredPythonRun(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, now time.Time) error {
 	d.Logger.Warn("rejecting a stored run of the kind python",
-		"release_id", r.ID(), "service", r.ChangedService(), "status", string(r.Status()))
+		"release_id", r.ID(), "project", r.ChangedProject(), "status", string(r.Status()))
 	return rejectInvalidArtifactRun(ctx, d, u, r, release.ErrPythonKindNotAccepted.Error(), now)
 }
 

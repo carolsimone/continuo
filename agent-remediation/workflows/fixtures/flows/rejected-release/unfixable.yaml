@@ -20,12 +20,12 @@ trigger:
       error_excerpt: 'could not connect to server: connection refused'
       candidate_artifact_uri: s3://candidates/rel-flow-unfixable/model.sales.orders.sql
       file_path: models/orders.sql
-      service: sales
+      project: sales
       node_type: dbt-model
       unfixable:
         reason: classifier_infra
         detail: 'could not connect to server: connection refused'
-service_repo_paths:
+project_repo_paths:
   sales: services/sales
 objects:
   s3://candidates/rel-flow-unfixable/model.sales.orders.sql: "select id, amount from analytics.raw_orders"

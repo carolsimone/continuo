@@ -12,7 +12,7 @@ vi.mock('./remediation-api', () => ({
 }));
 
 vi.mock('./node-api', () => ({
-  fetchNodeServices: vi.fn(),
+  fetchNodeProjects: vi.fn(),
 }));
 
 vi.mock('./auth/AuthContext', () => ({
@@ -20,12 +20,12 @@ vi.mock('./auth/AuthContext', () => ({
 }));
 
 import { fetchProposals, createPullRequest } from './remediation-api';
-import { fetchNodeServices } from './node-api';
+import { fetchNodeProjects } from './node-api';
 import { useCurrentUser } from './auth/AuthContext';
 
 const mockFetchProposals = fetchProposals as ReturnType<typeof vi.fn>;
 const mockCreatePullRequest = createPullRequest as ReturnType<typeof vi.fn>;
-const mockFetchNodeServices = fetchNodeServices as ReturnType<typeof vi.fn>;
+const mockFetchNodeProjects = fetchNodeProjects as ReturnType<typeof vi.fn>;
 const mockUseCurrentUser = useCurrentUser as ReturnType<typeof vi.fn>;
 
 const makeProposal = (overrides: Partial<ProposalDTO> = {}): ProposalDTO => ({
@@ -122,7 +122,7 @@ describe('CreatePrModal', () => {
 
   it('confirming calls createPullRequest, shows Creating… then Created, then PR link', async () => {
     mockCreatePullRequest.mockResolvedValue({
-      pull_requests: [{ service: '', pr_url: 'https://github.com/org/repo/pull/99', pr_number: 99 }],
+      pull_requests: [{ project: '', pr_url: 'https://github.com/org/repo/pull/99', pr_number: 99 }],
       errors: [],
     });
     const { onClose, onCreated } = renderModal();
@@ -141,7 +141,7 @@ describe('CreatePrModal', () => {
 
     expect(mockCreatePullRequest).toHaveBeenCalledWith('prop-1');
     expect(onCreated).toHaveBeenCalledWith({
-      pull_requests: [{ service: '', pr_url: 'https://github.com/org/repo/pull/99', pr_number: 99 }],
+      pull_requests: [{ project: '', pr_url: 'https://github.com/org/repo/pull/99', pr_number: 99 }],
       errors: [],
     });
     expect(onClose).toHaveBeenCalled();
@@ -162,10 +162,10 @@ describe('CreatePrModal', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
-  it('lists every created PR link and shows per-service errors on a partial success, keeping the modal open', async () => {
+  it('lists every created PR link and shows per-project errors on a partial success, keeping the modal open', async () => {
     mockCreatePullRequest.mockResolvedValue({
-      pull_requests: [{ service: 'core', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10 }],
-      errors: [{ service: 'finance', error: 'failed to open pull request' }],
+      pull_requests: [{ project: 'core', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10 }],
+      errors: [{ project: 'finance', error: 'failed to open pull request' }],
     });
     const { onClose, onCreated } = renderModal();
 
@@ -176,22 +176,22 @@ describe('CreatePrModal', () => {
     expect(await screen.findByText(/finance: failed to open pull request/i)).toBeInTheDocument();
 
     expect(onCreated).toHaveBeenCalledWith({
-      pull_requests: [{ service: 'core', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10 }],
-      errors: [{ service: 'finance', error: 'failed to open pull request' }],
+      pull_requests: [{ project: 'core', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10 }],
+      errors: [{ project: 'finance', error: 'failed to open pull request' }],
     });
-    // A partial success stays open — closing here would hide the services
+    // A partial success stays open — closing here would hide the projects
     // that still need attention.
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByRole('dialog')).toBeInTheDocument();
-    // The operator can retry the remaining service(s) immediately.
+    // The operator can retry the remaining project(s) immediately.
     expect(screen.getByRole('button', { name: /^Create PR$/i })).toBeEnabled();
   });
 
   it('keeps the modal open and shows why the owners were not asked to review an opened pull request', async () => {
     mockCreatePullRequest.mockResolvedValue({
-      pull_requests: [{ service: 'core', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10 }],
+      pull_requests: [{ project: 'core', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10 }],
       errors: [],
-      warnings: [{ service: 'core', warning: 'GitHub refused the review request (status 422): not a collaborator' }],
+      warnings: [{ project: 'core', warning: 'GitHub refused the review request (status 422): not a collaborator' }],
     });
     const { onClose, onCreated } = renderModal();
 
@@ -213,7 +213,7 @@ describe('CreatePrModal', () => {
 
   it('closes as before when the response carries no warning, or an empty list of them', async () => {
     mockCreatePullRequest.mockResolvedValue({
-      pull_requests: [{ service: '', pr_url: 'https://github.com/org/repo/pull/99', pr_number: 99 }],
+      pull_requests: [{ project: '', pr_url: 'https://github.com/org/repo/pull/99', pr_number: 99 }],
       errors: [],
       warnings: [],
     });
@@ -230,7 +230,7 @@ describe('CreatePrModal', () => {
     // FAILED_PRECONDITION is routed to errors[], not pull_requests), but the
     // modal must never assemble a dead href="" link if it ever did.
     mockCreatePullRequest.mockResolvedValue({
-      pull_requests: [{ service: 'core', pr_url: '', pr_number: 0 }],
+      pull_requests: [{ project: 'core', pr_url: '', pr_number: 0 }],
       errors: [],
     });
     renderModal();
@@ -247,7 +247,7 @@ describe('CreatePrModal', () => {
 describe('RemediationPanel — Create PR trigger gating', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockFetchNodeServices.mockResolvedValue([]);
+    mockFetchNodeProjects.mockResolvedValue([]);
   });
 
   it('shows Create PR trigger for operator when source_resolved=true and no pr_url', async () => {
@@ -360,7 +360,7 @@ describe('RemediationPanel — Create PR trigger gating', () => {
   it('after successful PR creation, shows the link immediately and settles on the server-reported state via refetch', async () => {
     mockUseCurrentUser.mockReturnValue({ userId: 'u1', email: 'op@x.com', name: 'Op', role: 'operator' });
     mockCreatePullRequest.mockResolvedValue({
-      pull_requests: [{ service: '', pr_url: 'https://github.com/org/repo/pull/55', pr_number: 55 }],
+      pull_requests: [{ project: '', pr_url: 'https://github.com/org/repo/pull/55', pr_number: 55 }],
       errors: [],
     });
     // Realistic actionable proposal: the card is already open, no click needed.
@@ -413,7 +413,7 @@ describe('RemediationPanel — Create PR trigger gating', () => {
   it('when best-effort recording fails, the refetch reports opening rather than a false open', async () => {
     mockUseCurrentUser.mockReturnValue({ userId: 'u1', email: 'op@x.com', name: 'Op', role: 'operator' });
     mockCreatePullRequest.mockResolvedValue({
-      pull_requests: [{ service: '', pr_url: 'https://github.com/org/repo/pull/56', pr_number: 56 }],
+      pull_requests: [{ project: '', pr_url: 'https://github.com/org/repo/pull/56', pr_number: 56 }],
       errors: [],
     });
     const proposal = makeProposal({ source_resolved: true, pr_url: '', pr_state: '' });

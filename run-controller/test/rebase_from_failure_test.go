@@ -80,7 +80,7 @@ func TestRebaseFromFailure(t *testing.T) {
 
 	live := promoteRelease(t, runControllerDB, nodes("sha256:rff_y-fixed", "sha256:rff_q-changed")...)
 	require.NotEqual(t, source, live)
-	changedY := &runv1.ChangedUpstreamNode{ServiceName: "service-1", SchemaName: "mart", TableName: "rff_y", Downstream: 1, LastSuccessSeconds: 42.5}
+	changedY := &runv1.ChangedUpstreamNode{ProjectName: "service-1", SchemaName: "mart", TableName: "rff_y", Downstream: 1, LastSuccessSeconds: 42.5}
 
 	t.Run("the preview counts what each choice runs and names the changed upstream node", func(t *testing.T) {
 		on, err := runClient.PreviewRebase(ctx, &runv1.PreviewRebaseRequest{SourceRunId: srcID, IncludeChangedUpstream: true})

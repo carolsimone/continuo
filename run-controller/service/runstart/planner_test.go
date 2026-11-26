@@ -178,7 +178,7 @@ func (a *appendedEvents) Append(_ context.Context, events []run.DomainEvent, _ u
 func threeNodes() topology.Graph {
 	node := func(schema, table string) topology.Node {
 		return topology.Node{
-			Key: topology.KeyOf(schema, table), ServiceName: "svc", SchemaName: schema, TableName: table,
+			Key: topology.KeyOf(schema, table), ProjectName: "svc", SchemaName: schema, TableName: table,
 			NodeType: "dbt-model", ImageTag: "svc:7", ScheduleName: "daily",
 		}
 	}
@@ -303,7 +303,7 @@ func TestPlanner_RebaseReadsTheSourceScheduleOnTheLiveRelease(t *testing.T) {
 	assert.Len(t, sel.Plan.Tasks, 3)
 	assert.Equal(t, pv.Plan, sel.Plan)
 	assert.Equal(t, 1, pv.ChangedUpstream)
-	assert.Equal(t, []runplan.ChangedNode{{Key: "raw.a", ServiceName: "svc", SchemaName: "raw", TableName: "a", Downstream: 2}}, pv.Changed)
+	assert.Equal(t, []runplan.ChangedNode{{Key: "raw.a", ProjectName: "svc", SchemaName: "raw", TableName: "a", Downstream: 2}}, pv.Changed)
 
 	topo.calls = nil
 	sel, pv, err = planner.Rebase(context.Background(), u, source, runstart.RebaseOptions{})
@@ -339,7 +339,7 @@ func TestPlanner_RebaseComparesAnInheritedSuccessWithTheReleaseThatBuiltIt(t *te
 	assert.Equal(t, [][]uuid.UUID{{root}}, tasks.asked)
 	assert.Equal(t, []string{"lock", "live default", "graph default rel-5", "graph default rel-3", "schedule default rel-7 daily"}, topo.calls)
 	assert.Equal(t, []topology.NodeKey{"raw.a"}, sel.Plan.Ready)
-	assert.Equal(t, []runplan.ChangedNode{{Key: "raw.a", ServiceName: "svc", SchemaName: "raw", TableName: "a", Downstream: 2}}, pv.Changed)
+	assert.Equal(t, []runplan.ChangedNode{{Key: "raw.a", ProjectName: "svc", SchemaName: "raw", TableName: "a", Downstream: 2}}, pv.Changed)
 }
 
 // An inherited success whose root task is gone, or whose run names no
@@ -398,7 +398,7 @@ func TestPlanner_ASourceWithoutAReleaseIsRefused(t *testing.T) {
 	assert.ErrorIs(t, err, runstart.ErrSourceHasNoRelease)
 	_, _, err = planner.Rebase(ctx, u, noRelease, runstart.RebaseOptions{})
 	assert.ErrorIs(t, err, runstart.ErrSourceHasNoRelease)
-	_, err = planner.SingleNode(ctx, u, pkgevents.DefaultTenantID, run.NodeID{ServiceName: "svc", SchemaName: "raw", TableName: "a"}, model.OperationRun, noRelease, nil)
+	_, err = planner.SingleNode(ctx, u, pkgevents.DefaultTenantID, run.NodeID{ProjectName: "svc", SchemaName: "raw", TableName: "a"}, model.OperationRun, noRelease, nil)
 	assert.ErrorIs(t, err, runstart.ErrSourceHasNoRelease)
 
 	u, _ = fakeUoW(topology.Pointer{ReleaseID: "rel-7", PromotionSeq: 12}, []run.Task{task("", run.TaskStatusFailed)})
@@ -412,7 +412,7 @@ func TestPlanner_ASourceWithoutAReleaseIsRefused(t *testing.T) {
 // run's release for a run of a node as that run built it.
 func TestPlanner_SingleNodeReadsOneNodeOfTheLiveOrTheSourceRelease(t *testing.T) {
 	ctx := context.Background()
-	target := run.NodeID{ServiceName: "svc", SchemaName: "mart", TableName: "b"}
+	target := run.NodeID{ProjectName: "svc", SchemaName: "mart", TableName: "b"}
 	u, topo := fakeUoW(topology.Pointer{ReleaseID: "rel-7", PromotionSeq: 12}, nil)
 
 	sel, err := planner.SingleNode(ctx, u, pkgevents.DefaultTenantID, target, model.OperationRun, nil, nil)
@@ -427,7 +427,7 @@ func TestPlanner_SingleNodeReadsOneNodeOfTheLiveOrTheSourceRelease(t *testing.T)
 	assert.Equal(t, run.ReleaseStamp{ReleaseID: "rel-3", PromotionSeq: 9}, sel.Stamp)
 	assert.Equal(t, []string{"graph default rel-3"}, topo.calls)
 
-	_, err = planner.SingleNode(ctx, u, pkgevents.DefaultTenantID, run.NodeID{ServiceName: "other", SchemaName: "mart", TableName: "b"}, model.OperationRun, nil, nil)
+	_, err = planner.SingleNode(ctx, u, pkgevents.DefaultTenantID, run.NodeID{ProjectName: "other", SchemaName: "mart", TableName: "b"}, model.OperationRun, nil, nil)
 	assert.ErrorIs(t, err, runplan.ErrTargetNotFound)
 }
 
@@ -473,7 +473,7 @@ func TestPlanner_StartStoresTheTasksAndWritesTheDispatches(t *testing.T) {
 func TestPlanner_ReadsAndWritesTheTenantItIsGivenOrTheRunsTenant(t *testing.T) {
 	ctx := context.Background()
 	live := topology.Pointer{ReleaseID: "rel-7", PromotionSeq: 12}
-	target := run.NodeID{ServiceName: "svc", SchemaName: "mart", TableName: "b"}
+	target := run.NodeID{ProjectName: "svc", SchemaName: "mart", TableName: "b"}
 
 	u, topo := fakeUoW(live, nil)
 	sel, err := planner.Schedule(ctx, u, "acme", "daily", model.OperationRun)
@@ -536,12 +536,12 @@ var (
 	fxPlanner   = runstart.Planner{Tasks: defaults, Family: warehouse.SchemaBound, Engine: "postgres"}
 )
 
-// fxNode is a node of the fx release: the svc service's, in the analytics
+// fxNode is a node of the fx release: the svc project's, in the analytics
 // schema, materialized as materialized and in schedule.
 func fxNode(key topology.NodeKey, nodeType, materialized, schedule string) topology.Node {
 	table := string(key)[len("analytics."):]
 	return topology.Node{
-		Key: key, ServiceName: "svc", SchemaName: "analytics", TableName: table, NodeType: nodeType,
+		Key: key, ProjectName: "svc", SchemaName: "analytics", TableName: table, NodeType: nodeType,
 		Materialized: materialized, ImageTag: "svc:7", ScheduleName: schedule,
 	}
 }
@@ -692,7 +692,7 @@ func TestPlanner_EveryRunKindThatLoadsASeedAppliesTheRules(t *testing.T) {
 		},
 		"single node": func(t *testing.T) runstart.Selection {
 			u, _ := fxUoW(nil)
-			target := run.NodeID{ServiceName: "svc", SchemaName: "analytics", TableName: "seed_fx_rates_eur"}
+			target := run.NodeID{ProjectName: "svc", SchemaName: "analytics", TableName: "seed_fx_rates_eur"}
 			sel, err := fxPlanner.SingleNode(ctx, u, tenant, target, model.OperationRun, nil, nil)
 			require.NoError(t, err)
 			return sel
@@ -942,7 +942,7 @@ func TestPlanner_AScheduleNodeThatReadsOnlyARebuiltViewWaitsForTheRebuild(t *tes
 // it for that reason.
 func TestPlanner_ASingleNodeFullRefreshOfASeedIsAnOperatorsRequest(t *testing.T) {
 	ctx := context.Background()
-	target := run.NodeID{ServiceName: "svc", SchemaName: "analytics", TableName: "seed_fx_rates_eur"}
+	target := run.NodeID{ProjectName: "svc", SchemaName: "analytics", TableName: "seed_fx_rates_eur"}
 	u, _ := fxUoW(nil)
 	u.MaterializationRepo = loadedColumns{seed: "sha256:new"}
 
@@ -960,7 +960,7 @@ func TestPlanner_ASingleNodeFullRefreshOfASeedIsAnOperatorsRequest(t *testing.T)
 // so the same seed is planned and its preflight only reports.
 func TestPlanner_SingleNodeRefusesAFullRefreshOfAFalseSeedOnPostgres(t *testing.T) {
 	ctx := context.Background()
-	target := run.NodeID{ServiceName: "svc", SchemaName: "analytics", TableName: "seed_fx_rates_eur"}
+	target := run.NodeID{ProjectName: "svc", SchemaName: "analytics", TableName: "seed_fx_rates_eur"}
 	keep := false
 	falseSeed := withSeed(fxTopology(), func(n *topology.Node) { n.FullRefresh = &keep })
 
@@ -997,7 +997,7 @@ func TestPlanner_SingleNodeRefusesAFullRefreshOfAFalseSeedOnPostgres(t *testing.
 // The objects an operator names reach the seed's preflight, and the run is the
 // same DAG as a reload of the seed.
 func TestPlanner_SingleNodeFullRefreshAllowsTheNamedObjects(t *testing.T) {
-	target := run.NodeID{ServiceName: "svc", SchemaName: "analytics", TableName: "seed_fx_rates_eur"}
+	target := run.NodeID{ProjectName: "svc", SchemaName: "analytics", TableName: "seed_fx_rates_eur"}
 	u, _ := fxUoW(nil)
 
 	sel, err := fxPlanner.SingleNode(context.Background(), u, tenant, target, model.OperationFullRefresh, nil, []string{"bi.fx_rates_report"})
@@ -1011,8 +1011,8 @@ func TestPlanner_SingleNodeFullRefreshAllowsTheNamedObjects(t *testing.T) {
 // Acknowledged dependents are valid for a full refresh of a dbt seed only.
 func TestPlanner_SingleNodeRefusesAnAcknowledgementOutsideASeedFullRefresh(t *testing.T) {
 	ctx := context.Background()
-	seedTarget := run.NodeID{ServiceName: "svc", SchemaName: "analytics", TableName: "seed_fx_rates_eur"}
-	viewTarget := run.NodeID{ServiceName: "svc", SchemaName: "analytics", TableName: "fx_rates_current"}
+	seedTarget := run.NodeID{ProjectName: "svc", SchemaName: "analytics", TableName: "seed_fx_rates_eur"}
+	viewTarget := run.NodeID{ProjectName: "svc", SchemaName: "analytics", TableName: "fx_rates_current"}
 	for name, c := range map[string]struct {
 		target run.NodeID
 		op     model.Operation

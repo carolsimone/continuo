@@ -68,9 +68,9 @@ func artifactDoc(releaseID string) topologyartifact.Document {
 		TenantID:      "default",
 		ReleaseID:     releaseID,
 		Nodes: []topologyartifact.Node{
-			{UniqueID: "raw.orders", SchemaName: "raw", TableName: "orders", ServiceName: "svc", NodeType: "dbt-seed",
+			{UniqueID: "raw.orders", SchemaName: "raw", TableName: "orders", ProjectName: "svc", NodeType: "dbt-seed",
 				ContentHash: "sha256:seed", ImageTag: "svc:1", Schedule: "daily", UpstreamUniqueIDs: []string{}},
-			{UniqueID: "stg.orders", SchemaName: "stg", TableName: "orders", ServiceName: "svc", NodeType: "dbt-model",
+			{UniqueID: "stg.orders", SchemaName: "stg", TableName: "orders", ProjectName: "svc", NodeType: "dbt-model",
 				TestCount: 2, ContentHash: "sha256:model", ImageTag: "svc:1", Schedule: "hourly",
 				TimeoutSeconds: 7200, UpstreamUniqueIDs: []string{"raw.orders"}},
 		},
@@ -100,7 +100,7 @@ func TestTopologyArtifactReader_ReturnsTheArtifactAsNodeSpecs(t *testing.T) {
 	require.Len(t, art.Nodes, 2)
 	two, timeout := 2, 7200
 	assert.Equal(t, topology.NodeSpec{
-		UniqueID: "stg.orders", ServiceName: "svc", SchemaName: "stg", TableName: "orders", NodeType: "dbt-model",
+		UniqueID: "stg.orders", ProjectName: "svc", SchemaName: "stg", TableName: "orders", NodeType: "dbt-model",
 		TestCount: &two, ContentHash: "sha256:model", ImageTag: "svc:1", ScheduleName: "hourly",
 		TimeoutSeconds: &timeout, UpstreamUniqueIDs: []string{"raw.orders"},
 	}, art.Nodes[1])

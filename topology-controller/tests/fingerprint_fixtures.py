@@ -95,7 +95,7 @@ def parse_and_resolve(name: str) -> ParsedArtifact:
         ctes: set[str] = set()
         refs = referenced_tables(node, dialect="postgres", ctes=ctes)
         node.upstream_deps = resolve_upstream_deps(
-            refs, lookup, service_name=node.service_name, ctes=ctes, ephemeral_ctes=ephemeral_ctes,
+            refs, lookup, project_name=node.project_name, ctes=ctes, ephemeral_ctes=ephemeral_ctes,
         )
     return parsed
 

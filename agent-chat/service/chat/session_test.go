@@ -594,10 +594,10 @@ func TestSession_DisconnectLeavesPendingActionResumable(t *testing.T) {
 func TestCommandString_ShowsOptionalPositionalInConfirmPrompt(t *testing.T) {
 	def := ports.ToolDef{
 		Name: "node_trigger", Mutating: true, CLIPath: []string{"node", "trigger"},
-		ParamOrder: []string{"service", "schema", "table", "source-run-id"},
+		ParamOrder: []string{"project", "schema", "table", "source-run-id"},
 	}
 	got := commandString("continuo", def, map[string]string{
-		"service": "finance", "schema": "analytics", "table": "orders",
+		"project": "finance", "schema": "analytics", "table": "orders",
 		"source-run-id": "3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b",
 	})
 	assert.Equal(t, "continuo node trigger finance analytics orders 3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b", got)
@@ -608,10 +608,10 @@ func TestCommandString_ShowsOptionalPositionalInConfirmPrompt(t *testing.T) {
 func TestCommandString_SkipsBlankOptionalPositional(t *testing.T) {
 	def := ports.ToolDef{
 		Name: "node_trigger", CLIPath: []string{"node", "trigger"},
-		ParamOrder: []string{"service", "schema", "table", "source-run-id"},
+		ParamOrder: []string{"project", "schema", "table", "source-run-id"},
 	}
 	got := commandString("continuo", def, map[string]string{
-		"service": "finance", "schema": "analytics", "table": "orders", "source-run-id": "  ",
+		"project": "finance", "schema": "analytics", "table": "orders", "source-run-id": "  ",
 	})
 	assert.Equal(t, "continuo node trigger finance analytics orders", got)
 }
@@ -622,13 +622,13 @@ func TestCommandString_ShowsEachItemOfAListFlagInConfirmPrompt(t *testing.T) {
 	def := ports.ToolDef{
 		Name: "node_full-refresh", Mutating: true, CLIPath: []string{"node", "full-refresh"},
 		Params: []ports.ToolParam{
-			{Name: "service", Required: true}, {Name: "schema", Required: true}, {Name: "table", Required: true},
+			{Name: "project", Required: true}, {Name: "schema", Required: true}, {Name: "table", Required: true},
 			{Name: "source-run-id"}, {Name: "acknowledge", Flag: true, Repeated: true},
 		},
-		ParamOrder: []string{"service", "schema", "table", "source-run-id"},
+		ParamOrder: []string{"project", "schema", "table", "source-run-id"},
 	}
 	got := commandString("continuo", def, map[string]string{
-		"service": "finance", "schema": "raw", "table": "customers",
+		"project": "finance", "schema": "raw", "table": "customers",
 		"acknowledge": `["bi.customer_report","bi.churn"]`,
 	})
 	assert.Equal(t, "continuo node full-refresh finance raw customers --acknowledge bi.customer_report --acknowledge bi.churn", got)

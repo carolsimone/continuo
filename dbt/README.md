@@ -2,14 +2,14 @@
 
 Dockerized dbt (PostgreSQL) job images. The platform owns the shared image
 and the command-dispatch mechanism (`base/`, `dbt-commands.yaml`) — it does
-not own dbt model definitions. `services/service-1/2/3` below are throwaway
+not own dbt model definitions. `projects/service-1/2/3` below are throwaway
 e2e test fixtures, not production content; real teams own their dbt models
 in their own repo (e.g. [`continuo-demo`](https://github.com/carolsimone/continuo-demo))
-and ship them as their own service image built on this base.
+and ship them as their own project image built on this base.
 
 ## Job, not a service
 
-The images built from `base/` and `services/*` are not long-running services
+The images built from `base/` and `projects/*` are not long-running services
 (see the [top-level README](../README.md) for those) — `execution-controller`
 dispatches each as a one-shot Kubernetes `Job` per scheduled run, setting the
 container's `Command` explicitly from
@@ -19,7 +19,7 @@ override such as `customname-dbt run-model`). That `Command` replaces the image'
 own `base/entrypoint.sh` ENTRYPOINT entirely for every dispatched Job — the
 resolved verb depends on the run's Operation and node type (`run`/`seed`/
 `snapshot`/`test`/`build`), not always a plain `dbt run`. The base image
-installs `dbt-postgres`, and every service's `profiles.yml` targets a real
+installs `dbt-postgres`, and every project's `profiles.yml` targets a real
 Postgres warehouse via `POSTGRES_HOST`/`POSTGRES_DB`/etc. env vars, not a
 throwaway file-based database. Either way, a Job runs one dbt invocation and
 exits — no gRPC/HTTP surface, no owned datastore, no persistent process. Its
@@ -27,11 +27,11 @@ behavior is pinned to whatever `dbt-commands.yaml` resolves, so this image
 itself is very unlikely to need touching for a new team. Day-to-day changes
 to platform-owned pieces are the shared `base/` image or `dbt-commands.yaml`
 for a new command dialect — the dbt models themselves are each team's own,
-living in their own repo, not under `services/*` here (those are e2e
+living in their own repo, not under `projects/*` here (those are e2e
 fixtures only).
 
 `dbt_upload` (below) is a different kind of container: a producer-side CLI
-that compiles and publishes a service's manifest, run manually via
+that compiles and publishes a project's manifest, run manually via
 `docker exec` rather than dispatched as a Job by continuo — see
 [Producing a release for continuo](#producing-a-release-for-continuo).
 
@@ -43,15 +43,15 @@ dbt/
     __init__.py
     __main__.py              # Entry point: python -m dbt_upload
     cli.py                   # Argparse: compile, upload, load subcommands
-    config.py                # Target profile loading, service dir resolution
-    paths.py                 # Each service's build directory under /app/build
+    config.py                # Target profile loading, project dir resolution
+    paths.py                 # Each project's build directory under /app/build
     compile.py               # dbt compile wrapper
     upload.py                # Manifest filtering, compile extras + S3 upload
   targets.yaml              # Named S3 target profiles (minio, hetzner)
   .env.hetzner              # Hetzner credentials (gitignored)
   Dockerfile.upload         # Image for dbt-compile-and-load service
   base/                     # Shared Docker base image (Python 3.12 + dbt-postgres)
-  services/                # e2e test fixtures only, not production content
+  projects/                # e2e test fixtures only, not production content
     service-1/              # models: table_a, table_b, table_c
     service-2/              # models: table_g, table_h
     service-3/              # models: table_d, table_e, table_f, table_i, table_j
@@ -63,30 +63,30 @@ dbt/
     test_cli.py              # Unit tests for CLI
     test_upload.py           # Manifest filter + S3 key unit tests, plus
                              #   minio integration tests (@pytest.mark.integration)
-    test_services_mount.py   # Integration test: /app/services is mounted read-only
+    test_projects_mount.py   # Integration test: /app/projects is mounted read-only
 ```
 
 ## dbt_upload CLI
 
-The `dbt_upload` package provides three subcommands for compiling dbt services and uploading manifests to S3.
+The `dbt_upload` package provides three subcommands for compiling dbt projects and uploading manifests to S3.
 
 ### Subcommands
 
 | Command   | What it does |
 |-----------|-------------|
-| `compile` | Run `dbt compile` for each service as its image compiles it: in `/app/build/<service>/staged-project`, a copy of the dbt base image's `/project` (its shared macros) with the service's files over it, writing the manifest to `/app/build/<service>/` |
-| `upload`  | Filter manifests (keep models, seeds, snapshots, tests and operations, strip `local_stub`), write each service's `compile-extras.json` with `/compile_extras.py` and the Python that runs dbt, and upload both to `<service>/<release_id>/` in S3 |
+| `compile` | Run `dbt compile` for each project as its image compiles it: in `/app/build/<project>/staged-project`, a copy of the dbt base image's `/project` (its shared macros) with the project's files over it, writing the manifest to `/app/build/<project>/` |
+| `upload`  | Filter manifests (keep models, seeds, snapshots, tests and operations, strip `local_stub`), write each project's `compile-extras.json` with `/compile_extras.py` and the Python that runs dbt, and upload both to `<project>/<release_id>/` in S3 |
 | `load`    | Compile + upload in one step (primary workflow) |
 
 ### Usage
 
 The container starts idle (`tail -f /dev/null`). Use `docker exec` to run any subcommand.
 
-`docker-compose.yml` mounts `dbt/services` at `/app/services` read-only, so
+`docker-compose.yml` mounts `dbt/projects` at `/app/projects` read-only, so
 nothing the container runs writes into your checkout, whichever user owns it.
-Each service's compile output (the staged project, `manifest.json`,
-`compile-extras.json`) lives in the container under `/app/build/<service>/`.
-Any other dbt command run in a service directory writes its `target/` and
+Each project's compile output (the staged project, `manifest.json`,
+`compile-extras.json`) lives in the container under `/app/build/<project>/`.
+Any other dbt command run in a project directory writes its `target/` and
 `logs/` to the image's `DBT_TARGET_PATH` (`/app/dbt-output/target`) and
 `DBT_LOG_PATH` (`/app/dbt-output/logs`). Read a compiled manifest with
 `docker exec dbt-compile-and-load cat /app/build/service-1/manifest.json`.
@@ -94,19 +94,19 @@ Any other dbt command run in a service directory writes its `target/` and
 ```bash
 # Compile + upload (full load)
 docker exec dbt-compile-and-load \
-  uv run python -m dbt_upload load --services-dir /app/services
+  uv run python -m dbt_upload load --projects-dir /app/projects
 
 # Upload only (skip compile) to hetzner
 docker exec dbt-compile-and-load \
-  uv run python -m dbt_upload upload --services-dir /app/services --target hetzner
+  uv run python -m dbt_upload upload --projects-dir /app/projects --target hetzner
 
 # Compile only
 docker exec dbt-compile-and-load \
-  uv run python -m dbt_upload compile --services-dir /app/services
+  uv run python -m dbt_upload compile --projects-dir /app/projects
 
-# Compile specific services
+# Compile specific projects
 docker exec dbt-compile-and-load \
-  uv run python -m dbt_upload compile /app/services/service-1 /app/services/service-3
+  uv run python -m dbt_upload compile /app/projects/service-1 /app/projects/service-3
 ```
 
 ### S3 Target Profiles
@@ -146,7 +146,7 @@ docker compose up -d dbt-compile-and-load
 
 # Then run the load
 docker exec dbt-compile-and-load \
-  uv run python -m dbt_upload load --services-dir /app/services
+  uv run python -m dbt_upload load --projects-dir /app/projects
 ```
 
 ### Targeting Hetzner Object Storage
@@ -163,15 +163,15 @@ AWS_SECRET_ACCESS_KEY=<your-hetzner-secret-key>
 ```bash
 docker exec --env-file dbt/.env.hetzner \
   dbt-compile-and-load \
-  uv run python -m dbt_upload load --services-dir /app/services --target hetzner
+  uv run python -m dbt_upload load --projects-dir /app/projects --target hetzner
 ```
 
-Manifests are uploaded to `s3://continuo-dev/dev/manifest/<service-name>/manifest_v{N}.json`.
+Manifests are uploaded to `s3://continuo-dev/dev/manifest/<project-name>/manifest_v{N}.json`.
 
 ### S3 Key Structure
 
 ```
-s3://<bucket>/<env>/manifest/<service-name>/manifest_v{N}.json
+s3://<bucket>/<env>/manifest/<project-name>/manifest_v{N}.json
 ```
 
 Each upload increments `N` from the highest existing version (1 if none exist). Example keys for minio after three load runs:
@@ -182,30 +182,30 @@ s3://continuo/local/manifest/service-1/manifest_v2.json
 s3://continuo/local/manifest/service-1/manifest_v3.json
 ```
 
-## How dbt services work
+## How dbt projects work
 
-Each service has its own `Dockerfile`, `dbt_project.yml`, and `profiles.yml`.
+Each project has its own `Dockerfile`, `dbt_project.yml`, and `profiles.yml`.
 `profiles.yml` targets Postgres via `POSTGRES_HOST`/`POSTGRES_PORT`/
 `POSTGRES_DB`/`POSTGRES_USER`/`POSTGRES_PASSWORD` env vars (see
-`services/*/profiles.yml`). `base/entrypoint.sh` (which logs the job
+`projects/*/profiles.yml`). `base/entrypoint.sh` (which logs the job
 parameters — `schedule_name`, `table_name`, `schema_name`, `job_name`,
-`service_name` — then runs `dbt run --select $TABLE_NAME`) is the image's
+`project_name` — then runs `dbt run --select $TABLE_NAME`) is the image's
 default `ENTRYPOINT`, but execution-controller-created Jobs override `Command`
 explicitly (see [Job, not a service](#job-not-a-service) above), so it only
 runs when a Job is launched *without* an explicit command — e.g. manual
 debugging via `docker run`/`kubectl run`, not the production dispatch path.
 
 Models use direct `SELECT ... FROM a JOIN b USING (id)` SQL so that sqlglot
-can extract real cross-service upstream dependencies when the
+can extract real cross-project upstream dependencies when the
 topology-controller resolves the graph.
 
 ### Model metadata
 
-Every service's `dbt_project.yml` declares the required `+meta` (`owner`, `criticality`) under the `models:` key, and `profiles.yml` sets `schema: e2e_schema`. A model's schedule name is its tag: a `+tags` entry in `dbt_project.yml`, or `config.tags` in the service's `models/schema.yml`. These fields are embedded in `manifest.json` by `dbt compile` and consumed by the topology-controller parser. A model with an owner and no tag is a dormant node: it is in the topology with no schedule, and a run started by hand builds it. No other run builds it, with one exception: a run whose load of a seed drops the seed's table rebuilds the dormant views and materialized views below that seed. service-1's `dormant_probe`, a table below no seed, is a dormant node.
+Every project's `dbt_project.yml` declares the required `+meta` (`owner`, `criticality`) under the `models:` key, and `profiles.yml` sets `schema: e2e_schema`. A model's schedule name is its tag: a `+tags` entry in `dbt_project.yml`, or `config.tags` in the project's `models/schema.yml`. These fields are embedded in `manifest.json` by `dbt compile` and consumed by the topology-controller parser. A model with an owner and no tag is a dormant node: it is in the topology with no schedule, and a run started by hand builds it. No other run builds it, with one exception: a run whose load of a seed drops the seed's table rebuilds the dormant views and materialized views below that seed. service-1's `dormant_probe`, a table below no seed, is a dormant node.
 
 ## Building
 
-Build the base image first (required once before building any service):
+Build the base image first (required once before building any project):
 
 ```bash
 DOCKER_BUILDKIT=1 docker build -t dbt-base:latest ./base
@@ -217,12 +217,12 @@ Build the compile-and-load image:
 DOCKER_BUILDKIT=1 docker build -t dbt-compile-and-load:latest -f Dockerfile.upload .
 ```
 
-Build individual service images:
+Build individual project images:
 
 ```bash
-DOCKER_BUILDKIT=1 docker build -t service-1:latest ./services/service-1
-DOCKER_BUILDKIT=1 docker build -t service-2:latest ./services/service-2
-DOCKER_BUILDKIT=1 docker build -t service-3:latest ./services/service-3
+DOCKER_BUILDKIT=1 docker build -t service-1:latest ./projects/service-1
+DOCKER_BUILDKIT=1 docker build -t service-2:latest ./projects/service-2
+DOCKER_BUILDKIT=1 docker build -t service-3:latest ./projects/service-3
 ```
 
 ## Running tests
@@ -247,13 +247,13 @@ docker exec \
 
 ## Producing a release for continuo
 
-`dbt_upload` compiles a dbt service and uploads its filtered manifest to the
-canonical S3 key `s3://<bucket>/<service>/<release_id>/manifest.json`. Uploading
+`dbt_upload` compiles a dbt project and uploads its filtered manifest to the
+canonical S3 key `s3://<bucket>/<project>/<release_id>/manifest.json`. Uploading
 the manifest is one step of shipping a change into continuo's blue/green
 pipeline; it does not, by itself, promote anything. To register the change,
-build and push the service image, upload the manifest, then `POST /api/v1/releases`
+build and push the project image, upload the manifest, then `POST /api/v1/releases`
 on continuo's public API. Only one object is uploaded per release — the
-filtered `manifest.json`. There is no `service_metadata.json` sidecar, and the
+filtered `manifest.json`. There is no metadata sidecar file, and the
 image tag travels in the HTTP request body, not in object storage.
 
 The public release API (`GET /api/v1/current-prod`, `POST /api/v1/releases`,

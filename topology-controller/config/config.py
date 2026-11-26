@@ -196,7 +196,7 @@ def redis_acl_mode() -> str:
 
 # ONTOLOGY_ENABLED (the chart's contracts.ontology.enabled, injected through the
 # shared ConfigMap): with it true, a release carrying the install's ontology
-# resolves each contract of a service the ontology declares and checks the
+# resolves each contract of a project the ontology declares and checks the
 # contracts against it. With it false or unset, a contract is stored without its
 # ontology part and an ontology a release carries is ignored.
 _ONTOLOGY_SWITCH = {"true": True, "false": False}

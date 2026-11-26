@@ -266,9 +266,9 @@ func TestDispatchProblem_APreflightMustFitASeed(t *testing.T) {
 // command the block lacks: seed_full_refresh for a seed, full_refresh for a
 // model.
 func TestFullRefreshUndefined(t *testing.T) {
-	reason, message := FullRefreshUndefined(pkgmodel.NodeTypeDbtSeed, "services.finance")
+	reason, message := FullRefreshUndefined(pkgmodel.NodeTypeDbtSeed, "projects.finance")
 	assert.Equal(t, pkgmodel.FailureReasonSeedFullRefreshUndefined, reason)
-	assert.Equal(t, "dbt-commands services.finance defines no seed_full_refresh command", message)
+	assert.Equal(t, "dbt-commands projects.finance defines no seed_full_refresh command", message)
 	reason, message = FullRefreshUndefined(pkgmodel.NodeTypeDbtModel, "default")
 	assert.Equal(t, pkgmodel.FailureReasonFullRefreshUndefined, reason)
 	assert.Equal(t, "dbt-commands default defines no full_refresh command", message)

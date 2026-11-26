@@ -1,6 +1,6 @@
 # The e2e fixture domain image, built exactly the way the runtime repository's
-# template prescribes: the engine-matched runtime base plus this service's
-# contracts and scripts. One image serves every one of the service's nodes — the
+# template prescribes: the engine-matched runtime base plus this project's
+# contracts and scripts. One image serves every one of the project's nodes — the
 # harness selects between them from NODE_ID at run time.
 #
 # Two targets. `probe` is the fixture image every python e2e test releases
@@ -8,7 +8,7 @@
 # the py_mismatch node's ODCS contract, which differs in one read from the one
 # its release carries (continuo-e2e-py-probe:mismatch), so the harness's start
 # check refuses to run it. The runtime reads every contracts/*.odcs.yaml file.
-FROM ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.14.0 AS probe
+FROM ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.15.0 AS probe
 COPY contracts/ /app/contracts/
 COPY scripts/ /app/scripts/
 # The runtime base already declares USER 65532:65532 — a frozen cross-repo

@@ -16,7 +16,7 @@ import (
 
 const goldenParseRejection = `{"release_id":"rel-1","stage":"parse","reason":"invalid_sql","error_detail":"Expecting ). Line 3, Col: 12.",` +
 	`"failing_nodes":["svc.sch.a"],` +
-	`"per_node":[{"node_id":"svc.sch.a","status":"failed","kind":"invalid_sql","detail":"Expecting ). Line 3, Col: 12.","file_path":"models/a.sql","service":"svc","node_type":"dbt-model"}],` +
+	`"per_node":[{"node_id":"svc.sch.a","status":"failed","kind":"invalid_sql","detail":"Expecting ). Line 3, Col: 12.","file_path":"models/a.sql","project":"svc","node_type":"dbt-model"}],` +
 	`"repo":"org/svc","commit_sha":"abc123","code_bundle_uri":"s3://bundles/rel-1.tar.gz"}`
 
 func TestEncodeParseRejection(t *testing.T) {
@@ -32,7 +32,7 @@ func TestEncodeParseRejection(t *testing.T) {
 			Kind:     "invalid_sql",
 			Detail:   "Expecting ). Line 3, Col: 12.",
 			FilePath: "models/a.sql",
-			Service:  "svc",
+			Project:  "svc",
 			NodeType: "dbt-model",
 		}},
 		Repo:          "org/svc",
@@ -53,7 +53,7 @@ func TestEncodeParseRejectionKeepsEmptyPerNodeKeys(t *testing.T) {
 		PerNode:   []ports.RejectedNode{{NodeID: "svc.sch.a", Status: "failed", Kind: "internal"}},
 	})
 	const want = `{"release_id":"rel-1","stage":"parse","reason":"internal_error","error_detail":"","failing_nodes":null,` +
-		`"per_node":[{"node_id":"svc.sch.a","status":"failed","kind":"internal","detail":"","file_path":"","service":"","node_type":""}],` +
+		`"per_node":[{"node_id":"svc.sch.a","status":"failed","kind":"internal","detail":"","file_path":"","project":"","node_type":""}],` +
 		`"repo":"","commit_sha":"","code_bundle_uri":""}`
 	assertJSON(t, got, want)
 }
@@ -78,7 +78,7 @@ func TestEncodeCompileRejection(t *testing.T) {
 			// The compile leg resolves no source location; the shape drops
 			// these rather than emitting empty keys.
 			FilePath: "models/a.sql",
-			Service:  "svc",
+			Project:  "svc",
 			NodeType: "dbt-model",
 		}},
 		Repo:          "org/svc",
@@ -90,7 +90,7 @@ func TestEncodeCompileRejection(t *testing.T) {
 
 const goldenSeedBuildRejection = `{"release_id":"rel-3","stage":"seed_build","reason":"seed_build_failed","error_detail":"Database Error in seed s",` +
 	`"failing_nodes":["svc.sch.s"],` +
-	`"per_node":[{"node_id":"svc.sch.s","status":"failed","dbt_log_uri":"s3://logs/s.log","run_results_uri":"s3://logs/s.json","file_path":"seeds/s.csv","service":"svc"}],` +
+	`"per_node":[{"node_id":"svc.sch.s","status":"failed","dbt_log_uri":"s3://logs/s.log","run_results_uri":"s3://logs/s.json","file_path":"seeds/s.csv","project":"svc"}],` +
 	`"repo":"org/svc","commit_sha":"ghi789","code_bundle_uri":"s3://bundles/rel-3.tar.gz","candidate_schema":"_cand_rel_3"}`
 
 func TestEncodeSeedBuildRejection(t *testing.T) {
@@ -106,7 +106,7 @@ func TestEncodeSeedBuildRejection(t *testing.T) {
 			DBTLogURI:     "s3://logs/s.log",
 			RunResultsURI: "s3://logs/s.json",
 			FilePath:      "seeds/s.csv",
-			Service:       "svc",
+			Project:       "svc",
 		}},
 		Repo:            "org/svc",
 		CommitSHA:       "ghi789",
@@ -119,9 +119,9 @@ func TestEncodeSeedBuildRejection(t *testing.T) {
 const goldenValidationRejection = `{"release_id":"rel-4","stage":"validation","reason":"validation_failed",` +
 	`"failing_nodes":["svc.sch.b"],"missing_nodes":[],"aggregate_status":"failed",` +
 	`"per_node":[` +
-	`{"node_id":"svc.sch.a","status":"ok","dbt_log_uri":"s3://logs/a.log","candidate_artifact_uri":"s3://cand/a.sql","node_type":"dbt-model","validation_op":"build_from_sql","file_path":"models/a.sql","service":"svc"},` +
-	`{"node_id":"svc.sch.b","status":"failed","dbt_log_uri":"s3://logs/b.log","run_results_uri":"s3://logs/b.json","node_type":"dbt-model","validation_op":"build_from_sql","file_path":"models/b.sql","service":"svc",` +
-	`"changed_ancestors":[{"node_id":"svc.sch.a","file_path":"models/a.sql","service":"svc","depth":1}]}],` +
+	`{"node_id":"svc.sch.a","status":"ok","dbt_log_uri":"s3://logs/a.log","candidate_artifact_uri":"s3://cand/a.sql","node_type":"dbt-model","validation_op":"build_from_sql","file_path":"models/a.sql","project":"svc"},` +
+	`{"node_id":"svc.sch.b","status":"failed","dbt_log_uri":"s3://logs/b.log","run_results_uri":"s3://logs/b.json","node_type":"dbt-model","validation_op":"build_from_sql","file_path":"models/b.sql","project":"svc",` +
+	`"changed_ancestors":[{"node_id":"svc.sch.a","file_path":"models/a.sql","project":"svc","depth":1}]}],` +
 	`"repo":"org/svc","commit_sha":"jkl012","code_bundle_uri":"s3://bundles/rel-4.tar.gz"}`
 
 func TestEncodeValidationRejection(t *testing.T) {
@@ -140,7 +140,7 @@ func TestEncodeValidationRejection(t *testing.T) {
 				NodeType:             "dbt-model",
 				ValidationOp:         pkg_model.ValidationOpBuildFromSQL,
 				FilePath:             "models/a.sql",
-				Service:              "svc",
+				Project:              "svc",
 			},
 			{
 				NodeID:        "svc.sch.b",
@@ -150,9 +150,9 @@ func TestEncodeValidationRejection(t *testing.T) {
 				NodeType:      "dbt-model",
 				ValidationOp:  pkg_model.ValidationOpBuildFromSQL,
 				FilePath:      "models/b.sql",
-				Service:       "svc",
+				Project:       "svc",
 				ChangedAncestors: []ports.ChangedAncestor{
-					{NodeID: "svc.sch.a", FilePath: "models/a.sql", Service: "svc", Depth: 1},
+					{NodeID: "svc.sch.a", FilePath: "models/a.sql", Project: "svc", Depth: 1},
 				},
 			},
 		},
@@ -211,8 +211,8 @@ func TestReleaseRejected_OnlyTheValidationShapeCarriesValidationOp(t *testing.T)
 
 const goldenDuplicateRejection = `{"release_id":"rel-5","reason":"duplicate_table","error_detail":"sch.t claimed by svc_a (models/t.sql) and svc_b (models/t.sql)",` +
 	`"failing_nodes":["svc_a.sch.t","svc_b.sch.t"],` +
-	`"per_node":[{"node_id":"svc_a.sch.t","status":"failed","service":"svc_a","file_path":"models/t.sql","node_type":"dbt-model",` +
-	`"relation_id":"sch.t","other_service":"svc_b","other_file_path":"models/t2.sql"}],` +
+	`"per_node":[{"node_id":"svc_a.sch.t","status":"failed","project":"svc_a","file_path":"models/t.sql","node_type":"dbt-model",` +
+	`"relation_id":"sch.t","other_project":"svc_b","other_file_path":"models/t2.sql"}],` +
 	`"repo":"org/svc_a","commit_sha":"mno345","code_bundle_uri":"s3://bundles/rel-5.tar.gz"}`
 
 // The duplicate-table check runs between legs, so its body carries no stage.
@@ -226,11 +226,11 @@ func TestEncodeDuplicateTableRejection(t *testing.T) {
 		PerNode: []ports.RejectedNode{{
 			NodeID:        "svc_a.sch.t",
 			Status:        "failed",
-			Service:       "svc_a",
+			Project:       "svc_a",
 			FilePath:      "models/t.sql",
 			NodeType:      "dbt-model",
 			RelationID:    "sch.t",
-			OtherService:  "svc_b",
+			OtherProject:  "svc_b",
 			OtherFilePath: "models/t2.sql",
 		}},
 		Repo:          "org/svc_a",
@@ -243,7 +243,7 @@ func TestEncodeDuplicateTableRejection(t *testing.T) {
 
 // The detail names the offending node->upstream edges; encoding/json escapes
 // > as \u003e, which every JSON decoder reads back as the original character.
-const goldenUnbuildableUpstreamRejection = `{"release_id":"rel-6","reason":"unbuildable_cross_service_upstream",` +
+const goldenUnbuildableUpstreamRejection = `{"release_id":"rel-6","reason":"unbuildable_cross_project_upstream",` +
 	`"error_detail":"svc.sch.a-\u003eother.sch.z; add the missing producing model"}`
 
 // The narrow body names only the release, the reason and the offending edges:
@@ -252,7 +252,7 @@ func TestEncodeUnbuildableUpstreamRejection(t *testing.T) {
 	got := encode(t, ports.ReleaseRejection{
 		Shape:       ports.RejectionShapeUnbuildableUpstream,
 		ReleaseID:   "rel-6",
-		Reason:      pkg_model.RejectReasonUnbuildableCrossServiceUpstream,
+		Reason:      pkg_model.RejectReasonUnbuildableCrossProjectUpstream,
 		ErrorDetail: "svc.sch.a->other.sch.z; add the missing producing model",
 		// Values the narrow shape drops.
 		FailingNodes:  []string{"svc.sch.a"},

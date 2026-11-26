@@ -61,7 +61,7 @@ type someNodes map[string]bool
 
 func (n someNodes) Locate(_ context.Context, id string) (string, string, error) {
 	if n[id] {
-		return "models/x.sql", "other-service", nil
+		return "models/x.sql", "other-project", nil
 	}
 	return "", "", nil
 }
@@ -82,15 +82,15 @@ func failure() remediation.Failure {
 		Trigger: remediation.Trigger{ReleaseID: "rel-1", Repo: "owner/demo", CommitSHA: "abc"},
 		Attempt: 2,
 		Target: remediation.TriggerNode{
-			NodeID: "analytics.table_b", RelationID: "analytics.table_b", Service: "marketing",
-			FilePath: "models/table_b.sql", OtherService: "service-1", OtherFilePath: "services/service-1/models/table_b.sql",
+			NodeID: "analytics.table_b", RelationID: "analytics.table_b", Project: "marketing",
+			FilePath: "models/table_b.sql", OtherProject: "service-1", OtherFilePath: "services/service-1/models/table_b.sql",
 		},
 	}
 }
 
 func sourceFiles() remediation.SourceFiles {
 	return remediation.SourceFiles{
-		Files: map[string]string{oldPath: "select 1 as id\n"}, Order: []string{oldPath}, Primary: oldPath, Service: "marketing",
+		Files: map[string]string{oldPath: "select 1 as id\n"}, Order: []string{oldPath}, Primary: oldPath, Project: "marketing",
 	}
 }
 
@@ -109,8 +109,8 @@ func references() ports.ModelReferences {
 func plan() remediation.ModelRename {
 	refs := references()
 	return remediation.ModelRename{
-		Service: "marketing", Relation: "analytics.table_b",
-		OtherService: "service-1", OtherFilePath: "services/service-1/models/table_b.sql",
+		Project: "marketing", Relation: "analytics.table_b",
+		OtherProject: "service-1", OtherFilePath: "services/service-1/models/table_b.sql",
 		OldName: "table_b", NewName: "table_b_v2", OldPath: oldPath, NewPath: newPath,
 		References: refs.Files, Order: refs.Order,
 	}
@@ -172,7 +172,7 @@ func TestModelRename_Declines(t *testing.T) {
 		paths   map[string]string
 		want    string
 	}{
-		"no project directory for the service": {&fakeArchive{}, map[string]string{}, `no repository directory is configured for service "marketing"`},
+		"no project directory for the project": {&fakeArchive{}, map[string]string{}, `no repository directory is configured for project "marketing"`},
 		"the repository is not available":      {&fakeArchive{err: ports.ErrSourceNotFound}, map[string]string{"marketing": "services/marketing"}, "repository owner/demo at commit abc is not available"},
 	}
 	for name, tc := range cases {
@@ -333,10 +333,10 @@ func TestMatchesPlan_ReadsAnyPropertiesFileTheFinderReads(t *testing.T) {
 	}
 }
 
-// TestModelRename_ANameAnotherServiceBuildsIsTaken pins that the new name is
-// free across services: when the live topology already holds
+// TestModelRename_ANameAnotherProjectBuildsIsTaken pins that the new name is
+// free across projects: when the live topology already holds
 // analytics.table_b_v2, the plan moves on to table_b_v3.
-func TestModelRename_ANameAnotherServiceBuildsIsTaken(t *testing.T) {
+func TestModelRename_ANameAnotherProjectBuildsIsTaken(t *testing.T) {
 	s := rename.NewModelRename(&fakeArchive{}, &fakeFinder{refs: references()}, someNodes{"analytics.table_b_v2": true},
 		map[string]string{"marketing": "services/marketing"}, nil)
 
@@ -356,7 +356,7 @@ func TestModelRename_AnAliasThatClashesIsWhatChanges(t *testing.T) {
 	files := remediation.SourceFiles{
 		Files:   map[string]string{"services/marketing/models/marketing_orders.sql": "{{ config(alias='orders') }}\nselect 1 as id\n"},
 		Order:   []string{"services/marketing/models/marketing_orders.sql"},
-		Primary: "services/marketing/models/marketing_orders.sql", Service: "marketing",
+		Primary: "services/marketing/models/marketing_orders.sql", Project: "marketing",
 	}
 	s := rename.NewModelRename(&fakeArchive{}, &fakeFinder{refs: ports.ModelReferences{ModelNames: map[string]bool{"marketing_orders": true}}},
 		noNodes{}, map[string]string{"marketing": "services/marketing"}, nil)

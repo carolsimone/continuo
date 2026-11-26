@@ -51,7 +51,7 @@ func validationParams() ValidationJobParams {
 		JobName:              "validate-orders-rel123",
 		ReleaseID:            "rel123",
 		NodeID:               "svc.orders",
-		ServiceName:          "service-1",
+		ProjectName:          "service-1",
 		SchemaName:           "analytics",
 		TableName:            "orders",
 		NodeType:             pkg_model.NodeTypeDbtModel,
@@ -149,7 +149,7 @@ func TestCreateValidationJob_LabelsCarryModeReleaseNodeIDs(t *testing.T) {
 		"mode":         "validation",
 		"release-id":   "rel123",
 		"node-id":      "svc.orders",
-		"service_name": "service-1",
+		"project_name": "service-1",
 		"schema_name":  "analytics",
 		"table_name":   "orders",
 	}
@@ -228,7 +228,7 @@ func TestBuildValidationPodSpec_BuildFromColumns_SetsSpecURI(t *testing.T) {
 	t.Setenv("JOB_S3_SECRET_NAME", "continuo-job-s3")
 	p := ValidationJobParams{
 		JobName: "vj", ReleaseID: "r1", NodeID: "e2e_schema.py_probe",
-		ServiceName: "svc-py", SchemaName: "e2e_schema", TableName: "py_probe",
+		ProjectName: "svc-py", SchemaName: "e2e_schema", TableName: "py_probe",
 		NodeType: pkg_model.NodeTypePythonNode, ImageTag: "img",
 		CandidateSchema: "cand_r1", ValidationOp: string(pkg_model.ValidationOpBuildFromColumns),
 		CandidateArtifactURI: "s3://b/candidate-sql/r1/candidate_e2e_schema.py_probe.json",
@@ -395,7 +395,7 @@ func TestCreateValidationJob_DefaultsToPullAlways(t *testing.T) {
 	job := fetchJob(t, c, p.Namespace, p.JobName)
 	require.Len(t, job.Spec.Template.Spec.Containers, 1)
 	assert.Equal(t, corev1.PullAlways, job.Spec.Template.Spec.Containers[0].ImagePullPolicy,
-		"validation job must default to PullAlways so a re-pushed mutable service tag is actually re-pulled")
+		"validation job must default to PullAlways so a re-pushed mutable project tag is actually re-pulled")
 }
 
 // TestCreateValidationJob_PullPolicyOverride verifies that environments which

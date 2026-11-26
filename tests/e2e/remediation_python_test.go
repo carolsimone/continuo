@@ -23,7 +23,7 @@ import (
 // so the contract a release is rejected on and the contract the python-validation
 // type finds in the checkout cannot describe different nodes.
 //
-// Each scenario has a service of its own, so no two share a contract
+// Each scenario has a project of its own, so no two share a contract
 // directory. The packaging step packs a whole directory into one bundle, so a
 // second, still-broken node beside the node under repair would sink the
 // verification run that is verifying the repair.
@@ -37,24 +37,24 @@ const (
 	// which is what makes the assertions on a proposal's edited file readable.
 	pyRemediationRepoRoot = "fixtures/py-remediation-repo"
 
-	// The single-node service whose declared read cannot bind, and the file
+	// The single-node project whose declared read cannot bind, and the file
 	// that declares it. One fix attempt repairs it.
-	pyBadReadService  = "svc-py-e2e"
+	pyBadReadProject  = "svc-py-e2e"
 	pyBadReadUniqueID = "e2e_schema.py_bad_read"
 	pyBadReadContract = "services/svc-py-e2e/contracts/py_bad_read.odcs.yaml"
 
-	// The second service, whose first repair is also wrong: it takes two
+	// The second project, whose first repair is also wrong: it takes two
 	// attempts, and the second only succeeds because it is shown the first
 	// one's verification-run error.
-	pyLoopService  = "svc-py-e2e-loop"
+	pyLoopProject  = "svc-py-e2e-loop"
 	pyLoopUniqueID = "e2e_schema.py_loop_read"
 	pyLoopContract = "services/svc-py-e2e-loop/contracts/py_loop_read.odcs.yaml"
 
-	// The third service, whose declared read names its relation without a
+	// The third project, whose declared read names its relation without a
 	// schema, so the release's SQL parser rejects the node before any Job
 	// runs. Its repair is made in the same contract file and proven by a
 	// verification run whose own parse leg is the judge.
-	pyParseService  = "svc-py-e2e-parse"
+	pyParseProject  = "svc-py-e2e-parse"
 	pyParseUniqueID = "e2e_schema.py_unqualified_read"
 	pyParseContract = "services/svc-py-e2e-parse/contracts/py_unqualified_read.odcs.yaml"
 
@@ -165,14 +165,14 @@ func TestE2E_PythonValidationFailure_VerifiedFix(t *testing.T) {
 	// verification run is "_candidate_" plus its id, and a run id embeds the
 	// failing release id, the node id, and the attempt number.
 	releaseID := "pyfix-" + uuid.NewString()[:8]
-	t.Logf("release_id=%s service=%s node=%s", releaseID, pyBadReadService, pyBadReadUniqueID)
+	t.Logf("release_id=%s project=%s node=%s", releaseID, pyBadReadProject, pyBadReadUniqueID)
 
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
 	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationProposedV1)
 	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV3)
 
-	clearProd := rejectPythonFixtureRelease(t, ctx, clients, pyBadReadService, releaseID)
+	clearProd := rejectPythonFixtureRelease(t, ctx, clients, pyBadReadProject, releaseID)
 	defer clearProd()
 
 	// 1. The runner's try produced an attempt and parked it awaiting its
@@ -206,9 +206,9 @@ func TestE2E_PythonValidationFailure_VerifiedFix(t *testing.T) {
 
 	verifications := decodeVerifications(t, proposed.Verifications)
 	require.Len(t, verifications, 1,
-		"the fix edits one service, so exactly one verification run judged it")
-	require.Equal(t, pyBadReadService, verifications[0].Service,
-		"the verification must name the service whose files the attempt edited")
+		"the fix edits one project, so exactly one verification run judged it")
+	require.Equal(t, pyBadReadProject, verifications[0].Project,
+		"the verification must name the project whose files the attempt edited")
 	require.Equal(t, runID, verifications[0].RunID,
 		"the verification must name the same run the row parked on")
 
@@ -238,8 +238,8 @@ func TestE2E_PythonValidationFailure_VerifiedFix(t *testing.T) {
 	//    promotion that took some other route.
 	var prodRows int
 	require.NoError(t, clients.releaseDB.GetContext(ctx, &prodRows,
-		`SELECT count(*) FROM service_prod WHERE service_name = $1`, pyBadReadService))
-	require.Zero(t, prodRows, "a verification run must never write the service's production pointer")
+		`SELECT count(*) FROM service_prod WHERE project_name = $1`, pyBadReadProject))
+	require.Zero(t, prodRows, "a verification run must never write the project's production pointer")
 	assertNoNodeVersionsFor(t, ctx, clients, runID)
 
 	// 7. No remediation trigger names the verification run. This scan cannot
@@ -296,13 +296,13 @@ func TestE2E_PythonValidationFailure_VerificationErrorFeedsNextAttempt(t *testin
 	defer dropRelation()
 
 	releaseID := "pyloop-" + uuid.NewString()[:8]
-	t.Logf("release_id=%s service=%s node=%s", releaseID, pyLoopService, pyLoopUniqueID)
+	t.Logf("release_id=%s project=%s node=%s", releaseID, pyLoopProject, pyLoopUniqueID)
 
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
 	requestedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationRequestedV3)
 
-	clearProd := rejectPythonFixtureRelease(t, ctx, clients, pyLoopService, releaseID)
+	clearProd := rejectPythonFixtureRelease(t, ctx, clients, pyLoopProject, releaseID)
 	defer clearProd()
 
 	// 1. Attempt 1's verification run fails the fix, and its error is
@@ -368,12 +368,12 @@ func TestE2E_PythonValidationFailure_VerificationErrorFeedsNextAttempt(t *testin
 }
 
 // rejectPythonFixtureRelease posts one of the remediation fixture repository's
-// services as a python-odcs release and waits for it to be rejected. The
+// projects as a python-odcs release and waits for it to be rejected. The
 // bundle it uploads is built from the same files the served repository
 // checkout holds, so the node the release fails on is the node the
 // python-validation type will later find in the checkout.
 //
-// It clears both python fixture services' production pointers before posting
+// It clears both python fixture projects' production pointers before posting
 // and returns a cleanup that clears them again — a leftover pointer would drag
 // this fixture's contract into every later test's assembled manifest set. The
 // cleanup is returned rather than registered with t.Cleanup because it needs
@@ -381,39 +381,39 @@ func TestE2E_PythonValidationFailure_VerificationErrorFeedsNextAttempt(t *testin
 // deferred call, including the one that closes every pool.
 func rejectPythonFixtureRelease(
 	t *testing.T, ctx context.Context, clients *testClients,
-	service, releaseID string,
+	project, releaseID string,
 ) func() {
 	t.Helper()
 
-	// Baseline: every dbt service keeps its live pointer; the python fixture
-	// service is unknown to production, so its single node is a changed node.
-	allServices := baselineServices(t, ctx, clients)
-	require.NotEmpty(t, allServices,
-		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
+	// Baseline: every dbt project keeps its live pointer; the python fixture
+	// project is unknown to production, so its single node is a changed node.
+	allProjects := baselineProjects(t, ctx, clients)
+	require.NotEmpty(t, allProjects,
+		"no baseline manifests under s3://%s/<project>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
 	var prodNodes []map[string]string
-	for svc, si := range allServices {
+	for svc, si := range allProjects {
 		for _, n := range si.nodes {
 			prodNodes = append(prodNodes, map[string]string{
-				"unique_id": n.uniqueID, "service": svc, "content_hash": n.contentHash,
+				"unique_id": n.uniqueID, "project": svc, "content_hash": n.contentHash,
 			})
 		}
 	}
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allServices)
+	seedServiceProd(t, ctx, clients, allProjects)
 	clearPythonServiceProd(t, ctx, clients)
 	cleanup := func() { clearPythonServiceProd(t, context.Background(), clients) }
 
-	putODCSBundle(t, ctx, clients, service, releaseID, pyRemediationBundle(t, ctx, service))
-	postPythonRelease(t, clients, service, releaseID, pyFixtureImage, false)
+	putODCSBundle(t, ctx, clients, project, releaseID, pyRemediationBundle(t, ctx, project))
+	postPythonRelease(t, clients, project, releaseID, pyFixtureImage, false)
 
 	waitForReleaseRejected(t, ctx, clients, releaseID, pyReleaseVerdictBudget)
 	return cleanup
 }
 
-// pyRemediationBundle builds the odcs-bundle.json a python service's CI
-// uploads before POST /releases, from the contracts and scripts of the service's
+// pyRemediationBundle builds the odcs-bundle.json a python project's CI
+// uploads before POST /releases, from the contracts and scripts of the project's
 // directory in the fixture repository, the repository root its contracts name
 // their scripts from, and the package list of the fixture image the release
 // names.
@@ -422,10 +422,10 @@ func rejectPythonFixtureRelease(
 // pack`, because the parse scenario's contract declares a read the runtime
 // refuses (a table without its schema): that read must reach the release for
 // the release to reject it.
-func pyRemediationBundle(t *testing.T, ctx context.Context, service string) []byte {
+func pyRemediationBundle(t *testing.T, ctx context.Context, project string) []byte {
 	t.Helper()
-	root := path.Join(pyRemediationRepoRoot, "services", service)
-	return buildODCSBundle(t, pyRemediationRepo, root, service, imagePackages(t, ctx, pyFixtureImage),
+	root := path.Join(pyRemediationRepoRoot, "services", project)
+	return buildODCSBundle(t, pyRemediationRepo, root, project, imagePackages(t, ctx, pyFixtureImage),
 		odcsContracts(t, pyRemediationRepo, root))
 }
 
@@ -458,14 +458,14 @@ func ensureBindingRelation(t *testing.T, ctx context.Context, clients *testClien
 }
 
 // clearPythonServiceProd removes the production pointers of both remediation
-// fixture services. Neither is ever meant to reach production in these tests,
+// fixture projects. Neither is ever meant to reach production in these tests,
 // so a row for either is stale state from an earlier run and would be read
 // back during manifest assembly.
 func clearPythonServiceProd(t *testing.T, ctx context.Context, clients *testClients) {
 	t.Helper()
-	for _, svc := range []string{pyBadReadService, pyLoopService} {
+	for _, svc := range []string{pyBadReadProject, pyLoopProject} {
 		if _, err := clients.releaseDB.ExecContext(ctx,
-			`DELETE FROM service_prod WHERE service_name = $1`, svc); err != nil {
+			`DELETE FROM service_prod WHERE project_name = $1`, svc); err != nil {
 			t.Errorf("clear service_prod row for %s: %v", svc, err)
 		}
 	}
@@ -534,12 +534,12 @@ func decodeFileEdits(t *testing.T, raw []byte) []pyFileEdit {
 }
 
 // pyVerification mirrors one element of the proposal's verifications column:
-// the service whose edits a verification run judged, the manifest kind it was
+// the project whose edits a verification run judged, the manifest kind it was
 // submitted under, that run's id, and its last-read phase. An attempt posts
-// one per edited service, so the list is how a reader tells which verdict
+// one per edited project, so the list is how a reader tells which verdict
 // covered what.
 type pyVerification struct {
-	Service string `json:"service"`
+	Project string `json:"project"`
 	Kind    string `json:"kind"`
 	RunID   string `json:"run_id"`
 	Phase   string `json:"phase"`
@@ -714,12 +714,12 @@ func assertNoNodeVersionsFor(t *testing.T, ctx context.Context, clients *testCli
 //	→ topology-controller's SQL parser rejects the node (unqualified_reference)
 //	→ release-controller: Fail(unqualified_reference), RecordStageResults("parse")
 //	→ release.rejected:v1 {stage: parse, per_node: [{kind, detail, file_path,
-//	  service, node_type=python-node}]} — the parser's own text is inline;
+//	  project, node_type=python-node}]} — the parser's own text is inline;
 //	  there is no dbt log because nothing ran
 //	→ classifier emits remediation.requested:v3 (source=parse, node_type=python-node)
 //	→ agent-remediation's runner matches it to the python-parse type: the
 //	  trigger's file_path names the node's contract file by its path in the
-//	  service's bundle, not in the repository, so the contract_file step finds
+//	  project's bundle, not in the repository, so the contract_file step finds
 //	  the .odcs.yaml file from the node id alone, the prompt has the model
 //	  qualify the read's relation, and the contract_packages check and the
 //	  verification_run gate pack the directory and POST it as a verification
@@ -752,14 +752,14 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 	defer dropRelation()
 
 	releaseID := "pyparse-" + uuid.NewString()[:8]
-	t.Logf("release_id=%s service=%s node=%s", releaseID, pyParseService, pyParseUniqueID)
+	t.Logf("release_id=%s project=%s node=%s", releaseID, pyParseProject, pyParseUniqueID)
 
 	// Tap the streams before the release is posted: the trim loop removes
 	// consumed entries, so the checks below read what the taps recorded.
 	rejectedTap := startStreamTap(t, ctx, clients.redisClient, streams.ReleaseRejectedV1)
 	proposedTap := startStreamTap(t, ctx, clients.redisClient, streams.RemediationProposedV1)
 
-	clearProd := rejectPythonFixtureRelease(t, ctx, clients, pyParseService, releaseID)
+	clearProd := rejectPythonFixtureRelease(t, ctx, clients, pyParseProject, releaseID)
 	defer clearProd()
 
 	// 1. The rejection is a parse-stage rejection naming the python node, with
@@ -785,8 +785,8 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 	require.Empty(t, proposed.VerifyError, "a verified fix records no verification error")
 
 	verifications := decodeVerifications(t, proposed.Verifications)
-	require.Len(t, verifications, 1, "the fix edits one service, so exactly one verification run judged it")
-	require.Equal(t, pyParseService, verifications[0].Service)
+	require.Len(t, verifications, 1, "the fix edits one project, so exactly one verification run judged it")
+	require.Equal(t, pyParseProject, verifications[0].Project)
 
 	edits := decodeFileEdits(t, proposed.FileEdits)
 	require.Len(t, edits, 1, "the fix changes exactly the one file that declares the node")
@@ -805,8 +805,8 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 	waitForRemediationProposed(t, ctx, proposedTap, releaseID, pyParseUniqueID, pyRecordVisibleBudget)
 	var prodRows int
 	require.NoError(t, clients.releaseDB.GetContext(ctx, &prodRows,
-		`SELECT count(*) FROM service_prod WHERE service_name = $1`, pyParseService))
-	require.Zero(t, prodRows, "a verification run must never write the service's production pointer")
+		`SELECT count(*) FROM service_prod WHERE project_name = $1`, pyParseProject))
+	require.Zero(t, prodRows, "a verification run must never write the project's production pointer")
 
 	t.Log("✅ a python node rejected at the parse stage was repaired in its contract, verified by a real verification run, and proposed for review")
 }
@@ -815,7 +815,7 @@ func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
 // release.rejected:v1 and pins the shape the python-parse type depends on:
 // stage parse, reason unqualified_reference, one per-node entry carrying the
 // parser's detail inline, the contract file as file_path (its path in the
-// service's bundle, where the rejected SQL is declared), the service, and
+// project's bundle, where the rejected SQL is declared), the project, and
 // node_type=python-node.
 func assertRejectedPythonParseStage(t *testing.T, ctx context.Context, rejectedTap *streamTap, releaseID string) {
 	t.Helper()
@@ -835,7 +835,7 @@ func assertRejectedPythonParseStage(t *testing.T, ctx context.Context, rejectedT
 					Kind     string `json:"kind"`
 					Detail   string `json:"detail"`
 					FilePath string `json:"file_path"`
-					Service  string `json:"service"`
+					Project  string `json:"project"`
 					NodeType string `json:"node_type"`
 				} `json:"per_node"`
 			}
@@ -853,8 +853,8 @@ func assertRejectedPythonParseStage(t *testing.T, ctx context.Context, rejectedT
 			require.Equal(t, "unqualified_reference", p.PerNode[0].Kind)
 			require.Contains(t, p.PerNode[0].Detail, "right_name")
 			require.Equal(t, path.Join("contracts", path.Base(pyParseContract)), p.PerNode[0].FilePath,
-				"a python-odcs node's parse failure names its contract file, by its path in the service's bundle")
-			require.Equal(t, pyParseService, p.PerNode[0].Service)
+				"a python-odcs node's parse failure names its contract file, by its path in the project's bundle")
+			require.Equal(t, pyParseProject, p.PerNode[0].Project)
 			require.Equal(t, "python-node", p.PerNode[0].NodeType)
 			return true, nil
 		}

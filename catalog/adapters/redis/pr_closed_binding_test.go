@@ -19,7 +19,7 @@ const prClosedPayload = `{
 	"release_id": "rel-1",
 	"node_id": "analytics.revenue",
 	"resolved_node_ids": ["analytics.revenue", "analytics.margin"],
-	"service": "core",
+	"project": "core",
 	"pr_url": "https://github.com/org/repo/pull/42",
 	"pr_number": 42,
 	"outcome": "merged",
@@ -42,7 +42,7 @@ func TestParsePRClosed_HappyPath(t *testing.T) {
 	assert.Equal(t, "rel-1", evt.ReleaseID)
 	assert.Equal(t, "analytics.revenue", evt.NodeID)
 	assert.Equal(t, []string{"analytics.revenue", "analytics.margin"}, evt.ResolvedNodeIDs)
-	assert.Equal(t, "core", evt.Service)
+	assert.Equal(t, "core", evt.Project)
 	assert.Equal(t, "https://github.com/org/repo/pull/42", evt.PrURL)
 	assert.Equal(t, 42, evt.PrNumber)
 	assert.Equal(t, "merged", evt.Outcome)

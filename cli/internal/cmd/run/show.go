@@ -41,7 +41,7 @@ Output (stdout, JSON):
   cancelling: a cancel was accepted and the run waits for its Jobs to stop.
   The run's failure_reason (stalled|empty_selection|invalid_node_type) is set only
   when the run failed without a failed task.
-  node is "<service>.<schema>.<table>". operation is the task's own operation,
+  node is "<project>.<schema>.<table>". operation is the task's own operation,
   one of run|test|build|full_refresh. plan_reason says why the planner chose the
   task for this run (for example a seed's load reason, or a view rebuilt because
   a seed's reload drops it) and is an empty string when none was recorded.

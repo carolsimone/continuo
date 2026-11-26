@@ -10,7 +10,7 @@ type ReleasePromotedTopologyNode struct {
 	UniqueID    string
 	SchemaName  string
 	TableName   string
-	ServiceName string
+	ProjectName string
 	NodeType    string
 	// ContentHash is stored on :Node so a single query can detect a node whose
 	// recorded code version no longer matches the code the topology says it runs.

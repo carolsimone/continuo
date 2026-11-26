@@ -15,7 +15,7 @@ import (
 
 func designNotice() release.Notice {
 	return release.Notice{
-		Kind: "seed_reload", NodeID: "analytics.seed_fx_rates_eur", Service: "finance",
+		Kind: "seed_reload", NodeID: "analytics.seed_fx_rates_eur", Project: "finance",
 		EngineFamily: warehouse.SchemaBound, Change: seedreload.ChangeColumns,
 		Columns: release.ColumnChanges{Added: []string{"source"}, Removed: []string{}, Retyped: []string{}},
 		Load:    seedreload.Load{Operation: model.OperationRun, DropsTable: true, Reason: "columns changed; +full_refresh: true re-creates the table on every load"},
@@ -35,7 +35,7 @@ func designNotice() release.Notice {
 func TestNoticesFromDomain_IsTheDesignsJSON(t *testing.T) {
 	raw, err := json.Marshal(serialization.NoticesFromDomain([]release.Notice{designNotice()}))
 	require.NoError(t, err)
-	assert.JSONEq(t, `[{"kind": "seed_reload", "node_id": "analytics.seed_fx_rates_eur", "service": "finance",
+	assert.JSONEq(t, `[{"kind": "seed_reload", "node_id": "analytics.seed_fx_rates_eur", "project": "finance",
   "engine_family": "schema_bound", "change": "columns",
   "columns": {"added": ["source"], "removed": [], "retyped": []},
   "load": {"operation": "run", "drops_table": true, "reason": "columns changed; +full_refresh: true re-creates the table on every load"},

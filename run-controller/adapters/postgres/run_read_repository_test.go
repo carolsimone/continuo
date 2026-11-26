@@ -33,12 +33,12 @@ func readRun(t *testing.T, db *sqlx.DB, tenant, scheduleName string, releaseID *
 	return runID
 }
 
-// readTask inserts a task of runID for the node "raw.<table>" of service svc.
+// readTask inserts a task of runID for the node "raw.<table>" of project svc.
 func readTask(t *testing.T, db *sqlx.DB, runID uuid.UUID, table, status string) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
 	_, err := db.Exec(`
-		INSERT INTO tasks (tenant_id, task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries, node_key)
+		INSERT INTO tasks (tenant_id, task_id, run_id, project_name, schema_name, table_name, job_name, status, max_retries, node_key)
 		VALUES ((SELECT tenant_id FROM runs WHERE run_id = $2), $1, $2, 'svc', 'raw', $3::text, $4, $5, 2, 'raw.' || $3::text)`,
 		id, runID, table, "job-"+id.String()[:8], status)
 	require.NoError(t, err)
@@ -172,7 +172,7 @@ func TestRunReadRepository_GraphReadsALegacyIngestedNodeAsUnknownExternal(t *tes
 	tenant := schemaTenant(t, db)
 	insertSchemaRelease(t, db, tenant, "rel-7", "raw.a")
 	_, err := db.Exec(`
-		INSERT INTO topology_nodes (tenant_id, release_id, node_key, unique_id, service_name, schema_name, table_name, node_type)
+		INSERT INTO topology_nodes (tenant_id, release_id, node_key, unique_id, project_name, schema_name, table_name, node_type)
 		VALUES ($1, 'rel-7', 'raw.x', 'raw.x', '', 'raw', 'x', 'ingested')`, tenant)
 	require.NoError(t, err)
 	rel, seq := "rel-7", int64(7)

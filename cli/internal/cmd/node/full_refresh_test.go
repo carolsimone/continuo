@@ -46,7 +46,7 @@ func TestFullRefreshNode_SuccessEmitsJSON(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
 	assert.Equal(t, map[string]string{"run_id": "run_fr", "schedule_name": "single-node-run-00ff00ff"}, payload)
 	assert.Equal(t, []string{"finance", "analytics", "orders", "3f9e1c2a-7b4d-4e8f-9a1b-2c3d4e5f6a7b", "agent-chat-llm"},
-		[]string{fake.gotFullRefreshSvc, fake.gotFullRefreshSchema, fake.gotFullRefreshTable, fake.gotFullRefreshSourceRun, fake.gotFullRefreshActor})
+		[]string{fake.gotFullRefreshProject, fake.gotFullRefreshSchema, fake.gotFullRefreshTable, fake.gotFullRefreshSourceRun, fake.gotFullRefreshActor})
 }
 
 func TestFullRefresh_SendsTheAcknowledgedObjects(t *testing.T) {

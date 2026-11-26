@@ -36,7 +36,7 @@ func (*ContractFile) Meta() step.Meta {
 		Kind: step.KindContext,
 		Description: "Finds the ODCS contract file (*.odcs.yaml, matched by its id) that declares the failing python node in the repository " +
 			"at the trigger's commit and keeps its repository-relative paths and its text. Declines a node id that names no schema and table, " +
-			"a trigger with no service, a repository that is not available, and a node that no contract file declares or several do.",
+			"a trigger with no project, a repository that is not available, and a node that no contract file declares or several do.",
 		Needs:    []remediation.EvidenceKey{remediation.KeyFailure},
 		Provides: []remediation.EvidenceKey{remediation.KeyContractFile},
 	}
@@ -48,7 +48,7 @@ func (*ContractFile) Meta() step.Meta {
 // the paths and the yaml text, never a directory. RepoRoot is the
 // repository-relative application root of the node, not a path on disk.
 //
-// A node id that names no schema and table, a trigger that names no service
+// A node id that names no schema and table, a trigger that names no project
 // (the fix would have no release to be verified under), a repository or commit
 // that does not exist, and a node that no contract file declares or that
 // several declare are settled facts, and each declines the cluster with the
@@ -62,8 +62,8 @@ func (s *ContractFile) Gather(ctx context.Context, in step.ContextInput) (step.C
 		return s.decline(f, fmt.Sprintf(
 			"node id %q does not name a schema and a table, so the contract file declaring it cannot be found", nodeID)), nil
 	}
-	if f.Target.Service == "" {
-		return s.decline(f, "the trigger names no service, so the fix has no release to be verified under"), nil
+	if f.Target.Project == "" {
+		return s.decline(f, "the trigger names no project, so the fix has no release to be verified under"), nil
 	}
 
 	root, cleanup, reason, err := fetchCheckout(ctx, s.archive, f)

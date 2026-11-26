@@ -20,15 +20,15 @@ import (
 )
 
 const (
-	// timeoutOnlyReleaseService is the service the release is posted for. Its
+	// timeoutOnlyReleaseProject is the project the release is posted for. Its
 	// own code does not change.
-	timeoutOnlyReleaseService = "service-1"
+	timeoutOnlyReleaseProject = "service-1"
 
-	// timeoutOnlyDeclaringService owns the node that declares the timeout. Its
+	// timeoutOnlyDeclaringProject owns the node that declares the timeout. Its
 	// manifest is staged under its production pointer rather than under the
-	// released service's key, because a release's compile Job overwrites
-	// <service>/<release_id>/manifest.json for the service it compiles.
-	timeoutOnlyDeclaringService = "service-2"
+	// released project's key, because a release's compile Job overwrites
+	// <project>/<release_id>/manifest.json for the project it compiles.
+	timeoutOnlyDeclaringProject = "service-2"
 
 	// timeoutOnlyNodeKey is the declaring node's key in run-controller's topology.
 	timeoutOnlyNodeKey = ftableEUniqueID
@@ -72,25 +72,25 @@ func TestE2E_ReleasePromote_ATimeoutOnlyChangePromotesWithoutValidation(t *testi
 	requireReleaseControllerHealthy(t, clients)
 
 	releaseID := "e2e-timeout-" + uuid.NewString()[:8]
-	t.Logf("release_id=%s released_service=%s timeout_node=%s (service %s)",
-		releaseID, timeoutOnlyReleaseService, timeoutOnlyNodeKey, timeoutOnlyDeclaringService)
+	t.Logf("release_id=%s released_project=%s timeout_node=%s (project %s)",
+		releaseID, timeoutOnlyReleaseProject, timeoutOnlyNodeKey, timeoutOnlyDeclaringProject)
 
-	allServices := baselineServices(t, ctx, clients)
-	require.NotEmpty(t, allServices, "no baseline manifests in S3 — setup.sh must run before the e2e suite")
-	released, ok := allServices[timeoutOnlyReleaseService]
-	require.True(t, ok, "%s has no baseline manifest", timeoutOnlyReleaseService)
+	allProjects := baselineProjects(t, ctx, clients)
+	require.NotEmpty(t, allProjects, "no baseline manifests in S3 — setup.sh must run before the e2e suite")
+	released, ok := allProjects[timeoutOnlyReleaseProject]
+	require.True(t, ok, "%s has no baseline manifest", timeoutOnlyReleaseProject)
 	require.NotEmpty(t, released.imageTag)
-	declaring, ok := allServices[timeoutOnlyDeclaringService]
-	require.True(t, ok, "%s has no baseline manifest", timeoutOnlyDeclaringService)
+	declaring, ok := allProjects[timeoutOnlyDeclaringProject]
+	require.True(t, ok, "%s has no baseline manifest", timeoutOnlyDeclaringProject)
 
 	// Production holds the baseline's own hash for every node, the declaring
 	// node included.
 	var prodNodes []map[string]string
-	for svc, si := range allServices {
+	for svc, si := range allProjects {
 		for _, n := range si.nodes {
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
-				"service":      svc,
+				"project":      svc,
 				"content_hash": n.contentHash,
 			})
 		}
@@ -102,16 +102,16 @@ func TestE2E_ReleasePromote_ATimeoutOnlyChangePromotesWithoutValidation(t *testi
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allServices)
+	seedServiceProd(t, ctx, clients, allProjects)
 
 	// Copy service-2's baseline manifest, declare the timeout on one model, copy
 	// the baseline's compile extras beside it, and pin service-2's production
 	// pointer at the copy so the assembled set the release parses carries it.
 	stagedReleaseID := releaseID + "-src"
-	stagedKey := fmt.Sprintf("%s/%s/manifest.json", timeoutOnlyDeclaringService, stagedReleaseID)
-	baselineKey := fmt.Sprintf("%s/%s/manifest.json", timeoutOnlyDeclaringService, e2eBaselineReleaseID)
+	stagedKey := fmt.Sprintf("%s/%s/manifest.json", timeoutOnlyDeclaringProject, stagedReleaseID)
+	baselineKey := fmt.Sprintf("%s/%s/manifest.json", timeoutOnlyDeclaringProject, e2eBaselineReleaseID)
 	putS3Object(t, ctx, clients, stagedKey, manifestDeclaringTimeout(t, getS3Object(t, ctx, clients, baselineKey)))
-	copyBaselineExtras(t, ctx, clients, timeoutOnlyDeclaringService, stagedReleaseID)
+	copyBaselineExtras(t, ctx, clients, timeoutOnlyDeclaringProject, stagedReleaseID)
 	// Put the pointer back and drop the staged manifest so no later test reads
 	// the declared timeout. Deferred, so it runs when the test function returns,
 	// before the cleanup setupClients registered closes the pools.
@@ -124,11 +124,11 @@ func TestE2E_ReleasePromote_ATimeoutOnlyChangePromotesWithoutValidation(t *testi
 			t.Logf("delete staged manifest s3://%s/%s: %v", e2eS3Bucket, stagedKey, err)
 		}
 	}()
-	pinServiceProd(t, ctx, clients, timeoutOnlyDeclaringService, stagedReleaseID, declaring.imageTag)
+	pinServiceProd(t, ctx, clients, timeoutOnlyDeclaringProject, stagedReleaseID, declaring.imageTag)
 	defer pinServiceProd(t, context.Background(), clients,
-		timeoutOnlyDeclaringService, e2eBaselineReleaseID, declaring.imageTag)
+		timeoutOnlyDeclaringProject, e2eBaselineReleaseID, declaring.imageTag)
 
-	postRelease(t, clients, timeoutOnlyReleaseService, releaseID, released.imageTag, false)
+	postRelease(t, clients, timeoutOnlyReleaseProject, releaseID, released.imageTag, false)
 
 	// No node differs from production, so the release promotes with nothing to
 	// validate: no validation.requested:v1 and no validation Job.
@@ -359,7 +359,7 @@ func manifestDeclaringTimeout(t *testing.T, body []byte) []byte {
 		meta["timeout_minutes"] = json.Number(fmt.Sprint(timeoutOnlyMinutes))
 		found = true
 	}
-	require.True(t, found, "%s must exist in the %s baseline manifest", timeoutOnlyNodeKey, timeoutOnlyDeclaringService)
+	require.True(t, found, "%s must exist in the %s baseline manifest", timeoutOnlyNodeKey, timeoutOnlyDeclaringProject)
 	out, err := json.Marshal(doc)
 	require.NoError(t, err, "encode manifest.json")
 	return out

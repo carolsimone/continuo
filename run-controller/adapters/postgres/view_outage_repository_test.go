@@ -31,7 +31,7 @@ func insertOutageRun(t *testing.T, db *sqlx.DB, tenant string, rebuildOf map[top
 	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM runs WHERE tenant_id = $1 AND run_id = $2`, tenant, runID) })
 	for key, seed := range rebuildOf {
 		_, err := db.Exec(`
-			INSERT INTO tasks (tenant_id, task_id, run_id, service_name, schema_name, table_name, job_name, status,
+			INSERT INTO tasks (tenant_id, task_id, run_id, project_name, schema_name, table_name, job_name, status,
 			                   max_retries, node_key, rebuild_seed_key)
 			VALUES ($1, $2, $3, 'svc', 'stg', $4, 'job-0', 'pending', 2, $5, $6)`,
 			tenant, uuid.New(), runID, strings.TrimPrefix(string(key), "stg."), string(key), string(seed))

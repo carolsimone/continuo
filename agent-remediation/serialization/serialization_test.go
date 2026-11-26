@@ -8,7 +8,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
 )
 
-const goldenPROpened = `{"proposal_id":"p","release_id":"r","node_id":"n","resolved_node_ids":["n"],"service":"svc","pr_url":"http://x","pr_number":5,"opened_by":"bot","opened_at":"2026-01-02T03:04:05Z"}`
+const goldenPROpened = `{"proposal_id":"p","release_id":"r","node_id":"n","resolved_node_ids":["n"],"project":"svc","pr_url":"http://x","pr_number":5,"opened_by":"bot","opened_at":"2026-01-02T03:04:05Z"}`
 
 func TestPROpenedRoundTrip(t *testing.T) {
 	var dto PROpenedDTO
@@ -22,19 +22,19 @@ func TestPROpenedRoundTrip(t *testing.T) {
 	if string(out) != goldenPROpened {
 		t.Fatalf("bytes changed:\n got %s\nwant %s", out, goldenPROpened)
 	}
-	if dto.ToDomain().PrNumber != 5 || dto.ToDomain().Service != "svc" {
+	if dto.ToDomain().PrNumber != 5 || dto.ToDomain().Project != "svc" {
 		t.Fatalf("toDomain fields wrong: %+v", dto.ToDomain())
 	}
 }
 
-func TestPROpenedServiceOmitempty(t *testing.T) {
+func TestPROpenedProjectOmitempty(t *testing.T) {
 	out, _ := json.Marshal(PROpenedFromDomain(event.PROpened{ProposalID: "p"}))
-	if strings.Contains(string(out), `"service"`) {
-		t.Fatalf("service must be omitted when empty: %s", out)
+	if strings.Contains(string(out), `"project"`) {
+		t.Fatalf("project must be omitted when empty: %s", out)
 	}
 }
 
-const goldenPRClosed = `{"proposal_id":"p","release_id":"r","node_id":"n","resolved_node_ids":["n"],"service":"svc","pr_url":"http://x","pr_number":5,"outcome":"merged","closed_at":"2026-01-02T03:04:05Z","edits":[{"path":"models/m.sql","target_node_id":"n","amended":true,"diff":"d"}]}`
+const goldenPRClosed = `{"proposal_id":"p","release_id":"r","node_id":"n","resolved_node_ids":["n"],"project":"svc","pr_url":"http://x","pr_number":5,"outcome":"merged","closed_at":"2026-01-02T03:04:05Z","edits":[{"path":"models/m.sql","target_node_id":"n","amended":true,"diff":"d"}]}`
 
 func TestPRClosedRoundTrip(t *testing.T) {
 	var dto PRClosedDTO
@@ -54,11 +54,11 @@ func TestPRClosedRoundTrip(t *testing.T) {
 	}
 }
 
-func TestPRClosedServiceAndEditsOmitempty(t *testing.T) {
+func TestPRClosedProjectAndEditsOmitempty(t *testing.T) {
 	out, _ := json.Marshal(PRClosedFromDomain(event.PRClosed{ProposalID: "p", Outcome: "rejected"}))
 	s := string(out)
-	if strings.Contains(s, `"service"`) || strings.Contains(s, `"edits"`) {
-		t.Fatalf("service/edits must be omitted when empty: %s", s)
+	if strings.Contains(s, `"project"`) || strings.Contains(s, `"edits"`) {
+		t.Fatalf("project/edits must be omitted when empty: %s", s)
 	}
 }
 

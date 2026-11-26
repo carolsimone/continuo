@@ -1,7 +1,7 @@
 """Which parser reads which kind of release artifact, and how each one fails.
 
 One release may carry a dbt manifest.json and a python odcs-bundle.json per
-service. They are parsed by different code with different failure vocabularies,
+project. They are parsed by different code with different failure vocabularies,
 but they produce the same ParsedArtifact, so this is the only place downstream
 code has to know a kind exists. A dbt manifest is parsed together with the
 compile-extras.json downloaded beside it, when the release has one.
@@ -49,12 +49,12 @@ def _parse_dbt(
     progress: Callable[[], None], timings: ReleaseTimings, validator: ContractValidator,
 ) -> ParsedArtifact:
     """Parse a dbt manifest with the compile extras downloaded beside it, when
-    there are any. The extras must name the manifest's declared service, and the
-    declared service stands for the manifest's project when the manifest does
+    there are any. The extras must name the manifest's declared project, and the
+    declared project stands for the manifest's project when the manifest does
     not name it. Each node's contract is checked with `validator`."""
-    extras = load_compile_extras(mf.extras_path, mf.declared_service) if mf.extras_path else None
+    extras = load_compile_extras(mf.extras_path, mf.declared_project) if mf.extras_path else None
     return parse_manifest(
-        mf.path, mf.image_tag, extras, skipped=skipped, declared_service=mf.declared_service,
+        mf.path, mf.image_tag, extras, skipped=skipped, declared_project=mf.declared_project,
         validator=validator, progress=progress, timings=timings,
     )
 

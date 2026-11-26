@@ -28,7 +28,7 @@ func stampRun(t *testing.T, db *sqlx.DB, seq any) uuid.UUID {
 // stampTask inserts one task of runID at nodeKey (nil for none).
 func stampTask(db *sqlx.DB, runID uuid.UUID, nodeKey any) error {
 	_, err := db.Exec(`
-		INSERT INTO tasks (tenant_id, task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries, node_key)
+		INSERT INTO tasks (tenant_id, task_id, run_id, project_name, schema_name, table_name, job_name, status, max_retries, node_key)
 		VALUES ((SELECT tenant_id FROM runs WHERE run_id = $2), $1, $2, 'svc', 'raw', 'orders', 'job', 'pending', 2, $3)`, uuid.New(), runID, nodeKey)
 	return err
 }

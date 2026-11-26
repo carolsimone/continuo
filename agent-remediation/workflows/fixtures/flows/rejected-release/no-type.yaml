@@ -17,9 +17,9 @@ trigger:
       reason: test_failed
       error_excerpt: "Got 3 results, configured to fail if != 0"
       file_path: models/schema.yml
-      service: sales
+      project: sales
       node_type: dbt-test
-service_repo_paths:
+project_repo_paths:
   sales: services/sales
 answers:
   pass:

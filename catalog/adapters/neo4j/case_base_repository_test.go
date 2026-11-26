@@ -119,9 +119,9 @@ func rejectionOf(releaseID, nodeID, signature string, at time.Time) casebase.Rej
 	}
 }
 
-func openPullRequest(proposalID, service string, number int, openedAt time.Time) casebase.PullRequest {
+func openPullRequest(proposalID, project string, number int, openedAt time.Time) casebase.PullRequest {
 	return casebase.PullRequest{
-		ProposalID: proposalID, Service: service,
+		ProposalID: proposalID, Project: project,
 		PrURL: "https://github.com/org/repo/pull/" + strconv.Itoa(number), PrNumber: number,
 		State: "open", OpenedBy: "agent-remediation", OpenedAt: openedAt,
 	}
@@ -254,7 +254,7 @@ func TestRecordRejection_BackLinkGuardIsPerNodeVersionFamily(t *testing.T) {
 
 	f.seedVersion("node-a", "hash-a1", t0.Add(time.Hour))
 	f.recordOutcome(casebase.PullRequestOutcome{
-		ProposalID: "prop", ReleaseID: "rel-a", Service: "core", Outcome: "merged",
+		ProposalID: "prop", ReleaseID: "rel-a", Project: "core", Outcome: "merged",
 		ClosedAt: t0, ResolvedNodeIDs: []string{"node-a"},
 	})
 	f.recordRejection(rejectionOf("rel-a", "node-a", "sig-a", t0))
@@ -304,7 +304,7 @@ func TestRecordProposal_CreatesStubRejection(t *testing.T) {
 	stub := f.rows(`
 		MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: 'rel', node_id: 'node'})-[:PROPOSED]->
 		      (:Proposal {tenant_id: $tenant_id, proposal_id: 'prop'})-[:HAS_PR]->
-		      (pl:PullRequest {tenant_id: $tenant_id, proposal_id: 'prop', service: 'core'})
+		      (pl:PullRequest {tenant_id: $tenant_id, proposal_id: 'prop', project: 'core'})
 		RETURN rej.stub AS stub, properties(pl) AS pl`, nil)
 	require.Len(t, stub, 1, "a stub :Rejection with a [:PROPOSED]->[:HAS_PR] chain")
 	isStub, _ := stub[0].Get("stub")
@@ -361,7 +361,7 @@ func TestCaseBase_LeavesOtherTenantsAlone(t *testing.T) {
 	a.recordRejection(rejectionOf("rel", "node", "sig", at))
 	a.recordProposal(casebase.Proposal{ProposalID: "prop", ReleaseID: "rel", NodeID: "node"}, openPullRequest("prop", "core", 7, at))
 	a.recordOutcome(casebase.PullRequestOutcome{
-		ProposalID: "prop", ReleaseID: "rel", Service: "core", Outcome: "merged", ClosedAt: at.Add(time.Hour),
+		ProposalID: "prop", ReleaseID: "rel", Project: "core", Outcome: "merged", ClosedAt: at.Add(time.Hour),
 		ResolvedNodeIDs: []string{"node"}, Edits: []casebase.EditOutcome{{Path: "models/edited.sql", TargetNodeID: "edited"}},
 	})
 	assert.Equal(t, beforeB, b.snapshot(), "tenant a's case base writes nothing of tenant b")

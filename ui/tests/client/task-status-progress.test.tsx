@@ -7,7 +7,7 @@ import type { Task } from '../../src/client/types';
 function tasksOf(...statuses: string[]): Task[] {
   return statuses.map((status, i) => ({
     task_id: `t-${i}`,
-    service_name: 'svc',
+    project_name: 'svc',
     schema_name: 'analytics',
     table_name: `table_${i}`,
     job_name: '',

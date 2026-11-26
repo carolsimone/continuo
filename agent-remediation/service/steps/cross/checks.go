@@ -12,7 +12,7 @@ import (
 
 // The names the checks of this file register under.
 const (
-	nameEditsMapToAService workflow.StepName = "edits_map_to_a_service"
+	nameEditsMapToAProject workflow.StepName = "edits_map_to_a_project"
 	nameNoPathEditedTwice  workflow.StepName = "no_path_edited_twice"
 	nameOneManifestKind    workflow.StepName = "one_manifest_kind"
 )
@@ -29,44 +29,44 @@ func finish(name workflow.StepName, f *remediation.Finding) remediation.CheckRes
 	return res
 }
 
-// --- edits_map_to_a_service ---
+// --- edits_map_to_a_project ---
 
-// EditsMapToAService is the check `edits_map_to_a_service`: every edit of the
-// try lies inside a service the install configures a repository path for.
-type EditsMapToAService struct {
-	serviceRepoPaths map[string]string
+// EditsMapToAProject is the check `edits_map_to_a_project`: every edit of the
+// try lies inside a project the install configures a repository path for.
+type EditsMapToAProject struct {
+	projectRepoPaths map[string]string
 	logger           *slog.Logger
 }
 
-var _ step.CrossCheck = (*EditsMapToAService)(nil)
+var _ step.CrossCheck = (*EditsMapToAProject)(nil)
 
-// NewEditsMapToAService builds the edits_map_to_a_service step. serviceRepoPaths
-// maps a service name to its repository path.
-func NewEditsMapToAService(serviceRepoPaths map[string]string, logger *slog.Logger) *EditsMapToAService {
-	return &EditsMapToAService{serviceRepoPaths: serviceRepoPaths, logger: shared.LoggerOrDefault(logger)}
+// NewEditsMapToAProject builds the edits_map_to_a_project step. projectRepoPaths
+// maps a project name to its repository path.
+func NewEditsMapToAProject(projectRepoPaths map[string]string, logger *slog.Logger) *EditsMapToAProject {
+	return &EditsMapToAProject{projectRepoPaths: projectRepoPaths, logger: shared.LoggerOrDefault(logger)}
 }
 
 // Meta describes the step.
-func (*EditsMapToAService) Meta() step.Meta {
+func (*EditsMapToAProject) Meta() step.Meta {
 	return step.Meta{
-		Name:        nameEditsMapToAService,
+		Name:        nameEditsMapToAProject,
 		Kind:        step.KindCheck,
-		Description: "Fails a try with an edit whose path no configured service owns, because a verification run is submitted for one service.",
+		Description: "Fails a try with an edit whose path no configured project owns, because a verification run is submitted for one project.",
 		Stages:      crossStage,
 	}
 }
 
-// CheckAll finds one edit_outside_services finding for the first edit, in
-// cluster order, that no configured service owns.
-func (c *EditsMapToAService) CheckAll(_ context.Context, in step.CrossInput) (remediation.CheckResult, error) {
-	e, ok := shared.FirstUnmapped(c.serviceRepoPaths, shared.EditsOf(in.Drafts))
+// CheckAll finds one edit_outside_projects finding for the first edit, in
+// cluster order, that no configured project owns.
+func (c *EditsMapToAProject) CheckAll(_ context.Context, in step.CrossInput) (remediation.CheckResult, error) {
+	e, ok := shared.FirstUnmapped(c.projectRepoPaths, shared.EditsOf(in.Drafts))
 	if !ok {
-		return finish(nameEditsMapToAService, nil), nil
+		return finish(nameEditsMapToAProject, nil), nil
 	}
-	c.logger.Error("an edit belongs to no configured service; the attempt cannot be verified",
+	c.logger.Error("an edit belongs to no configured project; the attempt cannot be verified",
 		"release", in.Trigger.ReleaseID, "path", e.Path, "target", e.TargetNodeID)
-	return finish(nameEditsMapToAService, &remediation.Finding{
-		Code: shared.CodeEditOutsideServices, Message: shared.UnmappedError(e).Error(), File: e.Path,
+	return finish(nameEditsMapToAProject, &remediation.Finding{
+		Code: shared.CodeEditOutsideProjects, Message: shared.UnmappedError(e).Error(), File: e.Path,
 	}), nil
 }
 
@@ -75,15 +75,15 @@ func (c *EditsMapToAService) CheckAll(_ context.Context, in step.CrossInput) (re
 // NoPathEditedTwice is the check `no_path_edited_twice`: no two edits of the
 // try change one repository path.
 type NoPathEditedTwice struct {
-	serviceRepoPaths map[string]string
+	projectRepoPaths map[string]string
 	logger           *slog.Logger
 }
 
 var _ step.CrossCheck = (*NoPathEditedTwice)(nil)
 
 // NewNoPathEditedTwice builds the no_path_edited_twice step.
-func NewNoPathEditedTwice(serviceRepoPaths map[string]string, logger *slog.Logger) *NoPathEditedTwice {
-	return &NoPathEditedTwice{serviceRepoPaths: serviceRepoPaths, logger: shared.LoggerOrDefault(logger)}
+func NewNoPathEditedTwice(projectRepoPaths map[string]string, logger *slog.Logger) *NoPathEditedTwice {
+	return &NoPathEditedTwice{projectRepoPaths: projectRepoPaths, logger: shared.LoggerOrDefault(logger)}
 }
 
 // Meta describes the step.
@@ -97,10 +97,10 @@ func (*NoPathEditedTwice) Meta() step.Meta {
 }
 
 // CheckAll finds one path_edited_twice finding for the first edit to a path an
-// earlier edit of the try changed. An edit no service owns is left to
-// edits_map_to_a_service.
+// earlier edit of the try changed. An edit no project owns is left to
+// edits_map_to_a_project.
 func (c *NoPathEditedTwice) CheckAll(_ context.Context, in step.CrossInput) (remediation.CheckResult, error) {
-	e, ok := shared.FirstDuplicate(c.serviceRepoPaths, shared.EditsOf(in.Drafts))
+	e, ok := shared.FirstDuplicate(c.projectRepoPaths, shared.EditsOf(in.Drafts))
 	if !ok {
 		return finish(nameNoPathEditedTwice, nil), nil
 	}
@@ -113,20 +113,20 @@ func (c *NoPathEditedTwice) CheckAll(_ context.Context, in step.CrossInput) (rem
 
 // --- one_manifest_kind ---
 
-// OneManifestKind is the check `one_manifest_kind`: no service has its python
+// OneManifestKind is the check `one_manifest_kind`: no project has its python
 // contract and an edit to anything else in one try. It reads the
 // packaged_contract evidence of each cluster when there is one, and every
 // other cluster simply has none.
 type OneManifestKind struct {
-	serviceRepoPaths map[string]string
+	projectRepoPaths map[string]string
 	logger           *slog.Logger
 }
 
 var _ step.CrossCheck = (*OneManifestKind)(nil)
 
 // NewOneManifestKind builds the one_manifest_kind step.
-func NewOneManifestKind(serviceRepoPaths map[string]string, logger *slog.Logger) *OneManifestKind {
-	return &OneManifestKind{serviceRepoPaths: serviceRepoPaths, logger: shared.LoggerOrDefault(logger)}
+func NewOneManifestKind(projectRepoPaths map[string]string, logger *slog.Logger) *OneManifestKind {
+	return &OneManifestKind{projectRepoPaths: projectRepoPaths, logger: shared.LoggerOrDefault(logger)}
 }
 
 // Meta describes the step.
@@ -134,23 +134,23 @@ func (*OneManifestKind) Meta() step.Meta {
 	return step.Meta{
 		Name: nameOneManifestKind,
 		Kind: step.KindCheck,
-		Description: "Fails a try that, in one service, packages a python contract and also edits something that is not a python node's " +
+		Description: "Fails a try that, in one project, packages a python contract and also edits something that is not a python node's " +
 			"contract, because a verification run verifies one manifest kind.",
 		Stages: crossStage,
 	}
 }
 
-// CheckAll finds one mixed_manifest_kinds finding for the first service, in
+// CheckAll finds one mixed_manifest_kinds finding for the first project, in
 // name order, whose packaged contract comes with an edit that is not the
 // contract of a failing python node.
 func (c *OneManifestKind) CheckAll(_ context.Context, in step.CrossInput) (remediation.CheckResult, error) {
-	service, e, ok := shared.FirstMixed(c.serviceRepoPaths, in.Trigger, in.Drafts)
+	project, e, ok := shared.FirstMixed(c.projectRepoPaths, in.Trigger, in.Drafts)
 	if !ok {
 		return finish(nameOneManifestKind, nil), nil
 	}
-	c.logger.Error("a service's edits span two manifest kinds; the attempt cannot be verified",
-		"release", in.Trigger.ReleaseID, "service", service, "edit", e.Path, "target", e.TargetNodeID)
+	c.logger.Error("a project's edits span two manifest kinds; the attempt cannot be verified",
+		"release", in.Trigger.ReleaseID, "project", project, "edit", e.Path, "target", e.TargetNodeID)
 	return finish(nameOneManifestKind, &remediation.Finding{
-		Code: shared.CodeMixedManifestKinds, Message: shared.MixedError(service).Error(), File: e.Path,
+		Code: shared.CodeMixedManifestKinds, Message: shared.MixedError(project).Error(), File: e.Path,
 	}), nil
 }

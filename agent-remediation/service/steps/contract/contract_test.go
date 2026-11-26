@@ -237,7 +237,7 @@ func failure(mod func(*remediation.Failure)) remediation.Failure {
 			ErrorSignature: "sig-1",
 			ErrorExcerpt:   "column amount missing",
 			DBTLogURI:      "s3://logs/rel-1/a.log",
-			Service:        "svc",
+			Project:        "svc",
 		},
 		Attempt: 2,
 	}

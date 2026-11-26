@@ -75,21 +75,21 @@ bytes for one version of the harness and of the pinned libraries, and two
 baselines of that version parse the same estate. The Python bundle's producer
 stamp names the runtime and library versions, so it changes with them.
 
-- 10 dbt services, `svc-0` to `svc-9`, with the models split evenly, and one
-  python service, `svc-py`, of one node per ten models. `svc-py` is written as
+- 10 dbt projects, `svc-0` to `svc-9`, with the models split evenly, and one
+  python project, `svc-py`, of one node per ten models. `svc-py` is written as
   its `odcs-bundle.json` (kind `python-odcs`), one ODCS contract per node with
-  its read queries, valid under continuo-contracts 0.4.1. The bundle's producer
-  names `continuo-python-runtime` 0.14.0 and continuo-contracts 0.4.1.
+  its read queries, valid under continuo-contracts 0.5.0. The bundle's producer
+  names `continuo-python-runtime` 0.15.0 and continuo-contracts 0.5.0.
 - Each model has `--columns` columns, a compiled SQL of a CTE over one upstream,
   a window sum and a left join to a second, and two generic not-null tests.
-- Each dbt service has one seed, and a `compile-extras.json` beside its manifest.
+- Each dbt project has one seed, and a `compile-extras.json` beside its manifest.
   The seed declares every column of its CSV header, so the release's header
   check passes.
 - Every dbt model and seed gets a generated contract, so the `contract_generation`
-  and `contract_validation` stages run for the dbt services as well as for
+  and `contract_validation` stages run for the dbt projects as well as for
   `svc-py`.
 - Each manifest carries the macros of `fixtures/macros.json.gz`, which
-  `dbt parse` of the finance service of continuo-demo (commit `3ab3a7e`) wrote
+  `dbt parse` of the finance project of continuo-demo (commit `3ab3a7e`) wrote
   with dbt-core 1.12.0b1 and dbt-postgres 1.10.0, the versions continuo's dbt
   images pin. The fixture stays the same from one baseline to the next.
 
@@ -121,7 +121,7 @@ The handler is built with the ontology switch on, so the `ontology` stage runs
 on a real ontology file and a real set of bindings, and the stored contracts are
 filled in from the ontology.
 
-- Every service of the estate, `svc-0` to `svc-9` and `svc-py`, is declared in the
+- Every project of the estate, `svc-0` to `svc-9` and `svc-py`, is declared in the
   ontology under one domain, `bench`.
 - The ontology holds one thing, `BenchRow`, with the key part `id`.
 - Every model, seed and python node is a copy of `BenchRow`: a model's `config.meta.continuo`

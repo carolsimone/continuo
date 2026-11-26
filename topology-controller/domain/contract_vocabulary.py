@@ -32,7 +32,7 @@ class RejectReason(StrEnum):
     INVALID_ARTIFACT = "invalid_artifact"
     INTERNAL_ERROR = "internal_error"
     DUPLICATE_TABLE = "duplicate_table"
-    UNBUILDABLE_CROSS_SERVICE_UPSTREAM = "unbuildable_cross_service_upstream"
+    UNBUILDABLE_CROSS_PROJECT_UPSTREAM = "unbuildable_cross_project_upstream"
     NOTHING_TO_VALIDATE = "nothing_to_validate"
     SEED_BUILD_FAILED = "seed_build_failed"
     VALIDATION_FAILED = "validation_failed"

@@ -9,16 +9,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// baselineImageTagsFile holds the per-service dbt image tags written by
+// baselineImageTagsFile holds the per-project dbt image tags written by
 // provision-k8s-test-env.sh / setup.sh (bind-mounted at /app/tests/e2e). It is
 // immutable setup metadata — the content-addressed tag each dbt image is loaded
-// into kind under — in IMAGE_TAG_PER_SERVICE form:
+// into kind under — in IMAGE_TAG_PER_PROJECT form:
 // "service-1=<tag>,service-2=<tag>,service-3=<tag>".
 const baselineImageTagsFile = ".image-tags"
 
-// seedBaselineServiceProd (re)establishes the per-service service_prod pointer
+// seedBaselineServiceProd (re)establishes the per-project service_prod pointer
 // rows from the immutable deploy metadata. It is called before every consumer
-// that reads per-service image tags (seedTopology, baselineServices) so a prior
+// that reads per-project image tags (seedTopology, baselineProjects) so a prior
 // blue/green test's mutation of service_prod — promotion rewriting a row, or the
 // bootstrap test wiping the table — cannot break a later test's read. The
 // baseline is rebuilt from setup metadata, never captured from the (test-mutated)
@@ -27,9 +27,9 @@ func seedBaselineServiceProd(t *testing.T, ctx context.Context, clients *testCli
 	t.Helper()
 	for svc, tag := range baselineImageTags(t) {
 		_, err := clients.releaseDB.ExecContext(ctx,
-			`INSERT INTO service_prod (service_name, release_id, manifest_s3_key, image_tag, manifest_kind, updated_at)
+			`INSERT INTO service_prod (project_name, release_id, manifest_s3_key, image_tag, manifest_kind, updated_at)
 			 VALUES ($1, $2, $3, $4, 'dbt', now())
-			 ON CONFLICT (service_name) DO UPDATE SET
+			 ON CONFLICT (project_name) DO UPDATE SET
 			   release_id = EXCLUDED.release_id, manifest_s3_key = EXCLUDED.manifest_s3_key,
 			   image_tag = EXCLUDED.image_tag, manifest_kind = EXCLUDED.manifest_kind, updated_at = EXCLUDED.updated_at`,
 			svc, e2eBaselineReleaseID, canonicalManifestS3URI(svc, e2eBaselineReleaseID), tag)
@@ -37,16 +37,16 @@ func seedBaselineServiceProd(t *testing.T, ctx context.Context, clients *testCli
 	}
 }
 
-// baselineImageTags parses the per-service image tags from the
-// IMAGE_TAG_PER_SERVICE env var, falling back to the bind-mounted .image-tags
-// file. Format: comma-separated "service=tag" pairs.
+// baselineImageTags parses the per-project image tags from the
+// IMAGE_TAG_PER_PROJECT env var, falling back to the bind-mounted .image-tags
+// file. Format: comma-separated "project=tag" pairs.
 func baselineImageTags(t *testing.T) map[string]string {
 	t.Helper()
-	spec := os.Getenv("IMAGE_TAG_PER_SERVICE")
+	spec := os.Getenv("IMAGE_TAG_PER_PROJECT")
 	if spec == "" {
 		b, err := os.ReadFile(baselineImageTagsFile)
 		require.NoError(t, err,
-			"read %s — provision-k8s-test-env.sh / setup.sh must write the per-service image tags", baselineImageTagsFile)
+			"read %s — provision-k8s-test-env.sh / setup.sh must write the per-project image tags", baselineImageTagsFile)
 		spec = strings.TrimSpace(string(b))
 	}
 	tags := map[string]string{}
@@ -56,6 +56,6 @@ func baselineImageTags(t *testing.T) map[string]string {
 		require.NotEmpty(t, kv[1], "empty image tag for %q", kv[0])
 		tags[kv[0]] = kv[1]
 	}
-	require.NotEmpty(t, tags, "no per-service image tags found")
+	require.NotEmpty(t, tags, "no per-project image tags found")
 	return tags
 }

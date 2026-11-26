@@ -38,11 +38,11 @@ def _vector(name: str) -> dict:
     return ontology_vector(name)
 
 
-def _release_ontology(tmp_path, text: str, *, service="company-ontology", release_id="rel-onto-4") -> ReleaseOntology:
+def _release_ontology(tmp_path, text: str, *, project="company-ontology", release_id="rel-onto-4") -> ReleaseOntology:
     path = tmp_path / "ontology.yaml"
     path.write_text(text, encoding="utf-8")
     return load_release_ontology(ManifestFile(
-        path=str(path), declared_service=service, kind=ManifestKind.ONTOLOGY, release_id=release_id))
+        path=str(path), declared_project=project, kind=ManifestKind.ONTOLOGY, release_id=release_id))
 
 
 def _reads(stored: dict) -> list[TableRef]:
@@ -60,7 +60,7 @@ def _node(stored: dict) -> ManifestNode:
     schema, table = stored["id"].split(".")
     python = values["kind"].startswith("python")
     return ManifestNode(
-        table_name=table, schema_name=schema, service_name=values["service"], owner="team", schedule_name="daily",
+        table_name=table, schema_name=schema, project_name=values["project"], owner="team", schedule_name="daily",
         criticality="SECONDARY", node_type=NodeType(values["kind"]),
         runtime=Runtime.PYTHON if python else Runtime.DBT,
         content_hash="sha256:" + "b" * 64,
@@ -138,7 +138,7 @@ def test_the_switch_off_takes_the_links_away_too():
 
 # --- the switch on --------------------------------------------------------------------
 
-def test_a_declared_service_is_stored_resolved(tmp_path):
+def test_a_declared_project_is_stored_resolved(tmp_path):
     vector = _vector("python_node_with_aggregates")
     ontology = _release_ontology(tmp_path, vector["ontology"])
 
@@ -172,8 +172,8 @@ def test_a_declared_dbt_contract_is_stored_resolved(tmp_path):
     assert stored.contract_hash == vector["contract_hash"]
 
 
-def test_an_undeclared_service_keeps_its_bindings_as_written(tmp_path):
-    vector = _vector("service_not_declared")
+def test_an_undeclared_project_keeps_its_bindings_as_written(tmp_path):
+    vector = _vector("project_not_declared")
     ontology = _release_ontology(tmp_path, vector["ontology"])
     assert not ontology.ontology.declares("core")
 
@@ -193,7 +193,7 @@ def test_the_switch_on_with_no_ontology_keeps_bindings_and_warns():
     assert stored.document == bound
     assert stored.contract_hash == contract_hash(bound)
     assert envelope == {
-        "enabled": True, "service": None, "release_id": None, "sha256": None, "declared_services": [],
+        "enabled": True, "project": None, "release_id": None, "sha256": None, "declared_projects": [],
         "findings": [NO_ONTOLOGY_WARNING],
     }
 
@@ -223,16 +223,16 @@ def test_the_envelope_is_none_with_the_switch_off(tmp_path):
 
 def test_the_envelope_records_the_ontology_the_release_used(tmp_path):
     text = _vector("python_node_with_aggregates")["ontology"]
-    ontology = _release_ontology(tmp_path, text, service="company-ontology", release_id="rel-9f8e7d6-14")
+    ontology = _release_ontology(tmp_path, text, project="company-ontology", release_id="rel-9f8e7d6-14")
 
     envelope = ontology_envelope(enabled=True, release_ontology=ontology, findings=())
 
     assert envelope == {
         "enabled": True,
-        "service": "company-ontology",
+        "project": "company-ontology",
         "release_id": "rel-9f8e7d6-14",
         "sha256": ontology.ontology.sha256,
-        "declared_services": ["core", "finance", "service-py"],
+        "declared_projects": ["core", "finance", "service-py"],
         "findings": [],
     }
     assert len(envelope["sha256"]) == 64
@@ -289,7 +289,7 @@ def test_the_fixture_contracts_are_what_the_ontology_resolves_the_library_vector
     given = _fixture_input()
     ontology = _release_ontology(
         tmp_path, _vector("python_node_with_aggregates")["ontology"],
-        service=given["ontology"]["service"], release_id=given["ontology"]["release_id"])
+        project=given["ontology"]["project"], release_id=given["ontology"]["release_id"])
     by_id = {c["unique_id"]: c for c in given["contracts"]}
     assert sorted(by_id) == ["analytics.fx_transactions_eur", "analytics.py_daily_kpis"]
 
@@ -332,7 +332,7 @@ def _release(tmp_path, *, enabled: bool, authored: str = AUTHORED, ontology_text
         path = tmp_path / "ontology.yaml"
         path.write_text(ontology_text, encoding="utf-8")
         files.append(ManifestFile(
-            path=str(path), declared_service="company-ontology", kind=ManifestKind.ONTOLOGY, release_id="rel-onto-4"))
+            path=str(path), declared_project="company-ontology", kind=ManifestKind.ONTOLOGY, release_id="rel-onto-4"))
     publisher, writer = MagicMock(), RecordingContractBundleWriter()
     python_handler(
         source_of(*files), publisher, contract_bundle_writer=writer, ontology_enabled=enabled,
@@ -364,7 +364,7 @@ def test_a_release_with_the_switch_off_ignores_the_ontology_it_carries(tmp_path)
     assert with_ontology["ontology"] is None
 
 
-def test_a_release_with_the_switch_on_stores_the_contracts_of_a_declared_service_resolved(tmp_path):
+def test_a_release_with_the_switch_on_stores_the_contracts_of_a_declared_project_resolved(tmp_path):
     ontology_text = _vector("python_node_with_aggregates")["ontology"]
 
     bundle = _release(tmp_path, enabled=True, ontology_text=ontology_text)
@@ -375,10 +375,10 @@ def test_a_release_with_the_switch_on_stores_the_contracts_of_a_declared_service
     assert contract["contract_hash"] == contract_hash(contract["document"])
     assert bundle["ontology"] == {
         "enabled": True,
-        "service": "company-ontology",
+        "project": "company-ontology",
         "release_id": "rel-onto-4",
         "sha256": ontology_file.load(ontology_text).sha256,
-        "declared_services": ["core", "finance", "service-py"],
+        "declared_projects": ["core", "finance", "service-py"],
         "findings": bundle["ontology"]["findings"],
     }
     # What the checker found of this contract and does not reject it for: it reads a table no
@@ -393,17 +393,17 @@ def test_a_release_with_the_switch_on_and_no_ontology_keeps_the_bindings_and_war
     document = _the_contract(bundle)["document"]
     assert ontology_file.has_bindings(document)
     assert "domain" not in document
-    assert bundle["ontology"]["service"] is None
+    assert bundle["ontology"]["project"] is None
     assert bundle["ontology"]["findings"] == [NO_ONTOLOGY_WARNING]
 
 
-def test_a_release_with_the_switch_on_keeps_the_bindings_of_a_service_the_ontology_does_not_declare(tmp_path):
-    ontology_text = _vector("service_not_declared")["ontology"]
-    assert "service-py" not in ontology_file.load(ontology_text).services()
+def test_a_release_with_the_switch_on_keeps_the_bindings_of_a_project_the_ontology_does_not_declare(tmp_path):
+    ontology_text = _vector("project_not_declared")["ontology"]
+    assert "service-py" not in ontology_file.load(ontology_text).projects()
 
     bundle = _release(tmp_path, enabled=True, ontology_text=ontology_text)
 
     document = _the_contract(bundle)["document"]
     assert ontology_file.has_bindings(document)
     assert "domain" not in document and LINK_PREFIX not in json.dumps(document)
-    assert bundle["ontology"]["service"] == "company-ontology"
+    assert bundle["ontology"]["project"] == "company-ontology"

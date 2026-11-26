@@ -448,13 +448,13 @@ func TestQueryHandler_GetCodeUnitVersions_ByUniqueID(t *testing.T) {
 
 func TestQueryHandler_GetNodeLocation_MapsFields(t *testing.T) {
 	lists := &fakeNodeReader{
-		location: &domain.NodeLocation{FilePath: "models/loc_target.sql", ServiceName: "service-1"},
+		location: &domain.NodeLocation{FilePath: "models/loc_target.sql", ProjectName: "service-1"},
 	}
 	h := newHandlerWithNodes(lists)
 	resp, err := h.GetNodeLocation(tenantCtx(), &catalogv1.GetNodeLocationRequest{UniqueId: "analytics.loc_target"})
 	require.NoError(t, err)
 	assert.Equal(t, "models/loc_target.sql", resp.FilePath)
-	assert.Equal(t, "service-1", resp.ServiceName)
+	assert.Equal(t, "service-1", resp.ProjectName)
 }
 
 func TestQueryHandler_GetNodeLocation_UnknownNode_NotFound(t *testing.T) {
@@ -635,7 +635,7 @@ func TestGetPrecedents_EmptyIsOKNotNotFound(t *testing.T) {
 func queryHandlerCalls(h *grpcadapter.QueryHandler, ctx context.Context) map[string]func() error {
 	return map[string]func() error{
 		"GetNode": func() error {
-			_, err := h.GetNode(ctx, &catalogv1.GetNodeRequest{ServiceName: "svc", SchemaName: "an", TableName: "fct"})
+			_, err := h.GetNode(ctx, &catalogv1.GetNodeRequest{ProjectName: "svc", SchemaName: "an", TableName: "fct"})
 			return err
 		},
 		"GetNodeLocation": func() error {

@@ -6,7 +6,7 @@ service CatalogQuery {
   rpc GetNode(GetNodeRequest) returns (GetNodeResponse);
 
   // GetNodeLocation returns where a node's source lives: its project-relative
-  // file path and owning service. An unknown or retired unique_id is
+  // file path and owning project. An unknown or retired unique_id is
   // NOT_FOUND; a node whose file path was not captured returns file_path "".
   rpc GetNodeLocation(GetNodeLocationRequest) returns (GetNodeLocationResponse);
 
@@ -78,11 +78,11 @@ service CatalogQuery {
 }
 
 // GetNode returns per-node topology metadata for a single node, addressed by
-// its (service, schema, table) identity. Used by the UI to decide which
+// its (project, schema, table) identity. Used by the UI to decide which
 // single-node operations are meaningful before submitting them. By default only
 // an active node matches and an inactive one is NOT_FOUND.
 message GetNodeRequest {
-  string service_name = 1;
+  string project_name = 1;
   string schema_name  = 2;
   string table_name   = 3;
   // include_inactive, when true, also returns a retired node, one no longer
@@ -106,7 +106,7 @@ message GetNodeResponse {
 message GetNodeLocationRequest  { string unique_id = 1; }
 message GetNodeLocationResponse {
   string file_path    = 1;  // dbt original_file_path (project-relative); "" if not captured
-  string service_name = 2;
+  string project_name = 2;
 }
 
 // VersionView is one recorded code state of a node: identity and hash parts,

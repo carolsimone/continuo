@@ -358,7 +358,7 @@ func TestRunner_AContractOwnerOutlivesTheTryThatReadIt(t *testing.T) {
 			metrics := &recordedMetrics{}
 			h := newHarness(t, withContractType(1, &refusingPackager{}), withMetrics(metrics))
 			h.archive.(*checkoutOf).files[contractYAML] = brokenContract + "team:\n  name: sales-team\n"
-			h.images.err = fmt.Errorf("release rel-1, service svc-a: %w", ports.ErrNoImagePackages)
+			h.images.err = fmt.Errorf("release rel-1, project svc-a: %w", ports.ErrNoImagePackages)
 			calls := h.recordOutputs()
 			h.llm.answer = func(req prompt.ProposeRequest) ports.ProposeResult {
 				if prompt.IsSourceFix(req) {

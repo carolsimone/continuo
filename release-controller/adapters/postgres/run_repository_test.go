@@ -86,7 +86,7 @@ func TestRunRepository_SaveAndGet(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, "rA", got.ID())
 	assert.Equal(t, pipeline.StatusReceived, got.Status())
-	assert.Equal(t, "svc", got.ChangedService())
+	assert.Equal(t, "svc", got.ChangedProject())
 	assert.Equal(t, release.ManifestKindDbt, got.ManifestKind())
 }
 
@@ -183,18 +183,18 @@ func TestRunRepository_SavesAnOntologyRun(t *testing.T) {
 
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO release_pipeline_runs
-		  (run_id, status, image_tags, created_at, repo, commit_sha, changed_service, manifest_kind, run_kind)
+		  (run_id, status, image_tags, created_at, repo, commit_sha, changed_project, manifest_kind, run_kind)
 		VALUES ('rel-bogus', 'received', '{}', $1, 'acme/x', 'cafebabe', 'svc', 'bogus', 'candidate')`,
 		time.Unix(100, 0).UTC())
 	require.Error(t, err, "the constraint accepts only the kinds a release can carry")
 	assert.Contains(t, err.Error(), "release_pipeline_runs_manifest_kind_check")
 }
 
-// TestRunRepository_ActiveCandidateServicesWithKind proves the list holds the
-// services of the candidate runs of one manifest kind that have not ended, each
+// TestRunRepository_ActiveCandidateProjectsWithKind proves the list holds the
+// projects of the candidate runs of one manifest kind that have not ended, each
 // once and sorted, and leaves out the runs that ended, the runs of other kinds
 // and the verification runs.
-func TestRunRepository_ActiveCandidateServicesWithKind(t *testing.T) {
+func TestRunRepository_ActiveCandidateProjectsWithKind(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewRunRepository(db, nil)
 	ctx := context.Background()
@@ -204,17 +204,17 @@ func TestRunRepository_ActiveCandidateServicesWithKind(t *testing.T) {
 		t.Helper()
 		require.NoError(t, repo.Save(ctx, r))
 	}
-	candidate := func(id, service string, kind release.ManifestKind) *pipeline.Run {
-		return pipeline.NewCandidate(id, service, "img:1", false, false, "acme/x", "cafebabe", kind, now)
+	candidate := func(id, project string, kind release.ManifestKind) *pipeline.Run {
+		return pipeline.NewCandidate(id, project, "img:1", false, false, "acme/x", "cafebabe", kind, now)
 	}
-	queued := func(id, service string, kind release.ManifestKind) { save(candidate(id, service, kind)) }
-	ended := func(id, service string, kind release.ManifestKind) {
-		r := candidate(id, service, kind)
+	queued := func(id, project string, kind release.ManifestKind) { save(candidate(id, project, kind)) }
+	ended := func(id, project string, kind release.ManifestKind) {
+		r := candidate(id, project, kind)
 		require.NoError(t, r.Fail("invalid_contract", "", nil, now))
 		save(r)
 	}
-	parsing := func(id, service string, kind release.ManifestKind) {
-		r := candidate(id, service, kind)
+	parsing := func(id, project string, kind release.ManifestKind) {
+		r := candidate(id, project, kind)
 		require.NoError(t, r.TransitionToParsing(now))
 		save(r)
 	}
@@ -227,15 +227,15 @@ func TestRunRepository_ActiveCandidateServicesWithKind(t *testing.T) {
 	queued("r6", "svc-py", release.ManifestKindPythonODCS)
 	save(pipeline.NewVerification("v1", "ontology-verified", "img:1", "r0", 1, "", release.ManifestKindOntology, now))
 
-	got, err := repo.ActiveCandidateServicesWithKind(ctx, release.ManifestKindOntology)
+	got, err := repo.ActiveCandidateProjectsWithKind(ctx, release.ManifestKindOntology)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"ontology-a", "ontology-b"}, got)
 
-	got, err = repo.ActiveCandidateServicesWithKind(ctx, release.ManifestKindDbt)
+	got, err = repo.ActiveCandidateProjectsWithKind(ctx, release.ManifestKindDbt)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"svc-dbt"}, got)
 
-	got, err = repo.ActiveCandidateServicesWithKind(ctx, release.ManifestKindPython)
+	got, err = repo.ActiveCandidateProjectsWithKind(ctx, release.ManifestKindPython)
 	require.NoError(t, err)
 	assert.Empty(t, got, "a kind no run holds yields an empty list, not an error")
 }
@@ -253,7 +253,7 @@ func TestRunRepository_AnOldPythonRunStillLoads(t *testing.T) {
 	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM release_pipeline_runs WHERE run_id = $1`, runID) })
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO release_pipeline_runs
-		  (run_id, status, image_tags, created_at, resolved_at, repo, commit_sha, changed_service, manifest_kind, run_kind)
+		  (run_id, status, image_tags, created_at, resolved_at, repo, commit_sha, changed_project, manifest_kind, run_kind)
 		VALUES ($1, 'promoted', '{"svc-py":"img:1"}', $2, $3, 'acme/py', 'cafebabe', 'svc-py', 'python', 'candidate')`,
 		runID, time.Unix(100, 0).UTC(), time.Unix(200, 0).UTC())
 	require.NoError(t, err)
@@ -264,7 +264,7 @@ func TestRunRepository_AnOldPythonRunStillLoads(t *testing.T) {
 	assert.Equal(t, release.ManifestKindPython, got.ManifestKind())
 	assert.True(t, got.ManifestKind().IsPython())
 	assert.Equal(t, pipeline.StatusPromoted, got.Status())
-	assert.Equal(t, "svc-py", got.ChangedService())
+	assert.Equal(t, "svc-py", got.ChangedProject())
 
 	locked, err := repo.Load(ctx, runID)
 	require.NoError(t, err)
@@ -321,7 +321,7 @@ func TestRunRepository_NextQueuedAndActive(t *testing.T) {
 	assert.Equal(t, "rOLD", a.ID())
 }
 
-func TestRunRepository_ChangedServiceRoundTrips(t *testing.T) {
+func TestRunRepository_ChangedProjectRoundTrips(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewRunRepository(db, nil)
 	ctx := context.Background()
@@ -332,7 +332,7 @@ func TestRunRepository_ChangedServiceRoundTrips(t *testing.T) {
 	got, err := repo.Get(ctx, "rCS")
 	require.NoError(t, err)
 	require.NotNil(t, got)
-	assert.Equal(t, "service-x", got.ChangedService())
+	assert.Equal(t, "service-x", got.ChangedProject())
 	assert.Equal(t, map[string]string{"service-x": "img-1"}, got.ImageTags())
 }
 
@@ -661,7 +661,7 @@ func TestRunRepository_Load_ReturnsRow(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, "rLoad", got.ID())
 	assert.Equal(t, pipeline.StatusReceived, got.Status())
-	assert.Equal(t, "svc", got.ChangedService())
+	assert.Equal(t, "svc", got.ChangedProject())
 }
 
 // TestRunRepository_Load_ReturnsNilForMissingRow verifies Load matches Get's
@@ -1256,7 +1256,7 @@ func TestRunRepository_RefusesRebaselineWithoutBootstrap(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewRunRepository(db, nil)
 	r := pipeline.Rehydrate(pipeline.RehydrateInput{ID: "r-bad", Kind: pipeline.KindCandidate, Status: pipeline.StatusReceived,
-		ChangedService: "svc-a", ImageTags: map[string]string{"svc-a": "sha-a"}, ManifestKind: release.ManifestKindDbt,
+		ChangedProject: "svc-a", ImageTags: map[string]string{"svc-a": "sha-a"}, ManifestKind: release.ManifestKindDbt,
 		Repo: "acme/demo", CommitSHA: "deadbeef", Rebaseline: true, CreatedAt: time.Unix(100, 0).UTC()})
 	_, err := repo.Create(context.Background(), r)
 	require.ErrorContains(t, err, "release_pipeline_runs_rebaseline_needs_bootstrap")
@@ -1278,7 +1278,7 @@ func TestRunRepository_StoresAndReadsTheNotices(t *testing.T) {
 	assert.Empty(t, got.Notices())
 
 	notice := release.Notice{
-		Kind: "seed_reload", NodeID: "analytics.seed_fx_rates_eur", Service: "finance",
+		Kind: "seed_reload", NodeID: "analytics.seed_fx_rates_eur", Project: "finance",
 		EngineFamily: warehouse.SchemaBound, Change: seedreload.ChangeColumns,
 		Columns:           release.ColumnChanges{Added: []string{"source"}, Removed: []string{}, Retyped: []string{}},
 		Load:              seedreload.Load{Operation: model.OperationRun, DropsTable: true, Reason: "columns changed; +full_refresh: true re-creates the table on every load"},

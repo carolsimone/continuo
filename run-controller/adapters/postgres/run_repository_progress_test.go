@@ -60,9 +60,9 @@ func TestRunRepository_SaveRun_PersistsProgressClock(t *testing.T) {
 
 	dispatchedAt := time.Now().Add(-30 * time.Minute).UTC().Truncate(time.Microsecond)
 	g := topology.NewGraph([]topology.Node{{
-		Key: "public.tbl", ServiceName: "svc", SchemaName: "public", TableName: "tbl", NodeType: "dbt-model",
+		Key: "public.tbl", ProjectName: "svc", SchemaName: "public", TableName: "tbl", NodeType: "dbt-model",
 	}}, nil)
-	plan, err := runplan.SingleNode{Key: "public.tbl", ServiceName: "svc"}.Select(g)
+	plan, err := runplan.SingleNode{Key: "public.tbl", ProjectName: "svc"}.Select(g)
 	require.NoError(t, err)
 	saveIn(func(rn *run.Run, tasks run.TaskCollection) {
 		_, err := rn.Start(ctx, tasks, plan, g, testTaskDefaults, dispatchedAt)

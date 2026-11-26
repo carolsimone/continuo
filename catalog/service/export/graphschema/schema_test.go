@@ -42,7 +42,7 @@ func TestGraphSchema_IdentitiesMatchTheDesign(t *testing.T) {
 		graphschema.Rejection:        {"release_id", "node_id"},
 		graphschema.ErrorSignature:   {"signature"},
 		graphschema.Proposal:         {"proposal_id"},
-		graphschema.PullRequest:      {"proposal_id", "service"},
+		graphschema.PullRequest:      {"proposal_id", "project"},
 		graphschema.ProcessedMessage: {"group", "message_id"},
 		graphschema.ContractVersion:  {"unique_id", "contract_hash"},
 	}

@@ -20,22 +20,22 @@ func (s *Server) ListNodeTasks(ctx context.Context, req *runv1.ListNodeTasksRequ
 	if err != nil {
 		return nil, err
 	}
-	if req.GetServiceName() == "" || req.GetSchemaName() == "" || req.GetTableName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "service_name, schema_name and table_name are required")
+	if req.GetProjectName() == "" || req.GetSchemaName() == "" || req.GetTableName() == "" {
+		return nil, status.Error(codes.InvalidArgument, "project_name, schema_name and table_name are required")
 	}
 	operation, err := model.ParseOperation(req.GetOperation())
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid operation: %v", err)
 	}
-	rows, err := s.reads.Nodes.ListNodeTasks(ctx, tenantID, req.GetServiceName(), req.GetSchemaName(), req.GetTableName(), operation, int(req.GetLimit()))
+	rows, err := s.reads.Nodes.ListNodeTasks(ctx, tenantID, req.GetProjectName(), req.GetSchemaName(), req.GetTableName(), operation, int(req.GetLimit()))
 	if err != nil {
 		return nil, s.internalError("ListNodeTasks", err,
-			"service", req.GetServiceName(), "schema", req.GetSchemaName(), "table", req.GetTableName())
+			"project", req.GetProjectName(), "schema", req.GetSchemaName(), "table", req.GetTableName())
 	}
 	outage, found, err := s.reads.Nodes.ViewOutage(ctx, tenantID, req.GetSchemaName(), req.GetTableName())
 	if err != nil {
 		return nil, s.internalError("ListNodeTasks", err,
-			"service", req.GetServiceName(), "schema", req.GetSchemaName(), "table", req.GetTableName())
+			"project", req.GetProjectName(), "schema", req.GetSchemaName(), "table", req.GetTableName())
 	}
 	out := make([]*runv1.NodeTask, 0, len(rows))
 	for _, r := range rows {
@@ -94,15 +94,15 @@ func (s *Server) ListNodes(ctx context.Context, req *runv1.ListNodesRequest) (*r
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid operation: %v", err)
 	}
-	rows, total, err := s.reads.Nodes.ListNodes(ctx, tenantID, req.GetSearch(), req.GetServiceName(), operation, req.GetDormantOnly(),
+	rows, total, err := s.reads.Nodes.ListNodes(ctx, tenantID, req.GetSearch(), req.GetProjectName(), operation, req.GetDormantOnly(),
 		int(req.GetLimit()), int(req.GetOffset()))
 	if err != nil {
-		return nil, s.internalError("ListNodes", err, "search", req.GetSearch(), "service", req.GetServiceName())
+		return nil, s.internalError("ListNodes", err, "search", req.GetSearch(), "project", req.GetProjectName())
 	}
 	out := make([]*runv1.NodeSummary, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, &runv1.NodeSummary{
-			ServiceName:     r.ServiceName,
+			ProjectName:     r.ProjectName,
 			SchemaName:      r.SchemaName,
 			TableName:       r.TableName,
 			TaskCount:       num.ClampInt32(r.RunCount),
@@ -128,23 +128,23 @@ func (s *Server) ListNodeNames(ctx context.Context, req *runv1.ListNodeNamesRequ
 	if err != nil {
 		return nil, err
 	}
-	names, err := s.reads.Nodes.ListNodeNames(ctx, tenantID, req.GetServiceName())
+	names, err := s.reads.Nodes.ListNodeNames(ctx, tenantID, req.GetProjectName())
 	if err != nil {
-		return nil, s.internalError("ListNodeNames", err, "service", req.GetServiceName())
+		return nil, s.internalError("ListNodeNames", err, "project", req.GetProjectName())
 	}
 	return &runv1.ListNodeNamesResponse{TableNames: names}, nil
 }
 
-// ListNodeServices returns the distinct service names of the nodes ListNodes
+// ListNodeProjects returns the distinct project names of the nodes ListNodes
 // lists.
-func (s *Server) ListNodeServices(ctx context.Context, _ *runv1.ListNodeServicesRequest) (*runv1.ListNodeServicesResponse, error) {
+func (s *Server) ListNodeProjects(ctx context.Context, _ *runv1.ListNodeProjectsRequest) (*runv1.ListNodeProjectsResponse, error) {
 	tenantID, err := requestTenant(ctx)
 	if err != nil {
 		return nil, err
 	}
-	services, err := s.reads.Nodes.ListNodeServices(ctx, tenantID)
+	projects, err := s.reads.Nodes.ListNodeProjects(ctx, tenantID)
 	if err != nil {
-		return nil, s.internalError("ListNodeServices", err)
+		return nil, s.internalError("ListNodeProjects", err)
 	}
-	return &runv1.ListNodeServicesResponse{ServiceNames: services}, nil
+	return &runv1.ListNodeProjectsResponse{ProjectNames: projects}, nil
 }

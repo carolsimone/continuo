@@ -122,7 +122,7 @@ func TestRunner_AttemptNumberContinuesTheReleaseSequence(t *testing.T) {
 		"types/dbt-compile.yaml":            "rev-dbt-compile",
 		"types/dbt-validation.yaml":         "rev-dbt-validation",
 		"types/shared-upstream.yaml":        "rev-shared-upstream",
-		"types/cross-service-upstream.yaml": "rev-cross-service-upstream",
+		"types/cross-project-upstream.yaml": "rev-cross-project-upstream",
 	}, tries[0].FileRevisions)
 	assert.Equal(t, 1, h.remediation(id).CurrentTry)
 
@@ -163,7 +163,7 @@ func TestRunner_FallbackClustersAreAddedOnce(t *testing.T) {
 			h.store.FailNextCommit()
 		}
 	}
-	ancestor := remediation.ChangedAncestor{NodeID: "model.core.base", FilePath: "models/base.sql", Service: "core", Depth: 1}
+	ancestor := remediation.ChangedAncestor{NodeID: "model.core.base", FilePath: "models/base.sql", Project: "core", Depth: 1}
 	a, b := compileNode("svc-a"), compileNode("svc-b")
 	a.ErrorSignature, b.ErrorSignature = "sig-shared", "sig-shared"
 	a.ChangedAncestors = []remediation.ChangedAncestor{ancestor}
@@ -192,23 +192,23 @@ func TestRunner_FallbackClustersAreAddedOnce(t *testing.T) {
 	assert.Equal(t, 2, h.llm.calls(), "each member's own type called the model once")
 }
 
-func TestRunner_CrossServiceDeclineSkipsTheMembers(t *testing.T) {
+func TestRunner_CrossProjectDeclineSkipsTheMembers(t *testing.T) {
 	h := newHarness(t)
-	ancestor := remediation.ChangedAncestor{NodeID: "model.core.base", FilePath: "models/base.sql", Service: "core", Depth: 1}
+	ancestor := remediation.ChangedAncestor{NodeID: "model.core.base", FilePath: "models/base.sql", Project: "core", Depth: 1}
 	a := compileNode("svc-a")
-	a.Service = "svc-a"
+	a.Project = "svc-a"
 	a.ChangedAncestors = []remediation.ChangedAncestor{ancestor}
 	id := h.accept(trigger("compile", a))
 
 	require.NoError(t, h.runner.Drive(ctx, id))
 
 	clusters := h.store.Clusters(id)
-	require.Len(t, clusters, 1, "a cross-service cluster adds no member cluster")
-	assert.Equal(t, workflow.ClusterCrossService, clusters[0].Kind)
+	require.Len(t, clusters, 1, "a cross-project cluster adds no member cluster")
+	assert.Equal(t, workflow.ClusterCrossProject, clusters[0].Kind)
 	assert.Equal(t, remediation.ClusterFellBack, clusters[0].Status)
 	assert.Equal(t, &proposal.NodeOutcome{
 		Status: proposal.StatusSkipped,
-		Reason: "the change that broke this node lives in service core; a fix in this node's own service cannot ship before it: " +
+		Reason: "the change that broke this node lives in project core; a fix in this node's own project cannot ship before it: " +
 			"the changed ancestor's source is not in the release's code bundle",
 		Code: model.HandoverReasonDeclined,
 	}, clusters[0].Outcome)
@@ -263,8 +263,8 @@ func TestRunner_NoRepositoryRecordsFailed(t *testing.T) {
 
 func TestRunner_DbtTestTargetIsSkipped(t *testing.T) {
 	h := newHarness(t)
-	test := remediation.TriggerNode{NodeID: "test.sales.not_null", ErrorSignature: "sig-t", NodeType: "dbt-test", Service: "svc-a"}
-	python := remediation.TriggerNode{NodeID: "python.sales.loader", ErrorSignature: "sig-p", NodeType: "python-node", Service: "svc-a"}
+	test := remediation.TriggerNode{NodeID: "test.sales.not_null", ErrorSignature: "sig-t", NodeType: "dbt-test", Project: "svc-a"}
+	python := remediation.TriggerNode{NodeID: "python.sales.loader", ErrorSignature: "sig-p", NodeType: "python-node", Project: "svc-a"}
 	id := h.accept(trigger("validation", test, python))
 
 	require.NoError(t, h.runner.Drive(ctx, id))
@@ -313,7 +313,7 @@ func TestRunner_DbtTestTargetIsSkippedEvenWhenATypeWouldSelectIt(t *testing.T) {
 
 func TestRunner_ADeclineWithNoTextHandsTheClusterOver(t *testing.T) {
 	h := newHarness(t)
-	node := remediation.TriggerNode{NodeID: "model.sales.orders", ErrorSignature: "sig-v", NodeType: "dbt-model", Service: "svc-a"}
+	node := remediation.TriggerNode{NodeID: "model.sales.orders", ErrorSignature: "sig-v", NodeType: "dbt-model", Project: "svc-a"}
 	id := h.accept(trigger("validation", node))
 
 	require.NoError(t, h.runner.Drive(ctx, id))

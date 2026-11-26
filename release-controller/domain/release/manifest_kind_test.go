@@ -22,7 +22,7 @@ func TestParseManifestKind_RefusesPythonNamingPythonODCS(t *testing.T) {
 	require.Error(t, err)
 	assert.Empty(t, k)
 	assert.EqualError(t, err,
-		`kind "python" is no longer accepted: release the service as "python-odcs", one ODCS contract per node (docs/contracts.md)`)
+		`kind "python" is no longer accepted: release the project as "python-odcs", one ODCS contract per node (docs/contracts.md)`)
 	assert.ErrorIs(t, err, release.ErrPythonKindNotAccepted,
 		"the refusal is one value, which the rejection of a stored kind-python run reuses")
 }
@@ -41,8 +41,8 @@ func TestParseManifestKind_AcceptsOntology(t *testing.T) {
 	assert.Equal(t, "ontology", string(k))
 }
 
-// Only a dbt service is compiled before it is parsed: a python-odcs service
-// ships a contract bundle and the ontology service ships its ontology file,
+// Only a dbt project is compiled before it is parsed: a python-odcs project
+// ships a contract bundle and the ontology project ships its ontology file,
 // both uploaded before the release is requested. A stored python run has no
 // compile leg either.
 func TestHasCompileLeg_OnlyDbt(t *testing.T) {
@@ -56,7 +56,7 @@ func TestManifestKind_IsPythonCoversBothPythonKinds(t *testing.T) {
 	assert.True(t, release.ManifestKindPython.IsPython())
 	assert.True(t, release.ManifestKindPythonODCS.IsPython())
 	assert.False(t, release.ManifestKindDbt.IsPython())
-	assert.False(t, release.ManifestKindOntology.IsPython(), "the ontology file is not a python service's artifact")
+	assert.False(t, release.ManifestKindOntology.IsPython(), "the ontology file is not a python project's artifact")
 }
 
 // A stored row may still carry the python kind, so the constant stays: it is

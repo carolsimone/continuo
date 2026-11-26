@@ -12,8 +12,8 @@ import (
 )
 
 var repoPaths = map[string]string{
-	"sales":   "dbt/services/sales",
-	"finance": "dbt/services/finance",
+	"sales":   "dbt/projects/sales",
+	"finance": "dbt/projects/finance",
 	"ledger":  "python/ledger",
 }
 
@@ -21,8 +21,8 @@ func trigger() remediation.Trigger {
 	return remediation.Trigger{
 		ReleaseID: "rel-1",
 		Nodes: []remediation.TriggerNode{
-			{NodeID: "model.sales.orders", NodeType: "dbt-model", Service: "sales"},
-			{NodeID: "python.ledger.postings", NodeType: "python-node", Service: "ledger"},
+			{NodeID: "model.sales.orders", NodeType: "dbt-model", Project: "sales"},
+			{NodeID: "python.ledger.postings", NodeType: "python-node", Project: "ledger"},
 		},
 	}
 }
@@ -46,24 +46,24 @@ func clusterDraft(i int, contract []byte, edits ...remediation.Edit) step.Cluste
 func TestGroup(t *testing.T) {
 	contract := []byte("nodes: []\n")
 	groups, err := shared.Group(repoPaths, trigger(), []step.ClusterDraft{
-		clusterDraft(1, nil, edit("dbt/services/sales/models/b.sql", "model.sales.orders"), edit("dbt/services/sales/models/a.sql", "model.sales.orders")),
+		clusterDraft(1, nil, edit("dbt/projects/sales/models/b.sql", "model.sales.orders"), edit("dbt/projects/sales/models/a.sql", "model.sales.orders")),
 		clusterDraft(2, contract, edit("python/ledger/contracts/postings.yaml", "python.ledger.postings")),
 	})
 	require.NoError(t, err)
 	require.Len(t, groups, 2)
-	assert.Equal(t, "ledger", groups[0].Service)
+	assert.Equal(t, "ledger", groups[0].Project)
 	assert.Equal(t, contract, groups[0].Contract)
 	assert.Equal(t, "python/ledger", groups[0].Prefix)
-	assert.Equal(t, "sales", groups[1].Service)
+	assert.Equal(t, "sales", groups[1].Project)
 	assert.Nil(t, groups[1].Contract)
-	assert.Equal(t, "dbt/services/sales", groups[1].Prefix)
+	assert.Equal(t, "dbt/projects/sales", groups[1].Prefix)
 	require.Len(t, groups[1].Edits, 2)
-	assert.Equal(t, "dbt/services/sales/models/b.sql", groups[1].Edits[0].Path, "edits keep the order of the clusters")
+	assert.Equal(t, "dbt/projects/sales/models/b.sql", groups[1].Edits[0].Path, "edits keep the order of the clusters")
 
 	_, err = shared.Group(repoPaths, trigger(), []step.ClusterDraft{clusterDraft(1, nil, edit("zzz/a.sql", "x"))})
 	assert.ErrorIs(t, err, shared.ErrUnmappedEdit)
 	_, err = shared.Group(repoPaths, trigger(), []step.ClusterDraft{
-		clusterDraft(1, nil, edit("dbt/services/sales/a.sql", "x"), edit("dbt/services/sales/a.sql", "x"))})
+		clusterDraft(1, nil, edit("dbt/projects/sales/a.sql", "x"), edit("dbt/projects/sales/a.sql", "x"))})
 	assert.ErrorIs(t, err, shared.ErrDuplicateEditPath)
 	_, err = shared.Group(repoPaths, trigger(), []step.ClusterDraft{
 		clusterDraft(1, contract, edit("python/ledger/a.sql", "model.sales.orders"))})
@@ -79,15 +79,15 @@ func TestRefusalFinding(t *testing.T) {
 	}{
 		"unmapped": {
 			[]step.ClusterDraft{clusterDraft(1, nil, edit("zzz/a.sql", "x"))},
-			"edit_outside_services", "edit belongs to no configured service: zzz/a.sql",
+			"edit_outside_projects", "edit belongs to no configured project: zzz/a.sql",
 		},
 		"duplicate": {
-			[]step.ClusterDraft{clusterDraft(1, nil, edit("dbt/services/sales/a.sql", "x"), edit("dbt/services/sales/a.sql", "x"))},
-			"path_edited_twice", "two edits change the same file: dbt/services/sales/a.sql",
+			[]step.ClusterDraft{clusterDraft(1, nil, edit("dbt/projects/sales/a.sql", "x"), edit("dbt/projects/sales/a.sql", "x"))},
+			"path_edited_twice", "two edits change the same file: dbt/projects/sales/a.sql",
 		},
 		"mixed": {
 			[]step.ClusterDraft{clusterDraft(1, contract, edit("python/ledger/a.sql", "model.sales.orders"))},
-			"mixed_manifest_kinds", "service ledger mixes a python contract with dbt edits in one attempt; a release verifies one manifest kind",
+			"mixed_manifest_kinds", "project ledger mixes a python contract with dbt edits in one attempt; a release verifies one manifest kind",
 		},
 	}
 	for name, c := range cases {

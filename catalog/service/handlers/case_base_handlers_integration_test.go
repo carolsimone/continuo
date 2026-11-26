@@ -174,7 +174,7 @@ func TestProposalsHandler_MarkerAtomicWithRecord(t *testing.T) {
 		ProposalID: "prop-1", ReleaseID: "r2", NodeID: "svc.public.a",
 		ResolvedNodeIDs: []string{"svc.public.a", "svc.public.b"},
 		PrURL:           "https://github.com/org/svc/pull/9", PrNumber: 9,
-		OpenedBy: "agent-remediation", OpenedAt: "2026-10-30T10:00:00Z", Service: "svc",
+		OpenedBy: "agent-remediation", OpenedAt: "2026-10-30T10:00:00Z", Project: "svc",
 	}
 	proposals := func(u uow.UnitOfWork) *handlers.PrOpenedProposalsHandler {
 		return handlers.NewPrOpenedProposalsHandler(u, newTestLogger())
@@ -212,7 +212,7 @@ func TestPrClosedProvenanceHandler_MarkerAtomicWithRecord(t *testing.T) {
 	g.promoteNodes("svc.public.a", "svc.public.e")
 	in := domainEvent.PRClosed{
 		ProposalID: "prop-1", ReleaseID: "r2", NodeID: "svc.public.a",
-		ResolvedNodeIDs: []string{"svc.public.a"}, Service: "svc",
+		ResolvedNodeIDs: []string{"svc.public.a"}, Project: "svc",
 		PrURL: "https://github.com/org/svc/pull/9", PrNumber: 9,
 		Outcome: "merged", ClosedAt: "2026-10-30T11:00:00Z",
 		Edits: []domainEvent.PRClosedEdit{{Path: "models/e.sql", TargetNodeID: "svc.public.e", Amended: true, Diff: "d"}},

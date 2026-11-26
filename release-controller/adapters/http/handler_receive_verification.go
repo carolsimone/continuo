@@ -15,7 +15,7 @@ import (
 // layer never sees the wire field names.
 type ReceiveVerificationRequest struct {
 	RunID             string `json:"run_id"`
-	Service           string `json:"service"`
+	Project           string `json:"project"`
 	ImageTag          string `json:"image_tag"`
 	Kind              string `json:"kind"`
 	VerifiesReleaseID string `json:"verifies_release_id"`
@@ -26,7 +26,7 @@ type ReceiveVerificationRequest struct {
 func (b ReceiveVerificationRequest) toInput() handlers.ReceiveVerificationInput {
 	return handlers.ReceiveVerificationInput{
 		RunID:             b.RunID,
-		Service:           b.Service,
+		Project:           b.Project,
 		ImageTag:          b.ImageTag,
 		Kind:              b.Kind,
 		VerifiesReleaseID: b.VerifiesReleaseID,

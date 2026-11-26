@@ -81,7 +81,7 @@ type Transition struct {
 type NodeValidationResult struct {
 	// Stage is "parse" | "compile" | "seed_build" | "validation". The failed
 	// unit generalises across legs — a dbt node for parse/validation/seed_build,
-	// a service compile unit for the compile leg.
+	// a project compile unit for the compile leg.
 	Stage         string
 	NodeID        string
 	Status        string // "ok" | "failed"
@@ -91,7 +91,7 @@ type NodeValidationResult struct {
 	// FilePath is the optional offending source file path. The parse leg
 	// carries the candidate's declared path for the failing node; the compile
 	// leg carries the path the dbt log names, since its failed unit is a
-	// service rather than a node.
+	// project rather than a node.
 	FilePath string
 	// NodeType is the node's kind as the candidate topology declares it, so a
 	// reader can tell a test's bind check from a model's build without the
@@ -122,20 +122,20 @@ type Candidate struct {
 // Verification holds the facts only a fix-verification run has: which
 // rejected release it verifies a fix for, which attempt of that release's
 // remediation it belongs to, and the overlay of proposed source its compile
-// and seed-build Jobs lay over the service's project.
+// and seed-build Jobs lay over the project's source.
 type Verification struct {
 	VerifiesReleaseID string
 	Attempt           int
 	SourceOverlayURI  string
 }
 
-// Run is one pass of one service's delta through the pipeline.
+// Run is one pass of one project's delta through the pipeline.
 type Run struct {
 	id                string
 	kind              Kind
 	status            Status
 	imageTags         map[string]string
-	changedService    string
+	changedProject    string
 	manifestKind      release.ManifestKind
 	candidateTopology release.TopologyRef
 	validationNodeIDs []string
@@ -154,38 +154,38 @@ type Run struct {
 	verification      *Verification // non-nil iff kind == KindVerification
 }
 
-func newRun(id string, kind Kind, service, imageTag string, manifestKind release.ManifestKind, now time.Time) *Run {
+func newRun(id string, kind Kind, project, imageTag string, manifestKind release.ManifestKind, now time.Time) *Run {
 	return &Run{
 		id:             id,
 		kind:           kind,
 		status:         StatusReceived,
-		imageTags:      map[string]string{service: imageTag},
-		changedService: service,
+		imageTags:      map[string]string{project: imageTag},
+		changedProject: project,
 		manifestKind:   manifestKind,
 		createdAt:      now,
 		transitions:    []Transition{{To: StatusReceived, At: now}},
 	}
 }
 
-// NewCandidate creates a candidate release for a single-service delta.
-// imageTags starts with just the changed service's tag and is overwritten
+// NewCandidate creates a candidate release for a single-project delta.
+// imageTags starts with just the changed project's tag and is overwritten
 // with the full assembled map at activation (SetAssembledImageTags). repo
 // (GitHub owner/name) and commitSHA record the source change; kind records
-// how the service's artifact is parsed. All three are immutable. rebaseline
+// how the project's artifact is parsed. All three are immutable. rebaseline
 // marks a bootstrap that re-baselines fingerprints; it is valid only together
 // with bootstrap.
-func NewCandidate(id, service, imageTag string, bootstrap, rebaseline bool, repo, commitSHA string, kind release.ManifestKind, now time.Time) *Run {
-	r := newRun(id, KindCandidate, service, imageTag, kind, now)
+func NewCandidate(id, project, imageTag string, bootstrap, rebaseline bool, repo, commitSHA string, kind release.ManifestKind, now time.Time) *Run {
+	r := newRun(id, KindCandidate, project, imageTag, kind, now)
 	r.candidate = &Candidate{Repo: repo, CommitSHA: commitSHA, Bootstrap: bootstrap, Rebaseline: rebaseline, RemediationRound: 1}
 	return r
 }
 
-// NewVerification creates a fix-verification run: the same single-service
+// NewVerification creates a fix-verification run: the same single-project
 // delta shape as a candidate, but carrying the rejected release it verifies,
-// the attempt it belongs to, and (for a dbt service) the overlay of proposed
+// the attempt it belongs to, and (for a dbt project) the overlay of proposed
 // source. It has no repository provenance and never bootstraps.
-func NewVerification(id, service, imageTag, verifiesReleaseID string, attempt int, sourceOverlayURI string, kind release.ManifestKind, now time.Time) *Run {
-	r := newRun(id, KindVerification, service, imageTag, kind, now)
+func NewVerification(id, project, imageTag, verifiesReleaseID string, attempt int, sourceOverlayURI string, kind release.ManifestKind, now time.Time) *Run {
+	r := newRun(id, KindVerification, project, imageTag, kind, now)
 	r.verification = &Verification{VerifiesReleaseID: verifiesReleaseID, Attempt: attempt, SourceOverlayURI: sourceOverlayURI}
 	return r
 }
@@ -194,7 +194,7 @@ func (r *Run) ID() string                                { return r.id }
 func (r *Run) Kind() Kind                                { return r.kind }
 func (r *Run) Status() Status                            { return r.status }
 func (r *Run) ImageTags() map[string]string              { return r.imageTags }
-func (r *Run) ChangedService() string                    { return r.changedService }
+func (r *Run) ChangedProject() string                    { return r.changedProject }
 func (r *Run) ManifestKind() release.ManifestKind        { return r.manifestKind }
 func (r *Run) CodeBundleURI() string                     { return r.codeBundleURI }
 func (r *Run) CandidateTopologyRef() release.TopologyRef { return r.candidateTopology }
@@ -285,11 +285,11 @@ func (r *Run) SourceOverlayURI() string {
 }
 
 // CandidateSubmission is what a team's CI states when it submits a candidate
-// release: the changed service, its image tag, how its artifact is parsed,
+// release: the changed project, its image tag, how its artifact is parsed,
 // whether it bootstraps production, whether that bootstrap re-baselines
 // fingerprints, and the source change it was built from.
 type CandidateSubmission struct {
-	Service    string
+	Project    string
 	ImageTag   string
 	Kind       release.ManifestKind
 	Bootstrap  bool
@@ -301,15 +301,15 @@ type CandidateSubmission struct {
 // MatchesSubmission reports whether s describes this candidate, so that a
 // release id submitted again names the same release rather than a different
 // one. The image tag compared is the one this run holds for its own changed
-// service, which activation keeps when it fills in every other service's tag;
+// project, which activation keeps when it fills in every other project's tag;
 // the answer therefore does not depend on how far the run has advanced. A
 // verification run matches no candidate submission.
 func (r *Run) MatchesSubmission(s CandidateSubmission) bool {
 	if r.kind != KindCandidate {
 		return false
 	}
-	return r.changedService == s.Service &&
-		r.imageTags[r.changedService] == s.ImageTag &&
+	return r.changedProject == s.Project &&
+		r.imageTags[r.changedProject] == s.ImageTag &&
 		r.manifestKind == s.Kind &&
 		r.candidate.Bootstrap == s.Bootstrap &&
 		r.candidate.Rebaseline == s.Rebaseline &&
@@ -395,7 +395,7 @@ func (r *Run) SetRejectionPayload(p []byte) {
 }
 
 // SetAssembledImageTags replaces the image-tags map with the fully assembled
-// set built from every service's live service_prod pointer, read at
+// set built from every project's live service_prod pointer, read at
 // activation so earlier-queued promotions are seen.
 func (r *Run) SetAssembledImageTags(tags map[string]string) { r.imageTags = tags }
 
@@ -580,7 +580,7 @@ type RehydrateInput struct {
 	Kind              Kind
 	Status            Status
 	ImageTags         map[string]string
-	ChangedService    string
+	ChangedProject    string
 	ManifestKind      release.ManifestKind
 	CandidateTopology release.TopologyRef
 	ValidationNodeIDs []string
@@ -618,7 +618,7 @@ func Rehydrate(in RehydrateInput) *Run {
 		kind:              in.Kind,
 		status:            in.Status,
 		imageTags:         in.ImageTags,
-		changedService:    in.ChangedService,
+		changedProject:    in.ChangedProject,
 		manifestKind:      in.ManifestKind,
 		candidateTopology: in.CandidateTopology,
 		validationNodeIDs: in.ValidationNodeIDs,

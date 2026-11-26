@@ -17,8 +17,8 @@ from streams_contract import RELEASE_REQUESTED_V1
 @dataclass(frozen=True)
 class ReleaseRequested:
     """A well-formed release.requested:v1 message: the release to parse, the
-    artifact to fetch for each service, the one bucket they all live in, and
-    the image tag each service's nodes run in. image_tags is None when the
+    artifact to fetch for each project, the one bucket they all live in, and
+    the image tag each project's nodes run in. image_tags is None when the
     message carries none."""
     release_id: str
     requests: list[ManifestRequest]
@@ -36,23 +36,23 @@ def _decode_field(fields: dict, name: str) -> str | None:
 def _manifest_request(entry: object) -> tuple[str, ManifestRequest]:
     """Validate one manifest_keys entry; return its bucket and the request.
 
-    An entry must be an object carrying a non-empty string "service" and a
+    An entry must be an object carrying a non-empty string "project" and a
     string "s3_uri". Any other shape is a permanent malformed-payload error, so
-    the service-mismatch and empty-manifest validation in the use case cannot
+    the project-mismatch and empty-manifest validation in the use case cannot
     be silently bypassed.
     """
     if not isinstance(entry, dict):
         raise PermanentMessageError(
             f"{RELEASE_REQUESTED_V1} manifest_keys entry must be an object, got {type(entry).__name__}"
         )
-    svc = entry.get("service")
-    if not svc:
+    project = entry.get("project")
+    if not project:
         raise PermanentMessageError(
-            f"{RELEASE_REQUESTED_V1} manifest_keys entry missing or empty 'service' field"
+            f"{RELEASE_REQUESTED_V1} manifest_keys entry missing or empty 'project' field"
         )
-    if not isinstance(svc, str):
+    if not isinstance(project, str):
         raise PermanentMessageError(
-            f"{RELEASE_REQUESTED_V1} manifest_keys entry 'service' must be a string, got {type(svc).__name__}"
+            f"{RELEASE_REQUESTED_V1} manifest_keys entry 'project' must be a string, got {type(project).__name__}"
         )
     s3_uri = entry.get("s3_uri")
     if not isinstance(s3_uri, str):
@@ -74,21 +74,21 @@ def _manifest_request(entry: object) -> tuple[str, ManifestRequest]:
     # kind's artifact with the dbt parser and misreport it as an unreadable
     # manifest, sending the operator to the wrong artifact.
     return bucket, ManifestRequest(
-        service=svc,
+        project=project,
         key=key.rstrip("/"),
         kind=entry.get("kind", ManifestKind.DBT),
     )
 
 
 def _image_tags(raw: object) -> dict[str, str]:
-    """Validate image_tags: an object mapping each service name to the image
+    """Validate image_tags: an object mapping each project name to the image
     tag its nodes run in, both strings. Any other shape is a permanent
     malformed-payload error."""
     if not isinstance(raw, dict) or not all(
-        isinstance(service, str) and isinstance(tag, str) for service, tag in raw.items()
+        isinstance(project, str) and isinstance(tag, str) for project, tag in raw.items()
     ):
         raise PermanentMessageError(
-            f"{RELEASE_REQUESTED_V1} image_tags must be an object mapping service names to image tag strings"
+            f"{RELEASE_REQUESTED_V1} image_tags must be an object mapping project names to image tag strings"
         )
     return dict(raw)
 

@@ -1,7 +1,7 @@
 import { Fragment, useRef, useState, type MutableRefObject } from 'react';
 import type { Task, TaskAttempt, GraphEdge, SeedPreflight } from './types';
-import type { ServiceGroup } from './NodesPanel';
-import { intraServiceOrder } from './run-graph-helpers';
+import type { ProjectGroup } from './NodesPanel';
+import { intraProjectOrder } from './run-graph-helpers';
 import {
   attemptClassReason,
   attemptPillClass,
@@ -17,23 +17,23 @@ import ErrorCell from './ErrorCell';
 import LeaseWaitPill from './LeaseWaitPill';
 
 interface Props {
-  groups: ServiceGroup[];
+  groups: ProjectGroup[];
   // Each task's attempts in attempt order. A row's Error, Started, Completed
   // and Logs cells read the task's highest-numbered attempt.
   attemptsByTask: Map<string, TaskAttempt[]>;
   // Run graph edges and each node's started_at, used to order a group's rows
-  // by intraServiceOrder. An empty edges array carries no dependency
+  // by intraProjectOrder. An empty edges array carries no dependency
   // information, so rows are left in the group's incoming (already
   // severity/recency sorted) order rather than falling through to
-  // intraServiceOrder's alphabetical tiebreak.
+  // intraProjectOrder's alphabetical tiebreak.
   edges: GraphEdge[];
   startedAt: Record<string, string | null | undefined>;
-  // A group is expanded when forceExpanded || expandedServices.has(service) —
+  // A group is expanded when forceExpanded || expandedProjects.has(project) —
   // callers that are actively filtering (RunNodeTable) force every remaining
   // group open regardless of the persisted expand/collapse state.
   forceExpanded: boolean;
-  expandedServices: Set<string>;
-  onServiceToggle: (service: string) => void;
+  expandedProjects: Set<string>;
+  onProjectToggle: (project: string) => void;
   // Row selection is optional: NodesPanel wires it to the graph/detail view,
   // making each node row a selection button; callers with no notion of a
   // "selected" node (RunNodeTable) omit it, and a row there expands into its
@@ -41,7 +41,7 @@ interface Props {
   // plain, non-interactive cells (no role/tabIndex/handlers).
   selectedNodeId?: string | null;
   onNodeSelect?: (nodeId: string | null) => void;
-  serviceColors?: Map<string, string>;
+  projectColors?: Map<string, string>;
   // Row/group DOM refs, populated as rows render. Optional so a caller with
   // no need to scroll a row/group into view (RunNodeTable) doesn't have to
   // supply one; NodeTableBody keeps its own map in that case.
@@ -55,11 +55,11 @@ export default function NodeTableBody({
   edges,
   startedAt,
   forceExpanded,
-  expandedServices,
-  onServiceToggle,
+  expandedProjects,
+  onProjectToggle,
   selectedNodeId,
   onNodeSelect,
-  serviceColors,
+  projectColors,
   rowRefs,
   groupRefs,
 }: Props) {
@@ -98,26 +98,26 @@ export default function NodeTableBody({
       </thead>
       <tbody>
         {groups.map(group => {
-          const isExpanded = forceExpanded || expandedServices.has(group.service);
+          const isExpanded = forceExpanded || expandedProjects.has(group.project);
           const orderedIds = edges.length > 0
-            ? intraServiceOrder(group.tasks.map(taskNodeId), edges, startedAt)
+            ? intraProjectOrder(group.tasks.map(taskNodeId), edges, startedAt)
             : group.tasks.map(taskNodeId);
           const tasksById = new Map(group.tasks.map(t => [taskNodeId(t), t]));
           const orderedTasks = orderedIds.map(id => tasksById.get(id)!).filter(Boolean);
 
           return (
-            <Fragment key={group.service}>
+            <Fragment key={group.project}>
               <tr
                 className={`nodes-group-row${isExpanded ? ' nodes-group-row--open' : ''}`}
-                ref={el => { if (el) groupRefMap.current.set(group.service, el); }}
-                onClick={() => onServiceToggle(group.service)}
+                ref={el => { if (el) groupRefMap.current.set(group.project, el); }}
+                onClick={() => onProjectToggle(group.project)}
                 tabIndex={0}
                 role="button"
                 aria-expanded={isExpanded}
                 onKeyDown={e => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
-                    onServiceToggle(group.service);
+                    onProjectToggle(group.project);
                   }
                 }}
               >
@@ -126,9 +126,9 @@ export default function NodeTableBody({
                     <span className="nodes-group-chevron">{isExpanded ? '▾' : '▸'}</span>
                     <span
                       className="nodes-group-dot"
-                      style={{ background: serviceColors?.get(group.service) ?? '#94a3b8' }}
+                      style={{ background: projectColors?.get(group.project) ?? '#94a3b8' }}
                     />
-                    <span className="nodes-group-name">{group.service}</span>
+                    <span className="nodes-group-name">{group.project}</span>
                     <span className="nodes-group-count">{group.tasks.length}</span>
                     <span className={`pill-sm ${taskPillClass(group.status)}`}>{group.status}</span>
                   </div>
@@ -185,7 +185,7 @@ export default function NodeTableBody({
                       {task.table_name}
                       {task.operation === 'full_refresh' && <span className="pill-sm pill-sm--muted">Full refresh</span>}
                     </div>
-                    <div className="nodes-node-schema">{task.service_name} · {task.schema_name}</div>
+                    <div className="nodes-node-schema">{task.project_name} · {task.schema_name}</div>
                     {task.plan_reason && <div className="task-reason">{task.plan_reason}</div>}
                   </>
                 );

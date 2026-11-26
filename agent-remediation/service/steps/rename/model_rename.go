@@ -28,8 +28,8 @@ type ModelRename struct {
 var _ step.ContextSource = (*ModelRename)(nil)
 
 // NewModelRename builds the model_rename step. nodes answers whether a node of
-// any service already builds a table (catalog's live topology); repoPaths maps
-// a service to its dbt project's directory in the repository.
+// any project already builds a table (catalog's live topology); repoPaths maps
+// a project to its dbt project's directory in the repository.
 func NewModelRename(archive ports.RepoArchive, finder ports.ModelReferenceFinder, nodes ports.NodeLocator, repoPaths map[string]string, logger *slog.Logger) *ModelRename {
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
@@ -52,7 +52,7 @@ func (*ModelRename) Meta() step.Meta {
 
 // Gather reads the model's project at the trigger's commit, picks the first
 // free name of name_v2, name_v3, … (free in the model's project and in the
-// live topology of every service), and provides the plan with every file that
+// live topology of every project), and provides the plan with every file that
 // names the model. When the model's alias makes it write the table in dispute,
 // the plan changes the alias instead of moving the file. The model's file is the failure's source file. A model the
 // project's other models out-declare, by naming what their table is
@@ -69,10 +69,10 @@ func (s *ModelRename) Gather(ctx context.Context, in step.ContextInput) (step.Co
 	if !strings.HasSuffix(oldPath, ".sql") {
 		return s.decline(f, fmt.Sprintf("%s is not a SQL model, so it cannot be renamed", oldPath)), nil
 	}
-	service := f.Target.Service
-	projectDir, ok := s.repoPaths[service]
+	project := f.Target.Project
+	projectDir, ok := s.repoPaths[project]
 	if !ok || projectDir == "" {
-		return s.decline(f, fmt.Sprintf("no repository directory is configured for service %q", service)), nil
+		return s.decline(f, fmt.Sprintf("no repository directory is configured for project %q", project)), nil
 	}
 	root, cleanup, err := s.archive.Fetch(ctx, f.Trigger.Repo, f.Trigger.CommitSHA)
 	if errors.Is(err, ports.ErrSourceNotFound) {
@@ -89,9 +89,9 @@ func (s *ModelRename) Gather(ctx context.Context, in step.ContextInput) (step.Co
 		return step.ContextOutput{}, fmt.Errorf("model_rename: %w", err)
 	}
 	plan := remediation.ModelRename{
-		Service:       service,
+		Project:       project,
 		Relation:      relationOf(f.Target),
-		OtherService:  f.Target.OtherService,
+		OtherProject:  f.Target.OtherProject,
 		OtherFilePath: f.Target.OtherFilePath,
 		OldName:       model,
 		OldPath:       oldPath,
@@ -119,7 +119,7 @@ func (s *ModelRename) Gather(ctx context.Context, in step.ContextInput) (step.Co
 	return step.ContextOutput{Evidence: map[remediation.EvidenceKey]any{remediation.KeyModelRename: plan}}, nil
 }
 
-// builtElsewhere reports whether a node of the live topology, of any service,
+// builtElsewhere reports whether a node of the live topology, of any project,
 // already builds schema.name, so a new name never trades one clash for
 // another. A failed read is logged and read as no such node: the
 // verification run still refuses a name that clashes.
@@ -127,12 +127,12 @@ func (s *ModelRename) builtElsewhere(ctx context.Context, schema, name string) b
 	if s.nodes == nil || schema == "" {
 		return false
 	}
-	filePath, service, err := s.nodes.Locate(ctx, schema+"."+name)
+	filePath, project, err := s.nodes.Locate(ctx, schema+"."+name)
 	if err != nil {
 		s.logger.Warn("model rename: could not ask the catalog whether a name is taken", "name", schema+"."+name, "error", err)
 		return false
 	}
-	return filePath != "" || service != ""
+	return filePath != "" || project != ""
 }
 
 // relationOf is the relation in dispute: the trigger's RelationID, or the

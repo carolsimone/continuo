@@ -3,12 +3,12 @@ package proposal
 import "time"
 
 // PullRequest is a pull request opened from a proposal, carrying all fields
-// mirrored from GitHub. One row per (proposal, service) combination when the
-// proposal was split by service.
+// mirrored from GitHub. One row per (proposal, project) combination when the
+// proposal was split by project.
 type PullRequest struct {
-	// Service is the owning-service group this PR covers; "" for legacy
+	// Project is the owning-project group this PR covers; "" for legacy
 	// whole-proposal PRs.
-	Service string
+	Project string
 	// Repo is the version-control repository (owner/name) into which the PR was
 	// opened.
 	Repo string
@@ -60,7 +60,7 @@ type View struct {
 	// sorted by node id. It is empty for an attempt row that belongs to no remediation
 	// and for one with no approvers recorded.
 	Approvers []Approver
-	// Verifications is one fix-verification run per edited service;
+	// Verifications is one fix-verification run per edited project;
 	// VerificationRunID is the view of the first.
 	Verifications []Verification
 	// VerificationRunID is the run id of the first verification — the
@@ -69,9 +69,9 @@ type View struct {
 	// still names the run that judged it. Empty for an attempt that never
 	// entered verification.
 	VerificationRunID string
-	// Services is every service this attempt touched: the failing nodes'
-	// services plus the edited ones.
-	Services []string
+	// Projects is every project this attempt touched: the failing nodes'
+	// projects plus the edited ones.
+	Projects []string
 	// VerifyError is the verification run's failure reason, recorded by
 	// MarkVerifyFailed; empty unless verification failed.
 	VerifyError         string
@@ -100,7 +100,7 @@ type View struct {
 	PrOpenedBy string
 	// PrClosedAt is when GitHub closed the PR; nil while pr_state is not terminal.
 	PrClosedAt *time.Time
-	// PullRequests is one row per (proposal, service) PR; empty for rows that
+	// PullRequests is one row per (proposal, project) PR; empty for rows that
 	// never entered the PR lifecycle.
 	PullRequests []PullRequest
 }
@@ -170,9 +170,9 @@ type PRClaim struct {
 	ClaimedAt time.Time
 	// Branch is populated by the caller of BeginPR, not from the DB.
 	Branch string
-	// Service is the owning-service group this claim covers; '' = legacy
+	// Project is the owning-project group this claim covers; '' = legacy
 	// whole-proposal claim.
-	Service string
+	Project string
 }
 
 // PROutcome is a terminal pull-request outcome mirrored from GitHub.
@@ -194,7 +194,7 @@ type OpenPR struct {
 	ReleaseID string
 	NodeID    string
 	Attempt   int
-	Service   string
+	Project   string
 }
 
 // OpeningPR identifies a proposal claimed for PR creation (pr_state='opening')
@@ -217,5 +217,5 @@ type OpeningPR struct {
 	Attempt   int
 	ClaimedAt *time.Time
 	CreatedAt time.Time
-	Service   string
+	Project   string
 }

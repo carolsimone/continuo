@@ -37,7 +37,7 @@ type HandleValidationResultInput struct {
 //
 // If every present validation node passed and the aggregate status is ok: a
 // candidate promotes to production (updates CurrentProd, upserts the changed
-// service's service_prod pointer, emits release.promoted:v2) and a
+// project's service_prod pointer, emits release.promoted:v2) and a
 // verification passes without touching either. Otherwise a candidate rejects
 // and emits release.rejected:v1, while a verification fails and emits no
 // release event. A run of either kind, on either outcome, emits
@@ -151,7 +151,7 @@ func concludeValidated(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 // promoteToProduction applies the promotion effects shared by the
 // validation-passed path and the nothing-to-validate short-circuit: it takes
 // the next promotion seq, points current_prod at this release's candidate
-// topology artifact under that seq, upserts the changed service's
+// topology artifact under that seq, upserts the changed project's
 // service_prod pointer, transitions the release to Promoted, persists it, and
 // writes the release.promoted:v2 and pipeline.run.finished:v1 outbox rows. The
 // caller owns Begin/Commit and any telemetry. The release must already hold
@@ -195,14 +195,14 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipe
 		return fmt.Errorf("upsert current prod: %w", err)
 	}
 
-	// Upsert the changed service's production pointer so future releases can
-	// assemble this service's manifest key at their AdvanceQueue step.
-	changedService := r.ChangedService()
+	// Upsert the changed project's production pointer so future releases can
+	// assemble this project's manifest key at their AdvanceQueue step.
+	changedProject := r.ChangedProject()
 	sp := release.NewServiceProd(
-		changedService,
+		changedProject,
 		releaseID,
-		CanonicalManifestKey(d.Bucket, changedService, releaseID, r.ManifestKind()),
-		r.ImageTags()[changedService],
+		CanonicalManifestKey(d.Bucket, changedProject, releaseID, r.ManifestKind()),
+		r.ImageTags()[changedProject],
 		r.ManifestKind(),
 		now,
 	)
@@ -288,7 +288,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 	//   - candidate_artifact_uri: the S3 pointer (derived per run) to the artifact that was
 	//     checked — mirroring the dbt_log_uri pattern as a pointer, not inline
 	//     content;
-	//   - node_type, file_path, service: the node's kind and source location as
+	//   - node_type, file_path, project: the node's kind and source location as
 	//     THIS candidate declares them;
 	//   - validation_op: how the validation leg prepared the node, the same op
 	//     the validation request named for it.
@@ -299,7 +299,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 	// remediation agent recognise a python node — whose candidate artifact is a
 	// JSON validation spec rather than SQL — without a topology lookup of its own.
 	type candidateFacts struct {
-		artifactURI, nodeType, filePath, service string
+		artifactURI, nodeType, filePath, project string
 		validationOp                             pkg_model.ValidationOp
 	}
 	factsByNodeID := make(map[string]candidateFacts, len(topo))
@@ -309,7 +309,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 			artifactURI:  candidateArtifactURI(d.Bucket, r.ID(), n),
 			nodeType:     n.NodeType,
 			filePath:     n.OriginalFilePath,
-			service:      n.ServiceName,
+			project:      n.ProjectName,
 			validationOp: op,
 		}
 	}
@@ -343,12 +343,12 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 			CandidateArtifactURI: f.artifactURI,
 			NodeType:             f.nodeType,
 			FilePath:             f.filePath,
-			Service:              f.service,
+			Project:              f.project,
 			ValidationOp:         f.validationOp,
 		}
 		if nr.Status != release.NodeStatusOK {
 			skipped := nr.Status == release.NodeStatusSkipped
-			notPassed = append(notPassed, release.FailedNode{NodeID: nr.NodeID, Service: f.service, Skipped: skipped})
+			notPassed = append(notPassed, release.FailedNode{NodeID: nr.NodeID, Project: f.project, Skipped: skipped})
 			ancestors := release.ChangedAncestors(topo, nr.NodeID, changedSet)
 			if !skipped {
 				// A skipped node never ran: what sits upstream of it only matters
@@ -357,7 +357,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 			}
 			for _, a := range ancestors {
 				entry.ChangedAncestors = append(entry.ChangedAncestors, ports.ChangedAncestor{
-					NodeID: a.NodeID, FilePath: a.FilePath, Service: a.Service, Depth: a.Depth,
+					NodeID: a.NodeID, FilePath: a.FilePath, Project: a.Project, Depth: a.Depth,
 				})
 			}
 		}

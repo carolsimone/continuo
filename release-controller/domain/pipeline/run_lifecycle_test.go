@@ -18,7 +18,7 @@ func TestNewCandidate_IsReceived(t *testing.T) {
 func TestNewCandidate_InitialisesImageTags(t *testing.T) {
 	r := pipeline.NewCandidate("sha-abc", "svc1", "sha-abc", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
 	assert.Equal(t, map[string]string{"svc1": "sha-abc"}, r.ImageTags())
-	assert.Equal(t, "svc1", r.ChangedService())
+	assert.Equal(t, "svc1", r.ChangedProject())
 }
 
 func TestRun_TransitionReceivedToParsing(t *testing.T) {

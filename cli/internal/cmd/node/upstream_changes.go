@@ -24,10 +24,10 @@ type upstreamChangesPayload struct {
 }
 
 // NewUpstreamChangesCommand builds
-// `continuo node upstream-changes <service> <schema> <table> [--depth N] [--since RFC3339]`.
+// `continuo node upstream-changes <project> <schema> <table> [--depth N] [--since RFC3339]`.
 func NewUpstreamChangesCommand(factory CatalogClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "upstream-changes <service> <schema> <table>",
+		Use:   "upstream-changes <project> <schema> <table>",
 		Short: "List a model node's ancestors' most recent code changes",
 		Long: `List a model node's ancestors' most recent code changes, most-recently-changed first.
 
@@ -43,11 +43,11 @@ revert's actual before/after rather than the two versions' original creation
 order.
 
 Arguments:
-  <service>  The owning service name.
+  <project>  The owning project name.
   <schema>   The schema name.
   <table>    The table (model) name.
 
-The node is addressed by its unique_id, "<schema>.<table>"; <service> is
+The node is addressed by its unique_id, "<schema>.<table>"; <project> is
 accepted for consistency with the other node subcommands but does not appear
 in the unique_id.
 
@@ -80,7 +80,7 @@ Errors:
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 3 {
-				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("upstream-changes requires exactly three arguments: <service> <schema> <table>"))
+				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("upstream-changes requires exactly three arguments: <project> <schema> <table>"))
 			}
 			return nil
 		},

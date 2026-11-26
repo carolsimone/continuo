@@ -76,11 +76,11 @@ func (r *TaskCollection) Create(ctx context.Context, task *TaskRow) error {
 	task.Operation = operationWithDefault(task.Operation)
 	query := `
 		INSERT INTO tasks (
-			tenant_id, task_id, run_id, created_at, service_name, schema_name,
+			tenant_id, task_id, run_id, created_at, project_name, schema_name,
 			table_name, job_name, status, attempt, max_retries, cancelled_at, cancelled_by,
 			image_tag, inherited_from_task_id, operation
 		) VALUES (
-			:tenant_id, :task_id, :run_id, :created_at, :service_name, :schema_name,
+			:tenant_id, :task_id, :run_id, :created_at, :project_name, :schema_name,
 			:table_name, :job_name, :status, :attempt, :max_retries, :cancelled_at, :cancelled_by,
 			:image_tag, :inherited_from_task_id, :operation
 		)
@@ -105,7 +105,7 @@ func (r *TaskCollection) Create(ctx context.Context, task *TaskRow) error {
 	r.logger.Info("Created task",
 		"task_id", task.TaskID,
 		"run_id", task.ScheduleID,
-		"service", task.ServiceName,
+		"project", task.ProjectName,
 		"table", task.TableName,
 	)
 
@@ -121,7 +121,7 @@ func (r *TaskCollection) Create(ctx context.Context, task *TaskRow) error {
 // waiting for a node no task holds (its grant is on the way) reads a NULL
 // waiting_on_run_id.
 const taskReadQuery = `
-	SELECT t.tenant_id, t.task_id, t.run_id, t.created_at, t.service_name, t.schema_name,
+	SELECT t.tenant_id, t.task_id, t.run_id, t.created_at, t.project_name, t.schema_name,
 	       t.table_name, t.job_name, t.status, t.attempt, t.max_retries, t.cancelled_at, t.cancelled_by,
 	       t.image_tag, t.inherited_from_task_id, t.operation, t.node_key, t.dispatched_at,
 	       t.wait_reason, t.lease_wait_since, t.plan_reason, t.seed_preflight, t.rebuild_seed_key,
@@ -167,7 +167,7 @@ func (r *TaskCollection) GetRow(ctx context.Context, taskID uuid.UUID) (*TaskRow
 func (r *TaskCollection) ListRunTasks(ctx context.Context, runID uuid.UUID) ([]run.Task, error) {
 	var rows []*TaskRow
 	err := r.tx.SelectContext(ctx, &rows, `
-		SELECT tenant_id, task_id, run_id, created_at, service_name, schema_name,
+		SELECT tenant_id, task_id, run_id, created_at, project_name, schema_name,
 		       table_name, job_name, status, attempt, max_retries, cancelled_at, cancelled_by,
 		       image_tag, inherited_from_task_id, operation, node_key, dispatched_at,
 		       plan_reason, seed_preflight, rebuild_seed_key
@@ -218,19 +218,19 @@ func (r *TaskCollection) RunReleasesOf(ctx context.Context, taskIDs []uuid.UUID)
 
 // GetRowByNode retrieves the tenant's task row by run_id and node
 // information, with the run holding the node lease it waits for.
-func (r *TaskCollection) GetRowByNode(ctx context.Context, runID uuid.UUID, serviceName, schemaName, tableName string) (*TaskRow, error) {
+func (r *TaskCollection) GetRowByNode(ctx context.Context, runID uuid.UUID, projectName, schemaName, tableName string) (*TaskRow, error) {
 	var task TaskRow
 	err := sqlx.GetContext(ctx, r.conn(), &task, taskReadQuery+`
 		  AND t.run_id = $2
-		  AND t.service_name = $3
+		  AND t.project_name = $3
 		  AND t.schema_name = $4
 		  AND t.table_name = $5`,
-		r.tenantID, runID, serviceName, schemaName, tableName)
+		r.tenantID, runID, projectName, schemaName, tableName)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			r.logger.Debug("Task not found by run and node",
 				"run_id", runID,
-				"service_name", serviceName,
+				"project_name", projectName,
 				"schema_name", schemaName,
 				"table_name", tableName,
 			)
@@ -238,7 +238,7 @@ func (r *TaskCollection) GetRowByNode(ctx context.Context, runID uuid.UUID, serv
 		}
 		r.logger.Error("Failed to get task by run and node",
 			"run_id", runID,
-			"service_name", serviceName,
+			"project_name", projectName,
 			"error", err,
 		)
 		return nil, fmt.Errorf("failed to get task: %w", err)
@@ -295,7 +295,7 @@ func (r *TaskCollection) ListByRunID(ctx context.Context, runID uuid.UUID, statu
 }
 
 // copyTasks streams a run's tasks with COPY … FROM STDIN.
-const copyTasks = `COPY tasks (tenant_id, task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, attempt, max_retries, image_tag, inherited_from_task_id, operation, node_key, dispatched_at, plan_reason, seed_preflight, rebuild_seed_key) FROM STDIN`
+const copyTasks = `COPY tasks (tenant_id, task_id, run_id, created_at, project_name, schema_name, table_name, job_name, status, attempt, max_retries, image_tag, inherited_from_task_id, operation, node_key, dispatched_at, plan_reason, seed_preflight, rebuild_seed_key) FROM STDIN`
 
 // BulkCreateTx inserts every task of a run inside tx with one COPY, each under
 // its row's tenant, so a run of any size is written in one round trip, binds
@@ -309,7 +309,7 @@ func (r *TaskCollection) BulkCreateTx(ctx context.Context, tx *sqlx.Tx, tasks []
 			return fmt.Errorf("copy task %s: %w", t.TaskID, ErrNoTenant)
 		}
 		rows = append(rows, []any{
-			t.TenantID, t.TaskID, t.ScheduleID, t.CreatedAt, t.ServiceName, t.SchemaName, t.TableName, t.JobName,
+			t.TenantID, t.TaskID, t.ScheduleID, t.CreatedAt, t.ProjectName, t.SchemaName, t.TableName, t.JobName,
 			string(t.Status), t.Attempt, t.MaxRetries, t.ImageTag, t.InheritedFromTaskID,
 			operationWithDefault(t.Operation), t.NodeKey, t.DispatchedAt,
 			t.PlanReason, t.SeedPreflight, t.RebuildSeedKey,
@@ -353,7 +353,7 @@ type taskStateRow struct {
 	MaxRetries   int32      `db:"max_retries"`
 	NodeKey      string     `db:"node_key"`
 	JobName      string     `db:"job_name"`
-	ServiceName  string     `db:"service_name"`
+	ProjectName  string     `db:"project_name"`
 	SchemaName   string     `db:"schema_name"`
 	TableName    string     `db:"table_name"`
 	DispatchedAt *time.Time `db:"dispatched_at"`
@@ -362,7 +362,7 @@ type taskStateRow struct {
 }
 
 // LoadAttemptState reads the run_id, status, attempt, max_retries,
-// node_key (empty when NULL), job_name, service_name, schema_name, table_name,
+// node_key (empty when NULL), job_name, project_name, schema_name, table_name,
 // dispatched_at, wait_reason (empty when NULL), operation, plan_reason and
 // seed_preflight of the tenant's task row of
 // taskID with FOR UPDATE through the bound transaction, so concurrent writers
@@ -373,7 +373,7 @@ func (r *TaskCollection) LoadAttemptState(ctx context.Context, taskID uuid.UUID)
 	var row taskStateRow
 	err := r.tx.GetContext(ctx, &row,
 		`SELECT run_id, status, attempt, max_retries, COALESCE(node_key, '') AS node_key,
-		        job_name, service_name, schema_name, table_name, dispatched_at,
+		        job_name, project_name, schema_name, table_name, dispatched_at,
 		        COALESCE(wait_reason, '') AS wait_reason, operation, plan_reason, seed_preflight
 		 FROM tasks WHERE tenant_id = $1 AND task_id = $2 FOR UPDATE`,
 		r.tenantID, taskID,
@@ -399,7 +399,7 @@ func (r *TaskCollection) LoadAttemptState(ctx context.Context, taskID uuid.UUID)
 		MaxRetries:   row.MaxRetries,
 		NodeKey:      topology.NodeKey(row.NodeKey),
 		JobName:      row.JobName,
-		ServiceName:  row.ServiceName,
+		ProjectName:  row.ProjectName,
 		SchemaName:   row.SchemaName,
 		TableName:    row.TableName,
 		DispatchedAt: row.DispatchedAt,
@@ -632,7 +632,7 @@ func (r *TaskCollection) RequestStops(ctx context.Context, runID uuid.UUID) ([]r
 // GetByNode reads the task of run runID that runs node, in the bound
 // transaction when there is one, else on the pool.
 func (r *TaskCollection) GetByNode(ctx context.Context, runID uuid.UUID, node run.NodeID) (run.Task, error) {
-	t, err := r.GetRowByNode(ctx, runID, node.ServiceName, node.SchemaName, node.TableName)
+	t, err := r.GetRowByNode(ctx, runID, node.ProjectName, node.SchemaName, node.TableName)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return run.Task{}, run.ErrTaskNotFound
@@ -666,7 +666,7 @@ func taskFromRow(t *TaskRow) (run.Task, error) {
 		TaskID:              t.TaskID,
 		ScheduleID:          t.ScheduleID,
 		CreatedAt:           t.CreatedAt,
-		ServiceName:         t.ServiceName,
+		ProjectName:         t.ProjectName,
 		SchemaName:          t.SchemaName,
 		TableName:           t.TableName,
 		JobName:             t.JobName,
@@ -700,7 +700,7 @@ func (r *TaskCollection) BulkCreate(ctx context.Context, tasks []run.Task) error
 			TaskID:              t.TaskID,
 			ScheduleID:          t.ScheduleID,
 			CreatedAt:           t.CreatedAt,
-			ServiceName:         t.ServiceName,
+			ProjectName:         t.ProjectName,
 			SchemaName:          t.SchemaName,
 			TableName:           t.TableName,
 			JobName:             t.JobName,

@@ -77,7 +77,7 @@ describe('release-client', () => {
       .mockResolvedValueOnce(new Response('image_tag required\n', { status: 400 }));
     vi.stubGlobal('fetch', fetchMock);
     const client = createReleaseClient('http://rc:8088/');
-    const input = { release_id: 'r1', service: 'core', image_tag: 'abc' };
+    const input = { release_id: 'r1', project: 'core', image_tag: 'abc' };
     expect(await client.submitRelease(input)).toEqual({ status: 202, text: '{"release_id":"r1","status":"received"}' });
     expect(await client.submitRelease(input)).toEqual({ status: 400, text: 'image_tag required\n' });
     const [calledUrl, init] = fetchMock.mock.calls[0];

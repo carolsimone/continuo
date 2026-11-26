@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewBuildCommand builds `continuo node build <service> <schema> <table> [source-run-id]`.
+// NewBuildCommand builds `continuo node build <project> <schema> <table> [source-run-id]`.
 // It runs the model via dbt build, which both materializes the model and
 // runs its tests in the same dbt invocation. Unlike `node test`, a model
 // with no tests defined is still built (there is no "skipped for lacking
@@ -29,7 +29,7 @@ import (
 // run-controller service records its own system identity.
 func NewBuildCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "build <service> <schema> <table> [source-run-id]",
+		Use:   "build <project> <schema> <table> [source-run-id]",
 		Short: "Run and test a model node with dbt build",
 		Long: `Run and test a model node with dbt build.
 
@@ -41,7 +41,7 @@ model's current (latest) image and manifest version. Pass a past run id to
 build the model exactly as that run saw it.
 
 Arguments:
-  <service>  The owning service name.
+  <project>  The owning project name.
   <schema>   The schema name.
   <table>    The table (model) name.
 ` + sourceRunArgDoc + `
@@ -89,13 +89,13 @@ Errors:
 			}
 			defer func() { _ = c.Close() }()
 
-			resp, err := c.TriggerNodeBuild(ctx, client.RequestID(), target.service, target.schema, target.table, target.sourceRunID, cfg.Actor)
+			resp, err := c.TriggerNodeBuild(ctx, client.RequestID(), target.project, target.schema, target.table, target.sourceRunID, cfg.Actor)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
 
 			if cfg.Human {
-				return output.HumanSuccess(stderr, "Triggered single-node build run "+resp.GetRunId()+" for "+target.service+"."+target.schema+"."+target.table)
+				return output.HumanSuccess(stderr, "Triggered single-node build run "+resp.GetRunId()+" for "+target.project+"."+target.schema+"."+target.table)
 			}
 			payload := map[string]string{
 				"run_id":        resp.GetRunId(),

@@ -65,7 +65,7 @@ func TestNewVerified_RefusesAnEmptyIDAndNoChecked(t *testing.T) {
 func TestNewVerified_KeepsWhatItWasGiven(t *testing.T) {
 	c, err := NewChecked(Draft{NamedTarget: "model.a"}, nil)
 	require.NoError(t, err)
-	vs := []proposal.Verification{{Service: "sales", RunID: "r1"}}
+	vs := []proposal.Verification{{Project: "sales", RunID: "r1"}}
 	v, err := NewVerified("p1", []Checked{c}, []CheckResult{{Check: "verification_run"}}, vs)
 	require.NoError(t, err)
 	assert.False(t, v.IsZero())

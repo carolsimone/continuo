@@ -15,7 +15,7 @@ export default function CreatePrModal({ proposal, onClose, onCreated }: Props) {
   const [buttonState, setButtonState] = useState<ButtonState>('idle');
   const [error, setError] = useState<string | null>(null);
   // result holds the last response this modal received, so a partial
-  // success (some services opened, some failed) can stay on screen instead
+  // success (some projects opened, some failed) can stay on screen instead
   // of being lost the instant the request settles.
   const [result, setResult] = useState<CreatePullRequestResponse | null>(null);
 
@@ -35,13 +35,13 @@ export default function CreatePrModal({ proposal, onClose, onCreated }: Props) {
       setResult(res);
       onCreated(res);
       if (res.errors.length === 0 && (res.warnings ?? []).length === 0) {
-        // Every owning service succeeded and its owners were asked to review —
+        // Every owning project succeeded and its owners were asked to review —
         // show success, hand the link(s) to the caller, and close.
         setButtonState('success');
         onClose();
         setTimeout(() => setButtonState('idle'), 3000);
       } else {
-        // A partial success: some services opened, others didn't, or a pull
+        // A partial success: some projects opened, others didn't, or a pull
         // request opened without its reviewers. Keep the modal open so the
         // operator can see which is which — closing here would silently drop
         // what still needs attention.
@@ -85,9 +85,9 @@ export default function CreatePrModal({ proposal, onClose, onCreated }: Props) {
             {result.pull_requests
               .filter(pr => pr.pr_url)
               .map(pr => (
-                <li key={pr.service || 'legacy'}>
+                <li key={pr.project || 'legacy'}>
                   <a href={pr.pr_url} target="_blank" rel="noreferrer">
-                    {pr.service ? `${pr.service}: open PR ↗` : 'open PR ↗'}
+                    {pr.project ? `${pr.project}: open PR ↗` : 'open PR ↗'}
                   </a>
                 </li>
               ))}
@@ -97,14 +97,14 @@ export default function CreatePrModal({ proposal, onClose, onCreated }: Props) {
         {result && result.errors.length > 0 && (
           <div className="info-strip info-strip--error">
             <span className="info-strip__icon">⚠</span>
-            {result.errors.map(e => (e.service ? `${e.service}: ${e.error}` : e.error)).join('; ')}
+            {result.errors.map(e => (e.project ? `${e.project}: ${e.error}` : e.error)).join('; ')}
           </div>
         )}
 
         {result && (result.warnings ?? []).length > 0 && (
           <div className="info-strip info-strip--warning">
             <span className="info-strip__icon">⚠</span>
-            {(result.warnings ?? []).map(w => (w.service ? `${w.service}: ${w.warning}` : w.warning)).join('; ')}
+            {(result.warnings ?? []).map(w => (w.project ? `${w.project}: ${w.warning}` : w.warning)).join('; ')}
           </div>
         )}
 

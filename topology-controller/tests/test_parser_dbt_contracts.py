@@ -135,7 +135,7 @@ def test_run_facts_come_from_the_contract(tmp_path, monkeypatch):
     def from_contract(document):
         return dataclasses.replace(
             real(document), schema="from_contract_schema", table="from_contract_table",
-            physical_name="from_contract_relation", service="from-contract-service", kind="dbt-snapshot",
+            physical_name="from_contract_relation", project="from-contract-service", kind="dbt-snapshot",
             schedule="from_contract", criticality="REGULATORY", timeout_minutes=7,
             file_path="from/contract.sql", owner="from-contract-team", materialized="from_contract",
         )
@@ -145,7 +145,7 @@ def test_run_facts_come_from_the_contract(tmp_path, monkeypatch):
 
     assert (node.schema_name, node.table_name, node.resolved_relation) == (
         "analytics", "from_contract_table", "from_contract_relation")
-    assert (node.service_name, node.node_type, node.schedule_name, node.criticality) == (
+    assert (node.project_name, node.node_type, node.schedule_name, node.criticality) == (
         "from-contract-service", NodeType.DBT_SNAPSHOT, "from_contract", "REGULATORY")
     assert (node.timeout_seconds, node.original_file_path, node.owner, node.materialized) == (
         420, "from/contract.sql", "from-contract-team", "from_contract")
@@ -160,7 +160,7 @@ def test_the_facts_a_well_formed_node_gets_from_its_contract_are_the_manifests(t
     (parsed,) = parse_manifest(_manifest(tmp_path, node)).nodes
     assert (parsed.schema_name, parsed.table_name, parsed.resolved_relation, parsed.materialized) == (
         "analytics", "orders_v2", "orders", "incremental")
-    assert (parsed.service_name, parsed.node_type, parsed.schedule_name, parsed.criticality, parsed.owner) == (
+    assert (parsed.project_name, parsed.node_type, parsed.schedule_name, parsed.criticality, parsed.owner) == (
         "shop", NodeType.DBT_MODEL, "daily", "CORE", "team-a")
     assert (parsed.timeout_seconds, parsed.original_file_path) == (1800, "models/orders_v2.sql")
 
@@ -214,7 +214,7 @@ def test_a_contract_whose_id_is_not_the_node_key_is_an_invalid_contract(tmp_path
     assert parsed.failed == (FailedNode(
         node_id=contract_id,
         kind=ParseFailureKind.INVALID_CONTRACT,
-        service="shop",
+        project="shop",
         file_path=f"models/{table}.sql",
         node_type=NodeType.DBT_MODEL,
         detail=f"id: the contract's id is {contract_id!r}, and continuo names its node {node_key!r}: the schema"
@@ -253,7 +253,7 @@ def test_a_bad_timeout_and_a_bad_criticality_are_invalid_contracts(tmp_path):
     assert parsed.failed == (FailedNode(
         node_id="analytics.orders",
         kind=ParseFailureKind.INVALID_CONTRACT,
-        service="shop",
+        project="shop",
         file_path="models/orders.sql",
         node_type=NodeType.DBT_MODEL,
         detail="customProperties[3].value: `criticality` is 'high', it must be one of REGULATORY, CORE, SECONDARY; "
@@ -321,16 +321,16 @@ def test_a_node_shape_error_is_an_invalid_contract_naming_the_node(tmp_path, nod
 
     assert [n.unique_id for n in parsed.nodes] == ["analytics.customers"]
     assert parsed.failed == (FailedNode(
-        node_id=name, kind=ParseFailureKind.INVALID_CONTRACT, service="shop", file_path="models/orders.sql",
+        node_id=name, kind=ParseFailureKind.INVALID_CONTRACT, project="shop", file_path="models/orders.sql",
         node_type=NodeType.DBT_MODEL, detail=message,
     ),)
     assert timings.contract_failures == {("generate", "manifest_shape"): 1}
 
 
-def test_a_node_shape_error_reads_the_service_and_file_path_tolerantly(tmp_path):
+def test_a_node_shape_error_reads_the_project_and_file_path_tolerantly(tmp_path):
     node = _node("orders", fqn="shop", original_file_path=7)
     (failed,) = parse_manifest(_manifest(tmp_path, node)).failed
-    assert (failed.node_id, failed.service, failed.file_path, failed.detail) == (
+    assert (failed.node_id, failed.project, failed.file_path, failed.detail) == (
         "analytics.orders", "", "", "model.shop.orders: fqn must be a list, got str")
 
 
@@ -351,8 +351,8 @@ def test_a_manifest_shape_error_is_an_invalid_artifact(tmp_path, metadata, extra
 
 
 @pytest.mark.parametrize("resource_type", ["model", "seed", "snapshot"])
-def test_the_parsers_copies_of_the_librarys_kind_and_service_rules_agree_with_it(tmp_path, resource_type):
-    """A failed node takes its type from the resource type and its service from the
+def test_the_parsers_copies_of_the_librarys_kind_and_project_rules_agree_with_it(tmp_path, resource_type):
+    """A failed node takes its type from the resource type and its project from the
     fqn without the library, which may have refused the node: for a well-formed node
     both are what the library gives."""
     node = _node("orders_daily", resource_type=resource_type, fqn=["shop_core", "orders_daily"])
@@ -360,7 +360,7 @@ def test_the_parsers_copies_of_the_librarys_kind_and_service_rules_agree_with_it
     generated = dbt.generate(node, [], manifest=manifest)
 
     assert parser._RESOURCE_TYPE_TO_NODE_TYPE[resource_type] == dbt.run_facts(generated.document).kind
-    assert parser._tolerant_service(node) == dbt.node_service(node) == "shop-core"
+    assert parser._tolerant_project(node) == dbt.node_project(node) == "shop-core"
 
 
 def test_tests_attach_only_to_nodes_that_became_manifest_nodes(tmp_path):
@@ -387,7 +387,7 @@ def _extras(**headers):
     """The compile extras of `shop`, naming each seed `<table>=<header columns>`."""
     seeds = {f"seed.shop.{table}": SeedExtras(sha256="ab" * 32, header=tuple(header), column_types={})
              for table, header in headers.items()}
-    return CompileExtras(service="shop", release_id="r", seeds=seeds, project_flags={}, packages={})
+    return CompileExtras(project="shop", release_id="r", seeds=seeds, project_flags={}, packages={})
 
 
 def test_a_header_column_the_seed_does_not_declare_is_an_invalid_contract(tmp_path):
@@ -399,7 +399,7 @@ def test_a_header_column_the_seed_does_not_declare_is_an_invalid_contract(tmp_pa
     assert parsed.failed == (FailedNode(
         node_id="analytics.countries",
         kind=ParseFailureKind.INVALID_CONTRACT,
-        service="shop",
+        project="shop",
         file_path="seeds/countries.csv",
         node_type=NodeType.DBT_SEED,
         detail="seed.shop.countries: name is in the CSV header but not declared",
@@ -584,7 +584,7 @@ def test_a_library_defect_is_internal(tmp_path, monkeypatch, caplog):
     the release fails as internal, with no failed node."""
     monkeypatch.setattr(dbt, "generate", _raise(KeyError("materialization")))
     publisher = MagicMock()
-    source = source_of(ManifestFile(path=_manifest(tmp_path, _node("orders")), declared_service="shop"))
+    source = source_of(ManifestFile(path=_manifest(tmp_path, _node("orders")), declared_project="shop"))
 
     with caplog.at_level(logging.ERROR, logger="service.candidate_manifest_handler"):
         timings = build_handler(source, publisher, make_uploader()).handle(release_id="rel-1")
@@ -866,8 +866,8 @@ def test_a_relationships_test_in_the_dbt_namespace_is_given_without_its_target_w
 
 # --- through the handler ---------------------------------------------------------
 
-def _dbt_file(tmp_path, name, service, *nodes, headers=None):
-    """The manifest file `name` of `service`. `headers` maps a seed's unique id to its CSV header,
+def _dbt_file(tmp_path, name, project, *nodes, headers=None):
+    """The manifest file `name` of `project`. `headers` maps a seed's unique id to its CSV header,
     and writes the compile extras that name those seeds beside the manifest."""
     path = Path(tmp_path) / name
     path.write_text(json.dumps({"nodes": {n["unique_id"]: n for n in nodes}}))
@@ -875,19 +875,19 @@ def _dbt_file(tmp_path, name, service, *nodes, headers=None):
     if headers is not None:
         extras = Path(tmp_path) / f"{name}.extras.json"
         extras.write_text(json.dumps({
-            "version": 1, "service": service, "release_id": "rel-1", "project_flags": {}, "packages": {},
+            "version": 1, "project": project, "release_id": "rel-1", "project_flags": {}, "packages": {},
             "seeds": {seed_id: {"sha256": "ab" * 32, "header": list(header), "column_types": {}}
                       for seed_id, header in headers.items()},
         }))
         extras_path = str(extras)
-    return ManifestFile(path=str(path), image_tag="", declared_service=service, extras_path=extras_path)
+    return ManifestFile(path=str(path), image_tag="", declared_project=project, extras_path=extras_path)
 
 
-def _handler_seed(service, name, declares):
-    """A seed of `service` as the handler tests release it, declaring the columns `declares`."""
+def _handler_seed(project, name, declares):
+    """A seed of `project` as the handler tests release it, declaring the columns `declares`."""
     return dbt_node(name) | {
-        "unique_id": f"seed.{service}.{name}", "resource_type": "seed", "compiled_code": "",
-        "fqn": [service, name], "original_file_path": f"seeds/{name}.csv",
+        "unique_id": f"seed.{project}.{name}", "resource_type": "seed", "compiled_code": "",
+        "fqn": [project, name], "original_file_path": f"seeds/{name}.csv",
         "config": {"materialized": "seed", "meta": {"owner": "team-a"}},
         "columns": {column: {"name": column} for column in declares},
     }
@@ -900,7 +900,7 @@ def _service_2_node(name, **over):
 
 
 def test_every_invalid_contract_and_sql_error_is_named_once(tmp_path):
-    """Invalid dbt contracts of two services, an invalid Python contract and a dbt node
+    """Invalid dbt contracts of two projects, an invalid Python contract and a dbt node
     whose SQL does not parse end in one rejection naming every failed node once. The
     kind is the first of the parse_failure_kind vocabulary's order, so the healable
     invalid_sql wins over invalid_contract."""
@@ -925,7 +925,7 @@ def test_every_invalid_contract_and_sql_error_is_named_once(tmp_path):
     assert kwargs["failure_kind"] == ParseFailureKind.INVALID_SQL
     assert kwargs["detail"] == (
         "4 nodes failed to parse: analytics.py_daily_kpis, test_schema.broken, test_schema.orders, test_schema.payments")
-    assert [(n.node_id, n.kind, n.service, n.file_path) for n in kwargs["failed_nodes"]] == [
+    assert [(n.node_id, n.kind, n.project, n.file_path) for n in kwargs["failed_nodes"]] == [
         ("analytics.py_daily_kpis", ParseFailureKind.INVALID_CONTRACT, "service-py", "contracts/py_daily_kpis.odcs.yaml"),
         ("test_schema.broken", ParseFailureKind.INVALID_SQL, "service-1", "models/broken.sql"),
         ("test_schema.orders", ParseFailureKind.INVALID_CONTRACT, "service-1", "models/orders.sql"),
@@ -977,7 +977,7 @@ _RELATIONSHIPS_LINE = "candidate: relationships tests whose target the manifest 
 
 def test_a_release_whose_relationships_test_names_a_left_out_stub_publishes_and_logs_it_once(tmp_path, caplog):
     """A baseline manifest the uploader filtered still names the stub its reader's relationships test
-    points at: the release publishes, and one line per release counts such tests by service."""
+    points at: the release publishes, and one line per release counts such tests by project."""
     publisher, bundle_writer = MagicMock(), RecordingContractBundleWriter()
     orders = dbt_node("orders") | {"columns": {"id": {"name": "id", "data_type": "integer"}}}
     test = _relationships_test("model.service-1.orders", "model.service-1.stub_customers") | {
@@ -993,7 +993,7 @@ def test_a_release_whose_relationships_test_names_a_left_out_stub_publishes_and_
     (column,) = bundle_writer.document["contracts"]["test_schema.orders"]["document"]["schema"][0]["properties"]
     assert "relationships" not in column and column["quality"][0]["type"] == "custom"
     (record,) = [r for r in caplog.records if r.getMessage() == _RELATIONSHIPS_LINE]
-    assert (record.levelno, record.release_id, record.tests, record.services) == (
+    assert (record.levelno, record.release_id, record.tests, record.projects) == (
         logging.WARNING, "rel-1", 1, {"service-1": 1})
 
 
@@ -1022,21 +1022,21 @@ def test_a_release_with_a_contract_whose_id_is_not_the_node_key_is_rejected_and_
     assert kwargs["failure_kind"] == ParseFailureKind.INVALID_CONTRACT
     assert kwargs["detail"] == f"1 node failed to parse: data{_SIGMA}.orders"
     (failed,) = kwargs["failed_nodes"]
-    assert (failed.node_id, failed.kind, failed.service, failed.file_path) == (
+    assert (failed.node_id, failed.kind, failed.project, failed.file_path) == (
         f"data{_SIGMA}.orders", ParseFailureKind.INVALID_CONTRACT, "service-1", "models/Orders.sql")
     assert f"continuo names its node 'data{_FINAL_SIGMA}.orders'" in failed.detail
     assert (code_bundle_uploader.upload.call_args_list, bundle_writer.writes, writer.writes) == ([], [], [])
     assert timings.contract_failures == {("validate", "identity"): 1}
 
 
-@pytest.mark.parametrize("two_services", [False, True], ids=["one-service", "two-services"])
-def test_two_dbt_nodes_with_one_contract_id_publish_with_neither_contract_in_the_bundle(tmp_path, caplog, two_services):
+@pytest.mark.parametrize("two_projects", [False, True], ids=["one-project", "two-projects"])
+def test_two_dbt_nodes_with_one_contract_id_publish_with_neither_contract_in_the_bundle(tmp_path, caplog, two_projects):
     """release-controller rejects such a release as duplicate_table, naming every
-    service: topology-controller publishes it, and the bundle, which keys a contract by
+    project: topology-controller publishes it, and the bundle, which keys a contract by
     id, holds neither contract of that id."""
     publisher, writer, bundle_writer = MagicMock(), RecordingArtifactWriter(), RecordingContractBundleWriter()
     model = dbt_node("orders")
-    if two_services:
+    if two_projects:
         files = [_dbt_file(tmp_path, "service-1.json", "service-1", model, dbt_node("fine")),
                  _dbt_file(tmp_path, "service-2.json", "service-2", _service_2_node("orders"))]
     else:
@@ -1077,7 +1077,7 @@ def test_a_release_with_a_seed_whose_header_differs_from_its_declared_columns_is
     assert kwargs["failure_kind"] == ParseFailureKind.INVALID_CONTRACT
     assert kwargs["detail"] == "1 node failed to parse: test_schema.seed_countries"
     (failed,) = kwargs["failed_nodes"]
-    assert (failed.node_id, failed.kind, failed.service, failed.file_path, failed.node_type) == (
+    assert (failed.node_id, failed.kind, failed.project, failed.file_path, failed.node_type) == (
         "test_schema.seed_countries", ParseFailureKind.INVALID_CONTRACT, "service-1",
         "seeds/seed_countries.csv", NodeType.DBT_SEED)
     assert failed.detail == "seed.service-1.seed_countries: name is in the CSV header but not declared"
@@ -1087,7 +1087,7 @@ def test_a_release_with_a_seed_whose_header_differs_from_its_declared_columns_is
 
 def test_a_release_whose_seeds_have_no_known_header_publishes_and_logs_their_count_once(tmp_path, caplog):
     """No compile extras, or extras that do not name a seed, leave no header to compare: the release
-    publishes, and one line per release counts the seeds that were not checked, across its services."""
+    publishes, and one line per release counts the seeds that were not checked, across its projects."""
     publisher = MagicMock()
     source = source_of(
         _dbt_file(tmp_path, "service-1.json", "service-1",
@@ -1104,7 +1104,7 @@ def test_a_release_whose_seeds_have_no_known_header_publishes_and_logs_their_cou
     publisher.publish_failed.assert_not_called()
     publisher.publish_ok.assert_called_once()
     (record,) = [r for r in caplog.records if r.getMessage() == _UNCHECKED_SEEDS_LINE]
-    assert (record.levelno, record.release_id, record.seeds, record.services) == (
+    assert (record.levelno, record.release_id, record.seeds, record.projects) == (
         logging.WARNING, "rel-1", 3, {"service-1": 2, "service-2": 1})
 
 
@@ -1171,7 +1171,7 @@ def test_a_seed_whose_extras_hold_text_utf8_cannot_encode_is_rejected_as_an_inva
     ("original_file_path", {"original_file_path": "seeds/seed_countries\ud800.csv"}),
 ])
 def test_a_node_whose_manifest_text_utf8_cannot_encode_is_rejected_as_an_invalid_artifact(tmp_path, field, over):
-    """A failed node names its node id, service and file as the manifest writes them, and a rejection
+    """A failed node names its node id, project and file as the manifest writes them, and a rejection
     that held text UTF-8 cannot encode could not be published."""
     redis = MagicMock()
     seed = _handler_seed("service-1", "seed_countries", ["code"]) | over
@@ -1186,7 +1186,7 @@ def test_a_node_whose_manifest_text_utf8_cannot_encode_is_rejected_as_an_invalid
     assert payload["failed_nodes"] == []
 
 
-def test_the_unchecked_seeds_of_two_manifests_of_one_service_are_added(tmp_path, caplog):
+def test_the_unchecked_seeds_of_two_manifests_of_one_project_are_added(tmp_path, caplog):
     source = source_of(
         _dbt_file(tmp_path, "a.json", "service-1", _handler_seed("service-1", "seed_a", ["x"]), dbt_node("fine")),
         _dbt_file(tmp_path, "b.json", "service-1", _handler_seed("service-1", "seed_b", ["x"]), dbt_node("also_fine")),
@@ -1196,4 +1196,4 @@ def test_the_unchecked_seeds_of_two_manifests_of_one_service_are_added(tmp_path,
         build_handler(source, MagicMock(), make_uploader()).handle(release_id="rel-1")
 
     (record,) = [r for r in caplog.records if r.getMessage() == _UNCHECKED_SEEDS_LINE]
-    assert (record.seeds, record.services) == (2, {"service-1": 2})
+    assert (record.seeds, record.projects) == (2, {"service-1": 2})

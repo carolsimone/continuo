@@ -117,7 +117,7 @@ class CandidateManifestPublisher:
                 {
                     "node_id": n.node_id,
                     "kind": n.kind.value,
-                    "service": n.service,
+                    "project": n.project,
                     "file_path": n.file_path,
                     "node_type": str(n.node_type),
                     "detail": _plain(n.detail),

@@ -54,27 +54,27 @@ kind load docker-image s3-sidecar:latest --name continuo || { log_error "failed 
 # scripts/lib/common.sh:kind_load_pulled_image.
 kind_load_pulled_image ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.14.0 continuo || exit 1
 
-# Build each dbt service image, tag it by its own content digest (never :latest),
+# Build each dbt project image, tag it by its own content digest (never :latest),
 # and load that tag into kind. The controller composes the dbt job image as
 # service-<n>:<image_tag>, so the kind image must be loaded under exactly the tag
-# the e2e seeds into service_prod. The per-service tags are written to the
+# the e2e seeds into service_prod. The per-project tags are written to the
 # bind-mounted tests/e2e/.image-tags file (immutable setup metadata); the e2e
 # rebuilds the service_prod baseline from it before each consumer.
-log_info "Building + loading dbt service images (content-hash tags)..."
-DBT_PER_SERVICE=""
-for svc in service-1 service-2 service-3; do
-  DOCKER_BUILDKIT=1 docker build -f "dbt/services/${svc}/Dockerfile.local" -t "${svc}:build-tmp" "dbt/services/${svc}/" \
-    || { log_error "failed to build ${svc}"; exit 1; }
-  img_id="$(docker image inspect --format '{{.Id}}' "${svc}:build-tmp")"
+log_info "Building + loading dbt project images (content-hash tags)..."
+DBT_PER_PROJECT=""
+for project in service-1 service-2 service-3; do
+  DOCKER_BUILDKIT=1 docker build -f "dbt/projects/${project}/Dockerfile.local" -t "${project}:build-tmp" "dbt/projects/${project}/" \
+    || { log_error "failed to build ${project}"; exit 1; }
+  img_id="$(docker image inspect --format '{{.Id}}' "${project}:build-tmp")"
   tag="${img_id#sha256:}"; tag="${tag:0:12}"
-  docker tag "${svc}:build-tmp" "${svc}:${tag}"
-  log_info "  ${svc} -> ${svc}:${tag}"
-  kind load docker-image "${svc}:${tag}" --name continuo \
-    || { log_error "Failed to load ${svc} into kind"; exit 1; }
-  DBT_PER_SERVICE="${DBT_PER_SERVICE:+${DBT_PER_SERVICE},}${svc}=${tag}"
+  docker tag "${project}:build-tmp" "${project}:${tag}"
+  log_info "  ${project} -> ${project}:${tag}"
+  kind load docker-image "${project}:${tag}" --name continuo \
+    || { log_error "Failed to load ${project} into kind"; exit 1; }
+  DBT_PER_PROJECT="${DBT_PER_PROJECT:+${DBT_PER_PROJECT},}${project}=${tag}"
 done
-printf '%s' "$DBT_PER_SERVICE" > "${REPO_ROOT}/tests/e2e/.image-tags"
-log_info "Wrote per-service image tags to tests/e2e/.image-tags: ${DBT_PER_SERVICE}"
+printf '%s' "$DBT_PER_PROJECT" > "${REPO_ROOT}/tests/e2e/.image-tags"
+log_info "Wrote per-project image tags to tests/e2e/.image-tags: ${DBT_PER_PROJECT}"
 
 log_info "Images built and loaded successfully"
 
@@ -163,9 +163,9 @@ log_info "Verifying controller health endpoint..."
 check_k8s_health() {
   local deployment=$1
   local port=$2
-  local service_name=$3
+  local component=$3
 
-  log_info "Checking ${service_name} health..."
+  log_info "Checking ${component} health..."
 
   kubectl port-forward deployment/${deployment} ${port}:${port} -n default >/dev/null 2>&1 &
   local PF_PID=$!
@@ -181,10 +181,10 @@ check_k8s_health() {
   wait ${PF_PID} 2>/dev/null || true
 
   if [ "${http_code}" = "200" ]; then
-    log_info "${service_name} health check: OK (${http_code})"
+    log_info "${component} health check: OK (${http_code})"
     return 0
   else
-    log_error "${service_name} health check: FAILED (${http_code})"
+    log_error "${component} health check: FAILED (${http_code})"
   fi
 }
 

@@ -67,7 +67,7 @@ export default function ReleasesPanel() {
               In flight · verification run{' '}
               <Link to={`/verifications/${pipeline.active.run_id}`}><strong>{pipeline.active.run_id}</strong></Link>
               {' '}for <Link to={`/releases/${pipeline.active.verifies_release_id}`}>{pipeline.active.verifies_release_id}</Link>
-              {' '}(attempt {pipeline.active.attempt}, service {pipeline.active.service}) · {pipeline.active.status}
+              {' '}(attempt {pipeline.active.attempt}, project {pipeline.active.project}) · {pipeline.active.status}
             </>
           ) : (
             <>

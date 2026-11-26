@@ -16,7 +16,7 @@ const started = () => ({ ok: true, status: 200, json: async () => ({ run_id: 'r'
 
 function renderOnTable(table: string) {
   return renderHook(
-    ({ table }) => useSingleNodeRun({ service: 'svc', schema: 'schema', table }, { operation: 'run' }),
+    ({ table }) => useSingleNodeRun({ project: 'svc', schema: 'schema', table }, { operation: 'run' }),
     { initialProps: { table } },
   );
 }

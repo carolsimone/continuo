@@ -58,7 +58,7 @@ func (h *builtHarness) finished(t *testing.T, name string, stamp run.ReleaseStam
 	_, err = h.db.Exec(`UPDATE runs SET status = 'failed', completed_at = now() WHERE run_id = $1`, id)
 	require.NoError(t, err)
 	_, err = h.db.Exec(`
-		INSERT INTO tasks (tenant_id, task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries, node_key)
+		INSERT INTO tasks (tenant_id, task_id, run_id, project_name, schema_name, table_name, job_name, status, max_retries, node_key)
 		VALUES ((SELECT tenant_id FROM runs WHERE run_id = $2), $1, $2, 'service-1', 'raw', 'stamp_orders', 'job', 'failed', 2, 'raw.stamp_orders')`, uuid.New(), id)
 	require.NoError(t, err)
 	return id
@@ -104,7 +104,7 @@ func TestReleaseStamp(t *testing.T) {
 		assert.Equal(t, live, h.stampOf(t, id))
 	})
 
-	target := run.NodeID{ServiceName: "service-1", SchemaName: "raw", TableName: "stamp_orders"}
+	target := run.NodeID{ProjectName: "service-1", SchemaName: "raw", TableName: "stamp_orders"}
 
 	t.Run("a latest single-node run names the live release", func(t *testing.T) {
 		id, err := h.singleNode(ctx, svchandlers.TriggerSingleNodeRunInput{

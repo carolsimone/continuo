@@ -26,7 +26,7 @@ func requireSeries(t *testing.T, body string, want ...string) {
 	}
 }
 
-// Every counter carries the flow, the type and its own labels, and the service
+// Every counter carries the flow, the type and its own labels, and the project
 // label the registry adds.
 func TestRemediationMetrics_CountersCarryTheirLabels(t *testing.T) {
 	reg := pkgmetrics.New("agent-remediation")

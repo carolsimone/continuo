@@ -25,7 +25,7 @@ func prClosedMergedInput() domainEvent.PRClosed {
 		ReleaseID:       "rel-1",
 		NodeID:          "analytics.revenue",
 		ResolvedNodeIDs: []string{"analytics.revenue", "analytics.margin"},
-		Service:         "core",
+		Project:         "core",
 		PrURL:           "https://github.com/org/repo/pull/42",
 		PrNumber:        42,
 		Outcome:         "merged",
@@ -64,7 +64,7 @@ func TestPrClosedProvenanceHandler_RecordsMergedOutcome(t *testing.T) {
 	o := repo.recordOutcomeCalls[0]
 	assert.Equal(t, "prop-1", o.ProposalID)
 	assert.Equal(t, "rel-1", o.ReleaseID)
-	assert.Equal(t, "core", o.Service)
+	assert.Equal(t, "core", o.Project)
 	assert.Equal(t, "merged", o.Outcome)
 	wantAt, err := time.Parse(time.RFC3339, in.ClosedAt)
 	require.NoError(t, err)
@@ -95,7 +95,7 @@ func TestPrClosedProvenanceHandler_RecordsRejectedOutcome(t *testing.T) {
 		ProposalID: "prop-1",
 		ReleaseID:  "rel-1",
 		NodeID:     "analytics.revenue",
-		Service:    "core",
+		Project:    "core",
 		PrURL:      "https://github.com/org/repo/pull/42",
 		PrNumber:   42,
 		Outcome:    "rejected",
@@ -122,7 +122,7 @@ func TestPrClosedProvenanceHandler_MergedWithoutResolvedNodesDrawsNothing(t *tes
 		ProposalID: "prop-1",
 		ReleaseID:  "rel-1",
 		NodeID:     "analytics.revenue",
-		Service:    "core",
+		Project:    "core",
 		Outcome:    "merged",
 		ClosedAt:   "2026-08-14T11:30:00Z",
 	}

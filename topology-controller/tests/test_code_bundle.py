@@ -6,7 +6,7 @@ from service.code_bundle import CONTRACT_VERSION, build_code_bundle
 
 def _mk(table="revenue", schema="analytics", **over):
     defaults = dict(
-        table_name=table, schema_name=schema, service_name="service-a",
+        table_name=table, schema_name=schema, project_name="service-a",
         owner="team-a", schedule_name="daily", criticality="SECONDARY",
         candidate_sql="select 1", node_type="dbt-model",
         raw_code="select 1 -- raw", config={"materialized": "table"},

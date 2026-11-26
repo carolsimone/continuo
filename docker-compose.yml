@@ -189,7 +189,7 @@ services:
       # (keys AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY).
       - JOB_S3_SECRET_NAME=continuo-job-s3
       - S3_SIDECAR_IMAGE=s3-sidecar:latest
-      # dbt command dialect (per-service command templates for K8s Jobs)
+      # dbt command dialect (per-project command templates for K8s Jobs)
       - DBT_COMMANDS_CONFIG_PATH=/etc/continuo/dbt-commands.yaml
       # S3: log/result uploads by this process, and credentials forwarded into
       # validation and compile pods. Compose-network DNS; in-kind pods use the
@@ -438,7 +438,7 @@ services:
       - LLM_BASE_URL=${LLM_BASE_URL-http://stub-llm:9100}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - GITHUB_BASE_URL=${GITHUB_BASE_URL:-http://stub-github:9200}
-      - SERVICE_REPO_MAP_PATH=/etc/continuo/service_repos.yaml
+      - PROJECT_REPO_MAP_PATH=/etc/continuo/project_repos.yaml
       # sqlglot dialect continuo-runtime packages python-node fix proposals
       # with. Mirrors the chart's validation.engine; the local stack runs
       # Postgres, same as topology-controller's WAREHOUSE_ENGINE.
@@ -457,11 +457,11 @@ services:
       - NO_PROXY=localhost,127.0.0.1,::1,postgres,redis,minio,catalog,release-controller,proxy.golang.org,sum.golang.org,storage.googleapis.com
     volumes:
       # The local stack runs on the e2e map, which adds the suite's fixture
-      # services to the demo ones. The map agent-remediation documents for
-      # operators (agent-remediation/config/service_repos.yaml) and the one
-      # the chart ships (deploy/continuo/files/service_repos.yaml) stay free
+      # projects to the demo ones. The map agent-remediation documents for
+      # operators (agent-remediation/config/project_repos.yaml) and the one
+      # the chart ships (deploy/continuo/files/project_repos.yaml) stay free
       # of test fixtures.
-      - ./tests/e2e/config/service_repos.yaml:/etc/continuo/service_repos.yaml:ro
+      - ./tests/e2e/config/project_repos.yaml:/etc/continuo/project_repos.yaml:ro
       # An install's flow, type and fixture files, which agent-remediation loads
       # over the built-in ones. The folder is empty here (only a .gitkeep), so
       # the local stack runs the built-in files alone.
@@ -910,21 +910,21 @@ services:
       - POSTGRES_DB=continuo_dbt
       - POSTGRES_USER=continuo_warehouse
       - POSTGRES_PASSWORD=local-continuo_warehouse
-      # Per-service image tags recorded in compiled manifests. The e2e resolves
+      # Per-project image tags recorded in compiled manifests. The e2e resolves
       # the dbt job image_tag from the release-controller service_prod table (seeded
       # by setup.sh / provision-k8s-test-env.sh with the real content-hash tags), so
       # this value only satisfies the topology-controller's A1 publish-boundary
       # validator, which rejects a batch whose image_tag is empty. setup.sh exports
-      # the real per-service tags before `docker compose up`; the placeholder default
+      # the real per-project tags before `docker compose up`; the placeholder default
       # only keeps a bare `docker compose up` from tripping the validator.
-      - IMAGE_TAG_PER_SERVICE=${IMAGE_TAG_PER_SERVICE:-service-1=e2e-local,service-2=e2e-local,service-3=e2e-local}
+      - IMAGE_TAG_PER_PROJECT=${IMAGE_TAG_PER_PROJECT:-service-1=e2e-local,service-2=e2e-local,service-3=e2e-local}
     # Read-only, so nothing this container runs writes into the checkout,
     # whichever user owns it: a compile writes under /app/build, any other dbt
     # command under the image's DBT_TARGET_PATH and DBT_LOG_PATH
-    # (dbt/Dockerfile.upload). dbt/tests/test_services_mount.py fails when
+    # (dbt/Dockerfile.upload). dbt/tests/test_projects_mount.py fails when
     # this mount is writable.
     volumes:
-      - ./dbt/services:/app/services:ro
+      - ./dbt/projects:/app/projects:ro
 
 volumes:
   neo4j_data:

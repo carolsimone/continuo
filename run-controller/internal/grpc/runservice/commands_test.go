@@ -112,7 +112,7 @@ func commandCalls(srv runv1.RunServiceServer, ctx context.Context, requestID str
 		},
 		"TriggerSingleNodeRun": func() error {
 			_, err := srv.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{
-				RequestId: requestID, ServiceName: "service-1", SchemaName: "mart", TableName: "orders", MetadataSource: "latest",
+				RequestId: requestID, ProjectName: "service-1", SchemaName: "mart", TableName: "orders", MetadataSource: "latest",
 			})
 			return err
 		},
@@ -174,7 +174,7 @@ func TestCommands_ActForTheRequestsTenant(t *testing.T) {
 	assert.Equal(t, tenantB, cmds.rebase.TenantID)
 
 	single, err := srv.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{
-		RequestId: requestID, ServiceName: "service-1", SchemaName: "mart", TableName: "orders", MetadataSource: "latest",
+		RequestId: requestID, ProjectName: "service-1", SchemaName: "mart", TableName: "orders", MetadataSource: "latest",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, acmeRun.String(), single.GetRunId())
@@ -244,11 +244,11 @@ func TestCommands_PassTheParsedParameters(t *testing.T) {
 	assert.Equal(t, "rel-7", cmds.rebase.ExpectedReleaseID)
 
 	_, err = srv.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{
-		RequestId: requestID.String(), ServiceName: "service-1", SchemaName: "mart", TableName: "orders",
+		RequestId: requestID.String(), ProjectName: "service-1", SchemaName: "mart", TableName: "orders",
 		MetadataSource: "snapshot_of_run", SourceRunId: src.String(), Operation: "full_refresh",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, run.NodeID{ServiceName: "service-1", SchemaName: "mart", TableName: "orders"}, cmds.single.Target)
+	assert.Equal(t, run.NodeID{ProjectName: "service-1", SchemaName: "mart", TableName: "orders"}, cmds.single.Target)
 	assert.Equal(t, run.MetadataSourceSnapshotOfRun, cmds.single.MetadataSource)
 	require.NotNil(t, cmds.single.SourceRunID)
 	assert.Equal(t, src, *cmds.single.SourceRunID)
@@ -291,31 +291,31 @@ func TestCommands_RefuseMalformedParameters(t *testing.T) {
 		},
 		"TriggerSingleNodeRun without a table": func() error {
 			_, err := srv.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{
-				RequestId: id, ServiceName: "service-1", SchemaName: "mart", MetadataSource: "latest",
+				RequestId: id, ProjectName: "service-1", SchemaName: "mart", MetadataSource: "latest",
 			})
 			return err
 		},
-		"TriggerSingleNodeRun without a service": func() error {
+		"TriggerSingleNodeRun without a project": func() error {
 			_, err := srv.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{
-				RequestId: id, ServiceName: "", SchemaName: "e2e_raw", TableName: "ingest_probe", MetadataSource: "latest",
+				RequestId: id, ProjectName: "", SchemaName: "e2e_raw", TableName: "ingest_probe", MetadataSource: "latest",
 			})
 			return err
 		},
 		"TriggerSingleNodeRun of an unknown metadata source": func() error {
 			_, err := srv.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{
-				RequestId: id, ServiceName: "service-1", SchemaName: "mart", TableName: "orders", MetadataSource: "yesterday",
+				RequestId: id, ProjectName: "service-1", SchemaName: "mart", TableName: "orders", MetadataSource: "yesterday",
 			})
 			return err
 		},
 		"TriggerSingleNodeRun of a snapshot without a source": func() error {
 			_, err := srv.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{
-				RequestId: id, ServiceName: "service-1", SchemaName: "mart", TableName: "orders", MetadataSource: "snapshot_of_run",
+				RequestId: id, ProjectName: "service-1", SchemaName: "mart", TableName: "orders", MetadataSource: "snapshot_of_run",
 			})
 			return err
 		},
 		"TriggerSingleNodeRun of the latest with a source": func() error {
 			_, err := srv.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{
-				RequestId: id, ServiceName: "service-1", SchemaName: "mart", TableName: "orders", MetadataSource: "latest",
+				RequestId: id, ProjectName: "service-1", SchemaName: "mart", TableName: "orders", MetadataSource: "latest",
 				SourceRunId: uuid.NewString(),
 			})
 			return err
@@ -348,7 +348,7 @@ func TestCommandError_UnknownExternalNodeIsInvalidArgument(t *testing.T) {
 	srv := newCommandServer(newStore(), cmds)
 
 	_, err := srv.TriggerSingleNodeRun(ctxOf(tenantA), &runv1.TriggerSingleNodeRunRequest{
-		RequestId: uuid.NewString(), ServiceName: "service-1", SchemaName: "raw", TableName: "ingest_probe", MetadataSource: "latest",
+		RequestId: uuid.NewString(), ProjectName: "service-1", SchemaName: "raw", TableName: "ingest_probe", MetadataSource: "latest",
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -363,7 +363,7 @@ func TestTriggerSingleNodeRun_NormalizesTheAcknowledgedObjects(t *testing.T) {
 	srv := newCommandServer(newStore(), cmds)
 
 	_, err := srv.TriggerSingleNodeRun(ctxOf(tenantA), &runv1.TriggerSingleNodeRunRequest{
-		RequestId: uuid.NewString(), ServiceName: "service-1", SchemaName: "raw", TableName: "fx_rates", MetadataSource: "latest",
+		RequestId: uuid.NewString(), ProjectName: "service-1", SchemaName: "raw", TableName: "fx_rates", MetadataSource: "latest",
 		Operation: "full_refresh", AcknowledgedDependents: []string{" BI.fx_rates_report ", "bi.fx_rates_report", "", "bi.a"},
 	})
 
@@ -371,7 +371,7 @@ func TestTriggerSingleNodeRun_NormalizesTheAcknowledgedObjects(t *testing.T) {
 	assert.Equal(t, []string{"bi.a", "bi.fx_rates_report"}, cmds.single.AcknowledgedDependents)
 
 	_, err = srv.TriggerSingleNodeRun(ctxOf(tenantA), &runv1.TriggerSingleNodeRunRequest{
-		RequestId: uuid.NewString(), ServiceName: "service-1", SchemaName: "raw", TableName: "fx_rates", MetadataSource: "latest",
+		RequestId: uuid.NewString(), ProjectName: "service-1", SchemaName: "raw", TableName: "fx_rates", MetadataSource: "latest",
 	})
 	require.NoError(t, err)
 	assert.Empty(t, cmds.single.AcknowledgedDependents, "a call naming none carries none")
@@ -393,7 +393,7 @@ func TestTriggerSingleNodeRun_TheSeedRefusalsAreInvalidArgument(t *testing.T) {
 			srv := newCommandServer(newStore(), &fakeCommands{err: refusal})
 
 			_, err := srv.TriggerSingleNodeRun(ctxOf(tenantA), &runv1.TriggerSingleNodeRunRequest{
-				RequestId: uuid.NewString(), ServiceName: "service-1", SchemaName: "raw", TableName: "fx_rates", MetadataSource: "latest",
+				RequestId: uuid.NewString(), ProjectName: "service-1", SchemaName: "raw", TableName: "fx_rates", MetadataSource: "latest",
 				Operation: "full_refresh",
 			})
 

@@ -426,7 +426,7 @@ func (r *remediationRepository) SaveCluster(_ context.Context, c remediation.Clu
 		if _, ok := d.tries[tryKey{c.RemediationID, c.Try}]; !ok {
 			return fmt.Errorf("save cluster: try %d of remediation %s does not exist", c.Try, c.RemediationID)
 		}
-		if !slices.Contains([]workflow.ClusterKind{workflow.ClusterSingle, workflow.ClusterSharedUpstream, workflow.ClusterCrossService}, c.Kind) {
+		if !slices.Contains([]workflow.ClusterKind{workflow.ClusterSingle, workflow.ClusterSharedUpstream, workflow.ClusterCrossProject}, c.Kind) {
 			return fmt.Errorf("cluster kind %q violates its check constraint", c.Kind)
 		}
 		if c.Cluster < 1 {

@@ -21,7 +21,7 @@ func TestCreateCompileJob_InitCompilesMainUploads(t *testing.T) {
 	c := newValidationTestClient()
 	p := ValidationJobParams{
 		JobName: "compile-svc-rel", ReleaseID: "rel-1", NodeID: "core",
-		ServiceName: "core", ImageTag: "abc123",
+		ProjectName: "core", ImageTag: "abc123",
 		ManifestS3URI: "s3://continuo/core/rel-1/manifest.json", Namespace: "default",
 	}
 	require.NoError(t, c.CreateCompileJob(context.Background(), p))
@@ -52,7 +52,7 @@ func TestCreateCompileJob_RespectsS3SidecarImageEnv(t *testing.T) {
 	c := newValidationTestClient()
 	p := ValidationJobParams{
 		JobName: "compile-svc-rel", ReleaseID: "rel-1", NodeID: "core",
-		ServiceName: "core", ImageTag: "abc123",
+		ProjectName: "core", ImageTag: "abc123",
 		ManifestS3URI: "s3://continuo/core/rel-1/manifest.json", Namespace: "default",
 	}
 	require.NoError(t, c.CreateCompileJob(context.Background(), p))
@@ -71,7 +71,7 @@ func TestCreateCompileJob_SetsTTLSecondsAfterFinished(t *testing.T) {
 	c := newValidationTestClient()
 	p := ValidationJobParams{
 		JobName: "compile-svc-rel-ttl", ReleaseID: "rel-1", NodeID: "core",
-		ServiceName: "core", ImageTag: "abc123",
+		ProjectName: "core", ImageTag: "abc123",
 		ManifestS3URI: "s3://continuo/core/rel-1/manifest.json", Namespace: "default",
 	}
 	require.NoError(t, c.CreateCompileJob(context.Background(), p))
@@ -83,7 +83,7 @@ func TestCreateCompileJob_SetsTTLSecondsAfterFinished(t *testing.T) {
 func TestCreateCompileJob_EmptyImageTagErrors(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
 	c := newValidationTestClient()
-	p := ValidationJobParams{JobName: "x", ServiceName: "core", NodeID: "core",
+	p := ValidationJobParams{JobName: "x", ProjectName: "core", NodeID: "core",
 		ManifestS3URI: "s3://b/k", Namespace: "default"}
 	require.Error(t, c.CreateCompileJob(context.Background(), p))
 }
@@ -96,7 +96,7 @@ func TestCreateCompileJob_EmptyImageTagErrors(t *testing.T) {
 func TestBuildCompilePodSpec_ParseContainers(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
 	p := ValidationJobParams{
-		ServiceName:         "core",
+		ProjectName:         "core",
 		ImageTag:            "abc123",
 		ManifestS3URI:       "s3://continuo/core/rel-1/manifest.json",
 		CandidateSchema:     "_candidate_rel1",
@@ -160,7 +160,7 @@ func TestBuildCompilePodSpec_NoParseLegWhenCandidateSchemaEmpty(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
 	t.Setenv("JOB_S3_SECRET_NAME", "continuo-job-s3")
 	p := ValidationJobParams{
-		ServiceName:   "core",
+		ProjectName:   "core",
 		ImageTag:      "abc123",
 		ManifestS3URI: "s3://continuo/core/rel-1/manifest.json",
 	}
@@ -197,7 +197,7 @@ func TestCreateCompileJob_SourceOverlayStagesProjectInWorkdir(t *testing.T) {
 	c := newValidationTestClient()
 	p := ValidationJobParams{
 		JobName: "compile-svc-verify", ReleaseID: "verify-rel-1-svc-a1", NodeID: "core",
-		ServiceName: "core", ImageTag: "abc123",
+		ProjectName: "core", ImageTag: "abc123",
 		ManifestS3URI:    "s3://continuo/core/verify-rel-1-svc-a1/manifest.json",
 		SourceOverlayURI: "s3://continuo/core/verify-rel-1-svc-a1/source-overlay.tar.gz",
 		Namespace:        "default",
@@ -255,7 +255,7 @@ func TestCreateCompileJob_SourceOverlayStagesProjectInWorkdir(t *testing.T) {
 func TestBuildCompilePodSpec_SourceOverlayAppliesToParseContainers(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
 	p := ValidationJobParams{
-		ServiceName:         "core",
+		ProjectName:         "core",
 		ImageTag:            "abc123",
 		ManifestS3URI:       "s3://continuo/core/verify-rel-1/manifest.json",
 		SourceOverlayURI:    "s3://continuo/core/verify-rel-1/source-overlay.tar.gz",
@@ -310,7 +310,7 @@ func TestCreateCompileJob_NoOverlayRunsTheExtrasScriptThenCompile(t *testing.T) 
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
 	c := newValidationTestClient()
 	p := ValidationJobParams{JobName: "compile-svc-rel", ReleaseID: "rel-1", NodeID: "core",
-		ServiceName: "core", ImageTag: "abc123", ManifestS3URI: "s3://continuo/core/rel-1/manifest.json", Namespace: "default"}
+		ProjectName: "core", ImageTag: "abc123", ManifestS3URI: "s3://continuo/core/rel-1/manifest.json", Namespace: "default"}
 	require.NoError(t, c.CreateCompileJob(context.Background(), p))
 	spec := fetchJob(t, c, p.Namespace, p.JobName).Spec.Template.Spec
 	require.Len(t, spec.InitContainers, 2)
@@ -336,7 +336,7 @@ func TestCreateCompileJob_CopiesAndRunsTheExtrasScript(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
 	c := newValidationTestClient()
-	p := ValidationJobParams{JobName: "compile-core-rel", ReleaseID: "rel-1", NodeID: "core", ServiceName: "core",
+	p := ValidationJobParams{JobName: "compile-core-rel", ReleaseID: "rel-1", NodeID: "core", ProjectName: "core",
 		ImageTag: "abc123", ManifestS3URI: "s3://continuo/core/rel-1/manifest.json", Namespace: "default"}
 	require.NoError(t, c.CreateCompileJob(context.Background(), p))
 	spec := fetchJob(t, c, p.Namespace, p.JobName).Spec.Template.Spec
@@ -346,7 +346,7 @@ func TestCreateCompileJob_CopiesAndRunsTheExtrasScript(t *testing.T) {
 	assert.Equal(t, []string{"cp", "/compile_extras.py", "/shared/compile_extras.py"}, spec.InitContainers[0].Command)
 	cmd := spec.InitContainers[1].Command[2]
 	assert.Contains(t, cmd, "command -v python3")
-	assert.Contains(t, cmd, "python3 /shared/compile_extras.py --manifest /shared/manifest.json --project-dir \"$PWD\" --service core --release-id rel-1 --out /shared/compile-extras.json")
+	assert.Contains(t, cmd, "python3 /shared/compile_extras.py --manifest /shared/manifest.json --project-dir \"$PWD\" --project core --release-id rel-1 --out /shared/compile-extras.json")
 	assert.Contains(t, cmd, "chmod 644 /shared/compile-extras.json")
 	assert.Equal(t, "/shared/compile-extras.json", envByName(spec, "COMPILE_EXTRAS_LOCAL_PATH"))
 	assert.Equal(t, "s3://continuo/core/rel-1/compile-extras.json", envByName(spec, "COMPILE_EXTRAS_S3_URI"))
@@ -367,10 +367,10 @@ func TestCompileExtrasURI_ReplacesTheLastSegment(t *testing.T) {
 // manifest hand-off: the python3 guard, the extras script run against the
 // project directory (projectDirWord, a shell word) and the chmod that makes
 // its output readable by the upload container.
-func wantExtrasSuffix(projectDirWord, service, releaseID string) string {
+func wantExtrasSuffix(projectDirWord, project, releaseID string) string {
 	return ` && { command -v python3 >/dev/null 2>&1 || { echo "compile: the team image has no python3 on PATH; continuo reads the seeds with the Python that runs dbt" >&2; exit 1; }; }` +
 		" && python3 /shared/compile_extras.py --manifest /shared/manifest.json --project-dir " + projectDirWord +
-		" --service " + shellQuote(service) + " --release-id " + shellQuote(releaseID) +
+		" --project " + shellQuote(project) + " --release-id " + shellQuote(releaseID) +
 		" --out /shared/compile-extras.json && chmod 644 /shared/compile-extras.json"
 }
 
@@ -380,7 +380,7 @@ func wantExtrasSuffix(projectDirWord, service, releaseID string) string {
 func extrasCommandOf(t *testing.T, compileArgv []string, manifestPath string, overlay bool) string {
 	t.Helper()
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
-	p := ValidationJobParams{ServiceName: "core", ImageTag: "abc123", ReleaseID: "rel-1",
+	p := ValidationJobParams{ProjectName: "core", ImageTag: "abc123", ReleaseID: "rel-1",
 		ManifestS3URI: "s3://continuo/core/rel-1/manifest.json"}
 	if overlay {
 		p.SourceOverlayURI = "s3://continuo/core/rel-1/source-overlay.tar.gz"
@@ -581,7 +581,7 @@ func TestStagePrefix_FailsWhenAListedPathCannotBeRemoved(t *testing.T) {
 func TestBuildCompilePodSpec_NoOverlayParseCommandsUnchanged(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
 	p := ValidationJobParams{
-		ServiceName:     "core",
+		ProjectName:     "core",
 		ImageTag:        "abc123",
 		ManifestS3URI:   "s3://continuo/core/rel-1/manifest.json",
 		CandidateSchema: "candidate_x",

@@ -13,7 +13,7 @@ type ActiveRun struct {
 	RunID             string
 	Kind              pipeline.Kind
 	Status            pipeline.Status
-	Service           string
+	Project           string
 	Since             time.Time
 	VerifiesReleaseID string // verification only
 	Attempt           int    // verification only
@@ -39,7 +39,7 @@ func GetPipeline(ctx context.Context, d *Deps) (Pipeline, error) {
 	}
 	since, _ := r.ActivatedAt()
 	return Pipeline{Active: &ActiveRun{
-		RunID: r.ID(), Kind: r.Kind(), Status: r.Status(), Service: r.ChangedService(), Since: since,
+		RunID: r.ID(), Kind: r.Kind(), Status: r.Status(), Project: r.ChangedProject(), Since: since,
 		VerifiesReleaseID: r.VerifiesReleaseID(), Attempt: r.Attempt(),
 	}}, nil
 }

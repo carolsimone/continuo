@@ -193,8 +193,8 @@ func infraDrop(r rule, key string) Classification {
 // naming conflict unknown:log_unavailable. The signature keys on the
 // contested relation, not the release and not the target claimant's own
 // node id: the target flips between releases (Target prefers whichever
-// service the release actually changed), so keying on node id would fork one
-// physical collision into two signatures the moment the changed service
+// project the release actually changed), so keying on node id would fork one
+// physical collision into two signatures the moment the changed project
 // alternates. RelationID falls back to NodeID when a trigger names no
 // relation, which keys the signature on something stable rather than on
 // nothing.

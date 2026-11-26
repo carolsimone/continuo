@@ -157,7 +157,7 @@ describe('HANDOVER_TEXT', () => {
 describe('verificationPhase', () => {
   const p = (phases: string[]): ProposalDTO => ({
     ...base, status: 'verifying',
-    verifications: phases.map((phase, i) => ({ service: `s${i}`, kind: 'dbt', run_id: `verify-${i}`, phase, activated_at: '', error: '' } as any)),
+    verifications: phases.map((phase, i) => ({ project: `s${i}`, kind: 'dbt', run_id: `verify-${i}`, phase, activated_at: '', error: '' } as any)),
   });
   it('is running when any run is running', () => {
     expect(verificationPhase(p(['queued', 'running']))).toBe('running');
@@ -207,8 +207,8 @@ describe('groupProposals', () => {
     status: o.status ?? 'failed',
     node_id: o.node_id ?? 'n0',
     resolved_node_ids: o.resolved_node_ids,
-    pr_services: o.pr_services,
-    services: o.services,
+    pr_projects: o.pr_projects,
+    projects: o.projects,
     pull_requests: o.pull_requests,
     pr_url: o.pr_url ?? '',
     pr_state: o.pr_state ?? '',
@@ -242,35 +242,35 @@ describe('groupProposals', () => {
     expect(groups[0].latest.id).toBe('a2');
   });
 
-  it('unions the services each attempt carries, sorted and de-duplicated', () => {
+  it('unions the projects each attempt carries, sorted and de-duplicated', () => {
     const groups = groupProposals([
-      mk({ id: 'a', services: ['ledger', 'analytics'] }),
-      mk({ id: 'b', services: ['analytics'] }),
+      mk({ id: 'a', projects: ['ledger', 'analytics'] }),
+      mk({ id: 'b', projects: ['analytics'] }),
     ]);
-    expect(groups[0].services).toEqual(['analytics', 'ledger']);
+    expect(groups[0].projects).toEqual(['analytics', 'ledger']);
   });
 
-  it('never parses a service out of a node id — a remediation node id is "<schema>.<table>"', () => {
+  it('never parses a project out of a node id — a remediation node id is "<schema>.<table>"', () => {
     const groups = groupProposals([
-      mk({ id: 'a', node_id: 'e2e_schema.table_a', resolved_node_ids: ['e2e_schema.table_a', 'e2e_schema.table_b'], services: ['service-1'] }),
+      mk({ id: 'a', node_id: 'e2e_schema.table_a', resolved_node_ids: ['e2e_schema.table_a', 'e2e_schema.table_b'], projects: ['service-1'] }),
     ]);
-    expect(groups[0].services).toEqual(['service-1']);
+    expect(groups[0].projects).toEqual(['service-1']);
   });
 
-  it('falls back to the non-empty pr_services of an attempt that carries no services', () => {
-    // A proposal served by an agent-remediation that predates the services
-    // field arrives with it absent; the owning services its pull requests
+  it('falls back to the non-empty pr_projects of an attempt that carries no projects', () => {
+    // A proposal served by an agent-remediation that predates the projects
+    // field arrives with it absent; the owning projects its pull requests
     // split into are the nearest thing it does carry.
     const groups = groupProposals([
-      mk({ id: 'a', pr_services: ['shared', 'analytics'] }),
-      mk({ id: 'b', pr_services: [''] }),
+      mk({ id: 'a', pr_projects: ['shared', 'analytics'] }),
+      mk({ id: 'b', pr_projects: [''] }),
     ]);
-    expect(groups[0].services).toEqual(['analytics', 'shared']);
+    expect(groups[0].projects).toEqual(['analytics', 'shared']);
   });
 
-  it('yields no services for a legacy attempt carrying neither services nor split pull requests', () => {
-    const groups = groupProposals([mk({ id: 'a', node_id: 'core_schema.t', pr_services: [''] })]);
-    expect(groups[0].services).toEqual([]);
+  it('yields no projects for a legacy attempt carrying neither projects nor split pull requests', () => {
+    const groups = groupProposals([mk({ id: 'a', node_id: 'core_schema.t', pr_projects: [''] })]);
+    expect(groups[0].projects).toEqual([]);
   });
 
   it('unions resolved node ids across attempts, sorted', () => {

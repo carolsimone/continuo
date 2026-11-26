@@ -23,23 +23,23 @@ func NewNodeReadRepository(nodeRunsOf func(tenantID string) NodeRunRepository) *
 }
 
 // ListNodeTasks returns the most recent tasks of a node, newest run first.
-func (r *NodeReadRepository) ListNodeTasks(ctx context.Context, tenantID, serviceName, schemaName, tableName string, operation model.Operation, limit int) ([]*projection.NodeRun, error) {
-	return r.nodeRunsOf(tenantID).List(ctx, serviceName, schemaName, tableName, operation, limit)
+func (r *NodeReadRepository) ListNodeTasks(ctx context.Context, tenantID, projectName, schemaName, tableName string, operation model.Operation, limit int) ([]*projection.NodeRun, error) {
+	return r.nodeRunsOf(tenantID).List(ctx, projectName, schemaName, tableName, operation, limit)
 }
 
 // ListNodes returns one page of the node list of the live release and how
 // many nodes match.
-func (r *NodeReadRepository) ListNodes(ctx context.Context, tenantID, search, serviceName string, operation model.Operation, dormantOnly bool, limit, offset int) ([]*projection.NodeSummary, int, error) {
-	return r.nodeRunsOf(tenantID).ListNodes(ctx, search, serviceName, operation, dormantOnly, limit, offset)
+func (r *NodeReadRepository) ListNodes(ctx context.Context, tenantID, search, projectName string, operation model.Operation, dormantOnly bool, limit, offset int) ([]*projection.NodeSummary, int, error) {
+	return r.nodeRunsOf(tenantID).ListNodes(ctx, search, projectName, operation, dormantOnly, limit, offset)
 }
 
 // ListNodeNames returns the distinct table names of the nodes ListNodes lists.
-func (r *NodeReadRepository) ListNodeNames(ctx context.Context, tenantID, serviceName string) ([]string, error) {
-	return r.nodeRunsOf(tenantID).ListNodeNames(ctx, serviceName)
+func (r *NodeReadRepository) ListNodeNames(ctx context.Context, tenantID, projectName string) ([]string, error) {
+	return r.nodeRunsOf(tenantID).ListNodeNames(ctx, projectName)
 }
 
-// ListNodeServices returns the distinct service names of the nodes ListNodes
+// ListNodeProjects returns the distinct project names of the nodes ListNodes
 // lists.
-func (r *NodeReadRepository) ListNodeServices(ctx context.Context, tenantID string) ([]string, error) {
-	return r.nodeRunsOf(tenantID).ListNodeServices(ctx)
+func (r *NodeReadRepository) ListNodeProjects(ctx context.Context, tenantID string) ([]string, error) {
+	return r.nodeRunsOf(tenantID).ListNodeProjects(ctx)
 }

@@ -20,7 +20,7 @@ type PROpenedDTO struct {
 	ReleaseID       string   `json:"release_id"`
 	NodeID          string   `json:"node_id"`
 	ResolvedNodeIDs []string `json:"resolved_node_ids"`
-	Service         string   `json:"service,omitempty"`
+	Project         string   `json:"project,omitempty"`
 	PrURL           string   `json:"pr_url"`
 	PrNumber        int      `json:"pr_number"`
 	OpenedBy        string   `json:"opened_by"`
@@ -34,7 +34,7 @@ func PROpenedFromDomain(e event.PROpened) PROpenedDTO {
 		ReleaseID:       e.ReleaseID,
 		NodeID:          e.NodeID,
 		ResolvedNodeIDs: e.ResolvedNodeIDs,
-		Service:         e.Service,
+		Project:         e.Project,
 		PrURL:           e.PrURL,
 		PrNumber:        e.PrNumber,
 		OpenedBy:        e.OpenedBy,
@@ -49,7 +49,7 @@ func (d PROpenedDTO) ToDomain() event.PROpened {
 		ReleaseID:       d.ReleaseID,
 		NodeID:          d.NodeID,
 		ResolvedNodeIDs: d.ResolvedNodeIDs,
-		Service:         d.Service,
+		Project:         d.Project,
 		PrURL:           d.PrURL,
 		PrNumber:        d.PrNumber,
 		OpenedBy:        d.OpenedBy,
@@ -71,7 +71,7 @@ type PRClosedDTO struct {
 	ReleaseID       string          `json:"release_id"`
 	NodeID          string          `json:"node_id"`
 	ResolvedNodeIDs []string        `json:"resolved_node_ids"`
-	Service         string          `json:"service,omitempty"`
+	Project         string          `json:"project,omitempty"`
 	PrURL           string          `json:"pr_url"`
 	PrNumber        int             `json:"pr_number"`
 	Outcome         string          `json:"outcome"`
@@ -93,7 +93,7 @@ func PRClosedFromDomain(e event.PRClosed) PRClosedDTO {
 		ReleaseID:       e.ReleaseID,
 		NodeID:          e.NodeID,
 		ResolvedNodeIDs: e.ResolvedNodeIDs,
-		Service:         e.Service,
+		Project:         e.Project,
 		PrURL:           e.PrURL,
 		PrNumber:        e.PrNumber,
 		Outcome:         e.Outcome,
@@ -116,7 +116,7 @@ func (d PRClosedDTO) ToDomain() event.PRClosed {
 		ReleaseID:       d.ReleaseID,
 		NodeID:          d.NodeID,
 		ResolvedNodeIDs: d.ResolvedNodeIDs,
-		Service:         d.Service,
+		Project:         d.Project,
 		PrURL:           d.PrURL,
 		PrNumber:        d.PrNumber,
 		Outcome:         d.Outcome,

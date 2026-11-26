@@ -24,7 +24,7 @@ export class IssuerUnavailableError extends Error {}
 
 // Reads the GitHub Actions claims continuo uses from a verified token's
 // payload. A token without a numeric repository_id, a repository or a sha
-// cannot be bound to a service, so it is an invalid token.
+// cannot be bound to a project, so it is an invalid token.
 export function githubClaimsFrom(payload: Record<string, unknown>): GithubClaims {
   const str = (k: string) => (typeof payload[k] === 'string' ? (payload[k] as string) : '');
   const claims: GithubClaims = {

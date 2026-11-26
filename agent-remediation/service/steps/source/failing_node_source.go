@@ -32,20 +32,20 @@ const (
 type FailingNodeSource struct {
 	source           ports.SourceReader
 	locator          ports.NodeLocator
-	serviceRepoPaths map[string]string
+	projectRepoPaths map[string]string
 	logger           *slog.Logger
 }
 
 var _ step.ContextSource = (*FailingNodeSource)(nil)
 
-// NewFailingNodeSource builds the failing_node_source step. serviceRepoPaths
-// maps a service name to its path inside the repository. It calls no port
+// NewFailingNodeSource builds the failing_node_source step. projectRepoPaths
+// maps a project name to its path inside the repository. It calls no port
 // until Gather.
-func NewFailingNodeSource(source ports.SourceReader, locator ports.NodeLocator, serviceRepoPaths map[string]string, logger *slog.Logger) *FailingNodeSource {
+func NewFailingNodeSource(source ports.SourceReader, locator ports.NodeLocator, projectRepoPaths map[string]string, logger *slog.Logger) *FailingNodeSource {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &FailingNodeSource{source: source, locator: locator, serviceRepoPaths: serviceRepoPaths, logger: logger}
+	return &FailingNodeSource{source: source, locator: locator, projectRepoPaths: projectRepoPaths, logger: logger}
 }
 
 // Meta describes the step.
@@ -54,7 +54,7 @@ func (*FailingNodeSource) Meta() step.Meta {
 		Name: "failing_node_source",
 		Kind: step.KindContext,
 		Description: "Reads the failing node's source file from the repository at the trigger's commit, with the yml files beside it and " +
-			"the service's dbt_project.yml for a compile or parse failure. Declines a failure whose source this cannot edit.",
+			"the project's dbt_project.yml for a compile or parse failure. Declines a failure whose source this cannot edit.",
 		Needs:    []remediation.EvidenceKey{remediation.KeyFailure},
 		Provides: []remediation.EvidenceKey{remediation.KeySourceFiles},
 	}
@@ -100,26 +100,26 @@ func (s *FailingNodeSource) compile(ctx context.Context, f remediation.Failure) 
 	if f.Target.FilePath == "" { // project-level error: no models/ path in the log
 		return remediation.SourceFiles{}, "the compile error names no source file, so there is no file to fix", nil
 	}
-	// For compile the node id is the service discriminator (a synthetic id).
+	// For compile the node id is the project discriminator (a synthetic id).
 	return s.gatherWithContext(ctx, f, f.Target.NodeID)
 }
 
 // parse reads the source file of a dbt node whose SQL the release's parser
-// rejected, under the service the trigger names.
+// rejected, under the project the trigger names.
 func (s *FailingNodeSource) parse(ctx context.Context, f remediation.Failure) (remediation.SourceFiles, string, error) {
 	n := f.Target
 	switch {
 	case n.FilePath == "":
 		return remediation.SourceFiles{}, "the parse rejection names no source file, so there is no file to fix", nil
-	case n.Service == "":
-		return remediation.SourceFiles{}, "the parse rejection names no service, so the source cannot be located", nil
+	case n.Project == "":
+		return remediation.SourceFiles{}, "the parse rejection names no project, so the source cannot be located", nil
 	}
-	return s.gatherWithContext(ctx, f, n.Service)
+	return s.gatherWithContext(ctx, f, n.Project)
 }
 
 func (s *FailingNodeSource) seed(ctx context.Context, f remediation.Failure) (remediation.SourceFiles, string, error) {
-	filePath, service := f.Target.FilePath, f.Target.Service
-	if filePath == "" || service == "" {
+	filePath, project := f.Target.FilePath, f.Target.Project
+	if filePath == "" || project == "" {
 		fp, svcName, err := s.locator.Locate(ctx, f.Target.NodeID)
 		if err != nil {
 			return remediation.SourceFiles{}, "", fmt.Errorf("locate seed %s in the promoted graph: %w", f.Target.NodeID, err)
@@ -127,14 +127,14 @@ func (s *FailingNodeSource) seed(ctx context.Context, f remediation.Failure) (re
 		if filePath == "" {
 			filePath = fp
 		}
-		if service == "" {
-			service = svcName
+		if project == "" {
+			project = svcName
 		}
 	}
-	if filePath == "" || service == "" {
-		return remediation.SourceFiles{}, "neither the trigger nor the graph names the seed's csv file and service, so there is no file to fix", nil
+	if filePath == "" || project == "" {
+		return remediation.SourceFiles{}, "neither the trigger nor the graph names the seed's csv file and project, so there is no file to fix", nil
 	}
-	return s.readOffendingFile(ctx, f, service, filePath)
+	return s.readOffendingFile(ctx, f, project, filePath)
 }
 
 // duplicateTable reads only the claimant the release changed. A python claimant
@@ -142,7 +142,7 @@ func (s *FailingNodeSource) seed(ctx context.Context, f remediation.Failure) (re
 // relation name comes from its csv filename or the project's config, never from
 // the csv's contents, so editing either file would not change which relation
 // the node claims: both are declined. The competing claimant's source is never
-// read, since its service and path are all the prompt needs to name it.
+// read, since its project and path are all the prompt needs to name it.
 func (s *FailingNodeSource) duplicateTable(ctx context.Context, f remediation.Failure) (remediation.SourceFiles, string, error) {
 	n := f.Target
 	if pkg_model.NodeType(n.NodeType).IsPython() {
@@ -154,25 +154,25 @@ func (s *FailingNodeSource) duplicateTable(ctx context.Context, f remediation.Fa
 			"project config, never from the csv's contents; an edited csv would alter the seed's data, " +
 			"not its name, so rename the seed by hand", nil
 	}
-	if n.FilePath == "" || n.Service == "" {
-		return remediation.SourceFiles{}, "the trigger names no source file or service for the claimant, so there is no file to fix", nil
+	if n.FilePath == "" || n.Project == "" {
+		return remediation.SourceFiles{}, "the trigger names no source file or project for the claimant, so there is no file to fix", nil
 	}
-	return s.readOffendingFile(ctx, f, n.Service, n.FilePath)
+	return s.readOffendingFile(ctx, f, n.Project, n.FilePath)
 }
 
 // gatherWithContext reads the offending file named by the failing node's file
-// path under the repository prefix of service and, when it is a .sql, its
-// co-located yml siblings and the service's dbt_project.yml as context. A
+// path under the repository prefix of project and, when it is a .sql, its
+// co-located yml siblings and the project's dbt_project.yml as context. A
 // missing prefix, a missing offending file or one over the size cap is a skip,
 // returned as its reason. A missing directory or a missing or oversized context
 // file is left out; any other read error is transient and returned.
-func (s *FailingNodeSource) gatherWithContext(ctx context.Context, f remediation.Failure, service string) (remediation.SourceFiles, string, error) {
-	g, skipReason, err := s.readOffendingFile(ctx, f, service, f.Target.FilePath)
+func (s *FailingNodeSource) gatherWithContext(ctx context.Context, f remediation.Failure, project string) (remediation.SourceFiles, string, error) {
+	g, skipReason, err := s.readOffendingFile(ctx, f, project, f.Target.FilePath)
 	if err != nil || skipReason != "" {
 		return remediation.SourceFiles{}, skipReason, err
 	}
 	offending := g.Primary
-	prefix := s.serviceRepoPaths[service]
+	prefix := s.projectRepoPaths[project]
 	if !strings.HasSuffix(offending, ".sql") {
 		return g, "", nil
 	}
@@ -196,14 +196,14 @@ func (s *FailingNodeSource) gatherWithContext(ctx context.Context, f remediation
 	return g, "", nil
 }
 
-// readOffendingFile resolves filePath under service's repository prefix and
+// readOffendingFile resolves filePath under project's repository prefix and
 // reads it at the trigger's commit, returning it as a one-file SourceFiles. A
 // file the repository does not have, or one over the size cap, is returned as a
 // skip reason: no fix can edit a file that cannot be shown to the model.
-func (s *FailingNodeSource) readOffendingFile(ctx context.Context, f remediation.Failure, service, filePath string) (remediation.SourceFiles, string, error) {
-	prefix, ok := s.serviceRepoPaths[service]
+func (s *FailingNodeSource) readOffendingFile(ctx context.Context, f remediation.Failure, project, filePath string) (remediation.SourceFiles, string, error) {
+	prefix, ok := s.projectRepoPaths[project]
 	if !ok {
-		return remediation.SourceFiles{}, fmt.Sprintf("service %q has no repository path mapping, so its source cannot be read", service), nil
+		return remediation.SourceFiles{}, fmt.Sprintf("project %q has no repository path mapping, so its source cannot be read", project), nil
 	}
 	offending := path.Join(prefix, filePath)
 	content, err := s.source.ReadFile(ctx, f.Trigger.Repo, f.Trigger.CommitSHA, offending)
@@ -220,7 +220,7 @@ func (s *FailingNodeSource) readOffendingFile(ctx context.Context, f remediation
 		Files:   map[string]string{offending: content},
 		Order:   []string{offending},
 		Primary: offending,
-		Service: service,
+		Project: project,
 	}, "", nil
 }
 

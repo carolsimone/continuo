@@ -52,7 +52,7 @@ func (*FailingSiblings) Meta() step.Meta {
 // The release's failing nodes are read from the original release, and each
 // other id is resolved against a fresh checkout of the repository to see where
 // it is declared. A node no ODCS contract file declares, such as a dbt model or a
-// python node in another service, is not packaged by this fix and cannot fail
+// python node in another project, is not packaged by this fix and cannot fail
 // its verification run. The checkout is removed before returning.
 func (s *FailingSiblings) Gather(ctx context.Context, in step.ContextInput) (step.ContextOutput, error) {
 	file, ok := remediation.Get[remediation.ContractFile](in.Evidence, remediation.KeyContractFile)

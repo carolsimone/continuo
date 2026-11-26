@@ -29,8 +29,8 @@ def _make_s3_source(keys=None, file_content='{"nodes": {}}'):
 def test_s3_source_returns_one_file_per_key():
     """list_manifests() returns exactly one ManifestFile per supplied key."""
     keys = [
-        ManifestRequest(service="service-1", key="service-1/rel-99/manifest.json"),
-        ManifestRequest(service="service-2", key="service-2/rel-99/manifest.json"),
+        ManifestRequest(project="service-1", key="service-1/rel-99/manifest.json"),
+        ManifestRequest(project="service-2", key="service-2/rel-99/manifest.json"),
     ]
     source = _make_s3_source(keys=keys)
     try:
@@ -42,8 +42,8 @@ def test_s3_source_returns_one_file_per_key():
 
 def test_s3_source_image_tag_always_empty():
     """The source leaves image_tag empty; the candidate handler joins the
-    release request's per-service tags onto the nodes."""
-    source = _make_s3_source(keys=[ManifestRequest(service="svc", key="svc/rel/manifest.json")])
+    release request's per-project tags onto the nodes."""
+    source = _make_s3_source(keys=[ManifestRequest(project="svc", key="svc/rel/manifest.json")])
     try:
         result = source.list_manifests()
         assert result[0].image_tag == ""
@@ -71,7 +71,7 @@ def test_s3_source_no_list_objects_call():
     mock_s3.download_file.side_effect = fake_download
     source = S3Source(
         bucket="b", env="e", s3_client=mock_s3,
-        keys=[ManifestRequest(service="svc", key="k/manifest.json")],
+        keys=[ManifestRequest(project="svc", key="k/manifest.json")],
     )
     try:
         source.list_manifests()
@@ -94,8 +94,8 @@ def test_s3_source_downloads_correct_keys():
     mock_s3.download_file.side_effect = fake_download
 
     keys = [
-        ManifestRequest(service="svc-a", key="svc-a/r1/manifest.json"),
-        ManifestRequest(service="svc-b", key="svc-b/r1/manifest.json"),
+        ManifestRequest(project="svc-a", key="svc-a/r1/manifest.json"),
+        ManifestRequest(project="svc-b", key="svc-b/r1/manifest.json"),
     ]
     source = S3Source(bucket="my-bucket", env="local", s3_client=mock_s3, keys=keys)
     try:
@@ -111,7 +111,7 @@ def test_s3_source_downloads_correct_keys():
 
 def test_s3_source_temp_files_exist_after_list():
     """Downloaded files are present under the temp dir until cleanup()."""
-    source = _make_s3_source(keys=[ManifestRequest(service="svc", key="svc/r/manifest.json")])
+    source = _make_s3_source(keys=[ManifestRequest(project="svc", key="svc/r/manifest.json")])
     try:
         result = source.list_manifests()
         assert os.path.exists(result[0].path)
@@ -122,7 +122,7 @@ def test_s3_source_temp_files_exist_after_list():
 def test_s3_source_downloads_content_to_temp_file():
     content = json.dumps({"nodes": {"n1": {"name": "table_a"}}})
     source = _make_s3_source(
-        keys=[ManifestRequest(service="service-1", key="service-1/rel/manifest.json")],
+        keys=[ManifestRequest(project="service-1", key="service-1/rel/manifest.json")],
         file_content=content,
     )
     try:
@@ -142,27 +142,27 @@ def test_s3_source_cleanup_removes_temp_dir():
     assert not os.path.exists(tmpdir_name)
 
 
-def test_s3_source_propagates_declared_service():
-    """declared_service from each ManifestRequest appears on the ManifestFile."""
+def test_s3_source_propagates_declared_project():
+    """declared_project from each ManifestRequest appears on the ManifestFile."""
     keys = [
-        ManifestRequest(service="service-a", key="service-a/rel-1/manifest.json"),
-        ManifestRequest(service="service-b", key="service-b/rel-1/manifest.json"),
+        ManifestRequest(project="service-a", key="service-a/rel-1/manifest.json"),
+        ManifestRequest(project="service-b", key="service-b/rel-1/manifest.json"),
     ]
     source = _make_s3_source(keys=keys)
     try:
         result = source.list_manifests()
-        assert result[0].declared_service == "service-a"
-        assert result[1].declared_service == "service-b"
+        assert result[0].declared_project == "service-a"
+        assert result[1].declared_project == "service-b"
     finally:
         source.cleanup()
 
 
-def test_s3_source_empty_declared_service_when_no_service_supplied():
-    """An empty declared_service propagates to the ManifestFile unchanged."""
-    source = _make_s3_source(keys=[ManifestRequest(service="", key="svc/rel/manifest.json")])
+def test_s3_source_empty_declared_project_when_no_project_supplied():
+    """An empty declared_project propagates to the ManifestFile unchanged."""
+    source = _make_s3_source(keys=[ManifestRequest(project="", key="svc/rel/manifest.json")])
     try:
         result = source.list_manifests()
-        assert result[0].declared_service == ""
+        assert result[0].declared_project == ""
     finally:
         source.cleanup()
 
@@ -171,15 +171,15 @@ def test_source_carries_the_declared_kind_onto_each_manifest_file():
     """kind travels with the key from the release.requested payload; the
     handler is what decides how to parse it."""
     source = _make_s3_source(keys=[
-        ManifestRequest(service="service-1", key="service-1/rel-1/manifest.json"),
-        ManifestRequest(service="marketing-py", key="marketing-py/rel-1/odcs-bundle.json",
+        ManifestRequest(project="service-1", key="service-1/rel-1/manifest.json"),
+        ManifestRequest(project="marketing-py", key="marketing-py/rel-1/odcs-bundle.json",
                         kind=ManifestKind.PYTHON_ODCS),
     ])
     try:
         files = source.list_manifests()
 
         assert [f.kind for f in files] == ["dbt", "python-odcs"]
-        assert [f.declared_service for f in files] == ["service-1", "marketing-py"]
+        assert [f.declared_project for f in files] == ["service-1", "marketing-py"]
     finally:
         source.cleanup()
 
@@ -191,8 +191,8 @@ def test_source_carries_the_declared_kind_onto_each_manifest_file():
 ])
 def test_the_release_id_comes_from_the_key(key, kind, release_id):
     """The folder that holds the artifact is the release that wrote it, which is not
-    the release being parsed when production's artifact of the service is used."""
-    source = _make_s3_source(keys=[ManifestRequest(service="svc", key=key, kind=kind)])
+    the release being parsed when production's artifact of the project is used."""
+    source = _make_s3_source(keys=[ManifestRequest(project="svc", key=key, kind=kind)])
     try:
         assert [f.release_id for f in source.list_manifests()] == [release_id]
     finally:
@@ -201,7 +201,7 @@ def test_the_release_id_comes_from_the_key(key, kind, release_id):
 
 def test_the_ontology_is_downloaded_as_one_object_with_no_extras():
     source = _make_s3_source(keys=[
-        ManifestRequest(service="onto", key="onto/rel-7/ontology.yaml", kind=ManifestKind.ONTOLOGY)])
+        ManifestRequest(project="onto", key="onto/rel-7/ontology.yaml", kind=ManifestKind.ONTOLOGY)])
     try:
         (manifest,) = source.list_manifests()
         assert manifest.extras_path == ""
@@ -212,8 +212,8 @@ def test_the_ontology_is_downloaded_as_one_object_with_no_extras():
 
 def test_s3_source_counts_its_manifests_before_downloading():
     source = _make_s3_source(keys=[
-        ManifestRequest(service="service-1", key="service-1/rel-1/manifest.json"),
-        ManifestRequest(service="service-2", key="service-2/rel-1/manifest.json"),
+        ManifestRequest(project="service-1", key="service-1/rel-1/manifest.json"),
+        ManifestRequest(project="service-2", key="service-2/rel-1/manifest.json"),
     ])
     try:
         assert source.manifest_count() == 2
@@ -223,7 +223,7 @@ def test_s3_source_counts_its_manifests_before_downloading():
 
 
 def test_s3_source_records_each_files_size():
-    source = _make_s3_source(keys=[ManifestRequest(service="svc", key="svc/rel/manifest.json")])
+    source = _make_s3_source(keys=[ManifestRequest(project="svc", key="svc/rel/manifest.json")])
     try:
         (file,) = source.list_manifests()
         assert file.size_bytes == 13
@@ -244,7 +244,7 @@ def _write(_bucket, _key, filename):
 
 
 def test_s3_source_downloads_the_extras_beside_a_dbt_manifest():
-    source, s3 = _source(_write, [ManifestRequest(service="core", key="core/rel-1/manifest.json")])
+    source, s3 = _source(_write, [ManifestRequest(project="core", key="core/rel-1/manifest.json")])
     try:
         [mf] = source.list_manifests()
         assert s3.download_file.call_args_list[1].args[1] == "core/rel-1/compile-extras.json"
@@ -259,7 +259,7 @@ def test_s3_source_treats_a_missing_extras_object_as_none():
             raise ClientError({"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject")
         _write(bucket, key, filename)
 
-    source, _ = _source(download, [ManifestRequest(service="core", key="core/rel-1/manifest.json")])
+    source, _ = _source(download, [ManifestRequest(project="core", key="core/rel-1/manifest.json")])
     try:
         assert source.list_manifests()[0].extras_path == ""
     finally:
@@ -273,7 +273,7 @@ def test_s3_source_treats_a_forbidden_extras_object_as_none_and_warns(caplog):
             raise ClientError({"Error": {"Code": "403", "Message": "Forbidden"}}, "HeadObject")
         _write(bucket, key, filename)
 
-    source, _ = _source(download, [ManifestRequest(service="core", key="core/rel-1/manifest.json")])
+    source, _ = _source(download, [ManifestRequest(project="core", key="core/rel-1/manifest.json")])
     try:
         with caplog.at_level(logging.INFO):
             assert source.list_manifests()[0].extras_path == ""
@@ -290,7 +290,7 @@ def test_s3_source_propagates_an_extras_outage():
             raise ClientError({"Error": {"Code": "503", "Message": "Slow Down"}}, "HeadObject")
         _write(bucket, key, filename)
 
-    source, _ = _source(download, [ManifestRequest(service="core", key="core/rel-1/manifest.json")])
+    source, _ = _source(download, [ManifestRequest(project="core", key="core/rel-1/manifest.json")])
     try:
         with pytest.raises(ClientError):
             source.list_manifests()
@@ -300,7 +300,7 @@ def test_s3_source_propagates_an_extras_outage():
 
 def test_s3_source_reads_no_extras_for_a_python_odcs_bundle():
     source, s3 = _source(
-        _write, [ManifestRequest(service="py", key="py/rel-1/odcs-bundle.json", kind=ManifestKind.PYTHON_ODCS)])
+        _write, [ManifestRequest(project="py", key="py/rel-1/odcs-bundle.json", kind=ManifestKind.PYTHON_ODCS)])
     try:
         assert source.list_manifests()[0].extras_path == "" and s3.download_file.call_count == 1
     finally:

@@ -492,27 +492,27 @@ grep -qF 'services[run-controller].volumes[extra-config]: configMap.name is empt
   || { echo "FAIL: unexpected error:"; cat "${tmp}/emptyvolume.err"; exit 1; }
 # agent-remediation mounts two chart ConfigMaps, each through the volume of its
 # own name. An empty configMap.name on a volume of another name mounts the first
-# of them, service-repos, with its digest on the pod template, so a services
+# of them, project-repos, with its digest on the pod template, so a services
 # list written for a single agent-remediation ConfigMap keeps working.
-echo "--- an empty configMap.name on an agent-remediation volume of another name mounts service-repos"
+echo "--- an empty configMap.name on an agent-remediation volume of another name mounts project-repos"
 helm template continuo "$CHART" --kube-version "$KUBE_VERSION" \
   -f scripts/install-test/values-unknown-configmap-volume.yaml > "${tmp}/unknownvolume.yaml" \
   || { echo "FAIL: an agent-remediation volume of an unknown name with an empty configMap.name failed the render"; exit 1; }
-python3 - "${tmp}/unknownvolume.yaml" <<'PY' || { echo "FAIL: the agent-remediation volume extra-config does not mount continuo-service-repos with checksum/service-repos"; exit 1; }
+python3 - "${tmp}/unknownvolume.yaml" <<'PY' || { echo "FAIL: the agent-remediation volume extra-config does not mount continuo-project-repos with checksum/project-repos"; exit 1; }
 import sys, yaml
 docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
 pod = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "agent-remediation")["spec"]["template"]
 volumes = {v["name"]: v for v in pod["spec"]["volumes"]}
 annotations = pod["metadata"]["annotations"]
-sys.exit(0 if volumes["extra-config"].get("configMap") == {"name": "continuo-service-repos"}
-         and "checksum/service-repos" in annotations
+sys.exit(0 if volumes["extra-config"].get("configMap") == {"name": "continuo-project-repos"}
+         and "checksum/project-repos" in annotations
          and "checksum/agent-remediation-workflows" not in annotations else 1)
 PY
 # A volume named remediation-workflows mounts the ConfigMap of the remediation
 # files only while it is mounted at the folder agent-remediation reads them
 # from (AGENT_REMEDIATION_WORKFLOWS_DIR, else /etc/continuo-workflows, compared
 # without a trailing slash). Mounted anywhere else, or nowhere, it mounts
-# service-repos like a volume of any other name, so a services entry whose
+# project-repos like a volume of any other name, so a services entry whose
 # volume of that name holds the service repository map at /etc/continuo keeps
 # it.
 echo "--- an empty-named remediation-workflows volume mounts the remediation files only at the folder agent-remediation reads"
@@ -526,11 +526,11 @@ single_volume_services() {
     "$env" "$1"
 }
 for placement in \
-  "at /etc/continuo, the service-repos folder|continuo-service-repos|service-repos|agent-remediation-workflows|$(single_volume_services '[{"name":"remediation-workflows","mountPath":"/etc/continuo","readOnly":true}]')" \
-  "with no volumeMounts entry|continuo-service-repos|service-repos|agent-remediation-workflows|$(single_volume_services '[]')" \
-  "at the default folder of the remediation files|continuo-agent-remediation-workflows|agent-remediation-workflows|service-repos|$(single_volume_services '[{"name":"remediation-workflows","mountPath":"/etc/continuo-workflows/","readOnly":true}]')" \
-  "at the folder AGENT_REMEDIATION_WORKFLOWS_DIR names|continuo-agent-remediation-workflows|agent-remediation-workflows|service-repos|$(single_volume_services '[{"name":"remediation-workflows","mountPath":"/opt/remediation-files","readOnly":true}]' '{"AGENT_REMEDIATION_WORKFLOWS_DIR":"/opt/remediation-files/"}')" \
-  "at /etc/continuo-workflows while AGENT_REMEDIATION_WORKFLOWS_DIR names another folder|continuo-service-repos|service-repos|agent-remediation-workflows|$(single_volume_services '[{"name":"remediation-workflows","mountPath":"/etc/continuo-workflows","readOnly":true}]' '{"AGENT_REMEDIATION_WORKFLOWS_DIR":"/opt/remediation-files"}')"; do
+  "at /etc/continuo, the project-repos folder|continuo-project-repos|project-repos|agent-remediation-workflows|$(single_volume_services '[{"name":"remediation-workflows","mountPath":"/etc/continuo","readOnly":true}]')" \
+  "with no volumeMounts entry|continuo-project-repos|project-repos|agent-remediation-workflows|$(single_volume_services '[]')" \
+  "at the default folder of the remediation files|continuo-agent-remediation-workflows|agent-remediation-workflows|project-repos|$(single_volume_services '[{"name":"remediation-workflows","mountPath":"/etc/continuo-workflows/","readOnly":true}]')" \
+  "at the folder AGENT_REMEDIATION_WORKFLOWS_DIR names|continuo-agent-remediation-workflows|agent-remediation-workflows|project-repos|$(single_volume_services '[{"name":"remediation-workflows","mountPath":"/opt/remediation-files","readOnly":true}]' '{"AGENT_REMEDIATION_WORKFLOWS_DIR":"/opt/remediation-files/"}')" \
+  "at /etc/continuo-workflows while AGENT_REMEDIATION_WORKFLOWS_DIR names another folder|continuo-project-repos|project-repos|agent-remediation-workflows|$(single_volume_services '[{"name":"remediation-workflows","mountPath":"/etc/continuo-workflows","readOnly":true}]' '{"AGENT_REMEDIATION_WORKFLOWS_DIR":"/opt/remediation-files"}')"; do
   IFS='|' read -r label configmap hashed unhashed services <<< "$placement"
   helm template continuo "$CHART" --kube-version "$KUBE_VERSION" --set-json "services=${services}" > "${tmp}/placement.yaml" 2> "${tmp}/placement.err" \
     || { echo "FAIL: a remediation-workflows volume ${label} failed the render:"; cat "${tmp}/placement.err"; exit 1; }
@@ -1041,8 +1041,8 @@ if grep -qF "$service_account_note" "${tmp}/notes-install.txt"; then
 fi
 
 # An upgrading operator is told once to upgrade with empty databases, which
-# five databases to drop, and to release each Python service as python-odcs
-# when it releases its services again; an installing one is told nothing.
+# five databases to drop, and to release each Python project as python-odcs
+# when it releases its projects again; an installing one is told nothing.
 empty_db_note='BREAKING: upgrade with empty databases.'
 [ "$(grep -cF "$empty_db_note" "${tmp}/notes-upgrade.txt")" = 1 ] \
   || { echo "FAIL: the upgrade notes do not say exactly once to upgrade with empty databases"; exit 1; }
@@ -1050,17 +1050,17 @@ for db in continuo_run_controller continuo_execution continuo_release continuo_r
   grep -F "$empty_db_note" "${tmp}/notes-upgrade.txt" | grep -qF "$db" \
     || { echo "FAIL: the empty-database upgrade note does not name ${db}"; exit 1; }
 done
-grep -qF 'release each Python service as "python-odcs"' "${tmp}/notes-upgrade.txt" \
-  || { echo "FAIL: the empty-database upgrade note does not tell an operator to release a Python service as python-odcs"; exit 1; }
+grep -qF 'release each Python project as "python-odcs"' "${tmp}/notes-upgrade.txt" \
+  || { echo "FAIL: the empty-database upgrade note does not tell an operator to release a Python project as python-odcs"; exit 1; }
 if grep -qF "$empty_db_note" "${tmp}/notes-install.txt"; then
   echo "FAIL: the install notes carry the empty-database upgrade note"; exit 1
 fi
-# The re-baseline note agrees with deploy/README.md: a Python service is
+# The re-baseline note agrees with deploy/README.md: a Python project is
 # released as python-odcs, built on runtime 0.13.0 or later, and no older
 # runtime is named.
-grep -qF 'a Python service is released as "python-odcs", built on' "${tmp}/notes-upgrade.txt" \
+grep -qF 'a Python project is released as "python-odcs", built on' "${tmp}/notes-upgrade.txt" \
   && grep -qF 'continuo-python-runtime 0.13.0 or later' "${tmp}/notes-upgrade.txt" \
-  || { echo "FAIL: the re-baseline upgrade note does not say a Python service is released as python-odcs on runtime 0.13.0 or later"; exit 1; }
+  || { echo "FAIL: the re-baseline upgrade note does not say a Python project is released as python-odcs on runtime 0.13.0 or later"; exit 1; }
 if grep -qE 'continuo-python-runtime 0\.1[0-2]\.' "${tmp}/notes-upgrade.txt"; then
   echo "FAIL: the upgrade notes name a continuo-python-runtime older than 0.13.0"; exit 1
 fi

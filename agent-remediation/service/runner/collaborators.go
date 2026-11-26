@@ -19,8 +19,8 @@ type Collaborators struct {
 	Evidence  ports.EvidenceReader
 	Artifacts ports.ArtifactWriter
 	Logger    *slog.Logger
-	// ServiceRepoPaths maps a service name to its repository path.
-	ServiceRepoPaths map[string]string
+	// ProjectRepoPaths maps a project name to its repository path.
+	ProjectRepoPaths map[string]string
 	Locator          ports.NodeLocator
 	Upstream         ports.UpstreamChangeReader
 	Versions         ports.VersionReader
@@ -42,11 +42,11 @@ type Collaborators struct {
 	// document, so the answer's effect on them can be compared against what
 	// the repository held before it was applied.
 	ContractInspector ports.ContractInspector
-	// Packager packs a service's directory of ODCS contracts into the
+	// Packager packs a project's directory of ODCS contracts into the
 	// odcs-bundle.json a release is submitted with.
 	Packager ports.ContractPackager
 	// ImagePackages reads the package list of the rejected release's image of
-	// a service, which the bundle records.
+	// a project, which the bundle records.
 	ImagePackages ports.ImagePackagesSource
 	// CurrentContracts reads a node's current contract from the catalog.
 	CurrentContracts ports.CurrentContractReader

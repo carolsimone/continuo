@@ -1,10 +1,10 @@
 # A finance model and a marketing model fail because the release changed
 # core's orders model, which both read: it dropped the amount column. The fix
 # restores it in core. When it cannot, both members are handed over, since a
-# fix in their own services cannot ship before core's.
+# fix in their own projects cannot ship before core's.
 kind: fixture
 version: 1
-type: cross-service-upstream
+type: cross-project-upstream
 trigger:
   source: validation
   release_id: rel-cross-1
@@ -20,10 +20,10 @@ trigger:
       dbt_log_uri: s3://logs/rel-cross-1/model.finance.revenue.log
       candidate_artifact_uri: s3://candidates/rel-cross-1/model.finance.revenue.sql
       file_path: models/revenue.sql
-      service: finance
+      project: finance
       node_type: dbt-model
       changed_ancestors:
-        - { node_id: model.core.orders, file_path: models/orders.sql, service: core, depth: 1 }
+        - { node_id: model.core.orders, file_path: models/orders.sql, project: core, depth: 1 }
     - node_id: model.marketing.campaign_orders
       category: validation
       error_signature: sig-campaign-amount
@@ -32,11 +32,11 @@ trigger:
       dbt_log_uri: s3://logs/rel-cross-1/model.marketing.campaign_orders.log
       candidate_artifact_uri: s3://candidates/rel-cross-1/model.marketing.campaign_orders.sql
       file_path: models/campaign_orders.sql
-      service: marketing
+      project: marketing
       node_type: dbt-model
       changed_ancestors:
-        - { node_id: model.core.orders, file_path: models/orders.sql, service: core, depth: 2 }
-service_repo_paths:
+        - { node_id: model.core.orders, file_path: models/orders.sql, project: core, depth: 2 }
+project_repo_paths:
   core: services/core
   finance: services/finance
   marketing: services/marketing
@@ -72,7 +72,7 @@ answers:
 decline_before_model:
   node:
     changed_ancestors:
-      - { node_id: model.core.orders, service: core, depth: 1 }
+      - { node_id: model.core.orders, project: core, depth: 1 }
 gate_errors:
   model.finance.revenue: 'column orders.amount does not exist'
   model.marketing.campaign_orders: 'column orders.amount does not exist'

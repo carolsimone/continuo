@@ -21,23 +21,23 @@ import (
 // for the node before any validation Job runs.
 const brokenCompiledSQL = "select c.id from e2e_schema.ftable_c c where"
 
-// parseFixReleaseService is the service whose release drives this scenario. It
-// is deliberately NOT the service holding the unparseable node: a release's
+// parseFixReleaseProject is the project whose release drives this scenario. It
+// is deliberately NOT the project holding the unparseable node: a release's
 // compile Job uploads its freshly compiled manifest to
-// <service>/<release_id>/manifest.json — the very key topology-controller then
+// <project>/<release_id>/manifest.json — the very key topology-controller then
 // reads (execution-controller/service/artifacts/parse_cache.go ManifestURI and
 // s3-sidecar/compile_uploader.py) — so a manifest doctored under the changed
-// service's own key is overwritten before the parse leg ever sees it. Only the
-// changed service is compiled, so the broken node is staged in another
-// service's production-pinned manifest, which nothing in this release rewrites.
-const parseFixReleaseService = "service-1"
+// project's own key is overwritten before the parse leg ever sees it. Only the
+// changed project is compiled, so the broken node is staged in another
+// project's production-pinned manifest, which nothing in this release rewrites.
+const parseFixReleaseProject = "service-1"
 
-// parseFixBrokenService is the service whose production-pinned manifest carries
-// the unparseable node, and the service whose source the fix edits. Both halves
-// live in one repository (services/<name> per tests/e2e/config/service_repos.yaml),
+// parseFixBrokenProject is the project whose production-pinned manifest carries
+// the unparseable node, and the project whose source the fix edits. Both halves
+// live in one repository (services/<name> per tests/e2e/config/project_repos.yaml),
 // so the repo and commit the release carries are the ones the dbt-parse type
 // reads the offending model from.
-const parseFixBrokenService = "service-2"
+const parseFixBrokenProject = "service-2"
 
 // TestE2E_Remediation_ParseFailureProposesFix drives a SQL syntax error caught
 // by topology-controller's parse leg end to end:
@@ -49,7 +49,7 @@ const parseFixBrokenService = "service-2"
 //	  ftable_e → manifest.loaded.candidate:v2
 //	  {status: failed, failure_kind: invalid_sql, failed_nodes: [ftable_e]}
 //	→ release-controller: Fail(invalid_sql), RecordStageResults("parse")
-//	→ release.rejected:v1 {stage: parse, per_node: [{kind, detail, file_path, service}]}
+//	→ release.rejected:v1 {stage: parse, per_node: [{kind, detail, file_path, project}]}
 //	→ remediation: ClassifyParse → remediation.requested:v3 (source=parse)
 //	→ agent-remediation's dbt-parse type: its failing_node_source step reads
 //	  the model from stub-github under service-2's repo prefix, its prompt asks
@@ -93,16 +93,16 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	requireReleaseControllerHealthy(t, clients)
 
 	releaseID := "e2e-parse-" + uuid.NewString()[:8]
-	t.Logf("release_id=%s released_service=%s broken_node=%s (service %s)",
-		releaseID, parseFixReleaseService, ftableEUniqueID, parseFixBrokenService)
+	t.Logf("release_id=%s released_project=%s broken_node=%s (project %s)",
+		releaseID, parseFixReleaseProject, ftableEUniqueID, parseFixBrokenProject)
 
-	allServices := baselineServices(t, ctx, clients)
-	require.NotEmpty(t, allServices, "no baseline manifests in S3 — setup.sh must run before the e2e suite")
-	released, ok := allServices[parseFixReleaseService]
-	require.True(t, ok, "%s has no baseline manifest", parseFixReleaseService)
+	allProjects := baselineProjects(t, ctx, clients)
+	require.NotEmpty(t, allProjects, "no baseline manifests in S3 — setup.sh must run before the e2e suite")
+	released, ok := allProjects[parseFixReleaseProject]
+	require.True(t, ok, "%s has no baseline manifest", parseFixReleaseProject)
 	require.NotEmpty(t, released.imageTag)
-	broken, ok := allServices[parseFixBrokenService]
-	require.True(t, ok, "%s has no baseline manifest", parseFixBrokenService)
+	broken, ok := allProjects[parseFixBrokenProject]
+	require.True(t, ok, "%s has no baseline manifest", parseFixBrokenProject)
 
 	// Seed production as every node except ftable_e, exactly as the validation
 	// scenario does, so ftable_e is the fix-verification run's only changed
@@ -111,15 +111,15 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	// A parse-rejected release records no candidate topology, so the
 	// fix-verification run assembles from production alone (assemble_release.go
 	// and changedNodeIDsFor both take their no-candidate fallback). Every live
-	// service keeps its baseline pointer, including service-1; the verification
+	// project keeps its baseline pointer, including service-1; the verification
 	// replaces service-2 with the fix and clones its complete upstream closure.
 	var prodNodes []map[string]string
-	for svc, si := range allServices {
+	for svc, si := range allProjects {
 		for _, n := range si.nodes {
 			if n.uniqueID == ftableEUniqueID {
 				continue
 			}
-			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "service": svc, "content_hash": n.contentHash})
+			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "project": svc, "content_hash": n.contentHash})
 		}
 	}
 	// Tap the streams before the release is posted: the trim loop removes
@@ -130,14 +130,14 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allServices)
+	seedServiceProd(t, ctx, clients, allProjects)
 
 	// Break ftable_e's compiled SQL in a copy of service-2's baseline manifest,
 	// copy the baseline's compile extras beside it, and pin service-2's
 	// production pointer at it, so the assembled set the parse leg reads
 	// carries the broken node.
 	brokenReleaseID := releaseID + "-src"
-	baselineKey := fmt.Sprintf("%s/%s/manifest.json", parseFixBrokenService, e2eBaselineReleaseID)
+	baselineKey := fmt.Sprintf("%s/%s/manifest.json", parseFixBrokenProject, e2eBaselineReleaseID)
 	doc, err := decodeJSONDoc(getS3Object(t, ctx, clients, baselineKey))
 	require.NoError(t, err)
 	var filePath string
@@ -154,19 +154,19 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 		n["compiled_code"] = brokenCompiledSQL
 		filePath, _ = n["original_file_path"].(string)
 	}
-	require.NotEmpty(t, filePath, "ftable_e must exist in the %s baseline manifest", parseFixBrokenService)
+	require.NotEmpty(t, filePath, "ftable_e must exist in the %s baseline manifest", parseFixBrokenProject)
 	body, err := json.Marshal(doc)
 	require.NoError(t, err)
 	putS3Object(t, ctx, clients,
-		fmt.Sprintf("%s/%s/manifest.json", parseFixBrokenService, brokenReleaseID), body)
-	copyBaselineExtras(t, ctx, clients, parseFixBrokenService, brokenReleaseID)
-	pinServiceProd(t, ctx, clients, parseFixBrokenService, brokenReleaseID, broken.imageTag)
+		fmt.Sprintf("%s/%s/manifest.json", parseFixBrokenProject, brokenReleaseID), body)
+	copyBaselineExtras(t, ctx, clients, parseFixBrokenProject, brokenReleaseID)
+	pinServiceProd(t, ctx, clients, parseFixBrokenProject, brokenReleaseID, broken.imageTag)
 	// Put the pointer back so no later test parses the broken manifest. Deferred, so it
 	// runs when the test function returns, while the pool is open.
 	defer pinServiceProd(t, context.Background(), clients,
-		parseFixBrokenService, e2eBaselineReleaseID, broken.imageTag)
+		parseFixBrokenProject, e2eBaselineReleaseID, broken.imageTag)
 
-	postRelease(t, clients, parseFixReleaseService, releaseID, released.imageTag, false)
+	postRelease(t, clients, parseFixReleaseProject, releaseID, released.imageTag, false)
 
 	// 1. Rejected at parse time with the node named.
 	waitForReleaseRejected(t, ctx, clients, releaseID, 10*time.Minute)
@@ -205,10 +205,10 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	assert.Equal(t, ftableEUniqueID, trigger.Nodes[0].NodeID)
 	assert.Nil(t, trigger.Nodes[0].Unfixable, "an invalid_sql rejection is healable")
 	assert.Equal(t, filePath, trigger.Nodes[0].FilePath)
-	// The service is what resolves the repository prefix for a parse fix: a
+	// The project is what resolves the repository prefix for a parse fix: a
 	// parse failure's node id is a real node id, not compile's synthetic
-	// service id, so the dbt-parse type cannot derive the prefix from it.
-	assert.Equal(t, parseFixBrokenService, trigger.Nodes[0].Service)
+	// project id, so the dbt-parse type cannot derive the prefix from it.
+	assert.Equal(t, parseFixBrokenProject, trigger.Nodes[0].Project)
 	assert.NotEmpty(t, trigger.Nodes[0].ErrorExcerpt)
 	assert.Empty(t, trigger.Nodes[0].DBTLogURI, "a parse failure has no log")
 
@@ -273,13 +273,13 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 //
 // Each is declared with a single `id integer` column because that is the
 // only output column these models select
-// (dbt/services/service-3/models/ftable_c.sql: "SELECT a.id FROM
+// (dbt/projects/service-3/models/ftable_c.sql: "SELECT a.id FROM
 // e2e_schema.ftable_a a LEFT JOIN e2e_schema.ftable_b b ON a.id = b.id";
-// dbt/services/service-2/models/ftable_d.sql: "SELECT id FROM
+// dbt/projects/service-2/models/ftable_d.sql: "SELECT id FROM
 // e2e_schema.ftable_c"), and it satisfies every reader of the cloned copy in
 // the candidate schema: the verified fix (stub-llm's parseFixContent, "SELECT
 // c.id FROM e2e_schema.ftable_c c") and ftable_f (
-// dbt/services/service-3/models/ftable_f.sql: "SELECT d.id FROM
+// dbt/projects/service-3/models/ftable_f.sql: "SELECT d.id FROM
 // e2e_schema.ftable_d d LEFT JOIN e2e_schema.ftable_e e ON d.id = e.id") both
 // read only `.id` from either relation.
 var parseFixClonedProdRelations = []string{
@@ -339,21 +339,21 @@ type parseProposalRow struct {
 	Verifications  []byte `db:"verifications"`
 }
 
-// pinServiceProd points a service's production manifest pointer at one release
+// pinServiceProd points a project's production manifest pointer at one release
 // id's canonical dbt manifest key, keeping its image tag.
-func pinServiceProd(t *testing.T, ctx context.Context, clients *testClients, service, releaseID, imageTag string) {
+func pinServiceProd(t *testing.T, ctx context.Context, clients *testClients, project, releaseID, imageTag string) {
 	t.Helper()
 	_, err := clients.releaseDB.ExecContext(ctx,
-		`INSERT INTO service_prod (service_name, release_id, manifest_s3_key, image_tag, manifest_kind, updated_at)
+		`INSERT INTO service_prod (project_name, release_id, manifest_s3_key, image_tag, manifest_kind, updated_at)
 		 VALUES ($1, $2, $3, $4, 'dbt', now())
-		 ON CONFLICT (service_name) DO UPDATE SET
+		 ON CONFLICT (project_name) DO UPDATE SET
 		   release_id = EXCLUDED.release_id,
 		   manifest_s3_key = EXCLUDED.manifest_s3_key,
 		   image_tag = EXCLUDED.image_tag,
 		   manifest_kind = EXCLUDED.manifest_kind,
 		   updated_at = EXCLUDED.updated_at`,
-		service, releaseID, canonicalManifestS3URI(service, releaseID), imageTag)
-	require.NoError(t, err, "pin service_prod for %s at %s", service, releaseID)
+		project, releaseID, canonicalManifestS3URI(project, releaseID), imageTag)
+	require.NoError(t, err, "pin service_prod for %s at %s", project, releaseID)
 }
 
 // assertRejectedParseStage waits for this release's release.rejected:v1 and
@@ -375,7 +375,7 @@ func assertRejectedParseStage(t *testing.T, ctx context.Context, rejectedTap *st
 					Kind     string `json:"kind"`
 					Detail   string `json:"detail"`
 					FilePath string `json:"file_path"`
-					Service  string `json:"service"`
+					Project  string `json:"project"`
 				} `json:"per_node"`
 			}
 			if raw == "" || json.Unmarshal([]byte(raw), &p) != nil || p.ReleaseID != releaseID {
@@ -391,7 +391,7 @@ func assertRejectedParseStage(t *testing.T, ctx context.Context, rejectedTap *st
 			require.NotEmpty(t, p.PerNode[0].Detail)
 			require.NotContains(t, p.PerNode[0].Detail, "\x1b")
 			require.Equal(t, filePath, p.PerNode[0].FilePath)
-			require.Equal(t, parseFixBrokenService, p.PerNode[0].Service)
+			require.Equal(t, parseFixBrokenProject, p.PerNode[0].Project)
 			return true, nil
 		}
 		return false, nil

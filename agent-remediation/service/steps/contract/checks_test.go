@@ -58,7 +58,7 @@ func (f *fakeInspector) Declarations(text string) ([]ports.NodeDeclaration, erro
 var _ ports.ContractInspector = (*fakeInspector)(nil)
 
 type packCall struct {
-	contractDir, repoRoot, service, dialect string
+	contractDir, repoRoot, project, dialect string
 	packages                                map[string]string
 }
 
@@ -68,25 +68,25 @@ type fakePackager struct {
 	calls []packCall
 }
 
-func (f *fakePackager) Pack(_ context.Context, contractDir, repoRoot, service, dialect string, packages map[string]string) ([]byte, error) {
-	f.calls = append(f.calls, packCall{contractDir, repoRoot, service, dialect, packages})
+func (f *fakePackager) Pack(_ context.Context, contractDir, repoRoot, project, dialect string, packages map[string]string) ([]byte, error) {
+	f.calls = append(f.calls, packCall{contractDir, repoRoot, project, dialect, packages})
 	return f.out, f.err
 }
 
 var _ ports.ContractPackager = (*fakePackager)(nil)
 
-// thePackages is the package list of every service's image in fakeImages.
+// thePackages is the package list of every project's image in fakeImages.
 var thePackages = map[string]string{"pyarrow": "26.0.0"}
 
-// fakeImages answers the image package list of a release's service, or err,
+// fakeImages answers the image package list of a release's project, or err,
 // and records what it was asked.
 type fakeImages struct {
 	err   error
 	asked [][2]string
 }
 
-func (f *fakeImages) ImagePackages(_ context.Context, releaseID, service string) (map[string]string, error) {
-	f.asked = append(f.asked, [2]string{releaseID, service})
+func (f *fakeImages) ImagePackages(_ context.Context, releaseID, project string) (map[string]string, error) {
+	f.asked = append(f.asked, [2]string{releaseID, project})
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -203,7 +203,7 @@ func TestContractPathsInsideFolder(t *testing.T) {
 			edit("svc/contracts/fx.yaml", "a"), edit("svc/contracts/sub/other.yaml", "b"), edit("svc/contracts", "c"),
 		}, nil},
 		{"no files", nil, []remediation.Finding{{Code: "no_files", Message: noFiles}}},
-		{"a path in another service", []remediation.Edit{edit("other/contracts/fx.yaml", "a")}, []remediation.Finding{{
+		{"a path in another project", []remediation.Edit{edit("other/contracts/fx.yaml", "a")}, []remediation.Finding{{
 			Code: "path_outside_contract_dir", File: "other/contracts/fx.yaml",
 			Message: fmt.Sprintf(outside, "other/contracts/fx.yaml", contractDir),
 		}}},
@@ -668,7 +668,7 @@ func TestContractPackages(t *testing.T) {
 	assert.Equal(t, []packCall{{
 		contractDir: filepath.Join(root, "svc", "contracts"),
 		repoRoot:    filepath.Join(root, "svc"),
-		service:     "svc",
+		project:     "svc",
 		dialect:     "trino",
 		packages:    thePackages,
 	}}, pk.calls, "the bundle records the package list the image_packages step left in the evidence")
@@ -699,7 +699,7 @@ func TestContractPackages_PacksEveryRoundWithTheListTheContextStepRead(t *testin
 
 // A cluster whose context steps ran before image_packages was a step of its
 // type has no package list in its evidence: the check reads it itself, for
-// the failing node's release and service.
+// the failing node's release and project.
 func TestContractPackages_ReadsTheListWhenTheEvidenceHasNone(t *testing.T) {
 	_, in := declPass(t)
 	in.Evidence = contractFileEvidence()
@@ -714,7 +714,7 @@ func TestContractPackages_ReadsTheListWhenTheEvidenceHasNone(t *testing.T) {
 	assert.Equal(t, thePackages, pk.calls[0].packages)
 }
 
-// A release that records no package list for the service, read by the check
+// A release that records no package list for the project, read by the check
 // itself, is the step's error naming why: no draft can change it.
 func TestContractPackages_ARecordOfNoPackagesReadByTheCheckIsItsError(t *testing.T) {
 	_, in := declPass(t)

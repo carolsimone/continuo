@@ -43,14 +43,14 @@ func (p *ProposalsClient) ListProposalsForRelease(ctx context.Context, releaseID
 			ID: pr.Id, NodeID: pr.NodeId, Attempt: int(pr.Attempt),
 			Status: pr.Status, PRState: pr.PrState, PRURL: pr.PrUrl,
 			PullRequests:     mapPullRequests(pr.PullRequests),
-			PRServices:       pr.PrServices,
+			PRProjects:       pr.PrProjects,
 			RemediationRound: int(pr.RemediationRound),
 		})
 	}
 	return out, nil
 }
 
-// mapPullRequests maps a proposal's per-service pull requests from the wire type
+// mapPullRequests maps a proposal's per-project pull requests from the wire type
 // to the port type. Returns nil for a proposal that carries none, so the port's
 // EffectivePRs falls back to that proposal's singular PRState/PRURL.
 func mapPullRequests(prs []*remediationv1.PullRequest) []ports.ProposalPR {
@@ -59,7 +59,7 @@ func mapPullRequests(prs []*remediationv1.PullRequest) []ports.ProposalPR {
 	}
 	out := make([]ports.ProposalPR, 0, len(prs))
 	for _, pr := range prs {
-		out = append(out, ports.ProposalPR{Service: pr.Service, PRState: pr.PrState, PRURL: pr.PrUrl})
+		out = append(out, ports.ProposalPR{Project: pr.Project, PRState: pr.PrState, PRURL: pr.PrUrl})
 	}
 	return out
 }

@@ -14,11 +14,11 @@ import (
 )
 
 // mustNodeCommand resolves a node command that the test expects to succeed.
-func mustNodeCommand(t *testing.T, r *Resolver, svc string, op pkg_model.Operation, nt pkg_model.NodeType, node string) []string {
+func mustNodeCommand(t *testing.T, r *Resolver, project string, op pkg_model.Operation, nt pkg_model.NodeType, node string) []string {
 	t.Helper()
-	argv, err := r.NodeCommand(svc, op, nt, node)
+	argv, err := r.NodeCommand(project, op, nt, node)
 	if err != nil {
-		t.Fatalf("NodeCommand(%s, %q, %s, %s): %v", svc, op, nt, node, err)
+		t.Fatalf("NodeCommand(%s, %q, %s, %s): %v", project, op, nt, node, err)
 	}
 	return argv
 }
@@ -44,7 +44,7 @@ func TestDefaults_NodeCommand_MatchesPkgNodeType(t *testing.T) {
 	for _, nt := range []pkg_model.NodeType{
 		pkg_model.NodeTypeDbtModel, pkg_model.NodeTypeDbtSeed, pkg_model.NodeTypeDbtSnapshot,
 	} {
-		assert.Equal(t, nt.Command("orders"), mustNodeCommand(t, r, "any-service", pkg_model.OperationRun, nt, "orders"),
+		assert.Equal(t, nt.Command("orders"), mustNodeCommand(t, r, "any-project", pkg_model.OperationRun, nt, "orders"),
 			"built-in default for %s must delegate to pkg NodeType.Command", nt)
 	}
 }
@@ -61,12 +61,12 @@ func TestDefaults_TestAndBuildOperations(t *testing.T) {
 func TestDefaults_SeedBuildCommand(t *testing.T) {
 	r := Defaults()
 	assert.Equal(t, []string{"dbt", "seed", "--select", "fx"},
-		r.SeedBuildCommand("any-service", "fx", "_candidate_rel1"),
+		r.SeedBuildCommand("any-project", "fx", "_candidate_rel1"),
 		"built-in seed_build equals seed; schema routed via DBT_TARGET_SCHEMA env")
 }
 
 func TestDefaults_CompileCommand(t *testing.T) {
-	argv, manifestPath := Defaults().CompileCommand("any-service")
+	argv, manifestPath := Defaults().CompileCommand("any-project")
 	assert.Equal(t, []string{"dbt", "compile", "--profiles-dir", "/project"}, argv)
 	assert.Equal(t, "/project/target/manifest.json", manifestPath)
 }
@@ -76,13 +76,13 @@ func TestParseCommand_DefaultAndOverride(t *testing.T) {
 	// No --profiles-dir: the built-in parse argv must carry the same
 	// parse-affecting flags as run/seed/snapshot/test/build/seed_build (none),
 	// per validateParseContext.
-	assert.Equal(t, []string{"dbt", "parse"}, r.ParseCommand("any-service"))
+	assert.Equal(t, []string{"dbt", "parse"}, r.ParseCommand("any-project"))
 }
 
 func TestPartialParsePath_DefaultsToManifestSibling(t *testing.T) {
 	r := Defaults()
 	// builtin manifest_path is /project/target/manifest.json
-	assert.Equal(t, "/project/target/partial_parse.msgpack", r.PartialParsePath("any-service"))
+	assert.Equal(t, "/project/target/partial_parse.msgpack", r.PartialParsePath("any-project"))
 }
 
 // loadTestConfig loads a Resolver from inline YAML via a temp file.
@@ -109,7 +109,7 @@ default:
   compile:
     command:       ["default-dbt", "compile", "--profiles-dir", "/project"]
     manifest_path: "/project/target/manifest.json"
-services:
+projects:
   customname:
     run:        ["customname-dbt", "run", "--select", "{{ node }}"]
     seed:       ["customname-dbt", "seed", "--select", "{{ node }}"]
@@ -123,16 +123,16 @@ services:
       manifest_path: "/project/out/manifest.json"
 `
 
-func TestResolver_ServiceOverrideBeatsDefault(t *testing.T) {
+func TestResolver_ProjectOverrideBeatsDefault(t *testing.T) {
 	r := loadTestConfig(t, precedenceYAML)
 	assert.Equal(t, []string{"customname-dbt", "run", "--select", "orders"},
 		mustNodeCommand(t, r, "customname", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders"))
 	assert.Equal(t, []string{"default-dbt", "run", "--select", "orders"},
-		mustNodeCommand(t, r, "other-service", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders"),
-		"service not in services: falls to default")
+		mustNodeCommand(t, r, "other-project", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders"),
+		"project not in projects: falls to default")
 }
 
-func TestResolver_ServiceUsesOwnSeedAndTest(t *testing.T) {
+func TestResolver_ProjectUsesOwnSeedAndTest(t *testing.T) {
 	r := loadTestConfig(t, precedenceYAML)
 	assert.Equal(t, []string{"customname-dbt", "seed", "--select", "fx"},
 		mustNodeCommand(t, r, "customname", pkg_model.OperationRun, pkg_model.NodeTypeDbtSeed, "fx"),
@@ -151,8 +151,8 @@ func TestResolver_SeedBuildTemplate_SubstitutesTargetSchema(t *testing.T) {
 func TestResolver_SeedBuildFromDefault(t *testing.T) {
 	r := loadTestConfig(t, precedenceYAML)
 	assert.Equal(t, []string{"default-dbt", "seed", "--select", "fx"},
-		r.SeedBuildCommand("other-service", "fx", "_candidate_rel1"),
-		"service not in services: seed_build resolves from the complete default")
+		r.SeedBuildCommand("other-project", "fx", "_candidate_rel1"),
+		"project not in projects: seed_build resolves from the complete default")
 }
 
 func TestResolver_Compile(t *testing.T) {
@@ -161,9 +161,9 @@ func TestResolver_Compile(t *testing.T) {
 	assert.Equal(t, []string{"customname-dbt", "compile", "--profiles-dir", "/project"}, argv)
 	assert.Equal(t, "/project/out/manifest.json", mp)
 
-	argv, mp = r.CompileCommand("other-service")
+	argv, mp = r.CompileCommand("other-project")
 	assert.Equal(t, []string{"default-dbt", "compile", "--profiles-dir", "/project"}, argv,
-		"service not in services: compile resolves from the complete default")
+		"project not in projects: compile resolves from the complete default")
 	assert.Equal(t, "/project/target/manifest.json", mp)
 }
 
@@ -209,7 +209,7 @@ default:
   compile:
     command:       ["dbt", "compile"]
     manifest_path: "/project/target/manifest.json"
-services:
+projects:
   customname:
     run:               ["customname-dbt", "run-model", "{{ node }}"]
     seed:              ["customname-dbt", "load-seed", "{{ node }}"]
@@ -241,7 +241,7 @@ func TestNodeCommand_FullRefresh(t *testing.T) {
 
 	assert.Equal(t, []string{"dbt", "run", "--full-refresh", "--select", "orders"},
 		mustNodeCommand(t, r, "svc", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtModel, "orders"),
-		"a service without an override uses the default full_refresh")
+		"a project without an override uses the default full_refresh")
 	assert.Equal(t, []string{"customname-dbt", "rebuild-model", "orders"},
 		mustNodeCommand(t, r, "customname", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtModel, "orders"))
 	assert.Equal(t, []string{"customname-dbt", "reload-seed", "fx"},
@@ -252,12 +252,12 @@ func TestNodeCommand_FullRefresh(t *testing.T) {
 		"an ordinary seed run resolves to the plain seed command")
 }
 
-func TestNodeCommand_FullRefresh_ServiceBlockWithoutKeyIsPermanent(t *testing.T) {
+func TestNodeCommand_FullRefresh_ProjectBlockWithoutKeyIsPermanent(t *testing.T) {
 	r := loadYAML(t, fullRefreshYAML)
 	_, err := r.NodeCommand("legacy", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtModel, "orders")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, pkgevents.ErrPermanent)
-	assert.Contains(t, err.Error(), "services.legacy defines no full_refresh command",
+	assert.Contains(t, err.Error(), "projects.legacy defines no full_refresh command",
 		"must not fall through to the default block's plain dbt")
 }
 
@@ -272,7 +272,7 @@ func TestNodeCommand_SeedFullRefresh_LegacyBlockWithoutKeyIsPermanent(t *testing
 	_, err := r.NodeCommand("legacy", pkg_model.OperationFullRefresh, pkg_model.NodeTypeDbtSeed, "fx")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, pkgevents.ErrPermanent)
-	assert.Contains(t, err.Error(), "services.legacy defines no seed_full_refresh command",
+	assert.Contains(t, err.Error(), "projects.legacy defines no seed_full_refresh command",
 		"must not fall back to the legacy block's plain seed command, and must not fall through to the default block")
 }
 
@@ -352,7 +352,7 @@ default:
   compile:
     command:       ["dbt", "compile"]
     manifest_path: "/project/target/manifest.json"
-services:
+projects:
   finance:
     run:          ["finance-dbt", "run", "{{ node }}"]
     seed:         ["finance-dbt", "seed", "{{ node }}"]
@@ -367,7 +367,7 @@ services:
       manifest_path: "/project/target/manifest.json"
 `
 
-// FullRefreshBlock names the block that governs a service, its override when
+// FullRefreshBlock names the block that governs a project, its override when
 // it has one, else the default, and whether that block defines the full
 // refresh command of the node type; an override never borrows the default's.
 func TestResolver_FullRefreshBlock(t *testing.T) {
@@ -378,10 +378,10 @@ func TestResolver_FullRefreshBlock(t *testing.T) {
 		assert.True(t, defined, "%s", nt)
 	}
 	block, defined := r.FullRefreshBlock("finance", pkg_model.NodeTypeDbtSeed)
-	assert.Equal(t, "services.finance", block)
+	assert.Equal(t, "projects.finance", block)
 	assert.False(t, defined, "the override defines no seed_full_refresh")
 	block, defined = r.FullRefreshBlock("finance", pkg_model.NodeTypeDbtModel)
-	assert.Equal(t, "services.finance", block)
+	assert.Equal(t, "projects.finance", block)
 	assert.True(t, defined)
 	_, defined = r.FullRefreshBlock("payments", pkg_model.NodeTypeDbtSnapshot)
 	assert.False(t, defined, "a node type that cannot be full-refreshed has no full refresh command")

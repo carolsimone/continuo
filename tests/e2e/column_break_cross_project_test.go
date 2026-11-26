@@ -11,9 +11,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// xbreakUp / xbreakDown are a DELIBERATELY-BROKEN cross-service chain that pins
+// xbreakUp / xbreakDown are a DELIBERATELY-BROKEN cross-project chain that pins
 // the migration scenario docs/try-it-locally.md depends on: an upstream release
-// drops a column a DIFFERENT service still reads.
+// drops a column a DIFFERENT project still reads.
 //
 // xbreak_down (service-2) reads the amount_eur column of xbreak_up (service-3)
 // by raw schema-qualified name:
@@ -26,23 +26,23 @@ import (
 // the break is not a missing relation. It surfaces only when the downstream is
 // validated against the candidate-built upstream, where execution-controller's
 // execution-time SQL rewrite (approach B — see the revert in
-// dbt/services/service-2/models/xprobe_down.sql's history) redirects
+// dbt/projects/service-2/models/xprobe_down.sql's history) redirects
 // e2e_schema.xbreak_up to the candidate schema and the warehouse raises
 // `column "amount_eur" does not exist`.
 //
 // This is the CLEAN counterpart to xprobe_up/xprobe_down (the happy-path
-// cross-service pair validated by TestE2E_ReleasePromote_GatedCrossServiceUpstream):
-// same cross-service wiring and seeding, but the downstream reads a column the
+// cross-project pair validated by TestE2E_ReleasePromote_GatedCrossProjectUpstream):
+// same cross-project wiring and seeding, but the downstream reads a column the
 // upstream no longer emits.
 const (
 	xbreakUpUniqueID   = "e2e_schema.xbreak_up"
 	xbreakDownUniqueID = "e2e_schema.xbreak_down"
 )
 
-// TestE2E_ReleasePromote_RejectsColumnBreakAcrossServices proves the cross-service
+// TestE2E_ReleasePromote_RejectsColumnBreakAcrossProjects proves the cross-project
 // column-break guard end to end, the one scenario no existing single test covers:
 //
-//	POST /releases (service-2) → cross-service closure schedules
+//	POST /releases (service-2) → cross-project closure schedules
 //	{xbreak_up, xbreak_down} with the gating edge xbreak_down -> xbreak_up →
 //	execution-controller builds xbreak_up (service-3) into the candidate schema first →
 //	xbreak_down validates against it and fails on the DROPPED amount_eur column
@@ -51,20 +51,20 @@ const (
 //	validation_failed → current_prod does NOT move.
 //
 // xbreak_down lives in service-2, xbreak_up lives in service-3. The test posts a
-// per-service release for service-2. Assembly attaches service-3's baseline
+// per-project release for service-2. Assembly attaches service-3's baseline
 // manifest (via service_prod), so topology-controller sees xbreak_up as part of
 // the candidate topology. current_prod is seeded with every node EXCEPT the
 // xbreak pair, so the derived changed set is exactly {xbreak_up, xbreak_down}
-// with the cross-service gating edge xbreak_down -> xbreak_up — identical seeding
-// to the happy-path cross-service test, so only the column mismatch differs.
-func TestE2E_ReleasePromote_RejectsColumnBreakAcrossServices(t *testing.T) {
+// with the cross-project gating edge xbreak_down -> xbreak_up — identical seeding
+// to the happy-path cross-project test, so only the column mismatch differs.
+func TestE2E_ReleasePromote_RejectsColumnBreakAcrossProjects(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
 
 	// additive polls: assertValidationRequestedNodes(8m) + waitForReleaseRejected(12m),
 	// the latter covering the upstream candidate build plus the downstream's failing
-	// validation job — two sequential dbt jobs, as in the cross-service promote test.
+	// validation job — two sequential dbt jobs, as in the cross-project promote test.
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 
@@ -77,25 +77,25 @@ func TestE2E_ReleasePromote_RejectsColumnBreakAcrossServices(t *testing.T) {
 	releaseID := "e2e-colbreak-" + uuid.NewString()[:8]
 	// xbreak_down is in service-2; posting a release for service-2 causes assembly
 	// to attach service-3's manifest (which contains xbreak_up) from service_prod,
-	// exposing the cross-service gating edge.
-	changedService := "service-2"
-	t.Logf("release_id=%s changed_service=%s", releaseID, changedService)
+	// exposing the cross-project gating edge.
+	changedProject := "service-2"
+	t.Logf("release_id=%s changed_project=%s", releaseID, changedProject)
 
 	excluded := map[string]bool{
 		xbreakUpUniqueID:   true,
 		xbreakDownUniqueID: true,
 	}
-	allServices := baselineServices(t, ctx, clients)
-	require.NotEmpty(t, allServices,
-		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
+	allProjects := baselineProjects(t, ctx, clients)
+	require.NotEmpty(t, allProjects,
+		"no baseline manifests under s3://%s/<project>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
 
-	changedImageTag := allServices[changedService].imageTag
+	changedImageTag := allProjects[changedProject].imageTag
 	require.NotEmpty(t, changedImageTag,
-		"image_tag missing for %s — setup.sh must seed service_prod", changedService)
+		"image_tag missing for %s — setup.sh must seed service_prod", changedProject)
 
 	var prodNodes []map[string]string
 	var upFound, downFound bool
-	for svc, si := range allServices {
+	for svc, si := range allProjects {
 		for _, n := range si.nodes {
 			switch n.uniqueID {
 			case xbreakUpUniqueID:
@@ -108,7 +108,7 @@ func TestE2E_ReleasePromote_RejectsColumnBreakAcrossServices(t *testing.T) {
 			}
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
-				"service":      svc,
+				"project":      svc,
 				"content_hash": n.contentHash,
 			})
 		}
@@ -125,7 +125,7 @@ func TestE2E_ReleasePromote_RejectsColumnBreakAcrossServices(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allServices)
+	seedServiceProd(t, ctx, clients, allProjects)
 
 	// Capture current_prod's release pointer after seeding its fresh artifact.
 	// A rejected release must leave this exact value in place.
@@ -133,11 +133,11 @@ func TestE2E_ReleasePromote_RejectsColumnBreakAcrossServices(t *testing.T) {
 	require.NoError(t, clients.releaseDB.QueryRowContext(ctx,
 		`SELECT release_id FROM current_prod`).Scan(&currentProdBefore))
 
-	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
+	postRelease(t, clients, changedProject, releaseID, changedImageTag, false)
 
-	// The cross-service closure must schedule BOTH nodes (upstream first), proving
+	// The cross-project closure must schedule BOTH nodes (upstream first), proving
 	// the downstream was pulled in as a consumer of the changed upstream and that
-	// the break is exercised across a service boundary — not within one service.
+	// the break is exercised across a project boundary — not within one project.
 	assertValidationRequestedNodes(t, ctx, validationTap, releaseID,
 		[]string{xbreakUpUniqueID, xbreakDownUniqueID})
 
@@ -178,5 +178,5 @@ func TestE2E_ReleasePromote_RejectsColumnBreakAcrossServices(t *testing.T) {
 		"a rejected release must never become current_prod")
 	assert.Equal(t, currentProdBefore, currentProdAfter,
 		"current_prod must be unchanged by a rejected release")
-	t.Logf("✅ cross-service column break rejected as validation_failed; current_prod unchanged (release_id=%q)", currentProdAfter)
+	t.Logf("✅ cross-project column break rejected as validation_failed; current_prod unchanged (release_id=%q)", currentProdAfter)
 }

@@ -114,7 +114,7 @@ func cloneTimePtr(t *time.Time) *time.Time {
 func cloneProposal(p proposal.Proposal) proposal.Proposal {
 	p.ResolvedNodeIDs = slices.Clone(p.ResolvedNodeIDs)
 	p.NodeOutcomes = maps.Clone(p.NodeOutcomes)
-	p.Services = slices.Clone(p.Services)
+	p.Projects = slices.Clone(p.Projects)
 	p.Verifications = cloneVerifications(p.Verifications)
 	p.Approvers = slices.Clone(p.Approvers)
 	if p.Edits != nil {

@@ -73,13 +73,13 @@ func releaseRA() topologyartifact.Document {
 		ReleaseID:     "rA",
 		Nodes: []topologyartifact.Node{
 			{UniqueID: "svc-a.public.table_a", SchemaName: "public", TableName: "table_a",
-				ServiceName: "service-a", NodeType: "dbt-seed", ContentHash: "sha256:a",
+				ProjectName: "service-a", NodeType: "dbt-seed", ContentHash: "sha256:a",
 				ImageTag: "tag-a", Schedule: "daily", UpstreamUniqueIDs: []string{}},
 			{UniqueID: "svc-b.public.table_b", SchemaName: "public", TableName: "table_b", //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
-				ServiceName: "service-b", NodeType: "python-api", ContentHash: "sha256:b",
+				ProjectName: "service-b", NodeType: "python-api", ContentHash: "sha256:b",
 				ImageTag: "tag-b", SecretRef: "continuo-api-b", Schedule: "hourly",
 				UpstreamUniqueIDs: []string{"svc-a.public.table_a"}},
-			{UniqueID: "test.not_null_table_b_id", ServiceName: "service-b", NodeType: "dbt-test",
+			{UniqueID: "test.not_null_table_b_id", ProjectName: "service-b", NodeType: "dbt-test",
 				UpstreamUniqueIDs: []string{"svc-b.public.table_b"}},
 		},
 	}

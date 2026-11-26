@@ -9,9 +9,9 @@ import (
 // NodeLocator resolves a node's source location from the catalog graph.
 type NodeLocator interface {
 	// Locate returns the node's project-relative source path and owning
-	// service. An unknown node degrades to ("", "", nil) — absence is a
+	// project. An unknown node degrades to ("", "", nil) — absence is a
 	// degraded answer, not an error.
-	Locate(ctx context.Context, uniqueID string) (filePath, serviceName string, err error)
+	Locate(ctx context.Context, uniqueID string) (filePath, projectName string, err error)
 }
 
 // UpstreamChangeReader returns a node's recently-changed upstream ancestry.

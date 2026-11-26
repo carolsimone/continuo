@@ -97,7 +97,7 @@ function installFetch(map: FetchMap = {}) {
 
 function mkTask(i: number, status: string): Task {
   return {
-    task_id: `t-${i}`, service_name: 'svc', schema_name: 'schema', table_name: `tbl${i}`,
+    task_id: `t-${i}`, project_name: 'svc', schema_name: 'schema', table_name: `tbl${i}`,
     job_name: 'job', status, attempt: 0, max_retries: 0, created_at: null,
   };
 }

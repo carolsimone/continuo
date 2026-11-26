@@ -456,12 +456,12 @@ func TestAssemble_RendersWhatThisReleaseChangedUpstream(t *testing.T) {
 	req := Assemble(Evidence{
 		NodeID: "analytics.report", CandidateSQL: "select amount from analytics.orders", DBTLog: "column amount does not exist",
 		ReleaseAncestorsKnown: true,
-		ReleaseUpstreamChanges: []ReleaseUpstreamChange{{NodeID: "analytics.orders", Service: "core", Depth: 1,
+		ReleaseUpstreamChanges: []ReleaseUpstreamChange{{NodeID: "analytics.orders", Project: "core", Depth: 1,
 			Diff: "-select id, amount from raw\n+select id, amount_eur from raw"}},
 	})
 	for _, want := range []string{
 		"What this release changed upstream of the failing model",
-		"Upstream analytics.orders (service core, depth=1):",
+		"Upstream analytics.orders (project core, depth=1):",
 		"+select id, amount_eur from raw",
 	} {
 		if !strings.Contains(req.User, want) {

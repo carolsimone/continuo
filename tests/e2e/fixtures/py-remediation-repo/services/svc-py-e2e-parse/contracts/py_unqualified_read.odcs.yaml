@@ -3,7 +3,7 @@
 # so it can resolve it to an upstream node, so it rejects this node before any
 # Job runs (unqualified_reference), and the release is rejected at the parse
 # stage. continuo-runtime refuses the same read, so the e2e test builds this
-# service's bundle itself instead of running `continuo-runtime pack`.
+# project's bundle itself instead of running `continuo-runtime pack`.
 #
 # The fix a remediation attempt has to find is in this file and nowhere else:
 # the read must qualify the relation (public.right_name, which the test creates

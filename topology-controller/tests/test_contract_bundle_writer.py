@@ -24,7 +24,7 @@ URI = f"s3://b/{KEY}"
 
 def _contract(unique_id: str, family: ContractFamily, document: dict | None = None) -> StoredContract:
     return StoredContract(
-        unique_id=unique_id, family=family, service="svc", contract_hash="sha256:" + "a" * 64,
+        unique_id=unique_id, family=family, project="svc", contract_hash="sha256:" + "a" * 64,
         content_hash="sha256:" + "b" * 64, source_path=f"{unique_id}.sql", source_sha256="c" * 64,
         document=document if document is not None else {"id": unique_id, "name": "é"},
     )

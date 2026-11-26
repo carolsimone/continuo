@@ -15,7 +15,7 @@
         {
           "node_id": "analytics.py_daily_kpis",
           "kind": "invalid_contract",
-          "service": "service-py",
+          "project": "service-py",
           "file_path": "contracts/py_daily_kpis.odcs.yaml",
           "node_type": "python-node",
           "detail": "schema[0].properties[2].physicalType: 'NUMERIC(12)' is not a type continuo accepts"
@@ -41,7 +41,7 @@
         {
           "node_id": "analytics.py_daily_kpis",
           "kind": "invalid_contract",
-          "service": "service-py",
+          "project": "service-py",
           "file_path": "contracts/py_daily_kpis.odcs.yaml",
           "node_type": "python-node",
           "detail": "schema[0].properties[2].physicalType: 'NUMERIC(12)' is not a type continuo accepts"

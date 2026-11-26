@@ -19,7 +19,7 @@ SCHEMA_VERSION = 1
 # keys, so the order here does not reach the bytes.
 _STRING_FIELDS = (
     "unique_id", "schema_name", "table_name", "resolved_relation_id",
-    "service_name", "node_type", "content_hash", "image_tag",
+    "project_name", "node_type", "content_hash", "image_tag",
     "original_file_path", "schedule",
 )
 

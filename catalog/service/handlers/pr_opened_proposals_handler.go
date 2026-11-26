@@ -74,10 +74,10 @@ func (h *PrOpenedProposalsHandler) Handle(
 	// node would leave the rest of a batched fix's rejections without a PROPOSED
 	// edge, and precedent for them would stop reporting the fix PR. The PR facts
 	// themselves are the same for every node in the batch — one PR, one
-	// service — so the same PullRequest value is recorded on each call.
+	// project — so the same PullRequest value is recorded on each call.
 	pr := casebase.PullRequest{
 		ProposalID: in.ProposalID,
-		Service:    in.Service,
+		Project:    in.Project,
 		PrURL:      in.PrURL,
 		PrNumber:   in.PrNumber,
 		State:      "open",
@@ -110,6 +110,6 @@ func (h *PrOpenedProposalsHandler) Handle(
 
 	h.logger.Info("proposal recorded in case base",
 		"tenant_id", tenantID, "release_id", in.ReleaseID, "node_ids", resolved,
-		"proposal_id", in.ProposalID, "service", in.Service, "pr_url", in.PrURL)
+		"proposal_id", in.ProposalID, "project", in.Project, "pr_url", in.PrURL)
 	return nil
 }

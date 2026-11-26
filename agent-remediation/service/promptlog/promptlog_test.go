@@ -41,7 +41,7 @@ func newBufLogger() (*slog.Logger, *bytes.Buffer) {
 func sampleRequest() ports.ProposeRequest {
 	return ports.ProposeRequest{
 		System:   "you fix a failing node",
-		User:     "Service: service-1\nFile models/table_aa.sql:\n{{ config(...) }}\ndbt compile error:\nexpected token ','",
+		User:     "Project: service-1\nFile models/table_aa.sql:\n{{ config(...) }}\ndbt compile error:\nexpected token ','",
 		ToolName: "propose_fix",
 	}
 }

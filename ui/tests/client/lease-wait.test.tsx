@@ -19,7 +19,7 @@ const HOLDER = '9f1c2d3e-4b5a-6789-abcd-ef0123456789';
 const SINCE = '2026-10-24T10:05:00Z';
 
 const task = (name: string, status: string, overrides: Partial<Task> = {}): Task => ({
-  task_id: name, service_name: 'core', schema_name: 'a', table_name: name,
+  task_id: name, project_name: 'core', schema_name: 'a', table_name: name,
   job_name: name, status, attempt: 0, max_retries: 2, created_at: null,
   ...overrides,
 });
@@ -94,7 +94,7 @@ describe('the waiting for node pill', () => {
   it('shows on a run page row waiting for its node, linking the holder run', () => {
     render(
       <RunNodeTable tasks={[waiting('orders'), task('customers', 'pending')]} attemptsByTask={noAttempts}
-        edges={[]} expandedServices={new Set(['core'])} onServiceToggle={vi.fn()} />,
+        edges={[]} expandedProjects={new Set(['core'])} onProjectToggle={vi.fn()} />,
     );
     const pill = screen.getByText('waiting for node');
     expect(pill.tagName).toBe('A');
@@ -110,7 +110,7 @@ describe('the waiting for node pill', () => {
   it('is not a link while no task holds the node', () => {
     render(
       <RunNodeTable tasks={[waiting('orders', null)]} attemptsByTask={noAttempts}
-        edges={[]} expandedServices={new Set(['core'])} onServiceToggle={vi.fn()} />,
+        edges={[]} expandedProjects={new Set(['core'])} onProjectToggle={vi.fn()} />,
     );
     const pill = screen.getByText('waiting for node');
     expect(pill.tagName).toBe('SPAN');
@@ -120,9 +120,9 @@ describe('the waiting for node pill', () => {
   it('opening the holder run does not select the row', () => {
     const onNodeSelect = vi.fn();
     render(
-      <NodeTableBody groups={[{ service: 'core', status: 'pending', tasks: [waiting('orders')] }]}
-        attemptsByTask={noAttempts} edges={[]} startedAt={{}} forceExpanded expandedServices={new Set(['core'])}
-        onServiceToggle={vi.fn()} onNodeSelect={onNodeSelect} />,
+      <NodeTableBody groups={[{ project: 'core', status: 'pending', tasks: [waiting('orders')] }]}
+        attemptsByTask={noAttempts} edges={[]} startedAt={{}} forceExpanded expandedProjects={new Set(['core'])}
+        onProjectToggle={vi.fn()} onNodeSelect={onNodeSelect} />,
     );
     // jsdom cannot open another page; a capture listener cancels the link's
     // navigation before React handles the click.
@@ -144,7 +144,7 @@ describe('the waiting for node pill', () => {
     const graph = { nodes: [node('core.a.orders'), node('core.a.customers')], edges: [] as GraphEdge[] };
     const { container } = render(
       <RunSwimlane graph={graph} tasks={[waiting('orders'), task('customers', 'pending')]}
-        serviceOrder={['core']} collapsed={new Set()} onLaneToggle={vi.fn()} />,
+        projectOrder={['core']} collapsed={new Set()} onLaneToggle={vi.fn()} />,
     );
     const pills = container.querySelectorAll('.swim-wait');
     expect(pills.length).toBe(1);
@@ -158,7 +158,7 @@ describe('the waiting for node pill', () => {
     const graph = { nodes: [{ node_id: 'core.a.orders', node_type: 'dbt-model', schedule_name: 's', dormant: false, last_run_at: null }], edges: [] as GraphEdge[] };
     const { container } = render(
       <RunSwimlane graph={graph} tasks={[waiting('orders')]}
-        serviceOrder={['core']} collapsed={new Set(['core'])} onLaneToggle={vi.fn()} />,
+        projectOrder={['core']} collapsed={new Set(['core'])} onLaneToggle={vi.fn()} />,
     );
     expect(container.querySelector('.swim-wait')).toBeNull();
     expect(container.querySelector('.swim-cell')!.getAttribute('title'))

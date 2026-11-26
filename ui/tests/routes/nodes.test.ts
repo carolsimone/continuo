@@ -8,7 +8,7 @@ const mockListNodeTasks = vi.fn();
 const mockTriggerSingleNodeRun = vi.fn();
 const mockListNodes = vi.fn();
 const mockListNodeNames = vi.fn();
-const mockListNodeServices = vi.fn();
+const mockListNodeProjects = vi.fn();
 const mockGetNode = vi.fn();
 const mockGetNodeVersions = vi.fn();
 const mockGetNodeContract = vi.fn();
@@ -20,7 +20,7 @@ const mockRunClient = {
   triggerSingleNodeRun: mockTriggerSingleNodeRun,
   listNodes: mockListNodes,
   listNodeNames: mockListNodeNames,
-  listNodeServices: mockListNodeServices,
+  listNodeProjects: mockListNodeProjects,
 };
 
 const REQUEST_ID = '5d21c0de-0000-4000-8000-000000000001';
@@ -46,7 +46,7 @@ describe('nodes router', () => {
     mockTriggerSingleNodeRun.mockReset();
     mockListNodes.mockReset();
     mockListNodeNames.mockReset();
-    mockListNodeServices.mockReset();
+    mockListNodeProjects.mockReset();
     mockGetNode.mockReset();
     mockGetNodeVersions.mockReset();
     mockGetNodeContract.mockReset();
@@ -93,7 +93,7 @@ describe('nodes router', () => {
     expect(res.body.tasks[0].failure_reason).toBe('compile_error');
     expect(res.body.tasks[0].operation).toBe('run');
     expect(mockListNodeTasks).toHaveBeenCalledWith(
-      { service_name: 'svc', schema_name: 'schema', table_name: 'tbl', limit: 50, operation: 'run' },
+      { project_name: 'svc', schema_name: 'schema', table_name: 'tbl', limit: 50, operation: 'run' },
       expect.any(Function),
     );
   });
@@ -109,7 +109,7 @@ describe('nodes router', () => {
     mockListNodeTasks.mockImplementation((_req, cb) => cb(null, { tasks: [] }));
     await request(makeApp()).get('/api/nodes/svc/schema/tbl/runs?operation=test');
     expect(mockListNodeTasks).toHaveBeenCalledWith(
-      { service_name: 'svc', schema_name: 'schema', table_name: 'tbl', limit: 50, operation: 'test' },
+      { project_name: 'svc', schema_name: 'schema', table_name: 'tbl', limit: 50, operation: 'test' },
       expect.any(Function),
     );
   });
@@ -147,7 +147,7 @@ describe('nodes router', () => {
     expect(res.body.run_id).toBe('new-r');
     expect(mockTriggerSingleNodeRun).toHaveBeenCalledWith(
       {
-        request_id: REQUEST_ID, service_name: 'svc', schema_name: 'schema', table_name: 'tbl',
+        request_id: REQUEST_ID, project_name: 'svc', schema_name: 'schema', table_name: 'tbl',
         metadata_source: 'latest', source_run_id: '', operation: '',
       },
       expect.any(Object),
@@ -181,7 +181,7 @@ describe('nodes router', () => {
         total_count: 2,
         nodes: [
           {
-            service_name: 'svc', schema_name: 'an', table_name: 'fct',
+            project_name: 'svc', schema_name: 'an', table_name: 'fct',
             task_count: 48, success_rate_pct: -1, avg_duration_sec: -1,
             p95_duration_sec: 21, flaky_rate_pct: 4,
             last_status: 'succeeded', last_run_at: '2026-06-08T10:00:00Z',
@@ -189,7 +189,7 @@ describe('nodes router', () => {
             node_type: 'dbt-model', dormant: true,
           },
           {
-            service_name: 'svc', schema_name: 'an', table_name: 'dim',
+            project_name: 'svc', schema_name: 'an', table_name: 'dim',
             task_count: 10, success_rate_pct: 90, avg_duration_sec: 5,
             p95_duration_sec: 9, flaky_rate_pct: 0,
             last_status: '', last_run_at: '', operation: 'test',
@@ -198,7 +198,7 @@ describe('nodes router', () => {
       }),
     );
 
-    const res = await request(makeApp()).get('/api/nodes?search=f&service=svc&limit=25&offset=0');
+    const res = await request(makeApp()).get('/api/nodes?search=f&project=svc&limit=25&offset=0');
     expect(res.status).toBe(200);
     expect(res.body.total_count).toBe(2);
     expect(res.body.nodes).toHaveLength(2);
@@ -221,7 +221,7 @@ describe('nodes router', () => {
     expect(res.body.nodes[1].node_type).toBe('');           // unset -> ''
     expect(res.body.nodes[1].dormant).toBe(false);          // unset -> false
     expect(mockListNodes).toHaveBeenCalledWith(
-      { search: 'f', service_name: 'svc', operation: 'run', limit: 25, offset: 0, dormant_only: false },
+      { search: 'f', project_name: 'svc', operation: 'run', limit: 25, offset: 0, dormant_only: false },
       expect.any(Function),
     );
   });
@@ -239,7 +239,7 @@ describe('nodes router', () => {
       cb(null, {
         total_count: 1,
         nodes: [{
-          service_name: 'svc', schema_name: 'an', table_name: 'stg_backfill',
+          project_name: 'svc', schema_name: 'an', table_name: 'stg_backfill',
           task_count: 0, success_rate_pct: -1, avg_duration_sec: -1, p95_duration_sec: -1, flaky_rate_pct: 0,
           last_status: '', last_run_at: '', operation: 'run', timeout_seconds: 3600,
           node_type: 'dbt-model', dormant: true,
@@ -259,7 +259,7 @@ describe('nodes router', () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ total_count: 0, nodes: [] });
     expect(mockListNodes).toHaveBeenCalledWith(
-      { search: '', service_name: '', operation: 'run', limit: 50, offset: 0, dormant_only: false },
+      { search: '', project_name: '', operation: 'run', limit: 50, offset: 0, dormant_only: false },
       expect.any(Function),
     );
   });
@@ -271,7 +271,7 @@ describe('nodes router', () => {
     ['an unknown value from a newer backend', 'vacuum', 'vacuum'],
   ])('GET / maps %s to the catalog operation', async (_label, wire, want) => {
     mockListNodes.mockImplementation((_req, cb) =>
-      cb(null, { total_count: 1, nodes: [{ service_name: 'svc', schema_name: 'an', table_name: 'fct', operation: wire }] }),
+      cb(null, { total_count: 1, nodes: [{ project_name: 'svc', schema_name: 'an', table_name: 'fct', operation: wire }] }),
     );
     const res = await request(makeApp()).get('/api/nodes');
     expect(res.body.nodes[0].operation).toBe(want);
@@ -288,14 +288,14 @@ describe('nodes router', () => {
     mockListNodes.mockImplementation((_req, cb) => cb(null, { total_count: 0, nodes: [] }));
     await request(makeApp()).get('/api/nodes?operation=test');
     expect(mockListNodes).toHaveBeenCalledWith(
-      { search: '', service_name: '', operation: 'test', limit: 50, offset: 0, dormant_only: false },
+      { search: '', project_name: '', operation: 'test', limit: 50, offset: 0, dormant_only: false },
       expect.any(Function),
     );
   });
 
   it('GET / defaults a node missing operation to "run"', async () => {
     mockListNodes.mockImplementation((_req, cb) =>
-      cb(null, { total_count: 1, nodes: [{ service_name: 'svc', schema_name: 'an', table_name: 'fct' }] }),
+      cb(null, { total_count: 1, nodes: [{ project_name: 'svc', schema_name: 'an', table_name: 'fct' }] }),
     );
     const res = await request(makeApp()).get('/api/nodes');
     expect(res.body.nodes[0].operation).toBe('run');
@@ -325,32 +325,32 @@ describe('nodes router', () => {
 
   it('GET /names returns distinct node names', async () => {
     mockListNodeNames.mockImplementation((_req, cb) => cb(null, { table_names: ['customers', 'orders'] }));
-    const res = await request(makeApp()).get('/api/nodes/names?service=svc');
+    const res = await request(makeApp()).get('/api/nodes/names?project=svc');
     expect(res.status).toBe(200);
     expect(res.body.names).toEqual(['customers', 'orders']);
-    expect(mockListNodeNames).toHaveBeenCalledWith({ service_name: 'svc' }, expect.any(Function));
+    expect(mockListNodeNames).toHaveBeenCalledWith({ project_name: 'svc' }, expect.any(Function));
   });
 
-  it('GET /services returns the distinct service list', async () => {
-    mockListNodeServices.mockImplementation((_req, cb) => cb(null, { service_names: ['billing', 'ledger'] }));
-    const res = await request(makeApp()).get('/api/nodes/services');
+  it('GET /projects returns the distinct project list', async () => {
+    mockListNodeProjects.mockImplementation((_req, cb) => cb(null, { project_names: ['billing', 'ledger'] }));
+    const res = await request(makeApp()).get('/api/nodes/projects');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ services: ['billing', 'ledger'] });
-    expect(mockListNodeServices).toHaveBeenCalledWith({}, expect.any(Function));
+    expect(res.body).toEqual({ projects: ['billing', 'ledger'] });
+    expect(mockListNodeProjects).toHaveBeenCalledWith({}, expect.any(Function));
   });
 
-  it('GET /services defaults a missing service list to an empty array', async () => {
-    mockListNodeServices.mockImplementation((_req, cb) => cb(null, {}));
-    const res = await request(makeApp()).get('/api/nodes/services');
+  it('GET /projects defaults a missing project list to an empty array', async () => {
+    mockListNodeProjects.mockImplementation((_req, cb) => cb(null, {}));
+    const res = await request(makeApp()).get('/api/nodes/projects');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ services: [] });
+    expect(res.body).toEqual({ projects: [] });
   });
 
-  it('GET /services maps a gRPC error to its HTTP status', async () => {
-    mockListNodeServices.mockImplementation((_req, cb) =>
+  it('GET /projects maps a gRPC error to its HTTP status', async () => {
+    mockListNodeProjects.mockImplementation((_req, cb) =>
       cb({ code: grpc.status.UNAVAILABLE, message: 'run-controller down' }),
     );
-    const res = await request(makeApp()).get('/api/nodes/services');
+    const res = await request(makeApp()).get('/api/nodes/projects');
     expect(res.status).toBe(500);
     expect(res.body.error).toContain('run-controller down');
   });
@@ -363,7 +363,7 @@ describe('nodes router', () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ node_type: 'dbt-model', test_count: 0, test_count_known: true, inactive: false });
     expect(mockGetNode).toHaveBeenCalledWith(
-      { service_name: 'svc', schema_name: 'schema', table_name: 'tbl', include_inactive: true },
+      { project_name: 'svc', schema_name: 'schema', table_name: 'tbl', include_inactive: true },
       expect.any(Function),
     );
   });

@@ -17,7 +17,7 @@ func previewResponse() *runv1.PreviewRebaseResponse {
 		ReleaseId: "rel-9", PromotionSeq: 9, TotalNodes: 12, WillRun: 5, FailedOrSkipped: 2,
 		NewNodes: 1, ChangedUpstream: 1, Downstream: 1, Inherited: 7,
 		ChangedNodes: []*runv1.ChangedUpstreamNode{
-			{ServiceName: "svc", SchemaName: "raw", TableName: "orders", Downstream: 3, LastSuccessSeconds: 41.5},
+			{ProjectName: "svc", SchemaName: "raw", TableName: "orders", Downstream: 3, LastSuccessSeconds: 41.5},
 		},
 	}
 }
@@ -32,7 +32,7 @@ func TestRunRebasePreview_OutputCarriesTheReleaseID(t *testing.T) {
 	assert.JSONEq(t, `{
 		"release_id":"rel-9","promotion_seq":9,"total_nodes":12,"will_run":5,"failed_or_skipped":2,
 		"new_nodes":1,"changed_upstream":1,"downstream":1,"inherited":7,
-		"changed_nodes":[{"service_name":"svc","schema_name":"raw","table_name":"orders","downstream":3,"last_success_seconds":41.5}]
+		"changed_nodes":[{"project_name":"svc","schema_name":"raw","table_name":"orders","downstream":3,"last_success_seconds":41.5}]
 	}`, stdout)
 	assert.Equal(t, []previewCall{{runID: testRunID, changedUpstream: true}}, fake.previewCalls)
 	assert.Equal(t, true, fake.deadlineCalls[0])

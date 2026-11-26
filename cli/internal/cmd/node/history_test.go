@@ -25,7 +25,7 @@ type fakeNodeRunController struct {
 
 	runsResp     *runv1.ListNodeTasksResponse
 	runsErr      error
-	gotSvc       string
+	gotProject   string
 	gotSchema    string
 	gotTable     string
 	gotOperation string
@@ -35,13 +35,13 @@ type fakeNodeRunController struct {
 	trigErr          error
 	gotActor         string
 	gotRequestIDs    []string
-	gotTrigSvc       string
+	gotTrigProject   string
 	gotTrigSourceRun string
 
 	testResp         *runv1.TriggerSingleNodeRunResponse
 	testErr          error
 	gotTestActor     string
-	gotTestSvc       string
+	gotTestProject   string
 	gotTestSchema    string
 	gotTestTable     string
 	gotTestSourceRun string
@@ -49,7 +49,7 @@ type fakeNodeRunController struct {
 	buildResp         *runv1.TriggerSingleNodeRunResponse
 	buildErr          error
 	gotBuildActor     string
-	gotBuildSvc       string
+	gotBuildProject   string
 	gotBuildSchema    string
 	gotBuildTable     string
 	gotBuildSourceRun string
@@ -57,7 +57,7 @@ type fakeNodeRunController struct {
 	fullRefreshResp         *runv1.TriggerSingleNodeRunResponse
 	fullRefreshErr          error
 	gotFullRefreshActor     string
-	gotFullRefreshSvc       string
+	gotFullRefreshProject   string
 	gotFullRefreshSchema    string
 	gotFullRefreshTable     string
 	gotFullRefreshSourceRun string
@@ -66,44 +66,44 @@ type fakeNodeRunController struct {
 	listResp           *runv1.ListNodesResponse
 	listErr            error
 	gotListSearch      string
-	gotListService     string
+	gotListProject     string
 	gotListOperation   string
 	gotListDormantOnly bool
 	gotListLimit       int32
 	gotListOffset      int32
 }
 
-func (f *fakeNodeRunController) ListNodes(_ context.Context, search, service, operation string, dormantOnly bool, limit, offset int32) (*runv1.ListNodesResponse, error) {
-	f.gotListSearch, f.gotListService, f.gotListOperation, f.gotListDormantOnly, f.gotListLimit, f.gotListOffset = search, service, operation, dormantOnly, limit, offset
+func (f *fakeNodeRunController) ListNodes(_ context.Context, search, project, operation string, dormantOnly bool, limit, offset int32) (*runv1.ListNodesResponse, error) {
+	f.gotListSearch, f.gotListProject, f.gotListOperation, f.gotListDormantOnly, f.gotListLimit, f.gotListOffset = search, project, operation, dormantOnly, limit, offset
 	return f.listResp, f.listErr
 }
 
-func (f *fakeNodeRunController) ListNodeRuns(_ context.Context, service, schema, table, operation string, limit int32) (*runv1.ListNodeTasksResponse, error) {
-	f.gotSvc, f.gotSchema, f.gotTable, f.gotOperation, f.gotLimit = service, schema, table, operation, limit
+func (f *fakeNodeRunController) ListNodeRuns(_ context.Context, project, schema, table, operation string, limit int32) (*runv1.ListNodeTasksResponse, error) {
+	f.gotProject, f.gotSchema, f.gotTable, f.gotOperation, f.gotLimit = project, schema, table, operation, limit
 	return f.runsResp, f.runsErr
 }
 
-func (f *fakeNodeRunController) TriggerNodeRun(_ context.Context, requestID, service, _, _, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
+func (f *fakeNodeRunController) TriggerNodeRun(_ context.Context, requestID, project, _, _, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
 	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
-	f.gotTrigSvc, f.gotTrigSourceRun, f.gotActor = service, sourceRunID, actor
+	f.gotTrigProject, f.gotTrigSourceRun, f.gotActor = project, sourceRunID, actor
 	return f.trigResp, f.trigErr
 }
 
-func (f *fakeNodeRunController) TriggerNodeTest(_ context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
+func (f *fakeNodeRunController) TriggerNodeTest(_ context.Context, requestID, project, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
 	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
-	f.gotTestSvc, f.gotTestSchema, f.gotTestTable, f.gotTestSourceRun, f.gotTestActor = service, schema, table, sourceRunID, actor
+	f.gotTestProject, f.gotTestSchema, f.gotTestTable, f.gotTestSourceRun, f.gotTestActor = project, schema, table, sourceRunID, actor
 	return f.testResp, f.testErr
 }
 
-func (f *fakeNodeRunController) TriggerNodeBuild(_ context.Context, requestID, service, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
+func (f *fakeNodeRunController) TriggerNodeBuild(_ context.Context, requestID, project, schema, table, sourceRunID, actor string) (*runv1.TriggerSingleNodeRunResponse, error) {
 	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
-	f.gotBuildSvc, f.gotBuildSchema, f.gotBuildTable, f.gotBuildSourceRun, f.gotBuildActor = service, schema, table, sourceRunID, actor
+	f.gotBuildProject, f.gotBuildSchema, f.gotBuildTable, f.gotBuildSourceRun, f.gotBuildActor = project, schema, table, sourceRunID, actor
 	return f.buildResp, f.buildErr
 }
 
-func (f *fakeNodeRunController) TriggerNodeFullRefresh(_ context.Context, requestID, service, schema, table, sourceRunID, actor string, acknowledged []string) (*runv1.TriggerSingleNodeRunResponse, error) {
+func (f *fakeNodeRunController) TriggerNodeFullRefresh(_ context.Context, requestID, project, schema, table, sourceRunID, actor string, acknowledged []string) (*runv1.TriggerSingleNodeRunResponse, error) {
 	f.gotRequestIDs = append(f.gotRequestIDs, requestID)
-	f.gotFullRefreshSvc, f.gotFullRefreshSchema, f.gotFullRefreshTable, f.gotFullRefreshSourceRun, f.gotFullRefreshActor = service, schema, table, sourceRunID, actor
+	f.gotFullRefreshProject, f.gotFullRefreshSchema, f.gotFullRefreshTable, f.gotFullRefreshSourceRun, f.gotFullRefreshActor = project, schema, table, sourceRunID, actor
 	f.gotAcknowledged = acknowledged
 	return f.fullRefreshResp, f.fullRefreshErr
 }
@@ -149,7 +149,7 @@ func TestHistory_SuccessMapsAllFields(t *testing.T) {
 	assert.Equal(t, 0, exit)
 	assert.Empty(t, stderr)
 	assert.Equal(t, int32(50), fake.gotLimit)
-	assert.Equal(t, "finance", fake.gotSvc)
+	assert.Equal(t, "finance", fake.gotProject)
 	assert.Equal(t, "analytics", fake.gotSchema)
 	assert.Equal(t, "orders", fake.gotTable)
 	assert.Equal(t, "run", fake.gotOperation)

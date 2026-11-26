@@ -81,17 +81,32 @@ assert "Makefile drift is caught" "[ $rc -ne 0 ]"
 assert "Makefile drift names the offending location" "[[ \"\$out\" == *Makefile* ]]"
 assert "Makefile drift is a DRIFT report, not a missing-ref report" "[[ \"\$out\" == *'PIN DRIFT'* ]]"
 
-# --- the python-node e2e fixture drifts ------------------------------------
+# --- the python-node e2e fixture lags --------------------------------------
 # The case this location exists for: a runtime release moves every other pin
 # and leaves the fixture behind, so the python-node e2e keeps proving the
 # harness against the OLD base while CI stays green.
 write_fixture "$tmp/fixture-drift" "v0.2.0"
-sed -i.bak 's/v0.2.0/v0.3.0/' "$tmp/fixture-drift/tests/e2e/fixtures/py-probe/Dockerfile"
+sed -i.bak 's/v0.2.0/v0.1.0/' "$tmp/fixture-drift/tests/e2e/fixtures/py-probe/Dockerfile"
 rm -f "$tmp/fixture-drift/tests/e2e/fixtures/py-probe/Dockerfile.bak"
 out="$(bash "$G" "$tmp/fixture-drift" 2>&1)"; rc=$?
-assert "py-probe fixture drift is caught" "[ $rc -ne 0 ]"
-assert "py-probe fixture drift names the offending location" "[[ \"\$out\" == *'py-probe/Dockerfile'* ]]"
-assert "py-probe fixture drift is a DRIFT report" "[[ \"\$out\" == *'PIN DRIFT'* ]]"
+assert "py-probe fixture older than the validation image is caught" "[ $rc -ne 0 ]"
+assert "py-probe fixture lag names the offending location" "[[ \"\$out\" == *'py-probe/Dockerfile'* ]]"
+
+# --- the python-node e2e fixture runs ahead ---------------------------------
+# The fixture is a project's image: it packs with the runtime it is built on,
+# which may be newer than the validation image.
+write_fixture "$tmp/fixture-ahead" "v0.9.0"
+sed -i.bak 's/v0.9.0/v0.10.0/' "$tmp/fixture-ahead/tests/e2e/fixtures/py-probe/Dockerfile"
+rm -f "$tmp/fixture-ahead/tests/e2e/fixtures/py-probe/Dockerfile.bak"
+out="$(bash "$G" "$tmp/fixture-ahead" 2>&1)"; rc=$?
+assert "py-probe fixture newer than the validation image passes (0.10.0 is newer than 0.9.0)" "[ $rc -eq 0 ]"
+
+# --- the python-node e2e fixture names another image -----------------------
+write_fixture "$tmp/fixture-repo" "v0.2.0"
+sed -i.bak 's/runtime-postgres:v0.2.0/runtime-trino:v0.2.0/' "$tmp/fixture-repo/tests/e2e/fixtures/py-probe/Dockerfile"
+rm -f "$tmp/fixture-repo/tests/e2e/fixtures/py-probe/Dockerfile.bak"
+out="$(bash "$G" "$tmp/fixture-repo" 2>&1)"; rc=$?
+assert "py-probe fixture on another image repository is caught" "[ $rc -ne 0 ]"
 
 # --- the python-node e2e fixture stops pinning entirely --------------------
 write_fixture "$tmp/fixture-missing" "v0.2.0"

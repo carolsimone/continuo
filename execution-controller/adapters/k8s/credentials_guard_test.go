@@ -76,7 +76,7 @@ func jobPodSpecKinds(t *testing.T) map[string]corev1.PodSpec {
 	add("seed-build", spec, err)
 
 	compile := ValidationJobParams{
-		ServiceName:         "core",
+		ProjectName:         "core",
 		ImageTag:            "abc123",
 		ManifestS3URI:       "s3://continuo/core/rel-1/manifest.json",
 		CandidateSchema:     "_candidate_rel1",

@@ -17,9 +17,9 @@ import (
 )
 
 const (
-	// rebaselineService is the dbt service the rebaseline release re-baselines.
-	// It is the only e2e service with seeds.
-	rebaselineService = "service-1"
+	// rebaselineProject is the dbt project the rebaseline release re-baselines.
+	// It is the only e2e project with seeds.
+	rebaselineProject = "service-1"
 	// rebaselineRefusal is release-controller's answer to a rebaseline release
 	// that is not a bootstrap one, which the public API passes on in its 400.
 	rebaselineRefusal = "rebaseline is accepted only together with bootstrap"
@@ -29,7 +29,7 @@ const (
 // release posted with "bootstrap": true and "rebaseline": true re-baselines
 // production without validating or loading anything:
 //
-//  1. production holds every baseline node and every service's baseline
+//  1. production holds every baseline node and every project's baseline
 //     pointer, and a release of service-1 with its current image is posted
 //     through the public API with both flags;
 //  2. it promotes, and no validation Job is ever created for it;
@@ -63,18 +63,18 @@ func TestE2E_RebaselineRelease_AdoptsSeedsAndValidatesNothing(t *testing.T) {
 	requireReleaseControllerHealthy(t, clients)
 
 	releaseID := "e2e-rebaseline-" + uuid.NewString()[:8]
-	t.Logf("release_id=%s service=%s", releaseID, rebaselineService)
+	t.Logf("release_id=%s project=%s", releaseID, rebaselineProject)
 
-	allServices := baselineServices(t, ctx, clients)
-	require.NotEmpty(t, allServices,
-		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
-	imageTag := allServices[rebaselineService].imageTag
-	require.NotEmpty(t, imageTag, "image_tag missing for %s", rebaselineService)
+	allProjects := baselineProjects(t, ctx, clients)
+	require.NotEmpty(t, allProjects,
+		"no baseline manifests under s3://%s/<project>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
+	imageTag := allProjects[rebaselineProject].imageTag
+	require.NotEmpty(t, imageTag, "image_tag missing for %s", rebaselineProject)
 	var prodNodes []map[string]string
-	for svc, si := range allServices {
+	for svc, si := range allProjects {
 		for _, n := range si.nodes {
 			prodNodes = append(prodNodes, map[string]string{
-				"unique_id": n.uniqueID, "service": svc, "content_hash": n.contentHash,
+				"unique_id": n.uniqueID, "project": svc, "content_hash": n.contentHash,
 			})
 		}
 	}
@@ -86,11 +86,11 @@ func TestE2E_RebaselineRelease_AdoptsSeedsAndValidatesNothing(t *testing.T) {
 	defer restoreDefaultTopologyAfter(t, clients, releaseID)
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allServices)
+	seedServiceProd(t, ctx, clients, allProjects)
 
 	token := mintCIToken(t, e2eDbtRepositoryID, "carolsimone/continuo-demo", imageTag)
 	status, body := submitPublicRelease(t, clients, token, map[string]any{
-		"service":    rebaselineService,
+		"project":    rebaselineProject,
 		"release_id": releaseID,
 		"image_tag":  imageTag,
 		"bootstrap":  true,
@@ -152,7 +152,7 @@ func TestE2E_RebaselineWithoutBootstrap_Is400(t *testing.T) {
 	releaseID := "e2e-rebaseline-nb-" + uuid.NewString()[:8]
 	token := mintCIToken(t, e2eDbtRepositoryID, "carolsimone/continuo-demo", "abc")
 	status, body := submitPublicRelease(t, clients, token, map[string]any{
-		"service":    rebaselineService,
+		"project":    rebaselineProject,
 		"release_id": releaseID,
 		"image_tag":  "unused",
 		"rebaseline": true,
@@ -184,7 +184,7 @@ type releaseSeed struct {
 	MaterializationSeen bool   `db:"materialization_seen"`
 }
 
-// assertSeedsAdopted asserts that each of rebaselineService's seeds in
+// assertSeedsAdopted asserts that each of rebaselineProject's seeds in
 // releaseID is recorded as adopted by that release, at the content_hash and
 // seed_columns_hash the release stores for it.
 func assertSeedsAdopted(t *testing.T, ctx context.Context, clients *testClients, releaseID string) {
@@ -201,16 +201,16 @@ func assertSeedsAdopted(t *testing.T, ctx context.Context, clients *testClients,
 		       m.node_key IS NOT NULL            AS materialization_seen
 		  FROM topology_nodes n
 		  LEFT JOIN node_materializations m ON m.tenant_id = n.tenant_id AND m.node_key = n.node_key
-		 WHERE n.tenant_id = $1 AND n.release_id = $2 AND n.node_type = $3 AND n.service_name = $4
+		 WHERE n.tenant_id = $1 AND n.release_id = $2 AND n.node_type = $3 AND n.project_name = $4
 		 ORDER BY n.node_key`,
-		events.DefaultTenantID, releaseID, string(model.NodeTypeDbtSeed), rebaselineService))
+		events.DefaultTenantID, releaseID, string(model.NodeTypeDbtSeed), rebaselineProject))
 	keys := make([]string, 0, len(seeds))
 	for _, s := range seeds {
 		keys = append(keys, s.NodeKey)
 	}
 	require.ElementsMatch(t,
 		[]string{seedSchemaName + ".seed_table_1", seedSchemaName + ".seed_table_2", seedSchemaName + ".seed_table_3"},
-		keys, "run-controller's copy of %s holds %s's three seeds", releaseID, rebaselineService)
+		keys, "run-controller's copy of %s holds %s's three seeds", releaseID, rebaselineProject)
 	for _, s := range seeds {
 		require.True(t, s.MaterializationSeen, "seed %s has no node_materializations row", s.NodeKey)
 		assert.Equal(t, "adopted", s.BuiltSource, "seed %s is recorded as adopted, not built", s.NodeKey)
@@ -221,7 +221,7 @@ func assertSeedsAdopted(t *testing.T, ctx context.Context, clients *testClients,
 			"seed %s has a seed_columns_hash in the release: the compile wrote the release's compile extras", s.NodeKey)
 		assert.Equal(t, s.ReleaseColumnsHash, s.BuiltColumnsHash, "seed %s is adopted at the release's seed_columns_hash", s.NodeKey)
 	}
-	t.Logf("✅ %s's seeds %v are adopted by %s at the release's hashes", rebaselineService, keys, releaseID)
+	t.Logf("✅ %s's seeds %v are adopted by %s at the release's hashes", rebaselineProject, keys, releaseID)
 }
 
 // getPublicRelease reads a release through the public API with a bearer token

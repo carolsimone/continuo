@@ -16,7 +16,7 @@ import (
 
 // goldenDeployTask is the exact JSON a fully-populated command.DeployTask is
 // stored as in deployments.job_params. Every tagged field is present.
-const goldenDeployTask = `{"task_id":"t","run_id":"s","schedule_name":"sn","service_name":"svc","schema_name":"sch","table_name":"tbl","job_name":"j","node_type":"dbt-model","image_tag":"v1","attempt":1,"operation":"test","timeout_seconds":86400}`
+const goldenDeployTask = `{"task_id":"t","run_id":"s","schedule_name":"sn","project_name":"svc","schema_name":"sch","table_name":"tbl","job_name":"j","node_type":"dbt-model","image_tag":"v1","attempt":1,"operation":"test","timeout_seconds":86400}`
 
 func TestDeployTaskDTORoundTrip(t *testing.T) {
 	var dto DeployTaskDTO
@@ -25,7 +25,7 @@ func TestDeployTaskDTORoundTrip(t *testing.T) {
 	}
 	got := dto.ToDomain()
 	want := command.DeployTask{
-		TaskID: "t", RunID: "s", ScheduleName: "sn", ServiceName: "svc",
+		TaskID: "t", RunID: "s", ScheduleName: "sn", ProjectName: "svc",
 		SchemaName: "sch", TableName: "tbl", JobName: "j", NodeType: "dbt-model",
 		ImageTag: "v1", Attempt: 1, Operation: "test", TimeoutSeconds: 86400,
 	}
@@ -59,7 +59,7 @@ func TestDeployTaskDTO_StoredModeIsIgnored(t *testing.T) {
 
 // goldenValidationDeployTask is the exact JSON a fully-populated
 // command.ValidationDeployTask is stored as.
-const goldenValidationDeployTask = `{"release_id":"r","node_id":"n","service_name":"svc","schema_name":"sch","table_name":"tbl","node_type":"dbt-model","image_tag":"v1","job_name":"j","candidate_schema":"cand","candidate_artifact_uri":"s3://c","validation_op":"build_from_sql","prod_schema":"prod","upstream_node_ids":["u1"],"manifest_s3_uri":"s3://m","parse_prod_s3_uri":"s3://pp","parse_candidate_s3_uri":"s3://pc","source_overlay_uri":"s3://so"}`
+const goldenValidationDeployTask = `{"release_id":"r","node_id":"n","project_name":"svc","schema_name":"sch","table_name":"tbl","node_type":"dbt-model","image_tag":"v1","job_name":"j","candidate_schema":"cand","candidate_artifact_uri":"s3://c","validation_op":"build_from_sql","prod_schema":"prod","upstream_node_ids":["u1"],"manifest_s3_uri":"s3://m","parse_prod_s3_uri":"s3://pp","parse_candidate_s3_uri":"s3://pc","source_overlay_uri":"s3://so"}`
 
 func TestValidationDeployTaskDTORoundTrip(t *testing.T) {
 	var dto ValidationDeployTaskDTO
@@ -68,7 +68,7 @@ func TestValidationDeployTaskDTORoundTrip(t *testing.T) {
 	}
 	got := dto.ToDomain()
 	want := command.ValidationDeployTask{
-		ReleaseID: "r", NodeID: "n", ServiceName: "svc", SchemaName: "sch", TableName: "tbl",
+		ReleaseID: "r", NodeID: "n", ProjectName: "svc", SchemaName: "sch", TableName: "tbl",
 		NodeType: "dbt-model", ImageTag: "v1", JobName: "j", CandidateSchema: "cand",
 		CandidateArtifactURI: "s3://c", ValidationOp: string(pkg_model.ValidationOpBuildFromSQL), ProdSchema: "prod",
 		UpstreamNodeIDs: []string{"u1"}, ManifestS3URI: "s3://m",
@@ -93,7 +93,7 @@ func TestValidationDeployTaskOmitemptyShape(t *testing.T) {
 	}
 	// parse_prod_s3_uri / parse_candidate_s3_uri / source_overlay_uri are omitempty
 	// and absent; upstream_node_ids has no omitempty so a nil slice is null.
-	const want = `{"release_id":"r","node_id":"","service_name":"","schema_name":"","table_name":"","node_type":"","image_tag":"","job_name":"","candidate_schema":"","candidate_artifact_uri":"","validation_op":"","prod_schema":"","upstream_node_ids":null,"manifest_s3_uri":""}`
+	const want = `{"release_id":"r","node_id":"","project_name":"","schema_name":"","table_name":"","node_type":"","image_tag":"","job_name":"","candidate_schema":"","candidate_artifact_uri":"","validation_op":"","prod_schema":"","upstream_node_ids":null,"manifest_s3_uri":""}`
 	if string(out) != want {
 		t.Fatalf("omitempty shape changed:\n got %s\nwant %s", out, want)
 	}

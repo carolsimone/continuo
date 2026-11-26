@@ -12,7 +12,7 @@ import (
 // the node's identity triple plus an optional past run whose metadata
 // snapshot the new run should be pinned to.
 type nodeTarget struct {
-	service, schema, table string
+	project, schema, table string
 	// sourceRunID is empty when the run should use the latest topology
 	// metadata, and a run id when it should reuse the metadata snapshot of
 	// that past run.
@@ -21,7 +21,7 @@ type nodeTarget struct {
 
 // parseNodeTarget reads a validated 3- or 4-element argument list.
 func parseNodeTarget(args []string) nodeTarget {
-	t := nodeTarget{service: args[0], schema: args[1], table: args[2]}
+	t := nodeTarget{project: args[0], schema: args[1], table: args[2]}
 	if len(args) == 4 {
 		t.sourceRunID = args[3]
 	}
@@ -29,7 +29,7 @@ func parseNodeTarget(args []string) nodeTarget {
 }
 
 // nodeTargetArgs returns the cobra Args validator for a node-run command:
-// exactly <service> <schema> <table> with an optional [source-run-id]. Any
+// exactly <project> <schema> <table> with an optional [source-run-id]. Any
 // other count is reported through the usage envelope as exit 2.
 //
 // A fourth argument that is present but blank (typically an unset shell
@@ -40,7 +40,7 @@ func parseNodeTarget(args []string) nodeTarget {
 func nodeTargetArgs(verb string, stdout, stderr io.Writer) cobra.PositionalArgs {
 	return func(cmd *cobra.Command, args []string) error {
 		if len(args) < 3 || len(args) > 4 {
-			return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError(verb+" requires <service> <schema> <table> and an optional [source-run-id]"))
+			return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError(verb+" requires <project> <schema> <table> and an optional [source-run-id]"))
 		}
 		if len(args) == 4 && strings.TrimSpace(args[3]) == "" {
 			return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError(verb+": source-run-id must not be empty; omit it to use the latest metadata"))

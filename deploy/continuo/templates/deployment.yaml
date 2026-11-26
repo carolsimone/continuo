@@ -20,7 +20,7 @@
 {{- $mountedConfigMaps := dict
       "execution-controller" (list (dict "volume" "dbt-commands" "name" "continuo.dbtCommandsConfigMapName" "checksum" "dbt-commands" "template" "dbt-commands-configmap.yaml"))
       "agent-remediation" (list
-        (dict "volume" "service-repos" "name" "continuo.serviceReposConfigMapName" "checksum" "service-repos" "template" "service-repos-configmap.yaml")
+        (dict "volume" "project-repos" "name" "continuo.projectReposConfigMapName" "checksum" "project-repos" "template" "project-repos-configmap.yaml")
         (dict "volume" "remediation-workflows" "name" "continuo.agentRemediationWorkflowsConfigMapName" "checksum" "agent-remediation-workflows" "template" "agent-remediation-workflows-configmap.yaml" "mountedAt" "continuo.agentRemediation.workflowsDir"))
       "ui" (list (dict "volume" "cancel-config" "name" "continuo.cancelConfigMapName")) }}
 {{- include "continuo.credentials.assertFiles" $ }}

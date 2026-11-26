@@ -23,7 +23,7 @@ models:
       +tags: ["e2e-schedule-failure"]
     xprobe_down:
       +tags: ["xprobe"]
-    # xbreak_down is the downstream half of a DELIBERATELY-BROKEN cross-service
+    # xbreak_down is the downstream half of a DELIBERATELY-BROKEN cross-project
     # pair: it reads the amount_eur column of service-3's xbreak_up by raw
     # schema-qualified name, but the current xbreak_up no longer produces that
     # column. Valid SQL that compiles; the break surfaces only at validation, as
@@ -31,7 +31,7 @@ models:
     # schedule so only the column-break e2e test builds it.
     xbreak_down:
       +tags: ["xbreak"]
-    # ybreak_up / ybreak_down are the SAME-service column-break pair for the
+    # ybreak_up / ybreak_down are the SAME-project column-break pair for the
     # verification seed-set e2e test: ybreak_up produces only `id` (SELECT 1 AS
     # id) and ybreak_down still reads its dropped amount_eur column by raw
     # schema-qualified name, so the break surfaces at validation. Their own tag

@@ -22,7 +22,7 @@ func (s *Server) handleGetPipeline(w http.ResponseWriter, r *http.Request) {
 			"run_id":   p.Active.RunID,
 			"run_kind": string(p.Active.Kind),
 			"status":   string(p.Active.Status),
-			"service":  p.Active.Service,
+			"project":  p.Active.Project,
 			"since":    p.Active.Since.UTC().Format(time.RFC3339),
 		}
 		if p.Active.Kind == pipeline.KindVerification {

@@ -52,13 +52,13 @@ type rejectedPayload struct {
 		// claimant's own unique_id) — the two differ whenever the target
 		// carries an alias. Empty for every other reason.
 		RelationID string `json:"relation_id"`
-		// FilePath and Service carry the source location from the candidate
+		// FilePath and Project carry the source location from the candidate
 		// topology, set by release-controller on validation, seed_build, and
 		// duplicate_table rejections. When present, the remediation agent can
 		// locate the source file without querying GetNodeLocation, which only
 		// holds promoted topology.
 		FilePath string `json:"file_path"`
-		Service  string `json:"service"`
+		Project  string `json:"project"`
 		// NodeType is the failing node's kind (dbt-model, dbt-seed,
 		// dbt-snapshot, python-node, python-csv, or python-api), set by
 		// release-controller on validation and duplicate-relation
@@ -68,13 +68,13 @@ type rejectedPayload struct {
 		// that repairs the contract yaml declaring the node, and a python
 		// duplicate-relation failure is skipped.
 		NodeType string `json:"node_type"`
-		// OtherService and OtherFilePath locate the competing node that also
+		// OtherProject and OtherFilePath locate the competing node that also
 		// produces the contested relation (RelationID), set on duplicate-relation
 		// rejections so the agent can name the relation's other producer in the
 		// rename prompt. The path is carried because two nodes in the SAME
-		// service can collide, in which case the service name alone identifies
+		// project can collide, in which case the project name alone identifies
 		// nothing.
-		OtherService  string `json:"other_service"`
+		OtherProject  string `json:"other_project"`
 		OtherFilePath string `json:"other_file_path"`
 		// Kind and Detail are set on a parse-stage rejection: the contract kind
 		// topology-controller assigned the node and its parser's own error text,
@@ -83,7 +83,7 @@ type rejectedPayload struct {
 		Detail string `json:"detail"`
 		// ChangedAncestors are the node's changed transitive ancestors, stamped
 		// by release-controller from the candidate topology, each with the file
-		// path and service THAT topology declares for it — the location an
+		// path and project THAT topology declares for it — the location an
 		// upstream fix must edit, which for a node this release renamed or moved
 		// is not where the promoted graph places it.
 		ChangedAncestors []changedAncestorPayload `json:"changed_ancestors"`
@@ -91,13 +91,13 @@ type rejectedPayload struct {
 }
 
 // changedAncestorPayload is one entry of a per_node entry's changed_ancestors
-// array: the changed upstream's id plus the file path and service the rejected
+// array: the changed upstream's id plus the file path and project the rejected
 // release's candidate topology declares for it and its minimum upstream hop
 // distance from the failing node.
 type changedAncestorPayload struct {
 	NodeID   string `json:"node_id"`
 	FilePath string `json:"file_path"`
-	Service  string `json:"service"`
+	Project  string `json:"project"`
 	Depth    int    `json:"depth"`
 }
 
@@ -110,7 +110,7 @@ func changedAncestors(in []changedAncestorPayload) []failure.ChangedAncestor {
 	}
 	out := make([]failure.ChangedAncestor, 0, len(in))
 	for _, a := range in {
-		out = append(out, failure.ChangedAncestor{NodeID: a.NodeID, FilePath: a.FilePath, Service: a.Service, Depth: a.Depth})
+		out = append(out, failure.ChangedAncestor{NodeID: a.NodeID, FilePath: a.FilePath, Project: a.Project, Depth: a.Depth})
 	}
 	return out
 }
@@ -154,7 +154,7 @@ func sourceFromPayload(stage, reason string) (pkg_model.RemediationSource, bool)
 // production. A rejection whose reason the contract declares and marks not
 // healable yields no evidence at all.
 // The Source field is derived from the payload's stage field; when stage is
-// absent, the reason field is used as a fallback. FilePath and Service carry
+// absent, the reason field is used as a fallback. FilePath and Project carry
 // whatever the rejection payload set directly (populated by release-controller
 // for validation, seed_build, duplicate_table, and parse); for compile
 // failures, which have none, the handler extracts FilePath from the dbt log
@@ -179,7 +179,7 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 	// failure a heal proposal could fix: a rehearsal miss is a project
 	// property, an upload failure or an internal_error is continuo's own, an
 	// invalid_artifact is a manifest or python contract the release ships
-	// unreadable or invalid (or naming another service, or declaring an invalid
+	// unreadable or invalid (or naming another project, or declaring an invalid
 	// node setting), and a failed copy of an unchanged upstream is settled by a
 	// run of that node. A reason that is empty or that this build does not
 	// declare (an older producer, a retry replay) is not dropped here; its
@@ -210,9 +210,9 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 			RunResultsURI:        n.RunResultsURI,
 			CandidateArtifactURI: n.CandidateArtifactURI,
 			FilePath:             n.FilePath,
-			Service:              n.Service,
+			Project:              n.Project,
 			NodeType:             n.NodeType,
-			OtherService:         n.OtherService,
+			OtherProject:         n.OtherProject,
 			OtherFilePath:        n.OtherFilePath,
 			Repo:                 p.Repo,
 			CommitSHA:            p.CommitSHA,

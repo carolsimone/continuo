@@ -1,5 +1,5 @@
 // Package gate holds the long check that asks the release pipeline to judge a
-// try: it submits one verification run per edited service, then polls the runs
+// try: it submits one verification run per edited project, then polls the runs
 // until they give a verdict. The run id that names each run lives here too.
 package gate
 
@@ -27,7 +27,7 @@ const nameVerificationRun workflow.StepName = "verification_run"
 var (
 	errNoEdits      = errors.New("the try has no edit to verify")
 	errNoSubmitTime = errors.New("the gate input names no time its runs were submitted at")
-	// errNotABundle marks a service whose packaged contract is not an ODCS
+	// errNotABundle marks a project whose packaged contract is not an ODCS
 	// producer bundle, the only contract format a verification run reads.
 	errNotABundle = errors.New("the packaged contract is not an ODCS producer bundle")
 )
@@ -45,7 +45,7 @@ type VerificationRun struct {
 	artifacts        ports.ArtifactWriter
 	releases         ports.ReleaseReader
 	pipeline         ports.VerificationPipeline
-	serviceRepoPaths map[string]string
+	projectRepoPaths map[string]string
 	clock            ports.Clock
 	timeout          time.Duration
 	logger           *slog.Logger
@@ -57,12 +57,12 @@ var _ step.LongCheck = (*VerificationRun)(nil)
 // run may be running, or a try's runs unreadable, before the gate gives up.
 func NewVerificationRun(
 	evidence ports.EvidenceReader, artifacts ports.ArtifactWriter, releases ports.ReleaseReader,
-	pipeline ports.VerificationPipeline, serviceRepoPaths map[string]string,
+	pipeline ports.VerificationPipeline, projectRepoPaths map[string]string,
 	clock ports.Clock, timeout time.Duration, logger *slog.Logger,
 ) *VerificationRun {
 	return &VerificationRun{
 		evidence: evidence, artifacts: artifacts, releases: releases, pipeline: pipeline,
-		serviceRepoPaths: serviceRepoPaths, clock: clock, timeout: timeout,
+		projectRepoPaths: projectRepoPaths, clock: clock, timeout: timeout,
 		logger: shared.LoggerOrDefault(logger),
 	}
 }
@@ -73,7 +73,7 @@ func (*VerificationRun) Meta() step.Meta {
 	return step.Meta{
 		Name: nameVerificationRun,
 		Kind: step.KindCheck,
-		Description: "Submits one verification run per edited service to the release pipeline and waits for their verdict. " +
+		Description: "Submits one verification run per edited project to the release pipeline and waits for their verdict. " +
 			"A failed run gives a finding per failing node, and a run that does not answer in time fails the try.",
 		Stages:            []workflow.Stage{workflow.StageGate},
 		MayStandAsGateRun: true,
@@ -81,10 +81,10 @@ func (*VerificationRun) Meta() step.Meta {
 }
 
 // plannedRun is one run that judges part of a try, with the manifest kind it
-// is verified as and the id it is submitted under. A python service's run
+// is verified as and the id it is submitted under. A python project's run
 // uploads the packaged contract in its edits; a dbt run has none.
 type plannedRun struct {
-	edits shared.ServiceEdits
+	edits shared.ProjectEdits
 	kind  string
 	runID string
 }
@@ -110,24 +110,24 @@ func refusalFinding(err error) (remediation.Finding, bool) {
 	return shared.RefusalFinding(err)
 }
 
-// plan groups the try's edits into the runs that judge them, sorted by service.
-// A service with a packaged contract is verified as kind python-odcs, and the
+// plan groups the try's edits into the runs that judge them, sorted by project.
+// A project with a packaged contract is verified as kind python-odcs, and the
 // try is refused with errNotABundle when that contract is not an ODCS producer
 // bundle.
 func (g *VerificationRun) plan(in step.GateInput) ([]plannedRun, error) {
 	if len(shared.EditsOf(in.Drafts)) == 0 {
 		return nil, errNoEdits
 	}
-	groups, err := shared.Group(g.serviceRepoPaths, in.Trigger, in.Drafts)
+	groups, err := shared.Group(g.projectRepoPaths, in.Trigger, in.Drafts)
 	if err != nil {
 		return nil, err
 	}
 	runs := make([]plannedRun, len(groups))
 	for i, grp := range groups {
-		run := plannedRun{edits: grp, kind: ports.VerificationKindDbt, runID: RunID(in.Trigger.ReleaseID, grp.Service, in.Try.Attempt)}
+		run := plannedRun{edits: grp, kind: ports.VerificationKindDbt, runID: RunID(in.Trigger.ReleaseID, grp.Project, in.Try.Attempt)}
 		if grp.Contract != nil {
 			if !isODCSBundle(grp.Contract) {
-				return nil, fmt.Errorf("%w: service %s", errNotABundle, grp.Service)
+				return nil, fmt.Errorf("%w: project %s", errNotABundle, grp.Project)
 			}
 			run.kind = ports.VerificationKindPythonODCS
 		}
@@ -136,17 +136,17 @@ func (g *VerificationRun) plan(in step.GateInput) ([]plannedRun, error) {
 	return runs, nil
 }
 
-// Submit posts one verification run per service the try edits. A python service
+// Submit posts one verification run per project the try edits. A python project
 // is verified by the odcs-bundle.json its fix packed, uploaded under the run's
-// own id as kind python-odcs. A dbt service is verified by re-running its
+// own id as kind python-odcs. A dbt project is verified by re-running its
 // project with the proposed content laid over it, so each edit's content is
 // read back from the artifact the draft stored and packed into one source
-// overlay, keyed by the edit's path within that service's project.
+// overlay, keyed by the edit's path within that project's directory.
 //
 // Both the artifact writes and the submission are idempotent on the try's keys,
-// since the run id is a pure function of (release, service, attempt), so a
+// since the run id is a pure function of (release, project, attempt), so a
 // repeat of a submission is safe. The result is waiting, with the run ids; Poll
-// reports the runs' services, kinds and phases.
+// reports the runs' projects, kinds and phases.
 func (g *VerificationRun) Submit(ctx context.Context, in step.GateInput) (step.GateVerdict, error) {
 	runs, err := g.plan(in)
 	if f, refused := refusalFinding(err); refused {
@@ -163,15 +163,15 @@ func (g *VerificationRun) Submit(ctx context.Context, in step.GateInput) (step.G
 	t, attempt := in.Trigger, in.Try.Attempt
 	verifications := make([]proposal.Verification, 0, len(runs))
 	for _, r := range runs {
-		service := r.edits.Service
+		project := r.edits.Project
 		overlayURI := ""
 		if r.edits.Contract != nil {
-			// A python service's artifact IS the packed bundle: there is no
+			// A python project's artifact IS the packed bundle: there is no
 			// project to overlay, so the run reads the bundle written under
 			// its own id.
 			if _, err := g.artifacts.Write(ctx,
-				service+"/"+r.runID+"/"+ports.ODCSBundleName, string(r.edits.Contract), "application/json"); err != nil {
-				return step.GateVerdict{}, fmt.Errorf("write verification contract for %s: %w", service, err)
+				project+"/"+r.runID+"/"+ports.ODCSBundleName, string(r.edits.Contract), "application/json"); err != nil {
+				return step.GateVerdict{}, fmt.Errorf("write verification contract for %s: %w", project, err)
 			}
 		} else {
 			files := make([]overlay.File, 0, len(r.edits.Edits))
@@ -193,25 +193,25 @@ func (g *VerificationRun) Submit(ctx context.Context, in step.GateInput) (step.G
 			}
 			tarball, err := overlay.Build(files, deletes)
 			if err != nil {
-				return step.GateVerdict{}, fmt.Errorf("build source overlay for %s: %w", service, err)
+				return step.GateVerdict{}, fmt.Errorf("build source overlay for %s: %w", project, err)
 			}
 			overlayURI, err = g.artifacts.Write(ctx,
-				service+"/"+r.runID+"/source-overlay.tar.gz", string(tarball), "application/gzip")
+				project+"/"+r.runID+"/source-overlay.tar.gz", string(tarball), "application/gzip")
 			if err != nil {
-				return step.GateVerdict{}, fmt.Errorf("write source overlay for %s: %w", service, err)
+				return step.GateVerdict{}, fmt.Errorf("write source overlay for %s: %w", project, err)
 			}
 		}
 
 		// The trigger carries no image tag, so the failing release's own tag is
 		// read and reused: a verification run never promotes, so it never
 		// reaches the path an image tag would otherwise drive.
-		imageTag, err := g.releases.ImageTag(ctx, t.ReleaseID, service)
+		imageTag, err := g.releases.ImageTag(ctx, t.ReleaseID, project)
 		if err != nil {
-			return step.GateVerdict{}, fmt.Errorf("read image tag of release %s for %s: %w", t.ReleaseID, service, err)
+			return step.GateVerdict{}, fmt.Errorf("read image tag of release %s for %s: %w", t.ReleaseID, project, err)
 		}
 		if err := g.pipeline.Submit(ctx, ports.VerificationRequest{
 			RunID:             r.runID,
-			Service:           service,
+			Project:           project,
 			ImageTag:          imageTag,
 			Kind:              r.kind,
 			VerifiesReleaseID: t.ReleaseID,
@@ -221,10 +221,10 @@ func (g *VerificationRun) Submit(ctx context.Context, in step.GateInput) (step.G
 			return step.GateVerdict{}, fmt.Errorf("submit verification run %s: %w", r.runID, err)
 		}
 		g.logger.Info("verification run submitted",
-			"release", t.ReleaseID, "attempt", attempt, "service", service,
+			"release", t.ReleaseID, "attempt", attempt, "project", project,
 			"run", r.runID, "kind", r.kind, "edits", len(r.edits.Edits))
 		verifications = append(verifications, proposal.Verification{
-			Service: service, Kind: r.kind, RunID: r.runID, Phase: proposal.PhaseQueued,
+			Project: project, Kind: r.kind, RunID: r.runID, Phase: proposal.PhaseQueued,
 		})
 	}
 	return step.GateVerdict{
@@ -238,7 +238,7 @@ func (g *VerificationRun) Submit(ctx context.Context, in step.GateInput) (step.G
 // on the first failed run or when the budget is spent, passed when every run
 // passed. The runs of the try are rebuilt from the input the way Submit built
 // them, and refused when they are not the runs the waiting result names. The
-// verdict carries the service, kind, phase and errors of each run it read, and
+// verdict carries the project, kind, phase and errors of each run it read, and
 // Phases lists those seen queued or running. A run whose status could not be
 // read is left out of both, so the runner keeps what it recorded for it. An
 // input with no SubmittedAt is refused before any run is read, since the budget
@@ -254,7 +254,7 @@ func (g *VerificationRun) Poll(ctx context.Context, in step.GateInput, waiting r
 	got := read{nodeErrors: map[string]string{}}
 	for _, r := range planned {
 		got.runs = append(got.runs, proposal.Verification{
-			Service: r.edits.Service, Kind: r.kind, RunID: r.runID, Phase: proposal.PhaseQueued,
+			Project: r.edits.Project, Kind: r.kind, RunID: r.runID, Phase: proposal.PhaseQueued,
 		})
 	}
 	if ids := runIDs(got.runs); !slices.Equal(ids, waiting.RunIDs) {

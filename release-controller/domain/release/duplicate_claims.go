@@ -40,7 +40,7 @@ const (
 // system can read.
 type Claimant struct {
 	UniqueID         string
-	ServiceName      string
+	ProjectName      string
 	OriginalFilePath string
 	NodeType         string
 }
@@ -116,8 +116,8 @@ func DuplicateClaims(candidate Topology) []DuplicateClaim {
 // collide here — see identityCollisions for why they can still collide on
 // identity.
 //
-// The check is service-agnostic: two nodes in the same service collide
-// exactly as two nodes in different services do.
+// The check is project-agnostic: two nodes in the same project collide
+// exactly as two nodes in different projects do.
 //
 // An unknown-external node is skipped: nothing builds its table, so it writes no
 // relation that another node could also write.
@@ -215,19 +215,19 @@ func effectiveRelation(n Node) string {
 func claimantOf(n Node) Claimant {
 	return Claimant{
 		UniqueID:         n.UniqueID,
-		ServiceName:      n.ServiceName,
+		ProjectName:      n.ProjectName,
 		OriginalFilePath: n.OriginalFilePath,
 		NodeType:         n.NodeType,
 	}
 }
 
-// sortClaimants orders a claim's claimants by (service, file path), the
+// sortClaimants orders a claim's claimants by (project, file path), the
 // stable presentation order used both in the rejection detail and by Target's
 // deterministic fallback.
 func sortClaimants(claimants []Claimant) {
 	sort.Slice(claimants, func(i, j int) bool {
-		if claimants[i].ServiceName != claimants[j].ServiceName {
-			return claimants[i].ServiceName < claimants[j].ServiceName
+		if claimants[i].ProjectName != claimants[j].ProjectName {
+			return claimants[i].ProjectName < claimants[j].ProjectName
 		}
 		return claimants[i].OriginalFilePath < claimants[j].OriginalFilePath
 	})
@@ -239,20 +239,20 @@ func sortClaimants(claimants []Claimant) {
 // collision, because renaming a claimant's alias changes ResolvedRelationID,
 // not the shared UniqueID, so no rename proposal can clear one.
 //
-// The changed service's claimant wins when it has one: that is the source
-// being changed in this release, so renaming it never touches a service the
+// The changed project's claimant wins when it has one: that is the source
+// being changed in this release, so renaming it never touches a project the
 // release did not modify. This holds for a bootstrap release too — bootstrap
-// still carries a single changedService (the posting service, also used by
+// still carries a single changedProject (the posting project, also used by
 // promoteToProduction for the service_prod upsert), so its claimant is
 // targeted the same way. Only when neither claimant belongs to the changed
-// service (both are already-promoted services colliding) does the choice fall
+// project (both are already-promoted projects colliding) does the choice fall
 // back to the first claimant in sorted order, to keep it deterministic; the
 // rejection detail names every claimant, so an operator can rename a
 // different one instead.
-func (c DuplicateClaim) Target(changedService string) (target, other Claimant) {
+func (c DuplicateClaim) Target(changedProject string) (target, other Claimant) {
 	idx := 0
 	for i, cl := range c.Claimants {
-		if cl.ServiceName == changedService {
+		if cl.ProjectName == changedProject {
 			idx = i
 			break
 		}
@@ -278,7 +278,7 @@ func FormatDuplicateClaims(claims []DuplicateClaim) string {
 	for _, c := range claims {
 		producers := make([]string, 0, len(c.Claimants))
 		for _, cl := range c.Claimants {
-			producers = append(producers, fmt.Sprintf("%s (%s)", cl.ServiceName, cl.OriginalFilePath))
+			producers = append(producers, fmt.Sprintf("%s (%s)", cl.ProjectName, cl.OriginalFilePath))
 		}
 		if c.Kind == CollisionIdentity {
 			hasIdentity = true

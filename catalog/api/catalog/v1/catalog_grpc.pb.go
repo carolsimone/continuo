@@ -37,7 +37,7 @@ const (
 type CatalogQueryClient interface {
 	GetNode(ctx context.Context, in *GetNodeRequest, opts ...grpc.CallOption) (*GetNodeResponse, error)
 	// GetNodeLocation returns where a node's source lives: its project-relative
-	// file path and owning service. An unknown or retired unique_id is
+	// file path and owning project. An unknown or retired unique_id is
 	// NOT_FOUND; a node whose file path was not captured returns file_path "".
 	GetNodeLocation(ctx context.Context, in *GetNodeLocationRequest, opts ...grpc.CallOption) (*GetNodeLocationResponse, error)
 	// GetNodeVersions returns a node's recorded code-version history, newest
@@ -219,7 +219,7 @@ func (c *catalogQueryClient) GetNodeContractDiff(ctx context.Context, in *GetNod
 type CatalogQueryServer interface {
 	GetNode(context.Context, *GetNodeRequest) (*GetNodeResponse, error)
 	// GetNodeLocation returns where a node's source lives: its project-relative
-	// file path and owning service. An unknown or retired unique_id is
+	// file path and owning project. An unknown or retired unique_id is
 	// NOT_FOUND; a node whose file path was not captured returns file_path "".
 	GetNodeLocation(context.Context, *GetNodeLocationRequest) (*GetNodeLocationResponse, error)
 	// GetNodeVersions returns a node's recorded code-version history, newest

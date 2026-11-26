@@ -19,7 +19,7 @@ func TestIntegration_FailedValidationKeepsCurrentProdUnchanged(t *testing.T) {
 
 	// Seed candidate through happy stages up to Validating
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "service-1", ReleaseID: "rFAIL", ImageTag: "sha-rFAIL",
+		Project: "service-1", ReleaseID: "rFAIL", ImageTag: "sha-rFAIL",
 		Repo: "acme/demo", CommitSHA: "deadbeefcafe1234",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
@@ -30,8 +30,8 @@ func TestIntegration_FailedValidationKeepsCurrentProdUnchanged(t *testing.T) {
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rFAIL", Status: "ok",
 		TopologyRef: putTopology(t, deps, "rFAIL", release.Topology{
-			{UniqueID: "a", ServiceName: "service-1"},
-			{UniqueID: "b", ServiceName: "service-1", UpstreamUniqueIDs: []string{"a"}},
+			{UniqueID: "a", ProjectName: "service-1"},
+			{UniqueID: "b", ProjectName: "service-1", UpstreamUniqueIDs: []string{"a"}},
 		}),
 	}))
 

@@ -3,12 +3,12 @@ import { useNavigate, useSearchParams } from 'react-router';
 import type { NodeSummary, NodesResponse } from './types';
 import { dormantTitle, formatDuration, formatRelative } from './node-helpers';
 import { taskPillClass } from './detail-page-helpers';
-import { fetchNodeServices } from './node-api';
+import { fetchNodeProjects } from './node-api';
 
 const PAGE = 50;
 
 function fqnOf(n: NodeSummary): string {
-  return `${n.service_name}.${n.schema_name}.${n.table_name}`;
+  return `${n.project_name}.${n.schema_name}.${n.table_name}`;
 }
 function pct(v: number | null): string { return v === null ? '—' : `${v}%`; }
 function durPair(avg: number | null, p95: number | null): string {
@@ -38,7 +38,7 @@ export default function NodesCatalogPanel() {
   };
   const [operation, setOperation] = useState('run');
   const [search, setSearch] = useState('');
-  const [service, setService] = useState('');
+  const [project, setProject] = useState('');
   const [nodes, setNodes] = useState<NodeSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +46,7 @@ export default function NodesCatalogPanel() {
   // empty table reads as loading rather than as "no nodes".
   const [loading, setLoading] = useState(true);
   const [nameOptions, setNameOptions] = useState<string[]>([]);
-  const [services, setServices] = useState<string[]>([]);
+  const [projects, setProjects] = useState<string[]>([]);
   const offsetRef = useRef(0);
   const genRef = useRef(0);
 
@@ -55,7 +55,7 @@ export default function NodesCatalogPanel() {
     const params = new URLSearchParams();
     params.set('operation', operation);
     if (search) params.set('search', search);
-    if (service) params.set('service', service);
+    if (project) params.set('project', project);
     if (dormantOnly) params.set(DORMANT_PARAM, '1');
     params.set('limit', String(PAGE));
     params.set('offset', String(offset));
@@ -76,7 +76,7 @@ export default function NodesCatalogPanel() {
       setError('Failed to load nodes');
       setLoading(false);
     }
-  }, [operation, search, service, dormantOnly]);
+  }, [operation, search, project, dormantOnly]);
 
   // Fetch the first page on mount and on filter change (debounced for search
   // typing). The list is not polled: each call aggregates every node's recent
@@ -87,28 +87,28 @@ export default function NodesCatalogPanel() {
   }, [fetchPage]);
 
   // Autocomplete: the COMPLETE distinct-name list, independent of the paginated
-  // catalog. Refetched on mount and on service change (not on search/paging).
+  // catalog. Refetched on mount and on project change (not on search/paging).
   useEffect(() => {
     const params = new URLSearchParams();
-    if (service) params.set('service', service);
+    if (project) params.set('project', project);
     fetch(`/api/nodes/names?${params.toString()}`)
       .then(r => (r.ok ? r.json() : { names: [] }))
       .then((d: { names?: string[] }) => setNameOptions(d.names || []))
       .catch(() => { /* autocomplete is best-effort */ });
-  }, [service]);
+  }, [project]);
 
-  // The Service filter offers every service with a node in the list, a
-  // service whose nodes never ran included, independent of the loaded page
-  // and of the chosen service. Fetched once on mount; a failure leaves only
+  // The Project filter offers every project with a node in the list, a
+  // project whose nodes never ran included, independent of the loaded page
+  // and of the chosen project. Fetched once on mount; a failure leaves only
   // "all".
   useEffect(() => {
-    fetchNodeServices().then(setServices).catch(() => setServices([]));
+    fetchNodeProjects().then(setProjects).catch(() => setProjects([]));
   }, []);
 
   const canLoadMore = nodes.length < total;
   // The test operation lists only the nodes with tests, so it narrows the list
   // as the other filters do.
-  const filtered = search !== '' || service !== '' || dormantOnly || operation === 'test';
+  const filtered = search !== '' || project !== '' || dormantOnly || operation === 'test';
 
   return (
     <>
@@ -139,10 +139,10 @@ export default function NodesCatalogPanel() {
         <datalist id="node-name-options">
           {nameOptions.map(name => <option key={name} value={name} />)}
         </datalist>
-        <label htmlFor="node-service">Service</label>
-        <select id="node-service" value={service} onChange={e => setService(e.target.value)}>
+        <label htmlFor="node-project">Project</label>
+        <select id="node-project" value={project} onChange={e => setProject(e.target.value)}>
           <option value="">all</option>
-          {services.map(s => <option key={s} value={s}>{s}</option>)}
+          {projects.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
         <label htmlFor="node-dormant" title="Nodes with no schedule tag, which run by hand">Dormant only</label>
         <input id="node-dormant" type="checkbox" checked={dormantOnly}
@@ -199,7 +199,7 @@ export default function NodesCatalogPanel() {
                             <span className="pill-sm pill-sm--muted" title={dormantTitle(n.last_run_at)}>dormant</span>
                           )}
                         </div>
-                        <div className="nodes-node-schema">{n.service_name} · {n.schema_name}</div>
+                        <div className="nodes-node-schema">{n.project_name} · {n.schema_name}</div>
                       </td>
                       {neverRan ? (
                         <>

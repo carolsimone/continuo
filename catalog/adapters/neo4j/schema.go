@@ -60,7 +60,7 @@ func (o schemaObject) statement() string {
 // properties, so the code that writes a node, not the schema, keeps tenant_id
 // present.
 //
-//   - node_fqn backs GetNode's lookup by service, schema and table name.
+//   - node_project_fqn backs GetNode's lookup by project, schema and table name.
 //   - node_version_uid and code_unit_version_unit_id back the version-history
 //     reads that start from a node's unique_id or a code unit's unit_id; the
 //     identity constraints cover only the full (id, hash) pair.
@@ -77,7 +77,7 @@ func (o schemaObject) statement() string {
 //     unique_id; the identity constraint covers only the full (id, hash) pair.
 var catalogSchema = []schemaObject{
 	identityConstraint("node_unique", graphschema.Node),
-	rangeIndex("node_fqn", graphschema.Node, "service_name", "schema_name", "table_name"),
+	rangeIndex("node_project_fqn", graphschema.Node, "project_name", "schema_name", "table_name"),
 	identityConstraint("meta_key_unique", graphschema.Meta),
 	identityConstraint("node_version_unique", graphschema.NodeVersion),
 	rangeIndex("node_version_uid", graphschema.NodeVersion, "unique_id"),
@@ -90,7 +90,7 @@ var catalogSchema = []schemaObject{
 	identityConstraint("error_signature_unique", graphschema.ErrorSignature),
 	rangeIndex("error_signature_category_reason", graphschema.ErrorSignature, "category", "reason"),
 	identityConstraint("proposal_unique", graphschema.Proposal),
-	identityConstraint("pull_request_unique", graphschema.PullRequest),
+	identityConstraint("pull_request_project_unique", graphschema.PullRequest),
 	identityConstraint("processed_message_unique", graphschema.ProcessedMessage),
 	uniqueConstraint("processed_message_outbox_unique", graphschema.ProcessedMessage, "group", "outbox_entry_id"),
 	identityConstraint("contract_version_unique", graphschema.ContractVersion),

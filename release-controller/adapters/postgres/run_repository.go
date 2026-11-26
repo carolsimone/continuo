@@ -46,7 +46,7 @@ func NewRunRepository(q Queryer, deleter ports.CandidateSQLDeleter) *RunReposito
 
 var _ repository.RunRepository = (*RunRepository)(nil)
 
-const runColumns = `run_id, run_kind, status, image_tags, changed_service,
+const runColumns = `run_id, run_kind, status, image_tags, changed_project,
 	validation_node_ids, fail_reason, fail_detail, failing_nodes,
 	per_node_results, created_at, transitions, code_bundle_uri, manifest_kind,
 	bootstrap, repo, commit_sha, remediation_round, rejection_payload,
@@ -66,7 +66,7 @@ type runRow struct {
 	RunKind           string         `db:"run_kind"`
 	Status            string         `db:"status"`
 	ImageTagsJSON     []byte         `db:"image_tags"`
-	ChangedService    string         `db:"changed_service"`
+	ChangedProject    string         `db:"changed_project"`
 	ValidationNodeIDs pq.StringArray `db:"validation_node_ids"`
 	FailReason        sql.NullString `db:"fail_reason"`
 	FailDetail        string         `db:"fail_detail"`
@@ -157,37 +157,37 @@ func (r *RunRepository) Active(ctx context.Context) (*pipeline.Run, error) {
 	return run, nil
 }
 
-// ActiveCandidateServicesWithKind lists the changed services of the candidate
+// ActiveCandidateProjectsWithKind lists the changed projects of the candidate
 // runs of the given manifest kind that have not ended, sorted ascending and
 // without repeats.
-func (r *RunRepository) ActiveCandidateServicesWithKind(ctx context.Context, kind release.ManifestKind) ([]string, error) {
+func (r *RunRepository) ActiveCandidateProjectsWithKind(ctx context.Context, kind release.ManifestKind) ([]string, error) {
 	rows, err := r.q.QueryxContext(ctx,
-		`SELECT DISTINCT changed_service
+		`SELECT DISTINCT changed_project
 		   FROM release_pipeline_runs
 		  WHERE run_kind = 'candidate'
 		    AND manifest_kind = $1
 		    AND status NOT IN `+terminalStatuses+`
-		  ORDER BY changed_service`, string(kind))
+		  ORDER BY changed_project`, string(kind))
 	if err != nil {
-		return nil, fmt.Errorf("select active candidate services of kind %q: %w", kind, err)
+		return nil, fmt.Errorf("select active candidate projects of kind %q: %w", kind, err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	services := []string{}
+	projects := []string{}
 	for rows.Next() {
-		var service string
-		if err := rows.Scan(&service); err != nil {
-			return nil, fmt.Errorf("scan active candidate service: %w", err)
+		var project string
+		if err := rows.Scan(&project); err != nil {
+			return nil, fmt.Errorf("scan active candidate project: %w", err)
 		}
-		services = append(services, service)
+		projects = append(projects, project)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate active candidate services of kind %q: %w", kind, err)
+		return nil, fmt.Errorf("iterate active candidate projects of kind %q: %w", kind, err)
 	}
-	return services, nil
+	return projects, nil
 }
 
-// Save upserts the run keyed on run_id. Immutable facts (kind, service,
+// Save upserts the run keyed on run_id. Immutable facts (kind, project,
 // created_at, manifest kind, provenance, verification facts) are written only
 // on INSERT; the ON CONFLICT clause updates the mutable ones. image_tags is
 // mutable because SetAssembledImageTags overwrites it at activation.
@@ -315,7 +315,7 @@ func encodeRun(run *pipeline.Run) ([]any, error) {
 		}
 	}
 	return []any{
-		run.ID(), string(run.Kind()), string(run.Status()), imageTagsJSON, run.ChangedService(),
+		run.ID(), string(run.Kind()), string(run.Status()), imageTagsJSON, run.ChangedProject(),
 		pq.StringArray(run.ValidationNodeIDs()), failReason, run.FailDetail(), pq.StringArray(run.FailingNodes()),
 		perNodeJSON, run.CreatedAt(), transitionsJSON, run.CodeBundleURI(), string(run.ManifestKind()),
 		run.IsBootstrap(), run.Repo(), run.CommitSHA(), max(run.RemediationRound(), 1), rejectionPayload,
@@ -374,7 +374,7 @@ func rowToRun(row runRow) (*pipeline.Run, error) {
 		Kind:           pipeline.Kind(row.RunKind),
 		Status:         pipeline.Status(row.Status),
 		ImageTags:      imageTags,
-		ChangedService: row.ChangedService,
+		ChangedProject: row.ChangedProject,
 		ManifestKind:   release.ManifestKind(row.ManifestKind),
 		CandidateTopology: release.TopologyRef{
 			URI:       row.CandidateTopologyURI.String,

@@ -50,7 +50,7 @@ func TestTriggerNode_SuccessEmitsJSON(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(stdout), &payload))
 	assert.Equal(t, "run_9", payload["run_id"])
 	assert.Equal(t, "single-node-run-abcd1234", payload["schedule_name"])
-	assert.Equal(t, "finance", fake.gotTrigSvc)
+	assert.Equal(t, "finance", fake.gotTrigProject)
 }
 
 func TestTriggerNode_ForwardsActorFromConfig(t *testing.T) {
@@ -85,7 +85,7 @@ func TestTriggerNode_WrongArgCountExits2(t *testing.T) {
 }
 
 func TestTriggerNode_InvalidArgumentExits2(t *testing.T) {
-	fake := &fakeNodeRunController{trigErr: status.Error(codes.InvalidArgument, "service_name required")}
+	fake := &fakeNodeRunController{trigErr: status.Error(codes.InvalidArgument, "project_name required")}
 	cfg := &config.Config{Timeout: 2 * time.Second}
 
 	_, _, exit := runTrigger(t, fake, cfg, []string{"finance", "analytics", "orders"})
@@ -181,7 +181,7 @@ func TestTriggerNode_EmptySourceRunArgExits2WithoutCalling(t *testing.T) {
 		var env map[string]output.CLIError
 		require.NoError(t, json.Unmarshal([]byte(stdout), &env))
 		assert.Equal(t, output.CodeUsage, env["error"].Code)
-		assert.Equal(t, "", fake.gotTrigSvc, "the run-controller service must not be called")
+		assert.Equal(t, "", fake.gotTrigProject, "the run-controller service must not be called")
 	}
 }
 

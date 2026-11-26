@@ -20,7 +20,7 @@ func createTask(t *testing.T, repo *postgres.TaskCollection, scheduleID uuid.UUI
 		TenantID:    pkgevents.DefaultTenantID,
 		TaskID:      uuid.New(),
 		ScheduleID:  scheduleID,
-		ServiceName: "svc",
+		ProjectName: "svc",
 		SchemaName:  "schema",
 		TableName:   "tbl_" + uuid.New().String()[:8],
 		JobName:     "job",
@@ -64,7 +64,7 @@ func TestTaskCollection_HasFailed_CountsCancelledTasks(t *testing.T) {
 					TenantID:    pkgevents.DefaultTenantID,
 					TaskID:      uuid.New(),
 					ScheduleID:  s.ScheduleID,
-					ServiceName: "svc",
+					ProjectName: "svc",
 					SchemaName:  "schema",
 					TableName:   "tbl_" + uuid.New().String()[:8],
 					JobName:     "job",
@@ -135,7 +135,7 @@ func TestTaskCollection_BeginStop(t *testing.T) {
 			TenantID:    pkgevents.DefaultTenantID,
 			TaskID:      tt.id,
 			ScheduleID:  schedID,
-			ServiceName: "svc",
+			ProjectName: "svc",
 			SchemaName:  "sch",
 			TableName:   "t-" + tt.id.String()[:8],
 			JobName:     "j-" + tt.id.String()[:8],
@@ -220,7 +220,7 @@ func TestTaskCollection_CreateAndGet_RoundTripsImageTag(t *testing.T) {
 		TaskID:      uuid.New(),
 		ScheduleID:  parent.ScheduleID,
 		CreatedAt:   time.Now(),
-		ServiceName: "service-1",
+		ProjectName: "service-1",
 		SchemaName:  "analytics",
 		TableName:   "daily_metrics",
 		JobName:     "job-x",
@@ -273,7 +273,7 @@ func TestTaskCollection_CreateAndGet_RoundTripsInheritedFromTaskID(t *testing.T)
 		TaskID:              uuid.New(),
 		ScheduleID:          parent.ScheduleID,
 		CreatedAt:           time.Now(),
-		ServiceName:         "svc",
+		ProjectName:         "svc",
 		SchemaName:          "s",
 		TableName:           "inherited_table",
 		JobName:             "job-i",
@@ -297,7 +297,7 @@ func TestTaskCollection_CreateAndGet_RoundTripsInheritedFromTaskID(t *testing.T)
 		TaskID:      uuid.New(),
 		ScheduleID:  parent.ScheduleID,
 		CreatedAt:   time.Now(),
-		ServiceName: "svc",
+		ProjectName: "svc",
 		SchemaName:  "s",
 		TableName:   "real_table",
 		JobName:     "job-r",
@@ -414,7 +414,7 @@ func TestTaskCollection_BulkCreateTx_CopiesTenThousandTasks(t *testing.T) {
 			TaskID:      uuid.New(),
 			ScheduleID:  sched.ScheduleID,
 			CreatedAt:   time.Now(),
-			ServiceName: "svc",
+			ProjectName: "svc",
 			SchemaName:  "sch",
 			TableName:   fmt.Sprintf("t_%05d", i),
 			JobName:     fmt.Sprintf("j-%05d", i),
@@ -466,13 +466,13 @@ func TestTaskCollection_DispatchedAtRoundTrips(t *testing.T) {
 	dispatched := &postgres.TaskRow{
 		TenantID: pkgevents.DefaultTenantID,
 		TaskID:   uuid.New(), ScheduleID: runRow.ScheduleID, CreatedAt: time.Now(),
-		ServiceName: "svc", SchemaName: "raw", TableName: "orders", JobName: "job-orders",
+		ProjectName: "svc", SchemaName: "raw", TableName: "orders", JobName: "job-orders",
 		Status: run.TaskStatusPending, MaxRetries: 2, NodeKey: &dispatchedKey, DispatchedAt: &at,
 	}
 	inherited := &postgres.TaskRow{
 		TenantID: pkgevents.DefaultTenantID,
 		TaskID:   uuid.New(), ScheduleID: runRow.ScheduleID, CreatedAt: time.Now(),
-		ServiceName: "svc", SchemaName: "raw", TableName: "customers", JobName: "job-customers",
+		ProjectName: "svc", SchemaName: "raw", TableName: "customers", JobName: "job-customers",
 		Status: run.TaskStatusSucceeded, NodeKey: &inheritedKey, InheritedFromTaskID: &root,
 	}
 
@@ -509,7 +509,7 @@ func TestTaskCollection_NodeKeyRoundTrips(t *testing.T) {
 	row := &postgres.TaskRow{
 		TenantID: pkgevents.DefaultTenantID,
 		TaskID:   uuid.New(), ScheduleID: runRow.ScheduleID, CreatedAt: time.Now(),
-		ServiceName: "svc", SchemaName: "raw", TableName: "orders", JobName: "job",
+		ProjectName: "svc", SchemaName: "raw", TableName: "orders", JobName: "job",
 		Status: run.TaskStatusPending, MaxRetries: 2, NodeKey: &key,
 	}
 

@@ -25,7 +25,7 @@ func TestDeploy_PythonNode_CreatesTheJob(t *testing.T) {
 	err := d.Deploy(context.Background(), deploy.JobSpec{
 		JobName:        "run-py-probe",
 		TaskID:         "task-1",
-		ServiceName:    "svc-py",
+		ProjectName:    "svc-py",
 		SchemaName:     "analytics",
 		TableName:      "py_probe",
 		NodeType:       string(pkg_model.NodeTypePythonNode),
@@ -54,7 +54,7 @@ func TestDeployValidation_PythonNode_BuildsTheValidationPod(t *testing.T) {
 		JobName:              "validate-py-rel123",
 		ReleaseID:            "rel123",
 		NodeID:               "svc-py.py_probe",
-		ServiceName:          "svc-py",
+		ProjectName:          "svc-py",
 		SchemaName:           "analytics",
 		TableName:            "py_probe",
 		NodeType:             string(pkg_model.NodeTypePythonNode),
@@ -85,7 +85,7 @@ func TestCompileParamsFromSpec_MapsAllFields(t *testing.T) {
 		JobName:              "compile-svc-rel123",
 		ReleaseID:            "rel123",
 		NodeID:               "svc.orders",
-		ServiceName:          "service-1",
+		ProjectName:          "service-1",
 		SchemaName:           "analytics",
 		TableName:            "orders",
 		NodeType:             string(pkg_model.NodeTypeDbtModel),
@@ -107,7 +107,7 @@ func TestCompileParamsFromSpec_MapsAllFields(t *testing.T) {
 	assert.Equal(t, "compile-svc-rel123", params.JobName)
 	assert.Equal(t, "rel123", params.ReleaseID)
 	assert.Equal(t, "svc.orders", params.NodeID)
-	assert.Equal(t, "service-1", params.ServiceName)
+	assert.Equal(t, "service-1", params.ProjectName)
 	assert.Equal(t, pkg_model.NodeTypeDbtModel, params.NodeType)
 	assert.Equal(t, "abc123", params.ImageTag)
 	assert.Equal(t, "s3://continuo/svc/rel123/manifest.json", params.ManifestS3URI)
@@ -128,10 +128,10 @@ func TestCompileParamsFromSpec_MapsAllFields(t *testing.T) {
 }
 
 // TestCompileParamsFromSpec_EmptyNodeType verifies compile Jobs tolerate an
-// empty NodeType (they compile the full service manifest, not a single dbt
+// empty NodeType (they compile the full project manifest, not a single dbt
 // node) instead of erroring on ParseNodeType("").
 func TestCompileParamsFromSpec_EmptyNodeType(t *testing.T) {
-	spec := deploy.ValidationJobSpec{JobName: "compile-svc-rel123", ServiceName: "service-1", ImageTag: "abc123"}
+	spec := deploy.ValidationJobSpec{JobName: "compile-svc-rel123", ProjectName: "service-1", ImageTag: "abc123"}
 
 	params, err := compileParamsFromSpec(spec, "default")
 
@@ -142,7 +142,7 @@ func TestCompileParamsFromSpec_EmptyNodeType(t *testing.T) {
 // TestCompileParamsFromSpec_InvalidNodeTypeErrors verifies an unparseable
 // NodeType is reported as a permanent error rather than silently ignored.
 func TestCompileParamsFromSpec_InvalidNodeTypeErrors(t *testing.T) {
-	spec := deploy.ValidationJobSpec{JobName: "compile-svc-rel123", ServiceName: "service-1", NodeType: "not-a-real-type"}
+	spec := deploy.ValidationJobSpec{JobName: "compile-svc-rel123", ProjectName: "service-1", NodeType: "not-a-real-type"}
 
 	_, err := compileParamsFromSpec(spec, "default")
 
@@ -167,7 +167,7 @@ func TestDeployCompile_CreatesJobWithMappedFields(t *testing.T) {
 		JobName:             "compile-svc-rel123",
 		ReleaseID:           "rel123",
 		NodeID:              "svc.orders",
-		ServiceName:         "service-1",
+		ProjectName:         "service-1",
 		ImageTag:            "abc123",
 		CandidateSchema:     "candidate_rel123",
 		ManifestS3URI:       "s3://continuo/svc/rel123/manifest.json",
@@ -202,7 +202,7 @@ func TestDeploySeedBuild_ThreadsSourceOverlayURI(t *testing.T) {
 		JobName:          "seedbuild-verify-fx",
 		ReleaseID:        "verify-rel-1-core-a1",
 		NodeID:           "seed.core.fx",
-		ServiceName:      "core",
+		ProjectName:      "core",
 		SchemaName:       "analytics",
 		TableName:        "fx",
 		NodeType:         string(pkg_model.NodeTypeDbtSeed),
@@ -224,7 +224,7 @@ func TestDeploySeedBuild_ThreadsSourceOverlayURI(t *testing.T) {
 func TestJobParamsFromSpec_CarriesSecretRef(t *testing.T) {
 	spec := deploy.JobSpec{ //nolint:gosec // G101: secret_ref names a Kubernetes Secret, not a credential
 		JobName:     "run-fx",
-		ServiceName: "svc-py",
+		ProjectName: "svc-py",
 		SchemaName:  "analytics",
 		TableName:   "fx",
 		NodeType:    string(pkg_model.NodeTypePythonApi),
@@ -251,7 +251,7 @@ func TestDeploySeedBuild_ThreadsTheSeedPreflight(t *testing.T) {
 
 	err := d.DeploySeedBuild(context.Background(), deploy.ValidationJobSpec{
 		JobName: "seedbuild-fx-rates", ReleaseID: "rel-1", NodeID: "analytics.seed_fx_rates_eur",
-		ServiceName: "analytics", SchemaName: "analytics", TableName: "seed_fx_rates_eur",
+		ProjectName: "analytics", SchemaName: "analytics", TableName: "seed_fx_rates_eur",
 		NodeType: string(pkg_model.NodeTypeDbtSeed), ImageTag: "abc123", CandidateSchema: "_candidate_rel_1",
 		SeedPreflight: &seedreload.Preflight{Mode: seedreload.PreflightReport, Family: warehouse.SchemaBound, Relation: "analytics.seed_fx_rates_eur"},
 	})

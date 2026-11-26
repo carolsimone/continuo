@@ -101,7 +101,7 @@ func TestClassifyDuplicateTable_SignatureIsStablePerNode(t *testing.T) {
 }
 
 // The target claimant Target() picks can flip between releases — it prefers
-// whichever service the release actually changed — even though the physical
+// whichever project the release actually changed — even though the physical
 // collision is the same relation both times. The signature must key on
 // RelationID, not NodeID, or a flipped target forks one recurring collision
 // into two signatures.

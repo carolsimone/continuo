@@ -560,12 +560,12 @@ func TestPrecedentReader_ProposalResolvedRejectionCarriesEditedAndLivePrState(t 
 	require.NoError(t, repo.RecordProposal(ctx,
 		casebase.Proposal{ProposalID: proposalID, ReleaseID: relA, NodeID: nodeA},
 		casebase.PullRequest{
-			ProposalID: proposalID, Service: "core",
+			ProposalID: proposalID, Project: "core",
 			PrURL: "https://github.com/org/repo/pull/9", PrNumber: 9,
 			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(10 * time.Minute),
 		}))
 	require.NoError(t, repo.RecordPullRequestOutcome(ctx, casebase.PullRequestOutcome{
-		ProposalID: proposalID, ReleaseID: relA, Service: "core",
+		ProposalID: proposalID, ReleaseID: relA, Project: "core",
 		Outcome: "merged", ClosedAt: closedAt,
 		ResolvedNodeIDs: []string{nodeA},
 		Edits: []casebase.EditOutcome{
@@ -640,12 +640,12 @@ func TestPrecedentReader_AmendedEditSelectsStraddlingVersions(t *testing.T) {
 	require.NoError(t, repo.RecordProposal(ctx,
 		casebase.Proposal{ProposalID: proposalID, ReleaseID: relC, NodeID: nodeC},
 		casebase.PullRequest{
-			ProposalID: proposalID, Service: "core",
+			ProposalID: proposalID, Project: "core",
 			PrURL: "https://github.com/org/repo/pull/11", PrNumber: 11,
 			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(10 * time.Minute),
 		}))
 	require.NoError(t, repo.RecordPullRequestOutcome(ctx, casebase.PullRequestOutcome{
-		ProposalID: proposalID, ReleaseID: relC, Service: "core",
+		ProposalID: proposalID, ReleaseID: relC, Project: "core",
 		Outcome: "merged", ClosedAt: closedAt,
 		ResolvedNodeIDs: []string{nodeC},
 		Edits: []casebase.EditOutcome{
@@ -699,14 +699,14 @@ func TestPrecedentReader_ProposalResolvedWithAllEditsAbsentSurfacesResolvedByPro
 	require.NoError(t, repo.RecordProposal(ctx,
 		casebase.Proposal{ProposalID: proposalID, ReleaseID: relA, NodeID: nodeA},
 		casebase.PullRequest{
-			ProposalID: proposalID, Service: "core",
+			ProposalID: proposalID, Project: "core",
 			PrURL: "https://github.com/org/repo/pull/13", PrNumber: 13,
 			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(10 * time.Minute),
 		}))
 	// Merged: resolves nodeA, but the sole edit's target :Node is absent, so no
 	// [:EDITED] edge is drawn.
 	require.NoError(t, repo.RecordPullRequestOutcome(ctx, casebase.PullRequestOutcome{
-		ProposalID: proposalID, ReleaseID: relA, Service: "core",
+		ProposalID: proposalID, ReleaseID: relA, Project: "core",
 		Outcome: "merged", ClosedAt: closedAt,
 		ResolvedNodeIDs: []string{nodeA},
 		Edits: []casebase.EditOutcome{
@@ -754,18 +754,18 @@ func TestPrecedentReader_UnresolvedRejectionIsNotResolvedByProposal(t *testing.T
 	assert.Empty(t, precedents[0].Edited)
 }
 
-// TestPrecedentReader_MultiServiceProposalScopesEditedProvenancePerService
-// verifies the per-resolving-service scoping of edited-node provenance. A single
-// :Proposal spans two services: a core rejection resolved by core's merged PR
+// TestPrecedentReader_MultiProjectProposalScopesEditedProvenancePerProject
+// verifies the per-resolving-project scoping of edited-node provenance. A single
+// :Proposal spans two projects: a core rejection resolved by core's merged PR
 // (a non-amended edit to a core node) and a finance rejection resolved by
 // finance's merged PR (an amended edit to a finance node). Each rejection links
 // to the SHARED :Proposal, so without scoping the read would walk EVERY [:EDITED]
 // edge and EVERY merged :PullRequest on that proposal. The RESOLVED_BY edge's
-// service stamp scopes the walk: the core rejection surfaces only the core edit,
+// project stamp scopes the walk: the core rejection surfaces only the core edit,
 // the finance rejection only the finance edit, and the finance amended straddle
 // is selected against finance's own :PullRequest closed_at — never core's
 // earlier one.
-func TestPrecedentReader_MultiServiceProposalScopesEditedProvenancePerService(t *testing.T) {
+func TestPrecedentReader_MultiProjectProposalScopesEditedProvenancePerProject(t *testing.T) {
 	client := newTestClient(t)
 	ctx := context.Background()
 	marker := t.Name()
@@ -786,7 +786,7 @@ func TestPrecedentReader_MultiServiceProposalScopesEditedProvenancePerService(t 
 	finClosed := t0.Add(5 * time.Hour)  // Tf — later close
 
 	// Two rejections on the SAME signature, resolved by the SAME proposal but by
-	// different services' PRs.
+	// different projects' PRs.
 	seedPrecedentRejection(t, client, coreRel, coreNode, sig, "logic", "logic:missing_object",
 		t0, "select core", "hash-core")
 	seedPrecedentRejection(t, client, finRel, finNode, sig, "logic", "logic:missing_object",
@@ -804,25 +804,25 @@ func TestPrecedentReader_MultiServiceProposalScopesEditedProvenancePerService(t 
 
 	repo := newCaseBaseRepo(client)
 
-	// pr_opened per service, sharing the one proposal.
+	// pr_opened per project, sharing the one proposal.
 	require.NoError(t, repo.RecordProposal(ctx,
 		casebase.Proposal{ProposalID: proposalID, ReleaseID: coreRel, NodeID: coreNode},
 		casebase.PullRequest{
-			ProposalID: proposalID, Service: "core",
+			ProposalID: proposalID, Project: "core",
 			PrURL: "https://github.com/org/core/pull/1", PrNumber: 1,
 			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(30 * time.Minute),
 		}))
 	require.NoError(t, repo.RecordProposal(ctx,
 		casebase.Proposal{ProposalID: proposalID, ReleaseID: finRel, NodeID: finNode},
 		casebase.PullRequest{
-			ProposalID: proposalID, Service: "finance",
+			ProposalID: proposalID, Project: "finance",
 			PrURL: "https://github.com/org/finance/pull/1", PrNumber: 1,
 			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(30 * time.Minute),
 		}))
 
 	// core PR merges: edits the core node, not amended.
 	require.NoError(t, repo.RecordPullRequestOutcome(ctx, casebase.PullRequestOutcome{
-		ProposalID: proposalID, ReleaseID: coreRel, Service: "core",
+		ProposalID: proposalID, ReleaseID: coreRel, Project: "core",
 		Outcome: "merged", ClosedAt: coreClosed,
 		PrURL: "https://github.com/org/core/pull/1", PrNumber: 1,
 		ResolvedNodeIDs: []string{coreNode},
@@ -832,7 +832,7 @@ func TestPrecedentReader_MultiServiceProposalScopesEditedProvenancePerService(t 
 	}))
 	// finance PR merges: edits the finance node, amended.
 	require.NoError(t, repo.RecordPullRequestOutcome(ctx, casebase.PullRequestOutcome{
-		ProposalID: proposalID, ReleaseID: finRel, Service: "finance",
+		ProposalID: proposalID, ReleaseID: finRel, Project: "finance",
 		Outcome: "merged", ClosedAt: finClosed,
 		PrURL: "https://github.com/org/finance/pull/1", PrNumber: 1,
 		ResolvedNodeIDs: []string{finNode},
@@ -856,7 +856,7 @@ func TestPrecedentReader_MultiServiceProposalScopesEditedProvenancePerService(t 
 	require.True(t, ok, "the finance rejection is present")
 
 	// The core rejection surfaces ONLY the core edit — never finance's.
-	require.Len(t, coreP.Edited, 1, "core rejection surfaces exactly its own service's edit")
+	require.Len(t, coreP.Edited, 1, "core rejection surfaces exactly its own project's edit")
 	assert.Equal(t, coreEdited, coreP.Edited[0].NodeID, "core must not surface finance's edited node")
 	assert.Equal(t, "D-core", coreP.Edited[0].Diff)
 	assert.False(t, coreP.Edited[0].Amended)
@@ -864,7 +864,7 @@ func TestPrecedentReader_MultiServiceProposalScopesEditedProvenancePerService(t 
 
 	// The finance rejection surfaces ONLY the finance edit, and selects the
 	// straddling merged version against finance's own PR closed_at.
-	require.Len(t, finP.Edited, 1, "finance rejection surfaces exactly its own service's edit")
+	require.Len(t, finP.Edited, 1, "finance rejection surfaces exactly its own project's edit")
 	fe := finP.Edited[0]
 	assert.Equal(t, finEdited, fe.NodeID, "finance must not surface core's edited node")
 	assert.Equal(t, "D-fin", fe.Diff)
@@ -876,11 +876,11 @@ func TestPrecedentReader_MultiServiceProposalScopesEditedProvenancePerService(t 
 	assert.Equal(t, "hash-between", fe.MergedPrior.ContentHash)
 }
 
-// TestPrecedentReader_ResolvedByWithoutServiceRendersEdit pins the fallback for
-// a [:RESOLVED_BY]->(:Proposal) edge that carries no service: the scoped walk
-// does not exclude it — with a null rb.service it falls back to the
-// whole-proposal walk, so its single-service edit still renders.
-func TestPrecedentReader_ResolvedByWithoutServiceRendersEdit(t *testing.T) {
+// TestPrecedentReader_ResolvedByWithoutProjectRendersEdit pins the fallback for
+// a [:RESOLVED_BY]->(:Proposal) edge that carries no project: the scoped walk
+// does not exclude it — with a null rb.project it falls back to the
+// whole-proposal walk, so its single-project edit still renders.
+func TestPrecedentReader_ResolvedByWithoutProjectRendersEdit(t *testing.T) {
 	client := newTestClient(t)
 	ctx := context.Background()
 	marker := t.Name()
@@ -898,7 +898,7 @@ func TestPrecedentReader_ResolvedByWithoutServiceRendersEdit(t *testing.T) {
 		t0, "select failing", "hash-failing")
 	seedEditTargetNode(t, client, edited, marker)
 
-	// A RESOLVED_BY edge with NO service property, plus its EDITED edge. The
+	// A RESOLVED_BY edge with NO project property, plus its EDITED edge. The
 	// read must still render it.
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
 	res, err := s.Run(ctx, `
@@ -906,10 +906,10 @@ func TestPrecedentReader_ResolvedByWithoutServiceRendersEdit(t *testing.T) {
 		MATCH (n:Node {tenant_id: $tenant_id, unique_id: $edited})
 		MERGE (p:Proposal {tenant_id: $tenant_id, proposal_id: $proposal_id})
 		MERGE (rej)-[:RESOLVED_BY]->(p)
-		MERGE (p)-[:HAS_PR]->(pl:PullRequest {tenant_id: $tenant_id, proposal_id: $proposal_id, service: 'core'})
+		MERGE (p)-[:HAS_PR]->(pl:PullRequest {tenant_id: $tenant_id, proposal_id: $proposal_id, project: 'core'})
 		SET pl.pr_state = 'merged', pl.closed_at = $closed_at
 		MERGE (p)-[ed:EDITED {path: 'models/legacy.sql'}]->(n)
-		SET ed.amended = false, ed.diff = 'D-legacy', ed.service = 'core'
+		SET ed.amended = false, ed.diff = 'D-legacy', ed.project = 'core'
 	`, map[string]any{
 		"tenant_id":  precedentFixtureTenant,
 		"release_id": rel, "node_id": node, "proposal_id": proposalID,
@@ -926,22 +926,22 @@ func TestPrecedentReader_ResolvedByWithoutServiceRendersEdit(t *testing.T) {
 	require.Len(t, precedents, 1)
 
 	require.Len(t, precedents[0].Edited, 1,
-		"a RESOLVED_BY edge with no service still renders its edit via the null fallback")
+		"a RESOLVED_BY edge with no project still renders its edit via the null fallback")
 	assert.Equal(t, edited, precedents[0].Edited[0].NodeID)
 	assert.Equal(t, "D-legacy", precedents[0].Edited[0].Diff)
 }
 
-// TestPrecedentReader_MultiServiceProposalScopesProposalPRsPerService verifies
-// the per-proposing-service scoping of a precedent's PR facts. A single
-// :Proposal spans two services: a core rejection whose fix PR is core's, and a
+// TestPrecedentReader_MultiProjectProposalScopesProposalPRsPerProject verifies
+// the per-proposing-project scoping of a precedent's PR facts. A single
+// :Proposal spans two projects: a core rejection whose fix PR is core's, and a
 // finance rejection whose fix PR is finance's. Both rejections link to the
-// SHARED :Proposal, which carries both services' :PullRequest nodes. Without
+// SHARED :Proposal, which carries both projects' :PullRequest nodes. Without
 // scoping the read would fan EVERY :PullRequest into EVERY rejection's Proposals
 // list — a core rejection would surface finance's PR url/number/state (and a
-// duplicate proposal entry). The [:PROPOSED] edge's service stamp scopes the PR
+// duplicate proposal entry). The [:PROPOSED] edge's project stamp scopes the PR
 // join: the core rejection surfaces only core's PR, the finance rejection only
 // finance's.
-func TestPrecedentReader_MultiServiceProposalScopesProposalPRsPerService(t *testing.T) {
+func TestPrecedentReader_MultiProjectProposalScopesProposalPRsPerProject(t *testing.T) {
 	client := newTestClient(t)
 	ctx := context.Background()
 	marker := t.Name()
@@ -957,7 +957,7 @@ func TestPrecedentReader_MultiServiceProposalScopesProposalPRsPerService(t *test
 	finRel, finNode := marker+"-fin-rel", marker+"-fin-node"
 
 	// Two rejections on the SAME signature, resolved by the SAME proposal but by
-	// different services' PRs.
+	// different projects' PRs.
 	seedPrecedentRejection(t, client, coreRel, coreNode, sig, "logic", "logic:missing_object",
 		t0, "select core", "hash-core")
 	seedPrecedentRejection(t, client, finRel, finNode, sig, "logic", "logic:missing_object",
@@ -965,20 +965,19 @@ func TestPrecedentReader_MultiServiceProposalScopesProposalPRsPerService(t *test
 
 	repo := newCaseBaseRepo(client)
 
-	// pr_opened per service, sharing the one proposal. Each RecordProposal stamps
-	// its service on the [:PROPOSED] edge and lands its PR on its own
+	// pr_opened per project, sharing the one proposal. Each RecordProposal stamps	// its project on the [:PROPOSED] edge and lands its PR on its own
 	// :PullRequest node.
 	require.NoError(t, repo.RecordProposal(ctx,
 		casebase.Proposal{ProposalID: proposalID, ReleaseID: coreRel, NodeID: coreNode},
 		casebase.PullRequest{
-			ProposalID: proposalID, Service: "core",
+			ProposalID: proposalID, Project: "core",
 			PrURL: "https://github.com/org/core/pull/1", PrNumber: 1,
 			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(30 * time.Minute),
 		}))
 	require.NoError(t, repo.RecordProposal(ctx,
 		casebase.Proposal{ProposalID: proposalID, ReleaseID: finRel, NodeID: finNode},
 		casebase.PullRequest{
-			ProposalID: proposalID, Service: "finance",
+			ProposalID: proposalID, Project: "finance",
 			PrURL: "https://github.com/org/finance/pull/7", PrNumber: 7,
 			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(30 * time.Minute),
 		}))
@@ -999,7 +998,7 @@ func TestPrecedentReader_MultiServiceProposalScopesProposalPRsPerService(t *test
 
 	// The core rejection surfaces ONLY core's PR — never finance's, and never a
 	// duplicate.
-	require.Len(t, coreP.Proposals, 1, "core rejection surfaces exactly its own service's PR")
+	require.Len(t, coreP.Proposals, 1, "core rejection surfaces exactly its own project's PR")
 	assert.Equal(t, proposalID, coreP.Proposals[0].ProposalID)
 	assert.Equal(t, "https://github.com/org/core/pull/1", coreP.Proposals[0].PrURL,
 		"core must not surface finance's PR url")
@@ -1007,17 +1006,17 @@ func TestPrecedentReader_MultiServiceProposalScopesProposalPRsPerService(t *test
 	assert.Equal(t, "open", coreP.Proposals[0].PrState)
 
 	// The finance rejection surfaces ONLY finance's PR.
-	require.Len(t, finP.Proposals, 1, "finance rejection surfaces exactly its own service's PR")
+	require.Len(t, finP.Proposals, 1, "finance rejection surfaces exactly its own project's PR")
 	assert.Equal(t, "https://github.com/org/finance/pull/7", finP.Proposals[0].PrURL,
 		"finance must not surface core's PR url")
 	assert.Equal(t, 7, finP.Proposals[0].PrNumber)
 }
 
-// TestPrecedentReader_ProposedWithoutServiceRendersPR pins the fallback for a
-// [:PROPOSED] edge that carries no service: the scoped PR join does not exclude
-// it — with a null prop.service it falls back to matching any of the
-// proposal's PRs, so its single-service PR still renders.
-func TestPrecedentReader_ProposedWithoutServiceRendersPR(t *testing.T) {
+// TestPrecedentReader_ProposedWithoutProjectRendersPR pins the fallback for a
+// [:PROPOSED] edge that carries no project: the scoped PR join does not exclude
+// it — with a null prop.project it falls back to matching any of the
+// proposal's PRs, so its single-project PR still renders.
+func TestPrecedentReader_ProposedWithoutProjectRendersPR(t *testing.T) {
 	client := newTestClient(t)
 	ctx := context.Background()
 	marker := t.Name()
@@ -1033,14 +1032,14 @@ func TestPrecedentReader_ProposedWithoutServiceRendersPR(t *testing.T) {
 	seedPrecedentRejection(t, client, rel, node, sig, "logic", "logic:missing_object",
 		t0, "select failing", "hash-failing")
 
-	// A [:PROPOSED] edge with NO service property, plus a :PullRequest on the
+	// A [:PROPOSED] edge with NO project property, plus a :PullRequest on the
 	// proposal. The read must still render the PR via the null fallback.
 	s := client.NewSession(ctx, neo4j.AccessModeWrite)
 	res, err := s.Run(ctx, `
 		MATCH (rej:Rejection {tenant_id: $tenant_id, release_id: $release_id, node_id: $node_id})
 		MERGE (p:Proposal {tenant_id: $tenant_id, proposal_id: $proposal_id})
 		MERGE (rej)-[:PROPOSED]->(p)
-		MERGE (p)-[:HAS_PR]->(pl:PullRequest {tenant_id: $tenant_id, proposal_id: $proposal_id, service: 'core'})
+		MERGE (p)-[:HAS_PR]->(pl:PullRequest {tenant_id: $tenant_id, proposal_id: $proposal_id, project: 'core'})
 		SET pl.pr_url = $pr_url, pl.pr_number = 5, pl.pr_state = 'merged'
 	`, map[string]any{
 		"tenant_id":  precedentFixtureTenant,
@@ -1058,7 +1057,7 @@ func TestPrecedentReader_ProposedWithoutServiceRendersPR(t *testing.T) {
 	require.Len(t, precedents, 1)
 
 	require.Len(t, precedents[0].Proposals, 1,
-		"a PROPOSED edge with no service still renders its PR via the null fallback")
+		"a PROPOSED edge with no project still renders its PR via the null fallback")
 	assert.Equal(t, "https://github.com/org/legacy/pull/5", precedents[0].Proposals[0].PrURL)
 	assert.Equal(t, 5, precedents[0].Proposals[0].PrNumber)
 	assert.Equal(t, "merged", precedents[0].Proposals[0].PrState)

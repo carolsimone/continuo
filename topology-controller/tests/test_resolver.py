@@ -10,7 +10,7 @@ def _make_registry(*table_names: str) -> dict:
         NodeRegistryEntry(
             table_name=t,
             schema_name="public",
-            service_name="service-1",
+            project_name="service-1",
             owner="data-platform",
             relation=t,
         )
@@ -25,7 +25,7 @@ def _make_node(table_name: str, sql: str = "", *, dependency_sqls: list[str] | N
     return ManifestNode(
         table_name=table_name,
         schema_name="public",
-        service_name="service-1",
+        project_name="service-1",
         owner="data-platform",
         schedule_name="daily",
         criticality="SECONDARY",
@@ -112,7 +112,7 @@ def test_refs_of_two_registered_tables_give_two_dependencies_in_ref_order():
 
 def test_skips_unknown_table():
     # Tables not in the registry (seeds, sources, external refs) are silently
-    # skipped — they are not cross-service model dependencies.
+    # skipped — they are not cross-project model dependencies.
     registry = _make_registry("users")
     node = _make_node("orders", "SELECT id FROM public.unknown_table")
     deps = _resolve(node, registry)
@@ -151,7 +151,7 @@ def test_unqualified_table_raises():
 
 def test_resolves_same_table_name_in_different_schemas():
     # Core regression test: same table_name in two schemas must resolve
-    # to the correct service — the bug this change fixes.
+    # to the correct project — the bug this change fixes.
     lookup = NodeRegistry(entries=[
         NodeRegistryEntry("orders", "public", "service-a", "team-a", relation="orders"),
         NodeRegistryEntry("orders", "billing", "service-b", "team-b", relation="orders"),
@@ -159,7 +159,7 @@ def test_resolves_same_table_name_in_different_schemas():
     node = _make_node("summary", "SELECT id FROM billing.orders")
     deps = _resolve(node, lookup)
     assert len(deps) == 1
-    assert deps[0].service_name == "service-b"
+    assert deps[0].project_name == "service-b"
 
 
 def test_schema_mismatch_returns_no_dep():
@@ -287,8 +287,8 @@ def test_an_unqualified_reference_to_a_cte_is_still_skipped():
     assert _resolve(_make_node("orders", sql), registry) == []
 
 
-def _entry(table_name: str, *, relation: str = "", service: str = "service-1", ephemeral: bool = False):
-    return NodeRegistryEntry(table_name, "public", service, "team", relation=relation or table_name, ephemeral=ephemeral)
+def _entry(table_name: str, *, relation: str = "", project: str = "service-1", ephemeral: bool = False):
+    return NodeRegistryEntry(table_name, "public", project, "team", relation=relation or table_name, ephemeral=ephemeral)
 
 
 def test_a_reference_to_an_alias_resolves_to_the_node_that_writes_it():
@@ -309,7 +309,7 @@ def _resolve_with_ephemerals(node: ManifestNode, registry: NodeRegistry) -> list
     refs = referenced_tables(node, dialect="postgres", ctes=ctes)
     return resolve_upstream_deps(
         refs, registry.to_lookup(),
-        service_name=node.service_name, ctes=ctes, ephemeral_ctes=registry.ephemeral_ctes(),
+        project_name=node.project_name, ctes=ctes, ephemeral_ctes=registry.ephemeral_ctes(),
     )
 
 
@@ -323,8 +323,8 @@ def test_an_ephemeral_cte_is_an_upstream_and_the_tables_it_reads_stay_upstreams(
     assert {d.unique_id for d in deps} == {"public.eph", "public.raw_orders"}
 
 
-def test_an_ephemeral_cte_of_another_service_is_not_an_upstream():
-    registry = NodeRegistry(entries=[_entry("eph", service="service-2", ephemeral=True)])
+def test_an_ephemeral_cte_of_another_project_is_not_an_upstream():
+    registry = NodeRegistry(entries=[_entry("eph", project="service-2", ephemeral=True)])
     sql = "WITH __dbt__cte__eph AS (SELECT 1 AS id) SELECT id FROM __dbt__cte__eph"
     deps = _resolve_with_ephemerals(_make_node("orders", sql), registry)
     assert deps == []

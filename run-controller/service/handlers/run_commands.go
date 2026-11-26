@@ -166,7 +166,7 @@ func (c *RunCommands) TriggerRebase(ctx context.Context, cmd TriggerRebaseComman
 }
 
 // TriggerSingleNodeRun runs one node once per request id. The fingerprint is
-// the node as service.schema.table, the metadata source, the source run (empty
+// the node as project.schema.table, the metadata source, the source run (empty
 // when none), the operation, an empty operation read as run, and, only when
 // the call names any, the acknowledged dependents.
 func (c *RunCommands) TriggerSingleNodeRun(ctx context.Context, cmd TriggerSingleNodeRunCommand) (CommandResult, error) {
@@ -285,7 +285,7 @@ func singleNodeFingerprintParts(in TriggerSingleNodeRunInput) []string {
 		source = in.SourceRunID.String()
 	}
 	t := in.Target
-	parts := []string{t.ServiceName + "." + t.SchemaName + "." + t.TableName, string(in.MetadataSource), source, operationPart(in.Operation)}
+	parts := []string{t.ProjectName + "." + t.SchemaName + "." + t.TableName, string(in.MetadataSource), source, operationPart(in.Operation)}
 	if len(in.AcknowledgedDependents) > 0 {
 		parts = append(parts, "ack="+strings.Join(in.AcknowledgedDependents, ","))
 	}

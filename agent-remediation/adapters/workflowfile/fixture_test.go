@@ -40,16 +40,16 @@ trigger:
       dbt_log_uri: s3://log
       candidate_artifact_uri: s3://cand
       file_path: models/orders.sql
-      service: sales
+      project: sales
       node_type: dbt-model
       changed_ancestors:
-        - { node_id: model.sales.base, file_path: models/base.sql, service: sales, depth: 1 }
-service_repo_paths: { sales: services/sales }
+        - { node_id: model.sales.base, file_path: models/base.sql, project: sales, depth: 1 }
+project_repo_paths: { sales: services/sales }
 repo_files: { services/sales/models/orders.sql: "select 1" }
 objects: { "s3://cand": "select 0" }
 bundle: { model.sales.orders: { runtime: dbt, raw_code: "select 0" } }
 catalog:
-  locations: { model.sales.base: { file_path: models/base.sql, service: sales } }
+  locations: { model.sales.base: { file_path: models/base.sql, project: sales } }
   current_versions: { model.sales.orders: { raw_code: "select 9", content_hash: h1, promoted_at: "2026-11-01T00:00:00Z" } }
   upstream_changes: { model.sales.orders: [{ node_id: model.sales.base, depth: 1, code_diff: "-a\n+b" }] }
   precedents: [{ node_id: model.sales.other, category: validation, reason: missing_column, resolved: true }]
@@ -66,7 +66,7 @@ answers:
     pass: [{ proposed_sql: "select 3", confidence: high }]
     fail: [{ proposed_sql: "selec 3" }]
 member_answers: { model.sales.base: { pass: [{ target_file: t.sql, proposed_content: c, suspected_root_cause_node: n }] } }
-decline_before_model: { node: { candidate_artifact_uri: "", service: other } }
+decline_before_model: { node: { candidate_artifact_uri: "", project: other } }
 gate_errors: { model.sales.orders: still failing }
 `
 
@@ -86,19 +86,19 @@ func TestLoadFixtures_ReadsEveryField(t *testing.T) {
 	node := remediation.TriggerNode{
 		NodeID: "model.sales.orders", Category: "validation", ErrorSignature: "sig-1", Reason: "missing_column",
 		ErrorExcerpt: "column amount does not exist", DBTLogURI: "s3://log", CandidateArtifactURI: "s3://cand",
-		FilePath: "models/orders.sql", Service: "sales", NodeType: "dbt-model",
-		ChangedAncestors: []remediation.ChangedAncestor{{NodeID: "model.sales.base", FilePath: "models/base.sql", Service: "sales", Depth: 1}},
+		FilePath: "models/orders.sql", Project: "sales", NodeType: "dbt-model",
+		ChangedAncestors: []remediation.ChangedAncestor{{NodeID: "model.sales.base", FilePath: "models/base.sql", Project: "sales", Depth: 1}},
 	}
 	assert.Equal(t, remediation.Trigger{
 		Source: "validation", ReleaseID: "rel-1", Round: 2, Repo: "o/repo", CommitSHA: "sha", CodeBundleURI: "s3://bundle",
 		Nodes: []remediation.TriggerNode{node},
 	}, f.Trigger)
-	assert.Equal(t, map[string]string{"sales": "services/sales"}, f.ServiceRepoPaths)
+	assert.Equal(t, map[string]string{"sales": "services/sales"}, f.ProjectRepoPaths)
 	assert.Equal(t, map[string]string{"services/sales/models/orders.sql": "select 1"}, f.RepoFiles)
 	assert.Equal(t, map[string]string{"s3://cand": "select 0"}, f.Objects)
 	assert.Equal(t, map[string]ports.CandidateSource{"model.sales.orders": {Runtime: "dbt", RawCode: "select 0"}}, f.Bundle)
 	assert.Equal(t, conformance.Catalog{
-		Locations:       map[string]conformance.Location{"model.sales.base": {FilePath: "models/base.sql", Service: "sales"}},
+		Locations:       map[string]conformance.Location{"model.sales.base": {FilePath: "models/base.sql", Project: "sales"}},
 		CurrentVersions: map[string]ports.CurrentVersion{"model.sales.orders": {RawCode: "select 9", ContentHash: "h1", PromotedAt: "2026-11-01T00:00:00Z"}},
 		UpstreamChanges: map[string][]prompt.UpstreamChange{"model.sales.orders": {{NodeID: "model.sales.base", Depth: 1, CodeDiff: "-a\n+b"}}},
 		Precedents:      []prompt.Precedent{{NodeID: "model.sales.other", Category: "validation", Reason: "missing_column", Resolved: true}},
@@ -128,7 +128,7 @@ func TestLoadFixtures_ReadsEveryField(t *testing.T) {
 	require.NotNil(t, f.DeclineBeforeModel)
 	patched := node
 	patched.CandidateArtifactURI = ""
-	patched.Service = "other"
+	patched.Project = "other"
 	assert.Equal(t, []remediation.TriggerNode{patched}, f.DeclineBeforeModel.Nodes)
 	assert.Equal(t, "rel-1", f.DeclineBeforeModel.ReleaseID)
 	assert.Equal(t, "s3://cand", f.Trigger.Nodes[0].CandidateArtifactURI, "the patch leaves the trigger itself alone")

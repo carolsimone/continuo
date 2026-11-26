@@ -62,9 +62,9 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 		podSpec, err = buildPythonPodSpec(params)
 	} else {
 		var argv []string
-		argv, err = c.commands.NodeCommand(params.ServiceName, params.Operation, params.NodeType, params.TableName)
+		argv, err = c.commands.NodeCommand(params.ProjectName, params.Operation, params.NodeType, params.TableName)
 		if err == nil {
-			podSpec, err = buildPodSpec(params, argv, c.commands.PartialParsePath(params.ServiceName))
+			podSpec, err = buildPodSpec(params, argv, c.commands.PartialParsePath(params.ProjectName))
 		}
 	}
 	if err != nil {
@@ -80,7 +80,7 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 		"schedule":     params.ScheduleName,
 		"table_name":   sanitizeK8sLabel(params.TableName),
 		"schema_name":  params.SchemaName,
-		"service_name": params.ServiceName,
+		"project_name": params.ProjectName,
 	}
 	// The runtime label distinguishes python pods for operators without
 	// changing the app selector every execution-controller Job carries.
@@ -162,7 +162,7 @@ type ValidationJobParams struct {
 	JobName     string
 	ReleaseID   string
 	NodeID      string
-	ServiceName string
+	ProjectName string
 	SchemaName  string
 	TableName   string
 	NodeType    pkg_model.NodeType
@@ -238,7 +238,7 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 		"mode":         string(validationmodel.ModeValidation),
 		"release-id":   sanitizeK8sLabel(params.ReleaseID),
 		"node-id":      sanitizeK8sLabel(params.NodeID),
-		"service_name": params.ServiceName,
+		"project_name": params.ProjectName,
 		"schema_name":  params.SchemaName,
 		"table_name":   sanitizeK8sLabel(params.TableName),
 	}
@@ -270,7 +270,7 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 // buildValidationPodSpec constructs the PodSpec for a validation node job.
 //
 // Validation runs the external continuo-python-runtime-<engine> image (PostgreSQL and
-// Trino today) that bakes one engine adapter — never the per-service team image. The
+// Trino today) that bakes one engine adapter — never the per-project team image. The
 // SRE selects the engine at deploy time (Helm/compose) via VALIDATION_IMAGE; the
 // execution-controller runs it with an explicit command (ValidationCommand), because the image's
 // default command runs the python-node harness rather than the validation runner.
@@ -316,7 +316,7 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 	mainEnv := []corev1.EnvVar{
 		{Name: "RELEASE_ID", Value: p.ReleaseID},
 		{Name: "NODE_ID", Value: p.NodeID},
-		{Name: "SERVICE_NAME", Value: p.ServiceName},
+		{Name: "PROJECT_NAME", Value: p.ProjectName},
 		{Name: "SCHEMA", Value: p.SchemaName},
 		{Name: "TABLE_NAME", Value: p.TableName},
 		{Name: "JOB_NAME", Value: p.JobName},
@@ -408,8 +408,8 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 	}
 
 	podSpec, err := buildSeedBuildPodSpec(params,
-		c.commands.SeedBuildCommand(params.ServiceName, params.TableName, params.CandidateSchema),
-		c.commands.PartialParsePath(params.ServiceName))
+		c.commands.SeedBuildCommand(params.ProjectName, params.TableName, params.CandidateSchema),
+		c.commands.PartialParsePath(params.ProjectName))
 	if err != nil {
 		return fmt.Errorf("failed to build seed-build pod spec: %w", err)
 	}
@@ -420,7 +420,7 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 		"mode":         string(validationmodel.ModeSeedBuild),
 		"release-id":   sanitizeK8sLabel(params.ReleaseID),
 		"node-id":      sanitizeK8sLabel(params.NodeID),
-		"service_name": params.ServiceName,
+		"project_name": params.ProjectName,
 		"schema_name":  params.SchemaName,
 		"table_name":   sanitizeK8sLabel(params.TableName),
 	}
@@ -466,7 +466,7 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 // containers.
 // When S3_BUCKET is set, the pod also gets a hydrate-parse-cache initContainer
 // that pre-seeds the candidate-context partial-parse artifact (see
-// parseCacheInitContainer); partialParsePath is the service's resolved
+// parseCacheInitContainer); partialParsePath is the project's resolved
 // partial_parse.msgpack path, used only to derive the team container's mount
 // directory.
 // When p.SeedPreflight is set, the "seed-preflight" initContainer runs last,
@@ -475,11 +475,11 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 // through a shell that always exits 0.
 func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParsePath string) (corev1.PodSpec, error) {
 	if p.ImageTag == "" {
-		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from seed-build job params for service %s",
-			events.ErrPermanent, p.ServiceName)
+		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from seed-build job params for project %s",
+			events.ErrPermanent, p.ProjectName)
 	}
 
-	image := p.ServiceName + ":" + p.ImageTag
+	image := p.ProjectName + ":" + p.ImageTag
 	if user := os.Getenv("DOCKERHUB_USERNAME"); user != "" {
 		image = user + "/" + image
 	}
@@ -487,7 +487,7 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 	envVars := []corev1.EnvVar{
 		{Name: "RELEASE_ID", Value: p.ReleaseID},
 		{Name: "NODE_ID", Value: p.NodeID},
-		{Name: "SERVICE_NAME", Value: p.ServiceName},
+		{Name: "PROJECT_NAME", Value: p.ProjectName},
 		{Name: "SCHEMA", Value: p.SchemaName},
 		{Name: "TABLE_NAME", Value: p.TableName},
 		{Name: "JOB_NAME", Value: p.JobName},
@@ -547,7 +547,7 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 		// inside the image. Under a source overlay the staging copy runs after
 		// this initContainer and copies that directory along with the rest of
 		// the project, so the hydrated artifact reaches the workdir too.
-		uri := artifacts.ParseCacheCandidateURI(bucket, p.ServiceName, p.ReleaseID)
+		uri := artifacts.ParseCacheCandidateURI(bucket, p.ProjectName, p.ReleaseID)
 		init, vol, teamMount := parseCacheInitContainer(uri, path.Dir(partialParsePath))
 		spec.InitContainers = append(spec.InitContainers, init)
 		spec.Volumes = append(spec.Volumes, vol)
@@ -577,7 +577,7 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 //     runs.
 //   - initContainer "extras-script": the s3-sidecar image copies
 //     /compile_extras.py into /shared for the team image to run.
-//   - initContainer "compile": team image runs the service's resolved compile
+//   - initContainer "compile": team image runs the project's resolved compile
 //     command and copies the manifest from its declared path into
 //     /shared/manifest.json, with the warehouse-Secret envFrom attached; when
 //     the overlay ran, the command first stages the project into its own
@@ -586,7 +586,7 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 //     It then runs the extras script against that manifest, writing
 //     /shared/compile-extras.json.
 //   - when params.CandidateSchema is set, two more team-image initContainers,
-//     "parse-prod" and "parse-candidate", export and rehearse the service's
+//     "parse-prod" and "parse-candidate", export and rehearse the project's
 //     partial-parse cache (see buildParseExportCommand) into
 //     /shared/parse/<prod|candidate>/partial_parse.msgpack; when the overlay
 //     ran, both commands stage the project the same way into workdirs of their
@@ -616,9 +616,9 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 		return nil
 	}
 
-	compileArgv, manifestPath := c.commands.CompileCommand(params.ServiceName)
-	parseArgv := c.commands.ParseCommand(params.ServiceName)
-	partialParsePath := c.commands.PartialParsePath(params.ServiceName)
+	compileArgv, manifestPath := c.commands.CompileCommand(params.ProjectName)
+	parseArgv := c.commands.ParseCommand(params.ProjectName)
+	partialParsePath := c.commands.PartialParsePath(params.ProjectName)
 	podSpec, err := buildCompilePodSpec(params, compileArgv, manifestPath, parseArgv, partialParsePath)
 	if err != nil {
 		return fmt.Errorf("failed to build compile pod spec: %w", err)
@@ -630,7 +630,7 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 		"mode":         string(validationmodel.ModeCompile),
 		"release-id":   sanitizeK8sLabel(params.ReleaseID),
 		"node-id":      sanitizeK8sLabel(params.NodeID),
-		"service_name": params.ServiceName,
+		"project_name": params.ProjectName,
 	}
 	annotations := map[string]string{
 		annotationReleaseID: params.ReleaseID,
@@ -679,7 +679,7 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 //   - an initContainer "compile" using the team image (ImageTag must be
 //     non-empty) that, when the overlay ran, first stages the project into its
 //     workdir with /shared/overlay laid over it and the listed paths removed
-//     (see overlayStagePrefix), then runs the service's resolved compile
+//     (see overlayStagePrefix), then runs the project's resolved compile
 //     command there, copies the manifest dbt wrote in that copy into
 //     /shared/manifest.json, and chmods it 644 so it is
 //     world-readable regardless of the team image's uid/umask (the upload
@@ -692,7 +692,7 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 //   - when p.CandidateSchema is non-empty, two more team-image initContainers,
 //     "parse-prod" and "parse-candidate", that (each staging the project into
 //     its own workdir first, when the overlay is set) export and rehearse the
-//     service's partial-parse cache under prod and candidate connection
+//     project's partial-parse cache under prod and candidate connection
 //     contexts respectively (see buildParseExportCommand) into
 //     /shared/parse/<ctx>/partial_parse.msgpack;
 //     when CandidateSchema is empty the parse-export leg is disabled and the
@@ -707,12 +707,12 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 //     (local paths + S3 destinations) when the parse-export leg ran.
 func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPath string, parseArgv []string, partialParsePath string) (corev1.PodSpec, error) {
 	if p.ImageTag == "" {
-		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from compile job params for service %s",
-			events.ErrPermanent, p.ServiceName)
+		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from compile job params for project %s",
+			events.ErrPermanent, p.ProjectName)
 	}
 
 	// Team image for the init (compile, parse-prod, parse-candidate) containers.
-	teamImage := p.ServiceName + ":" + p.ImageTag
+	teamImage := p.ProjectName + ":" + p.ImageTag
 	if user := os.Getenv("DOCKERHUB_USERNAME"); user != "" {
 		teamImage = user + "/" + teamImage
 	}
@@ -722,7 +722,7 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 
 	// Warehouse connection for every dbt-running init container (compile and the
 	// parse legs): the operator-owned Secret, attached via envFrom.
-	whFrom, err := warehouseSecretEnvFrom("compile job for service " + p.ServiceName)
+	whFrom, err := warehouseSecretEnvFrom("compile job for project " + p.ProjectName)
 	if err != nil {
 		return corev1.PodSpec{}, err
 	}
@@ -759,7 +759,7 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 	compileCmd := overlayPrefix + shellJoin(compileArgv) +
 		" && cp " + shellQuote(compiledManifestPath) + " /shared/manifest.json" +
 		" && chmod 644 /shared/manifest.json" +
-		compileExtrasCommand(extrasProjectDirWord(compileArgv), p.ServiceName, p.ReleaseID)
+		compileExtrasCommand(extrasProjectDirWord(compileArgv), p.ProjectName, p.ReleaseID)
 	var initContainers []corev1.Container
 	if staged {
 		// The overlay fetcher lays the proposed files into /shared/overlay and
@@ -879,11 +879,11 @@ func compileExtrasURI(manifestURI string) (string, error) {
 // against the compiled manifest and the dbt project (projectDirWord, a shell
 // word from extrasProjectDirWord), and makes its output world-readable for the
 // upload container, which runs as another uid.
-func compileExtrasCommand(projectDirWord, service, releaseID string) string {
+func compileExtrasCommand(projectDirWord, project, releaseID string) string {
 	return ` && { command -v python3 >/dev/null 2>&1 || { echo "compile: the team image has no python3 on PATH; continuo reads the seeds with the Python that runs dbt" >&2; exit 1; }; }` +
 		" && python3 /shared/compile_extras.py --manifest /shared/manifest.json" +
 		" --project-dir " + projectDirWord +
-		" --service " + shellQuote(service) +
+		" --project " + shellQuote(project) +
 		" --release-id " + shellQuote(releaseID) +
 		" --out /shared/compile-extras.json" +
 		" && chmod 644 /shared/compile-extras.json"
@@ -934,17 +934,17 @@ func extrasProjectDirWord(compileArgv []string) string {
 // falling back to "latest" is intentionally refused.
 // When S3_BUCKET is set, the pod also gets a hydrate-parse-cache initContainer
 // that pre-seeds the prod-context partial-parse artifact (see
-// parseCacheInitContainer); partialParsePath is the service's resolved
+// parseCacheInitContainer); partialParsePath is the project's resolved
 // partial_parse.msgpack path, used only to derive the team container's mount
 // directory. When params carries a SeedPreflight, its init container (see
 // seedPreflightInitContainer) runs last, after the hydrate.
 func buildPodSpec(params JobParams, command []string, partialParsePath string) (corev1.PodSpec, error) {
 	if params.ImageTag == "" {
-		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from job params for service %s",
-			events.ErrPermanent, params.ServiceName)
+		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from job params for project %s",
+			events.ErrPermanent, params.ProjectName)
 	}
 
-	image := params.ServiceName + ":" + params.ImageTag
+	image := params.ProjectName + ":" + params.ImageTag
 	if user := os.Getenv("DOCKERHUB_USERNAME"); user != "" {
 		image = user + "/" + image
 	}
@@ -954,7 +954,7 @@ func buildPodSpec(params JobParams, command []string, partialParsePath string) (
 		{Name: "TASK_ATTEMPT", Value: strconv.Itoa(params.Attempt)},
 		{Name: "SCHEDULE_ID", Value: params.RunID},
 		{Name: "SCHEDULE_NAME", Value: params.ScheduleName},
-		{Name: "SERVICE_NAME", Value: params.ServiceName},
+		{Name: "PROJECT_NAME", Value: params.ProjectName},
 		{Name: "SCHEMA", Value: params.SchemaName},
 		{Name: "TABLE_NAME", Value: params.TableName},
 		{Name: "JOB_NAME", Value: params.JobName},
@@ -981,7 +981,7 @@ func buildPodSpec(params JobParams, command []string, partialParsePath string) (
 	}
 
 	if bucket := os.Getenv("S3_BUCKET"); bucket != "" {
-		uri := artifacts.ParseCacheProdURI(bucket, params.ServiceName, params.ImageTag)
+		uri := artifacts.ParseCacheProdURI(bucket, params.ProjectName, params.ImageTag)
 		init, vol, teamMount := parseCacheInitContainer(uri, path.Dir(partialParsePath))
 		spec.InitContainers = []corev1.Container{init}
 		spec.Volumes = []corev1.Volume{vol}

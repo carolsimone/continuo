@@ -62,11 +62,11 @@ func Load(path string, logger *slog.Logger) (*Resolver, error) {
 		return nil, fmt.Errorf("dbt commands config %s: %w", path, err)
 	}
 	if blocks := blocksMissingCapability(&cfg, func(o *opSet) []string { return o.FullRefresh }); len(blocks) > 0 {
-		logger.Warn("dbt commands config: these command blocks define no full_refresh, so full refresh of dbt models is unavailable for the services they cover",
+		logger.Warn("dbt commands config: these command blocks define no full_refresh, so full refresh of dbt models is unavailable for the projects they cover",
 			"path", path, "blocks", blocks)
 	}
 	if blocks := blocksMissingCapability(&cfg, func(o *opSet) []string { return o.SeedFullRefresh }); len(blocks) > 0 {
-		logger.Warn("dbt commands config: these command blocks define no seed_full_refresh, so full refresh of dbt seeds is unavailable for the services they cover",
+		logger.Warn("dbt commands config: these command blocks define no seed_full_refresh, so full refresh of dbt seeds is unavailable for the projects they cover",
 			"path", path, "blocks", blocks)
 	}
 	return &Resolver{cfg: &cfg}, nil
@@ -80,14 +80,14 @@ func blocksMissingCapability(cfg *fileConfig, pick func(*opSet) []string) []stri
 	if pick(cfg.Default) == nil {
 		blocks = append(blocks, "default")
 	}
-	var services []string
-	for name, ops := range cfg.Services {
+	var projects []string
+	for name, ops := range cfg.Projects {
 		if pick(ops) == nil {
-			services = append(services, "services."+name)
+			projects = append(projects, "projects."+name)
 		}
 	}
-	sort.Strings(services)
-	return append(blocks, services...)
+	sort.Strings(projects)
+	return append(blocks, projects...)
 }
 
 // unknownFieldRe matches one yaml.v3 KnownFields TypeError line, e.g. "line 3:
@@ -121,7 +121,7 @@ func unknownFieldNames(err error) []string {
 }
 
 // validate enforces the config schema: the default block is required and
-// complete, every service override is complete, and each present template
+// complete, every project override is complete, and each present template
 // passes the per-template checks (non-empty argv, required/allowed placeholders,
 // absolute literal compile manifest_path). Per-template checks run before the
 // completeness check so a malformed present key reports its specific error.
@@ -135,14 +135,14 @@ func validate(cfg *fileConfig) error {
 	if err := requireComplete("default", cfg.Default); err != nil {
 		return err
 	}
-	for name, ops := range cfg.Services {
+	for name, ops := range cfg.Projects {
 		if ops == nil {
-			return fmt.Errorf("services.%s: required and must define every command", name)
+			return fmt.Errorf("projects.%s: required and must define every command", name)
 		}
-		if err := validateOpSet("services."+name, ops); err != nil {
+		if err := validateOpSet("projects."+name, ops); err != nil {
 			return err
 		}
-		if err := requireComplete("services."+name, ops); err != nil {
+		if err := requireComplete("projects."+name, ops); err != nil {
 			return err
 		}
 	}

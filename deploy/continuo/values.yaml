@@ -36,7 +36,7 @@ global:
   logLevel: INFO
 
   # Registry/namespace prefix for per-team dbt images (execution-controller
-  # composes "<prefix>/<service>:<tag>" for compile/seed/scheduled Jobs).
+  # composes "<prefix>/<project>:<tag>" for compile/seed/scheduled Jobs).
   # Empty renders DOCKERHUB_USERNAME="", which execution-controller treats as
   # unset, so team images resolve to bare names (side-loaded).
   teamImagePrefix: ""
@@ -255,8 +255,8 @@ auth:
 # Lets CD pipelines release through the public API (POST <publicUrl>/api/v1/releases)
 # with their GitHub Actions OIDC token instead of a stored secret. The ui verifies
 # the token against `issuer` and lets it release, and read releases of, only the
-# services bound to its repository below. Humans are not configured here: their
-# access follows the auth role settings (an operator may release any service).
+# projects bound to its repository below. Humans are not configured here: their
+# access follows the auth role settings (an operator may release any project).
 # The whole block is optional; an absent key takes the default shown.
 ciAuth:
   # GitHub Actions OIDC issuer. GitHub Enterprise Server: https://<host>/_services/token
@@ -265,7 +265,7 @@ ciAuth:
   # ACTIONS_ID_TOKEN_REQUEST_URL&audience=<audience>). Empty = the origin of
   # auth.publicUrl, so a token minted for one install is useless at another.
   audience: ""
-  # service -> GitHub identities allowed to release it. Empty = no CI access:
+  # project -> GitHub identities allowed to release it. Empty = no CI access:
   # the ui then does not trust `issuer` at all, so every CI token is a 401, and
   # a token whose repository matches no binding is refused on every route.
   # repositoryId is required and must be QUOTED digits (`gh api repos/OWNER/REPO --jq .id`);
@@ -400,20 +400,20 @@ credentials:
       agent-remediation: {username: continuo_agent_remediation, existingSecret: "", key: password}
       dead-letter-controller: {username: continuo_dead_letter_controller, existingSecret: "", key: password}
 
-# service_name -> project root within that service's repo, read by
+# project_name -> the dbt project folder within that project's repository, read by
 # agent-remediation to locate a changed model's source before it proposes a fix.
-# Leave empty to use the chart's shipped demo map (files/service_repos.yaml),
-# which covers continuo's own tutorial services so the walkthroughs work out of
-# the box. Set this to your own services and it REPLACES that demo map entirely —
-# a production install maps only the services it runs, so a demo entry can never
-# linger to mis-own a path. A service with no entry has its fix recorded as
+# Leave empty to use the chart's shipped demo map (files/project_repos.yaml),
+# which covers continuo's own tutorial projects so the walkthroughs work out of
+# the box. Set this to your own projects and it REPLACES that demo map entirely —
+# a production install maps only the projects it runs, so a demo entry can never
+# linger to mis-own a path. A project with no entry has its fix recorded as
 # unverifiable and its proposal skipped; an explicit empty value ("") maps a
-# service whose dbt project is the repository root. Restart agent-remediation
+# project whose dbt project folder is the repository root. Restart agent-remediation
 # after changing this. Example:
-#   serviceRepos:
+#   projectRepos:
 #     analytics: analytics          # dbt project at the repo root
 #     ingest: services/ingest
-serviceRepos: {}
+projectRepos: {}
 
 validation:
   # ┌────────────────────────────────────────────────────────────────────────────┐
@@ -635,7 +635,7 @@ catalog:
 #   `ontology`, and topology-controller stores each contract without its
 #   ontology part and ignores an ontology a release carries. While it is true,
 #   a release that carries the install's ontology resolves each contract of a
-#   service the ontology declares and checks the contracts against it.
+#   project the ontology declares and checks the contracts against it.
 # baseUrl: ONTOLOGY_BASE_URL, read by catalog. Empty (the default) publishes the
 #   ontology links of a contract as stored, each starting with
 #   `continuo-ontology:`. Otherwise an absolute http or https URL with a host
@@ -910,11 +910,11 @@ defaultResources:
 #                                  volume with an empty name mounts the chart's
 #                                  ConfigMap for the services that have one;
 #                                  on agent-remediation, which has two, the one
-#                                  of the volume's name: service-repos, or
+#                                  of the volume's name: project-repos, or
 #                                  remediation-workflows while the volume is
 #                                  mounted at AGENT_REMEDIATION_WORKFLOWS_DIR
 #                                  (/etc/continuo-workflows when unset); any
-#                                  other volume mounts service-repos.
+#                                  other volume mounts project-repos.
 # These keys are install-time only: they shape the Deployments and
 # ServiceAccounts, and no service reads them.
 services:
@@ -1186,7 +1186,7 @@ services:
       GITHUB_BASE_URL: https://api.github.com
       REMEDIATION_PR_POLL_INTERVAL: "60s"
       REMEDIATION_PR_OPENING_GRACE_PERIOD: "10m"
-      SERVICE_REPO_MAP_PATH: /etc/continuo/service_repos.yaml
+      PROJECT_REPO_MAP_PATH: /etc/continuo/project_repos.yaml
       RELEASE_CONTROLLER_URL: http://release-controller:8088
       # How long a fix proposal waits for one of its verification runs to
       # reach a verdict. Counted from when that run leaves the release
@@ -1197,20 +1197,20 @@ services:
       # (agentRemediation.workflows.files), mounted below.
       AGENT_REMEDIATION_WORKFLOWS_DIR: /etc/continuo-workflows
     volumeMounts:
-      - {name: service-repos, mountPath: /etc/continuo, readOnly: true}
+      - {name: project-repos, mountPath: /etc/continuo, readOnly: true}
       - {name: remediation-workflows, mountPath: /etc/continuo-workflows, readOnly: true}
-    # agent-remediation reads service_repos.yaml and its remediation files only
+    # agent-remediation reads project_repos.yaml and its remediation files only
     # at startup. An empty configMap.name mounts the chart's ConfigMap of the
-    # volume's name: service-repos (serviceRepos, or files/service_repos.yaml
+    # volume's name: project-repos (projectRepos, or files/project_repos.yaml
     # when that is empty), or agent-remediation-workflows
     # (agentRemediation.workflows.files) while the volume is mounted at
-    # AGENT_REMEDIATION_WORKFLOWS_DIR; any other volume mounts service-repos.
+    # AGENT_REMEDIATION_WORKFLOWS_DIR; any other volume mounts project-repos.
     # The digest of each is on the pod template, so
     # `helm upgrade` rolls agent-remediation when one changes. Helm cannot hash
     # a ConfigMap of your own named here: after editing it, run
     # `kubectl rollout restart deployment/agent-remediation`.
     volumes:
-      - name: service-repos
+      - name: project-repos
         configMap: {name: ""}
       - name: remediation-workflows
         configMap: {name: ""}

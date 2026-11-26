@@ -46,7 +46,7 @@ type TaskDispatchHandler struct {
 // NewTaskDispatchHandler constructs the handler; jobs is the watch's cache,
 // read for a Job of the attempt, lookup reads the Job from the Kubernetes
 // API before an attempt is reported lost, and commands tells whether the
-// dbt-commands block of a full refresh's service defines its command.
+// dbt-commands block of a full refresh's project defines its command.
 func NewTaskDispatchHandler(jobs ports.JobCache, lookup ports.JobLookup, commands ports.CommandResolver, metrics ports.StopMetrics,
 	logger *slog.Logger) *TaskDispatchHandler {
 	return &TaskDispatchHandler{jobs: jobs, lookup: lookup, commands: commands, metrics: metrics, logger: logger, now: time.Now}
@@ -149,7 +149,7 @@ func (h *TaskDispatchHandler) fullRefreshProblem(cmd command.DeployTask) (pkgmod
 	if pkgmodel.Operation(cmd.Operation) != pkgmodel.OperationFullRefresh || !nodeType.SupportsFullRefresh() {
 		return "", ""
 	}
-	block, defined := h.commands.FullRefreshBlock(cmd.ServiceName, nodeType)
+	block, defined := h.commands.FullRefreshBlock(cmd.ProjectName, nodeType)
 	if defined {
 		return "", ""
 	}

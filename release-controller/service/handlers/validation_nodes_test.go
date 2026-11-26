@@ -9,9 +9,9 @@ import (
 
 func TestValidationNodesInOrder_CarriesRelationNameOnlyWhenSet(t *testing.T) {
 	topo := release.Topology{
-		{UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders", RelationName: "Orders_Tbl", NodeType: "dbt-model", ServiceName: "s", ImageTag: "t"},
-		{UniqueID: "analytics.dim.v2", SchemaName: "analytics", TableName: "dim.v2", RelationName: "dim_v2", NodeType: "dbt-model", ServiceName: "s", ImageTag: "t"},
-		{UniqueID: "analytics.plain", SchemaName: "analytics", TableName: "plain", NodeType: "dbt-model", ServiceName: "s", ImageTag: "t"},
+		{UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders", RelationName: "Orders_Tbl", NodeType: "dbt-model", ProjectName: "s", ImageTag: "t"},
+		{UniqueID: "analytics.dim.v2", SchemaName: "analytics", TableName: "dim.v2", RelationName: "dim_v2", NodeType: "dbt-model", ProjectName: "s", ImageTag: "t"},
+		{UniqueID: "analytics.plain", SchemaName: "analytics", TableName: "plain", NodeType: "dbt-model", ProjectName: "s", ImageTag: "t"},
 	}
 	ids := []string{"analytics.dim.v2", "analytics.orders", "analytics.plain"}
 	in := map[string]bool{"analytics.dim.v2": true, "analytics.orders": true, "analytics.plain": true}

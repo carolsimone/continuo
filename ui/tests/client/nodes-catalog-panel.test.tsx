@@ -7,23 +7,23 @@ import NodesCatalogPanel from '../../src/client/NodesCatalogPanel';
 const page = {
   total_count: 2,
   nodes: [
-    { service_name: 'service-1', schema_name: 'an', table_name: 'fct_orders',
+    { project_name: 'service-1', schema_name: 'an', table_name: 'fct_orders',
       task_count: 51, success_rate_pct: 82, avg_duration_sec: 34, p95_duration_sec: 69,
       last_status: 'failed', last_run_at: '2026-06-08T11:48:00Z', node_type: 'dbt-model', dormant: false },
-    { service_name: 'service-2', schema_name: 'an', table_name: 'dim_products',
+    { project_name: 'service-2', schema_name: 'an', table_name: 'dim_products',
       task_count: 40, success_rate_pct: 91, avg_duration_sec: 11, p95_duration_sec: 28,
       last_status: 'succeeded', last_run_at: '2026-06-08T09:00:00Z', node_type: 'dbt-model', dormant: false },
   ],
 };
 
-// withLookups answers the name and service lookups the panel reads beside
-// its pages with names and services, and hands every other read to pages, so
+// withLookups answers the name and project lookups the panel reads beside
+// its pages with names and projects, and hands every other read to pages, so
 // a test's own page mock sees only the page reads.
-function withLookups(pages: (url: string) => Promise<any>, names: string[] = [], services: string[] = []) {
+function withLookups(pages: (url: string) => Promise<any>, names: string[] = [], projects: string[] = []) {
   return (url: any) => {
     const u = String(url);
     if (u.includes('/api/nodes/names')) return Promise.resolve({ ok: true, json: async () => ({ names }) });
-    if (u.includes('/api/nodes/services')) return Promise.resolve({ ok: true, json: async () => ({ services }) });
+    if (u.includes('/api/nodes/projects')) return Promise.resolve({ ok: true, json: async () => ({ projects }) });
     return pages(u);
   };
 }
@@ -61,17 +61,17 @@ describe('NodesCatalogPanel', () => {
     expect(opts).toContain('rpt_revenue'); // from /names, NOT present in the catalog page
   });
 
-  it('offers every service of /api/nodes/services in the Service filter, and keeps them once one is chosen', async () => {
+  it('offers every project of /api/nodes/projects in the Project filter, and keeps them once one is chosen', async () => {
     const { container } = render(<MemoryRouter><NodesCatalogPanel /></MemoryRouter>);
     await screen.findByText('fct_orders');
-    const options = () => Array.from(container.querySelectorAll('#node-service option'))
+    const options = () => Array.from(container.querySelectorAll('#node-project option'))
       .map(o => (o as HTMLOptionElement).value);
     // service-3 has no row on the page: its nodes never ran.
     await vi.waitFor(() => expect(options()).toEqual(['', 'service-1', 'service-2', 'service-3']));
 
-    fireEvent.change(screen.getByLabelText('Service'), { target: { value: 'service-3' } });
+    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'service-3' } });
     await vi.waitFor(() => expect(fetchMock.mock.calls.map(([u]) => String(u)))
-      .toContain('/api/nodes?operation=run&service=service-3&limit=50&offset=0'));
+      .toContain('/api/nodes?operation=run&project=service-3&limit=50&offset=0'));
     expect(options()).toEqual(['', 'service-1', 'service-2', 'service-3']);
   });
 
@@ -140,7 +140,7 @@ describe('NodesCatalogPanel', () => {
   });
 
   it('lists a never-run node with "never" and dashes', async () => {
-    const neverRan = { service_name: 'service-1', schema_name: 'an', table_name: 'stg_backfill',
+    const neverRan = { project_name: 'service-1', schema_name: 'an', table_name: 'stg_backfill',
       task_count: 0, success_rate_pct: null, avg_duration_sec: null, p95_duration_sec: null,
       last_status: null, last_run_at: null, operation: 'run', timeout_seconds: 3600, timeout_declared: false,
       node_type: 'dbt-model', dormant: true };
@@ -250,11 +250,11 @@ describe('NodesCatalogPanel', () => {
     let resolveStale!: (v: any) => void;
     const stalePromise = new Promise(r => { resolveStale = r; });
     const pageNew = { total_count: 1, nodes: [
-      { service_name: 'svc', schema_name: 'an', table_name: 'NEW_NODE',
+      { project_name: 'svc', schema_name: 'an', table_name: 'NEW_NODE',
         task_count: 1, success_rate_pct: 100, avg_duration_sec: 1, p95_duration_sec: 1,
         last_status: 'succeeded', last_run_at: '2026-06-08T11:00:00Z' } ] };
     const pageStale = { total_count: 99, nodes: [
-      { service_name: 'svc', schema_name: 'an', table_name: 'STALE_NODE',
+      { project_name: 'svc', schema_name: 'an', table_name: 'STALE_NODE',
         task_count: 1, success_rate_pct: 0, avg_duration_sec: 1, p95_duration_sec: 1,
         last_status: 'failed', last_run_at: '2026-06-08T10:00:00Z' } ] };
     let catalogCall = 0;

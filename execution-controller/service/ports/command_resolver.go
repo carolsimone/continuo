@@ -6,44 +6,44 @@ import (
 
 // CommandResolver resolves the container argv for every dbt operation the
 // execution-controller dispatches to a Kubernetes Job. Implementations resolve a team's
-// declared command dialect with precedence service override > deployment
+// declared command dialect with precedence project override > deployment
 // default > built-in plain dbt, so events keep carrying intent (node type +
 // table name) and command strings exist only at Job-build time.
 type CommandResolver interface {
 	// NodeCommand returns the argv for op against node, for the given
-	// service. For OperationRun, nt (model, seed, or snapshot) selects the
+	// project. For OperationRun, nt (model, seed, or snapshot) selects the
 	// verb — a seed resolves to its plain seed command, the one every
 	// automatic seed load runs (what it does to the table depends on the
 	// warehouse and the seed's +full_refresh, see dbt-commands.yaml);
 	// OperationTest and OperationBuild resolve to a fixed dbt verb regardless
-	// of nt. OperationFullRefresh resolves a model to the service's
+	// of nt. OperationFullRefresh resolves a model to the project's
 	// full_refresh command and a seed to its seed_full_refresh command. The
 	// error wraps events.ErrPermanent when the node type cannot be
-	// full-refreshed or the service's command block defines no full_refresh
+	// full-refreshed or the project's command block defines no full_refresh
 	// (model) or seed_full_refresh (seed) command. An unknown-external node type has
 	// no command for any operation: it is refused with an error that wraps
 	// both events.ErrPermanent and deploy.ErrInvalidNodeType, which is how the
 	// dispatcher records the failure as invalid_node_type.
-	NodeCommand(serviceName string, op pkg_model.Operation, nt pkg_model.NodeType, node string) ([]string, error)
-	// FullRefreshBlock names the dbt-commands block that governs the service
-	// ("services.<name>" when the service has an override, else "default")
+	NodeCommand(projectName string, op pkg_model.Operation, nt pkg_model.NodeType, node string) ([]string, error)
+	// FullRefreshBlock names the dbt-commands block that governs the project
+	// ("projects.<name>" when the project has an override, else "default")
 	// and reports whether that block defines the full refresh command of nt:
 	// full_refresh for a model, seed_full_refresh for a seed. A node type that
 	// cannot be full-refreshed has none.
-	FullRefreshBlock(serviceName string, nt pkg_model.NodeType) (block string, defined bool)
+	FullRefreshBlock(projectName string, nt pkg_model.NodeType) (block string, defined bool)
 	// SeedBuildCommand returns the argv for building a seed into the
-	// release's candidate schema. When the service has no seed_build
+	// release's candidate schema. When the project has no seed_build
 	// template it falls back to the seed command; schema routing then relies
 	// on the DBT_TARGET_SCHEMA env var contract.
-	SeedBuildCommand(serviceName, node, targetSchema string) []string
+	SeedBuildCommand(projectName, node, targetSchema string) []string
 	// CompileCommand returns the compile argv and the absolute path where
-	// the service's tool writes manifest.json after compiling.
-	CompileCommand(serviceName string) (argv []string, manifestPath string)
+	// the project's tool writes manifest.json after compiling.
+	CompileCommand(projectName string) (argv []string, manifestPath string)
 	// ParseCommand returns the argv that runs the team's dbt parse for the
 	// compile Job's parse-export/rehearsal containers.
-	ParseCommand(serviceName string) []string
+	ParseCommand(projectName string) []string
 	// PartialParsePath returns the absolute in-container path where the
-	// service's dbt writes partial_parse.msgpack (explicit
+	// project's dbt writes partial_parse.msgpack (explicit
 	// compile.partial_parse_path, else the manifest_path's directory).
-	PartialParsePath(serviceName string) string
+	PartialParsePath(projectName string) string
 }

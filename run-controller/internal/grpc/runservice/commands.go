@@ -100,8 +100,8 @@ func (s *Server) TriggerSingleNodeRun(ctx context.Context, req *runv1.TriggerSin
 	if err != nil {
 		return nil, err
 	}
-	if req.GetServiceName() == "" || req.GetSchemaName() == "" || req.GetTableName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "service_name, schema_name and table_name are required")
+	if req.GetProjectName() == "" || req.GetSchemaName() == "" || req.GetTableName() == "" {
+		return nil, status.Error(codes.InvalidArgument, "project_name, schema_name and table_name are required")
 	}
 	var sourceID *uuid.UUID
 	switch run.MetadataSource(req.GetMetadataSource()) {
@@ -122,7 +122,7 @@ func (s *Server) TriggerSingleNodeRun(ctx context.Context, req *runv1.TriggerSin
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid operation: %v", err)
 	}
-	target := run.NodeID{ServiceName: req.GetServiceName(), SchemaName: req.GetSchemaName(), TableName: req.GetTableName()}
+	target := run.NodeID{ProjectName: req.GetProjectName(), SchemaName: req.GetSchemaName(), TableName: req.GetTableName()}
 	res, err := s.commands.TriggerSingleNodeRun(ctx, svchandlers.TriggerSingleNodeRunCommand{
 		RequestID: requestID,
 		TriggerSingleNodeRunInput: svchandlers.TriggerSingleNodeRunInput{
@@ -168,7 +168,7 @@ func (s *Server) PreviewRebase(ctx context.Context, req *runv1.PreviewRebaseRequ
 	}
 	for _, c := range got.Changed {
 		resp.ChangedNodes = append(resp.ChangedNodes, &runv1.ChangedUpstreamNode{
-			ServiceName:        c.ServiceName,
+			ProjectName:        c.ProjectName,
 			SchemaName:         c.SchemaName,
 			TableName:          c.TableName,
 			Downstream:         num.ClampInt32(c.Downstream),

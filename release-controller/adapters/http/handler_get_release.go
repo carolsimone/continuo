@@ -13,7 +13,7 @@ func getReleaseResponse(rel *pipeline.Run) map[string]any {
 	body := map[string]any{
 		"release_id":          rel.ID(),
 		"status":              string(rel.Status()),
-		"changed_service":     rel.ChangedService(),
+		"changed_project":     rel.ChangedProject(),
 		"manifest_kind":       string(rel.ManifestKind()),
 		"transitions":         serialization.TransitionsFromDomain(rel.Transitions()),
 		"validation_node_ids": rel.ValidationNodeIDs(),

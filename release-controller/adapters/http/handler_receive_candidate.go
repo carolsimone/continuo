@@ -15,7 +15,7 @@ import (
 // one onto handlers.ReceiveCandidateInput; the application layer never sees
 // the wire field names.
 type ReceiveCandidateRequest struct {
-	Service           string `json:"service"`
+	Project           string `json:"project"`
 	ReleaseID         string `json:"release_id"`
 	ImageTag          string `json:"image_tag"`
 	Bootstrap         bool   `json:"bootstrap"`
@@ -30,7 +30,7 @@ type ReceiveCandidateRequest struct {
 
 func (b ReceiveCandidateRequest) toInput() handlers.ReceiveCandidateInput {
 	return handlers.ReceiveCandidateInput{
-		Service:           b.Service,
+		Project:           b.Project,
 		ReleaseID:         b.ReleaseID,
 		ImageTag:          b.ImageTag,
 		Bootstrap:         b.Bootstrap,
@@ -59,7 +59,7 @@ func (s *Server) handleReceiveCandidate(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		if errors.Is(err, handlers.ErrRunKindConflict) || errors.Is(err, handlers.ErrReleaseIDConflict) ||
-			errors.Is(err, handlers.ErrOntologyServiceConflict) {
+			errors.Is(err, handlers.ErrOntologyProjectConflict) {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}

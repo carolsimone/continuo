@@ -168,7 +168,7 @@ var (
 // does not place, as the catalog answers for a node it does not know.
 func (c catalog) Locate(_ context.Context, uniqueID string) (string, string, error) {
 	loc := c.c.Locations[uniqueID]
-	return loc.FilePath, loc.Service, nil
+	return loc.FilePath, loc.Project, nil
 }
 
 // UpstreamChanges returns what changed upstream of the node.
@@ -203,10 +203,10 @@ type release struct{ r conformance.Release }
 
 var _ ports.ReleaseReader = release{}
 
-// ImageTag returns the release's image tag of every service.
-func (r release) ImageTag(_ context.Context, releaseID, service string) (string, error) {
+// ImageTag returns the release's image tag of every project.
+func (r release) ImageTag(_ context.Context, releaseID, project string) (string, error) {
 	if r.r.ImageTag == "" {
-		return "", fmt.Errorf("the fixture names no image tag for %s in release %s", service, releaseID)
+		return "", fmt.Errorf("the fixture names no image tag for %s in release %s", project, releaseID)
 	}
 	return r.r.ImageTag, nil
 }
@@ -222,16 +222,16 @@ func (release) ContractBundle(context.Context, string) (string, string, error) {
 	return "", "", nil
 }
 
-// imagePackages answers the package list of every service's image from the
+// imagePackages answers the package list of every project's image from the
 // fixture, or ErrNoImagePackages when the fixture names none.
 type imagePackages struct{ r conformance.Release }
 
 var _ ports.ImagePackagesSource = imagePackages{}
 
 // ImagePackages returns the fixture's package list.
-func (i imagePackages) ImagePackages(_ context.Context, releaseID, service string) (map[string]string, error) {
+func (i imagePackages) ImagePackages(_ context.Context, releaseID, project string) (map[string]string, error) {
 	if i.r.ImagePackages == nil {
-		return nil, fmt.Errorf("release %s, service %s: %w", releaseID, service, ports.ErrNoImagePackages)
+		return nil, fmt.Errorf("release %s, project %s: %w", releaseID, project, ports.ErrNoImagePackages)
 	}
 	return i.r.ImagePackages, nil
 }

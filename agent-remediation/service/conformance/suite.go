@@ -31,7 +31,7 @@ const (
 	// with the first round's calls and no more.
 	PreflightRevisionPasses Scenario = "preflight_revision_passes"
 	// PreflightRoundsSpent: pre-flight refuses the draft of every round the
-	// type allows. The members of a single or a cross-service cluster are
+	// type allows. The members of a single or a cross-project cluster are
 	// handed over as preflight_rounds_spent, in one remediation.handed_over
 	// event. The members of a shared-upstream cluster each take their own type
 	// and are proposed.
@@ -540,7 +540,7 @@ func (sr *scenarioRun) expectType(files workflow.Set, f Fixture, typ workflow.Ty
 		case workflow.ClusterSharedUpstream:
 			e.membersRanTheirTypes(files, first)
 			e.that(!e.reachedModel(first, typ), "the upstream cluster that declined before the model reached it")
-		case workflow.ClusterCrossService:
+		case workflow.ClusterCrossProject:
 			if as := e.attempts(proposal.StatusSkipped); len(as) == 1 {
 				e.membersSkipped(first, as[0], model.HandoverReasonDeclined)
 			}
@@ -556,7 +556,7 @@ func (sr *scenarioRun) expectType(files workflow.Set, f Fixture, typ workflow.Ty
 // refusedEveryRound expects pre-flight to have refused the first cluster's
 // draft in every round its type allows, with the plan's calls of one try, and
 // the cluster to have ended by its shape: a shared-upstream cluster's members
-// each ran their own type, a cross-service cluster's members were skipped with
+// each ran their own type, a cross-project cluster's members were skipped with
 // the code preflight_rounds_spent and the last round's first finding in their
 // reason, and a single cluster was handed over with its last round's first
 // finding.
@@ -565,7 +565,7 @@ func (e *expectation) refusedEveryRound(files workflow.Set, first remediation.Cl
 	switch typ.Match.Cluster {
 	case workflow.ClusterSharedUpstream:
 		e.membersRanTheirTypes(files, first)
-	case workflow.ClusterCrossService:
+	case workflow.ClusterCrossProject:
 		if as := e.attempts(proposal.StatusSkipped); len(as) == 1 {
 			e.membersSkipped(first, as[0], model.HandoverReasonPreflightRoundsSpent)
 		}

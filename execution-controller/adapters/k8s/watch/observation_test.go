@@ -90,7 +90,7 @@ func TestObservation_TheJobCreatedForAnAttemptRunsIt(t *testing.T) {
 	require.NoError(t, client.CreateQueryJob(context.Background(), k8s.JobParams{
 		JobName: "service-1-e2e-schema-ftable-e-7f3e1a2b-r2", TaskID: taskID,
 		RunID: "7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b", ScheduleName: "e2e-schedule-failure",
-		ServiceName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_e", Namespace: ns,
+		ProjectName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_e", Namespace: ns,
 		NodeType: pkgmodel.NodeTypeDbtModel, ImageTag: "v42", Attempt: 2, ActiveDeadlineSeconds: 4500,
 	}))
 	created, err := cs.BatchV1().Jobs(ns).Get(context.Background(), "service-1-e2e-schema-ftable-e-7f3e1a2b-r2", metav1.GetOptions{})
@@ -113,7 +113,7 @@ func TestObservation_ReadsTheRunIDLabel(t *testing.T) {
 	runID := "7f3e1a2b-4c5d-4e6f-8a9b-0c1d2e3f4a5b"
 	require.NoError(t, client.CreateQueryJob(context.Background(), k8s.JobParams{
 		JobName: "service-1-e2e-schema-ftable-e-7f3e1a2b", TaskID: "3e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a",
-		RunID: runID, ScheduleName: "daily", ServiceName: "service-1", SchemaName: "e2e_schema",
+		RunID: runID, ScheduleName: "daily", ProjectName: "service-1", SchemaName: "e2e_schema",
 		TableName: "ftable_e", Namespace: ns, NodeType: pkgmodel.NodeTypeDbtModel, ImageTag: "v42",
 		ActiveDeadlineSeconds: 4500,
 	}))

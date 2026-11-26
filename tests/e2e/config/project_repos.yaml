@@ -1,0 +1,28 @@
+# tests/e2e/config/project_repos.yaml
+# The project→repo-path map the local docker-compose stack runs with, bound
+# into agent-remediation at /etc/continuo/project_repos.yaml via
+# PROJECT_REPO_MAP_PATH. It exists so the e2e fixture projects below stay out
+# of the map agent-remediation documents for operators
+# (agent-remediation/config/project_repos.yaml) and out of the one the chart
+# ships (deploy/continuo/files/project_repos.yaml).
+#
+# Every project the compose stack can produce a fix for must appear here: a
+# verification run is routed by the project root that owns the edited file,
+# so a project missing from the map has its fix recorded as unverifiable rather
+# than being verified, and compile, seed, and duplicate-table proposals for it
+# are skipped outright. Add a project here when a new e2e test proposes a fix
+# for it, then restart agent-remediation.
+projects:
+  # Demo dbt projects, from the shared local checkout.
+  core: services/core
+  finance: services/finance
+  marketing: services/marketing
+  # dbt fixture projects the e2e suite releases and breaks on purpose.
+  service-1: services/service-1
+  service-2: services/service-2
+  service-3: services/service-3
+  # python-node fixture projects; svc-py-e2e-loop drives the retry-round test,
+  # svc-py-e2e-parse the parse-stage (unqualified read) repair.
+  svc-py-e2e: services/svc-py-e2e
+  svc-py-e2e-loop: services/svc-py-e2e-loop
+  svc-py-e2e-parse: services/svc-py-e2e-parse

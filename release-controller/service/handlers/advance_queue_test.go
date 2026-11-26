@@ -21,7 +21,7 @@ func TestAdvanceQueue_NoActive_ActivatesToCompilingAndEmitsCompileRequested(t *t
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "my-bucket"
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc-a", ReleaseID: "rA", ImageTag: "tag-a", Repo: "acme/demo", CommitSHA: "deadbeef",
+		Project: "svc-a", ReleaseID: "rA", ImageTag: "tag-a", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
@@ -35,14 +35,14 @@ func TestAdvanceQueue_NoActive_ActivatesToCompilingAndEmitsCompileRequested(t *t
 	var payload map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(entries[0].Payload, &payload))
 
-	// Must carry release_id, service, image_tag, bucket; must NOT carry manifest_keys.
+	// Must carry release_id, project, image_tag, bucket; must NOT carry manifest_keys.
 	var releaseID string
 	require.NoError(t, json.Unmarshal(payload["release_id"], &releaseID))
 	assert.Equal(t, "rA", releaseID)
 
-	var service string
-	require.NoError(t, json.Unmarshal(payload["service"], &service))
-	assert.Equal(t, "svc-a", service)
+	var project string
+	require.NoError(t, json.Unmarshal(payload["project"], &project))
+	assert.Equal(t, "svc-a", project)
 
 	var imageTag string
 	require.NoError(t, json.Unmarshal(payload["image_tag"], &imageTag))
@@ -62,16 +62,16 @@ func TestAdvanceQueue_NoActive_ActivatesToCompilingAndEmitsCompileRequested(t *t
 	assert.False(t, hasManifestsURI, "manifests_uri must not appear in the payload")
 }
 
-func TestAdvanceQueue_OtherServicesIncluded_ImageTagsAssembledOnRelease(t *testing.T) {
+func TestAdvanceQueue_OtherProjectsIncluded_ImageTagsAssembledOnRelease(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "bucket"
 
-	// Pre-seed two other services' production pointers.
+	// Pre-seed two other projects' production pointers.
 	store.SeedServiceProd(release.NewServiceProd("svc-b", "rOLD1", "s3://bucket/svc-b/rOLD1/manifest.json", "tag-b-old", release.ManifestKindDbt, time.Unix(0, 0)))
 	store.SeedServiceProd(release.NewServiceProd("svc-c", "rOLD2", "s3://bucket/svc-c/rOLD2/manifest.json", "tag-c-old", release.ManifestKindDbt, time.Unix(0, 0)))
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc-a", ReleaseID: "rNEW", ImageTag: "tag-a-new", Repo: "acme/demo", CommitSHA: "deadbeef",
+		Project: "svc-a", ReleaseID: "rNEW", ImageTag: "tag-a-new", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
@@ -82,10 +82,10 @@ func TestAdvanceQueue_OtherServicesIncluded_ImageTagsAssembledOnRelease(t *testi
 	var payload map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(entries[0].Payload, &payload))
 
-	// compile.requested carries the changed service + its image_tag.
-	var service string
-	require.NoError(t, json.Unmarshal(payload["service"], &service))
-	assert.Equal(t, "svc-a", service)
+	// compile.requested carries the changed project + its image_tag.
+	var project string
+	require.NoError(t, json.Unmarshal(payload["project"], &project))
+	assert.Equal(t, "svc-a", project)
 
 	var imageTag string
 	require.NoError(t, json.Unmarshal(payload["image_tag"], &imageTag))
@@ -101,21 +101,21 @@ func TestAdvanceQueue_OtherServicesIncluded_ImageTagsAssembledOnRelease(t *testi
 	}, r.ImageTags())
 }
 
-func TestAdvanceQueue_ProdSeeded_UncoveredService_BlocksActivation(t *testing.T) {
+func TestAdvanceQueue_ProdSeeded_UncoveredProject_BlocksActivation(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "bucket"
 
-	// current_prod lists three live services, but no service_prod pointers exist
+	// current_prod lists three live projects, but no service_prod pointers exist
 	// (the state right after an upgrade from the whole-snapshot model).
 	topology := release.Topology{
-		{UniqueID: "a", ServiceName: "svc-a"},
-		{UniqueID: "b", ServiceName: "svc-b"},
-		{UniqueID: "c", ServiceName: "svc-c"},
+		{UniqueID: "a", ProjectName: "svc-a"},
+		{UniqueID: "b", ProjectName: "svc-b"},
+		{UniqueID: "c", ProjectName: "svc-c"},
 	}
 	seedProd(t, deps, store, "rProd", topology, time.Unix(0, 0).UTC())
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc-a", ReleaseID: "rA", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
+		Project: "svc-a", ReleaseID: "rA", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
@@ -126,23 +126,23 @@ func TestAdvanceQueue_ProdSeeded_UncoveredService_BlocksActivation(t *testing.T)
 	assert.Empty(t, outboxEntries(store))
 }
 
-func TestAdvanceQueue_ProdSeeded_AllServicesCovered_Proceeds(t *testing.T) {
+func TestAdvanceQueue_ProdSeeded_AllProjectsCovered_Proceeds(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "bucket"
 
 	topology := release.Topology{
-		{UniqueID: "a", ServiceName: "svc-a"},
-		{UniqueID: "b", ServiceName: "svc-b"},
-		{UniqueID: "c", ServiceName: "svc-c"},
+		{UniqueID: "a", ProjectName: "svc-a"},
+		{UniqueID: "b", ProjectName: "svc-b"},
+		{UniqueID: "c", ProjectName: "svc-c"},
 	}
 	seedProd(t, deps, store, "rProd", topology, time.Unix(0, 0).UTC())
 
-	// svc-b and svc-c are covered by pointers; svc-a is the changed service.
+	// svc-b and svc-c are covered by pointers; svc-a is the changed project.
 	store.SeedServiceProd(release.NewServiceProd("svc-b", "rOLD1", "s3://bucket/svc-b/rOLD1/manifest.json", "tag-b-old", release.ManifestKindDbt, time.Unix(0, 0)))
 	store.SeedServiceProd(release.NewServiceProd("svc-c", "rOLD2", "s3://bucket/svc-c/rOLD2/manifest.json", "tag-c-old", release.ManifestKindDbt, time.Unix(0, 0)))
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc-a", ReleaseID: "rA", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
+		Project: "svc-a", ReleaseID: "rA", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
@@ -154,22 +154,22 @@ func TestAdvanceQueue_ProdSeeded_AllServicesCovered_Proceeds(t *testing.T) {
 	assert.Equal(t, streams.CompileRequestedV1, entries[0].StreamName)
 }
 
-// TestUncoveredProdServices_IgnoresUnknownExternalNodes pins that the live production
-// topology's unknown-external nodes do not count as a service without a service_prod
-// pointer: an unknown-external node has no service, so no pointer can ever cover it,
+// TestUncoveredProdProjects_IgnoresUnknownExternalNodes pins that the live production
+// topology's unknown-external nodes do not count as a project without a service_prod
+// pointer: an unknown-external node has no project, so no pointer can ever cover it,
 // and counting it would hold every release in the queue.
-func TestUncoveredProdServices_IgnoresUnknownExternalNodes(t *testing.T) {
+func TestUncoveredProdProjects_IgnoresUnknownExternalNodes(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "bucket"
 
 	seedProd(t, deps, store, "rProd", release.Topology{
 		{UniqueID: "raw.orders", SchemaName: "raw", TableName: "orders", ResolvedRelationID: "raw.orders", NodeType: "unknown-external", UpstreamUniqueIDs: []string{}},
-		{UniqueID: "b", ServiceName: "svc-b", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"raw.orders"}},
+		{UniqueID: "b", ProjectName: "svc-b", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"raw.orders"}},
 	}, time.Unix(0, 0).UTC())
 	store.SeedServiceProd(release.NewServiceProd("svc-b", "rOLD1", "s3://bucket/svc-b/rOLD1/manifest.json", "tag-b-old", release.ManifestKindDbt, time.Unix(0, 0)))
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc-a", ReleaseID: "rA", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
+		Project: "svc-a", ReleaseID: "rA", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
@@ -177,20 +177,20 @@ func TestUncoveredProdServices_IgnoresUnknownExternalNodes(t *testing.T) {
 	assert.Equal(t, pipeline.StatusCompiling, r.Status(), "svc-b is covered and the unknown-external node needs no pointer")
 }
 
-// TestUncoveredProdServices_StillBlocksOnAnUncoveredServiceBesideAnUnknownExternalNode
-// is the control: an unknown-external node is skipped, a real service without a
+// TestUncoveredProdProjects_StillBlocksOnAnUncoveredProjectBesideAnUnknownExternalNode
+// is the control: an unknown-external node is skipped, a real project without a
 // pointer still holds the release.
-func TestUncoveredProdServices_StillBlocksOnAnUncoveredServiceBesideAnUnknownExternalNode(t *testing.T) {
+func TestUncoveredProdProjects_StillBlocksOnAnUncoveredProjectBesideAnUnknownExternalNode(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "bucket"
 
 	seedProd(t, deps, store, "rProd", release.Topology{
 		{UniqueID: "raw.orders", SchemaName: "raw", TableName: "orders", ResolvedRelationID: "raw.orders", NodeType: "unknown-external", UpstreamUniqueIDs: []string{}},
-		{UniqueID: "b", ServiceName: "svc-b", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"raw.orders"}},
+		{UniqueID: "b", ProjectName: "svc-b", NodeType: "dbt-model", UpstreamUniqueIDs: []string{"raw.orders"}},
 	}, time.Unix(0, 0).UTC())
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc-a", ReleaseID: "rA", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
+		Project: "svc-a", ReleaseID: "rA", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
@@ -202,11 +202,11 @@ func TestAdvanceQueue_ActiveExists_DoesNothing(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc", ReleaseID: "rA", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
+		Project: "svc", ReleaseID: "rA", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc", ReleaseID: "rB", ImageTag: "t2", Repo: "acme/demo", CommitSHA: "deadbeef",
+		Project: "svc", ReleaseID: "rB", ImageTag: "t2", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	rB, _ := store.GetRelease("rB")
@@ -227,7 +227,7 @@ func TestAdvanceQueue_PythonODCSRelease_SkipsCompile_EmitsReleaseRequested(t *te
 	store.SeedServiceProd(release.NewServiceProd("svc-dbt", "rOld", "s3://b/svc-dbt/rOld/manifest.json", "t-old", release.ManifestKindDbt, time.Unix(0, 0)))
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc-py", ReleaseID: "rPy", ImageTag: "img:1", Repo: "acme/py", CommitSHA: "cafebabe",
+		Project: "svc-py", ReleaseID: "rPy", ImageTag: "img:1", Repo: "acme/py", CommitSHA: "cafebabe",
 		Kind: "python-odcs",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
@@ -244,7 +244,7 @@ func TestAdvanceQueue_PythonODCSRelease_SkipsCompile_EmitsReleaseRequested(t *te
 	var p struct {
 		ReleaseID    string `json:"release_id"`
 		ManifestKeys []struct {
-			Service string `json:"service"`
+			Project string `json:"project"`
 			S3URI   string `json:"s3_uri"`
 			Kind    string `json:"kind"`
 		} `json:"manifest_keys"`
@@ -252,22 +252,22 @@ func TestAdvanceQueue_PythonODCSRelease_SkipsCompile_EmitsReleaseRequested(t *te
 	require.NoError(t, json.Unmarshal(entries[0].Payload, &p))
 	assert.Equal(t, "rPy", p.ReleaseID)
 	require.Len(t, p.ManifestKeys, 2)
-	byService := map[string]string{}
+	byProject := map[string]string{}
 	uris := map[string]string{}
 	for _, k := range p.ManifestKeys {
-		byService[k.Service] = k.Kind
-		uris[k.Service] = k.S3URI
+		byProject[k.Project] = k.Kind
+		uris[k.Project] = k.S3URI
 	}
-	assert.Equal(t, map[string]string{"svc-py": "python-odcs", "svc-dbt": "dbt"}, byService)
+	assert.Equal(t, map[string]string{"svc-py": "python-odcs", "svc-dbt": "dbt"}, byProject)
 	assert.Equal(t, "s3://b/svc-py/rPy/odcs-bundle.json", uris["svc-py"])
 	assert.Equal(t, "s3://b/svc-dbt/rOld/manifest.json", uris["svc-dbt"])
 	assert.Equal(t, map[string]string{"svc-py": "img:1", "svc-dbt": "t-old"}, releaseRequestedImageTags(t, entries[0].Payload),
 		"release.requested carries the run's assembled image tags: topology-controller joins exactly these onto every node")
 }
 
-// The ontology service ships its ontology file before the release is
+// The ontology project ships its ontology file before the release is
 // requested, so its release has no compile leg: it activates straight into
-// Parsing, and release.requested names the file as the service's artifact.
+// Parsing, and release.requested names the file as the project's artifact.
 func TestAdvanceQueue_AnOntologyReleaseGoesStraightToParsing(t *testing.T) {
 	deps, store := ontologyDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
@@ -287,7 +287,7 @@ func TestAdvanceQueue_AnOntologyReleaseGoesStraightToParsing(t *testing.T) {
 
 	var p struct {
 		ManifestKeys []struct {
-			Service string `json:"service"`
+			Project string `json:"project"`
 			S3URI   string `json:"s3_uri"`
 			Kind    string `json:"kind"`
 		} `json:"manifest_keys"`
@@ -296,8 +296,8 @@ func TestAdvanceQueue_AnOntologyReleaseGoesStraightToParsing(t *testing.T) {
 	kinds := map[string]string{}
 	uris := map[string]string{}
 	for _, k := range p.ManifestKeys {
-		kinds[k.Service] = k.Kind
-		uris[k.Service] = k.S3URI
+		kinds[k.Project] = k.Kind
+		uris[k.Project] = k.S3URI
 	}
 	assert.Equal(t, map[string]string{"company-ontology": "ontology", "svc-dbt": "dbt"}, kinds)
 	assert.Equal(t, "s3://b/company-ontology/rOnt/ontology.yaml", uris["company-ontology"])
@@ -308,7 +308,7 @@ func TestAdvanceQueue_DbtRelease_StillCompiles(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc-a", ReleaseID: "rDbt", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
+		Project: "svc-a", ReleaseID: "rDbt", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	r, _ := store.GetRelease("rDbt")
@@ -322,10 +322,10 @@ func TestAdvanceQueue_PicksOldestFirst(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc", ReleaseID: "rOLD", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
+		Project: "svc", ReleaseID: "rOLD", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc", ReleaseID: "rNEW", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
+		Project: "svc", ReleaseID: "rNEW", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	rOLD, _ := store.GetRelease("rOLD")
@@ -366,7 +366,7 @@ func verifiedOriginal(id string, now time.Time) *pipeline.Run {
 		ID:             id,
 		Status:         pipeline.StatusRejected,
 		ImageTags:      map[string]string{"svc-a": "tag-a-candidate", "svc-b": "tag-b-old"},
-		ChangedService: "svc-a",
+		ChangedProject: "svc-a",
 		// Activation only needs to know the verified release was parsed; it
 		// never reads the artifact.
 		CandidateTopology: release.TopologyRef{
@@ -378,7 +378,7 @@ func verifiedOriginal(id string, now time.Time) *pipeline.Run {
 }
 
 // TestAdvanceQueue_VerificationVerifiesTheRejectedReleasesCandidate covers the
-// fix whose edit lands in a DIFFERENT service than the one whose release was
+// fix whose edit lands in a DIFFERENT project than the one whose release was
 // rejected: the rejection came from svc-a's candidate, so verifying the fix
 // against svc-a's PRODUCTION manifest would judge it on code the rejection was
 // never about. The verification names the release it verifies, and svc-a is
@@ -398,7 +398,7 @@ func TestAdvanceQueue_VerificationVerifiesTheRejectedReleasesCandidate(t *testin
 	uris := manifestKeyURIs(t, entries[0].Payload)
 	assert.Equal(t, "s3://b/svc-a/rO/manifest.json", uris["svc-a"],
 		"svc-a must be assembled from the rejected release's candidate, not from its production pointer")
-	assert.Equal(t, "s3://b/svc-b/rVerify/odcs-bundle.json", uris["svc-b"], "the verification run's own service is its own delta")
+	assert.Equal(t, "s3://b/svc-b/rVerify/odcs-bundle.json", uris["svc-b"], "the verification run's own project is its own delta")
 
 	r, _ := store.GetRelease("rVerify")
 	assert.Equal(t, "tag-a-candidate", r.ImageTags()["svc-a"],
@@ -443,7 +443,7 @@ func TestAdvanceQueue_VerificationVerifyingAStoredPythonRelease_FallsBackToProd(
 		ID:                original.ID(),
 		Status:            original.Status(),
 		ImageTags:         original.ImageTags(),
-		ChangedService:    original.ChangedService(),
+		ChangedProject:    original.ChangedProject(),
 		CandidateTopology: original.CandidateTopologyRef(),
 		ManifestKind:      release.ManifestKindPython,
 		CreatedAt:         original.CreatedAt(),
@@ -467,11 +467,11 @@ func TestAdvanceQueue_VerificationVerifyingAStoredPythonRelease_FallsBackToProd(
 	assert.Contains(t, logBuf.String(), "assembling from production instead")
 }
 
-// TestAdvanceQueue_VerificationVerifyingItsOwnServicesRelease_ChangesNothing
-// covers the ordinary verification, whose fix edits the very service whose
-// release was rejected: that service is the verification's own delta
+// TestAdvanceQueue_VerificationVerifyingItsOwnProjectsRelease_ChangesNothing
+// covers the ordinary verification, whose fix edits the very project whose
+// release was rejected: that project is the verification's own delta
 // already, so there is nothing to override.
-func TestAdvanceQueue_VerificationVerifyingItsOwnServicesRelease_ChangesNothing(t *testing.T) {
+func TestAdvanceQueue_VerificationVerifyingItsOwnProjectsRelease_ChangesNothing(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	store.SeedRelease(verifiedOriginal("rO2", deps.Clock.Now()))
@@ -488,19 +488,19 @@ func TestAdvanceQueue_VerificationVerifyingItsOwnServicesRelease_ChangesNothing(
 	assert.Equal(t, "img:2", r.ImageTags()["svc-a"])
 }
 
-// manifestKeyURIs decodes a release.requested payload into service → s3 uri.
+// manifestKeyURIs decodes a release.requested payload into project → s3 uri.
 func manifestKeyURIs(t *testing.T, payload []byte) map[string]string {
 	t.Helper()
 	var p struct {
 		ManifestKeys []struct {
-			Service string `json:"service"`
+			Project string `json:"project"`
 			S3URI   string `json:"s3_uri"`
 		} `json:"manifest_keys"`
 	}
 	require.NoError(t, json.Unmarshal(payload, &p))
 	uris := map[string]string{}
 	for _, k := range p.ManifestKeys {
-		uris[k.Service] = k.S3URI
+		uris[k.Project] = k.S3URI
 	}
 	return uris
 }
@@ -517,18 +517,18 @@ func releaseRequestedImageTags(t *testing.T, payload []byte) map[string]string {
 }
 
 // assertKindChangeRejectedAtActivation checks that the queued run releaseID of
-// the service service ended with kind-change refusal text as an invalid_artifact
-// rejection, was never parsed, and left the service's service_prod row and
+// the project named project ended with kind-change refusal text as an invalid_artifact
+// rejection, was never parsed, and left the project's service_prod row and
 // current_prod as they were.
-func assertKindChangeRejectedAtActivation(t *testing.T, store *fakeStore, releaseID, service, refusal string, row *release.ServiceProd) {
+func assertKindChangeRejectedAtActivation(t *testing.T, store *fakeStore, releaseID, project, refusal string, row *release.ServiceProd) {
 	t.Helper()
 	r := mustGetRelease(t, store, releaseID)
 	assert.Equal(t, pipeline.StatusRejected, r.Status(), "a kind change is rejected, never promoted")
 	assert.Equal(t, string(pkg_model.RejectReasonInvalidArtifact), r.FailReason())
 	assert.Equal(t, refusal, r.FailDetail())
 
-	assert.Equal(t, row.ManifestKind(), store.GetServiceProd(service).ManifestKind(), "the service keeps its stored kind")
-	assert.Equal(t, row.ReleaseID(), store.GetServiceProd(service).ReleaseID(), "no service_prod row is written")
+	assert.Equal(t, row.ManifestKind(), store.GetServiceProd(project).ManifestKind(), "the project keeps its stored kind")
+	assert.Equal(t, row.ReleaseID(), store.GetServiceProd(project).ReleaseID(), "no service_prod row is written")
 	assert.Zero(t, store.CurrentProdUpsertCalls(), "current_prod is not moved")
 	for _, e := range store.OutboxEntries() {
 		assert.NotEqual(t, streams.ReleaseRequestedV1, e.StreamName, "a refused kind change requests no parse")
@@ -547,9 +547,9 @@ func assertKindChangeRejectedAtActivation(t *testing.T, store *fakeStore, releas
 	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
 }
 
-// A dbt release of the service may promote between the intake of a queued
-// ontology release of the same service and its activation, so activation
-// refuses the kind change too: the ontology file would replace the service's
+// A dbt release of the project may promote between the intake of a queued
+// ontology release of the same project and its activation, so activation
+// refuses the kind change too: the ontology file would replace the project's
 // manifest and drop its nodes.
 func TestAdvanceQueue_AnOntologyRunOfAServiceNowReleasedAsDbtIsRejectedAtActivation(t *testing.T) {
 	deps, store := ontologyDeps(time.Unix(200, 0).UTC())
@@ -564,15 +564,15 @@ func TestAdvanceQueue_AnOntologyRunOfAServiceNowReleasedAsDbtIsRejectedAtActivat
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	assertKindChangeRejectedAtActivation(t, store, "rOnt", "svc-x",
-		`service "svc-x" is released as kind "dbt": a service cannot change between kind "ontology" and a node kind`, row)
+		`project "svc-x" is released as kind "dbt": a project cannot change between kind "ontology" and a node kind`, row)
 	assert.Equal(t, pipeline.StatusCompiling, mustGetRelease(t, store, "rBehind").Status(),
 		"the queue activates the next run once the kind change is rejected")
 }
 
-// The ontology service of an install may be released as a node kind by a dbt
+// The ontology project of an install may be released as a node kind by a dbt
 // run queued before the ontology was released: activation refuses it, so the
-// install's ontology is not silently replaced by a dbt service.
-func TestAdvanceQueue_ADbtRunOfTheOntologyServiceIsRejectedAtActivation(t *testing.T) {
+// install's ontology is not silently replaced by a dbt project.
+func TestAdvanceQueue_ADbtRunOfTheOntologyProjectIsRejectedAtActivation(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	row := release.NewServiceProd("svc-x", "rOnt", "s3://b/svc-x/rOnt/ontology.yaml", "img:1", release.ManifestKindOntology, time.Unix(0, 0))
@@ -583,12 +583,12 @@ func TestAdvanceQueue_ADbtRunOfTheOntologyServiceIsRejectedAtActivation(t *testi
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	assertKindChangeRejectedAtActivation(t, store, "rDbt", "svc-x",
-		`service "svc-x" is released as kind "ontology": a service cannot change between kind "ontology" and a node kind`, row)
+		`project "svc-x" is released as kind "ontology": a project cannot change between kind "ontology" and a node kind`, row)
 }
 
-// A run whose kind is on the same side of the line as its service's stored
+// A run whose kind is on the same side of the line as its project's stored
 // kind activates as usual.
-func TestAdvanceQueue_ARunKeepingItsServicesKindSideIsNotRejected(t *testing.T) {
+func TestAdvanceQueue_ARunKeepingItsProjectsKindSideIsNotRejected(t *testing.T) {
 	deps, store := ontologyDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	store.SeedServiceProd(release.NewServiceProd("svc-x", "rOnt", "s3://b/svc-x/rOnt/ontology.yaml", "img:1", release.ManifestKindOntology, time.Unix(0, 0)))

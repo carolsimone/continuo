@@ -15,7 +15,7 @@ const runAt = (id: string, status: string) => ({
 const tasksOf = (table: string, status = 'running') => ({
   total_count: 1,
   tasks: [{
-    task_id: `t-${table}`, service_name: 'svc', schema_name: 'public', table_name: table,
+    task_id: `t-${table}`, project_name: 'svc', schema_name: 'public', table_name: table,
     job_name: table, status, attempt: 0, max_retries: 0, created_at: null,
   }],
 });

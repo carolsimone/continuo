@@ -26,7 +26,7 @@ type seedBuildRequestedDTO struct {
 
 type seedBuildNodeDTO struct {
 	UniqueID    string `json:"unique_id"`
-	ServiceName string `json:"service_name"`
+	ProjectName string `json:"project_name"`
 	NodeType    string `json:"node_type"`
 	SchemaName  string `json:"schema_name"`
 	TableName   string `json:"table_name"`
@@ -73,8 +73,8 @@ func ParseSeedBuildRequested(msg goredis.XMessage) (events.SeedBuildRequested, e
 		case pkg_model.NodeType(s.NodeType).IsExternal():
 			return events.SeedBuildRequested{},
 				fmt.Errorf("seed[%d] (%s) is an unknown-external node: nothing builds it", i, s.UniqueID)
-		case s.ServiceName == "":
-			return events.SeedBuildRequested{}, fmt.Errorf("seed[%d] (%s) missing service_name", i, s.UniqueID)
+		case s.ProjectName == "":
+			return events.SeedBuildRequested{}, fmt.Errorf("seed[%d] (%s) missing project_name", i, s.UniqueID)
 		case s.SchemaName == "":
 			return events.SeedBuildRequested{}, fmt.Errorf("seed[%d] (%s) missing schema_name", i, s.UniqueID)
 		case s.TableName == "":
@@ -94,7 +94,7 @@ func ParseSeedBuildRequested(msg goredis.XMessage) (events.SeedBuildRequested, e
 		}
 		seeds = append(seeds, events.SeedBuildNode{
 			NodeID:        s.UniqueID,
-			ServiceName:   s.ServiceName,
+			ProjectName:   s.ProjectName,
 			SchemaName:    s.SchemaName,
 			TableName:     s.TableName,
 			NodeType:      nodeType,

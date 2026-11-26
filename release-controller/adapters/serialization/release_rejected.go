@@ -24,7 +24,7 @@ type parseNodeDTO struct {
 	Kind     string `json:"kind"`
 	Detail   string `json:"detail"`
 	FilePath string `json:"file_path"`
-	Service  string `json:"service"`
+	Project  string `json:"project"`
 	NodeType string `json:"node_type"`
 }
 
@@ -38,7 +38,7 @@ type compileNodeDTO struct {
 	RunResultsURI string `json:"run_results_uri,omitempty"`
 }
 
-// seedBuildNodeDTO is one seed-build-leg result. file_path and service carry
+// seedBuildNodeDTO is one seed-build-leg result. file_path and project carry
 // the source location from the candidate topology so the remediation agent can
 // locate the seed source file without querying GetNodeLocation, which only
 // holds promoted topology and cannot find newly-added seeds.
@@ -48,7 +48,7 @@ type seedBuildNodeDTO struct {
 	DBTLogURI     string `json:"dbt_log_uri,omitempty"`
 	RunResultsURI string `json:"run_results_uri,omitempty"`
 	FilePath      string `json:"file_path,omitempty"`
-	Service       string `json:"service,omitempty"`
+	Project       string `json:"project,omitempty"`
 }
 
 // changedAncestorDTO is one changed upstream of a failing validation node,
@@ -56,7 +56,7 @@ type seedBuildNodeDTO struct {
 type changedAncestorDTO struct {
 	NodeID   string `json:"node_id"`
 	FilePath string `json:"file_path,omitempty"`
-	Service  string `json:"service,omitempty"`
+	Project  string `json:"project,omitempty"`
 	Depth    int    `json:"depth"`
 }
 
@@ -74,7 +74,7 @@ type validationNodeDTO struct {
 	NodeType             string               `json:"node_type,omitempty"`
 	ValidationOp         string               `json:"validation_op,omitempty"`
 	FilePath             string               `json:"file_path,omitempty"`
-	Service              string               `json:"service,omitempty"`
+	Project              string               `json:"project,omitempty"`
 	ChangedAncestors     []changedAncestorDTO `json:"changed_ancestors,omitempty"`
 }
 
@@ -84,11 +84,11 @@ type validationNodeDTO struct {
 type duplicateNodeDTO struct {
 	NodeID        string `json:"node_id"`
 	Status        string `json:"status"`
-	Service       string `json:"service"`
+	Project       string `json:"project"`
 	FilePath      string `json:"file_path"`
 	NodeType      string `json:"node_type"`
 	RelationID    string `json:"relation_id"`
-	OtherService  string `json:"other_service"`
+	OtherProject  string `json:"other_project"`
 	OtherFilePath string `json:"other_file_path"`
 }
 
@@ -167,7 +167,7 @@ type duplicateRejectedDTO struct {
 }
 
 // unbuildableUpstreamRejectedDTO is the release.rejected:v1 body of a
-// cross-service upstream that cannot be built. It names only the release, the
+// cross-project upstream that cannot be built. It names only the release, the
 // reason and the offending edges: there is no per-node evidence a fixer could
 // act on, so the body carries none.
 type unbuildableUpstreamRejectedDTO struct {
@@ -272,7 +272,7 @@ func parseNode(n ports.RejectedNode) parseNodeDTO {
 		Kind:     n.Kind,
 		Detail:   n.Detail,
 		FilePath: n.FilePath,
-		Service:  n.Service,
+		Project:  n.Project,
 		NodeType: n.NodeType,
 	}
 }
@@ -293,7 +293,7 @@ func seedBuildNode(n ports.RejectedNode) seedBuildNodeDTO {
 		DBTLogURI:     n.DBTLogURI,
 		RunResultsURI: n.RunResultsURI,
 		FilePath:      n.FilePath,
-		Service:       n.Service,
+		Project:       n.Project,
 	}
 }
 
@@ -307,7 +307,7 @@ func validationNode(n ports.RejectedNode) validationNodeDTO {
 		NodeType:             n.NodeType,
 		ValidationOp:         string(n.ValidationOp),
 		FilePath:             n.FilePath,
-		Service:              n.Service,
+		Project:              n.Project,
 		ChangedAncestors:     mapAncestors(n.ChangedAncestors),
 	}
 }
@@ -316,11 +316,11 @@ func duplicateNode(n ports.RejectedNode) duplicateNodeDTO {
 	return duplicateNodeDTO{
 		NodeID:        n.NodeID,
 		Status:        n.Status,
-		Service:       n.Service,
+		Project:       n.Project,
 		FilePath:      n.FilePath,
 		NodeType:      n.NodeType,
 		RelationID:    n.RelationID,
-		OtherService:  n.OtherService,
+		OtherProject:  n.OtherProject,
 		OtherFilePath: n.OtherFilePath,
 	}
 }
@@ -334,7 +334,7 @@ func mapAncestors(in []ports.ChangedAncestor) []changedAncestorDTO {
 	}
 	out := make([]changedAncestorDTO, len(in))
 	for i, a := range in {
-		out[i] = changedAncestorDTO{NodeID: a.NodeID, FilePath: a.FilePath, Service: a.Service, Depth: a.Depth}
+		out[i] = changedAncestorDTO{NodeID: a.NodeID, FilePath: a.FilePath, Project: a.Project, Depth: a.Depth}
 	}
 	return out
 }

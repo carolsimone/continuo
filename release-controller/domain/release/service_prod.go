@@ -2,11 +2,11 @@ package release
 
 import "time"
 
-// ServiceProd is the per-service production pointer: it records which manifest
-// and image are currently live for a single service. The full production
-// topology is assembled by collecting every service's pointer at release time.
+// ServiceProd is the per-project production pointer: it records which manifest
+// and image are currently live for a single project. The full production
+// topology is assembled by collecting every project's pointer at release time.
 type ServiceProd struct {
-	serviceName   string
+	projectName   string
 	releaseID     string
 	manifestS3Key string
 	imageTag      string
@@ -15,11 +15,11 @@ type ServiceProd struct {
 }
 
 // NewServiceProd constructs a ServiceProd with all fields set. manifestKind
-// records how this service's artifact is parsed; it follows the promoted
-// release's kind, so a service can migrate dbt→python across releases.
-func NewServiceProd(serviceName, releaseID, manifestS3Key, imageTag string, manifestKind ManifestKind, updatedAt time.Time) *ServiceProd {
+// records how this project's artifact is parsed; it follows the promoted
+// release's kind, so a project can migrate dbt→python across releases.
+func NewServiceProd(projectName, releaseID, manifestS3Key, imageTag string, manifestKind ManifestKind, updatedAt time.Time) *ServiceProd {
 	return &ServiceProd{
-		serviceName:   serviceName,
+		projectName:   projectName,
 		releaseID:     releaseID,
 		manifestS3Key: manifestS3Key,
 		imageTag:      imageTag,
@@ -28,7 +28,7 @@ func NewServiceProd(serviceName, releaseID, manifestS3Key, imageTag string, mani
 	}
 }
 
-func (s *ServiceProd) ServiceName() string        { return s.serviceName }
+func (s *ServiceProd) ProjectName() string        { return s.projectName }
 func (s *ServiceProd) ReleaseID() string          { return s.releaseID }
 func (s *ServiceProd) ManifestS3Key() string      { return s.manifestS3Key }
 func (s *ServiceProd) ImageTag() string           { return s.imageTag }

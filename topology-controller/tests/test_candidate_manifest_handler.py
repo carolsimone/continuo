@@ -66,7 +66,7 @@ def resolved_topology():
 def handler_with_mocks():
     """Return (handler, publisher, uploader, writer) with a two-node,
     two-manifest source (service1's "users" and service2's "orders", which
-    selects from test_schema.users) — this cross-service reference is what
+    selects from test_schema.users) — this cross-project reference is what
     gives the candidate-schema rewrite something real to do."""
     source = _make_source(
         "manifest_service1.json",
@@ -123,10 +123,10 @@ def _failed_kwargs(publisher):
     return publisher.publish_failed.call_args.kwargs
 
 
-def _write_compile_extras(tmp_path, seeds: dict, *, service: str = "service-1") -> str:
+def _write_compile_extras(tmp_path, seeds: dict, *, project: str = "service-1") -> str:
     """Write a compile-extras.json holding `seeds` and return its path."""
     path = tmp_path / "compile-extras.json"
-    path.write_text(json.dumps({"version": 1, "service": service, "release_id": "rel-1", "seeds": seeds,
+    path.write_text(json.dumps({"version": 1, "project": project, "release_id": "rel-1", "seeds": seeds,
                                 "project_flags": {}, "packages": {}}))
     return str(path)
 
@@ -146,7 +146,7 @@ def test_unqualified_reference_publishes_one_failed_node(monkeypatch, tmp_path):
     assert kw["failure_kind"] == ParseFailureKind.UNQUALIFIED_REFERENCE
     assert all(n.kind == ParseFailureKind.UNQUALIFIED_REFERENCE for n in kw["failed_nodes"])
     first = kw["failed_nodes"][0]
-    assert first.node_id and first.service and first.file_path and first.node_type
+    assert first.node_id and first.project and first.file_path and first.node_type
     assert "orders" in first.detail
     publisher.publish_ok.assert_not_called()
     uploader.upload.assert_not_called()
@@ -276,7 +276,7 @@ def test_the_failed_node_of_a_node_with_unreadable_tags_carries_the_librarys_mes
     assert kw["failure_kind"] == ParseFailureKind.INVALID_CONTRACT
     assert kw["detail"] == "1 node failed to parse: s.t"
     assert kw["failed_nodes"] == [FailedNode(
-        node_id="s.t", kind=ParseFailureKind.INVALID_CONTRACT, service="svc", file_path="models/t.sql",
+        node_id="s.t", kind=ParseFailureKind.INVALID_CONTRACT, project="svc", file_path="models/t.sql",
         node_type="dbt-model", detail="model.svc.t: tags must be a list of strings, got str",
     )]
 
@@ -384,31 +384,31 @@ def test_handle_calls_source_cleanup_even_on_publish_failed(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# declared_service validation: EmptyManifest, ServiceMismatch, and happy path
+# declared_project validation: EmptyManifest, ProjectMismatch, and happy path
 # ---------------------------------------------------------------------------
 
 def _make_source_with_declared(entries):
-    """Build a fake manifest source returning ManifestFiles with declared_service set.
+    """Build a fake manifest source returning ManifestFiles with declared_project set.
 
-    entries is a list of (fixture_name, declared_service) pairs.
+    entries is a list of (fixture_name, declared_project) pairs.
     """
     source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
-        ManifestFile(path=str(FIXTURES / name), image_tag="", declared_service=declared)
+        ManifestFile(path=str(FIXTURES / name), image_tag="", declared_project=declared)
         for name, declared in entries
     ]
     return source
 
 
-def test_handle_publishes_failed_empty_manifest_for_declared_service(tmp_path):
-    """A manifest with zero qualifying nodes for a declared service is a permanent
-    failure — it would silently retire the entire service if promoted."""
+def test_handle_publishes_failed_empty_manifest_for_declared_project(tmp_path):
+    """A manifest with zero qualifying nodes for a declared project is a permanent
+    failure — it would silently retire the entire project if promoted."""
     empty = tmp_path / "empty_nodes.json"
     empty.write_text('{"nodes": {}}')
 
     source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
-        ManifestFile(path=str(empty), image_tag="", declared_service="service-1")
+        ManifestFile(path=str(empty), image_tag="", declared_project="service-1")
     ]
     publisher = MagicMock()
 
@@ -421,9 +421,9 @@ def test_handle_publishes_failed_empty_manifest_for_declared_service(tmp_path):
     publisher.publish_ok.assert_not_called()
 
 
-def test_handle_publishes_failed_service_mismatch(tmp_path):
-    """A manifest whose nodes belong to a different service than declared triggers
-    a permanent ServiceMismatch failure."""
+def test_handle_publishes_failed_project_mismatch(tmp_path):
+    """A manifest whose nodes belong to a different project than declared triggers
+    a permanent ProjectMismatch failure."""
     # Build a manifest whose node has fqn[0]="service-2" but it is declared as service-1.
     mismatch = tmp_path / "mismatch.json"
     mismatch.write_text(json.dumps({
@@ -445,7 +445,7 @@ def test_handle_publishes_failed_service_mismatch(tmp_path):
 
     source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
-        ManifestFile(path=str(mismatch), image_tag="", declared_service="service-1")
+        ManifestFile(path=str(mismatch), image_tag="", declared_project="service-1")
     ]
     publisher = MagicMock()
 
@@ -460,8 +460,8 @@ def test_handle_publishes_failed_service_mismatch(tmp_path):
     publisher.publish_ok.assert_not_called()
 
 
-def test_handle_publishes_ok_matching_declared_service():
-    """A non-empty manifest whose nodes all match the declared service succeeds."""
+def test_handle_publishes_ok_matching_declared_project():
+    """A non-empty manifest whose nodes all match the declared project succeeds."""
     source = _make_source_with_declared([
         ("manifest_service1.json", "service-1"),
         ("manifest_service2.json", "service-2"),
@@ -473,13 +473,13 @@ def test_handle_publishes_ok_matching_declared_service():
 
     publisher.publish_ok.assert_called_once()
     assert publisher.publish_ok.call_args.kwargs["release_id"] == "rel-ok"
-    assert {n["service_name"] for n in writer.nodes} == {"service-1", "service-2"}
+    assert {n["project_name"] for n in writer.nodes} == {"service-1", "service-2"}
     publisher.publish_failed.assert_not_called()
 
 
-def test_every_node_runs_in_the_image_its_service_is_tagged_with():
-    """Each node carries the tag of its own service from the release request,
-    joined by service name."""
+def test_every_node_runs_in_the_image_its_project_is_tagged_with():
+    """Each node carries the tag of its own project from the release request,
+    joined by project name."""
     source = _make_source_with_declared([
         ("manifest_service1.json", "service-1"),
         ("manifest_service2.json", "service-2"),
@@ -490,12 +490,12 @@ def test_every_node_runs_in_the_image_its_service_is_tagged_with():
         "service-1": "reg/service-1:abc", "service-2": "reg/service-2:def",
     }).handle(release_id="rel-1")
 
-    assert {n["service_name"]: n["image_tag"] for n in writer.nodes} == {
+    assert {n["project_name"]: n["image_tag"] for n in writer.nodes} == {
         "service-1": "reg/service-1:abc", "service-2": "reg/service-2:def",
     }
 
 
-def test_a_service_the_request_names_no_tag_for_keeps_an_empty_image_tag():
+def test_a_project_the_request_names_no_tag_for_keeps_an_empty_image_tag():
     source = _make_source_with_declared([
         ("manifest_service1.json", "service-1"),
         ("manifest_service2.json", "service-2"),
@@ -506,7 +506,7 @@ def test_a_service_the_request_names_no_tag_for_keeps_an_empty_image_tag():
         "service-1": "reg/service-1:abc",
     }).handle(release_id="rel-1")
 
-    assert {n["service_name"]: n["image_tag"] for n in writer.nodes} == {
+    assert {n["project_name"]: n["image_tag"] for n in writer.nodes} == {
         "service-1": "reg/service-1:abc", "service-2": "",
     }
 
@@ -544,23 +544,23 @@ def test_a_request_without_image_tags_fails_the_release_as_internal():
     source.cleanup.assert_called_once()
 
 
-def test_handle_skips_declared_service_checks_when_declared_service_empty(tmp_path):
-    """When declared_service is empty (legacy/non-per-service source), the
-    EmptyManifest and ServiceMismatch checks are skipped entirely."""
+def test_handle_skips_declared_project_checks_when_declared_project_empty(tmp_path):
+    """When declared_project is empty (legacy/non-per-project source), the
+    EmptyManifest and ProjectMismatch checks are skipped entirely."""
     empty = tmp_path / "empty_nodes.json"
     empty.write_text('{"nodes": {}}')
 
     source = create_autospec(ManifestSourcePort)
-    # declared_service="" — same file that triggers EmptyManifest when non-empty
+    # declared_project="" — same file that triggers EmptyManifest when non-empty
     source.list_manifests.return_value = [
-        ManifestFile(path=str(empty), image_tag="", declared_service="")
+        ManifestFile(path=str(empty), image_tag="", declared_project="")
     ]
     publisher = MagicMock()
 
     handler = build_handler(source, publisher, make_uploader())
     handler.handle(release_id="rel-legacy")
 
-    # No service declared — falls through to publish_ok with an empty topology
+    # No project declared — falls through to publish_ok with an empty topology
     # (the existing "no manifests found" path is bypassed because list_manifests
     # returned one file; an empty node list is still valid for undeclared sources).
     publisher.publish_failed.assert_not_called()
@@ -762,7 +762,7 @@ def test_empty_manifests_publish_empty_bundle_uri():
 
 
 def _manifest_with_single_macro(
-    macro_sql: str, node_name: str, service: str, macro_depends_on: list[str] | None = None,
+    macro_sql: str, node_name: str, project: str, macro_depends_on: list[str] | None = None,
 ) -> dict:
     """A single-model manifest whose model depends on macro.svc.m1."""
     return {
@@ -771,7 +771,7 @@ def _manifest_with_single_macro(
                 "resource_type": "model",
                 "name": node_name,
                 "schema": "public",
-                "fqn": [service],
+                "fqn": [project],
                 "original_file_path": f"models/{node_name}.sql",
                 "config": {"materialized": "table", "meta": {"owner": "team"}},
                 "tags": ["nightly"],
@@ -789,12 +789,12 @@ def _manifest_with_single_macro(
     }
 
 
-def test_shared_code_namespaced_by_service_for_colliding_unit_ids(tmp_path, caplog):
+def test_shared_code_namespaced_by_project_for_colliding_unit_ids(tmp_path, caplog):
     """Two manifests shipping the same dbt macro id (macro.svc.m1) but pinning
-    different package versions (cross-service skew) are namespaced by service
-    in the bundle: BOTH copies survive, each under its own `<service>:<unit_id>`
+    different package versions (cross-project skew) are namespaced by project
+    in the bundle: BOTH copies survive, each under its own `<project>:<unit_id>`
     key with its own source/checksum, and each manifest's node's code_unit_ids
-    points at its own service's namespaced copy — no collision, no warning."""
+    points at its own project's namespaced copy — no collision, no warning."""
     first = tmp_path / "first.json"
     first.write_text(json.dumps(_manifest_with_single_macro("SELECT 'v1'", "node_a", "service-a")))
     second = tmp_path / "second.json"
@@ -802,8 +802,8 @@ def test_shared_code_namespaced_by_service_for_colliding_unit_ids(tmp_path, capl
 
     source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
-        ManifestFile(path=str(first), image_tag="", declared_service="service-a"),
-        ManifestFile(path=str(second), image_tag="", declared_service="service-b"),
+        ManifestFile(path=str(first), image_tag="", declared_project="service-a"),
+        ManifestFile(path=str(second), image_tag="", declared_project="service-b"),
     ]
     publisher = MagicMock()
     bundle_uploader = FakeBundleUploader()
@@ -834,10 +834,10 @@ def test_shared_code_namespaced_by_service_for_colliding_unit_ids(tmp_path, capl
 
 def test_shared_code_depends_on_entries_namespaced_consistently_with_keys(tmp_path, caplog):
     """A shared-code unit's own `depends_on` list is namespaced with the same
-    `<service>:` prefix as the bundle's shared_code map keys — so a consumer
+    `<project>:` prefix as the bundle's shared_code map keys — so a consumer
     walking unit->unit edges never needs to re-derive the namespace. Exercises
-    the fallback path where declared_service is unset: the namespace is
-    derived from the manifest's own node service instead."""
+    the fallback path where declared_project is unset: the namespace is
+    derived from the manifest's own node project instead."""
     with_dependency = _manifest_with_single_macro("SELECT 1", "node_a", "service-a", macro_depends_on=["macro.svc.m2"])
     with_dependency["macros"]["macro.svc.m2"] = {"unique_id": "macro.svc.m2", "macro_sql": "SELECT 2",
                                                  "depends_on": {"macros": []}}
@@ -897,16 +897,16 @@ def test_a_malformed_python_timeout_fails_the_release_naming_the_node(tmp_path, 
     assert "timeoutMinutes" in kwargs["failed_nodes"][0].detail
 
 
-def test_a_python_odcs_bundle_for_another_service_fails_the_release(tmp_path):
+def test_a_python_odcs_bundle_for_another_project_fails_the_release(tmp_path):
     publisher = MagicMock()
-    source = source_of(bundle_file(tmp_path, [python_node()], declared_service="service-py", service="someone-else"))
+    source = source_of(bundle_file(tmp_path, [python_node()], declared_project="service-py", project="someone-else"))
 
     dispatch_handler(source, publisher).handle(release_id="rel-1")
 
     publisher.publish_ok.assert_not_called()
     kwargs = publisher.publish_failed.call_args.kwargs
     assert kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
-    assert "the bundle is for service 'someone-else', not 'service-py'" in kwargs["detail"]
+    assert "the bundle is for project 'someone-else', not 'service-py'" in kwargs["detail"]
 
 
 def test_an_unknown_kind_fails_the_release_permanently():
@@ -914,7 +914,7 @@ def test_an_unknown_kind_fails_the_release_permanently():
     the operator sees a rejected release, rather than retrying forever."""
     publisher = MagicMock()
     source = source_of(ManifestFile(
-        path="/nonexistent", declared_service="service-x", kind="spark",
+        path="/nonexistent", declared_project="service-x", kind="spark",
     ))
 
     dispatch_handler(source, publisher).handle(release_id="rel-1")
@@ -948,7 +948,7 @@ def test_an_empty_kind_fails_the_release_rather_than_parsing_as_dbt():
     looking at the wrong artifact entirely."""
     publisher = MagicMock()
     source = source_of(ManifestFile(
-        path="/nonexistent", declared_service="service-x", kind="",
+        path="/nonexistent", declared_project="service-x", kind="",
     ))
 
     dispatch_handler(source, publisher).handle(release_id="rel-1")
@@ -1049,8 +1049,8 @@ def test_a_node_without_a_timeout_publishes_no_timeout_seconds_key(tmp_path):
     assert "timeout_seconds" not in node
 
 
-def test_two_python_services_each_publish_their_nodes_in_one_release(tmp_path):
-    """The table both services' nodes read is built by no node of the release, so it is one
+def test_two_python_projects_each_publish_their_nodes_in_one_release(tmp_path):
+    """The table both projects' nodes read is built by no node of the release, so it is one
     unknown-external node."""
     publisher = MagicMock()
     writer = RecordingArtifactWriter()
@@ -1058,14 +1058,14 @@ def test_two_python_services_each_publish_their_nodes_in_one_release(tmp_path):
     first.mkdir()
     second.mkdir()
     source = source_of(
-        bundle_file(first, [python_node("py_first")], declared_service="service-first", service="service-first"),
-        bundle_file(second, [python_node("py_second")], declared_service="service-second", service="service-second"),
+        bundle_file(first, [python_node("py_first")], declared_project="service-first", project="service-first"),
+        bundle_file(second, [python_node("py_second")], declared_project="service-second", project="service-second"),
     )
 
     python_handler(source, publisher, artifact_writer=writer).handle(release_id="rel-1")
 
     publisher.publish_failed.assert_not_called()
-    assert sorted((n["unique_id"], n["node_type"], n["service_name"]) for n in writer.nodes) == [
+    assert sorted((n["unique_id"], n["node_type"], n["project_name"]) for n in writer.nodes) == [
         ("test_schema.orders", "unknown-external", ""),
         ("test_schema.py_first", "python-node", "service-first"),
         ("test_schema.py_second", "python-node", "service-second"),
@@ -1130,7 +1130,7 @@ def test_the_dbt_artifact_entry_shape_is_frozen(handler_with_mocks):
         "schema_name": "test_schema",
         "table_name": "orders",
         "resolved_relation_id": "test_schema.orders",
-        "service_name": "service-2",
+        "project_name": "service-2",
         "node_type": "dbt-model",
         "test_count": 0,
         "content_hash": "sha256:55ceac9b4f7f8902cc27398292e20b85400e66aba6545038bad673a208661cd0",
@@ -1149,9 +1149,9 @@ def test_a_release_mixes_dbt_and_python_and_resolves_edges_in_both_directions(tm
     spec_uploader = MagicMock()
     spec_uploader.upload.return_value = "s3://continuo/candidate-sql/rel-1/candidate_test_schema.py_metrics.json"
     source = source_of(
-        ManifestFile(path=str(FIXTURES / "manifest_service2.json"), declared_service="service-2"),
+        ManifestFile(path=str(FIXTURES / "manifest_service2.json"), declared_project="service-2"),
         bundle_file(tmp_path, [python_node()]),
-        ManifestFile(path=str(FIXTURES / "manifest_service4.json"), declared_service="service-4"),
+        ManifestFile(path=str(FIXTURES / "manifest_service4.json"), declared_project="service-4"),
     )
 
     dbt_uploader = make_uploader("s3://continuo/candidate-sql/rel-1/candidate_test_schema.orders.sql")
@@ -1403,7 +1403,7 @@ def test_a_release_with_an_unknown_manifest_kind_publishes_valid_durations(tmp_p
     publisher = _autospec_publisher()
 
     timings = dispatch_handler(
-        source_of(ManifestFile(path=str(path), kind="spark", declared_service="service-b")), publisher,
+        source_of(ManifestFile(path=str(path), kind="spark", declared_project="service-b")), publisher,
         clock=FakeClock(step=1.0),
     ).handle(release_id="rel-1")
 
@@ -1477,13 +1477,13 @@ def _model(name, *, owner="team-a", tags=("daily",)):
             "checksum": {"checksum": name}, "compiled_code": "select 1"}
 
 
-def test_each_skipped_node_is_logged_at_info_with_its_release_service_and_reason(tmp_path, caplog):
+def test_each_skipped_node_is_logged_at_info_with_its_release_project_and_reason(tmp_path, caplog):
     path = _skipping_manifest(tmp_path, _model("kept"), _model("no_owner", owner=None),
                               _model("stub", tags=("local_stub",)), _model("no_owner_no_tag", owner=None, tags=()))
     with caplog.at_level(logging.INFO):
         timings = build_handler(source_of(ManifestFile(path=path)), MagicMock(), make_uploader()).handle(release_id="rel-1")
     skips = [r for r in caplog.records if r.getMessage() == "candidate: node skipped"]
-    assert [(r.levelno, r.release_id, r.service, r.node_id, r.reason) for r in skips] == [
+    assert [(r.levelno, r.release_id, r.project, r.node_id, r.reason) for r in skips] == [
         (logging.INFO, "rel-1", "svc-a", "model.svc_a.no_owner", "no_owner"),
         (logging.INFO, "rel-1", "svc-a", "model.svc_a.stub", "local_stub"),
         (logging.INFO, "rel-1", "svc-a", "model.svc_a.no_owner_no_tag", "no_owner")]
@@ -1504,8 +1504,8 @@ def test_a_model_with_an_owner_and_no_tag_is_kept_not_skipped_and_counted_dorman
 
 def test_an_untagged_node_of_an_installed_package_is_skipped_and_the_release_is_published(caplog):
     """dbt gives the models of an installed package the project's top-level
-    owner, so the manifest of service shop-core holds untagged nodes of the
-    package evalpkg. They are left out, so the service check passes, and the
+    owner, so the manifest of project shop-core holds untagged nodes of the
+    package evalpkg. They are left out, so the project check passes, and the
     table one of them writes is an unknown-external node for its reader."""
     source = _make_source_with_declared([("manifest_installed_package.json", "shop-core")])
     publisher, writer = MagicMock(), RecordingArtifactWriter()
@@ -1515,7 +1515,7 @@ def test_an_untagged_node_of_an_installed_package_is_skipped_and_the_release_is_
     publisher.publish_failed.assert_not_called()
     publisher.publish_ok.assert_called_once()
     by_id = {n["unique_id"]: n for n in writer.nodes}
-    assert {uid: (n["service_name"], n["node_type"], n["schedule"]) for uid, n in by_id.items()} == {
+    assert {uid: (n["project_name"], n["node_type"], n["schedule"]) for uid, n in by_id.items()} == {
         "analytics.orders": ("shop-core", "dbt-model", "daily"),
         "analytics.monthly_report": ("shop-core", "dbt-model", ""),
         "analytics.countries": ("shop-core", "dbt-seed", "seed"),
@@ -1523,7 +1523,7 @@ def test_an_untagged_node_of_an_installed_package_is_skipped_and_the_release_is_
     }
     assert by_id["analytics.orders"]["upstream_unique_ids"] == ["analytics.pkg_model"]
     assert timings.skipped == {SkipReason.NO_OWNER: 1, SkipReason.LOCAL_STUB: 0, SkipReason.INSTALLED_PACKAGE: 2}
-    skips = [(r.service, r.node_id, r.reason) for r in caplog.records if r.getMessage() == "candidate: node skipped"]
+    skips = [(r.project, r.node_id, r.reason) for r in caplog.records if r.getMessage() == "candidate: node skipped"]
     assert skips == [
         ("evalpkg", "model.evalpkg.pkg_model", "installed_package"),
         ("evalpkg", "seed.evalpkg.pkg_seed", "installed_package"),
@@ -1531,14 +1531,14 @@ def test_an_untagged_node_of_an_installed_package_is_skipped_and_the_release_is_
     ]
 
 
-def test_a_tagged_node_of_an_installed_package_still_fails_the_service_check(tmp_path):
+def test_a_tagged_node_of_an_installed_package_still_fails_the_project_check(tmp_path):
     manifest = json.loads((FIXTURES / "manifest_installed_package.json").read_text())
     manifest["nodes"]["model.evalpkg.pkg_model"]["tags"] = ["daily"]
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(manifest))
     publisher = MagicMock()
 
-    build_handler(source_of(ManifestFile(path=str(path), declared_service="shop-core")), publisher,
+    build_handler(source_of(ManifestFile(path=str(path), declared_project="shop-core")), publisher,
                   make_uploader()).handle(release_id="rel-1")
 
     kw = _failed_kwargs(publisher)
@@ -1563,7 +1563,7 @@ def test_a_manifest_whose_every_node_is_skipped_logs_the_skips_before_it_fails(t
     path = _skipping_manifest(tmp_path, _model("a", owner=None), _model("b", owner=None))
     publisher = MagicMock()
     with caplog.at_level(logging.INFO):
-        build_handler(source_of(ManifestFile(path=path, declared_service="svc-a")), publisher,
+        build_handler(source_of(ManifestFile(path=path, declared_project="svc-a")), publisher,
                  make_uploader()).handle(release_id="rel-1")
     assert publisher.publish_failed.call_args.kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
     assert len([r for r in caplog.records if r.getMessage() == "candidate: node skipped"]) == 2
@@ -1589,7 +1589,7 @@ def test_the_observer_gets_each_published_release_once():
 def test_the_observer_gets_a_failed_release_with_its_failure_kind(tmp_path):
     observer = _RecordingReleaseObserver()
     path = _skipping_manifest(tmp_path, _model("a", owner=None))
-    timings = build_handler(source_of(ManifestFile(path=path, declared_service="svc-a")), MagicMock(),
+    timings = build_handler(source_of(ManifestFile(path=path, declared_project="svc-a")), MagicMock(),
                        make_uploader(), observer=observer).handle(release_id="rel-1")
     assert observer.finished == [timings]
     assert (timings.outcome, timings.failure_kind) == (ReleaseOutcome.FAILED, ParseFailureKind.INVALID_ARTIFACT)
@@ -1616,10 +1616,10 @@ def test_an_outage_mid_release_records_no_release_and_logs_no_release_line(caplo
     assert not _release_lines(caplog)
 
 
-def test_extras_of_another_service_reject_the_release_as_invalid_artifact(tmp_path):
+def test_extras_of_another_project_reject_the_release_as_invalid_artifact(tmp_path):
     publisher = MagicMock()
-    source = source_of(ManifestFile(path=str(FIXTURES / "manifest_service1.json"), declared_service="service-1",
-                                     extras_path=_write_compile_extras(tmp_path, {}, service="other")))
+    source = source_of(ManifestFile(path=str(FIXTURES / "manifest_service1.json"), declared_project="service-1",
+                                     extras_path=_write_compile_extras(tmp_path, {}, project="other")))
     build_handler(source, publisher, make_uploader()).handle(release_id="rel-1")
     kw = _failed_kwargs(publisher)
     assert kw["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
@@ -1627,16 +1627,16 @@ def test_extras_of_another_service_reject_the_release_as_invalid_artifact(tmp_pa
     publisher.publish_ok.assert_not_called()
 
 
-def test_extras_of_the_declared_service_leave_the_release_parsed(tmp_path):
+def test_extras_of_the_declared_project_leave_the_release_parsed(tmp_path):
     publisher = MagicMock()
-    source = source_of(ManifestFile(path=str(FIXTURES / "manifest_service1.json"), declared_service="service-1",
+    source = source_of(ManifestFile(path=str(FIXTURES / "manifest_service1.json"), declared_project="service-1",
                                      extras_path=_write_compile_extras(tmp_path, {})))
     build_handler(source, publisher, make_uploader()).handle(release_id="rel-1")
     publisher.publish_failed.assert_not_called()
     publisher.publish_ok.assert_called_once()
 
 
-_PATH_CHECKSUM_LINE = "candidate: seed keeps dbt's path checksum until its service's rebaseline release"
+_PATH_CHECKSUM_LINE = "candidate: seed keeps dbt's path checksum until its project's rebaseline release"
 
 
 def test_the_handler_logs_each_path_checksum_seed(tmp_path, caplog):
@@ -1645,7 +1645,7 @@ def test_the_handler_logs_each_path_checksum_seed(tmp_path, caplog):
     with caplog.at_level(logging.WARNING, logger="service.candidate_manifest_handler"):
         build_handler(source_with_nodes(tmp_path, big), MagicMock(), make_uploader()).handle(release_id="rel-1")
     (record,) = [r for r in caplog.records if r.getMessage() == _PATH_CHECKSUM_LINE]
-    assert (record.levelno, record.release_id, record.service, record.seed) == (
+    assert (record.levelno, record.release_id, record.project, record.seed) == (
         logging.WARNING, "rel-1", "service-1", "test_schema.seed_big")
 
 
@@ -1717,7 +1717,7 @@ def test_topology_carries_materialized_full_refresh_and_seed_columns(tmp_path):
 def test_python_and_test_nodes_carry_no_seed_reload_field(tmp_path):
     writer = RecordingArtifactWriter()
     source = source_of(
-        ManifestFile(path=str(FIXTURES / "manifest_with_test.json"), declared_service="service-1"),
+        ManifestFile(path=str(FIXTURES / "manifest_with_test.json"), declared_project="service-1"),
         bundle_file(tmp_path, [python_node()]),
     )
     python_handler(source, MagicMock(), artifact_writer=writer).handle(release_id="rel-1")

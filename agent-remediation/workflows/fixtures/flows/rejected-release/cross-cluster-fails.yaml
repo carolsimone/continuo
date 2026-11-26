@@ -21,17 +21,17 @@ trigger:
       reason: syntax
       error_excerpt: "Compilation Error in model orders (models/orders.sql)"
       file_path: models/orders.sql
-      service: svc-a
+      project: svc-a
       changed_ancestors:
-        - { node_id: model.core.base, file_path: models/base.sql, service: core, depth: 1 }
+        - { node_id: model.core.base, file_path: models/base.sql, project: core, depth: 1 }
     - node_id: core
       category: compile
       error_signature: sig-core
       reason: syntax
       error_excerpt: "Compilation Error in model base (models/base.sql)"
       file_path: models/base.sql
-      service: core
-service_repo_paths:
+      project: core
+project_repo_paths:
   svc-a: services/svc-a
   core: services/core
 repo_files:
@@ -43,7 +43,7 @@ release:
   image_tag: sha-cross-cluster
 answers:
   pass:
-    # The fix of base for svc-a's cross-service cluster.
+    # The fix of base for svc-a's cross-project cluster.
     - proposed_sql: "select 1 as id\n"
       rationale: completed the select
       confidence: high

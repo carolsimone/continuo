@@ -35,7 +35,7 @@ func (s stubNodeReader) GetNode(_ context.Context, _, _, _, _ string, scope doma
 
 func TestGetNode_MapsMeta(t *testing.T) {
 	h := NewQueryHandler(stubNodeReader{meta: &domain.NodeMeta{NodeType: "dbt-model", TestCount: 0, TestCountKnown: true}}, nil, nil, nil, testLogger())
-	resp, err := h.GetNode(requestCtx(), &catalogv1.GetNodeRequest{ServiceName: "svc", SchemaName: "an", TableName: "fct"})
+	resp, err := h.GetNode(requestCtx(), &catalogv1.GetNodeRequest{ProjectName: "svc", SchemaName: "an", TableName: "fct"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestGetNode_IncludeInactiveMapsToScope(t *testing.T) {
 	} {
 		got := domain.NodeScope(-1)
 		h := NewQueryHandler(stubNodeReader{meta: &domain.NodeMeta{NodeType: "dbt-model"}, gotScope: &got}, nil, nil, nil, testLogger())
-		if _, err := h.GetNode(requestCtx(), &catalogv1.GetNodeRequest{ServiceName: "svc", SchemaName: "an", TableName: "fct", IncludeInactive: includeInactive}); err != nil {
+		if _, err := h.GetNode(requestCtx(), &catalogv1.GetNodeRequest{ProjectName: "svc", SchemaName: "an", TableName: "fct", IncludeInactive: includeInactive}); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if got != want {
@@ -62,7 +62,7 @@ func TestGetNode_IncludeInactiveMapsToScope(t *testing.T) {
 
 func TestGetNode_MapsInactive(t *testing.T) {
 	h := NewQueryHandler(stubNodeReader{meta: &domain.NodeMeta{NodeType: "dbt-seed", Inactive: true}}, nil, nil, nil, testLogger())
-	resp, err := h.GetNode(requestCtx(), &catalogv1.GetNodeRequest{ServiceName: "svc", SchemaName: "an", TableName: "seed", IncludeInactive: true})
+	resp, err := h.GetNode(requestCtx(), &catalogv1.GetNodeRequest{ProjectName: "svc", SchemaName: "an", TableName: "seed", IncludeInactive: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestGetNode_MapsInactive(t *testing.T) {
 
 func TestGetNode_NotFound(t *testing.T) {
 	h := NewQueryHandler(stubNodeReader{err: domain.ErrNodeNotFound}, nil, nil, nil, testLogger())
-	_, err := h.GetNode(requestCtx(), &catalogv1.GetNodeRequest{ServiceName: "svc", SchemaName: "an", TableName: "missing"})
+	_, err := h.GetNode(requestCtx(), &catalogv1.GetNodeRequest{ProjectName: "svc", SchemaName: "an", TableName: "missing"})
 	if status.Code(err) != codes.NotFound {
 		t.Fatalf("want NotFound, got %v", err)
 	}
@@ -81,7 +81,7 @@ func TestGetNode_NotFound(t *testing.T) {
 
 func TestGetNode_MissingArgs(t *testing.T) {
 	h := NewQueryHandler(stubNodeReader{}, nil, nil, nil, testLogger())
-	_, err := h.GetNode(requestCtx(), &catalogv1.GetNodeRequest{ServiceName: "", SchemaName: "an", TableName: "fct"})
+	_, err := h.GetNode(requestCtx(), &catalogv1.GetNodeRequest{ProjectName: "", SchemaName: "an", TableName: "fct"})
 	if status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("want InvalidArgument, got %v", err)
 	}

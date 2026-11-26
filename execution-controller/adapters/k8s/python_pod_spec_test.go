@@ -18,7 +18,7 @@ func pythonParams() JobParams {
 		JobName:     "run-py-probe",
 		TaskID:      "task-1",
 		RunID:       "sched-1",
-		ServiceName: "svc-py",
+		ProjectName: "svc-py",
 		SchemaName:  "analytics",
 		TableName:   "py_probe",
 		Namespace:   "default",
@@ -93,14 +93,14 @@ func TestBuildPythonPodSpec_OmitsDbtEnvNames(t *testing.T) {
 	env := envMap(spec.Containers[0].Env)
 	for _, name := range []string{
 		"SCHEMA", "DBT_TARGET_SCHEMA", "CONTRACT_DIR", "APP_ROOT",
-		"SERVICE_NAME", "JOB_NAME", "TASK_ID", "SCHEDULE_ID", "SCHEDULE_NAME",
+		"PROJECT_NAME", "JOB_NAME", "TASK_ID", "SCHEDULE_ID", "SCHEDULE_NAME",
 	} {
 		assert.NotContains(t, env, name, "%s must not be injected into a python pod", name)
 	}
 }
 
 // TestBuildPythonPodSpec_ImageIsVerbatim verifies the release's image_tag is a
-// complete registry reference used as-is — never composed with the service name
+// complete registry reference used as-is — never composed with the project name
 // and never prefixed, which is how dbt team images are resolved.
 func TestBuildPythonPodSpec_ImageIsVerbatim(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
@@ -425,15 +425,15 @@ func TestCreateQueryJob_DbtModel_PodSpecUnchanged(t *testing.T) {
 	params := pythonParams()
 	params.JobName = "run-dbt-orders"
 	params.NodeType = pkg_model.NodeTypeDbtModel
-	params.ServiceName = "service-1"
+	params.ProjectName = "service-1"
 	params.TableName = "orders"
 	params.ImageTag = "abc123"
 
 	require.NoError(t, client.CreateQueryJob(context.Background(), params))
 
-	argv, err := client.commands.NodeCommand(params.ServiceName, params.Operation, params.NodeType, params.TableName)
+	argv, err := client.commands.NodeCommand(params.ProjectName, params.Operation, params.NodeType, params.TableName)
 	require.NoError(t, err)
-	want, err := buildPodSpec(params, argv, client.commands.PartialParsePath(params.ServiceName))
+	want, err := buildPodSpec(params, argv, client.commands.PartialParsePath(params.ProjectName))
 	require.NoError(t, err)
 
 	job := fetchJob(t, client, "default", "run-dbt-orders")

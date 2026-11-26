@@ -22,7 +22,7 @@ import (
 // Reads go straight to Neo4j and return raw domain types. Satisfied by
 // adapters/neo4j.NodeQueryRepository.
 type NodeReader interface {
-	GetNode(ctx context.Context, tenantID, service, schema, table string, scope domain.NodeScope) (*domain.NodeMeta, error)
+	GetNode(ctx context.Context, tenantID, project, schema, table string, scope domain.NodeScope) (*domain.NodeMeta, error)
 	GetNodeLocation(ctx context.Context, tenantID, uniqueID string) (*domain.NodeLocation, error)
 }
 
@@ -97,19 +97,19 @@ func (h *QueryHandler) GetNode(ctx context.Context, req *catalogv1.GetNodeReques
 	if err != nil {
 		return nil, err
 	}
-	if req.ServiceName == "" || req.SchemaName == "" || req.TableName == "" {
-		return nil, status.Error(codes.InvalidArgument, "service_name, schema_name and table_name are required")
+	if req.ProjectName == "" || req.SchemaName == "" || req.TableName == "" {
+		return nil, status.Error(codes.InvalidArgument, "project_name, schema_name and table_name are required")
 	}
 	scope := domain.ActiveNodesOnly
 	if req.GetIncludeInactive() {
 		scope = domain.IncludeInactiveNodes
 	}
-	meta, err := h.nodes.GetNode(ctx, tenantID, req.ServiceName, req.SchemaName, req.TableName, scope)
+	meta, err := h.nodes.GetNode(ctx, tenantID, req.ProjectName, req.SchemaName, req.TableName, scope)
 	if err != nil {
 		if errors.Is(err, domain.ErrNodeNotFound) {
-			return nil, status.Errorf(codes.NotFound, "node %s.%s.%s not found", req.ServiceName, req.SchemaName, req.TableName)
+			return nil, status.Errorf(codes.NotFound, "node %s.%s.%s not found", req.ProjectName, req.SchemaName, req.TableName)
 		}
-		h.logger.Error("GetNode failed", "service", req.ServiceName, "schema", req.SchemaName, "table", req.TableName, "error", err)
+		h.logger.Error("GetNode failed", "project", req.ProjectName, "schema", req.SchemaName, "table", req.TableName, "error", err)
 		return nil, status.Errorf(codes.Internal, "GetNode: %v", err)
 	}
 	return &catalogv1.GetNodeResponse{
@@ -135,7 +135,7 @@ func (h *QueryHandler) GetNodeLocation(ctx context.Context, req *catalogv1.GetNo
 		h.logger.Error("GetNodeLocation failed", "unique_id", req.UniqueId, "error", err)
 		return nil, status.Errorf(codes.Internal, "get node location: %v", err)
 	}
-	return &catalogv1.GetNodeLocationResponse{FilePath: loc.FilePath, ServiceName: loc.ServiceName}, nil
+	return &catalogv1.GetNodeLocationResponse{FilePath: loc.FilePath, ProjectName: loc.ProjectName}, nil
 }
 
 // maxUpstreamDepth caps GetUpstreamChanges' depth request; the proto

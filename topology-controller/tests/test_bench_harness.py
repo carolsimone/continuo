@@ -58,11 +58,11 @@ def test_the_estate_built_without_the_ontology_hashes_to_its_recorded_digest():
             del bundle["producer"]
             data = json.dumps(bundle, sort_keys=True).encode()
         digest.update(key.encode() + b"\0" + data + b"\0")
-    assert digest.hexdigest() == "8d114021934b4160bfb31b9afbe4e47676a684f0cb53cdf24fe2997ae3ac4a14"
+    assert digest.hexdigest() == "08cb9290e5f7a3d2342642c0d8be8ac8201977ca79401b4ed982e5dd54de3a66"
 
 
-def test_the_estate_writes_the_python_service_as_one_odcs_bundle(tmp_path):
-    """The Python service is one `odcs-bundle.json` of kind python-odcs with one
+def test_the_estate_writes_the_python_project_as_one_odcs_bundle(tmp_path):
+    """The Python project is one `odcs-bundle.json` of kind python-odcs with one
     ODCS contract per node, each valid under the library the bundle names, and
     its reads are the ones the estate counts."""
     estate = generate_estate(20, columns=4)
@@ -71,13 +71,13 @@ def test_the_estate_writes_the_python_service_as_one_odcs_bundle(tmp_path):
     path = tmp_path / "odcs-bundle.json"
     path.write_bytes(estate.objects[request.key])
     bundle = json.loads(path.read_bytes())
-    assert (bundle["bundle_version"], bundle["service"]) == (1, "svc-py")
-    assert bundle["producer"] == {"continuo_python_runtime": "0.14.0", "continuo_contracts": "0.4.1"}
+    assert (bundle["bundle_version"], bundle["project"]) == (1, "svc-py")
+    assert bundle["producer"] == {"continuo_python_runtime": "0.15.0", "continuo_contracts": "0.5.0"}
     assert len(bundle["nodes"]) == estate.python_nodes
 
     timings = ReleaseTimings(estate.release_id, FakeClock(), ScriptedMemoryProbe(0))
     parsed = parse_odcs_bundle(
-        ManifestFile(path=str(path), image_tag="bench", declared_service="svc-py", kind=ManifestKind.PYTHON_ODCS),
+        ManifestFile(path=str(path), image_tag="bench", declared_project="svc-py", kind=ManifestKind.PYTHON_ODCS),
         progress=lambda: None, timings=timings, validator=ContractValidator(),
     )
     assert not parsed.failed
@@ -98,10 +98,10 @@ def test_every_estate_extras_object_passes_the_loader(tmp_path):
         key = posixpath.join(posixpath.dirname(request.key), "compile-extras.json")
         if key not in estate.objects:
             continue
-        path = tmp_path / request.service / "compile-extras.json"
+        path = tmp_path / request.project / "compile-extras.json"
         path.parent.mkdir()
         path.write_bytes(estate.objects[key])
-        extras = load_compile_extras(str(path), request.service)
+        extras = load_compile_extras(str(path), request.project)
         assert extras.seeds and all(re.fullmatch(r"[0-9a-f]{64}", s.sha256) for s in extras.seeds.values())
         loaded += 1
     assert loaded == 10
@@ -139,7 +139,7 @@ def test_the_handler_writes_one_contract_bundle_and_keeps_it_on_the_next_pass():
     assert document["summary"]["contracts"] == estate.python_nodes + dbt_contracts
     assert document["summary"]["by_family"] == {"dbt": dbt_contracts, "python": estate.python_nodes}
     assert document["provenance"] == {
-        "svc-py": {"continuo_python_runtime": "0.14.0", "image_packages": {"pyarrow": "26.0.0"}},
+        "svc-py": {"continuo_python_runtime": "0.15.0", "image_packages": {"pyarrow": "26.0.0"}},
     }
 
 
@@ -182,20 +182,20 @@ def test_the_ontology_estate_adds_one_ontology_manifest_and_leaves_the_other_obj
     plain = generate_estate(20, columns=4)
     estate = generate_estate(20, columns=4, ontology=True)
     (request,) = [request for request in estate.requests if request.kind is ManifestKind.ONTOLOGY]
-    assert (request.service, request.key) == ("bench-ontology", "bench-ontology/rel-bench-ontology/ontology.yaml")
+    assert (request.project, request.key) == ("bench-ontology", "bench-ontology/rel-bench-ontology/ontology.yaml")
     assert estate.objects.keys() == plain.objects.keys() | {request.key}
     assert [r for r in estate.requests if r.kind is not ManifestKind.ONTOLOGY] == plain.requests
     assert estate.image_tags == plain.image_tags
     assert estate.objects == generate_estate(20, columns=4, ontology=True).objects
 
 
-def test_the_estate_ontology_declares_every_service_under_one_domain_and_one_thing():
+def test_the_estate_ontology_declares_every_project_under_one_domain_and_one_thing():
     estate = generate_estate(20, columns=4, ontology=True)
     (request,) = [request for request in estate.requests if request.kind is ManifestKind.ONTOLOGY]
     loaded = ontology_file.load(estate.objects[request.key].decode())
-    services = sorted(r.service for r in estate.requests if r.kind is not ManifestKind.ONTOLOGY)
-    assert loaded.services() == tuple(services)
-    assert {loaded.domain_of(service) for service in services} == {"bench"}
+    projects = sorted(r.project for r in estate.requests if r.kind is not ManifestKind.ONTOLOGY)
+    assert loaded.projects() == tuple(projects)
+    assert {loaded.domain_of(project) for project in projects} == {"bench"}
     assert list(loaded.document["principals"]["domains"]) == ["bench"]
     assert loaded.document["entities"]["BenchRow"]["key"] == {"id": "integer"}
     assert list(loaded.document["entities"]) == ["BenchRow"]
@@ -240,8 +240,8 @@ def test_the_real_handler_checks_the_bound_estate_and_finds_no_error():
     timings = handler.handle(estate.release_id)
     assert publisher.ok, publisher.failure
     ontology = _read_contract_bundle(store, estate.release_id)["ontology"]
-    assert (ontology["enabled"], ontology["service"], ontology["release_id"]) == (True, "bench-ontology", "rel-bench-ontology")
-    assert ontology["declared_services"] == sorted(r.service for r in estate.requests if r.kind is not ManifestKind.ONTOLOGY)
+    assert (ontology["enabled"], ontology["project"], ontology["release_id"]) == (True, "bench-ontology", "rel-bench-ontology")
+    assert ontology["declared_projects"] == sorted(r.project for r in estate.requests if r.kind is not ManifestKind.ONTOLOGY)
     assert [f for f in ontology["findings"] if f["severity"] != "info"] == []
     assert timings.contract_failures == {}
     record = timings.stages[Stage.ONTOLOGY]

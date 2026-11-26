@@ -34,7 +34,7 @@ func NewRunReadRepository(db *sqlx.DB) *RunReadRepository {
 
 type runGraphNodeRow struct {
 	TaskID         uuid.UUID  `db:"task_id"`
-	ServiceName    string     `db:"service_name"`
+	ProjectName    string     `db:"project_name"`
 	SchemaName     string     `db:"schema_name"`
 	TableName      string     `db:"table_name"`
 	Status         string     `db:"status"`
@@ -77,7 +77,7 @@ func (r *RunReadRepository) GetRunGraph(ctx context.Context, tenantID string, ru
 	// Every row joined is the tenant's.
 	var nodes []runGraphNodeRow
 	if err := r.db.SelectContext(ctx, &nodes, `
-		SELECT t.task_id, t.service_name, t.schema_name, t.table_name, t.status,
+		SELECT t.task_id, t.project_name, t.schema_name, t.table_name, t.status,
 		       COALESCE(n.schedule_name, '') AS schedule_name,
 		       COALESCE(n.node_type, '')     AS node_type,
 		       COALESCE(t.wait_reason, '')   AS wait_reason,
@@ -93,14 +93,14 @@ func (r *RunReadRepository) GetRunGraph(ctx context.Context, tenantID string, ru
 		  ON t.wait_reason = 'node_lease' AND l.tenant_id = t.tenant_id
 		 AND l.node_key = t.node_key AND l.task_id <> t.task_id
 		WHERE t.tenant_id = $2 AND t.run_id = $1
-		ORDER BY t.service_name, t.schema_name, t.table_name`, runID, tenantID); err != nil {
+		ORDER BY t.project_name, t.schema_name, t.table_name`, runID, tenantID); err != nil {
 		return projection.RunGraph{}, fmt.Errorf("read tasks of run %s: %w", runID, err)
 	}
 	// A node's type is returned under its current name, whatever name the
 	// run's release stored it under.
 	for _, n := range nodes {
 		g.Nodes = append(g.Nodes, projection.RunGraphNode{
-			ServiceName: n.ServiceName, SchemaName: n.SchemaName, TableName: n.TableName,
+			ProjectName: n.ProjectName, SchemaName: n.SchemaName, TableName: n.TableName,
 			ScheduleName: n.ScheduleName, NodeType: string(model.CanonicalNodeType(n.NodeType)),
 			Status: run.TaskStatus(n.Status), TaskID: n.TaskID,
 			WaitReason: run.WaitReason(n.WaitReason), WaitingSince: n.WaitingSince,
@@ -111,8 +111,8 @@ func (r *RunReadRepository) GetRunGraph(ctx context.Context, tenantID string, ru
 
 	var edges []runGraphEdgeRow
 	if err := r.db.SelectContext(ctx, &edges, `
-		SELECT d.service_name || '.' || d.schema_name || '.' || d.table_name AS from_node_id,
-		       u.service_name || '.' || u.schema_name || '.' || u.table_name AS to_node_id
+		SELECT d.project_name || '.' || d.schema_name || '.' || d.table_name AS from_node_id,
+		       u.project_name || '.' || u.schema_name || '.' || u.table_name AS to_node_id
 		FROM runs s
 		JOIN topology_edges e ON e.tenant_id = s.tenant_id AND e.release_id = s.release_id
 		JOIN tasks u ON u.tenant_id = s.tenant_id AND u.run_id = s.run_id AND u.node_key = e.upstream_key

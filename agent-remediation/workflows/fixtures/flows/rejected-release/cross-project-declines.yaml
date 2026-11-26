@@ -1,10 +1,10 @@
-# The cross-service cluster at core's orders declines: the release's code
+# The cross-project cluster at core's orders declines: the release's code
 # bundle does not hold it. Its finance member is handed over skipped, since a
 # fix in finance cannot ship before core's.
 kind: fixture
 version: 1
 flow: rejected-release
-scenario: cross_service_declines
+scenario: cross_project_declines
 trigger:
   source: validation
   release_id: rel-flow-cross-declines
@@ -19,11 +19,11 @@ trigger:
       error_excerpt: 'column orders.amount does not exist'
       candidate_artifact_uri: s3://candidates/rel-flow-cross-declines/model.finance.revenue.sql
       file_path: models/revenue.sql
-      service: finance
+      project: finance
       node_type: dbt-model
       changed_ancestors:
-        - { node_id: model.core.orders, file_path: models/orders.sql, service: core, depth: 1 }
-service_repo_paths:
+        - { node_id: model.core.orders, file_path: models/orders.sql, project: core, depth: 1 }
+project_repo_paths:
   core: services/core
   finance: services/finance
 release:

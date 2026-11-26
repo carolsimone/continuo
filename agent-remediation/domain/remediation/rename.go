@@ -8,7 +8,7 @@ import (
 )
 
 // ModelRename is the plan for a dbt model whose relation another node already
-// builds, in the same schema. Relation, OtherService and OtherFilePath name the
+// builds, in the same schema. Relation, OtherProject and OtherFilePath name the
 // relation in dispute and the node that already builds it. References holds,
 // by repository-relative path, every other file of the model's project that
 // names the model, with its content.
@@ -23,9 +23,9 @@ import (
 // place. The alias changes instead: OldName and NewName are the alias's old and
 // new table name, NewPath is OldPath, and no file moves.
 type ModelRename struct {
-	Service       string
+	Project       string
 	Relation      string
-	OtherService  string
+	OtherProject  string
 	OtherFilePath string
 	ChangesAlias  bool
 	OldName       string
@@ -48,7 +48,7 @@ func (r ModelRename) Explanation() string {
 	return fmt.Sprintf(
 		"%s is already built by %s (%s). This release added a second model that builds it in %s, so continuo refused it. "+
 			"%s so the release can pass; rename it as you prefer before merging.",
-		r.Relation, r.OtherService, r.OtherFilePath, r.Service, what)
+		r.Relation, r.OtherProject, r.OtherFilePath, r.Project, what)
 }
 
 // RelationTable is the table part of a relation id: what follows its last dot.

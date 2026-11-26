@@ -1,5 +1,5 @@
 {#
-    Schema resolution shared by every dbt service image.
+    Schema resolution shared by every dbt project image.
 
     Blue/green validation runs each candidate node in an isolated schema so it
     never touches production tables. execution-controller passes that schema

@@ -19,10 +19,10 @@ trigger:
       error_excerpt: 'column base_orders.amount does not exist'
       candidate_artifact_uri: s3://candidates/rel-flow-shared-declines/model.sales.daily_orders.sql
       file_path: models/daily_orders.sql
-      service: sales
+      project: sales
       node_type: dbt-model
       changed_ancestors:
-        - { node_id: model.sales.base_orders, file_path: models/base_orders.sql, service: sales, depth: 1 }
+        - { node_id: model.sales.base_orders, file_path: models/base_orders.sql, project: sales, depth: 1 }
     - node_id: model.sales.weekly_orders
       category: validation
       error_signature: sig-base-orders-amount
@@ -30,11 +30,11 @@ trigger:
       error_excerpt: 'column base_orders.amount does not exist'
       candidate_artifact_uri: s3://candidates/rel-flow-shared-declines/model.sales.weekly_orders.sql
       file_path: models/weekly_orders.sql
-      service: sales
+      project: sales
       node_type: dbt-model
       changed_ancestors:
-        - { node_id: model.sales.base_orders, file_path: models/base_orders.sql, service: sales, depth: 1 }
-service_repo_paths:
+        - { node_id: model.sales.base_orders, file_path: models/base_orders.sql, project: sales, depth: 1 }
+project_repo_paths:
   sales: services/sales
 objects:
   s3://candidates/rel-flow-shared-declines/model.sales.daily_orders.sql: "select id, amount from analytics.base_orders"

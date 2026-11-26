@@ -104,10 +104,10 @@ func (h *harness) startedWith(t testing.TB, attempt int, deployedAt time.Time, e
 	t.Helper()
 	runID := uuid.New().String()
 	cmd := command.DeployTask{TenantID: "default", TaskID: uuid.New().String(), RunID: runID, ScheduleName: "daily",
-		ServiceName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_e",
+		ProjectName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_e",
 		NodeType: "dbt-model", ImageTag: "v42", Operation: "run", Attempt: attempt}
 	edit(&cmd)
-	name, err := domain.ComputeJobName(cmd.ServiceName, cmd.SchemaName, cmd.TableName, runID, attempt)
+	name, err := domain.ComputeJobName(cmd.ProjectName, cmd.SchemaName, cmd.TableName, runID, attempt)
 	require.NoError(t, err)
 	cmd.JobName = name
 	dep := model.NewDeployment(cmd, nil, deployedAt)
@@ -503,7 +503,7 @@ func TestProcess_AValidationNodeRecordsItsOutcome(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	cmd := command.ValidationDeployTask{ReleaseID: "rel-" + uuid.NewString()[:8], NodeID: "e2e_schema.ftable_e",
-		ServiceName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_e", NodeType: "dbt-model",
+		ProjectName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_e", NodeType: "dbt-model",
 		ImageTag: "v42", JobName: "validate-ftable-e", CandidateSchema: "_cand_x"}
 	dep := model.NewValidationDeployment(cmd, nil, h.now, false)
 	require.NoError(t, h.repo.Add(ctx, dep))
@@ -529,7 +529,7 @@ func TestProcess_AReleaseLegWhosePodNeverStartsIsRecordedFailed(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 	cmd := command.ValidationDeployTask{ReleaseID: "rel-" + uuid.NewString()[:8], NodeID: "e2e_schema.ftable_e",
-		ServiceName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_e", NodeType: "dbt-model",
+		ProjectName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_e", NodeType: "dbt-model",
 		ImageTag: "v42", JobName: "validate-ftable-e-stuck", CandidateSchema: "_cand_x"}
 	dep := model.NewValidationDeployment(cmd, nil, h.now.Add(-16*time.Minute), false)
 	require.NoError(t, h.repo.Add(ctx, dep))
@@ -822,7 +822,7 @@ func (h *harness) unstartedRow(t *testing.T, runID, jobName string, failed bool)
 	t.Helper()
 	ctx := context.Background()
 	cmd := command.DeployTask{TenantID: "default", TaskID: uuid.NewString(), RunID: runID, ScheduleName: "daily",
-		ServiceName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_e", JobName: jobName,
+		ProjectName: "service-1", SchemaName: "e2e_schema", TableName: "ftable_e", JobName: jobName,
 		NodeType: "dbt-model", ImageTag: "v42", Operation: "run"}
 	dep := model.NewDeployment(cmd, nil, h.now.Add(-time.Minute))
 	require.NoError(t, h.repo.Add(ctx, dep))

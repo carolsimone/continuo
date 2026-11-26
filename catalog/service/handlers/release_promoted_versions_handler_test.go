@@ -103,7 +103,7 @@ func versionsArtifact() topologyartifact.Document {
 		TenantID:      "default",
 		ReleaseID:     "rel-1",
 		Nodes: []topologyartifact.Node{
-			{UniqueID: "analytics.revenue", SchemaName: "analytics", TableName: "revenue", ServiceName: "svc",
+			{UniqueID: "analytics.revenue", SchemaName: "analytics", TableName: "revenue", ProjectName: "svc",
 				NodeType: "dbt-model", ContentHash: "sha256:abc", Schedule: "daily", UpstreamUniqueIDs: []string{}},
 			{UniqueID: "test.revenue_not_null", NodeType: "dbt-test", UpstreamUniqueIDs: []string{"analytics.revenue"}},
 		},

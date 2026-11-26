@@ -47,7 +47,7 @@ func (h *ValidationRequestedHandler) Handle(
 		cmd := command.ValidationDeployTask{
 			ReleaseID:            evt.ReleaseID,
 			NodeID:               n.NodeID,
-			ServiceName:          n.ServiceName,
+			ProjectName:          n.ProjectName,
 			SchemaName:           n.SchemaName,
 			TableName:            n.TableName,
 			NodeType:             string(n.NodeType),
@@ -71,7 +71,7 @@ func (h *ValidationRequestedHandler) Handle(
 // createValidationDeployment writes one validation Deployment aggregate to the
 // deployments command queue through the UoW deployments repo.
 // hasUpstreams gates the initial status: true starts the deployment as blocked
-// (intra-service upstreams must complete first), false as pending (root node,
+// (intra-project upstreams must complete first), false as pending (root node,
 // immediately dispatchable). msgProcID is stored for provenance; pass uuid.Nil
 // when no inbound trigger applies.
 func createValidationDeployment(

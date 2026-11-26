@@ -37,7 +37,7 @@ const rebaseReleaseMovedMessage = "the live release changed; preview again"
 //   - with them also re-executes ftable_c and ftable_d below it, which succeed,
 //     and inherits only ftable_a and ftable_b.
 //
-// The e2e dbt projects are baked into the service images, so the announcement
+// The e2e dbt projects are baked into the project images, so the announcement
 // changes ftable_c's content hash but not its SQL, and ftable_e fails again in
 // every rebase. That a fixed upstream node makes the failure pass is covered by
 // run-controller's TestRebaseFromFailure.
@@ -91,7 +91,7 @@ func TestRebase_ReRunsAChangedUpstreamNode(t *testing.T) {
 	waitForAnnouncedTopology(t, ctx, clients, live, schedules)
 	waitForRunControllerLiveRelease(t, ctx, clients, live)
 
-	wantChanged := []rebaseChangedNode{{Service: "service-3", Schema: seedSchemaName, Table: "ftable_c", Downstream: 3}}
+	wantChanged := []rebaseChangedNode{{Project: "service-3", Schema: seedSchemaName, Table: "ftable_c", Downstream: 3}}
 
 	// ── Preview with the changed upstream nodes ─────────────────────────────
 	// ftable_c's duration is recorded from its attempt's final report, which
@@ -234,7 +234,7 @@ func previewCountsOf(p *runv1.PreviewRebaseResponse) rebasePreviewCounts {
 // rebaseChangedNode is a changed upstream node of a preview, without its last
 // successful duration, which varies from run to run.
 type rebaseChangedNode struct {
-	Service    string
+	Project    string
 	Schema     string
 	Table      string
 	Downstream int32
@@ -244,7 +244,7 @@ func changedNodesOf(p *runv1.PreviewRebaseResponse) []rebaseChangedNode {
 	out := make([]rebaseChangedNode, 0, len(p.GetChangedNodes()))
 	for _, n := range p.GetChangedNodes() {
 		out = append(out, rebaseChangedNode{
-			Service:    n.GetServiceName(),
+			Project:    n.GetProjectName(),
 			Schema:     n.GetSchemaName(),
 			Table:      n.GetTableName(),
 			Downstream: n.GetDownstream(),

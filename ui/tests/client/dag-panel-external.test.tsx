@@ -22,7 +22,7 @@ vi.mock('@xyflow/react', async (importOriginal) => {
 });
 
 // An unknown-external node is a table a node reads and no node builds. Its wire id has
-// an empty service, so it starts with a dot.
+// an empty project, so it starts with a dot.
 const UNKNOWN_EXTERNAL_ID = '.raw.ingest_probe';
 const READER_ID = 's.a.m';
 
@@ -42,9 +42,9 @@ function setup(props: {
   onNodeClick?: (nodeId: string | null) => void;
   graphNodes?: GraphNode[];
   graphEdges?: GraphEdge[];
-  serviceView?: boolean;
-  expandedServices?: Set<string>;
-  serviceColors?: Map<string, string>;
+  projectView?: boolean;
+  expandedProjects?: Set<string>;
+  projectColors?: Map<string, string>;
 } = {}) {
   return render(
     <ReactFlowProvider>
@@ -55,9 +55,9 @@ function setup(props: {
         selectedNodeId={props.selectedNodeId ?? null}
         onNodeClick={props.onNodeClick ?? (() => {})}
         colorByStatus={props.colorByStatus ?? false}
-        serviceView={props.serviceView}
-        expandedServices={props.expandedServices}
-        serviceColors={props.serviceColors}
+        projectView={props.projectView}
+        expandedProjects={props.expandedProjects}
+        projectColors={props.projectColors}
       />
     </ReactFlowProvider>,
   );
@@ -96,17 +96,17 @@ describe('DAGPanel unknown-external nodes', () => {
     expect(node.style.borderTopColor).toBe('rgb(148, 163, 184)');
   });
 
-  it('carries no service accent on its left border, even when the empty service has a colour', () => {
-    // The service view expands both services, so each node is drawn on its own,
-    // and the colour map holds a colour for the empty service an unknown-external id
+  it('carries no project accent on its left border, even when the empty project has a colour', () => {
+    // The project view expands both projects, so each node is drawn on its own,
+    // and the colour map holds a colour for the empty project an unknown-external id
     // starts with: only the node type keeps the accent off the unknown-external node.
     const { container } = setup({
-      serviceView: true,
-      expandedServices: new Set(['', 's']),
-      serviceColors: new Map([['', '#ff0000'], ['s', '#2563eb']]),
+      projectView: true,
+      expandedProjects: new Set(['', 's']),
+      projectColors: new Map([['', '#ff0000'], ['s', '#2563eb']]),
     });
 
-    // A node of a real service in the same graph takes its service's accent.
+    // A node of a real project in the same graph takes its project's accent.
     const reader = nodeIn(container, READER_ID);
     expect(reader.style.borderLeftColor).toBe('rgb(37, 99, 235)');
     expect(reader.style.borderLeftWidth).not.toBe(reader.style.borderTopWidth);

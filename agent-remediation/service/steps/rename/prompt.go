@@ -68,10 +68,10 @@ func request(in step.PromptInput, plan remediation.ModelRename, files remediatio
 	}
 	precedents, _ := remediation.Get[[]prompt.Precedent](in.Evidence, remediation.KeyFailurePrecedents)
 	model := prompt.NamedFile{Path: plan.OldPath, Content: files.Files[plan.OldPath]}
-	req := prompt.AssembleModelRename(plan.Relation, plan.OtherService, plan.OtherFilePath, plan.OldName, plan.NewName,
+	req := prompt.AssembleModelRename(plan.Relation, plan.OtherProject, plan.OtherFilePath, plan.OldName, plan.NewName,
 		model, plan.NewPath, references, precedents)
 	if plan.ChangesAlias {
-		req = prompt.AssembleAliasChange(plan.Relation, plan.OtherService, plan.OtherFilePath, plan.OldName, plan.NewName,
+		req = prompt.AssembleAliasChange(plan.Relation, plan.OtherProject, plan.OtherFilePath, plan.OldName, plan.NewName,
 			model, references, precedents)
 	}
 	return step.WithPreviousTries(req, in.Evidence)

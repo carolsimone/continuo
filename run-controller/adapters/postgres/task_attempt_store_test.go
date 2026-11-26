@@ -47,7 +47,7 @@ func newRunWithTasks(t *testing.T, db *sqlx.DB, n int) (uuid.UUID, []uuid.UUID) 
 	for i := range n {
 		id := uuid.New()
 		_, err = db.Exec(`
-			INSERT INTO tasks (tenant_id, task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries)
+			INSERT INTO tasks (tenant_id, task_id, run_id, project_name, schema_name, table_name, job_name, status, max_retries)
 			VALUES ((SELECT tenant_id FROM runs WHERE run_id = $2), $1, $2, 'svc', 'sch', $3, 'job-0', 'running', 2)`, id, scheduleID, "tbl"+string(rune('a'+i)))
 		require.NoError(t, err)
 		ids = append(ids, id)
@@ -342,7 +342,7 @@ func TestTaskAttempts_LoadAttemptStateCarriesTheTasksIdentity(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, found)
 		assert.Equal(t, "job-0", got.JobName)
-		assert.Equal(t, "svc", got.ServiceName)
+		assert.Equal(t, "svc", got.ProjectName)
 		assert.Equal(t, "sch", got.SchemaName)
 		assert.Equal(t, "tbla", got.TableName)
 		require.NotNil(t, got.DispatchedAt)

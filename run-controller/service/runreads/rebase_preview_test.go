@@ -81,11 +81,11 @@ func (d *durations) LastSuccessDurations(_ context.Context, _ string, nodes []ru
 }
 
 // fanOut is raw.a feeding mart.b and mart.c, and raw.d feeding mart.c, in
-// service svc; hashA and hashD are the content hashes of raw.a and raw.d.
+// project svc; hashA and hashD are the content hashes of raw.a and raw.d.
 func fanOut(hashA, hashD string) topology.Graph {
 	node := func(schema, table, hash string) topology.Node {
 		return topology.Node{
-			Key: topology.KeyOf(schema, table), ServiceName: "svc", SchemaName: schema, TableName: table,
+			Key: topology.KeyOf(schema, table), ProjectName: "svc", SchemaName: schema, TableName: table,
 			NodeType: "dbt-model", ContentHash: hash, ScheduleName: "daily",
 		}
 	}
@@ -120,7 +120,7 @@ func newPreviewFixture(t *testing.T, status run.RunStatus) *previewFixture {
 		}},
 		runs: &sourceRuns{source: source},
 		reads: &durations{known: map[run.NodeID]time.Duration{
-			{ServiceName: "svc", SchemaName: "raw", TableName: "a"}: 252 * time.Second,
+			{ProjectName: "svc", SchemaName: "raw", TableName: "a"}: 252 * time.Second,
 		}},
 	}
 	f.u.SetRunRepo(f.runs)
@@ -149,15 +149,15 @@ func TestRebasePreviewer_PreviewsTheRebaseAndWritesNothing(t *testing.T) {
 	assert.Equal(t, run.ReleaseStamp{ReleaseID: "rel-7", PromotionSeq: 12}, got.Release)
 	assert.Equal(t, []runreads.ChangedUpstream{
 		{
-			ChangedNode: runplan.ChangedNode{Key: "raw.a", ServiceName: "svc", SchemaName: "raw", TableName: "a", Downstream: 2},
+			ChangedNode: runplan.ChangedNode{Key: "raw.a", ProjectName: "svc", SchemaName: "raw", TableName: "a", Downstream: 2},
 			LastSuccess: 252 * time.Second,
 		},
-		{ChangedNode: runplan.ChangedNode{Key: "raw.d", ServiceName: "svc", SchemaName: "raw", TableName: "d", Downstream: 1}},
+		{ChangedNode: runplan.ChangedNode{Key: "raw.d", ProjectName: "svc", SchemaName: "raw", TableName: "d", Downstream: 1}},
 	}, got.Changed)
 	assert.Equal(t, 2, got.Preview.FailedOrSkipped)
 	assert.Equal(t, 2, got.Preview.ChangedUpstream)
 	assert.Equal(t, [][]run.NodeID{{
-		{ServiceName: "svc", SchemaName: "raw", TableName: "a"}, {ServiceName: "svc", SchemaName: "raw", TableName: "d"},
+		{ProjectName: "svc", SchemaName: "raw", TableName: "a"}, {ProjectName: "svc", SchemaName: "raw", TableName: "d"},
 	}}, f.reads.asked)
 	assert.Equal(t, 1, f.u.BeginCalled)
 	assert.Equal(t, 1, f.u.RollbackCalled)

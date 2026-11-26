@@ -76,7 +76,7 @@ func TestVersionsPlan_StoresCodeWithNoSecretUntouched(t *testing.T) {
 	assert.Equal(t, "select 1 compiled", in.Nodes[0].CompiledCode)
 }
 
-// A python service's code is stored redacted where it holds a credential, and
+// A python project's code is stored redacted where it holds a credential, and
 // as it is where it only reads one from somewhere else.
 func TestVersionsPlan_RedactsAHardcodedCredentialOfPythonCodeAndKeepsAReadOfOne(t *testing.T) {
 	b := bundleFixture()

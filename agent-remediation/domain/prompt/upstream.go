@@ -6,25 +6,25 @@ import (
 )
 
 // MemberFailure is one failing descendant shown to the model as a symptom of
-// the upstream change it is asked to repair. Service is the member's owning
-// service; rendered when set.
+// the upstream change it is asked to repair. Project is the member's owning
+// project; rendered when set.
 type MemberFailure struct {
 	NodeID       string
-	Service      string
+	Project      string
 	ErrorExcerpt string
 }
 
 // UpstreamEvidence is what the model sees when nodes failed below one node that
 // changed in this release: that node's source, what changed in it, and the
-// descendants with their errors. CrossService marks the descendants as living
-// in other services, which cannot change in this release.
+// descendants with their errors. CrossProject marks the descendants as living
+// in other projects, which cannot change in this release.
 type UpstreamEvidence struct {
 	TargetNodeID  string
 	TargetSource  string
 	OwnChangeDiff string
 	Members       []MemberFailure
 	Precedents    []Precedent
-	CrossService  bool
+	CrossProject  bool
 }
 
 const upstreamFixSystemPrompt = `You are a data-engineering assistant that repairs a dbt model whose change broke the models downstream of it.
@@ -39,13 +39,13 @@ Rules:
 - If you cannot determine a safe fix, return the SQL unchanged with a low confidence and an explanation.
 - Always respond by calling the propose_fix tool.`
 
-// crossServiceClause is appended to the upstream system prompt when the
-// failing descendants live in other services. A release changes one service,
+// crossProjectClause is appended to the upstream system prompt when the
+// failing descendants live in other projects. A release changes one project,
 // so those descendants cannot change here and the producer must keep serving
 // what they read.
-const crossServiceClause = `
+const crossProjectClause = `
 
-The failing downstream models live in other services and cannot change in this release: a fix in their own service can never ship before this change.
+The failing downstream models live in other projects and cannot change in this release: a fix in their own project can never ship before this change.
 Repair the changed model so it keeps what it now produces AND keeps the column or relation the downstream models read — keep both, typically by selecting the old name alongside the new one. Do not revert the change and do not edit the downstream models.`
 
 // AssembleUpstreamFix builds the request for a shared-upstream cluster: one
@@ -61,8 +61,8 @@ func AssembleUpstreamFix(ev UpstreamEvidence) ProposeRequest {
 	}
 	u.WriteString("Downstream models that fail validation because of this change:\n")
 	for _, m := range ev.Members {
-		if m.Service != "" {
-			fmt.Fprintf(&u, "- %s (service %s): %s\n", m.NodeID, m.Service, m.ErrorExcerpt)
+		if m.Project != "" {
+			fmt.Fprintf(&u, "- %s (project %s): %s\n", m.NodeID, m.Project, m.ErrorExcerpt)
 			continue
 		}
 		fmt.Fprintf(&u, "- %s: %s\n", m.NodeID, m.ErrorExcerpt)
@@ -72,8 +72,8 @@ func AssembleUpstreamFix(ev UpstreamEvidence) ProposeRequest {
 	fmt.Fprintf(&u, "Return the complete corrected SQL for %s so every downstream model listed validates.", ev.TargetNodeID)
 
 	system := upstreamFixSystemPrompt
-	if ev.CrossService {
-		system += crossServiceClause
+	if ev.CrossProject {
+		system += crossProjectClause
 	}
 
 	return ProposeRequest{

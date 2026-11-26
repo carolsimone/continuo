@@ -64,7 +64,7 @@ const STAGE_LABELS: Record<string, string> = {
   parse_rehearsal: 'Parse rehearsal',
   artifact_upload: 'Artifact upload',
   nothing_to_validate: 'Nothing to validate',
-  unbuildable_cross_service_upstream: 'Unbuildable cross-service upstream',
+  unbuildable_cross_project_upstream: 'Unbuildable cross-project upstream',
   upgrade_interrupted: 'Upgrade interrupted',
   // upstream_clone_failed, after reasonLabel drops its "_failed" suffix.
   upstream_clone: 'Could not copy an upstream from production',
@@ -112,7 +112,7 @@ export function groupByStage(
 
 // proposalKey is the join key between a per-node result and a remediation
 // proposal. A node_id alone is ambiguous across stages (a compile node_id is a
-// service name that can collide with a validation node_id), so the key is
+// project name that can collide with a validation node_id), so the key is
 // (stage, node_id); stage and proposal.source share the same literals.
 export function proposalKey(stage: string, nodeId: string): string {
   return `${stage}|${nodeId}`;
@@ -159,18 +159,18 @@ export function proposalApproverForNode(p: ProposalDTO, nodeId: string): Approve
 }
 
 // proposalPullRequests lists every pull request opened from this proposal.
-// A proposal split across owning services carries one entry per service in
-// pull_requests; a legacy row (or one from before the per-service split
+// A proposal split across owning projects carries one entry per project in
+// pull_requests; a legacy row (or one from before the per-project split
 // existed) has none, so its singular pr_* fields — which the server mirrors
 // from pull_requests[0] for exactly this reason — are synthesized into the
-// one (service '') entry they describe. A proposal with no pull request at
+// one (project '') entry they describe. A proposal with no pull request at
 // all (pr_url and pr_state both empty) yields an empty list either way.
 export function proposalPullRequests(p: ProposalDTO): PullRequestDTO[] {
   if (p.pull_requests && p.pull_requests.length > 0) return p.pull_requests;
   if (!p.pr_url && !p.pr_state) return [];
   return [
     {
-      service: '',
+      project: '',
       repo: p.repo,
       branch: '',
       pr_url: p.pr_url,
@@ -183,18 +183,18 @@ export function proposalPullRequests(p: ProposalDTO): PullRequestDTO[] {
   ];
 }
 
-// proposalPrServices lists the owning-service groups this proposal's pull
+// proposalPrProjects lists the owning-project groups this proposal's pull
 // requests split into. Absent or empty on a legacy row (or one predating the
-// per-service split), in which case it is a single group named '' — the same
+// per-project split), in which case it is a single group named '' — the same
 // default agent-remediation reports for such a row.
-export function proposalPrServices(p: ProposalDTO): string[] {
-  return p.pr_services && p.pr_services.length > 0 ? p.pr_services : [''];
+export function proposalPrProjects(p: ProposalDTO): string[] {
+  return p.pr_projects && p.pr_projects.length > 0 ? p.pr_projects : [''];
 }
 
-// proposalPrStateForService reads the pr_state of one owning-service group's
-// pull request, '' when that service has none yet.
-export function proposalPrStateForService(p: ProposalDTO, service: string): string {
-  return proposalPullRequests(p).find((pr) => pr.service === service)?.pr_state ?? '';
+// proposalPrStateForProject reads the pr_state of one owning-project group's
+// pull request, '' when that project has none yet.
+export function proposalPrStateForProject(p: ProposalDTO, project: string): string {
+  return proposalPullRequests(p).find((pr) => pr.project === project)?.pr_state ?? '';
 }
 
 // verificationRunPhase reads a verification run's status as the phase an
@@ -233,7 +233,7 @@ export function effectiveRound(p: ProposalDTO): number {
 }
 
 // ProposalGroup aggregates every remediation attempt for one (release, round):
-// the attempts newest first, the union of the services they touch and the
+// the attempts newest first, the union of the projects they touch and the
 // nodes they resolve, the newest attempt's status, and the newest attempt
 // that carries a pull request.
 export interface ProposalGroup {
@@ -242,30 +242,30 @@ export interface ProposalGroup {
   round: number;
   attempts: ProposalDTO[];       // newest first
   latest: ProposalDTO;           // attempts[0]
-  services: string[];            // see proposalServices; union, sorted
+  projects: string[];            // see proposalProjects; union, sorted
   nodeIds: string[];             // resolved-node union, sorted
   latestPrProposal: ProposalDTO | null;
 }
 
-// proposalServices lists the services one attempt touched, as recorded by
-// agent-remediation on the proposal itself: the failing nodes' services plus
-// the edited ones — the same set the server's `service` list filter matches
-// a proposal on, so the Services column and the filter agree. A remediation
-// node id is "<schema>.<table>" and names no service, so nothing is ever
+// proposalProjects lists the projects one attempt touched, as recorded by
+// agent-remediation on the proposal itself: the failing nodes' projects plus
+// the edited ones — the same set the server's `project` list filter matches
+// a proposal on, so the Projects column and the filter agree. A remediation
+// node id is "<schema>.<table>" and names no project, so nothing is ever
 // parsed out of resolved_node_ids. A proposal served by an agent-remediation
-// that predates the field carries no services; the owning services its pull
+// that predates the field carries no projects; the owning projects its pull
 // requests split into (the legacy '' sentinel dropped) are the nearest thing
 // it does carry, and a legacy proposal with neither yields none.
-export function proposalServices(p: ProposalDTO): string[] {
-  const carried = (p.services ?? []).filter((s) => s !== '');
+export function proposalProjects(p: ProposalDTO): string[] {
+  const carried = (p.projects ?? []).filter((s) => s !== '');
   if (carried.length > 0) return Array.from(new Set(carried)).sort();
-  return Array.from(new Set(proposalPrServices(p).filter((s) => s !== ''))).sort();
+  return Array.from(new Set(proposalPrProjects(p).filter((s) => s !== ''))).sort();
 }
 
 // groupProposals buckets proposals by (release_id, remediation round), newest
 // group first by its latest attempt. Within a group the attempts are newest
-// first (created_at, then attempt number). `services` unions each attempt's
-// proposalServices; `nodeIds` unions their resolved nodes; `latestPrProposal`
+// first (created_at, then attempt number). `projects` unions each attempt's
+// proposalProjects; `nodeIds` unions their resolved nodes; `latestPrProposal`
 // is the newest attempt that has opened a pull request, or null when none
 // has.
 export function groupProposals(proposals: ProposalDTO[]): ProposalGroup[] {
@@ -285,8 +285,8 @@ export function groupProposals(proposals: ProposalDTO[]): ProposalGroup[] {
     });
     const latest = attempts[0];
 
-    const serviceSet = new Set<string>();
-    for (const p of attempts) for (const s of proposalServices(p)) serviceSet.add(s);
+    const projectSet = new Set<string>();
+    for (const p of attempts) for (const s of proposalProjects(p)) projectSet.add(s);
     const nodeSet = new Set<string>();
     for (const p of attempts) for (const n of proposalNodeIds(p)) nodeSet.add(n);
 
@@ -296,7 +296,7 @@ export function groupProposals(proposals: ProposalDTO[]): ProposalGroup[] {
       round: effectiveRound(latest),
       attempts,
       latest,
-      services: Array.from(serviceSet).sort(),
+      projects: Array.from(projectSet).sort(),
       nodeIds: Array.from(nodeSet).sort(),
       latestPrProposal: attempts.find(p => proposalPullRequests(p).some(pr => pr.pr_state)) ?? null,
     });
@@ -347,7 +347,7 @@ const KINDS_WITHOUT_COMPILE = ['python', 'python-odcs', 'ontology'];
 // pipelinePath lists the stages a run of this kind passes through, in order,
 // naming the condition on each stage that does not run on every path:
 // - compiling: dbt only — the CI of any other kind builds and uploads its
-//   artifact (a Python service's contract bundle, the ontology file) before
+//   artifact (a Python project's contract bundle, the ontology file) before
 //   the release is posted, so activation goes straight to parsing;
 // - parsing: every run;
 // - seed_building: dbt only, and only when the validation set holds a new or

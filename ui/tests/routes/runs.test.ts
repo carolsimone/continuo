@@ -127,7 +127,7 @@ describe('routes/runs: statuses cross unchanged', () => {
 
   it.each(TASK_STATUSES)('GET /:id/tasks and /:id/graph report the task_status %s as sent', async (status) => {
     mockListTasks.mockImplementation((_req: any, cb: any) => cb(null, { tasks: [{ task_id: 't', status }], total_count: 1 }));
-    mockGetRunGraph.mockImplementation((_req: any, cb: any) => cb(null, { nodes: [{ service_name: 's', schema_name: 'a', table_name: 'b', status }], edges: [] }));
+    mockGetRunGraph.mockImplementation((_req: any, cb: any) => cb(null, { nodes: [{ project_name: 's', schema_name: 'a', table_name: 'b', status }], edges: [] }));
     expect((await request(app).get('/api/runs/r/tasks')).body.tasks[0].status).toBe(status);
     expect((await request(app).get('/api/runs/r/graph')).body.nodes[0].status).toBe(status);
   });
@@ -371,7 +371,7 @@ describe('routes/runs: GET /:id/graph', () => {
   it('passes through run_promotion_seq and latest_promotion_seq as numbers', async () => {
     mockGetRunGraph.mockImplementation((_req: any, cb: any) =>
       cb(null, {
-        nodes: [{ service_name: 's', schema_name: 'sch', table_name: 't', node_type: 'dbt-model' }],
+        nodes: [{ project_name: 's', schema_name: 'sch', table_name: 't', node_type: 'dbt-model' }],
         edges: [],
         run_promotion_seq: '5',     // gRPC-JS returns int64 as string
         latest_promotion_seq: '7',
@@ -392,7 +392,7 @@ describe('routes/runs: GET /:id/graph', () => {
   it('returns task statuses as the run-controller service sends them', async () => {
     mockGetRunGraph.mockImplementation((_req: any, cb: any) =>
       cb(null, {
-        nodes: [{ service_name: 's', schema_name: 'sch', table_name: 't', node_type: 'dbt-model', status: 'skipped' }],
+        nodes: [{ project_name: 's', schema_name: 'sch', table_name: 't', node_type: 'dbt-model', status: 'skipped' }],
         edges: [],
         run_promotion_seq: '0',
         latest_promotion_seq: '3',
@@ -410,9 +410,9 @@ describe('routes/runs: GET /:id/graph', () => {
     mockGetRunGraph.mockImplementation((_req: any, cb: any) =>
       cb(null, {
         nodes: [
-          { service_name: 's', schema_name: 'sch', table_name: 'a', node_type: 'dbt-model', status: 'pending',
+          { project_name: 's', schema_name: 'sch', table_name: 'a', node_type: 'dbt-model', status: 'pending',
             wait_reason: 'node_lease', waiting_on_run_id: 'run-9', waiting_since: '2026-10-24T10:05:00Z' },
-          { service_name: 's', schema_name: 'sch', table_name: 'b', node_type: 'dbt-model', status: 'pending',
+          { project_name: 's', schema_name: 'sch', table_name: 'b', node_type: 'dbt-model', status: 'pending',
             wait_reason: '', waiting_on_run_id: '', waiting_since: '' },
         ],
         edges: [],
@@ -471,7 +471,7 @@ describe('routes/runs: GET /:id/tasks', () => {
           {
             task_id: 'task-456',
             run_id: 'abc-123',
-            service_name: 'dbt',
+            project_name: 'dbt',
             schema_name: 'analytics',
             table_name: 'users',
             job_name: 'dbt-analytics-users',
@@ -772,8 +772,8 @@ describe('routes/runs: GET /:id/rebase-preview', () => {
       release_id: 'rel-7', promotion_seq: '7', total_nodes: 2000, will_run: 41,
       failed_or_skipped: 3, new_nodes: 1, changed_upstream: 2, downstream: 35, inherited: 1959,
       changed_nodes: [
-        { service_name: 'billing', schema_name: 'stg', table_name: 'invoices', downstream: 3, last_success_seconds: 0 },
-        { service_name: 'core', schema_name: 'stg', table_name: 'orders', downstream: 18, last_success_seconds: 252.4 },
+        { project_name: 'billing', schema_name: 'stg', table_name: 'invoices', downstream: 3, last_success_seconds: 0 },
+        { project_name: 'core', schema_name: 'stg', table_name: 'orders', downstream: 18, last_success_seconds: 252.4 },
       ],
     }));
 
@@ -788,8 +788,8 @@ describe('routes/runs: GET /:id/rebase-preview', () => {
       release_id: 'rel-7', promotion_seq: 7, total_nodes: 2000, will_run: 41,
       failed_or_skipped: 3, new_nodes: 1, changed_upstream: 2, downstream: 35, inherited: 1959,
       changed_nodes: [
-        { service_name: 'billing', schema_name: 'stg', table_name: 'invoices', downstream: 3, last_success_seconds: null },
-        { service_name: 'core', schema_name: 'stg', table_name: 'orders', downstream: 18, last_success_seconds: 252.4 },
+        { project_name: 'billing', schema_name: 'stg', table_name: 'invoices', downstream: 3, last_success_seconds: null },
+        { project_name: 'core', schema_name: 'stg', table_name: 'orders', downstream: 18, last_success_seconds: 252.4 },
       ],
     });
   });
@@ -916,8 +916,8 @@ describe('routes/runs: task operations, plan reasons and seed preflight findings
   it('carries each graph node operation and plan reason', async () => {
     mockGetRunGraph.mockImplementation((_req: any, cb: any) => cb(null, {
       nodes: [
-        { service_name: 's', schema_name: 'a', table_name: 'v', node_type: 'dbt-model', operation: 'full_refresh', plan_reason: 'rebuilt after seed' },
-        { service_name: 's', schema_name: 'a', table_name: 'w', node_type: 'dbt-model', operation: 'run', plan_reason: '' },
+        { project_name: 's', schema_name: 'a', table_name: 'v', node_type: 'dbt-model', operation: 'full_refresh', plan_reason: 'rebuilt after seed' },
+        { project_name: 's', schema_name: 'a', table_name: 'w', node_type: 'dbt-model', operation: 'run', plan_reason: '' },
       ],
       edges: [],
     }));

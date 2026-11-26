@@ -327,7 +327,7 @@ describe('routes/schedules: GET /:name/graph reads RunService', () => {
       expect(req).toEqual({ schedule_name: 'daily' });
       cb(null, {
         nodes: [
-          { service_name: 'svc', schema_name: 'sales', table_name: 'orders', node_type: 'dbt-model', schedule_name: 'daily' },
+          { project_name: 'svc', schema_name: 'sales', table_name: 'orders', node_type: 'dbt-model', schedule_name: 'daily' },
         ],
         edges: [],
         promotion_seq: '42', // gRPC-JS returns int64 as string
@@ -348,9 +348,9 @@ describe('routes/schedules: GET /:name/graph reads RunService', () => {
     mockGetScheduleGraph.mockImplementation((_req: any, cb: any) => {
       cb(null, {
         nodes: [
-          { service_name: 'svc', schema_name: 'stg', table_name: 'ran', node_type: 'dbt-model', schedule_name: '', dormant: true, last_run_at: '2026-11-12T08:30:00Z' },
-          { service_name: 'svc', schema_name: 'stg', table_name: 'never_ran', node_type: 'dbt-model', schedule_name: '', dormant: true, last_run_at: '' },
-          { service_name: 'svc', schema_name: 'sales', table_name: 'orders', node_type: 'dbt-model', schedule_name: 'daily', dormant: false, last_run_at: '' },
+          { project_name: 'svc', schema_name: 'stg', table_name: 'ran', node_type: 'dbt-model', schedule_name: '', dormant: true, last_run_at: '2026-11-12T08:30:00Z' },
+          { project_name: 'svc', schema_name: 'stg', table_name: 'never_ran', node_type: 'dbt-model', schedule_name: '', dormant: true, last_run_at: '' },
+          { project_name: 'svc', schema_name: 'sales', table_name: 'orders', node_type: 'dbt-model', schedule_name: 'daily', dormant: false, last_run_at: '' },
         ],
         edges: [],
       });
@@ -376,8 +376,8 @@ describe('routes/schedules: GET /:name/graph reads RunService', () => {
     mockGetScheduleGraph.mockImplementation((_req: any, cb: any) => {
       cb(null, {
         nodes: [
-          { service_name: 'svc', schema_name: 'raw', table_name: 'seed_orders', node_type: 'dbt-seed', schedule_name: 'daily' },
-          { service_name: 'svc', schema_name: 'sales', table_name: 'orders', node_type: 'dbt-model', schedule_name: 'daily' },
+          { project_name: 'svc', schema_name: 'raw', table_name: 'seed_orders', node_type: 'dbt-seed', schedule_name: 'daily' },
+          { project_name: 'svc', schema_name: 'sales', table_name: 'orders', node_type: 'dbt-model', schedule_name: 'daily' },
         ],
         // orders depends on seed_orders
         edges: [{ from_node_id: 'svc.sales.orders', to_node_id: 'svc.raw.seed_orders' }],

@@ -21,7 +21,7 @@ type Version struct {
 	UniqueID     string
 	ContractHash string
 	Family       model.ContractFamily
-	Service      string
+	Project      string
 	// FirstReleaseID is the release whose promotion first carried this
 	// contract into the graph.
 	FirstReleaseID string
@@ -48,7 +48,7 @@ type Incoming struct {
 	ContractHash string
 	ContentHash  string
 	Family       model.ContractFamily
-	Service      string
+	Project      string
 	// SourcePath is the file the contract was read from.
 	SourcePath string
 	Document   map[string]any

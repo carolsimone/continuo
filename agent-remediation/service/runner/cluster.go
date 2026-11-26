@@ -471,8 +471,8 @@ func (r *Runner) writeArtifacts(ctx context.Context, d remediation.Draft) (remed
 // as its members' outcome. A single cluster is handed over. An upstream cluster
 // falls back: each member of a shared-upstream cluster is added as a single
 // cluster of its own, returned for the same commit, and the members of a
-// cross-service cluster are skipped with the code of o, because a fix in their
-// own service cannot ship before the change in the other service that broke
+// cross-project cluster are skipped with the code of o, because a fix in their
+// own project cannot ship before the change in the other project that broke
 // them. The code says why the upstream fix failed: declined when a step or the
 // draft declined it, which settles the members for good, and
 // preflight_rounds_spent when pre-flight refused every round, which leaves
@@ -486,18 +486,18 @@ func (r *Runner) settle(run tryRun, c *remediation.Cluster, o proposal.NodeOutco
 		r.logger.Info("shared-upstream fix unavailable; each member falls back to its own source",
 			"release", run.trigger.ReleaseID, "target", c.TargetNodeID, "members", c.Members, "reason", o.Reason)
 		return r.memberClusters(run, *c), nil
-	case workflow.ClusterCrossService:
+	case workflow.ClusterCrossProject:
 		if err := moveCluster(c, remediation.ClusterFellBack); err != nil {
 			return nil, err
 		}
-		_, service := ancestorLocation(run.trigger, c.TargetNodeID)
+		_, project := ancestorLocation(run.trigger, c.TargetNodeID)
 		c.Outcome = &proposal.NodeOutcome{
 			Status: proposal.StatusSkipped,
-			Reason: fmt.Sprintf("the change that broke this node lives in %s; a fix in this node's own service cannot ship before it: %s",
-				describeService(service), o.Reason),
+			Reason: fmt.Sprintf("the change that broke this node lives in %s; a fix in this node's own project cannot ship before it: %s",
+				describeProject(project), o.Reason),
 			Code: o.Code,
 		}
-		r.logger.Info("cross-service upstream fix unavailable; members are skipped, not fixed in their own service",
+		r.logger.Info("cross-project upstream fix unavailable; members are skipped, not fixed in their own project",
 			"release", run.trigger.ReleaseID, "target", c.TargetNodeID, "members", c.Members, "reason", o.Reason)
 		return nil, nil
 	default:
@@ -582,22 +582,22 @@ func failureFor(t remediation.Trigger, c remediation.Cluster, try remediation.Tr
 // a changed ancestor, as the trigger carries it on the failing nodes that
 // descend from it. Both are empty when no node carries a complete location for
 // it.
-func ancestorLocation(t remediation.Trigger, ancestorID string) (filePath, service string) {
+func ancestorLocation(t remediation.Trigger, ancestorID string) (filePath, project string) {
 	for _, n := range t.Nodes {
 		for _, a := range n.ChangedAncestors {
-			if a.NodeID == ancestorID && a.FilePath != "" && a.Service != "" {
-				return a.FilePath, a.Service
+			if a.NodeID == ancestorID && a.FilePath != "" && a.Project != "" {
+				return a.FilePath, a.Project
 			}
 		}
 	}
 	return "", ""
 }
 
-// describeService names a service for an operator-facing reason, or "another
-// service" when the trigger carried no service for the ancestor.
-func describeService(service string) string {
-	if service == "" {
-		return "another service"
+// describeProject names a project for an operator-facing reason, or "another
+// project" when the trigger carried no project for the ancestor.
+func describeProject(project string) string {
+	if project == "" {
+		return "another project"
 	}
-	return "service " + service
+	return "project " + project
 }

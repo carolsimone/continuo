@@ -6,7 +6,7 @@ import { groupAttemptsByTask } from '../../src/client/detail-page-helpers';
 import type { Task, TaskAttempt } from '../../src/client/types';
 
 const task = (name: string, status: string, overrides: Partial<Task> = {}): Task => ({
-  task_id: name, service_name: 'core', schema_name: 'a', table_name: name,
+  task_id: name, project_name: 'core', schema_name: 'a', table_name: name,
   job_name: name, status, attempt: 0, max_retries: 2, created_at: null,
   ...overrides,
 });
@@ -27,10 +27,10 @@ describe('RunNodeTable', () => {
   it('filters to failed nodes only', () => {
     render(
       <RunNodeTable tasks={tasks} attemptsByTask={noAttempts} edges={[]}
-        expandedServices={new Set(['core'])} onServiceToggle={vi.fn()} />,
+        expandedProjects={new Set(['core'])} onProjectToggle={vi.fn()} />,
     );
     expect(screen.getByText('ok_node')).toBeInTheDocument();
-    // Anchored regex: a service group header is also `role="button"` and its
+    // Anchored regex: a project group header is also `role="button"` and its
     // accessible name can contain the word "failed" (its rolled-up status
     // pill) — anchoring to the start matches only the filter button's own
     // label ("Failed 1"), not the group header.
@@ -46,19 +46,19 @@ describe('RunNodeTable', () => {
   it('keeps every status column header', () => {
     render(
       <RunNodeTable tasks={tasks} attemptsByTask={noAttempts} edges={[]}
-        expandedServices={new Set(['core'])} onServiceToggle={vi.fn()} />,
+        expandedProjects={new Set(['core'])} onProjectToggle={vi.fn()} />,
     );
     for (const col of ['Status', 'Attempt', 'Error', 'Started', 'Completed', 'Logs']) {
       expect(screen.getByRole('columnheader', { name: col })).toBeInTheDocument();
     }
   });
 
-  it('orders a group\'s rows by dependency depth via intraServiceOrder', () => {
+  it('orders a group\'s rows by dependency depth via intraProjectOrder', () => {
     const depTasks = [task('downstream', 'succeeded'), task('upstream', 'succeeded')];
     const edges = [{ from_node_id: 'core.a.upstream', to_node_id: 'core.a.downstream' }];
     const { container } = render(
       <RunNodeTable tasks={depTasks} attemptsByTask={noAttempts} edges={edges}
-        expandedServices={new Set(['core'])} onServiceToggle={vi.fn()} />,
+        expandedProjects={new Set(['core'])} onProjectToggle={vi.fn()} />,
     );
     const names = [...container.querySelectorAll('.nodes-node-name')].map((el) => el.textContent);
     expect(names).toEqual(['upstream', 'downstream']);
@@ -68,7 +68,7 @@ describe('RunNodeTable', () => {
     const mixed = [task('ok_node', 'succeeded'), task('bad_node', 'failed'), task('skip_node', 'skipped')];
     render(
       <RunNodeTable tasks={mixed} attemptsByTask={noAttempts} edges={[]}
-        expandedServices={new Set(['core'])} onServiceToggle={vi.fn()} />,
+        expandedProjects={new Set(['core'])} onProjectToggle={vi.fn()} />,
     );
     // Badge reads failed(1) + skipped(1) = 2, matching the rows the click shows.
     const failedBtn = screen.getByRole('button', { name: /^failed 2$/i });
@@ -81,9 +81,9 @@ describe('RunNodeTable', () => {
   it('auto-expands and shows a matching group when filtering by text search', () => {
     render(
       <RunNodeTable tasks={tasks} attemptsByTask={noAttempts} edges={[]}
-        expandedServices={new Set()} onServiceToggle={vi.fn()} />,
+        expandedProjects={new Set()} onProjectToggle={vi.fn()} />,
     );
-    // Collapsed by default (expandedServices is empty): rows are hidden.
+    // Collapsed by default (expandedProjects is empty): rows are hidden.
     expect(screen.queryByText('bad_node')).not.toBeInTheDocument();
     fireEvent.change(screen.getByPlaceholderText(/filter nodes/i), { target: { value: 'bad' } });
     expect(screen.getByText('bad_node')).toBeInTheDocument();
@@ -94,7 +94,7 @@ describe('RunNodeTable', () => {
     const { container } = render(
       <RunNodeTable tasks={[task('retried', 'running', { attempt: 1, max_retries: 2 })]}
         attemptsByTask={noAttempts} edges={[]}
-        expandedServices={new Set(['core'])} onServiceToggle={vi.fn()} />,
+        expandedProjects={new Set(['core'])} onProjectToggle={vi.fn()} />,
     );
     expect(container.querySelector('.nodes-attempt')?.textContent).toBe('2 / 3');
   });
@@ -105,7 +105,7 @@ describe('RunNodeTable', () => {
     const { container } = render(
       <RunNodeTable tasks={[task('unbudgeted', 'running', { attempt: 0, max_retries: 0 })]}
         attemptsByTask={noAttempts} edges={[]}
-        expandedServices={new Set(['core'])} onServiceToggle={vi.fn()} />,
+        expandedProjects={new Set(['core'])} onProjectToggle={vi.fn()} />,
     );
     expect(container.querySelector('.nodes-attempt')?.textContent).toBe('1');
   });
@@ -127,7 +127,7 @@ describe('RunNodeTable', () => {
     ]);
     const { container } = render(
       <RunNodeTable tasks={[task('bad_node', 'failed', { attempt: 1 })]} attemptsByTask={attempts} edges={[]}
-        expandedServices={new Set(['core'])} onServiceToggle={vi.fn()} />,
+        expandedProjects={new Set(['core'])} onProjectToggle={vi.fn()} />,
     );
 
     // The task row reads its Error and Logs cells from the highest-numbered attempt.
@@ -167,7 +167,7 @@ describe('RunNodeTable', () => {
     const attempts = groupAttemptsByTask([attempt('bad_node', 0, { status: 'dispatched' })]);
     const { container } = render(
       <RunNodeTable tasks={tasks} attemptsByTask={attempts} edges={[]}
-        expandedServices={new Set(['core'])} onServiceToggle={vi.fn()} />,
+        expandedProjects={new Set(['core'])} onProjectToggle={vi.fn()} />,
     );
     const okRow = screen.getByText('ok_node').closest('tr')!;
     expect(okRow.getAttribute('aria-expanded')).toBeNull();
@@ -198,7 +198,7 @@ describe('RunNodeTable', () => {
           task('plain', 'succeeded', { operation: 'run', plan_reason: null }),
         ]}
         attemptsByTask={noAttempts} edges={[]}
-        expandedServices={new Set(['core'])} onServiceToggle={vi.fn()} />,
+        expandedProjects={new Set(['core'])} onProjectToggle={vi.fn()} />,
     );
     expect(screen.getAllByText('Full refresh')).toHaveLength(1);
     expect(screen.getByText('Full refresh').className).toContain('pill-sm--muted');
@@ -224,7 +224,7 @@ describe('RunNodeTable', () => {
     })]);
     render(
       <RunNodeTable tasks={[task('seed_table_1', 'failed')]} attemptsByTask={attempts} edges={[]}
-        expandedServices={new Set(['core'])} onServiceToggle={vi.fn()} />,
+        expandedProjects={new Set(['core'])} onProjectToggle={vi.fn()} />,
     );
     expect(screen.queryByText('bi.fx_rates_report (view, owner bi)')).toBeNull();
     fireEvent.click(screen.getByText('seed_table_1').closest('tr')!);
@@ -245,7 +245,7 @@ describe('RunNodeTable', () => {
     })]);
     const { container } = render(
       <RunNodeTable tasks={[task('seed_table_1', 'succeeded')]} attemptsByTask={attempts} edges={[]}
-        expandedServices={new Set(['core'])} onServiceToggle={vi.fn()} />,
+        expandedProjects={new Set(['core'])} onProjectToggle={vi.fn()} />,
     );
     fireEvent.click(screen.getByText('seed_table_1').closest('tr')!);
     expect(container.querySelector('.remediation-verif')).toBeNull();

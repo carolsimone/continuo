@@ -45,9 +45,9 @@ func TestStart_StampsTaskOperation(t *testing.T) {
 
 	one := 1
 	g := topology.NewGraph([]topology.Node{{
-		Key: "analytics.tbl_op", ServiceName: "svc", SchemaName: "analytics", TableName: "tbl_op", NodeType: "dbt-model", TestCount: &one,
+		Key: "analytics.tbl_op", ProjectName: "svc", SchemaName: "analytics", TableName: "tbl_op", NodeType: "dbt-model", TestCount: &one,
 	}}, nil)
-	plan, err := runplan.SingleNode{Key: "analytics.tbl_op", ServiceName: "svc", Operation: model.OperationTest}.Select(g)
+	plan, err := runplan.SingleNode{Key: "analytics.tbl_op", ProjectName: "svc", Operation: model.OperationTest}.Select(g)
 	require.NoError(t, err)
 	_, err = r.Start(ctx, tasks, plan, g, testTaskDefaults, time.Now())
 	require.NoError(t, err)

@@ -66,7 +66,7 @@ type TaskCollection interface {
 	// status other than SUCCEEDED. Used by rerun/rebase eligibility checks.
 	HasNonSucceeded(ctx context.Context, runID uuid.UUID) (bool, error)
 
-	// GetByNode returns the task at the (service, schema, table) node within
+	// GetByNode returns the task at the (project, schema, table) node within
 	// the given run. Returns ErrTaskNotFound if no row matches.
 	GetByNode(ctx context.Context, runID uuid.UUID, node NodeID) (Task, error)
 
@@ -175,7 +175,7 @@ type TaskAttemptState struct {
 	MaxRetries   int32
 	NodeKey      topology.NodeKey
 	JobName      string
-	ServiceName  string
+	ProjectName  string
 	SchemaName   string
 	TableName    string
 	DispatchedAt *time.Time

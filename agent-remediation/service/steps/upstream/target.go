@@ -1,5 +1,5 @@
 // Package upstream holds the steps of the upstream family: the fix of a
-// shared-upstream or cross-service cluster, made at the changed ancestor the
+// shared-upstream or cross-project cluster, made at the changed ancestor the
 // failing members share as their cause. The context source upstream_target
 // reads the ancestor and finds where it lives, and the prompt step upstream
 // asks the model for its corrected source.
@@ -23,21 +23,21 @@ type Target struct {
 	candidates       ports.CandidateSourceReader
 	locator          ports.NodeLocator
 	changes          shared.ChangeDiffer
-	serviceRepoPaths map[string]string
+	projectRepoPaths map[string]string
 	logger           *slog.Logger
 }
 
 var _ step.ContextSource = (*Target)(nil)
 
-// NewTarget builds the upstream_target step. serviceRepoPaths maps a service
+// NewTarget builds the upstream_target step. projectRepoPaths maps a project
 // name to its path inside the repository. It calls no port until Gather.
-func NewTarget(candidates ports.CandidateSourceReader, locator ports.NodeLocator, versions ports.VersionReader, serviceRepoPaths map[string]string, logger *slog.Logger) *Target {
+func NewTarget(candidates ports.CandidateSourceReader, locator ports.NodeLocator, versions ports.VersionReader, projectRepoPaths map[string]string, logger *slog.Logger) *Target {
 	logger = shared.LoggerOrDefault(logger)
 	return &Target{
 		candidates:       candidates,
 		locator:          locator,
 		changes:          shared.ChangeDiffer{Versions: versions, Logger: logger},
-		serviceRepoPaths: serviceRepoPaths,
+		projectRepoPaths: projectRepoPaths,
 		logger:           logger,
 	}
 }
@@ -47,9 +47,9 @@ func (*Target) Meta() step.Meta {
 	return step.Meta{
 		Name: "upstream_target",
 		Kind: step.KindContext,
-		Description: "Reads the changed ancestor of an upstream cluster from the release's code bundle, finds the file and service that declare it, " +
+		Description: "Reads the changed ancestor of an upstream cluster from the release's code bundle, finds the file and project that declare it, " +
 			"and diffs it against the version that runs now. Declines a cluster with no failing member, an ancestor that is not in the bundle, " +
-			"is not a dbt model, cannot be located, or whose service has no repository path.",
+			"is not a dbt model, cannot be located, or whose project has no repository path.",
 		Needs:    []remediation.EvidenceKey{remediation.KeyFailure},
 		Provides: []remediation.EvidenceKey{remediation.KeyUpstreamTarget},
 	}
@@ -61,7 +61,7 @@ func (*Target) Meta() step.Meta {
 // it, and from the promoted graph otherwise, so a brand-new ancestor, which the
 // promoted graph cannot place, declines the cluster. Every other reason the
 // ancestor cannot be edited also declines it: the cluster has no member, the
-// bundle does not hold the ancestor, it is not a dbt model, or its service has
+// bundle does not hold the ancestor, it is not a dbt model, or its project has
 // no repository path. A transient bundle read error, and any error of the
 // promoted graph (which answers an unknown node with an empty location), is
 // returned so the work is tried again.
@@ -81,22 +81,22 @@ func (s *Target) Gather(ctx context.Context, in step.ContextInput) (step.Context
 	if src.Runtime != ports.RuntimeDbt {
 		return s.decline(targetID, fmt.Sprintf("the changed ancestor %s is not a dbt model (runtime %q)", targetID, src.Runtime)), nil
 	}
-	filePath, serviceName, err := s.locate(ctx, f)
+	filePath, projectName, err := s.locate(ctx, f)
 	if err != nil {
 		return step.ContextOutput{}, fmt.Errorf("locate %s in the promoted graph: %w", targetID, err)
 	}
-	if filePath == "" || serviceName == "" {
+	if filePath == "" || projectName == "" {
 		return s.decline(targetID, fmt.Sprintf("the changed ancestor %s cannot be located in the promoted graph", targetID)), nil
 	}
-	if _, ok := s.serviceRepoPaths[serviceName]; !ok {
-		return s.decline(targetID, fmt.Sprintf("service %q has no repository path mapping", serviceName)), nil
+	if _, ok := s.projectRepoPaths[projectName]; !ok {
+		return s.decline(targetID, fmt.Sprintf("project %q has no repository path mapping", projectName)), nil
 	}
 	return step.ContextOutput{Evidence: map[remediation.EvidenceKey]any{
 		remediation.KeyUpstreamTarget: remediation.UpstreamTarget{
 			NodeID:        targetID,
 			Source:        src.RawCode,
 			FilePath:      filePath,
-			Service:       serviceName,
+			Project:       projectName,
 			OwnChangeDiff: s.changes.Diff(ctx, targetID, src.RawCode),
 		},
 	}}, nil
@@ -115,9 +115,9 @@ func (s *Target) decline(targetID, reason string) step.ContextOutput {
 // at the file it used to live in, and an edit routed there would rewrite source
 // that no longer declares the node. The promoted graph is the fallback for a
 // rejection that carries no per-node topology.
-func (s *Target) locate(ctx context.Context, f remediation.Failure) (filePath, serviceName string, err error) {
-	if filePath, serviceName = ancestorLocation(f.Trigger, f.TargetNodeID); filePath != "" {
-		return filePath, serviceName, nil
+func (s *Target) locate(ctx context.Context, f remediation.Failure) (filePath, projectName string, err error) {
+	if filePath, projectName = ancestorLocation(f.Trigger, f.TargetNodeID); filePath != "" {
+		return filePath, projectName, nil
 	}
 	return s.locator.Locate(ctx, f.TargetNodeID)
 }
@@ -126,11 +126,11 @@ func (s *Target) locate(ctx context.Context, f remediation.Failure) (filePath, s
 // the changed ancestor, as the trigger carries it on the failing nodes that
 // descend from it. Both are empty when no node carries a complete location for
 // it.
-func ancestorLocation(t remediation.Trigger, ancestorID string) (filePath, serviceName string) {
+func ancestorLocation(t remediation.Trigger, ancestorID string) (filePath, projectName string) {
 	for _, n := range t.Nodes {
 		for _, a := range n.ChangedAncestors {
-			if a.NodeID == ancestorID && a.FilePath != "" && a.Service != "" {
-				return a.FilePath, a.Service
+			if a.NodeID == ancestorID && a.FilePath != "" && a.Project != "" {
+				return a.FilePath, a.Project
 			}
 		}
 	}

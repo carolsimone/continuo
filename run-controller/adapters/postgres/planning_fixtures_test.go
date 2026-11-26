@@ -81,7 +81,7 @@ func (s releaseShape) release(tb testing.TB, tenant, releaseID string) topology.
 			}
 			count := testCount
 			specs = append(specs, topology.NodeSpec{
-				UniqueID: "bench." + table, ServiceName: "bench-svc", SchemaName: "bench", TableName: table,
+				UniqueID: "bench." + table, ProjectName: "bench-svc", SchemaName: "bench", TableName: table,
 				NodeType: "dbt-model", TestCount: &count, ContentHash: "h-" + table, ImageTag: "bench-svc:1",
 				ScheduleName: s.schedule(), UpstreamUniqueIDs: upstream,
 			})

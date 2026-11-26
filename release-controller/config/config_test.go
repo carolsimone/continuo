@@ -196,7 +196,7 @@ func TestLoad_OntologyEnabledDefaultsToOffWhenUnset(t *testing.T) {
 	assert.Empty(t, v.Missing())
 }
 
-// Any other spelling stops the service at boot, naming the variable, so an
+// Any other spelling stops the project at boot, naming the variable, so an
 // install never runs with a switch release-controller cannot read.
 func TestLoad_OntologyEnabledRefusesAnyOtherValue(t *testing.T) {
 	for _, raw := range []string{"TRUE", "1", "yes", " true", "true "} {

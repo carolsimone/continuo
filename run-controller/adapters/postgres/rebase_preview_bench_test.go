@@ -49,7 +49,7 @@ func BenchmarkPreviewRebase(b *testing.B) {
 	b.Run("last-success-durations", func(b *testing.B) {
 		nodes := make([]run.NodeID, 0, dag2000.nodes)
 		for _, n := range dag2000.release(b, tenant, "rel-1").Nodes {
-			nodes = append(nodes, run.NodeID{ServiceName: n.ServiceName, SchemaName: n.SchemaName, TableName: n.TableName})
+			nodes = append(nodes, run.NodeID{ProjectName: n.ProjectName, SchemaName: n.SchemaName, TableName: n.TableName})
 		}
 		var succeeded int
 		require.NoError(b, db.Get(&succeeded, `SELECT count(*) FROM tasks WHERE run_id = $1 AND status = 'succeeded'`, runID))

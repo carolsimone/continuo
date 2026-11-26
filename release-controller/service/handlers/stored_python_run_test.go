@@ -17,7 +17,7 @@ import (
 
 // pythonKindRefusal is the refusal text the release domain gives for the kind
 // python. A stored run of that kind ends with it as its detail.
-const pythonKindRefusal = `kind "python" is no longer accepted: release the service as "python-odcs", one ODCS contract per node (docs/contracts.md)`
+const pythonKindRefusal = `kind "python" is no longer accepted: release the project as "python-odcs", one ODCS contract per node (docs/contracts.md)`
 
 // asStoredPython replaces the run releaseID with the same run carrying the
 // kind python, as a row an earlier continuo version accepted and stored holds.
@@ -29,7 +29,7 @@ func asStoredPython(t *testing.T, store *fakeStore, releaseID string) {
 		Kind:                    r.Kind(),
 		Status:                  r.Status(),
 		ImageTags:               r.ImageTags(),
-		ChangedService:          r.ChangedService(),
+		ChangedProject:          r.ChangedProject(),
 		ManifestKind:            release.ManifestKindPython,
 		CandidateTopology:       r.CandidateTopologyRef(),
 		ValidationNodeIDs:       r.ValidationNodeIDs(),
@@ -56,17 +56,17 @@ func asStoredPython(t *testing.T, store *fakeStore, releaseID string) {
 }
 
 // assertStoredPythonCandidateRejected checks that the candidate releaseID of
-// the service service ended rejected invalid_artifact with the refusal text,
+// the project named project ended rejected invalid_artifact with the refusal text,
 // emitted release.rejected:v1 and pipeline.run.finished:v1, and wrote neither
 // current_prod nor a service_prod row.
-func assertStoredPythonCandidateRejected(t *testing.T, store *fakeStore, releaseID, service string) {
+func assertStoredPythonCandidateRejected(t *testing.T, store *fakeStore, releaseID, project string) {
 	t.Helper()
 	r := mustGetRelease(t, store, releaseID)
 	assert.Equal(t, pipeline.StatusRejected, r.Status(), "a stored kind-python run is rejected, never promoted")
 	assert.Equal(t, string(pkg_model.RejectReasonInvalidArtifact), r.FailReason())
 	assert.Contains(t, r.FailDetail(), pythonKindRefusal)
 
-	assert.Nil(t, store.GetServiceProd(service), "no service_prod row is written for a kind-python run")
+	assert.Nil(t, store.GetServiceProd(project), "no service_prod row is written for a kind-python run")
 	assert.Zero(t, store.CurrentProdUpsertCalls(), "current_prod is not moved")
 	for _, e := range store.OutboxEntries() {
 		assert.NotEqual(t, streams.ReleasePromotedV2, e.StreamName, "no release.promoted:v2 is emitted")
@@ -130,7 +130,7 @@ func TestHandleParsedManifest_AStoredPythonBootstrapRunIsRejectedNotPromoted(t *
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service:   "svc-py",
+		Project:   "svc-py",
 		ReleaseID: "rStoredPyBoot",
 		ImageTag:  "sha-py",
 		Repo:      "acme/demo",
@@ -143,7 +143,7 @@ func TestHandleParsedManifest_AStoredPythonBootstrapRunIsRejectedNotPromoted(t *
 	asStoredPython(t, store, "rStoredPyBoot")
 
 	topo := release.Topology{
-		{UniqueID: "a", ServiceName: "svc-py", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "a", ProjectName: "svc-py", UpstreamUniqueIDs: []string{}},
 	}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID:   "rStoredPyBoot",
@@ -172,7 +172,7 @@ func TestAdvanceQueue_AQueuedPythonRunIsRejectedAtActivation(t *testing.T) {
 	store.SeedRelease(pipeline.NewCandidate("rQueuedPy", "svc-py", "sha-py", false, false,
 		"acme/demo", "deadbeef", release.ManifestKindPython, deps.Clock.Now()))
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service:   "svc-a",
+		Project:   "svc-a",
 		ReleaseID: "rQueuedDbt",
 		ImageTag:  "sha-a",
 		Repo:      "acme/demo",

@@ -98,12 +98,12 @@ func sampleNode(id string) remediation.TriggerNode {
 		DBTLogURI:            "s3://logs/dbt.log",
 		CandidateArtifactURI: "s3://candidate/orders_daily.sql",
 		FilePath:             "models/orders_daily.sql",
-		Service:              "orders",
+		Project:              "orders",
 		NodeType:             "model",
-		OtherService:         "billing",
+		OtherProject:         "billing",
 		OtherFilePath:        "models/other.sql",
 		ChangedAncestors: []remediation.ChangedAncestor{
-			{NodeID: "orders.model.stg_orders", FilePath: "models/stg_orders.sql", Service: "orders", Depth: 1},
+			{NodeID: "orders.model.stg_orders", FilePath: "models/stg_orders.sql", Project: "orders", Depth: 1},
 		},
 		Unfixable: &remediation.Unfixable{Reason: model.HandoverReasonClassifierInfra, Detail: "the warehouse timed out"},
 	}
@@ -225,20 +225,20 @@ func evidenceSamples() map[remediation.EvidenceKey]any {
 			Files:   map[string]string{"models/orders_daily.sql": "select 1"},
 			Order:   []string{"models/orders_daily.sql"},
 			Primary: "models/orders_daily.sql",
-			Service: "orders",
+			Project: "orders",
 		},
 		remediation.KeyCandidateSQL: remediation.Text("select 1 from analytics.orders"),
 		remediation.KeyCodeBundleSource: remediation.CandidateSource{
-			Source: "select 1", Origin: "code_bundle", FilePath: "models/orders_daily.sql", Service: "orders",
+			Source: "select 1", Origin: "code_bundle", FilePath: "models/orders_daily.sql", Project: "orders",
 		},
 		remediation.KeyOwnChangeDiff: remediation.Text("-select 0\n+select 1"),
 		remediation.KeyChangedAncestorDiffs: []prompt.ReleaseUpstreamChange{{
-			NodeID: "orders.model.stg_orders", Service: "orders", Depth: 1, Diff: "-a\n+b",
+			NodeID: "orders.model.stg_orders", Project: "orders", Depth: 1, Diff: "-a\n+b",
 		}},
 		remediation.KeyModelRename: remediation.ModelRename{
-			Service:       "marketing",
+			Project:       "marketing",
 			Relation:      "analytics.table_b",
-			OtherService:  "service-1",
+			OtherProject:  "service-1",
 			OtherFilePath: "services/service-1/models/table_b.sql",
 			ChangesAlias:  true,
 			OldName:       "table_b",
@@ -269,7 +269,7 @@ func evidenceSamples() map[remediation.EvidenceKey]any {
 		remediation.KeyPackagedContract: remediation.Bytes("packaged contract"),
 		remediation.KeyUpstreamTarget: remediation.UpstreamTarget{
 			NodeID: "orders.model.stg_orders", Source: "select a", FilePath: "models/stg_orders.sql",
-			Service: "orders", OwnChangeDiff: "-a\n+b",
+			Project: "orders", OwnChangeDiff: "-a\n+b",
 		},
 	}
 }

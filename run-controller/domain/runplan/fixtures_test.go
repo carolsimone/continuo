@@ -10,20 +10,20 @@ import (
 )
 
 // e2eSchema is the schema every e2e fixture model builds in
-// (dbt/services/service-*/profiles.yml).
+// (dbt/projects/service-*/profiles.yml).
 const e2eSchema = "e2e_schema"
 
 // fixtureNode is one node of the e2e suite's fixed DAG: the table it builds,
-// the service that owns it, its schedule and the tables it reads.
+// the project that owns it, its schedule and the tables it reads.
 type fixtureNode struct {
 	table    string
-	service  string
+	project  string
 	schedule string
 	upstream []string
 }
 
 // e2eDAG mirrors tests/e2e/seed_topology_test.go and the dbt projects under
-// dbt/services: the seed schedule's three seeds, e2e-schedule's layered DAG
+// dbt/projects: the seed schedule's three seeds, e2e-schedule's layered DAG
 // over them, and e2e-schedule-failure, whose ftable_e and ftable_g fail.
 var e2eDAG = []fixtureNode{
 	{"seed_table_1", "service-1", "seed", nil},
@@ -50,7 +50,7 @@ var e2eDAG = []fixtureNode{
 }
 
 // e2eTestCounts is the data-test count of the seeds that carry tests
-// (dbt/services/service-1/seeds/schema.yml); every other node has a known 0.
+// (dbt/projects/service-1/seeds/schema.yml); every other node has a known 0.
 var e2eTestCounts = map[string]int{"seed_table_1": 2, "seed_table_3": 1}
 
 func key(table string) topology.NodeKey { return topology.KeyOf(e2eSchema, table) }
@@ -72,10 +72,10 @@ func storedNode(n fixtureNode) topology.Node {
 		nodeType = "dbt-seed"
 	}
 	return topology.Node{
-		Key: key(n.table), UniqueID: e2eSchema + "." + n.table, ServiceName: n.service,
+		Key: key(n.table), UniqueID: e2eSchema + "." + n.table, ProjectName: n.project,
 		SchemaName: e2eSchema, TableName: n.table, NodeType: nodeType,
 		TestCount: count(e2eTestCounts[n.table]), ContentHash: "h-" + n.table,
-		ImageTag: n.service + ":1", ScheduleName: n.schedule,
+		ImageTag: n.project + ":1", ScheduleName: n.schedule,
 	}
 }
 
@@ -133,7 +133,7 @@ func planOf(tasks []runplan.PlannedTask, ready ...string) runplan.Plan {
 // the given node type and data-test count.
 func withNode(table, nodeType string, testCount *int) topology.Graph {
 	return topology.NewGraph([]topology.Node{{
-		Key: key(table), ServiceName: "service-1", SchemaName: e2eSchema, TableName: table,
+		Key: key(table), ProjectName: "service-1", SchemaName: e2eSchema, TableName: table,
 		NodeType: nodeType, TestCount: testCount,
 	}}, nil)
 }
@@ -142,7 +142,7 @@ func withNode(table, nodeType string, testCount *int) topology.Graph {
 // some node reads and no node builds.
 var unknownExternalProbe = topology.KeyOf("raw", "ingest_probe")
 
-// unknownExternalNode is the unknown-external node as the release stores it: no service, no
+// unknownExternalNode is the unknown-external node as the release stores it: no project, no
 // schedule, no content hash, no image and no data test.
 func unknownExternalNode() topology.Node {
 	return topology.Node{

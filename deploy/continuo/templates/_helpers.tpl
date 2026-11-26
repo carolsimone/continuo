@@ -195,8 +195,8 @@ app.kubernetes.io/name: {{ .service }}
 {{- printf "%s-cancel-config" (include "continuo.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "continuo.serviceReposConfigMapName" -}}
-{{- printf "%s-service-repos" (include "continuo.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- define "continuo.projectReposConfigMapName" -}}
+{{- printf "%s-project-repos" (include "continuo.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
 {{- define "continuo.ciAuthConfigMapName" -}}

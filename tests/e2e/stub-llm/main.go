@@ -236,7 +236,7 @@ const parseFixMarker = "SQL parse error:"
 // It names a physical schema.table rather than a {{ ref(...) }} macro for the
 // same reason step2SourceFix does: the fix is verified by a verification run
 // that lays this exact text over service-2's dbt project and compiles it, and
-// a ref() to another service's project would abort that compile.
+// a ref() to a model of another project would abort that compile.
 const parseFixContent = `{{ config(materialized='table') }}
 SELECT c.id
 FROM e2e_schema.ftable_c c
@@ -258,7 +258,7 @@ const step2Marker = "Original model source"
 //
 // Physical names rather than {{ ref(...) }} macros because every proposed fix
 // is verified by a verification run that lays this exact text over the
-// service's dbt project and compiles it. A {{ ref('table_b') }} does not
+// project's dbt files and compiles it. A {{ ref('table_b') }} does not
 // resolve inside service-2 (table_b belongs to service-1's project), so the
 // overlay compile would abort and no fix could ever verify.
 const step2SourceFix = `{{ config(materialized='table') }}
@@ -283,12 +283,12 @@ SELECT id, 0 AS amount FROM e2e_schema.ftable_c
 const xbreakUpNodeID = "e2e_schema.xbreak_up"
 
 // xbreakProducerFix keeps the producer's change AND the column its
-// cross-service consumer reads, so the consumer binds without changing.
+// cross-project consumer reads, so the consumer binds without changing.
 const xbreakProducerFix = `{{ config(materialized='table') }}
 SELECT 1 AS id, 0 AS amount_eur
 `
 
-// ybreakMarker names the same-service consumer fixture whose only changed
+// ybreakMarker names the same-project consumer fixture whose only changed
 // ancestor dropped the column it reads. The prompt for its fix shows
 // ybreak_up in the candidate SQL (step 1) and in the original source (step 2).
 const ybreakMarker = "ybreak_up"
@@ -522,12 +522,12 @@ func writeProposeFixResponse(w http.ResponseWriter, userContent string, params m
 			proposedSQL = upstreamFixContent
 			rationale = "restored the amount column the change dropped"
 			if strings.Contains(userContent, "Upstream node: "+xbreakUpNodeID) {
-				// Cross-service cluster: the producer keeps both columns.
+				// Cross-project cluster: the producer keeps both columns.
 				proposedSQL = xbreakProducerFix
 				rationale = "kept amount_eur alongside id so the consumer in service-2 still binds"
 			}
 		case strings.Contains(userContent, ybreakMarker):
-			// Same-service consumer of a changed upstream: an edit that keeps
+			// Same-project consumer of a changed upstream: an edit that keeps
 			// reading the dropped column, for both the step-1 and step-2 prompts.
 			proposedSQL = ybreakConsumerFix
 			rationale = "aliased amount_eur to amount"

@@ -65,13 +65,13 @@ type Config struct {
 	// one that exists but cannot be read stops start-up.
 	WorkflowsDir string
 
-	// ServiceRepoMapPath is the path to the service→repo YAML file. When empty
-	// or missing, ServiceRepoPaths is an empty map and Step-2 source resolution
-	// degrades gracefully for all services.
-	ServiceRepoMapPath string
-	// ServiceRepoPaths maps a dbt service_name to its project root within the
-	// source repo. Loaded from ServiceRepoMapPath at startup.
-	ServiceRepoPaths map[string]string
+	// ProjectRepoMapPath is the path to the project→repo YAML file. When empty
+	// or missing, ProjectRepoPaths is an empty map and Step-2 source resolution
+	// degrades gracefully for all projects.
+	ProjectRepoMapPath string
+	// ProjectRepoPaths maps a dbt project_name to its project root within the
+	// source repo. Loaded from ProjectRepoMapPath at startup.
+	ProjectRepoPaths map[string]string
 
 	// SQLDialect is the sqlglot dialect name the ContractPackager adapter
 	// passes to continuo-runtime's --dialect flag when packaging a proposed
@@ -118,9 +118,9 @@ type Config struct {
 	Maintenance bool
 }
 
-// serviceReposFile is the on-disk structure of config/service_repos.yaml.
-type serviceReposFile struct {
-	Services map[string]string `yaml:"services"`
+// projectReposFile is the on-disk structure of config/project_repos.yaml.
+type projectReposFile struct {
+	Projects map[string]string `yaml:"projects"`
 }
 
 // defaultLLMCacheTTL bounds how long a cached LLM propose result lives. It only
@@ -222,7 +222,7 @@ func Load(v *pkgconfig.Validator) Config {
 		GRPCPort:             pkgconfig.EnvOrDefault("AGENT_REMEDIATION_GRPC_PORT", "50054"),
 		WorkflowsDir:         pkgconfig.EnvOrDefault("AGENT_REMEDIATION_WORKFLOWS_DIR", defaultWorkflowsDir),
 		CatalogAddr:          pkgconfig.EnvOrDefault("CONTINUO_CATALOG_ADDR", "catalog:50052"),
-		ServiceRepoMapPath:   pkgconfig.EnvOrDefault("SERVICE_REPO_MAP_PATH", ""),
+		ProjectRepoMapPath:   pkgconfig.EnvOrDefault("PROJECT_REPO_MAP_PATH", ""),
 		ReleaseControllerURL: pkgconfig.EnvOrDefault("RELEASE_CONTROLLER_URL", defaultReleaseControllerURL),
 		VerificationTimeout:  v.DurationOrDefault("VERIFICATION_TIMEOUT", defaultVerificationTimeout),
 		VerificationPollInterval: v.DurationOrDefault(
@@ -254,37 +254,37 @@ func Load(v *pkgconfig.Validator) Config {
 	if cfg.VerificationPollInterval <= 0 {
 		cfg.VerificationPollInterval = defaultVerificationPollInterval
 	}
-	cfg.ServiceRepoPaths = loadServiceRepos(cfg.ServiceRepoMapPath)
+	cfg.ProjectRepoPaths = loadProjectRepos(cfg.ProjectRepoMapPath)
 	return cfg
 }
 
-// loadServiceRepos reads the service→repo mapping from path. When path is
+// loadProjectRepos reads the project→repo mapping from path. When path is
 // empty or the file does not exist, it returns an empty map so the caller
 // degrades gracefully. Parse errors are logged and also produce an empty map.
-func loadServiceRepos(path string) map[string]string {
+func loadProjectRepos(path string) map[string]string {
 	if path == "" {
-		slog.Info("SERVICE_REPO_MAP_PATH not set; service→repo mapping disabled")
+		slog.Info("PROJECT_REPO_MAP_PATH not set; project→repo mapping disabled")
 		return map[string]string{}
 	}
-	// path is an operator-supplied deploy-time setting (SERVICE_REPO_MAP_PATH env
+	// path is an operator-supplied deploy-time setting (PROJECT_REPO_MAP_PATH env
 	// var), never derived from a request or other runtime input; Clean it before
 	// reading purely to normalize traversal segments defensively.
 	data, err := os.ReadFile(filepath.Clean(path)) //nolint:gosec // G304: trusted operator config path, not user input.
 	if err != nil {
 		if os.IsNotExist(err) {
-			slog.Warn("service repo map file not found; service→repo mapping disabled", "path", path)
+			slog.Warn("project repo map file not found; project→repo mapping disabled", "path", path)
 		} else {
-			slog.Warn("failed to read service repo map; service→repo mapping disabled", "path", path, "error", err)
+			slog.Warn("failed to read project repo map; project→repo mapping disabled", "path", path, "error", err)
 		}
 		return map[string]string{}
 	}
-	var f serviceReposFile
+	var f projectReposFile
 	if err := yaml.Unmarshal(data, &f); err != nil {
-		slog.Warn("failed to parse service repo map; service→repo mapping disabled", "path", path, "error", err)
+		slog.Warn("failed to parse project repo map; project→repo mapping disabled", "path", path, "error", err)
 		return map[string]string{}
 	}
-	if f.Services == nil {
+	if f.Projects == nil {
 		return map[string]string{}
 	}
-	return f.Services
+	return f.Projects
 }

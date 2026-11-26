@@ -419,8 +419,8 @@ a.pill-sm--waiting:hover { background: #e2e8f0; color: #334155; }
 .dag-focus-dot--child    { background: #86efac; }
 .dag-focus-dot--dim      { background: #e5e7eb; }
 
-/* Collapsed service vertex label (rendered inside a React Flow node) */
-.dag-service-vertex {
+/* Collapsed project vertex label (rendered inside a React Flow node) */
+.dag-project-vertex {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -448,13 +448,13 @@ a.pill-sm--waiting:hover { background: #e2e8f0; color: #334155; }
   background: #fff;
   border-radius: 2px;
 }
-.dag-service-vertex-dot {
+.dag-project-vertex-dot {
   width: 10px;
   height: 10px;
   border-radius: 3px;
   flex: none;
 }
-.dag-service-vertex-name {
+.dag-project-vertex-name {
   font-weight: 600;
   font-size: 12.5px;
   color: #1e293b;
@@ -463,7 +463,7 @@ a.pill-sm--waiting:hover { background: #e2e8f0; color: #334155; }
   white-space: nowrap;
 }
 /* Same count-pill treatment as .section-header__count / .tabs__count. */
-.dag-service-vertex-count {
+.dag-project-vertex-count {
   margin-left: auto;
   background: #f1f3f5;
   color: #555;
@@ -526,7 +526,7 @@ a.pill-sm--waiting:hover { background: #e2e8f0; color: #334155; }
   vertical-align: top;
 }
 
-/* Collapsible per-service group header rows */
+/* Collapsible per-project group header rows */
 .nodes-table tbody tr.nodes-group-row { background: #f8fafc; }
 .nodes-table tbody tr.nodes-group-row:hover { background: #f1f5f9; }
 .nodes-table tbody tr.nodes-group-row td { padding: 7px 14px; }
@@ -925,7 +925,7 @@ a.release-author:hover { text-decoration: underline; }
 }
 /* The breakdown of a section header's total, aligned with the header's text. */
 .preview-facts--summary { padding: 0 16px; font-size: 12px; }
-/* Per-service group header of a preview list past twelve rows: the grouped
+/* Per-project group header of a preview list past twelve rows: the grouped
    table rows header (.nodes-group-header) with the same fill. */
 .preview-group__header {
   padding: 7px 10px;
@@ -1019,16 +1019,16 @@ a.release-author:hover { text-decoration: underline; }
 .page-sub a:hover { text-decoration: underline; }
 .page-sub__sep { color: #cbd5e1; }
 
-/* Service tiles: one static tile per service — accent dot, name, image tag.
+/* Project tiles: one static tile per project — accent dot, name, image tag.
    Identity only, so the tile is not a click target and has no hover. The
-   changed service is tinted and carries the "changed" chip. */
-.service-tile-grid {
+   changed project is tinted and carries the "changed" chip. */
+.project-tile-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
   gap: 10px;
   margin: 12px 0 18px;
 }
-.service-tile {
+.project-tile {
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -1038,8 +1038,8 @@ a.release-author:hover { text-decoration: underline; }
   border: 1px solid #e2e8f0;
   border-radius: 6px;
 }
-.service-tile__head { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.service-tile__name {
+.project-tile__head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.project-tile__name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -1049,13 +1049,13 @@ a.release-author:hover { text-decoration: underline; }
   font-weight: 600;
   color: #111827;
 }
-.service-tile__tag {
+.project-tile__tag {
   font-family: 'SF Mono', 'Fira Mono', monospace;
   font-size: 11.5px;
   color: #6b7280;
   word-break: break-all;
 }
-.service-tile--changed { border-color: #c7d2fe; background: #fbfbff; }
+.project-tile--changed { border-color: #c7d2fe; background: #fbfbff; }
 .pill-sm--changed { background: #eef2ff; color: #4338ca; }
 
 /* Pipeline timeline: one step per status transition, in order, joined by
@@ -1675,7 +1675,7 @@ a.release-author:hover { text-decoration: underline; }
 .nodes-table tbody tr.remediation-group--open,
 .nodes-table tbody tr.remediation-group--open.nodes-row--static:hover { background: #f8fafc; }
 .nodes-table tbody tr.remediation-group--open:hover { background: #f1f5f9; }
-/* Short columns (including the service list, which is a few short names)
+/* Short columns (including the project list, which is a few short names)
    stay on one line; the node list and the PR chips take the remaining
    width and wrap between items (never inside one), so the table has no
    dead space to give away. */
@@ -1792,12 +1792,12 @@ a.release-author:hover { text-decoration: underline; }
   background: #eef2ff;
   color: #4338ca;
 }
-/* A chip prefixed by the service it belongs to, in small muted type so the
+/* A chip prefixed by the project it belongs to, in small muted type so the
    chip stays the emphasis; the pair never splits across lines. */
 .pr-chip-labeled { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
-.pr-chip-labeled__service { font-size: 11px; color: #64748b; }
+.pr-chip-labeled__project { font-size: 11px; color: #64748b; }
 /* One wrapping row for a status pill and/or several labeled chips, so a
-   proposal split across many services stays one compact cell. */
+   proposal split across many projects stays one compact cell. */
 .remediation-prs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 
 /* ---- Run progress: the status bar and counts of a run's tasks, on the run
@@ -1860,7 +1860,7 @@ a.release-author:hover { text-decoration: underline; }
 .rf-btn.fail.on { background: #dc2626; border-color: #dc2626; }
 .run-search { margin-left: auto; font-size: 12.5px; border: 1px solid #e6e9ee; border-radius: 8px; padding: 7px 11px; min-width: 170px; }
 
-/* ---- Run swimlane (status graph: lane = service, column = dependency depth) ----
+/* ---- Run swimlane (status graph: lane = project, column = dependency depth) ----
    The lane/node grid itself is laid out with inline styles from
    buildSwimlaneLayout's pixel coordinates; the rules below only paint the
    lanes, node/cell boxes and edges at those coordinates. Status colors reuse
@@ -1909,7 +1909,7 @@ a.release-author:hover { text-decoration: underline; }
 /* A node is painted by status alone: tinted fill + border in the status
    colour, matching the run-progress header and .swim-legend. Pending is a
    dashed outline (nothing has happened yet), skipped is muted and struck
-   through (it will never run in this run). Service colour is on the lane
+   through (it will never run in this run). Project colour is on the lane
    label only. */
 .swim-node {
   position: relative;

@@ -28,13 +28,13 @@ def relation_key(schema_name: str, name: str) -> str:
 
 
 class ManifestKind(StrEnum):
-    """Which artifact dialect a service's release payload speaks.
+    """Which artifact dialect a project's release payload speaks.
 
     Carried per manifest_keys entry on release.requested:v1. Absent means dbt.
-    `dbt` is a service's `manifest.json`, `python-odcs` its ODCS bundle
+    `dbt` is a project's `manifest.json`, `python-odcs` its ODCS bundle
     (`odcs-bundle.json`), and `ontology` the install's company ontology
     (`ontology.yaml`), which declares no node: it is read only to resolve and
-    check the contracts of the other services.
+    check the contracts of the other projects.
     """
     DBT = "dbt"
     PYTHON_ODCS = "python-odcs"
@@ -51,7 +51,7 @@ class SkipReason(StrEnum):
     is not left out: it is a dormant node with an empty schedule, and an untagged
     seed takes the schedule `seed`. A node of an installed package with an owner
     and a tag (and no `local_stub` tag) is not left out either: it is kept under
-    the package's service, which the release's service check refuses."""
+    the package's project, which the release's project check refuses."""
     NO_OWNER = "no_owner"
     LOCAL_STUB = "local_stub"
     INSTALLED_PACKAGE = "installed_package"
@@ -62,7 +62,7 @@ class SkippedNode:
     """One dbt node the parse leg left out of the topology, and why. A skip is
     never a failure: the node simply is not part of the release."""
     node_id: str
-    service: str
+    project: str
     reason: SkipReason
 
 
@@ -76,7 +76,7 @@ class FailedNode:
     """
     node_id: str
     kind: ParseFailureKind
-    service: str
+    project: str
     file_path: str
     node_type: str
     detail: str
@@ -124,9 +124,9 @@ class ContractBundleRef:
 
 @dataclass(frozen=True)
 class ManifestRequest:
-    """One service's artifact to fetch for a release: its S3 object key plus the
+    """One project's artifact to fetch for a release: its S3 object key plus the
     kind that decides which parser reads it."""
-    service: str
+    project: str
     key: str
     kind: str = ManifestKind.DBT
 
@@ -135,13 +135,13 @@ class ManifestRequest:
 class ManifestFile:
     path: str
     image_tag: str = ""
-    declared_service: str = ""
+    declared_project: str = ""
     # The raw wire value, not narrowed to ManifestKind: an unrecognized kind is
     # a permanent failure the handler reports, not an exception at decode time.
     kind: str = ManifestKind.DBT
     # The release that wrote the artifact: the folder that holds it in the store,
     # which is not the release being parsed when production's artifact of a
-    # service stands in for a new one. "" when the source does not know it.
+    # project stands in for a new one. "" when the source does not know it.
     release_id: str = ""
     size_bytes: int = 0  # the fetched file's size on disk
     # The downloaded compile-extras.json that sits beside a dbt manifest; "" when
@@ -161,9 +161,9 @@ class SeedExtras:
 @dataclass(frozen=True)
 class CompileExtras:
     """The contents of a compile-extras.json: what a dbt compile knows about a
-    service that its manifest does not carry. `seeds` is keyed by the seed's dbt
+    project that its manifest does not carry. `seeds` is keyed by the seed's dbt
     unique id and `packages` maps each installed dbt distribution to its version."""
-    service: str
+    project: str
     release_id: str
     seeds: dict[str, SeedExtras]
     project_flags: dict
@@ -171,8 +171,8 @@ class CompileExtras:
 
 
 @dataclass(frozen=True)
-class ServiceProvenance:
-    """What one service's dbt compile ran with: the dbt version its manifest
+class ProjectProvenance:
+    """What one project's dbt compile ran with: the dbt version its manifest
     names, the installed dbt distributions and their versions (empty without
     compile extras), and the unique ids of its seeds whose source part is
     still dbt's `path` checksum, sorted."""
@@ -185,7 +185,7 @@ class ServiceProvenance:
 class UpstreamDep:
     table_name: str
     schema_name: str
-    service_name: str
+    project_name: str
 
     @property
     def unique_id(self) -> str:
@@ -222,7 +222,7 @@ class TableRef:
 class ManifestNode:
     table_name: str
     schema_name: str
-    service_name: str
+    project_name: str
     owner: str
     schedule_name: str
     criticality: str  # "REGULATORY" | "CORE" | "SECONDARY"
@@ -315,10 +315,10 @@ class ManifestNode:
 
     @property
     def node_key(self) -> tuple[str, str]:
-        """(service_name, unique_id): one node of a release. Two services may declare
+        """(project_name, unique_id): one node of a release. Two projects may declare
         one unique_id, which release-controller rejects as duplicate_table, so a map
         over a release's nodes keys by both and keeps each node's own entry."""
-        return (self.service_name, self.unique_id)
+        return (self.project_name, self.unique_id)
 
     @property
     def resolved_relation_id(self) -> str:
@@ -373,7 +373,7 @@ class NodeRegistryEntry:
     relation and reaches its readers as a CTE dbt inlines into their SQL."""
     table_name: str
     schema_name: str
-    service_name: str
+    project_name: str
     owner: str
     relation: str
     ephemeral: bool = False
@@ -393,7 +393,7 @@ class NodeRegistry:
             NodeRegistryEntry(
                 table_name=n.table_name,
                 schema_name=n.schema_name,
-                service_name=n.service_name,
+                project_name=n.project_name,
                 owner=n.owner,
                 relation=n.relation,
                 ephemeral=n.materialized == "ephemeral",
@@ -409,12 +409,12 @@ class NodeRegistry:
         return {(e.schema_name.lower(), e.relation.lower()): e for e in self.entries}
 
     def ephemeral_ctes(self) -> dict[tuple[str, str], NodeRegistryEntry]:
-        """Each ephemeral entry keyed by (service, CTE name): dbt inlines an
+        """Each ephemeral entry keyed by (project, CTE name): dbt inlines an
         ephemeral model into a reader of the same project as a CTE named
         "__dbt__cte__<relation>", so a CTE of that name in a node of that
-        service is a read of the ephemeral model."""
+        project is a read of the ephemeral model."""
         return {
-            (e.service_name, "__dbt__cte__" + e.relation.lower()): e
+            (e.project_name, "__dbt__cte__" + e.relation.lower()): e
             for e in self.entries
             if e.ephemeral
         }
@@ -422,7 +422,7 @@ class NodeRegistry:
 
 @dataclass(frozen=True)
 class ParsedArtifact:
-    """The result of parsing one service's artifact: its nodes, the shared
+    """The result of parsing one project's artifact: its nodes, the shared
     code (dbt macros) they use, keyed by unit id, and, for a dbt manifest, what
     its compile ran with (None for a python contract).
 
@@ -431,7 +431,7 @@ class ParsedArtifact:
     generated contract with issues, or a node whose field the generator cannot
     read) in manifest order. A `python-odcs` bundle also reports
     `python_provenance` (the producer's `continuo_python_runtime` and the
-    `image_packages` of the image the service runs), which a dbt manifest
+    `image_packages` of the image the project runs), which a dbt manifest
     leaves empty. Each node but a dbt test carries its contract
     (ManifestNode.contract).
 
@@ -444,7 +444,7 @@ class ParsedArtifact:
     which the contracts they test carry as `custom` rules."""
     nodes: list[ManifestNode]
     shared_code: dict[str, dict]
-    provenance: ServiceProvenance | None = None
+    provenance: ProjectProvenance | None = None
     failed: tuple[FailedNode, ...] = ()
     python_provenance: dict[str, Any] | None = None
     unchecked_seeds: tuple[str, ...] = ()

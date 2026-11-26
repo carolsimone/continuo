@@ -72,7 +72,7 @@ FOREACH (_ IN CASE WHEN resolved IS NULL THEN [] ELSE [1] END |
 // stub's at is the proposal's opened_at (approximate) and RecordRejection
 // later corrects it when the rejection itself arrives. The PR facts land on
 // :PullRequest rather than inline on :Proposal, MERGEd on (proposal_id,
-// service) so a redelivery converges onto the one PR node.
+// project) so a redelivery converges onto the one PR node.
 //
 // The open event and the close event are consumed by independent groups, so
 // either can land first. When the :PullRequest already exists — a replay, or a
@@ -82,19 +82,19 @@ FOREACH (_ IN CASE WHEN resolved IS NULL THEN [] ELSE [1] END |
 // its terminal 'merged'/'rejected', and opening it must not reset that to
 // 'open'.
 //
-// The [:PROPOSED] edge carries the proposing service, so a precedent read of a
-// proposal that spans services can scope each rejection's PR facts to the
-// service that proposed the fix for it: a proposal shared by several
+// The [:PROPOSED] edge carries the proposing project, so a precedent read of a
+// proposal that spans projects can scope each rejection's PR facts to the
+// project that proposed the fix for it: a proposal shared by several
 // rejections links them all to the one :Proposal, but each rejection's PR
-// facts live on its own service's :PullRequest, and the edge's service selects
+// facts live on its own project's :PullRequest, and the edge's project selects
 // the right one.
 const recordProposalCypher = `
 MERGE (rej:Rejection {tenant_id: $tenant_id, release_id: $release_id, node_id: $node_id})
 ON CREATE SET rej.at = $opened_at, rej.stub = true
 MERGE (prop:Proposal {tenant_id: $tenant_id, proposal_id: $proposal_id})
 MERGE (rej)-[pe:PROPOSED]->(prop)
-SET pe.service = $service
-MERGE (prop)-[:HAS_PR]->(pull:PullRequest {tenant_id: $tenant_id, proposal_id: $proposal_id, service: $service})
+SET pe.project = $project
+MERGE (prop)-[:HAS_PR]->(pull:PullRequest {tenant_id: $tenant_id, proposal_id: $proposal_id, project: $project})
 ON CREATE SET pull.pr_url = $pr_url,
               pull.pr_number = $pr_number,
               pull.pr_state = $pr_state,
@@ -107,7 +107,7 @@ ON MATCH SET pull.opened_by = $opened_by,
 
 // recordPullRequestOutcomeCypher stamps a fix PR's terminal state on the
 // tenant's :PullRequest — the node RecordProposal opened, matched through
-// [:HAS_PR] on (proposal_id, service). When this close arrives before the PR's
+// [:HAS_PR] on (proposal_id, project). When this close arrives before the PR's
 // open event, the MERGE creates the :PullRequest and ON CREATE fills the
 // pr_url/pr_number the close event also carries, so a close-first node is not
 // left blank until the open event's later ON MATCH fills its opened_by and
@@ -120,8 +120,8 @@ ON MATCH SET pull.opened_by = $opened_by,
 // [:EDITED] from that :Proposal to each edit's :Node, only when the tenant
 // holds the node: a retired node still exists and takes the link, and this
 // writer never creates a :Node. Every [:RESOLVED_BY] carries the same
-// amended flag and the resolving service; every [:EDITED] carries its own
-// edit's amended flag, diff and the service.
+// amended flag and the resolving project; every [:EDITED] carries its own
+// edit's amended flag, diff and the project.
 //
 // FOREACH over $resolved keeps the single (pr) row even when the list is
 // empty, so the [:EDITED] UNWIND that follows runs against one row rather than
@@ -130,7 +130,7 @@ ON MATCH SET pull.opened_by = $opened_by,
 // nor edits.
 const recordPullRequestOutcomeCypher = `
 MERGE (pr:Proposal {tenant_id: $tenant_id, proposal_id: $proposal_id})
-MERGE (pr)-[:HAS_PR]->(pull:PullRequest {tenant_id: $tenant_id, proposal_id: $proposal_id, service: $service})
+MERGE (pr)-[:HAS_PR]->(pull:PullRequest {tenant_id: $tenant_id, proposal_id: $proposal_id, project: $project})
 ON CREATE SET pull.pr_url = $pr_url, pull.pr_number = $pr_number
 SET pull.pr_state = $outcome, pull.closed_at = $closed_at
 WITH pr
@@ -138,13 +138,13 @@ FOREACH (nid IN $resolved |
   MERGE (rej:Rejection {tenant_id: $tenant_id, release_id: $release_id, node_id: nid})
   ON CREATE SET rej.at = $closed_at, rej.stub = true
   MERGE (rej)-[rb:RESOLVED_BY]->(pr)
-  SET rb.amended = $amended_any, rb.service = $service)
+  SET rb.amended = $amended_any, rb.project = $project)
 WITH pr
 UNWIND $edits AS e
 OPTIONAL MATCH (n:Node {tenant_id: $tenant_id, unique_id: e.target_node_id})
 FOREACH (_ IN CASE WHEN n IS NULL THEN [] ELSE [1] END |
   MERGE (pr)-[ed:EDITED {path: e.path}]->(n)
-  SET ed.amended = e.amended, ed.diff = e.diff, ed.service = $service)`
+  SET ed.amended = e.amended, ed.diff = e.diff, ed.project = $project)`
 
 // caseBaseRepository writes one tenant's case base on the open transaction of
 // a unit-of-work Write. Every write is a MERGE on natural identity within the
@@ -193,7 +193,7 @@ func (r *caseBaseRepository) RecordProposal(ctx context.Context, tenantID string
 		"release_id":  p.ReleaseID,
 		"node_id":     p.NodeID,
 		"proposal_id": p.ProposalID,
-		"service":     pr.Service,
+		"project":     pr.Project,
 		"pr_url":      pr.PrURL,
 		"pr_number":   pr.PrNumber,
 		"pr_state":    pr.State,
@@ -232,7 +232,7 @@ func (r *caseBaseRepository) RecordPullRequestOutcome(ctx context.Context, tenan
 	if err := execCypher(ctx, r.run, recordPullRequestOutcomeCypher, map[string]any{
 		"proposal_id": o.ProposalID,
 		"release_id":  o.ReleaseID,
-		"service":     o.Service,
+		"project":     o.Project,
 		"outcome":     o.Outcome,
 		"closed_at":   o.ClosedAt.UTC(),
 		"pr_url":      o.PrURL,

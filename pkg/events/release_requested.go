@@ -5,18 +5,18 @@ import (
 	"fmt"
 )
 
-// ManifestKey names one service's artifact in a release.requested:v1 payload.
+// ManifestKey names one project's artifact in a release.requested:v1 payload.
 // Kind is "dbt", "python-odcs" or "ontology" and is always written; a reader
 // treats an absent kind as "dbt".
 type ManifestKey struct {
-	Service string `json:"service"`
+	Project string `json:"project"`
 	S3URI   string `json:"s3_uri"`
 	Kind    string `json:"kind"`
 }
 
 // ReleaseRequested is the payload of a release.requested:v1 entry: the release
-// topology-controller resolves, the artifact to fetch for each service, and
-// the image tag each service's nodes run in. topology-controller joins
+// topology-controller resolves, the artifact to fetch for each project, and
+// the image tag each project's nodes run in. topology-controller joins
 // ImageTags onto every node of the candidate topology it writes.
 //
 // The stream carries this JSON as its single "payload" field, with no envelope

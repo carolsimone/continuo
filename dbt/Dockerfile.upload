@@ -32,14 +32,14 @@ COPY --from=sidecar /s3_common.py /s3_common.py
 COPY --from=sidecar /compile_uploader.py /compile_uploader.py
 COPY --from=sidecar /parse_cache_fetcher.py /parse_cache_fetcher.py
 # compile_extras.py is not test-only: `dbt_upload load|upload` runs it with the
-# Python that runs dbt to write each service's compile-extras.json.
+# Python that runs dbt to write each project's compile-extras.json.
 COPY --from=sidecar /compile_extras.py /compile_extras.py
 
-# docker-compose.yml mounts dbt/services read-only at /app/services, so a dbt
-# command run in a service directory (setup.sh's seed, a test's plain compile)
+# docker-compose.yml mounts dbt/projects read-only at /app/projects, so a dbt
+# command run in a project directory (setup.sh's seed, a test's plain compile)
 # writes its target/ and logs/ here instead. Anonymous usage stats stay off:
 # dbt would otherwise write its .user.yml into the profiles directory, which is
-# the service directory. A compile through dbt_upload passes its own
+# the project directory. A compile through dbt_upload passes its own
 # --target-path under /app/build (dbt_upload/paths.py).
 ENV DBT_TARGET_PATH=/app/dbt-output/target \
     DBT_LOG_PATH=/app/dbt-output/logs \

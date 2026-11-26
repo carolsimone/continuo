@@ -138,7 +138,7 @@ func TestTenantKeysSchema_ATaskOfAnotherTenantsRunIsRefused(t *testing.T) {
 
 	insertTask := func(tenant string) error {
 		_, err := db.Exec(`
-			INSERT INTO tasks (tenant_id, task_id, run_id, service_name, schema_name, table_name, job_name, status, max_retries)
+			INSERT INTO tasks (tenant_id, task_id, run_id, project_name, schema_name, table_name, job_name, status, max_retries)
 			VALUES ($1, $2, $3, 'svc', 'sch', 'tbl', 'job-0', 'pending', 2)`, tenant, uuid.New(), runID)
 		return err
 	}

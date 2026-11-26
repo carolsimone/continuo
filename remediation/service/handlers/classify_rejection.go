@@ -101,8 +101,8 @@ func ClassifyRejection(ctx context.Context, deps Deps, tenantID string, evs []fa
 				NodeID: it.ev.NodeID, RelationID: it.ev.RelationID,
 				Category: string(it.c.Category), ErrorSignature: it.c.Signature, Reason: it.c.Reason, ErrorExcerpt: it.c.Excerpt,
 				DBTLogURI: it.ev.DBTLogURI, CandidateArtifactURI: it.ev.CandidateArtifactURI,
-				FilePath: it.ev.FilePath, Service: it.ev.Service, NodeType: it.ev.NodeType,
-				OtherService: it.ev.OtherService, OtherFilePath: it.ev.OtherFilePath,
+				FilePath: it.ev.FilePath, Project: it.ev.Project, NodeType: it.ev.NodeType,
+				OtherProject: it.ev.OtherProject, OtherFilePath: it.ev.OtherFilePath,
 				ChangedAncestors: changedAncestorsOf(it.ev),
 			}
 			if it.c.Decision == failure.DecisionDrop {
@@ -160,7 +160,7 @@ func changedAncestorsOf(ev failure.FailureEvidence) []event.ChangedAncestor {
 	}
 	out := make([]event.ChangedAncestor, 0, len(ev.ChangedAncestors))
 	for _, a := range ev.ChangedAncestors {
-		out = append(out, event.ChangedAncestor{NodeID: a.NodeID, FilePath: a.FilePath, Service: a.Service, Depth: a.Depth})
+		out = append(out, event.ChangedAncestor{NodeID: a.NodeID, FilePath: a.FilePath, Project: a.Project, Depth: a.Depth})
 	}
 	return out
 }

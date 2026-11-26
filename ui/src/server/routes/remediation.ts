@@ -40,11 +40,11 @@ function changedOnBaseBranchText(err: FileChangedOnBaseBranchError): string {
   const change = paths.length === 1 ? 'that change' : 'those changes';
   return (
     `${named} changed on ${baseBranch} since the release this fix was made for, so the pull request would overwrite ${change}. ` +
-    `Check ${baseBranch}: the failure may already be fixed; if it still fails, the next release of the service is remediated again.`
+    `Check ${baseBranch}: the failure may already be fixed; if it still fails, the next release of the project is remediated again.`
   );
 }
 
-// safeFailPullRequest releases a stuck 'opening' claim for one service back
+// safeFailPullRequest releases a stuck 'opening' claim for one project back
 // to 'failed' so it can be retried immediately. This is a best-effort
 // courtesy, not a requirement for correctness: the reconciler's opening
 // sweep recovers any claim left in 'opening' on its own, independent of
@@ -61,23 +61,23 @@ async function safeFailPullRequest(
   remediation: RemediationClient,
   id: string,
   claimedAt: string | undefined,
-  service: string,
+  project: string,
 ): Promise<void> {
   if (!claimedAt) {
     console.warn(
-      '[remediation] skipping failPullRequest for proposal %s service %s: no claimed_at available (version skew) — the opening sweep will recover this claim',
+      '[remediation] skipping failPullRequest for proposal %s project %s: no claimed_at available (version skew) — the opening sweep will recover this claim',
       id,
-      service,
+      project,
     );
     return;
   }
   try {
-    await remediation.failPullRequest({ id, claimed_at: claimedAt, service });
+    await remediation.failPullRequest({ id, claimed_at: claimedAt, project });
   } catch (err: any) {
     console.error(
-      '[remediation] failPullRequest failed for proposal %s service %s (status=%s): %s — the opening sweep will recover this claim',
+      '[remediation] failPullRequest failed for proposal %s project %s (status=%s): %s — the opening sweep will recover this claim',
       id,
-      service,
+      project,
       err?.code ?? 'unknown',
       err?.message ?? String(err),
     );
@@ -87,21 +87,21 @@ async function safeFailPullRequest(
 // A pull request that exists after this request completes — either just
 // opened, or already open from an earlier attempt (FAILED_PRECONDITION).
 interface PullRequestResult {
-  service: string;
+  project: string;
   pr_url: string;
   pr_number: number;
 }
 
-// One owning-service group that failed to produce a pull request.
+// One owning-project group that failed to produce a pull request.
 interface PullRequestError {
-  service: string;
+  project: string;
   error: string;
 }
 
-// One owning-service group whose pull request is open but whose owners could
+// One owning-project group whose pull request is open but whose owners could
 // not be asked to review it.
 interface PullRequestWarning {
-  service: string;
+  project: string;
   warning: string;
 }
 
@@ -137,12 +137,12 @@ export function createRemediationRouter(
 ): Router {
   const router = Router();
 
-  // GET /api/remediation/proposals?status=&pr_state=&limit=&service=
-  // `service` narrows to proposals whose service set includes it (forwarded to
-  // ListProposals, which matches when `service` is among a proposal's services).
+  // GET /api/remediation/proposals?status=&pr_state=&limit=&project=
+  // `project` narrows to proposals whose project set includes it (forwarded to
+  // ListProposals, which matches when `project` is among a proposal's projects).
   router.get('/proposals', async (req, res) => {
     const params: Record<string, string> = {};
-    for (const k of ['status', 'pr_state', 'limit', 'service']) {
+    for (const k of ['status', 'pr_state', 'limit', 'project']) {
       const v = req.query[k];
       if (typeof v === 'string' && v !== '') params[k] = v;
     }
@@ -178,58 +178,58 @@ export function createRemediationRouter(
     }
   });
 
-  // openPullRequestForService drives BeginPullRequest -> S3 fetch -> GitHub
-  // create -> RecordPullRequest for one owning-service group of the
+  // openPullRequestForProject drives BeginPullRequest -> S3 fetch -> GitHub
+  // create -> RecordPullRequest for one owning-project group of the
   // proposal. It mirrors the single-shot flow this route used before the
-  // per-service split, scoped to one claim, and never throws: every failure
+  // per-project split, scoped to one claim, and never throws: every failure
   // mode resolves to a PullRequestError so the caller can keep looping over
-  // the remaining services instead of losing an already-created PR.
-  async function openPullRequestForService(
+  // the remaining projects instead of losing an already-created PR.
+  async function openPullRequestForProject(
     id: string,
-    service: string,
+    project: string,
     openedBy: string,
     creator: PullRequestCreator,
   ): Promise<
     { ok: true; value: PullRequestResult; warnings: PullRequestWarning[] } | { ok: false; error: PullRequestError }
   > {
-    // Claim this service's group — guard against concurrent or duplicate PR creation.
+    // Claim this project's group — guard against concurrent or duplicate PR creation.
     let claim: any;
     try {
-      claim = await remediation.beginPullRequest({ id, service });
+      claim = await remediation.beginPullRequest({ id, project });
     } catch (err: any) {
       if (err?.code === grpc.status.FAILED_PRECONDITION) {
         // agent-remediation maps three distinct causes to FAILED_PRECONDITION:
-        // this service already has a pull request (the message embeds its
+        // this project already has a pull request (the message embeds its
         // URL), the proposal has no real source to fix, or the claim raced
         // past 'proposed' (a verification run reached a verdict, or the
-        // attempt budget was exhausted) since pr_services was read. Only the
+        // attempt budget was exhausted) since pr_projects was read. Only the
         // first is a success — skip creating a duplicate and report the
         // existing PR instead of losing it from the response. The other two
-        // carry no URL and are genuine per-service failures, not an
+        // carry no URL and are genuine per-project failures, not an
         // already-open PR; reporting them as a success would fabricate an
         // empty-url entry and silently mask the real failure from the
         // 200/207/502 accounting.
         const message: string = err.details ?? err.message ?? '';
         const pr_url = extractPrUrl(message);
         if (pr_url) {
-          return { ok: true, value: { service, pr_url, pr_number: extractPrNumber(pr_url) }, warnings: [] };
+          return { ok: true, value: { project, pr_url, pr_number: extractPrNumber(pr_url) }, warnings: [] };
         }
         console.error(
-          '[remediation] beginPullRequest refused for proposal %s service %s: %s',
+          '[remediation] beginPullRequest refused for proposal %s project %s: %s',
           id,
-          service,
+          project,
           message,
         );
-        return { ok: false, error: { service, error: message } };
+        return { ok: false, error: { project, error: message } };
       }
       console.error(
-        '[remediation] beginPullRequest failed for proposal %s service %s (status=%s): %s',
+        '[remediation] beginPullRequest failed for proposal %s project %s (status=%s): %s',
         id,
-        service,
+        project,
         err?.code ?? 'unknown',
         err?.message ?? String(err),
       );
-      return { ok: false, error: { service, error: 'remediation service request failed' } };
+      return { ok: false, error: { project, error: 'remediation service request failed' } };
     }
 
     // claimed_at is the pr_claimed_at value BeginPullRequest's CAS persisted
@@ -239,7 +239,7 @@ export function createRemediationRouter(
     // opening sweep) since this request began.
     const claimedAt = claim.claimed_at;
 
-    // Every file this service's claim changes, in the order the agent
+    // Every file this project's claim changes, in the order the agent
     // produced them. The list is empty when the claim came from an
     // agent-remediation instance that predates it — the same rolling-upgrade
     // skew safeFailPullRequest tolerates on claimed_at — so fall back to the
@@ -270,12 +270,12 @@ export function createRemediationRouter(
     // Release the claim and fail loudly rather than open one.
     if (edits.length === 0) {
       console.error(
-        '[remediation] proposal %s service %s was claimed with no file edits and no single file to fall back to — refusing to open an empty pull request',
+        '[remediation] proposal %s project %s was claimed with no file edits and no single file to fall back to — refusing to open an empty pull request',
         id,
-        service,
+        project,
       );
-      await safeFailPullRequest(remediation, id, claimedAt, service);
-      return { ok: false, error: { service, error: 'proposal carries no file edits' } };
+      await safeFailPullRequest(remediation, id, claimedAt, project);
+      return { ok: false, error: { project, error: 'proposal carries no file edits' } };
     }
 
     // Fetch the proposed content of every edited file from S3.
@@ -291,22 +291,22 @@ export function createRemediationRouter(
       );
     } catch (err) {
       console.error(
-        '[remediation] failed to fetch proposed file content for proposal %s service %s: %s',
+        '[remediation] failed to fetch proposed file content for proposal %s project %s: %s',
         id,
-        service,
+        project,
         err instanceof Error ? err.message : String(err),
       );
-      await safeFailPullRequest(remediation, id, claimedAt, service);
-      return { ok: false, error: { service, error: 'failed to fetch proposed file content from S3' } };
+      await safeFailPullRequest(remediation, id, claimedAt, project);
+      return { ok: false, error: { project, error: 'failed to fetch proposed file content from S3' } };
     }
 
     // Build the PR title and body. A batched proposal resolves several
     // failing nodes under one attempt, so the title names how many rather
     // than picking one; a single-node proposal (or a legacy row with no
     // resolved_node_ids) still names that one node exactly as before. A
-    // proposal split across several owning services suffixes each service's
+    // proposal split across several owning projects suffixes each project's
     // title with its name so the PR list isn't several identical titles;
-    // the legacy whole-proposal group (service === '') carries no suffix,
+    // the legacy whole-proposal group (project === '') carries no suffix,
     // keeping today's exact title unchanged.
     const nodeIds: string[] = (claim.resolved_node_ids && claim.resolved_node_ids.length > 0)
       ? claim.resolved_node_ids
@@ -315,7 +315,7 @@ export function createRemediationRouter(
     let title = nodeIds.length === 1
       ? `[remediation] fix ${nodeIds[0]} (release ${releaseId})`
       : `[remediation] fix ${nodeIds.length} nodes (release ${releaseId})`;
-    if (service) title += ` (${service})`;
+    if (project) title += ` (${project})`;
 
     // A single inline preview keeps the body readable on a multi-file proposal;
     // the rest of the diffs are one click away in the pull request itself.
@@ -327,9 +327,9 @@ export function createRemediationRouter(
         // Diff is best-effort — omit on failure, but still log why so a
         // missing diff in a PR body is diagnosable without a repro.
         console.warn(
-          '[remediation] failed to fetch proposed diff for proposal %s service %s (continuing without it): %s',
+          '[remediation] failed to fetch proposed diff for proposal %s project %s (continuing without it): %s',
           id,
-          service,
+          project,
           err instanceof Error ? err.message : String(err),
         );
       }
@@ -389,13 +389,13 @@ export function createRemediationRouter(
       // failure, and the operator is told which files changed and what to do.
       if (err instanceof FileChangedOnBaseBranchError) {
         console.warn(
-          '[remediation] pull request not opened for proposal %s service %s: %s',
+          '[remediation] pull request not opened for proposal %s project %s: %s',
           id,
-          service,
+          project,
           err.message,
         );
-        await safeFailPullRequest(remediation, id, claimedAt, service);
-        return { ok: false, error: { service, error: changedOnBaseBranchText(err) } };
+        await safeFailPullRequest(remediation, id, claimedAt, project);
+        return { ok: false, error: { project, error: changedOnBaseBranchText(err) } };
       }
       // Log the proposal id plus the error's status/message (Octokit errors
       // carry both) so a GitHub-side rejection is diagnosable without a
@@ -404,18 +404,18 @@ export function createRemediationRouter(
       // Authorization header used to authenticate as the GitHub App.
       const e = err as { status?: number; message?: string };
       console.error(
-        '[remediation] pull request creation failed for proposal %s service %s (status=%s): %s',
+        '[remediation] pull request creation failed for proposal %s project %s (status=%s): %s',
         id,
-        service,
+        project,
         e?.status ?? 'unknown',
         e?.message ?? String(err),
       );
-      // Record the failure so this service's group transitions back to a retryable state.
-      await safeFailPullRequest(remediation, id, claimedAt, service);
-      return { ok: false, error: { service, error: 'failed to open pull request' } };
+      // Record the failure so this project's group transitions back to a retryable state.
+      await safeFailPullRequest(remediation, id, claimedAt, project);
+      return { ok: false, error: { project, error: 'failed to open pull request' } };
     }
 
-    // Record the opened PR against this service's group. This is best-effort
+    // Record the opened PR against this project's group. This is best-effort
     // bookkeeping: the PR already exists on GitHub at this point, so a
     // recording failure must not prevent the client from receiving the PR
     // link. Log loudly on failure so the stuck row is diagnosable; the
@@ -427,13 +427,13 @@ export function createRemediationRouter(
         pr_url: pr.url,
         pr_number: pr.number,
         opened_by: openedBy,
-        service,
+        project,
       });
     } catch (err) {
       console.error(
-        '[remediation] recordPullRequest failed for proposal %s service %s (PR %s); proposal may remain in pr_state=opening — the reconciler opening sweep recovers it automatically (see REMEDIATION_PR_OPENING_GRACE_PERIOD):',
+        '[remediation] recordPullRequest failed for proposal %s project %s (PR %s); proposal may remain in pr_state=opening — the reconciler opening sweep recovers it automatically (see REMEDIATION_PR_OPENING_GRACE_PERIOD):',
         id,
-        service,
+        project,
         pr.url,
         err,
       );
@@ -443,17 +443,17 @@ export function createRemediationRouter(
     // some owners; each refusal is logged and reported beside the pull request.
     const warnings: PullRequestWarning[] = [];
     for (const warning of pr.warnings ?? []) {
-      console.warn('[remediation] reviewer request refused for proposal %s service %s: %s', id, service, warning);
-      warnings.push({ service, warning });
+      console.warn('[remediation] reviewer request refused for proposal %s project %s: %s', id, project, warning);
+      warnings.push({ project, warning });
     }
-    return { ok: true, value: { service, pr_url: pr.url, pr_number: pr.number }, warnings };
+    return { ok: true, value: { project, pr_url: pr.url, pr_number: pr.number }, warnings };
   }
 
   // POST /api/remediation/proposals/:id/pull-request
   // Operator gating is enforced automatically by the app-level requireApiAuth
   // middleware applied to all /api routes — no role check is needed here.
   //
-  // A proposal opens one pull request per owning service — pr_services names
+  // A proposal opens one pull request per owning project — pr_projects names
   // the sorted groups ([""] for a legacy, unsplit proposal). Every group is
   // attempted; a group that already has a pull request is skipped and listed
   // as-is, and a group that fails is reported in `errors` without losing the
@@ -470,7 +470,7 @@ export function createRemediationRouter(
     }
     const creator = prCreator;
 
-    // Fetch the proposal first to learn which owning-service groups its pull
+    // Fetch the proposal first to learn which owning-project groups its pull
     // requests split into.
     let proposal: any;
     try {
@@ -488,17 +488,17 @@ export function createRemediationRouter(
       return res.status(502).json({ error: 'remediation service request failed' });
     }
 
-    // pr_services is always non-empty on the wire — [""] for a legacy,
+    // pr_projects is always non-empty on the wire — [""] for a legacy,
     // unsplit proposal — but tolerate an absent/empty field defensively
     // against an older peer that predates it.
-    const services: string[] = [...(proposal.pr_services && proposal.pr_services.length > 0 ? proposal.pr_services : [''])].sort();
+    const projects: string[] = [...(proposal.pr_projects && proposal.pr_projects.length > 0 ? proposal.pr_projects : [''])].sort();
     const openedBy = (req as any).user?.userId ?? '';
 
     const pull_requests: PullRequestResult[] = [];
     const errors: PullRequestError[] = [];
     const warnings: PullRequestWarning[] = [];
-    for (const service of services) {
-      const result = await openPullRequestForService(id, service, openedBy, creator);
+    for (const project of projects) {
+      const result = await openPullRequestForProject(id, project, openedBy, creator);
       if (result.ok) {
         pull_requests.push(result.value);
         warnings.push(...result.warnings);

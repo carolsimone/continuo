@@ -12,7 +12,7 @@ import (
 type verificationRunSummary struct {
 	RunID       string `json:"run_id"`
 	Status      string `json:"status"`
-	Service     string `json:"service"`
+	Project     string `json:"project"`
 	Attempt     int    `json:"attempt"`
 	CreatedAt   string `json:"created_at"`
 	ActivatedAt string `json:"activated_at"`
@@ -23,7 +23,7 @@ type verificationRunSummary struct {
 // handleListVerificationRuns lists the verification runs that verify one
 // release, newest first. `verifies` is required: the listing exists for the
 // release page, and a global list of verification runs is not a read anyone
-// needs. Unpaginated: bounded by rounds × attempts × edited services.
+// needs. Unpaginated: bounded by rounds × attempts × edited projects.
 func (s *Server) handleListVerificationRuns(w http.ResponseWriter, r *http.Request) {
 	verifies := r.URL.Query().Get("verifies")
 	if verifies == "" {
@@ -43,7 +43,7 @@ func (s *Server) handleListVerificationRuns(w http.ResponseWriter, r *http.Reque
 		activated, aok := run.ActivatedAt()
 		finished, fok := run.FinishedAt()
 		out = append(out, verificationRunSummary{
-			RunID: run.ID(), Status: string(run.Status()), Service: run.ChangedService(), Attempt: run.Attempt(),
+			RunID: run.ID(), Status: string(run.Status()), Project: run.ChangedProject(), Attempt: run.Attempt(),
 			CreatedAt: run.CreatedAt().UTC().Format(time.RFC3339), ActivatedAt: rfc3339OrEmpty(activated, aok),
 			FinishedAt: rfc3339OrEmpty(finished, fok), FailReason: run.FailReason(),
 		})

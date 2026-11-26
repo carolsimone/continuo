@@ -18,11 +18,11 @@ class S3Source:
     """Downloads manifests from S3 to a local temp dir, returns ManifestFile objects.
 
     Accepts an explicit list of ManifestRequest within the bucket. Each request
-    maps to exactly one ManifestFile; declared_service is propagated onto the
+    maps to exactly one ManifestFile; declared_project is propagated onto the
     ManifestFile so the handler can validate that the downloaded manifest
-    actually belongs to the declared service, and kind rides along from the
+    actually belongs to the declared project, and kind rides along from the
     event so the handler knows which parser to use. The folder that holds the
-    object (`<service>/<release_id>/<file>`) is the release that wrote it, and
+    object (`<project>/<release_id>/<file>`) is the release that wrote it, and
     rides along as release_id. No S3 listing is performed.
 
     A dbt manifest is fetched with the compile-extras.json that sits beside it
@@ -32,7 +32,7 @@ class S3Source:
     (manifest_keys[].s3_uri stripped to a plain key by the caller).
 
     image_tag is left empty here; the candidate handler joins the release
-    request's per-service image tags onto the nodes.
+    request's per-project image tags onto the nodes.
     """
 
     def __init__(self, bucket: str, env: str, s3_client, keys: list[ManifestRequest]) -> None:
@@ -52,7 +52,7 @@ class S3Source:
             self._s3.download_file(self._bucket, request.key, local_path)
             result.append(ManifestFile(
                 path=local_path, image_tag="",
-                declared_service=request.service, kind=request.kind,
+                declared_project=request.project, kind=request.kind,
                 release_id=posixpath.basename(posixpath.dirname(request.key)),
                 size_bytes=os.path.getsize(local_path),
                 extras_path=self._download_extras(request) if request.kind == ManifestKind.DBT else "",
@@ -66,7 +66,7 @@ class S3Source:
         pending and is redelivered."""
         key = posixpath.join(posixpath.dirname(request.key), EXTRAS_OBJECT)
         local_path = os.path.join(self._tmpdir.name, key.replace("/", "_"))
-        fields = {"service": request.service, "key": key}
+        fields = {"project": request.project, "key": key}
         try:
             self._s3.download_file(self._bucket, key, local_path)
         except ClientError as exc:

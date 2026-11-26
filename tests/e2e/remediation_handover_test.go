@@ -88,27 +88,27 @@ func TestE2E_Remediation_EveryNodeUnfixableIsHandedOver(t *testing.T) {
 	requireReleaseControllerHealthy(t, clients)
 
 	releaseID := "e2e-rem-handover-" + uuid.NewString()[:8]
-	changedService := "service-2"
-	t.Logf("release_id=%s changed_service=%s changed_node=%s", releaseID, changedService, unfixableInfraUniqueID)
+	changedProject := "service-2"
+	t.Logf("release_id=%s changed_project=%s changed_node=%s", releaseID, changedProject, unfixableInfraUniqueID)
 
 	// 1. Production holds every baseline node but the fixture, so the derived
 	//    changed set is exactly {unfixable_infra}.
-	allServices := baselineServices(t, ctx, clients)
-	require.NotEmpty(t, allServices,
-		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
-	changedImageTag := allServices[changedService].imageTag
+	allProjects := baselineProjects(t, ctx, clients)
+	require.NotEmpty(t, allProjects,
+		"no baseline manifests under s3://%s/<project>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
+	changedImageTag := allProjects[changedProject].imageTag
 	require.NotEmpty(t, changedImageTag,
-		"image_tag missing for %s — setup.sh must seed service_prod", changedService)
+		"image_tag missing for %s — setup.sh must seed service_prod", changedProject)
 
 	var prodNodes []map[string]string
 	fixtureFound := false
-	for svc, si := range allServices {
+	for svc, si := range allProjects {
 		for _, n := range si.nodes {
 			if n.uniqueID == unfixableInfraUniqueID {
 				fixtureFound = true
 				continue
 			}
-			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "service": svc, "content_hash": n.contentHash})
+			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "project": svc, "content_hash": n.contentHash})
 		}
 	}
 	require.True(t, fixtureFound,
@@ -122,10 +122,10 @@ func TestE2E_Remediation_EveryNodeUnfixableIsHandedOver(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allServices)
+	seedServiceProd(t, ctx, clients, allProjects)
 
 	// 2. The release validates the fixture alone and is rejected on it.
-	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
+	postRelease(t, clients, changedProject, releaseID, changedImageTag, false)
 	assertValidationRequestedNodes(t, ctx, validationTap, releaseID, []string{unfixableInfraUniqueID})
 	waitForReleaseRejected(t, ctx, clients, releaseID, handoverRejectBudget)
 	require.Equal(t, []string{unfixableInfraUniqueID}, releaseFailingNodes(t, ctx, clients, releaseID),

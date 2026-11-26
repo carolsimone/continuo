@@ -12,15 +12,15 @@ import (
 )
 
 // pullRequest returns the properties of the tenant's :PullRequest of
-// (proposalID, service), reached from its :Proposal through [:HAS_PR], and
+// (proposalID, project), reached from its :Proposal through [:HAS_PR], and
 // checks there is exactly one.
-func (f *swapFixture) pullRequest(proposalID, service string) map[string]any {
+func (f *swapFixture) pullRequest(proposalID, project string) map[string]any {
 	f.t.Helper()
 	recs := f.rows(`
 		MATCH (:Proposal {tenant_id: $tenant_id, proposal_id: $proposal_id})-[:HAS_PR]->
-		      (pl:PullRequest {tenant_id: $tenant_id, proposal_id: $proposal_id, service: $service})
-		RETURN properties(pl) AS p`, map[string]any{"proposal_id": proposalID, "service": service})
-	require.Len(f.t, recs, 1, "exactly one :PullRequest for (proposal, service)")
+		      (pl:PullRequest {tenant_id: $tenant_id, proposal_id: $proposal_id, project: $project})
+		RETURN properties(pl) AS p`, map[string]any{"proposal_id": proposalID, "project": project})
+	require.Len(f.t, recs, 1, "exactly one :PullRequest for (proposal, project)")
 	v, _ := recs[0].Get("p")
 	return v.(map[string]any)
 }
@@ -46,7 +46,7 @@ func (f *swapFixture) editedEdges(proposalID string) int64 {
 // A merged outcome stamps the :PullRequest RecordProposal opened, draws one
 // [:RESOLVED_BY] per resolved node to the one shared :Proposal with the
 // any-edit-amended flag, and one [:EDITED] per edit to the edit's :Node with
-// its path, amended flag, diff and service. A redelivery converges.
+// its path, amended flag, diff and project. A redelivery converges.
 func TestRecordPullRequestOutcome_Merged(t *testing.T) {
 	f := newSwapFixture(t)
 	openedAt := time.Date(2026, 8, 14, 9, 0, 0, 0, time.UTC)
@@ -55,7 +55,7 @@ func TestRecordPullRequestOutcome_Merged(t *testing.T) {
 
 	f.recordProposal(casebase.Proposal{ProposalID: "prop", ReleaseID: "rel", NodeID: "na"}, openPullRequest("prop", "core", 42, openedAt))
 	outcome := casebase.PullRequestOutcome{
-		ProposalID: "prop", ReleaseID: "rel", Service: "core", Outcome: "merged", ClosedAt: closedAt,
+		ProposalID: "prop", ReleaseID: "rel", Project: "core", Outcome: "merged", ClosedAt: closedAt,
 		ResolvedNodeIDs: []string{"na", "nb"},
 		Edits:           []casebase.EditOutcome{{Path: "models/revenue.sql", TargetNodeID: "nu", Amended: true, Diff: "d"}},
 	}
@@ -91,7 +91,7 @@ func TestRecordPullRequestOutcome_Merged(t *testing.T) {
 	assert.Equal(t, "models/revenue.sql", ed["path"])
 	assert.Equal(t, true, ed["amended"])
 	assert.Equal(t, "d", ed["diff"])
-	assert.Equal(t, "core", ed["service"])
+	assert.Equal(t, "core", ed["project"])
 }
 
 // An edit whose node the tenant does not hold draws no [:EDITED] and creates
@@ -99,7 +99,7 @@ func TestRecordPullRequestOutcome_Merged(t *testing.T) {
 func TestRecordPullRequestOutcome_MergedSkipsAbsentNode(t *testing.T) {
 	f := newSwapFixture(t)
 	f.recordOutcome(casebase.PullRequestOutcome{
-		ProposalID: "prop", ReleaseID: "rel", Service: "core", Outcome: "merged",
+		ProposalID: "prop", ReleaseID: "rel", Project: "core", Outcome: "merged",
 		ClosedAt:        time.Date(2026, 8, 14, 11, 30, 0, 0, time.UTC),
 		ResolvedNodeIDs: []string{"na"},
 		Edits:           []casebase.EditOutcome{{Path: "models/x.sql", TargetNodeID: "missing"}},
@@ -119,7 +119,7 @@ func TestRecordPullRequestOutcome_EditedLinkSurvivesNodeRetirement(t *testing.T)
 	f.promoteAt("r1", 1, releaseOf(modelNode("analytics.table_a"), modelNode("analytics.table_e")), base)
 
 	f.recordOutcome(casebase.PullRequestOutcome{
-		ProposalID: "prop", ReleaseID: "r1", Service: "core", Outcome: "merged", ClosedAt: base.Add(time.Hour),
+		ProposalID: "prop", ReleaseID: "r1", Project: "core", Outcome: "merged", ClosedAt: base.Add(time.Hour),
 		ResolvedNodeIDs: []string{"analytics.table_a"},
 		Edits:           []casebase.EditOutcome{{Path: "models/table_e.sql", TargetNodeID: "analytics.table_e", Diff: "d"}},
 	})
@@ -137,7 +137,7 @@ func TestRecordPullRequestOutcome_EditedLinkSurvivesNodeRetirement(t *testing.T)
 
 	// The edit of a node that is already retired still attaches to it.
 	f.recordOutcome(casebase.PullRequestOutcome{
-		ProposalID: "prop-2", ReleaseID: "r2", Service: "core", Outcome: "merged", ClosedAt: base.Add(3 * time.Hour),
+		ProposalID: "prop-2", ReleaseID: "r2", Project: "core", Outcome: "merged", ClosedAt: base.Add(3 * time.Hour),
 		Edits: []casebase.EditOutcome{{Path: "models/table_e.sql", TargetNodeID: "analytics.table_e"}},
 	})
 	assert.Equal(t, int64(1), f.editedEdges("prop-2"), "a retired node still takes a later fix PR's [:EDITED]")
@@ -152,7 +152,7 @@ func TestRecordPullRequestOutcome_Rejected(t *testing.T) {
 	f.recordProposal(casebase.Proposal{ProposalID: "prop", ReleaseID: "rel", NodeID: "na"}, openPullRequest("prop", "core", 42, openedAt))
 
 	f.recordOutcome(casebase.PullRequestOutcome{
-		ProposalID: "prop", ReleaseID: "rel", Service: "core", Outcome: "rejected",
+		ProposalID: "prop", ReleaseID: "rel", Project: "core", Outcome: "rejected",
 		ClosedAt:        time.Date(2026, 8, 14, 11, 30, 0, 0, time.UTC),
 		ResolvedNodeIDs: []string{"na"},
 		Edits:           []casebase.EditOutcome{{Path: "models/x.sql", TargetNodeID: "nu", Amended: true, Diff: "d"}},
@@ -179,7 +179,7 @@ func TestRecordPullRequestOutcome_AmendedOrReduction(t *testing.T) {
 			f.seedLiveNode("ny")
 
 			f.recordOutcome(casebase.PullRequestOutcome{
-				ProposalID: "prop", ReleaseID: "rel", Service: "core", Outcome: "merged",
+				ProposalID: "prop", ReleaseID: "rel", Project: "core", Outcome: "merged",
 				ClosedAt:        time.Date(2026, 8, 14, 11, 30, 0, 0, time.UTC),
 				ResolvedNodeIDs: []string{"na", "nb"},
 				Edits: []casebase.EditOutcome{
@@ -214,7 +214,7 @@ func TestRecordPullRequestOutcome_MergedWithEmptyLists(t *testing.T) {
 	f.recordProposal(casebase.Proposal{ProposalID: "prop", ReleaseID: "rel", NodeID: "na"}, openPullRequest("prop", "core", 42, openedAt))
 
 	f.recordOutcome(casebase.PullRequestOutcome{
-		ProposalID: "prop", ReleaseID: "rel", Service: "core", Outcome: "merged", ClosedAt: closedAt,
+		ProposalID: "prop", ReleaseID: "rel", Project: "core", Outcome: "merged", ClosedAt: closedAt,
 	})
 
 	pl := f.pullRequest("prop", "core")
@@ -237,7 +237,7 @@ func TestRecordPullRequestOutcome_CloseBeforeOpenFillsPRFactsWithoutResettingSta
 	pr := openPullRequest("prop", "core", 77, openedAt)
 
 	f.recordOutcome(casebase.PullRequestOutcome{
-		ProposalID: "prop", ReleaseID: "rel", Service: "core", Outcome: "merged", ClosedAt: closedAt,
+		ProposalID: "prop", ReleaseID: "rel", Project: "core", Outcome: "merged", ClosedAt: closedAt,
 		PrURL: pr.PrURL, PrNumber: pr.PrNumber, ResolvedNodeIDs: []string{"na"},
 	})
 	afterClose := f.pullRequest("prop", "core")
@@ -270,7 +270,7 @@ func TestRecordPullRequestOutcome_OpenBeforeCloseYieldsTerminalStateAndAllFacts(
 
 	f.recordProposal(casebase.Proposal{ProposalID: "prop", ReleaseID: "rel", NodeID: "na"}, pr)
 	f.recordOutcome(casebase.PullRequestOutcome{
-		ProposalID: "prop", ReleaseID: "rel", Service: "core", Outcome: "merged", ClosedAt: closedAt,
+		ProposalID: "prop", ReleaseID: "rel", Project: "core", Outcome: "merged", ClosedAt: closedAt,
 		PrURL: pr.PrURL, PrNumber: pr.PrNumber, ResolvedNodeIDs: []string{"na"},
 	})
 

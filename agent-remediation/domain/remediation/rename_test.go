@@ -43,8 +43,8 @@ func TestRelationTableAndSchema(t *testing.T) {
 
 func TestModelRename_Explanation(t *testing.T) {
 	r := ModelRename{
-		Service: "marketing", Relation: "analytics.table_b",
-		OtherService: "service-1", OtherFilePath: "services/service-1/models/table_b.sql",
+		Project: "marketing", Relation: "analytics.table_b",
+		OtherProject: "service-1", OtherFilePath: "services/service-1/models/table_b.sql",
 		NewName: "table_b_v2",
 	}
 	assert.Equal(t,

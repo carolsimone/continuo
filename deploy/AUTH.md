@@ -210,7 +210,7 @@ API and how a CD pipeline calls the [public release API](README.md#releasing-fro
 | Issuer | Audience (`aud`) | Identity | What it may do |
 | --- | --- | --- | --- |
 | The login issuer: the IdP configured by `auth.issuerUrl` (bundled Dex, or your own) | The `ui`'s OIDC client id | A person. The role comes from the same rules as a login (see [Role assignment reference](#role-assignment-reference)), resolved from the token's claims on every request. | Whatever the role allows: a viewer reads, an operator reads and changes. A token whose identity has no role is `403`. |
-| `ciAuth.issuer` (GitHub Actions), trusted only while `ciAuth.bindings` holds at least one binding | `ciAuth.audience`, by default the origin of `auth.publicUrl` | A repository, matched against `ciAuth.bindings` | Only the three `/api/v1` release routes, and only for the services bound to its repository. A repository that matches no binding may call none of them, `GET /api/v1/current-prod` included. |
+| `ciAuth.issuer` (GitHub Actions), trusted only while `ciAuth.bindings` holds at least one binding | `ciAuth.audience`, by default the origin of `auth.publicUrl` | A repository, matched against `ciAuth.bindings` | Only the three `/api/v1` release routes, and only for the projects bound to its repository. A repository that matches no binding may call none of them, `GET /api/v1/current-prod` included. |
 
 With no bindings (the default), `ui` does not trust the CI issuer at all: a
 GitHub token is a `401` (`untrusted issuer`), and the startup log says that CI

@@ -61,10 +61,10 @@ const nodeHistoryLimit int32 = 50
 // validHistoryOperations are the values accepted by --operation.
 var validHistoryOperations = map[string]bool{"run": true, "test": true, "build": true}
 
-// NewHistoryCommand builds `continuo node history <service> <schema> <table>`.
+// NewHistoryCommand builds `continuo node history <project> <schema> <table>`.
 func NewHistoryCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "history <service> <schema> <table>",
+		Use:   "history <project> <schema> <table>",
 		Short: "List the recent run history of one model node",
 		Long: `List the recent run history of one model node.
 
@@ -74,7 +74,7 @@ attempt failed (failure class, reason and error message), which image it ran,
 its log and result locations, and the content hash of the code it executed.
 
 Arguments:
-  <service>  The owning service name.
+  <project>  The owning project name.
   <schema>   The schema name.
   <table>    The table (model) name.
 
@@ -118,7 +118,7 @@ blocking_objects lists, as <schema>.<name>, the objects outside continuo that
 read a seed and stopped its load before the drop: it is set on a seed task
 whose latest attempt failed with failure_reason unowned_dependents, and is []
 on every other run. To let the load drop them, name each one with
-"continuo node full-refresh <service> <schema> <table> --acknowledge
+"continuo node full-refresh <project> <schema> <table> --acknowledge
 <schema>.<name>".
 
 In --human mode, content_hash is rendered too: each line ends with an
@@ -136,7 +136,7 @@ Errors:
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 3 {
-				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("history requires exactly three arguments: <service> <schema> <table>"))
+				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("history requires exactly three arguments: <project> <schema> <table>"))
 			}
 			operation, _ := cmd.Flags().GetString("operation")
 			if !validHistoryOperations[operation] {

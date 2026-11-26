@@ -7,10 +7,10 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
-	"github.com/carolsimone/continuo/pkg/messageprocessing"
-	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
+	"github.com/carolsimone/continuo/pkg/messageprocessing"
+	"github.com/carolsimone/continuo/pkg/outbox"
 )
 
 // UnitOfWork manages a single Postgres transaction and the repositories scoped
@@ -19,16 +19,16 @@ type UnitOfWork struct {
 	db               *sqlx.DB
 	tx               *sqlx.Tx
 	logger           *slog.Logger
-	serviceRepoPaths map[string]string
+	projectRepoPaths map[string]string
 }
 
 var _ uow.UnitOfWork = (*UnitOfWork)(nil)
 
-// NewUnitOfWork constructs a Postgres-backed UnitOfWork. serviceRepoPaths is
-// forwarded to the transaction-scoped ProposalRepository so a per-service PR
-// claim can split a proposal's edits by owning service.
-func NewUnitOfWork(db *sqlx.DB, logger *slog.Logger, serviceRepoPaths map[string]string) *UnitOfWork {
-	return &UnitOfWork{db: db, logger: logger, serviceRepoPaths: serviceRepoPaths}
+// NewUnitOfWork constructs a Postgres-backed UnitOfWork. projectRepoPaths is
+// forwarded to the transaction-scoped ProposalRepository so a per-project PR
+// claim can split a proposal's edits by owning project.
+func NewUnitOfWork(db *sqlx.DB, logger *slog.Logger, projectRepoPaths map[string]string) *UnitOfWork {
+	return &UnitOfWork{db: db, logger: logger, projectRepoPaths: projectRepoPaths}
 }
 
 func (u *UnitOfWork) Begin(ctx context.Context) error {
@@ -60,7 +60,7 @@ func (u *UnitOfWork) Rollback() error {
 
 // ProposalRepo returns the ProposalRepository bound to the current transaction.
 func (u *UnitOfWork) ProposalRepo() repository.ProposalRepository {
-	return NewProposalRepository(u.tx, u.serviceRepoPaths)
+	return NewProposalRepository(u.tx, u.projectRepoPaths)
 }
 
 // RemediationRepo returns the RemediationRepository bound to the current

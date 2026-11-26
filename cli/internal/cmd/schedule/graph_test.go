@@ -66,7 +66,7 @@ func runGraph(t *testing.T, fake client.RunClient, args []string, human bool) (s
 type graphNodeJSON struct {
 	TableName   string `json:"table_name"`
 	SchemaName  string `json:"schema_name"`
-	ServiceName string `json:"service_name"`
+	ProjectName string `json:"project_name"`
 	NodeType    string `json:"node_type"`
 	// Dormant is a pointer so a test tells a node that says "dormant":false
 	// from one that carries no such key.
@@ -90,7 +90,7 @@ func sampleGraph() *runv1.GetScheduleGraphResponse {
 			{
 				TableName:    "orders",
 				SchemaName:   "public",
-				ServiceName:  "warehouse",
+				ProjectName:  "warehouse",
 				NodeType:     "table",
 				ScheduleName: "daily_ingest",
 			},
@@ -119,7 +119,7 @@ func TestGraph_SuccessEmitsCorrectJSON(t *testing.T) {
 	n := payload.Nodes[0]
 	assert.Equal(t, "orders", n.TableName)
 	assert.Equal(t, "public", n.SchemaName)
-	assert.Equal(t, "warehouse", n.ServiceName)
+	assert.Equal(t, "warehouse", n.ProjectName)
 	assert.Equal(t, "table", n.NodeType)
 
 	require.Len(t, payload.Edges, 1)
@@ -129,18 +129,18 @@ func TestGraph_SuccessEmitsCorrectJSON(t *testing.T) {
 }
 
 // An unknown-external node is a table no node builds. The schedule graph carries it
-// with node_type "unknown-external" and an empty service_name, and an edge from the
-// node that reads it to its id (the empty service, then schema and table). The
+// with node_type "unknown-external" and an empty project_name, and an edge from the
+// node that reads it to its id (the empty project, then schema and table). The
 // command emits all of it as it comes, and its help says what the type is and
-// that the empty service makes its node id start with a dot, so a caller that
+// that the empty project makes its node id start with a dot, so a caller that
 // reads the graph knows no node command can address it.
-func TestGraph_UnknownExternalNodeKeepsItsTypeAndAnEmptyService(t *testing.T) {
+func TestGraph_UnknownExternalNodeKeepsItsTypeAndAnEmptyProject(t *testing.T) {
 	fake := &fakeGraphRun{resp: &runv1.GetScheduleGraphResponse{
 		Nodes: []*runv1.ScheduleGraphNode{
 			{
 				SchemaName:  "raw",
 				TableName:   "ingest_probe",
-				ServiceName: "",
+				ProjectName: "",
 				NodeType:    "unknown-external",
 			},
 		},
@@ -161,15 +161,15 @@ func TestGraph_UnknownExternalNodeKeepsItsTypeAndAnEmptyService(t *testing.T) {
 	assert.Equal(t, "raw", n.SchemaName)
 	assert.Equal(t, "ingest_probe", n.TableName)
 	assert.Equal(t, "unknown-external", n.NodeType)
-	assert.Empty(t, n.ServiceName)
-	assert.Contains(t, stdout, `"service_name":""`, "the empty service is emitted, not omitted")
+	assert.Empty(t, n.ProjectName)
+	assert.Contains(t, stdout, `"project_name":""`, "the empty project is emitted, not omitted")
 	require.Len(t, payload.Edges, 1)
 	assert.Equal(t, "a.m", payload.Edges[0].FromNodeId)
 	assert.Equal(t, ".raw.ingest_probe", payload.Edges[0].ToNodeId)
 
 	cmd := NewGraphCommand(nil, &config.Config{}, &bytes.Buffer{}, &bytes.Buffer{})
 	assert.Contains(t, cmd.Long, `A node of type "unknown-external" is a table continuo reads and does not build`, "the help says what an unknown-external node is")
-	assert.Contains(t, cmd.Long, "its node id starts with a dot", "the help says what the empty service does to the node id")
+	assert.Contains(t, cmd.Long, "its node id starts with a dot", "the help says what the empty project does to the node id")
 }
 
 // A dormant node is one that belongs to no schedule: the graph carries it as an
@@ -181,11 +181,11 @@ func TestGraph_DormantNodeIsMarked(t *testing.T) {
 	fake := &fakeGraphRun{resp: &runv1.GetScheduleGraphResponse{
 		Nodes: []*runv1.ScheduleGraphNode{
 			{
-				TableName: "revenue", SchemaName: "public", ServiceName: "warehouse",
+				TableName: "revenue", SchemaName: "public", ProjectName: "warehouse",
 				NodeType: "dbt-model", ScheduleName: "daily_ingest",
 			},
 			{
-				TableName: "scratch_rates", SchemaName: "staging", ServiceName: "warehouse",
+				TableName: "scratch_rates", SchemaName: "staging", ProjectName: "warehouse",
 				NodeType: "dbt-model", Dormant: true,
 			},
 			{
@@ -221,7 +221,7 @@ func TestGraph_DormantNodeIsMarked(t *testing.T) {
 	assert.Contains(t, long, "No cron or schedule run includes it, except to rebuild a dormant view or materialized view below a seed",
 		"the help says a run includes a dormant node only to rebuild a view below a seed whose load drops the seed's table")
 	assert.Contains(t, long, "a rerun or rebase of that run rebuilds it again if the rebuild did not finish", "the help says a rerun or rebase finishes the rebuild")
-	assert.Contains(t, long, `a run started by hand executes it ("continuo node trigger <service> <schema> <table>")`, "the help names the command that runs it")
+	assert.Contains(t, long, `a run started by hand executes it ("continuo node trigger <project> <schema> <table>")`, "the help names the command that runs it")
 	assert.Contains(t, cmd.Annotations["output_schema"], `"dormant":"boolean"`, "the output schema declares the field")
 }
 

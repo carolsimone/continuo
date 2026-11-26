@@ -22,7 +22,7 @@ func graphSpec(table, nodeType, schedule string, upstream ...string) topology.No
 		ids = append(ids, "stg."+u)
 	}
 	return topology.NodeSpec{
-		UniqueID: "stg." + table, ServiceName: "svc-" + schedule, SchemaName: "stg", TableName: table,
+		UniqueID: "stg." + table, ProjectName: "svc-" + schedule, SchemaName: "stg", TableName: table,
 		NodeType: nodeType, TestCount: &one, ContentHash: "h-" + table, ImageTag: "svc:1",
 		SecretRef: "secret-" + table, ScheduleName: schedule, UpstreamUniqueIDs: ids,
 	}
@@ -76,7 +76,7 @@ func TestTopologyRepository_ScheduleGraphHoldsTheScheduleAndTheSeedsItReads(t *t
 	require.True(t, ok)
 	one := 1
 	assert.Equal(t, topology.Node{
-		Key: "stg.a", UniqueID: "stg.a", ServiceName: "svc-daily", SchemaName: "stg", TableName: "a",
+		Key: "stg.a", UniqueID: "stg.a", ProjectName: "svc-daily", SchemaName: "stg", TableName: "a",
 		NodeType: "dbt-model", TestCount: &one, ContentHash: "h-a", ImageTag: "svc:1",
 		SecretRef: "secret-a", ScheduleName: "daily",
 	}, a)
@@ -197,7 +197,7 @@ func TestScheduleGraph_NeverHoldsADormantUpstream(t *testing.T) {
 		dormantTable,
 		dormantSnapshot,
 		topology.NodeSpec{
-			UniqueID: "test.svc.not_null_dormant_m", ServiceName: "svc-", SchemaName: "stg", TableName: "not_null_dormant_m",
+			UniqueID: "test.svc.not_null_dormant_m", ProjectName: "svc-", SchemaName: "stg", TableName: "not_null_dormant_m",
 			NodeType: "dbt-test", UpstreamUniqueIDs: []string{"stg.dormant_m"},
 		},
 		graphSpec("a", "dbt-model", "daily", "dormant_m", "dormant_s", "seed_1"),

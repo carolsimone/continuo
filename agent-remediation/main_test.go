@@ -301,7 +301,7 @@ func TestMain_RunnerGetsTheConfiguredVerificationTimeout(t *testing.T) {
 		VerificationTimeout: 37 * time.Minute,
 		Maintenance:         true,
 		SQLDialect:          "trino",
-		ServiceRepoPaths:    map[string]string{"svc": "path"},
+		ProjectRepoPaths:    map[string]string{"svc": "path"},
 	}
 	collab := runnerCollaborators(cfg, runnerAdapters{}, discardLogger())
 	counted := rametrics.NewRemediationMetrics(pkgmetrics.New(config.ServiceName))
@@ -310,7 +310,7 @@ func TestMain_RunnerGetsTheConfiguredVerificationTimeout(t *testing.T) {
 	assert.Equal(t, 37*time.Minute, deps.VerificationTimeout)
 	assert.Equal(t, 37*time.Minute, deps.Collab.VerificationTimeout)
 	assert.Equal(t, "trino", deps.Collab.SQLDialect)
-	assert.Equal(t, map[string]string{"svc": "path"}, deps.Collab.ServiceRepoPaths)
+	assert.Equal(t, map[string]string{"svc": "path"}, deps.Collab.ProjectRepoPaths)
 	assert.True(t, deps.Maintenance)
 	assert.Equal(t, "host:7", deps.Owner)
 	assert.NotNil(t, deps.Registry)
@@ -440,7 +440,7 @@ approver: node_owner
 // reaches the steps.
 func TestMain_RunnerCollaboratorsFillEveryField(t *testing.T) {
 	cfg := config.Config{
-		ServiceRepoPaths:    map[string]string{"svc": "cfg-path"},
+		ProjectRepoPaths:    map[string]string{"svc": "cfg-path"},
 		SQLDialect:          "trino",
 		VerificationTimeout: 37 * time.Minute,
 	}
@@ -481,7 +481,7 @@ func TestMain_RunnerCollaboratorsFillEveryField(t *testing.T) {
 		assert.False(t, v.Field(i).IsZero(), "runner.Collaborators.%s is not set", v.Type().Field(i).Name)
 	}
 	assert.Same(t, logger, collab.Logger)
-	assert.Equal(t, cfg.ServiceRepoPaths, collab.ServiceRepoPaths)
+	assert.Equal(t, cfg.ProjectRepoPaths, collab.ProjectRepoPaths)
 	assert.Equal(t, "trino", collab.SQLDialect)
 	assert.Equal(t, 37*time.Minute, collab.VerificationTimeout)
 }

@@ -185,7 +185,7 @@ func TestSweeper_EndsAVerifyingTryWhoseGateKeepsFailing(t *testing.T) {
 	// release counts it.
 	p := h.attempt(1).Proposal
 	assert.Equal(t, proposal.StatusFailed, p.Status)
-	assert.Equal(t, []proposal.Verification{{Service: "svc-a", Kind: "dbt", RunID: svcARun1, Phase: proposal.PhaseQueued}}, p.Verifications)
+	assert.Equal(t, []proposal.Verification{{Project: "svc-a", Kind: "dbt", RunID: svcARun1, Phase: proposal.PhaseQueued}}, p.Verifications)
 	assert.Equal(t, proposal.StatusFailed, p.NodeOutcomes["svc-a"].Status)
 	assert.Equal(t, deadLetteredReason(h.remediation(id)), h.attempt(1).VerifyError, "the row carries the reason")
 }

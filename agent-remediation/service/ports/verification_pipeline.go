@@ -8,14 +8,14 @@ import (
 )
 
 // VerificationRequest is a fix-verification run to submit: the edited
-// service's delta, the rejected release the fix answers, and the attempt it
-// belongs to. Kind is the service's manifest kind, VerificationKindDbt or
+// project's delta, the rejected release the fix answers, and the attempt it
+// belongs to. Kind is the project's manifest kind, VerificationKindDbt or
 // VerificationKindPythonODCS — required, never defaulted. SourceOverlayURI is
 // the tarball of proposed source a dbt run lays over the project; a python run
 // is verified by its packaged odcs-bundle.json and carries none.
 type VerificationRequest struct {
 	RunID             string
-	Service           string
+	Project           string
 	ImageTag          string
 	Kind              string
 	VerifiesReleaseID string
@@ -29,10 +29,10 @@ const (
 	VerificationKindPythonODCS = "python-odcs"
 )
 
-// ODCSBundleName is the object name of a python-odcs service's bundle of
+// ODCSBundleName is the object name of a python-odcs project's bundle of
 // ODCS contracts: its CI uploads one for a release at
-// <service>/<release id>/odcs-bundle.json, and a fix's verification run reads
-// the packed one at <service>/<run id>/odcs-bundle.json.
+// <project>/<release id>/odcs-bundle.json, and a fix's verification run reads
+// the packed one at <project>/<run id>/odcs-bundle.json.
 const ODCSBundleName = "odcs-bundle.json"
 
 // VerificationStatus is one read of a verification run. Phase is derived
@@ -65,13 +65,13 @@ type ContractBundleReader interface {
 }
 
 // ReleaseReader reads facts about a candidate release: where its contract
-// bundle is, the image tag its changed service was posted with, which a
-// verification of a fix to that service reuses verbatim (a verification never
+// bundle is, the image tag its changed project was posted with, which a
+// verification of a fix to that project reuses verbatim (a verification never
 // promotes, so the tag never reaches the path a promotion would drive), and
 // the release's own failing validation nodes.
 type ReleaseReader interface {
 	ContractBundleReader
-	ImageTag(ctx context.Context, releaseID, service string) (string, error)
+	ImageTag(ctx context.Context, releaseID, project string) (string, error)
 	// FailingNodes returns the ORIGINAL candidate release's failing validation
 	// nodes: node_id -> error text, one entry per node that failed validation
 	// when that release was rejected. releaseID names the same failing

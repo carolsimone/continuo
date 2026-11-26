@@ -34,7 +34,7 @@ func TestSingleNodeRunLatest(t *testing.T) {
 
 	// Use a well-known seed node that is always present after setup.sh.
 	const (
-		targetService = "service-1"
+		targetProject = "service-1"
 		targetSchema  = "e2e_schema"
 		targetTable   = "seed_table_1"
 	)
@@ -49,9 +49,9 @@ func TestSingleNodeRunLatest(t *testing.T) {
 	seedTopology(t, ctx, clients)
 
 	// Trigger the single-node run via the run-controller gRPC.
-	t.Logf("Calling TriggerSingleNodeRun: %s.%s.%s (latest)", targetService, targetSchema, targetTable)
+	t.Logf("Calling TriggerSingleNodeRun: %s.%s.%s (latest)", targetProject, targetSchema, targetTable)
 	resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
-		ServiceName:    targetService,
+		ProjectName:    targetProject,
 		SchemaName:     targetSchema,
 		TableName:      targetTable,
 		MetadataSource: "latest",
@@ -108,7 +108,7 @@ func TestSingleNodeRunLatest(t *testing.T) {
 	var top *runv1.NodeTask
 	pollUntil(t, ctx, 30*time.Second, 500*time.Millisecond, func() (bool, error) {
 		listResp, err := clients.runClient.ListNodeTasks(ctx, &runv1.ListNodeTasksRequest{
-			ServiceName: targetService,
+			ProjectName: targetProject,
 			SchemaName:  targetSchema,
 			TableName:   targetTable,
 			Limit:       50,
@@ -163,7 +163,7 @@ func TestSingleNodeRunStale(t *testing.T) {
 	clients := setupClients(t, ctx)
 
 	const (
-		targetService = "service-1"
+		targetProject = "service-1"
 		targetSchema  = "e2e_schema"
 		targetTable   = "seed_table_1"
 		srcSchedule   = "seed"
@@ -197,14 +197,14 @@ func TestSingleNodeRunStale(t *testing.T) {
 
 	// ── Step 3: Read source's image_tag for the target ────────────────────────
 	t.Log("=== Step 3: Reading source task metadata ===")
-	srcImage := readTaskImageTag(t, clients, srcID, targetService, targetSchema, targetTable)
+	srcImage := readTaskImageTag(t, clients, srcID, targetProject, targetSchema, targetTable)
 	require.NotEmpty(t, srcImage, "source tasks.image_tag must be non-empty")
 	t.Logf("Source metadata: image_tag=%s", srcImage)
 
 	// ── Step 4: Trigger single-node run in stale mode ─────────────────────────
 	t.Log("=== Step 4: Triggering single-node run in stale (snapshot_of_run) mode ===")
 	resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
-		ServiceName:    targetService,
+		ProjectName:    targetProject,
 		SchemaName:     targetSchema,
 		TableName:      targetTable,
 		MetadataSource: "snapshot_of_run",
@@ -230,7 +230,7 @@ func TestSingleNodeRunStale(t *testing.T) {
 
 	// ── Step 6: Assert new run inherited source metadata ─────────────────────
 	t.Log("=== Step 6: Asserting stale metadata inheritance ===")
-	newImage := readTaskImageTag(t, clients, runID, targetService, targetSchema, targetTable)
+	newImage := readTaskImageTag(t, clients, runID, targetProject, targetSchema, targetTable)
 	require.Equal(t, srcImage, newImage,
 		"stale mode must inherit source's image_tag: got %q, want %q", newImage, srcImage)
 	t.Logf("New run metadata matches source: image_tag=%s", newImage)
@@ -264,18 +264,18 @@ func TestSingleNodeRunTargetNotFound(t *testing.T) {
 	cleanupTestData(t, ctx, clients, "single-node-run")
 	seedTopology(t, ctx, clients)
 
-	// Use a service/schema/table triple that is guaranteed to be absent.
+	// Use a project/schema/table triple that is guaranteed to be absent.
 	const (
-		ghostService = "service-does-not-exist"
+		ghostProject = "service-does-not-exist"
 		ghostSchema  = "no_such_schema"
 		ghostTable   = "no_such_table"
 	)
 
 	before := countRunsOfKind(t, clients, "single_node_run")
 	t.Logf("Calling TriggerSingleNodeRun against missing target: %s.%s.%s",
-		ghostService, ghostSchema, ghostTable)
+		ghostProject, ghostSchema, ghostTable)
 	_, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
-		ServiceName:    ghostService,
+		ProjectName:    ghostProject,
 		SchemaName:     ghostSchema,
 		TableName:      ghostTable,
 		MetadataSource: "latest",
@@ -312,13 +312,13 @@ func cleanupSingleNodeRun(t *testing.T, ctx context.Context, clients *testClient
 }
 
 // readTaskImageTag returns the image_tag from the tasks row that matches
-// the given run_id and target identity (service_name, schema_name,
+// the given run_id and target identity (project_name, schema_name,
 // table_name). Fails the test if no row is found.
 func readTaskImageTag(
 	t *testing.T,
 	clients *testClients,
 	scheduleID uuid.UUID,
-	serviceName, schemaName, tableName string,
+	projectName, schemaName, tableName string,
 ) string {
 	t.Helper()
 	var imageTag string
@@ -326,15 +326,15 @@ func readTaskImageTag(
 		`SELECT image_tag
 		   FROM tasks
 		  WHERE run_id   = $1
-		    AND service_name  = $2
+		    AND project_name  = $2
 		    AND schema_name   = $3
 		    AND table_name    = $4
 		  LIMIT 1`,
-		scheduleID, serviceName, schemaName, tableName,
+		scheduleID, projectName, schemaName, tableName,
 	)
 	require.NoError(t, err,
-		"readTaskImageTag: no tasks row for run_id=%s service=%s schema=%s table=%s",
-		scheduleID, serviceName, schemaName, tableName,
+		"readTaskImageTag: no tasks row for run_id=%s project=%s schema=%s table=%s",
+		scheduleID, projectName, schemaName, tableName,
 	)
 	return imageTag
 }

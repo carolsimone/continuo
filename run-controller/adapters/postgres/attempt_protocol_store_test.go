@@ -222,7 +222,7 @@ func TestTaskGraph_NodeReadsOneNodeOfTheRelease(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, found)
 		assert.Equal(t, topology.Node{
-			Key: "e2e_schema.ftable_e", UniqueID: "e2e_schema.ftable_e", ServiceName: "service-1", SchemaName: "e2e_schema",
+			Key: "e2e_schema.ftable_e", UniqueID: "e2e_schema.ftable_e", ProjectName: "service-1", SchemaName: "e2e_schema",
 			TableName: "ftable_e", NodeType: "dbt-model", ContentHash: "h-ftable_e", ImageTag: "service-1:5",
 			ScheduleName: "e2e-schedule-failure",
 		}, n)

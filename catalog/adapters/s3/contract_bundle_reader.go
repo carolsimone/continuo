@@ -107,7 +107,7 @@ func incomingContracts(contracts map[string]contractbundle.Contract) ([]contract
 			ContractHash: c.ContractHash,
 			ContentHash:  c.ContentHash,
 			Family:       c.Family,
-			Service:      c.Service,
+			Project:      c.Project,
 			SourcePath:   c.Source.Path,
 			Document:     document,
 		})

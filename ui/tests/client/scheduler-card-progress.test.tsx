@@ -31,7 +31,7 @@ function baseSchedule(overrides: Partial<ScheduleSummary> = {}): ScheduleSummary
 function taskPage(count: number): Task[] {
   return Array.from({ length: count }, (_, i) => ({
     task_id: `t-${i}`,
-    service_name: 'svc',
+    project_name: 'svc',
     schema_name: 'schema',
     table_name: 'table',
     job_name: 'job',

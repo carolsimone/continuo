@@ -20,17 +20,17 @@ const (
 )
 
 func secondOntologyText(other string) string {
-	return `service "` + other + `" is the install's ontology: an install has one ontology service`
+	return `project "` + other + `" is the install's ontology: an install has one ontology project`
 }
 
-func kindChangeText(service string, stored release.ManifestKind) string {
-	return `service "` + service + `" is released as kind "` + string(stored) + `": a service cannot change between kind "ontology" and a node kind`
+func kindChangeText(project string, stored release.ManifestKind) string {
+	return `project "` + project + `" is released as kind "` + string(stored) + `": a project cannot change between kind "ontology" and a node kind`
 }
 
-// receiveOntology submits a candidate of the given kind for service.
-func receiveOntology(deps *handlers.Deps, releaseID, service, kind string) error {
+// receiveOntology submits a candidate of the given kind for project.
+func receiveOntology(deps *handlers.Deps, releaseID, project, kind string) error {
 	return handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: service, ReleaseID: releaseID, ImageTag: "img:1", Repo: "acme/ontology", CommitSHA: "cafebabe", Kind: kind,
+		Project: project, ReleaseID: releaseID, ImageTag: "img:1", Repo: "acme/ontology", CommitSHA: "cafebabe", Kind: kind,
 	})
 }
 
@@ -66,29 +66,29 @@ func TestReceiveCandidate_AcceptsOntologyWhileTheSwitchIsOn(t *testing.T) {
 	assert.Equal(t, pipeline.StatusReceived, r.Status())
 }
 
-// An install has one ontology service: another service holding the kind in
+// An install has one ontology project: another project holding the kind in
 // service_prod, or in a candidate run that has not ended, refuses a second.
-func TestReceiveCandidate_RefusesASecondOntologyService(t *testing.T) {
-	t.Run("another service holds it in service_prod", func(t *testing.T) {
+func TestReceiveCandidate_RefusesASecondOntologyProject(t *testing.T) {
+	t.Run("another project holds it in service_prod", func(t *testing.T) {
 		deps, store := ontologyDeps(time.Unix(100, 0).UTC())
 		store.SeedServiceProd(release.NewServiceProd("ontology-a", "rel-1", "s3://b/ontology-a/rel-1/ontology.yaml", "img:1",
 			release.ManifestKindOntology, time.Unix(0, 0)))
 
 		err := receiveOntology(deps, "rOnt", "ontology-b", "ontology")
 
-		require.ErrorIs(t, err, handlers.ErrOntologyServiceConflict)
+		require.ErrorIs(t, err, handlers.ErrOntologyProjectConflict)
 		assert.EqualError(t, err, secondOntologyText("ontology-a"))
 		_, getErr := store.GetRelease("rOnt")
 		assert.Error(t, getErr)
 	})
 
-	t.Run("another service has a candidate run in flight", func(t *testing.T) {
+	t.Run("another project has a candidate run in flight", func(t *testing.T) {
 		deps, store := ontologyDeps(time.Unix(100, 0).UTC())
 		require.NoError(t, receiveOntology(deps, "rOntA", "ontology-a", "ontology"))
 
 		err := receiveOntology(deps, "rOntB", "ontology-b", "ontology")
 
-		require.ErrorIs(t, err, handlers.ErrOntologyServiceConflict)
+		require.ErrorIs(t, err, handlers.ErrOntologyProjectConflict)
 		assert.EqualError(t, err, secondOntologyText("ontology-a"))
 		_, getErr := store.GetRelease("rOntB")
 		assert.Error(t, getErr)
@@ -113,9 +113,9 @@ func TestReceiveCandidate_RefusesASecondOntologyService(t *testing.T) {
 	})
 }
 
-// A service keeps one side of the line for good: a service released with a node
-// kind cannot become the ontology, and the ontology service cannot be released
-// with a node kind. The refusal leaves the service's production row, and so its
+// A project keeps one side of the line for good: a project released with a node
+// kind cannot become the ontology, and the ontology project cannot be released
+// with a node kind. The refusal leaves the project's production row, and so its
 // nodes, alone.
 func TestReceiveCandidate_RefusesAKindChangeToOrFromOntology(t *testing.T) {
 	cases := map[string]struct {
@@ -135,7 +135,7 @@ func TestReceiveCandidate_RefusesAKindChangeToOrFromOntology(t *testing.T) {
 
 			err := receiveOntology(deps, "rKind", "svc", tc.submit)
 
-			require.ErrorIs(t, err, handlers.ErrOntologyServiceConflict)
+			require.ErrorIs(t, err, handlers.ErrOntologyProjectConflict)
 			assert.EqualError(t, err, kindChangeText("svc", tc.stored))
 			_, getErr := store.GetRelease("rKind")
 			assert.Error(t, getErr, "a refused release is not stored")
@@ -147,8 +147,8 @@ func TestReceiveCandidate_RefusesAKindChangeToOrFromOntology(t *testing.T) {
 }
 
 // The line between the ontology and the node kinds is also drawn when the
-// switch is off: a dbt service is never moved by a release of the other side,
-// and a dbt release for a dbt service is untouched.
+// switch is off: a dbt project is never moved by a release of the other side,
+// and a dbt release for a dbt project is untouched.
 func TestReceiveCandidate_NodeKindsKeepWorkingNextToTheOntologyRules(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	store.SeedServiceProd(release.NewServiceProd("svc-dbt", "rel-1", "s3://b/svc-dbt/rel-1/manifest.json", "img:1",
@@ -161,9 +161,9 @@ func TestReceiveCandidate_NodeKindsKeepWorkingNextToTheOntologyRules(t *testing.
 	require.NoError(t, receiveOntology(deps, "rNew", "svc-new", "dbt"))
 }
 
-// The ontology service releases again and again: its own production row and its
-// own queued runs never count as a second ontology service.
-func TestReceiveCandidate_AcceptsTheSameOntologyServiceAgain(t *testing.T) {
+// The ontology project releases again and again: its own production row and its
+// own queued runs never count as a second ontology project.
+func TestReceiveCandidate_AcceptsTheSameOntologyProjectAgain(t *testing.T) {
 	t.Run("it holds the kind in service_prod", func(t *testing.T) {
 		deps, store := ontologyDeps(time.Unix(100, 0).UTC())
 		store.SeedServiceProd(release.NewServiceProd("company-ontology", "rel-1", "s3://b/company-ontology/rel-1/ontology.yaml", "img:1",
@@ -186,7 +186,7 @@ func TestReceiveCandidate_AcceptsTheSameOntologyServiceAgain(t *testing.T) {
 
 // A release id the install already stored is answered as before, whatever the
 // install holds now: a CI retry of an accepted ontology release never turns
-// into a conflict because another service has since become the ontology.
+// into a conflict because another project has since become the ontology.
 func TestReceiveCandidate_ResubmittingAnOntologyReleaseStaysIdempotent(t *testing.T) {
 	deps, store := ontologyDeps(time.Unix(100, 0).UTC())
 	require.NoError(t, receiveOntology(deps, "rOnt", "ontology-b", "ontology"))
@@ -203,7 +203,7 @@ func TestReceiveVerification_RefusesOntology(t *testing.T) {
 			deps.OntologyEnabled = enabled
 
 			err := handlers.ReceiveVerification(context.Background(), deps, handlers.ReceiveVerificationInput{
-				RunID: "v1", Service: "company-ontology", ImageTag: "img:1", Kind: "ontology",
+				RunID: "v1", Project: "company-ontology", ImageTag: "img:1", Kind: "ontology",
 				VerifiesReleaseID: "rel-0", Attempt: 1,
 			})
 
@@ -215,9 +215,9 @@ func TestReceiveVerification_RefusesOntology(t *testing.T) {
 	}
 }
 
-// The ontology service declares no node. An ontology release whose parse names
+// The ontology project declares no node. An ontology release whose parse names
 // no change to any node has nothing to validate: it promotes at once, moves
-// current_prod, and records the service's production pointer with the kind
+// current_prod, and records the project's production pointer with the kind
 // ontology and the ontology file as its artifact.
 func TestHandleParsedManifest_AnOntologyReleasePromotesWithNothingToValidate(t *testing.T) {
 	deps, store := ontologyDeps(time.Unix(100, 0).UTC())
@@ -225,8 +225,8 @@ func TestHandleParsedManifest_AnOntologyReleasePromotesWithNothingToValidate(t *
 	store.SeedServiceProd(release.NewServiceProd("svc-a", "prev", "s3://continuo/svc-a/prev/manifest.json", "sha-a",
 		release.ManifestKindDbt, time.Unix(0, 0)))
 	topo := release.Topology{
-		{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h_a"},
-		{UniqueID: "b", ServiceName: "svc-a", ContentHash: "h_b", UpstreamUniqueIDs: []string{"a"}},
+		{UniqueID: "a", ProjectName: "svc-a", ContentHash: "h_a"},
+		{UniqueID: "b", ProjectName: "svc-a", ContentHash: "h_b", UpstreamUniqueIDs: []string{"a"}},
 	}
 	seedProd(t, deps, store, "prev", topo, time.Unix(50, 0).UTC())
 
@@ -252,11 +252,11 @@ func TestHandleParsedManifest_AnOntologyReleasePromotesWithNothingToValidate(t *
 	assert.Equal(t, "rOnt", store.GetCurrentProd().ReleaseID(), "current prod moved to the ontology release")
 
 	sp := store.GetServiceProd("company-ontology")
-	require.NotNil(t, sp, "the ontology service's production pointer is stored")
+	require.NotNil(t, sp, "the ontology project's production pointer is stored")
 	assert.Equal(t, release.ManifestKindOntology, sp.ManifestKind())
 	assert.Equal(t, "s3://continuo/company-ontology/rOnt/ontology.yaml", sp.ManifestS3Key())
 	assert.Equal(t, "rOnt", sp.ReleaseID())
-	assert.Equal(t, "dbt", string(store.GetServiceProd("svc-a").ManifestKind()), "another service's pointer is not touched")
+	assert.Equal(t, "dbt", string(store.GetServiceProd("svc-a").ManifestKind()), "another project's pointer is not touched")
 
 	var promoted struct {
 		ReleaseID string `json:"release_id"`

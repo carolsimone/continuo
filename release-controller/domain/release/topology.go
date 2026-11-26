@@ -22,7 +22,7 @@ type Node struct {
 	// payload from before this field existed; DuplicateClaims falls back to
 	// UniqueID in that case.
 	ResolvedRelationID string
-	ServiceName        string
+	ProjectName        string
 	NodeType           string
 	ContentHash        string
 	TestCount          int
@@ -58,7 +58,7 @@ type SeedColumn struct {
 // IsExternal reports whether the node only marks a table that something
 // outside continuo builds. An unknown-external node has no content and nothing builds
 // it, so it is never changed, built, cloned or duplicated, and it needs no
-// service.
+// project.
 func (n Node) IsExternal() bool {
 	return pkg_model.NodeType(n.NodeType).IsExternal()
 }

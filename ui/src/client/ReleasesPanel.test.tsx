@@ -100,18 +100,18 @@ describe('ReleasesPanel — author column', () => {
 
 describe('ReleasesPanel — in-flight strip', () => {
   it('names a running verification and links both the run and the release it verifies', async () => {
-    mockFetch([], { active: { run_id: 'verify-rel-1-core-a2', run_kind: 'verification', status: 'compiling', service: 'core', since: '2026-09-02T10:01:00Z', verifies_release_id: 'rel-1', attempt: 2 } });
+    mockFetch([], { active: { run_id: 'verify-rel-1-core-a2', run_kind: 'verification', status: 'compiling', project: 'core', since: '2026-09-02T10:01:00Z', verifies_release_id: 'rel-1', attempt: 2 } });
     render(<MemoryRouter><ReleasesPanel /></MemoryRouter>);
     const strip = await screen.findByText(/In flight · verification run/);
     expect(strip.textContent).toContain('attempt 2');
-    expect(strip.textContent).toContain('service core');
+    expect(strip.textContent).toContain('project core');
     expect(strip.textContent).toContain('compiling');
     expect(screen.getByRole('link', { name: 'verify-rel-1-core-a2' })).toHaveAttribute('href', '/verifications/verify-rel-1-core-a2');
     expect(screen.getByRole('link', { name: 'rel-1' })).toHaveAttribute('href', '/releases/rel-1');
   });
 
   it('names a running candidate release', async () => {
-    mockFetch([], { active: { run_id: 'rel-7', run_kind: 'candidate', status: 'validating', service: 'core', since: '2026-09-02T10:01:00Z' } });
+    mockFetch([], { active: { run_id: 'rel-7', run_kind: 'candidate', status: 'validating', project: 'core', since: '2026-09-02T10:01:00Z' } });
     render(<MemoryRouter><ReleasesPanel /></MemoryRouter>);
     const strip = await screen.findByText(/In flight ·/);
     expect(strip.textContent).toContain('validating');

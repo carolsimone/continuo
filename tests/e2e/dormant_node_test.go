@@ -18,14 +18,14 @@ import (
 )
 
 const (
-	// dormantProbeService owns dormant_probe, the model of service-1 that
+	// dormantProbeProject owns dormant_probe, the model of service-1 that
 	// carries the project's owner and no schedule tag.
-	dormantProbeService = "service-1"
+	dormantProbeProject = "service-1"
 	// dormantProbeTable is the dormant model, and dormantProbeKey its node key
 	// (<schema>.<table>, lower-case).
 	dormantProbeTable = "dormant_probe"
 	dormantProbeKey   = seedSchemaName + "." + dormantProbeTable
-	// scheduledProbeTable is a model of the same service with a schedule tag
+	// scheduledProbeTable is a model of the same project with a schedule tag
 	// (rel-probe): the node a list of dormant nodes leaves out.
 	scheduledProbeTable = "rel_probe"
 )
@@ -85,21 +85,21 @@ func TestE2E_DormantNode_IsListedRunsByHandAndNeverRunsOnASchedule(t *testing.T)
 	requireReleaseControllerHealthy(t, clients)
 
 	releaseID := "e2e-dormant-" + uuid.NewString()[:8]
-	t.Logf("release_id=%s changed_service=%s dormant_node=%s", releaseID, dormantProbeService, dormantProbeKey)
+	t.Logf("release_id=%s changed_project=%s dormant_node=%s", releaseID, dormantProbeProject, dormantProbeKey)
 
-	allServices := baselineServices(t, ctx, clients)
-	require.NotEmpty(t, allServices,
-		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
-	imageTag := allServices[dormantProbeService].imageTag
-	require.NotEmpty(t, imageTag, "image_tag missing for %s", dormantProbeService)
+	allProjects := baselineProjects(t, ctx, clients)
+	require.NotEmpty(t, allProjects,
+		"no baseline manifests under s3://%s/<project>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
+	imageTag := allProjects[dormantProbeProject].imageTag
+	require.NotEmpty(t, imageTag, "image_tag missing for %s", dormantProbeProject)
 	inBaseline := false
-	for _, n := range allServices[dormantProbeService].nodes {
+	for _, n := range allProjects[dormantProbeProject].nodes {
 		inBaseline = inBaseline || n.uniqueID == dormantProbeKey
 	}
 	require.True(t, inBaseline,
 		"topology-controller's parser yields no node %s from %s's baseline manifest — is the model in service-1, "+
 			"the image rebuilt and the manifests re-uploaded, and does the parser keep a model with an owner and no tag?",
-		dormantProbeKey, dormantProbeService)
+		dormantProbeKey, dormantProbeProject)
 
 	// Only this test runs the node, so a run of it is one an earlier attempt of
 	// the test left behind: it is removed, and no other run may hold a task for
@@ -120,7 +120,7 @@ func TestE2E_DormantNode_IsListedRunsByHandAndNeverRunsOnASchedule(t *testing.T)
 	_, err = clients.releaseDB.ExecContext(ctx, "DELETE FROM service_prod")
 	require.NoError(t, err, "clear service_prod")
 
-	postRelease(t, clients, dormantProbeService, releaseID, imageTag, true)
+	postRelease(t, clients, dormantProbeProject, releaseID, imageTag, true)
 
 	pollUntil(t, ctx, 5*time.Minute, 2*time.Second, func() (bool, error) {
 		return neo4jScalarString(ctx, clients,
@@ -135,17 +135,17 @@ func TestE2E_DormantNode_IsListedRunsByHandAndNeverRunsOnASchedule(t *testing.T)
 
 	// ── 2. run-controller and catalog hold it with no schedule ───────────────
 	var stored struct {
-		ServiceName  string `db:"service_name"`
+		ProjectName  string `db:"project_name"`
 		NodeType     string `db:"node_type"`
 		ScheduleName string `db:"schedule_name"`
 	}
 	require.NoError(t, clients.runControllerDB.GetContext(ctx, &stored, `
-		SELECT service_name, node_type, schedule_name
+		SELECT project_name, node_type, schedule_name
 		  FROM topology_nodes
 		 WHERE tenant_id = $1 AND release_id = $2 AND node_key = $3`,
 		events.DefaultTenantID, releaseID, dormantProbeKey),
 		"run-controller's copy of release %s holds no node %s", releaseID, dormantProbeKey)
-	assert.Equal(t, dormantProbeService, stored.ServiceName, "service-1 builds the dormant node")
+	assert.Equal(t, dormantProbeProject, stored.ProjectName, "service-1 builds the dormant node")
 	assert.Equal(t, string(model.NodeTypeDbtModel), stored.NodeType, "the dormant node is a dbt model")
 	assert.Empty(t, stored.ScheduleName, "a model with no tag belongs to no schedule")
 	require.True(t, model.IsDormant(model.NodeType(stored.NodeType), stored.ScheduleName),
@@ -157,12 +157,12 @@ func TestE2E_DormantNode_IsListedRunsByHandAndNeverRunsOnASchedule(t *testing.T)
 	t.Logf("✅ run-controller and catalog hold %s as a %s node with no schedule", dormantProbeKey, stored.NodeType)
 
 	// ── 3. it is listed as dormant before any run ────────────────────────────
-	before := listNodesOfDormantProbeService(t, ctx, clients, dormantProbeTable, true)
+	before := listNodesOfDormantProbeProject(t, ctx, clients, dormantProbeTable, true)
 	require.Len(t, before.GetNodes(), 1,
 		"ListNodes(dormant_only) lists %s before its first run: %v", dormantProbeKey, before.GetNodes())
 	assert.EqualValues(t, 1, before.GetTotalCount(), "the total counts the one node the filters match")
 	node := before.GetNodes()[0]
-	assert.Equal(t, dormantProbeService, node.GetServiceName())
+	assert.Equal(t, dormantProbeProject, node.GetProjectName())
 	assert.Equal(t, seedSchemaName, node.GetSchemaName())
 	assert.Equal(t, dormantProbeTable, node.GetTableName())
 	assert.Equal(t, string(model.NodeTypeDbtModel), node.GetNodeType(), "the node list carries the node's type")
@@ -173,10 +173,10 @@ func TestE2E_DormantNode_IsListedRunsByHandAndNeverRunsOnASchedule(t *testing.T)
 
 	// The control: a model of a schedule is listed, not dormant, and the
 	// dormant filter leaves it out.
-	scheduled := listNodesOfDormantProbeService(t, ctx, clients, scheduledProbeTable, false)
+	scheduled := listNodesOfDormantProbeProject(t, ctx, clients, scheduledProbeTable, false)
 	require.Len(t, scheduled.GetNodes(), 1, "ListNodes lists %s, a model of a schedule: %v", scheduledProbeTable, scheduled.GetNodes())
 	assert.False(t, scheduled.GetNodes()[0].GetDormant(), "a model of a schedule is not dormant")
-	assert.Empty(t, listNodesOfDormantProbeService(t, ctx, clients, scheduledProbeTable, true).GetNodes(),
+	assert.Empty(t, listNodesOfDormantProbeProject(t, ctx, clients, scheduledProbeTable, true).GetNodes(),
 		"ListNodes(dormant_only) leaves out %s, a model of a schedule", scheduledProbeTable)
 
 	everyDormant, err := clients.runClient.ListNodes(ctx, &runv1.ListNodesRequest{DormantOnly: true, Limit: 200})
@@ -184,8 +184,8 @@ func TestE2E_DormantNode_IsListedRunsByHandAndNeverRunsOnASchedule(t *testing.T)
 	listed := false
 	for _, n := range everyDormant.GetNodes() {
 		assert.True(t, n.GetDormant(), "ListNodes(dormant_only) lists only dormant nodes, not %s.%s.%s",
-			n.GetServiceName(), n.GetSchemaName(), n.GetTableName())
-		listed = listed || (n.GetServiceName() == dormantProbeService && n.GetTableName() == dormantProbeTable)
+			n.GetProjectName(), n.GetSchemaName(), n.GetTableName())
+		listed = listed || (n.GetProjectName() == dormantProbeProject && n.GetTableName() == dormantProbeTable)
 	}
 	assert.True(t, listed, "ListNodes(dormant_only) with no other filter lists %s: %v", dormantProbeKey, everyDormant.GetNodes())
 
@@ -204,8 +204,8 @@ func TestE2E_DormantNode_IsListedRunsByHandAndNeverRunsOnASchedule(t *testing.T)
 	assert.Zero(t, external.GetTotalCount(), "ListNodes counts no unknown-external node")
 
 	// The ui's node list, which the Nodes tab reads.
-	uiList := mustGetJSON(t, fmt.Sprintf("%s/api/nodes?search=%s&service=%s&dormant=1",
-		clients.uiBase, dormantProbeTable, dormantProbeService))
+	uiList := mustGetJSON(t, fmt.Sprintf("%s/api/nodes?search=%s&project=%s&dormant=1",
+		clients.uiBase, dormantProbeTable, dormantProbeProject))
 	uiNodes, ok := uiList["nodes"].([]interface{})
 	require.True(t, ok, "GET /api/nodes: 'nodes' field missing or wrong type: %v", uiList)
 	require.Len(t, uiNodes, 1, "GET /api/nodes?dormant=1 lists %s before its first run: %v", dormantProbeKey, uiNodes)
@@ -314,7 +314,7 @@ func TestE2E_DormantNode_IsListedRunsByHandAndNeverRunsOnASchedule(t *testing.T)
 
 	// ── 5. a single-node run of it succeeds ──────────────────────────────────
 	triggered, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{
-		RequestId: uuid.NewString(), ServiceName: dormantProbeService, SchemaName: seedSchemaName, TableName: dormantProbeTable,
+		RequestId: uuid.NewString(), ProjectName: dormantProbeProject, SchemaName: seedSchemaName, TableName: dormantProbeTable,
 		MetadataSource: "latest",
 	})
 	require.NoError(t, err, "TriggerSingleNodeRun(%s)", dormantProbeKey)
@@ -354,7 +354,7 @@ func TestE2E_DormantNode_IsListedRunsByHandAndNeverRunsOnASchedule(t *testing.T)
 		"the single-node run of %s succeeds (failure_reason %q, attempts %v, attempts read error %v)",
 		dormantProbeKey, failureReason, attempts, attemptsErr)
 
-	after := listNodesOfDormantProbeService(t, ctx, clients, dormantProbeTable, true)
+	after := listNodesOfDormantProbeProject(t, ctx, clients, dormantProbeTable, true)
 	require.Len(t, after.GetNodes(), 1, "ListNodes(dormant_only) lists %s after its run: %v", dormantProbeKey, after.GetNodes())
 	ran := after.GetNodes()[0]
 	assert.True(t, ran.GetDormant(), "a run started by hand leaves %s dormant", dormantProbeKey)
@@ -366,14 +366,14 @@ func TestE2E_DormantNode_IsListedRunsByHandAndNeverRunsOnASchedule(t *testing.T)
 	t.Logf("✅ the single-node run %s of %s succeeded, and the node is still listed dormant", runID, dormantProbeKey)
 }
 
-// listNodesOfDormantProbeService lists the nodes of service-1 whose table is
+// listNodesOfDormantProbeProject lists the nodes of service-1 whose table is
 // table through ListNodes, only the dormant ones when dormantOnly is set.
-func listNodesOfDormantProbeService(t *testing.T, ctx context.Context, clients *testClients, table string, dormantOnly bool) *runv1.ListNodesResponse {
+func listNodesOfDormantProbeProject(t *testing.T, ctx context.Context, clients *testClients, table string, dormantOnly bool) *runv1.ListNodesResponse {
 	t.Helper()
 	resp, err := clients.runClient.ListNodes(ctx, &runv1.ListNodesRequest{
-		Search: table, ServiceName: dormantProbeService, DormantOnly: dormantOnly,
+		Search: table, ProjectName: dormantProbeProject, DormantOnly: dormantOnly,
 	})
-	require.NoError(t, err, "ListNodes(search %s, service %s, dormant_only %t)", table, dormantProbeService, dormantOnly)
+	require.NoError(t, err, "ListNodes(search %s, project %s, dormant_only %t)", table, dormantProbeProject, dormantOnly)
 	return resp
 }
 
@@ -384,8 +384,8 @@ func tasksOfDormantProbe(t *testing.T, ctx context.Context, clients *testClients
 	var n int
 	require.NoError(t, clients.runControllerDB.GetContext(ctx, &n, `
 		SELECT count(*) FROM tasks
-		 WHERE tenant_id = $1 AND service_name = $2 AND schema_name = $3 AND table_name = $4`,
-		events.DefaultTenantID, dormantProbeService, seedSchemaName, dormantProbeTable))
+		 WHERE tenant_id = $1 AND project_name = $2 AND schema_name = $3 AND table_name = $4`,
+		events.DefaultTenantID, dormantProbeProject, seedSchemaName, dormantProbeTable))
 	return n
 }
 
@@ -404,8 +404,8 @@ func removeLeftoverDormantProbeRuns(t *testing.T, ctx context.Context, clients *
 		  FROM runs r
 		  JOIN tasks t ON t.tenant_id = r.tenant_id AND t.run_id = r.run_id
 		 WHERE r.tenant_id = $1 AND r.kind = 'single_node_run'
-		   AND t.service_name = $2 AND t.schema_name = $3 AND t.table_name = $4`,
-		events.DefaultTenantID, dormantProbeService, seedSchemaName, dormantProbeTable))
+		   AND t.project_name = $2 AND t.schema_name = $3 AND t.table_name = $4`,
+		events.DefaultTenantID, dormantProbeProject, seedSchemaName, dormantProbeTable))
 	for _, run := range leftovers {
 		cleanupSingleNodeRun(t, ctx, clients, run.RunID, run.ScheduleName)
 	}

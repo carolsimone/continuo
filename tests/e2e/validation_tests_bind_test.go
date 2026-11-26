@@ -11,8 +11,8 @@ import (
 )
 
 // tbind / tbind_ok are service-2's dbt-test bind-check fixtures (see
-// dbt/services/service-2/models/tbind.yml,
-// dbt/services/service-2/tests/assert_tbind_amount_positive.sql, and the
+// dbt/projects/service-2/models/tbind.yml,
+// dbt/projects/service-2/tests/assert_tbind_amount_positive.sql, and the
 // dbt_project.yml tags that keep them off every shared schedule). tbind's
 // tests name amount_eur, a column tbind does not emit, so both its generic
 // not_null test and its singular assert test fail their bind check while the
@@ -46,23 +46,23 @@ func TestE2E_ReleaseValidation_TestThatNoLongerBindsRejects(t *testing.T) {
 	requireReleaseControllerHealthy(t, clients)
 
 	releaseID := "e2e-tbind-" + uuid.NewString()[:8]
-	changedService := "service-2"
-	allServices := baselineServices(t, ctx, clients)
-	changedImageTag := allServices[changedService].imageTag
+	changedProject := "service-2"
+	allProjects := baselineProjects(t, ctx, clients)
+	changedImageTag := allProjects[changedProject].imageTag
 	require.NotEmpty(t, changedImageTag)
 
 	// Production holds everything, tbind at a stale hash so it is the only
 	// changed node; its two tests are pulled in as its descendants.
 	seen := map[string]bool{}
 	var prodNodes []map[string]string
-	for svc, si := range allServices {
+	for svc, si := range allProjects {
 		for _, n := range si.nodes {
 			seen[n.uniqueID] = true
 			hash := n.contentHash
 			if n.uniqueID == tbindUniqueID {
 				hash = "stale-" + hash
 			}
-			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "service": svc, "content_hash": hash})
+			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "project": svc, "content_hash": hash})
 		}
 	}
 	for _, id := range []string{tbindUniqueID, tbindNotNullTestID, tbindSingularTestID} {
@@ -75,9 +75,9 @@ func TestE2E_ReleaseValidation_TestThatNoLongerBindsRejects(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allServices)
+	seedServiceProd(t, ctx, clients, allProjects)
 
-	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
+	postRelease(t, clients, changedProject, releaseID, changedImageTag, false)
 	assertValidationRequestedNodes(t, ctx, validationTap, releaseID, []string{tbindUniqueID, tbindNotNullTestID, tbindSingularTestID})
 	waitForReleaseRejected(t, ctx, clients, releaseID, batchRejectBudget)
 
@@ -124,22 +124,22 @@ func TestE2E_ReleaseValidation_TestsBindAndArePromotedInvisibly(t *testing.T) {
 	requireReleaseControllerHealthy(t, clients)
 
 	releaseID := "e2e-tbind-ok-" + uuid.NewString()[:8]
-	changedService := "service-2"
-	allServices := baselineServices(t, ctx, clients)
-	changedImageTag := allServices[changedService].imageTag
+	changedProject := "service-2"
+	allProjects := baselineProjects(t, ctx, clients)
+	changedImageTag := allProjects[changedProject].imageTag
 	require.NotEmpty(t, changedImageTag)
 
 	// tbind_ok and its test are held back entirely from production, so both
 	// arrive as new nodes in the assembled candidate topology.
 	held := map[string]bool{tbindOkUniqueID: false, tbindOkNotNullTestID: false}
 	var prodNodes []map[string]string
-	for svc, si := range allServices {
+	for svc, si := range allProjects {
 		for _, n := range si.nodes {
 			if _, excluded := held[n.uniqueID]; excluded {
 				held[n.uniqueID] = true
 				continue
 			}
-			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "service": svc, "content_hash": n.contentHash})
+			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "project": svc, "content_hash": n.contentHash})
 		}
 	}
 	for id, found := range held {
@@ -151,9 +151,9 @@ func TestE2E_ReleaseValidation_TestsBindAndArePromotedInvisibly(t *testing.T) {
 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allServices)
+	seedServiceProd(t, ctx, clients, allProjects)
 
-	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
+	postRelease(t, clients, changedProject, releaseID, changedImageTag, false)
 	assertValidationRequestedNodes(t, ctx, validationTap, releaseID, []string{tbindOkUniqueID, tbindOkNotNullTestID})
 	waitForReleasePromoted(t, ctx, clients, releaseID, batchRejectBudget)
 	// Catalog swaps the Neo4j topology asynchronously after the release

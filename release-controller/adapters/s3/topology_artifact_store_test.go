@@ -32,20 +32,20 @@ var r1Ref = objectstore.Ref{Bucket: bucket, Key: "tenants/default/topologies/r1/
 // response errors do.
 type outage struct{}
 
-func (outage) Error() string       { return "s3: service unavailable" }
+func (outage) Error() string       { return "s3: project unavailable" }
 func (outage) HTTPStatusCode() int { return 503 }
 
 func sampleTopology() release.Topology {
 	return release.Topology{
-		{UniqueID: "svc.orders", SchemaName: "svc", TableName: "orders", ResolvedRelationID: "svc.orders", ServiceName: "svc",
+		{UniqueID: "svc.orders", SchemaName: "svc", TableName: "orders", ResolvedRelationID: "svc.orders", ProjectName: "svc",
 			NodeType: "dbt-model", TestCount: 2, ContentHash: "sha256:o", ImageTag: "img:1", OriginalFilePath: "models/orders.sql",
 			UpstreamUniqueIDs: []string{"svc.customers"}, Schedule: "daily"},
-		{UniqueID: "svc.customers", SchemaName: "svc", TableName: "customers", ServiceName: "svc", NodeType: "dbt-seed",
+		{UniqueID: "svc.customers", SchemaName: "svc", TableName: "customers", ProjectName: "svc", NodeType: "dbt-seed",
 			ContentHash: "sha256:c", ImageTag: "img:1", UpstreamUniqueIDs: []string{}, Schedule: "daily"},
-		{UniqueID: "test.svc.not_null_orders_id", ServiceName: "svc", NodeType: "dbt-test",
+		{UniqueID: "test.svc.not_null_orders_id", ProjectName: "svc", NodeType: "dbt-test",
 			UpstreamUniqueIDs: []string{"svc.orders"}},
 		//nolint:gosec // test fixture secret_ref value, not a credential
-		{UniqueID: "api.rates", SchemaName: "api", TableName: "rates", ServiceName: "api", NodeType: "python-api",
+		{UniqueID: "api.rates", SchemaName: "api", TableName: "rates", ProjectName: "api", NodeType: "python-api",
 			ImageTag: "img:2", UpstreamUniqueIDs: []string{}, SecretRef: "continuo-api-rates"},
 	}
 }
@@ -94,9 +94,9 @@ func TestTopologyArtifactStore_WriteThenLoadRoundTrips(t *testing.T) {
 // a node that declares none reads back as undeclared.
 func TestTopologyArtifactStore_RoundTripKeepsEveryNodesTimeout(t *testing.T) {
 	topo := release.Topology{
-		{UniqueID: "svc.slow", SchemaName: "svc", TableName: "slow", ServiceName: "svc", NodeType: "dbt-model",
+		{UniqueID: "svc.slow", SchemaName: "svc", TableName: "slow", ProjectName: "svc", NodeType: "dbt-model",
 			ImageTag: "img:1", UpstreamUniqueIDs: []string{}, Schedule: "daily", TimeoutSeconds: 7200},
-		{UniqueID: "svc.plain", SchemaName: "svc", TableName: "plain", ServiceName: "svc", NodeType: "dbt-model",
+		{UniqueID: "svc.plain", SchemaName: "svc", TableName: "plain", ProjectName: "svc", NodeType: "dbt-model",
 			ImageTag: "img:1", UpstreamUniqueIDs: []string{}, Schedule: "daily"},
 	}
 	mem := objectstoretest.NewMemory(bucket)
@@ -341,8 +341,8 @@ func TestTopologyArtifactStore_FirstLoadReturnsACopyOfWhatItCaches(t *testing.T)
 // needs to see both, so the store hands back every node of the artifact.
 func TestTopologyArtifactStore_LoadKeepsNodesSharingAUniqueID(t *testing.T) {
 	topo := release.Topology{
-		{UniqueID: "svc.orders", SchemaName: "svc", TableName: "orders", ServiceName: "a", NodeType: "dbt-model", UpstreamUniqueIDs: []string{}},
-		{UniqueID: "svc.orders", SchemaName: "svc", TableName: "orders", ServiceName: "b", NodeType: "dbt-model", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "svc.orders", SchemaName: "svc", TableName: "orders", ProjectName: "a", NodeType: "dbt-model", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "svc.orders", SchemaName: "svc", TableName: "orders", ProjectName: "b", NodeType: "dbt-model", UpstreamUniqueIDs: []string{}},
 	}
 	mem := objectstoretest.NewMemory(bucket)
 	writer := NewTopologyArtifactStore(mem, bucket, 4)
@@ -352,22 +352,22 @@ func TestTopologyArtifactStore_LoadKeepsNodesSharingAUniqueID(t *testing.T) {
 	fromObject, err := NewTopologyArtifactStore(mem, bucket, 4).Load(context.Background(), ref)
 	require.NoError(t, err)
 	require.Len(t, fromObject, 2)
-	assert.ElementsMatch(t, []string{"a", "b"}, []string{fromObject[0].ServiceName, fromObject[1].ServiceName})
+	assert.ElementsMatch(t, []string{"a", "b"}, []string{fromObject[0].ProjectName, fromObject[1].ProjectName})
 
 	fromCache, err := writer.Load(context.Background(), ref)
 	require.NoError(t, err)
 	assert.Len(t, fromCache, 2)
 }
 
-// An unknown-external node has no service, no content hash, no image and no source
+// An unknown-external node has no project, no content hash, no image and no source
 // file. An artifact topology-controller wrote with those fields empty decodes
 // and loads with the node whole, and a write of it reads back the same.
 func TestTopologyArtifactStore_LoadKeepsAnUnknownExternalNodeWithEmptyFields(t *testing.T) {
 	const doc = `{"nodes":[` +
 		`{"content_hash":"","image_tag":"","node_type":"unknown-external","original_file_path":"","resolved_relation_id":"raw.ingest_probe",` +
-		`"schedule":"","schema_name":"raw","service_name":"","table_name":"ingest_probe","test_count":0,"unique_id":"raw.ingest_probe","upstream_unique_ids":[]},` +
+		`"schedule":"","schema_name":"raw","project_name":"","table_name":"ingest_probe","test_count":0,"unique_id":"raw.ingest_probe","upstream_unique_ids":[]},` +
 		`{"content_hash":"h","image_tag":"img:1","node_type":"dbt-model","original_file_path":"models/m.sql","resolved_relation_id":"svc.m",` +
-		`"schedule":"","schema_name":"svc","service_name":"svc","table_name":"m","test_count":1,"unique_id":"svc.m","upstream_unique_ids":["raw.ingest_probe"]}` +
+		`"schedule":"","schema_name":"svc","project_name":"svc","table_name":"m","test_count":1,"unique_id":"svc.m","upstream_unique_ids":["raw.ingest_probe"]}` +
 		`],"release_id":"r1","schema_version":1,"tenant_id":"default"}`
 	gz, sum := gzipped(t, []byte(doc))
 	mem := objectstoretest.NewMemory(bucket)
@@ -464,14 +464,14 @@ func TestCloneTopology_SharesNoSeedReloadFieldWithItsSource(t *testing.T) {
 func TestTopologyArtifactStore_RoundTripsTheSeedReloadFields(t *testing.T) {
 	yes, no := true, false
 	topo := release.Topology{
-		{UniqueID: "analytics.flags", SchemaName: "analytics", TableName: "flags", ServiceName: "svc",
+		{UniqueID: "analytics.flags", SchemaName: "analytics", TableName: "flags", ProjectName: "svc",
 			NodeType: "dbt-seed", ImageTag: "img:1", UpstreamUniqueIDs: []string{}, Schedule: "seed",
 			Materialized: "seed", FullRefresh: &no},
-		{UniqueID: "analytics.seed_fx_rates_eur", SchemaName: "analytics", TableName: "seed_fx_rates_eur", ServiceName: "svc",
+		{UniqueID: "analytics.seed_fx_rates_eur", SchemaName: "analytics", TableName: "seed_fx_rates_eur", ProjectName: "svc",
 			NodeType: "dbt-seed", ImageTag: "img:1", UpstreamUniqueIDs: []string{}, Schedule: "seed",
 			Materialized: "seed", FullRefresh: &yes,
 			SeedColumns: []release.SeedColumn{{Name: "currency"}, {Name: "rate_to_eur", Type: "numeric"}}},
-		{UniqueID: "analytics.fx_rates_current", SchemaName: "analytics", TableName: "fx_rates_current", ServiceName: "svc",
+		{UniqueID: "analytics.fx_rates_current", SchemaName: "analytics", TableName: "fx_rates_current", ProjectName: "svc",
 			NodeType: "dbt-model", ImageTag: "img:1", UpstreamUniqueIDs: []string{}, Schedule: "daily", Materialized: "view"},
 	}
 	mem := objectstoretest.NewMemory(bucket)
@@ -489,9 +489,9 @@ func TestTopologyArtifactStore_RoundTripsTheSeedReloadFields(t *testing.T) {
 
 func TestTopologyArtifactStore_RoundTripsRelationNameAndSeedColumnsHash(t *testing.T) {
 	topo := release.Topology{
-		{UniqueID: "svc.orders", SchemaName: "svc", TableName: "orders", RelationName: "Orders_Tbl", ServiceName: "svc",
+		{UniqueID: "svc.orders", SchemaName: "svc", TableName: "orders", RelationName: "Orders_Tbl", ProjectName: "svc",
 			NodeType: "dbt-model", ImageTag: "img:1", UpstreamUniqueIDs: []string{}, Schedule: "daily"},
-		{UniqueID: "svc.countries", SchemaName: "svc", TableName: "countries", ServiceName: "svc", NodeType: "dbt-seed",
+		{UniqueID: "svc.countries", SchemaName: "svc", TableName: "countries", ProjectName: "svc", NodeType: "dbt-seed",
 			ImageTag: "img:1", UpstreamUniqueIDs: []string{}, Schedule: "seed", SeedColumnsHash: "sha256:e5a0"},
 	}
 	mem := objectstoretest.NewMemory(bucket)

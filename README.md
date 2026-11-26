@@ -79,7 +79,7 @@ the pipeline's GitHub Actions token
 ([how](deploy/README.md#releasing-from-ci-github-actions)), locally your own ID
 token from the bundled Dex
 ([how](deploy/README.md#releasing-with-your-own-token)). continuo compiles
-the project itself and derives the rest. (A Python service uploads its contract to object
+the project itself and derives the rest. (A Python project uploads its contract to object
 storage first — one extra `aws s3 cp` in your CD.)
 
 Every release is then validated the way blue/green validates a software

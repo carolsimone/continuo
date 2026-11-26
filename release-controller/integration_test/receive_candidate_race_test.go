@@ -35,7 +35,7 @@ func TestIntegration_ConcurrentFirstSubmissionsOfOneIDHaveOneWinner(t *testing.T
 				defer wg.Done()
 				<-start
 				errs[i] = handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-					Service: "service-1", ReleaseID: "race-1", ImageTag: tag,
+					Project: "service-1", ReleaseID: "race-1", ImageTag: tag,
 					Repo: "acme/demo", CommitSHA: "deadbeefcafe1234",
 				})
 			}(i, tag)

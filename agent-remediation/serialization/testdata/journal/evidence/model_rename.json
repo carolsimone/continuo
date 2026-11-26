@@ -1,7 +1,7 @@
 {
-  "Service": "marketing",
+  "Project": "marketing",
   "Relation": "analytics.table_b",
-  "OtherService": "service-1",
+  "OtherProject": "service-1",
   "OtherFilePath": "services/service-1/models/table_b.sql",
   "ChangesAlias": true,
   "OldName": "table_b",

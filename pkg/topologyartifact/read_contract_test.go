@@ -28,7 +28,7 @@ var (
 	readSetV1Node = map[string]string{
 		"unique_id":            "string",
 		"resolved_relation_id": "string",
-		"service_name":         "string",
+		"project_name":         "string",
 	}
 )
 
@@ -73,7 +73,7 @@ func TestReadSetV1_HoldsInTheWrittenDocument(t *testing.T) {
 // ignore keys it does not know, at both levels.
 func TestDecode_IgnoresKeysItDoesNotKnow(t *testing.T) {
 	obj := gz(t, []byte(`{"schema_version":1,"tenant_id":"default","release_id":"r","added":true,`+
-		`"nodes":[{"unique_id":"a.b","service_name":"one","resolved_relation_id":"a.b","added_on_a_node":{"x":1}}]}`))
+		`"nodes":[{"unique_id":"a.b","project_name":"one","resolved_relation_id":"a.b","added_on_a_node":{"x":1}}]}`))
 
 	d, err := topologyartifact.Decode(obj, sha(obj))
 	require.NoError(t, err)

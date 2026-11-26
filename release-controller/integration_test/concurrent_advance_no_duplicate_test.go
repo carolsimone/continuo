@@ -27,7 +27,7 @@ func TestIntegration_ConcurrentAdvance_PromotesAtMostOnce(t *testing.T) {
 
 	// Seed a single Received candidate.
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service:   "service-1",
+		Project:   "service-1",
 		ReleaseID: "rA",
 		ImageTag:  "sha-rA",
 		Repo:      "acme/demo",

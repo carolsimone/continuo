@@ -16,7 +16,7 @@ reference.
 | Create the Postgres and Redis logins continuo signs in with, and hand their passwords to the pods | [CREDENTIALS.md](CREDENTIALS.md) — every login, its rights, the statements and rules that create it, and env, file and Vault/CSI delivery |
 | Understand the security posture before adopting | [SECURITY.md](SECURITY.md) and the chart's [Security defaults](continuo/README.md#3-security-defaults) |
 | Configure real OIDC authentication | [AUTH.md](AUTH.md) |
-| Release a service from my CD pipeline | [Releasing from CI](#releasing-from-ci-github-actions) — the public `/api/v1` API with a GitHub Actions token |
+| Release a project from my CD pipeline | [Releasing from CI](#releasing-from-ci-github-actions) — the public `/api/v1` API with a GitHub Actions token |
 | Release by hand, or try the API on a local install | [Releasing with your own token](#releasing-with-your-own-token) — mint an ID token and call `/api/v1` with it |
 | Monitor continuo with my own Prometheus, Datadog or other tool | [OBSERVABILITY.md](OBSERVABILITY.md) — the metrics, the Job labels, example alert rules and what to leave out of them |
 | Control which hosts the assistant and the fix proposer can reach | [Outbound traffic](#outbound-traffic) — the egress proxy and its allowlist |
@@ -74,11 +74,11 @@ See [python-api nodes](../docs/run-projects-in-continuo.md#python-api-nodes).
 
 ## Releasing from CI (GitHub Actions)
 
-A CD pipeline releases a service with one authenticated HTTPS call to the
+A CD pipeline releases a project with one authenticated HTTPS call to the
 `ui`, at `https://<continuo-host>/api/v1/releases`. It needs no kubeconfig, no
 SSH access and no stored secret: the workflow proves which repository it runs
 in with its GitHub Actions OIDC token, and the chart's `ciAuth` values say which
-repository may release which service.
+repository may release which project.
 
 ### 1. Find the repository id
 
@@ -89,18 +89,18 @@ be taken over by a new owner after a rename; the id cannot).
 gh api repos/OWNER/REPO --jq .id
 ```
 
-### 2. Bind the repository to a service
+### 2. Bind the repository to a project
 
 ```yaml
 ciAuth:
   bindings:
-    core:                              # the service name the release carries
+    core:                              # the project name the release carries
       - repositoryId: "812345678"      # quoted: a bare number fails the chart's schema
         ref: [refs/heads/main]
         allowBootstrap: true           # first release only; set false afterwards
 ```
 
-A binding grants one GitHub identity the right to release one service. Every
+A binding grants one GitHub identity the right to release one project. Every
 field you set must match the token; `repositoryId` is the only required one.
 
 | Field | Matched against | Meaning |
@@ -112,7 +112,7 @@ field you set must match the token; `repositoryId` is the only required one.
 | `workflowRef` | `workflow_ref` | The workflow file and ref is one of the listed values. |
 | `allowBootstrap` | none | Permits `"bootstrap": true` (default `false`). |
 
-A service may list several bindings; a token that matches any one of them may
+A project may list several bindings; a token that matches any one of them may
 release it. With no bindings (the default) no pipeline can use the API: `ui`
 does not trust the GitHub issuer at all, so every CI token is a `401`. A token
 whose repository matches no binding is refused on every route, including
@@ -126,12 +126,12 @@ whose repository matches no binding is refused on every route, including
 
 The workflow requests a token whose audience is the same origin continuo expects,
 then submits the release and polls it to a terminal status. This example
-releases a dbt service, so it sends only the three required fields. `kind`
-names how continuo reads the service's artifact: `dbt` (the default when absent),
-`python-odcs` (a Python service's `odcs-bundle.json`, see
+releases a dbt project, so it sends only the three required fields. `kind`
+names how continuo reads the project's artifact: `dbt` (the default when absent),
+`python-odcs` (a Python project's `odcs-bundle.json`, see
 [Python contracts](../docs/contracts.md)) or `ontology` (the install's company
 ontology, see [the company ontology](../docs/ontology.md)).
-The first release of a service has no production version to validate against,
+The first release of a project has no production version to validate against,
 so it is sent with `"bootstrap": true`, which needs a binding with
 `allowBootstrap: true`. These and the other submit fields are described below.
 
@@ -157,7 +157,7 @@ jobs:
           curl --fail-with-body -sS -X POST "$CONTINUO_URL/api/v1/releases" \
             -H "Authorization: Bearer $(token)" -H 'content-type: application/json' \
             -d "$(jq -n --arg id "$RELEASE_ID" --arg tag "${GITHUB_SHA::7}" \
-                  '{release_id:$id, service:"core", image_tag:$tag}')"
+                  '{release_id:$id, project:"core", image_tag:$tag}')"
           for _ in $(seq 1 300); do              # 300 polls x 10 s = 50 minutes
             s=$(curl -sS -H "Authorization: Bearer $(token)" \
                   "$CONTINUO_URL/api/v1/releases/$RELEASE_ID") || s='{}'
@@ -181,7 +181,7 @@ All three routes live under `/api/v1` on the `ui`. Each takes
 | `GET /api/v1/releases/{id}` | Read a release (below). |
 | `GET /api/v1/current-prod` | Which release production is serving: `{current_prod_release_id, node_count, updated_at}`. An empty `current_prod_release_id` means production has never been seeded. |
 
-**Submit body.** `release_id`, `service` and `image_tag` are required;
+**Submit body.** `release_id`, `project` and `image_tag` are required;
 `bootstrap` and `rebaseline` (JSON booleans), `kind` (`dbt`, the default,
 `python-odcs` or `ontology`), `repo` and `commit_sha` are optional. Any other field is a `400`. `release_id` must
 match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`: it starts with a letter or digit and
@@ -191,18 +191,18 @@ the token (`repository` and `sha`): leave them out, or send values equal to the
 token's, because a different value is a `403` `claim_mismatch`. A person calling
 with their own token (see [AUTH.md](AUTH.md#bearer-tokens)) must send `repo` and
 `commit_sha` in the body. `"bootstrap": true` promotes without validation and is
-for the first release of a service; a CI token may send it only when its
+for the first release of a project; a CI token may send it only when its
 binding sets `allowBootstrap`. `"rebaseline": true` is a bootstrap that also
 records every live seed as loaded at its new fingerprint, so no seed is
 reloaded ([below](#re-baseline-after-a-fingerprint-change)); it is accepted only
 with `"bootstrap": true`, otherwise a `400`, and a CI token needs
 `allowBootstrap` to send it. Submitting the same `release_id` again with the
 same body is idempotent and answers `202`; the same `release_id` with a
-different service, `image_tag`, `kind`, bootstrap flag, rebaseline flag, `repo`
+different project, `image_tag`, `kind`, bootstrap flag, rebaseline flag, `repo`
 or `commit_sha` is a `409` `release_kind_conflict`, so use a fresh id for a new
 release.
 
-**Release read.** The answer carries `release_id`, `service`, `status`,
+**Release read.** The answer carries `release_id`, `project`, `status`,
 `terminal` (`true` once the status is `promoted`, `rejected` or `superseded`),
 `bootstrap`, `rebaseline`, `repo`, `commit_sha`, `reject_reason`, `reject_detail`, `ui_url`,
 the release's page in the dashboard, `continuo_contracts` and `notices`.
@@ -210,12 +210,12 @@ the release's page in the dashboard, `continuo_contracts` and `notices`.
 read the release's contracts: the version topology-controller runs, or `""`
 until the parse ends. `notices` is an array with
 one entry for each seed whose change reloads its table (`[]` when the release
-has none): `kind`, `node_id`, `service`, `change`, `load` (the operation of the
+has none): `kind`, `node_id`, `project`, `change`, `load` (the operation of the
 seed's own load), `columns` (`added`, `removed` and `retyped` column names),
 `rebuilds` (the views the run rebuilds after the load, each with `node_id` and
 `operation`) and `stops_on` (the warehouse objects outside continuo that stop
 the load, empty unless the load is predicted to stop). A CI token can read only releases of the
-services its bindings grant; a release of any other service answers `404`
+projects its bindings grant; a release of any other project answers `404`
 `not_found`, exactly as a release that does not exist. A pipeline polling for
 `terminal` stays well inside the read limit (300 a minute per principal) with
 one read every few seconds.
@@ -224,13 +224,13 @@ one read every few seconds.
 
 | Status | `code` | Meaning |
 |---|---|---|
-| 400 | `bad_request` | Malformed JSON, an unknown or mistyped field, a missing required field, `rebaseline` without `"bootstrap": true`, a `release_id` outside the pattern above, or a `kind` other than `dbt`, `python-odcs` or `ontology`: the kind `python` is refused with a message that says to release the service as `python-odcs`, and the kind `ontology` is refused while the install's ontology switch is off (`contracts.ontology.enabled`). |
+| 400 | `bad_request` | Malformed JSON, an unknown or mistyped field, a missing required field, `rebaseline` without `"bootstrap": true`, a `release_id` outside the pattern above, or a `kind` other than `dbt`, `python-odcs` or `ontology`: the kind `python` is refused with a message that says to release the project as `python-odcs`, and the kind `ontology` is refused while the install's ontology switch is off (`contracts.ontology.enabled`). |
 | 401 | `invalid_token` | The bearer token is malformed, expired, for the wrong audience, from an untrusted issuer, signed with an algorithm other than RS256, or valid for longer than one hour. The response carries `WWW-Authenticate: Bearer error="invalid_token"`. A request with no credential at all answers `401` with code `unauthenticated`. |
-| 403 | `forbidden` | The identity may not do this: a repository not bound to the service it submits, a repository bound to no service at all (on every route), a viewer submitting, or a CI token calling any other route. |
+| 403 | `forbidden` | The identity may not do this: a repository not bound to the project it submits, a repository bound to no project at all (on every route), a viewer submitting, or a CI token calling any other route. |
 | 403 | `claim_mismatch` | The body's `repo` or `commit_sha` differs from the token's. |
 | 403 | `bootstrap_not_allowed` | `"bootstrap": true` from a binding without `allowBootstrap`. |
-| 404 | `not_found` | No such release, a release of a service the CI token's repository is not bound to, or an id outside the `release_id` pattern. |
-| 409 | `release_kind_conflict` | The `release_id` already names a release with a different service, `image_tag`, `kind`, bootstrap flag, rebaseline flag, `repo` or `commit_sha`. It is also the answer to the two ontology conflicts: the kind `ontology` for a service while another service is the install's ontology, and a service that changes between the kind `ontology` and a node kind. The release service makes these checks. A person's `error` carries its message. A CI token gets `release id already exists with different content`, which names no other release, except for the two ontology conflicts. The kind change, whose message names only the caller's own service (`service "<name>" is released as kind "<kind>": a service cannot change between kind "ontology" and a node kind`), reaches a CI token as it is. The second ontology service reaches it as `an install has one ontology service`, with the other service's name left out. The kind-change refusal also applies when queued releases come up to run: the second of two queued releases that change a service between `ontology` and a node kind is not a 409 but ends `rejected` with the reason `invalid_artifact`, the same text as its `reject_detail`, and nothing is promoted. |
+| 404 | `not_found` | No such release, a release of a project the CI token's repository is not bound to, or an id outside the `release_id` pattern. |
+| 409 | `release_kind_conflict` | The `release_id` already names a release with a different project, `image_tag`, `kind`, bootstrap flag, rebaseline flag, `repo` or `commit_sha`. It is also the answer to the two ontology conflicts: the kind `ontology` for a project while another project is the install's ontology, and a project that changes between the kind `ontology` and a node kind. The release service makes these checks. A person's `error` carries its message. A CI token gets `release id already exists with different content`, which names no other release, except for the two ontology conflicts. The kind change, whose message names only the caller's own project (`project "<name>" is released as kind "<kind>": a project cannot change between kind "ontology" and a node kind`), reaches a CI token as it is. The second ontology project reaches it as `an install has one ontology project`, with the other project's name left out. The kind-change refusal also applies when queued releases come up to run: the second of two queued releases that change a project between `ontology` and a node kind is not a 409 but ends `rejected` with the reason `invalid_artifact`, the same text as its `reject_detail`, and nothing is promoted. |
 | 429 | `rate_limited` | More than 30 submits, or more than 300 reads (`GET /api/v1/releases/{id}` and `GET /api/v1/current-prod` together), in a minute from one principal (a repository for CI, a user for a person), counted per `ui` pod. Submits and reads have separate budgets. |
 | 503 | `auth_unavailable` | The token's issuer could not be reached, its discovery document or signing keys could not be read, or its key set has no usable RS256 key, publishes a `kid` twice, or holds an RSA key shorter than 2048 bits; the dashboard keeps working. Retry. |
 | 503 | `upstream_unavailable` | The release service is unreachable or failed. Retry; a submit is idempotent. |
@@ -239,11 +239,11 @@ one read every few seconds.
 
 Every node carries a `content_hash`, a fingerprint of the code it runs. When a
 continuo upgrade changes what the fingerprint covers, every node's hash moves
-at once. Done through ordinary releases, the next release of each service would
+at once. Done through ordinary releases, the next release of each project would
 validate the whole estate and reload every seed with unchanged data. A
 `rebaseline` release avoids both: it is a bootstrap, so nothing is validated,
 and its promotion records every live seed as loaded at its new fingerprint, so
-no seed is reloaded. Each service is released once, because a stored artifact
+no seed is reloaded. Each project is released once, because a stored artifact
 lacks inputs that only a fresh compile (dbt) or a fresh CI run (Python)
 produces. The release notes of a version that needs this say so; a fresh
 install needs none of it, because its first release is a bootstrap with the new
@@ -251,10 +251,10 @@ fingerprint.
 
 Before you start:
 
-- Release every Python service as `python-odcs`, on a continuo version that
+- Release every Python project as `python-odcs`, on a continuo version that
   accepts it, before the upgrade
   ([Python contracts](../docs/contracts.md#moving-from-contractyaml)). The
-  upgrade stops while a service in production is still released as the kind
+  upgrade stops while a project in production is still released as the kind
   `python`.
 - Check every dbt team image: the compile Job runs `compile_extras.py` with the
   image's `python3`, so
@@ -262,39 +262,39 @@ Before you start:
   succeed for each one. An image where it fails fails its compile after the
   upgrade.
 
-1. **Freeze producer merges.** No pipeline may release a service until step 6
+1. **Freeze producer merges.** No pipeline may release a project until step 6
    ends: an ordinary release inside the window validates a large set of nodes
    and reloads every seed.
-2. **Upgrade continuo.** The upgrade stops while a service in production is
+2. **Upgrade continuo.** The upgrade stops while a project in production is
    still released as the kind `python`, in one of two ways. With your own
    database the migration Job fails and `helm upgrade` fails before any pod
    changes. With the bundled Postgres `helm upgrade` can report success while
    the pods roll, and release-controller refuses to start; `helm rollback`
-   recovers. Both name the services, which "Before you start" had not released
+   recovers. Both name the projects, which "Before you start" had not released
    as `python-odcs`.
-3. **Release each dbt service** with its current `image_tag` and both flags.
+3. **Release each dbt project** with its current `image_tag` and both flags.
    The pipeline that posts these releases needs `allowBootstrap: true` on its CI
    binding. `repo` and `commit_sha` (the full SHA) are required for a call with
    your own token, as in the CI example above:
 
    ```json
-   {"release_id":"rel-rebase-finance-1","service":"finance","image_tag":"cddbcbc","bootstrap":true,"rebaseline":true,"repo":"carolsimone/continuo-demo","commit_sha":"cddbcbc981380257edf435e2a0627246e9908129"}
+   {"release_id":"rel-rebase-finance-1","project":"finance","image_tag":"cddbcbc","bootstrap":true,"rebaseline":true,"repo":"carolsimone/continuo-demo","commit_sha":"cddbcbc981380257edf435e2a0627246e9908129"}
    ```
 
-4. **Release each Python service.** Build its image on
-   `continuo-python-runtime` 0.13.0 or later (the image's `FROM` tag and the
-   runtime your CI installs), pack its contracts with `continuo-runtime pack`,
-   upload the `odcs-bundle.json` ([Python contracts](../docs/contracts.md#the-ci-steps))
+4. **Release each Python project.** Build its image on
+   `continuo-python-runtime` 0.13.0 or later (the image's `FROM` tag), pack its
+   contracts with `continuo-runtime pack --project <name>` of runtime 0.15.0 or
+   later (the runtime your CI installs), upload the `odcs-bundle.json` ([Python contracts](../docs/contracts.md#the-ci-steps))
    and release it with the same two flags and `"kind": "python-odcs"`. Its
    `image_tag` is the full registry reference, not the bare short SHA, for
    example `"image_tag":"docker.io/<user>/service-py:4e5f6a7"`.
-5. **Check.** Release any one service normally with no change. Its release must
+5. **Check.** Release any one project normally with no change. Its release must
    validate nothing.
 6. **Unfreeze.**
 
 While the window is open, some nodes get two new hashes: the first when another
-service's re-baseline re-parses their stored artifact, the second at their own
-service's. Neither validates or reloads, and each is recorded as a healed code
+project's re-baseline re-parses their stored artifact, the second at their own
+project's. Neither validates or reloads, and each is recorded as a healed code
 version.
 
 ### Networking
@@ -347,12 +347,12 @@ and the password. A release posted with a person's token must carry `repo` and
 ```bash
 curl -s -X POST http://localhost:8090/api/v1/releases \
   -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-  -d '{"release_id":"rel-core-v1","service":"core","image_tag":"v1","repo":"<owner>/<repo>","commit_sha":"<sha>"}'
+  -d '{"release_id":"rel-core-v1","project":"core","image_tag":"v1","repo":"<owner>/<repo>","commit_sha":"<sha>"}'
 ```
 
 With your own IdP, the token is an ID token it issues for the `ui`'s client id;
 how a script obtains one depends on the IdP. An operator token may also
-bootstrap a service (`"bootstrap": true`).
+bootstrap a project (`"bootstrap": true`).
 
 ## Service deployment controls
 

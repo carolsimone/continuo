@@ -111,7 +111,7 @@ func TestToWireTools_ARepeatedParamIsAnArrayOfStrings(t *testing.T) {
 	tools := toWireTools([]ports.ToolDef{{
 		Name: "node_full-refresh",
 		Params: []ports.ToolParam{
-			{Name: "service", Required: true},
+			{Name: "project", Required: true},
 			{Name: "acknowledge", Description: "an object", Flag: true, Repeated: true},
 		},
 	}})
@@ -119,7 +119,7 @@ func TestToWireTools_ARepeatedParamIsAnArrayOfStrings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"type":"object","properties":{"acknowledge":{"type":"array","description":"an object","items":{"type":"string"}},"service":{"type":"string"}},"required":["service"]}`
+	want := `{"type":"object","properties":{"acknowledge":{"type":"array","description":"an object","items":{"type":"string"}},"project":{"type":"string"}},"required":["project"]}`
 	if string(raw) != want {
 		t.Fatalf("input schema\n got %s\nwant %s", raw, want)
 	}
@@ -128,11 +128,11 @@ func TestToWireTools_ARepeatedParamIsAnArrayOfStrings(t *testing.T) {
 // A list the model sends for a repeated parameter reaches ToolCall.Args as its
 // JSON array, which the executor decodes into one value per item.
 func TestParseToolArgs_KeepsAListAsItsJSONArray(t *testing.T) {
-	args, err := parseToolArgs(`{"service":"finance","acknowledge":["bi.customer_report","bi.churn"]}`)
+	args, err := parseToolArgs(`{"project":"finance","acknowledge":["bi.customer_report","bi.churn"]}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if args["acknowledge"] != `["bi.customer_report","bi.churn"]` || args["service"] != "finance" {
+	if args["acknowledge"] != `["bi.customer_report","bi.churn"]` || args["project"] != "finance" {
 		t.Fatalf("args = %v", args)
 	}
 }

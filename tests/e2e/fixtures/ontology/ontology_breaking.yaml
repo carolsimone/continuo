@@ -6,7 +6,7 @@ principals:
   domains:
     e2e:
       owner_team: e2e
-  services:
+  projects:
     svc-py-e2e:
       domain: e2e
       kind: python

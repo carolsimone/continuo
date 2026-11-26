@@ -38,12 +38,12 @@ func TestChangedAncestorDiffs_MetaNamesWhatItNeedsAndProvides(t *testing.T) {
 func TestChangedAncestorDiffs_DiffsEachAncestorsBundleSourceAgainstItsPromotedVersion(t *testing.T) {
 	bundle := &fakeBundle{nodes: map[string]ports.CandidateSource{"model.svc.up": dbtEntry("select 2")}}
 	versions := &fakeVersions{versions: map[string]ports.CurrentVersion{"model.svc.up": {RawCode: "select 1"}}}
-	f := failure(withAncestors(remediation.ChangedAncestor{NodeID: "model.svc.up", Service: "svc", FilePath: "models/up.sql", Depth: 1}))
+	f := failure(withAncestors(remediation.ChangedAncestor{NodeID: "model.svc.up", Project: "svc", FilePath: "models/up.sql", Depth: 1}))
 
 	out := gather(t, validation.NewChangedAncestorDiffs(bundle, versions, discardLogger()), f, remediation.NewEvidence())
 
 	assert.Equal(t, []prompt.ReleaseUpstreamChange{{
-		NodeID: "model.svc.up", Service: "svc", Depth: 1,
+		NodeID: "model.svc.up", Project: "svc", Depth: 1,
 		Diff: proposal.ComputeUnifiedDiff("select 1", "select 2", "model.svc.up"),
 	}}, ancestorDiffs(t, out))
 	assert.Equal(t, []bundleCall{{"s3://bundle/rel-1", "model.svc.up", "rel-1"}}, bundle.calls)
@@ -55,7 +55,7 @@ func TestChangedAncestorDiffs_ShowsTheThreeNearestByDepthThenId(t *testing.T) {
 		id    string
 		depth int
 	}{{"d", 2}, {"c", 1}, {"e", 3}, {"b", 2}, {"a", 3}, {"f", 1}} {
-		as = append(as, remediation.ChangedAncestor{NodeID: a.id, Service: "s-" + a.id, Depth: a.depth})
+		as = append(as, remediation.ChangedAncestor{NodeID: a.id, Project: "s-" + a.id, Depth: a.depth})
 	}
 	f := failure(withAncestors(as...))
 

@@ -45,7 +45,7 @@ func TestOperationColumns_DefaultAndCheck(t *testing.T) {
 	// row inserted above.
 	taskDefault := uuid.New()
 	_, err = db.Exec(`
-		INSERT INTO tasks (tenant_id, task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries)
+		INSERT INTO tasks (tenant_id, task_id, run_id, created_at, project_name, schema_name, table_name, job_name, status, max_retries)
 		VALUES ((SELECT tenant_id FROM runs WHERE run_id = $2), $1, $2, now(), 'svc', 'schema', 'tbl', 'job-op-default', 'pending', 3)`, taskDefault, id)
 	if err != nil {
 		t.Fatalf("insert tasks: %v", err)
@@ -61,7 +61,7 @@ func TestOperationColumns_DefaultAndCheck(t *testing.T) {
 
 	badTask := uuid.New()
 	_, err = db.Exec(`
-		INSERT INTO tasks (tenant_id, task_id, run_id, created_at, service_name, schema_name, table_name, job_name, status, max_retries, operation)
+		INSERT INTO tasks (tenant_id, task_id, run_id, created_at, project_name, schema_name, table_name, job_name, status, max_retries, operation)
 		VALUES ((SELECT tenant_id FROM runs WHERE run_id = $2), $1, $2, now(), 'svc', 'schema', 'tbl', 'job-op-bad', 'pending', 3, 'nonsense')`, badTask, id)
 	if err == nil {
 		db.Exec(`DELETE FROM tasks WHERE task_id = $1`, badTask)

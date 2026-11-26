@@ -130,7 +130,7 @@ type ReleaseNotice struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	Kind              string                 `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
 	NodeId            string                 `protobuf:"bytes,2,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	Service           string                 `protobuf:"bytes,3,opt,name=service,proto3" json:"service,omitempty"`
+	Project           string                 `protobuf:"bytes,3,opt,name=project,proto3" json:"project,omitempty"`
 	EngineFamily      string                 `protobuf:"bytes,4,opt,name=engine_family,json=engineFamily,proto3" json:"engine_family,omitempty"`
 	Change            string                 `protobuf:"bytes,5,opt,name=change,proto3" json:"change,omitempty"`
 	Columns           *ColumnChanges         `protobuf:"bytes,6,opt,name=columns,proto3" json:"columns,omitempty"`
@@ -189,9 +189,9 @@ func (x *ReleaseNotice) GetNodeId() string {
 	return ""
 }
 
-func (x *ReleaseNotice) GetService() string {
+func (x *ReleaseNotice) GetProject() string {
 	if x != nil {
-		return x.Service
+		return x.Project
 	}
 	return ""
 }
@@ -651,7 +651,7 @@ const file_proto_release_v1_release_proto_rawDesc = "" +
 	"\rReleaseNotice\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x17\n" +
 	"\anode_id\x18\x02 \x01(\tR\x06nodeId\x12\x18\n" +
-	"\aservice\x18\x03 \x01(\tR\aservice\x12#\n" +
+	"\aproject\x18\x03 \x01(\tR\aproject\x12#\n" +
 	"\rengine_family\x18\x04 \x01(\tR\fengineFamily\x12\x16\n" +
 	"\x06change\x18\x05 \x01(\tR\x06change\x123\n" +
 	"\acolumns\x18\x06 \x01(\v2\x19.release.v1.ColumnChangesR\acolumns\x12(\n" +

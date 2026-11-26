@@ -56,7 +56,7 @@ DIGESTS_PATH = FIXTURES / "contract_bundle_digests.json"
 
 RELEASE_ID = "rel-1"
 
-# The image of each service a release names, so that a node's image_tag is part of what is captured.
+# The image of each project a release names, so that a node's image_tag is part of what is captured.
 IMAGE_TAGS = {
     "fpshop": "registry.example/fpshop:1",
     "service-1": "registry.example/service-1:1",
@@ -65,12 +65,12 @@ IMAGE_TAGS = {
     "shop-core": "registry.example/shop-core:1",
 }
 
-# The service the fpshop variants declare, which their compile extras name too.
-FPSHOP_SERVICE = "fpshop"
+# The project the fpshop variants declare, which their compile extras name too.
+FPSHOP_PROJECT = "fpshop"
 
-# Each release the fixture manifests make, as the (file, declared service) pairs of its manifests. A
-# release request declares the service of every manifest, so each pair does, except
-# manifest_missing_owner.json: the parse leaves no node of it, and a manifest that declares a service
+# Each release the fixture manifests make, as the (file, declared project) pairs of its manifests. A
+# release request declares the project of every manifest, so each pair does, except
+# manifest_missing_owner.json: the parse leaves no node of it, and a manifest that declares a project
 # and holds no node is refused.
 MANIFEST_RELEASES: dict[str, tuple[tuple[str, str], ...]] = {
     "manifest_valid": (("manifest_valid.json", "service-1"),),
@@ -90,7 +90,7 @@ MANIFEST_RELEASES: dict[str, tuple[tuple[str, str], ...]] = {
     ),
 }
 
-# The releases parsed for Trino, as the (file, declared service) pairs of their manifests. A release
+# The releases parsed for Trino, as the (file, declared project) pairs of their manifests. A release
 # belongs here only when its output differs from the postgres one, which the fixtures above do not:
 # their SQL renders the same in both dialects. `trino_manifest_trino` reads and builds tables with the
 # catalog written, reads the engine's system catalog and information_schema, uses syntax only Trino
@@ -100,7 +100,7 @@ TRINO_RELEASES: dict[str, tuple[tuple[str, str], ...]] = {
     "trino_manifest_trino": (("manifest_trino.json", "service-1"),),
 }
 
-# The base variant parsed without the compile extras it ships with, as a service whose compile wrote
+# The base variant parsed without the compile extras it ships with, as a project whose compile wrote
 # none is: its seeds keep dbt's path checksum.
 _FPSHOP_WITHOUT_EXTRAS = "fpshop_base_without_extras"
 
@@ -174,17 +174,17 @@ def _manifest_files(name: str, tmp_dir: str) -> list[ManifestFile]:
     """The manifests of release `name`, with the variants' gunzipped into tmp_dir."""
     if name in MANIFEST_RELEASES or name in TRINO_RELEASES:
         return [
-            ManifestFile(path=str(FIXTURES / file), image_tag="", declared_service=service)
-            for file, service in {**MANIFEST_RELEASES, **TRINO_RELEASES}[name]
+            ManifestFile(path=str(FIXTURES / file), image_tag="", declared_project=project)
+            for file, project in {**MANIFEST_RELEASES, **TRINO_RELEASES}[name]
         ]
     if name == _FPSHOP_WITHOUT_EXTRAS:
         manifest_path, _ = variant_paths("base", tmp_dir)
-        return [ManifestFile(path=manifest_path, image_tag="", declared_service=FPSHOP_SERVICE)]
+        return [ManifestFile(path=manifest_path, image_tag="", declared_project=FPSHOP_PROJECT)]
     variant = name.removeprefix("fpshop_")
     if name.startswith("fpshop_") and variant in VARIANTS:
         manifest_path, extras_path = variant_paths(variant, tmp_dir)
         return [ManifestFile(
-            path=manifest_path, image_tag="", declared_service=FPSHOP_SERVICE, extras_path=extras_path,
+            path=manifest_path, image_tag="", declared_project=FPSHOP_PROJECT, extras_path=extras_path,
         )]
     raise KeyError(f"no fixture release named {name!r}")
 

@@ -45,7 +45,7 @@ def test_the_script_reads_the_compile_extras_beside_the_manifest(tmp_path):
     if seed_id is None:
         pytest.skip("the fixture holds no seed whose file hash the extras would change")
     (tmp_path / "compile-extras.json").write_text(json.dumps({
-        "version": 1, "service": "", "release_id": "rel-1", "project_flags": {}, "packages": {},
+        "version": 1, "project": "", "release_id": "rel-1", "project_flags": {}, "packages": {},
         "seeds": {seed_id: {"sha256": "ab" * 32, "header": [], "column_types": {}}},
     }))
     with_extras = _run(tmp_path)

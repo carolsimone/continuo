@@ -45,23 +45,23 @@ func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
 	// 1. Same healable rejection the agent test drives (validation failure on
 	//    ftable_e, service-2).
 	releaseID := "e2e-rem-retry-" + uuid.NewString()[:8]
-	changedService := "service-2"
-	t.Logf("release_id=%s changed_service=%s changed_node=%s", releaseID, changedService, ftableEUniqueID)
+	changedProject := "service-2"
+	t.Logf("release_id=%s changed_project=%s changed_node=%s", releaseID, changedProject, ftableEUniqueID)
 
 	// Read baseline manifests from S3 (uploaded by setup.sh). Build the prod
 	// snapshot of every node except ftable_e so the derived changed set is
 	// exactly {ftable_e} — the deliberately-broken node.
-	allServices := baselineServices(t, ctx, clients)
-	require.NotEmpty(t, allServices,
-		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
+	allProjects := baselineProjects(t, ctx, clients)
+	require.NotEmpty(t, allProjects,
+		"no baseline manifests under s3://%s/<project>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
 
-	changedImageTag := allServices[changedService].imageTag
+	changedImageTag := allProjects[changedProject].imageTag
 	require.NotEmpty(t, changedImageTag,
-		"image_tag missing for %s — setup.sh must seed service_prod", changedService)
+		"image_tag missing for %s — setup.sh must seed service_prod", changedProject)
 
 	var prodNodes []map[string]string
 	ftableFound := false
-	for svc, si := range allServices {
+	for svc, si := range allProjects {
 		for _, n := range si.nodes {
 			if n.uniqueID == ftableEUniqueID {
 				ftableFound = true
@@ -69,7 +69,7 @@ func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
 			}
 			prodNodes = append(prodNodes, map[string]string{
 				"unique_id":    n.uniqueID,
-				"service":      svc,
+				"project":      svc,
 				"content_hash": n.contentHash,
 			})
 		}
@@ -79,18 +79,18 @@ func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
 	t.Logf("seeded prod snapshot with %d nodes (ftable_e excluded)", len(prodNodes))
 
 	// Reset the queue, seed current_prod (all nodes except ftable_e), and seed
-	// service_prod for every baseline service.
+	// service_prod for every baseline project.
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProd(t, ctx, clients, allServices)
+	seedServiceProd(t, ctx, clients, allProjects)
 
 	// Seed the ftable_e topology :Node in Neo4j so the agent-remediation's
-	// Locator can resolve the node's file path and service name for both rounds.
+	// Locator can resolve the node's file path and project name for both rounds.
 	seedFTableETopologyNode(t, ctx, clients)
 
 	// POST /releases for service-2. ftable_e's SQL references public.wrong_name
 	// (a relation that does not exist), so validation fails.
-	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
+	postRelease(t, clients, changedProject, releaseID, changedImageTag, false)
 	waitForReleaseRejected(t, ctx, clients, releaseID, 10*time.Minute)
 
 	// 2. Round 1 proposes a fix (stub LLM answers high confidence) once the

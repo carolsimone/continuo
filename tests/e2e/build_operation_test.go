@@ -32,7 +32,7 @@ func TestBuildOperationSingleNode(t *testing.T) {
 	clients := setupClients(t, ctx)
 
 	const (
-		targetService = "service-1"
+		targetProject = "service-1"
 		targetSchema  = "e2e_schema"
 		targetTable   = "seed_table_1"
 	)
@@ -43,9 +43,9 @@ func TestBuildOperationSingleNode(t *testing.T) {
 	cleanupTestData(t, ctx, clients, "single-node-build-op")
 	seedTopology(t, ctx, clients)
 
-	t.Logf("TriggerSingleNodeRun operation=build: %s.%s.%s", targetService, targetSchema, targetTable)
+	t.Logf("TriggerSingleNodeRun operation=build: %s.%s.%s", targetProject, targetSchema, targetTable)
 	resp, err := clients.runClient.TriggerSingleNodeRun(ctx, &runv1.TriggerSingleNodeRunRequest{RequestId: uuid.NewString(),
-		ServiceName:    targetService,
+		ProjectName:    targetProject,
 		SchemaName:     targetSchema,
 		TableName:      targetTable,
 		MetadataSource: "latest",

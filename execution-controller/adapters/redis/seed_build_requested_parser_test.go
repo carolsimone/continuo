@@ -24,7 +24,7 @@ func seedBuildPayload() map[string]any {
 		"seeds": []map[string]any{
 			{
 				"unique_id":    "seed.shop.country_codes",
-				"service_name": "shop",
+				"project_name": "shop",
 				"node_type":    "dbt-seed",
 				"schema_name":  "public",
 				"table_name":   "country_codes",
@@ -32,7 +32,7 @@ func seedBuildPayload() map[string]any {
 			},
 			{
 				"unique_id":    "seed.shop.currencies",
-				"service_name": "shop",
+				"project_name": "shop",
 				"node_type":    "dbt-seed",
 				"schema_name":  "public",
 				"table_name":   "currencies",
@@ -74,7 +74,7 @@ func TestParseSeedBuildRequested_HappyPath(t *testing.T) {
 
 	require.Len(t, evt.Seeds, 2)
 	assert.Equal(t, "seed.shop.country_codes", evt.Seeds[0].NodeID)
-	assert.Equal(t, "shop", evt.Seeds[0].ServiceName)
+	assert.Equal(t, "shop", evt.Seeds[0].ProjectName)
 	assert.Equal(t, "public", evt.Seeds[0].SchemaName)
 	assert.Equal(t, "country_codes", evt.Seeds[0].TableName)
 	assert.Equal(t, pkg_model.NodeTypeDbtSeed, evt.Seeds[0].NodeType)
@@ -163,9 +163,9 @@ func TestParseSeedBuildRequested_NonDbtSeedNodeTypeIsError(t *testing.T) {
 func TestParseSeedBuildRequested_RefusesAnUnknownExternalNode(t *testing.T) {
 	for name, edit := range map[string]func(map[string]any){
 		"a complete seed": func(s map[string]any) { s["node_type"] = "unknown-external" },
-		"a seed with no service name": func(s map[string]any) {
+		"a seed with no project name": func(s map[string]any) {
 			s["node_type"] = "unknown-external"
-			delete(s, "service_name")
+			delete(s, "project_name")
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

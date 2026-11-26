@@ -137,7 +137,7 @@ func toProtoTask(t projection.TaskDetail) *runv1.Task {
 		TaskId:         t.TaskID.String(),
 		RunId:          t.RunID.String(),
 		CreatedAt:      timestamppb.New(t.CreatedAt),
-		ServiceName:    t.ServiceName,
+		ProjectName:    t.ProjectName,
 		SchemaName:     t.SchemaName,
 		TableName:      t.TableName,
 		JobName:        t.JobName,
@@ -243,7 +243,7 @@ func (s *Server) GetRunGraph(ctx context.Context, req *runv1.GetRunGraphRequest)
 	}
 	for _, n := range g.Nodes {
 		resp.Nodes = append(resp.Nodes, &runv1.RunGraphNode{
-			ServiceName:    n.ServiceName,
+			ProjectName:    n.ProjectName,
 			SchemaName:     n.SchemaName,
 			TableName:      n.TableName,
 			ScheduleName:   n.ScheduleName,

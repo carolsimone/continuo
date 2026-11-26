@@ -1,6 +1,6 @@
 import { useRef, useEffect } from 'react';
 import { Task, TaskAttempt } from './types';
-import { rollupStatus } from './service-helpers';
+import { rollupStatus } from './project-helpers';
 import { latestAttempt, taskNodeId } from './detail-page-helpers';
 import NodeTableBody from './NodeTableBody';
 
@@ -9,9 +9,9 @@ interface Props {
   attemptsByTask: Map<string, TaskAttempt[]>; // each task's attempts in attempt order
   selectedNodeId: string | null;
   onNodeSelect: (nodeId: string | null) => void;
-  expandedServices: Set<string>;
-  onServiceToggle: (service: string) => void;
-  serviceColors: Map<string, string>;
+  expandedProjects: Set<string>;
+  onProjectToggle: (project: string) => void;
+  projectColors: Map<string, string>;
 }
 
 // Dispatched and queued tasks, which wait for execution-controller or for a
@@ -39,30 +39,30 @@ function sortTasks(tasks: Task[], attemptsByTask: Map<string, TaskAttempt[]>): T
   );
 }
 
-export interface ServiceGroup {
-  service: string;
+export interface ProjectGroup {
+  project: string;
   status: string;
   tasks: Task[];
 }
 
 // Groups sort most-severe-first (same precedence as node rows), ties by name.
-export function groupTasksByService(tasks: Task[], attemptsByTask: Map<string, TaskAttempt[]>): ServiceGroup[] {
-  const byService = new Map<string, Task[]>();
+export function groupTasksByProject(tasks: Task[], attemptsByTask: Map<string, TaskAttempt[]>): ProjectGroup[] {
+  const byProject = new Map<string, Task[]>();
   tasks.forEach((task) => {
-    const bucket = byService.get(task.service_name);
+    const bucket = byProject.get(task.project_name);
     if (bucket) bucket.push(task);
-    else byService.set(task.service_name, [task]);
+    else byProject.set(task.project_name, [task]);
   });
 
-  return [...byService.entries()]
-    .map(([service, groupTasks]) => ({
-      service,
+  return [...byProject.entries()]
+    .map(([project, groupTasks]) => ({
+      project,
       status: rollupStatus(groupTasks.map((t) => t.status)),
       tasks: sortTasks(groupTasks, attemptsByTask),
     }))
     .sort((a, b) =>
       (STATUS_ORDER[a.status] ?? UNLISTED_STATUS_RANK) - (STATUS_ORDER[b.status] ?? UNLISTED_STATUS_RANK) ||
-      a.service.localeCompare(b.service),
+      a.project.localeCompare(b.project),
     );
 }
 
@@ -71,13 +71,13 @@ export default function NodesPanel({
   attemptsByTask,
   selectedNodeId,
   onNodeSelect,
-  expandedServices,
-  onServiceToggle,
-  serviceColors,
+  expandedProjects,
+  onProjectToggle,
+  projectColors,
 }: Props) {
   const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
   const groupRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
-  const prevExpandedRef = useRef<Set<string>>(expandedServices);
+  const prevExpandedRef = useRef<Set<string>>(expandedProjects);
 
   // Auto-scroll to the selected / highlighted row
   useEffect(() => {
@@ -88,21 +88,21 @@ export default function NodesPanel({
     }
   }, [selectedNodeId, tasks]);
 
-  // When a service is expanded from the graph side, bring its group into view.
+  // When a project is expanded from the graph side, bring its group into view.
   useEffect(() => {
     const prev = prevExpandedRef.current;
-    prevExpandedRef.current = expandedServices;
-    const added = [...expandedServices].filter((svc) => !prev.has(svc));
+    prevExpandedRef.current = expandedProjects;
+    const added = [...expandedProjects].filter((svc) => !prev.has(svc));
     if (added.length === 1) {
       groupRefs.current.get(added[0])?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
-  }, [expandedServices]);
+  }, [expandedProjects]);
 
   if (tasks.length === 0) {
     return <p style={{ padding: 16, color: '#94a3b8', fontSize: 12, textAlign: 'center', margin: 0 }}>No tasks yet.</p>;
   }
 
-  const groups = groupTasksByService(tasks, attemptsByTask);
+  const groups = groupTasksByProject(tasks, attemptsByTask);
 
   return (
     <NodeTableBody
@@ -111,11 +111,11 @@ export default function NodesPanel({
       edges={[]}
       startedAt={{}}
       forceExpanded={false}
-      expandedServices={expandedServices}
-      onServiceToggle={onServiceToggle}
+      expandedProjects={expandedProjects}
+      onProjectToggle={onProjectToggle}
       selectedNodeId={selectedNodeId}
       onNodeSelect={onNodeSelect}
-      serviceColors={serviceColors}
+      projectColors={projectColors}
       rowRefs={rowRefs}
       groupRefs={groupRefs}
     />

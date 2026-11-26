@@ -131,7 +131,7 @@ func (o *recordedEvents) Append(_ context.Context, events []run.DomainEvent, _ u
 func chain(hash string) topology.Graph {
 	node := func(schema, table, contentHash string) topology.Node {
 		return topology.Node{
-			Key: topology.KeyOf(schema, table), ServiceName: "svc", SchemaName: schema, TableName: table,
+			Key: topology.KeyOf(schema, table), ProjectName: "svc", SchemaName: schema, TableName: table,
 			NodeType: "dbt-model", ContentHash: contentHash, ImageTag: "svc:1", ScheduleName: "daily",
 		}
 	}

@@ -250,7 +250,7 @@ func (f *liveFolderFixture) swapTopology(releaseID string, seq int64, schemas ma
 	var nodes []topology.ReleasePromotedTopologyNode
 	for id, schema := range schemas {
 		nodes = append(nodes, topology.ReleasePromotedTopologyNode{
-			UniqueID: id, SchemaName: schema, TableName: id[strings.Index(id, ".")+1:], ServiceName: "svc",
+			UniqueID: id, SchemaName: schema, TableName: id[strings.Index(id, ".")+1:], ProjectName: "svc",
 			NodeType: "dbt-model", ContentHash: "sha256:" + id, ImageTag: "img", Schedule: "daily",
 			UpstreamUniqueIDs: []string{},
 		})

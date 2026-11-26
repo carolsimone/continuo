@@ -1,6 +1,6 @@
 {{- /*
   The ui's CI-auth file: trusted GitHub issuer, resolved audience, and the
-  service -> GitHub identity bindings from .Values.ciAuth. Rendered as JSON so
+  project -> GitHub identity bindings from .Values.ciAuth. Rendered as JSON so
   the ui needs no YAML parser.
 */ -}}
 apiVersion: v1

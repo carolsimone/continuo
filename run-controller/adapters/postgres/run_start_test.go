@@ -39,7 +39,7 @@ func failureGraph() topology.Graph {
 	nodes := make([]topology.Node, 0, len(tables))
 	for _, table := range tables {
 		nodes = append(nodes, topology.Node{
-			Key: topology.KeyOf("e2e_schema", table), ServiceName: "service-1", SchemaName: "e2e_schema",
+			Key: topology.KeyOf("e2e_schema", table), ProjectName: "service-1", SchemaName: "e2e_schema",
 			TableName: table, NodeType: "dbt-model", ImageTag: "service-1:5", ScheduleName: "e2e-schedule-failure",
 		})
 	}
@@ -254,7 +254,7 @@ func TestOutboxPublisher_TaskDispatchedMatchesTheGoldenFixture(t *testing.T) {
 		Attempt:      in.Attempt,
 		KnownStatus:  run.AttemptStatus(in.KnownStatus),
 		Node: topology.Node{
-			Key: topology.NodeKey(in.NodeKey), ServiceName: in.ServiceName, SchemaName: in.SchemaName,
+			Key: topology.NodeKey(in.NodeKey), ProjectName: in.ProjectName, SchemaName: in.SchemaName,
 			TableName: in.TableName, NodeType: in.NodeType, ImageTag: in.ImageTag, SecretRef: in.SecretRef,
 		},
 		JobName:   in.JobName,

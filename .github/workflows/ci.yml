@@ -330,7 +330,7 @@ jobs:
         # Runs every test under dbt/tests: the unit tests and every
         # @pytest.mark.integration test (test_upload.py's compile+S3 round trip,
         # test_parse_rehearsal.py's real-dbt partial-parse rehearsal + fetcher
-        # round trip, and test_services_mount.py's check that /app/services is
+        # round trip, and test_projects_mount.py's check that /app/projects is
         # mounted read-only), not just one file, so a new test module is picked
         # up here automatically.
         run: |

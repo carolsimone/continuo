@@ -28,7 +28,7 @@ import (
 type ParsedFailedNode struct {
 	NodeID   string
 	Kind     pkg_model.ParseFailureKind
-	Service  string
+	Project  string
 	FilePath string
 	NodeType string
 	Detail   string
@@ -168,7 +168,7 @@ func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 		failing = append(failing, n.NodeID)
 		perNode = append(perNode, ports.RejectedNode{
 			NodeID: n.NodeID, Status: "failed", Kind: string(n.Kind), Detail: n.Detail,
-			FilePath: n.FilePath, Service: n.Service, NodeType: n.NodeType,
+			FilePath: n.FilePath, Project: n.Project, NodeType: n.NodeType,
 		})
 	}
 	if len(results) > 0 {
@@ -275,7 +275,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 	// A bootstrap release skips validation entirely: it seeds current_prod and
 	// swaps topology directly. This is the one-time cutover (or a trusted
 	// re-baseline) where current_prod is empty/mismatched and normal validation
-	// would reject every cross-service upstream as new.
+	// would reject every cross-project upstream as new.
 	if r.IsBootstrap() {
 		return promoteBootstrap(ctx, d, u, r, in.ReleaseID, in.TopologyRef, topo, now)
 	}
@@ -294,14 +294,14 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 	// scope with no context (bootstrap, with no prod row, treats every candidate
 	// node as new and validates the whole topology). A verification run splits
 	// the two so the fix's shared changed ancestor is rebuilt for context
-	// without expanding this run to a sibling service's still-unfixed failure.
+	// without expanding this run to a sibling project's still-unfixed failure.
 	scope, contextRebuilds, err := changedNodeIDsFor(ctx, u, d, r, topo, prod)
 	if err != nil {
 		return err
 	}
 
 	// Validate the scope closure — the fix's own delta and everything downstream
-	// of it — plus the FULL transitive upstream closure (across service
+	// of it — plus the FULL transitive upstream closure (across project
 	// boundaries) so every upstream is built as an empty table in the candidate
 	// schema before its dependents. Only scope seeds the downstream closure: a
 	// verification's context rebuilds are pulled in only where they land in this
@@ -315,8 +315,8 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 	// in the candidate topology; an upstream absent from it cannot be built into
 	// the candidate schema and would fail the dbt --empty run with a missing
 	// relation. Reject early with a clear, actionable message instead.
-	if edges := release.UnbuildableCrossServiceUpstreams(topo, validationIDs); len(edges) > 0 {
-		return rejectUnbuildableCrossServiceUpstream(ctx, d, u, r, in.ReleaseID, edges, now)
+	if edges := release.UnbuildableCrossProjectUpstreams(topo, validationIDs); len(edges) > 0 {
+		return rejectUnbuildableCrossProjectUpstream(ctx, d, u, r, in.ReleaseID, edges, now)
 	}
 
 	rebuiltFromCandidate := release.RebuiltFromCandidateSet(changedClosure, contextRebuilds, validationIDs)
@@ -433,9 +433,9 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 // A verification run exists to verify a proposed fix, and it is measured
 // against the graph the rejection happened in: the rejected candidate plus the
 // fix (release.VerificationBuildSets). Splitting scope from context is what
-// keeps a fix spanning two services shippable: each service's fix is a separate
+// keeps a fix spanning two projects shippable: each project's fix is a separate
 // run, so a run rebuilds a shared changed ancestor for context but must not let
-// that ancestor drag the OTHER service's still-broken descendant — named in the
+// that ancestor drag the OTHER project's still-broken descendant — named in the
 // rejected release's failing_nodes — into this run and re-fail it. A node the
 // rejected release recorded as not ok that the fix did not touch is in neither
 // set; a node another release promoted since the rejection matches current_prod
@@ -531,7 +531,7 @@ func seedBuildNodesInOrder(topo release.Topology, seedIDs []string, preflights m
 		}
 		seed := map[string]any{
 			"unique_id":    n.UniqueID,
-			"service_name": n.ServiceName,
+			"project_name": n.ProjectName,
 			"node_type":    n.NodeType,
 			"schema_name":  n.SchemaName,
 			"table_name":   n.TableName,
@@ -666,7 +666,7 @@ func releaseNotices(d *Deps, r *pipeline.Run, candidate, prod release.Topology) 
 // validationNodesInOrder returns one map per validation node in lexical
 // (sorted) order, carrying the per-node fields execution-controller needs to
 // build a candidate dbt job. upstream_node_ids lists the in-set upstreams (intra-
-// AND cross-service) that must succeed before this node can run its candidate
+// AND cross-project) that must succeed before this node can run its candidate
 // schema build. candidate_artifact_uri is derived from the run and the node
 // (candidateArtifactURI). Dispatch ordering is deterministic but NOT
 // topological; per-node execution sequencing is enforced at runtime by the
@@ -685,7 +685,7 @@ func validationNodesInOrder(bucket, releaseID string, topo release.Topology, val
 		op, prodSchema := release.ValidationOpFor(n, rebuiltFromCandidate)
 		node := map[string]any{
 			"unique_id":              n.UniqueID,
-			"service_name":           n.ServiceName,
+			"project_name":           n.ProjectName,
 			"node_type":              n.NodeType,
 			"schema_name":            n.SchemaName,
 			"table_name":             n.TableName,
@@ -773,19 +773,19 @@ func failVerificationNothingToValidate(ctx context.Context, d *Deps, u uow.UnitO
 	return nil
 }
 
-// rejectUnbuildableCrossServiceUpstream transitions the release to Rejected and
+// rejectUnbuildableCrossProjectUpstream transitions the release to Rejected and
 // emits release.rejected:v1 naming the offending edge(s) — upstreams that are
 // referenced by a changed node but absent from the candidate topology and
 // therefore cannot be built into the candidate schema.
-func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, releaseID string, edges []release.CrossServiceEdge, now time.Time) error {
-	detail := formatCrossServiceEdges(edges)
-	if err := r.Fail(string(pkg_model.RejectReasonUnbuildableCrossServiceUpstream), detail, nil, now); err != nil {
+func rejectUnbuildableCrossProjectUpstream(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, releaseID string, edges []release.CrossProjectEdge, now time.Time) error {
+	detail := formatCrossProjectEdges(edges)
+	if err := r.Fail(string(pkg_model.RejectReasonUnbuildableCrossProjectUpstream), detail, nil, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 	payload, err := d.Rejections.Encode(ports.ReleaseRejection{
 		Shape:       ports.RejectionShapeUnbuildableUpstream,
 		ReleaseID:   releaseID,
-		Reason:      pkg_model.RejectReasonUnbuildableCrossServiceUpstream,
+		Reason:      pkg_model.RejectReasonUnbuildableCrossProjectUpstream,
 		ErrorDetail: detail,
 	})
 	if err != nil {
@@ -813,8 +813,8 @@ func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.U
 // release.rejected:v1 naming every node in every collision — both relation
 // collisions (two nodes writing the same warehouse table) and identity
 // collisions (two nodes sharing a unique_id). Each per_node entry carries the
-// claimant a rename should target — the changed service's, when it has one —
-// plus the competing claimant's service and file path, so the remediation
+// claimant a rename should target — the changed project's, when it has one —
+// plus the competing claimant's project and file path, so the remediation
 // classifier can build evidence without resolving the source location
 // itself. That resolution is not available downstream: a rejected release is
 // never promoted, so GetNodeLocation (which serves the promoted topology)
@@ -828,7 +828,7 @@ func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.U
 // node_type carries the target claimant's kind (dbt-model, dbt-seed,
 // dbt-snapshot, python-node, python-csv, or python-api) so remediation can tell, without a topology
 // lookup of its own, whether the target's source is a single file this
-// system can read. A python node's relation is declared in the service's
+// system can read. A python node's relation is declared in the project's
 // ODCS contract file, whose repository path this system does not carry — only
 // file_path for the contract's script entry — so the fixer must skip a
 // python target rather than editing a file that cannot produce the fix.
@@ -857,13 +857,13 @@ func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.U
 // carry different unique_ids (see DuplicateClaims), so a single shared id no
 // longer identifies "the collision".
 //
-// repo/commit_sha describe only the service this release changed — each team
+// repo/commit_sha describe only the project this release changed — each team
 // ships its dbt or python jobs from its own repository, so there is no single
-// checkout that contains every service's models. Target prefers the changed
-// service's claimant, so in the common case per_node.file_path names a file in
+// checkout that contains every project's models. Target prefers the changed
+// project's claimant, so in the common case per_node.file_path names a file in
 // that same repo/commit_sha and the remediation agent can read it directly.
-// When no claimant belongs to the changed service (a bootstrap release, or two
-// other services colliding while this release changed a third), the target
+// When no claimant belongs to the changed project (a bootstrap release, or two
+// other projects colliding while this release changed a third), the target
 // claimant's source lives in a repository this event does not name, and the
 // agent's read of repo@commit_sha for that path fails. That is expected: the
 // agent proposes nothing rather than guessing at a file it cannot see, and
@@ -893,15 +893,15 @@ func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pip
 		if len(c.Claimants) != 2 {
 			continue
 		}
-		target, other := c.Target(r.ChangedService())
+		target, other := c.Target(r.ChangedProject())
 		perNode = append(perNode, ports.RejectedNode{
 			NodeID:        target.UniqueID,
 			Status:        "failed",
-			Service:       target.ServiceName,
+			Project:       target.ProjectName,
 			FilePath:      target.OriginalFilePath,
 			NodeType:      target.NodeType,
 			RelationID:    c.RelationID,
-			OtherService:  other.ServiceName,
+			OtherProject:  other.ProjectName,
 			OtherFilePath: other.OriginalFilePath,
 		})
 	}
@@ -944,14 +944,14 @@ func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pip
 	return nil
 }
 
-// formatCrossServiceEdges renders offending edges as a human-readable string
+// formatCrossProjectEdges renders offending edges as a human-readable string
 // listing each node->upstream pair separated by commas, followed by an
 // actionable hint naming the missing producing model.
-func formatCrossServiceEdges(edges []release.CrossServiceEdge) string {
+func formatCrossProjectEdges(edges []release.CrossProjectEdge) string {
 	parts := make([]string, 0, len(edges))
 	for _, e := range edges {
 		parts = append(parts, e.Node+"->"+e.Upstream)
 	}
 	return strings.Join(parts, ", ") +
-		"; upstream is not produced by any service in this release — add the producing model"
+		"; upstream is not produced by any project in this release — add the producing model"
 }

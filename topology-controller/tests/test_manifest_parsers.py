@@ -45,19 +45,19 @@ def test_the_dbt_entry_loads_the_extras_beside_the_manifest(tmp_path):
         _parse(ManifestKind.DBT, mf)
 
 
-def test_the_dbt_entry_holds_the_extras_to_the_declared_service(tmp_path):
+def test_the_dbt_entry_holds_the_extras_to_the_declared_project(tmp_path):
     extras = tmp_path / "compile-extras.json"
-    extras.write_text(json.dumps({"version": 1, "service": "other", "release_id": "rel-1",
+    extras.write_text(json.dumps({"version": 1, "project": "other", "release_id": "rel-1",
                                   "seeds": {}, "project_flags": {}, "packages": {}}))
-    mf = ManifestFile(path=str(FIXTURES / "manifest_service1.json"), declared_service="service-1",
+    mf = ManifestFile(path=str(FIXTURES / "manifest_service1.json"), declared_project="service-1",
                       extras_path=str(extras))
 
     with pytest.raises(InvalidCompileExtrasError, match="other"):
         _parse(ManifestKind.DBT, mf)
 
 
-def test_the_dbt_entry_reads_a_manifest_that_names_no_project_against_the_declared_service(tmp_path):
-    """The declared service stands for the project the manifest was compiled
+def test_the_dbt_entry_reads_a_manifest_that_names_no_project_against_the_declared_project(tmp_path):
+    """The declared project stands for the project the manifest was compiled
     from, so an untagged node of an installed package is left out."""
     manifest = json.loads((FIXTURES / "manifest_installed_package.json").read_text())
     del manifest["metadata"]
@@ -65,7 +65,7 @@ def test_the_dbt_entry_reads_a_manifest_that_names_no_project_against_the_declar
     path.write_text(json.dumps(manifest))
     skipped: list[SkippedNode] = []
 
-    parsed = _parse(ManifestKind.DBT, ManifestFile(path=str(path), declared_service="shop-core"), skipped=skipped)
+    parsed = _parse(ManifestKind.DBT, ManifestFile(path=str(path), declared_project="shop-core"), skipped=skipped)
 
     assert sorted(n.table_name for n in parsed.nodes) == ["countries", "monthly_report", "orders"]
     assert [(s.node_id, s.reason) for s in skipped] == [

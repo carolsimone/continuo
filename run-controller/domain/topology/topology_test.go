@@ -12,7 +12,7 @@ func count(n int) *int { return &n }
 
 func spec(schema, table, nodeType string, upstream ...string) topology.NodeSpec {
 	return topology.NodeSpec{
-		UniqueID: schema + "." + table, ServiceName: "svc", SchemaName: schema, TableName: table,
+		UniqueID: schema + "." + table, ProjectName: "svc", SchemaName: schema, TableName: table,
 		NodeType: nodeType, TestCount: count(0), ContentHash: "h-" + schema + "-" + table, ImageTag: "svc:1",
 		ScheduleName: "daily", UpstreamUniqueIDs: upstream,
 	}
@@ -20,7 +20,7 @@ func spec(schema, table, nodeType string, upstream ...string) topology.NodeSpec 
 
 func testSpec(name, upstream string) topology.NodeSpec {
 	return topology.NodeSpec{
-		UniqueID: "test.svc." + name, ServiceName: "svc", SchemaName: "stg", TableName: name,
+		UniqueID: "test.svc." + name, ProjectName: "svc", SchemaName: "stg", TableName: name,
 		NodeType: "dbt-test", UpstreamUniqueIDs: []string{upstream},
 	}
 }
@@ -44,7 +44,7 @@ func TestNewRelease_DropsTestsAndSortsNodesByKey(t *testing.T) {
 	require.Len(t, rel.Nodes, 2)
 	assert.Equal(t, topology.NodeKey("raw.orders"), rel.Nodes[0].Key)
 	assert.Equal(t, topology.Node{
-		Key: "stg.orders", UniqueID: "stg.orders", ServiceName: "svc", SchemaName: "stg", TableName: "orders",
+		Key: "stg.orders", UniqueID: "stg.orders", ProjectName: "svc", SchemaName: "stg", TableName: "orders",
 		NodeType: "dbt-model", TestCount: count(0), ContentHash: "h-stg-orders", ImageTag: "svc:1", ScheduleName: "daily",
 	}, rel.Nodes[1])
 }
@@ -77,7 +77,7 @@ func TestNewRelease_WithoutUpstreamsHasNoEdges(t *testing.T) {
 func TestNewRelease_RejectsTwoNodesWithOneKey(t *testing.T) {
 	_, err := topology.NewRelease("default", "rel-1", 1, "u", "s", []topology.NodeSpec{
 		spec("raw", "orders", "dbt-seed"),
-		{UniqueID: "RAW.Orders", ServiceName: "svc-2", SchemaName: "RAW", TableName: "Orders", NodeType: "python-csv"},
+		{UniqueID: "RAW.Orders", ProjectName: "svc-2", SchemaName: "RAW", TableName: "Orders", NodeType: "python-csv"},
 	})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, topology.ErrDuplicateNodeKey)
@@ -173,7 +173,7 @@ func TestPointerOutcome_String(t *testing.T) {
 }
 
 // An unknown-external node is a table a node reads and no node builds. It has no
-// service, no content hash, no schedule and no image, and it is a node of the
+// project, no content hash, no schedule and no image, and it is a node of the
 // release like any other: it is kept with every field as the artifact states
 // it, and the node that reads it has an edge from it.
 func TestNewRelease_KeepsAnUnknownExternalNode(t *testing.T) {
@@ -190,7 +190,7 @@ func TestNewRelease_KeepsAnUnknownExternalNode(t *testing.T) {
 	assert.Equal(t, topology.Node{
 		Key: "raw.ingest_probe", UniqueID: "raw.ingest_probe", SchemaName: "raw", TableName: "ingest_probe",
 		NodeType: "unknown-external", TestCount: count(0),
-	}, rel.Nodes[0], "empty service name, content hash, image tag and schedule name are kept empty")
+	}, rel.Nodes[0], "empty project name, content hash, image tag and schedule name are kept empty")
 	assert.Equal(t, []topology.Edge{{Upstream: "raw.ingest_probe", Downstream: "stg.orders"}}, rel.Edges)
 }
 

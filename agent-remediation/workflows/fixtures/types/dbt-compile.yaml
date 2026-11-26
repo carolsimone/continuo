@@ -1,6 +1,6 @@
 # A dbt project whose model x does not compile: its config block has a stray
 # parenthesis.
-# For a compile failure the node id names the service.
+# For a compile failure the node id names the project.
 kind: fixture
 version: 1
 type: dbt-compile
@@ -18,7 +18,7 @@ trigger:
       error_excerpt: "Compilation Error in model x (models/x.sql): unexpected ')'"
       dbt_log_uri: s3://logs/rel-compile-1/svc/dbt.log
       file_path: models/x.sql
-service_repo_paths:
+project_repo_paths:
   svc: services/svc
 repo_files:
   services/svc/models/x.sql: "{{ config(x), y) }}\nselect 1\n"

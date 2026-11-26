@@ -41,7 +41,7 @@ function trustedCiConfig(ci: CiAuthConfig | null): CiAuthConfig | null {
     console.log(`CI auth is configured but has no bindings; tokens from ${ci.issuer} are not accepted`);
     return null;
   }
-  console.log(`CI auth: issuer ${ci.issuer}, ${ci.bindings.size} bound service(s)`);
+  console.log(`CI auth: issuer ${ci.issuer}, ${ci.bindings.size} bound project(s)`);
   return ci;
 }
 

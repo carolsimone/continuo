@@ -76,9 +76,9 @@ def _project(projection_input: dict) -> tuple[str, str]:
 
 
 def build_python_node(
-    fields: PythonNodeFields, *, service: str, image_tag: str, source_hash: str, shared_code_hash: str
+    fields: PythonNodeFields, *, project: str, image_tag: str, source_hash: str, shared_code_hash: str
 ) -> ManifestNode:
-    """The ManifestNode of a Python node of `service`, hashed over the producer's
+    """The ManifestNode of a Python node of `project`, hashed over the producer's
     `source_hash` and `shared_code_hash` and its own code projection.
 
     A node the projection refuses raises MalformedContractError.
@@ -144,7 +144,7 @@ def build_python_node(
         # A python contract has no alias concept: the relation it writes is
         # always the declared table.
         resolved_relation=fields.table,
-        service_name=service,
+        project_name=project,
         owner=fields.owner,
         schedule_name=fields.schedule,
         criticality=fields.criticality,

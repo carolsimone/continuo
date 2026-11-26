@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewTriggerCommand builds `continuo node trigger <service> <schema> <table> [source-run-id]`.
+// NewTriggerCommand builds `continuo node trigger <project> <schema> <table> [source-run-id]`.
 // It triggers a fresh single-node run. With three arguments the run uses the
 // latest topology metadata; with a fourth it reuses the metadata snapshot of
 // that past run.
@@ -25,7 +25,7 @@ import (
 // run-controller service records its own system identity.
 func NewTriggerCommand(factory RunClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "trigger <service> <schema> <table> [source-run-id]",
+		Use:   "trigger <project> <schema> <table> [source-run-id]",
 		Short: "Trigger a fresh run of one model node",
 		Long: `Trigger a fresh run of one model node.
 
@@ -34,7 +34,7 @@ By default the run uses the model's current (latest) image and manifest
 version. Pass a past run id to re-run the model exactly as that run saw it.
 
 Arguments:
-  <service>  The owning service name.
+  <project>  The owning project name.
   <schema>   The schema name.
   <table>    The table (model) name.
 ` + sourceRunArgDoc + `
@@ -82,13 +82,13 @@ Errors:
 			}
 			defer func() { _ = c.Close() }()
 
-			resp, err := c.TriggerNodeRun(ctx, client.RequestID(), target.service, target.schema, target.table, target.sourceRunID, cfg.Actor)
+			resp, err := c.TriggerNodeRun(ctx, client.RequestID(), target.project, target.schema, target.table, target.sourceRunID, cfg.Actor)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
 
 			if cfg.Human {
-				return output.HumanSuccess(stderr, "Triggered single-node run "+resp.GetRunId()+" for "+target.service+"."+target.schema+"."+target.table)
+				return output.HumanSuccess(stderr, "Triggered single-node run "+resp.GetRunId()+" for "+target.project+"."+target.schema+"."+target.table)
 			}
 			payload := map[string]string{
 				"run_id":        resp.GetRunId(),

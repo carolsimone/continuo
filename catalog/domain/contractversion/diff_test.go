@@ -163,8 +163,8 @@ func TestDiff_NamesTheCustomPropertyAndItsNestedKey(t *testing.T) {
 	prop := func(daily string) map[string]any {
 		return map[string]any{"vendor": "continuo", "property": "readQueries", "value": map[string]any{"daily": daily}}
 	}
-	before := map[string]any{"customProperties": []any{map[string]any{"vendor": "continuo", "property": "service", "value": "service-py"}, prop("select 1")}}
-	after := map[string]any{"customProperties": []any{map[string]any{"vendor": "continuo", "property": "service", "value": "service-py"}, prop("select 2")}}
+	before := map[string]any{"customProperties": []any{map[string]any{"vendor": "continuo", "property": "project", "value": "service-py"}, prop("select 1")}}
+	after := map[string]any{"customProperties": []any{map[string]any{"vendor": "continuo", "property": "project", "value": "service-py"}, prop("select 2")}}
 
 	assert.Equal(t, []contractversion.FieldChange{{
 		Path: "customProperties[1].value.daily", BeforeJSON: `"select 1"`, AfterJSON: `"select 2"`,

@@ -57,7 +57,7 @@ func TestTaskCollection_LoadAttemptStateReadsTheTask(t *testing.T) {
 		assert.Equal(t, int32(2), got.MaxRetries)
 		assert.Equal(t, topology.NodeKey("e2e_schema.ftable_e"), got.NodeKey)
 		assert.NotEmpty(t, got.JobName)
-		assert.NotEmpty(t, got.ServiceName)
+		assert.NotEmpty(t, got.ProjectName)
 		assert.Equal(t, "e2e_schema", got.SchemaName)
 		assert.Equal(t, "ftable_e", got.TableName)
 

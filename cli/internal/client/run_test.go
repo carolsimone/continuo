@@ -452,7 +452,7 @@ func TestRunClient_ListNodesSendsDormantOnly(t *testing.T) {
 	asked := srv.gotNodes[0]
 	assert.True(t, asked.GetDormantOnly())
 	assert.Equal(t, "orders", asked.GetSearch())
-	assert.Equal(t, "core", asked.GetServiceName())
+	assert.Equal(t, "core", asked.GetProjectName())
 	assert.Equal(t, "test", asked.GetOperation())
 	assert.Equal(t, int32(20), asked.GetLimit())
 	assert.Equal(t, int32(40), asked.GetOffset())

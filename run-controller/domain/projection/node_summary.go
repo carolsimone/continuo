@@ -15,7 +15,7 @@ import "time"
 // duration (durations come from each task's succeeded attempt only). The
 // repository converts these to nulls at the BFF boundary so the UI renders "—".
 type NodeSummary struct {
-	ServiceName string
+	ProjectName string
 	SchemaName  string
 	TableName   string
 	// NodeType is the node's type in the live release, such as dbt-model.

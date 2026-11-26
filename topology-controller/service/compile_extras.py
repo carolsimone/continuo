@@ -1,6 +1,6 @@
 """Loads and validates the compile-extras.json a dbt compile writes beside its manifest.
 
-The object records what the manifest does not carry about a service: each seed's file
+The object records what the manifest does not carry about a project: each seed's file
 digest, CSV header and configured column types, the dbt_project.yml flags and the
 versions of the installed dbt distributions. A document that is unreadable, speaks
 another version or holds a value of the wrong shape is refused whole.
@@ -18,9 +18,9 @@ SCHEMA_VERSION = 1
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
-def load_compile_extras(path: str, expected_service: str) -> CompileExtras:
-    """Read the extras object at `path`. When `expected_service` is non-empty the
-    object must name that service. Raises InvalidCompileExtrasError otherwise."""
+def load_compile_extras(path: str, expected_project: str) -> CompileExtras:
+    """Read the extras object at `path`. When `expected_project` is non-empty the
+    object must name that project. Raises InvalidCompileExtrasError otherwise."""
     try:
         with open(path, encoding="utf-8") as f:
             document = json.load(f)
@@ -33,11 +33,11 @@ def load_compile_extras(path: str, expected_service: str) -> CompileExtras:
     if type(version) is not int or version != SCHEMA_VERSION:
         raise InvalidCompileExtrasError(f"unsupported version {version!r}, this parser reads version {SCHEMA_VERSION}")
 
-    service = _string(document, "service")
-    if expected_service and service != expected_service:
-        raise InvalidCompileExtrasError(f"service {service!r} is not the declared service {expected_service!r}")
+    project = _string(document, "project")
+    if expected_project and project != expected_project:
+        raise InvalidCompileExtrasError(f"project {project!r} is not the declared project {expected_project!r}")
     return CompileExtras(
-        service=service,
+        project=project,
         release_id=_string(document, "release_id"),
         seeds=_seeds(_field(document, "seeds", dict)),
         project_flags=_field(document, "project_flags", dict),

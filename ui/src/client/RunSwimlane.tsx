@@ -1,7 +1,7 @@
 import { Fragment, useMemo } from 'react';
 import type { GraphNode, GraphEdge, Task } from './types';
 import { buildSwimlaneLayout, laneLabelColumnWidth } from './run-graph-helpers';
-import { serviceOfNode, buildServiceColors, rollupStatus } from './service-helpers';
+import { projectOfNode, buildProjectColors, rollupStatus } from './project-helpers';
 import { resolveNodeStatus, resolveNodeWait, leaseWaitTitle, parseNodeId, tasksByNodeId, type LeaseWait } from './detail-page-helpers';
 import LeaseWaitPill from './LeaseWaitPill';
 
@@ -24,27 +24,27 @@ const CELL_SIZE = 14;
 // How far in from a node's right edge a "waiting for node" pill ends.
 const WAIT_PILL_INSET = 8;
 
-// Status graph as swimlanes: one horizontal lane per service, columns are
+// Status graph as swimlanes: one horizontal lane per project, columns are
 // dependency depth. Node placement and lane sizing come from
 // buildSwimlaneLayout; this component only paints nodes/edges/lane labels at
 // the coordinates it returns, and lets a collapsed lane render as a strip of
 // small `.swim-cell` squares instead of full node boxes. A node is coloured by
-// its status alone (fill, border and dot); the service colour appears only on
-// the lane label, since the lane a node sits in already says which service it
+// its status alone (fill, border and dot); the project colour appears only on
+// the lane label, since the lane a node sits in already says which project it
 // belongs to. The label column is sized to the widest label so nodes never
-// start under a long service name.
+// start under a long project name.
 export default function RunSwimlane({
-  graph, tasks, serviceOrder, collapsed, onLaneToggle,
+  graph, tasks, projectOrder, collapsed, onLaneToggle,
 }: {
   graph: { nodes: GraphNode[]; edges: GraphEdge[] };
   tasks: Task[];
-  serviceOrder: string[];
+  projectOrder: string[];
   collapsed: Set<string>;
-  onLaneToggle: (service: string) => void;
+  onLaneToggle: (project: string) => void;
 }) {
-  const colors = buildServiceColors(serviceOrder);
+  const colors = buildProjectColors(projectOrder);
   // Status, lane roll-ups and the whole layout depend only on the graph, the
-  // tasks, the service order and the collapse state; they are memoised so a
+  // tasks, the project order and the collapse state; they are memoised so a
   // large DAG is laid out once per poll rather than on every render. Each
   // node's status and wait are read through one index of the tasks by node.
   const { statusById, waitById, reasonById, rollups, layout, pos } = useMemo(() => {
@@ -60,24 +60,24 @@ export default function RunSwimlane({
       const reason = taskByNode.get(n.node_id)?.plan_reason ?? n.plan_reason;
       if (reason) reasonById.set(n.node_id, reason);
     }
-    const laneRollup = (service: string) => {
+    const laneRollup = (project: string) => {
       const statuses = graph.nodes
-        .filter((n) => serviceOfNode(n.node_id) === service)
+        .filter((n) => projectOfNode(n.node_id) === project)
         .map((n) => statusById.get(n.node_id)!);
       const done = statuses.filter(
         (s) => s === 'succeeded' || s === 'failed' || s === 'skipped' || s === 'cancelled',
       ).length;
       return { done, total: statuses.length, roll: rollupStatus(statuses) };
     };
-    const rollups = new Map(serviceOrder.map((s) => [s, laneRollup(s)]));
+    const rollups = new Map(projectOrder.map((s) => [s, laneRollup(s)]));
     const laneLeft = laneLabelColumnWidth(
-      serviceOrder.map((s) => ({ service: s, done: rollups.get(s)!.done, total: rollups.get(s)!.total })),
+      projectOrder.map((s) => ({ project: s, done: rollups.get(s)!.done, total: rollups.get(s)!.total })),
     );
     const nodeIds = graph.nodes.map((n) => n.node_id);
-    const layout = buildSwimlaneLayout(nodeIds, graph.edges, serviceOrder, collapsed, { laneLeft });
+    const layout = buildSwimlaneLayout(nodeIds, graph.edges, projectOrder, collapsed, { laneLeft });
     const pos = new Map(layout.nodes.map((n) => [n.nodeId, n]));
     return { statusById, waitById, reasonById, rollups, layout, pos };
-  }, [graph, tasks, serviceOrder, collapsed]);
+  }, [graph, tasks, projectOrder, collapsed]);
 
   return (
     <>
@@ -85,7 +85,7 @@ export default function RunSwimlane({
       <div className="swim-stage" style={{ position: 'relative', width: layout.width, height: layout.height }}>
         {layout.bands.map((b) => (
           <div
-            key={b.service}
+            key={b.project}
             className="swim-lane"
             style={{ position: 'absolute', top: b.top, height: b.height, width: layout.width }}
           />
@@ -100,9 +100,9 @@ export default function RunSwimlane({
             const a = pos.get(e.from_node_id);
             const b = pos.get(e.to_node_id);
             if (!a || !b) return null;
-            const aWidth = collapsed.has(a.service) ? CELL_SIZE : NODE_W;
-            const aHalfH = (collapsed.has(a.service) ? CELL_SIZE : NODE_H) / 2;
-            const bHalfH = (collapsed.has(b.service) ? CELL_SIZE : NODE_H) / 2;
+            const aWidth = collapsed.has(a.project) ? CELL_SIZE : NODE_W;
+            const aHalfH = (collapsed.has(a.project) ? CELL_SIZE : NODE_H) / 2;
+            const bHalfH = (collapsed.has(b.project) ? CELL_SIZE : NODE_H) / 2;
             const sx = a.x + aWidth;
             const sy = a.y + aHalfH;
             const tx = b.x;
@@ -121,18 +121,18 @@ export default function RunSwimlane({
           })}
         </svg>
         {layout.bands.map((b) => {
-          const { done, total, roll } = rollups.get(b.service)!;
+          const { done, total, roll } = rollups.get(b.project)!;
           return (
             <div
-              key={b.service}
+              key={b.project}
               className="swim-lab"
-              data-lane={b.service}
+              data-lane={b.project}
               style={{ position: 'absolute', top: b.top + 9, left: 8 }}
-              onClick={() => onLaneToggle(b.service)}
+              onClick={() => onLaneToggle(b.project)}
             >
-              <span className="chev">{collapsed.has(b.service) ? '▸' : '▾'}</span>
-              <span className="swim-dot" style={{ background: colors.get(b.service) }} />
-              {b.service} <span className={`swim-roll ${clsOf(roll)}`}>{done}/{total}</span>
+              <span className="chev">{collapsed.has(b.project) ? '▸' : '▾'}</span>
+              <span className="swim-dot" style={{ background: colors.get(b.project) }} />
+              {b.project} <span className={`swim-roll ${clsOf(roll)}`}>{done}/{total}</span>
             </div>
           );
         })}
@@ -141,7 +141,7 @@ export default function RunSwimlane({
           const wait = waitById.get(n.nodeId);
           const reason = reasonById.get(n.nodeId);
           const nodeTitle = reason ? `${n.nodeId} — ${reason}` : n.nodeId;
-          if (collapsed.has(n.service)) {
+          if (collapsed.has(n.project)) {
             return (
               <div
                 key={n.nodeId}

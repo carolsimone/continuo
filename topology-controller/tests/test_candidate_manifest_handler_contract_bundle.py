@@ -77,7 +77,7 @@ def test_every_ok_release_writes_one_bundle_before_the_topology_artifact():
     [write] = bundle_writer.writes
     assert (write["tenant_id"], write["release_id"]) == ("default", "rel-1")
     [(unique_id, contract)] = write["document"]["contracts"].items()
-    assert (unique_id, contract["family"], contract["service"], contract["source"]["path"]) == (
+    assert (unique_id, contract["family"], contract["project"], contract["source"]["path"]) == (
         "test_schema.users", "dbt", "service-1", "models/users.sql")
     assert write["document"]["summary"] == {"contracts": 1, "by_family": {"dbt": 1}, "invalid": 0, "skipped": 0}
     publisher.publish_ok.assert_called_once()
@@ -116,7 +116,7 @@ def test_the_bundle_holds_the_stored_form_of_each_python_odcs_contract(tmp_path)
     assert sorted(doc["contracts"]) == ["analytics.demo_orders_csv", "analytics.fx_eur_usd_rates", "analytics.py_daily_kpis"]
     kpis = doc["contracts"]["analytics.py_daily_kpis"]
     assert kpis["family"] == "python"
-    assert kpis["service"] == "service-py"
+    assert kpis["project"] == "service-py"
     assert kpis["contract_hash"] == _vector("demo_py_daily_kpis")["contract_hash"]
     assert kpis["document"] == _vector("demo_py_daily_kpis")["stored"], "the read query names analytics.daily_transactions"
     assert kpis["source"]["path"] == KPIS_PATH
@@ -158,15 +158,15 @@ def test_a_contract_reads_the_tables_its_queries_name_and_no_system_relation(tmp
         {"property": "reads", "value": ["analytics.daily_transactions"], "vendor": "continuo"}]
 
 
-def test_each_python_odcs_service_has_its_own_provenance(tmp_path):
+def test_each_python_odcs_project_has_its_own_provenance(tmp_path):
     bundle_writer = RecordingContractBundleWriter()
     first, second = tmp_path / "first", tmp_path / "second"
     first.mkdir()
     second.mkdir()
     source = source_of(
-        bundle_file(first, [demo_node("py_daily_kpis")], declared_service="service-a", service="service-a",
+        bundle_file(first, [demo_node("py_daily_kpis")], declared_project="service-a", project="service-a",
                     producer_runtime="0.13.0", image_packages={"pyarrow": "26.0.0"}),
-        bundle_file(second, [demo_node("demo_orders_csv")], declared_service="service-b", service="service-b",
+        bundle_file(second, [demo_node("demo_orders_csv")], declared_project="service-b", project="service-b",
                     producer_runtime="0.12.0", image_packages={}),
     )
 
@@ -178,30 +178,30 @@ def test_each_python_odcs_service_has_its_own_provenance(tmp_path):
     }
 
 
-@pytest.mark.parametrize("first_service", ["service-a", "service-b"])
-def test_an_id_two_python_odcs_services_declare_is_left_out_of_the_bundle_and_the_release_publishes(
-    tmp_path, first_service, caplog,
+@pytest.mark.parametrize("first_project", ["service-a", "service-b"])
+def test_an_id_two_python_odcs_projects_declare_is_left_out_of_the_bundle_and_the_release_publishes(
+    tmp_path, first_project, caplog,
 ):
-    """Two services that each declare analytics.py_daily_kpis are release-controller's
-    duplicate_table to reject (it names both services): the parse publishes ok, the topology
+    """Two projects that each declare analytics.py_daily_kpis are release-controller's
+    duplicate_table to reject (it names both projects): the parse publishes ok, the topology
     holds both nodes, and the bundle holds neither contract of the shared id, whichever
-    service comes first. Each node keeps the tables its own SQL reads."""
+    project comes first. Each node keeps the tables its own SQL reads."""
     bundle_writer, topology_writer, publisher = RecordingContractBundleWriter(), RecordingArtifactWriter(), MagicMock()
     other_reads = demo_text("py_daily_kpis").replace(
         "from analytics.daily_transactions", "from raw.other_transactions")
     files = {}
-    for service, nodes in (
+    for project, nodes in (
         ("service-a", [demo_node("py_daily_kpis"), demo_node("demo_orders_csv")]),
         ("service-b", [bundle_node(KPIS_PATH, other_reads)]),
     ):
-        folder = tmp_path / service
+        folder = tmp_path / project
         folder.mkdir()
-        files[service] = bundle_file(folder, nodes, declared_service=service, service=service)
-    second_service = "service-b" if first_service == "service-a" else "service-a"
+        files[project] = bundle_file(folder, nodes, declared_project=project, project=project)
+    second_project = "service-b" if first_project == "service-a" else "service-a"
 
     with caplog.at_level("WARNING"):
         python_handler(
-            source_of(files[first_service], files[second_service]), publisher,
+            source_of(files[first_project], files[second_project]), publisher,
             contract_bundle_writer=bundle_writer, artifact_writer=topology_writer,
         ).handle(release_id="rel-1")
 
@@ -210,7 +210,7 @@ def test_an_id_two_python_odcs_services_declare_is_left_out_of_the_bundle_and_th
     assert sorted(bundle_writer.document["contracts"]) == ["analytics.demo_orders_csv"]
     assert bundle_writer.document["summary"]["contracts"] == 1
     kpis = sorted(
-        (n["service_name"], sorted(n["upstream_unique_ids"]))
+        (n["project_name"], sorted(n["upstream_unique_ids"]))
         for n in topology_writer.nodes if n["unique_id"] == "analytics.py_daily_kpis")
     assert kpis == [
         ("service-a", ["analytics.daily_transactions"]),
@@ -218,7 +218,7 @@ def test_an_id_two_python_odcs_services_declare_is_left_out_of_the_bundle_and_th
     ]
     [record] = [r for r in caplog.records if "more than one node" in r.getMessage()]
     assert record.unique_id == "analytics.py_daily_kpis"
-    assert record.services == ["service-a", "service-b"]
+    assert record.projects == ["service-a", "service-b"]
 
 
 # --- the bundle's timings and the stages ------------------------------------------
@@ -285,11 +285,11 @@ def _invalid_sql_release(tmp_path):
     path = tmp_path / "manifest.json"
     broken = {**dbt_node("broken"), "compiled_code": "SELECT FROM WHERE((("}
     path.write_text(json.dumps({"nodes": {broken["unique_id"]: broken}}))
-    return source_of(ManifestFile(path=str(path), image_tag="", declared_service="service-1"))
+    return source_of(ManifestFile(path=str(path), image_tag="", declared_project="service-1"))
 
 
 def _unknown_kind_release(tmp_path):
-    return source_of(ManifestFile(path=str(tmp_path / "x"), image_tag="", declared_service="s", kind="spark"))
+    return source_of(ManifestFile(path=str(tmp_path / "x"), image_tag="", declared_project="s", kind="spark"))
 
 
 @pytest.mark.parametrize(
@@ -341,7 +341,7 @@ def test_a_table_the_contract_cannot_list_rejects_the_release_as_an_invalid_cont
     assert kwargs["failed_nodes"] == [FailedNode(
         node_id="analytics.py_daily_kpis",
         kind=ParseFailureKind.INVALID_CONTRACT,
-        service="service-py",
+        project="service-py",
         file_path=KPIS_PATH,
         node_type="python-node",
         detail=f"readQueries: table {written} cannot be listed as <schema>.<table>: {reason}",
@@ -354,7 +354,7 @@ def test_a_table_the_contract_cannot_list_rejects_the_release_as_an_invalid_cont
 
 def test_every_contract_with_such_a_table_is_named_on_the_one_publish_with_the_other_failures(tmp_path):
     """Each failing contract is one failed node, whatever the order of the bundle, and a broken
-    SQL node of another service is reported in the same publish."""
+    SQL node of another project is reported in the same publish."""
     publisher = MagicMock()
     broken_sql = {**dbt_node("broken"), "compiled_code": "SELECT FROM WHERE((("}
     manifest = tmp_path / "manifest.json"
@@ -366,7 +366,7 @@ def test_every_contract_with_such_a_table_is_named_on_the_one_publish_with_the_o
             _kpis_reading('analytics."e f"', name="py_third_kpis"),
             demo_node("demo_orders_csv"),
         ]),
-        ManifestFile(path=str(manifest), image_tag="", declared_service="service-1"),
+        ManifestFile(path=str(manifest), image_tag="", declared_project="service-1"),
     )
 
     timings = python_handler(source, publisher).handle(release_id="rel-1")
@@ -496,7 +496,7 @@ def test_the_bundle_write_is_timed_as_its_own_stage_even_when_it_fails():
 def _service_1_manifest(tmp_path) -> ManifestFile:
     path = Path(tmp_path) / "service-1.json"
     path.write_text(json.dumps({"nodes": {n["unique_id"]: n for n in (dbt_node("users"), dbt_node("orders"))}}))
-    return ManifestFile(path=str(path), image_tag="", declared_service="service-1")
+    return ManifestFile(path=str(path), image_tag="", declared_project="service-1")
 
 
 def _handle_with(s3: FakeS3, *files: ManifestFile, clock: FakeClock) -> MagicMock:

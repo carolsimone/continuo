@@ -22,16 +22,16 @@ const sourceValidation = "validation"
 // source.
 type DBTValidation struct {
 	artifacts        ports.ArtifactWriter
-	serviceRepoPaths map[string]string
+	projectRepoPaths map[string]string
 }
 
 var _ step.Prompt = (*DBTValidation)(nil)
 
-// NewDBTValidation builds the dbt-validation step. serviceRepoPaths maps a
-// service name to its path inside the repository. It calls no port until
+// NewDBTValidation builds the dbt-validation step. projectRepoPaths maps a
+// project name to its path inside the repository. It calls no port until
 // Propose.
-func NewDBTValidation(artifacts ports.ArtifactWriter, serviceRepoPaths map[string]string) *DBTValidation {
-	return &DBTValidation{artifacts: artifacts, serviceRepoPaths: serviceRepoPaths}
+func NewDBTValidation(artifacts ports.ArtifactWriter, projectRepoPaths map[string]string) *DBTValidation {
+	return &DBTValidation{artifacts: artifacts, projectRepoPaths: projectRepoPaths}
 }
 
 // Meta describes the step.
@@ -76,7 +76,7 @@ func (*DBTValidation) Meta() step.Meta {
 // because that note describes the diff the reviewer sees and that confidence
 // rates it, and its model and suspected root are the first call's. The source
 // is always reachable: code_bundle_source declines a node whose source, file
-// path, service or service's repository path is unknown, and evidence that
+// path, project or project's repository path is unknown, and evidence that
 // lacks one is an error that calls no model.
 //
 // A round after the first revises the last call of the round before it, with
@@ -143,17 +143,17 @@ func (p *DBTValidation) Propose(ctx context.Context, in step.PromptInput, m step
 	return p.sourceFix(ctx, f, bundle, repoPrefix, applyDiagnosis, draft, m)
 }
 
-// repoPrefix is the repository path of the service the node's source lives in.
-// code_bundle_source gives a node only when its source, file path and service
-// are known and the service has a repository path, so evidence without one of
+// repoPrefix is the repository path of the project the node's source lives in.
+// code_bundle_source gives a node only when its source, file path and project
+// are known and the project has a repository path, so evidence without one of
 // them is an error.
 func (p *DBTValidation) repoPrefix(bundle remediation.CandidateSource) (string, error) {
-	if bundle.Source == "" || bundle.FilePath == "" || bundle.Service == "" {
-		return "", fmt.Errorf("dbt-validation: the code bundle source holds no source, file path or service to edit")
+	if bundle.Source == "" || bundle.FilePath == "" || bundle.Project == "" {
+		return "", fmt.Errorf("dbt-validation: the code bundle source holds no source, file path or project to edit")
 	}
-	prefix, ok := p.serviceRepoPaths[bundle.Service]
+	prefix, ok := p.projectRepoPaths[bundle.Project]
 	if !ok {
-		return "", fmt.Errorf("dbt-validation: service %q has no repository path mapping", bundle.Service)
+		return "", fmt.Errorf("dbt-validation: project %q has no repository path mapping", bundle.Project)
 	}
 	return prefix, nil
 }

@@ -313,7 +313,7 @@ func TestDeployment_Skip(t *testing.T) {
 
 func TestNewSeedBuildDeployment_IsPendingValidationMode(t *testing.T) {
 	t0 := time.Now()
-	cmd := command.ValidationDeployTask{ReleaseID: "r", NodeID: "seed.a", ServiceName: "s",
+	cmd := command.ValidationDeployTask{ReleaseID: "r", NodeID: "seed.a", ProjectName: "s",
 		SchemaName: "sc", TableName: "a", NodeType: "dbt-seed", ImageTag: "t", JobName: "j",
 		CandidateSchema: "_candidate_r"}
 	dep := model.NewSeedBuildDeployment(cmd, nil, t0)

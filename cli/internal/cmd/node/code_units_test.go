@@ -71,7 +71,7 @@ func TestCodeUnits_UnitIDSelector_Success(t *testing.T) {
 
 func TestCodeUnits_NodeSelector_Success(t *testing.T) {
 	fake := &fakeNodeCatalog{unitsResp: &catalogv1.GetCodeUnitVersionsResponse{}}
-	stdout, _, exit := runCodeUnits(t, fake, []string{"--service", "finance", "--schema", "analytics", "--table", "orders"}, false)
+	stdout, _, exit := runCodeUnits(t, fake, []string{"--project", "finance", "--schema", "analytics", "--table", "orders"}, false)
 	assert.Equal(t, 0, exit)
 	assert.Equal(t, "", fake.gotUnitsUnitID)
 	assert.Equal(t, "analytics.orders", fake.gotUnitsUniqueID)
@@ -87,7 +87,7 @@ func TestCodeUnits_LimitFlagIsForwarded(t *testing.T) {
 
 func TestCodeUnits_BothSelectorsGivenExits2(t *testing.T) {
 	fake := &fakeNodeCatalog{}
-	stdout, _, exit := runCodeUnits(t, fake, []string{"unit_abc", "--service", "finance", "--schema", "analytics", "--table", "orders"}, false)
+	stdout, _, exit := runCodeUnits(t, fake, []string{"unit_abc", "--project", "finance", "--schema", "analytics", "--table", "orders"}, false)
 	assert.Equal(t, 2, exit)
 	var env map[string]output.CLIError
 	require.NoError(t, json.Unmarshal([]byte(stdout), &env))
@@ -105,7 +105,7 @@ func TestCodeUnits_NeitherSelectorGivenExits2(t *testing.T) {
 
 func TestCodeUnits_PartialNodeSelectorExits2(t *testing.T) {
 	fake := &fakeNodeCatalog{}
-	stdout, _, exit := runCodeUnits(t, fake, []string{"--service", "finance"}, false)
+	stdout, _, exit := runCodeUnits(t, fake, []string{"--project", "finance"}, false)
 	assert.Equal(t, 2, exit)
 	var env map[string]output.CLIError
 	require.NoError(t, json.Unmarshal([]byte(stdout), &env))

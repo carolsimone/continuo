@@ -93,7 +93,7 @@ class CandidatePublisherPort(Protocol):
         contracts_ms: int,
     ) -> None:
         """Publish the rejection. The event is encoded as UTF-8, so no text handed to this
-        port (the detail, and each failed node's id, service, file path and detail) may hold
+        port (the detail, and each failed node's id, project, file path and detail) may hold
         what UTF-8 cannot encode, a lone surrogate: the handler publishes such a rejection
         as an invalid artifact with no failed node, whose detail names the release and shows
         the first such text escaped, cut at 500 characters."""

@@ -12,7 +12,7 @@ func TestFailure_PrecedentSubjectIsTheFirstMemberOfAnUpstreamCluster(t *testing.
 	target := TriggerNode{NodeID: "model.up"}
 	first := TriggerNode{NodeID: "model.a"}
 	second := TriggerNode{NodeID: "model.b"}
-	for _, kind := range []workflow.ClusterKind{workflow.ClusterSharedUpstream, workflow.ClusterCrossService} {
+	for _, kind := range []workflow.ClusterKind{workflow.ClusterSharedUpstream, workflow.ClusterCrossProject} {
 		f := Failure{Kind: kind, Target: target, Members: []TriggerNode{first, second}}
 		assert.Equal(t, first, f.PrecedentSubject(), kind)
 	}
@@ -36,8 +36,8 @@ func TestTrigger_NodeIDsAreSortedAndLeaveNodesAlone(t *testing.T) {
 	assert.Equal(t, "b", tr.Nodes[0].NodeID)
 }
 
-func TestTrigger_ServicesAreSortedUniqueAndNonEmpty(t *testing.T) {
-	tr := Trigger{Nodes: []TriggerNode{{Service: "sales"}, {Service: ""}, {Service: "finance"}, {Service: "sales"}}}
-	assert.Equal(t, []string{"finance", "sales"}, tr.Services())
-	assert.Empty(t, Trigger{}.Services())
+func TestTrigger_ProjectsAreSortedUniqueAndNonEmpty(t *testing.T) {
+	tr := Trigger{Nodes: []TriggerNode{{Project: "sales"}, {Project: ""}, {Project: "finance"}, {Project: "sales"}}}
+	assert.Equal(t, []string{"finance", "sales"}, tr.Projects())
+	assert.Empty(t, Trigger{}.Projects())
 }

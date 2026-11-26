@@ -26,7 +26,7 @@ const (
 // for their own schedule and, once the seed-build leg ran, what the warehouse
 // holds. A notice predicts; the run's own preflight decides.
 type Notice struct {
-	Kind, NodeID, Service string
+	Kind, NodeID, Project string
 	EngineFamily          warehouse.Family
 	Change                seedreload.Change
 	Columns               ColumnChanges
@@ -104,7 +104,7 @@ func BuildNotices(candidate, prod Topology, family warehouse.Family, engine stri
 		n := Notice{
 			Kind:              noticeKindSeedReload,
 			NodeID:            cand.UniqueID,
-			Service:           cand.ServiceName,
+			Project:           cand.ProjectName,
 			EngineFamily:      family,
 			Change:            change,
 			Columns:           columns,

@@ -26,7 +26,7 @@ func incoming(uniqueID, contractHash, contentHash string) contractversion.Incomi
 		ContractHash: contractHash,
 		ContentHash:  contentHash,
 		Family:       "python",
-		Service:      "service-py",
+		Project:      "service-py",
 		SourcePath:   "contracts/" + uniqueID + ".odcs.yaml",
 		Document:     map[string]any{"id": uniqueID, "marker": contractHash},
 	}
@@ -113,7 +113,7 @@ func TestPlan_EveryIncomingContractIsAVersionStampedWithTheRelease(t *testing.T)
 		UniqueID:       kpis,
 		ContractHash:   hashA,
 		Family:         "python",
-		Service:        "service-py",
+		Project:        "service-py",
 		FirstReleaseID: "rel-41",
 		Document:       a.Document,
 	}}, plan.Versions)

@@ -14,9 +14,9 @@ interface Props {
   // runId is the failed or cancelled run to rebase.
   runId: string;
   driftLabel: string | null;
-  // serviceColors is the page's accent palette, so a service is painted here
+  // projectColors is the page's accent palette, so a project is painted here
   // as everywhere else on the page.
-  serviceColors: Map<string, string>;
+  projectColors: Map<string, string>;
   onClose: () => void;
   // onSubmitted runs once the rebase has been accepted.
   onSubmitted: () => void;
@@ -72,7 +72,7 @@ function changedItem(n: ChangedUpstreamNode): PreviewItem {
     facts.push(`last run ${formatSeconds(n.last_success_seconds)}`);
   }
   const id = `${n.schema_name}.${n.table_name}`;
-  return { key: `${n.service_name}.${id}`, service: n.service_name, label: id, title: `${n.service_name}.${id}`, facts };
+  return { key: `${n.project_name}.${id}`, project: n.project_name, label: id, title: `${n.project_name}.${id}`, facts };
 }
 
 // RebaseDialog confirms a rebase of a failed or cancelled run onto the live
@@ -80,7 +80,7 @@ function changedItem(n: ChangedUpstreamNode): PreviewItem {
 // whenever "Include changed upstream nodes" changes, and rebases on exactly
 // the previewed release. A refusal stays in the dialog; a moved live release
 // previews again and says so.
-export default function RebaseDialog({ runId, driftLabel, serviceColors, onClose, onSubmitted }: Props) {
+export default function RebaseDialog({ runId, driftLabel, projectColors, onClose, onSubmitted }: Props) {
   const [includeChanged, setIncludeChanged] = useState(true);
   const [preview, setPreview] = useState<PreviewState>({ data: null, changedNodes: [], loading: false, error: null });
   // One request id for the dialog: every submit of the same request sends it,
@@ -241,7 +241,7 @@ export default function RebaseDialog({ runId, driftLabel, serviceColors, onClose
                 </div>
                 {!includeChanged && <div className="section-header__sub">Left out of this rebase</div>}
               </div>
-              <PreviewList items={changedItems} colors={serviceColors} />
+              <PreviewList items={changedItems} colors={projectColors} />
             </section>
           </>
         )}

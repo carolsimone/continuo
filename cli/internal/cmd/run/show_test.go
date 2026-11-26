@@ -27,10 +27,10 @@ func showFake() *fakeRunClient {
 	return &fakeRunClient{
 		run: fullRun(),
 		taskPages: []*runv1.ListTasksResponse{{TotalCount: 3, Tasks: []*runv1.Task{
-			{TaskId: "t-a", ServiceName: "svc", SchemaName: "raw", TableName: "a", Status: "succeeded", Attempt: 1,
+			{TaskId: "t-a", ProjectName: "svc", SchemaName: "raw", TableName: "a", Status: "succeeded", Attempt: 1,
 				Operation: "full_refresh", PlanReason: "columns changed"},
-			{TaskId: "t-b", ServiceName: "svc", SchemaName: "raw", TableName: "b", Status: "failed", Attempt: 2},
-			{TaskId: "t-c", ServiceName: "svc", SchemaName: "raw", TableName: "c", Status: "pending",
+			{TaskId: "t-b", ProjectName: "svc", SchemaName: "raw", TableName: "b", Status: "failed", Attempt: 2},
+			{TaskId: "t-c", ProjectName: "svc", SchemaName: "raw", TableName: "c", Status: "pending",
 				WaitReason: "node_lease", WaitingOnRunId: "run-other"},
 		}}},
 		attemptPgs: []*runv1.ListRunAttemptsResponse{{TotalCount: 5, Attempts: []*runv1.TaskAttempt{
@@ -86,7 +86,7 @@ func TestRunShow_PagesThroughEveryTaskAndEveryAttempt(t *testing.T) {
 	var attempts []*runv1.TaskAttempt
 	for i := 0; i < 250; i++ {
 		id := string(rune('a'+i%26)) + string(rune('A'+i/26))
-		tasks = append(tasks, &runv1.Task{TaskId: id, ServiceName: "s", SchemaName: "x", TableName: id, Status: "succeeded"})
+		tasks = append(tasks, &runv1.Task{TaskId: id, ProjectName: "s", SchemaName: "x", TableName: id, Status: "succeeded"})
 		attempts = append(attempts, &runv1.TaskAttempt{TaskId: id, Attempt: 0, Status: "succeeded"})
 	}
 	fake.taskPages = []*runv1.ListTasksResponse{{TotalCount: 250, Tasks: tasks[:200]}, {TotalCount: 250, Tasks: tasks[200:]}}

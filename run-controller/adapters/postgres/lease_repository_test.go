@@ -317,7 +317,7 @@ func (lf leaseFlow) triggerSingleNode(t *testing.T, table string) statusFlow {
 		RequestID: uuid.New(),
 		TriggerSingleNodeRunInput: handlers.TriggerSingleNodeRunInput{
 			TenantID:       lf.tenant,
-			Target:         run.NodeID{ServiceName: "service-1", SchemaName: "e2e_schema", TableName: table},
+			Target:         run.NodeID{ProjectName: "service-1", SchemaName: "e2e_schema", TableName: table},
 			MetadataSource: run.MetadataSourceLatest,
 			Operation:      model.OperationRun,
 			Initiator:      identity.System(),

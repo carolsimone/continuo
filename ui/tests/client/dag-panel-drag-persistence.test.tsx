@@ -4,7 +4,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { ReactFlowProvider } from '@xyflow/react';
 import type { Node } from '@xyflow/react';
 import DAGPanel from '../../src/client/DAGPanel';
-import { serviceVertexId } from '../../src/client/service-helpers';
+import { projectVertexId } from '../../src/client/project-helpers';
 import type { GraphNode, GraphEdge, Task } from '../../src/client/types';
 
 // The panel's drag handling is exercised through the props it hands to
@@ -58,7 +58,7 @@ function freshGraphEdges(): GraphEdge[] {
 interface PanelOptions {
   selectedNodeId?: string | null;
   tasks?: Task[];
-  serviceView?: boolean;
+  projectView?: boolean;
 }
 
 function panel(options: PanelOptions = {}) {
@@ -70,9 +70,9 @@ function panel(options: PanelOptions = {}) {
         tasks={options.tasks ?? []}
         selectedNodeId={options.selectedNodeId ?? null}
         onNodeClick={() => {}}
-        serviceView={options.serviceView}
-        expandedServices={options.serviceView ? new Set<string>() : undefined}
-        onServiceClick={() => {}}
+        projectView={options.projectView}
+        expandedProjects={options.projectView ? new Set<string>() : undefined}
+        onProjectClick={() => {}}
       />
     </ReactFlowProvider>
   );
@@ -124,7 +124,7 @@ describe('DAGPanel manual node placement', () => {
         tasks: [
           {
             task_id: 'marketing.sch.c',
-            service_name: 'marketing',
+            project_name: 'marketing',
             schema_name: 'sch',
             table_name: 'c',
             job_name: '',
@@ -149,12 +149,12 @@ describe('DAGPanel manual node placement', () => {
     expect(transformOf(container, 'core.sch.a')).toBe('translate(42px,84px)');
   });
 
-  it('keeps a dragged service vertex in place across a refresh', () => {
-    const { container, rerender } = render(panel({ serviceView: true }));
-    const vertexId = serviceVertexId('marketing');
+  it('keeps a dragged project vertex in place across a refresh', () => {
+    const { container, rerender } = render(panel({ projectView: true }));
+    const vertexId = projectVertexId('marketing');
 
     dragTo(vertexId, 700, 40);
-    rerender(panel({ serviceView: true }));
+    rerender(panel({ projectView: true }));
 
     expect(transformOf(container, vertexId)).toBe('translate(700px,40px)');
   });

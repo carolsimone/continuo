@@ -54,7 +54,7 @@ const PROPOSAL_G = { release_id: 'rel_abc', node_id: 'analytics.table_g', status
 function proposalVerifying(phase: 'queued' | 'running') {
   return {
     release_id: 'rel_abc', node_id: 'analytics.table_g', status: 'verifying',
-    verifications: [{ service: '', kind: '', run_id: 'verify-1', phase, activated_at: '', error: '' }],
+    verifications: [{ project: '', kind: '', run_id: 'verify-1', phase, activated_at: '', error: '' }],
   };
 }
 
@@ -102,9 +102,9 @@ describe('ReleaseDetailPage', () => {
     expect(container.querySelector('.detail-back-link')).toBeTruthy();
     expect(container.querySelector('.detail-page-title')).toBeTruthy();
     expect(container.querySelector('.page-header .pill')).toBeTruthy();
-    // Services, Timeline, and the one per-node stage section.
+    // Projects, Timeline, and the one per-node stage section.
     expect(container.querySelectorAll('.section-header').length).toBe(3);
-    expect(container.querySelector('.service-tile')).toBeTruthy();
+    expect(container.querySelector('.project-tile')).toBeTruthy();
     expect(container.querySelector('.release-timeline')).toBeTruthy();
     expect(container.textContent).not.toContain('Image tags:');
     expect(container.querySelector('table.nodes-table')).toBeTruthy();
@@ -394,9 +394,9 @@ describe('ReleaseDetailPage — brand header', () => {
 });
 
 describe('ReleaseDetailPage — provenance line', () => {
-  it('says which service the release changes and links its commit on GitHub', async () => {
+  it('says which project the release changes and links its commit on GitHub', async () => {
     const detail = {
-      ...DETAIL, changed_service: 'service-1', repo: 'acme/demo', commit_sha: 'abcdef1234567',
+      ...DETAIL, changed_project: 'service-1', repo: 'acme/demo', commit_sha: 'abcdef1234567',
       commit_url: 'https://ghe.example.com/acme/demo/commit/abcdef1234567',
     };
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve(detail) })));
@@ -412,7 +412,7 @@ describe('ReleaseDetailPage — provenance line', () => {
   });
 
   it('omits the commit link when the server attached no commit URL', async () => {
-    const detail = { ...DETAIL, changed_service: 'service-1', repo: 'acme/demo', commit_sha: 'abcdef1234567' };
+    const detail = { ...DETAIL, changed_project: 'service-1', repo: 'acme/demo', commit_sha: 'abcdef1234567' };
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve(detail) })));
     const { container } = renderDetail();
     await waitFor(() => expect(screen.getByText('rel_abc')).toBeInTheDocument());
@@ -421,7 +421,7 @@ describe('ReleaseDetailPage — provenance line', () => {
     expect(sub.querySelector('a')).toBeNull();
   });
 
-  it('renders no provenance line when the release names no changed service', async () => {
+  it('renders no provenance line when the release names no changed project', async () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve(DETAIL) })));
     const { container } = renderDetail();
     await waitFor(() => expect(screen.getByText('rel_abc')).toBeInTheDocument());
@@ -483,7 +483,7 @@ describe('ReleaseDetailPage — timeline preview follows the release kind', () =
 // the run rebuilds, one table that refreshes on its own schedule and one view
 // outside continuo that stops the load.
 const designNotice = {
-  kind: 'seed_reload', node_id: 'analytics.seed_fx_rates_eur', service: 'finance',
+  kind: 'seed_reload', node_id: 'analytics.seed_fx_rates_eur', project: 'finance',
   engine_family: 'schema_bound', change: 'columns',
   columns: { added: ['source'], removed: [], retyped: [] },
   load: { operation: 'run', drops_table: true, reason: 'columns changed; +full_refresh: true re-creates the table on every load' },

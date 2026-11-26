@@ -6,7 +6,7 @@ per stage. A stage that runs several times (once per manifest, once per node)
 adds up in the same record. The record also keeps the largest resident set seen
 at a stage boundary, how many nodes and declared columns each runtime
 contributed, how many nodes the parse skipped and why, how many dormant nodes
-each service holds, and how the release ended. `log_fields` renders all of it as
+each project holds, and how the release ended. `log_fields` renders all of it as
 the fields of the release's log line. `parse_ms` and `contracts_ms` split the
 time from the record's start to the publish into the contract stages and the
 rest.
@@ -178,8 +178,8 @@ class ReleaseTimings:
     and which count under the `external` runtime) and the columns they
     declare; `skipped` holds the nodes the parses left out, per reason.
     `nodes`, `columns` and `skipped` name every runtime or reason from
-    construction. `dormant` holds, per service, the dormant nodes the release
-    holds (the nodes a release builds that belong to no schedule); a service
+    construction. `dormant` holds, per project, the dormant nodes the release
+    holds (the nodes a release builds that belong to no schedule); a project
     with none has no entry. `contract_failures` counts the contract failures
     the release met by (stage, reason), and `validation_cache` counts the
     contract validations answered from the cache (`hit`) and run (`miss`).
@@ -247,12 +247,12 @@ class ReleaseTimings:
     def add_nodes(self, nodes: Iterable[ManifestNode]) -> None:
         """Count nodes the release holds, a parse's or the release's unknown-external
         nodes, and their declared columns, under each node's runtime, and each
-        dormant node under its service."""
+        dormant node under its project."""
         for node in nodes:
             self.nodes[node.runtime] += 1
             self.columns[node.runtime] += node.declared_columns
             if is_dormant(node.node_type, node.schedule_name):
-                self.dormant[node.service_name] = self.dormant.get(node.service_name, 0) + 1
+                self.dormant[node.project_name] = self.dormant.get(node.project_name, 0) + 1
 
     def add_skips(self, skips: Iterable[SkippedNode]) -> None:
         """Count the nodes a parse left out, under each skip's reason."""

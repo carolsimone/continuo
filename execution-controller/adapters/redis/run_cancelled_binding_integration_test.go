@@ -76,7 +76,7 @@ func TestRunCancelledBinding_DeletesTheJobsAfterCommit(t *testing.T) {
 	logger := testDispatchLogger()
 	runID := uuid.New()
 	cmd := command.DeployTask{TenantID: "default", TaskID: uuid.NewString(), RunID: runID.String(), ScheduleName: "daily",
-		ServiceName: "dbt", SchemaName: "public", TableName: "orders", JobName: "dbt-public-orders-" + runID.String()[:8],
+		ProjectName: "dbt", SchemaName: "public", TableName: "orders", JobName: "dbt-public-orders-" + runID.String()[:8],
 		NodeType: "dbt-model", ImageTag: "sha-abc", Operation: "run", TimeoutSeconds: 3600}
 	repo := postgres.NewDeploymentsRepository(db, logger)
 	d := model.NewDeployment(cmd, nil, time.Now().Add(-time.Minute))

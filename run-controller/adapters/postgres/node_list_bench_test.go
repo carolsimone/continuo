@@ -16,8 +16,8 @@ import (
 )
 
 // nodeListShape is the history of a tenant whose live release holds a number
-// of scheduled dbt models given by nodes, spread over nodeListServices
-// services and nodeListSchedules schedules, plus one dormant dbt model per
+// of scheduled dbt models given by nodes, spread over nodeListProjects
+// projects and nodeListSchedules schedules, plus one dormant dbt model per
 // nodeListDormantEvery of them, which never ran. Every schedule ran
 // runsPerNode times, and each run holds one run task per node of its
 // schedule: one in twenty tasks failed, one in twenty needed a second
@@ -29,7 +29,7 @@ type nodeListShape struct {
 }
 
 const (
-	nodeListServices     = 10
+	nodeListProjects     = 10
 	nodeListSchedules    = 20
 	nodeListDormantEvery = 50
 )
@@ -46,8 +46,8 @@ var nodeListShapes = []nodeListShape{
 
 // BenchmarkListNodes measures the node list on each shape: "page" is the
 // first page of every node, "badge" the one-row page that only reads the
-// total, "node" the read of one node by its service and table name, "service"
-// the first page of one service's nodes and "dormant" the first page of the
+// total, "node" the read of one node by its project and table name, "project"
+// the first page of one project's nodes and "dormant" the first page of the
 // dormant nodes. Each reports the median of its iterations as p50-ms.
 //
 //	go test -tags integration -run '^$' -bench BenchmarkListNodes -benchtime 10x ./adapters/postgres/
@@ -60,14 +60,14 @@ func BenchmarkListNodes(b *testing.B) {
 			repo := postgres.NewNodeRunRepository(db, tenant, discardLogger())
 			for _, read := range []struct {
 				name            string
-				search, service string
+				search, project string
 				dormantOnly     bool
 				limit           int
 			}{
 				{name: "page", limit: 50},
 				{name: "badge", limit: 1},
-				{name: "node", search: "t_1003", service: "svc_3", limit: 50},
-				{name: "service", service: "svc_3", limit: 50},
+				{name: "node", search: "t_1003", project: "svc_3", limit: 50},
+				{name: "project", project: "svc_3", limit: 50},
 				{name: "dormant", dormantOnly: true, limit: 50},
 			} {
 				b.Run(read.name, func(b *testing.B) {
@@ -75,7 +75,7 @@ func BenchmarkListNodes(b *testing.B) {
 					b.ResetTimer()
 					for range b.N {
 						start := time.Now()
-						rows, total, err := repo.ListNodes(ctx, read.search, read.service, model.OperationRun, read.dormantOnly, read.limit, 0)
+						rows, total, err := repo.ListNodes(ctx, read.search, read.project, model.OperationRun, read.dormantOnly, read.limit, 0)
 						took = append(took, time.Since(start))
 						require.NoError(b, err)
 						require.NotEmpty(b, rows)
@@ -107,18 +107,18 @@ func storeNodeListShape(b *testing.B, db *sqlx.DB, shape nodeListShape) string {
 	}{
 		{`INSERT INTO topology_releases (tenant_id, release_id, promotion_seq, topology_uri, topology_sha256)
 		  VALUES ($1, 'rel-1', 1, 's3://bench/topology.json.gz', 'bench')`, []any{tenant}},
-		{`INSERT INTO topology_nodes (tenant_id, release_id, node_key, unique_id, service_name, schema_name,
+		{`INSERT INTO topology_nodes (tenant_id, release_id, node_key, unique_id, project_name, schema_name,
 		                             table_name, node_type, schedule_name, timeout_seconds)
 		  SELECT $1, 'rel-1', 'analytics.t_' || n, 'model.svc_' || (n % $3) || '.t_' || n, 'svc_' || (n % $3),
 		         'analytics', 't_' || n, 'dbt-model', 'sched_' || (n % $4), CASE WHEN n % 3 = 0 THEN 600 END
 		  FROM generate_series(0, $2::int - 1) AS n`,
-			[]any{tenant, shape.nodes, nodeListServices, nodeListSchedules}},
-		{`INSERT INTO topology_nodes (tenant_id, release_id, node_key, unique_id, service_name, schema_name,
+			[]any{tenant, shape.nodes, nodeListProjects, nodeListSchedules}},
+		{`INSERT INTO topology_nodes (tenant_id, release_id, node_key, unique_id, project_name, schema_name,
 		                             table_name, node_type)
 		  SELECT $1, 'rel-1', 'analytics.d_' || n, 'model.svc_' || (n % $3) || '.d_' || n, 'svc_' || (n % $3),
 		         'analytics', 'd_' || n, 'dbt-model'
 		  FROM generate_series(0, $2::int / $4::int - 1) AS n`,
-			[]any{tenant, shape.nodes, nodeListServices, nodeListDormantEvery}},
+			[]any{tenant, shape.nodes, nodeListProjects, nodeListDormantEvery}},
 		{`INSERT INTO live_release (tenant_id, release_id, promotion_seq, updated_at) VALUES ($1, 'rel-1', 1, now())`,
 			[]any{tenant}},
 		{`INSERT INTO runs (run_id, tenant_id, schedule_name, status, created_at, started_at, completed_at,
@@ -128,7 +128,7 @@ func storeNodeListShape(b *testing.B, db *sqlx.DB, shape nodeListShape) string {
 		  FROM generate_series(0, $2::int - 1) AS s, generate_series(0, $3::int - 1) AS k,
 		       LATERAL (SELECT now() - make_interval(hours => k, mins => s % 60) AS at) t`,
 			[]any{tenant, nodeListSchedules, shape.runsPerNode}},
-		{`INSERT INTO tasks (task_id, run_id, tenant_id, created_at, service_name, schema_name, table_name,
+		{`INSERT INTO tasks (task_id, run_id, tenant_id, created_at, project_name, schema_name, table_name,
 		                    job_name, status, attempt, max_retries, operation, node_key, dispatched_at)
 		  SELECT md5($1 || ':' || n || ':' || k)::uuid, md5($1 || ':' || (n % $4) || ':' || k)::uuid, $1, t.at,
 		         'svc_' || (n % $3), 'analytics', 't_' || n, 'job-' || left(md5($1 || ':' || n || ':' || k), 20),
@@ -136,7 +136,7 @@ func storeNodeListShape(b *testing.B, db *sqlx.DB, shape nodeListShape) string {
 		         CASE WHEN (3 * n + k) % 20 = 1 THEN 1 ELSE 0 END, 2, 'run', 'analytics.t_' || n, t.at
 		  FROM generate_series(0, $2::int - 1) AS n, generate_series(0, $5::int - 1) AS k,
 		       LATERAL (SELECT now() - make_interval(hours => k, mins => (n % $4) % 60) AS at) t`,
-			[]any{tenant, shape.nodes, nodeListServices, nodeListSchedules, shape.runsPerNode}},
+			[]any{tenant, shape.nodes, nodeListProjects, nodeListSchedules, shape.runsPerNode}},
 		{`INSERT INTO task_attempts (task_id, tenant_id, attempt, job_name, status, dispatched_at, started_at, finished_at)
 		  SELECT task_id, tenant_id, 0, job_name || '-0', CASE WHEN attempt = 1 THEN 'failed' ELSE status END,
 		         created_at, created_at + interval '2 seconds',

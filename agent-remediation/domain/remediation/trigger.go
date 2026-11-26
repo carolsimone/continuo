@@ -58,21 +58,21 @@ type TriggerNode struct {
 	// Empty on a validation or seed_build node falls back to the catalog
 	// graph's node locator; a duplicate_table node has no such fallback.
 	FilePath string
-	// Service is the owning dbt service name for the failing node. Set for
+	// Project is the owning dbt project name for the failing node. Set for
 	// validation, seed_build, and duplicate_table failures from the candidate
-	// topology. Empty for compile failures, where NodeID acts as the service
+	// topology. Empty for compile failures, where NodeID acts as the project
 	// discriminator.
-	Service string
+	Project string
 	// NodeType is the failing node's kind (dbt-model, dbt-seed, dbt-snapshot,
 	// python-node, python-csv, or python-api), set on validation,
 	// duplicate-relation and parse failures. It selects how the node is fixed:
 	// a python-node, whose source is not a single readable file, is fixed in
 	// the ODCS contract file declaring it.
 	NodeType string
-	// OtherService and OtherFilePath locate the competing node that also
+	// OtherProject and OtherFilePath locate the competing node that also
 	// produces the contested relation (RelationID), set on a duplicate-relation
 	// failure.
-	OtherService  string
+	OtherProject  string
 	OtherFilePath string
 	// ChangedAncestors are the node's transitive upstream ancestors whose
 	// content changed in the rejected release, each with the location that
@@ -96,7 +96,7 @@ type Unfixable struct {
 }
 
 // ChangedAncestor is one changed upstream of a failing node. FilePath and
-// Service are the location the rejected release's candidate topology declares;
+// Project are the location the rejected release's candidate topology declares;
 // both are empty on a rejection that carries no per-node topology, and the fix
 // then falls back to the promoted graph. Depth is the ancestor's minimum
 // upstream hop distance from the failing node (1 = direct upstream); 0 on a
@@ -104,7 +104,7 @@ type Unfixable struct {
 type ChangedAncestor struct {
 	NodeID   string
 	FilePath string
-	Service  string
+	Project  string
 	Depth    int
 }
 
@@ -120,13 +120,13 @@ func (t Trigger) NodeIDs() []string {
 	return ids
 }
 
-// Services is the sorted set of services the trigger's failing nodes belong to.
-func (t Trigger) Services() []string {
+// Projects is the sorted set of projects the trigger's failing nodes belong to.
+func (t Trigger) Projects() []string {
 	names := make([]string, 0, len(t.Nodes))
 	for _, n := range t.Nodes {
-		names = append(names, n.Service)
+		names = append(names, n.Project)
 	}
-	return proposal.UnionServices(names)
+	return proposal.UnionProjects(names)
 }
 
 // Failure is one cluster of failing nodes to fix: the trigger it came from, the

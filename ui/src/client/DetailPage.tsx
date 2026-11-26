@@ -27,7 +27,7 @@ import { useRunRows } from './detail-page/useRunRows';
 import { useScheduleGraph } from './detail-page/useScheduleGraph';
 import { RUNS_PAGE_SIZE, useScheduleRuns } from './detail-page/useScheduleRuns';
 import { useSelectedRunGraph } from './detail-page/useSelectedRunGraph';
-import { useServiceTree } from './detail-page/useServiceTree';
+import { useProjectTree } from './detail-page/useProjectTree';
 import { useTriggerRun } from './detail-page/useTriggerRun';
 import RebaseDialog from './RebaseDialog';
 import RerunDialog from './RerunDialog';
@@ -83,7 +83,7 @@ function ScheduleDetail({ name, mode, requestId }: {
   const activeGraph = resolveActiveGraph({
     mode, scheduleGraph: graph, liveRunGraph, selectedRunGraph: runGraph, selectedRunId,
   });
-  const tree = useServiceTree(activeGraph, tasks);
+  const tree = useProjectTree(activeGraph, tasks);
   const attemptsByTask = useMemo(() => groupAttemptsByTask(attempts), [attempts]);
 
   // The Rerun and Rebase dialogs post their run themselves; once one is
@@ -189,7 +189,7 @@ function ScheduleDetail({ name, mode, requestId }: {
             runId={runOnScreen.run_id}
             releaseId={shownReleaseId}
             driftLabel={driftLabel}
-            serviceColors={tree.serviceColors}
+            projectColors={tree.projectColors}
             onClose={closeDialog}
             onSubmitted={handleRerunSubmitted}
           />
@@ -198,7 +198,7 @@ function ScheduleDetail({ name, mode, requestId }: {
           <RebaseDialog
             runId={runOnScreen.run_id}
             driftLabel={driftLabel}
-            serviceColors={tree.serviceColors}
+            projectColors={tree.projectColors}
             onClose={closeDialog}
             onSubmitted={handleRebaseSubmitted}
           />
@@ -220,10 +220,10 @@ function ScheduleDetail({ name, mode, requestId }: {
             selectedNodeId={tree.selectedNodeId}
             selectedRunId={selectedRunId}
             lastRunId={lastRunId}
-            expandedServices={tree.effectiveExpandedServices}
-            serviceColors={tree.serviceColors}
+            expandedProjects={tree.effectiveExpandedProjects}
+            projectColors={tree.projectColors}
             onNodeSelect={tree.handleNodeSelect}
-            onServiceToggle={tree.handleServiceToggle}
+            onProjectToggle={tree.handleProjectToggle}
             pastRuns={pastRuns}
           />
         ) : (
@@ -239,9 +239,9 @@ function ScheduleDetail({ name, mode, requestId }: {
             tasks={tasks}
             attemptsByTask={attemptsByTask}
             activeGraph={activeGraph}
-            services={tree.services}
-            expandedServices={tree.effectiveExpandedServices}
-            onServiceToggle={tree.handleServiceToggle}
+            projects={tree.projects}
+            expandedProjects={tree.effectiveExpandedProjects}
+            onProjectToggle={tree.handleProjectToggle}
             pastRuns={pastRuns}
           />
         )}

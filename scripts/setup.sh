@@ -81,7 +81,7 @@ DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/
 echo "Building s3-sidecar image..."
 DOCKER_BUILDKIT=1 docker build -t s3-sidecar:latest s3-sidecar/
 # The python e2e fixture: a domain image built the way a real domain repository
-# builds one — the published runtime base plus that service's contracts and
+# builds one — the published runtime base plus that project's contracts and
 # scripts. The e2e posts this exact tag as the release's image_tag, and the
 # execution-controller runs it verbatim. The Dockerfile has two targets, and a
 # build with no --target builds the last one, so each build names its own.
@@ -118,35 +118,35 @@ done
 _build_batch
 echo "===== DIAG: all compose build batches complete ====="
 
-# Build dbt service images and load into KIND
+# Build dbt project images and load into KIND
 
 IMAGE_TAG="$(git rev-parse --short HEAD)-$(date +%s)"
 echo "===== DIAG: IMAGE_TAG=${IMAGE_TAG} ====="
-echo "Using IMAGE_TAG=${IMAGE_TAG} for dbt service images"
+echo "Using IMAGE_TAG=${IMAGE_TAG} for dbt project images"
 
-DBT_SERVICES=(service-1 service-2 service-3)
-echo "Building dbt service images with content-addressed tag..."
-for svc in "${DBT_SERVICES[@]}"; do
+DBT_PROJECTS=(service-1 service-2 service-3)
+echo "Building dbt project images with content-addressed tag..."
+for project in "${DBT_PROJECTS[@]}"; do
     DOCKER_BUILDKIT=1 docker build \
-        -f "dbt/services/${svc}/Dockerfile.local" \
-        -t "${svc}:${IMAGE_TAG}" \
-        "dbt/services/${svc}/"
+        -f "dbt/projects/${project}/Dockerfile.local" \
+        -t "${project}:${IMAGE_TAG}" \
+        "dbt/projects/${project}/"
 done
 
-PER_SERVICE=""
-for svc in "${DBT_SERVICES[@]}"; do
-    [ -n "$PER_SERVICE" ] && PER_SERVICE="${PER_SERVICE},"
-    PER_SERVICE="${PER_SERVICE}${svc}=${IMAGE_TAG}"
+PER_PROJECT=""
+for project in "${DBT_PROJECTS[@]}"; do
+    [ -n "$PER_PROJECT" ] && PER_PROJECT="${PER_PROJECT},"
+    PER_PROJECT="${PER_PROJECT}${project}=${IMAGE_TAG}"
 done
-export IMAGE_TAG_PER_SERVICE="$PER_SERVICE"
-echo "Exported IMAGE_TAG_PER_SERVICE=${IMAGE_TAG_PER_SERVICE}"
+export IMAGE_TAG_PER_PROJECT="$PER_PROJECT"
+echo "Exported IMAGE_TAG_PER_PROJECT=${IMAGE_TAG_PER_PROJECT}"
 
-# Write the per-service image tags to the bind-mounted tests/e2e/.image-tags file
+# Write the per-project image tags to the bind-mounted tests/e2e/.image-tags file
 # (immutable setup metadata). The e2e rebuilds the release-controller service_prod
 # baseline from this before each consumer, so a prior test's mutation of
 # service_prod cannot break a later read. Replaces the obsolete S3 image-tag sidecar.
-printf '%s' "$PER_SERVICE" > tests/e2e/.image-tags
-echo "Wrote per-service image tags to tests/e2e/.image-tags"
+printf '%s' "$PER_PROJECT" > tests/e2e/.image-tags
+echo "Wrote per-project image tags to tests/e2e/.image-tags"
 
 # continuo-execution-controller is already built by 'docker compose build'
 # above with the correct tag, so no need to rebuild it here.
@@ -174,8 +174,8 @@ echo "Loading images into kind (sequential)..."
 # all images at once thrashes disk I/O and can stall the import. Sequential
 # loading keeps disk pressure bounded — the same reason the image build above
 # is batched.
-for svc in "${DBT_SERVICES[@]}"; do
-    kind load docker-image "${svc}:${IMAGE_TAG}" --name "${CLUSTER_NAME}"
+for project in "${DBT_PROJECTS[@]}"; do
+    kind load docker-image "${project}:${IMAGE_TAG}" --name "${CLUSTER_NAME}"
 done
 kind load docker-image continuo-execution-controller:latest --name ${CLUSTER_NAME}
 kind load docker-image dbt-base:latest --name ${CLUSTER_NAME}
@@ -218,10 +218,10 @@ fi
 echo "Starting dbt-compile-and-load..."
 docker compose up -d dbt-compile-and-load
 echo "Compiling and uploading dbt manifests to MinIO S3..."
-docker exec dbt-compile-and-load uv run python -m dbt_upload load --services-dir /app/services --target minio --release-id e2e-baseline
-echo "✓ dbt manifests compiled and uploaded to MinIO S3 (key: <service>/e2e-baseline/manifest.json)"
+docker exec dbt-compile-and-load uv run python -m dbt_upload load --projects-dir /app/projects --target minio --release-id e2e-baseline
+echo "✓ dbt manifests compiled and uploaded to MinIO S3 (key: <project>/e2e-baseline/manifest.json)"
 
-# Per-service image tags are seeded into the release-controller service_prod
+# Per-project image tags are seeded into the release-controller service_prod
 # pointer table at the end of this script (after the final compose up runs the
 # release-controller migrations). The e2e reads image_tag from service_prod — the
 # production source of truth — so no S3 image-tag sidecar is needed.
@@ -233,7 +233,7 @@ echo "✓ dbt manifests compiled and uploaded to MinIO S3 (key: <service>/e2e-ba
 # service-1 ships seeds; dbt-compile-and-load shares continuo_dbt with the kind
 # run-jobs, so seeds land where those jobs read them.
 echo "Materializing dbt seeds into e2e_schema..."
-docker exec dbt-compile-and-load bash -c "cd /app/services/service-1 && dbt seed --profiles-dir ."
+docker exec dbt-compile-and-load bash -c "cd /app/projects/service-1 && dbt seed --profiles-dir ."
 echo "✓ dbt seeds materialized"
 
 # Create the table that service-1's ingest_probe_reader model reads and no model

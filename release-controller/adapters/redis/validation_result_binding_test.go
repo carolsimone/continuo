@@ -196,7 +196,7 @@ func (r *fakeReleaseRepo) Active(ctx context.Context) (*pipeline.Run, error) {
 func (r *fakeReleaseRepo) List(ctx context.Context, f repository.ListFilter) ([]*pipeline.Run, *repository.ListCursor, error) {
 	panic("not implemented")
 }
-func (r *fakeReleaseRepo) ActiveCandidateServicesWithKind(ctx context.Context, kind release.ManifestKind) ([]string, error) {
+func (r *fakeReleaseRepo) ActiveCandidateProjectsWithKind(ctx context.Context, kind release.ManifestKind) ([]string, error) {
 	panic("not implemented")
 }
 func (r *fakeReleaseRepo) DeleteFinishedBefore(ctx context.Context, cutoff time.Time, keepReleaseIDs []string) (int, error) {

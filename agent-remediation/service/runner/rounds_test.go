@@ -141,9 +141,9 @@ func TestRunner_AnUpstreamClusterWhoseRoundsAreSpentFallsBack(t *testing.T) {
 		r.ProposedSQL = "select 1"
 		return r
 	}
-	ancestor := remediation.ChangedAncestor{NodeID: "model.core.base", FilePath: "models/base.sql", Service: "core", Depth: 1}
+	ancestor := remediation.ChangedAncestor{NodeID: "model.core.base", FilePath: "models/base.sql", Project: "core", Depth: 1}
 	a := compileNode("svc-a")
-	a.Service = "svc-a"
+	a.Project = "svc-a"
 	a.ChangedAncestors = []remediation.ChangedAncestor{ancestor}
 	trig := trigger("compile", a)
 	trig.CodeBundleURI = "s3://bundles/rel-1.tar.gz"
@@ -153,14 +153,14 @@ func TestRunner_AnUpstreamClusterWhoseRoundsAreSpentFallsBack(t *testing.T) {
 
 	assert.Equal(t, 3, h.llm.calls(), "the upstream cluster runs every round")
 	clusters := h.store.Clusters(id)
-	require.Len(t, clusters, 1, "a cross-service cluster adds no member cluster")
-	assert.Equal(t, workflow.ClusterCrossService, clusters[0].Kind)
+	require.Len(t, clusters, 1, "a cross-project cluster adds no member cluster")
+	assert.Equal(t, workflow.ClusterCrossProject, clusters[0].Kind)
 	assert.Equal(t, remediation.ClusterFellBack, clusters[0].Status)
 	require.NotNil(t, clusters[0].Outcome)
 	assert.Equal(t, proposal.StatusSkipped, clusters[0].Outcome.Status)
-	assert.Equal(t, model.HandoverReasonPreflightRoundsSpent, clusters[0].Outcome.Code, "the members of a cross-service cluster whose rounds are spent are handed over as such")
-	assert.Contains(t, clusters[0].Outcome.Reason, "the change that broke this node lives in service core; "+
-		"a fix in this node's own service cannot ship before it: ")
+	assert.Equal(t, model.HandoverReasonPreflightRoundsSpent, clusters[0].Outcome.Code, "the members of a cross-project cluster whose rounds are spent are handed over as such")
+	assert.Contains(t, clusters[0].Outcome.Reason, "the change that broke this node lives in project core; "+
+		"a fix in this node's own project cannot ship before it: ")
 }
 
 func TestRunner_EachRoundHasItsOwnCacheKey(t *testing.T) {

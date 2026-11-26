@@ -27,7 +27,7 @@ func TestSeedBuildRequestedHandler_EnqueuesOneSeedBuildDeploymentPerSeed(t *test
 		Seeds: []events.SeedBuildNode{
 			{
 				NodeID:      "seed.shop.country_codes",
-				ServiceName: "shop",
+				ProjectName: "shop",
 				SchemaName:  "public",
 				TableName:   "country_codes",
 				NodeType:    pkg_model.NodeTypeDbtSeed,
@@ -54,7 +54,7 @@ func TestSeedBuildRequestedHandler_EnqueuesOneSeedBuildDeploymentPerSeed(t *test
 	cmd := dep.ValidationCommand()
 	assert.Equal(t, "rel-seed-2026", cmd.ReleaseID)
 	assert.Equal(t, "seed.shop.country_codes", cmd.NodeID)
-	assert.Equal(t, "shop", cmd.ServiceName)
+	assert.Equal(t, "shop", cmd.ProjectName)
 	assert.Equal(t, "public", cmd.SchemaName)
 	assert.Equal(t, "country_codes", cmd.TableName)
 	assert.Equal(t, string(pkg_model.NodeTypeDbtSeed), cmd.NodeType)
@@ -77,11 +77,11 @@ func TestSeedBuildRequestedHandler_MultipleSeeds(t *testing.T) {
 		CandidateSchema: "_candidate_rel_multi",
 		Seeds: []events.SeedBuildNode{
 			{
-				NodeID: "seed.shop.a", ServiceName: "shop", SchemaName: "public",
+				NodeID: "seed.shop.a", ProjectName: "shop", SchemaName: "public",
 				TableName: "a", NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "t1",
 			},
 			{
-				NodeID: "seed.shop.b", ServiceName: "shop", SchemaName: "public",
+				NodeID: "seed.shop.b", ProjectName: "shop", SchemaName: "public",
 				TableName: "b", NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "t2",
 			},
 		},
@@ -109,7 +109,7 @@ func TestSeedBuildRequestedHandler_MsgProcIDNilAllowed(t *testing.T) {
 		ReleaseID:       "rel-nil",
 		CandidateSchema: "_cand",
 		Seeds: []events.SeedBuildNode{
-			{NodeID: "seed.s.x", ServiceName: "s", SchemaName: "sc", TableName: "x",
+			{NodeID: "seed.s.x", ProjectName: "s", SchemaName: "sc", TableName: "x",
 				NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "t"},
 		},
 	}
@@ -133,9 +133,9 @@ func TestSeedBuildRequestedHandler_ThreadsSourceOverlayURI(t *testing.T) {
 		Mode:            "seed_build",
 		CandidateSchema: "_candidate_verify_rel_seed_1",
 		Seeds: []events.SeedBuildNode{
-			{NodeID: "seed.shop.country_codes", ServiceName: "shop", SchemaName: "public",
+			{NodeID: "seed.shop.country_codes", ProjectName: "shop", SchemaName: "public",
 				TableName: "country_codes", NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "sha-seed1"},
-			{NodeID: "seed.shop.currencies", ServiceName: "shop", SchemaName: "public",
+			{NodeID: "seed.shop.currencies", ProjectName: "shop", SchemaName: "public",
 				TableName: "currencies", NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "sha-seed1"},
 		},
 		SeedIDsInOrder:   []string{"seed.shop.country_codes", "seed.shop.currencies"},
@@ -159,9 +159,9 @@ func TestSeedBuildRequestedHandler_StoresEachSeedsPreflight(t *testing.T) {
 	evt := events.SeedBuildRequested{
 		ReleaseID: "rel-seed-2026", Mode: "seed_build", CandidateSchema: "_candidate_rel_seed_2026",
 		Seeds: []events.SeedBuildNode{
-			{NodeID: "seed.shop.country_codes", ServiceName: "shop", SchemaName: "public", TableName: "country_codes",
+			{NodeID: "seed.shop.country_codes", ProjectName: "shop", SchemaName: "public", TableName: "country_codes",
 				NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "sha-seed1", SeedPreflight: pf},
-			{NodeID: "seed.shop.currencies", ServiceName: "shop", SchemaName: "public", TableName: "currencies",
+			{NodeID: "seed.shop.currencies", ProjectName: "shop", SchemaName: "public", TableName: "currencies",
 				NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "sha-seed2"},
 		},
 	}

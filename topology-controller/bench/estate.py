@@ -1,8 +1,8 @@
 """A seeded synthetic estate: the S3 objects of one release.
 
 `generate_estate` builds what release-controller would have uploaded for a
-release that carries dbt services and one python service: a dbt `manifest.json`
-and `compile-extras.json` per dbt service, and the python service's
+release that carries dbt projects and one python project: a dbt `manifest.json`
+and `compile-extras.json` per dbt project, and the python project's
 `odcs-bundle.json` (kind `python-odcs`), one ODCS contract per node. Every
 value comes from one `random.Random(seed)`, so with `ontology=False` the same
 arguments give the same bytes and two baselines parse the same estate, for one
@@ -11,7 +11,7 @@ producer stamp names the runtime and library versions, so it moves with them.
 
 With `ontology=True` the release also carries the install's ontology, a
 manifest of kind `ontology`, and every contract of the estate binds to it: all
-the services are declared under one domain, `bench`, and the ontology holds one
+the projects are declared under one domain, `bench`, and the ontology holds one
 thing, `BenchRow`, with the key `id`. Every model, seed and python node is a copy
 of that thing, its key column is bound to `BenchRow.id` and every other column
 is `local`, so the ontology check has nothing to refuse. Without it the estate
@@ -45,12 +45,12 @@ _IMAGE_TAG = "bench"
 _INVOCATION_ID = "5f0c6d2e-8a41-4b7e-9d3c-2e1f0a9b8c7d"
 _RUN_STARTED_AT = "2026-11-10T06:00:00.000000+00:00"
 _DATABASE = "warehouse"
-_PYTHON_SERVICE = "svc-py"
+_PYTHON_PROJECT = "svc-py"
 _PYTHON_SCHEMA = "py"
 # What `continuo-runtime pack` writes into the bundle's producer: its own version
 # and the continuo-contracts version it checked the contracts with.
-_PYTHON_RUNTIME_VERSION = "0.14.0"
-_CONTRACTS_VERSION = "0.4.1"
+_PYTHON_RUNTIME_VERSION = "0.15.0"
+_CONTRACTS_VERSION = "0.5.0"
 _PYTHON_IMAGE_PACKAGES = {"pyarrow": "26.0.0"}
 _DBT_PACKAGES = {
     "dbt-core": "1.12.0b1",
@@ -64,10 +64,10 @@ _SEED_COLUMNS = ["id", "code", "value"]
 # The columns the model SQL names beyond c0: its window sums c2, so a model
 # needs at least three columns.
 _MIN_COLUMNS = 3
-# The ontology of an estate built with `ontology=True`: the service that releases
-# it and its release id, the one domain every service belongs to, the one thing
+# The ontology of an estate built with `ontology=True`: the project that releases
+# it and its release id, the one domain every project belongs to, the one thing
 # every contract is a copy of and that thing's key part.
-_ONTOLOGY_SERVICE = "bench-ontology"
+_ONTOLOGY_PROJECT = "bench-ontology"
 _ONTOLOGY_RELEASE_ID = "rel-bench-ontology"
 _ONTOLOGY_DOMAIN = "bench"
 _ONTOLOGY_THING = "BenchRow"
@@ -82,7 +82,7 @@ class Estate:
     """One release's S3 objects, and the facts a run needs about them.
 
     `objects` maps each S3 key to its bytes, `requests` is the list of
-    artifacts the release request names, and `image_tags` the per-service tag
+    artifacts the release request names, and `image_tags` the per-project tag
     map it carries. The counts are what the estate holds: `python_reads` is the
     number of reads declared across the python nodes.
     """
@@ -163,18 +163,18 @@ def _dbt_bindings(columns: dict[str, dict], key_column: str) -> dict[str, dict]:
 
 
 def _model_node(
-    service: int, name: str, columns: list[str], upstreams: list[tuple[str, str]], *, ontology: bool = False,
+    project: int, name: str, columns: list[str], upstreams: list[tuple[str, str]], *, ontology: bool = False,
 ) -> dict:
-    schema = f"s{service}"
+    schema = f"s{project}"
     node = {
-        "unique_id": f"model.svc_{service}.{name}",
+        "unique_id": f"model.svc_{project}.{name}",
         "resource_type": "model",
         "name": name,
         "database": _DATABASE,
         "schema": schema,
-        "fqn": [f"svc_{service}", name],
+        "fqn": [f"svc_{project}", name],
         "tags": ["daily"],
-        "config": {"materialized": "table", "meta": {"owner": f"team-{service}"}},
+        "config": {"materialized": "table", "meta": {"owner": f"team-{project}"}},
         "checksum": {"name": "sha256", "checksum": _sha256(name)},
         "original_file_path": f"models/{name}.sql",
         "columns": {
@@ -191,16 +191,16 @@ def _model_node(
     return node
 
 
-def _test_node(service: int, model: dict, column: str) -> dict:
+def _test_node(project: int, model: dict, column: str) -> dict:
     schema = model["schema"]
     name = f"not_null_{model['name']}_{column}"
     return {
-        "unique_id": f"test.svc_{service}.{name}",
+        "unique_id": f"test.svc_{project}.{name}",
         "resource_type": "test",
         "name": name,
         "database": _DATABASE,
         "schema": schema,
-        "fqn": [f"svc_{service}", name],
+        "fqn": [f"svc_{project}", name],
         "tags": [],
         "config": {},
         "original_file_path": f"models/{model['name']}.yml",
@@ -210,17 +210,17 @@ def _test_node(service: int, model: dict, column: str) -> dict:
     }
 
 
-def _seed_node(service: int, *, ontology: bool = False) -> dict:
-    name = f"seed_svc_{service}"
+def _seed_node(project: int, *, ontology: bool = False) -> dict:
+    name = f"seed_svc_{project}"
     node = {
-        "unique_id": f"seed.svc_{service}.{name}",
+        "unique_id": f"seed.svc_{project}.{name}",
         "resource_type": "seed",
         "name": name,
         "database": _DATABASE,
-        "schema": f"s{service}",
-        "fqn": [f"svc_{service}", name],
+        "schema": f"s{project}",
+        "fqn": [f"svc_{project}", name],
         "tags": [],
-        "config": {"materialized": "seed", "meta": {"owner": f"team-{service}"}},
+        "config": {"materialized": "seed", "meta": {"owner": f"team-{project}"}},
         "checksum": {"name": "sha256", "checksum": _sha256(name)},
         "original_file_path": f"seeds/{name}.csv",
         "columns": {
@@ -235,10 +235,10 @@ def _seed_node(service: int, *, ontology: bool = False) -> dict:
     return node
 
 
-def _compile_extras(service: int, release_id: str, seed: dict) -> dict:
+def _compile_extras(project: int, release_id: str, seed: dict) -> dict:
     return {
         "version": 1,
-        "service": f"svc-{service}",
+        "project": f"svc-{project}",
         "release_id": release_id,
         "seeds": {seed["unique_id"]: {
             "sha256": _sha256(seed["name"] + "-csv"),
@@ -304,16 +304,16 @@ def _python_bundle_node(index: int, columns: list[str], reads: dict[str, str], *
     }
 
 
-def _ontology_text(dbt_services: int, *, python_service: bool) -> str:
-    """The ontology file of an estate: every service under the domain `bench`, and the
+def _ontology_text(dbt_projects: int, *, python_project: bool) -> str:
+    """The ontology file of an estate: every project under the domain `bench`, and the
     one thing `BenchRow` that every contract is a copy of."""
-    services = {f"svc-{service}": {"domain": _ONTOLOGY_DOMAIN, "kind": "dbt"} for service in range(dbt_services)}
-    if python_service:
-        services[_PYTHON_SERVICE] = {"domain": _ONTOLOGY_DOMAIN, "kind": "python"}
+    projects = {f"svc-{project}": {"domain": _ONTOLOGY_DOMAIN, "kind": "dbt"} for project in range(dbt_projects)}
+    if python_project:
+        projects[_PYTHON_PROJECT] = {"domain": _ONTOLOGY_DOMAIN, "kind": "python"}
     document = {
         "principals": {
             "domains": {_ONTOLOGY_DOMAIN: {"owner_team": _ONTOLOGY_DOMAIN}},
-            "services": services,
+            "projects": projects,
             "teams": {_ONTOLOGY_DOMAIN: {"idp_group": _ONTOLOGY_DOMAIN}},
         },
         "entities": {
@@ -328,20 +328,20 @@ def generate_estate(
     *,
     columns: int = 20,
     tests_per_model: int = 2,
-    services: int = 10,
+    projects: int = 10,
     python_share: float = 0.1,
     seed: int = DEFAULT_SEED,
     release_id: str = "rel-bench",
     ontology: bool = False,
 ) -> Estate:
-    """Build the estate of `models` dbt models spread over `services` dbt
-    services, each with `columns` columns and `tests_per_model` not-null tests,
-    one seed per service, and, when `python_share` is above zero, one python
-    service of `round(models * python_share)` nodes (at least one), each node
-    one contract of the service's ODCS bundle. With `ontology` the release also
+    """Build the estate of `models` dbt models spread over `projects` dbt
+    projects, each with `columns` columns and `tests_per_model` not-null tests,
+    one seed per project, and, when `python_share` is above zero, one python
+    project of `round(models * python_share)` nodes (at least one), each node
+    one contract of the project's ODCS bundle. With `ontology` the release also
     carries the ontology that every model, seed and python node binds to."""
-    if models < 1 or services < 1:
-        raise ValueError("an estate needs at least one model and one service")
+    if models < 1 or projects < 1:
+        raise ValueError("an estate needs at least one model and one project")
     if columns < _MIN_COLUMNS:
         raise ValueError(f"a model needs at least {_MIN_COLUMNS} columns, got {columns}")
     if not 0 <= tests_per_model <= columns:
@@ -358,10 +358,10 @@ def generate_estate(
     built: list[tuple[str, str]] = []
     index = 0
 
-    for service, count in enumerate(_split(models, services)):
-        schema = f"s{service}"
-        service_name = f"svc-{service}"
-        seed_node = _seed_node(service, ontology=ontology)
+    for project, count in enumerate(_split(models, projects)):
+        schema = f"s{project}"
+        project_name = f"svc-{project}"
+        seed_node = _seed_node(project, ontology=ontology)
         nodes: dict[str, dict] = {seed_node["unique_id"]: seed_node}
         for position in range(count):
             name = f"m_{index:05d}"
@@ -370,29 +370,29 @@ def generate_estate(
             else:
                 picks = rng.sample(range(len(built)), min(2, len(built)))
                 upstreams = [built[pick] for pick in picks]
-            model = _model_node(service, name, column_names, upstreams, ontology=ontology)
+            model = _model_node(project, name, column_names, upstreams, ontology=ontology)
             nodes[model["unique_id"]] = model
             for column in column_names[:tests_per_model]:
-                test = _test_node(service, model, column)
+                test = _test_node(project, model, column)
                 nodes[test["unique_id"]] = test
             built.append((schema, name))
             index += 1
 
         metadata = {
             "dbt_version": _DBT_PACKAGES["dbt-core"],
-            "project_name": f"svc_{service}",
+            "project_name": f"svc_{project}",
             "adapter_type": "postgres",
             "invocation_id": _INVOCATION_ID,
             "run_started_at": _RUN_STARTED_AT,
         }
         manifest = {"metadata": metadata, "nodes": nodes, "macros": macros}
-        manifest_key = f"{service_name}/{release_id}/manifest.json"
+        manifest_key = f"{project_name}/{release_id}/manifest.json"
         objects[manifest_key] = json.dumps(manifest, sort_keys=True).encode()
-        objects[f"{service_name}/{release_id}/compile-extras.json"] = json.dumps(
-            _compile_extras(service, release_id, seed_node), sort_keys=True,
+        objects[f"{project_name}/{release_id}/compile-extras.json"] = json.dumps(
+            _compile_extras(project, release_id, seed_node), sort_keys=True,
         ).encode()
-        requests.append(ManifestRequest(service=service_name, key=manifest_key, kind=ManifestKind.DBT))
-        image_tags[service_name] = _IMAGE_TAG
+        requests.append(ManifestRequest(project=project_name, key=manifest_key, kind=ManifestKind.DBT))
+        image_tags[project_name] = _IMAGE_TAG
 
     python_nodes = 0
     python_reads = 0
@@ -411,7 +411,7 @@ def generate_estate(
             bundle_nodes.append(_python_bundle_node(position, column_names, reads, ontology=ontology))
         bundle = {
             "bundle_version": 1,
-            "service": _PYTHON_SERVICE,
+            "project": _PYTHON_PROJECT,
             "producer": {
                 "continuo_python_runtime": _PYTHON_RUNTIME_VERSION,
                 "continuo_contracts": _CONTRACTS_VERSION,
@@ -419,15 +419,15 @@ def generate_estate(
             "image_packages": dict(_PYTHON_IMAGE_PACKAGES),
             "nodes": bundle_nodes,
         }
-        bundle_key = f"{_PYTHON_SERVICE}/{release_id}/odcs-bundle.json"
+        bundle_key = f"{_PYTHON_PROJECT}/{release_id}/odcs-bundle.json"
         objects[bundle_key] = json.dumps(bundle, sort_keys=True).encode()
-        requests.append(ManifestRequest(service=_PYTHON_SERVICE, key=bundle_key, kind=ManifestKind.PYTHON_ODCS))
-        image_tags[_PYTHON_SERVICE] = _IMAGE_TAG
+        requests.append(ManifestRequest(project=_PYTHON_PROJECT, key=bundle_key, kind=ManifestKind.PYTHON_ODCS))
+        image_tags[_PYTHON_PROJECT] = _IMAGE_TAG
 
     if ontology:
-        ontology_key = f"{_ONTOLOGY_SERVICE}/{_ONTOLOGY_RELEASE_ID}/ontology.yaml"
-        objects[ontology_key] = _ontology_text(services, python_service=python_share > 0).encode()
-        requests.append(ManifestRequest(service=_ONTOLOGY_SERVICE, key=ontology_key, kind=ManifestKind.ONTOLOGY))
+        ontology_key = f"{_ONTOLOGY_PROJECT}/{_ONTOLOGY_RELEASE_ID}/ontology.yaml"
+        objects[ontology_key] = _ontology_text(projects, python_project=python_share > 0).encode()
+        requests.append(ManifestRequest(project=_ONTOLOGY_PROJECT, key=ontology_key, kind=ManifestKind.ONTOLOGY))
 
     return Estate(
         release_id=release_id,
@@ -436,7 +436,7 @@ def generate_estate(
         image_tags=image_tags,
         models=models,
         tests=models * tests_per_model,
-        seeds=services,
+        seeds=projects,
         python_nodes=python_nodes,
         python_reads=python_reads,
     )
