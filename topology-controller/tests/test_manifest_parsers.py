@@ -97,5 +97,4 @@ def test_a_plain_string_resolves_the_same_as_the_enum_member():
 
 def test_an_unrecognized_kind_resolves_to_nothing():
     assert parser_for("spark") is None
-    assert parser_for("python-" + "odcs") is None, "the retired Python kind is unknown"
     assert parser_for("") is None

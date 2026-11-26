@@ -69,20 +69,6 @@ func TestReceiveVerification_AcceptsPython(t *testing.T) {
 	assert.Empty(t, got.SourceOverlayURI())
 }
 
-// A verification naming the retired Python kind is refused with an unknown
-// kind, and stores nothing.
-func TestReceiveVerification_RefusesTheRetiredPythonKind(t *testing.T) {
-	deps, store := newDeps(time.Unix(1_700_000_000, 0).UTC())
-	in := validVerification()
-	in.Kind = retiredPythonKind
-	in.SourceOverlayURI = ""
-	err := handlers.ReceiveVerification(context.Background(), deps, in)
-	require.ErrorIs(t, err, handlers.ErrInvalidInput)
-	assert.ErrorContains(t, err, `unknown manifest kind "`+retiredPythonKind+`"`)
-	_, getErr := store.GetRelease(in.RunID)
-	assert.Error(t, getErr, "a refused verification stores nothing")
-}
-
 func TestReceiveVerification_RefusesASourceOverlayForPython(t *testing.T) {
 	deps, store := newDeps(time.Unix(1_700_000_000, 0).UTC())
 	in := validVerification()

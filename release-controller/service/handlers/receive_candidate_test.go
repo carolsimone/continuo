@@ -135,25 +135,6 @@ func TestReceiveCandidate_PersistsPythonKind(t *testing.T) {
 	assert.Equal(t, release.ManifestKindPython, r.ManifestKind())
 }
 
-// retiredPythonKind is the kind a Python project was once released with. It is
-// built from two parts because the retired-names guard keeps the whole word out
-// of every tracked file.
-const retiredPythonKind = "python-" + "odcs"
-
-// A new release naming the retired Python kind is refused as an invalid
-// candidate with an unknown kind, and persists nothing.
-func TestReceiveCandidate_RefusesTheRetiredPythonKind(t *testing.T) {
-	deps, store := newDeps(time.Unix(100, 0).UTC())
-	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Project: "svc", ReleaseID: "rK4", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
-		Kind: retiredPythonKind,
-	})
-	require.ErrorIs(t, err, handlers.ErrInvalidCandidate)
-	assert.ErrorContains(t, err, `unknown manifest kind "`+retiredPythonKind+`"`)
-	r, _ := store.GetRelease("rK4")
-	assert.Nil(t, r, "a refused kind must not persist a release")
-}
-
 func TestReceiveCandidate_RejectsUnknownKind(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{

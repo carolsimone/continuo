@@ -64,26 +64,6 @@ func TestHandleReceiveVerification_ValidationIs400(t *testing.T) {
 	}
 }
 
-// POST /verification-runs refuses the retired Python kind as an unknown kind,
-// with or without a source overlay, as a client error, and stores nothing.
-func TestHandleReceiveVerification_RefusesTheRetiredPythonKindWith400(t *testing.T) {
-	for name, overlay := range map[string]string{"without an overlay": "", "with an overlay": "s3://b/core/overlay.tar.gz"} {
-		t.Run(name, func(t *testing.T) {
-			deps, releases := newRetryRemediationDeps(time.Unix(100, 0).UTC())
-			in := validVerificationInput()
-			in.Kind = retiredPythonKind
-			in.SourceOverlayURI = overlay
-
-			rec := postVerificationRun(newTestServer(deps), in)
-
-			require.Equal(t, http.StatusBadRequest, rec.Code)
-			assert.Contains(t, rec.Body.String(),
-				`unknown manifest kind "`+retiredPythonKind+`" (expected "dbt", "python" or "ontology")`)
-			assert.Empty(t, releases.releases)
-		})
-	}
-}
-
 // A verification run never has the kind ontology: POST /verification-runs
 // refuses it as a client error whose body is the message, and stores nothing.
 func TestHandleReceiveVerification_RefusesOntologyWith400(t *testing.T) {

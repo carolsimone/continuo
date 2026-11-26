@@ -17,8 +17,7 @@ import (
 // release-controller accepts on a new release (the cases of ParseManifestKind
 // in its domain/release/manifest_kind.go). A kind one side accepts and the
 // other does not would be requested by release-controller and failed by
-// topology-controller, or the reverse. The kind python is not in the list: only
-// a stored row holds it, and ParseManifestKind refuses it.
+// topology-controller, or the reverse.
 func TestManifestKindsMatchTopologyController(t *testing.T) {
 	root := repoRootFromTest(t)
 	got := pythonManifestKinds(t, filepath.Join(root, "topology-controller", "domain", "model.py"))

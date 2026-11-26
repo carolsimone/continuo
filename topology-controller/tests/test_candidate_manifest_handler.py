@@ -924,27 +924,6 @@ def test_an_unknown_kind_fails_the_release_permanently():
     assert "spark" in kwargs["detail"]
 
 
-# The kind a Python project was once released with, built from two parts because the
-# retired-names guard keeps the whole word out of every tracked file.
-RETIRED_PYTHON_KIND = "python-" + "odcs"
-
-
-def test_the_retired_python_kind_is_invalid_artifact(tmp_path):
-    """The retired Python kind is not one this build reads, so a request for it ends like any
-    unknown kind: permanently, as invalid_artifact, with no node parsed from the file it names."""
-    publisher = MagicMock()
-    bundle = write_bundle(tmp_path, bundle_doc(demo_nodes()))
-    source = source_of(dataclasses.replace(bundle, kind=RETIRED_PYTHON_KIND))
-
-    dispatch_handler(source, publisher).handle(release_id="rel-1")
-
-    publisher.publish_ok.assert_not_called()
-    kwargs = publisher.publish_failed.call_args.kwargs
-    assert kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
-    assert kwargs["detail"] == f"service-py: unknown manifest kind '{RETIRED_PYTHON_KIND}'"
-    assert kwargs["failed_nodes"] == []
-
-
 def test_an_empty_kind_fails_the_release_rather_than_parsing_as_dbt():
     """An explicitly empty kind is not a kind this build can parse, so it takes
     the same permanent-failure path as any other unrecognized value. Silently

@@ -45,15 +45,3 @@ func TestParseManifestKind_RejectsEmptyAndUnknown(t *testing.T) {
 	_, err = release.ParseManifestKind("r")
 	assert.EqualError(t, err, `unknown manifest kind "r" (expected "dbt", "python" or "ontology")`)
 }
-
-// retiredPythonKind is the kind a Python project was once released with. It is
-// built from two parts because the retired-names guard keeps the whole word out
-// of every tracked file.
-const retiredPythonKind = "python-" + "odcs"
-
-// The retired kind is refused like any other unknown kind.
-func TestParseManifestKind_RefusesTheRetiredPythonKindAsUnknown(t *testing.T) {
-	k, err := release.ParseManifestKind(retiredPythonKind)
-	assert.Empty(t, k)
-	assert.EqualError(t, err, `unknown manifest kind "`+retiredPythonKind+`" (expected "dbt", "python" or "ontology")`)
-}

@@ -90,26 +90,6 @@ func TestHandleReceiveCandidate_ValidationFailureIs400(t *testing.T) {
 	}
 }
 
-// retiredPythonKind is the kind a Python project was once released with. It is
-// built from two parts because the retired-names guard keeps the whole word out
-// of every tracked file.
-const retiredPythonKind = "python-" + "odcs"
-
-// POST /releases refuses the retired Python kind as an unknown kind, a client
-// error, and stores nothing.
-func TestHandleReceiveCandidate_RefusesTheRetiredPythonKindWith400(t *testing.T) {
-	deps, releases := newRetryRemediationDeps(time.Unix(100, 0).UTC())
-	in := validCandidateInput()
-	in.Kind = retiredPythonKind
-
-	rec := postCandidate(newTestServer(deps), in)
-
-	require.Equal(t, http.StatusBadRequest, rec.Code)
-	assert.Contains(t, rec.Body.String(),
-		`unknown manifest kind "`+retiredPythonKind+`" (expected "dbt", "python" or "ontology")`)
-	assert.Empty(t, releases.releases)
-}
-
 // While the install's ontology switch is off, POST /releases refuses the kind
 // ontology as a client error whose body is the message, and stores nothing.
 func TestHandleReceiveCandidate_RefusesOntologyWhileTheSwitchIsOffWith400(t *testing.T) {

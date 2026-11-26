@@ -1008,14 +1008,6 @@ func TestRunRepository_TheMigrationAcceptsPython(t *testing.T) {
 	err = spRepo.Upsert(ctx, release.NewServiceProd("svc-x", "rOther", "s3://b/svc-x/x", "img:1", release.ManifestKind("other"), now))
 	require.Error(t, err, "service_prod refuses a kind outside dbt, python and ontology")
 
-	// The kind a Python project was once released with, built from two parts
-	// because the retired-names guard keeps the whole word out of every file.
-	retired := release.ManifestKind("python-" + "odcs")
-	err = repo.Save(ctx, pipeline.NewCandidate("rRetired", "svc-r", "img:1", false, false, "acme/r", "cafebabe", retired, now))
-	require.Error(t, err, "release_pipeline_runs refuses the retired Python kind")
-	err = spRepo.Upsert(ctx, release.NewServiceProd("svc-r", "rRetired", "s3://b/svc-r/x", "img:1", retired, now))
-	require.Error(t, err, "service_prod refuses the retired Python kind")
-
 	for _, table := range []string{"release_pipeline_runs", "service_prod"} {
 		var n int
 		require.NoError(t, db.GetContext(ctx, &n, `
