@@ -682,6 +682,29 @@ Call: include "continuo.agent.assertEnv" (dict "root" $ "svc" $svc) */}}
 {{- end -}}
 {{- end -}}
 
+{{/* Fails the render when a component's `components[].env` or
+`components[].secretEnv` names one of the variables in $reserved below, which
+the chart sets for every component on the shared ConfigMap: an entry's own
+variable would win over the ConfigMap's, so that component would run with
+another setting than the rest of the install. REDIS_ACL_MODE comes from
+credentials.redis.mode.
+Call: include "continuo.component.assertEnv" (dict "root" $ "svc" $svc) */}}
+{{- define "continuo.component.assertEnv" -}}
+{{- $svc := .svc -}}
+{{- $reserved := dict "REDIS_ACL_MODE" "the chart sets it from credentials.redis.mode; set credentials.redis.mode instead, and remove the variable from the entry" -}}
+{{- range $key, $_ := ($svc.env | default dict) -}}
+{{- if hasKey $reserved $key -}}
+{{- fail (printf "components[name=%s].env sets %s: %s" $svc.name $key (get $reserved $key)) -}}
+{{- end -}}
+{{- end -}}
+{{- range $secret := ($svc.secretEnv | default (list)) -}}
+{{- $name := $secret.name | toString -}}
+{{- if hasKey $reserved $name -}}
+{{- fail (printf "components[name=%s].secretEnv sets %s: %s" $svc.name $name (get $reserved $name)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{/* "true" unless egress.enabled is false. A values file without an egress
 block (for example after helm upgrade --reuse-values) runs the proxy with its
 defaults. */}}
